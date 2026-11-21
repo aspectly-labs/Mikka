@@ -1,5 +1,5 @@
 import { scrubLocalString } from '@mikka/protocol/tracing'
-import { safeDomain, safeLabel, safeLanding } from './first-touch'
+import { safeDomain, safeLabel, safeLanding } from './first-touch.ts'
 
 const allowedEvents = new Set(['$pageview', '$identify', '$feature_flag_called', 'mikka_team_created', 'mikka_team_updated', 'mikka_live_socket', 'mikka_live_received', 'mikka_live_skipped', 'mikka_live_read'])
 const allowedProperties = new Set([
