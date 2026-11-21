@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
 import { enqueueGroupTurn, GROUP_TURN_STOPPED, stopGroupTurns } from './coordinator/group-turns'
-import { groupParticipants, type GroupParticipant } from './group-participants'
+import { groupParticipants, groupParticipantsMany, type GroupParticipant } from './group-participants'
 import { groupListChanged, groupListReadChanged } from './live/lists'
 import { groupChatChanged } from './live/groups'
 
@@ -211,14 +211,22 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
               AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
             ORDER BY l."anchorPosition" DESC,l.id`, [group.id, messages.map(m => m.position), group.createdBy, group.workspaceId]) : { rows: [] }
         const exchanges: { type: 'agent_exchange'; linkId: string; anchorPosition: string; count: string; participants: GroupParticipant[] }[] = []
+        const participantsByLink = await groupParticipantsMany(client, links.rows.map(link => link.linkedConversationId), group.createdBy, group.workspaceId)
         for (const link of links.rows) {
-          const participants = await groupParticipants(client, link.linkedConversationId, group.createdBy, group.workspaceId)
+          const participants = participantsByLink.get(link.linkedConversationId) ?? []
           if (participants.length === 2) exchanges.push({ type: 'agent_exchange', linkId: link.linkId, anchorPosition: link.anchorPosition, count: link.count, participants })
         }
         const timeline = messages.flatMap(m => [
           { type: 'message', ...m },
           ...exchanges.filter(link => link.anchorPosition === m.position),
         ])
+        // Exchanges anchored to messages outside this delta still ride the
+        // response — otherwise a new link on an already-loaded message is fetched
+        // but discarded. The reader dedupes by linkId and keys markers by anchor.
+        if (after != null) {
+          const anchored = new Set(messages.map(m => m.position))
+          timeline.push(...exchanges.filter(link => !anchored.has(link.anchorPosition)))
+        }
         const active = queueAgents ? await q(`SELECT "agentId","botId",status,"updatedAt" FROM group_turns WHERE "conversationId"=$1 AND status IN ('queued','running') ORDER BY "createdAt" LIMIT 1`, [req.id]) : { rows: [] }
         const failed = queueAgents ? await q(`SELECT error FROM group_turns WHERE "conversationId"=$1 ORDER BY "createdAt" DESC,"messageId" DESC LIMIT 1`, [req.id]) : { rows: [] }
         result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null,
