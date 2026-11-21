@@ -28,7 +28,9 @@ export const runOfflineDevice = sql<{ id: string; lastSeenAt: string | null } | 
 
 /** The same bounded facts back mobile, detail and canonical batch state. */
 export const taskStateRunColumns = {
-  runId: agentRuns.id, status: agentRuns.status, outcome: agentRuns.outcome,
+  runId: agentRuns.id, status: agentRuns.status,
+  // An unjudged succeeded run reads done so list/panel/inbox agree while the judge catches up (#1863).
+  outcome: sql<string | null>`coalesce(${agentRuns.outcome}, case when ${agentRuns.status}='succeeded' then 'done' end)`.as('outcome'),
   pauseReason: agentRuns.pauseReason, stopReason: agentRuns.stopReason, threadReplacedBy: agentRuns.threadReplacedBy,
   failureDetails: runFailureBrief.as('failureDetails'), awaitingApproval: runAwaitingApproval.as('awaitingApproval'),
   deviceOffline: runDeviceOffline.as('deviceOffline'), offlineDevice: runOfflineDevice.as('offlineDevice'),

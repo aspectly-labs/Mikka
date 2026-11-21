@@ -1051,6 +1051,22 @@ export function createFactoryStore(
           );
           await tx.query(`UPDATE run_tokens SET "revokedAt"=coalesce("revokedAt",now())
             WHERE "userId"=$2 AND "runId" IN (SELECT a."runId" FROM factory_attempts a JOIN agent_runs r ON r.id=a."runId" AND r."userId"=$2 AND r."issueId"=$3 WHERE a."taskId"=$1)`,[task.id,userId,task.issueId]);
+          // An open question is the task's 等待你 marker: a cancelled task cannot stay waiting.
+          await tx.query(`UPDATE factory_questions SET status='cancelled',reason=$2,revision=revision+1,"updatedAt"=now()
+            WHERE "taskId"=$1 AND status IN ('open','waiting_user')`,[task.id,change.reason]);
+          // The person canceling the Factory work cancels its task in the same transaction (#1863); a
+          // status they already closed stays.
+          if (change.action === "cancel") {
+            await tx.query(
+              `WITH saved AS (
+                 UPDATE issues i SET status='canceled',revision=i.revision+1,"updatedAt"=now()
+                 WHERE i.id=$1 AND i."userId"=$2 AND i.status NOT IN ('done','canceled','duplicate')
+                 RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
+               INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
+               SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'user',$3 FROM saved`,
+              [task.issueId, userId, userId],
+            );
+          }
         } else if (change.action === "resolve") {
           if (task.stage !== "clarify" || task.status !== "waiting")
             fail("factoryTransition");
