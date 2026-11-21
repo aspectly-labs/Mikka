@@ -31,7 +31,7 @@ export async function verifyE2BKey(apiKey: string, fetchImpl: typeof fetch = fet
 
 const sealKey = (apiKey: string, userId: string) => {
   try { return sealSecret(apiKey, userE2bKeyAad(userId)) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable')
+    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     throw error
   }
 }
@@ -128,9 +128,10 @@ export async function getUserE2BApiKey(userId: string, env: Record<string, strin
   const [row] = await guardSecretsDb(() => db.select().from(userE2bKeys).where(eq(userE2bKeys.userId, userId)))
   if (!row) throw new E2BKeyError('e2b_key_missing')
   try { return openSecret(row, userE2bKeyAad(userId), env) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new E2BKeyError('e2b_unavailable', 'secrets key missing')
+    if (error instanceof SecretsKeyMissingError) throw Object.assign(new E2BKeyError('e2b_unavailable', 'secrets key missing'), { cause: error })
     // Moved/tampered row or rotated key: never surface the raw crypto Error.
     logSecretFailure('e2b_unavailable', userId)
+    // error-cause: the raw crypto error is never surfaced past the seal boundary
     throw new E2BKeyError('e2b_unavailable', 'decrypt failed')
   }
 }

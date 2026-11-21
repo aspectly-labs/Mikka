@@ -143,7 +143,7 @@ export const questionSkillAssignments: QuestionSkillGuards = {
       await prelockCliRunPolicy(tx,question.originRunId,userId);
     } catch (error) {
       if (error instanceof Error && error.message === "agentPolicyUnavailable")
-        throw new FactoryError("factoryNotFound");
+        throw Object.assign(new FactoryError("factoryNotFound"), { cause: error });
       throw error;
     }
   },
@@ -152,7 +152,7 @@ export const questionSkillAssignments: QuestionSkillGuards = {
       await (await import("../self-improvement/server")).skillAssignments.lockQuestion(...args);
     } catch (error) {
       if (error instanceof ImprovementError)
-        throw new FactoryError("factoryQuestionContinuationUnavailable");
+        throw Object.assign(new FactoryError("factoryQuestionContinuationUnavailable"), { cause: error });
       throw error;
     }
   },
@@ -161,7 +161,7 @@ export const questionSkillAssignments: QuestionSkillGuards = {
       await (await import("../self-improvement/server")).skillAssignments.continueQuestion(...args);
     } catch (error) {
       if (error instanceof ImprovementError)
-        throw new FactoryError("factoryQuestionContinuationUnavailable");
+        throw Object.assign(new FactoryError("factoryQuestionContinuationUnavailable"), { cause: error });
       throw error;
     }
   },

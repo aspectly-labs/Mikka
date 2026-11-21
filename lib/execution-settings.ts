@@ -109,7 +109,7 @@ export class ExecutionSettings {
     let models: SubscriptionCatalogueModel[];
     try {
       models = await (discover ?? (async (ownerId, id) => (await import("./subscription-runtime")).subscriptionRuntime().models(ownerId,id)))(scope.ownerId, connectionId);
-    } catch { throw new ActionFailureError("executionAccountUnavailable"); }
+    } catch (error) { throw Object.assign(new ActionFailureError("executionAccountUnavailable"), { cause: error }); }
     const unique = [...new Map(models.map(model => [model.id, model])).values()];
     const route = connection.provider === 'codex' ? 'codex_cpa' : 'claude_cpa';
     const client = await this.pool.connect();

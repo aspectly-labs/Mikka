@@ -57,8 +57,8 @@ export async function extractChatFile(
     let text: string
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(data)
-    } catch {
-      throw new ChatFileError('unreadable')
+    } catch (error) {
+      throw Object.assign(new ChatFileError('unreadable'), { cause: error })
     }
     if (text.includes('\0')) throw new ChatFileError('unreadable')
     if (text.length > CHAT_FILE_MAX_TEXT) throw new ChatFileError('tooLong')
@@ -73,7 +73,7 @@ export async function extractChatFile(
       .metadata()
       .catch(() => null)
     if (!meta || !['png', 'jpeg', 'webp', 'gif'].includes(meta.format ?? ''))
-      throw new ChatFileError('unreadable')
+      throw Object.assign(new ChatFileError('unreadable'), { cause: error })
     return { mediaType: MIME[meta.format === 'jpeg' ? 'jpg' : meta.format!], text: null }
   }
   if (CHAT_AUDIO_EXTENSIONS.has(ext)) {
@@ -90,7 +90,7 @@ export async function extractChatFile(
         !meta.format.numberOfChannels ||
         !meta.format.sampleRate
       )
-        throw new ChatFileError('unreadable')
+        throw Object.assign(new ChatFileError('unreadable'), { cause: error })
     }
     return { mediaType: MIME[ext], text: null }
   }
@@ -129,7 +129,7 @@ export async function extractChatFile(
     return { mediaType: MIME[ext] ?? 'application/octet-stream', text: text.trim() || null }
   } catch (error) {
     if (error instanceof ChatFileError) throw error
-    throw new ChatFileError('unreadable')
+    throw Object.assign(new ChatFileError('unreadable'), { cause: error })
   }
 }
 

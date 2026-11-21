@@ -23,7 +23,7 @@ export async function credentialBody(request: Request): Promise<unknown> {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'))
   } catch (error) {
     if (error instanceof CredentialError) throw error
-    throw new CredentialError('credential_body_invalid', 400)
+    throw Object.assign(new CredentialError('credential_body_invalid', 400), { cause: error })
   } finally { for (const chunk of chunks) chunk.fill(0); reader.releaseLock() }
 }
 export function credentialFailure(error: unknown) {

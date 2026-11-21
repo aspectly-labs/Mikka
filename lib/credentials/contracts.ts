@@ -22,7 +22,7 @@ export function canonicalOrigin(value: string): string {
     if (url.protocol !== 'https:' || url.username || url.password || url.hostname.endsWith('.') || !url.hostname) throw new Error()
     // URL applies IDNA/punycode; confusable Unicode domains remain a different origin.
     return url.origin
-  } catch { throw new CredentialError('credential_origin_invalid', 400) }
+  } catch (error) { throw Object.assign(new CredentialError('credential_origin_invalid', 400), { cause: error }) }
 }
 export function assertSameOrigin(actual: string, expected: string) {
   if (canonicalOrigin(actual) !== canonicalOrigin(expected)) throw new CredentialError('credential_denied', 404)

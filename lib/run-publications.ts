@@ -394,9 +394,9 @@ async function ownerGitHubCredential(userId: string, remoteKey: string): Promise
   try { return await githubMachineCredential(userId, { remoteKey }) }
   catch (error) {
     if (!(error instanceof GitHubAccessError)) throw error
-    if (error.code === 'githubNotConnected') throw new PublicationError('github_identity_required')
-    if (error.code === 'githubReconnectRequired') throw new PublicationError('github_reconnect_required')
-    throw new PublicationError('github_unavailable', true)
+    if (error.code === 'githubNotConnected') throw Object.assign(new PublicationError('github_identity_required'), { cause: error })
+    if (error.code === 'githubReconnectRequired') throw Object.assign(new PublicationError('github_reconnect_required'), { cause: error })
+    throw Object.assign(new PublicationError('github_unavailable', true), { cause: error })
   }
 }
 

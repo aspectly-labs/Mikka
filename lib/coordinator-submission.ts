@@ -100,7 +100,7 @@ export async function readPersonalSubmissionBody(request: Request, allowEmpty = 
   if (allowEmpty && size === 0) return {}
   const bytes=new Uint8Array(size);let offset=0
   for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength}
-  try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))}catch{throw new PersonalSubmissionBodyError(400)}
+  try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))}catch(error){throw Object.assign(new PersonalSubmissionBodyError(400),{cause:error})}
 }
 export class PersonalSubmissionBodyError extends Error {
   constructor(readonly status: 400|413){super('personalSubmissionInvalid')}

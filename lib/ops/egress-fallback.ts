@@ -20,7 +20,7 @@ async function stateTransaction<T>(pool: Pool, action: (client: PoolClient) => P
     return result
   } catch {
     await client.query('ROLLBACK').catch(() => {})
-    throw Error('__providerEgressCollectorStateUnavailable')
+    throw Object.assign(Error('__providerEgressCollectorStateUnavailable'), { cause: error })
   } finally { client.release() }
 }
 

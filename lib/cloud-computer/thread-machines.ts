@@ -1504,7 +1504,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       await pool.query(`UPDATE thread_machines m SET state=CASE WHEN EXISTS(SELECT 1 FROM agent_runs r WHERE r.id=m."runId" AND r.status='queued'
         AND (r."leaseExpiresAt" IS NULL OR r."leaseExpiresAt"<=now())) THEN 'error' ELSE m.state END,
         "workerLeaseId"=NULL,"workerLeaseUntil"=NULL WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND "sandboxId"=$4 AND "workerLeaseId"=$5 AND state<>'ended'`, [runId,actor.userId,actor.workspaceId,retainedSandboxId,leaseId]).catch(()=>undefined)
-      throw new RetainedTaskMachineUnavailable()
+      throw Object.assign(new RetainedTaskMachineUnavailable(), { cause: error })
     }
     else if (reservedStartLease && error && typeof error === 'object') {
       failedThreadStarts.set(error, Object.freeze({ userId: actor.userId, workspaceId: actor.workspaceId, runId, leaseId }))

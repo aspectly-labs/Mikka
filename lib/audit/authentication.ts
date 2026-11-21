@@ -58,6 +58,6 @@ export async function auditAuthentication(ctx: AuthAuditContext) {
     ctx.context.newSession = null
     try { await ctx.context.internalAdapter.deleteSession(session.session.token) }
     catch (cleanupError) { console.error('[audit] withheld authentication session cleanup pending', auditFailureSummary(cleanupError)) }
-    throw new APIError('SERVICE_UNAVAILABLE', { code: 'AUTH_AUDIT_UNAVAILABLE', message: 'Sign-in unavailable' })
+    throw new APIError('SERVICE_UNAVAILABLE', { code: 'AUTH_AUDIT_UNAVAILABLE', message: 'Sign-in unavailable', cause: error })
   }
 }

@@ -80,7 +80,7 @@ export function verifyCodexMailboxResume(stateDir: string, sourceRunId: string, 
         !isDeepStrictEqual(receipt.catalogue, catalogue) || typeof receipt.historyPath !== 'string') throw unavailable()
     verifyHistory(home, receipt.historyPath, threadId, catalogue)
     return receipt.nativeVersion
-  } catch { throw unavailable() }
+  } catch (error) { throw Object.assign(unavailable(), { cause: error }) }
 }
 
 /** Record only the actual native response, before this run can send a turn. */
@@ -97,10 +97,10 @@ export function recordCodexMailboxSession(stateDir: string, runId: string, home:
     const stat = lstatSync(dir)
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw unavailable()
     writeJsonAtomic(receiptFile(stateDir, runId), { version: 1, nativeVersion, runId, threadId: thread.id, historyPath, catalogue } satisfies Receipt)
-  } catch {
+  } catch (error) {
     // A previously supported fresh thread does not become unavailable just
     // because this CLI cannot provide resume evidence. Its later resume still
     // requires the receipt and matching persisted metadata above.
-    if (resumed) throw unavailable()
+    if (resumed) throw Object.assign(unavailable(), { cause: error })
   }
 }

@@ -50,6 +50,6 @@ export async function fetchSkillSource(input: z.infer<typeof installSkillSchema>
     return { name, source: source.toLowerCase(), slug, sourceKind: 'skills.sh', sourceRevision: commit.sha, sourcePath: path, body, sha256: createHash('sha256').update(body).digest('hex') }
   } catch (error) {
     if (error instanceof PluginError) throw error
-    throw new PluginError('skillSourceUnavailable', 502)
+    throw Object.assign(new PluginError('skillSourceUnavailable', 502), { cause: error })
   }
 }

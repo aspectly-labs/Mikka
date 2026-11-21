@@ -119,8 +119,8 @@ export class SessionMailbox {
         try { await client.query('rollback') }
         catch (cleanup) { discard = cleanup instanceof Error ? cleanup : new Error('Mailbox rollback failed') }
       } else discard = error instanceof Error ? error : new Error('Mailbox transaction admission failed')
-      if (committed) throw new MailboxError('Mailbox effect committed; membership lease lost during finalization. Reconcile using the original stable key', 409, 'committed')
-      if (committing) throw new MailboxError('Mailbox commit outcome unconfirmed; reconcile using the original stable key', 409, 'unconfirmed')
+      if (committed) throw Object.assign(new MailboxError('Mailbox effect committed; membership lease lost during finalization. Reconcile using the original stable key', 409, 'committed'), { cause: discard })
+      if (committing) throw Object.assign(new MailboxError('Mailbox commit outcome unconfirmed; reconcile using the original stable key', 409, 'unconfirmed'), { cause: discard })
       throw error
     } finally {
       admissionClosed = true

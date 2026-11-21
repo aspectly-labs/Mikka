@@ -44,6 +44,6 @@ export async function collectOperationalSignals(pool: Pool, options: { sink?: st
       requestLogCollection: 'runtime_log_collector_required', persisted: true }
   } catch {
     await client.query('ROLLBACK').catch(() => {})
-    throw Error('opsMonitorPersistenceUnavailable')
+    throw Object.assign(Error('opsMonitorPersistenceUnavailable'), { cause: error })
   } finally { client.release() }
 }

@@ -194,5 +194,5 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     await runChanged(client, runId)
     if (!existing) await client.query('COMMIT')
     return { runId }
-  } catch (error) { if (!existing) await client.query('ROLLBACK'); if (error instanceof ExecutionIdentityError) throw new ComputerError(409, 'Execution identity or resource unavailable'); throw error } finally { if (!existing) client.release() }
+  } catch (error) { if (!existing) await client.query('ROLLBACK'); if (error instanceof ExecutionIdentityError) throw Object.assign(new ComputerError(409, 'Execution identity or resource unavailable'), { cause: error }); throw error } finally { if (!existing) client.release() }
 }
