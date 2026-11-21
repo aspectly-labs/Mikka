@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { withBasePath } from '@/lib/base-path'
@@ -29,22 +29,28 @@ function useSettled<T>(value: T, delay: number) {
   return settled
 }
 
-/** "Who is working" strip above the group composer. Hidden when nobody is working. */
-export function WorkingStatus() {
+/** "Who is working" strip above the group composer. Hidden when nobody is working.
+ * Polls only after the group's live channel reports a change — an idle group
+ * makes zero activity requests (tests/idle-request-budget.json). */
+export function WorkingStatus({ revision }: { revision: number | undefined }) {
   const t = useTranslations('GroupChat.workingStatus')
-  const { data } = useSWR('/api/agent/sessions/active', fetchActiveAgents, {
-    refreshInterval: latest => (latest && latest.agents.length > 0 ? 2000 : 10000),
-    revalidateOnFocus: false,
-  })
+  const { data, mutate } = useSWR('/api/agent/sessions/active', fetchActiveAgents, { revalidateOnFocus: false })
+  const last = useRef(revision)
+  useEffect(() => {
+    if (revision !== undefined && revision !== last.current) {
+      last.current = revision
+      void mutate()
+    }
+  }, [revision, mutate])
   const workers = useMemo<Worker[]>(() => activeToWorkers(data?.agents), [data])
-  const key = useSettled(workersKey(workers), COALESCE_MS)
-  const settled = useMemo(() => workers.filter(worker => key.split('|').includes(worker.id)), [workers, key])
+  const settled = useSettled(workers, COALESCE_MS)
+  const key = workersKey(settled)
   const label = workingLabel(settled.map(worker => worker.name))
   if (!label) return null
   const { shown, overflow } = workingAvatars(settled)
   const text = label.key === 'many' ? t('many', label.values) : t(label.key, label.values)
 
-  return <div className="flex h-7 min-w-0 items-center overflow-hidden">
+  return <div aria-live="polite" className="flex h-7 min-w-0 items-center overflow-hidden">
     <ActionSwapRollText value={key} className="min-w-0">
       <span className="flex min-w-0 items-center gap-2">
         <AvatarGroup className="-space-x-1.5">
@@ -55,7 +61,7 @@ export function WorkingStatus() {
               </Avatar>)}
           {overflow > 0 && <AvatarGroupCount className="size-5 text-xs">+{overflow}</AvatarGroupCount>}
         </AvatarGroup>
-        <span aria-live="polite" className="min-w-0 truncate text-sm leading-5 text-muted-foreground">
+        <span className="min-w-0 truncate text-sm leading-5 text-muted-foreground">
           <TextShimmer duration={2}>{text}</TextShimmer>
         </span>
       </span>
