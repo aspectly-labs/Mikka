@@ -82,7 +82,7 @@ for (const [path, exports] of [
   ['@/lib/db/listen', { COORDINATOR_LEASE_CHANNEL: 'test-coordinator-lease' }],
   ['./telegram-pending', { markTelegramPending: unused, pendingTelegramTargets: unused }],
   ['./triage', { eventsForInbox: unused, isolateTaskRequest: unused }],
-  ['@/lib/task-identifier-server', { taskIdentifiers: unused, syncWorkspaceTaskPrefix: unused }],
+  ['@/lib/task-identifier-server', { taskIdentifiers: unused, syncWorkspaceTaskPrefix: unused, taskIdentifierNamespaceInUse: unused }],
   ['@/lib/artifacts/store', { artifactSummaries: async () => ({}) }],
   ['@/lib/preferences', { readPreferences: unused, readCoordinatorPromptPreferences: unused }],
   ['./triage-batch', { TRIAGE_RETRY_COOLDOWN_MS: 60_000 }],

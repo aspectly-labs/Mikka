@@ -102,7 +102,7 @@ stub('../attention/store.ts', {
 stub('../agent-runs.ts', { addRunMessage: forbidden, queueRun: forbidden, queueFactoryRun: forbidden, readRun: forbidden, requestRunStop: forbidden, visibleRuns: forbidden })
 stub('../issue-visibility.ts', { issueVisibility: forbidden })
 stub('../issue-access.ts', { issueForUser: forbidden, requireUser: forbidden })
-stub('../task-identifier-server.ts', { taskIdentifiers: forbidden, taskPrefixInput: forbidden, issueView: forbidden, syncWorkspaceTaskPrefix: forbidden })
+stub('../task-identifier-server.ts', { taskIdentifiers: forbidden, taskPrefixInput: forbidden, issueView: forbidden, syncWorkspaceTaskPrefix: forbidden, taskIdentifierNamespaceInUse: forbidden })
 stub('../artifacts/store.ts', { artifactSummaries: forbidden })
 stub('./bot-instructions.ts', { botInstructions: forbidden })
 stub('./execution-context.ts', { executionContextParts: async () => ({ models: 'Synthetic allowed models', live: 'Synthetic current availability' }) })

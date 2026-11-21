@@ -33,7 +33,7 @@ stub('../credentials/chat-guard.ts', { assertCredentialSafeChat: async () => und
 stub('../agent-runs.ts', { visibleRuns: () => {}, readRun: () => {} })
 stub('../issue-access.ts', { issueForUser: () => {} })
 stub('../issue-visibility.ts', { issueVisibility: () => {} })
-stub('../task-identifier-server.ts', { taskIdentifiers: () => {}, syncWorkspaceTaskPrefix: () => {} })
+stub('../task-identifier-server.ts', { taskIdentifiers: () => {}, syncWorkspaceTaskPrefix: () => {}, taskIdentifierNamespaceInUse: () => {} })
 stub('../artifacts/store.ts', { artifactSummaries: () => {} })
 stub('./wake.ts', { coordinatorEnabled: () => false, wakeCoordinator: async () => {} })
 stub('../live/coordinator-session.ts', { coordinatorSessionChanged: async () => {}, coordinatorSessionScope: async () => null })
