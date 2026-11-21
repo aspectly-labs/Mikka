@@ -152,6 +152,25 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
   await Promise.all([...new Set(rows.filter(row => row.changed).map(row => row.runId))].map(id => runListChanged(database, id, true)))
   // The PR badge on each task it was delivered on asks GitHub again (#1212); the state itself never crosses.
   await pullRequestStatusChanged(database, rows.flatMap(row => row.issueId ? [row.issueId] : []))
+  // The task's metadata copy is the single source the Factory read prefers (#1863): mirror the
+  // new state there, under each issue's own tenant.
+  const metaIssues = [...new Set(rows.filter(row => row.changed && row.issueId).map(row => row.issueId))]
+  if (metaIssues.length) {
+    await database.query(
+      `WITH saved AS (
+         UPDATE issues i SET content=jsonb_set(i.content,'{attrs,mikka,pullRequests}',(
+             SELECT jsonb_agg(CASE WHEN lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) THEN e || jsonb_build_object('state',$2) ELSE e END ORDER BY n)
+             FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') WITH ORDINALITY AS list(e,n))),
+           revision=i.revision+1,"updatedAt"=now()
+         WHERE i.id = ANY($3::uuid[]) AND jsonb_typeof(i.content #> '{attrs,mikka,pullRequests}')='array'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') e
+             WHERE lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) AND e->>'state' IS DISTINCT FROM $2)
+         RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
+       INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
+       SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'system','publication-webhook' FROM saved`,
+      [key, state, metaIssues],
+    )
+  }
   // 已完成 once the last PR Mikka delivered on a task is merged: forward only, and a status the person set since the
   // work began is kept (lib/task-status-advance.ts). A redelivery finds the task already there and changes nothing.
   if (state === 'merged') {

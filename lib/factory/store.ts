@@ -21,6 +21,7 @@ import { intersectRunPolicy } from '../run-assignment-policy';
 import { factoryRunBotMatches } from './run-scope'
 import { randomUUID } from "node:crypto";
 import { factoryChanged } from '../live/factory';
+import { issueListChanged } from '../live/lists';
 import { factoryCheckIndependent } from "./check-independence";
 import { maskFactoryNote } from "./note-mask";
 import { factoryTaskDetail, type FactoryTaskDetail } from "./task-detail";
@@ -1055,17 +1056,19 @@ export function createFactoryStore(
           await tx.query(`UPDATE factory_questions SET status='cancelled',reason=$2,revision=revision+1,"updatedAt"=now()
             WHERE "taskId"=$1 AND status IN ('open','waiting_user')`,[task.id,change.reason]);
           // The person canceling the Factory work cancels its task in the same transaction (#1863); a
-          // status they already closed stays.
-          if (change.action === "cancel") {
+          // status they already closed stays. Internal cancels (e.g. a replacement thread) leave it,
+          // and the issue carries its own tenant: a member stopping shared work still closes it.
+          if (change.action === "cancel" && !change.internal) {
             await tx.query(
               `WITH saved AS (
                  UPDATE issues i SET status='canceled',revision=i.revision+1,"updatedAt"=now()
-                 WHERE i.id=$1 AND i."userId"=$2 AND i.status NOT IN ('done','canceled','duplicate')
+                 WHERE i.id=$1 AND i.status NOT IN ('done','canceled','duplicate')
                  RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
                INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
-               SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'user',$3 FROM saved`,
-              [task.issueId, userId, userId],
+               SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'user',$2 FROM saved`,
+              [task.issueId, userId],
             );
+            await issueListChanged(tx, task.issueId);
           }
         } else if (change.action === "resolve") {
           if (task.stage !== "clarify" || task.status !== "waiting")

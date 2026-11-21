@@ -298,12 +298,12 @@ export function createFactoryMerges(
                SELECT jsonb_agg(CASE WHEN lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) THEN e || '{"state":"merged"}'::jsonb ELSE e END ORDER BY n)
                FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') WITH ORDINALITY AS list(e,n))),
              revision=i.revision+1,"updatedAt"=now()
-           WHERE i."userId"=$2 AND jsonb_typeof(i.content #> '{attrs,mikka,pullRequests}')='array'
+           WHERE i.id=$2 AND jsonb_typeof(i.content #> '{attrs,mikka,pullRequests}')='array'
              AND EXISTS (SELECT 1 FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') e WHERE lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')))
            RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
          INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
          SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'system','factory-merge' FROM saved`,
-        [pullRequestUrl, actor.userId],
+        [pullRequestUrl, task.issueId],
       );
       await factoryChanged(tx, task);
       const done = await finalize(tx, task, mergeId);
