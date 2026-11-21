@@ -11,7 +11,7 @@ export function projectEveTurn(view:SessionView,sessionId:string,turnId:string,o
   const failure=typeof code==='string' && /^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}$/.test(code) ? code : 'turn_failed'
   // HOOK_FAILED wraps the hook's own error (`Hook "…" failed: <cause>`): surface a coded
   // cause so refusal recovery names what failed instead of the wrapper (#3028).
-  const cause=failure==='HOOK_FAILED' && typeof error?.message==='string' ? /: ([a-z][a-z0-9_]{0,127})$/.exec(error.message.trim())?.[1] : undefined
+  const cause=failure==='HOOK_FAILED' && typeof error?.message==='string' ? /: ([a-zA-Z][a-zA-Z0-9_.:-]{0,127})$/.exec(error.message.trim())?.[1] : undefined
   // The turn's errorId is the support reference for failures no cause explains.
   const ref=error?.details && typeof error.details==='object' && typeof (error.details as {errorId?:unknown}).errorId==='string' ? (error.details as {errorId:string}).errorId.slice(0,64) : undefined
   const content = parts(view,{turnId}).flatMap(part => (part.kind === 'text' || part.kind === 'reasoning') && typeof part.value === 'string' ? [{type:part.kind,text:part.value}] : [])

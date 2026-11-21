@@ -16,7 +16,7 @@ const REFUSALS = {
   // A cloud computer's own CLI did not report the run's model (packages/daemon/src/subscription-hosted-runner.ts).
   subscription_model_not_reported: 'modelNotReported',
   // No usable model for the session — the person skipped or lost their model setup (lib/eve/runtime.ts).
-  subscription_model_unavailable: 'modelRequired',
+  subscription_model_unavailable: 'modelRequired', executionModelUnknown: 'modelRequired',
 } as const satisfies Record<SubscriptionRefusalCode, string> & Record<string, string>
 
 export type SubscriptionRefusalNotice = (typeof REFUSALS)[keyof typeof REFUSALS]

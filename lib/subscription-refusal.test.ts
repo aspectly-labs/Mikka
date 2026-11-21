@@ -20,6 +20,7 @@ test('a subscription refusal maps to its notice, never the raw step error', () =
   // No usable model for the session, surfaced through a hook's wrapped error (#3028).
   assert.equal(subscriptionRefusal('subscription_model_unavailable'), 'modelRequired')
   assert.equal(subscriptionRefusal('Hook "turn.started" failed: subscription_model_unavailable'), 'modelRequired')
+  assert.equal(subscriptionRefusal('Hook "turn.started" failed: executionModelUnknown'), 'modelRequired')
 })
 
 test('recovery follows the cause rather than retrying a disconnected account', () => {
