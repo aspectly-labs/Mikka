@@ -37,6 +37,8 @@ export async function acceptLocalRun(input: {
   id: string; userId: string; issueId: string; agentId: string; deviceId: string; deviceRepoId: string
   source?: 'mcp' | null; /** Evidence-only entry provenance; required for every new run (lib/run-origin.ts). */ origin: RunOrigin; originRef?: RunOriginRef | null; botId: string | null; prompt: string; /** Code-point task range; initial briefs start at zero. */ promptTaskStart?: number | null; promptTaskLength?: number | null; definition: WorkerDefinitionSnapshot; requestEventId?: string
   dispatch?: DispatchInput & DispatchCredential; continuation?: boolean; sourceRunId?: string; profileSourceRunId?: string
+  /** A live parent's own worker delegation (#3089): the task's only live run must be this exact parent. */
+  delegation?: { parentRunId: string }
   /** A host-authorized device recovery retains config without the same-Agent replay exception. */
   frozenSourceRunId?: string
   factoryContext?: { sourceEventId: string; attemptId: string }
@@ -163,12 +165,30 @@ export async function acceptLocalRun(input: {
     // credential. A read-only run gets no task branch; it is still the
     // owner's run with the owner's credential.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(['dispatch-issue', input.userId, task.id])}, 0))`)
-    const [active] = await tx.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.issueId, task.id), inArray(agentRuns.status, [...UNFINISHED_RUN_STATUSES]))).limit(1)
-    if (active) throw new ActionFailureError('runAlreadyActive', { runId: active.id })
+    const actives = await tx.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.issueId, task.id), inArray(agentRuns.status, [...UNFINISHED_RUN_STATUSES])))
+    // Delegation admits only while the declared parent is this task's one live
+    // run (docs/factory/3089-run-delegation.md): a live sibling is the ordinary conflict.
+    const conflict = input.delegation ? actives.find(run => run.id !== input.delegation!.parentRunId) : actives[0]
+    if (conflict) throw new ActionFailureError('runAlreadyActive', { runId: conflict.id })
+    if (input.delegation) {
+      if (!actives.some(run => run.id === input.delegation!.parentRunId)) throw invalid('delegationUnavailable')
+      const [parent] = await tx.select({ workspaceId: agentRuns.workspaceId, deviceId: agentRuns.deviceId, agentId: agentRuns.agentId,
+        deviceRepoId: agentRuns.deviceRepoId, botId: agentRuns.botId, stopRequestedAt: agentRuns.stopRequestedAt,
+        parentRunId: sql<string | null>`${agentRuns.agentDefinition}->'delegation'->>'parentRunId'`,
+        harness: sql<string | null>`${agentRuns.agentDefinition}->>'harness'` }).from(agentRuns)
+        .where(and(eq(agentRuns.id, input.delegation.parentRunId), eq(agentRuns.userId, input.userId), eq(agentRuns.issueId, task.id))).for('share')
+      // The child may only repeat the parent's exact scope; a delegated child never delegates.
+      if (!parent || parent.workspaceId !== task.workspaceId || parent.deviceId !== input.deviceId || parent.agentId !== input.agentId ||
+          parent.deviceRepoId !== repo.id || (parent.botId ?? null) !== input.botId || parent.stopRequestedAt || parent.parentRunId ||
+          parent.harness !== input.definition.harness) throw invalid('delegationUnavailable')
+      const [children] = await tx.select({ count: sql<number>`count(*)::int` }).from(agentRuns)
+        .where(and(eq(agentRuns.userId, input.userId), sql`${agentRuns.agentDefinition}->'delegation'->>'parentRunId' = ${input.delegation.parentRunId}`))
+      if (children.count >= 8) throw invalid('delegationLimit')
+    }
     if (readOnly) {
       // The conversation is named once this commits (decision 2026-11-13-1405); a run that continues one takes its title.
       scheduleThreadTitle(tx, input.id, input.userId, 'created')
-      await tx.insert(agentRuns).values({ id: input.id, userId: input.userId, botId: input.botId, issueId: task.id, agentId: input.agentId, deviceId: input.deviceId, deviceRepoId: repo.id, status: 'queued', kind: 'implement', source: input.source ?? null, origin: input.origin, originRef: input.originRef ?? null, baseBranch: effectiveBaseBranch, ...copyRunPrompt({ prompt: input.prompt, promptTaskStart: input.promptTaskStart ?? 0, promptTaskLength: input.promptTaskLength ?? null }), agentDefinition: definition, dispatchKey: input.dispatch?.requestKey ?? null, dispatchFingerprint: dispatchHash })
+      await tx.insert(agentRuns).values({ id: input.id, userId: input.userId, botId: input.botId, issueId: task.id, agentId: input.agentId, deviceId: input.deviceId, deviceRepoId: repo.id, status: 'queued', kind: 'implement', source: input.source ?? null, origin: input.origin, originRef: input.originRef ?? null, baseBranch: effectiveBaseBranch, ...copyRunPrompt({ prompt: input.prompt, promptTaskStart: input.promptTaskStart ?? 0, promptTaskLength: input.promptTaskLength ?? null }), agentDefinition: { ...definition, ...(input.delegation ? { delegation: { parentRunId: input.delegation.parentRunId } } : {}) }, dispatchKey: input.dispatch?.requestKey ?? null, dispatchFingerprint: dispatchHash })
       await runListChanged(tx, input.id)
       await runChanged(tx, input.id)
       return input.dispatch?.requestKey ? { runId: input.id, status: 'queued' as const, replayed: false } : { runId: input.id }
@@ -187,7 +207,7 @@ export async function acceptLocalRun(input: {
     if (collision) throw invalid('branchInUse')
     // The conversation is named once this commits (decision 2026-11-13-1405); a run that continues one takes its title.
     scheduleThreadTitle(tx, input.id, input.userId, 'created')
-    await tx.insert(agentRuns).values({ id: input.id, userId: input.userId, botId: input.botId, issueId: task.id, agentId: input.agentId, deviceId: input.deviceId, deviceRepoId: repo.id, status: 'queued', kind: 'implement', source: input.source ?? null, origin: input.origin, originRef: input.originRef ?? null, baseBranch: effectiveBaseBranch, ...copyRunPrompt({ prompt: input.prompt, promptTaskStart: input.promptTaskStart ?? 0, promptTaskLength: input.promptTaskLength ?? null }), agentDefinition: { ...definition, repositoryAdmission: admission }, dispatchKey: input.dispatch?.requestKey ?? null, dispatchFingerprint: dispatchHash })
+    await tx.insert(agentRuns).values({ id: input.id, userId: input.userId, botId: input.botId, issueId: task.id, agentId: input.agentId, deviceId: input.deviceId, deviceRepoId: repo.id, status: 'queued', kind: 'implement', source: input.source ?? null, origin: input.origin, originRef: input.originRef ?? null, baseBranch: effectiveBaseBranch, ...copyRunPrompt({ prompt: input.prompt, promptTaskStart: input.promptTaskStart ?? 0, promptTaskLength: input.promptTaskLength ?? null }), agentDefinition: { ...definition, repositoryAdmission: admission, ...(input.delegation ? { delegation: { parentRunId: input.delegation.parentRunId } } : {}) }, dispatchKey: input.dispatch?.requestKey ?? null, dispatchFingerprint: dispatchHash })
     await tx.insert(runPublications).values({ runId: input.id, userId: input.userId, issueId: task.id, scopeVersion: task.scopeVersion, issueTitle: task.title, remoteUrl: repo.remoteUrl, remoteKey: repo.repoPath, identifier, branch, baseBranch: effectiveBaseBranch, pushApproved: true })
     if (input.requestEventId && !input.continuation && !input.sourceRunId && (await requestedRunSettings(client, input.userId, input.requestEventId)).pin)
       await client.query('UPDATE agent_runs SET "conversationPinnedAt"=clock_timestamp() WHERE id=$1', [input.id])

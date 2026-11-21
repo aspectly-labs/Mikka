@@ -320,6 +320,20 @@ function createWorkerHandler(mailbox: readonly MailboxToolName[]) { return creat
     return json(await runPrStatus(worker.workerRun(ctx.http?.authInfo)))
   })
 
+  // A run delegates bounded work to a sub-agent (docs/factory/3089-run-delegation.md).
+  // The authenticated run is the parent; scope, credentials and the one-live
+  // child rule are enforced by the ordinary local admission, never by the call.
+  server.registerTool('delegate_subagent', {
+    description: 'Queue one bounded sub-agent run on this task. It runs on your own Agent, computer and repository with your `task` text appended after the task brief, is claimed through the normal device path, and reports on this task’s thread. Only one delegated run may be live at a time and retries must reuse `requestKey`. Returns the child run id; track it with list_runs/get_run. It never names a different account, repository, credential or device.',
+    inputSchema: z.object({
+      task: z.string().trim().min(1).max(4000).describe('The bounded work for the sub-agent.'),
+      requestKey: z.string().trim().min(1).max(140).describe('Idempotency key; a retry of this same call must reuse it.'),
+    }).strict(),
+  }, async (input, ctx) => {
+    const { delegateSubagent } = await import('@/lib/mcp/run-delegation')
+    return json(await delegateSubagent(worker.workerRun(ctx.http?.authInfo), input))
+  })
+
   server.registerTool('report', {
     title: 'Report progress',
     description: 'Tell the person\'s Coordinator about progress on this run. Use it sparingly, at milestones (a plan settled, a hard part solved, ready for review), not after every step.',

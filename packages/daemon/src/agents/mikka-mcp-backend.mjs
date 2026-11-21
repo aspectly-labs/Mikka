@@ -121,7 +121,15 @@ const PR_STATUS_TOOL = {
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true },
 }
-const WORKER_PROXY_TOOLS = new Set(['pr_status', 'delegate_subagent'])
+const DELEGATE_SUBAGENT_TOOL = {
+  name: 'delegate_subagent',
+  description: 'Queue one bounded sub-agent run on this task. It runs on your own Agent, computer and repository with your `task` text appended after the task brief, is claimed through the normal device path, and reports on this task’s thread. Only one delegated run may be live at a time and retries must reuse `requestKey`. The call returns the child run id — track it with list_runs/get_run. It never names a different account, repository, credential or device.',
+  inputSchema: { type: 'object', properties: {
+    task: { type: 'string', minLength: 1, maxLength: 4000, description: 'The bounded work for the sub-agent.' },
+    requestKey: { type: 'string', minLength: 1, maxLength: 140, description: 'Idempotency key; a retry of this same call must reuse it.' },
+  }, required: ['task', 'requestKey'], additionalProperties: false },
+}
+const WORKER_PROXY_TOOLS = new Set([PR_STATUS_TOOL.name, DELEGATE_SUBAGENT_TOOL.name])
 
 const stringArray = { type: "array", items: { type: "string" } }
 
@@ -877,6 +885,10 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
           return reply(id, await workerCall(PR_STATUS_TOOL.name, params.arguments ?? {},
             'Pull request status could not be read from Mikka. The run may have no server-issued delivery yet; unknown is not a passing state.'))
         }
+        if (decisionMcpAvailable && params?.name === DELEGATE_SUBAGENT_TOOL.name) {
+          return reply(id, await workerCall(DELEGATE_SUBAGENT_TOOL.name, params.arguments ?? {},
+            'The sub-agent could not be delegated. The run may have finished, a delegated run may already be live, or the server refused the request.'))
+        }
         if (repositoryRoot && params?.name === REPOSITORY_TOOL.name) {
           try { return reply(id, selectRepository(params.arguments ?? {})) }
           catch { return reply(id, { isError: true, content: [{ type: 'text', text: 'Repository selection could not be recorded.' }] }) }
@@ -932,7 +944,7 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
 
   function readTools() {
     return decisionTools().then(decisions => structuredClone([
-      ...TOOLS, ...decisions, ...(decisionMcpAvailable && preparedDecisionCatalogue !== undefined ? [PR_STATUS_TOOL] : []),
+      ...TOOLS, ...decisions, ...(decisionMcpAvailable && preparedDecisionCatalogue !== undefined ? [PR_STATUS_TOOL, DELEGATE_SUBAGENT_TOOL] : []),
       ...(repositoryRoot ? [REPOSITORY_TOOL] : []),
       ...(profileSkillsDir ? [LOAD_SKILL_TOOL] : []),
       ...(capturesDir ? [CAPTURE_TOOL] : []), ...(factoryVerify ? [VERIFY_TOOL] : []),
@@ -978,7 +990,7 @@ export function mikkaMcpToolCatalogue({
   factoryVerify = false, artifactInspection = false, profileSkills = false,
 } = {}) {
   return structuredClone([
-    ...TOOLS, ...(decisionCatalogue === undefined ? [] : [readPreparedDecisionCatalogue(decisionCatalogue), PR_STATUS_TOOL]),
+    ...TOOLS, ...(decisionCatalogue === undefined ? [] : [readPreparedDecisionCatalogue(decisionCatalogue), PR_STATUS_TOOL, DELEGATE_SUBAGENT_TOOL]),
     ...(repositorySelection ? [REPOSITORY_TOOL] : []), ...(captures ? [CAPTURE_TOOL] : []),
     ...(factoryVerify ? [VERIFY_TOOL] : []), ...(artifactInspection ? [ARTIFACT_TOOL, INSPECT_REPOSITORY_TOOL] : []),
     ...(profileSkills ? [LOAD_SKILL_TOOL] : []),

@@ -127,7 +127,7 @@ it('keeps every canonical field identical through the real stdio and official SD
   const actual = await client.listTools()
   expect(actual.tools).toEqual(old.result!.tools)
   expect(actual.tools.map((tool: { name: string }) => tool.name)).toEqual(['submit', 'request_help', 'ask_human', 'report_blocked',
-    'record_decision', 'pr_status', 'switch_repository', 'submit_capture', 'verify_command', 'inspect_artifact', 'inspect_repository'])
+    'record_decision', 'pr_status', 'delegate_subagent', 'switch_repository', 'submit_capture', 'verify_command', 'inspect_artifact', 'inspect_repository'])
   await backend.bind(f.config, authority())
   expect((await client.listTools()).tools).toEqual(actual.tools)
   expect(existsSync(f.config.handoffFile)).toBe(false)
@@ -201,6 +201,33 @@ it('returns a safe pr_status error without relaying transport detail on endpoint
   const second = fixture(), other = prepareMikkaMcpBackend({ ...second.profile, decisionCatalogue: undefined }), client2 = await sdk(other)
   await other.bind({ ...second.config, decisionUrl: undefined, decisionToken: undefined, decisionCatalogue: undefined }, authority())
   await expect(client2.callTool({ name: 'pr_status', arguments: {} })).rejects.toThrow('Unknown tool')
+})
+
+it('forwards delegate_subagent to the bound worker endpoint verbatim and returns the child run id', async () => {
+  const api = await httpServer((_id, response) => response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+    jsonrpc: '2.0', id: _id, result: { content: [{ type: 'text', text: JSON.stringify({ childRunId: 'run-child-1', status: 'queued', replayed: false }) }] },
+  })))
+  const f = fixture(), backend = prepareMikkaMcpBackend(f.profile), client = await sdk(backend)
+  await backend.bind({ ...f.config, decisionUrl: api.url }, authority())
+  const result = await client.callTool({ name: 'delegate_subagent', arguments: { task: 'Review the new module', requestKey: 'k-1' } })
+  expect(result.isError).not.toBe(true)
+  expect(JSON.parse((result.content as { type: string; text: string }[])[0].text)).toMatchObject({ childRunId: 'run-child-1', status: 'queued' })
+  expect(api.calls).toEqual([{ authorization: 'Bearer ' + token, method: 'tools/call',
+    params: { name: 'delegate_subagent', arguments: { task: 'Review the new module', requestKey: 'k-1' } } }])
+  expect(existsSync(f.config.handoffFile)).toBe(false)
+})
+
+it('returns a safe delegate_subagent error on endpoint failure and never advertises it without a worker endpoint', async () => {
+  const api = await httpServer((_id, response) => response.writeHead(500).end('server exploded'))
+  const f = fixture(), backend = prepareMikkaMcpBackend(f.profile), client = await sdk(backend)
+  await backend.bind({ ...f.config, decisionUrl: api.url }, authority())
+  const failed = await client.callTool({ name: 'delegate_subagent', arguments: { task: 'x', requestKey: 'k' } })
+  expect(failed.isError).toBe(true)
+  expect(JSON.stringify(failed.content)).not.toContain('server exploded')
+  expect(api.calls).toHaveLength(1)
+  const second = fixture(), other = prepareMikkaMcpBackend({ ...second.profile, decisionCatalogue: undefined }), client2 = await sdk(other)
+  await other.bind({ ...second.config, decisionUrl: undefined, decisionToken: undefined, decisionCatalogue: undefined }, authority())
+  await expect(client2.callTool({ name: 'delegate_subagent', arguments: { task: 'x', requestKey: 'k' } })).rejects.toThrow('Unknown tool')
 })
 
 it.each(['missing', 'malformed', 'changed'] as const)('refuses a %s catalogue once without a remote discovery request', async mismatch => {
