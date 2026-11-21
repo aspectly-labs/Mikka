@@ -305,7 +305,10 @@ export function createFactoryStore(
     return task;
   }
   async function lockedIssue(tx: PoolClient, issueId: string, lock = true) {
-    const { rows: [issue] } = await tx.query<FactoryIssueScope>(lock ? 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1 FOR SHARE' : 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1', [issueId]);
+    // NO KEY UPDATE, not SHARE: a task apply may write the issue row itself
+    // (e.g. cancel marks it canceled), and upgrading a held SHARE deadlocks
+    // against a sibling task on the same issue doing the same.
+    const { rows: [issue] } = await tx.query<FactoryIssueScope>(lock ? 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1 FOR NO KEY UPDATE' : 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1', [issueId]);
     return issue;
   }
   async function snapshot(
