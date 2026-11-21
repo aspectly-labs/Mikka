@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers'
 import { liteLlmRequest } from '../../api/ingress/services.mjs'
 import { productRequest } from '../runtime/product.mjs'
 import { singletonContainerName } from '../runtime/config.mjs'
+import { consumeEveWake, eveServiceDelivery, eveWorkflowDelivery } from '../runtime/delivery.mjs'
 export { EveRuntime } from './index.mjs'
 export { ContainerProxy } from '@cloudflare/containers'
 
@@ -33,7 +34,7 @@ function forward(request, env, headers) {
 }
 
 export class EveService extends WorkerEntrypoint {
-  fetch(request) {
+  async fetch(request) {
     const url = new URL(request.url)
     if (url.origin !== 'https://eve.internal' || !url.pathname.startsWith('/eve/v1/') || /%2e|%2f|%5c/i.test(url.pathname)) return missing()
     const headers = new Headers(request.headers)
@@ -45,8 +46,22 @@ export class EveService extends WorkerEntrypoint {
     const scope = headers.get('x-mikka-eve-scope')
     headers.delete('x-mikka-eve-scope')
     if (scope) headers.set('x-mikka-eve-binding-scope', scope)
-    return forward(request, this.env, headers)
+    // A stopped or starting host must never drop a product event. The durable
+    // EVE_WAKE copy replays the exact call; the caller still sees the real
+    // outcome and the product outbox stays the claim authority.
+    return eveServiceDelivery(request, this.env, headers, forwarded => forward(forwarded, this.env, headers))
   }
 }
 
-export default { fetch: missing }
+/** Release-pinned World queue deliveries. The private release maps bind this
+ * entrypoint per retained deployment; the container it names starts on demand. */
+export class EveWorkflowDelivery extends WorkerEntrypoint {
+  fetch(request) { return eveWorkflowDelivery(request, this.env) }
+}
+
+export default {
+  fetch: missing,
+  /** Private EVE_WAKE consumer. Delivery is acked only after the container
+   * accepted it; everything else retries with bounded backoff to the DLQ. */
+  async queue(batch, env, ctx) { await consumeEveWake(batch, env, ctx) },
+}
