@@ -3,7 +3,7 @@ import { webUrlSchema } from '@/lib/search/url-schema'
 import { mcpEnvironmentSchema, mcpHeadersSchema, taskMcpServerSchema } from '../../packages/protocol/src/task-mcp'
 
 export class PluginError extends Error {
-  constructor(readonly code: string, readonly status = 503) { super(code) }
+  constructor(readonly code: string, readonly status = 503, options?: { cause?: unknown }) { super(code, options) }
 }
 
 // User-provided MCP servers receive only their explicitly saved credential.
