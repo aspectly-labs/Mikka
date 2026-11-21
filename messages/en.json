@@ -5465,7 +5465,7 @@
       "removeMember": "Remove {name}",
       "memberRemoved": "Removed {name}",
       "undo": "Undo",
-      "leadRestoreError": "{name} is back, but their lead role was not restored."
+      "leadRestoreError": "{name} is back; their lead role may not have been restored."
     },
     "suggestions": {
       "title": "Suggestions",
