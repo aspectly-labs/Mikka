@@ -11,7 +11,7 @@ import { IconTile } from '@/components/reui/icon-tile'
 import { daemonCommands } from '@/lib/daemon-commands'
 import { FieldError } from '@/components/ui/field'
 import { publicServiceAddress } from '@/lib/platform/public-origin'
-import { daemonPackageName } from '@/lib/platform/client-config'
+import { daemonPackageName, desktopReleasesUrl } from '@/lib/platform/client-config'
 
 export function ConnectDeviceDialog({ open: controlledOpen, onOpenChange, hideTrigger = false, reconnect = false }: {
   open?: boolean
@@ -74,6 +74,9 @@ export function DaemonCommandList({ open = true, reconnect = false }: { open?: b
       </CodeBlockHeader>
     </CodeBlock>)}
     <p className="text-xs text-muted-foreground">{t('requirements')}</p>
+    {!reconnect && <p className="text-xs text-muted-foreground">{t('desktopHint')}{' '}
+      <a className="font-medium text-foreground underline underline-offset-4" href={desktopReleasesUrl()} target="_blank" rel="noreferrer">{t('desktopLink')}</a>
+    </p>}
   </div> : <FieldError>{t('configurationFailed')}</FieldError>
 }
 

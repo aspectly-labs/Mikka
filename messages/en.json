@@ -1055,7 +1055,9 @@
       },
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "Installation commands are unavailable",
-      "reconnectTitle": "Reconnect"
+      "reconnectTitle": "Reconnect",
+      "desktopHint": "Prefer an app to the terminal? Get the Mikka desktop app — it adds this computer itself.",
+      "desktopLink": "Download the desktop app"
     },
     "setup": "Set up repository and agent",
     "offlineSince": "Offline · {time}",
