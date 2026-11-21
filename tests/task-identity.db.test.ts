@@ -46,7 +46,7 @@ test('task identity: split DB migration, immutable issuance, historical aliases 
       INSERT INTO issue_prefixes VALUES ('owner','SAME'), ('peer','SAME');
     `)
     await ws.query(`
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL DEFAULT 'owner', kind text NOT NULL DEFAULT 'team');
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL DEFAULT 'owner', kind text NOT NULL DEFAULT 'team', "taskPrefix" varchar(4));
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL, "userId" text NOT NULL, status text NOT NULL, PRIMARY KEY ("workspaceId","userId"));
       CREATE TABLE mikka_teams (id uuid PRIMARY KEY, "workspaceId" uuid NOT NULL, identifier varchar(12) NOT NULL);
       CREATE TABLE mikka_team_issues ("issueId" uuid PRIMARY KEY, "teamId" uuid NOT NULL,
@@ -94,7 +94,9 @@ test('task identity: split DB migration, immutable issuance, historical aliases 
     const appMigration = await readFile(new URL('../drizzle/20261111030001_task_identity.sql', import.meta.url), 'utf8')
     const wsMigration = await readFile(new URL('../drizzle/20261111030002_task_identity_aliases.sql', import.meta.url), 'utf8')
     const aliasMigration = await readFile(new URL('../drizzle/20261111030007_task_alias_tenant.sql', import.meta.url), 'utf8')
-    await app.query(appMigration); await app.query(aliasMigration); await ws.query(wsMigration)
+    const prefixMigration = await readFile(new URL('../drizzle/20261121230000_workspace_task_saved_prefix.sql', import.meta.url), 'utf8')
+    const issuedIndex = await readFile(new URL('../drizzle/20261121230001_issues_issued_identifier_idx.sql', import.meta.url), 'utf8')
+    await app.query(appMigration); await app.query(aliasMigration); await app.query(prefixMigration); await app.query(issuedIndex); await ws.query(wsMigration)
     await app.query('SELECT * FROM reconcile_bound_task_identifier_aliases($1::uuid[])', [[publication]])
     moduleApp = (await import('../lib/db')).pool
     moduleWS = (await import('../lib/workspace-db')).workspacePool
@@ -213,6 +215,34 @@ test('task identity: split DB migration, immutable issuance, historical aliases 
       await app.query('INSERT INTO workspace_task_identifier_counters("workspaceId",prefix) VALUES($1,$2)', [occupiedBy, short])
       const created = (await insert(randomUUID(), 'owner', nextWorkspace, 502)).rows[0]
       assert.equal(created.issuedIdentifier, 'W' + nextWorkspace.replaceAll('-', '').toUpperCase() + '-1')
+    })
+
+    await t.test('the saved workspace prefix names new task identifiers, collisions skip, and clearing restores the guarded prefix', async () => {
+      const { syncWorkspaceTaskPrefix } = await import('../lib/task-identifier-server')
+      const gamma = randomUUID()
+      await ws.query('INSERT INTO mikka_workspaces(id,"taskPrefix") VALUES($1,\'ACME\')', [gamma])
+      await ws.query('INSERT INTO mikka_workspace_members VALUES($1,\'owner\',\'active\')', [gamma])
+      await syncWorkspaceTaskPrefix(gamma)
+      const first = (await insert(randomUUID(), 'owner', gamma, 600)).rows[0]
+      assert.equal(first.issuedIdentifier, 'ACME-1')
+      // A personal-spelling issued in the same Workspace is recorded as an
+      // alias; a row issued before that trigger existed is not. The allocator
+      // must skip the occupied spelling either way — here proven by removing
+      // the alias row so only the issues lookup still sees it.
+      const personalTask = (await insert(randomUUID(), 'owner', gamma, 601, 'personal')).rows[0]
+      assert.equal(personalTask.issuedIdentifier, 'NEXT-601')
+      await app.query('DELETE FROM task_identifier_aliases WHERE "issueId"=$1 AND kind=\'issued\'', [personalTask.id])
+      await ws.query('UPDATE mikka_workspaces SET "taskPrefix"=\'NEXT\' WHERE id=$1', [gamma])
+      await syncWorkspaceTaskPrefix(gamma)
+      await app.query('UPDATE workspace_task_identifier_counters SET "lastNumber"=600 WHERE "workspaceId"=$1', [gamma])
+      const second = (await insert(randomUUID(), 'owner', gamma, 602)).rows[0]
+      assert.equal(second.issuedIdentifier, 'NEXT-602')
+      await ws.query('UPDATE mikka_workspaces SET "taskPrefix"=NULL WHERE id=$1', [gamma])
+      await syncWorkspaceTaskPrefix(gamma)
+      const third = (await insert(randomUUID(), 'owner', gamma, 603)).rows[0]
+      assert.match(third.issuedIdentifier, new RegExp(`^W${gamma.replaceAll('-', '').slice(0, 12).toUpperCase()}-603$`))
+      // The prefix edit only renames future numbers: earlier issued spellings resolve unchanged.
+      assert.deepEqual(await resolveTaskIdentifierAlias({ workspaceId: gamma, identifier: 'ACME-1', ownerId: 'owner' }), { kind: 'found', issueId: first.id })
     })
 
     await t.test('deployment backfill resumes, is idempotent, and never assigns a quarantined tenant', async () => {
