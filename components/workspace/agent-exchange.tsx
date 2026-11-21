@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { BotAvatar } from '@/components/slots/bot-avatar'
 import { LetterAvatar } from '@/components/nav/letter-avatar'
 import { AvatarGroup } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 
 type ExchangePage = {
@@ -40,17 +41,17 @@ export function AgentExchangeMarker({ exchange }: { exchange: GroupExchange }) {
 
   return <>
     <li className="flex justify-center">
-      <button type="button" onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 rounded-full bg-muted/60 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+      <Button variant="ghost" size="xs" onClick={() => setOpen(true)}
+        className="gap-1.5 rounded-full bg-muted/60 px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
         <AvatarGroup className="-space-x-1">
           {exchange.participants.map(p => <ParticipantAvatar key={p.id} p={p} />)}
         </AvatarGroup>
         {t('marker', { names, count: Number(exchange.count) })}
-      </button>
+      </Button>
     </li>
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent side="right" className="flex w-[380px] flex-col gap-0 p-0">
-        <SheetTitle className="border-b px-4 py-3 text-sm font-medium">{t('title', { names })}</SheetTitle>
+        <SheetTitle className="px-4 py-3 text-sm font-medium">{t('title', { names })}</SheetTitle>
         {open && <ExchangeTranscript linkId={exchange.linkId} />}
       </SheetContent>
     </Sheet>
