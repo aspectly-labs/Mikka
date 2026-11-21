@@ -12,7 +12,7 @@
 its fixed schema and forwards the call to `/api/mcp` with the run token, exactly
 like `record_decision`/`pr_status`. The server is the only authority; the agent
 supplies `task` (bounded direction, ≤4000 chars) and `requestKey` (required
-idempotency key, ≤160 chars). Nothing else is agent input.
+idempotency key, ≤140 chars). Nothing else is agent input.
 
 The server creates a **child `agent_runs` row bound to the calling run**:
 
