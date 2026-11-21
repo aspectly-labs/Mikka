@@ -30,7 +30,8 @@ import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { cn } from '@/lib/utils'
 import { mentionsIn } from '@/lib/group-mentions'
-import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupMessagePage } from '@/lib/group-messages'
+import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
+import { AgentExchangeMarker } from './agent-exchange'
 import { toast } from 'sonner'
 import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
 import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
@@ -105,6 +106,16 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const pagesKey = infiniteKey(pageKey(group.id))
   useLiveKey('group_chat', group.id, [pagesKey, unstable_serialize(groupMembersKey(group.id))], group.workspaceId, { minIntervalMs: GROUP_MERGE_MS, revisions: { [pagesKey]: pages?.[0]?.revision } })
   const messages = useMemo(() => pages ? chronological(pages) : [], [pages])
+  const exchanges = useMemo(() => {
+    const byAnchor = new Map<string, GroupExchange[]>()
+    for (const page of pages ?? []) for (const item of page.timeline ?? []) {
+      if (item.type !== 'agent_exchange') continue
+      const list = byAnchor.get(item.anchorPosition) ?? []
+      if (!list.some(link => link.linkId === item.linkId)) list.push(item)
+      byAnchor.set(item.anchorPosition, list)
+    }
+    return byAnchor
+  }, [pages])
   const receivedIds = useMemo(() => new Set(messages.map(message => message.id)), [messages])
   useEffect(() => {
     if (delivery.rows.some(row => row.storedId && receivedIds.has(row.storedId))) delivery.setRows(current => current.filter(row => !row.storedId || !receivedIds.has(row.storedId)))
@@ -235,10 +246,12 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
                   {older && <Button variant="ghost" size="sm" className="self-center text-muted-foreground" disabled={loadingOlder} onClick={() => { void setSize(size + 1) }}>{loadingOlder && <Spinner data-icon="inline-start" role="presentation" aria-hidden="true" />}{loadingOlder ? t('loadingOlder') : t('older')}</Button>}
                   <ol aria-label={t('messages')} className="flex flex-col gap-4">
                     {authorRuns(messages).map(run => {
+                      const anchored = exchanges.get(run.messages.at(-1)!.position) ?? []
                       const mine = run.authorType === 'user' && run.authorId === userId
                       const name = authorName(run.authorType, run.authorId)
                       const bot = run.authorType === 'bot' ? member('bot', run.authorId) : undefined
-                      return <li key={run.key} className={cn('flex', mine ? 'flex-col items-end gap-1' : 'items-end gap-2')}>
+                      return <Fragment key={run.key}>
+                      <li className={cn('flex', mine ? 'flex-col items-end gap-1' : 'items-end gap-2')}>
                         {!mine && (bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />)}
                         <div className={cn('flex min-w-0 flex-col gap-1', mine ? 'max-w-[min(26rem,80%)] items-end' : 'max-w-[min(35rem,85%)]')}>
                           {mine ? <span className="sr-only">{name}</span> : <span className="text-xs font-medium text-muted-foreground">{name}</span>}
@@ -253,6 +266,8 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
                             </Fragment>)}
                         </div>
                       </li>
+                      {anchored.map(exchange => <AgentExchangeMarker key={exchange.linkId} exchange={exchange} />)}
+                      </Fragment>
                     })}
                     {unsent.map(item => <li key={item.id} data-pending={item.phase} className={cn('flex flex-col items-end gap-1', item.phase === 'sending' && 'opacity-60')}>
                       <ChatMessage from="person" speaker={speaker} body={<CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage>} />
