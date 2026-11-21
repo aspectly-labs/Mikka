@@ -1,6 +1,5 @@
 name: Cloud computer backend
-# Pull requests only: the same suite already passed on the PR, and main's
-# CI workflow (ui-policy.yml) still verifies every merged commit.
+# Candidate path selection or manual dispatch starts this suite.
 on:
   workflow_call:
   workflow_dispatch:

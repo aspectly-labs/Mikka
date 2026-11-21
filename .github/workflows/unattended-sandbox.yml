@@ -1,6 +1,5 @@
 name: Unattended sandbox acceptance
-# Pull requests only: the same suite already passed on the PR, and main's
-# CI workflow (ui-policy.yml) still verifies every merged commit.
+# Candidate path selection or manual dispatch starts this suite.
 on:
   workflow_call:
   workflow_dispatch:
@@ -17,7 +16,6 @@ env:
 
 jobs:
   runtime:
-    # No Runner allocation until a draft becomes review-ready.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:

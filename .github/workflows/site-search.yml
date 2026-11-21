@@ -3,10 +3,7 @@ name: Site search read contract
 # none): tests/e2e/site-search.spec.ts uses Playwright's request client only,
 # against the compiled API, Better Auth and two PostgreSQL services. No
 # browser is installed or launched.
-# Runs only when search changes: on every pull request (this repository's and
-# forks') and on pushes to main that touch these paths.
-# Pull requests only: the same suite already passed on the PR, and main's
-# CI workflow (ui-policy.yml) still verifies every merged commit.
+# Candidate path selection or manual dispatch starts this suite.
 on:
   workflow_call:
   workflow_dispatch:
@@ -23,7 +20,6 @@ env:
 
 jobs:
   site-search:
-    # No Runner allocation until a draft becomes review-ready.
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
