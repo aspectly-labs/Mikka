@@ -39,6 +39,9 @@ export function isAgentUISourcePrefix(source: string): boolean {
   const assignment = /^root\s*=\s*/.exec(text)
   const component = assignment ? text.slice(assignment[0].length) : text
   if (TOP_LEVEL_COMPONENTS.some(name => name.startsWith(component) || new RegExp(`^${name}\\s*(?:\\(\\s*)?$`).test(component))) return true
+  // A known component with an open call — `Stack(` plus args still streaming —
+  // is held too, so an incomplete program never flashes as Markdown mid-reply.
+  if (TOP_LEVEL_COMPONENTS.some(name => new RegExp(`^${name}\\s*\\(`).test(component))) return true
   // While a reply is streaming, an opening fence whose body could still become
   // a program is ambiguous too — hold it so the fenced source never flashes
   // as a code block before the card appears.

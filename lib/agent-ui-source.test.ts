@@ -11,7 +11,7 @@ test('streaming buffers possible OpenUI prefixes but releases ordinary Markdown'
   }
   // A still-open fence whose body could become a program is held: the fenced
   // source never flashes as a code block before the card appears.
-  for (const source of ['```', '```text\n', '```js\nroot = Sta', '~~~\nBeQue']) {
+  for (const source of ['```', '```text\n', '```js\nroot = Sta', '~~~\nBeQue', '```\nroot = Stack([', '~~~\nroot = BeQuestions("q", [', '```\nStack([']) {
     assert.equal(isAgentUISourcePrefix(source), true, source)
   }
   // Once a closing fence lands the code inside is no longer ambiguous.
