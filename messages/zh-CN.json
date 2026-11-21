@@ -6376,8 +6376,8 @@
       "connect": "连接 <claude></claude> Claude / <openai></openai> ChatGPT 订阅",
       "choosePlan": "选择套餐",
       "askAdmin": "请管理员充值",
-      "billing_scope_missing": "这个工作区还没有计费账户。打开计费设置绑定一个。",
-      "billing_owner_missing": "这个工作区的计费账户没有负责人。请管理员在计费设置中指定。"
+      "billing_scope_missing": "这个工作区还没有计费账户。",
+      "billing_owner_missing": "这个工作区的计费账户没有负责人。"
     }
   },
   "BeUi": {

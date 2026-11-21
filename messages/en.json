@@ -6376,8 +6376,8 @@
       "connect": "Connect <claude></claude> Claude / <openai></openai> ChatGPT subscription",
       "choosePlan": "Choose a plan",
       "askAdmin": "Ask an admin to add credits",
-      "billing_scope_missing": "This workspace has no billing account. Open billing to set one up.",
-      "billing_owner_missing": "This workspace's billing account has no owner. An admin can assign one in billing."
+      "billing_scope_missing": "This workspace has no billing account.",
+      "billing_owner_missing": "This workspace's billing account has no owner."
     }
   },
   "BeUi": {
