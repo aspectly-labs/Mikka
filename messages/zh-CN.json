@@ -5925,7 +5925,6 @@
     "exchange": {
       "marker": "{names} — {count} 条私聊",
       "title": "{names}",
-      "readOnly": "成员之间的私聊 — 只读",
       "empty": "这次私聊没有消息。",
       "loadError": "无法加载这次私聊。"
     }

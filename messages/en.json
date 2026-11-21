@@ -5925,7 +5925,6 @@
     "exchange": {
       "marker": "{names} — {count} exchange messages",
       "title": "{names}",
-      "readOnly": "A private exchange between members — read-only",
       "empty": "This exchange has no messages.",
       "loadError": "The exchange could not be loaded."
     }

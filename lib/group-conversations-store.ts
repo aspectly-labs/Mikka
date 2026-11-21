@@ -196,11 +196,20 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
         // Read existing links only; this is not the private-exchange producer.
         // Links share their source message's page/cursor. They add no message
         // position or unread event, and never expose the private DM transcript.
-        const links = messages.length ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
-          FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
-          WHERE l."sourceConversationId"=$1 AND l."anchorPosition"=ANY($2::bigint[])
-            AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
-          ORDER BY l."anchorPosition" DESC,l.id`, [group.id, messages.map(m => m.position), group.createdBy, group.workspaceId]) : { rows: [] }
+        // A delta read (after=) emits every link anchored up to the tip: a new
+        // exchange may anchor to a message the reader already has, and the
+        // caller dedupes by linkId, so re-emitting older links stays cheap.
+        const links = after != null && tip != null
+          ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
+            FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
+            WHERE l."sourceConversationId"=$1 AND l."anchorPosition"<=$2::bigint
+              AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
+            ORDER BY l."anchorPosition" DESC,l.id`, [group.id, tip.position, group.createdBy, group.workspaceId])
+          : messages.length ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
+            FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
+            WHERE l."sourceConversationId"=$1 AND l."anchorPosition"=ANY($2::bigint[])
+              AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
+            ORDER BY l."anchorPosition" DESC,l.id`, [group.id, messages.map(m => m.position), group.createdBy, group.workspaceId]) : { rows: [] }
         const exchanges: { type: 'agent_exchange'; linkId: string; anchorPosition: string; count: string; participants: GroupParticipant[] }[] = []
         for (const link of links.rows) {
           const participants = await groupParticipants(client, link.linkedConversationId, group.createdBy, group.workspaceId)

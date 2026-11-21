@@ -51,7 +51,6 @@ export function AgentExchangeMarker({ exchange }: { exchange: GroupExchange }) {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent side="right" className="flex w-[380px] flex-col gap-0 p-0">
         <SheetTitle className="border-b px-4 py-3 text-sm font-medium">{t('title', { names })}</SheetTitle>
-        <div className="px-4 pb-2 pt-1 text-xs text-muted-foreground">{t('readOnly')}</div>
         {open && <ExchangeTranscript linkId={exchange.linkId} />}
       </SheetContent>
     </Sheet>

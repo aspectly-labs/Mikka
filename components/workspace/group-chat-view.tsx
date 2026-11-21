@@ -246,7 +246,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
                   {older && <Button variant="ghost" size="sm" className="self-center text-muted-foreground" disabled={loadingOlder} onClick={() => { void setSize(size + 1) }}>{loadingOlder && <Spinner data-icon="inline-start" role="presentation" aria-hidden="true" />}{loadingOlder ? t('loadingOlder') : t('older')}</Button>}
                   <ol aria-label={t('messages')} className="flex flex-col gap-4">
                     {authorRuns(messages).map(run => {
-                      const anchored = exchanges.get(run.messages.at(-1)!.position) ?? []
+                      const anchored = run.messages.flatMap(message => exchanges.get(message.position) ?? [])
                       const mine = run.authorType === 'user' && run.authorId === userId
                       const name = authorName(run.authorType, run.authorId)
                       const bot = run.authorType === 'bot' ? member('bot', run.authorId) : undefined
