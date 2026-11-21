@@ -76,7 +76,13 @@ export async function stopGroupReply(id: string, fetcher: typeof fetch = fetch):
 export function mergeGroupPoll(previous: GroupMessagePage | null, next: GroupMessagePage): GroupMessagePage {
   if (!previous) return next
   // Nothing new since the shown page: it is current at this read's revision.
-  if (next.unchanged) return { ...previous, agentStatus: next.agentStatus ?? null, routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision }
+  // A fresh exchange may still arrive without a new message — carry unseen markers forward.
+  if (next.unchanged) {
+    const seenLinks = new Set((previous.timeline ?? []).map(item => item.type === 'agent_exchange' ? item.linkId : item.id))
+    const addedItems = (next.timeline ?? []).filter(item => item.type === 'agent_exchange' && !seenLinks.has(item.linkId))
+    const timeline = addedItems.length ? [...addedItems, ...(previous.timeline ?? [])] : previous.timeline
+    return { ...previous, agentStatus: next.agentStatus ?? null, routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision, timeline }
+  }
   if (next.appended) {
     const seen = new Set(previous.messages.map(message => message.id))
     const added = next.messages.filter(message => !seen.has(message.id))
