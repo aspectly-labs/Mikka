@@ -111,6 +111,18 @@ const ARTIFACT_TEXT_LIMIT = 64 * 1024
 const ARTIFACT_TOOL = { name: 'inspect_artifact', description: 'Read a file in this fixed worktree: byte count, SHA256, Git HEAD, committed file SHA256, Git comparison and complete UTF8 text up to 64 KiB. Optionally compare exact expected UTF8 bytes, including every newline. Binary or larger files return no text. No shell commands, changes, submission or acceptance.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to this worktree.' }, expectedUtf8: { type: 'string', maxLength: ARTIFACT_TEXT_LIMIT, description: 'Optional exact expected text, including all whitespace and the final newline; at most 64 KiB as UTF8.' } }, required: ['path'], additionalProperties: false } }
 const INSPECT_REPOSITORY_TOOL = { name: 'inspect_repository', description: 'Read this fixed worktree’s actual Git HEAD, sanitized GitHub origin, working-tree status and one directory’s files. Supply baseCommit to observe committed changes from that exact baseline to HEAD across the whole worktree. Start with path ".", then inspect a listed directory or read a file with inspect_artifact. Listings, status and comparison are bounded and mark truncation; truncated observations cannot establish the complete change scope. Symlinks and .git are not listed. No shell commands, changes, repository selection, submission or acceptance.', inputSchema: { type: 'object', properties: { path: { type: 'string', maxLength: 2000, description: 'Directory relative to this worktree; defaults to ".".' }, baseCommit: { type: 'string', pattern: '^[a-f0-9]{40}$', description: 'Optional exact baseline commit SHA for committed change scope; full 40-character lowercase hex, never a branch or revision expression.' } }, additionalProperties: false } }
 
+// Tools the host-bound worker endpoint owns: the daemon advertises their fixed
+// schemas and forwards calls to the Mikka server with the run's own token,
+// exactly like record_decision. The server is the only authority; an absent
+// value is unknown, never fabricated here.
+const PR_STATUS_TOOL = {
+  name: 'pr_status',
+  description: 'Read this run’s task delivery state as Mikka recorded it: the assigned issue branch and base, the bound pull request URL, number and state, its head SHA, and the latest synchronized check rollup (counts and per-check states). The server’s publication record is the authority: an absent pull request or check means unknown, never passing. Read-only; it cannot open, update or merge anything.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  annotations: { readOnlyHint: true },
+}
+const WORKER_PROXY_TOOLS = new Set(['pr_status', 'delegate_subagent'])
+
 const stringArray = { type: "array", items: { type: "string" } }
 
 // A `plan` run hands in a spec and the split it proposes instead of code
@@ -381,7 +393,8 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
     // The audited path contains business requests only. Keep this boundary at
     // the physical send, so another method cannot silently inherit its label.
     if (!(operation === 'decision_catalogue' && method === 'tools/list'
-      || operation === 'decision_record' && method === 'tools/call' && params?.name === 'record_decision')) throw new Error('decision_method_invalid')
+      || operation === 'decision_record' && method === 'tools/call' && params?.name === 'record_decision'
+      || operation === 'worker_call' && method === 'tools/call' && WORKER_PROXY_TOOLS.has(params?.name))) throw new Error('decision_method_invalid')
     if (!decisionMcpAvailable) throw new Error('decision_unavailable')
     const id = ++decisionRpcId
     const observed = decisionObserver.begin(operation)
@@ -436,6 +449,19 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
     } catch {
       // Do not relay arbitrary transport text or authorization headers.
       return { isError: true, content: [{ type: 'text', text: 'Decision could not be recorded in Mikka. Check task authority and retry with the same idempotencyKey; do not save it in the repository.' }] }
+    }
+  }
+
+  // One audited transport for the fixed server-owned worker tools above. The
+  // server answers from its own records; a transport failure is a safe error,
+  // never a fabricated status.
+  async function workerCall(name, args, failureText) {
+    try {
+      const result = await decisionRpc('worker_call', 'tools/call', { name, arguments: args })
+      if (!Array.isArray(result.content)) throw new Error('decision_response')
+      return result
+    } catch {
+      return { isError: true, content: [{ type: 'text', text: failureText }] }
     }
   }
 
@@ -847,6 +873,10 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
         return reply(id, { tools: await readTools() })
       case "tools/call": {
         if (decisionMcpAvailable && params?.name === 'record_decision') return reply(id, await recordDecision(params.arguments ?? {}))
+        if (decisionMcpAvailable && params?.name === PR_STATUS_TOOL.name) {
+          return reply(id, await workerCall(PR_STATUS_TOOL.name, params.arguments ?? {},
+            'Pull request status could not be read from Mikka. The run may have no server-issued delivery yet; unknown is not a passing state.'))
+        }
         if (repositoryRoot && params?.name === REPOSITORY_TOOL.name) {
           try { return reply(id, selectRepository(params.arguments ?? {})) }
           catch { return reply(id, { isError: true, content: [{ type: 'text', text: 'Repository selection could not be recorded.' }] }) }
@@ -902,7 +932,8 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
 
   function readTools() {
     return decisionTools().then(decisions => structuredClone([
-      ...TOOLS, ...decisions, ...(repositoryRoot ? [REPOSITORY_TOOL] : []),
+      ...TOOLS, ...decisions, ...(decisionMcpAvailable && preparedDecisionCatalogue !== undefined ? [PR_STATUS_TOOL] : []),
+      ...(repositoryRoot ? [REPOSITORY_TOOL] : []),
       ...(profileSkillsDir ? [LOAD_SKILL_TOOL] : []),
       ...(capturesDir ? [CAPTURE_TOOL] : []), ...(factoryVerify ? [VERIFY_TOOL] : []),
       ...(artifactRoot ? [ARTIFACT_TOOL, INSPECT_REPOSITORY_TOOL] : []),
@@ -947,7 +978,7 @@ export function mikkaMcpToolCatalogue({
   factoryVerify = false, artifactInspection = false, profileSkills = false,
 } = {}) {
   return structuredClone([
-    ...TOOLS, ...(decisionCatalogue === undefined ? [] : [readPreparedDecisionCatalogue(decisionCatalogue)]),
+    ...TOOLS, ...(decisionCatalogue === undefined ? [] : [readPreparedDecisionCatalogue(decisionCatalogue), PR_STATUS_TOOL]),
     ...(repositorySelection ? [REPOSITORY_TOOL] : []), ...(captures ? [CAPTURE_TOOL] : []),
     ...(factoryVerify ? [VERIFY_TOOL] : []), ...(artifactInspection ? [ARTIFACT_TOOL, INSPECT_REPOSITORY_TOOL] : []),
     ...(profileSkills ? [LOAD_SKILL_TOOL] : []),

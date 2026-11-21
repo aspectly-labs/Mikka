@@ -309,6 +309,17 @@ function createWorkerHandler(mailbox: readonly MailboxToolName[]) { return creat
     }
   })
 
+  // The daemon's `mikka` server proxies this tool into the run; the server's
+  // publication record is the only authority for branch/PR/check state.
+  server.registerTool('pr_status', {
+    description: 'Read the delivery state Mikka recorded for this run’s task: the assigned issue branch and base, the bound pull request URL, number and state, its head SHA, and the latest synchronized check rollup (counts and per-check states). The server’s publication record is the authority: an absent pull request or check means unknown, never passing.',
+    inputSchema: z.object({}).strict(),
+    annotations: { readOnlyHint: true },
+  }, async (_input, ctx) => {
+    const { runPrStatus } = await import('@/lib/mcp/run-pr-status')
+    return json(await runPrStatus(worker.workerRun(ctx.http?.authInfo)))
+  })
+
   server.registerTool('report', {
     title: 'Report progress',
     description: 'Tell the person\'s Coordinator about progress on this run. Use it sparingly, at milestones (a plan settled, a hard part solved, ready for review), not after every step.',
