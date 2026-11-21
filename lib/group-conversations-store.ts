@@ -262,7 +262,8 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
           WHERE cm."conversationId"=$1 AND cm."memberType"='user' AND cm."leftAt" IS NULL ORDER BY cm."joinedAt",cm."memberId"`, [group.id])).rows
         const visibleUsers = []
         for (const user of users) if (await directory(group.workspaceId, user.id, [])) visibleUsers.push({ ...user, memberType: 'user' })
-        result = { members: [...visibleUsers, ...participants.map(p => ({ ...p, memberType: p.memberType ?? 'agent' }))] }
+        const leadOf = { agent: group.leadAgentId, bot: group.leadBotId }
+        result = { members: [...visibleUsers, ...participants.map(p => ({ ...p, memberType: p.memberType ?? 'agent', ...(p.id === leadOf[p.memberType ?? 'agent'] ? { lead: true } : {}) }))] }
       } else if (req.resource === 'members' && ['POST', 'DELETE'].includes(req.method)) {
         if (req.method === 'POST' && group.role !== 'owner') return fail(403)
         const input = parse(member, req.body)

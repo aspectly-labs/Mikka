@@ -93,14 +93,23 @@ export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { gr
   const asideRef = useRef<HTMLElement>(null)
   useLayoutEffect(() => { asideRef.current?.style.setProperty('--group-panel-width', `${resize.width}px`) }, [resize.width])
   const tCommon = useTranslations('Common')
+  const [undo, setUndo] = useState<GroupMember | null>(null)
+  useEffect(() => {
+    if (!undo) return
+    const timer = setTimeout(() => setUndo(null), 8000)
+    return () => clearTimeout(timer)
+  }, [undo])
+  const restore = (member: GroupMember) => {
+    setUndo(null)
+    const lead = member.lead ? (member.memberType === 'bot' ? { leadBotId: member.id } : { leadAgentId: member.id }) : null
+    void writeGroupMember(group.id, 'POST', { memberType: member.memberType, memberId: member.id })
+      .then(() => lead ? setGroupLead(group.id, lead) : undefined)
+      .then(() => mutate())
+      .catch(() => toast.error(t('membersWriteError')))
+  }
   const remove = (member: GroupMember) => () => {
     void writeGroupMember(group.id, 'DELETE', { memberType: member.memberType, memberId: member.id })
-      .then(() => {
-        void mutate()
-        toast(t('memberRemoved', { name: member.name }), {
-          action: { label: t('undo'), onClick: () => { void writeGroupMember(group.id, 'POST', { memberType: member.memberType, memberId: member.id }).then(() => mutate()).catch(() => toast.error(t('membersWriteError'))) } },
-        })
-      })
+      .then(() => { void mutate(); setUndo(member) })
       .catch(() => toast.error(t('membersWriteError')))
   }
   // R-37: opening and closing are instant, no motion (decision 2026-11-01-2320).
@@ -115,6 +124,10 @@ export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { gr
       </div>
       <section ref={scroll} aria-label={label} className="flex min-h-0 flex-col gap-1 overflow-y-auto px-4 pb-4">
         <GroupHeader action={owner && members ? <Button variant="ghost" size="icon-xs" aria-label={t('addMember')} onClick={() => setAdding(true)}><X className="rotate-45" /></Button> : undefined}>{label}</GroupHeader>
+        {undo && <div className="mx-2 mb-1 flex items-center justify-between gap-2 rounded-lg bg-muted px-2 py-1.5 text-sm">
+          <span className="truncate text-muted-foreground">{t('memberRemoved', { name: undo.name })}</span>
+          <Button variant="secondary" size="xs" onClick={() => restore(undo)}>{t('undo')}</Button>
+        </div>}
         {error ? <div className="px-2 py-1.5"><InlineLoadError message={t('membersError')} retryLabel={t('retry')} onRetry={() => { void mutate() }} /></div>
           : !members ? <div aria-busy="true" className="flex flex-col gap-2 px-2 py-1.5">{[0, 1, 2].map(index => <Skeleton key={index} className="h-5 w-40" />)}</div>
           : <ul className="flex flex-col">{members.map(member => <MemberRow key={`${member.memberType}:${member.id}`} member={member} removeLabel={t('removeMember', { name: member.name })} onRemove={owner && member.role !== 'owner' ? remove(member) : undefined} />)}</ul>}

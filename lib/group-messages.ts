@@ -146,7 +146,7 @@ export function fetchScopedGroups(ownerId: string, workspaceId: string, fetcher:
 }
 
 /** A group's members as GET /api/conversations/{id}/members returns them; bots carry their colour and shape. */
-export type GroupMember = { id: string; name: string; memberType: 'user' | 'agent' | 'bot'; role?: 'owner' | 'member'; color?: string | null; shape?: string | null; coordinator?: boolean }
+export type GroupMember = { id: string; name: string; memberType: 'user' | 'agent' | 'bot'; role?: 'owner' | 'member'; lead?: boolean; color?: string | null; shape?: string | null; coordinator?: boolean }
 
 export function fetchGroupMembers(id: string, fetcher: typeof fetch = fetch): Promise<GroupMember[]> {
   return readGroupApi(`/api/conversations/${encodeURIComponent(id)}/members`, listIn<GroupMember>('members'), fetcher)
@@ -171,6 +171,15 @@ export async function leaveGroupConversation(id: string, userId: string, fetcher
 }
 
 /** Owner-side membership change: add a member or remove one (a user leaves via leaveGroupConversation). */
+/** Set a group's lead agent or bot (PATCH /api/conversations/{id}, owner-only). */
+export async function setGroupLead(id: string, lead: { leadAgentId: string | null } | { leadBotId: string | null }, fetcher: typeof fetch = fetch): Promise<void> {
+  const response = await fetcher(withBasePath(`/api/conversations/${encodeURIComponent(id)}`), {
+    method: 'PATCH', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lead),
+  })
+  if (!response.ok) throw new GroupMessagesRequestError('lead_write_failed')
+}
+
 export async function writeGroupMember(id: string, method: 'POST' | 'DELETE', member: { memberType: 'user' | 'agent' | 'bot'; memberId: string }, fetcher: typeof fetch = fetch): Promise<void> {
   let response: Response
   try {
