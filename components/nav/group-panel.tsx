@@ -27,35 +27,35 @@ import { LetterAvatar } from './letter-avatar'
 const WIDTH = { storageKey: 'mikka:context-panel-width', min: 320, max: 'half', initial: 360, edge: 'start' } as const
 
 /** A member row: people with their letter, bots with their bloub (R-36), then the name. The owner removes non-owner rows. */
-function MemberRow({ member, onRemove }: { member: GroupMember; onRemove?: () => void }) {
+function MemberRow({ member, removeLabel, onRemove }: { member: GroupMember; removeLabel?: string; onRemove?: () => void }) {
   return <li className="group/member flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm">
     {member.memberType === 'bot' ? <BotAvatar {...memberAvatar(member)} size="row" still /> : <LetterAvatar name={member.name} size="row" />}
     <span className="truncate">{member.name}</span>
-    {onRemove && <Button variant="ghost" size="icon-xs" aria-label={`Remove ${member.name}`} className="ml-auto text-muted-foreground opacity-0 transition-opacity group-hover/member:opacity-100 focus-visible:opacity-100" onClick={onRemove}><X /></Button>}
+    {onRemove && <Button variant="ghost" size="icon-xs" aria-label={removeLabel} className="ml-auto text-muted-foreground opacity-0 transition-opacity group-hover/member:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100" onClick={onRemove}><X /></Button>}
   </li>
 }
 
 /** The owner's add-member dialog: the workspace's owned Bots that are not in the group yet. */
-function AddMembers({ group, bots, members, open, onOpenChange, onAdded }: { group: { id: string; title: string }; bots: readonly BotView[]; members: readonly GroupMember[]; open: boolean; onOpenChange: (open: boolean) => void; onAdded: () => void }) {
+function AddMembers({ group, bots, members, open, onOpenChange, onAdded }: { group: { id: string; title: string }; bots: readonly BotView[]; members: readonly GroupMember[] | undefined; open: boolean; onOpenChange: (open: boolean) => void; onAdded: () => void }) {
   const t = useTranslations('Shell.panel')
   const [picked, setPicked] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
-  const inside = new Set(members.map(member => `${member.memberType}:${member.id}`))
+  const inside = new Set((members ?? []).map(member => `${member.memberType}:${member.id}`))
   const choices = bots.filter(bot => !inside.has(`bot:${bot.id}`))
   async function submit() {
     if (saving || !picked.length) return
     setSaving(true)
     try {
       for (const memberId of picked) await writeGroupMember(group.id, 'POST', { memberType: 'bot', memberId })
-      onAdded()
       onOpenChange(false)
       setPicked([])
-    } catch { toast.error(t('membersWriteError')) } finally { setSaving(false) }
+    } catch { toast.error(t('membersWriteError')) } finally { setSaving(false); onAdded() }
   }
   return <Dialog open={open} onOpenChange={next => { onOpenChange(next); if (!next) setPicked([]) }}>
     <DialogContent>
       <DialogHeader><DialogTitle>{t('addMembers', { group: group.title })}</DialogTitle></DialogHeader>
-      {choices.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{t('noMoreBots')}</p>
+      {!members ? <p className="py-4 text-sm text-muted-foreground">{t('membersLoading')}</p>
+        : choices.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{t('noMoreBots')}</p>
         : <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
           {choices.map(bot => <li key={bot.id}>
             <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
@@ -66,7 +66,7 @@ function AddMembers({ group, bots, members, open, onOpenChange, onAdded }: { gro
           </li>)}
         </ul>}
       <DialogFooter>
-        <Button variant="outline" onClick={() => onOpenChange(false)}>{t('cancel')}</Button>
+        <Button variant="outline" onClick={() => { onOpenChange(false); setPicked([]) }}>{t('cancel')}</Button>
         <Button disabled={saving || !picked.length} onClick={() => { void submit() }}>{saving && <Spinner data-icon="inline-start" role="presentation" aria-hidden="true" />}{t('add')}</Button>
       </DialogFooter>
     </DialogContent>
@@ -94,7 +94,14 @@ export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { gr
   useLayoutEffect(() => { asideRef.current?.style.setProperty('--group-panel-width', `${resize.width}px`) }, [resize.width])
   const tCommon = useTranslations('Common')
   const remove = (member: GroupMember) => () => {
-    void writeGroupMember(group.id, 'DELETE', { memberType: member.memberType, memberId: member.id }).then(() => mutate()).catch(() => toast.error(t('membersWriteError')))
+    void writeGroupMember(group.id, 'DELETE', { memberType: member.memberType, memberId: member.id })
+      .then(() => {
+        void mutate()
+        toast(t('memberRemoved', { name: member.name }), {
+          action: { label: t('undo'), onClick: () => { void writeGroupMember(group.id, 'POST', { memberType: member.memberType, memberId: member.id }).then(() => mutate()).catch(() => toast.error(t('membersWriteError'))) } },
+        })
+      })
+      .catch(() => toast.error(t('membersWriteError')))
   }
   // R-37: opening and closing are instant, no motion (decision 2026-11-01-2320).
   return <aside ref={asideRef} aria-label={t('label')}
@@ -107,12 +114,12 @@ export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { gr
         <h2 className="max-w-full truncate text-xl font-semibold">{group.title}</h2>
       </div>
       <section ref={scroll} aria-label={label} className="flex min-h-0 flex-col gap-1 overflow-y-auto px-4 pb-4">
-        <GroupHeader action={owner ? <Button variant="ghost" size="icon-xs" aria-label={t('addMember')} onClick={() => setAdding(true)}><X className="rotate-45" /></Button> : undefined}>{label}</GroupHeader>
+        <GroupHeader action={owner && members ? <Button variant="ghost" size="icon-xs" aria-label={t('addMember')} onClick={() => setAdding(true)}><X className="rotate-45" /></Button> : undefined}>{label}</GroupHeader>
         {error ? <div className="px-2 py-1.5"><InlineLoadError message={t('membersError')} retryLabel={t('retry')} onRetry={() => { void mutate() }} /></div>
           : !members ? <div aria-busy="true" className="flex flex-col gap-2 px-2 py-1.5">{[0, 1, 2].map(index => <Skeleton key={index} className="h-5 w-40" />)}</div>
-          : <ul className="flex flex-col">{members.map(member => <MemberRow key={`${member.memberType}:${member.id}`} member={member} onRemove={owner && member.role !== 'owner' ? remove(member) : undefined} />)}</ul>}
+          : <ul className="flex flex-col">{members.map(member => <MemberRow key={`${member.memberType}:${member.id}`} member={member} removeLabel={t('removeMember', { name: member.name })} onRemove={owner && member.role !== 'owner' ? remove(member) : undefined} />)}</ul>}
       </section>
     </div>
-    {owner && bots && <AddMembers group={group} bots={bots} members={members ?? []} open={adding} onOpenChange={setAdding} onAdded={() => { void mutate() }} />}
+    {owner && bots && <AddMembers group={group} bots={bots} members={members} open={adding} onOpenChange={setAdding} onAdded={() => { void mutate() }} />}
   </aside>
 }

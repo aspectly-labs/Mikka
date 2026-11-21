@@ -5461,7 +5461,10 @@
       "noMoreBots": "你的所有 Bot 都已在群里。",
       "membersWriteError": "无法修改成员。",
       "cancel": "取消",
-      "add": "添加"
+      "add": "添加",
+      "removeMember": "移除 {name}",
+      "memberRemoved": "已移除 {name}",
+      "undo": "撤销"
     },
     "suggestions": {
       "title": "建议",

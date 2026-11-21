@@ -5461,7 +5461,10 @@
       "noMoreBots": "All your Bots are already in this group.",
       "membersWriteError": "The members could not be changed.",
       "cancel": "Cancel",
-      "add": "Add"
+      "add": "Add",
+      "removeMember": "Remove {name}",
+      "memberRemoved": "Removed {name}",
+      "undo": "Undo"
     },
     "suggestions": {
       "title": "Suggestions",
