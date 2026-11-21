@@ -8,7 +8,7 @@ import { refreshQueue } from './refresh-queue.mjs'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { stopOwnedServices } from './shutdown.mjs'
-import { grantLocalCredits, localDecision, localModelAnswer, localServiceRoutes, LOCAL_CRON_SECRET, LOCAL_RESEND_KEY, LOCAL_LITELLM_KEY } from './services.mjs'
+import { grantLocalCredits, localDecision, localModelAnswer, localServiceRoutes, LOCAL_CRON_SECRET, LOCAL_RESEND_KEY, LOCAL_DEEPSEEK_KEY, LOCAL_LITELLM_KEY } from './services.mjs'
 
 test('the scripted model echoes, calls a registered tool on /tool and reports tool results', () => {
   const user = text => ({ prompt: [{ role: 'user', content: [{ type: 'text', text }] }], tools: [{ type: 'function', name: 'create_issue' }] })
@@ -181,4 +181,61 @@ test('the real OpenAI-compatible provider reaches the LiteLLM substitute, tool c
   assert.equal(await called.text, 'echo: "{\\"echoed\\":\\"hi\\"}"')
   const wrongKey = createOpenAICompatible({ name: 'litellm', baseURL: 'https://litellm.invalid/v1', apiKey: 'real-looking-key', fetch: local }).chatModel('mikka-default')
   await assert.rejects(generateText({ model: wrongKey, prompt: 'ping', maxRetries: 0 }))
+})
+
+test('fake LiteLLM covers stream, tools, faults, cost and every client surface', async t => {
+  const { routes } = localServiceRoutes({ log: () => {} })
+  const server = createServer(async (request, response) => {
+    if (!await routes(request, response, new URL(request.url, 'http://127.0.0.1'))) { response.writeHead(404); response.end() }
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const key = { authorization: `Bearer ${LOCAL_LITELLM_KEY}`, 'content-type': 'application/json' }
+  const post = (path, body) => fetch(`${origin}${path}`, { method: 'POST', headers: key, body: JSON.stringify(body) })
+
+  // Scripted fault/cost scenarios, matched by a marker anywhere in the request.
+  assert.equal((await post('/litellm/scenarios', { marker: 'flt-429', fault: '429' })).status, 200)
+  assert.equal((await post('/litellm/scenarios', { marker: 'flt-500', fault: '500' })).status, 200)
+  assert.equal((await post('/litellm/scenarios', { marker: 'flt-slow', fault: 'timeout' })).status, 200)
+  assert.equal((await post('/litellm/scenarios', { marker: 'priced', cost: 0.0025 })).status, 200)
+  const chat = body => post('/litellm/v1/chat/completions', { model: 'mikka-default', messages: [{ role: 'user', content: 'hi' }], ...body })
+  assert.equal((await chat({ user: 'flt-429' })).status, 429)
+  assert.equal((await chat({ user: 'flt-500' })).status, 500)
+  const controller = new AbortController()
+  const slow = fetch(`${origin}/litellm/v1/chat/completions`, { method: 'POST', headers: key, signal: controller.signal,
+    body: JSON.stringify({ model: 'mikka-default', messages: [{ role: 'user', content: 'hi' }], user: 'flt-slow' }) })
+  await assert.rejects(Promise.race([slow, new Promise((_, reject) => setTimeout(() => reject(new Error('client gave up')), 500))]), /gave up/)
+  controller.abort()
+  await assert.rejects(slow)
+  const priced = await chat({ user: 'priced' })
+  assert.equal(priced.headers.get('x-litellm-response-cost'), '0.0025')
+  assert.equal((await priced.json()).usage.cost, 0.0025)
+
+  // Streaming + tool calls through the AI SDK surface.
+  const stream = await chat({ stream: true })
+  assert.match(stream.headers.get('content-type'), /text\/event-stream/)
+  const body = await stream.text()
+  assert.match(body, /data: \[DONE\]/)
+  assert.match(body, /Local model: hi/)
+  const toolCall = await chat({ stream: true, tools: [{ type: 'function', function: { name: 'echo' } }], messages: [{ role: 'user', content: '/tool echo {"a":1}' }] })
+  assert.match(await toolCall.text(), /"name":"echo"/)
+
+  // Anthropic Messages and OpenAI Responses surfaces.
+  const message = await (await post('/litellm/v1/messages', { model: 'mikka-default', messages: [{ role: 'user', content: 'hi' }] })).json()
+  assert.equal(message.type, 'message')
+  assert.equal(message.content[0].text, 'Local model: hi')
+  const messageStream = await post('/litellm/v1/messages', { model: 'mikka-default', stream: true, messages: [{ role: 'user', content: 'hi' }] })
+  assert.match(await messageStream.text(), /event: message_stop/)
+  const resp = await (await post('/litellm/v1/responses', { model: 'mikka-default', input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }] })).json()
+  assert.equal(resp.object, 'response')
+  assert.equal(resp.output[0].content[0].text, 'Local model: hi')
+  const respStream = await post('/litellm/v1/responses', { model: 'mikka-default', stream: true, input: [{ role: 'user', content: 'hi' }] })
+  assert.match(await respStream.text(), /event: response\.completed/)
+
+  // The provider /models probe the local seeder verifies against.
+  const deepseek = await fetch(`${origin}/deepseek/models`, { headers: { authorization: `Bearer ${LOCAL_DEEPSEEK_KEY}` } })
+  assert.equal(deepseek.status, 200)
+  assert.deepEqual((await deepseek.json()).data.map(m => m.id), ['deepseek-v4.1-flash'])
+  assert.equal((await fetch(`${origin}/deepseek/models`, { headers: { authorization: 'Bearer real-looking-key' } })).status, 401)
 })

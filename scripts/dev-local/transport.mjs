@@ -31,6 +31,10 @@ export function hasBoundDevLocalTransport(env = process.env) {
 export function devLocalTarget(href, env) {
   const url = new URL(href)
   if (url.origin === 'https://api.github.com') return `${MVP_SERVICES}/github${url.pathname}${url.search}`
+  // The seeded workspace key is a scripted placeholder; its provider /models
+  // probe must never leave the loop. MIKKA_DEV_REAL_MODELS=1 is the explicit,
+  // off-by-default switch for live-model acceptance.
+  if (url.origin === 'https://api.deepseek.com' && env.MIKKA_DEV_REAL_MODELS !== '1') return `${MVP_SERVICES}/deepseek${url.pathname}${url.search}`
   if (env.MIKKA_LITELLM_URL === LOCAL_LITELLM_URL && env.MIKKA_LITELLM_MASTER_KEY === LOCAL_LITELLM_KEY
     && url.href.startsWith(LOCAL_LITELLM_URL + '/v1/')) return url.href
   if (url.href === 'https://api.resend.com/emails' && env.RESEND_API_KEY === LOCAL_RESEND_KEY) return `${MVP_SERVICES}/resend/emails`
@@ -54,8 +58,11 @@ export function installDevLocalTransport(env = process.env, upstreamFetch = glob
       return Promise.resolve(new Response(null, { status: 204, headers: { [responseHeader]: response } }))
     }
     const target = devLocalTarget(request.url, env)
-    // Rewritten gateway calls are the isolated scripted fixture, not live spend.
-    if (!target) await assertTestModelRequest(request)
+    // Rewritten gateway calls are the isolated scripted fixture, not live spend —
+    // but a rewritten provider call is still a model request: the Flash-only
+    // policy must reject a non-Flash prompt even when the fake would answer it.
+    if (!target || new URL(request.url).origin === 'https://api.deepseek.com')
+      await assertTestModelRequest(request)
     return target ? upstreamFetch(new Request(target, request), { redirect: 'error' }) : upstreamFetch(request)
   }
   const installed = Object.freeze({

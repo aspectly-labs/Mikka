@@ -253,11 +253,11 @@ async function setup() {
     const refreshed = await fetch('http://127.0.0.1:3191/refresh', { method: 'POST', signal: AbortSignal.timeout(90_000) })
     if (!refreshed.ok) return false
     const keys = await query(`SELECT id FROM model_api_keys WHERE "ownerId"=$1 AND provider='deepseek'`, [accounts.owner.userId])
-    assert.ok(keys.length, 'No real DeepSeek key seeded; refusing scripted/default model acceptance')
+    assert.ok(keys.length, 'No workspace model key seeded; refusing acceptance without the seeded key row')
     return true
   }))
   if (!needsDaemon) {
-    await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, items: selectedItems, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, started: new Date(started).toISOString(), externalBoundaries: [needsModels ? 'Real DeepSeek model' : 'No model calls required by selected items', 'No daemon required by selected items', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
+    await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, items: selectedItems, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, started: new Date(started).toISOString(), externalBoundaries: [needsModels ? 'Scripted model via fake LiteLLM (MIKKA_DEV_REAL_MODELS=1 for live)' : 'No model calls required by selected items', 'No daemon required by selected items', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
     return null
   }
   const standaloneDaemon = (args, persistent = false) => {
@@ -287,7 +287,7 @@ async function setup() {
     return result.devices?.some(device => device.online) ? result.devices : null
   }))
   const device = devices.find(value => value.online)
-  await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, deviceId: device.id, started: new Date(started).toISOString(), externalBoundaries: ['Real DeepSeek model', 'Synthetic GitHub API and real local bare Git push', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
+  await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, deviceId: device.id, started: new Date(started).toISOString(), externalBoundaries: ['Scripted model via fake LiteLLM (MIKKA_DEV_REAL_MODELS=1 for live)', 'Synthetic GitHub API and real local bare Git push', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
   return device
 }
 

@@ -17,7 +17,7 @@ import { localSecretsKey } from './dev-local/secrets-key.mjs'
 import { refreshQueue } from './dev-local/refresh-queue.mjs'
 import { stopOwnedServices, waitForApiReady } from './dev-local/shutdown.mjs'
 import { prepareLocalHarnesses } from './dev-local/prepare-harnesses.mjs'
-import { grantLocalCredits, localServiceRoutes, LOCAL_CRON_SECRET, LOCAL_RESEND_KEY, LOCAL_LITELLM_KEY, LOCAL_LITELLM_URL } from './dev-local/services.mjs'
+import { grantLocalCredits, localServiceRoutes, LOCAL_CRON_SECRET, LOCAL_RESEND_KEY, LOCAL_LITELLM_KEY, LOCAL_LITELLM_URL, LOCAL_DEEPSEEK_KEY } from './dev-local/services.mjs'
 import { startMvpServices } from '../tests/mvp/services.mjs'
 import { MVP_SERVICES, REPOSITORY } from '../tests/mvp/isolated-env.mjs'
 
@@ -82,13 +82,17 @@ log(`fake GitHub on ${MVP_SERVICES}; repository ${REPOSITORY} → ${scenario.bar
 const cronSecret = process.env.CRON_SECRET || LOCAL_CRON_SECRET
 // One value for the API and the model key seeder: what one seals, the other opens.
 const secretsKey = process.env.WORKSPACE_SECRETS_KEY || localSecretsKey(join(root, '.cache/dev-local'))
-// The workspace model key (DeepSeek preset): from the environment, else by name from Infisical
-// (MIKKA_DEV_INFISICAL_PROJECT). Held in memory for the seeder only; never written or printed.
+// The workspace model key (DeepSeek preset): scripted by default — the fake
+// LiteLLM answers every local model call, so local-loop needs no real key.
+// MIKKA_DEV_REAL_MODELS=1 is the explicit off-by-default switch that restores
+// live-model acceptance (DEEPSEEK_API_KEY env or the named Infisical secret).
+// Held in memory for the seeder only; never written or printed.
 const skipModelSetup = process.env.MIKKA_DEV_SKIP_MODEL_SETUP === '1'
-const deepseekKey = skipModelSetup ? undefined : process.env.DEEPSEEK_API_KEY || await infisicalSecret('DEEPSEEK_API_KEY')
+const realModels = process.env.MIKKA_DEV_REAL_MODELS === '1'
+const deepseekKey = skipModelSetup ? undefined : realModels ? process.env.DEEPSEEK_API_KEY || await infisicalSecret('DEEPSEEK_API_KEY') : LOCAL_DEEPSEEK_KEY
 delete process.env.DEEPSEEK_API_KEY
 delete childEnv.DEEPSEEK_API_KEY
-log(skipModelSetup ? 'model setup: not required by selected acceptance items' : deepseekKey ? 'model key DEEPSEEK_API_KEY: found' : 'model key: 缺少 DEEPSEEK_API_KEY，跳过模型 key 注入')
+log(skipModelSetup ? 'model setup: not required by selected acceptance items' : realModels ? (deepseekKey ? 'model key DEEPSEEK_API_KEY: found (MIKKA_DEV_REAL_MODELS=1)' : 'model key: 缺少 DEEPSEEK_API_KEY，跳过模型 key 注入') : 'model key: scripted via fake LiteLLM (MIKKA_DEV_REAL_MODELS=1 for live)')
 async function infisicalSecret(name) {
   const project = process.env.MIKKA_DEV_INFISICAL_PROJECT || process.env.INFISICAL_PROJECT_ID
   if (!project) return undefined
@@ -118,6 +122,7 @@ const apiProcess = watch(spawn(process.execPath, ['apps/api/scripts/dev.mjs', '-
     // A configured LiteLLM stays real; otherwise the guarded fixture handles model calls.
     MIKKA_LITELLM_URL: process.env.MIKKA_LITELLM_URL || LOCAL_LITELLM_URL,
     MIKKA_LITELLM_MASTER_KEY: process.env.MIKKA_LITELLM_URL ? process.env.MIKKA_LITELLM_MASTER_KEY : LOCAL_LITELLM_KEY,
+    MIKKA_DEV_REAL_MODELS: process.env.MIKKA_DEV_REAL_MODELS,
     RESEND_API_KEY: process.env.RESEND_API_KEY || LOCAL_RESEND_KEY,
     CRON_SECRET: cronSecret,
     // Saving a workspace's own model key needs it (lib/secrets/crypto.ts).

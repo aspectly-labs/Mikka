@@ -7,7 +7,7 @@
   Codex's, with the handoff as the
   starting point.
 - Rule: — (process, not product)
-- Superseded in part by: [2026-11-03-2359](2026-11-03-2359-issue-owner-merges-and-accepts-in-production.md) (item 3: an issue's owner owns any change end to end, backend included; no area is Codex's)
+- Superseded in part by: [2026-11-03-2359](2026-11-03-2359-issue-owner-merges-and-accepts-in-production.md) (item 3: an issue's owner owns any change end to end, backend included; no area is Codex's); [2026-11-21-1800](2026-11-21-1800-fake-litellm-local-loop.md) (item 2: local-loop fakes the model at the LiteLLM boundary and needs no real DeepSeek key by default; `MIKKA_DEV_REAL_MODELS=1` opts back into live keys)
 - Replaces: [2026-11-01-1520-no-browser-tests-in-ci](2026-11-01-1520-no-browser-tests-in-ci.md), the sentence "Browser specs under `tests/e2e/` stay and run locally"
 
 1. **No browser tests anywhere.** CI does not run them (1520), and neither does

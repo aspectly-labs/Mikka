@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { answerModel } from './model.mjs'
+import { fakeLiteLLMRoutes } from './fake-litellm.mjs'
 import { subscriptionPrompt, subscriptionChunks, MVP_SUBSCRIPTION_MODEL } from './subscription.mjs'
 import { MVP_SERVICES, REPOSITORY } from './isolated-env.mjs'
 import { finishMvpResources, indexMvpResource } from './retention.mjs'
@@ -45,6 +46,7 @@ export async function startMvpServices(port = 3191, { routes } = {}) {
   let errors = []
   let pullRequests = []
   const streams = new Map()
+  const litellm = fakeLiteLLMRoutes()
   const observe = item => observations.push({ at: new Date().toISOString(), ...item })
   const server = createServer(async (request, response) => {
     const requestId = `mvp-${randomUUID()}`
@@ -53,6 +55,12 @@ export async function startMvpServices(port = 3191, { routes } = {}) {
     const reply = (value, status = 200) => { response.writeHead(status, { 'content-type': 'application/json', 'x-mvp-request-id': requestId }); response.end(JSON.stringify(value)) }
     try {
       if (routes) { handler = 'extension'; if (await routes(request, response, url)) return; handler = 'route' }
+      // The shared fake LiteLLM (tests/mvp/fake-litellm.mjs) also serves the
+      // mvp suite, so only one scripted model implementation exists.
+      if (url.pathname.startsWith('/litellm/') || url.pathname.startsWith('/deepseek/')) {
+        handler = 'fake_litellm'
+        if (await litellm(request, response, url, { readBody })) return
+      }
       if (url.pathname === '/health') return reply({ ready: true })
       if (url.pathname === '/observations') return reply({ observations, errors, pullRequests: pullRequests.map(pr => ({ number: pr.number, url: pr.html_url, branch: pr.head.ref, draft: pr.draft })) })
       if (url.pathname === '/streaming/scenario' && request.method === 'POST') {

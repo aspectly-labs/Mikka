@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { MVP_SERVICES } from '../../tests/mvp/isolated-env.mjs'
 import { LOCAL_LITELLM_KEY, LOCAL_LITELLM_URL } from './services.mjs'
 import { devLocalMode } from './guard.mjs'
 import { devLocalTarget, installDevLocalTransport } from './transport.mjs'
@@ -28,7 +29,8 @@ test('only GitHub and the explicitly synthetic LiteLLM and Resend go to the loca
   assert.equal(devLocalTarget('https://api.resend.com/emails', { ...local, RESEND_API_KEY: 'mikka-local-outbox' }), 'http://127.0.0.1:3191/resend/emails')
   assert.equal(devLocalTarget('https://api.resend.com/emails', { ...local, RESEND_API_KEY: 're_real' }), null)
   assert.equal(devLocalTarget('https://api.resend.com/domains', { ...local, RESEND_API_KEY: 'mikka-local-outbox' }), null)
-  assert.equal(devLocalTarget('https://api.deepseek.com/v1/chat/completions', local), null)
+  assert.equal(devLocalTarget('https://api.deepseek.com/v1/chat/completions', local), `${MVP_SERVICES}/deepseek/v1/chat/completions`)
+  assert.equal(devLocalTarget('https://api.deepseek.com/v1/chat/completions', { ...local, MIKKA_DEV_REAL_MODELS: '1' }), null)
   assert.equal(devLocalTarget('https://github.com/login/oauth/authorize', local), null)
 })
 
@@ -40,7 +42,14 @@ test('the transport refuses to install outside dev:local and rewrites only match
     await fetch('https://api.github.com/user/4242')
     await fetch('https://api.deepseek.com/v1/models')
   } finally { restore() }
-  assert.deepEqual(seen, ['http://127.0.0.1:3191/github/user/4242', 'https://api.deepseek.com/v1/models'])
+  assert.deepEqual(seen, ['http://127.0.0.1:3191/github/user/4242', 'http://127.0.0.1:3191/deepseek/v1/models'])
+
+  const liveSeen = []
+  const restoreLive = installDevLocalTransport({ ...local, MIKKA_DEV_REAL_MODELS: '1' }, async request => { liveSeen.push(request.url); return new Response('ok') })
+  try {
+    await fetch('https://api.deepseek.com/v1/models')
+  } finally { restoreLive() }
+  assert.deepEqual(liveSeen, ['https://api.deepseek.com/v1/models'])
 })
 
 test('live acceptance blocks V4 Pro before any provider or model-selection request leaves the process', async () => {

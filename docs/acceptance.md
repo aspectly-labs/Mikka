@@ -126,11 +126,11 @@ not prove the other.
 
 The DeepSeek/API-key leg never gates a merge or acceptance. Do not send paid
 API-key prompts to retry a blocked leg or substitute Pro, another provider or
-another model. The existing `test:local-loop` driver still requires a real
-DeepSeek key and asserts Flash selection, so its local-flow results do not
-establish either subscription path. Record that implementation gap without
-making it an additional gate. The built-in Decision judge is separate from
-these user-selectable coding models and keeps its configured model.
+another model. The `test:local-loop` driver fakes the model at the LiteLLM
+boundary by default (`MIKKA_DEV_REAL_MODELS=1` opts back into a live key), so
+its local-flow results do not establish either subscription path. The
+built-in Decision judge is separate from these user-selectable coding models
+and keeps its configured model.
 
 ## Personal Workspace acceptance
 

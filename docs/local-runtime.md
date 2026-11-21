@@ -146,7 +146,7 @@ What is fake and what is real:
 | Repository | A local bare `file://` origin seeded with `README.md` |
 | GitHub identity | Synthetic: every local account is linked to GitHub account `4242`, which the fake lets write |
 | Model, a workspace's own key (Settings › 模型与订阅) | Uses the configured LiteLLM; without one, the synthetic LiteLLM fixture answers without a provider request. Saving it needs `WORKSPACE_SECRETS_KEY`; without one, dev:local creates a random local key in `.cache/dev-local/workspace-secrets-key` (git-ignored, mode 0600) and reuses it, so saved keys still open after a restart |
-| The DeepSeek key, added automatically | `DEEPSEEK_API_KEY` comes from the environment or the named Infisical `dev:/vercel` secret. Use the configured `INFISICAL_PROJECT_ID` (or `MIKKA_DEV_INFISICAL_PROJECT`) with an existing `INFISICAL_TOKEN` or Universal Auth identity. The managed HTTP proxy is preserved. Setup runs immediately, then reconciles every 5 seconds; existing keys are reused, new Bots and workspaces receive the Flash choice, and individual failures back off from 30 seconds to 5 minutes. The key stays in process memory and sealed application storage. Missing Flash models never fall back to another real model. Real requests require a configured `MIKKA_LITELLM_URL` and `MIKKA_LITELLM_MASTER_KEY`; otherwise the scripted substitute answers the model calls. The API-key path never gates a merge or acceptance. |
+| The model key, added automatically | Scripted by default: a placeholder key (`mikka-local-scripted-key`) whose provider `/models` probe the loopback fixture answers, so local-loop needs no real model credential; every model call goes to the fake LiteLLM ([tests/mvp/fake-litellm.mjs](../tests/mvp/fake-litellm.mjs)). `MIKKA_DEV_REAL_MODELS=1` is the explicit off-by-default switch for live acceptance: `DEEPSEEK_API_KEY` then comes from the environment or the named Infisical `dev:/vercel` secret (`INFISICAL_PROJECT_ID` or `MIKKA_DEV_INFISICAL_PROJECT` with an existing `INFISICAL_TOKEN`/Universal Auth identity). Setup runs immediately, then reconciles every 5 seconds; existing keys are reused, new Bots and workspaces receive the Flash choice, and individual failures back off from 30 seconds to 5 minutes. The key stays in process memory and sealed application storage. Missing Flash models never fall back to another real model. The API-key path never gates a merge or acceptance. |
 | Mikka 默认 (`mikka-default`, through LiteLLM) | Without configured LiteLLM, dev:local uses the loopback `/litellm/v1/chat/completions` fixture: it echoes (`Local model: <text>`), `/tool <name> <json>` calls that registered tool for real, and a tool result comes back as JSON. It does not call a real model. |
 | Decisions (`mikka-decision`, through LiteLLM) | The same loopback fixture answers the first choice of each question, `0.5` for a predicate, and marks its LiteLLM-shaped cost/call receipts as synthetic. |
 | Card verification and credit for Mikka 默认 (Stripe) | Every local workspace gets a verification and a $1000 local allowance, checked every 5 seconds |
@@ -159,22 +159,26 @@ What is fake and what is real:
 
 The existing `dev:local` seeder selects an allowed DeepSeek Flash model
 through the workspace's own API key (`scripts/dev-local/seed-model-keys.ts`).
-It prefers a V4.1 Flash entry and also accepts the provider's `deepseek-flash`
-alias. Record the exact returned ID without asserting a version for the alias.
+By default that key is the scripted placeholder and its model list comes from
+the loopback fixture — no real model credential is needed. With
+`MIKKA_DEV_REAL_MODELS=1` the seeder verifies a real key instead and the
+fixture's `api.deepseek.com` rewrite is off. The seeded key prefers a V4.1
+Flash entry and also accepts the provider's `deepseek-flash` alias. Record
+the exact returned ID without asserting a version for the alias.
 Live model acceptance follows the [subscription policy](acceptance.md#live-model-acceptance).
 The DeepSeek/API-key leg never gates a merge or acceptance, and paid retries
 must not be used to unblock it.
 
-The existing development setup uses these settings.
+The live-key path (`MIKKA_DEV_REAL_MODELS=1`) uses these settings.
 
 - The key is `DEEPSEEK_API_KEY` in the Mikka Infisical project, environment
   `dev`, folder `/vercel`. Read it with an existing identity
   ([infisical-cloud.md](infisical-cloud.md)) into the process environment
   only; never write it to a file, a commit, a log or a report.
-- `pnpm dev:local` adds it to every local account and picks DS 4.1 Flash for
-  the Coordinator and the Bots (`scripts/dev-local/seed-model-keys.ts`). Outside
-  dev:local, the same setup uses a DeepSeek key in Settings › 模型与订阅 with
-  an allowed Flash model selected.
+- `pnpm dev:local` adds the key to every local account and picks DS 4.1 Flash
+  for the Coordinator and the Bots (`scripts/dev-local/seed-model-keys.ts`).
+  Outside dev:local, the same setup uses a DeepSeek key in Settings › 模型与订阅
+  with an allowed Flash model selected.
 - All model requests use LiteLLM. Set both `MIKKA_LITELLM_URL` and
   `MIKKA_LITELLM_MASTER_KEY` for a real service. Configure built-in aliases
   and upstream credentials there; user API keys are passed only for their
@@ -228,9 +232,11 @@ real daemon CLI, using Node 24 in cloud Linux. Supply the same loopback
 `*_e2e` database on that local PostgreSQL server, migrates it, bootstraps the
 existing account pool, registers/logs in through normal auth, approves the
 daemon's device login over HTTP and starts `dev:local` on port 3110. It reads
-the development DeepSeek key through the existing Infisical identity and
-does not read local environment credential files or set CI variables. The
-runner still requires a real DeepSeek key and asserts a Flash selection.
+no real model credential by default — the scripted key's Flash selection
+comes from the loopback fixture. `MIKKA_DEV_REAL_MODELS=1` reads the
+development DeepSeek key through the existing Infisical identity for live
+acceptance; it does not read local environment credential files or set CI
+variables.
 This is a remaining harness limitation, so this command does not establish
 Claude Code or Codex subscription acceptance. An unavailable API-key leg
 must not hold a merge or acceptance open.
