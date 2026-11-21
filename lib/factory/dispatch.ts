@@ -107,6 +107,17 @@ export function createFactoryDispatch(pool: Pool, store: ReturnType<typeof creat
       await adapters.freeze(tx,task,queued.runId);
       const { rows: [run] } = await tx.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE',[queued.runId]);
       if (!run || run.userId !== userId || run.issueId !== task.issueId || !(await factoryRunBotMatches(tx, task, run)) || run.agentId !== input.agentId || run.deviceRepoId !== input.deviceRepoId || run.status !== 'queued' || run.stopRequestedAt || !run.agentDefinition) fail('factoryRunMismatch');
+      // #3081: the run's actual place (its device row) and frozen harness must
+      // resolve to a route in the explicit execution matrix. An unmatched
+      // combination refuses the dispatch outright — no substitution and no
+      // silent fallback. The resolved route is frozen on the attempt as its
+      // audit receipt in the same transaction as the run binding.
+      const { rows: [routeDevice] } = run.deviceId
+        ? await tx.query<{ kind: string | null }>('SELECT kind FROM devices WHERE id=$1 AND "ownerId"=$2', [run.deviceId, userId])
+        : { rows: [] as { kind: string | null }[] }
+      const { executionRouteForRun, recordExecutionRoute } = await import('./execution-route')
+      await recordExecutionRoute(tx, { taskId: task.id, attemptId: task.attemptId },
+        executionRouteForRun({ deviceKind: routeDevice?.kind ?? null, harness: typeof run.agentDefinition?.harness === 'string' ? run.agentDefinition.harness : null }))
       const state = await store.apply(userId,binding,binding.attemptId,{action:'bind_run',runId:run.id},tx);
       const result = {...state,runId:run.id as string,replayed:false,binding:factoryBinding(state.task)};
       await tx.query('INSERT INTO factory_events ("taskId","eventId",request,result) VALUES ($1,$2,$3,$4)',[task.id,eventId,JSON.stringify(input),JSON.stringify(result)]);
