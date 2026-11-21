@@ -5923,7 +5923,13 @@
     "notSent": "Not sent",
     "answering": "Replying",
     "noTaker": "No bot took this. @ one by name",
-    "stopped": "Stopped"
+    "stopped": "Stopped",
+    "exchange": {
+      "marker": "{names} — {count} exchange messages",
+      "title": "{names}",
+      "empty": "This exchange has no messages.",
+      "loadError": "The exchange could not be loaded."
+    }
   },
   "DeviceSetup": {
     "title": "Set up {device}",

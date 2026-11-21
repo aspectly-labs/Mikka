@@ -5923,7 +5923,13 @@
     "notSent": "未发送",
     "answering": "正在回复",
     "noTaker": "没有 Bot 接这条，@ 它的名字",
-    "stopped": "已停止"
+    "stopped": "已停止",
+    "exchange": {
+      "marker": "{names} — {count} 条私聊",
+      "title": "{names}",
+      "empty": "这次私聊没有消息。",
+      "loadError": "无法加载这次私聊。"
+    }
   },
   "DeviceSetup": {
     "title": "设置 {device}",
