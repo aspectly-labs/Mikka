@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ActiveAgent } from './active-agents'
-import { activeToWorkers, workersKey, workingAvatars, workingLabel } from './working-status'
+import { activeToWorkers, revisionChanged, workersKey, workingAvatars, workingLabel, workingPollMs, WORKING_POLL_MS } from './working-status'
 
 const agent = (over: Partial<ActiveAgent> = {}): ActiveAgent => ({
   id: 'a1', kind: 'agent', name: 'Agent', avatarUrl: null, startedAt: '2026-01-01T00:00:00Z', state: 'working', runId: 'r1', issueId: null, ...over,
@@ -40,4 +40,18 @@ test('activeToWorkers keeps only working entries with their avatar traits', () =
 test('workersKey is order sensitive and stable', () => {
   assert.equal(workersKey([{ id: 'a', kind: 'agent', name: 'A' }, { id: 'b', kind: 'bot', name: 'B' }]), 'a|b')
   assert.equal(workersKey([]), '')
+})
+
+test('workingPollMs polls only while someone is working, zero otherwise', () => {
+  assert.equal(workingPollMs(undefined), 0)
+  assert.equal(workingPollMs({ agents: [] }), 0)
+  assert.equal(workingPollMs({ agents: [agent({ state: 'waiting_input' })] }), WORKING_POLL_MS)
+  assert.equal(workingPollMs({ agents: [agent(), agent()] }), WORKING_POLL_MS)
+})
+
+test('revisionChanged refetches only on a later live revision, never on first sighting', () => {
+  assert.equal(revisionChanged(undefined, 5), false) // first sighting records, no extra startup read
+  assert.equal(revisionChanged(5, 5), false)
+  assert.equal(revisionChanged(5, 6), true)
+  assert.equal(revisionChanged(5, undefined), false)
 })

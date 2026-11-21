@@ -33,3 +33,19 @@ export function workingAvatars<T>(workers: T[]) {
 export function workersKey(workers: Worker[]) {
   return workers.map(worker => worker.id).join('|')
 }
+
+export const WORKING_POLL_MS = 10_000
+
+/**
+ * The account-wide activity feed cannot be driven by this group's live channel
+ * alone — work finishing in another group bumps no revision here. So the strip
+ * polls, but only while someone is known to be working: idle chats read nothing.
+ */
+export function workingPollMs(page: { agents: ActiveAgent[] } | undefined): number {
+  return page && page.agents.length > 0 ? WORKING_POLL_MS : 0
+}
+
+/** A live revision the strip has not seen before asks for a refetch; the first sighting only records. */
+export function revisionChanged(last: number | undefined, revision: number | undefined): boolean {
+  return revision !== undefined && last !== undefined && revision !== last
+}

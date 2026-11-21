@@ -5,7 +5,7 @@ import useSWR from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { withBasePath } from '@/lib/base-path'
 import type { ActiveAgent } from '@/lib/active-agents'
-import { activeToWorkers, workersKey, workingAvatars, workingLabel, type Worker } from '@/lib/working-status'
+import { activeToWorkers, revisionChanged, workersKey, workingAvatars, workingLabel, workingPollMs, type Worker } from '@/lib/working-status'
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from '@/components/ui/avatar'
 import { BotAvatar } from '@/components/slots/bot-avatar'
 import { ActionSwapRollText } from '@/components/motion/action-swap-roll'
@@ -30,17 +30,19 @@ function useSettled<T>(value: T, delay: number) {
 }
 
 /** "Who is working" strip above the group composer. Hidden when nobody is working.
- * Polls only after the group's live channel reports a change — an idle group
- * makes zero activity requests (tests/idle-request-budget.json). */
+ * The endpoint is account-wide while the live channel is this group's, so the
+ * strip also polls — but only while someone is known to be working: an idle
+ * group makes zero activity requests (tests/idle-request-budget.json). */
 export function WorkingStatus({ revision }: { revision: number | undefined }) {
   const t = useTranslations('GroupChat.workingStatus')
-  const { data, mutate } = useSWR('/api/agent/sessions/active', fetchActiveAgents, { revalidateOnFocus: false })
+  const { data, mutate } = useSWR('/api/agent/sessions/active', fetchActiveAgents, {
+    refreshInterval: latest => workingPollMs(latest),
+    revalidateOnFocus: false,
+  })
   const last = useRef(revision)
   useEffect(() => {
-    if (revision !== undefined && revision !== last.current) {
-      last.current = revision
-      void mutate()
-    }
+    if (revisionChanged(last.current, revision)) void mutate()
+    if (revision !== undefined) last.current = revision
   }, [revision, mutate])
   const workers = useMemo<Worker[]>(() => activeToWorkers(data?.agents), [data])
   const settled = useSettled(workers, COALESCE_MS)
