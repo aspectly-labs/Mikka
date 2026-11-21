@@ -8,20 +8,63 @@
   "observed": {
     "worker_scripts_total": 101,
     "worker_families": {
-      "mikka-api": {"prod": 10, "staging": 14, "model": "release-per-worker, ingress worker + container application per release"},
-      "mikka-app-release": {"prod": 20, "staging": 12, "model": "release-per-worker (web/hybrid releases)"},
-      "mikka-eve": {"prod": 9, "staging": 2, "notes": "Eve runtime workers; mikka-eve-relay-prod/staging front the Oracle Eve relay"},
-      "mikka-business-world": {"prod": 1, "staging": 1},
-      "mikka-eve-world": {"prod": 1, "staging": 1},
-      "mikka-ci": {"prod": 1, "staging": 1},
-      "mikka-cloud-services": {"prod": 1, "staging": 1},
-      "mikka-task-sandbox": {"prod": 1, "staging": 1},
-      "mikka-litellm": {"prod": 1, "staging": 1},
-      "mikka-credential-broker": {"prod": 1, "preview": 1},
-      "mikka-credential-identity": {"prod": 1, "preview": 1},
-      "mikka-device-gateway": {"prod": 1},
-      "mikka-suggestions-cron": {"prod": 1},
-      "mikka-linear-sync": {"prod": 1, "preview": 1},
+      "mikka-api": {
+        "prod": 10,
+        "staging": 14,
+        "model": "release-per-worker, ingress worker + container application per release"
+      },
+      "mikka-app-release": {
+        "prod": 20,
+        "staging": 12,
+        "model": "release-per-worker (web/hybrid releases)"
+      },
+      "mikka-eve": {
+        "prod": 9,
+        "staging": 2,
+        "notes": "Eve runtime workers; mikka-eve-candidate is the CF container+DO host (never idles by code); mikka-eve-relay-* front the relay path"
+      },
+      "mikka-business-world": {
+        "prod": 1,
+        "staging": 1
+      },
+      "mikka-eve-world": {
+        "prod": 1,
+        "staging": 1
+      },
+      "mikka-ci": {
+        "prod": 1,
+        "staging": 1
+      },
+      "mikka-cloud-services": {
+        "prod": 1,
+        "staging": 1
+      },
+      "mikka-task-sandbox": {
+        "prod": 1,
+        "staging": 1
+      },
+      "mikka-litellm": {
+        "prod": 1,
+        "staging": 1
+      },
+      "mikka-credential-broker": {
+        "prod": 1,
+        "preview": 1
+      },
+      "mikka-credential-identity": {
+        "prod": 1,
+        "preview": 1
+      },
+      "mikka-device-gateway": {
+        "prod": 1
+      },
+      "mikka-suggestions-cron": {
+        "prod": 1
+      },
+      "mikka-linear-sync": {
+        "prod": 1,
+        "preview": 1
+      },
       "other_singletons": 14
     },
     "container_applications": {
@@ -46,7 +89,7 @@
         "LiteLlm (mikka-litellm*)": "sleepAfter='5m' (cloudflare/litellm/worker.mjs:10) — sleeps when idle",
         "mikka-task-sandbox / mikka-credential-broker": "0 instances at snapshot — already idle-zero",
         "mikka-cloud-services": "UNVERIFIED — container class source lives in the service repo, not this one",
-        "eve-runtime host (Oracle-side)": "onActivityExpired(){} no-op + onStop auto-restart (cloudflare/eve-runtime/src/index.mjs) — genuinely never idles; not a CF container app"
+        "eve-runtime host (CF container DO)": "onActivityExpired(){} no-op + onStop auto-restart (cloudflare/eve-runtime/src/index.mjs); deployed as CF worker + EveRuntime DO + container (cloudflare/eve-runtime/wrangler.jsonc) — genuinely never idles"
       }
     },
     "durable_object_namespaces": 20,
@@ -54,7 +97,7 @@
       "total": 19,
       "ownership_patterns": [
         "^mikka-business-world(-staging)?-(events|dead)$",
-        "^mikka-ci(-staging)?-[0-9a-f]{20}-(events|dead)$",
+        "^mikka-ci(-staging)?-[0-9a-f]{20,40}-(events|dead)$",
         "^mikka-cloud-services-outbox(-staging)?(-dlq)?$",
         "^mikka-eve-world(-staging)?-(events|control|dead)$",
         "^mikka-marketing-visits-48h$"
