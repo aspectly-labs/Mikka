@@ -27,7 +27,7 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
   const [actError, setActError] = useState<string | null>(null)
   const [withdrawing, setWithdrawing] = useState<TeamSkillEntry | null>(null)
 
-  const act = (entry: TeamSkillEntry, operation: 'approve' | 'withdraw') => () => {
+  const act = (entry: TeamSkillEntry, operation: 'approve' | 'withdraw') => {
     setActing(entry.versionId); setActError(null)
     void reviewTeamSkill(workspaceId!, { versionId: entry.versionId, sha256: entry.artifact.sha256, operation })
       .then(() => { setWithdrawing(null); return mutate() })
@@ -52,7 +52,7 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
       {admin && <div className="flex items-center gap-2">
         {actError === entry.versionId && <span className="text-xs text-destructive">{t('actError')}</span>}
         {entry.status === 'pending' && <Button variant="secondary" size="sm" disabled={acting !== null}
-          onClick={act(entry, 'approve')}>{t('approve')}</Button>}
+          onClick={() => act(entry, 'approve')}>{t('approve')}</Button>}
         {entry.status !== 'withdrawn' && <Button variant="ghost" size="sm" disabled={acting !== null}
           onClick={() => setWithdrawing(entry)}>{t('withdraw')}</Button>}
       </div>}
@@ -64,7 +64,7 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
       <AlertDialogDescription>{t('withdrawBody')}</AlertDialogDescription>
       <AlertDialogFooter>
         <AlertDialogCancel disabled={acting !== null}>{t('cancel')}</AlertDialogCancel>
-        <AlertDialogAction disabled={acting !== null} onClick={() => { const entry = withdrawing; if (entry) act(entry, 'withdraw')() }}>{t('withdraw')}</AlertDialogAction>
+        <AlertDialogAction disabled={acting !== null} onClick={() => { const entry = withdrawing; if (entry) act(entry, 'withdraw') }}>{t('withdraw')}</AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>
