@@ -66,6 +66,26 @@ test('native failed outcomes preserve a closed provider code without publishing 
   assert.equal(JSON.stringify(messages).includes('Private provider diagnostic'),false)
 })
 
+test('a hook failure surfaces the hook\'s coded cause and keeps the turn\'s error reference (#3028)',()=>{
+  const settle=(data:object,line:number)=>({type:'turn.settled',data,meta:{position:{line,index:0},at:'2026-11-11T00:00:01Z',endOfLine:true}})
+  const coded=foldEvents(emptySessionView(),[
+    {type:'turn.started',data:{turnId:'turn_hooked',cause:{deliveryId:'delivery_hooked'},follows:null},meta:{position:{line:0,index:0},at:'2026-11-11T00:00:00Z',endOfLine:true}},
+    settle({turnId:'turn_hooked',outcome:'failed',error:{code:'HOOK_FAILED',message:'Hook "turn.started" failed: subscription_model_unavailable',details:{errorId:'err_support_reference'}}},1),
+  ])
+  const messages=projectEveTurn(coded,'wrun_fixture','turn_hooked','failed')
+  assert.equal(messages[0].mikkaFailure,'subscription_model_unavailable')
+  assert.equal(messages[0].mikkaFailureRef,'err_support_reference')
+
+  const opaque=foldEvents(emptySessionView(),[
+    {type:'turn.started',data:{turnId:'turn_opaque',cause:{deliveryId:'delivery_opaque'},follows:null},meta:{position:{line:0,index:0},at:'2026-11-11T00:00:00Z',endOfLine:true}},
+    settle({turnId:'turn_opaque',outcome:'failed',error:{code:'HOOK_FAILED',message:'Hook "turn.started" failed: cannot read properties of undefined',details:{errorId:'err_opaque'}}},1),
+  ])
+  const bare=projectEveTurn(opaque,'wrun_fixture','turn_opaque','failed')
+  assert.equal(bare[0].mikkaFailure,'HOOK_FAILED')
+  assert.equal(bare[0].mikkaFailureRef,'err_opaque')
+  assert.equal(JSON.stringify(bare).includes('cannot read properties'),false)
+})
+
 test('a cancelled turn keeps published interrupted text for display without importing it as model history', async () => {
   const { stoppedTurnDisplay } = await import('./projection')
   const sessionId = 'wrun_stop', turnId = 'turn_1'

@@ -17,11 +17,14 @@ test('a subscription refusal maps to its notice, never the raw step error', () =
   assert.equal(subscriptionRefusal('invalid_credential_bundle'), 'reconnect')
   // A cloud computer whose CLI did not report the run's model (the hosted runner's own check).
   assert.equal(subscriptionRefusal('subscription_model_not_reported'), 'modelNotReported')
+  // No usable model for the session, surfaced through a hook's wrapped error (#3028).
+  assert.equal(subscriptionRefusal('subscription_model_unavailable'), 'modelRequired')
+  assert.equal(subscriptionRefusal('Hook "turn.started" failed: subscription_model_unavailable'), 'modelRequired')
 })
 
 test('recovery follows the cause rather than retrying a disconnected account', () => {
   for (const notice of ['retry', 'rateLimited', 'quotaChecking'] as const) assert.equal(subscriptionRecovery(notice), 'retry')
-  for (const notice of ['reconnect', 'unavailable', 'modelNotReported'] as const) assert.equal(subscriptionRecovery(notice), 'settings')
+  for (const notice of ['reconnect', 'unavailable', 'modelNotReported', 'modelRequired'] as const) assert.equal(subscriptionRecovery(notice), 'settings')
   for (const notice of ['selectionChanged', 'runtimeUnavailable', 'accessDenied', 'modelRejected'] as const) assert.equal(subscriptionRecovery(notice), 'model')
 })
 
