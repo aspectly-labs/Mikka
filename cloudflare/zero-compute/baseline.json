@@ -1,15 +1,16 @@
 {
   "kind": "mikka-cf0-baseline",
-  "version": 1,
+  "version": 2,
   "evidence_at": "2026-11-21T22:40:00Z",
   "account_id": "d8f6630c7869111a5139bc5ed4d24ace",
   "source": "Cloudflare API (read-only): workers/scripts, workers/domains, workers/durable_objects/namespaces, queues, containers/applications + instances-v2",
+  "privacy": "exact per-release instance names/placements are intentionally NOT enumerated here — company-hosted operations are private (AGENTS.md); ownership is asserted by naming patterns + counts",
   "observed": {
     "worker_scripts_total": 101,
     "worker_families": {
       "mikka-api": {"prod": 10, "staging": 14, "model": "release-per-worker, ingress worker + container application per release"},
       "mikka-app-release": {"prod": 20, "staging": 12, "model": "release-per-worker (web/hybrid releases)"},
-      "mikka-eve": {"prod": 9, "staging": 2, "notes": "Eve runtime workers; mikka-eve-relay-prod / mikka-eve-relay-staging are the Oracle Eve relay pair"},
+      "mikka-eve": {"prod": 9, "staging": 2, "notes": "Eve runtime workers; mikka-eve-relay-prod/staging front the Oracle Eve relay"},
       "mikka-business-world": {"prod": 1, "staging": 1},
       "mikka-eve-world": {"prod": 1, "staging": 1},
       "mikka-ci": {"prod": 1, "staging": 1},
@@ -21,66 +22,44 @@
       "mikka-device-gateway": {"prod": 1},
       "mikka-suggestions-cron": {"prod": 1},
       "mikka-linear-sync": {"prod": 1, "preview": 1},
-      "singletons": ["mikka-app-gateway", "mikka-cloud", "mikka-hosted-ui", "mikka-marketing", "mikka-marketing-staging", "mikka-marketing-candidate-8b7a7b29b7c6", "mikka-legacy-301-0a155105e8ca", "aspectlylabs-proxy", "orvilo-auth", "orvilo-auth-qa-permission", "orvilo-share-preview", "orvilo-workbench", "orvilo-workbench-preview"]
+      "other_singletons": 14
     },
-    "container_applications_total": 30,
-    "container_applications_with_running_instances": [
-      {"app": "mikka-api-9bbe245ca19d-44834900850-1-businessapi", "env": "prod", "instances": 1, "location": "iah01/ENAM"},
-      {"app": "mikka-api-514b921155ad-44716198689-1-businessapi", "env": "prod", "instances": 1},
-      {"app": "mikka-api-b53e8f369ff2-44044113013-2-businessapi", "env": "prod", "instances": 1, "location": "sjc07/WNAM"},
-      {"app": "mikka-api-2f673b389adc-44023934484-2-businessapi", "env": "prod", "instances": 1},
-      {"app": "mikka-api-9a655d49e2ef-43951706221-1-businessapi", "env": "prod", "instances": 1},
-      {"app": "mikka-api-3f7eaa6042d0-43798137072-6-businessapi", "env": "prod", "instances": 1, "location": "pdx03/WNAM"},
-      {"app": "mikka-api-d59c85cb321b-43659450248-1-businessapi", "env": "prod", "instances": 1},
-      {"app": "mikka-api-ac9013c6d7e1-43574093174-1-businessapi", "env": "prod", "instances": 1},
-      {"app": "mikka-api-8a079f179722-43403712785-1-businessapi", "env": "prod", "instances": 1, "location": "dfw11/WNAM"},
-      {"app": "mikka-api-603d1d95f026-44824274619-1-businessapi", "env": "prod", "instances": 0},
-      {"app": "mikka-api-staging-9bbe245ca19d-44834900850-1-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-603d1d95f026-44824274619-1-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-514b921155ad-44716198689-1-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-db3a09d802a6-44082264453-1-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-b53e8f369ff2-44044113013-2-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-b53e8f369ff2-44044113013-1-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-2f673b389adc-44023934484-2-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-9a655d49e2ef-43951706221-1-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-3f7eaa6042d0-43798137072-6-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-api-staging-d59c85cb321b-43659450248-1-businessapi", "env": "staging", "instances": 1},
-      {"app": "mikka-litellm", "env": "prod", "instances": 1},
-      {"app": "mikka-litellm-staging", "env": "staging", "instances": 1},
-      {"app": "mikka-cloud-services-cloudservices", "env": "prod", "instances": 1, "location": "sjc01/WNAM"},
-      {"app": "mikka-api-staging-ac9013c6d7e1-43574093174-1-businessapi", "env": "staging", "instances": 0},
-      {"app": "mikka-api-staging-ae2060e75032-43527060735-1-businessapi", "env": "staging", "instances": 0},
-      {"app": "mikka-api-staging-8a079f179722-43403712785-1-businessapi", "env": "staging", "instances": 0},
-      {"app": "mikka-api-staging-d8b0f3ff8dd4-43368604374-1-businessapi", "env": "staging", "instances": 0},
-      {"app": "mikka-task-sandbox", "env": "prod", "instances": 0},
-      {"app": "mikka-task-sandbox-staging", "env": "staging", "instances": 0},
-      {"app": "mikka-credential-broker-credentialbrokerruntime", "env": "prod", "instances": 0},
-      {"app": "mikka-credential-broker-preview-credentialbrokerruntime", "env": "preview", "instances": 0},
-      {"app": "mikka-cloud-services-staging-cloudservices", "env": "staging", "instances": 0}
-    ],
-    "durable_object_namespaces": [
-      "mikka-device-gateway_DeviceSession",
-      "mikka-cloud-services_CloudServices", "mikka-cloud-services-staging_CloudServices",
-      "mikka-credential-broker_CredentialBrokerRuntime", "mikka-credential-broker-preview_CredentialBrokerRuntime",
-      "mikka-task-sandbox_TaskMachine", "mikka-task-sandbox_TaskCapacity",
-      "mikka-task-sandbox-staging_TaskMachine", "mikka-task-sandbox-staging_TaskCapacity",
-      "mikka-business-world_EveWorldAuthority", "mikka-business-world_EveWorldStream", "mikka-business-world_EveQueueClaim",
-      "mikka-business-world-staging_EveWorldAuthority", "mikka-business-world-staging_EveWorldStream", "mikka-business-world-staging_EveQueueClaim",
-      "mikka-eve-world_EveWorldAuthority", "mikka-eve-world_EveQueueClaim",
-      "mikka-eve-world-staging_EveWorldAuthority", "mikka-eve-world-staging_EveWorldStream", "mikka-eve-world-staging_EveQueueClaim"
-    ],
-    "queues": [
-      "mikka-business-world-events", "mikka-business-world-dead",
-      "mikka-business-world-staging-events", "mikka-business-world-staging-dead",
-      "mikka-ci-19d64223fdf004d5eb9116a4-events", "mikka-ci-19d64223fdf004d5eb9116a4-dead",
-      "mikka-ci-staging-19d64223fdf004d5eb9116a4-events", "mikka-ci-staging-19d64223fdf004d5eb9116a4-dead",
-      "mikka-cloud-services-outbox", "mikka-cloud-services-outbox-dlq",
-      "mikka-cloud-services-outbox-staging", "mikka-cloud-services-outbox-staging-dlq",
-      "mikka-eve-world-events", "mikka-eve-world-control", "mikka-eve-world-dead",
-      "mikka-eve-world-staging-events", "mikka-eve-world-staging-control", "mikka-eve-world-staging-dead",
-      "mikka-marketing-visits-48h"
-    ],
-    "queue_consumers": "every live events/outbox queue has exactly 1 consumer + 1 producer; dead/dlq queues have none",
-    "always_on_code_evidence": "cloudflare/eve-runtime/src/index.mjs:67 `onActivityExpired() {}` is an intentional no-op — 'Postgres queue workers need the server while no HTTP requests arrive'; onStop() restarts the server unless storage.stopped was set via release-pinned stopForOwner()"
+    "container_applications": {
+      "total_observed": 31,
+      "ownership_patterns": [
+        "^mikka-api(-staging)?-[0-9a-f]{12}-\\d{11}-\\d+-businessapi$",
+        "^mikka-litellm(-staging)?$",
+        "^mikka-task-sandbox(-staging)?$",
+        "^mikka-cloud-services(-staging)?-cloudservices$",
+        "^mikka-credential-broker(-preview)?-credentialbrokerruntime$"
+      ],
+      "warm_instances_at_snapshot": {
+        "mikka-api_prod": 9,
+        "mikka-api_staging": 10,
+        "mikka-litellm_prod": 1,
+        "mikka-litellm_staging": 1,
+        "mikka-cloud-services_prod": 1,
+        "total": 22
+      },
+      "idle_policy": {
+        "BusinessApi (mikka-api-*)": "sleepAfter='5m' (cloudflare/api/ingress/worker.mjs:12) — warm at snapshot does NOT prove always-on",
+        "LiteLlm (mikka-litellm*)": "sleepAfter='5m' (cloudflare/litellm/worker.mjs:10) — sleeps when idle",
+        "mikka-task-sandbox / mikka-credential-broker": "0 instances at snapshot — already idle-zero",
+        "mikka-cloud-services": "UNVERIFIED — container class source lives in the service repo, not this one",
+        "eve-runtime host (Oracle-side)": "onActivityExpired(){} no-op + onStop auto-restart (cloudflare/eve-runtime/src/index.mjs) — genuinely never idles; not a CF container app"
+      }
+    },
+    "durable_object_namespaces": 20,
+    "queues": {
+      "total": 19,
+      "ownership_patterns": [
+        "^mikka-business-world(-staging)?-(events|dead)$",
+        "^mikka-ci(-staging)?-[0-9a-f]{20}-(events|dead)$",
+        "^mikka-cloud-services-outbox(-staging)?(-dlq)?$",
+        "^mikka-eve-world(-staging)?-(events|control|dead)$",
+        "^mikka-marketing-visits-48h$"
+      ],
+      "consumers": "every live events/outbox/control queue has exactly 1 consumer + 1 producer; dead/dlq queues have none — no orphan consumers"
+    }
   }
 }
