@@ -13,8 +13,9 @@ import { usePanelInitialWidth, useWidenToggle } from '@/hooks/use-panel-width'
 import { setGroupLead, writeGroupMember, type GroupMember } from '@/lib/group-messages'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
@@ -58,11 +59,11 @@ function AddMembers({ group, bots, members, open, onOpenChange, onAdded }: { gro
         : choices.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{t('noMoreBots')}</p>
         : <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
           {choices.map(bot => <li key={bot.id}>
-            <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
+            <Label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm font-normal hover:bg-muted">
               <Checkbox checked={picked.includes(bot.id)} onCheckedChange={checked => setPicked(current => checked === true ? [...current, bot.id] : current.filter(id => id !== bot.id))} />
               <BotAvatar id={bot.id} color={bot.color} shape={bot.shape} size="row" still />
               <span className="truncate">{bot.name}</span>
-            </label>
+            </Label>
           </li>)}
         </ul>}
       <DialogFooter>
@@ -96,7 +97,7 @@ export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { gr
   // Each pending removal keeps the group it happened in: navigating groups must not retarget a restore.
   const undoKey = useRef(0)
   const [undos, setUndos] = useState<{ key: number; groupId: string; member: GroupMember }[]>([])
-  const restore = (entry: { key: number; groupId: string; member: GroupMember }) => () => {
+  const restore = (entry: { key: number; groupId: string; member: GroupMember }) => {
     setUndos(list => list.filter(item => item.key !== entry.key))
     const member = entry.member
     const lead = member.lead ? (member.memberType === 'bot' ? { leadBotId: member.id } : { leadAgentId: member.id }) : null
@@ -126,11 +127,11 @@ export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { gr
         <h2 className="max-w-full truncate text-xl font-semibold">{group.title}</h2>
       </div>
       <section ref={scroll} aria-label={label} className="flex min-h-0 flex-col gap-1 overflow-y-auto px-4 pb-4">
-        <GroupHeader action={owner && members ? <Button variant="ghost" size="icon-xs" aria-label={t('addMember')} onClick={() => setAdding(true)}><X className="rotate-45" /></Button> : undefined}>{label}</GroupHeader>
+        <GroupHeader action={owner && members ? <Button variant="ghost" size="icon-xs" aria-label={t('addMember')} onClick={() => setAdding(true)}><Plus /></Button> : undefined}>{label}</GroupHeader>
         {undos.length > 0 && <div className="sticky top-0 z-10 mb-1 flex flex-col gap-1 px-2">
           {undos.map(entry => <div key={entry.key} className="flex items-center justify-between gap-2 rounded-lg bg-muted px-2 py-1.5 text-sm shadow-sm">
             <span className="truncate text-muted-foreground">{t('memberRemoved', { name: entry.member.name })}</span>
-            <Button variant="secondary" size="xs" onClick={restore(entry)}>{t('undo')}</Button>
+            <Button variant="secondary" size="xs" onClick={() => restore(entry)}>{t('undo')}</Button>
           </div>)}
         </div>}
         {error ? <div className="px-2 py-1.5"><InlineLoadError message={t('membersError')} retryLabel={t('retry')} onRetry={() => { void mutate() }} /></div>
