@@ -151,10 +151,13 @@ export function deviceKindToPlace(kind: string | null | undefined): ExecutionPla
  * and frozen harness. The run's stored rows are the authority: a tampered or
  * inconsistent combination is refused, not reinterpreted.
  */
-export function executionRouteForRun(run: { deviceKind?: string | null; harness?: string | null }): ExecutionRoute {
+export function executionRouteForRun(run: { deviceKind?: string | null; harness?: string | null; provider?: string | null }): ExecutionRoute {
   const place = deviceKindToPlace(run.deviceKind)
   if (!place) throw new FactoryError(UNAVAILABLE)
-  return resolveExecutionRoute({ place, harness: run.harness })
+  // #3082: a frozen Eve Factory definition carries the admitted third-party
+  // provider in place of a native harness; the resolver refuses the
+  // combination rather than substituting a native route.
+  return resolveExecutionRoute({ place, harness: run.harness, provider: run.provider })
 }
 
 /**

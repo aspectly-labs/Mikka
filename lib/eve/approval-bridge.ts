@@ -4,7 +4,7 @@ import { isEveApprovalResponder, type ApprovalPrincipal } from './approval-princ
 export { isEveApprovalResponder, type ApprovalPrincipal } from './approval-principal'
 
 export interface ApprovalCall {
-  ownerId:string;botId:string;workspaceId:string;surface:'web'|'slack'
+  ownerId:string;botId:string;workspaceId:string;surface:'web'|'slack'|'factory'
   sessionId:string;turnId:string;callId:string;executionId?:string|null;sourceEventId?:string|null
   name:string;input:unknown
 }

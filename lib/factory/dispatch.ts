@@ -116,8 +116,10 @@ export function createFactoryDispatch(pool: Pool, store: ReturnType<typeof creat
         ? await tx.query<{ kind: string | null }>('SELECT kind FROM devices WHERE id=$1 AND "ownerId"=$2', [run.deviceId, userId])
         : { rows: [] as { kind: string | null }[] }
       const { executionRouteForRun, recordExecutionRoute } = await import('./execution-route')
+      const eveProvider = typeof run.agentDefinition?.provider === 'string' && run.agentDefinition?.executor === 'eve_factory'
+        ? run.agentDefinition.provider : null
       await recordExecutionRoute(tx, { taskId: task.id, attemptId: task.attemptId },
-        executionRouteForRun({ deviceKind: routeDevice?.kind ?? null, harness: typeof run.agentDefinition?.harness === 'string' ? run.agentDefinition.harness : null }))
+        executionRouteForRun({ deviceKind: routeDevice?.kind ?? null, harness: eveProvider ? null : (typeof run.agentDefinition?.harness === 'string' ? run.agentDefinition.harness : null), provider: eveProvider }))
       const state = await store.apply(userId,binding,binding.attemptId,{action:'bind_run',runId:run.id},tx);
       const result = {...state,runId:run.id as string,replayed:false,binding:factoryBinding(state.task)};
       await tx.query('INSERT INTO factory_events ("taskId","eventId",request,result) VALUES ($1,$2,$3,$4)',[task.id,eventId,JSON.stringify(input),JSON.stringify(result)]);
