@@ -6,6 +6,11 @@ const repository = /^v2\/github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+$/i
 export const WORKSPACE_MACHINES = 25
 export const CHECKPOINT_TIME_MS = 60_000
 
+// Wire allowlist mirroring MACHINE_SIZES in lib/cloud-computer/machine-pricing.ts.
+// The API's quota gate decides which sizes may actually start (#3080); the
+// Worker trusts its service binding to mint only provisionable grants.
+const MACHINE_SIZES = new Set(['standard-1', 'standard-2', 'standard-3', 'standard-4', 'standard-4-16'])
+
 // Only the Mikka API service binding may construct this lease after checking the
 // frozen product run. It is never accepted from a browser or an Actions issuer.
 const hex = /^[0-9a-f]{64}$/
@@ -27,9 +32,11 @@ export function machineGrant(input) {
   if (!input || typeof input.ownerId !== 'string' || !input.ownerId || input.ownerId.length > 256 ||
       ![input.workspaceId, input.taskId, input.runId, input.operationId].every(v => typeof v === 'string' && uuid.test(v)) ||
       typeof input.repositoryKey !== 'string' || input.repositoryKey.length > 320 || !repository.test(input.repositoryKey) ||
-      !Number.isSafeInteger(input.expiresAt)) throw new Error('Invalid task machine grant')
+      !Number.isSafeInteger(input.expiresAt) ||
+      (input.size !== undefined && (typeof input.size !== 'string' || !MACHINE_SIZES.has(input.size)))) throw new Error('Invalid task machine grant')
   const { ownerId, workspaceId, taskId, runId, operationId, expiresAt } = input
   return { ownerId, workspaceId, taskId, repositoryKey: input.repositoryKey.toLowerCase(), runId, operationId, expiresAt,
+    ...(input.size === undefined ? {} : {size: input.size}),
     ...(input.requiredCheckpoint === undefined ? {} : {requiredCheckpoint:requiredCheckpoint(input.requiredCheckpoint)}) }
 }
 

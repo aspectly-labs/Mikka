@@ -17,6 +17,8 @@ import { ComputerError } from './store'
 import { RunModelMissingError } from './run-model'
 import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source'
 import { cloudTaskTarget } from './cloud-task-target'
+import { provisionableMachineSize } from '../cloud-computer/machine-pricing'
+import { verifiedMachineQuota } from '../cloud-computer/sponsored-task'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { resolveRunOrigin, type RunOrigin, type RunOriginRef } from '@/lib/run-origin'
@@ -166,9 +168,13 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
           (prior && !earlierPlacement) || (earlierPlacement && (earlierPlacement.ownerId!==actor.userId || earlierPlacement.workspaceId!==actor.workspaceId ||
              earlierPlacement.taskId!==input.issueId || earlierPlacement.botId!==input.botId || earlierPlacement.repositoryKey!==effectiveExecution.repositoryKey)))
         throw new ComputerError(409,'Cloudflare coding task unavailable')
+      // The quota gate (#3080): the frozen placement records what actually starts
+      // and is billed, with an over-limit request and its reason alongside.
+      const requestedSize = settings.machineSize ?? effectiveExecution.environment?.defaultMachineSize
+      const provision = requestedSize ? provisionableMachineSize(requestedSize, verifiedMachineQuota()) : null
       frozen.taskMachine=earlierPlacement ?? {provider:'cloudflare',payer:'mikka',ownerId:actor.userId,workspaceId:actor.workspaceId,
         taskId:input.issueId,botId:input.botId,repositoryKey:effectiveExecution.repositoryKey,requestEventId:input.sourceEventId!,
-        ...(settings.machineSize ?? effectiveExecution.environment?.defaultMachineSize ? { size: settings.machineSize ?? effectiveExecution.environment!.defaultMachineSize! } : {})}
+        ...(provision ? { size: provision.size, ...(provision.adjusted ? { requestedSize: provision.requested, sizeReason: provision.adjusted } : {}) } : {})}
     }
     frozen.definitionDigest = workerDefinitionDigest(frozen)
     frozen.executionIdentity = await freezeExecutionIdentity(client, { userId: actor.userId, botId: runBotId, deviceId: target.deviceId, agentDefinition: frozen }, undefined, actor.workspaceId)

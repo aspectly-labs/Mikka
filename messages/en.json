@@ -3708,7 +3708,8 @@
       "approveSetup": "Run this setup when a new worktree starts",
       "machineSize": "Default machine size",
       "machineSizeDefault": "Mikka default",
-      "machineSizeOption": "{vcpu} vCPU · {gib} GiB"
+      "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
+      "machineSizeQuotaGated": "pending provider quota"
     },
     "threadTitles": {
       "title": "Thread titles",
@@ -8768,6 +8769,7 @@
       "machineSize": "Machine size",
       "machineSizeDefault": "Environment default",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
+      "machineSizeQuotaGated": "pending provider quota",
       "pin": "Pin each run’s thread",
       "more": "More",
       "duplicateTo": "Duplicate to",

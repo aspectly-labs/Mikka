@@ -3708,7 +3708,8 @@
       "approveSetup": "新工作树启动时运行这些准备步骤",
       "machineSize": "默认机器规格",
       "machineSizeDefault": "Mikka 默认",
-      "machineSizeOption": "{vcpu} vCPU · {gib} GiB"
+      "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
+      "machineSizeQuotaGated": "待提供商配额"
     },
     "threadTitles": {
       "title": "线程标题",
@@ -8768,6 +8769,7 @@
       "machineSize": "机器规格",
       "machineSizeDefault": "按环境默认",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
+      "machineSizeQuotaGated": "待提供商配额",
       "pin": "置顶每次运行的线程",
       "more": "更多",
       "duplicateTo": "复制到",

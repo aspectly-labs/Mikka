@@ -71,7 +71,9 @@ export class TaskMachine extends DurableObject {
   async startImage(run) {
     const container = this.ctx.container
     if (!container) throw new Error('Task container unavailable')
-    await startTaskImage(container, { image: container.images.task, instance: 'standard-3',
+    // The grant's size is the billed instance type the admission recorded
+    // (#3080). Older grants without one keep the default standard-3.
+    await startTaskImage(container, { image: container.images.task, instance: run.grant.size ?? 'standard-3',
       enableInternet: this.env.NATIVE_TASK_EGRESS === 'direct',
       // The prepaid lease, renewed in place, decides when it stops; never a fixed run length.
       entrypoint: ['sleep', 'infinity'] }, this.idleLimit(run))
