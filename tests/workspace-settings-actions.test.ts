@@ -62,7 +62,10 @@ before(async () => {
         } }
       } }
     },
-  } } })
+  },
+  // task-identity-store reaches this name transitively; settings tests never hit the raw pool.
+  workspacePool: { query: () => { throw new Error('Unexpected raw workspace read') } },
+  } })
   mock.module('@/lib/workspace-admin/general', { namedExports: {
     updateWorkspaceGeneral: respond('updateWorkspaceGeneral', { id: actor.workspaceId, name: 'New', slug: 'new', icon: null }),
     readWorkspaceGeneral: async (...args: unknown[]) => { calls.push(['readWorkspaceGeneral', ...args]); return { id: args[1], name: 'Old', slug: 'old', icon: null, canEdit: true, canTransfer: true, personal: false } },
