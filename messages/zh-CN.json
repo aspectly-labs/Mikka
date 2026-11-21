@@ -479,6 +479,7 @@
     "retryIn": "{seconds} 秒后可重试",
     "verifyLinkInvalid": "验证链接无效、已过期或已使用。如邮箱尚未验证，请重新发送。",
     "verifyEmailLink": "验证邮箱或重新发送验证邮件",
+    "retryVerification": "重试人机验证",
     "signupRefusal": {
       "disposableEmail": "不支持临时邮箱，请使用常用邮箱。",
       "signupRateLimited": "注册请求过多，请稍后重试。",
@@ -4237,6 +4238,10 @@
       "cloudCredits": "Mikka Cloud 额度",
       "ownProvider": "自带服务商",
       "hostedUnavailable": "Mikka 额度在这个工作区不可用",
+      "noModelSelected": "未选择模型",
+      "noModelConnections": "没有可用的模型连接",
+      "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
+      "setUpModel": "设置模型",
       "changeModel": "换模型",
       "useMyPoints": "把我的点数用于这个团队",
       "apiKey": "API Key",
@@ -9029,5 +9034,23 @@
     "merge": "合并",
     "mergeAnyway": "仍然合并，{count} 项失败",
     "mergeFailed": "合并没有完成。"
+  },
+  "SettingsRegistry": {
+    "archiveIdleAfterDays": {
+      "label": "归档闲置线程",
+      "keywords": "归档|闲置"
+    },
+    "threadTitleInstructions": {
+      "label": "线程标题指令",
+      "keywords": "标题|指令"
+    },
+    "threadTitleTriggers": {
+      "label": "更新线程标题",
+      "keywords": "标题|拉取请求"
+    },
+    "subagentMaxConcurrent": {
+      "label": "并发子 Agent 数量",
+      "keywords": "子 Agent|并发|限制"
+    }
   }
 }

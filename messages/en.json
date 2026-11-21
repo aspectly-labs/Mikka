@@ -479,6 +479,7 @@
     "retryIn": "Try again in {seconds}s",
     "verifyLinkInvalid": "This verification link is invalid, expired or already used. If your email is not verified yet, send a new link.",
     "verifyEmailLink": "Verify your email or resend the link",
+    "retryVerification": "Retry verification",
     "signupRefusal": {
       "disposableEmail": "Temporary email addresses aren't supported. Please use a regular address.",
       "signupRateLimited": "Too many sign-up attempts. Please try again later.",
@@ -4237,6 +4238,10 @@
       "cloudCredits": "Mikka Cloud credits",
       "ownProvider": "Own provider",
       "hostedUnavailable": "Mikka credits can’t run in this workspace",
+      "noModelSelected": "No model selected",
+      "noModelConnections": "No usable model connections",
+      "noCreditsOrConnections": "No Mikka credits or usable model connections",
+      "setUpModel": "Set up a model",
       "changeModel": "Change model",
       "useMyPoints": "Use my points for this team",
       "apiKey": "API Key",
@@ -9029,5 +9034,23 @@
     "merge": "Merge",
     "mergeAnyway": "Merge anyway, {count} failing",
     "mergeFailed": "Could not merge."
+  },
+  "SettingsRegistry": {
+    "archiveIdleAfterDays": {
+      "label": "Archive idle threads",
+      "keywords": "archive|idle|days"
+    },
+    "threadTitleInstructions": {
+      "label": "Thread title instructions",
+      "keywords": "title|naming"
+    },
+    "threadTitleTriggers": {
+      "label": "Update thread titles",
+      "keywords": "title|pull request|PR"
+    },
+    "subagentMaxConcurrent": {
+      "label": "Concurrent subagents",
+      "keywords": "agent|concurrency|limit"
+    }
   }
 }
