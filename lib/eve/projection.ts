@@ -13,14 +13,14 @@ export function projectEveTurn(view:SessionView,sessionId:string,turnId:string,o
   // cause so refusal recovery names what failed instead of the wrapper (#3028).
   const cause=failure==='HOOK_FAILED' && typeof error?.message==='string' ? /: ([a-zA-Z][a-zA-Z0-9_.:-]{0,127})$/.exec(error.message.trim())?.[1] : undefined
   // The turn's errorId is the support reference for failures no cause explains.
-  const ref=error?.details && typeof error.details==='object' && typeof (error.details as {errorId?:unknown}).errorId==='string' ? (error.details as {errorId:string}).errorId.slice(0,64) : undefined
+  const ref=(()=>{const details=(error as {details?:unknown}|undefined)?.details;return details&&typeof details==='object'&&typeof (details as {errorId?:unknown}).errorId==='string'?(details as {errorId:string}).errorId.slice(0,64):undefined})()
   const content = parts(view,{turnId}).flatMap(part => (part.kind === 'text' || part.kind === 'reasoning') && typeof part.value === 'string' ? [{type:part.kind,text:part.value}] : [])
   const tools = calls(view,{turnId,kind:'tool'})
   const toolCalls = tools.map(call => ({ type:'tool-call',toolCallId:call.callId,toolName:call.name,input:call.input ?? {} }))
   const stopped = outcome === 'cancelled' ? { mikkaStopped:true, ...(stoppedText ? {mikkaDisplay:{version:1, kind:'reply', text:stoppedText}} : {}) } : {}
   const output = tools.filter(call => ['completed','failed','cancelled','rejected'].includes(call.state)).map(call => ({type:'tool-result',toolCallId:call.callId,toolName:call.name,output:{type:'json',value:call.output ?? {error:call.error?.code ?? call.state}}}))
   return [
-    {role:'assistant',content:[...content,...toolCalls],mikkaStreamId:eveStreamId(sessionId,turnId),...stopped,...(outcome === 'failed' ? {mikkaFailure:cause ?? failure,...(ref ? {mikkaFailureRef:ref} : {})} : {})},
+    {role:'assistant',content:[...content,...toolCalls],mikkaStreamId:eveStreamId(sessionId,turnId),...stopped,...(outcome === 'failed' ? {mikkaFailure:cause ?? failure,mikkaFailureRef:ref} : {})},
     ...(output.length ? [{role:'tool',content:output}] : []),
   ]
 }
