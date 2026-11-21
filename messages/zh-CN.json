@@ -1056,7 +1056,6 @@
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "安装命令暂不可用",
       "reconnectTitle": "重新连接",
-      "desktopHint": "不想用命令行？下载 Mikka 桌面端，它会自动添加这台电脑。",
       "desktopLink": "下载桌面端"
     },
     "setup": "设置仓库和 Agent",
