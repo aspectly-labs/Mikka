@@ -1,0 +1,37 @@
+name: merge-queue-autopilot
+on:
+  check_suite:
+    types: [completed]
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: merge-queue-autopilot
+  cancel-in-progress: true
+
+# Enables GitHub's "merge when ready" on every open non-draft pull request.
+# With the main merge queue ruleset, a PR enters the queue automatically once
+# its required checks pass. GITHUB_TOKEN cannot enable auto-merge on
+# fork pull requests (read-only token); those stay manual.
+jobs:
+  arm-auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -u
+          prs=$(gh pr list --state open --limit 200 \
+            --json number,isDraft,autoMergeRequest \
+            --jq '.[] | select(.isDraft == false and .autoMergeRequest == null) | .number')
+          for pr in $prs; do
+            if gh pr merge "$pr" --auto --merge 2>/dev/null; then
+              echo "auto-merge armed for #$pr"
+            else
+              echo "skipped #$pr (auto-merge unavailable, e.g. fork)"
+            fi
+          done
