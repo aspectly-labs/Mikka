@@ -64,8 +64,9 @@ export function splitOpenUI(text: string): { prose: string; source: string } | n
   const match = /(^|\n)[ \t]*root[ \t]*=/.exec(whole)
   if (!match) return null
   // A fenced code block that happens to assign `root` in ordinary code is not
-  // a card — only a body that parses as a complete program unwraps.
-  if (whole !== text && !readStatements(whole)?.roots) return null
+  // a card — only a body that parses as a complete program whose root renders
+  // unwraps (`root = 1` or `root = /var/www` stay code).
+  if (whole !== text && !isComponent(parseOpenUI(whole))) return null
   const at = match.index + match[1].length
   const before = whole.slice(0, at)
   if ((before.match(/(^|\n)[ \t]*(```|~~~)/g) ?? []).length % 2) return null

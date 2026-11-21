@@ -79,7 +79,7 @@ test('a reply that is only one fenced block unwraps to its body', () => {
   assert.ok(parseOpenUI(fenced))
   assert.equal(openUIRootCount(fenced), 1)
   // A fenced block of ordinary code stays Markdown: `root =` alone is not a program.
-  for (const code of ['```\nroot = /var/www\n```', '```\nroot = Path(__file__).parent\nx = 1\n```', '```\nno program here\n```']) {
+  for (const code of ['```\nroot = /var/www\n```', '```\nroot = 1\n```', '```\nroot = true\n```', '```\nroot = Path(__file__).parent\nx = 1\n```', '```\nno program here\n```']) {
     assert.equal(isOpenUI(code), false, code)
   }
   // Only a whole-reply fence unwraps: prose around the fence keeps it code.
