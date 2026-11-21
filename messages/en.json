@@ -5464,7 +5464,8 @@
       "add": "Add",
       "removeMember": "Remove {name}",
       "memberRemoved": "Removed {name}",
-      "undo": "Undo"
+      "undo": "Undo",
+      "leadRestoreError": "{name} is back, but their lead role was not restored."
     },
     "suggestions": {
       "title": "Suggestions",
