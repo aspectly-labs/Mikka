@@ -97,12 +97,15 @@
       "total": 19,
       "ownership_patterns": [
         "^mikka-business-world(-staging)?-(events|dead)$",
-        "^mikka-ci(-staging)?-[0-9a-f]{20,40}-(events|dead)$",
+        "^mikka-ci(-staging)?-[0-9a-f]{24}-(events|dead)$",
         "^mikka-cloud-services-outbox(-staging)?(-dlq)?$",
         "^mikka-eve-world(-staging)?-(events|control|dead)$",
         "^mikka-marketing-visits-48h$"
       ],
-      "consumers": "every live events/outbox/control queue has exactly 1 consumer + 1 producer; dead/dlq queues have none — no orphan consumers"
+      "consumers": "every live events/outbox/control queue has exactly 1 consumer + 1 producer; dead/dlq queues have none — no orphan consumers",
+      "id_lengths_observed": {
+        "mikka-ci": 24
+      }
     }
   }
 }
