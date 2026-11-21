@@ -103,6 +103,10 @@ export function useIssueDetailActions({ task, userId, disabled, request, getCurr
       // A deleted task can no longer serve its connections. Its surrounding list still needs the ACK.
       await Promise.all([
         mode === 'delete' ? undefined : mutate(issueKeys.connections(task.id)),
+        // The detail page reads connections through the issue-threads snapshot;
+        // mutating only issueKeys.connections left it stale when the live
+        // gateway (issue_relations pushes) is not configured, e.g. in dev.
+        mode === 'delete' ? undefined : mutate(issueKeys.threads(task.id)),
         updatesCurrent ? undefined : mutate(key => isIssueListKey(key, userId)),
       ])
       if (mode === 'duplicate') onOpen(result.issue.id)

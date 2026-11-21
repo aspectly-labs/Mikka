@@ -27,7 +27,8 @@
     "downloadFailed": "Could not download the attachment.",
     "readFailed": "Could not load attachments.",
     "size": "Choose a nonempty file up to 3 MiB.",
-    "limit": "Up to 10 files per task."
+    "limit": "Up to 10 files per task.",
+    "storage": "The file store is unreachable right now. Try again shortly."
   },
   "Common": {
     "privacyPolicy": "Privacy policy",
