@@ -22,10 +22,20 @@ First-touch acquisition is shared between `aspectlylabs.com` (mikka-web) and
 
 ## Source → signup breakdown (PostHog)
 
-Create a PostHog **Funnel**: `$pageview` (filter `app = mikka-marketing`) →
-`registration_completed` (any order is wrong: require the pageview first).
-Break down by `first_touch_source` (fall back: `utm_source`,
-`$referring_domain`). Exclude `test_account = true`. `registration_completed`
-fires once per user id, so the funnel's conversion is completed signups, not
+The two sites do **not** share a visitor identity: mikka-web's anonymous
+`distinct_id` never reaches the app (the app's SDK uses memory persistence by
+design), and `registration_completed` is keyed to the account id. A cross-event
+funnel cannot join them — the cookie is what carries attribution instead, so
+the breakdown is read off `registration_completed` itself:
+
+- **Trends/Insight** on `registration_completed`, break down by
+  `first_touch_source` (then `first_touch_utm_source`,
+  `first_touch_referrer_domain`). Exclude `test_account = true`. This gives the
+  signups-by-source half with no identity join.
+- Marketing-side volume comes from the marketing `$pageview`s grouped by
+  `utm_source`/`$referring_domain`; it is a separate series, not a joined
+  conversion.
+
+`registration_completed` fires once per user id — completed signups, not
 sign-ins. Historical signups before this change carry no attribution and are
 not backfilled.

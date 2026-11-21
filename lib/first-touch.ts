@@ -14,8 +14,8 @@ export const safeDomain = (value: unknown) =>
   typeof value === 'string' && value.length <= 253 && /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(value)
     ? value.toLowerCase() : null
 
-function safeLanding(pathname: string) {
-  if (pathname === '/') return '/'
+export function safeLanding(pathname: unknown) {
+  if (typeof pathname !== 'string' || pathname === '/') return '/'
   const segments = pathname.split('/').filter(Boolean)
   if (segments.length > 4 || segments.some(part => !/^[a-z][a-z0-9-]{0,32}$/i.test(part))) return '/'
   if (segments.some(part => ['invite', 'token', 'oauth', 'callback', 'reset-password', 'settings', 'w', 'a'].includes(part.toLowerCase()))) return '/'
