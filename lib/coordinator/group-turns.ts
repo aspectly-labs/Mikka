@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { CodedError } from '@mikka/protocol/coded-error'
 import { serverRunFailure } from '@/lib/run-failure-details'
 
 import { hostedBillingScope } from '@/lib/abuse/context'
@@ -73,6 +74,7 @@ export function groupGenerationFailure(error: unknown) {
   for (let current = error, depth = 0; current && typeof current === 'object' && depth < 8 && !seen.has(current); depth++) {
     seen.add(current)
     const value = current as { name?: string; statusCode?: number; cause?: unknown }
+    if (value instanceof CodedError) return value.code
     if (value.name === 'TimeoutError') return 'generation_timeout'
     if (value.name === 'AbortError') return 'generation_aborted'
     if (value.statusCode === 401 || value.statusCode === 403) return 'generation_authentication'
