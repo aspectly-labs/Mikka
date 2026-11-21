@@ -341,14 +341,14 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     // Holding the Bot's desktop holds only work on that desktop. A repository task on its own task
     // machine (no desktop) and a computer task on its own thread machine's desktop are neither.
     const repositoryThread = await onThreadMachine(allowedRepository.runId)
-    assert.deepEqual(await claimCloudRun(pool, actor, allowedRepository.runId, repositoryThread, new Date(Date.now() + 30000), cloudSubscription, undefined, undefined, false), { botId: bot.id, ownerId: actor.userId, display: ':1', permission: 'deny' })
+    assert.deepEqual(await claimCloudRun(pool, actor, allowedRepository.runId, repositoryThread, new Date(Date.now() + 30000), cloudSubscription, undefined, undefined, false), { botId: bot.id, ownerId: actor.userId, display: ':1', policyVersion: 0, permission: 'deny' })
     await pool.query(`UPDATE agent_runs SET status='running' WHERE id=$1`, [allowedRepository.runId])
     await store.operate(actor, bot.id, 'takeover')
     const hold = (await pool.query('SELECT control,"controlledBy","controlUntil",epoch FROM bot_desktops WHERE "botId"=$1', [bot.id])).rows[0]
     assert.equal(hold.control, 'user')
     assert.equal(hold.controlledBy, actor.userId)
     assert.ok(new Date(hold.controlUntil).getTime() > Date.now())
-    assert.deepEqual(await claimCloudRun(pool, actor, queued.runId, queuedThread, new Date(Date.now() + 30000), cloudSubscription), { botId: bot.id, ownerId: actor.userId, display: ':1', permission: 'allow' }, 'a computer task on its own thread machine claims while the Bot desktop is held')
+    assert.deepEqual(await claimCloudRun(pool, actor, queued.runId, queuedThread, new Date(Date.now() + 30000), cloudSubscription), { botId: bot.id, ownerId: actor.userId, display: ':1', policyVersion: 0, permission: 'allow' }, 'a computer task on its own thread machine claims while the Bot desktop is held')
     await store.operate(actor, bot.id, 'takeover')
     const threadRuns = async () => (await pool.query('SELECT id,status,"pauseReason","resumeStatus" FROM agent_runs WHERE id=ANY($1::uuid[])', [[allowedRepository.runId, queued.runId]])).rows.sort((a, b) => a.id === allowedRepository.runId ? -1 : b.id === allowedRepository.runId ? 1 : 0).map(({ status, pauseReason, resumeStatus }) => ({ status, pauseReason, resumeStatus }))
     const unpaused = [{ status: 'running', pauseReason: null, resumeStatus: null }, { status: 'preparing', pauseReason: null, resumeStatus: null }]
@@ -380,7 +380,7 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     await pool.query('UPDATE devices SET enabled=true WHERE id=$1', [cloudThread])
     const cloudClaims = await Promise.all([claimCloudRun(pool, actor, cloudRun, cloudThread, deadline, cloudSubscription), claimCloudRun(pool, actor, cloudRun, cloudThread, deadline, cloudSubscription)])
     assert.equal(cloudClaims.filter(Boolean).length, 1)
-    assert.deepEqual(cloudClaims.find(Boolean), { botId: bot.id, ownerId: actor.userId, display: ':1', permission: 'allow' })
+    assert.deepEqual(cloudClaims.find(Boolean), { botId: bot.id, ownerId: actor.userId, display: ':1', policyVersion: 0, permission: 'allow' })
     const runId = randomUUID()
     await pool.query('INSERT INTO agent_runs (id,"userId",status,"workspaceId") VALUES ($1,$2,$3,$4)', [runId, actor.userId, 'queued', actor.workspaceId])
     await assert.rejects(bindComputerRun(pool, bob, runId, bobBot.id), { status: 404 })
@@ -526,7 +526,7 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     const allowedRun = randomUUID()
     await pool.query('INSERT INTO agent_runs (id,"userId","agentId",status,"deviceId","workspaceId") VALUES ($1,$2,$3,$4,$5,$6)', [allowedRun, actor.userId, consumer, 'queued', worker.deviceId, actor.workspaceId])
     await bindComputerRun(pool, actor, allowedRun, bot.id)
-    assert.deepEqual(await claimCloudRun(pool, actor, allowedRun, await onThreadMachine(allowedRun), new Date(Date.now() + 30000), cloudSubscription), { botId: bot.id, ownerId: actor.userId, display: ':1', permission: 'allow' })
+    assert.deepEqual(await claimCloudRun(pool, actor, allowedRun, await onThreadMachine(allowedRun), new Date(Date.now() + 30000), cloudSubscription), { botId: bot.id, ownerId: actor.userId, display: ':1', policyVersion: 4, permission: 'allow' })
     const directLocal = randomUUID()
     await pool.query(`INSERT INTO agent_runs (id,"userId","botId","deviceId",status,"machineAuthority","leaseExpiresAt","workspaceId")
       VALUES ($1,$2,$3,$4,'running',true,now()+interval '5 minutes',$5)`, [directLocal, actor.userId, bot.id, deviceId, actor.workspaceId])
