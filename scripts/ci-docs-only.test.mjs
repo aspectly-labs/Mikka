@@ -173,15 +173,22 @@ test('real git diffs retain all fixtures while testing rename, deletion and even
   const packages = ['040000', 'tree', daemon, 'packages']
   const before = git(['commit-tree', root([oldDocs], true, [packages]), '-p', base, '-m', 'daemon fixture'])
   const after = git(['commit-tree', root([oldDocs]), '-p', before, '-m', 'remove hidden daemon fixture'])
-  for (const [name, head, selected] of [['candidate-daemon-deletion', after, true], ['candidate-docs-only', docsHead, false]]) {
+  const ciPolicy = tree([['100644', 'blob', code, 'merge-candidate-paths.json']])
+  const scripts = tree([['040000', 'tree', ciPolicy, 'ci']])
+  const policyHead = git(['commit-tree', root([oldDocs], true, [['040000', 'tree', scripts, 'scripts']]), '-p', base, '-m', 'change the selection policy'])
+  for (const [name, candidateBase, head, selected, full] of [
+    ['candidate-daemon-deletion', before, after, true, false],
+    ['candidate-docs-only', base, docsHead, false, false],
+    ['candidate-policy-change', base, policyHead, true, true],
+  ]) {
     const eventFile = join(dir, `${name}.json`)
     const outputFile = join(dir, `${name}.outputs`)
-    record(`${name}.json`, { merge_group: { base_sha: name === 'candidate-docs-only' ? base : before, head_sha: head } })
+    record(`${name}.json`, { merge_group: { base_sha: candidateBase, head_sha: head } })
     execFileSync(process.execPath, [candidate], { cwd: dir, env: { ...env, GITHUB_EVENT_PATH: eventFile, GITHUB_OUTPUT: outputFile } })
     const output = readFileSync(outputFile, 'utf8').split('\n')
     assert(output.includes(`e2b-byos=${selected}`), name)
     assert(output.includes(`ssh-device-backend=${selected}`), name)
-    assert(output.includes('app-icon=false'), name)
+    assert(output.includes(`app-icon=${full}`), name)
   }
   const unavailable = classify('missing', docsHead)
   record('missing-base.json', { output: unavailable })

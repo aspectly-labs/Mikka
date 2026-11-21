@@ -28,7 +28,7 @@ Use `workflow_dispatch` in the individual workflow where it is available to
 request its evidence before queueing.
 
 Mark a same-repository mobile PR Ready or apply the `mobile-preview` label to
-publish the current PR head to its `pr-<n>` EAS branch. Remove and reapply the
+publish a preview of the current PR to its `pr-<n>` EAS branch. Remove and reapply the
 label to publish a newer head. Production OTA still runs on its main push or
 existing manual dispatch.
 
