@@ -24,8 +24,10 @@ test('billing-scope refusals are their own hosted states, not verification_requi
 
 test('each new refusal code has flat Billing.refusal copy in both locales', () => {
   for (const code of ['billing_scope_missing', 'billing_owner_missing']) {
-    assert.equal(typeof en.Billing.refusal[code], 'string', `en ${code}`)
-    assert.equal(typeof zh.Billing.refusal[code], 'string', `zh ${code}`)
+    for (const copy of [en.Billing.refusal[code], zh.Billing.refusal[code]]) {
+      assert.equal(typeof copy, 'string', `${code}`)
+      assert.ok(!/[.。][^.。]+[.。]/.test(copy), `${code}: a status line names the state only, no next-step sentence (R-40)`)
+    }
     assert.notEqual(en.Billing.refusal[code], zh.Billing.refusal[code], code)
     assert.ok(!/credit|card|积分|信用/i.test(en.Billing.refusal[code] + zh.Billing.refusal[code]), `${code} copy must not blame credits or cards`)
   }
@@ -58,6 +60,23 @@ test('every Go Repo.Fail call carries a cause detail for byos_connections.lastEr
   assert.ok(calls >= 10, `expected the Fail sites, got ${calls}`)
   const repo = source('packages/subscription-worker/repository.go')
   assert.match(repo, /codedText\(code, detail\)/, 'Fail must persist code (detail)')
+  // The column's CHECK accepts the serialized shape; a rejected write is
+  // silently dropped by the worker's callers and loses the failure reason.
+  const check = source('drizzle/20261121120000_byos_last_error_detail.sql')
+  for (const code of ['publication_failed', 'refresh_failed', 'projection_failed', 'acquire_expired']) assert.ok(check.includes(code), `constraint missing ${code}`)
+  assert.ok(check.includes(' \\('), 'constraint must permit the " (detail)" suffix')
+  assert.ok(check.includes('\\))?$'), 'constraint must close the detail suffix')
+  assert.match(check, /~ '\^\(/, 'constraint must keep the bounded code prefix')
+})
+
+test('group turns keep a coded refusal code instead of generation_failed_not_replayed', () => {
+  const turns = source('lib/coordinator/group-turns.ts')
+  assert.match(turns, /if \(value instanceof CodedError\) return value\.code/, 'groupGenerationFailure must pass CodedError codes through')
+})
+
+test('mailbox commit failures keep the caught error as cause, not the cleanup outcome', () => {
+  const mailbox = source('lib/session-mailbox.ts')
+  assert.ok(!mailbox.includes('cause: discard'), 'committed/unconfirmed throws must carry the caught error')
 })
 
 test('dropped-cause allowlist stays empty after the burn-down', async () => {
