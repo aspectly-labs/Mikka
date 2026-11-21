@@ -27,7 +27,7 @@ export async function executeAppToolCall(client: Client, userId: string, call: A
 
 export function appToolDeps(userId: string, botId: string | null, client: Client, signal?:AbortSignal): AppToolDeps {
   return {
-    appAllowed: async toolkit => (await import('@/lib/app-policy/store')).botMayUseApp(botId, toolkit),
+    appAllowed: async toolkit => (await import('@/lib/app-policy/store')).botMayUseApp(botId, toolkit, userId),
     noAuth: toolkit => isNoAuthToolkit(composioToolkitLister(client), toolkit).catch(() => false),
     resolveAccount: (toolkit, selected) => resolveComposioAccount(userId, toolkit, client, kit => chosenComposioDefault(userId, kit), selected),
     listTools: (toolkit, query) => client.tools.getRawComposioTools(query ? { toolkits: [toolkit], search: query, limit: 15 } : { toolkits: [toolkit], limit: 15 }) as Promise<AppTool[]>,
