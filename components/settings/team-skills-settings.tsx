@@ -36,7 +36,7 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
   }
 
   if (!workspaceId) return null
-  if (isLoading) return <SettingsLoading />
+  if (isLoading) return <SettingsLoading label={t('title')} />
   if (error || !data) return <SettingsSaveError message={t('loadError')} retryLabel={common('retry')} onRetry={() => void mutate()} />
   if (!data.length) return <SettingsSection title={t('title')}>
     <SettingRow title={t('empty')} />
