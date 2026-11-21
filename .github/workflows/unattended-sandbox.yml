@@ -2,21 +2,7 @@ name: Unattended sandbox acceptance
 # Pull requests only: the same suite already passed on the PR, and main's
 # CI workflow (ui-policy.yml) still verifies every merged commit.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-    paths:
-      - '.github/workflows/unattended-sandbox.yml'
-      - 'packages/daemon/**'
-      - 'packages/protocol/**'
-      - 'scripts/e2b/**'
-      - 'lib/agent-tool-approval/**'
-      - 'lib/cloud-computer/**'
-      - 'lib/computer/**'
-      - 'lib/credentials/**'
-      - 'components/settings/computer-policy-settings.tsx'
-      - 'tests/e2e/computer-policy-settings.spec.ts'
-      - 'workflows/subagent/**'
-      - 'pnpm-lock.yaml'
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,7 +18,6 @@ env:
 jobs:
   runtime:
     # No Runner allocation until a draft becomes review-ready.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:

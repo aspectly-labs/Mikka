@@ -2,16 +2,7 @@ name: Cloud computer backend
 # Pull requests only: the same suite already passed on the PR, and main's
 # CI workflow (ui-policy.yml) still verifies every merged commit.
 on:
-  pull_request:
-    paths:
-      - 'packages/daemon/**'
-      - 'packages/protocol/**'
-      - 'lib/computer/**'
-      - 'lib/cua/**'
-      - 'lib/cloud-computer/**'
-      - 'app/api/bots/**'
-      - 'scripts/e2b/**'
-      - '.github/workflows/cloud-computer.yml'
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
