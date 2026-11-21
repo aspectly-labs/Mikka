@@ -45,7 +45,8 @@ export function workingPollMs(page: { agents: ActiveAgent[] } | undefined): numb
   return page && page.agents.length > 0 ? WORKING_POLL_MS : 0
 }
 
-/** A live revision the strip has not seen before asks for a refetch; the first sighting only records. */
+/** A live revision the strip has not seen before asks for a refetch, the first sighting included:
+ * a bot may start between the mount read and the first group history read, and no later event reveals it. */
 export function revisionChanged(last: number | undefined, revision: number | undefined): boolean {
-  return revision !== undefined && last !== undefined && revision !== last
+  return revision !== undefined && last !== revision
 }

@@ -49,8 +49,8 @@ test('workingPollMs polls only while someone is working, zero otherwise', () => 
   assert.equal(workingPollMs({ agents: [agent(), agent()] }), WORKING_POLL_MS)
 })
 
-test('revisionChanged refetches only on a later live revision, never on first sighting', () => {
-  assert.equal(revisionChanged(undefined, 5), false) // first sighting records, no extra startup read
+test('revisionChanged refetches on first sighting and later revisions', () => {
+  assert.equal(revisionChanged(undefined, 5), true) // a bot may have started between the mount read and the first revision
   assert.equal(revisionChanged(5, 5), false)
   assert.equal(revisionChanged(5, 6), true)
   assert.equal(revisionChanged(5, undefined), false)
