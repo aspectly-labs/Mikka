@@ -196,11 +196,17 @@ test('store lists every Composio toolkit but local ones and own integrations, in
   await assertCatalogToolkit(async () => pages[0], 'dev_app', 'managed', async () => verified)
   let patchCheck = 0
   assert.equal((await listStoreCatalog(async () => pages[Math.min(patchCheck++, 1)])).apps.find(app => app.id === 'dev_app')!.connect, 'managed')
+  // The detail endpoint can name schemes only inside auth_config_details — same
+  // fallback the app page uses, so a detail-only DCR toolkit still admits.
+  resetStoreCatalogCache()
+  await assertCatalogToolkit(async () => pages[0], 'dev_app', 'managed', async () => ({ slug: 'dev_app', name: 'DEV_APP', composio_managed_auth_schemes: [], auth_config_details: [{ mode: 'DCR_OAUTH' }] } as never))
+  resetStoreCatalogCache()
   // Detail disagreeing with the asked kind, a failing detail read, and a slug
   // the store does not carry all stay refusals — never an admit.
   await assert.rejects(assertCatalogToolkit(async () => pages[0], 'dev_app', 'credentials', async () => verified), /integrationToolkitNotSupported/)
   resetStoreCatalogCache()
-  await assert.rejects(assertCatalogToolkit(async () => pages[0], 'dev_app', 'managed', async () => { throw new Error('detail down') }), /integrationToolkitNotSupported/)
+  const providerDown = new Error('detail down')
+  await assert.rejects(assertCatalogToolkit(async () => pages[0], 'dev_app', 'managed', async () => { throw providerDown }), (error: unknown) => error instanceof Error && error.cause === providerDown && /integrationToolkitNotSupported/.test(error.message))
   await assert.rejects(assertCatalogToolkit(async () => pages[0], 'not_in_store', 'managed', async () => verified), /integrationToolkitNotSupported/)
   // A failed read is not kept.
   resetStoreCatalogCache()

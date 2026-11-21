@@ -1308,7 +1308,7 @@
         "PATCH",
         "POST"
       ],
-      "sourceHash": "443f3c86479c8f0b9a3904e10a7ef44fdd8a826b404a2995f11b462b9e5358b3"
+      "sourceHash": "a9428725bb75e8957963cfe7a552c56203f14b50debf8bc1c6033a4a24d9c73a"
     },
     {
       "path": "/mikka/api/integrations/composio/callback",

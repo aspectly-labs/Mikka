@@ -1,6 +1,6 @@
 import { isToolkitSlug, OWN_INTEGRATIONS } from '@/lib/composio-accounts'
 import { PluginError } from './contracts'
-import { connectKind, type ConnectKind } from './connect-kind'
+import { connectKind, detailAuthSchemes, type ConnectKind } from './connect-kind'
 
 // The 插件 store: every Composio toolkit (decisions 2026-10-31 and
 // 2026-11-02), whether it connects in one click (Composio-managed auth), with
@@ -36,6 +36,8 @@ type RawToolkit = {
   no_auth?: boolean | null
   composio_managed_auth_schemes?: string[] | null
   auth_schemes?: string[] | null
+  /** The detail endpoint can name schemes only inside auth_config_details. */
+  auth_config_details?: unknown
   meta?: { description?: string | null; logo?: string | null; created_at?: string | null; categories?: { id?: string | null; name?: string | null }[] | null } | null
 }
 type RawPage = { items: RawToolkit[]; next_cursor?: string | null }
@@ -139,10 +141,12 @@ export function composioToolkitRetriever(client: { getClient: () => { toolkits: 
   return slug => client.getClient().toolkits.retrieve(slug, undefined, { signal: AbortSignal.timeout(10_000) }) as Promise<RawToolkit>
 }
 
-/** A detail-verified kind is kept on the cached entry so the store and the admission check agree until the next list read. */
+/** A detail-verified kind is kept on the cached entry so the store and the admission check agree until the next list read. A failed list read is still not kept. */
 function patchCachedConnect(id: string, kind: ConnectKind) {
   if (!cached) return
-  cached = { at: cached.at, value: cached.value.then(catalog => ({ ...catalog, apps: catalog.apps.map(app => app.id === id ? { ...app, connect: kind } : app) })) }
+  const entry = { at: cached.at, value: cached.value.then(catalog => ({ ...catalog, apps: catalog.apps.map(app => app.id === id ? { ...app, connect: kind } : app) })) }
+  cached = entry
+  entry.value.catch(() => { if (cached === entry) cached = null })
 }
 
 /**
@@ -157,8 +161,11 @@ export async function assertCatalogToolkit(list: ToolkitLister, id: string, kind
   if (app?.connect === kind) return
   if (app && verify) {
     try {
-      if (connectKind(await verify(id)) === kind) { patchCachedConnect(id, kind); return }
-    } catch { /* the detail read failed: refuse below rather than pretend support */ }
+      const detail = await verify(id)
+      if (connectKind({ ...detail, auth_schemes: detail.auth_schemes ?? detailAuthSchemes(detail.auth_config_details) }) === kind) { patchCachedConnect(id, kind); return }
+    } catch (cause) {
+      throw new PluginError('integrationToolkitNotSupported', 400, { cause })
+    }
   }
   throw new PluginError('integrationToolkitNotSupported', 400)
 }
