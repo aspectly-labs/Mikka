@@ -5921,7 +5921,13 @@
     "notSent": "Not sent",
     "answering": "Replying",
     "noTaker": "No bot took this. @ one by name",
-    "stopped": "Stopped"
+    "stopped": "Stopped",
+    "workingStatus": {
+      "one": "{a} is working…",
+      "two": "{a} and {b} are working…",
+      "three": "{a}, {b} and {c} are working…",
+      "many": "{a}, {b} and {count, plural, one {# other} other {# others}} are working…"
+    }
   },
   "DeviceSetup": {
     "title": "Set up {device}",

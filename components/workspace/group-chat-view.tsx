@@ -19,6 +19,7 @@ import { withBasePath } from '@/lib/base-path'
 import { PersonReferences, ThreadReferencePicker } from './thread-references'
 import { VisibleReadEnd } from './visible-read-end'
 import { ThreadHeader } from './thread-header'
+import { WorkingStatus } from './working-status'
 import { ConversationPill } from '@/components/nav/conversation-pill'
 import { GroupAvatar, groupMembersKey, memberAvatar, useGroupMembers } from '@/components/nav/group-avatar'
 import { useLiveKey } from '@/hooks/use-live-key'
@@ -267,6 +268,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       </div>
     </div>
     <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4">
+      <WorkingStatus />
       {referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
       <ChatComposer ref={composerInput} value={draft} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
         model={modelBot && <BotModelPicker key={modelBot} botId={modelBot} running={replying} />}

@@ -5921,7 +5921,13 @@
     "notSent": "未发送",
     "answering": "正在回复",
     "noTaker": "没有 Bot 接这条，@ 它的名字",
-    "stopped": "已停止"
+    "stopped": "已停止",
+    "workingStatus": {
+      "one": "{a} 正在工作…",
+      "two": "{a} 和 {b} 正在工作…",
+      "three": "{a}、{b} 和 {c} 正在工作…",
+      "many": "{a}、{b} 和另外 {count} 位正在工作…"
+    }
   },
   "DeviceSetup": {
     "title": "设置 {device}",
