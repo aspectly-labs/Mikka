@@ -44,6 +44,15 @@ test('dead object store: saveTaskFile and readTaskFile raise TaskFileError stora
     // attachments row itself must not exist after the failed transaction.
     const { rows } = await pool.query('SELECT id FROM task_attachments WHERE "taskId"=$1', [taskId])
     assert.equal(rows.length, 0)
+    // Downloads fail the same controlled way when the object store is down.
+    const stored = randomUUID()
+    await pool.query(`INSERT INTO task_attachments("taskId",id,name,size,sha256,"storageKey","userId") VALUES($1,$2,'note.txt',4,$3,$4,$5)`,
+      [taskId, stored, 'a'.repeat(64), `task-files/${taskId}/dead-key`, owner])
+    await assert.rejects(
+      () => store.readTaskFile(actor, stored, new AbortController().signal),
+      (error: unknown) => error instanceof store.TaskFileError && error.code === 'storage' && error.cause !== undefined,
+      'unreachable object store must raise TaskFileError storage on download too',
+    )
   } finally {
     for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
   }
