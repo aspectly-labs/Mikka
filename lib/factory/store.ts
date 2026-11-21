@@ -293,7 +293,7 @@ export function createFactoryStore(
         : 'SELECT * FROM factory_tasks WHERE id=$1 AND "userId"=$2',
       [taskId, userId],
     );
-    const issue = task ? await lockedIssue(tx, task.issueId, lock) : undefined;
+    const issue = task ? await lockedIssue(tx, task.issueId) : undefined;
     if (
       !task ||
       (task.botId !== botId && (lock || readScope === "bot")) ||
@@ -304,13 +304,14 @@ export function createFactoryStore(
       fail("factoryNotFound");
     return task;
   }
-  async function lockedIssue(tx: PoolClient, issueId: string, lock = true) {
-    // KEY SHARE, not SHARE: a task apply may write the issue row itself
-    // (e.g. cancel marks it canceled), and upgrading a held SHARE deadlocks
-    // against a sibling task on the same issue doing the same. KEY SHARE does
-    // not conflict with the UPDATE's implicit NO KEY UPDATE, so sibling tasks
-    // still hold the lock together and their issue writes serialize on the row.
-    const { rows: [issue] } = await tx.query<FactoryIssueScope>(lock ? 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1 FOR KEY SHARE' : 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1', [issueId]);
+  async function lockedIssue(tx: PoolClient, issueId: string) {
+    // No row lock: a task apply may UPDATE this issue (e.g. cancel marks it
+    // canceled), and any share-mode lock held here (FOR SHARE or FOR KEY
+    // SHARE) conflicts with that write's implicit NO KEY UPDATE — two sibling
+    // tasks on one issue would each hold the share lock and then block on the
+    // other's, deadlocking. The unlocked snapshot feeds scope checks only;
+    // apply re-reads and the UPDATE's own row lock serializes the siblings.
+    const { rows: [issue] } = await tx.query<FactoryIssueScope>('SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1', [issueId]);
     return issue;
   }
   async function snapshot(
