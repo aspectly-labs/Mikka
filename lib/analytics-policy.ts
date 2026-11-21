@@ -1,4 +1,5 @@
 import { scrubLocalString } from '@mikka/protocol/tracing'
+import { safeDomain, safeLabel } from './first-touch'
 
 const allowedEvents = new Set(['$pageview', '$identify', '$feature_flag_called', 'mikka_team_created', 'mikka_team_updated', 'mikka_live_socket', 'mikka_live_received', 'mikka_live_skipped', 'mikka_live_read'])
 const allowedProperties = new Set([
@@ -57,12 +58,32 @@ function route(properties: Record<string, unknown>) {
   } catch { return {} }
 }
 
+/** Sanitized acquisition fields: bounded UTM labels and referring domains
+ * only — never a full URL, query string, fragment or free-form value. Covers
+ * the SDK's `$entry_*` session names and the marketing site's `first_touch_*`
+ * props alongside bare `utm_*`/`$referring_domain`. */
+function source(properties: Record<string, unknown>) {
+  const out: Record<string, string> = {}
+  for (const key of ['$referring_domain', '$entry_referring_domain', 'first_touch_referrer_domain']) {
+    const domain = safeDomain(properties[key])
+    if (domain) out[key] = domain
+  }
+  for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+    '$entry_utm_source', '$entry_utm_medium', '$entry_utm_campaign', '$entry_utm_content', '$entry_utm_term',
+    'first_touch_source', 'first_touch_landing',
+    'first_touch_utm_source', 'first_touch_utm_medium', 'first_touch_utm_campaign', 'first_touch_utm_content', 'first_touch_utm_term']) {
+    const label = safeLabel(properties[key])
+    if (label) out[key] = label
+  }
+  return out
+}
+
 /** The allowlisted properties plus the classification and the route, so a
  * `$set` riding on the event cannot add person properties either. */
 function narrow<T extends { event: string; properties: Record<string, unknown> }>(event: T, kept: Record<string, unknown> = {}): T {
   const properties = {
     ...Object.fromEntries(Object.entries(event.properties).filter(([key]) => allowedProperties.has(key))),
-    ...browserClassification(event.properties), ...route(event.properties), ...kept,
+    ...browserClassification(event.properties), ...route(event.properties), ...source(event.properties), ...kept,
   }
   const narrowed = { ...event, properties }
   for (const key of ['$set', '$set_once', '$unset']) Reflect.deleteProperty(narrowed, key)
