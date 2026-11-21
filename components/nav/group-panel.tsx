@@ -1,16 +1,23 @@
 'use client'
 
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useViewScroll } from '@/lib/hooks/view-state'
 import { useTranslations } from '@/lib/intl/i18n-client'
+import type { BotView } from '@/app/actions/bots'
 import { InlineLoadError } from '@/components/load-error'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ResizeHandle } from '@/components/ui/resizable-pane'
 import { PanelHeader } from '@ui-slot/panel-header'
 import { useResizableWidth } from '@/hooks/use-resizable-width'
 import { usePanelInitialWidth, useWidenToggle } from '@/hooks/use-panel-width'
-import type { GroupMember } from '@/lib/group-messages'
+import { writeGroupMember, type GroupMember } from '@/lib/group-messages'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
+import { X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Spinner } from '@/components/ui/spinner'
 import { BotAvatar } from './bot-avatar'
 import { GroupAvatar, memberAvatar, useGroupMembers } from './group-avatar'
 import { GroupHeader } from './group-header'
@@ -19,23 +26,64 @@ import { LetterAvatar } from './letter-avatar'
 // The same right column as a bot's 概览, so it shares that column's remembered width.
 const WIDTH = { storageKey: 'mikka:context-panel-width', min: 320, max: 'half', initial: 360, edge: 'start' } as const
 
-/** A member row: people with their letter, bots with their bloub (R-36), then the name. */
-function MemberRow({ member }: { member: GroupMember }) {
-  return <li className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm">
+/** A member row: people with their letter, bots with their bloub (R-36), then the name. The owner removes non-owner rows. */
+function MemberRow({ member, onRemove }: { member: GroupMember; onRemove?: () => void }) {
+  return <li className="group/member flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm">
     {member.memberType === 'bot' ? <BotAvatar {...memberAvatar(member)} size="row" still /> : <LetterAvatar name={member.name} size="row" />}
     <span className="truncate">{member.name}</span>
+    {onRemove && <Button variant="ghost" size="icon-xs" aria-label={`Remove ${member.name}`} className="ml-auto text-muted-foreground opacity-0 transition-opacity group-hover/member:opacity-100 focus-visible:opacity-100" onClick={onRemove}><X /></Button>}
   </li>
 }
 
+/** The owner's add-member dialog: the workspace's owned Bots that are not in the group yet. */
+function AddMembers({ group, bots, members, open, onOpenChange, onAdded }: { group: { id: string; title: string }; bots: readonly BotView[]; members: readonly GroupMember[]; open: boolean; onOpenChange: (open: boolean) => void; onAdded: () => void }) {
+  const t = useTranslations('Shell.panel')
+  const [picked, setPicked] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const inside = new Set(members.map(member => `${member.memberType}:${member.id}`))
+  const choices = bots.filter(bot => !inside.has(`bot:${bot.id}`))
+  async function submit() {
+    if (saving || !picked.length) return
+    setSaving(true)
+    try {
+      for (const memberId of picked) await writeGroupMember(group.id, 'POST', { memberType: 'bot', memberId })
+      onAdded()
+      onOpenChange(false)
+      setPicked([])
+    } catch { toast.error(t('membersWriteError')) } finally { setSaving(false) }
+  }
+  return <Dialog open={open} onOpenChange={next => { onOpenChange(next); if (!next) setPicked([]) }}>
+    <DialogContent>
+      <DialogHeader><DialogTitle>{t('addMembers', { group: group.title })}</DialogTitle></DialogHeader>
+      {choices.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{t('noMoreBots')}</p>
+        : <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+          {choices.map(bot => <li key={bot.id}>
+            <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
+              <Checkbox checked={picked.includes(bot.id)} onCheckedChange={checked => setPicked(current => checked === true ? [...current, bot.id] : current.filter(id => id !== bot.id))} />
+              <BotAvatar id={bot.id} color={bot.color} shape={bot.shape} size="row" still />
+              <span className="truncate">{bot.name}</span>
+            </label>
+          </li>)}
+        </ul>}
+      <DialogFooter>
+        <Button variant="outline" onClick={() => onOpenChange(false)}>{t('cancel')}</Button>
+        <Button disabled={saving || !picked.length} onClick={() => { void submit() }}>{saving && <Spinner data-icon="inline-start" role="presentation" aria-hidden="true" />}{t('add')}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+}
+
 /**
- * A group chat's right column, read-only (R-13, R-51): the group's avatar and
- * name, then its members, people and bots. No computer: a group has none, a
- * bot's own chat shows its. Recent threads and files join once a group's
- * threads and files are stored with it.
+ * A group chat's right column (R-13): the group's avatar and name, then its
+ * members, people and bots. Read-only for members (R-51); the group's owner
+ * manages membership here — the API keeps the same checks. No computer: a
+ * group has none, a bot's own chat shows its.
  */
-export function GroupPanel({ group, onClose, sheet = false }: { group: { id: string; title: string }; onClose: () => void; sheet?: boolean }) {
+export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { group: { id: string; title: string }; userId?: string; bots?: readonly BotView[]; onClose: () => void; sheet?: boolean }) {
   const t = useTranslations('Shell.panel')
   const { data: members, error, mutate } = useGroupMembers(group.id)
+  const [adding, setAdding] = useState(false)
+  const owner = !!userId && !!members?.some(member => member.memberType === 'user' && member.id === userId && member.role === 'owner')
   const scroll = useViewScroll<HTMLElement>(`group-panel:${group.id}`, !!members)
   const label = members ? t('members', { count: members.length }) : t('membersLoading')
   // A UI layer may size the default from the main area (panel-header slot); a remembered width still wins.
@@ -45,6 +93,9 @@ export function GroupPanel({ group, onClose, sheet = false }: { group: { id: str
   const asideRef = useRef<HTMLElement>(null)
   useLayoutEffect(() => { asideRef.current?.style.setProperty('--group-panel-width', `${resize.width}px`) }, [resize.width])
   const tCommon = useTranslations('Common')
+  const remove = (member: GroupMember) => () => {
+    void writeGroupMember(group.id, 'DELETE', { memberType: member.memberType, memberId: member.id }).then(() => mutate()).catch(() => toast.error(t('membersWriteError')))
+  }
   // R-37: opening and closing are instant, no motion (decision 2026-11-01-2320).
   return <aside ref={asideRef} aria-label={t('label')}
     className={cn('relative min-h-0 shrink-0 flex-col', sheet ? 'flex size-full' : 'hidden w-(--group-panel-width) overflow-hidden border-l bg-background xl:flex', resize.dragging && 'select-none')}>
@@ -56,11 +107,12 @@ export function GroupPanel({ group, onClose, sheet = false }: { group: { id: str
         <h2 className="max-w-full truncate text-xl font-semibold">{group.title}</h2>
       </div>
       <section ref={scroll} aria-label={label} className="flex min-h-0 flex-col gap-1 overflow-y-auto px-4 pb-4">
-        <GroupHeader>{label}</GroupHeader>
+        <GroupHeader action={owner ? <Button variant="ghost" size="icon-xs" aria-label={t('addMember')} onClick={() => setAdding(true)}><X className="rotate-45" /></Button> : undefined}>{label}</GroupHeader>
         {error ? <div className="px-2 py-1.5"><InlineLoadError message={t('membersError')} retryLabel={t('retry')} onRetry={() => { void mutate() }} /></div>
           : !members ? <div aria-busy="true" className="flex flex-col gap-2 px-2 py-1.5">{[0, 1, 2].map(index => <Skeleton key={index} className="h-5 w-40" />)}</div>
-          : <ul className="flex flex-col">{members.map(member => <MemberRow key={`${member.memberType}:${member.id}`} member={member} />)}</ul>}
+          : <ul className="flex flex-col">{members.map(member => <MemberRow key={`${member.memberType}:${member.id}`} member={member} onRemove={owner && member.role !== 'owner' ? remove(member) : undefined} />)}</ul>}
       </section>
     </div>
+    {owner && bots && <AddMembers group={group} bots={bots} members={members ?? []} open={adding} onOpenChange={setAdding} onAdded={() => { void mutate() }} />}
   </aside>
 }

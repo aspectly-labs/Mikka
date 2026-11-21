@@ -5455,7 +5455,13 @@
       "open": "Open panel",
       "filterBot": "Filter by dispatcher",
       "allBots": "All dispatchers",
-      "closeAllThreads": "Close all threads"
+      "closeAllThreads": "Close all threads",
+      "addMember": "Add members",
+      "addMembers": "Add members to {group}",
+      "noMoreBots": "All your Bots are already in this group.",
+      "membersWriteError": "The members could not be changed.",
+      "cancel": "Cancel",
+      "add": "Add"
     },
     "suggestions": {
       "title": "Suggestions",

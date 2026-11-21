@@ -5455,7 +5455,13 @@
       "open": "打开右栏",
       "filterBot": "按派出者筛选",
       "allBots": "全部派出者",
-      "closeAllThreads": "关闭全部线程"
+      "closeAllThreads": "关闭全部线程",
+      "addMember": "添加成员",
+      "addMembers": "添加成员到 {group}",
+      "noMoreBots": "你的所有 Bot 都已在群里。",
+      "membersWriteError": "无法修改成员。",
+      "cancel": "取消",
+      "add": "添加"
     },
     "suggestions": {
       "title": "建议",

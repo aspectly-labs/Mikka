@@ -170,6 +170,18 @@ export async function leaveGroupConversation(id: string, userId: string, fetcher
   throw new GroupMessagesRequestError(response.status === 401 ? 'unauthorized' : response.status === 404 ? 'not_found' : 'unavailable', response.status)
 }
 
+/** Owner-side membership change: add a member or remove one (a user leaves via leaveGroupConversation). */
+export async function writeGroupMember(id: string, method: 'POST' | 'DELETE', member: { memberType: 'user' | 'agent' | 'bot'; memberId: string }, fetcher: typeof fetch = fetch): Promise<void> {
+  let response: Response
+  try {
+    response = await fetcher(withBasePath(`/api/conversations/${encodeURIComponent(id)}/members`), {
+      method, credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(member),
+    })
+  } catch (cause) { throw new GroupMessagesRequestError('unavailable', undefined, { cause }) }
+  if (response.ok && (await response.json().catch(() => null))?.ok === true) return
+  throw new GroupMessagesRequestError(response.status === 401 ? 'unauthorized' : response.status === 404 ? 'not_found' : 'unavailable', response.status)
+}
+
 /** SWR can pass either an array key or an encoded infinite-page key. Revoke both, not just the visible list. */
 export function revokedGroupCacheKey(key: unknown, id: string): boolean {
   if (Array.isArray(key)) return (key[0] === 'group-members' || key[0] === 'group-messages') && key[1] === id
