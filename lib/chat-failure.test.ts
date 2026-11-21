@@ -64,6 +64,7 @@ test('generic, quoted and tool errors never become a balance state from credit o
 
 test('a failed reply is named by what the person can do, never the raw error', () => {
   assert.deepEqual(chatFailure({ working: false, error: 'Step "step//./workflows/coordinator/agent-kit-steps//botRuntime" failed after 3 retries: binding_required' }), { kind: 'subscription', notice: 'selectionChanged', raw: 'binding_required' })
+    assert.deepEqual(chatFailure({ working: false, error: 'Hook "turn.started" failed: executionModelUnknown' }), { kind: 'subscription', notice: 'modelRequired', raw: 'executionModelUnknown' })
   assert.deepEqual(chatFailure({ working: false, error: 'Error: points_exhausted' }), { kind: 'hosted', code: 'points_exhausted', raw: 'points_exhausted' })
   assert.deepEqual(chatFailure({ working: false, error: 'wake_exhausted' }), { kind: 'wake', code: 'wake_exhausted', raw: 'wake_exhausted' })
   assert.deepEqual(chatFailure({ working: false, error: 'model timed out' }), { kind: 'failed', raw: 'model timed out' })
