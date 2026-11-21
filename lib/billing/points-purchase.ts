@@ -21,7 +21,7 @@ export const POINTS_TAX_CODE = 'txcd_10105002'
 /** Admin-only; the browser supplies dollars, never points, price IDs or redirect URLs. Comes back to 计费. */
 export async function pointsPurchaseUrl(actorId: string, workspaceId: string, amount: number, locale: string, fetchImpl: typeof fetch = fetch, env: Env = process.env): Promise<{ url: string }> {
   const result = await pointsPurchase(actorId, workspaceId, amount, locale, {}, fetchImpl, env)
-  if (!('url' in result)) throw new WorkspaceError('billingProviderFailed', { cause: error })
+  if (!('url' in result)) throw new WorkspaceError('billingProviderFailed')
   return result
 }
 
@@ -71,7 +71,7 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
       }
       const session = await stripePost<{ url: string }>(config, 'checkout/sessions', { ...common, success_url: successUrl, cancel_url: back.href }, fetchImpl)
       const url = z.url().parse(session.url)
-      if (new URL(url).origin !== 'https://checkout.stripe.com') throw new WorkspaceError('billingProviderFailed', { cause: error })
+      if (new URL(url).origin !== 'https://checkout.stripe.com') throw new WorkspaceError('billingProviderFailed')
       return { url }
     } catch (error) {
       if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed', { cause: error })

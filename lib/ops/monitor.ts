@@ -42,7 +42,7 @@ export async function collectOperationalSignals(pool: Pool, options: { sink?: st
     await client.query('COMMIT')
     return { id, observedAt: now.toISOString(), databaseAvailable: signals.databaseAvailable === 1, signals, alerts, transitions, notificationStatus,
       requestLogCollection: 'runtime_log_collector_required', persisted: true }
-  } catch {
+  } catch (error) {
     await client.query('ROLLBACK').catch(() => {})
     throw Object.assign(Error('opsMonitorPersistenceUnavailable'), { cause: error })
   } finally { client.release() }

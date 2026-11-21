@@ -69,28 +69,30 @@ export async function extractChatFile(
   }
   if (CHAT_IMAGE_EXTENSIONS.has(ext)) {
     const { default: sharp } = await import('sharp')
+    let imageError: unknown
     const meta = await sharp(data, { limitInputPixels: 40_000_000 })
       .metadata()
-      .catch(() => null)
+      .catch((error: unknown) => { imageError = error; return null })
     if (!meta || !['png', 'jpeg', 'webp', 'gif'].includes(meta.format ?? ''))
-      throw Object.assign(new ChatFileError('unreadable'), { cause: error })
+      throw Object.assign(new ChatFileError('unreadable'), { cause: imageError })
     return { mediaType: MIME[meta.format === 'jpeg' ? 'jpg' : meta.format!], text: null }
   }
   if (CHAT_AUDIO_EXTENSIONS.has(ext)) {
     if (ext !== 'pcm') {
+      let audioError: unknown
       const { parseBuffer, TrackType } = await import('music-metadata')
       const meta = await parseBuffer(
         data,
         { mimeType: MIME[ext], size: data.length },
         { duration: true, skipCovers: true },
-      ).catch(() => null)
+      ).catch((error: unknown) => { audioError = error; return null })
       if (
         !meta ||
         meta.format.trackInfo.some((track) => track.type === TrackType.video) ||
         !meta.format.numberOfChannels ||
         !meta.format.sampleRate
       )
-        throw Object.assign(new ChatFileError('unreadable'), { cause: error })
+        throw Object.assign(new ChatFileError('unreadable'), { cause: audioError })
     }
     return { mediaType: MIME[ext], text: null }
   }
