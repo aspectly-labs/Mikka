@@ -73,6 +73,7 @@ test('a hook failure surfaces the hook\'s coded cause and keeps the turn\'s erro
     settle({turnId:'turn_hooked',outcome:'failed',error:{code:'HOOK_FAILED',message:'Hook "turn.started" failed: subscription_model_unavailable',details:{errorId:'err_support_reference'}}},1),
   ])
   const messages=projectEveTurn(coded,'wrun_fixture','turn_hooked','failed')
+  assert.ok('mikkaFailure' in messages[0])
   assert.equal(messages[0].mikkaFailure,'subscription_model_unavailable')
   assert.equal(messages[0].mikkaFailureRef,'err_support_reference')
 
@@ -81,6 +82,7 @@ test('a hook failure surfaces the hook\'s coded cause and keeps the turn\'s erro
     settle({turnId:'turn_opaque',outcome:'failed',error:{code:'HOOK_FAILED',message:'Hook "turn.started" failed: cannot read properties of undefined',details:{errorId:'err_opaque'}}},1),
   ])
   const bare=projectEveTurn(opaque,'wrun_fixture','turn_opaque','failed')
+  assert.ok('mikkaFailure' in bare[0])
   assert.equal(bare[0].mikkaFailure,'HOOK_FAILED')
   assert.equal(bare[0].mikkaFailureRef,'err_opaque')
   assert.equal(JSON.stringify(bare).includes('cannot read properties'),false)
