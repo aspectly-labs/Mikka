@@ -38,17 +38,38 @@ export function isImageQuery(query: string) {
 }
 
 /**
+ * A reply that is only one fenced code block unwraps to its body: a model that
+ * fences its whole program still renders as a card. Anything else — code
+ * samples inside prose, several fences, an unclosed fence — stays untouched.
+ */
+export function unfenceWholeReply(text: string): string {
+  const trimmed = text.trim()
+  const open = /^(```|~~~)[^\n]*\n/.exec(trimmed)
+  if (!open) return text
+  const marker = open[1]
+  const rest = trimmed.slice(open[0].length).trimEnd()
+  if (!rest.endsWith(marker)) return text
+  const inner = rest.slice(0, -marker.length)
+  if (/(^|\n)[ \t]*(```|~~~)/.test(inner)) return text
+  return inner.replace(/\n$/, '')
+}
+
+/**
  * Where a reply's OpenUI starts: the first line that assigns `root`, outside a
  * fenced code block, as the web's chat finds it (lib/agent-ui-source.ts).
  * Words the bot wrote before it are its prose, shown above the cards.
  */
 export function splitOpenUI(text: string): { prose: string; source: string } | null {
-  const match = /(^|\n)[ \t]*root[ \t]*=/.exec(text)
+  const whole = unfenceWholeReply(text)
+  const match = /(^|\n)[ \t]*root[ \t]*=/.exec(whole)
   if (!match) return null
+  // A fenced code block that happens to assign `root` in ordinary code is not
+  // a card — only a body that parses as a complete program unwraps.
+  if (whole !== text && !readStatements(whole)?.roots) return null
   const at = match.index + match[1].length
-  const before = text.slice(0, at)
+  const before = whole.slice(0, at)
   if ((before.match(/(^|\n)[ \t]*(```|~~~)/g) ?? []).length % 2) return null
-  return { prose: before.trim(), source: text.slice(at) }
+  return { prose: before.trim(), source: whole.slice(at) }
 }
 
 /** Whether a reply is OpenUI rather than Markdown. */
