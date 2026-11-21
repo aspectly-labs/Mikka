@@ -22,6 +22,9 @@ bindings. Current workflow files define the triggers and selected coverage.
   checks. `browser-gate.yml` only keeps the protected check name
   `Browser tests (before merge)` and passes at once; delete it once that name
   is removed from the required checks in the repository settings.
+- `merge-queue-autopilot.yml` arms merge-when-ready on every open non-draft
+  pull request after each completed check suite; green pull requests enter
+  the merge queue without a manual click. Drafts and forks stay manual.
 - `GitGuardian Security Checks` is a separate external required check.
 - All four existing required names remain intact. Do not silently replace
   them with a new aggregate check until the GitHub branch-protection settings
