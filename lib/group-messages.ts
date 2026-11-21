@@ -177,7 +177,7 @@ export async function setGroupLead(id: string, lead: { leadAgentId: string | nul
     method: 'PATCH', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lead),
   })
-  if (!response.ok) throw new GroupMessagesRequestError('lead_write_failed')
+  if (!response.ok) throw new GroupMessagesRequestError(response.status === 401 ? 'unauthorized' : response.status === 404 ? 'not_found' : 'unavailable', response.status)
 }
 
 export async function writeGroupMember(id: string, method: 'POST' | 'DELETE', member: { memberType: 'user' | 'agent' | 'bot'; memberId: string }, fetcher: typeof fetch = fetch): Promise<void> {
