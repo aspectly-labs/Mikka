@@ -2290,6 +2290,9 @@
       },
       "issue-states": {
         "title": "Issue states"
+      },
+      "team-skills": {
+        "title": "Team skills"
       }
     },
     "appearance": {
@@ -3760,6 +3763,20 @@
         "blue": "Blue",
         "purple": "Purple",
         "red": "Red"
+      }
+    },
+    "teamSkills": {
+      "title": "Team skills",
+      "description": "Skills submitted for this workspace to reuse. Approving makes a version distributable; withdrawing takes it back out.",
+      "empty": "No team skills yet",
+      "loadError": "The team skill registry could not be read.",
+      "actError": "Could not be changed. Try again.",
+      "approve": "Approve",
+      "withdraw": "Withdraw",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "withdrawn": "Withdrawn"
       }
     }
   },
