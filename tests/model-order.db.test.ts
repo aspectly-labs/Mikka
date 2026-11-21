@@ -33,7 +33,6 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     await pool.query('DELETE FROM model_api_keys WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM devices WHERE "ownerId" = ANY($1)', [users])
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])

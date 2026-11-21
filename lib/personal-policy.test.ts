@@ -55,8 +55,8 @@ const owner = 'policy-fixture-owner'
 
 function policyReader(allowed: boolean | undefined = true) {
   const calls: string[] = []
-  const state: { allowed: boolean | undefined; error: Error | null; sharedKeys: boolean; sharedOwners: string[] } = {
-    allowed, error: null, sharedKeys: true, sharedOwners: ['policy-fixture-peer'],
+  const state: { allowed: boolean | undefined; error: Error | null; sharedKeys: boolean } = {
+    allowed, error: null, sharedKeys: true,
   }
   const key = (mine: boolean) => ({
     id: mine ? '10000000-0000-4000-8000-000000000002' : '10000000-0000-4000-8000-000000000003',
@@ -75,9 +75,6 @@ function policyReader(allowed: boolean | undefined = true) {
     }
     if (sql.includes('FROM model_api_key_shares')) {
       calls.push('shared-keys'); assert.deepEqual(values, [workspace, owner]); return { rows: state.sharedKeys ? [key(false)] : [] }
-    }
-    if (sql.includes('FROM workspace_subscription_shares')) {
-      calls.push('shared-owners'); assert.deepEqual(values, [workspace, owner]); return { rows: state.sharedOwners.map(ownerId => ({ ownerId })) }
     }
     assert.fail('unexpected policy consumer query')
   } } as unknown as Pick<Pool, 'query'>
