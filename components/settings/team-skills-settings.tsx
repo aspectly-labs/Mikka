@@ -5,7 +5,7 @@ import useSWR from 'swr'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { SettingRow, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { listTeamSkills, reviewTeamSkill, type TeamSkillEntry } from '@/lib/team-skill-client'
 
@@ -30,7 +30,7 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
   const act = (entry: TeamSkillEntry, operation: 'approve' | 'withdraw') => () => {
     setActing(entry.versionId); setActError(null)
     void reviewTeamSkill(workspaceId!, { versionId: entry.versionId, sha256: entry.artifact.sha256, operation })
-      .then(() => mutate())
+      .then(() => { setWithdrawing(null); return mutate() })
       .catch(() => setActError(entry.versionId))
       .finally(() => setActing(null))
   }
@@ -61,7 +61,7 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
   <AlertDialog open={withdrawing !== null} onOpenChange={open => { if (!open && acting === null) setWithdrawing(null) }}>
     <AlertDialogContent>
       <AlertDialogHeader><AlertDialogTitle>{t('withdrawTitle', { name: withdrawing?.name ?? '' })}</AlertDialogTitle></AlertDialogHeader>
-      <p className="text-sm text-muted-foreground">{t('withdrawBody')}</p>
+      <AlertDialogDescription>{t('withdrawBody')}</AlertDialogDescription>
       <AlertDialogFooter>
         <AlertDialogCancel disabled={acting !== null}>{t('cancel')}</AlertDialogCancel>
         <AlertDialogAction disabled={acting !== null} onClick={() => { const entry = withdrawing; if (entry) act(entry, 'withdraw')() }}>{t('withdraw')}</AlertDialogAction>
