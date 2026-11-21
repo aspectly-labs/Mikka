@@ -55,8 +55,8 @@ export const issues = pgTable('issues', {
   /** Immutable issued identity; legacy aliases and publication receipts remain separate. */
   issuedIdentifier: text('issuedIdentifier'),
   id: uuid('id').primaryKey(), userId: text('userId').notNull(),
-  /** The owner-scope task number; Linear-imported tasks have none (they carry a team key). */
-  number: integer('number'),
+  /** The owner-scope task number, generated from content.attrs.mikka.number (20261031000250). */
+  number: bigint('number', { mode: 'number' }).generatedAlwaysAs(sql`CASE WHEN content #>> '{attrs,mikka,number}' ~ '^[1-9][0-9]*$' THEN (content #>> '{attrs,mikka,number}')::bigint END`),
   /** Immutable tenant. NULL is reserved for quarantined historical records. */
   workspaceId: uuid('workspaceId'),
   ownershipState: text('ownershipState').$type<'bound' | 'pending'>().notNull().default('pending'),
