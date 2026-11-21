@@ -103,7 +103,7 @@ async function approvalPolicyBlock(userId: string, row: { action: string; botId:
       // Loaded here, as steps.ts does: the store's module graph reaches Next, and
       // this file is imported by suites that never approve an app card.
       const { botMayUseApp } = await import('@/lib/app-policy/store')
-      if (!(await botMayUseApp(row.botId, toolkit))) return 'integrationBlockedByWorkspace'
+      if (!(await botMayUseApp(row.botId, toolkit, userId))) return 'integrationBlockedByWorkspace'
     } catch (failure) {
       // An unreadable app policy names nothing either; log it and let the approval stand.
       console.error('Workspace app block unreadable: approval stands', { toolkit, cause: failure instanceof Error ? failure.name : 'unknown' })

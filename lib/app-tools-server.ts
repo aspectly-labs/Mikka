@@ -69,7 +69,7 @@ export async function runAppToolkits(userId: string, botId: string | null): Prom
   const { connectedComposioApps } = await import('@/lib/suggestions/sources')
   const { botMayUseApp } = await import('@/lib/app-policy/store')
   const kits = (await connectedComposioApps(userId)).filter(kit => isToolkitSlug(kit) && !OWN_INTEGRATIONS.has(kit))
-  const allowed = await Promise.all(kits.map(kit => botMayUseApp(botId, kit)))
+  const allowed = await Promise.all(kits.map(kit => botMayUseApp(botId, kit, userId)))
   return kits.filter((_, index) => allowed[index]).sort()
 }
 
