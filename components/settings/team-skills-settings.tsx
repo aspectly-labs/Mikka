@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { SettingRow, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { listTeamSkills, reviewTeamSkill, type TeamSkillEntry } from '@/lib/team-skill-client'
 
@@ -24,6 +25,7 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
   )
   const [acting, setActing] = useState<string | null>(null)
   const [actError, setActError] = useState<string | null>(null)
+  const [withdrawing, setWithdrawing] = useState<TeamSkillEntry | null>(null)
 
   const act = (entry: TeamSkillEntry, operation: 'approve' | 'withdraw') => () => {
     setActing(entry.versionId); setActError(null)
@@ -36,23 +38,35 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: { admin?: boo
   if (!workspaceId) return null
   if (isLoading) return <SettingsLoading />
   if (error || !data) return <SettingsSaveError message={t('loadError')} retryLabel={common('retry')} onRetry={() => void mutate()} />
-  if (!data.length) return <SettingsSection title={t('title')} description={t('description')}>
+  if (!data.length) return <SettingsSection title={t('title')}>
     <SettingRow title={t('empty')} />
   </SettingsSection>
 
-  return <SettingsSection title={t('title')} description={t('description')}>
+  return <><SettingsSection title={t('title')}>
     {data.map(entry => <SettingRow key={entry.versionId} title={entry.name}
       description={<span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
         <Badge variant={entry.status === 'approved' ? 'secondary' : entry.status === 'pending' ? 'outline' : 'destructive'}>{t(`status.${entry.status}`)}</Badge>
+        <span className="text-xs text-muted-foreground">{new Date(entry.createdAt).toLocaleDateString()} · {entry.versionId.slice(0, 8)}</span>
         {entry.description && <span className="truncate">{entry.description}</span>}
       </span>}>
       {admin && <div className="flex items-center gap-2">
         {actError === entry.versionId && <span className="text-xs text-destructive">{t('actError')}</span>}
-        {entry.status !== 'approved' && <Button variant="secondary" size="sm" disabled={acting !== null}
+        {entry.status === 'pending' && <Button variant="secondary" size="sm" disabled={acting !== null}
           onClick={act(entry, 'approve')}>{t('approve')}</Button>}
         {entry.status !== 'withdrawn' && <Button variant="ghost" size="sm" disabled={acting !== null}
-          onClick={act(entry, 'withdraw')}>{t('withdraw')}</Button>}
+          onClick={() => setWithdrawing(entry)}>{t('withdraw')}</Button>}
       </div>}
     </SettingRow>)}
   </SettingsSection>
+  <AlertDialog open={withdrawing !== null} onOpenChange={open => { if (!open && acting === null) setWithdrawing(null) }}>
+    <AlertDialogContent>
+      <AlertDialogHeader><AlertDialogTitle>{t('withdrawTitle', { name: withdrawing?.name ?? '' })}</AlertDialogTitle></AlertDialogHeader>
+      <p className="text-sm text-muted-foreground">{t('withdrawBody')}</p>
+      <AlertDialogFooter>
+        <AlertDialogCancel disabled={acting !== null}>{t('cancel')}</AlertDialogCancel>
+        <AlertDialogAction disabled={acting !== null} onClick={() => { const entry = withdrawing; if (entry) act(entry, 'withdraw')() }}>{t('withdraw')}</AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
+  </>
 }

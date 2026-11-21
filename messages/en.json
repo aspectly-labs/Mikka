@@ -3767,7 +3767,6 @@
     },
     "teamSkills": {
       "title": "Team skills",
-      "description": "Skills submitted for this workspace to reuse. Approving makes a version distributable; withdrawing takes it back out.",
       "empty": "No team skills yet",
       "loadError": "The team skill registry could not be read.",
       "actError": "Could not be changed. Try again.",
@@ -3777,7 +3776,10 @@
         "pending": "Pending",
         "approved": "Approved",
         "withdrawn": "Withdrawn"
-      }
+      },
+      "withdrawTitle": "Withdraw {name}?",
+      "withdrawBody": "Withdrawal is permanent: unfinished runs that selected this version stop.",
+      "cancel": "Cancel"
     }
   },
   "TelegramBot": {
