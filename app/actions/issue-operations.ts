@@ -200,10 +200,12 @@ export async function createLinkedIssue(input: { id: string; revision: number; k
             originals.push(original); seen.add(original.id); queue.push(original.id)
           }
         }
+        const ownership = { workspaceId: workspace.id, ownershipState: 'bound' as const, scope: workspace.kind === 'personal' ? 'personal' as const : 'workspace' as const, scopeSetBy: 'user' as const, linearSyncPolicy: 'disabled' as const, linearSyncBlocked: true }
+        // Lock the workspace counter before the owner counter — every other
+        // writer (issue-create, the insert allocator) takes them in that order.
+        if (ownership.scope === 'workspace') await syncWorkspaceTaskPrefix(workspace.id, tx)
         const number = await allocateIssueNumbers(tx, ownerId, originals.length + 1)
         const newMetadata = { ...metadata, number, parentId: child ? source.id : null, blockedByIds: [], relatedIds: [], duplicateOfId: null, favoriteUserIds: [], subscriberUserIds: [], deletedAt: null, assignee: child || source.userId === user.id ? metadata.assignee : null, delegate: child || source.userId === user.id ? metadata.delegate : null }
-        const ownership = { workspaceId: workspace.id, ownershipState: 'bound' as const, scope: workspace.kind === 'personal' ? 'personal' as const : 'workspace' as const, scopeSetBy: 'user' as const, linearSyncPolicy: 'disabled' as const, linearSyncBlocked: true }
-        if (ownership.scope === 'workspace') await syncWorkspaceTaskPrefix(workspace.id, tx)
         const [created] = await tx.insert(issues).values({ id: crypto.randomUUID(), userId: ownerId, ...ownership, title: parsed.data.title ?? t('defaultDuplicateTitle', { title: source.title.slice(0, 195) }), content: withIssueMetadata(child ? { type: 'doc', content: [{ type: 'paragraph' }] } : source.content, newMetadata), status: 'todo', priority: source.priority, revision: 1 }).returning()
         const versions: typeof issueVersions.$inferInsert[] = [{ id: crypto.randomUUID(), issueId: created.id, userId: ownerId, revision: 1, title: created.title, content: created.content, status: created.status, priority: created.priority, ...activityActor(user.id) }]
         const policies: Array<{ id: string; parentId: string | null }> = [{ id: created.id, parentId: child ? source.id : null }]

@@ -54,6 +54,20 @@ export async function syncWorkspaceTaskPrefix(workspaceId: string, executor: Pic
   }
 }
 
+/**
+ * True when this workspace already issued any `KEY-N` spelling — a retired
+ * task prefix or another owner once produced them. A Team reusing such a key
+ * would emit spellings that duplicate immutable identifiers and make alias
+ * resolution ambiguous, so `saveTeam` must refuse it.
+ */
+export async function taskIdentifierNamespaceInUse(workspaceId: string, key: string, executor: Pick<typeof db, 'execute'> = db) {
+  const { rows } = await executor.execute(sql`
+    SELECT 1 AS found FROM task_identifier_aliases
+    WHERE "workspaceId"=${workspaceId}::uuid AND position(${key || ''} || '-' IN identifier)=1
+    LIMIT 1`)
+  return rows.length > 0
+}
+
 /** Each workspace task's team key and number in that team (workspace database). */
 export async function teamNumbers(issueIds: string[]) {
   const result = new Map<string, { key: string; number: number }>()

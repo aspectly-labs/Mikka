@@ -1545,6 +1545,7 @@
     "botTransferNameConflict": "接手人已有同名 Bot，为其中一个改名后再转交。",
     "teamNotFound": "团队不存在。",
     "teamIdentifierClashesWithWorkspacePrefix": "该缩写已被用作工作区任务前缀。请更换缩写，或在工作区设置中修改前缀。",
+    "teamIdentifierNamespaceInUse": "该缩写曾在此签发任务编号，不能再次使用。请更换缩写。",
     "teamDeleteNameMismatch": "输入的名称与团队名称不一致。",
     "botDefaultRepositoryUnavailable": "这个仓库不在工作区成员已安装的 GitHub App 仓库中。",
     "botEnvironmentUnavailable": "这个环境不可用，请换一个。",

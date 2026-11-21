@@ -239,6 +239,7 @@ export const ACTION_ERROR_CODES = [
   'botTransferNameConflict',
   'teamNotFound',
   'teamIdentifierClashesWithWorkspacePrefix',
+  'teamIdentifierNamespaceInUse',
   'teamDeleteNameMismatch',
   'botDefaultRepositoryUnavailable',
   'botEnvironmentUnavailable',

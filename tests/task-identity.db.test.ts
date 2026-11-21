@@ -243,6 +243,11 @@ test('task identity: split DB migration, immutable issuance, historical aliases 
       assert.match(third.issuedIdentifier, new RegExp(`^W${gamma.replaceAll('-', '').slice(0, 12).toUpperCase()}-603$`))
       // The prefix edit only renames future numbers: earlier issued spellings resolve unchanged.
       assert.deepEqual(await resolveTaskIdentifierAlias({ workspaceId: gamma, identifier: 'ACME-1', ownerId: 'owner' }), { kind: 'found', issueId: first.id })
+      // A retired prefix or a used personal spelling can never become a Team key.
+      const { taskIdentifierNamespaceInUse } = await import('../lib/task-identifier-server')
+      assert.equal(await taskIdentifierNamespaceInUse(gamma, 'ACME'), true)
+      assert.equal(await taskIdentifierNamespaceInUse(gamma, 'NEXT'), true)
+      assert.equal(await taskIdentifierNamespaceInUse(gamma, 'FRESH'), false)
     })
 
     await t.test('deployment backfill resumes, is idempotent, and never assigns a quarantined tenant', async () => {

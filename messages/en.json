@@ -1545,6 +1545,7 @@
     "botTransferNameConflict": "The new owner already has a bot with the same name. Rename one of them, then hand it over.",
     "teamNotFound": "This team does not exist.",
     "teamIdentifierClashesWithWorkspacePrefix": "This key is the workspace task prefix. Choose another key, or change the prefix in workspace settings.",
+    "teamIdentifierNamespaceInUse": "This key once issued task identifiers here and can never be reused. Choose another key.",
     "teamDeleteNameMismatch": "The name you entered does not match the team name.",
     "botDefaultRepositoryUnavailable": "This repository is not in any workspace member’s GitHub App installation.",
     "botEnvironmentUnavailable": "This environment is unavailable. Choose another one.",
