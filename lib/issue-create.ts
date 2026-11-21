@@ -35,6 +35,7 @@ export async function createIssueForUserInTransaction(tx: Transaction, userId: s
     content: withIssueMetadata(parsed.data.content, metadata),
     id,
     userId,
+    number,
     workspaceId: workspace.id,
     ownershipState: 'bound',
     scope: workspace.kind === 'personal' ? 'personal' : 'workspace',

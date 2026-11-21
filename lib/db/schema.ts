@@ -55,6 +55,8 @@ export const issues = pgTable('issues', {
   /** Immutable issued identity; legacy aliases and publication receipts remain separate. */
   issuedIdentifier: text('issuedIdentifier'),
   id: uuid('id').primaryKey(), userId: text('userId').notNull(),
+  /** The owner-scope task number; Linear-imported tasks have none (they carry a team key). */
+  number: integer('number'),
   /** Immutable tenant. NULL is reserved for quarantined historical records. */
   workspaceId: uuid('workspaceId'),
   ownershipState: text('ownershipState').$type<'bound' | 'pending'>().notNull().default('pending'),
@@ -84,7 +86,8 @@ export const issues = pgTable('issues', {
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('issues_owner_updated_idx').on(table.userId, table.updatedAt.desc()), index('issues_workspace_updated_idx').on(table.workspaceId, table.updatedAt.desc()),
   index('issues_source_schedule_idx').on(table.sourceScheduleId).where(sql`${table.sourceScheduleId} IS NOT NULL`),
-  check('issues_short_title_compact', sql`mikka_issue_short_title_valid(${table.shortTitle})`)])
+  check('issues_short_title_compact', sql`mikka_issue_short_title_valid(${table.shortTitle})`),
+  uniqueIndex('issues_owner_number_key').on(table.userId, table.number).where(sql`${table.number} is not null`)])
 /**
  * A workspace's task states (Capy's Issue states). `category` is one of ISSUE_STATUS_CODES and fixes `type`; each
  * category has one default. `name` NULL shows the category's translated name. Seeded by mikka_ensure_issue_states.
