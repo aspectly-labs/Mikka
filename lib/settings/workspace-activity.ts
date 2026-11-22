@@ -48,6 +48,7 @@ export async function readWorkspaceSettingsActivity(reader: EnterpriseReader, wo
         SELECT DISTINCT ON ("issueId",date_trunc('day',at AT TIME ZONE 'UTC'))
           "issueId",date_trunc('day',at AT TIME ZONE 'UTC') AS day,member
         FROM credited WHERE status='done' AND previous_status<>'done' AND at>=$3 AND at<$4
+          AND member=ANY($2::text[])
         ORDER BY "issueId",date_trunc('day',at AT TIME ZONE 'UTC'),at,revision
       ), pull_events AS (
         SELECT DISTINCT ON (rtrim(pull->>'url','/')) rtrim(pull->>'url','/') AS url,c.at,c.member

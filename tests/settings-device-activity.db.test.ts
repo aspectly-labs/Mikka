@@ -146,6 +146,14 @@ test('settings device and contribution HTTP reads preserve owner, tenant and rol
       { day: '2026-11-19', memberId: owner, completedTasks: 0, mergedPullRequests: 0, threads: 1 },
       { day: '2026-11-19', memberId: member, completedTasks: 1, mergedPullRequests: 1, threads: 0 },
     ].sort((a, b) => a.memberId.localeCompare(b.memberId)))
+    await workspacePool.query(`UPDATE mikka_workspace_members SET status='suspended' WHERE "workspaceId"=$1 AND "userId"=$2`, [workspace.id, member])
+    try {
+      assert.deepEqual((await (await readActivity()).json()).contributions, [
+        { day: '2026-11-19', memberId: owner, completedTasks: 1, mergedPullRequests: 0, threads: 1 },
+      ])
+    } finally {
+      await workspacePool.query(`UPDATE mikka_workspace_members SET status='active' WHERE "workspaceId"=$1 AND "userId"=$2`, [workspace.id, member])
+    }
     assert.deepEqual((await (await readActivity('?from=2026-11-20&to=2026-11-20')).json()).contributions, [])
     assert.equal((await readActivity('?from=2026-11-31')).status, 400)
     assert.equal((await readActivity('?groupBy=invalid')).status, 400)
