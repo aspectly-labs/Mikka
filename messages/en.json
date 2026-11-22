@@ -5079,13 +5079,18 @@
       "hours": "{h}h {m}m"
     },
     "cost": {
-      "label": "This conversation cost {amount}",
-      "title": "This conversation",
+      "label": "This thread cost {amount}",
+      "labelAtLeast": "This thread cost at least {amount}; some calls are still settling",
+      "labelSettling": "This thread's cost is still settling",
+      "title": "This thread",
       "credits": "Mikka credits",
+      "settling": "Settling",
+      "underCent": "<{amount}",
+      "unsettled": "{count, plural, one {# call is} other {# calls are}} still settling",
       "included": "Your subscription or API key",
-      "unpriced": "{count, plural, one {# call has} other {# calls have}} no settled cost yet",
-      "note": "What Mikka recorded at settlement for every run in this conversation.",
-      "includedNote": "Usage on your own subscription or API key is not charged to Mikka credits."
+      "calls": "{count, plural, one {# call} other {# calls}}",
+      "unpricedCalls": "Plus {count, plural, one {# call} other {# calls}} with no per-call price",
+      "includedNote": "Not charged to Mikka credits. A subscription has no per-call price."
     }
   },
   "Computer": {

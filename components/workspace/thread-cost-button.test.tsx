@@ -9,8 +9,9 @@ import type { ThreadCost } from '@/lib/thread-cost'
 // The real Chinese copy, so the test reads what the person sees.
 const zh = JSON.parse(readFileSync(new URL('../../messages/zh-CN.json', import.meta.url), 'utf8')) as Record<string, Record<string, unknown>>
 mock.module('@/lib/intl/i18n-client', { namedExports: {
-  useLocale: () => 'en',
-  useFormatter: () => ({ number: (value: number, options: Intl.NumberFormatOptions) => new Intl.NumberFormat('en-US', options).format(value) }),
+  useLocale: () => 'zh-CN',
+  // The person's real locale end to end: Chinese copy and zh-CN number formatting.
+  useFormatter: () => ({ number: (value: number, options: Intl.NumberFormatOptions) => new Intl.NumberFormat('zh-CN', options).format(value) }),
   useTranslations: (namespace: string) => (key: string, values: Record<string, unknown> = {}) => {
     const text = `${namespace}.${key}`.split('.').reduce<unknown>((value, name) => (value as Record<string, unknown>)?.[name], zh)
     if (typeof text !== 'string') throw new Error(`missing copy: ${namespace}.${key}`)
@@ -62,27 +63,42 @@ async function open() {
   return document.body.textContent ?? ''
 }
 
-test('the header shows what Mikka charged this conversation, from the settled amount', async () => {
+test('the header shows what Mikka charged this thread, from the settled amount', async () => {
   await show(<mod.ThreadCostView cost={cost({ microUsd: 1_240_000, unpricedReceipts: 0 })} />)
   assert.equal(trigger()?.textContent, '$1.24')
-  assert.equal(trigger()?.getAttribute('aria-label'), '本会话费用 $1.24')
+  assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用 $1.24')
   const panel = await open()
   assert.match(panel, /Mikka 额度\$1\.24/)
   assert.doesNotMatch(panel, /你的订阅或 API Key/, 'no subscription row when none was used')
 })
 
-test('a call with no settled cost is never read as zero', async () => {
+test('a cost with nothing settled yet reads as settling, never as a zero amount', async () => {
   await show(<mod.ThreadCostView cost={cost({ microUsd: 0, unpricedReceipts: 2 })} />)
-  assert.equal(trigger()?.textContent, '$0.00+')
-  assert.match(await open(), /2 次调用的费用还没结算/)
+  assert.equal(trigger()?.textContent, '结算中')
+  assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用还在结算')
+  assert.match(await open(), /还有 2 次调用在结算/)
 })
 
-test('usage on the person own subscription is shown apart, never added to the charge', async () => {
-  await show(<mod.ThreadCostView cost={cost({ microUsd: 500_000, unpricedReceipts: 0 }, { microUsd: 3_000_000, unpricedReceipts: 0 })} />)
+test('a partly settled cost is a floor, and a charge under a cent is not shown as zero', async () => {
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 4_000, unpricedReceipts: 1 })} />)
+  assert.equal(trigger()?.textContent, '<$0.01+')
+  assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用至少 <$0.01，还有调用在结算')
+})
+
+test('subscription calls are counted apart, never added to the charge or called settling', async () => {
+  // A subscription call is recorded with no cost (lib/secrets/run-events.ts): it has no per-call price.
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 500_000, unpricedReceipts: 0 }, { microUsd: 0, unpricedReceipts: 12 })} />)
   assert.equal(trigger()?.textContent, '$0.50')
   const panel = await open()
-  assert.match(panel, /你的订阅或 API Key\$3\.00/)
-  assert.match(panel, /不扣 Mikka 额度/)
+  assert.match(panel, /你的订阅或 API Key12 次调用/)
+  assert.match(panel, /订阅不按次计价/)
+  assert.doesNotMatch(panel, /在结算/)
+})
+
+test('an API key usage with a price is shown as its own amount', async () => {
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 500_000, unpricedReceipts: 0 }, { microUsd: 3_000_000, unpricedReceipts: 0 })} />)
+  assert.equal(trigger()?.textContent, '$0.50')
+  assert.match(await open(), /你的订阅或 API Key\$3\.00/)
 })
 
 test('the button reads the thread cost and shows nothing when the read is refused', async () => {

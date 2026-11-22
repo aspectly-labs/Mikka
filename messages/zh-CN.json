@@ -5079,13 +5079,18 @@
       "hours": "{h} 小时 {m} 分"
     },
     "cost": {
-      "label": "本会话费用 {amount}",
-      "title": "本会话",
+      "label": "本线程费用 {amount}",
+      "labelAtLeast": "本线程费用至少 {amount}，还有调用在结算",
+      "labelSettling": "本线程费用还在结算",
+      "title": "本线程",
       "credits": "Mikka 额度",
+      "settling": "结算中",
+      "underCent": "<{amount}",
+      "unsettled": "还有 {count} 次调用在结算",
       "included": "你的订阅或 API Key",
-      "unpriced": "{count} 次调用的费用还没结算",
-      "note": "按 Mikka 结算时记录的金额，包含本会话的每一次运行。",
-      "includedNote": "用你自己的订阅或 API Key 产生的用量不扣 Mikka 额度。"
+      "calls": "{count} 次调用",
+      "unpricedCalls": "另有 {count} 次调用没有单次价格",
+      "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
     }
   },
   "Computer": {

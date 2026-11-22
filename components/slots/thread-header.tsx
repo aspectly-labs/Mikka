@@ -21,11 +21,12 @@ export function ThreadHeader({ title, viewTitle, headingRef, onBack, onClose, on
     {place}
     {acceptanceBadge}
     <span className="flex-1" />
-    {cost}
     {identity}
     {/* Stop lives here for every live run, also one waiting for an answer, whose composer button sends. */}
     {onStop && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground" aria-label={t('stop')} data-slot="thread-stop" onClick={onStop} />}><Square data-icon="inline-start" className="fill-current" /></TooltipTrigger><TooltipContent side="bottom">{t('stop')}</TooltipContent></Tooltip>}
     {onOpenTask && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground" aria-label={t('openTask')} onClick={onOpenTask} />}><SquareKanban data-icon="inline-start" /></TooltipTrigger><TooltipContent side="bottom">{t('openTask')}</TooltipContent></Tooltip>}
+    {/* What the thread has cost, just before ⋯ as in Figma 1318:2 section 01 (#2922). */}
+    {cost}
     {views.length > 0 && <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={nav('more')} />}><Ellipsis /></DropdownMenuTrigger>
       <DropdownMenuContent align="end">

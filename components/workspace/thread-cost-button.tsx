@@ -5,57 +5,101 @@ import { useFormatter, useTranslations } from '@/lib/intl/i18n-client'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { readThreadCost } from '@/app/actions/task-runs'
-import type { ThreadCost, ThreadCostAmount } from '@/lib/thread-cost'
+import type { ThreadCost } from '@/lib/thread-cost'
 
 export const threadCostKey = (runId: string) => ['thread-cost', runId] as const
 
 /**
- * The thread header's cost (#2922 item 1, Figma 1318:2 section 01): what this conversation has cost in
- * Mikka 额度, as settlement recorded it (readThreadCost, #2934). Calls whose cost has not settled yet are
- * never read as zero: the figure gets a "+" and the panel counts them. Usage paid by the person's own
- * subscription or API key is shown apart, never added to what Mikka charged.
- *
- * The thread panel rereads it on its runs' live events (threadCostKey), never on a timer.
- * Nothing shows until the read succeeds: no placeholder figure, and a refused read (not the thread's owner)
- * leaves the header as it was.
+ * What a thread has cost (readThreadCost, #2934), or null until a read succeeds. A refusal ({ error }, not the
+ * thread's owner) or anything that is not a cost stays null, so nothing is drawn. The thread panel rereads it on its
+ * runs' live activity (threadCostKey), never on a timer.
+ */
+export function useThreadCost(runId: string): ThreadCost | null {
+  const { data } = useSWR(threadCostKey(runId), () => readThreadCost(runId, 'thread'),
+    { revalidateOnFocus: false, shouldRetryOnError: false, keepPreviousData: false })
+  return data && 'totals' in data && data.totals ? data : null
+}
+
+export type ThreadCostRow = { label: string; value: string; note?: string }
+export type ThreadCostText = {
+  /** What the header shows: an amount, or a word while nothing has settled. */
+  figure: string
+  /** The trigger's accessible name, without the "+" a screen reader drops. */
+  label: string
+  title: string
+  rows: ThreadCostRow[]
+  /** Only when the person's own subscription or key paid for some of it. */
+  note?: string
+}
+
+/** "$1.24" in every locale, as Figma and the billing pages show it (components/billing/balance-section.tsx). */
+const CURRENCY = { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2 } as const
+
+/**
+ * The words and figures for a thread's cost, shared by every header that draws it:
+ * - What Mikka charged in credits is the figure, summed from settled receipts as settlement recorded them.
+ * - Receipts not settled yet are never read as zero: with nothing settled the figure is a word (结算中), otherwise
+ *   the sum gets a "+" and the panel counts what is still settling.
+ * - A settled charge under a cent reads "<$0.01", never "$0.00".
+ * - Usage paid by the person's own subscription or API key is its own row and never added to the charge. A
+ *   subscription call has no per-call price (lib/secrets/run-events.ts records it with no cost), so those calls are
+ *   counted, never called "settling".
+ */
+export function useThreadCostText(cost: ThreadCost): ThreadCostText {
+  const t = useTranslations('IssueThreads.cost')
+  const format = useFormatter()
+  const money = (microUsd: number) => microUsd > 0 && microUsd < 10_000
+    ? t('underCent', { amount: format.number(0.01, CURRENCY) })
+    : format.number(microUsd / 1e6, CURRENCY)
+  const { credits, included } = cost.totals
+  const settling = credits.microUsd === 0 && credits.unpricedReceipts > 0
+  const amount = money(credits.microUsd)
+  const rows: ThreadCostRow[] = [{
+    label: t('credits'),
+    value: settling ? t('settling') : amount,
+    note: credits.unpricedReceipts > 0 ? t('unsettled', { count: credits.unpricedReceipts }) : undefined,
+  }]
+  const usedOwn = included.microUsd > 0 || included.unpricedReceipts > 0
+  if (usedOwn) rows.push({
+    label: t('included'),
+    value: included.microUsd > 0 ? money(included.microUsd) : t('calls', { count: included.unpricedReceipts }),
+    note: included.microUsd > 0 && included.unpricedReceipts > 0 ? t('unpricedCalls', { count: included.unpricedReceipts }) : undefined,
+  })
+  return {
+    figure: settling ? t('settling') : amount + (credits.unpricedReceipts > 0 ? '+' : ''),
+    label: settling ? t('labelSettling') : credits.unpricedReceipts > 0 ? t('labelAtLeast', { amount }) : t('label', { amount }),
+    title: t('title'),
+    rows,
+    note: usedOwn ? t('includedNote') : undefined,
+  }
+}
+
+/**
+ * The thread header's cost (#2922 item 1, Figma 1318:2 section 01), as the community header draws it. The hosted
+ * header draws its own control from useThreadCost and useThreadCostText.
  */
 export function ThreadCostButton({ runId }: { runId: string }) {
-  const { data } = useSWR(threadCostKey(runId), () => readThreadCost(runId, 'thread'),
-    { revalidateOnFocus: true, shouldRetryOnError: false, keepPreviousData: false })
-  // A refusal ({ error }) or anything that is not a cost shows nothing.
-  if (!data || !('totals' in data) || !data.totals) return null
-  return <ThreadCostView cost={data} />
+  const cost = useThreadCost(runId)
+  return cost ? <ThreadCostView cost={cost} /> : null
 }
 
 export function ThreadCostView({ cost }: { cost: ThreadCost }) {
-  const t = useTranslations('IssueThreads.cost')
-  const format = useFormatter()
-  const usd = (microUsd: number) => format.number(microUsd / 1e6, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const figure = (value: ThreadCostAmount) => usd(value.microUsd) + (value.unpricedReceipts > 0 ? '+' : '')
-  const { credits, included } = cost.totals
-  const hasIncluded = included.microUsd > 0 || included.unpricedReceipts > 0
-  const amount = figure(credits)
+  const text = useThreadCostText(cost)
   return <Popover>
     <PopoverTrigger render={<Button variant="ghost" size="sm" data-slot="thread-cost"
-      className="shrink-0 px-2 tabular-nums text-muted-foreground" aria-label={t('label', { amount })} />}>
-      {amount}
+      className="shrink-0 px-2 tabular-nums text-muted-foreground" aria-label={text.label} />}>
+      {text.figure}
     </PopoverTrigger>
-    <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-3">
-      <span className="text-xs font-medium">{t('title')}</span>
-      <dl className="flex flex-col gap-1">
-        <Row label={t('credits')} value={figure(credits)} />
-        {credits.unpricedReceipts > 0 && <p className="text-xs text-muted-foreground">{t('unpriced', { count: credits.unpricedReceipts })}</p>}
-        {hasIncluded && <Row label={t('included')} value={figure(included)} />}
-        {hasIncluded && included.unpricedReceipts > 0 && <p className="text-xs text-muted-foreground">{t('unpriced', { count: included.unpricedReceipts })}</p>}
-      </dl>
-      <p className="text-xs text-muted-foreground">{hasIncluded ? t('includedNote') : t('note')}</p>
+    <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-3" aria-label={text.title}>
+      <span className="text-xs font-medium">{text.title}</span>
+      {text.rows.map(row => <div key={row.label} className="flex flex-col gap-0.5">
+        <div className="flex items-baseline justify-between gap-2 text-xs">
+          <span className="text-muted-foreground">{row.label}</span>
+          <span className="tabular-nums">{row.value}</span>
+        </div>
+        {row.note && <p className="text-xs text-muted-foreground">{row.note}</p>}
+      </div>)}
+      {text.note && <p className="text-xs text-muted-foreground">{text.note}</p>}
     </PopoverContent>
   </Popover>
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return <div className="flex items-baseline justify-between gap-2 text-xs">
-    <dt className="text-muted-foreground">{label}</dt>
-    <dd className="tabular-nums">{value}</dd>
-  </div>
 }
