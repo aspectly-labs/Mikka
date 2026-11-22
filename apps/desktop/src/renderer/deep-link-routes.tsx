@@ -44,7 +44,7 @@ export function SharedArtifactRoute({ token }: { token: string }) {
   useEffect(() => {
     const abort = new AbortController()
     void (async () => {
-      const response = await fetch(withBasePath(`/api/artifacts/shared/${encodeURIComponent(token)}`), { cache: 'no-store', credentials: 'same-origin', signal: abort.signal })
+      const response = await fetch(withBasePath(`/api/artifacts/shared/${encodeURIComponent(token)}`), { cache: 'no-store', credentials: 'omit', signal: abort.signal })
       if (response.status === 404) { setFound(null); return }
       if (!response.ok) throw new DesktopTransportError('desktop_request_failed')
       const result = await response.json() as { artifact: ArtifactDetail; markdown: string | null }

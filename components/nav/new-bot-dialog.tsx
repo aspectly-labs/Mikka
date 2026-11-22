@@ -9,11 +9,14 @@ import { createBot, getWorkspaceBotDefaults, listBotEnvironments, setBotEffort, 
 import { listDevices } from '@/app/actions/agents'
 import { MODEL_ROUTING_EFFORTS } from '@/lib/model-routing'
 import type { TaskDestination } from '@/lib/task-destination'
+import type { SettingsView } from '@mikka/protocol/settings'
+import type { WorkVisibility } from '@mikka/protocol/work-visibility'
 import { chooseBotModel, getBotModelMenu } from '@/app/actions/execution-settings'
 import { botModelMenuKey, modelGroupHeading, modelGroupTag, modelPriceTag } from '@/hooks/use-bot-model-picker'
 import type { BotModelMenu } from '@/lib/bot-model-menu-view'
 import { modelDisplayName } from '@/lib/model-display-name'
 import { useActionError } from '@/lib/use-action-error'
+import { fetchSettingsData, settingsReadOptions } from '@/lib/settings-data'
 import { DEFAULT_BOT_COLOR, DEFAULT_BOT_SHAPE, type BotColor, type BotShape } from './bot-avatar'
 import { NO_EFFORT, NO_REPOSITORY, type NewBotChoice, type NewBotDetail } from '@/components/slots/new-bot-contract'
 import { NewBot } from '@ui-slot/new-bot'
@@ -39,9 +42,9 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
   const [environment, setEnvironment] = useState<string | undefined>()
   const [machine, setMachine] = useState<string | undefined>()
   const [effort, setEffort] = useState<string>(NO_EFFORT)
-  const [access, setAccess] = useState<'private' | 'shared'>('private')
+  const [access, setAccess] = useState<{ workspaceId: string | undefined; value: WorkVisibility }>()
   const [saving, setSaving] = useState(false)
-  useEffect(() => { if (!open) { setName(''); setColor(DEFAULT_BOT_COLOR); setShape(DEFAULT_BOT_SHAPE); setModel(undefined); setRepository(undefined); setEnvironment(undefined); setMachine(undefined); setEffort(NO_EFFORT); setAccess('private') } }, [open])
+  useEffect(() => { if (!open) { setName(''); setColor(DEFAULT_BOT_COLOR); setShape(DEFAULT_BOT_SHAPE); setModel(undefined); setRepository(undefined); setEnvironment(undefined); setMachine(undefined); setEffort(NO_EFFORT); setAccess(undefined) } }, [open])
 
   // Read once when the window opens; nothing here refreshes on its own.
   const menu = useSWR<BotModelMenu | null>(open ? [...botModelMenuKey(null), workspaceId] : null, () => getBotModelMenu(null, workspaceId), { shouldRetryOnError: false, revalidateOnFocus: false })
@@ -57,6 +60,8 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     return result
   }, { shouldRetryOnError: false, revalidateOnFocus: false })
   const { data: devices = [] } = useSWR(open ? 'devices' : null, listDevices, { shouldRetryOnError: false, revalidateOnFocus: false })
+  const policy = useSWR<SettingsView>(open && environments.data?.shareable ? ['new-bot-work-creation', workspaceId] : null,
+    () => fetchSettingsData(`/api/settings/personal${workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ''}`), settingsReadOptions)
 
   const modelChoices: NewBotChoice[] = (menu.data?.groups ?? []).flatMap(group => {
     const source = modelGroupHeading(tModel, group)
@@ -109,10 +114,20 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     choices: effortChoices, value: effort, label: effortChoices.find(choice => choice.value === effort)?.label ?? t('effortDefault'),
     onChange: setEffort, disabled: saving,
   }
-  const accessChoices: NewBotChoice[] = [{ value: 'private', label: t('accessPrivate') }, { value: 'shared', label: t('accessShared') }]
+  const workCreation = policy.data?.workCreation
+  const explicitAccess = access && access.workspaceId === workspaceId && (access.value === 'shared' || workCreation?.privateAllowed) ? access.value : undefined
+  const accessValue = explicitAccess ?? workCreation?.effectiveVisibility ?? null
+  const accessChoices: NewBotChoice[] = [
+    ...(workCreation?.privateAllowed ? [{ value: 'private', label: t('accessPrivate') }] : []),
+    { value: 'shared', label: t('accessShared') },
+  ]
   const accessDetail: NewBotDetail = {
-    choices: accessChoices, value: access, label: accessChoices.find(choice => choice.value === access)!.label,
-    onChange: value => setAccess(value === 'shared' ? 'shared' : 'private'), disabled: saving,
+    choices: accessChoices, value: accessValue,
+    label: accessChoices.find(choice => choice.value === accessValue)?.label ?? (policy.error ? tModel('unavailable') : t('loading')),
+    onChange: value => {
+      if (workCreation && (value === 'shared' || (value === 'private' && workCreation.privateAllowed))) setAccess({ workspaceId, value })
+    },
+    disabled: saving || !workCreation || accessChoices.length === 1,
   }
   const crewTarget: TaskDestination | undefined = machine === undefined ? undefined
     : machine === 'cloud' ? { kind: 'cloud' } : machine === 'cloudflare' ? { kind: 'cloud', provider: 'cloudflare' } : { kind: 'device', deviceId: machine }
@@ -123,7 +138,8 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     setSaving(true)
     try {
       const bot = await createBot({ name: trimmed, color, shape, ...(repository === undefined ? {} : { repository: repository === NO_REPOSITORY ? null : repository }),
-        ...(environment === undefined ? {} : { environmentId: environment }), ...(crewTarget ? { crewTarget } : {}), visibility: access }, workspaceId)
+        ...(environment === undefined ? {} : { environmentId: environment }), ...(crewTarget ? { crewTarget } : {}),
+        ...(explicitAccess === undefined ? {} : { visibility: explicitAccess }) }, workspaceId)
       if (effort !== NO_EFFORT) {
         const saved = await setBotEffort(bot.id, effort, workspaceId).catch(() => ({ error: 'notSaved' }))
         if (saved.error) toast.error(tModel('notSaved'))

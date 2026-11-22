@@ -123,6 +123,7 @@ test('artifact links freeze defaults and enforce their scope at metadata and HTM
 
   await t.test('an SSO-admitted teammate reads a workspace share without impersonating its issuer', async () => {
     const share = await create(markdown.id, 'workspace')
+    const htmlShare = await create(html.id, 'workspace')
     const org = randomUUID(), provider = randomUUID(), session = randomUUID(), identity = randomUUID()
     const issuer = 'https://workspace-share.example.invalid'
     const { enterprisePrincipal } = await import('../lib/enterprise/principal')
@@ -138,6 +139,16 @@ test('artifact links freeze defaults and enforce their scope at metadata and HTM
       assert.equal(await store.sharedArtifact(share.token, { id: member }), null)
       const viewer = { id: member, [enterprisePrincipal]: { kind: 'session' as const, sessionId: session } }
       assert.equal((await store.sharedArtifact(share.token, viewer))?.content, markdown.content)
+      for (const kind of ['metadata', 'frame'] as const) {
+        assert.equal((await open(htmlShare.token, member, kind)).status, 404)
+        const request = new Request(`http://localhost/api/artifacts/shared/${htmlShare.token}${kind === 'frame' ? '/frame' : ''}`, {
+          headers: { cookie: 'artifact-fixture=present' },
+        })
+        const admitted = await withActivitySession(member, () => (kind === 'frame' ? frame.GET : metadata.GET)(request,
+          { params: Promise.resolve({ token: htmlShare.token }) }), workspace.id, session)
+        assert.equal(admitted.status, 200)
+        if (kind === 'frame') assert.ok((await admitted.text()).includes(html.content))
+      }
     } finally {
       await pool.query('DELETE FROM session WHERE id=$1', [session])
       await pool.query('DELETE FROM enterprise_identity WHERE id=$1', [identity])

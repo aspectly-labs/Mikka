@@ -76,6 +76,7 @@ const ROUTES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   // Sharing an installed Skill into a workspace is the Skills panel's one write.
   [/^\/api\/skills\/share$/, ['POST']],
   [/^\/api\/settings\/(?:password|sessions|preferences|saved-logins|workspace-general|transfer-targets|deletion-impact|app-policy|share-policy|secrets|e2b-key|usage|billing|credit-billing|card-verification|audit|model-order|bots|workspace-bots|api-keys|environments)$/, ['GET']],
+  [/^\/api\/settings\/personal$/, ['GET']],
   [/^\/api\/agent-cli-policy$/, ['GET', 'POST']],
   // 收件箱 (Inbox) reads its page and writes its lifecycle commands here; both
   // are authorized per reader and workspace inside the handler.

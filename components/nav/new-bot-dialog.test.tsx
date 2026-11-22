@@ -23,10 +23,11 @@ const chosen: [string | null, string][] = []
 let defaultsResult: { error?: string; defaultModel?: null; defaultRepository?: string | null; models?: string[]; repositories?: string[] }
 let menu: BotModelMenu
 let failChoose = false
+let shareable = false
 mock.module(new URL('../../app/actions/bots.ts', import.meta.url).href, { namedExports: {
   getWorkspaceBotDefaults: async (workspaceId?: string) => { selectedScopes.push(workspaceId); calls.push('defaults'); return defaultsResult },
   createBot: async (input: Record<string, unknown>, workspaceId?: string) => { selectedScopes.push(workspaceId); created.push(input); return { id: 'new-bot', name: input.name, color: input.color, shape: input.shape } },
-  listBotEnvironments: async () => { calls.push('environments'); return { environments: [{ id: 'env-default', name: 'Default', repositoryKeys: ['v2/github.com/acme/app'] }], shareable: false } },
+  listBotEnvironments: async () => { calls.push('environments'); return { environments: [{ id: 'env-default', name: 'Default', repositoryKeys: ['v2/github.com/acme/app'] }], shareable } },
   setBotEffort: async (botId: string, effort: string | null) => { calls.push(`effort:${botId}:${effort}`); return { id: botId, effort } },
 } })
 mock.module(new URL('../../app/actions/agents.ts', import.meta.url).href, { namedExports: {
@@ -51,7 +52,7 @@ before(async () => {
   ;({ NewBotDialog } = await import('./new-bot-dialog'))
 })
 beforeEach(() => {
-  props = null; failChoose = false; selectedScopes.length = 0; calls.length = 0; toasts.length = 0; created.length = 0; chosen.length = 0
+  props = null; failChoose = false; shareable = false; selectedScopes.length = 0; calls.length = 0; toasts.length = 0; created.length = 0; chosen.length = 0
   defaultsResult = { defaultModel: null, defaultRepository: 'acme/app', models: [], repositories: ['acme/app', 'acme/web'] }
   menu = {
     groups: [{ kind: 'subscription', provider: 'claude', credentialLabel: 'Work', options: [
@@ -106,10 +107,28 @@ test('a picked model and repository are saved on the new Bot', async () => {
   await settle()
   await act(async () => { props!.onName('Builder'); props!.model.onChange('binding-sonnet'); props!.repository.onChange('') })
   await act(async () => props!.onSubmit())
-  assert.deepEqual(created[0], { name: 'Builder', color: created[0].color, shape: created[0].shape, repository: null, visibility: 'private' })
+  assert.deepEqual(created[0], { name: 'Builder', color: created[0].color, shape: created[0].shape, repository: null })
   assert.deepEqual(chosen, [['new-bot', 'binding-sonnet']])
   assert.equal(opened, 'new-bot')
   assert.deepEqual(selectedScopes, ['shown-team', 'shown-team', 'shown-team'])
+})
+
+for (const scenario of ['shared default', 'explicit private', 'private disabled'] as const) test(`New Bot applies access policy: ${scenario}`, async t => {
+  shareable = true
+  const fetchPolicy = t.mock.method(globalThis, 'fetch', async (_url: string) => Response.json({
+    workCreation: { effectiveVisibility: 'shared', privateAllowed: scenario !== 'private disabled' },
+  }))
+  await render(dialog(true, undefined, 'shown-team'))
+  await settle()
+  assert.match(String(fetchPolicy.mock.calls[0].arguments[0]), /\/api\/settings\/personal\?workspaceId=shown-team$/)
+  assert.equal(props!.access?.value, 'shared')
+  assert.equal(props!.access?.disabled, scenario === 'private disabled')
+  if (scenario === 'explicit private') await act(async () => props!.access?.onChange('private'))
+  if (scenario === 'private disabled') assert.deepEqual(props!.access?.choices.map(choice => choice.value), ['shared'])
+  await act(async () => props!.onName('Builder'))
+  await act(async () => props!.onSubmit())
+  if (scenario === 'explicit private') assert.equal(created[0].visibility, 'private')
+  else assert.equal(Object.hasOwn(created[0], 'visibility'), false)
 })
 
 test('without a pick, only a model the Coordinator chose is pinned; an unchosen default is left to the resolver', async () => {
