@@ -1,7 +1,14 @@
 // Bot 改名与换形象（右栏）against a real PostgreSQL: validation, duplicates and owner/workspace scoping.
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { mock } from 'node:test'
+import * as lists from '../lib/live/lists'
+import * as groups from '../lib/live/groups'
 import { dbUrl, seedBot, seedUser, seedWorkspace } from './support/workspace-admin-db'
+
+// The live writers this test watches: a Bot's look also stands in its groups' avatars and member lists.
+const pushed: string[] = []
+mock.module(new URL('../lib/live/lists.ts', import.meta.url).href, { namedExports: { ...lists, botGroupsChanged: async (_executor: object, botId: string) => { pushed.push(`group_list:${botId}`) } } })
+mock.module(new URL('../lib/live/groups.ts', import.meta.url).href, { namedExports: { ...groups, botGroupChatsChanged: async (_executor: object, botId: string) => { pushed.push(`group_chat:${botId}`) } } })
 
 test('update a bot', { skip: !dbUrl }, async t => {
   const { Pool } = await import('pg')
@@ -26,6 +33,18 @@ test('update a bot', { skip: !dbUrl }, async t => {
     assert.deepEqual(await nameOf(bot), { name: 'Release notes', color: 'vert', shape: 'hexagone' })
     // Its own name in another case is not a clash with itself.
     assert.equal((await updateOwnedBot(me, { botId: bot, name: 'RELEASE NOTES' })).name, 'RELEASE NOTES')
+  })
+
+  await t.test('a new name or look pushes the groups the Bot is in; a duty change does not', async () => {
+    pushed.length = 0
+    await updateOwnedBot(me, { botId: bot, color: 'rouge' })
+    assert.deepEqual(pushed, [`group_list:${bot}`, `group_chat:${bot}`])
+    pushed.length = 0
+    await updateOwnedBot(me, { botId: bot, publicRole: 'Reviews' })
+    assert.deepEqual(pushed, [])
+    await rejects(updateOwnedBot({ ownerId: member, workspaceId: ws.id }, { botId: bot, shape: 'hexagone' }), 'botNotFound')
+    assert.deepEqual(pushed, [], 'a refused change pushes nothing')
+    await updateOwnedBot(me, { botId: bot, color: 'vert', publicRole: '' })
   })
 
   await t.test('rejects an empty, too long or duplicate name and leaves the bot alone', async () => {

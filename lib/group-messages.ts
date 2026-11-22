@@ -21,7 +21,7 @@ export type GroupMessage = {
 /** An `agent_exchange` timeline marker: two members had a private exchange anchored at a group message's position. The bounded transcript is readable through the link. */
 export type GroupExchange = { type: 'agent_exchange'; linkId: string; anchorPosition: string; count: string; participants: GroupParticipant[] }
 /** `timeline` interleaves each page's messages with the exchange markers anchored on them. */
-export type GroupMessagePage = { readRevision?: number; messages: GroupMessage[]; timeline?: ({ type: 'message'; id: string; position: string } | GroupExchange)[]; nextBefore: string | null; agentStatus?: { status: string } | null; routingError?: { code: string } | null; stopped?: boolean; unchanged?: boolean; appended?: boolean; /** The group_chat key's revision, read before this newest page. */ revision?: number }
+export type GroupMessagePage = { readRevision?: number; messages: GroupMessage[]; timeline?: ({ type: 'message'; id: string; position: string } | GroupExchange)[]; nextBefore: string | null; agentStatus?: { status: string } | null; /** Who is writing a reply now, in the order they started. */ answering?: { memberType: 'bot' | 'agent'; id: string }[]; routingError?: { code: string } | null; stopped?: boolean; unchanged?: boolean; appended?: boolean; /** The group_chat key's revision, read before this newest page. */ revision?: number }
 export type GroupMessagesError = 'unauthorized' | 'not_found' | 'unavailable'
 
 export class GroupMessagesRequestError extends Error {
@@ -81,7 +81,7 @@ export function mergeGroupPoll(previous: GroupMessagePage | null, next: GroupMes
     const seenLinks = new Set((previous.timeline ?? []).map(item => item.type === 'agent_exchange' ? item.linkId : item.id))
     const addedItems = (next.timeline ?? []).filter(item => item.type === 'agent_exchange' && !seenLinks.has(item.linkId))
     const timeline = addedItems.length ? [...addedItems, ...(previous.timeline ?? [])] : previous.timeline
-    return { ...previous, agentStatus: next.agentStatus ?? null, routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision, timeline }
+    return { ...previous, agentStatus: next.agentStatus ?? null, answering: next.answering ?? [], routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision, timeline }
   }
   if (next.appended) {
     const seen = new Set(previous.messages.map(message => message.id))

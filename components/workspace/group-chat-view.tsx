@@ -31,6 +31,7 @@ import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { ReplyActions } from '@/components/chat/reply-actions'
+import { ReplyWaiting } from '@/components/coordinator/reply-activity'
 import { mentionsIn } from '@/lib/group-mentions'
 import { chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
 import { AgentExchangeMarker } from './agent-exchange'
@@ -255,12 +256,27 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   for (const item of unsent) entries.push({ id: item.id, role: 'person', at: item.at, text: item.text,
     body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage>,
     status: item.phase === 'failed' ? 'failed' : 'sending', ...(item.phase === 'failed' ? { deliveryMessage: item.error, onRetry: () => { void deliver(item) } } : {}) })
+  // Who is writing a reply now, as a chat shows "X is typing": each answering Bot's own row, its mark and name on the
+  // thread's author line and the wait under it; several answer at once, each in the order it started.
+  if (first?.agentStatus) {
+    const asked = [...entries].reverse().find(entry => entry.role === 'person')?.at
+    const waiting = (key: string) => ({ kind: 'text' as const, text: '', node: <ReplyWaiting key={key} {...(asked !== undefined ? { since: asked } : {})} /> })
+    const answering = first.answering ?? []
+    for (const who of answering) {
+      const name = authorName(who.memberType, who.id)
+      const bot = who.memberType === 'bot' ? member('bot', who.id) : undefined
+      entries.push({ id: `answering:${who.memberType}:${who.id}`, role: 'bot', at: Date.now(), streaming: true, parts: [waiting(who.id)],
+        author: { id: `${who.memberType}:${who.id}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> } })
+    }
+    // Queued, not yet taken by a Bot: the group's own wait.
+    if (!answering.length) entries.push({ id: 'answering', role: 'bot', at: Date.now(), streaming: true, parts: [waiting('group')] })
+  }
   const lastAt = entries.at(-1)?.at ?? 0
   const line = (key: string, text: string) => entries.push({ id: key, role: 'bot', at: lastAt, event: true, parts: [{ kind: 'text', text, node: <p role="status" className="text-center text-xs text-muted-foreground">{text}</p> }] })
   if (first?.routingError && !first.agentStatus) line('no-taker', t('noTaker'))
   if (first?.stopped && !first.agentStatus) line('stopped', t('stopped'))
   // A named chat is read once its newest message has been seen.
-  const lastEntry = entries.at(-1)
+  const lastEntry = entries.filter(entry => entry.role === 'person' || !entry.streaming).at(-1)
   if (lastEntry && namedChat && readRevision !== undefined && !blockingCode && !accessRejected) lastEntry.actions = <>{lastEntry.actions}<VisibleReadEnd onSeen={acknowledge} /></>
 
   const blocked = blockingCode === 'not_found' ? <p role="alert" className="py-6 text-sm">{t('notFound')}</p>

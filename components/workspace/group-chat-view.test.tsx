@@ -308,3 +308,18 @@ test('before its first page the group shows every chat\'s one skeleton, not a li
   assert.equal(container.querySelector('ol'), null)
   assert.equal(container.querySelector('textarea'), null, 'the thread screen comes with the first page')
 })
+
+test('while Bots answer, the thread names each one with its mark, as a chat shows who is typing', async () => {
+  groupMembers = [{ id: 'design', name: 'Design Bot', memberType: 'bot' }, { id: 'build', name: 'Build Bot', memberType: 'bot' }]
+  pages = [{ messages: [message('user', 1, '@Design Bot @Build Bot check this')], nextBefore: null, agentStatus: { status: 'running' },
+    answering: [{ memberType: 'bot', id: 'build' }, { memberType: 'bot', id: 'design' }] }]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  const writing = lastThreadScreen()!.entries!.filter(entry => entry.role === 'bot' && entry.streaming)
+  assert.deepEqual(writing.map(entry => entry.role === 'bot' ? [entry.id, entry.author?.name] : null), [['answering:bot:build', 'Build Bot'], ['answering:bot:design', 'Design Bot']])
+  assert.ok(writing.every(entry => entry.role === 'bot' && entry.author?.mark), 'each with its own mark')
+  assert.deepEqual([...container.querySelectorAll('[data-slot="group-author"]')].map(node => node.textContent), ['Build Bot', 'Design Bot'])
+  pages = [{ messages: [message('user', 1, 'anyone?')], nextBefore: null, agentStatus: { status: 'queued' }, answering: [] }]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  assert.deepEqual(lastThreadScreen()!.entries!.filter(entry => entry.role === 'bot' && entry.streaming).map(entry => entry.id), ['answering'], 'not yet taken: the group\'s own wait')
+  groupMembers = []
+})

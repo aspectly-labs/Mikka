@@ -12,7 +12,7 @@ import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-t
 import { seedTeam } from '../../tests/support/workspace-admin-db'
 import { orderMigrations } from '../../scripts/migration-order.mjs'
 import { captureDatabaseQuery, observePoolCommits } from '../db/commit-effects'
-import { groupListTargets, issueListTargets, issueListScopesBeforeChange, issueListScopeChanged, ownerListTargets, ownerSettingsTargets, runListChanged, runListTargets, workspaceListTargets } from './lists'
+import { botGroupListTargets, groupListTargets, issueListTargets, issueListScopesBeforeChange, issueListScopeChanged, ownerListTargets, ownerSettingsTargets, runListChanged, runListTargets, workspaceListTargets } from './lists'
 import { liveChannelId, type LiveScope } from './scope'
 import type { LiveInvalidation } from './events'
 import { isolateCoordinatorWakes } from '../../tests/support/coordinator-wake'
@@ -128,6 +128,19 @@ test('real PG: lists retain their reader scope and publish only the originating 
       assert.deepEqual(await ownerListTargets(database, 'inactive', ['bot_chat_list']), [])
       assert.deepEqual(await ownerListTargets(database, 'peer', ['thread_list']), [], 'Shared workspace membership never substitutes for an owned Personal workspace')
       assert.equal((await database.query('SELECT count(*)::integer AS n FROM mikka_workspaces')).rows[0].n, before, 'notifications never create a workspace')
+    })
+
+    await t.test('a Bot\'s look reaches the group lists it stands in, for their members only', async () => {
+      const bot = randomUUID(), lone = randomUUID()
+      await database.query(`INSERT INTO conversation_members ("conversationId","memberType","memberId",role) VALUES ($1,'bot',$2,'member')`, [groupId, bot])
+      try {
+        const targets = await botGroupListTargets(database, database, bot)
+        assert.deepEqual(targets, await groupListTargets(database, database, groupId), 'the group\'s own list audience, nobody else')
+        assert.ok(targets.length > 0 && targets.every(value => value.events.every(event => event.kind === 'group_list' && event.id === team)))
+        assert.deepEqual(await botGroupListTargets(database, database, lone), [], 'a Bot in no group wakes no list')
+        await database.query(`UPDATE conversation_members SET "leftAt"=now() WHERE "conversationId"=$1 AND "memberId"=$2`, [groupId, bot])
+        assert.deepEqual(await botGroupListTargets(database, database, bot), [], 'a Bot that left no longer stands in the group\'s avatar')
+      } finally { await database.query(`DELETE FROM conversation_members WHERE "conversationId"=$1 AND "memberId"=$2`, [groupId, bot]) }
     })
 
     await t.test('workspace lists use active members; a private group does not notify unrelated members', async () => {

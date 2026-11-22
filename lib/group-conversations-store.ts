@@ -231,8 +231,13 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
           timeline.push(...exchanges.filter(link => !anchored.has(link.anchorPosition)))
         }
         const active = queueAgents ? await q(`SELECT "agentId","botId",status,"updatedAt" FROM group_turns WHERE "conversationId"=$1 AND status IN ('queued','running') ORDER BY "createdAt" LIMIT 1`, [req.id]) : { rows: [] }
+        // Who is writing a reply now, each once, in the order they started (a chat's "X is typing").
+        const answering = queueAgents ? (await q(`SELECT "memberType",id FROM (SELECT DISTINCT ON (coalesce("botId","agentId"))
+            CASE WHEN "botId" IS NOT NULL THEN 'bot' ELSE 'agent' END AS "memberType", coalesce("botId","agentId")::text AS id, "createdAt"
+            FROM group_turns WHERE "conversationId"=$1 AND status='running' AND coalesce("botId","agentId") IS NOT NULL
+            ORDER BY coalesce("botId","agentId"), "createdAt") turns ORDER BY "createdAt", id`, [req.id])).rows : []
         const failed = queueAgents ? await q(`SELECT error FROM group_turns WHERE "conversationId"=$1 ORDER BY "createdAt" DESC,"messageId" DESC LIMIT 1`, [req.id]) : { rows: [] }
-        result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null,
+        result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null, answering,
           ...(readRevision !== undefined ? { readRevision } : {}),
           ...(idle ? { unchanged: true } : {}),
           ...(appended ? { appended: true } : {}),

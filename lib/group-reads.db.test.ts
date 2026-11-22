@@ -293,6 +293,15 @@ test('group read routes advance actual group history without opening private DMs
     assert.equal(listed.bots.length, 3)
     assert.ok(listed.bots.every((face: Record<string, unknown>) => !('name' in face)), 'a face carries no name')
     await pool.query(`UPDATE bots SET color='bleu',shape='cercle' WHERE id=$1`, [b])
+    // Who is writing a reply now: each running Bot once, in the order it started; a queued one is not answering yet.
+    const asked = [randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    for (const [index, message] of asked.entries()) await pool.query(`INSERT INTO conversation_messages (id,"conversationId",position,"authorType","authorId",body) VALUES ($1,$2,$3,'user',$4,'answering fixture')`, [message, source, 9000 + index, owner])
+    for (const [index, [bot, status]] of ([[b, 'running'], [a, 'running'], [b, 'running'], [c, 'queued']] as const).entries())
+      await pool.query(`INSERT INTO group_turns ("messageId","conversationId","userId",status,"botId","createdAt") VALUES ($1,$2,$3,$4,$5,now() + $6 * interval '1 second')`, [asked[index], source, owner, status, bot, index])
+    try {
+      const page = await handleGroup(pool, directory, { userId: member, method: 'GET', resource: 'messages', id: source, origin: null, host: '127.0.0.1' }, true)
+      assert.deepEqual((page.body as { answering: unknown }).answering, [{ memberType: 'bot', id: b }, { memberType: 'bot', id: a }])
+    } finally { await pool.query('DELETE FROM conversation_messages WHERE id=ANY($1::uuid[])', [asked]) }
     const send = async (text: string, selected: string[], userId = owner) => {
       const response = await handleGroup(pool, directory, { userId, method: 'POST', resource: 'messages', id: source, origin: null, host: '127.0.0.1',
         body: JSON.stringify({ body: text, mentions: selected.map(memberId => ({ memberType: 'bot', memberId })) }) }, true)
