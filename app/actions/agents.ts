@@ -826,6 +826,30 @@ export async function deleteThreadEnvVar(input: { issueId: string | null; runId:
   return { deleted: true }
 }
 
+/** #2941 item 6: @-mentioning a bot in a thread dispatches the note to that
+ * bot's own thread — a coordinator event in its inbox (same shape sendToBot
+ * uses for interop peers) plus the wake that starts its turn. */
+export async function mentionThreadBot(input: { issueId: string | null; runId: string; botId: string; text: string }) {
+  const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
+  const botId = z.uuid().safeParse(input.botId)
+  if (!text.success || !botId.success) throw new ActionFailureError('validationGeneric')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { rows: [bot] } = await pool.query<{ id: string; ownerId: string }>(
+    `SELECT id,"ownerId" FROM bots WHERE id=$1 AND "workspaceId"=$2`, [botId.data, row.workspaceId])
+  if (!bot) throw new ActionFailureError('botNotFound')
+  const { rows: [inserted] } = await pool.query<{ id: string }>(
+    `INSERT INTO coordinator_events (id,"userId","botId",kind,"dedupeKey",payload,tier)
+     VALUES ($1,$2,$3,'run_report',$4,$5,'result') ON CONFLICT ("dedupeKey") DO NOTHING RETURNING id`,
+    [crypto.randomUUID(), bot.ownerId, bot.id, `mention:${user.id}:${bot.id}:${row.id}:${crypto.randomUUID()}`,
+     JSON.stringify({ text: text.data, source: 'peer', from: { kind: 'user', id: user.id }, threadRunId: row.id })])
+  if (inserted) {
+    const { wakeCoordinator } = await import('@/lib/coordinator/wake')
+    await wakeCoordinator(bot.ownerId)
+  }
+  return { dispatched: true, eventId: inserted?.id ?? null }
+}
+
 /**
  * The composer's send: the same as sendIssueThreadMessage, with a refusal the
  * person can act on (threadReplaced, threadCannotContinue, threadStopping, a
