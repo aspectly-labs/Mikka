@@ -56,7 +56,7 @@ export async function reconcileFactoryCheck(
       task.userId,
       binding(task),
       factoryEventId("check-cancel", run.id),
-      { action: "cancel", reason: "Independent check cancelled" },
+      { action: "cancel", reason: "Independent check cancelled", internal: true },
       tx,
     );
     return;

@@ -54,7 +54,6 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
     await pool.query('DELETE FROM user_e2b_keys WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM bot_desktops WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM cloud_machines WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM device_tokens WHERE "userId" = ANY($1)', [users])
@@ -79,7 +78,6 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
     const id = await seedUser(pool, label)
     users.push(id)
     const ws = await seedWorkspace(pool, id, [{ userId: id, role: 'admin' }])
-    await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)', [id, ws.id])
     const botId = await seedBot(pool, ws.id, id)
     const issueId = await task(id, ws.id)
     const remote = `https://github.com/mikka-ci/api-key-runs-${randomUUID()}.git`
