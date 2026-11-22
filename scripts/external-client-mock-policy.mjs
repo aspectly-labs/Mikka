@@ -69,8 +69,14 @@ export function trustedPolicyBase(root = process.cwd()) {
   } catch {}
   candidates.push('origin/main', 'FETCH_HEAD')
   if (has('HEAD^2')) candidates.push('HEAD^1')
+  const head = git('rev-parse', 'HEAD')
   for (const ref of candidates.filter(Boolean)) {
-    if (has(ref)) return git('merge-base', 'HEAD', ref)
+    // A merge base equal to HEAD means the ref IS the candidate (FETCH_HEAD
+    // after checkout) — never trusted, or increases would compare to themselves.
+    if (has(ref)) {
+      const base = git('merge-base', 'HEAD', ref)
+      if (base && base !== head) return base
+    }
   }
   try { execFileSync('git', ['fetch', '--depth=100', 'origin', 'main'], { cwd: root, stdio: 'ignore' }) } catch {}
   return git('merge-base', 'HEAD', 'origin/main')
