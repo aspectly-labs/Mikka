@@ -5,6 +5,7 @@ import { build } from 'esbuild'
 import { runtimeResources } from '../../../scripts/release/runtime-resources.mjs'
 import { configuredDeploymentId } from '../../../lib/deployment-id.mjs'
 import { nodeRuntimePackages } from '../build-contract.mjs'
+import { assertNoFixtureAuthInDirectories } from '../../../scripts/fixtures/bundle-check.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const within = (root, path) => path === root || path.startsWith(`${root}${sep}`)
@@ -29,6 +30,7 @@ export async function finalizeBuild({ root, output, preset, revision }) {
   const tracing = await compileTracing(root)
   const { resources, posterBinary, copyResources } = await runtimeResources(root)
   const evidence = { version: 1, revision, preset, node: process.version,
+    target: process.env.MIKKA_BUILD_TARGET === 'local-fixture' ? 'local-fixture' : 'production',
     basePath: '/mikka',
     appBuild: process.env.NEXT_PUBLIC_MIKKA_BUILD || revision,
     testDeploymentSha: process.env.MIKKA_TEST_DEPLOYMENT_SHA ?? '',
@@ -36,6 +38,7 @@ export async function finalizeBuild({ root, output, preset, revision }) {
     routesSha256: hash(await readFile(join(root, 'apps/api/generated/routes.json'))),
     tracingSha256: hash(tracing), posterBinary, resources }
   if (evidence.testDeploymentSha && evidence.testDeploymentSha !== revision) throw new Error('API_TEST_BUILD_SHA_MISMATCH')
+  if (evidence.target === 'local-fixture' && (process.env.VERCEL || process.env.VERCEL_ENV)) throw new Error('FIXTURE_DEPLOYMENT_FORBIDDEN')
   evidence.overlaySha = process.env.MIKKA_UI_OVERLAY_SHA || null
   evidence.deploymentId = configuredDeploymentId() ?? null
   if (process.env.MIKKA_EDITION === 'cloud' && evidence.overlaySha && evidence.deploymentId) {
@@ -56,6 +59,7 @@ export async function finalizeBuild({ root, output, preset, revision }) {
   // Node deployments are self-contained too. Existing process.cwd() resource
   // paths are retained when starting from this output directory.
   await copyResources(output)
+  evidence.fixtureAuthExclusion = { checkedFiles: await assertNoFixtureAuthInDirectories([join(output, 'server')]) }
   await writeFile(join(output, 'mikka-build.json'), `${JSON.stringify(evidence, null, 2)}\n`)
   return evidence
 }
