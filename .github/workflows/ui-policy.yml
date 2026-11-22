@@ -7,7 +7,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+    # `edited` so the acceptance-evidence gate re-evaluates a fixed PR body.
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
   merge_group:
   workflow_dispatch:
   schedule:
@@ -82,7 +83,9 @@ jobs:
     needs: changes
     # #2888: deterministic PR-body gate — the template's "How it was checked"
     # section must carry real evidence before a non-draft PR can merge.
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true && needs.changes.result == 'success'
+    # Runs on non-draft PRs and on merge-group candidates (fetches the queued
+    # PR's current body via `gh api`, so body edits after a failure are honoured).
+    if: needs.changes.result == 'success' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true))
     runs-on: ubuntu-22.04
     timeout-minutes: 2
     steps:
@@ -91,6 +94,8 @@ jobs:
         with:
           node-version: 24
       - run: node scripts/ci/pr-acceptance-evidence.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   ui-policy-full:
     name: Core unit checks
@@ -346,7 +351,7 @@ jobs:
           EXPECT_ANALYTICS: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.analytics == 'true' }}
           EXPECT_GOVERNANCE: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main')) && needs.changes.outputs.db == 'true' }}
           EXPECT_CANDIDATE: ${{ github.event_name == 'merge_group' }}
-          EXPECT_EVIDENCE: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft != true }}
+          EXPECT_EVIDENCE: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true) }}
           EVIDENCE: ${{ needs.acceptance-evidence.result }}
           CANDIDATE: ${{ needs.candidate-checks.result }}
           GOVERNANCE: ${{ needs.workspace-governance-checks.result }}

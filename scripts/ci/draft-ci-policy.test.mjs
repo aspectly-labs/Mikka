@@ -13,7 +13,7 @@ function job(name) {
 }
 
 test('draft and ready transitions are both observed', () => {
-  assert.match(workflow, /pull_request:\n    types: \[opened, reopened, synchronize, ready_for_review, converted_to_draft\]/)
+  assert.match(workflow, /pull_request:\n    # `edited` so the acceptance-evidence gate re-evaluates a fixed PR body\.\n    types: \[opened, reopened, synchronize, ready_for_review, converted_to_draft, edited\]/)
   assert.match(workflow, /merge_group:/)
   assert.match(workflow, /push:\n    branches: \[main\]/)
 })
