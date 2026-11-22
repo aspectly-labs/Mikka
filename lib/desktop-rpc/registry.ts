@@ -90,6 +90,7 @@ const functions = {
   'agents.getThreadChanges': actions1.getThreadChanges,
   'agents.getThreadMachine': actions1.getThreadMachine,
   'agents.getThreadSummary': actions1.getThreadSummary,
+  'agents.listSubagentRuns': actions1.listSubagentRuns,
   'agents.getThreadInstructions': actions1.getThreadInstructions,
   'agents.sendIssueThreadReply': actions1.sendIssueThreadReply,
   'agents.createThreadReplyVersion': actions1.createThreadReplyVersion,

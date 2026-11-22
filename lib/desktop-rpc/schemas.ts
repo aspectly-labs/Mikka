@@ -165,6 +165,7 @@ export const desktopActionSchemas = {
   'agents.changeQueuedThreadReply': tuple(object({issueId: uuid.nullable(), runId: uuid, messageId: uuid, action: z.enum(['cancel','sendNow'])})),
   'agents.getThreadContinuationModels': tuple(uuid, uuid),
   'agents.getThreadName': oneId,
+  'agents.listSubagentRuns': oneId,
   'agents.stopRun': oneId,
   'agents.resumeQuotaPausedRunOnApiKey': oneId,
   'agents.retryQuotaPausedRun': oneId,
