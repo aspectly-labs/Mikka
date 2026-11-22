@@ -1155,6 +1155,7 @@
     "loading": "正在加载设备"
   },
   "Workspace": {
+    "documentTitle": "{name} · Mikka",
     "loadingEditor": "正在加载任务编辑器",
     "loading": "正在加载…",
     "loadingCreate": "正在加载新建任务…",

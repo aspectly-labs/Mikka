@@ -35,6 +35,7 @@ import { ChatFileCards } from '@/components/chat/chat-file-cards'
 import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConversationPageLoading } from './workspace-loading'
 import { AgentMarkdown } from './agent-markdown'
 import { ComputerCard } from '@/components/computer/computer-card'
 import { issueKeys } from '@/lib/swr/keys'
@@ -469,7 +470,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }
   const waiting = !data && (error
     ? <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void mutate() }} />
-    : <div role="status" aria-label={t('loading')} data-thread-loading className="flex flex-col gap-3"><Skeleton className="h-5 w-40" /><Skeleton className="ml-auto h-12 w-3/4" /><Skeleton className="h-12 w-2/3" /></div>)
+    // The chat's one skeleton, as a Bot's chat opens (UX audit 2026-11-22 #3).
+    : <div data-thread-loading="" className="flex min-h-0 flex-1 flex-col"><ConversationPageLoading /></div>)
   const citationTexts = items.flatMap(item => item.kind === 'agent' || item.kind === 'person' ? [item.text] : [])
   const previews = useLinkPreviews(citationTexts)
   const citationBase = useMemo<AgentCitations>(() => ({ sources: {}, previews, onOpenIssue: openTask }), [previews])
@@ -680,7 +682,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     </>}
     under={readOnly || !data?.thread.ownedByCurrentUser ? undefined : <ThreadUnderComposer issueId={issueId} runId={runId} status={view?.status ?? data.thread.status} context={data.context ? <ThreadContextUsage usage={data.context} /> : undefined} />}
     questions={[]} onAnswer={async () => ({ status: 'unavailable', error: '' })} running={0} onOpenTask={() => onOpenTask?.()} onOpenInbox={() => navigate({ section: 'suggestions' })} /></div>
-    : <div className="min-h-0 flex-1 overflow-y-auto p-4">{waiting}</div>
+    : error ? <div className="min-h-0 flex-1 overflow-y-auto p-4">{waiting}</div> : waiting
   const views: ThreadViewAction[] = []
   if (hasChanges && !viewingChanges) views.push({ id: 'changes', label: t('changesTab'), onSelect: () => setTab('changes') })
   if (acceptance && !accepting) views.push({ id: 'acceptance', label: t('acceptanceTab'), onSelect: () => setTab('acceptance') })

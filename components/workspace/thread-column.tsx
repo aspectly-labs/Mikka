@@ -6,7 +6,7 @@ import useSWR from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { toast } from 'sonner'
 import { findThreadIssue } from '@/app/actions/agents'
-import { Skeleton } from '@/components/ui/skeleton'
+import { ConversationPageLoading } from './workspace-loading'
 import { InlineLoadError } from '@/components/load-error'
 import { readAccessFailure } from '@/lib/swr/persistent-cache'
 import { ResizeHandle } from '@/components/ui/resizable-pane'
@@ -59,7 +59,8 @@ export function ThreadColumn({ runId, issueId: known, overList = false, name, ma
         ? <TaskConversation key={issueId} host={main ? 'page' : 'column'} issueId={issueId} runId={runId} name={name} onBack={back} onClose={overList ? () => toggleAllThreads(false) : undefined} onOpenThread={openThread} onOpenTask={() => navigate({ issue: issueId, thread: window.matchMedia(TASK_WIDE).matches ? runId : null })} />
         : <IssueThreadPanel key={runId} host={main ? 'page' : 'column'} issueId={issueId} runId={runId} name={name} onBack={back} onClose={overList ? () => toggleAllThreads(false) : undefined} onOpenThread={openThread} />
       : error ? <div className="p-4"><InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void mutate() }} /></div>
-      : <div role="status" aria-label={t('loading')} className="flex flex-col gap-3 p-4"><Skeleton className="h-6 w-2/3" /><Skeleton className="h-24 w-full" /></div>
+      // The chat's one skeleton, as a Bot's chat opens (UX audit 2026-11-22 #3).
+      : <ConversationPageLoading />
   return main ? <div data-own-scroll="" data-slot="main-thread" className="flex min-h-0 min-w-0 flex-1 flex-col">{content}</div>
     : <RightColumn slot="thread-column">{content}</RightColumn>
 }

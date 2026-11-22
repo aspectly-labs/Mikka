@@ -1155,6 +1155,7 @@
     "loading": "Loading devices"
   },
   "Workspace": {
+    "documentTitle": "{name} · Mikka",
     "loadingEditor": "Loading task editor",
     "loading": "Loading…",
     "loadingCreate": "Loading new task…",
