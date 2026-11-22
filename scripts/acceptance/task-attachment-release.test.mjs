@@ -66,12 +66,13 @@ test('foreign, pull-request and stale targets never authorize a production write
   }
 })
 
-test('pull requests run only offline tests and every smoke lookup waits for the release proof', () => {
+test('main pushes run only offline tests and every smoke lookup waits for the release proof', () => {
   const workflow = readFileSync(new URL('../../.github/workflows/task-attachment-production.yml', import.meta.url), 'utf8')
-  const [pr, live] = workflow.split('\n  roundtrip:\n')
-  assert.match(pr, /if: github.event_name == 'pull_request'/)
-  assert.match(pr, /node --test scripts\/acceptance\/task-attachment-\*\.test\.mjs/)
-  assert.doesNotMatch(pr, /Infisical|id-token: write|\bsecrets\.|GH_TOKEN|pull_request_target|workflow_run/)
+  const [offline, live] = workflow.split('\n  roundtrip:\n')
+  assert.match(offline, /push:\n    branches: \[main\]/)
+  assert.match(offline, /if: github.event_name == 'push'/)
+  assert.match(offline, /node --test scripts\/acceptance\/task-attachment-\*\.test\.mjs/)
+  assert.doesNotMatch(offline, /Infisical|id-token: write|\bsecrets\.|GH_TOKEN|pull_request_target|workflow_run/)
   assert.match(live, /github.event_name == 'workflow_dispatch'/)
   const secretSteps = live.split('      - name: ').filter(step => step.includes('uses: Infisical/'))
   assert.deepEqual(secretSteps.map(step => step.match(/secret-name: (\w+)/)?.[1]), ['SMOKE_OWNER_EMAIL', 'SMOKE_OWNER_PASSWORD'])
