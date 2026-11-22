@@ -75,7 +75,7 @@ const STEP_KIND_MAP: Record<string, ThreadStepKind> = {
 /** One tool call in a folded "N steps" line: its name, the one input that says what it did, and whether it failed.
  * `kind`/`status`/`title`/`outputTail`/`outputRef` are derived from the chunk stream so older chunks still read (#2937). */
 export type ThreadStep = { id: string; name: string; detail: string | null; failed: boolean; command?: string; output?: string; exitCode?: number | null; ms?: number;
-  kind: ThreadStepKind; status: ThreadStepStatus; title: string; outputTail?: string; outputRef?: string }
+  kind?: ThreadStepKind; status?: ThreadStepStatus; title?: string; outputTail?: string; outputRef?: string }
 
 /** Claude Code's `Bash`, Codex's `bash`/`shell` and Cursor's `execute` run a command; every other step is a tool (as iOS
  * apps/mobile/features/tasks/model/thread-steps.ts counts them, #1770). */

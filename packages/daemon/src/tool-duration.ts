@@ -19,7 +19,7 @@ export function toolDuration(clock: () => number = () => performance.now()) {
       if (!starts.has(chunk.toolCallId)) starts.set(chunk.toolCallId, { at: clock(), name: chunk.toolName })
       const rest = { ...(chunk as Record<string, unknown>) }
       delete rest.toolKind
-      return { ...rest, toolKind: toolKind(chunk.toolName) } as RunChunk
+      return { ...rest, toolKind: toolKind(chunk.toolName) } as unknown as RunChunk
     } else if (chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error') {
       const started = starts.get(chunk.toolCallId)
       starts.delete(chunk.toolCallId)
