@@ -73,7 +73,7 @@ import { mailboxInputs } from '@mikka/protocol/mailbox'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
 import { mailboxToolResult, type RunMailbox } from '../run-mailbox'
 import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
-import type { RunChunk } from "../chunks"
+import { toolOutputTail, type RunChunk } from "../chunks"
 import { CLI_EXITED_EARLY, redactDiagnostic, resultDiagnostics, subscriptionFailureCategory } from "./claude-failure"
 import {
   claudePermissionRules,
@@ -213,7 +213,7 @@ export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[
     if (!Array.isArray(content)) return chunks
     for (const block of content) {
       if (block.type !== "tool_result") continue
-      const output = toolResultText(block.content)
+      const { text: output, truncated } = toolResultText(block.content)
       chunks.push(
         block.is_error
           ? {
@@ -225,6 +225,7 @@ export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[
               type: "tool-output-available",
               toolCallId: block.tool_use_id,
               output,
+              ...(truncated ? { outputTruncated: true as const } : {}),
             },
       )
     }
@@ -308,11 +309,11 @@ function claudeProviderException(error: unknown): ProviderFailure | undefined {
   return classifyProviderFailure(error)
 }
 
-function toolResultText(content: unknown): string {
-  if (typeof content === "string") return content.slice(-4000)
+function toolResultText(content: unknown): { text: string; truncated: boolean } {
+  if (typeof content === "string") return toolOutputTail(content)
   if (Array.isArray(content)) {
     // ToolSearch answers with tool_reference parts only: show the tools it loaded.
-    return content
+    return toolOutputTail(content
       .map((part: { type?: unknown; text?: unknown; tool_name?: unknown }) =>
         typeof part?.text === "string"
           ? part.text
@@ -320,10 +321,9 @@ function toolResultText(content: unknown): string {
             ? part.tool_name
             : "",
       )
-      .join("\n")
-      .slice(-4000)
+      .join("\n"))
   }
-  return ""
+  return { text: "", truncated: false }
 }
 
 /** Normalize only failed SDK results, before their diagnostics become display strings. */

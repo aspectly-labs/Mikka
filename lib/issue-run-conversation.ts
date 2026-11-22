@@ -60,13 +60,53 @@ export function runFailureText(status: string, error: string | null | undefined)
 export type ThreadStage = { stage: 'repository' | 'worktree' | 'agent_start'; ms: number; ok: boolean }
 const THREAD_STAGES = new Set<ThreadStage['stage']>(['repository', 'worktree', 'agent_start'])
 
-/** One tool call in a folded "N steps" line: its name, the one input that says what it did, and whether it failed. */
-export type ThreadStep = { id: string; name: string; detail: string | null; failed: boolean; command?: string; output?: string; exitCode?: number | null; ms?: number }
+/**
+ * What a tool call did, from its harness's tool name (#2937): the thread names a call by its kind and target
+ * (「已读取 a.ts」) instead of parsing a summary. Unknown tools, MCP tools included, are `other`.
+ */
+export type ThreadStepKind = 'read' | 'search' | 'shell' | 'edit' | 'web' | 'delegate' | 'todo' | 'other'
+
+/**
+ * Where a call stands: `running` until its result arrives. A call still running when its run ended never finished;
+ * `threadStepStatus` reads it as `cancelled`.
+ */
+export type ThreadStepStatus = 'running' | 'ok' | 'failed'
+
+/**
+ * One tool call in a folded "N steps" line: its name, the one input that says what it did, and whether it failed.
+ * Structured (#2937): `kind`, `status`, `target` (the file, pattern, URL or query it acted on), `scope` (where a search
+ * looked), and `outputTruncated` when the daemon kept only the end of the output. `output` is everything stored.
+ */
+export type ThreadStep = {
+  id: string; name: string; detail: string | null; failed: boolean; command?: string; output?: string; exitCode?: number | null; ms?: number
+  kind: ThreadStepKind; status: ThreadStepStatus; target?: string; scope?: string; outputTruncated?: true
+}
+
+/** Claude Code's, Codex's and Cursor's (ACP `kind`) tool names by kind; matched without case. */
+const STEP_KINDS: Record<Exclude<ThreadStepKind, 'other'>, readonly string[]> = {
+  read: ['read', 'notebookread', 'read_file', 'view', 'cat'],
+  search: ['grep', 'glob', 'ls', 'search', 'find', 'file_search', 'codebase_search', 'list_dir'],
+  shell: ['bash', 'shell', 'execute', 'exec_command', 'local_shell'],
+  edit: ['edit', 'multiedit', 'write', 'notebookedit', 'apply_patch', 'delete', 'move', 'write_file', 'edit_file', 'str_replace'],
+  web: ['webfetch', 'websearch', 'web_search', 'fetch'],
+  delegate: ['task', 'agent'],
+  todo: ['todowrite', 'update_plan'],
+}
+const STEP_KIND_OF = new Map(Object.entries(STEP_KINDS).flatMap(([kind, names]) => names.map(name => [name, kind as ThreadStepKind])))
+
+/** A tool name's kind (#2937). */
+export function threadStepKind(name: string): ThreadStepKind {
+  return STEP_KIND_OF.get(name.toLowerCase()) ?? 'other'
+}
+
+/** A call's status once its run is known: one left running by a run that ended was cancelled. */
+export function threadStepStatus(step: Pick<ThreadStep, 'status'>, runActive: boolean): ThreadStepStatus | 'cancelled' {
+  return step.status === 'running' && !runActive ? 'cancelled' : step.status
+}
 
 /** Claude Code's `Bash`, Codex's `bash`/`shell` and Cursor's `execute` run a command; every other step is a tool (as iOS
  * apps/mobile/features/tasks/model/thread-steps.ts counts them, #1770). */
-const COMMAND_STEPS = new Set(['bash', 'shell', 'execute'])
-export const isCommandStep = (step: Pick<ThreadStep, 'name'>) => COMMAND_STEPS.has(step.name.toLowerCase())
+export const isCommandStep = (step: Pick<ThreadStep, 'name'>) => threadStepKind(step.name) === 'shell'
 
 /** Codex records its combined output and exit code in a single result. */
 function commandResult(value: unknown) {
@@ -96,12 +136,41 @@ const STEP_OUTPUT_END_CHARS = 4096
 
 /** Stored chunks already mask workspace/owner secrets; reapply credential patterns before cutting. */
 function stepText(output: unknown): string | undefined {
+  return stepTextCut(output)?.text
+}
+
+/** `stepText`, and whether it left out the middle. */
+function stepTextCut(output: unknown): { text: string; cut: boolean } | undefined {
   if (output === undefined || output === null) return undefined
   const masked = maskDeep(output, credentialMasker)
   const text = typeof masked === 'string' ? masked : JSON.stringify(masked, null, 2)
   if (text === undefined) return undefined
-  return text.length <= STEP_OUTPUT_END_CHARS * 2 ? text
-    : `${text.slice(0, STEP_OUTPUT_END_CHARS)}\n[output truncated]\n${text.slice(-STEP_OUTPUT_END_CHARS)}`
+  return text.length <= STEP_OUTPUT_END_CHARS * 2 ? { text, cut: false }
+    : { text: `${text.slice(0, STEP_OUTPUT_END_CHARS)}\n[output truncated]\n${text.slice(-STEP_OUTPUT_END_CHARS)}`, cut: true }
+}
+
+const TARGET_KEYS: Partial<Record<ThreadStepKind, readonly string[]>> = {
+  read: ['file_path', 'path', 'notebook_path', 'file'],
+  search: ['pattern', 'query', 'glob', 'path'],
+  edit: ['file_path', 'path', 'notebook_path', 'file'],
+  web: ['url', 'query'],
+  delegate: ['description', 'subagent_type'],
+}
+
+/** What a call acted on, and for a search where it looked (#2937). A path, pattern or URL is one line, cut at 200 characters. */
+function stepTarget(kind: ThreadStepKind, input: unknown): { target?: string; scope?: string } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const record = input as Record<string, unknown>
+  const line = (value: unknown) => {
+    if (typeof value !== 'string' || !value.trim()) return undefined
+    const text = value.trim().replace(/\s+/g, ' ')
+    return text.length > STEP_DETAIL_MAX ? `${text.slice(0, STEP_DETAIL_MAX - 1)}…` : text
+  }
+  const key = TARGET_KEYS[kind]?.find(name => line(record[name]))
+  let target = key ? line(record[key]) : undefined
+  if (!target && kind === 'edit' && Array.isArray(record.files)) target = line(record.files.filter(file => typeof file === 'string').join(', '))
+  const scope = kind === 'search' && key !== 'path' ? line(record.path) : undefined
+  return { ...(target ? { target } : {}), ...(scope ? { scope } : {}) }
 }
 
 function stepDetail(input: unknown): string | null {
@@ -165,7 +234,9 @@ export function threadItems(
       if (!item) { item = { kind: 'agent', id, text: '', at: time }; texts.set(id, item); items.push(item) }
       if (typeof chunk.delta === 'string') item.text += chunk.delta
     } else if (chunk.type === 'tool-input-available') {
-      const step: ThreadStep = { id: String(chunk.toolCallId ?? index), name: typeof chunk.toolName === 'string' && chunk.toolName ? chunk.toolName : 'tool', detail: stepDetail(chunk.input), failed: false }
+      const name = typeof chunk.toolName === 'string' && chunk.toolName ? chunk.toolName : 'tool'
+      const kind = threadStepKind(name)
+      const step: ThreadStep = { id: String(chunk.toolCallId ?? index), name, detail: stepDetail(chunk.input), failed: false, kind, status: 'running', ...stepTarget(kind, chunk.input) }
       if (isCommandStep(step) && chunk.input && typeof chunk.input === 'object' && 'command' in chunk.input && typeof chunk.input.command === 'string' && chunk.input.command.trim()) {
         step.command = stepText(chunk.input.command)
       }
@@ -175,14 +246,18 @@ export function threadItems(
     } else if ((chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error') && typeof chunk.toolCallId === 'string') {
       const step = calls.get(chunk.toolCallId)
       if (step) {
-        if (chunk.type === 'tool-output-error') step.failed = true
+        step.status = 'ok'
+        if (chunk.type === 'tool-output-error') { step.failed = true; step.status = 'failed' }
         else {
-          const output = stepText(chunk.output)
-          if (output !== undefined) step.output = output
+          if (chunk.outputTruncated === true) step.outputTruncated = true
+          const output = stepTextCut(chunk.output)
+          if (output !== undefined) step.output = output.text
+          if (output?.cut) step.outputTruncated = true
           const code = isCommandStep(step) ? commandResult(chunk.output)?.exitCode : undefined
           if (code !== undefined) {
             step.exitCode = code
             step.failed = code !== null && code !== 0
+            if (step.failed) step.status = 'failed'
           }
         }
         // `at` is the batch's insert time, not tool execution time. Historical chunks stay unknown.
