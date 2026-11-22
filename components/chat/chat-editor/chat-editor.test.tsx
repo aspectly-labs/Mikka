@@ -15,14 +15,21 @@ mock.module(new URL('../../../lib/chat-attachments/client.ts', import.meta.url).
   ChatUploadError: class extends Error {},
   uploadChatFile: (file: File) => new Promise(resolve => { lastUpload = file; finishUpload = () => resolve({ ...uploaded, name: file.name }) }),
 } })
+let referencesFound = true
 mock.module(new URL('../../../app/actions/task-runs.ts', import.meta.url).href, { namedExports: {
-  findThreadReferences: async () => [{ kind: 'task', id: task, title: 'MIK-12 Fix the login loop' }],
+  findThreadReferences: async () => referencesFound ? [{ kind: 'task', id: task, title: 'MIK-12 Fix the login loop' }] : [],
 } })
 mock.module(new URL('../../../hooks/use-thread-workspace.ts', import.meta.url).href, { namedExports: {
   useThreadWorkspace: (runId: string | null) => ({ data: runId ? { workspaceId: 'w', checkout: { runId, repoId: 'r' } } : null, loading: false, error: null }),
 } })
+class WorkspaceFilesError extends Error { constructor(readonly code: string) { super(code) } }
+let filesFail = false
 mock.module(new URL('../../../lib/right-column/workspace-files.ts', import.meta.url).href, { namedExports: {
-  searchFiles: async () => [{ path: 'src/app/page.tsx', name: 'page.tsx', kind: 'file', size: 1 }, { path: 'src/lib', name: 'lib', kind: 'directory', size: null }],
+  WorkspaceFilesError,
+  searchFiles: async () => {
+    if (filesFail) throw new WorkspaceFilesError('workspace_machine_unavailable')
+    return [{ path: 'src/app/page.tsx', name: 'page.tsx', kind: 'file', size: 1 }, { path: 'src/lib', name: 'lib', kind: 'directory', size: null }]
+  },
 } })
 mock.module('sonner', { namedExports: { toast: { error: () => {}, dismiss: () => {} } } })
 mock.module('@/lib/intl/i18n-client', { namedExports: {
@@ -321,4 +328,57 @@ test('a long paste goes as a text attachment, the way Claude sends 「Pasted tex
   await act(async () => (dom().querySelector('[data-chat-chip="pasted"] button[aria-label="ChatEditor.removePasted"]') as unknown as HTMLButtonElement).click())
   await settle(20)
   assert.equal(removed.length, 1, 'removing the chip removes the attachment')
+})
+
+test('files that cannot be read never hide the references that loaded; only an asked-for file search says why', async () => {
+  filesFail = true
+  try {
+    await mount('', { references: { workspaceId: 'w', runId: 'run-1' } })
+    await type('@login')
+    await settle(250)
+    assert.deepEqual(latest.editor.menu?.sections.map(section => section.title), ['ThreadReferences.tasks'], 'the tasks that loaded are listed')
+    assert.equal(latest.editor.menu?.status, undefined)
+    referencesFound = false
+    await act(async () => latest.editor.editor!.commands.clearContent(true))
+    await type('@nothing')
+    await settle(250)
+    assert.equal(latest.editor.menu?.status, 'ThreadReferences.empty', 'nothing matched: the reference search did not fail')
+    await act(async () => latest.editor.editor!.commands.clearContent(true))
+    await type('@file:page')
+    await settle(250)
+    assert.equal(latest.editor.menu?.status, 'RightColumn.files.machineUnavailable', 'a file search says why the files cannot be read')
+  } finally { filesFail = false; referencesFound = true }
+})
+
+test('a draft with chips and a pasted-text attachment survives a reload (a new window reads it back from localStorage)', async () => {
+  localStorage.clear(); sessionStorage.clear()
+  const long = Array.from({ length: 40 }, (_, index) => `row ${index}`).join('\n')
+  globalThis.fetch = (async () => new Response(long)) as typeof fetch
+  const { useViewState } = await import('@/lib/hooks/view-state')
+  function Thread() {
+    const [value, setValue] = useViewState('thread:run-1:draft', '')
+    const state = useChatComposer({ ref: createRef(), value, onChange: setValue, onSubmit: () => {}, label: 'Message', sendKey: 'enter',
+      attachmentScope: { kind: 'thread', id: 'run-1' }, references: { workspaceId: 'w' }, historyKey: 'thread:run-1', thread: true })
+    const editor = useChatEditor(state, { label: 'Message' })
+    latest = { value, editor, state }
+    return <div>{editor.field}</div>
+  }
+  const open = async () => {
+    await act(async () => root.render(<ViewStateProvider key={Math.random()} scope="owner:workspace"><Thread /></ViewStateProvider>))
+    await settle(20)
+  }
+  await open()
+  await type('see ')
+  await act(async () => { latest.editor.editor!.commands.insertContent({ type: 'mention', attrs: { id: task, label: 'MIK-12', kind: 'task', mentionSuggestionChar: '@' } }) })
+  await paste({ text: long })
+  await act(async () => { finishUpload?.() })
+  await settle(20)
+  const saved = latest.value
+  assert.match(saved, /^\[mikka-file:[^\]]+pasted-text-[^\]]+\]\n\nsee \[\[issue:/)
+  // The window closes and opens again: a new store, the same browser storage.
+  await act(async () => root.unmount())
+  root = createRoot(container)
+  await open()
+  assert.equal(latest.value, saved, 'the draft is read back as it was')
+  assert.deepEqual(chips(), ['pasted', 'task'])
 })
