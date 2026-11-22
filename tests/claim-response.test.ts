@@ -302,7 +302,11 @@ test('the current daemon receives filtered MCP, unless the grant is revoked befo
     const response = await claim(probe)
     assert.equal(response.status, revoke ? 409 : 200)
     const body = await response.json()
-    if (revoke) assert.deepEqual(body, { error: 'Run access changed before claim response.' })
+    if (revoke) {
+      assert.deepEqual(body, { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+      assert.equal(probe.run.status, 'failed')
+      assert.equal(probe.run.stopReason, 'blocked')
+    }
     else assert.deepEqual(body.mcp.servers, probe.nativeMcpServers)
   }
 })

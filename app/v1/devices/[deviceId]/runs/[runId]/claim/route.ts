@@ -529,6 +529,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     await persistRunCompletion(caller.userId, runId, { stopReason: 'error', report: { summary: 'Frozen execution policy no longer fits the current owner policy.', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
     return NextResponse.json({ error: 'Frozen execution policy is no longer permitted.' }, { status: 409 })
   }
+  const failPreparingClaim = async (failure: CodedError, message: string) => {
+    const now = new Date()
+    const failed = await db.update(agentRuns).set({ status: 'failed', stopReason: 'blocked', failureDetails: serverRunFailure(runId, now, failure), error: message, finishedAt: now, updatedAt: now })
+      .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, caller.userId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'preparing'), eq(agentRuns.leaseExpiresAt, new Date(leaseExpiresAt)), isNull(agentRuns.stopRequestedAt))).returning({ id: agentRuns.id })
+    if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId); await afterRunEnded(caller.userId, runId) }
+    return NextResponse.json({ error: message, code: failure.code, ...(failure.detail ? { detail: failure.detail } : {}) }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
+  }
   let subscriptionLease: NativeLease | undefined
   let githubCredential: { token: string; expiresAt: string | null } | undefined
   timings.next('credentials_wait')
@@ -543,10 +550,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       // only this claim's still-preparing lease, never a concurrent stop/retry.
       console.warn(JSON.stringify({ msg: 'run_claim_credentials_failed', runId,
         failures: failures.map(result => causeFields((result as PromiseRejectedResult).reason)) }))
-      const failed = await db.update(agentRuns).set({ status: 'failed', stopReason: 'blocked', failureDetails: serverRunFailure(runId, new Date(), failure), error: 'Run credentials unavailable.', finishedAt: new Date(), updatedAt: new Date() })
-        .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, caller.userId), eq(agentRuns.status, 'preparing'), eq(agentRuns.leaseExpiresAt, new Date(leaseExpiresAt)), isNull(agentRuns.stopRequestedAt))).returning({ id: agentRuns.id })
-      if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId); await afterRunEnded(caller.userId, runId) }
-      return NextResponse.json({ error: 'Run credentials unavailable.', code: failure.code, ...(failure.detail ? { detail: failure.detail } : {}) }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
+      return failPreparingClaim(failure, 'Run credentials unavailable.')
     }
     if (native.status === 'fulfilled') subscriptionLease = native.value
     if (github.status === 'fulfilled') githubCredential = github.value
@@ -632,7 +636,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       try {
         const { lockNativeMcpAuthority } = await import('@/lib/plugins/workspace-mcp')
         await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
-      } catch (error) { if (error instanceof PluginError) return false; throw error }
+      } catch (error) {
+        if (error instanceof PluginError && error.code !== 'mcpUnavailable') return false
+        throw error
+      }
     }
     if (taskInjection.snapshot === undefined) return true
     if (workspaceId && !current.agentDefinition?.executionIdentity && !await executionMembersActive(workspaceId, [current.userId])) return false
@@ -647,6 +654,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       if (error instanceof CodedError && error.code === 'task_secret_unavailable') return false
       throw error
     }
+  }).catch((error: unknown) => {
+    if (error instanceof PluginError && error.code === 'mcpUnavailable') {
+      return failPreparingClaim(new CodedError('mcpUnavailable', { cause: error }), 'MCP configuration unavailable.')
+    }
+    throw error
   })
   return response ?? NextResponse.json({ error: 'Run access changed before claim response.' }, { status: 409 })
   }
