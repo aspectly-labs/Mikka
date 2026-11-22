@@ -1056,7 +1056,8 @@
       "downloadDesktop": "Download Mikka Desktop",
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "Installation commands are unavailable",
-      "reconnectTitle": "Reconnect"
+      "reconnectTitle": "Reconnect",
+      "desktopLink": "Download the desktop app"
     },
     "setup": "Set up repository and agent",
     "offlineSince": "Offline · {time}",
@@ -2291,6 +2292,9 @@
       },
       "issue-states": {
         "title": "Issue states"
+      },
+      "team-skills": {
+        "title": "Team skills"
       }
     },
     "appearance": {
@@ -3763,6 +3767,22 @@
         "purple": "Purple",
         "red": "Red"
       }
+    },
+    "teamSkills": {
+      "title": "Team skills",
+      "empty": "No team skills yet",
+      "loadError": "The team skill registry could not be read.",
+      "actError": "Could not be changed. Try again.",
+      "approve": "Approve",
+      "withdraw": "Withdraw",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "withdrawn": "Withdrawn"
+      },
+      "withdrawTitle": "Withdraw {name}?",
+      "withdrawBody": "Withdrawal is permanent: unfinished runs that selected this version stop.",
+      "cancel": "Cancel"
     }
   },
   "TelegramBot": {
@@ -5925,7 +5945,13 @@
     "notSent": "Not sent",
     "answering": "Replying",
     "noTaker": "No bot took this. @ one by name",
-    "stopped": "Stopped"
+    "stopped": "Stopped",
+    "exchange": {
+      "marker": "{names} — {count} exchange messages",
+      "title": "{names}",
+      "empty": "This exchange has no messages.",
+      "loadError": "The exchange could not be loaded."
+    }
   },
   "DeviceSetup": {
     "title": "Set up {device}",

@@ -1,3 +1,5 @@
+import { unfenceWholeReply } from './openui-lang'
+
 /** Component names a reply may open with as its whole program: the library's catalog, its root and the OpenUI built-ins the Coordinator prompt lists. */
 const TOP_LEVEL_COMPONENTS = [
   'Stack', 'TextContent', 'BeCodeBlock', 'BeCard', 'BeCardGrid', 'BeImageCard', 'BeImage', 'BeButton',
@@ -36,7 +38,19 @@ export function isAgentUISourcePrefix(source: string): boolean {
   if (/^root\s*$/.test(text)) return true
   const assignment = /^root\s*=\s*/.exec(text)
   const component = assignment ? text.slice(assignment[0].length) : text
-  return TOP_LEVEL_COMPONENTS.some(name => name.startsWith(component) || new RegExp(`^${name}\\s*(?:\\(\\s*)?$`).test(component))
+  if (TOP_LEVEL_COMPONENTS.some(name => name.startsWith(component) || new RegExp(`^${name}\\s*(?:\\(\\s*)?$`).test(component))) return true
+  // A known component with an open call — `Stack(` plus args still streaming —
+  // is held too, so an incomplete program never flashes as Markdown mid-reply.
+  if (TOP_LEVEL_COMPONENTS.some(name => new RegExp(`^${name}\\s*\\(`).test(component))) return true
+  // While a reply is streaming, an opening fence whose body could still become
+  // a program is ambiguous too — hold it so the fenced source never flashes
+  // as a code block before the card appears.
+  const open = /^(```|~~~)[^\n]*\n?/.exec(text)
+  if (open && !new RegExp(`(^|\\n)[ \\t]*${open[1]}[ \\t]*(\\n|$)`).test(text.slice(open[0].length))) {
+    const inner = text.slice(open[0].length)
+    return !inner.trim() || isAgentUISourcePrefix(inner)
+  }
+  return false
 }
 
 /**
@@ -46,6 +60,14 @@ export function isAgentUISourcePrefix(source: string): boolean {
  * normaliser, and prose that only names a component stays Markdown.
  */
 export function detectAgentUISource(source: string): { isOpenUI: boolean; source: string } {
+  const unfenced = unfenceWholeReply(source)
+  if (unfenced !== source) {
+    // A model that fences its whole program still renders; the same strict
+    // component test decides whether the fenced body is a program or code.
+    if (ROOT_ASSIGNMENT.test(unfenced)) return { isOpenUI: true, source: normalizeAgentUISource(unfenced) }
+    if (TOP_LEVEL_CALL.test(unfenced)) return { isOpenUI: true, source: normalizeAgentUISource(`root = ${unfenced.trimStart()}`) }
+    return { isOpenUI: false, source }
+  }
   if (ROOT_ASSIGNMENT.test(withoutFences(source))) return { isOpenUI: true, source: normalizeAgentUISource(source) }
   if (TOP_LEVEL_CALL.test(source)) return { isOpenUI: true, source: normalizeAgentUISource(`root = ${source.trimStart()}`) }
   return { isOpenUI: false, source }

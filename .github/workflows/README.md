@@ -7,21 +7,26 @@ bindings. Current workflow files define the triggers and selected coverage.
 
 Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
 and Cloudflare API source qualification for PRs targeting main. CI runs
-affected source, unit and daemon checks. Its unit matrix runs Node 24 for PRs
-targeting main. PRs targeting dev, which has no merge queue, retain the two
-Node versions and selected acceptance in the protected UI check.
+affected source, unit and daemon checks on Node 24 only
+([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
+PRs targeting dev, which has no merge queue, retain selected acceptance in the
+protected UI check.
+
+Merge queue autopilot checks the PR head after CI or Browser gate completes.
+It adds an eligible same-repository PR to the end of the queue once all required
+checks pass. Stacks and PRs included in an open batch follow their owner's merge
+flow. The GitHub App installation token lets queue candidates trigger CI.
 
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
 Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
 checks that trusted selection succeeded and the deferred DB jobs skipped.
 
-On `merge_group`, CI retains the full Node 22 and 24 unit and PG17 shard
-matrices. Selected Analytics, Workspace Governance and specialty acceptance
+On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path
 policy from the candidate's immutable base and selects all checks if that base
-predates the policy. Node.js compatibility continues its separate candidate
-workflow with real App, Eve and local-device builds and startup on both majors.
+predates the policy. The Node.js compatibility candidate workflow keeps its real
+App, Eve and local-device build and startup on Node 24.
 
 The specialty checks cover app icon compilation, cloud computer, coding
 workspace, credential isolation, E2B subscription custody, Read Cache, Site
