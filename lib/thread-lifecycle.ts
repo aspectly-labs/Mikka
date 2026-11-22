@@ -48,10 +48,10 @@ export type ThreadRelation = 'fork' | 'side' | 'subagent'
 const CHAIN_SQL = `WITH RECURSIVE chain AS (SELECT id FROM agent_runs WHERE id=$1
   UNION ALL SELECT r.id FROM agent_runs r JOIN chain ON r."continuesRunId"=chain.id OR r."retryOf"=chain.id)`
 
-async function transcriptExcerpt(sourceRootId: string, limit = 20): Promise<string> {
+async function transcriptExcerpt(sourceRootId: string, limit = 20, cutoff?: string | null): Promise<string> {
   const { rows } = await pool.query(
-    `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) ORDER BY "createdAt" DESC LIMIT $2`,
-    [sourceRootId, limit])
+    `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt" DESC LIMIT $2`,
+    [sourceRootId, limit, cutoff ?? null])
   return rows.reverse().map(row => String(row.text)).join('\n')
 }
 
@@ -66,15 +66,18 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   const root = await rootRunId(user, runId)
   if (!root) return null
   const relation = input.relation
+  // `fromMessageId` is the branch point: nothing after it joins the copy or the prompt.
+  let cutoff: string | null = null
   if (input.fromMessageId) {
-    const { rows: [message] } = await pool.query(`${CHAIN_SQL} SELECT id FROM run_messages WHERE id=$2 AND "runId" IN (SELECT id FROM chain)`, [root, input.fromMessageId])
+    const { rows: [message] } = await pool.query(`${CHAIN_SQL} SELECT id,"createdAt"::text AS at FROM run_messages WHERE id=$2 AND "runId" IN (SELECT id FROM chain)`, [root, input.fromMessageId])
     if (!message) return null
+    cutoff = message.at
   }
   // A full replay also carries the person's follow-up inputs, not just the first prompt.
-  const replay = relation === 'fork' && input.mode !== 'summary' ? (await transcriptExcerpt(root, 50)).slice(0, 8000) : ''
+  const replay = relation === 'fork' && input.mode !== 'summary' ? (await transcriptExcerpt(root, 50, cutoff)).slice(0, 8000) : ''
   const prompt = relation === 'fork' && input.mode !== 'summary'
     ? `${source.prompt}${replay ? `\n\n${replay}` : ''}`
-    : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20)).slice(0, 6000)}`
+    : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20, cutoff)).slice(0, 6000)}`
   const id = randomUUID()
   const { rows: [run] } = await pool.query(
     `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin)
@@ -88,16 +91,19 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
       `${CHAIN_SQL} INSERT INTO run_messages(id,"runId","userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt")
        SELECT gen_random_uuid(),$2,"userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
        WHERE "runId" IN (SELECT id FROM chain)
-         AND ($3::uuid IS NULL OR "createdAt" <= (SELECT "createdAt" FROM run_messages WHERE id=$3))
+         AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
        ORDER BY "createdAt"`,
-      [root, id, input.fromMessageId ?? null])
+      [root, id, cutoff])
     // The agent's own answers and tool calls live in the chunk stream; copy it
-    // too, renumbering seq because several source runs feed one new run.
+    // too. Negative seqs keep history ordered without colliding with the
+    // sequence numbers the child's own writer assigns (onConflictDoNothing
+    // would silently drop new replies at copied seqs). `cutoff` bounds history
+    // at the selected message.
     await pool.query(
       `${CHAIN_SQL} INSERT INTO run_chunks(id,"runId",seq,chunk,"createdAt")
-       SELECT gen_random_uuid(),$2,ROW_NUMBER() OVER (ORDER BY "createdAt",seq),chunk,"createdAt" FROM run_chunks
-       WHERE "runId" IN (SELECT id FROM chain) ORDER BY "createdAt",seq`,
-      [root, id])
+       SELECT gen_random_uuid(),$2,-ROW_NUMBER() OVER (ORDER BY "createdAt" DESC,seq DESC),chunk,"createdAt" FROM run_chunks
+       WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt",seq`,
+      [root, id, cutoff])
   }
   // Wake the child's execution: a device run pings its device; a cloud run gets a machine claim.
   if (run.deviceId) notifyDeviceWork(String(run.deviceId))
