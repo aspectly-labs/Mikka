@@ -36,8 +36,9 @@ Node 22 (latest 22.x) and Node 24 can both build, start and test the full app,
 including Eve. The default remains Node 24; it is not a minimum-version check.
 To verify another supported major, put that Node binary first on `PATH` after
 bootstrap, then run `pnpm build:app`, `pnpm start` and the relevant tests.
-The frozen dependency patch for Eve only widens its CLI engine declaration;
-CI verifies its actual compiled runtime on both versions.
+The frozen dependency patch for Eve only widens its CLI engine declaration.
+CI verifies its compiled runtime on Node 24 only
+([2026-11-22-1430](design/decisions/2026-11-22-1430-ci-node24-only.md)).
 
 ## In the cloud environment's setup script
 

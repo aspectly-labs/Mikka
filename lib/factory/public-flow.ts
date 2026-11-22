@@ -97,7 +97,9 @@ export async function readFactoryFlow(tx: Pick<PoolClient, 'query'>, task: Facto
     q."updatedAt" AS "questionSince", report."artifactId",report."candidateId" AS "reportCandidateId",report."runId" AS "reportRunId",report.counts,report.media,report_version.version AS "latestVersion",
     review."candidateId" AS "reviewCandidateId",review.output->'completion'->>'reviewVerdict' AS verdict,
     publication."pullRequest" AS "reviewPublication",publication.branch AS "publicationBranch",
-    CASE WHEN publication."pullRequest" IS NULL THEN NULL ELSE jsonb_build_object('url',left(publication."pullRequest"->>'url',2000),'state',publication."pullRequest"->>'state') END AS "pullRequest",
+    CASE WHEN publication."pullRequest" IS NULL THEN NULL ELSE jsonb_build_object('url',left(publication."pullRequest"->>'url',2000),'state',
+      coalesce((SELECT e->>'state' FROM jsonb_array_elements(coalesce(i.content #> '{attrs,mikka,pullRequests}','[]'::jsonb)) e
+        WHERE lower(rtrim(e->>'url','/'))=lower(rtrim(publication."pullRequest"->>'url','/')) LIMIT 1), publication."pullRequest"->>'state')) END AS "pullRequest",
     EXISTS(SELECT 1 FROM factory_merges m WHERE m."taskId"=$1 AND m."candidateId"=$3 AND m."userId"=$2 AND m.status='merged' AND candidate.kind='repository') AS merged,
     EXISTS(SELECT 1 FROM factory_deliverable_acceptances accepted WHERE accepted."taskId"=$1 AND accepted."candidateId"=$3 AND accepted."userId"=$2 AND candidate.kind IN ('report','deliverable')) AS accepted
     FROM factory_attempts current
@@ -108,7 +110,8 @@ export async function readFactoryFlow(tx: Pick<PoolClient, 'query'>, task: Facto
     LEFT JOIN LATERAL (SELECT "candidateId",output FROM factory_attempts WHERE "taskId"=$1 AND stage='review' AND "runId" IS NOT NULL AND status IN ('passed','failed','blocked','waiting') ORDER BY position DESC LIMIT 1) review ON true
     LEFT JOIN factory_candidates candidate ON candidate.id=$3 AND candidate."taskId"=$1
     LEFT JOIN run_publications publication ON publication."runId"=candidate."runId" AND publication."userId"=$2
-    WHERE current.id=$4 AND current."taskId"=$1 LIMIT 1`, [task.id,task.userId,task.candidateId,task.attemptId]);
+    LEFT JOIN issues i ON i.id=$5 AND i."userId"=$2
+    WHERE current.id=$4 AND current."taskId"=$1 LIMIT 1`, [task.id,task.userId,task.candidateId,task.attemptId,task.issueId]);
   const state = publicFactoryState(task, row);
   const { stage } = state;
   const { rows: history } = await tx.query<{ stage: FactoryTask['stage'] }>(`SELECT stage,min(position) AS position FROM factory_attempts
