@@ -7,7 +7,8 @@ import { useTranslations } from '@/lib/intl/i18n-client'
 import { Archive, Folder, Pencil, Plus } from '@/components/icons'
 import type { EnvironmentView, EnvironmentsView } from '@/app/actions/environments'
 import { listProjectSetupVersions, rollbackProjectSetup, saveEnvironment, setProjectDefaultEnvironment } from '@/app/actions/project-resources'
-import { environmentConfiguration, type EnvironmentConfiguration, type ProjectSetupHistory } from '@/lib/project-resources/contracts'
+import type { EnvironmentConfiguration, ProjectSetupHistory } from '@/lib/project-resources/contracts'
+import { isReservedEnvName, SECRET_NAME } from '@/lib/secrets/format'
 import type { ActionResult } from '@/lib/action-result'
 import { MACHINE_SIZES, isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 import { cn } from '@/lib/utils'
@@ -29,9 +30,19 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SettingsLoading, SettingsSaveError, SettingsSection, SettingRow, settingsSelectTriggerClass } from './primitives'
 
+const envVarKeySchema = z.string().regex(SECRET_NAME).refine(name => !isReservedEnvName(name))
+const clientEnvironmentConfiguration = z.object({
+  runtime: z.enum(['any', 'local', 'cloud']),
+  harness: z.enum(['any', 'claude_code', 'codex', 'cursor']),
+  setup: z.object({ script: z.string().max(16_384) }).optional(),
+  variables: z.record(envVarKeySchema, z.string().max(32_768)),
+  secretIds: z.array(z.uuid()).max(100),
+  repositoryKeys: z.array(z.string()).max(100),
+}).refine(value => Object.keys(value.variables).length <= 100)
+
 const environmentFormSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  configuration: environmentConfiguration,
+  configuration: clientEnvironmentConfiguration,
 })
 
 function formatRepositoryList(repositoryKeys: readonly string[], boundProjects: readonly string[]): string {

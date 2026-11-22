@@ -1,5 +1,8 @@
-import { posix, win32 } from 'node:path'
 import { z } from 'zod'
+
+function isAbsoluteLocalPath(value: string): boolean {
+  return value.startsWith('/') || value.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(value)
+}
 
 /**
  * Shared WS-G contracts for device policy, repository scope CRUD and
@@ -54,7 +57,7 @@ export type UpdateDevicePolicyInput = z.infer<typeof updateDevicePolicyInput>
 
 const safeLocalPath = z.string().trim().min(1).max(1024).refine(
   value => !Array.from(value).some(char => char.charCodeAt(0) < 32)
-    && (posix.isAbsolute(value) || win32.isAbsolute(value)),
+    && isAbsoluteLocalPath(value),
   { message: 'Local path must be an absolute filesystem path without control characters.' },
 )
 
