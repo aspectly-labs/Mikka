@@ -111,7 +111,7 @@ export async function queueFactoryTask(pool: Pool, userId: string, input: {
       }
     }
     if (task && !input.previousRunId && !pendingSpec && !['cancelled','revoked'].includes(task.status)) {
-      await runtime.store.apply(userId, factoryBinding(task), factoryEventId('replace-thread', key), { action: 'cancel', reason: 'The person requested a new thread.' }, tx)
+      await runtime.store.apply(userId, factoryBinding(task), factoryEventId('replace-thread', key), { action: 'cancel', reason: 'The person requested a new thread.', internal: true }, tx)
       task = undefined
     }
     if (task && input.previousRunId && !['cancelled','revoked'].includes(task.status)) {
