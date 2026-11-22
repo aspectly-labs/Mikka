@@ -156,19 +156,19 @@ export async function forget(userId: string, input: { text: string }, scope: Nat
 }
 
 /** 团队权限 › 允许使用的应用: a workspace can block an app for its bots. The person's Coordinator is not governed (lib/app-policy/store.ts). */
-async function appBlockedForBot(botId: string | undefined, action: ComposioActionName) {
+async function appBlockedForBot(botId: string | undefined, action: ComposioActionName, ownerId: string) {
   if (!botId) return false
   const { botMayUseApp } = await import('@/lib/app-policy/store')
   // Loaded here, not at module top: steps.ts is imported by suites that stub 'ai', which composio-actions needs.
   const { COMPOSIO_ACTIONS } = await import('@/lib/composio-actions')
   const toolkit = COMPOSIO_ACTIONS[action]?.toolkit
-  return Boolean(toolkit && !(await botMayUseApp(botId, toolkit)))
+  return Boolean(toolkit && !(await botMayUseApp(botId, toolkit, ownerId)))
 }
 
 export async function composioAction(userId: string, action: ComposioActionName, input: unknown, scope?: NativeToolScope, accountId?: string, botId?: string) {
   'use step'
   await assertNativeToolScope(userId,scope)
-  if (await appBlockedForBot(botId, action)) return { error: 'integrationBlockedByWorkspace' }
+  if (await appBlockedForBot(botId, action, userId)) return { error: 'integrationBlockedByWorkspace' }
   return accountId ? runComposioAction(userId, action, input, accountId) : runComposioAction(userId, action, input)
 }
 
@@ -231,7 +231,7 @@ export async function accountWrite(userId: string, action: ApprovalActionName, i
   // (deny / ask / allow, 设置 › 应用与运行权限) decides inside writeAccountAction
   // through lib/operations/account-write-setting.ts. Reading only the first let the
   // Coordinator send mail while the same app's call_app_tool was denied (ALE-8).
-  if (await appBlockedForBot(botId, action)) return { error: 'integrationBlockedByWorkspace' }
+  if (await appBlockedForBot(botId, action, userId)) return { error: 'integrationBlockedByWorkspace' }
   return writeAccountAction(userId, action, input, accountId, botId ?? null)
 }
 // A send has no idempotency key: a replayed step could send it twice.
@@ -917,7 +917,7 @@ export async function personalWrite(userId:string, botId:string | null, executio
   const app = WRITE_TOOL_APPS[call.action]
   if (botId && app) {
     const { botMayUseApp } = await import('@/lib/app-policy/store')
-    if (!(await botMayUseApp(botId, app))) return { error: 'integrationBlockedByWorkspace' }
+    if (!(await botMayUseApp(botId, app, userId))) return { error: 'integrationBlockedByWorkspace' }
   }
   const { personalWriteFromRun } = await import('@/lib/operations/write-runtime')
   return personalWriteFromRun(userId,botId,executionId,call,scope?.holder!==undefined?scope:undefined)
@@ -997,21 +997,4 @@ export async function scheduleCommand(userId:string,botId:string|null,sourceEven
   await assertNativeToolScope(userId,scope)
   const {executeScheduleCommand}=await import('@/lib/schedules/runtime')
   return executeScheduleCommand(userId,botId,sourceEventId,input)
-}
-export async function assertScheduleRead(userId:string,botId:string,scope:import('@/lib/schedules/contract').ScheduledRead){
-  'use step'
-  const {assertScheduledRead}=await import('@/lib/schedules/runtime')
-  await assertScheduledRead(userId,botId,scope)
-}
-export async function completeScheduleRead(userId:string,botId:string,scope:import('@/lib/schedules/contract').ScheduledRead,text:string,streamId?:string){
-  'use step'
-  const {schedules}=await import('@/lib/schedules/runtime')
-  await schedules().completeRead(userId,botId,scope,text,streamId)
-  return (await store.conversationForDisplay(userId,1,botId))[0]?.position ?? 0
-}
-export async function failScheduleRead(scope:import('@/lib/schedules/contract').ScheduledRead,denied=false){
-  'use step'
-  const {failScheduledRead}=await import('@/lib/schedules/runtime')
-  const {ScheduleError}=await import('@/lib/schedules/contract')
-  await failScheduledRead({id:scope.occurrenceId,lease_token:scope.leaseToken},denied?new ScheduleError('scheduleReadAuthorityLost',403):new Error('scheduledReadFailed'))
 }

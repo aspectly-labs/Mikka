@@ -3,14 +3,9 @@ name: Site search read contract
 # none): tests/e2e/site-search.spec.ts uses Playwright's request client only,
 # against the compiled API, Better Auth and two PostgreSQL services. No
 # browser is installed or launched.
-# Runs only when search changes: on every pull request (this repository's and
-# forks') and on pushes to main that touch these paths.
-# Pull requests only: the same suite already passed on the PR, and main's
-# CI workflow (ui-policy.yml) still verifies every merged commit.
+# Candidate path selection or manual dispatch starts this suite.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-    paths: ['apps/api/**', 'apps/frontend/**', 'lib/browser-rpc/**', 'scripts/start-app*', 'lib/search/**', 'lib/federated-search/**', 'app/api/search/**', 'tests/e2e/site-search.spec.ts', '.github/workflows/site-search.yml']
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,8 +20,6 @@ env:
 
 jobs:
   site-search:
-    # No Runner allocation until a draft becomes review-ready.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -72,7 +65,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:integrations
-      - run: node apps/api/scripts/generate-routes.mjs --check && pnpm typecheck && pnpm lint
+      # The unchanged pnpm build below owns the full typecheck before HTTP acceptance.
+      - run: node apps/api/scripts/generate-routes.mjs --check && pnpm lint
       - name: Provision only the isolated application test database from existing schema
         run: pnpm test:e2e:setup
       - name: Provision only the separate workspace test database from existing schema

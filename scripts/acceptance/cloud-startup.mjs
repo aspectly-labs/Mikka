@@ -132,7 +132,8 @@ export function parseOptions(args, env = process.env) {
   assert(!options.workspace || UUID.test(options.workspace), 'workspace_invalid')
   validatePersonalOptions(options)
   assert(['both', 'claude_code', 'codex'].includes(options.harness), 'harness_invalid')
-  assert(['baseline', 'acceptance', 'candidate'].includes(options.mode), 'mode_invalid')
+  assert(['baseline', 'acceptance', 'candidate', 'canary'].includes(options.mode), 'mode_invalid')
+  if (options.mode === 'canary') assert(options.runs === 1 && options.harness !== 'both' && !options.deviceId && !options.agentId && !options.taskProvider && options.workspaceKind !== 'personal', 'option_invalid')
   options.runtimeEvidence ??= options.mode === 'acceptance' ? 'required' : 'optional'
   options.officialTiming ??= options.mode === 'acceptance' ? 'enabled' : 'disabled'
   assert(['required', 'optional'].includes(options.runtimeEvidence), 'runtime_evidence_invalid')
@@ -145,7 +146,7 @@ export function parseOptions(args, env = process.env) {
       && options.runtimeEvidence === 'required' && options.officialTiming === 'enabled', 'option_invalid')
     assert(new URL(options.origin).origin === 'https://app.aspectlylabs.com', 'origin_invalid')
   }
-  assert(Number.isInteger(options.runs) && options.runs >= (options.mode === 'candidate' ? 1 : options.taskProvider ? 2 : 3) && options.runs <= 20, 'runs_invalid')
+  assert(Number.isInteger(options.runs) && options.runs >= (['candidate', 'canary'].includes(options.mode) ? 1 : options.taskProvider ? 2 : 3) && options.runs <= 20, 'runs_invalid')
   assert(Number.isSafeInteger(options.maxStartupMs) && options.maxStartupMs > 0 && options.maxStartupMs <= 60000, 'threshold_invalid')
   assert(Number.isSafeInteger(options.timeoutMs) && options.timeoutMs >= 1000 && options.timeoutMs <= 600000, 'timeout_invalid')
   assert(!options.botId || UUID.test(options.botId), 'bot_invalid')
@@ -291,11 +292,20 @@ export async function restoreAcceptanceWorkspace(client, ownerId, workspaceId) {
   assert(current.currentUserId === ownerId && current.workspace?.id === workspaceId && session.user?.id === ownerId, 'workspace_restore_failed')
 }
 
-export async function acceptanceBot(client, botId, fixtureId, { issue = 1505, rememberCreated } = {}) {
+export async function acceptanceBot(client, botId, fixtureId, { issue = 1505, rememberCreated, mode } = {}) {
   assert([1505, 1593].includes(issue), 'fixture_scope_invalid')
   let created = false
+  const canaryName = `测试${issue} cloud-run-canary`
+  if (!botId && mode === 'canary') {
+    const bots = await client.rpc('bots.listBots', [])
+    assert(Array.isArray(bots), 'response_invalid')
+    const matches = bots.filter(bot => bot.name === canaryName)
+    assert(matches.length <= 1, 'test_bot_required')
+    botId = matches[0]?.id
+    if (matches.length) assert(UUID.test(botId ?? ''), 'bot_invalid')
+  }
   if (!botId) {
-    const value = await client.rpc('bots.createBot', [{ name: `测试${issue} ${fixtureId.slice(0, 8)}`, color: 'gris', shape: 'cercle', model: null, repository: null }])
+    const value = await client.rpc('bots.createBot', [{ name: mode === 'canary' ? canaryName : `测试${issue} ${fixtureId.slice(0, 8)}`, color: 'gris', shape: 'cercle', model: null, repository: null }])
     assert(UUID.test(value.id ?? ''), 'bot_create_failed')
     botId = value.id; created = true
     rememberCreated?.(botId)
@@ -304,7 +314,7 @@ export async function acceptanceBot(client, botId, fixtureId, { issue = 1505, re
   // This normal GET only returns bots owned by this session in its selected workspace.
   const bot = await client.json(`/api/bots/${botId}`)
   assert(bot.id === botId && new RegExp(`^测试\\s*${issue}(?:\\s|$)`).test(bot.name ?? ''), 'test_bot_required')
-  return { botId, created, retention: 'retained_no_delete_api' }
+  return { botId, created, retention: mode === 'canary' ? 'retained_reusable_canary' : 'retained_no_delete_api' }
 }
 
 /** The case's Bot chat takes the account's own subscription model: a
@@ -374,10 +384,19 @@ export async function dispatchThroughCoordinator(client, record, { botId, profil
   record.requestTraceScope = 'submission_http_only_workflow_may_use_another_trace'
   record.messageSubmittedAt = iso(now())
   record.phase = 'coordinator_submit'
-  await client.rpc('coordinator.sendCoordinatorMessage', [text, null, botId, randomUUID(),
-    deviceId ? { kind: 'device', deviceId, ...(agentId ? { agentId } : {}) } : sponsored ? {kind:'cloud',provider:'cloudflare'} : { $mikka: 'undefined' },
-    null, [], { $mikka: 'undefined' }, profileId, ...(sponsored ? [scope.workspaceId, record.title] : [])],
-  { headers: { traceparent: trace.traceparent } })
+  const submitted = await client.request('/api/agents/eve/v1/session?botId=' + encodeURIComponent(botId), {
+    ...post({ message: text, clientContext: { expectedOwnerId: scope.ownerId, expectedWorkspaceId: scope.workspaceId, profileId,
+      ...(deviceId ? { taskDestination: { kind: 'device', deviceId, ...(agentId ? { agentId } : {}) } }
+        : sponsored ? { taskDestination: { kind: 'cloud', provider: 'cloudflare' } } : {}),
+      ...(sponsored ? { taskTitle: record.title } : {}),
+    } }), headers: { 'content-type': 'application/json', 'x-mikka-submission-id': randomUUID(), traceparent: trace.traceparent },
+  })
+  if (!submitted.ok) { await submitted.body?.cancel().catch(() => {}); fail(`http_${submitted.status}`) }
+  assert(submitted.status === 202, 'response_invalid')
+  let receipt
+  try { receipt = await submitted.json() } catch (error) { fail('response_invalid', error) }
+  assert(receipt?.ok === true && /^wrun_[A-Za-z0-9_-]+$/.test(receipt.sessionId ?? '')
+    && typeof receipt.deliveryId === 'string' && receipt.deliveryId.length > 0, 'response_invalid')
   record.phase = 'coordinator_stream'
   let selectedCall, completed = false
   await observeEveSession(client, botId, { timeoutMs,
@@ -386,6 +405,7 @@ export async function dispatchThroughCoordinator(client, record, { botId, profil
       fail(code === 'identity' ? 'workflow_run_missing' : code === 'too_large' ? 'coordinator_stream_too_large' : code === 'unavailable' ? 'coordinator_stream_unavailable' : 'coordinator_stream_invalid', error)
     },
     onEvent: async (event, sessionId) => {
+      assert(sessionId === receipt.sessionId, 'workflow_run_missing')
       record.eveSessionId = sessionId
       // Session id is the durable Workflow run id, not the model's run_ label.
       record.workflowRunId = sessionId
@@ -675,7 +695,8 @@ export function observeChunks(record, detail, observedAt) {
     && successfulExecutionTools.size >= (record.minToolCalls ?? 0)
     && (!record.requireReplyAfterTool || record.replyVerifiedAfterTool)
     && (!record.requireRuntimeReceipt || record.runtimeTimingStatus === 'complete')
-    && (!record.requireTerminal || (detail.thread?.id === record.runId && TERMINAL.has(record.lastStatus))))
+    && (!record.requireTerminal || (detail.thread?.id === record.runId && TERMINAL.has(record.lastStatus)))
+    && (!record.requireSuccess || record.lastStatus === 'succeeded'))
 }
 
 /** The public detail keeps the original run's status separate from later
@@ -984,7 +1005,7 @@ export async function cleanupCase(client, record, target, { timeoutMs = 60000, W
 export async function runSubscriptionCase({ client, botId, profileId, profile, scope, harness, model = MODELS[harness],
   deviceId, agentId, sourceCommit, expectedBuild, taskProvider, repository = REPOSITORY, titlePrefix = '测试 1505',
   sampleId = randomUUID(), timeoutMs = 240000, requireReply = true, minToolCalls = deviceId ? 0 : 1,
-  runtimeEvidence: runtimeEvidenceMode = 'optional', officialTiming = 'disabled',
+  runtimeEvidence: runtimeEvidenceMode = 'optional', officialTiming = 'disabled', mode,
   now = Date.now, WebSocketImpl = globalThis.WebSocket, pinBuild, leaseAudit = false, onCandidateRunQueued, createCaseProbe, onFixture, verifyCompletedTask }) {
   assert(client && ['request', 'json', 'rpc'].every(key => typeof client[key] === 'function'), 'client_required')
   assert(UUID.test(botId ?? '') && UUID.test(profileId ?? ''), 'fixture_required')
@@ -1003,6 +1024,7 @@ export async function runSubscriptionCase({ client, botId, profileId, profile, s
   const record = { sampleId, harness, requestedModel: model, ...(taskProvider ? {taskProvider} : {}), title: `${titlePrefix} ${sampleId} ${harness}`,
     profileId, requireReply, minToolCalls, requireRuntimeReceipt: runtimeEvidenceMode === 'required' || Boolean(deviceId), requireAgentAcceptance: Boolean(deviceId || taskProvider), requireTerminal: Boolean(deviceId || taskProvider) || leaseAudit, requireOfficialTiming: officialTiming === 'enabled',
     requireReplyAfterTool: minToolCalls > 0 && (Boolean(deviceId) || runtimeEvidenceMode === 'required' || leaseAudit),
+    ...(mode === 'canary' ? { requireTerminal: true, requireSuccess: true, requireReplyAfterTool: true } : {}),
     stages: [], status: 'running', phase: 'build_pin', ...(sourceCommit ? { sourceCommit } : {}) }
   if (scope.workspaceKind === 'personal') record.workspaceKind = 'personal'
   const pin = pinBuild ?? (async () => {
@@ -1247,7 +1269,7 @@ export async function runCloudStartup(options, { env = process.env, fetchImpl = 
       }
     }
     report.phase = 'bot_create'
-    const fixture = await acceptanceBot(client, botId, fixtureId)
+    const fixture = await acceptanceBot(client, botId, fixtureId, { mode: options.mode })
     botId = fixture.botId
     if (fixture.created) await onFixture?.({ kind: 'bot', id: botId })
     if (fixture.created) report.createdBotId = botId
@@ -1353,6 +1375,7 @@ export async function runCloudStartup(options, { env = process.env, fetchImpl = 
   report.finishedAt = iso(now())
   report.status = report.error || report.cleanup.errors.length || report.samples.length !== options.runs
     || report.samples.some(sample => sample.status === 'failed' || sample.cleanup.status !== 'passed') ? 'failed'
+      : options.mode === 'canary' ? 'canary_passed'
       : options.taskProvider === 'cloudflare' && report.samples.every(sample => sample.replyVerified && sample.runtimeEvidence?.status === 'passed')
         ? 'sponsored_subscriptions_verified'
       : options.mode === 'candidate' && report.samples.every(sample => sample.replyVerified) ? 'candidate_subscription_proved'
@@ -1426,7 +1449,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   let output
   try {
     const options = parseOptions(process.argv.slice(2))
-    if (options.help) console.log(HELP)
+    if (options.help) console.log(`${HELP}\nScheduled cloud execution check: --mode canary --runs 1 --harness claude_code --strategy official --origin HTTPS_ORIGIN --output report.json\nCanary requires a successful terminal run, reply after tool execution, and cleanup; it does not assess startup latency.`)
     else {
       output = resolve(options.output)
       let report = options.alignReport

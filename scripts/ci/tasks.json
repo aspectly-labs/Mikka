@@ -1,4 +1,9 @@
 {
+  "core-legacy-orvilo-redirect": {
+    "command": "pnpm test:legacy-orvilo-redirect",
+    "kind": "core",
+    "env": {}
+  },
   "core-2": {
     "command": "pnpm test:factory-check-independence",
     "kind": "core",
@@ -468,6 +473,11 @@
   },
   "integration-factory-activity": {
     "command": "pnpm test:factory-activity",
+    "kind": "integration",
+    "env": {}
+  },
+  "integration-http-fakes": {
+    "command": "pnpm test:http-fakes",
     "kind": "integration",
     "env": {}
   }
