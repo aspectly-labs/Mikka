@@ -66,26 +66,56 @@ test('native failed outcomes preserve a closed provider code without publishing 
   assert.equal(JSON.stringify(messages).includes('Private provider diagnostic'),false)
 })
 
-test('a hook failure surfaces the hook\'s coded cause and keeps the turn\'s error reference (#3028)',()=>{
-  const settle=(data:object,line:number)=>({type:'turn.settled',data,meta:{position:{line,index:0},at:'2026-11-11T00:00:01Z',endOfLine:true}})
-  const coded=foldEvents(emptySessionView(),[
-    {type:'turn.started',data:{turnId:'turn_hooked',cause:{deliveryId:'delivery_hooked'},follows:null},meta:{position:{line:0,index:0},at:'2026-11-11T00:00:00Z',endOfLine:true}},
-    settle({turnId:'turn_hooked',outcome:'failed',error:{code:'HOOK_FAILED',message:'Hook "turn.started" failed: subscription_model_unavailable',details:{errorId:'err_support_reference'}}},1),
-  ])
-  const messages=projectEveTurn(coded,'wrun_fixture','turn_hooked','failed')
-  assert.ok('mikkaFailure' in messages[0])
-  assert.equal(messages[0].mikkaFailure,'subscription_model_unavailable')
-  assert.equal(messages[0].mikkaFailureRef,'err_support_reference')
+test('a missing-model hook refusal surfaces its coded refusal, never the wrapper (#3028)',()=>{
+  for (const refusal of ['executionModelUnknown','subscription_model_unavailable']) {
+    const view=foldEvents(emptySessionView(),[
+      {type:'turn.started',data:{turnId:'turn_hooked',cause:{deliveryId:'delivery_hooked'},follows:null},meta:{position:{line:0,index:0},at:'2026-11-11T00:00:00Z',endOfLine:true}},
+      {type:'turn.settled',data:{turnId:'turn_hooked',outcome:'failed',error:{code:'HOOK_FAILED',message:`Hook "turn.started" failed: ${refusal}`}},meta:{position:{line:1,index:0},at:'2026-11-11T00:00:01Z',endOfLine:true}},
+    ])
+    const messages=projectEveTurn(view,'wrun_fixture','turn_hooked','failed')
+    assert.ok('mikkaFailure' in messages[0])
+    assert.equal(messages[0].mikkaFailure,refusal)
+  }
+})
 
-  const opaque=foldEvents(emptySessionView(),[
-    {type:'turn.started',data:{turnId:'turn_opaque',cause:{deliveryId:'delivery_opaque'},follows:null},meta:{position:{line:0,index:0},at:'2026-11-11T00:00:00Z',endOfLine:true}},
-    settle({turnId:'turn_opaque',outcome:'failed',error:{code:'HOOK_FAILED',message:'Hook "turn.started" failed: cannot read properties of undefined',details:{errorId:'err_opaque'}}},1),
-  ])
-  const bare=projectEveTurn(opaque,'wrun_fixture','turn_opaque','failed')
-  assert.ok('mikkaFailure' in bare[0])
-  assert.equal(bare[0].mikkaFailure,'HOOK_FAILED')
-  assert.equal(bare[0].mikkaFailureRef,'err_opaque')
-  assert.equal(JSON.stringify(bare).includes('cannot read properties'),false)
+test('preparation refusals and safe references project without publishing hook diagnostics', () => {
+  const reference = '11111111-1111-4111-8111-111111111111'
+  const cases = [
+    { error: { code: 'HOOK_FAILED', message: 'Hook "hooks/product.ts" failed: executionModelUnknown' }, expected: 'executionModelUnknown' },
+    { error: { code: 'HOOK_FAILED', message: 'Hook "agent/hooks/product" failed: private diagnostic', id: reference, hint: 'private body' }, expected: `HOOK_FAILED · ref ${reference}` },
+    { error: { code: 'MODEL_FAILED', message: 'private diagnostic', id: reference }, expected: `MODEL_FAILED · ref ${reference}` },
+    { error: { code: 'reconnect_required', message: 'private diagnostic', id: reference }, expected: `reconnect_required · ref ${reference}` },
+    { error: { code: 'HOOK_FAILED', message: 'Hook "agent/hooks/product" failed: cloudComputerUnavailable' }, expected: 'HOOK_FAILED' },
+    { error: { code: 'HOOK_FAILED', message: 'Hook "agent/hooks/product" failed: executionModelUnknown private diagnostic' }, expected: 'HOOK_FAILED' },
+    { error: { code: 'OTHER_FAILED', message: 'Hook "agent/hooks/product" failed: executionModelUnknown' }, expected: 'OTHER_FAILED' },
+    { error: { code: 'HOOK_FAILED', message: 'private diagnostic', id: 'unsafe ref\n<script>' }, expected: 'HOOK_FAILED' },
+    { error: { code: 'HOOK_FAILED', message: 'private diagnostic', id: 'unsafe\n' }, expected: 'HOOK_FAILED' },
+    { error: { code: 'HOOK_FAILED', message: 'private diagnostic', id: '' }, expected: 'HOOK_FAILED' },
+    { error: { code: 'HOOK_FAILED', message: 'private diagnostic', id: 'a'.repeat(129) }, expected: 'HOOK_FAILED' },
+    { error: { code: 'HOOK_FAILED\n', message: 'private diagnostic' }, expected: 'turn_failed' },
+    { error: { code: 'HOOK_FAILED', message: { private: 'diagnostic' }, id: { private: 'diagnostic' } }, expected: 'HOOK_FAILED' },
+    { error: { code: 'unsafe code\nprivate diagnostic', message: 'private diagnostic', id: null }, expected: 'turn_failed' },
+    { error: null, expected: 'turn_failed' },
+    { error: undefined, expected: 'turn_failed' },
+  ]
+  for (const { error, expected } of cases) {
+    const view = foldEvents(emptySessionView(), [
+      { type: 'turn.started', data: { turnId: 'failed', cause: { deliveryId: 'request' }, follows: null } },
+      { type: 'turn.settled', data: { turnId: 'failed', outcome: 'failed', error } },
+    ].map((event, line) => ({ ...event, meta: { position: { line, index: 0 }, at: '2026-11-11T00:00:00Z', endOfLine: true } })) as ReceivedEvent[])
+    const messages = projectEveTurn(view, 'wrun_fixture', 'failed', 'failed')
+    assert.equal((messages[0] as { mikkaFailure?: string }).mikkaFailure, expected)
+    assert.doesNotMatch(JSON.stringify(messages), /private|diagnostic|providerBody|Hook "|<script>/)
+  }
+})
+
+test('a hook failure after a tool call never claims that no task started', () => {
+  const view = foldEvents(emptySessionView(), [
+    { type: 'turn.started', data: { turnId: 'failed', cause: { deliveryId: 'request' }, follows: null } },
+    { type: 'call.requested', scope: { turnId: 'failed' }, data: { callId: 'dispatch', owner: { turnId: 'failed' }, capability: { kind: 'tool', name: 'dispatch_run' }, input: {} } },
+    { type: 'turn.settled', data: { turnId: 'failed', outcome: 'failed', error: { code: 'HOOK_FAILED', message: 'Hook "agent/hooks/product" failed: executionModelUnknown' } } },
+  ].map((event, line) => ({ ...event, meta: { position: { line, index: 0 }, at: '2026-11-11T00:00:00Z', endOfLine: true } })) as ReceivedEvent[])
+  assert.equal((projectEveTurn(view, 'wrun_fixture', 'failed', 'failed')[0] as { mikkaFailure?: string }).mikkaFailure, 'HOOK_FAILED')
 })
 
 test('a cancelled turn keeps published interrupted text for display without importing it as model history', async () => {
