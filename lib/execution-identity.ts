@@ -11,7 +11,7 @@ const resource = z.object({
   grantId: z.uuid().optional(), workspaceId: z.uuid().optional(),
 })
 const account = z.object({
-  kind: z.enum(['api_key', 'subscription', 'native_login', 'local_device', 'e2b', 'cloudflare_sponsored', 'credits']),
+  kind: z.enum(['api_key', 'subscription', 'native_login', 'local_device', 'e2b', 'cloudflare_sponsored']),
   ownerId: z.string().min(1), resourceId: z.string().min(1),
   amount: z.enum(['provider_unknown', 'metered', 'not_applicable']),
 })
@@ -84,13 +84,9 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
     if (!binding || binding.modelId !== definition.subscription.modelId || binding.route !== definition.subscription.route || binding.ownerId !== run.userId) return denied()
     resourceBindings.push({ kind: 'subscription', id: definition.subscription.bindingId, ownerId: binding.ownerId, access: 'owner', revision: binding.revision })
     model = { kind: 'subscription', ownerId: binding.ownerId, resourceId: definition.subscription.bindingId, amount: 'provider_unknown' }
-  } else if (definition.credits) {
-    // Mikka-billed catalogue model: the LiteLLM gateway grant is issued at claim, so
-    // admission only proves the billed principal's personal workspace exists.
-    const { rows: [personal] } = await query.query(`SELECT 1 FROM mikka_workspaces WHERE "userId"=$1 AND kind='personal'`, [run.userId])
-    if (!personal) return denied()
-    model = { kind: 'credits', ownerId: run.userId, resourceId: definition.credits.model, amount: 'metered' }
-  } else if (device.kind === 'cloud') return denied()
+  // A credits-only definition bills the catalogue model through Mikka's native login — the
+  // same 'native_login' account shape queued credits runs already freeze with.
+  } else if (!definition.credits && device.kind === 'cloud') return denied()
   const placement=definition.taskMachine
   if (placement) {
     if (device.kind!=='cloud'||placement.provider!=='cloudflare'||placement.payer!=='mikka'||placement.ownerId!==run.userId||placement.botId!==run.botId||placement.workspaceId!==workspaceId||
