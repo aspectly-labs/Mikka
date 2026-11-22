@@ -8,6 +8,7 @@ let claimRows: Record<string, unknown>[] = []
 const linked: unknown[][] = []
 let composio: { create: (userId: string) => Promise<{ authorize: (toolkit: string) => Promise<{ redirectUrl: string; id: string }> }> } | null = null
 let authorized: [string, string] | null = null
+let sessionUser: string | null = 'app-user'
 
 const intent = {
   tokenHash: 'h', userId: 'app-user', toolkit: 'gmail', replaceAccountId: null,
@@ -16,7 +17,7 @@ const intent = {
 const stub = (path: string, exports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports: exports })
 mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest, NextResponse, after: () => {} } })
 stub('../../../../../lib/request-log.ts', { noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
-stub('../../../../../lib/auth.ts', { authBaseURL: 'https://example.test' })
+stub('../../../../../lib/auth.ts', { auth: { api: { getSession: async () => sessionUser ? { user: { id: sessionUser } } : null } }, authBaseURL: 'https://example.test' })
 stub('../../../../../lib/composio.ts', { getComposio: () => composio })
 stub('../../../../../lib/composio-config.ts', { isComposioCallbackVerifierConfigured: () => true })
 stub('../../../../../lib/db/index.ts', { pool: { query: async (sql: string, params: unknown[]) => {
@@ -30,7 +31,7 @@ function request(token: string) {
   return new NextRequest(`https://example.test/api/integrations/composio/connect?intent=${token}`)
 }
 function setup() {
-  readRows = []; claimRows = []; linked.length = 0; authorized = null
+  readRows = []; claimRows = []; linked.length = 0; authorized = null; sessionUser = 'app-user'
   composio = { create: async (userId: string) => ({ authorize: async (toolkit: string) => { authorized = [userId, toolkit]; return { redirectUrl: 'https://connect.composio.dev/link/l1', id: 'conn-1' } } }) }
 }
 
@@ -60,6 +61,20 @@ test('an intent the account store refuses goes back to integrations, not a loopb
   const back = new URL(response.headers.get('location')!)
   assert.equal(back.searchParams.get('composio'), 'callback-failed')
   assert.equal(back.searchParams.get('settings'), 'integrations')
+})
+
+test('a browser that is not the intent\'s account must sign in first and spends nothing', async () => {
+  setup()
+  readRows = [intent]; claimRows = [intent]
+  for (const user of [null, 'other-user']) {
+    sessionUser = user
+    const response = await GET(request('coi_' + 't'.repeat(43)))
+    const signin = new URL(response.headers.get('location')!)
+    assert.equal(signin.pathname, '/sign-in')
+    assert.equal(signin.searchParams.get('next'), '/api/integrations/composio/connect?intent=coi_' + 't'.repeat(43))
+    assert.equal(authorized, null)
+    assert.equal(linked.length, 0)
+  }
 })
 
 test('a link the provider cannot start answers failed on the loopback', async () => {
