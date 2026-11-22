@@ -9242,5 +9242,96 @@
     "collapse": "收起",
     "card": "{name}，{status}：{brief}",
     "cardNoBrief": "{name}，{status}"
+  },
+  "RightColumn": {
+    "tabs": {
+      "changes": "改动",
+      "files": "文件",
+      "setup": "运行环境"
+    },
+    "changes": {
+      "loadFailed": "读取线程改动失败",
+      "retry": "重试",
+      "none": "这个线程还没有改过文件",
+      "tooLarge": "改动太大，无法显示"
+    },
+    "files": {
+      "search": "搜索文件",
+      "views": "显示的文件",
+      "all": "全部文件",
+      "thread": "本线程",
+      "uploads": "上传",
+      "loadFailed": "读取线程文件失败",
+      "retry": "重试",
+      "noCheckout": "这个线程没有可读取的代码目录",
+      "tooLarge": "改动太大，无法列出",
+      "noChanges": "这个线程还没有改过文件",
+      "noUploads": "这里还没有发送过文件",
+      "botUploads": "你发给这个 Bot 的文件",
+      "machineUnavailable": "机器在休眠或离线，唤醒后才能读取文件。",
+      "checkoutUnavailable": "机器上已没有这个代码目录",
+      "notFound": "无法读取这个代码目录",
+      "readFailed": "读取文件失败（{code}）",
+      "more": "显示更多",
+      "asleep": "机器在休眠，唤醒后才能读取文件。",
+      "noMatches": "无匹配结果",
+      "pathCopied": "路径已复制",
+      "copyFailed": "复制路径失败",
+      "actions": "{name} 的操作",
+      "open": "打开",
+      "viewDiff": "查看本线程的改动",
+      "copyPath": "复制路径",
+      "download": "下载",
+      "status": {
+        "added": "新增",
+        "deleted": "删除",
+        "modified": "修改",
+        "renamed": "重命名"
+      },
+      "format": {
+        "binary": "二进制文件",
+        "too_large": "文件太大，无法显示",
+        "unsupported": "无法显示这个文件"
+      },
+      "truncated": "… 文件其余部分未显示"
+    },
+    "setup": {
+      "loadFailed": "读取线程运行环境失败",
+      "retry": "重试",
+      "noMachine": "还没有机器",
+      "noEnvironment": "没有运行环境",
+      "machine": "机器",
+      "spec": "{cpu} vCPU · {memory} GB",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘",
+      "uptime": "运行时长",
+      "minutes": "{count} 分钟",
+      "hours": "{hours} 小时 {minutes} 分钟",
+      "environment": "环境",
+      "runtime": {
+        "any": "任意机器",
+        "local": "你的电脑",
+        "cloud": "云端"
+      },
+      "scripts": "脚本",
+      "noSetup": "没有准备命令",
+      "install": "准备命令",
+      "unapproved": "未批准",
+      "copyFiles": "复制的文件（{count}）",
+      "edit": "在设置里编辑"
+    },
+    "menu": {
+      "search": "搜索标签页",
+      "common": "打开",
+      "related": "相关",
+      "crew": "Crew",
+      "terminals": "终端",
+      "allThreads": "全部线程",
+      "openPanel": "打开右栏",
+      "expand": "放大右栏",
+      "restore": "恢复右栏宽度",
+      "add": "打开标签页"
+    }
   }
 }
