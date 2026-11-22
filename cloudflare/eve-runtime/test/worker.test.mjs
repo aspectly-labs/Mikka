@@ -141,6 +141,35 @@ test('the Postgres World refuses on-demand and keeps the resident keepalive', as
   assert.equal(host.started, true) // resident onStop restarted it
 })
 
+test('a bound World service mints the private capability and registers the world.internal intercept', async () => {
+  const intercepts = []
+  const storage = {
+    kv: { get: () => undefined, put: () => {} },
+    async get() { return undefined }, async put() {},
+  }
+  const host = new EveRuntime({ storage, container: {
+    async interceptOutboundHttps(host, entrypoint) { intercepts.push(host) },
+  }, exports: { EveProductOutbound: x => x, EveWorldOutbound: x => x } }, { ...env, EVE_WORLD: { fetch: () => new Response('world') } })
+  assert.equal(typeof host.envVars.MIKKA_EVE_WORLD_TOKEN, 'string')
+  assert.equal(host.envVars.MIKKA_EVE_WORLD_TOKEN.length, 72)
+  await host.bindOutboundServices()
+  assert.deepEqual(intercepts, ['product.internal', 'world.internal'])
+})
+
+test('an unbound World service leaves no capability or intercept behind', async () => {
+  const intercepts = []
+  const storage = {
+    kv: { get: () => undefined, put: () => {} },
+    async get() { return undefined }, async put() {},
+  }
+  const host = new EveRuntime({ storage, container: {
+    async interceptOutboundHttps(host, entrypoint) { intercepts.push(host) },
+  }, exports: { EveProductOutbound: x => x, EveWorldOutbound: x => x } }, env)
+  assert.equal(host.envVars.MIKKA_EVE_WORLD_TOKEN, undefined)
+  await host.bindOutboundServices()
+  assert.deepEqual(intercepts, ['product.internal'])
+})
+
 test('SDK error bodies and thrown messages never become public configuration disclosures', async () => {
   const errors = []
   mock.method(console, 'error', value => { errors.push(value) })

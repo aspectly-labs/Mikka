@@ -32,6 +32,14 @@ export class EveRuntime extends Container {
     this.envVars = { ...this.configuration.runtimeEnv, MIKKA_EVE_PRODUCT_TOKEN: productCapability,
       NODE_EXTRA_CA_CERTS: '/etc/cloudflare/certs/cloudflare-containers-ca.crt' }
     if (env.LITELLM) this.envVars.MIKKA_LITELLM_URL = 'https://litellm.internal'
+    if (env.EVE_WORLD) {
+      let worldCapability = ctx.storage.kv.get('eve-world.capability')
+      if (!worldCapability) {
+        worldCapability = crypto.randomUUID() + crypto.randomUUID()
+        ctx.storage.kv.put('eve-world.capability', worldCapability)
+      }
+      this.envVars.MIKKA_EVE_WORLD_TOKEN = worldCapability
+    }
     this.labels = { component: 'eve-runtime', release: this.configuration.releaseId }
   }
 
@@ -39,6 +47,8 @@ export class EveRuntime extends Container {
     if (this.env.LITELLM) await this.ctx.container.interceptOutboundHttps('litellm.internal', this.ctx.exports.LiteLlmOutbound)
     await this.ctx.container.interceptOutboundHttps('product.internal',
       this.ctx.exports.EveProductOutbound({ props: { capability: this.envVars.MIKKA_EVE_PRODUCT_TOKEN } }))
+    if (this.env.EVE_WORLD) await this.ctx.container.interceptOutboundHttps('world.internal',
+      this.ctx.exports.EveWorldOutbound({ props: { capability: this.envVars.MIKKA_EVE_WORLD_TOKEN } }))
   }
 
   async start(...args) {

@@ -3,6 +3,7 @@ import { liteLlmRequest } from '../../api/ingress/services.mjs'
 import { productRequest } from '../runtime/product.mjs'
 import { singletonContainerName } from '../runtime/config.mjs'
 import { consumeEveWake, eveServiceDelivery, eveWorkflowDelivery } from '../runtime/delivery.mjs'
+import { eveWorldRequest } from '../runtime/world.mjs'
 export { EveRuntime } from './index.mjs'
 export { ContainerProxy } from '@cloudflare/containers'
 
@@ -16,6 +17,12 @@ export class EveProductOutbound extends WorkerEntrypoint {
   fetch(request) {
     return productRequest(request, this.env.BUSINESS_API, this.env.EVE_PUBLIC_ORIGIN, this.ctx.props.capability, this.ctx)
   }
+}
+
+/** Private egress adapter: forwards the container's `world.internal` calls to
+ * the pinned WorldService binding after capability verification. */
+export class EveWorldOutbound extends WorkerEntrypoint {
+  fetch(request) { return eveWorldRequest(request, this.env.EVE_WORLD, this.ctx.props.capability) }
 }
 
 function forward(request, env, headers) {

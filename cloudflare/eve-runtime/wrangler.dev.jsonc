@@ -24,7 +24,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EveRuntime"] }],
   "containers": [{
     "class_name": "EveRuntime",
-    "image": "./Dockerfile",
+    "image": "registry.cloudflare.com/d8f6630c7869111a5139bc5ed4d24ace/mikka-eve:dev-amd64",
     "image_build_context": "../..",
     "instance_type": "basic",
     "max_instances": 1,
