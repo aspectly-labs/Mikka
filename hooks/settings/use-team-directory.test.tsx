@@ -17,9 +17,13 @@ mock.module('@/lib/client-runtime/navigation', { namedExports: { useSearchParams
 mock.module('@/lib/use-action-error', { namedExports: { useActionError: () => (message: string) => message } })
 mock.module('@/lib/settings-navigation', { namedExports: { pushSettingsHistory: () => true } })
 mock.module('@/components/workspace/workspace-navigation', { namedExports: { workspaceLink: () => '/' } })
-mock.module('swr', { defaultExport: () => ({
-  data: { workspace: { id: current }, currentUserId: 'owner', teams: [chosen, other] }, mutate: async () => {},
-}), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }) } })
+const swrConfigs: Array<Record<string, unknown> | undefined> = []
+mock.module('swr', { defaultExport: (_key: unknown, _fetcher: unknown, config?: Record<string, unknown>) => {
+  swrConfigs.push(config)
+  return {
+    data: { workspace: { id: current }, currentUserId: 'owner', teams: [chosen, other] }, isValidating: false, mutate: async () => {},
+  }
+}, namedExports: { useSWRConfig: () => ({ mutate: async () => {} }) } })
 mock.module('@/lib/settings-data', { namedExports: {
   fetchTeamDirectory() {}, fetchTeamMembers() {}, isSettingsAccessError() { return false }, settingsReadOptions: {},
   teamDirectoryKey(id: string) { return id }, teamMembersKey(id: string) { return id },
@@ -41,6 +45,7 @@ test('strict deletion and explicit ungroup use separate intents, impact receipts
   function Directory() { directory = useTeamDirectory(current); return null }
   try {
     await act(async () => root.render(<Directory />))
+    assert.equal(swrConfigs[0]?.revalidateOnMount, true)
     await act(async () => { void directory.askDelete(chosen); void directory.askRemoveGrouping(other) })
     await act(async () => { reads.get(other.id)!(result(other.id, false)); reads.get(chosen.id)!(result(chosen.id, true)) })
     assert.equal(directory!.deletion?.team.id, other.id)

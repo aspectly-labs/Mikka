@@ -112,8 +112,8 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
   // Read only the open section. Pointer/focus intent warms the next section.
   useEffect(() => {
     if (preview || !roleKnown || !resolvedWorkspaceId) return
-    prefetchSettingsSection(section, resolvedWorkspaceId, cache, mutate)
-  }, [preview, roleKnown, resolvedWorkspaceId, section, cache, mutate])
+    prefetchSettingsSection(section, resolvedWorkspaceId, cache, mutate, { admin })
+  }, [preview, roleKnown, resolvedWorkspaceId, section, admin, cache, mutate])
   const title = t.has(`sections.${section}.title` as never) ? t(`sections.${section}.title` as never) : t('sections.preferences.title')
   const routedBody = section === 'members' || section === 'teams'
   const openSection = (next: SettingsSectionId) => {
@@ -128,7 +128,7 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
   const enter = switched.current ? 'animate-in fade-in-0 duration-(--motion-fast) motion-reduce:animate-none' : undefined
 
   return <>
-    <SettingsSidebar section={section} activeSection={activeSection} admin={admin} personal={!team} billing={billing} cloudAdmin={cloudAdmin} organization={ORGANIZATION_SETTINGS} workspaceName={workspace?.workspace.name} selectedTeamId={selectedTeamId} workspaceId={workspaceId} onSectionChange={setSection} onIntent={next => { if (!preview && (next !== 'billing' || billing)) prefetchSettingsSection(next, resolvedWorkspaceId, cache, mutate) }} onRail={onRail} />
+    <SettingsSidebar section={section} activeSection={activeSection} admin={admin} personal={!team} billing={billing} cloudAdmin={cloudAdmin} organization={ORGANIZATION_SETTINGS} workspaceName={workspace?.workspace.name} selectedTeamId={selectedTeamId} workspaceId={workspaceId} onSectionChange={setSection} onIntent={next => { if (!preview && (next !== 'billing' || billing)) prefetchSettingsSection(next, resolvedWorkspaceId, cache, mutate, { admin }) }} onRail={onRail} />
     <SettingsContentFrame parent={t('title')} title={title}>
 
       {accountError && <FieldError className="px-6 py-2">{accountError}</FieldError>}
