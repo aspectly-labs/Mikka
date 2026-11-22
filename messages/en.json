@@ -3448,7 +3448,7 @@
       },
       "dailyThreadsHeading": "Daily new threads",
       "dailyThreadsChartLabel": "New threads per day",
-      "botBreakdownHeading": "Agent runtime breakdown",
+      "botBreakdownHeading": "By Bot",
       "pendingAnalyticsHeading": "Contribution and review analytics",
       "pendingAnalyticsNote": "Aggregated contribution analytics are pending backend integration.",
       "pendingCards": {
@@ -3504,7 +3504,7 @@
       "workspaceSection": "Workspace",
       "workspaceKind": "Workspace type",
       "kindPersonal": "Personal",
-      "kindTeam": "Team",
+      "kindTeam": "Shared",
       "activeMembersCount": "{count} active members",
       "quotaLabel": "Mikka quota",
       "quotaPointsUsed": "{used} / {total} pts",
