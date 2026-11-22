@@ -19,7 +19,7 @@ const icons: Record<SettingsSectionId, IconGlyph> = {
   account: UserRound, security: Shield, preferences: SlidersHorizontal, notifications: Bell, memory: Brain, connections: Blocks, 'bot-permissions': ShieldCheck,
   models: Gauge, logins: KeyRound, privacy: Lock, computers: Monitor, developer: SquareTerminal,
   general: Building2, 'issue-states': CircleDashed, members: Users, teams: SquareUserRound, permissions: CircleCheck, secrets: HardDrive, environments: Container,
-  audit: FileText, organization: Landmark, usage: ChartColumn, billing: CreditCard, cloud: Blocks,
+  audit: FileText, organization: Landmark, usage: ChartColumn, billing: CreditCard, cloud: Blocks, 'team-skills': Brain,
 }
 
 export function SettingsSidebar({ section, activeSection, admin, personal = false, billing = true, cloudAdmin = false, workspaceName, selectedTeamId, workspaceId, onSectionChange, onIntent, onRail }: SettingsSidebarProps) {

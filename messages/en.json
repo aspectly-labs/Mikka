@@ -1055,7 +1055,8 @@
       },
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "Installation commands are unavailable",
-      "reconnectTitle": "Reconnect"
+      "reconnectTitle": "Reconnect",
+      "desktopLink": "Download the desktop app"
     },
     "setup": "Set up repository and agent",
     "offlineSince": "Offline · {time}",
@@ -2290,6 +2291,9 @@
       },
       "issue-states": {
         "title": "Issue states"
+      },
+      "team-skills": {
+        "title": "Team skills"
       }
     },
     "appearance": {
@@ -3290,6 +3294,7 @@
       "othersUsage": "Team members can use it to run their own bots. Usage is billed to your API account.",
       "afterQuota": "Use an API key when subscription quota runs out",
       "afterQuotaBilling": "The same model continues on your API key, billed at the provider’s price",
+      "afterQuotaNoKey": "Add an API key for the same model before this can continue at the provider’s price",
       "sectionTitle": "API keys",
       "none": "No API keys yet",
       "loading": "Loading API keys…",
@@ -3761,6 +3766,22 @@
         "purple": "Purple",
         "red": "Red"
       }
+    },
+    "teamSkills": {
+      "title": "Team skills",
+      "empty": "No team skills yet",
+      "loadError": "The team skill registry could not be read.",
+      "actError": "Could not be changed. Try again.",
+      "approve": "Approve",
+      "withdraw": "Withdraw",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "withdrawn": "Withdrawn"
+      },
+      "withdrawTitle": "Withdraw {name}?",
+      "withdrawBody": "Withdrawal is permanent: unfinished runs that selected this version stop.",
+      "cancel": "Cancel"
     }
   },
   "TelegramBot": {
@@ -4153,6 +4174,7 @@
     },
     "loadError": "Could not load the conversation.",
     "failedTitle": "Reply failed",
+    "modelRequired": "No task started: no model selected.",
     "replyToolUnavailable": "This reply could not be completed. Please try again.",
     "apiBalance": "Insufficient API balance",
     "subscriptionRefusal": {
@@ -4167,7 +4189,8 @@
       "modelRejected": "Model request rejected",
       "quotaChecking": "Subscription usage unconfirmed",
       "runtimeUnavailable": "Subscription unsupported in this runtime",
-      "modelNotReported": "The cloud computer didn't report this model"
+      "modelNotReported": "The cloud computer didn't report this model",
+      "modelRequired": "No model set up — the request did not run"
     },
     "quota": {
       "used": "{name} quota used up",
@@ -5455,7 +5478,17 @@
       "open": "Open panel",
       "filterBot": "Filter by dispatcher",
       "allBots": "All dispatchers",
-      "closeAllThreads": "Close all threads"
+      "closeAllThreads": "Close all threads",
+      "addMember": "Add members",
+      "addMembers": "Add members to {group}",
+      "noMoreBots": "All your Bots are already in this group.",
+      "membersWriteError": "The members could not be changed.",
+      "cancel": "Cancel",
+      "add": "Add",
+      "removeMember": "Remove {name}",
+      "memberRemoved": "Removed {name}",
+      "undo": "Undo",
+      "leadRestoreError": "{name} is back; their lead role may not have been restored."
     },
     "suggestions": {
       "title": "Suggestions",
@@ -5921,7 +5954,13 @@
     "notSent": "Not sent",
     "answering": "Replying",
     "noTaker": "No bot took this. @ one by name",
-    "stopped": "Stopped"
+    "stopped": "Stopped",
+    "exchange": {
+      "marker": "{names} — {count} exchange messages",
+      "title": "{names}",
+      "empty": "This exchange has no messages.",
+      "loadError": "The exchange could not be loaded."
+    }
   },
   "DeviceSetup": {
     "title": "Set up {device}",
@@ -8171,7 +8210,16 @@
       "providerOn": "{on}/{total} enabled",
       "firstModel": "Tasks start with",
       "noFirstModel": "No usable model yet",
-      "keyProvider": "Provider"
+      "keyProvider": "Provider",
+      "catalog": "Model catalogue",
+      "catalogFailed": "Could not load models",
+      "catalogLoading": "Loading models…",
+      "subscriptionNoModels": "These subscriptions have not reported any models",
+      "noSubscriptions": "No subscription connected",
+      "keyNoModels": "These API keys have not reported any models",
+      "noApiKeys": "No API keys added",
+      "customNoModels": "These custom providers have not reported any models",
+      "connectedNoModels": "Your connections have not reported any models"
     }
   },
   "CodeReview": {
@@ -8383,6 +8431,7 @@
       "quotaChecking": "Subscription limit being checked",
       "runtimeUnavailable": "This environment does not support that subscription",
       "modelNotReported": "The cloud computer did not report this model",
+      "modelRequired": "No model set up — the request did not run",
       "hostedQuotaUsed": "Mikka limit reached",
       "hostedPaused": "Mikka limit temporarily unavailable",
       "temporarilyUnavailable": "Temporarily unavailable",

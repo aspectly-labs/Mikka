@@ -15,6 +15,23 @@ import type { RunOrigin, RunOriginRef } from '@/lib/run-origin'
 export const users = pgTable('user', {
   id: text('id').primaryKey(), name: text('name').notNull(), email: text('email').notNull(), image: text('image'),
 })
+
+export const accountDeletionJobs = pgTable('account_deletion_jobs', {
+  id: uuid('id').primaryKey(),
+  subjectUserId: text('subjectUserId').notNull(),
+  subjectEmailHash: text('subjectEmailHash').notNull(),
+  requestedAt: timestamp('requestedAt', { withTimezone: true }).notNull().defaultNow(),
+  stage: text('stage').notNull(),
+  plan: jsonb('plan'),
+  pendingObjects: jsonb('pendingObjects').$type<string[]>().notNull().default([]),
+  storageNotBefore: timestamp('storageNotBefore', { withTimezone: true }),
+  blockedReasons: jsonb('blockedReasons').$type<string[]>().notNull().default([]),
+  blockerErrors: jsonb('blockerErrors').$type<Record<string, string>>().notNull().default({}),
+  warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
+  completedAt: timestamp('completedAt', { withTimezone: true }),
+  retentionUntil: timestamp('retentionUntil', { withTimezone: true }),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+})
 /** A finished or skipped first-run guide; no row means not yet. */
 export const userOnboarding = pgTable('user_onboarding', {
   userId: text('userId').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
@@ -73,6 +90,8 @@ export const issues = pgTable('issues', {
   /** Immutable issued identity; legacy aliases and publication receipts remain separate. */
   issuedIdentifier: text('issuedIdentifier'),
   id: uuid('id').primaryKey(), userId: text('userId').notNull(),
+  /** The owner-scope task number, generated from content.attrs.mikka.number (20261031000250). */
+  number: bigint('number', { mode: 'number' }).generatedAlwaysAs(sql`CASE WHEN content #>> '{attrs,mikka,number}' ~ '^[1-9][0-9]*$' THEN (content #>> '{attrs,mikka,number}')::bigint END`),
   /** Immutable tenant. NULL is reserved for quarantined historical records. */
   workspaceId: uuid('workspaceId'),
   ownershipState: text('ownershipState').$type<'bound' | 'pending'>().notNull().default('pending'),
@@ -102,7 +121,8 @@ export const issues = pgTable('issues', {
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('issues_owner_updated_idx').on(table.userId, table.updatedAt.desc()), index('issues_workspace_updated_idx').on(table.workspaceId, table.updatedAt.desc()),
   index('issues_source_schedule_idx').on(table.sourceScheduleId).where(sql`${table.sourceScheduleId} IS NOT NULL`),
-  check('issues_short_title_compact', sql`mikka_issue_short_title_valid(${table.shortTitle})`)])
+  check('issues_short_title_compact', sql`mikka_issue_short_title_valid(${table.shortTitle})`),
+  uniqueIndex('issues_owner_number_key').on(table.userId, table.number).where(sql`${table.number} is not null`)])
 /**
  * A workspace's task states (Capy's Issue states). `category` is one of ISSUE_STATUS_CODES and fixes `type`; each
  * category has one default. `name` NULL shows the category's translated name. Seeded by mikka_ensure_issue_states.
