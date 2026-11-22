@@ -117,7 +117,12 @@ export async function retryCoordinatorWakes(deadline = Date.now()+45_000) {
 
 export async function replayCoordinatorWake(eventId:string, signal?: AbortSignal) {
   if (signal?.aborted) return false
-  const row = (await pool.query<{userId:string;botId:string|null}>('SELECT "userId","botId" FROM coordinator_events WHERE id=$1 AND "deliveredAt" IS NULL',[eventId])).rows[0]
+  const eventScope = async () => (await pool.query<{userId:string;botId:string|null}>('SELECT "userId","botId" FROM coordinator_events WHERE id=$1 AND "deliveredAt" IS NULL',[eventId])).rows[0]
+  let row = await eventScope()
+  if (row && !row.botId) {
+    await coordinatorBot(row.userId, null)
+    row = await eventScope()
+  }
   if (!row?.botId || signal?.aborted || !await coordinatorEnabled(row.userId, row.botId)) return false
   return await wakeChat({ userId: row.userId, botId: row.botId }, signal, Infinity, eventId) === 'started'
 }

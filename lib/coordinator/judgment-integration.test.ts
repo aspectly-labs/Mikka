@@ -9,6 +9,7 @@ const priorKey=process.env.MIKKA_LITELLM_MASTER_KEY, priorFetch=globalThis.fetch
 let events: Array<{id:string;botId?:string;kind:'run_finished'|'run_question'|'run_blocked'|'issue_done'|'user_message';payload:Record<string,unknown>;tier:string|null;lastTriageAttemptAt?:Date|null}>=[]
 let starts=0
 const sentEvents: string[] = []
+let backfill: (() => void) | undefined
 let dueScopes: Array<{ userId: string; botId: string }> = []
 const requests: Array<Record<string,unknown>>=[]
 let response:unknown
@@ -33,7 +34,7 @@ stub('../attention/store.ts',{releaseAttention:async()=>{}})
 // The model boundary is real; only product outbox persistence and Eve delivery
 // are synthetic. No old Workflow loop or lease engine participates.
 stub('../default-model.ts',{defaultModelAvailable:async()=>true})
-stub('./coordinator-bot.ts',{coordinatorBot:async()=>({botId:'fixture-bot',workspaceId:'fixture-workspace'})})
+stub('./coordinator-bot.ts',{coordinatorBot:async()=>{backfill?.();return {botId:'fixture-bot',workspaceId:'fixture-workspace'}}})
 stub('../db/index.ts',{pool:{query:async(sql:string,parameters?:unknown[])=>{
  if(sql.includes('SELECT DISTINCT "userId","botId" FROM coordinator_events'))return {rows:dueScopes}
  if(sql.includes('FROM coordinator_events WHERE id=$1'))return {rows:events.filter(e=>e.id===parameters?.[0]&&!sentEvents.includes(e.id)).map(e=>({userId:'synthetic',botId:e.botId??null}))}
@@ -52,7 +53,7 @@ before(async()=>{
  globalThis.fetch=async(input,init)=>{assert.equal(String(input),'https://litellm.example/v1/decisions');requests.push(JSON.parse(String(init?.body)));return Response.json({model:DECISION_MODEL,...(response as object)},{headers:{'x-litellm-call-id':'synthetic-generation','x-litellm-response-cost':'0'}})}
  wake=await import('./wake');group=await import('./route-group');transport=await import('./decide')
 })
-beforeEach(()=>{process.env.MIKKA_LITELLM_URL='https://litellm.example';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-no-provider';events=[];dueScopes=[];starts=0;sentEvents.length=0;requests.length=0;response={answers:[{type:'choice',name:'tier',choice:'result'}]}})
+beforeEach(()=>{process.env.MIKKA_LITELLM_URL='https://litellm.example';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-no-provider';events=[];dueScopes=[];starts=0;backfill=undefined;sentEvents.length=0;requests.length=0;response={answers:[{type:'choice',name:'tier',choice:'result'}]}})
 after(()=>{if(priorUrl===undefined)delete process.env.MIKKA_LITELLM_URL;else process.env.MIKKA_LITELLM_URL=priorUrl;globalThis.fetch=priorFetch;console.error=priorConsole;if(priorKey===undefined)delete process.env.MIKKA_LITELLM_MASTER_KEY;else process.env.MIKKA_LITELLM_MASTER_KEY=priorKey})
 test('every runtime event reaches the actual model adapter instead of failed/blocked heuristics',async()=>{
  events=['run_finished','run_question','run_blocked','issue_done'].map((kind,i)=>({id:String(i),kind:kind as 'run_finished',payload:{status:'failed',reason:'already recoverable'},tier:null}))
@@ -164,6 +165,22 @@ test('a replay cancelled before processing does not claim success', async () => 
  controller.abort()
  events = [{ id: 'cancelled-replay', botId: 'target-bot', kind: 'run_blocked', payload: {}, tier: 'result' }]
  assert.equal(await wake.replayCoordinatorWake('cancelled-replay', controller.signal), false)
+ assert.deepEqual(sentEvents, [])
+})
+test('unassigned replay events resolve their personal Coordinator before delivery', async () => {
+ events = [{ id: 'legacy', kind: 'run_blocked', payload: {}, tier: 'result' }]
+ let resolved = false
+ backfill = () => { resolved = true; events[0].botId = 'fixture-bot' }
+ assert.equal(await wake.replayCoordinatorWake('legacy'), true)
+ assert.equal(resolved, true)
+ assert.deepEqual(sentEvents, ['legacy'])
+})
+test('unassigned replay events stay deferred when Coordinator backfill cannot finish', async () => {
+ events = [{ id: 'legacy-deferred', kind: 'run_blocked', payload: {}, tier: 'result' }]
+ let resolved = false
+ backfill = () => { resolved = true }
+ assert.equal(await wake.replayCoordinatorWake('legacy-deferred'), false)
+ assert.equal(resolved, true)
  assert.deepEqual(sentEvents, [])
 })
 test('replay delivers only the requested event in its own chat', async () => {
