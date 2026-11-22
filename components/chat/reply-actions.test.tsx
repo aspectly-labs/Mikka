@@ -34,7 +34,7 @@ const reply = () => container.querySelector('button[aria-label="AiElements.messa
 test('the line shows when the message was sent, then Reply and Copy, then what the caller adds', async () => {
   const at = Date.UTC(2026, 10, 19, 14, 41)
   await act(async () => root.render(<ReplyActions at={at} copyText="the reply" onQuote={() => {}}><span data-extra="" /></ReplyActions>))
-  const line = container.querySelector('[data-slot="reply-actions"]')!
+  const line = container.querySelector('[data-slot="message-actions"]')!
   const time = line.querySelector('time')!
   assert.equal(time.getAttribute('datetime'), new Date(at).toISOString())
   assert.equal(time.textContent, `at:${new Date(at).toISOString()}`)
@@ -75,7 +75,7 @@ test('Reply quotes the whole message, cut like a selection so a long reply never
 test('the thread panel keeps the line to hover; elsewhere it stays on screen', async () => {
   const { HOVER_ACTIONS, REPLY_ACTIONS } = await import('./copy-action')
   await act(async () => root.render(<ReplyActions copyText="x" hover />))
-  const line = () => container.querySelector('[data-slot="reply-actions"]')!.className
+  const line = () => container.querySelector('[data-slot="message-actions"]')!.className
   assert.ok(line().includes(HOVER_ACTIONS.split(' ')[0]))
   await act(async () => root.render(<ReplyActions copyText="x" />))
   assert.ok(!line().includes(HOVER_ACTIONS.split(' ')[0]))

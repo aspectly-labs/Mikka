@@ -30,7 +30,7 @@ export function ReplyActions({ at, copyText, quoteText, onQuote, hover = false, 
 }) {
   const t = useTranslations('AiElements.message')
   const format = useFormatter()
-  return <MessageActions className={cn('items-center', hover ? HOVER_ACTIONS : REPLY_ACTIONS)} data-slot="reply-actions">
+  return <MessageActions className={cn('items-center', hover ? HOVER_ACTIONS : REPLY_ACTIONS)}>
     {at !== undefined && Number.isFinite(at) && at > 0 && <time dateTime={new Date(at).toISOString()} className="px-1 text-xs tabular-nums text-muted-foreground"
       title={format.dateTime(new Date(at), { dateStyle: 'full', timeStyle: 'short' })}>
       {format.dateTime(new Date(at), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
