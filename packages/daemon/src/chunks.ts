@@ -65,6 +65,8 @@ export type RunChunk = UIMessageChunk<unknown, MikkaDataTypes> & {
   toolDurationMs?: number
   /** The adapter kept only the end of a tool's output (the last TOOL_OUTPUT_TAIL_CHARS characters). */
   outputTruncated?: true
+  /** Claude Code's TaskCreate: the id its result gave the new task, so a later TaskUpdate finds it in the plan. */
+  planTask?: { id: string }
 }
 
 /** How much of a tool's output the adapters keep: its end, where a command's result and errors are. */

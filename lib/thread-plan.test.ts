@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { chainChunks } from './issue-run-conversation'
-import { runPlan, threadPlan } from './thread-plan'
+import { threadPlan } from './thread-plan'
 
 const at = '2026-11-22T10:00:00Z'
 const row = (chunk: Record<string, unknown>) => ({ chunk, at })
@@ -70,15 +70,36 @@ test('a very long plan or item is cut to what the pinned list can hold', () => {
   assert.ok(plan!.every(item => item.text.length <= 200 && item.text.endsWith('…')))
 })
 
-test("a read's plan is its run's: one run's chunks only when they are that run's, else that run's calls", () => {
-  const one = [call('a', 'TodoWrite', todos(['Read', 'in_progress']))]
-  assert.deepEqual(view(runPlan({ chunks: one, chunkCursor: { runs: 1, runId: 'r1' } }, 'r1')), [['Read', 'in_progress']])
-  // A follow-up run that has written nothing yet does not show the run before it.
-  assert.equal(runPlan({ chunks: one, chunkCursor: { runs: 1, runId: 'r1' } }, 'r2'), null)
-  assert.equal(runPlan({ chunks: [], chunkCursor: null }, 'r1'), null)
-  const both = chainChunks([{ runId: 'r1', ...one[0] }, { runId: 'r2', ...call('b', 'update_plan', steps(['Next', 'pending'])) }])
-  assert.deepEqual(view(runPlan({ chunks: both, chunkCursor: { runs: 2, runId: 'r2' } }, 'r2')), [['Next', 'pending']])
-  assert.deepEqual(view(runPlan({ chunks: both, historyPage: { chain: 'r1,r2' } }, 'r1')), [['Read', 'in_progress']])
-  assert.deepEqual(view(runPlan({ chunks: one, historyPage: { chain: 'r1' } }, 'r1')), [['Read', 'in_progress']])
-  assert.equal(runPlan({ chunks: one, historyPage: { chain: 'r1' } }, 'r2'), null)
+const output = (toolCallId: string, planTask?: string) => row({ type: 'tool-output-available', toolCallId, output: 'ok', ...(planTask ? { planTask: { id: planTask } } : {}) })
+
+test("Claude Code's TaskCreate / TaskUpdate build the plan one call at a time, by the id each create's result gave", () => {
+  const plan = threadPlan([
+    call('c1', 'TaskCreate', { subject: 'Read the brief', description: 'x', activeForm: 'Reading' }), output('c1', '1'),
+    call('c2', 'TaskCreate', { subject: 'Write the parser', description: 'x' }), output('c2', '2'),
+    call('c3', 'TaskCreate', { subject: 'Remove me', description: 'x' }), output('c3', '3'),
+    call('c4', 'TaskCreate', { subject: 'Add tests', description: 'x' }), output('c4', '4'),
+    call('u1', 'TaskUpdate', { taskId: '1', status: 'completed' }), output('u1'),
+    call('u2', 'TaskUpdate', { taskId: '2', status: 'in_progress', subject: 'Write the plan parser' }), output('u2'),
+    call('u3', 'TaskUpdate', { taskId: '3', status: 'deleted' }), output('u3'),
+    call('u4', 'TaskUpdate', { taskId: '99', status: 'completed' }), output('u4'),
+  ])
+  assert.deepEqual(view(plan), [['Read the brief', 'completed'], ['Write the plan parser', 'in_progress'], ['Add tests', 'pending']])
+})
+
+test('a task keeps its row id across updates; a failed create adds nothing; a create without a result id stays pending', () => {
+  const created = [call('c1', 'TaskCreate', { subject: 'Read', description: 'x' }), output('c1', '1')]
+  const before = threadPlan(created)
+  const after = threadPlan([...created, call('u1', 'TaskUpdate', { taskId: '1', status: 'in_progress' })])
+  assert.deepEqual(after?.map(item => item.id), before?.map(item => item.id))
+  assert.equal(threadPlan([call('c1', 'TaskCreate', { subject: 'Read' }), row({ type: 'tool-output-error', toolCallId: 'c1', errorText: 'no' })]), null)
+  assert.deepEqual(view(threadPlan([call('c1', 'TaskCreate', { subject: 'Read' }), output('c1'), call('u1', 'TaskUpdate', { taskId: '1', status: 'completed' })])), [['Read', 'pending']])
+})
+
+test('a whole-list call replaces the tasks; tasks created after it join that list', () => {
+  const plan = threadPlan([
+    call('c1', 'TaskCreate', { subject: 'Old', description: 'x' }), output('c1', '1'),
+    call('t1', 'TodoWrite', todos(['Read', 'completed'])),
+    call('c2', 'TaskCreate', { subject: 'Ship', description: 'x' }), output('c2', '2'),
+  ])
+  assert.deepEqual(view(plan), [['Read', 'completed'], ['Ship', 'pending']])
 })

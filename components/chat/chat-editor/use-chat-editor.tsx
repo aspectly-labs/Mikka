@@ -167,8 +167,8 @@ export function useChatEditor(composer: ChatComposerState, options: {
       current.submit()
       return true
     }
-    // In a bot chat Esc stops the reply, as the stop button does (a thread's composer never does, 2026-11-02-0301).
-    if (event.key === 'Escape' && current.stoppable && !current.field.thread) { event.preventDefault(); current.stop?.(); return true }
+    // Esc stops whatever answers, in every chat, also with words typed (decision 2026-11-22-1600, as Claude Code and Codex).
+    if (event.key === 'Escape' && current.escapeStops) { event.preventDefault(); current.stop?.(); return true }
     if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
       const stored = current.field.stored
       const recalling = recall.current.at !== null && stored === current.field.history[recall.current.at]

@@ -16,7 +16,7 @@ export type ChatComposerProps = {
   placeholder?: string
   /** Waiting for a reply. With `onStop`, the send button turns into stop. */
   sending?: boolean
-  /** The other side keeps working and still takes messages. With `onStop`, the button is stop until something is typed. */
+  /** The other side keeps working and still takes messages. With `onStop`, the button is stop until something is typed; Esc stops either way. */
   running?: boolean
   /** Keep the draft editable while a thread waits for its stop acknowledgement. */
   editableWhileSending?: boolean
@@ -35,7 +35,7 @@ export type ChatComposerProps = {
   footer?: ReactNode
   /** The person's send key (偏好设置); the caller reads it from their preferences. */
   sendKey?: SendKey
-  /** A thread's composer, not a bot chat's: choosing a chat focuses only the latter, and Esc never stops the run (decision 2026-11-02-0301). */
+  /** A thread's composer, not a bot chat's: choosing a chat focuses only the latter. Esc stops either while it works (decision 2026-11-22-1600). */
   thread?: boolean
   attachmentScope?: ChatFileScope
   /** Keep a saved draft editable while blocking new files. */

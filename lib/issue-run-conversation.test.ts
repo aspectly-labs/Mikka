@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { chainChunks, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, runSummaryText, runSummaryView, threadItems, threadStepOutput } from './issue-run-conversation'
+import { activityLineBadgeShown, chainChunks, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, runSummaryText, runSummaryView, threadItems, threadStepOutput } from './issue-run-conversation'
 import { createSecretMasker, withCredentialMasking } from './secrets/mask'
 import { maskStreamedChunks } from './secrets/stream-mask'
 
@@ -257,4 +257,23 @@ test('tool calls carry kind, status, target and the daemon\'s truncation mark (#
   assert.equal(threadStepStatus(running, true), 'running')
   assert.equal(threadStepStatus(running, false), 'cancelled', 'a call its ended run left running never finished')
   assert.equal(threadStepStatus((await steps(codex))[0], false), 'failed')
+})
+
+test('the activity line is the one running indicator: no status badge beside a working, waiting or stopping run', () => {
+  const none = { waiting: false, stopping: false, outcome: null }
+  for (const status of ['queued', 'preparing', 'running', 'finishing', 'waiting_input']) assert.equal(activityLineBadgeShown(status, none), false, status)
+  assert.equal(activityLineBadgeShown('succeeded', { ...none, waiting: true }), false)
+  assert.equal(activityLineBadgeShown('failed', { ...none, stopping: true }), false)
+  // What the line does not say stays: a run that ended blocked, paused, or with an outcome to judge.
+  assert.equal(activityLineBadgeShown('failed', none), true)
+  assert.equal(activityLineBadgeShown('paused', none), true)
+  assert.equal(activityLineBadgeShown('succeeded', { ...none, outcome: 'merged' }), true)
+  assert.equal(activityLineBadgeShown('succeeded', none), false)
+})
+
+test('a run has one Stop: the composer while it works there, the header only where the composer cannot', () => {
+  assert.equal(headerStopShown({ canStop: true, working: true, composerStop: true }), false)
+  assert.equal(headerStopShown({ canStop: true, working: false, composerStop: true }), true, 'waiting for an answer: the composer sends')
+  assert.equal(headerStopShown({ canStop: true, working: true, composerStop: false }), true, 'no composer on screen')
+  assert.equal(headerStopShown({ canStop: false, working: true, composerStop: false }), false)
 })

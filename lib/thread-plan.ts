@@ -1,8 +1,10 @@
 /**
- * An Agent's live plan, from the run chunks the thread already holds (no new reads): the input of its newest plan call,
- * Claude Code's `TodoWrite` (`todos: { content, status }[]`) or Codex's `update_plan` (`plan: { step, status }[]`; the
- * daemon writes Codex's `turn/plan/updated` and Cursor's ACP `plan` updates as that call). Each call carries the whole
- * list, so the newest one is the plan; an empty one clears it.
+ * An Agent's live plan, from its run's chunks. Claude Code's `TodoWrite` (`todos: { content, status }[]`) and Codex's
+ * `update_plan` (`plan: { step, status }[]`; the daemon writes Codex's `turn/plan/updated` and Cursor's ACP `plan`
+ * updates as that call) carry the whole list: the newest replaces it, an empty one clears it. Claude Code's newer
+ * `TaskCreate` / `TaskUpdate` build it one task at a time: a create adds its `subject` as pending, its output chunk
+ * carries the id the CLI gave it (`planTask.id`, packages/daemon/src/adapters/claude.ts), and an update addresses that
+ * id (`status`, `subject`; `deleted` removes it).
  */
 import { threadStepKind } from './issue-run-conversation'
 
@@ -42,33 +44,45 @@ function planItems(input: unknown): ThreadPlanItem[] | null {
   return items
 }
 
-/**
- * The newest plan in a thread's chunks, or null. With `runId`, the chunks span several runs (chainChunks prefixes each
- * call's id with its run): only that run's calls count, so a new run shows no plan until it writes one.
- */
-export function threadPlan(chunks: readonly { chunk: Record<string, unknown> }[], runId?: string): ThreadPlanItem[] | null {
-  for (let index = chunks.length - 1; index >= 0; index -= 1) {
-    const chunk = chunks[index].chunk
-    if (chunk.type !== 'tool-input-available' || typeof chunk.toolName !== 'string' || threadStepKind(chunk.toolName) !== 'todo') continue
-    if (runId !== undefined && !String(chunk.toolCallId ?? '').startsWith(`${runId}:`)) continue
-    const items = planItems(chunk.input)
-    if (items) return items.length ? items : null
-  }
-  return null
-}
+type Task = ThreadPlanItem & { taskId?: string }
 
 /**
- * A run's plan from a thread read (app/actions/agents.ts): its chunks span several runs when the read's chain has more
- * than one, else they are one run's, which must be `runId`'s (a new run has no chunks of its own yet).
+ * The plan in a run's chunks, folded oldest first, or null. With `runId`, the chunks span several runs (chainChunks
+ * prefixes each call's id with its run): only that run's calls count, so a new run shows no plan until it writes one.
  */
-export function runPlan(read: {
-  chunks: readonly { chunk: Record<string, unknown> }[]
-  chunkCursor?: { runs: number; runId: string | null } | null
-  historyPage?: { chain: string } | null
-}, runId: string): ThreadPlanItem[] | null {
-  const chain = read.historyPage?.chain.split(',')
-  const spans = chain ? chain.length > 1 : (read.chunkCursor?.runs ?? 0) > 1
-  if (spans) return threadPlan(read.chunks, runId)
-  const only = chain ? chain[0] : read.chunkCursor?.runId
-  return only === runId ? threadPlan(read.chunks) : null
+export function threadPlan(chunks: readonly { chunk: Record<string, unknown> }[], runId?: string): ThreadPlanItem[] | null {
+  let items: Task[] = []
+  const created = new Map<string, Task>()
+  for (const { chunk } of chunks) {
+    const callId = typeof chunk.toolCallId === 'string' ? chunk.toolCallId : ''
+    if (!callId || (runId !== undefined && !callId.startsWith(`${runId}:`))) continue
+    if (chunk.type === 'tool-input-available' && typeof chunk.toolName === 'string') {
+      const name = chunk.toolName.toLowerCase()
+      const input = chunk.input && typeof chunk.input === 'object' ? chunk.input as Record<string, unknown> : {}
+      if (name === 'taskcreate') {
+        const text = line(input.subject)
+        if (!text || items.length >= MAX_ITEMS) continue
+        const task: Task = { id: `task:${callId}`, text, status: 'pending' }
+        items.push(task)
+        created.set(callId, task)
+      } else if (name === 'taskupdate') {
+        const task = typeof input.taskId === 'string' ? items.find(item => item.taskId === input.taskId) : undefined
+        if (!task) continue
+        if (input.status === 'deleted') { items = items.filter(item => item !== task); continue }
+        if (input.status !== undefined) task.status = status(input.status)
+        task.text = line(input.subject) ?? task.text
+      } else if (threadStepKind(name) === 'todo') {
+        const list = planItems(input)
+        if (list) items = list
+      }
+    } else if (chunk.type === 'tool-output-available') {
+      const task = created.get(callId)
+      const planTask = chunk.planTask && typeof chunk.planTask === 'object' ? (chunk.planTask as { id?: unknown }).id : undefined
+      if (task && typeof planTask === 'string') task.taskId = planTask
+    } else if (chunk.type === 'tool-output-error') {
+      const task = created.get(callId)
+      if (task) items = items.filter(item => item !== task)
+    }
+  }
+  return items.length ? items.map(({ id, text, status }) => ({ id, text, status })) : null
 }

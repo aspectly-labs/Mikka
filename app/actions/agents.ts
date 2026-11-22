@@ -389,6 +389,8 @@ export interface IssueThreadDetail {
    */
   context?: import('@/lib/context-usage').ContextUsage
   composerModel?: import('@/lib/context-usage').ContextUsage['composerModel']
+  /** The owner's live run's plan over all of that run's chunks, whichever page is held (lib/thread-plan-read.ts); absent otherwise. */
+  plan?: import('@/lib/thread-plan').ThreadPlanItem[] | null
 }
 
 /**
@@ -598,7 +600,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
   const [{ threadLiveReferences, documentLiveWorkspace }, { workspacePool }] = await Promise.all([import('@/lib/live/panels'), import('@/lib/workspace-db')])
   const chainRunIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
   const quotaView = row.userId === user.id ? import('@/lib/run-quota-view') : null
-  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback] = await Promise.all([
+  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback, plan] = await Promise.all([
     threadLiveReferences(pool, workspacePool, runIds, user.id),
     row.issueId ? documentLiveWorkspace(pool, workspacePool, row.issueId, user.id) : null,
     // Over the whole chain and the whole brief, so a cursor read reports what a full one does.
@@ -608,6 +610,8 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
       threadDeliveryView(pool, user.id, chain?.rootRunId ?? row.id, thread.latestRunId)) : undefined,
     quotaView?.then(({ threadQuotaView }) => threadQuotaView(user.id, chainRunIds, thread.latestRunId)),
     quotaView?.then(({ threadModelFallbackState }) => threadModelFallbackState(user.id, chainRunIds, thread.latestRunId)),
+    row.userId === user.id && runIsActive(liveStatus) && runIds.includes(thread.latestRunId)
+      ? import('@/lib/thread-plan-read').then(({ readRunPlan }) => readRunPlan(pool, { runId: thread.latestRunId, ownerId: user.id })) : undefined,
   ])
   return {
     readReceipts,
@@ -622,6 +626,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
     ...(messageUpdates?.length ? { messageUpdates } : {}),
     context,
     ...(composerModel ? { composerModel } : {}),
+    ...(plan !== undefined ? { plan } : {}),
     ...(promptOmitted ? { promptOmitted: true as const } : {}),
   }
 }

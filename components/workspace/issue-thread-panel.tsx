@@ -17,8 +17,7 @@ import { sendReviewChange, type ReviewChangeTarget } from '@/lib/factory/review-
 import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
-import { conversationItems, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadPeople } from '@/lib/issue-run-conversation'
-import { runPlan } from '@/lib/thread-plan'
+import { activityLineBadgeShown, conversationItems, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadPeople } from '@/lib/issue-run-conversation'
 import { useFoldedChunks } from '@/lib/conversation/folded'
 import { interleave } from '@/lib/conversation/interleave'
 import { splitRunScoped } from '@/lib/conversation/ids'
@@ -355,8 +354,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const folded = useFoldedChunks(threadConversationKey(runId), data?.chunks)
   const threadConversation = useMemo(() => data ? interleave(folded, threadPeople(data.messages)) : [], [data, folded])
   const items = useMemo(() => conversationItems(threadConversation, runId), [threadConversation, runId])
-  // The live run's newest plan (its TodoWrite / update_plan), pinned above the composer until the run ends.
-  const plan = useMemo(() => data && active ? runPlan(data, liveRunId) : null, [data, active, liveRunId])
+  // The live run's plan, read by the server over all of the run's chunks (whichever page is held), pinned above the
+  // composer until the run ends.
+  const plan = active ? data?.plan ?? null : null
   // The jump index, from the items already built: never a second fold of the stream.
   const outline = threadOutline(items)
   // A failed run says why under the stage that stopped, else at the end of the conversation.
@@ -532,8 +532,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       const status = view?.status ?? data.thread.status
       const outcome = acceptedProducerOutcome(data.thread, issueId, allTasks)
       const waitingForReply = question === 'waiting' || status === 'waiting_input'
-      // The list's fallback group for an unjudged run is not a request for input.
-      const showBadge = !stopRequested && (waitingForReply || runIsActive(status) || status === 'failed' || status === 'paused' || outcome !== null)
+      // The list's fallback group for an unjudged run is not a request for input. The line already says it works or waits,
+      // so the badge only adds what it does not (one running indicator, as Claude, ChatGPT and LobeHub).
+      const showBadge = activityLineBadgeShown(status, { waiting: waitingForReply, stopping: stopRequested, outcome })
       const started = new Date(data.thread.createdAt).getTime()
       const ended = data.thread.finishedAt ? new Date(data.thread.finishedAt).getTime() : Date.now()
       const seconds = Math.max(0, Math.round((ended - started) / 1000))
@@ -707,7 +708,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   // holds this panel (the official work area) gives it the scroller's height instead of growing with it.
   return <section ref={rootRef} aria-label={title} data-run-thread="" data-own-scroll="" className="flex h-full min-h-0 flex-col" onKeyDown={bare || !back ? undefined : event => closeOnEscape(event, headingRef.current, back)}>
     {!bare && <ThreadHeader issueId={issueId} runId={runId} title={title} viewTitle={viewTitle} headingRef={headingRef} onBack={back} onClose={onClose}
-      onStop={canStop ? () => { void stop() } : null} onOpenTask={onOpenTask} views={views}
+      onStop={headerStopShown({ canStop, working, composerStop: !viewingChanges && !(accepting && acceptance) && !(viewingArtifacts && artifacts) && !(readOnly && !changeRequest) })
+        ? () => { void stop() } : null} onOpenTask={onOpenTask} views={views}
       widen={widen ?? undefined} liveRunId={liveRunId}
       place={detail ? <ThreadRunPlace issueId={issueId} runId={runId} status={view?.status ?? data?.thread.status ?? ''} harness={detail.harness} botName={detail.agentName} /> : null}
       acceptanceBadge={acceptance ? <AcceptanceStateBadge task={acceptance} /> : null}
