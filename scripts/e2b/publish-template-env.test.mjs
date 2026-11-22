@@ -94,8 +94,8 @@ test('publication reads complete file evidence and retains independently bound m
   assert.equal(cli.status, 0, cli.stderr)
   assert.deepEqual(JSON.parse(cli.stdout), cloud)
   assert.ok(!cli.stdout.includes('providerManifest') && !cli.stdout.includes('subscriptionAcceptance'))
-  assert.deepEqual(applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', ...cloud, E2B_API_KEY: 'platform-only' }), {
-    BETTER_AUTH_URL: 'https://app.example', MIKKA_API_INGRESS: 'cloudflare', ...cloud,
+  assert.deepEqual(applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', ...cloud, E2B_API_KEY: 'platform-only', MIKKA_DECISION_TIMEOUT_MS: '45000' }), {
+    BETTER_AUTH_URL: 'https://app.example', MIKKA_API_INGRESS: 'cloudflare', ...cloud, MIKKA_DECISION_TIMEOUT_MS: '45000',
   })
   assert.throws(() => cloudflareRuntimeConfiguration(path, { ...expectedRelease, runAttempt: '3' }), /attempt_mismatch/)
   assert.throws(() => cloudflareRuntimeConfiguration(path, { ...expectedRelease, sha256: 'c'.repeat(64) }), /digest_mismatch/)
@@ -106,6 +106,12 @@ test('publication reads complete file evidence and retains independently bound m
   assert.throws(() => publicationInputFromFile(path, { ...expected, runAttempt: '3' }), /attempt_mismatch/)
   assert.throws(() => publicationInputFromFile(path, { ...expected, sha256: 'c'.repeat(64) }), /digest_mismatch/)
   assert.throws(() => assertReleaseEvidence(publicationInputFromFile(path, { ...expected, templates: { ...TEMPLATES, codex: 'other' } })), /template_invalid/)
+})
+
+test('an absent, empty or non-string Decision timeout leaves the runtime default intact', () => {
+  for (const value of [undefined, null, '', 45000]) {
+    assert.equal(Object.hasOwn(applicationEnvironment({ MIKKA_DECISION_TIMEOUT_MS: value }), 'MIKKA_DECISION_TIMEOUT_MS'), false)
+  }
 })
 
 test('the publisher CLI reports a closed parse error without printing the report cause', t => {
@@ -479,4 +485,3 @@ test('publication requires these exact public candidates before any network requ
     assert.equal(fake.calls.length, 0)
   }
 })
-

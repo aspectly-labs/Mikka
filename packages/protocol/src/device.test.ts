@@ -7,8 +7,11 @@ import {
   deviceReportSchema,
   deviceSessionReportSchema,
   devicesOnline,
+  gitAuthorEmailSchema,
+  gitAuthorNameSchema,
   isDeviceOnline,
   runAssignmentSchema,
+  runGitIdentitySchema,
   runPatchSchema,
 } from "./device"
 import { TASK_SECRET_MAX_CAPABILITIES, TASK_SECRET_MAX_TOKEN_BYTES } from './task-secrets'
@@ -216,5 +219,35 @@ describe("daemon releases in the report answer", () => {
     const failure = { version: "0.0.331", code: "install_failed", at: "2026-11-02T21:00:00.000Z" }
     expect(daemonUpdateFailureSchema.parse(failure)).toEqual(failure)
     expect(daemonUpdateFailureSchema.safeParse({ ...failure, code: "npm ERR! 404" }).success).toBe(false)
+  })
+})
+
+describe("git author identity schemas", () => {
+  it("validates author name and email settings and run assignment gitIdentity", () => {
+    expect(gitAuthorNameSchema.parse("")).toBe("")
+    expect(gitAuthorNameSchema.parse("  Alice Smith  ")).toBe("Alice Smith")
+    expect(gitAuthorEmailSchema.parse("")).toBe("")
+    expect(gitAuthorEmailSchema.parse("  alice@example.com  ")).toBe("alice@example.com")
+
+    for (const invalidName of ["   ", "a".repeat(101), "Alice\nBob", "Alice <bob@example.com>", "Alice\x00"]) {
+      expect(gitAuthorNameSchema.safeParse(invalidName).success).toBe(false)
+    }
+    for (const invalidEmail of ["   ", "not-an-email", "alice@", "@example.com", "alice <a@b.com>", `a@${"x".repeat(255)}.com`]) {
+      expect(gitAuthorEmailSchema.safeParse(invalidEmail).success).toBe(false)
+    }
+
+    expect(runGitIdentitySchema.parse({ name: "Alice", email: "alice@example.com" })).toEqual({
+      name: "Alice",
+      email: "alice@example.com",
+    })
+    expect(runGitIdentitySchema.safeParse({ name: "" }).success).toBe(false)
+    expect(runGitIdentitySchema.safeParse({ email: "" }).success).toBe(false)
+    expect(runGitIdentitySchema.safeParse({ name: "Alice", unknown: true }).success).toBe(false)
+
+    const base = { runId: "r1", issueId: "i1", deviceId: "d1", repoId: "repo", harness: "codex" as const, prompt: "p" }
+    expect(runAssignmentSchema.parse({ ...base, gitIdentity: { name: "Alice", email: "alice@example.com" } }).gitIdentity).toEqual({
+      name: "Alice",
+      email: "alice@example.com",
+    })
   })
 })

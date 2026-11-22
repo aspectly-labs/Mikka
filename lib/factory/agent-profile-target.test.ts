@@ -73,8 +73,6 @@ function fixture() {
       rows = connections.filter(row => (params[0] as string[]).includes(row.id)).map(row => ({ id: row.id, models: row.models }))
     } else if (sql.startsWith('SELECT subscriptions FROM workspace_personal_policies')) {
       kind = 'share_policy'; rows = [{ subscriptions: allowed }]
-    } else if (sql.startsWith('SELECT "ownerId" FROM workspace_subscription_shares')) {
-      kind = 'pooled_owners'; rows = [...shares].map(ownerId => ({ ownerId }))
     } else if (sql.startsWith('SELECT CASE WHEN sh."allowOthers" THEN NOT EXISTS')) {
       kind = 'fresh_share'; rows = [{ allowOthers: allowed && shares.has(String(params[0])) }]
     } else if (sql.startsWith('SELECT id FROM byos_connections') || sql.startsWith('SELECT id FROM model_api_keys')) {

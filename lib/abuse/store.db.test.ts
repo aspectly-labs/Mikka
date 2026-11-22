@@ -80,6 +80,7 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
   })
   const store = new HostedUsageStore(pool)
   await pool.query(readFileSync('drizzle/20261121043334_add_hosted_usage_message_attribution.sql', 'utf8'))
+  await pool.query(readFileSync('drizzle/20261122084255_hosted_usage_turn_ref.sql', 'utf8'))
   await t.test('a scripted LiteLLM BYOK receipt keeps its usage and does not consume the workspace budget', async t => {
     const { createServer } = await import('node:http')
     const { drizzle } = await import('drizzle-orm/node-postgres')
@@ -139,6 +140,19 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     await store.settle(call, 75_000, 40, 8, 'fixture-call', null, 'different-message')
     assert.deepEqual(await receipt(), { ...attribution, state: 'settled', cost: 25_000, input: 11 })
     assert.equal((await store.balance(workspaceId)).free, 975_000)
+  })
+  await t.test('a call records the conversation turn it served; a malformed turn never blocks the call', async () => {
+    const { hostedBillingScope } = await import('./context')
+    const [workspaceId, good, bad] = Array.from({ length: 3 }, () => randomUUID())
+    await store.verify(workspaceId, 'cus_turns', `card_${workspaceId}`)
+    await pool.query('INSERT INTO hosted_allowances ("workspaceId",remaining) VALUES ($1,1000000)', [workspaceId])
+    await hostedBillingScope.run({ workspaceId, billingAccountWorkspaceId: workspaceId, turnRef: 'eve:session-1:turn-1' },
+      () => store.reserve(workspaceId, 'fixture-model', good))
+    await store.settle(good, 100, 1, 1, 'fixture-good')
+    await hostedBillingScope.run({ workspaceId, billingAccountWorkspaceId: workspaceId, turnRef: "eve:x'; drop table" },
+      () => store.reserve(workspaceId, 'fixture-model', bad))
+    const turns = (await pool.query('SELECT id,"usageTurnRef" AS ref FROM hosted_usage WHERE id=ANY($1) ORDER BY id', [[good, bad]])).rows
+    assert.deepEqual(Object.fromEntries(turns.map(row => [row.id, row.ref])), { [good]: 'eve:session-1:turn-1', [bad]: null })
   })
   /** `n` messages sent in this workspace's chats (created by `creator`), plus a 重试 and a welcome request that never count. */
   const sent = async (workspaceId: string, n: number, creator = `creator-${workspaceId}`) => {

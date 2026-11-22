@@ -397,6 +397,38 @@ export const runModelCredentialSchema = z.discriminatedUnion("kind", [
 ])
 export type RunModelCredential = z.infer<typeof runModelCredentialSchema>
 
+const hasGitIdentityForbiddenChar = (value: string) =>
+  [...value].some(char => {
+    const code = char.charCodeAt(0)
+    return code < 0x20 || code === 0x7f || char === "<" || char === ">"
+  })
+
+/** Commit author/committer name: <= 100 chars non-empty after trim, or "" for default fallback. */
+export const gitAuthorNameSchema = z
+  .string()
+  .refine(value => value === "" || value.trim().length > 0, { message: "Invalid git author name" })
+  .transform(value => value.trim())
+  .pipe(z.string().max(100).refine(value => !hasGitIdentityForbiddenChar(value), { message: "Invalid git author name" }))
+
+/** Commit author/committer email: valid email (<= 254 chars) or "" for default fallback. */
+export const gitAuthorEmailSchema = z
+  .string()
+  .refine(value => value === "" || value.trim().length > 0, { message: "Invalid git author email" })
+  .transform(value => value.trim())
+  .pipe(
+    z.string().max(254).refine(
+      value => value === "" || (!hasGitIdentityForbiddenChar(value) && z.email().safeParse(value).success),
+      { message: "Invalid git author email" },
+    ),
+  )
+
+/** Resolved non-empty Git identity delivered to a run at claim time. */
+export const runGitIdentitySchema = z.strictObject({
+  name: gitAuthorNameSchema.pipe(z.string().min(1)).optional(),
+  email: gitAuthorEmailSchema.pipe(z.string().min(1)).optional(),
+})
+export type RunGitIdentity = z.infer<typeof runGitIdentitySchema>
+
 /** A repository record and its identity-scoped settings. */
 export const deviceRepoSchema = z.object({
   repoId: id,
@@ -615,6 +647,8 @@ export const runAssignmentSchema = z.object({
   repositorySkills: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(MAX_PROFILE_SKILLS_PER_RUN).optional(),
   /** Frozen by the server benchmark ledger; never extracted from model output. */
   benchmark: runBenchmarkContext.optional(),
+  /** Resolved personal/workspace Git commit author & committer identity (#3110). */
+  gitIdentity: runGitIdentitySchema.optional(),
 }).refine(value => !(value.modelCredential && value.subscriptionBinding), { message: "A run has one model credential", path: ["modelCredential"] })
   .refine(value => !value.subscriptionLease || Boolean(value.subscriptionBinding && value.subscriptionBinding.route === value.subscriptionLease.route &&
     (value.harness === 'codex' ? value.subscriptionLease.route === 'codex_cli' : value.harness === 'claude_code' && value.subscriptionLease.route === 'claude_code_cli')),
