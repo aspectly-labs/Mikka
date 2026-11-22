@@ -7,7 +7,7 @@
 
 export const STANDING_INSTRUCTIONS_MAX = 2000
 
-const STANDING_INSTRUCTION_TAGS = /<\/?(?:workspace|environment|bot|personal)_instructions\b[^>]*>/gi
+const STANDING_INSTRUCTION_TAGS = /<\/?(?:(?:workspace|environment|bot|personal)_)?instructions\b[^>]*>/gi
 
 /** Strips instruction XML delimiters so user- or admin-authored text cannot close or spoof a section. */
 export function sanitizeStandingInstructions(value: string): string {

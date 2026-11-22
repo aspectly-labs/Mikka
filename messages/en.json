@@ -2567,7 +2567,15 @@
       "remove": "Remove skill",
       "removeConfirmTitle": "Remove {name}?",
       "pathLabel": "Path",
-      "hashLabel": "Digest"
+      "hashLabel": "Digest",
+      "modeManual": "Create manually",
+      "modeGithub": "GitHub repository",
+      "nameLabel": "Skill name",
+      "namePlaceholder": "Release checklist",
+      "contentLabel": "Skill instructions",
+      "contentPlaceholder": "Steps the Agent follows on matching tasks…",
+      "editSkill": "Edit",
+      "editTitle": "Edit skill"
     },
     "memory": {
       "emptyBody": "Mikka saves facts from chats and connected apps; they appear here.",
@@ -4574,7 +4582,10 @@
       "valueWithSource": "{value} · {source}",
       "countWithSource": "{count} · {source}",
       "parallelTreeHint": "Concurrent subagents allowed in a thread tree.",
-      "archiveSaveError": "Could not save archive setting"
+      "archiveSaveError": "Could not save archive setting",
+      "resetInherit": "Reset to inherit",
+      "resetDefaults": "Reset defaults",
+      "resetError": "Could not reset settings"
     },
     "shortcutsPage": {
       "voiceTitle": "Voice input",

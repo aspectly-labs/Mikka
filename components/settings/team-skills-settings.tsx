@@ -24,6 +24,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { SearchInput } from '@/components/ui/search-input'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   SettingRow,
   SettingSelect,
@@ -47,6 +50,7 @@ interface InstalledSkillItem {
   sha256: string
   enabled: boolean
   createdAt: string
+  body?: string
 }
 
 interface InstalledSkillsResponse {
@@ -55,8 +59,18 @@ interface InstalledSkillsResponse {
   scope: 'personal'
 }
 
+interface InstalledSkillDetailResponse {
+  skill: InstalledSkillItem & { body?: string }
+}
+
 interface TeamSkillVersionDetail {
   markdown?: string
+  skill?: {
+    id: string
+    name: string
+    description: string | null
+    instructions: string
+  }
   status: 'pending' | 'approved' | 'withdrawn'
   artifact: { sha256: string }
 }
@@ -69,6 +83,12 @@ export interface TeamSkillsSettingsProps {
   admin?: boolean
   workspaceId?: string
   personal?: boolean
+}
+
+function extractBodyInstructions(body?: string): string {
+  if (!body) return ''
+  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n*/.exec(body)
+  return match ? body.slice(match[0].length).trim() : body.trim()
 }
 
 async function fetchInstalledSkills(): Promise<InstalledSkillsResponse> {
@@ -87,7 +107,7 @@ async function fetchInstalledSkills(): Promise<InstalledSkillsResponse> {
  * manages installed skills (`GET/POST/PATCH/DELETE /api/skills` + workspace share via `/api/skills/share`)
  * alongside the workspace team-skill registry (`listTeamSkills`, `reviewTeamSkill`, version detail).
  */
-export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSettingsProps) {
+export function TeamSkillsSettings({ admin = false, workspaceId, personal = false }: TeamSkillsSettingsProps) {
   const t = useTranslations('Settings.teamSkills')
   const s = useTranslations('Settings.skillsPage')
   const common = useTranslations('Common')
@@ -105,10 +125,19 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
   const [detailModalOpen, setDetailModalOpen] = useState(false)
 
   const [addOpen, setAddOpen] = useState(false)
+  const [addMode, setAddMode] = useState<'manual' | 'github'>('manual')
+  const [draftName, setDraftName] = useState('')
   const [draftSource, setDraftSource] = useState('')
   const [draftSlug, setDraftSlug] = useState('')
+  const [draftInstructions, setDraftInstructions] = useState('')
+  const [draftScope, setDraftScope] = useState<'personal' | 'workspace'>('workspace')
   const [installing, setInstalling] = useState(false)
   const [installError, setInstallError] = useState<string | null>(null)
+
+  const [editingSkill, setEditingSkill] = useState<InstalledSkillItem | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editInstructions, setEditInstructions] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
 
   const [updatingSkill, setUpdatingSkill] = useState(false)
   const [skillMutationError, setSkillMutationError] = useState<string | null>(null)
@@ -136,6 +165,23 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
     ? teamSkills.find(item => item.versionId === activeSelection.versionId) ?? null
     : null
 
+  const installedDetailRead = useSWR<InstalledSkillDetailResponse>(
+    (detailModalOpen || editingSkill !== null) && selectedInstalled
+      ? ['installed-skill-detail', selectedInstalled.id]
+      : null,
+    async () => {
+      const response = await fetch(withBasePath(`/api/skills?id=${encodeURIComponent(selectedInstalled!.id)}`), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (!response.ok) throw new Error('skillDetailFailed')
+      return response.json() as Promise<InstalledSkillDetailResponse>
+    },
+    settingsReadOptions,
+  )
+
   const teamDetailRead = useSWR<TeamSkillVersionDetail>(
     detailModalOpen && selectedTeam && workspaceId
       ? ['team-skill-detail', workspaceId, selectedTeam.versionId, admin]
@@ -151,16 +197,67 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
     settingsReadOptions,
   )
 
+  const canShareWorkspace = Boolean(workspaceId && !personal)
+
   function openAddModal() {
+    setAddMode('manual')
+    setDraftName('')
     setDraftSource('')
     setDraftSlug('')
+    setDraftInstructions('')
+    setDraftScope(canShareWorkspace ? 'workspace' : 'personal')
     setInstallError(null)
     setAddOpen(true)
   }
 
+  function openEditModal(skill: InstalledSkillItem, currentBody?: string) {
+    setEditError(null)
+    setEditName(skill.name)
+    setEditInstructions(extractBodyInstructions(currentBody))
+    setDetailModalOpen(false)
+    setEditingSkill(skill)
+  }
+
   async function installNewSkill() {
-    const source = draftSource.trim()
     const slug = draftSlug.trim()
+    if (addMode === 'manual') {
+      const name = draftName.trim()
+      const instructions = draftInstructions.trim()
+      if (!name || !SKILL_SLUG_PATTERN.test(slug) || !instructions) {
+        setInstallError(s('invalidInput'))
+        return
+      }
+      setInstalling(true)
+      setInstallError(null)
+      try {
+        const response = await fetch(withBasePath('/api/skills'), {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          redirect: 'error',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, slug, instructions }),
+        })
+        const body = await response.json().catch(() => null) as { skill?: InstalledSkillItem; error?: string } | null
+        if (!response.ok || !body?.skill) {
+          setInstallError(s('installError'))
+          return
+        }
+        if (canShareWorkspace && draftScope === 'workspace' && workspaceId) {
+          await shareWorkspaceSkill(workspaceId, body.skill.id, true)
+        }
+        await Promise.all([installedRead.mutate(), profilesRead.mutate()])
+        setSelected({ kind: 'installed', id: body.skill.id })
+        setAddOpen(false)
+      } catch {
+        setInstallError(s('installError'))
+      } finally {
+        setInstalling(false)
+      }
+      return
+    }
+
+    const source = draftSource.trim()
     if (!SKILL_SOURCE_PATTERN.test(source) || !SKILL_SLUG_PATTERN.test(slug)) {
       setInstallError(s('invalidInput'))
       return
@@ -188,6 +285,38 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
       setInstallError(s('installError'))
     } finally {
       setInstalling(false)
+    }
+  }
+
+  async function saveEditedSkill() {
+    if (!editingSkill) return
+    const name = editName.trim()
+    const instructions = editInstructions.trim()
+    if (!name || !instructions) {
+      setEditError(s('invalidInput'))
+      return
+    }
+    setUpdatingSkill(true)
+    setEditError(null)
+    try {
+      const response = await fetch(withBasePath('/api/skills'), {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        redirect: 'error',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: editingSkill.id, name, instructions }),
+      })
+      if (!response.ok) {
+        setEditError(s('updateError'))
+        return
+      }
+      await Promise.all([installedRead.mutate(), installedDetailRead.mutate(), profilesRead.mutate()])
+      setEditingSkill(null)
+    } catch {
+      setEditError(s('updateError'))
+    } finally {
+      setUpdatingSkill(false)
     }
   }
 
@@ -291,8 +420,16 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
   const profileCatalogEntry = selectedInstalled
     ? profilesRead.data?.catalog.skills.find(item => item.id === `personal:${selectedInstalled.id}` || item.id === selectedInstalled.id)
     : undefined
-  const canShareSelected = Boolean(workspaceId && profileCatalogEntry?.shareable)
+  const canShareSelected = Boolean(workspaceId && (profileCatalogEntry?.shareable ?? canShareWorkspace))
   const isSelectedShared = Boolean(profileCatalogEntry?.shared)
+
+  const teamDetailBody = teamDetailRead.data?.skill?.instructions ?? teamDetailRead.data?.markdown
+  const installedDetailBody = installedDetailRead.data?.skill?.body
+
+  const scopeSelectOptions = [
+    { value: 'workspace', label: s('scopeWorkspace') },
+    { value: 'personal', label: s('scopePersonal') },
+  ]
 
   return (
     <div className="flex flex-col gap-6">
@@ -511,38 +648,128 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
             }}
             className="flex flex-col gap-4"
           >
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="skill-source">{s('sourceLabel')}</FieldLabel>
-                <Input
-                  id="skill-source"
-                  required
-                  maxLength={201}
-                  disabled={installing}
-                  placeholder={s('sourcePlaceholder')}
-                  value={draftSource}
-                  onChange={event => setDraftSource(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="skill-slug">{s('slugLabel')}</FieldLabel>
-                <Input
-                  id="skill-slug"
-                  required
-                  maxLength={100}
-                  disabled={installing}
-                  placeholder={s('slugPlaceholder')}
-                  value={draftSlug}
-                  onChange={event => setDraftSlug(event.target.value)}
-                />
-              </Field>
-            </FieldGroup>
+            <ToggleGroup
+              aria-label={s('addSkill')}
+              variant="segment"
+              size="sm"
+              spacing={0.5}
+              value={[addMode]}
+              onValueChange={values => {
+                const next = values[0]
+                if (next === 'manual' || next === 'github') {
+                  setAddMode(next)
+                  setInstallError(null)
+                }
+              }}
+            >
+              <ToggleGroupItem value="manual">{s('modeManual')}</ToggleGroupItem>
+              <ToggleGroupItem value="github">{s('modeGithub')}</ToggleGroupItem>
+            </ToggleGroup>
+
+            {addMode === 'manual' ? (
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="skill-name">{s('nameLabel')}</FieldLabel>
+                  <Input
+                    id="skill-name"
+                    required
+                    maxLength={80}
+                    disabled={installing}
+                    placeholder={s('namePlaceholder')}
+                    value={draftName}
+                    onChange={event => setDraftName(event.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="skill-slug">{s('slugLabel')}</FieldLabel>
+                  <Input
+                    id="skill-slug"
+                    required
+                    maxLength={100}
+                    disabled={installing}
+                    placeholder={s('slugPlaceholder')}
+                    value={draftSlug}
+                    onChange={event => setDraftSlug(event.target.value)}
+                  />
+                </Field>
+                {canShareWorkspace ? (
+                  <Field>
+                    <FieldLabel htmlFor="skill-scope">{s('scopeLabel')}</FieldLabel>
+                    <Select
+                      items={scopeSelectOptions}
+                      value={draftScope}
+                      disabled={installing}
+                      onValueChange={value => {
+                        if (value === 'personal' || value === 'workspace') setDraftScope(value)
+                      }}
+                    >
+                      <SelectTrigger id="skill-scope"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {scopeSelectOptions.map(option => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                ) : null}
+                <Field>
+                  <FieldLabel htmlFor="skill-content">{s('contentLabel')}</FieldLabel>
+                  <Textarea
+                    id="skill-content"
+                    required
+                    rows={5}
+                    maxLength={12_000}
+                    disabled={installing}
+                    placeholder={s('contentPlaceholder')}
+                    value={draftInstructions}
+                    onChange={event => setDraftInstructions(event.target.value)}
+                  />
+                </Field>
+              </FieldGroup>
+            ) : (
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="skill-source">{s('sourceLabel')}</FieldLabel>
+                  <Input
+                    id="skill-source"
+                    required
+                    maxLength={201}
+                    disabled={installing}
+                    placeholder={s('sourcePlaceholder')}
+                    value={draftSource}
+                    onChange={event => setDraftSource(event.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="skill-slug">{s('slugLabel')}</FieldLabel>
+                  <Input
+                    id="skill-slug"
+                    required
+                    maxLength={100}
+                    disabled={installing}
+                    placeholder={s('slugPlaceholder')}
+                    value={draftSlug}
+                    onChange={event => setDraftSlug(event.target.value)}
+                  />
+                </Field>
+              </FieldGroup>
+            )}
             {installError ? <FieldError>{installError}</FieldError> : null}
             <DialogFooter>
               <Button type="button" variant="outline" disabled={installing} onClick={() => setAddOpen(false)}>
                 {common('cancel')}
               </Button>
-              <Button type="submit" busy={installing} disabled={!draftSource.trim() || !draftSlug.trim()}>
+              <Button
+                type="submit"
+                busy={installing}
+                disabled={
+                  addMode === 'manual'
+                    ? !draftName.trim() || !draftSlug.trim() || !draftInstructions.trim()
+                    : !draftSource.trim() || !draftSlug.trim()
+                }
+              >
                 {s('addSkill')}
               </Button>
             </DialogFooter>
@@ -575,6 +802,11 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
                   <dd className="font-mono text-foreground">{selectedInstalled.sha256}</dd>
                 </div>
               </dl>
+              {installedDetailBody ? (
+                <pre className="max-h-64 overflow-y-auto rounded-lg border bg-card p-3 font-mono text-xs whitespace-pre-wrap break-words text-foreground">
+                  {installedDetailBody}
+                </pre>
+              ) : null}
               <DialogFooter>
                 <Button
                   type="button"
@@ -584,6 +816,16 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
                 >
                   {s('remove')}
                 </Button>
+                {selectedInstalled.source === 'local/manual' ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={updatingSkill || installedDetailRead.isLoading}
+                    onClick={() => openEditModal(selectedInstalled, installedDetailBody)}
+                  >
+                    {s('editSkill')}
+                  </Button>
+                ) : null}
                 <Button type="button" variant="outline" onClick={() => setDetailModalOpen(false)}>
                   {common('close')}
                 </Button>
@@ -601,9 +843,9 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
                   <dd className="font-mono text-foreground">{selectedTeam.artifact.sha256}</dd>
                 </div>
               </dl>
-              {teamDetailRead.data?.markdown ? (
+              {teamDetailBody ? (
                 <pre className="max-h-64 overflow-y-auto rounded-lg border bg-card p-3 font-mono text-xs whitespace-pre-wrap break-words text-foreground">
-                  {teamDetailRead.data.markdown}
+                  {teamDetailBody}
                 </pre>
               ) : null}
               <DialogFooter>
@@ -613,6 +855,56 @@ export function TeamSkillsSettings({ admin = false, workspaceId }: TeamSkillsSet
               </DialogFooter>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editingSkill !== null} onOpenChange={open => { if (!open && !updatingSkill) setEditingSkill(null) }}>
+        <DialogContent aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>{s('editTitle')}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={event => {
+              event.preventDefault()
+              void saveEditedSkill()
+            }}
+            className="flex flex-col gap-4"
+          >
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="edit-skill-name">{s('nameLabel')}</FieldLabel>
+                <Input
+                  id="edit-skill-name"
+                  required
+                  maxLength={80}
+                  disabled={updatingSkill}
+                  value={editName}
+                  onChange={event => setEditName(event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="edit-skill-content">{s('contentLabel')}</FieldLabel>
+                <Textarea
+                  id="edit-skill-content"
+                  required
+                  rows={6}
+                  maxLength={12_000}
+                  disabled={updatingSkill}
+                  value={editInstructions}
+                  onChange={event => setEditInstructions(event.target.value)}
+                />
+              </Field>
+            </FieldGroup>
+            {editError ? <FieldError>{editError}</FieldError> : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={updatingSkill} onClick={() => setEditingSkill(null)}>
+                {common('cancel')}
+              </Button>
+              <Button type="submit" busy={updatingSkill} disabled={!editName.trim() || !editInstructions.trim()}>
+                {common('save')}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

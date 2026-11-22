@@ -208,51 +208,57 @@ export function MemorySettings({ workspaceId }: MemorySettingsProps = {}) {
   ]
   const kindOptions = USER_FACT_KINDS.map(kind => ({ value: kind, label: m(`kinds.${kind}`) }))
 
+  const settingsLoading = (!data && !error) || (!prefsRead.data && prefsRead.isLoading) || (!personalRegistry.data && personalRegistry.isLoading)
+
   return (
     <div className="flex flex-col gap-6">
-      <SettingsSection id="memory-settings" title={p('sectionTitle')}>
-        <SettingRow title={p('manageFacts')} description={p('manageFactsHint')}>
-          <Button type="button" variant="ghost" size="icon-sm" aria-label={p('addFact')} onClick={openAddDialog}>
-            <Pencil />
-          </Button>
-        </SettingRow>
-        <SettingRow title={p('dailySuggestions')} description={p('dailySuggestionsHint')}>
-          <SettingSelect
-            label={p('dailySuggestions')}
-            value={dailySuggestions ? 'on' : 'off'}
-            disabled={!memoryEnabled || prefsBusy}
-            options={[
-              { value: 'on', label: p('on') },
-              { value: 'off', label: p('off') },
-            ]}
-            onValueChange={value => {
-              if (value === 'on' || value === 'off') void saveDailySuggestions(value === 'on')
-            }}
-          />
-        </SettingRow>
-        <SettingRow
-          title={withPendingSuffix(p('shareToWorkspace'), p('pendingBadge'))}
-          description={p('shareToWorkspaceHint')}
-        >
-          <span className="text-xs text-muted-foreground">{p('pendingBadge')}</span>
-        </SettingRow>
-        <SettingRow title={p('autoApprove')} description={p('autoApproveHint')}>
-          <SettingSwitch
-            label={p('autoApprove')}
-            checked={autoApprove}
-            disabled={autoApproveBusy || (!personalRegistry.data && personalRegistry.isLoading)}
-            onCheckedChange={checked => { void saveAutoApprove(checked) }}
-          />
-        </SettingRow>
-        <SettingRow title={p('contextInjection')} description={p('contextInjectionHint')}>
-          <SettingSwitch
-            label={p('contextInjection')}
-            checked={memoryEnabled}
-            disabled={!data}
-            onCheckedChange={enabled => { void toggleMemoryEnabled(enabled) }}
-          />
-        </SettingRow>
-      </SettingsSection>
+      {settingsLoading ? (
+        <SettingsLoading label={p('sectionTitle')} rows={5} />
+      ) : (
+        <SettingsSection id="memory-settings" title={p('sectionTitle')}>
+          <SettingRow title={p('manageFacts')} description={p('manageFactsHint')}>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label={p('addFact')} onClick={openAddDialog}>
+              <Pencil />
+            </Button>
+          </SettingRow>
+          <SettingRow title={p('dailySuggestions')} description={p('dailySuggestionsHint')}>
+            <SettingSelect
+              label={p('dailySuggestions')}
+              value={dailySuggestions ? 'on' : 'off'}
+              disabled={!memoryEnabled || prefsBusy}
+              options={[
+                { value: 'on', label: p('on') },
+                { value: 'off', label: p('off') },
+              ]}
+              onValueChange={value => {
+                if (value === 'on' || value === 'off') void saveDailySuggestions(value === 'on')
+              }}
+            />
+          </SettingRow>
+          <SettingRow
+            title={withPendingSuffix(p('shareToWorkspace'), p('pendingBadge'))}
+            description={p('shareToWorkspaceHint')}
+          >
+            <span className="text-xs text-muted-foreground">{p('pendingBadge')}</span>
+          </SettingRow>
+          <SettingRow title={p('autoApprove')} description={p('autoApproveHint')}>
+            <SettingSwitch
+              label={p('autoApprove')}
+              checked={autoApprove}
+              disabled={autoApproveBusy}
+              onCheckedChange={checked => { void saveAutoApprove(checked) }}
+            />
+          </SettingRow>
+          <SettingRow title={p('contextInjection')} description={p('contextInjectionHint')}>
+            <SettingSwitch
+              label={p('contextInjection')}
+              checked={memoryEnabled}
+              disabled={!data}
+              onCheckedChange={enabled => { void toggleMemoryEnabled(enabled) }}
+            />
+          </SettingRow>
+        </SettingsSection>
+      )}
 
       {(error || failed) && (
         <SettingsSaveError message={m('error')} retryLabel={common('retry')} onRetry={() => { void reload() }} />
