@@ -34,7 +34,8 @@ const runAttention = `CASE
   WHEN r.outcome='needs_input' THEN 'needsReply'
   WHEN r.status='failed' OR r.outcome='failed' THEN 'failed'
   ELSE NULL END`
-const runFacts = `id,"userId",status,outcome,"pauseReason","stopReason","threadReplacedBy",
+// An unjudged succeeded run reads done so the badge and the listed rows agree while the judge catches up (#1863).
+const runFacts = `id,"userId",status,coalesce(outcome,CASE WHEN status='succeeded' THEN 'done' END) AS outcome,"pauseReason","stopReason","threadReplacedBy",
   (${offlineFact}) AS offline, (${approvalFact}) AS "awaitingApproval", (${failureFact}) AS failure`
 
 export type Scope = { personal: boolean }

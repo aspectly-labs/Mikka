@@ -70,6 +70,26 @@ test('a reply that opens with prose and then assigns root is a card, with its pr
   assert.equal(isOpenUI('the root = cause'), false)
 })
 
+test('a reply that is only one fenced block unwraps to its body', () => {
+  const fenced = `\`\`\`text\n${WELCOME}\n\`\`\``
+  const split = splitOpenUI(fenced)
+  assert.equal(isOpenUI(fenced), true)
+  assert.equal(split?.prose, '')
+  assert.equal(split?.source, WELCOME)
+  assert.ok(parseOpenUI(fenced))
+  assert.equal(openUIRootCount(fenced), 1)
+  // A fenced block of ordinary code stays Markdown: `root =` alone is not a program.
+  for (const code of ['```\nroot = /var/www\n```', '```\nroot = 1\n```', '```\nroot = true\n```', '```\nroot = Path(__file__).parent\nx = 1\n```', '```\nno program here\n```']) {
+    assert.equal(isOpenUI(code), false, code)
+  }
+  // Only a whole-reply fence unwraps: prose around the fence keeps it code.
+  assert.equal(isOpenUI(`先看例子：\n${fenced}`), false)
+  assert.equal(isOpenUI(`${fenced}\n上面是例子`), false)
+  assert.equal(isOpenUI('```\nroot = Stack([])\n```\n\n```\nroot = Stack([])\n```'), false)
+  // An unclosed fence is not a whole-reply fence.
+  assert.equal(isOpenUI('```\nroot = Stack([])'), false)
+})
+
 test('counts assigned roots across merged messages without treating quoted text as a new card', () => {
   const first = 'root = TextContent("root = BeApproval()")'
   const second = 'root = BeButton("Continue", "continue")'

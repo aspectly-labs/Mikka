@@ -24,7 +24,6 @@ test('Agent Profiles: real PostgreSQL isolation, immutable versions, exact-sourc
     await pool.query('DELETE FROM run_publications WHERE "userId"=ANY($1)', [owners])
     await pool.query('DELETE FROM coordinator_events WHERE "userId"=ANY($1)', [owners])
     await pool.query('DELETE FROM factory_agent_profiles WHERE "ownerId"=ANY($1)', [owners])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId"=ANY($1)', [owners])
     await pool.query('DELETE FROM model_order_entries WHERE "ownerId"=ANY($1)', [owners])
     await pool.query('DELETE FROM model_order_settings WHERE "ownerId"=ANY($1)', [owners])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId"=ANY($1)', [owners])
@@ -93,7 +92,6 @@ test('Agent Profiles: real PostgreSQL isolation, immutable versions, exact-sourc
     const who = await person('fixed-entry-owner'), payor = await person('fixed-entry-payor'), unrelated = await person('fixed-entry-unrelated')
     for (const member of [payor, unrelated]) {
       await pool.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,$2,'Fixed entry fixture',$3,'member','active')`, [who.workspaceId, member.ownerId, `${member.ownerId}@example.invalid`])
-      await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId","allowOthers") VALUES ($1,$2,true)', [member.ownerId, who.workspaceId])
     }
     const own = await subscribe(who, 'codex', ['fixed-entry-model', 'unrelated-model'])
     const shared = await subscribe(payor, 'codex', ['fixed-entry-model', 'unrelated-model'])
@@ -171,11 +169,9 @@ test('Agent Profiles: real PostgreSQL isolation, immutable versions, exact-sourc
         await pool.query(`UPDATE mikka_workspace_members SET status='suspended' WHERE "workspaceId"=$1 AND "userId"=$2`, [who.workspaceId, payor.ownerId])
         try { await compare(sharedSelection) } finally { await pool.query(`UPDATE mikka_workspace_members SET status='active' WHERE "workspaceId"=$1 AND "userId"=$2`, [who.workspaceId, payor.ownerId]) }
       })
-      await t.test('withdrawn subscription or key shares cannot be replaced by another same-model source', async () => {
-        await pool.query('UPDATE workspace_subscription_shares SET "allowOthers"=false WHERE "ownerId"=$1 AND "workspaceId"=$2', [payor.ownerId, who.workspaceId])
+      await t.test('a withdrawn key share cannot be replaced by another same-model source', async () => {
         await pool.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1 AND "workspaceId"=$2', [keys[1], who.workspaceId])
         try { await compare(sharedSelection); await compare(sharedKey) } finally {
-          await pool.query('UPDATE workspace_subscription_shares SET "allowOthers"=true WHERE "ownerId"=$1 AND "workspaceId"=$2', [payor.ownerId, who.workspaceId])
           await pool.query('INSERT INTO model_api_key_shares ("keyId","workspaceId") VALUES ($1,$2)', [keys[1], who.workspaceId])
         }
       })

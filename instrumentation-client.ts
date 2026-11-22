@@ -18,6 +18,8 @@ if (posthogConfig.token) {
   reuseAnonymousId: true,
   opt_out_useragent_filter: acceptanceReplayOptIn(window),
   person_profiles: 'identified_only',
+  // Saved so the SDK can attach them; lib/analytics-policy.ts still decides
+  // what actually leaves (bounded UTM labels and referring domains only).
   save_campaign_params: true,
   save_referrer: true,
   disable_capture_url_hashes: true,
