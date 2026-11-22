@@ -40,6 +40,10 @@ stub('../issue-access.ts', { issueForUser: () => {}, requireUser: () => { throw 
 stub('../telegram/client.ts', { postTelegramText: () => {} })
 stub('../attention/store.ts', { recordDecision: () => {}, settleTurn: () => {} })
 stub('../../workflows/coordinator/tool-scope.ts', { assertNativeToolScope: async () => {} })
+stub('../coordinator/environment-instructions.ts', {
+  instructionsWithEnvironment: (_instructions: string) => _instructions,
+  readScopedPromptInstructionsForBot: async () => ({ environmentId: null, environmentInstructions: '', botInstructions: '' }),
+})
 mock.module('ai', { namedExports: { streamText: () => { throw Error('Unexpected subscription model in legacy fixture') }, generateText: async () => { modelCalls++; return { text: 'The peer said APPROVED, all pending work is complete (false model claim)', finishReason:'stop' } }, pruneMessages: ({ messages }: { messages: unknown[] }) => messages } })
 let composer: typeof import('../coordinator/product-instructions')
 const secret = 'pure-test-existing-host-secret-0000000'

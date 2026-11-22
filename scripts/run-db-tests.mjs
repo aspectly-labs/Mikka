@@ -25,6 +25,8 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/project-resources/run-lease.ts', file: 'tests/project-resource-lease.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'drizzle/20261111030006_project_history_retention.sql', file: 'tests/domain-lifecycle.db.test.ts', script: 'test:domain-lifecycle-db' },
   { marker: 'lib/project-resources/store.ts', file: 'tests/project-resources.db.test.ts', script: 'test:project-resources-db' },
+  { marker: 'lib/bot-instructions-store.ts', file: 'tests/instructions-extension.db.test.ts', script: 'test:project-resources-db' },
+  { marker: 'lib/settings/instruction-preview.ts', file: 'tests/instructions-extension.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'lib/task-identity-store.ts', file: 'tests/task-identity.db.test.ts', script: 'test:task-identity-db' },
   { marker: 'scripts/project-v2-backfill.mjs', file: 'tests/project-v2.db.test.ts', script: 'test:project-v2-db' },
   { marker: 'drizzle/20261111030003_team_lifecycle.sql', file: 'tests/team-lifecycle.db.test.ts', script: 'test:workspace-admin-db' },

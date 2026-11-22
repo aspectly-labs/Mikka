@@ -3,7 +3,7 @@ import { AVATAR_MAX_BYTES, isAvatarContentType } from '../account/avatar-file'
 import { deletePasskeyInputSchema, renamePasskeyInputSchema } from '@/lib/account/passkeys-contract'
 import { threadModelChoice } from '@/lib/thread-model-choice'
 import { archiveIdleDays, conversationTargetInput, directoryInput } from '@/lib/conversation-directory-input'
-import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
+import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
 import { createOnlyCommand, dispatchReceiptInput } from '@/lib/task-create-command'
 import { taskListPageInput } from '@/lib/task-list-page'
 import { taskPresentationsInput } from '@/lib/task-presentation-input'
@@ -44,7 +44,8 @@ const none = tuple()
 const inWorkspace = tuple(workspace)
 /** Bot Profile's settings (lib/bot-settings.ts); the server checks each again. */
 const botSettingFields = { alias: text(64).nullable().optional(), environmentId: uuid.nullable().optional(), crewTarget: taskDestinationSchema.nullable().optional(),
-  defaultAgent: z.enum(BOT_DEFAULT_AGENTS).nullable().optional(), defaultProfileId: uuid.nullable().optional(), runsOn: botRunsOnSchema.nullable().optional() }
+  defaultAgent: z.enum(BOT_DEFAULT_AGENTS).nullable().optional(), defaultProfileId: uuid.nullable().optional(), runsOn: botRunsOnSchema.nullable().optional(),
+  instructions: text(8000).transform(value => value.trim()).refine(value => [...value].length <= 2000).optional() }
 const memoryScope = z.discriminatedUnion('kind', [
   object({ kind: z.literal('global'), ids: z.tuple([]) }),
   object({ kind: z.literal('workspaces'), ids: z.array(uuid).min(1).max(50) }),
@@ -284,6 +285,11 @@ export const desktopActionSchemas = {
   'settings.resetPersonalSettings': tuple(settingsResetInput, workspace),
   'settings.resetWorkspaceSettings': tuple(uuid, settingsResetInput),
   'settings.getSettingsSchema': none,
+  'settings.getInstructionPreview': tuple(object({ workspaceId: workspace, environmentId: uuid.optional(), botId: uuid.optional() }).optional()),
+  'project-resources.getEnvironmentInstructions': tuple(uuid, uuid),
+  'project-resources.saveEnvironmentInstructions': tuple(saveEnvironmentInstructionsInput),
+  'bots.getBotInstructions': tuple(uuid, workspace),
+  'bots.saveBotInstructions': tuple(object({ botId: uuid, instructions: text(8000).transform(value => value.trim()).refine(value => [...value].length <= 2000), workspaceId: workspace })),
   'thread-title-settings.getThreadTitleSettings': inWorkspace,
   'thread-title-settings.saveThreadTitleSettings': tuple(object({ workspaceId: workspace, scope: z.enum(['workspace', 'mine']), instructions: text(1000).optional(), triggers: z.enum(['first_run_ended', 'pull_opened', 'either']).nullable().optional() })),
   'issues.listIssues': none,
