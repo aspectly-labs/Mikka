@@ -13,7 +13,8 @@ const anyOf = (parts: SQL[]) => parts.length === 1 ? parts[0] : or(...parts)!
 
 const assignedTo = (ids: readonly string[]) => anyOf(ids.map(id => has({ assignee: { id } })))
 /** The registry folds label names case-insensitively, so a filter saved under an older spelling still matches. */
-const labelled = (name: string) => sql`exists (select 1 from jsonb_array_elements(coalesce(${issueMetadataSql}->'labels', '[]'::jsonb) ) label where lower(label->>'name') = lower(${name}))`
+const labels = sql`${issueMetadataSql}->'labels'`
+const labelled = (name: string) => sql`exists (select 1 from jsonb_array_elements(case when jsonb_typeof(${labels})='array' then ${labels} else '[]'::jsonb end) label where lower(label->>'name') = lower(${name}))`
 const mentions = (userId: string) => sql`jsonb_path_exists(${issues.content}, '$.** ? (@.type == "mention" && @.attrs.id == $u)', jsonb_build_object('u', ${userId}::text))`
 const follows = (userId: string) => has({ subscriberUserIds: [userId] })
 

@@ -59,6 +59,8 @@ test('task list views and filters apply before the page limit', { skip: !enabled
   await same({ view: 'created', labels: ['ui'] }, [theirs])
   await same({ assignee: ['me'] }, [assigned, assignedDone])
   await same({ assignee: [teammate, 'me'], labels: ['bug', 'ui'] }, [assigned, theirs])
+  await pool.query(`UPDATE issues SET content=jsonb_set(content,'{attrs,mikka,labels}','null') WHERE id=$1`, [parent])
+  await same({ labels: ['BUG'] }, [assigned], 'a non-array label field does not match or break the page')
   await same({ dueAfter: '2026-02-15' }, [theirs])
   await same({ dueBefore: '2026-02-15', dueAfter: '2026-01-15' }, [assigned])
   await same({ hasPr: true }, [followed])

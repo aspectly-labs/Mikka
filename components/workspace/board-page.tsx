@@ -260,9 +260,11 @@ export function BoardPage({ issues: allIssues, userId, workspaceId, teamId, pres
     project: [...[...projects].map(([id, name]) => ({ value: id, label: name })), { value: NONE, label: t('noProject') }],
     agentState: [...AGENT_STATES.map(state => ({ value: state, label: t(`card.agent.${state}` as `card.agent.${AgentState}`) })), { value: NONE, label: t('noRun') }],
   }
+  const filterValue = (field: FilterField, value: string) => field === 'labels' ? value.toLowerCase() : value
+  const hasFilter = (field: FilterField, value: string) => (filters[field] ?? []).some(item => filterValue(field, item) === filterValue(field, value))
   function toggleFilter(field: FilterField, value: string) {
     const current = filters[field] ?? []
-    const next = current.includes(value) ? current.filter(item => item !== value) : [...current, value]
+    const next = hasFilter(field, value) ? current.filter(item => filterValue(field, item) !== filterValue(field, value)) : [...current, value]
     setFilters({ ...filters, [field]: next })
   }
   const setDisplay = (patch: Partial<Display>) => update({ display: { ...display, ...patch } })
@@ -277,7 +279,7 @@ export function BoardPage({ issues: allIssues, userId, workspaceId, teamId, pres
   const filterItems: BoardMenuItem[] = [
     ...FILTER_FIELDS.map((field): BoardMenuItem => field === 'creator'
       ? { label: t(`filterField.${field}`), checked: filters.creator?.includes(ME) ?? false, onSelect: () => toggleFilter(field, ME) }
-      : { label: t(`filterField.${field}`), submenu: options[field].map(option => ({ label: option.label, checked: filters[field]?.includes(option.value) ?? false, onSelect: () => toggleFilter(field, option.value) })) }),
+      : { label: t(`filterField.${field}`), submenu: options[field].map(option => ({ label: option.label, checked: hasFilter(field, option.value), onSelect: () => toggleFilter(field, option.value) })) }),
     { label: t('columns'), divider: true, submenu: BOARD_COLUMNS.map(column => ({ label: statusLabel(column.value), checked: !display.hidden.includes(column.value), onSelect: () => setDisplay({ hidden: display.hidden.includes(column.value) ? display.hidden.filter(item => item !== column.value) : [...display.hidden, column.value] }) })) },
     { label: t('showEmpty'), checked: display.showEmpty, onSelect: () => setDisplay({ showEmpty: !display.showEmpty }) },
   ]

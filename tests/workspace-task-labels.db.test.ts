@@ -192,7 +192,7 @@ test('workspace task label HTTP management and real task writers preserve tenant
     const sql = await readFile(new URL('../drizzle/20261120190715_workspace_task_labels.sql', import.meta.url), 'utf8')
     const client = await pool.connect()
     const schema = `label_upgrade_${randomUUID().replaceAll('-', '')}`
-    const first = randomUUID(), second = randomUUID(), historical = randomUUID(), foreignTask = randomUUID()
+    const first = randomUUID(), second = randomUUID(), historical = randomUUID(), foreignTask = randomUUID(), privateLegacy = randomUUID()
     const document = (name: string, color: string) => ({ type: 'doc', attrs: { mikka: { number: 1, labels: [{ name, color }] } }, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Keep the document' }] }] })
     try {
       await client.query(`CREATE SCHEMA "${schema}"`)
@@ -202,11 +202,14 @@ test('workspace task label HTTP management and real task writers preserve tenant
       // existing write triggers the upgrade runs against, Linear sync among them.
       await client.query('CREATE TABLE issues (LIKE public.issues INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING GENERATED); ALTER TABLE issues ADD PRIMARY KEY(id)')
       await client.query('CREATE TABLE issue_writes (id uuid NOT NULL, sync_source text)')
+      await client.query('CREATE TABLE resource_access_policies (id uuid NOT NULL, kind text NOT NULL, visibility text NOT NULL)')
+      await client.query("INSERT INTO resource_access_policies VALUES ($1,'task','private')", [privateLegacy])
       await client.query(`CREATE FUNCTION record_issue_write() RETURNS trigger LANGUAGE plpgsql AS $fn$
         BEGIN INSERT INTO issue_writes(id,sync_source) VALUES(NEW.id,current_setting('mikka.linear_sync_source',true)); RETURN NEW; END $fn$`)
       await client.query('CREATE TRIGGER zz_record_issue_write AFTER UPDATE ON issues FOR EACH ROW EXECUTE FUNCTION record_issue_write()')
       for (const [id, tenant, name, color, created] of [[first, workspace.id, 'Bug', 'red', '2026-01-01'], [second, workspace.id, 'BUG', 'blue', '2026-01-02'],
-        [historical, null, 'Unscoped', 'green', '2026-01-01'], [foreignTask, other.id, 'Bug', 'violet', '2026-01-01']]) {
+        [historical, null, 'Unscoped', 'green', '2026-01-01'], [foreignTask, other.id, 'Bug', 'violet', '2026-01-01'],
+        [privateLegacy, workspace.id, 'Private only', 'gray', '2026-01-01']]) {
         await client.query('INSERT INTO issues(id,"userId","workspaceId","ownershipState",title,content,status,priority,"createdAt") VALUES($1,$2,$3,CASE WHEN $3::uuid IS NULL THEN \'pending\' ELSE \'bound\' END,\'Task\',$4,\'todo\',\'normal\',$5)',
           [id, owner, tenant, JSON.stringify(document(name!, color!)), created])
       }
@@ -216,6 +219,9 @@ test('workspace task label HTTP management and real task writers preserve tenant
       assert.deepEqual(rows.find(row => row.workspace_id === workspace.id), { workspace_id: workspace.id, name: 'Bug', color: 'red' })
       assert.deepEqual(rows.find(row => row.workspace_id === other.id), { workspace_id: other.id, name: 'Bug', color: 'violet' })
       assert.equal(rows.length, 2)
+      assert.equal((await client.query('SELECT 1 FROM issue_label_refs WHERE issue_id=$1', [privateLegacy])).rowCount, 0)
+      assert.deepEqual((await client.query("SELECT content#>'{attrs,mikka,labels}' labels FROM issues WHERE id=$1", [privateLegacy])).rows[0].labels,
+        [{ name: 'Private only', color: 'gray' }])
       assert.equal((await client.query('SELECT count(DISTINCT label_id)::int n FROM issue_label_refs WHERE issue_id=ANY($1::uuid[])', [[first, second]])).rows[0].n, 1)
       assert.deepEqual((await client.query('SELECT * FROM issues WHERE id=$1', [historical])).rows, historicalBefore)
       const backfilled = (await client.query(`SELECT DISTINCT sync_source FROM issue_writes WHERE id=ANY($1::uuid[])`, [[first, second, foreignTask]])).rows
@@ -226,6 +232,9 @@ test('workspace task label HTTP management and real task writers preserve tenant
       const once = await snapshot()
       await client.query(sql)
       assert.deepEqual(await snapshot(), once)
+      await client.query("UPDATE issues SET \"workspaceId\"=$2,\"ownershipState\"='bound' WHERE id=$1", [historical, workspace.id])
+      const edited = await client.query(`UPDATE issues SET content=jsonb_set(content,'{attrs,mikka,dueDate}','"2026-11-30"') WHERE id=$1 RETURNING content#>'{attrs,mikka,labels}' labels`, [historical])
+      assert.deepEqual(edited.rows[0].labels, [{ name: 'Unscoped', color: 'green' }])
       await client.query(`UPDATE issues SET content=jsonb_set(jsonb_set(content,'{attrs,mikka,labelIds}','[]'),'{attrs,mikka,labels}','[]') WHERE "workspaceId"=$1`, [workspace.id])
       await client.query('DELETE FROM workspace_issue_labels WHERE workspace_id=$1', [workspace.id])
       await client.query(sql)

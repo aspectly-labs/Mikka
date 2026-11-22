@@ -16,7 +16,7 @@ const translate = Object.assign(key => key, { has: () => true })
 const stub = (path, namedExports) => mock.module(new URL('../' + path, import.meta.url).href, { namedExports })
 const children = ({ children }) => children
 mock.module('@/lib/intl/i18n-client', { namedExports: { useTranslations: () => translate } })
-mock.module('swr', { defaultExport: () => ({}) })
+mock.module('swr', { defaultExport: () => ({ data: { labels: [red('My draft')] } }) })
 stub('app/actions/issues.ts', { pollIssue: async () => readResult ?? { issue: latest } })
 stub('app/actions/projects.ts', { moveIssueToProject: input => move(input) })
 stub('app/actions/issue-metadata.ts', { getIssuePropertyOptions: () => ({}), updateIssueMetadata: async input => {
@@ -26,6 +26,7 @@ stub('app/actions/issue-metadata.ts', { getIssuePropertyOptions: () => ({}), upd
 stub('components/workspace/issue-assignee-menu.tsx', { IssueAssigneeMenu: () => null })
 stub('components/workspace/issue-pull-request-link.tsx', { IssuePullRequestLink: () => null })
 stub('components/ui/dialog.tsx', { Dialog: ({ open, children }) => open ? children : null, DialogContent: children, DialogDescription: children, DialogFooter: children, DialogHeader: children, DialogTitle: children })
+stub('components/ui/checkbox.tsx', { Checkbox: ({ id, checked, disabled, onCheckedChange }) => createElement('input', { id, type: 'checkbox', checked, disabled, onChange: event => onCheckedChange(event.target.checked) }) })
 stub('components/ui/alert-dialog.tsx', Object.fromEntries(['AlertDialog', 'AlertDialogAction', 'AlertDialogCancel', 'AlertDialogContent', 'AlertDialogDescription', 'AlertDialogFooter', 'AlertDialogHeader', 'AlertDialogTitle'].map(key => [key, () => null])))
 const { createRoot } = await import('react-dom/client')
 const { IssueMetadataControls, useIssueMetadataSave } = await import('../components/workspace/issue-metadata-controls.tsx')
@@ -43,11 +44,9 @@ test('an open label form pins its revision, retains its draft across a failed re
   const submit = () => act(async () => host.querySelector('form').dispatchEvent(new browser.Event('submit', { bubbles: true, cancelable: true })))
   try {
     await render(base)
-    const field = host.querySelector('input:not([type=checkbox])')
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, 'value').set.call(field, 'My draft')
-      field.dispatchEvent(new browser.Event('input', { bubbles: true }))
-    })
+    const field = host.querySelector('input[id$="-My draft"]')
+    assert.ok(field)
+    await act(async () => field.click())
     await render(latest)
     readResult = { error: 'issueUnavailable' }
     await submit()
@@ -58,13 +57,13 @@ test('an open label form pins its revision, retains its draft across a failed re
     assert.deepEqual(writes.map(write => write.revision), [1, 1])
     assert.deepEqual(changes, [[2, 'refresh']])
     assert.match(host.textContent, /issueStale/)
-    assert.equal(field.value, 'My draft')
+    assert.equal(field.checked, true)
     assert.ok(host.textContent.includes('Added elsewhere'))
     assert.ok(!host.textContent.includes('Removed elsewhere'))
     await submit()
     assert.equal(writes.length, 3)
     assert.equal(writes[2].revision, 2)
-    assert.deepEqual(writes[2].patch.labels, [red('Added elsewhere'), { name: 'My draft', color: 'violet' }])
+    assert.deepEqual(writes[2].patch.labels, [red('Added elsewhere'), red('My draft')])
     assert.deepEqual(changes, [[2, 'refresh'], [3, 'save']])
     assert.equal(host.querySelector('form'), null)
   } finally {

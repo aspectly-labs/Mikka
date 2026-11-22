@@ -77,6 +77,10 @@ BEGIN
       SELECT * INTO label FROM workspace_issue_labels WHERE workspace_id=target AND lower(name)=lower(btrim(item->>'name')) FOR SHARE NOWAIT;
     END IF;
     IF NOT FOUND THEN
+      IF NOT by_id AND NOT (incoming ? 'labelIds') AND previous IS NOT NULL
+        AND incoming->'labels' IS NOT DISTINCT FROM previous->'labels' THEN
+        RETURN incoming;
+      END IF;
       RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Task label must reference an existing workspace label',CONSTRAINT='issue_labels_workspace_reference';
     END IF;
     IF NOT ids @> jsonb_build_array(label.id) THEN
