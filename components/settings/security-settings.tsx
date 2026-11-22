@@ -8,12 +8,13 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasskeysSection, TwoFactorSection } from '@/components/settings/passkeys-section'
 import { SettingRow, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
 import { relativeTime } from '@/lib/relative-time'
 import { FieldError } from '@/components/ui/field'
 import { useSecurity } from '@/hooks/settings/use-security'
 
-/** N1: password, signed-in devices. Passkey and 2FA wait for their backend. */
+/** Frame 04: sign-in methods, two-step verification, passkeys, and signed-in devices. */
 export function SecuritySettings() {
   const t = useTranslations('Settings.security')
   const commonT = useTranslations('Common')
@@ -56,6 +57,9 @@ export function SecuritySettings() {
       {security.passwordLoading && <SettingsLoading label={commonT('loading')} rows={1} bare />}
       {passwordError && <SettingsSaveError message={passwordError} retryLabel={commonT('retry')} onRetry={() => { void security.reloadPassword() }} />}
     </SettingsSection>
+
+    <TwoFactorSection hasPassword={hasPassword} />
+    <PasskeysSection />
 
     <SettingsSection id="devices-heading" title={t('devices')}>
       {security.devicesError !== null && <SettingsSaveError message={security.devicesError || t('devicesError')} retryLabel={commonT('retry')} onRetry={() => { void security.reloadDevices() }} />}
