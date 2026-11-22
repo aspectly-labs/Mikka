@@ -759,7 +759,7 @@
         "GET"
       ],
       "maxDuration": 60,
-      "sourceHash": "4a3c99fcfedde954887f9a7adef15cca824b0707c10ffece1880cb4b8276de52"
+      "sourceHash": "82b7ae68f0db5cec034bced4a3438696c3cbdc8b5385e4547de2e995c350dce4"
     },
     {
       "path": "/mikka/api/cron/user-facts",

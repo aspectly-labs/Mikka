@@ -322,7 +322,7 @@ test('automatic build-time publication binds the actual report source to current
   assert.equal(proof.artifact.id, 321)
   assert.match(proof.reportSha256, /^[a-f0-9]{64}$/)
   assert.equal(fixture.calls.filter(path => path === 'storage').length, 1)
-  const attested = { ...proof, web: { sourceCommit: SHA, publicBuild: SHA, webRunId: 456, webAttempt: 1 } }
+  const attested = { ...proof, web: { sourceCommit: SHA, publicBuild: SHA, provider: 'cloudflare', verifiedAt: '2026-11-18T10:00:00.000Z' } }
   assert.doesNotThrow(() => assertAttestation(expected(), attested))
   for (const mutate of [value => { value.workerSourceCommit = OTHER }, value => { value.artifact.repositoryId++ },
     value => { value.reportSha256 = 'invalid' }, value => { delete value.artifact }]) {
@@ -357,7 +357,7 @@ test('the shared guard verifies an automatic release and still rejects reruns an
 test('provider work requires this runner own same-source Web and upstream attestation', () => {
   const proof = { kind: 'thread-lifecycle-ci-attestation', selected: true, sourceCommit: SHA,
     upstream: { runId: 123, runAttempt: 2, workflowId: workflow.id },
-    web: { sourceCommit: SHA, publicBuild: SHA, webRunId: 124, webAttempt: 1 } }
+    web: { sourceCommit: SHA, publicBuild: SHA, provider: 'cloudflare', verifiedAt: '2026-11-18T10:00:00.000Z' } }
   assert.doesNotThrow(() => assertAttestation(expected(), proof))
   for (const mutate of [value => { value.sourceCommit = OTHER }, value => { value.upstream.runAttempt++ },
     value => { value.selected = false }, value => { value.web.publicBuild = OTHER }, value => { delete value.web }]) {
