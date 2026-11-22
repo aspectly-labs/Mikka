@@ -44,7 +44,7 @@ async function finished(row: GitOperationRow) {
  * second intent with a different body. */
 export async function writeRunFile(dependencies: FileWriteDependencies, actor: ReviewActor, runId: string, repoId: string,
   input: FileWriteInput, signal?: AbortSignal): Promise<WorkspaceFileWriteResult & { undoAvailable?: boolean }> {
-  const scope = await resolveReviewScope(dependencies.database, dependencies.membership, actor, runId, repoId)
+  await resolveReviewScope(dependencies.database, dependencies.membership, actor, runId, repoId)
   const request = requestFor(input)
   const operationKind = input.kind === 'save' ? 'save' : input.kind === 'rename' ? 'rename' : 'delete'
   await withReviewTransaction(dependencies.database, dependencies.membership, actor, runId, repoId, async client => {
