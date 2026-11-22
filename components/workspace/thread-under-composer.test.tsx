@@ -65,6 +65,11 @@ test('a computer is named by its device, an asleep cloud says so, and nothing re
   html = renderToStaticMarkup(<Under issueId={null} runId="run" status="paused" />)
   assert.ok(html.includes(lookup('ThreadUnderComposer.machineLabel', { name: 'Cloud', state: english.ThreadUnderComposer.asleep })))
   assert.ok(html.includes('>alexj11324/Mikka<'), 'a run that does not push shows the repository without a branch')
+  html = renderToStaticMarkup(<Under issueId={null} runId="run" status="paused" />)
+  assert.ok(html.includes(lookup('ThreadUnderComposer.context', { used: '10', max: '100' })), 'without the thread read\'s ring, the summary\'s context against the model window')
+  assert.match(html, /bg-muted-foreground/, 'an asleep machine has a grey dot')
+  machine = cloud
+  assert.match(renderToStaticMarkup(<Under issueId={null} runId="run" status="running" />), /bg-success/, 'an awake machine has a green dot')
   machine = null; summary = null
   assert.equal(renderToStaticMarkup(<Under issueId={null} runId="run" status="running" />), '')
 })

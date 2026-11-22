@@ -4816,6 +4816,7 @@
     "hourly": "醒着时 ${price} / 小时",
     "current": "当前",
     "addMachine": "添加机器…",
+    "context": "上下文，约 {used} / {max} token（估算）",
     "repository": "仓库 {name}",
     "queued": {
       "title": "排队 · {count}",

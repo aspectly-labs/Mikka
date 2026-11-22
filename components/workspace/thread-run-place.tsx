@@ -24,7 +24,7 @@ export function useMachineName() {
 }
 
 /** The status dot (R-24): the colour of the machine's own mark, so it agrees with the run mark on the same row. */
-export function Dot({ dot, corner }: { dot: ReturnType<typeof machineDot>; corner?: boolean }) {
+function Dot({ dot, corner }: { dot: ReturnType<typeof machineDot>; corner?: boolean }) {
   return <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', statusDots[stateMarkTone(markOfValue(dot))], corner && 'absolute -top-0.5 -right-0.5 ring-2 ring-background')} />
 }
 

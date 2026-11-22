@@ -10,7 +10,26 @@ import { settingsHref } from '@/lib/settings-sections'
 import { useThreadMachine, useThreadSummary } from '@/hooks/use-thread-run-reads'
 import { MACHINE_SIZES, machineHourlyUsd, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 import { machineDot, machineStateWord, type ThreadMachine } from '@/lib/thread-machine'
-import { Dot, KIND_ICONS, useMachineName } from './thread-run-place'
+import { KIND_ICONS, useMachineName } from './thread-run-place'
+import { ContextRing } from '@/components/chat/context-ring'
+import { statusDots } from '@/lib/status-appearance'
+import { cn } from '@/lib/utils'
+
+/** Green while the machine is awake or online, red on error, grey asleep or offline (Figma 1318:2 section 19). */
+function Dot({ dot }: { dot: ReturnType<typeof machineDot> }) {
+  return <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', statusDots[dot === 'running' ? 'success' : dot === 'failed' ? 'destructive' : 'neutral'])} />
+}
+
+const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
+
+/** The summary's context against the model's window, when the thread read did not bring its own ring. */
+function SummaryRing({ used, max }: { used: number; max: number }) {
+  const t = useTranslations('ThreadUnderComposer')
+  const name = t('context', { used: compact.format(used), max: compact.format(max) })
+  return <span role="img" aria-label={name} title={name} data-slot="thread-context-ring" className="grid size-6 place-items-center">
+    <ContextRing share={Math.round(used / max * 100)} />
+  </span>
+}
 
 /** A cloud machine is awake or asleep, as Capy says it; a computer or server keeps its own state word (ThreadRunPlace.states). */
 function useStateWord() {
@@ -74,13 +93,14 @@ export function ThreadUnderComposer({ issueId, runId, status, context }: { issue
   const { data: machine } = useThreadMachine(issueId, runId, status)
   const { data: summary } = useThreadSummary(runId, status)
   const repo = summary?.repo ? [summary.repo.name, summary.branch].filter(Boolean).join(' · ') : null
-  if (!machine && !repo && !context) return null
+  const ring = context ?? (summary?.context.max ? <SummaryRing used={summary.context.used} max={summary.context.max} /> : null)
+  if (!machine && !repo && !ring) return null
   return <div data-slot="thread-under-composer" className="flex min-w-0 items-center gap-2 px-1 text-xs text-muted-foreground">
     {machine && <MachineMenu machine={machine} size={summary?.machine?.kind === 'cloud' ? summary.machine.size : null} />}
     {repo && <span data-slot="thread-repository" className="flex min-w-0 items-center gap-1.5 px-1.5" title={repo} aria-label={t('repository', { name: repo })}>
       <GitBranch aria-hidden="true" className="size-3.5 shrink-0" />
       <span className="min-w-0 truncate">{repo}</span>
     </span>}
-    {context && <span className="ms-auto flex shrink-0 items-center">{context}</span>}
+    {ring && <span className="ms-auto flex shrink-0 items-center">{ring}</span>}
   </div>
 }

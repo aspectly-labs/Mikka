@@ -55,7 +55,7 @@ stub('components/workspace/factory-acceptance.tsx', { useAcceptanceTasks: () => 
 stub('components/workspace/factory-acceptance-pane.tsx', { FactoryAcceptancePane: Empty })
 stub('components/workspace/thread-changes.tsx', { ThreadChangesPane: Empty, ChangesTabLabel: Empty })
 stub('components/workspace/self-improvement.tsx', { ThreadFeedback: Empty })
-stub('components/workspace/thread-run-place.tsx', { ThreadRunPlace: Empty, MachineDetails: Empty, MachineIcon: Empty, Dot: Empty, KIND_ICONS: {}, useMachineName: () => '' })
+stub('components/workspace/thread-run-place.tsx', { ThreadRunPlace: Empty, MachineDetails: Empty, MachineIcon: Empty, KIND_ICONS: {}, useMachineName: () => '' })
 stub('components/workspace/thread-execution-identity.tsx', { ThreadExecutionIdentity: Empty })
 stub('components/workspace/artifact-review.tsx', { ThreadArtifactChips: Empty })
 stub('components/workspace/thread-quota.tsx', { ThreadModelFallbackNotice: Empty, ThreadQuotaPausedCard: Empty, ThreadQuotaSwitchLine: Empty })

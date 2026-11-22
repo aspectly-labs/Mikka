@@ -4816,6 +4816,7 @@
     "hourly": "${price} / h while awake",
     "current": "Current",
     "addMachine": "Add a machine…",
+    "context": "Context, about {used} of {max} tokens (estimated)",
     "repository": "Repository {name}",
     "queued": {
       "title": "Queued · {count}",
