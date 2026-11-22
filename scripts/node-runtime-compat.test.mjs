@@ -45,6 +45,8 @@ test('runtime version gates accept 22/24 and still reject 20 before any applicat
 
 test('CI installs, builds and starts both real runtimes without a daemon-only duplicate', () => {
   const compat = load('.github/workflows/local-device-node22.yml')
+  assert(Object.hasOwn(compat.on, 'merge_group'))
+  assert(!Object.hasOwn(compat.on, 'pull_request'))
   const job = compat.jobs['node22-unit']
   assert.deepEqual(job.strategy.matrix.node, ['22', '24'])
   const setup = job.steps.find(step => step.uses === './.github/actions/pnpm-install')
@@ -54,7 +56,9 @@ test('CI installs, builds and starts both real runtimes without a daemon-only du
   const ci = load('.github/workflows/ui-policy.yml')
   for (const key of ['ui-policy-full', 'ui-policy-integrations', 'browser-tests-full']) {
     const job = ci.jobs[key]
-    assert.deepEqual(job.strategy.matrix.node, ['22', '24'], key)
+    assert.deepEqual(job.strategy.matrix.node, key === 'browser-tests-full'
+      ? ['22', '24']
+      : `\${{ github.event_name == 'pull_request' && github.base_ref == 'main' && fromJSON('["24"]') || fromJSON('["22","24"]') }}`, key)
     assert.equal(job.steps.find(step => step.uses === './.github/actions/pnpm-install').with['node-version'], '${{ matrix.node }}')
   }
   assert.equal(ci.jobs['browser-tests-full'].strategy.matrix.shard, '${{ fromJSON(needs.changes.outputs.db_matrix).shard }}')
