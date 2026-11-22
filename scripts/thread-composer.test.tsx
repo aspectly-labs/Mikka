@@ -314,10 +314,10 @@ test('a thread the viewer cannot read in full has no composer', () => {
 })
 
 test('every conversation container draws the shared composer, directly or through the thread panel', () => {
-  for (const file of ['components/coordinator/coordinator-chat.tsx', 'components/workspace/issue-thread-panel.tsx']) {
+  // A group is the same thread screen as a Bot chat (decision 2026-11-22-1500-group-chat-as-bot-chat).
+  for (const file of ['components/coordinator/coordinator-chat.tsx', 'components/workspace/issue-thread-panel.tsx', 'components/workspace/group-chat-view.tsx']) {
     assert.match(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), /<ThreadScreen\b/, file)
   }
-  assert.match(readFileSync(new URL('../components/workspace/group-chat-view.tsx', import.meta.url), 'utf8'), /<ChatComposer\b/)
   const threads = ['components/artifacts/artifact-window.tsx', 'components/workspace/task-thread-pane.tsx', 'components/workspace/thread-column.tsx']
   for (const file of threads) assert.match(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), /<IssueThreadPanel\b/, file)
   // The task page's thread is TaskThreadPane: the run panel, or the task-conversation slot built from it.

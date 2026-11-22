@@ -12,10 +12,6 @@ export type ChatMessageProps = {
   speaker: ChatSpeaker
   /** The chat inside the Artifact reader: narrower bubbles. */
   compact?: boolean
-  /** Existing message frames: received group words. */
-  /** `group-reply`: a Bot's or Agent's words in a group chat, plain text with no bubble (#2922). */
-  /** `group-sent`: the person's own words in a group chat, as the Bot chat draws them. Group frames draw `actions` (hover-only). */
-  presentation?: 'default' | 'group-received' | 'group-reply' | 'group-sent'
   /** An embedded chat's local row until stored history replaces it; the caller owns its status copy and retry action. */
   delivery?: { phase: 'sending' | 'accepted' | 'failed'; label: ReactNode; retry?: ReactNode }
   /** The reply is still streaming: no actions yet. */

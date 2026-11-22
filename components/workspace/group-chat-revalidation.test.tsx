@@ -57,6 +57,13 @@ function ReadControl() {
   refresh = () => mutate(infiniteKey(() => ['group-messages', 'group-one', null]))
   return null
 }
+mock.module(new URL('./agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: ({ children }: { children: import('react').ReactNode }) => children } })
+// The official thread screen, as a public fixture that paints its props (tests/support/thread-screen-fixture.tsx).
+let threadFixture: typeof import('../../tests/support/thread-screen-fixture') | undefined
+mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports: {
+  ThreadScreen: (props: import('../slots/thread-contract').ThreadScreenProps) => { const Screen = threadFixture!.FixtureThreadScreen; return <Screen {...props} /> },
+} })
+
 before(async () => {
   for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'MutationObserver', 'ResizeObserver'] as const) Object.defineProperty(globalThis, key, { configurable: true, value: key === 'window' ? browser : browser[key] })
   Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: browser.getComputedStyle.bind(browser) })
@@ -65,6 +72,7 @@ before(async () => {
   ;({ createRoot } = await import('react-dom/client'))
   ;({ SWRConfig, useSWRConfig } = await import('swr'))
   ;({ unstable_serialize: infiniteKey } = await import('swr/infinite'))
+  threadFixture = await import('../../tests/support/thread-screen-fixture')
   ;({ GroupChatView } = await import('./group-chat-view'))
 })
 beforeEach(() => {
