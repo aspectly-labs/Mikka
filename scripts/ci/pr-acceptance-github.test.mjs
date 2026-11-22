@@ -4,7 +4,7 @@ import test from 'node:test'
 import { checkPullRequest } from './pr-acceptance-github.mjs'
 
 const head = '679022e02d24c445bcf23235e1e68ff757830d84'
-async function github(t, { files = [{ filename: 'docs/guide.md' }], body = '', draft = false, changeOnRead, readStatus = 200, rateLimitReads = 0 } = {}) {
+async function github(t, { files = [{ filename: 'docs/guide.md' }], body = '', draft = false, changeOnRead, readStatus = 200, rateLimitReads = 0, rateLimitStatus = 403, rateLimitRemaining = false } = {}) {
   const pr = { state: 'open', head: { sha: head }, base: { sha: 'b'.repeat(40) }, body, draft, changed_files: files.length, labels: [] }
   const writes = [], pages = []
   let reads = 0, labelExists = false
@@ -17,7 +17,16 @@ async function github(t, { files = [{ filename: 'docs/guide.md' }], body = '', d
     if (req.method !== 'GET') writes.push({ path: req.url, method: req.method, data })
     if (req.url === '/repos/example/project/pulls/7') {
       reads++
-      if (reads <= rateLimitReads) { res.setHeader('retry-after', '0'); reply(403, { message: 'rate limited' }); return }
+      if (reads <= rateLimitReads) {
+        if (rateLimitRemaining) {
+          res.setHeader('x-ratelimit-remaining', '0')
+          res.setHeader('x-ratelimit-reset', String(Math.floor(Date.now() / 1000) + 1))
+        } else {
+          res.setHeader('retry-after', '0')
+        }
+        reply(rateLimitStatus, { message: 'rate limited' })
+        return
+      }
       if (changeOnRead) changeOnRead(pr, reads)
       reply(readStatus, pr)
     } else if (req.url.startsWith('/repos/example/project/pulls/7/files?')) {
@@ -33,7 +42,7 @@ async function github(t, { files = [{ filename: 'docs/guide.md' }], body = '', d
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   t.after(() => new Promise(resolve => server.close(resolve)))
-  return { pr, writes, pages, args: { repository: 'example/project', number: 7, apiBase: `http://127.0.0.1:${server.address().port}`, token: 'fixture-token', publish: true } }
+  return { pr, writes, pages, get reads() { return reads }, args: { repository: 'example/project', number: 7, apiBase: `http://127.0.0.1:${server.address().port}`, token: 'fixture-token', publish: true } }
 }
 
 test('missing evidence posts failure and label; a PR edit posts success and removes it', async t => {
@@ -129,4 +138,22 @@ test('a rate-limited read retries instead of failing with prAcceptanceGitHubHttp
 test('a persistent rate limit still fails closed after the retry budget', async t => {
   const fixture = await github(t, { rateLimitReads: 9, body: '## Acceptance\nNot needed: documentation only.' })
   await assert.rejects(checkPullRequest(fixture.args), { code: 'prAcceptanceGitHubHttp403' })
+})
+
+test('a 429 read retries through the retry-after delay', async t => {
+  const fixture = await github(t, { rateLimitStatus: 429, rateLimitReads: 2, body: '## Acceptance\nNot needed: documentation only.' })
+  assert.equal((await checkPullRequest(fixture.args)).status, 'pass')
+  assert.equal(fixture.reads, 5)
+})
+
+test('a rate limit signalled only by x-ratelimit headers still retries', async t => {
+  const fixture = await github(t, { rateLimitReads: 1, rateLimitRemaining: true, body: '## Acceptance\nNot needed: documentation only.' })
+  assert.equal((await checkPullRequest(fixture.args)).status, 'pass')
+  assert.equal(fixture.reads, 4)
+})
+
+test('an ordinary 403 fails without retrying', async t => {
+  const fixture = await github(t, { readStatus: 403 })
+  await assert.rejects(checkPullRequest(fixture.args), { code: 'prAcceptanceGitHubHttp403' })
+  assert.equal(fixture.reads, 1)
 })
