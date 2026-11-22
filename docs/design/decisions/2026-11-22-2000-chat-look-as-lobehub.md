@@ -12,7 +12,7 @@ Alex compared Mikka's chat with LobeHub's side by side (measured values in the b
 
 ## Decision
 
-Every chat drawn by `ThreadScreen` (hosted affectUI Agent / Thread, `mikka.look: "lobehub"`, `patches/agent-thread.lobehub-look.patch`, `styles/globals.css`) looks as LobeHub's:
+Every chat drawn by `ThreadScreen` (hosted affectUI Agent / Thread, `mikka.look: "lobehub"`, `patches/thread-lobehub-look.patch`, `styles/globals.css`) looks as LobeHub's:
 
 1. **Column.** It fills the conversation pane up to 960px with 16px gutters: 928px of reading width at 1440 with no side panel, the pane less 32px on a phone. The composer takes the same width.
 2. **Rows.** Messages touch; each has 8px above and below and keeps its action bar's row (8px plus 28px) whether the bar shows or not, so messages stand about 60px ink to ink.
