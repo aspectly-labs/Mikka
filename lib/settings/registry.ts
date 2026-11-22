@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { gitAuthorEmailSchema, gitAuthorNameSchema } from '@mikka/protocol/device'
 import type { ResolvedSetting, SettingSchemaEntry, SettingScope, SettingValue } from '@mikka/protocol/settings'
+import { KEYBOARD_SHORTCUT_ACTIONS, keyboardShortcutSettingKey, normalizeKeyboardShortcut, type KeyboardShortcutSettingKey } from '@mikka/protocol/keyboard-shortcuts'
 import { archiveIdleDays } from '@/lib/conversation-directory-input'
 import { DEFAULT_DND_SCHEDULE, DND_DAYS, DND_TIME_PATTERN, NOTIFICATION_SOUNDS } from '@/lib/push-allowed'
 import { DEFAULT_TITLE_TRIGGERS, THREAD_TITLE_TRIGGERS, TITLE_INSTRUCTIONS_MAX } from '@/lib/thread-title'
@@ -23,6 +24,17 @@ const inherited = {
   writeAccess: { personal: 'owner', workspace: 'admin' } as const,
 }
 
+const keyboardBinding = z.string().max(80).transform((raw, context) => {
+  const value = normalizeKeyboardShortcut(raw)
+  if (value === null) { context.addIssue({ code: 'custom', message: 'Invalid keyboard shortcut or reserved navigation key' }); return z.NEVER }
+  return value
+})
+const shortcutFields = Object.fromEntries(KEYBOARD_SHORTCUT_ACTIONS.map(({ action, context, defaultBinding, metadataKey }): [KeyboardShortcutSettingKey, SettingDefinition] => [keyboardShortcutSettingKey(action), {
+  key: keyboardShortcutSettingKey(action), scope: ['personal'], group: 'keyboard_shortcuts', page: 'shortcuts',
+  ...settingMetadata(metadataKey), type: 'string', guard: keyboardBinding, defaultValue: defaultBinding,
+  personalOverride: true, writeAccess: { personal: 'owner' }, personalContext: 'account', action, context,
+}])) as Record<KeyboardShortcutSettingKey, SettingDefinition>
+
 const personalAccount = {
   scope: ['personal'] as SettingScope[], personalOverride: true,
   writeAccess: { personal: 'owner' } as const, personalContext: 'account' as const,
@@ -32,6 +44,7 @@ const dndDaysGuard = z.array(z.enum(DND_DAYS)).max(7).refine(days => new Set(day
 
 /** Adding a scalar field here gives it validation, typed persistence, reset and schema search. */
 export const SETTINGS_REGISTRY = {
+  ...shortcutFields,
   archiveIdleAfterDays: {
     ...inherited, key: 'archiveIdleAfterDays', group: 'threads', page: 'threads',
     ...settingMetadata('archiveIdleAfterDays'),
