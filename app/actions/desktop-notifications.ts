@@ -32,21 +32,19 @@ export async function chooseDesktopNotifications(raw: unknown): Promise<ActionRe
     })
     if (!candidates.length) return { show: [] }
     const userId = session.user.id
-    const runtime = (process.env.MIKKA_DATABASE_URL || process.env.DATABASE_URL)
-      ? await readDesktopNotificationRuntime(userId)
-      : null
-    if (runtime && inDndWindow(runtime.dnd, runtime.timeZone)) return { show: [] }
+    const runtime = await readDesktopNotificationRuntime(userId)
+    if (inDndWindow(runtime.dnd, runtime.timeZone)) return { show: [] }
     let finishedAllowed = true
     // Preferences affect completed-run notifications unless overridden by desktop-specific settings.
     if (candidates.some(candidate => candidate.kind === 'finished')) {
       const preferences = await readPreferences(userId)
-      finishedAllowed = pushAllowed(preferences, ['finished'], runtime ? { overrides: runtime.desktop, dnd: runtime.dnd, timeZone: runtime.timeZone } : undefined)
+      finishedAllowed = pushAllowed(preferences, ['finished'], { overrides: runtime.desktop, dnd: runtime.dnd, timeZone: runtime.timeZone })
     }
     candidates = filterDesktopCandidates(candidates, {
-      dnd: runtime?.dnd,
-      timeZone: runtime?.timeZone,
-      overrides: runtime?.desktop,
-      legacyDecide: runtime?.legacyPushDecide,
+      dnd: runtime.dnd,
+      timeZone: runtime.timeZone,
+      overrides: runtime.desktop,
+      legacyDecide: runtime.legacyPushDecide,
       finishedAllowed,
     })
     if (!candidates.length) return { show: [] }
