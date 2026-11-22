@@ -7,7 +7,7 @@ name: Frontend screenshots
 # it does not start a browser (decision 2026-11-01-1520).
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    types: [edited]
 
 permissions:
   contents: read
