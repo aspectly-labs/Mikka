@@ -22,7 +22,7 @@ const textareaOf = (node: ChatComposerInput | null) => (node as HTMLElement | nu
  * drop and paste, the length limit. The default slot and the hosted layer both
  * call it, so the two composers cannot behave differently.
  */
-export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands, people, historyKey }: ChatComposerProps) {
+export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands, people, historyKey, skills }: ChatComposerProps) {
   const tShell = useTranslations('Shell')
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<ChatComposerInput | null>(null)
@@ -122,12 +122,16 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
       workspaceId: referenceScope?.workspaceId,
       runId: referenceScope?.runId,
       commands,
+      /** `/` and `$` list the person's installed skills. */
+      skills: skills ?? !!commands?.length,
       people,
       sendKey,
       thread,
       addFiles,
       takesFiles: !!attachmentScope,
       setInline,
+      /** The draft's attached files, so a collapsed paste's file opens as its chip again. */
+      attachments: files.files,
       fileOf: (key: string) => files.files.find(file => file.id === (files.idOf(key) ?? key)) ?? null,
       pendingOf: (key: string) => files.pending.find(item => item.key === key) ?? null,
     },

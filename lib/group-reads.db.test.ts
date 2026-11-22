@@ -69,6 +69,15 @@ test('group read routes advance actual group history without opening private DMs
     assert.deepEqual(await (await call('POST', group, '1')).json(), { lastReadMessageId: ids[1], lastReadPosition: 2, unreadCount: 1 })
     assert.deepEqual(await (await call('POST', group, '4')).json(), { lastReadMessageId: ids[3], lastReadPosition: 4, unreadCount: 0 })
   })
+  await t.test('a member without a name is listed by the local part of their email address, never left out', async () => {
+    const members = await import('../app/api/conversations/[id]/members/route')
+    await pool.query('UPDATE "user" SET name=\'\' WHERE id=$1', [member])
+    try {
+      const body = await (await members.GET(new Request(`http://127.0.0.1/api/conversations/${group}/members`), { params: Promise.resolve({ id: group }) })).json()
+      assert.equal(body.members.find((row: { id: string }) => row.id === member)?.name, member, 'the address is never sent, only what stands before @')
+      assert.equal(JSON.stringify(body).includes('@example.invalid'), false)
+    } finally { await pool.query('UPDATE "user" SET name=$1 WHERE id=$1', [member]) }
+  })
   await t.test('unknown and foreign messages are rejected without moving the read position', async () => {
     for (const id of [foreign, randomUUID(), '5', '0', 'bad']) assert.equal((await call('POST', group, id)).status, 422)
     assert.equal((await (await call('GET')).json()).lastReadPosition, 4)

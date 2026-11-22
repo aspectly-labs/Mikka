@@ -1,11 +1,12 @@
 'use client'
 
-import { createContext, useContext, type ComponentType } from 'react'
+import { createContext, useContext, useEffect, useState, type ComponentType } from 'react'
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { FileText, Folder, Image as ImageIcon, Maximize2, X } from '@/components/icons'
 import type { PendingChatFile } from '@/components/chat/use-chat-files'
 import { cn } from '@/lib/utils'
+import { withBasePath } from '@/lib/base-path'
 import { Button } from '@/components/ui/button'
 
 /** One chip in the field: a file or folder, a collapsed paste, an image. The hosted layer draws it with BoardUI's Chip. */
@@ -66,21 +67,36 @@ export function SourceFileView({ node, deleteNode, selected }: NodeViewProps) {
   </NodeViewWrapper>
 }
 
-export function PastedView({ node, editor, getPos, deleteNode, selected }: NodeViewProps) {
+export function PastedView({ node, editor, getPos, deleteNode, selected, updateAttributes }: NodeViewProps) {
   const t = useTranslations('ChatEditor')
-  const { Chip } = useChip()
+  const { Chip, sources } = useChip()
   const text = String(node.attrs.text)
+  const key = node.attrs.fileKey ? String(node.attrs.fileKey) : null
+  const pending = key ? sources?.pendingOf(key) : null
+  const file = key ? sources?.fileOf(key) : null
+  // A saved draft's paste is its attachment: read its text back once, for the size and for expanding.
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (text || !file || failed) return
+    let current = true
+    fetch(withBasePath(`/api/chat/attachments/${file.id}?download`), { credentials: 'same-origin' })
+      .then(response => response.ok ? response.text() : Promise.reject(new Error(`attachment ${response.status}`)))
+      .then(body => { if (current) updateAttributes({ text: body }) }, () => { if (current) setFailed(true) })
+    return () => { current = false }
+  }, [file?.id, text, failed]) // eslint-disable-line react-hooks/exhaustive-deps
   const lines = text.split('\n').length
-  // Expanding puts the pasted text back in the field, as plain text.
+  // Expanding puts the pasted text back in the field, as plain text (its attachment goes with the chip).
   const expand = () => {
     const at = typeof getPos === 'function' ? getPos() : undefined
-    if (typeof at !== 'number') return
+    if (typeof at !== 'number' || !text) return
     editor.chain().focus().insertContentAt({ from: at, to: at + node.nodeSize }, text.split('\n').flatMap((line, index) =>
       [...index ? [{ type: 'hardBreak' }] : [], ...line ? [{ type: 'text', text: line }] : []])).run()
   }
+  const status = pending ? pending.state === 'error' ? t('uploadFailed') : t('uploading', { percent: Math.min(99, pending.percent) }) : undefined
   return <NodeViewWrapper as="span" className="inline">
-    <Chip kind="pasted" label={t('pasted', { lines, chars: text.length })} title={text.slice(0, 400)} selected={selected}
-      actions={[{ id: 'expand', label: t('expand'), onPress: expand }, { id: 'remove', label: t('removePasted'), onPress: deleteNode }]} />
+    <Chip kind="pasted" label={text ? t('pasted', { lines, chars: text.length }) : t('pastedFile')} title={text ? text.slice(0, 400) : file?.name} selected={selected}
+      status={status} failed={pending?.state === 'error'}
+      actions={[...text ? [{ id: 'expand' as const, label: t('expand'), onPress: expand }] : [], { id: 'remove', label: t('removePasted'), onPress: deleteNode }]} />
   </NodeViewWrapper>
 }
 

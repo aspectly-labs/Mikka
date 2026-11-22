@@ -21,6 +21,13 @@ export const LONG_PASTE_CHARS = 1500
 export const LONG_PASTE_LINES = 30
 export const isLongPaste = (text: string) => text.length > LONG_PASTE_CHARS || text.split('\n').length > LONG_PASTE_LINES
 
+/**
+ * A collapsed paste goes as a text attachment under this name, as Claude sends 「Pasted text」, so the model gets
+ * all of it and a reloaded draft knows the file for the same chip.
+ */
+export const PASTED_FILE = /^pasted-text-[\w-]+\.txt$/
+export const pastedFileName = (at = new Date()) => `pasted-text-${at.toISOString().replace(/[:.]/g, '-')}.txt`
+
 /** What a chip writes into the stored message. */
 export function chipText(attrs: MentionAttrs): string {
   switch (attrs.kind) {
@@ -39,7 +46,8 @@ function inlineText(node: JSONNode): string {
     case 'hardBreak': return '\n'
     case 'mention': return chipText(node.attrs as MentionAttrs)
     case 'sourceFile': return sourceText(String(node.attrs?.path ?? ''), Boolean(node.attrs?.folder))
-    case 'pasted': return String(node.attrs?.text ?? '')
+    // Sent as a text attachment (its file marker travels with the files); without one, as its text.
+    case 'pasted': return node.attrs?.fileKey ? '' : String(node.attrs?.text ?? '')
     case 'image': return ''
     default: return (node.content ?? []).map(inlineText).join('')
   }
@@ -59,6 +67,11 @@ export type HydrateContext = {
   skills?: readonly { slug: string; name: string }[]
   /** File and folder paths become chips only where the composer can search the run's files. */
   files?: boolean
+  /**
+   * The draft's attached files. A collapsed paste's file opens as its chip again, at the start: the stored message
+   * keeps files apart from its text (`withChatFiles`), so where in the text it stood is not kept.
+   */
+  attachments?: readonly { id: string; name: string }[]
 }
 
 export const fallbackReferenceLabel = (reference: Pick<MessageReference, 'type' | 'id'>) =>
@@ -124,8 +137,10 @@ function lineContent(line: string, context: HydrateContext): JSONNode[] {
 
 /** The document for a stored message (a saved draft, a recalled prompt, text put in from elsewhere). */
 export function storedToDoc(stored: string, context: HydrateContext = {}): JSONNode {
-  return { type: 'doc', content: stored.split('\n').map(line => {
-    const content = lineContent(line, context)
+  const pasted: JSONNode[] = (context.attachments ?? []).filter(file => PASTED_FILE.test(file.name))
+    .map(file => ({ type: 'pasted', attrs: { text: '', fileKey: file.id } }))
+  return { type: 'doc', content: stored.split('\n').map((line, index) => {
+    const content = [...index ? [] : pasted, ...lineContent(line, context)]
     return content.length ? { type: 'paragraph', content } : { type: 'paragraph' }
   }) }
 }

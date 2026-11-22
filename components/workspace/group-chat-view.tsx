@@ -348,7 +348,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
         label: t('composer', { name: title }), disabled: !!blockingCode, attachmentScope: { kind: 'group', id: group.id },
         leftControls: modelBot ? <BotModelPicker key={modelBot} botId={modelBot} running={replying} /> : undefined,
         sending: stopping, editableWhileSending: stopping, running: replying && !stopping,
-        references: referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined, people: mentionable, historyKey: `group:${group.id}` }}
+        // `@` names the group's members and references; skills where the group holds one of the person's Bots.
+        references: referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined, people: mentionable, historyKey: `group:${group.id}`,
+        skills: members.some(item => item.memberType === 'bot' && ownedBots?.some(bot => bot.id === item.id)) }}
       pending={[]}
       questions={[]} onAnswer={async () => ({ status: 'unavailable', error: actionError() })}
       running={0} onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />}

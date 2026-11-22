@@ -64,3 +64,12 @@ test('a hard break is a new line, as a new paragraph is', () => {
   const doc: JSONNode = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'a' }, { type: 'hardBreak' }, { type: 'text', text: 'b' }] }, { type: 'paragraph', content: [{ type: 'text', text: 'c' }] }] }
   assert.equal(docToStored(viaSchema(doc)), 'a\nb\nc')
 })
+
+test('a paste sent as a text attachment writes nothing in the text, and its file opens as the chip again', () => {
+  const attachments = [{ id: 'f1', name: 'pasted-text-2026-11-22T18-00-00-000Z.txt' }, { id: 'f2', name: 'shot.png' }]
+  const doc = storedToDoc('see this', { attachments })
+  assert.deepEqual(doc.content?.[0].content?.[0], { type: 'pasted', attrs: { text: '', fileKey: 'f1' } })
+  assert.equal(doc.content?.[0].content?.length, 2, 'only the paste comes back as a chip; an image stays in the strip')
+  assert.equal(docToStored(viaSchema(doc)), 'see this')
+  assert.equal(docToStored(viaSchema({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'pasted', attrs: { text: 'long', fileKey: 'k' } }] }] })), '')
+})
