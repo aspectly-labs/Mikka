@@ -805,6 +805,61 @@ export async function getThreadName(runId: string): Promise<string | null> {
 }
 
 
+
+/** #2940 item 2: uploads on the thread's chain, owner only. */
+export async function listThreadUploads(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/uploads', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).listThreadUploads(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 2: a fresh signed download URL for one of the thread's uploads. */
+export async function getThreadUploadDownloadUrl(issueId: string | null, runId: string, fileId: string) {
+  return withDatabaseOperation('/actions/threads/uploads/download', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).threadUploadDownloadUrl(pool, user.id, runIds, fileId)
+  })
+}
+
+/** #2940 item 2: the files this thread changed, from the latest
+ * coding-workspace diff snapshot per run. */
+export async function listThreadChangedFiles(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/changed-files', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await import('@/lib/thread-workspace')).listThreadChangedFiles(workspacePool, user.id, user[tokenWorkspace] ?? null, runIds)
+  })
+}
+
+/** #2940 item 3: the thread's machine — spec identity and liveness metrics. */
+export async function getThreadMachineDetail(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/machine-detail', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).getThreadMachineDetail(pool, user.id, user[tokenWorkspace] ?? null, row.id)
+  })
+}
+
+/** #2940 item 3: re-run setup/maintenance on the thread's machine — the
+ * refresh_runtime the machine route already serves. */
+export async function rerunThreadMachineSetup(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/machine-setup', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).rerunThreadMachineSetup(pool, user.id, user[tokenWorkspace] ?? null, row.id)
+  })
+}
+
 /** #2940 item 5: the pull requests a thread's chain published, owner only —
  * the publication receipt is the requester's own record, like the run-location
  * icon getThreadMachine serves. */
