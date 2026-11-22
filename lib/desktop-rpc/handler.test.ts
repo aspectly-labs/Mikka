@@ -165,8 +165,12 @@ test('registry schemas reject forged authority, malformed nested input and extra
     ['teams.deleteTeam', ['not-a-team', 'Design']],
     ['teams.deleteTeam', [owner]],
     ['teams.getTeamDeletionImpact', [owner, { workspaceId: peer }]],
+    ['agents.createDeviceToken', [{ name: '' }]],
+    ['agents.createDeviceToken', [{ name: 'x'.repeat(61) }]],
+    ['agents.createDeviceToken', [{ name: 'MacBook', userId: peer }]],
   ]
   for (const [name, args] of cases) assert.equal(desktopActionSchemas[name].safeParse(args).success, false, name)
+  assert.equal(desktopActionSchemas['agents.createDeviceToken'].safeParse([{ name: 'MacBook Pro' }]).success, true)
   assert.equal(desktopActionSchemas['coordinator.pollCoordinatorChat'].safeParse([null, undefined, { after: 2, cursor: 1, prefix: 'a'.repeat(32) }]).success, true)
 })
 

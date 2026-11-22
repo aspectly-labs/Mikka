@@ -32,7 +32,7 @@ import {
 import { MAX_READ_BATCH, READ_BATCH_ACTIONS, type ReadBatchCall } from './read-batch-contract'
 import { USER_FACT_KINDS } from '@/lib/profile/kinds'
 import { definitionSchema as scheduleDefinition, webhookBatchListInput, webhookBatchInput } from '@/lib/schedules/contract'
-import { DEVICE_DESCRIPTION_MAX } from '@/lib/device-name'
+import { DEVICE_DESCRIPTION_MAX, DEVICE_NAME_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
 import { updateWorkspaceInput } from '@/lib/workspace-admin/general-input'
 
@@ -154,6 +154,7 @@ export const desktopActionSchemas = {
   'passkeys.deletePasskey': tuple(deletePasskeyInputSchema),
   'agents.listDevices': none,
   'agents.pollDevices': none,
+  'agents.createDeviceToken': tuple(object({ name: text(DEVICE_NAME_MAX).trim().min(1) })),
   'agents.setDeviceEnabled': tuple(object({ deviceId: uuid, enabled: bool })),
   'agents.renameDevice': tuple(uuid, text(100).trim().min(1)),
   'agents.setDeviceDescription': tuple(uuid, z.string().trim().max(DEVICE_DESCRIPTION_MAX)),

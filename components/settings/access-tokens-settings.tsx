@@ -279,6 +279,7 @@ function ManageServiceAccountDialog({ workspaceId, identity, onClose, open = tru
       setRow(updated)
       setName(updated.name)
       setDirty(true)
+      if (cred.data) await cred.mutate({ ...cred.data, enabled: updated.enabled, revision: updated.revision }, { revalidate: false })
     } catch (err) {
       handleError(err)
     } finally {
@@ -292,6 +293,7 @@ function ManageServiceAccountDialog({ workspaceId, identity, onClose, open = tru
     try {
       const updated = await serviceIdentityClient(workspaceId).change(row, { action: row.enabled ? 'disable' : 'restore' })
       setRow(updated)
+      if (!updated.enabled) setIssuedToken(null)
       setDirty(true)
       await cred.mutate()
     } catch (err) {
@@ -308,12 +310,14 @@ function ManageServiceAccountDialog({ workspaceId, identity, onClose, open = tru
     try {
       const days = EXPIRY_DAYS[expiry]
       const expiresAt = days ? new Date(Date.now() + days * 86_400_000).toISOString() : null
-      const next = await serviceIdentityClient(workspaceId).rotate(row.id, cred.data.revision, expiresAt, cred.data.organizationId)
-      setIssuedToken(next.token)
+      const next = await serviceIdentityClient(workspaceId).rotate(row.id, row.revision, expiresAt, cred.data.organizationId)
+      const { token, ...credentialState } = next
+      setRow(current => ({ ...current, enabled: next.enabled, revision: next.revision }))
+      setIssuedToken(token)
       setCopied(false)
       setCopyFailed(false)
       setDirty(true)
-      await cred.mutate()
+      await cred.mutate(credentialState, { revalidate: false })
     } catch (err) {
       handleError(err)
     } finally {
@@ -326,10 +330,11 @@ function ManageServiceAccountDialog({ workspaceId, identity, onClose, open = tru
     setPending('revoke')
     setError(null)
     try {
-      await serviceIdentityClient(workspaceId).revoke(row.id, cred.data.revision)
+      const next = await serviceIdentityClient(workspaceId).revoke(row.id, row.revision)
+      setRow(current => ({ ...current, enabled: next.enabled, revision: next.revision }))
       setIssuedToken(null)
       setDirty(true)
-      await cred.mutate()
+      await cred.mutate(next, { revalidate: false })
     } catch (err) {
       handleError(err)
     } finally {

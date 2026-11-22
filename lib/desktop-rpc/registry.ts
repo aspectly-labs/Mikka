@@ -88,6 +88,7 @@ const functions = {
   'passkeys.deletePasskey': passkeyActions.deletePasskey,
   'agents.listDevices': actions1.listDevices,
   'agents.pollDevices': actions1.pollDevices,
+  'agents.createDeviceToken': actions1.createDeviceToken,
   'agents.setDeviceEnabled': actions1.setDeviceEnabled,
   'agents.renameDevice': actions1.renameDevice,
   'agents.setDeviceDescription': actions1.setDeviceDescription,

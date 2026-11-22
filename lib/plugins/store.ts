@@ -12,7 +12,10 @@ type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
 }
 const mcpColumns = 'id,name,url,transport,enabled,revision,auth_header,ciphertext,iv,key_version,created_at'
 const skillColumns = 'id,name,source,slug,source_kind AS "sourceKind",source_revision AS "sourceRevision",source_path AS "sourcePath",sha256,enabled,created_at AS "createdAt"'
-const mcpView = (row: McpRow): McpServerView => ({ id: row.id, name: row.name, url: row.url, transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: row.transport === 'stdio' ? 'env' : row.auth_header ? 'header' : 'none', createdAt: row.created_at.toISOString() })
+const stdioHeader = (env: Record<string, string> | undefined) => env && Object.keys(env).length > 0 ? '__stdio__' : '__stdio_noenv__'
+const mcpAuthKind = (row: Pick<McpRow, 'transport' | 'auth_header'>): McpServerView['authKind'] =>
+  row.transport === 'stdio' ? (row.auth_header === '__stdio_noenv__' ? 'none' : 'env') : row.auth_header ? 'header' : 'none'
+const mcpView = (row: McpRow): McpServerView => ({ id: row.id, name: row.name, url: row.url, transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: mcpAuthKind(row), createdAt: row.created_at.toISOString() })
 const aad = (userId: string, id: string, url: string, header: string) => JSON.stringify(['personal-mcp', userId, id, url, header.toLowerCase()])
 
 export class PersonalPluginStore {
@@ -32,7 +35,7 @@ export class PersonalPluginStore {
   }
   async createMcp(userId: string, input: z.infer<typeof createMcpSchema>) {
     const id = randomUUID(), url = input.transport === 'stdio' ? '' : input.url
-    const header = input.transport === 'stdio' ? '__stdio__' : input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
+    const header = input.transport === 'stdio' ? stdioHeader(input.env) : input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
     const value = input.transport === 'stdio' ? JSON.stringify({ command: input.command, args: input.args, cwd: input.cwd, env: input.env }) : input.headers ? JSON.stringify(input.headers) : input.auth?.value
     const sealed = value !== undefined ? sealSecret(value, aad(userId, id, url, header!), this.env) : null
     return this.write(userId, async client => {
@@ -50,7 +53,8 @@ export class PersonalPluginStore {
       let sealed: Sealed | null = row.ciphertext ? { ciphertext: row.ciphertext, iv: row.iv!, keyVersion: row.key_version! } : null
       if (row.transport === 'stdio' && input.env !== undefined) {
         const value = JSON.parse(openSecret(sealed!, aad(userId,row.id,row.url,header!),this.env))
-        sealed = sealSecret(JSON.stringify({ ...value, env: input.env }), aad(userId,row.id,row.url,header!),this.env)
+        header = stdioHeader(input.env)
+        sealed = sealSecret(JSON.stringify({ ...value, env: input.env }), aad(userId,row.id,row.url,header),this.env)
       } else if (input.headers !== undefined || input.auth !== undefined) {
         header = input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
         const value = input.headers ? JSON.stringify(input.headers) : input.auth?.value
