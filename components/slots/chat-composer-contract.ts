@@ -52,6 +52,11 @@ export type ChatComposerProps = {
   }
   /** The people and Bots `@` can name (a group chat's members); a chip is sent as `@Name` (lib/group-mentions.ts). */
   people?: readonly { id: string; name: string; kind: 'person' | 'bot' }[]
+  /**
+   * The chat's agents can use the person's installed skills (`/api/skills`): `/` and `$` list them. Defaults to
+   * whether the chat has `/` commands (a Bot chat, a thread); a group chat says so when it holds one of their Bots.
+   */
+  skills?: boolean
   /** Where the person's earlier prompts are kept (a thread's or chat's own key): Up in an empty composer recalls them. */
   historyKey?: string
   /** The `/` commands this chat can run; only commands with a working action are listed. */

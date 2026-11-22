@@ -51,7 +51,8 @@ export const Pasted = Node.create({
   atom: true,
   selectable: true,
   addAttributes() {
-    return { text: { default: '' } }
+    // `fileKey`: the text attachment it goes as (its upload, then its file); none where the chat takes no files.
+    return { text: { default: '' }, fileKey: { default: null } }
   },
   parseHTML() { return [{ tag: 'span[data-pasted]' }] },
   renderHTML({ HTMLAttributes }) { return ['span', mergeAttributes(HTMLAttributes, { 'data-pasted': '' })] },

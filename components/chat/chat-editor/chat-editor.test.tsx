@@ -10,9 +10,10 @@ import { Window } from 'happy-dom'
 const task = '0f8fad5b-d9cb-469f-a165-70867728950e'
 const uploaded = { id: '10000000-0000-4000-8000-000000000001', name: 'shot.png', mediaType: 'image/png', size: 12 }
 let finishUpload: (() => void) | null = null
+let lastUpload: File | null = null
 mock.module(new URL('../../../lib/chat-attachments/client.ts', import.meta.url).href, { namedExports: {
   ChatUploadError: class extends Error {},
-  uploadChatFile: () => new Promise(resolve => { finishUpload = () => resolve(uploaded) }),
+  uploadChatFile: (file: File) => new Promise(resolve => { lastUpload = file; finishUpload = () => resolve({ ...uploaded, name: file.name }) }),
 } })
 mock.module(new URL('../../../app/actions/task-runs.ts', import.meta.url).href, { namedExports: {
   findThreadReferences: async () => [{ kind: 'task', id: task, title: 'MIK-12 Fix the login loop' }],
@@ -257,4 +258,53 @@ test('@ opens straight after Chinese text, never inside an address; Enter waits 
   assert.deepEqual((latest.editor.menu as ReturnType<typeof useChatEditor>["menu"])?.sections.map(section => section.title), ['ThreadReferences.tasks'])
   await key({ key: 'Enter' })
   assert.equal(latest.value, `看一下[[issue:${task}]] `)
+})
+
+test('a group chat with a Bot of the person’s lists their skills under / and $, without commands', async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ skills: [{ id: 's', name: 'Deploy preview', slug: 'deploy-preview', enabled: true }] }))) as typeof fetch
+  await mount('', { skills: true })
+  await type('/dep')
+  await settle(50)
+  assert.deepEqual(latest.editor.menu?.sections.map(section => section.rows.map(row => row.label)), [['/deploy-preview']])
+  await key({ key: 'Enter' })
+  assert.equal(latest.value, '$deploy-preview ')
+  await act(async () => latest.editor.editor!.commands.clearContent(true))
+  await mount('', {})
+  await type('$dep')
+  await settle(50)
+  assert.equal(latest.editor.menu, null, 'a chat whose agents cannot use skills offers none')
+})
+
+test('a long paste goes as a text attachment, the way Claude sends 「Pasted text」, and comes back as the same chip', async () => {
+  const long = Array.from({ length: 40 }, (_, index) => `row ${index}`).join('\n')
+  const removed: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const address = String(input)
+    if (init?.method === 'DELETE') { removed.push(address); return new Response('{}') }
+    return new Response(long)
+  }) as typeof fetch
+  await mount('', { attachmentScope: { kind: 'bot', id: 'bot' } })
+  await type('see ')
+  await paste({ text: long })
+  assert.deepEqual(chips(), ['pasted'])
+  assert.match(lastUpload?.name ?? '', /^pasted-text-[\w-]+\.txt$/)
+  assert.equal(await lastUpload!.text(), long, 'the model receives the whole text')
+  assert.equal(latest.state.strip.pending.length, 0, 'the chip stands for it; the strip leaves it out')
+  await act(async () => { finishUpload?.() })
+  await settle()
+  const stored = latest.value
+  assert.match(stored, /^\[mikka-file:10000000-0000-4000-8000-000000000001:pasted-text-[\w%-]+\.txt\]\n\nsee $/)
+  assert.equal(latest.state.strip.files.length, 0)
+  // A reload: the same stored message opens with the same chip, its text read back for the label.
+  await act(async () => root.unmount())
+  root = createRoot(container)
+  await mount(stored, { attachmentScope: { kind: 'bot', id: 'bot' } })
+  await settle(20)
+  assert.deepEqual(chips(), ['pasted'])
+  assert.equal(latest.value, stored, 'opening it changes nothing')
+  assert.equal(latest.state.strip.files.length, 0)
+  assert.match(dom().textContent ?? '', /lines":40/)
+  await act(async () => (dom().querySelector('[data-chat-chip="pasted"] button[aria-label="ChatEditor.removePasted"]') as unknown as HTMLButtonElement).click())
+  await settle(20)
+  assert.equal(removed.length, 1, 'removing the chip removes the attachment')
 })

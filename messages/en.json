@@ -4900,6 +4900,7 @@
     "files": "Files and folders",
     "skills": "Skills",
     "pasted": "Pasted text · {lines, plural, =1 {1 line} other {# lines}}",
+    "pastedFile": "Pasted text",
     "expand": "Show pasted text",
     "removePasted": "Remove pasted text",
     "remove": "Remove {name}",

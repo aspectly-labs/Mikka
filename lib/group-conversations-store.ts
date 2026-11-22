@@ -275,7 +275,8 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
         result = rows[0]; status = 201
       } else if (req.resource === 'members' && req.method === 'GET') {
         const participants = await groupParticipants(client, group.id, group.createdBy, group.workspaceId)
-        const users = (await q(`SELECT cm."memberId" AS id,u.name,u.image AS "avatarUrl",cm.role FROM conversation_members cm JOIN "user" u ON u.id=cm."memberId"
+        // A person with no name is named by what stands before @ in their address (never the address itself).
+        const users = (await q(`SELECT cm."memberId" AS id,COALESCE(NULLIF(btrim(u.name),''),split_part(u.email,'@',1)) AS name,u.image AS "avatarUrl",cm.role FROM conversation_members cm JOIN "user" u ON u.id=cm."memberId"
           WHERE cm."conversationId"=$1 AND cm."memberType"='user' AND cm."leftAt" IS NULL ORDER BY cm."joinedAt",cm."memberId"`, [group.id])).rows
         const visibleUsers = []
         for (const user of users) if (await directory(group.workspaceId, user.id, [])) visibleUsers.push({ ...user, memberType: 'user' })

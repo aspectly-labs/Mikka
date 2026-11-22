@@ -298,7 +298,8 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       end: namedChat && readRevision !== undefined && !blockingCode && !accessRejected && <VisibleReadEnd onSeen={acknowledge} />,
     }}
       composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={composerInput} value={draft}
-        references={referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined} people={mentionable} historyKey={`group:${group.id}`} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
+        references={referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined} people={mentionable} historyKey={`group:${group.id}`}
+        skills={members.some(item => item.memberType === 'bot' && ownedBots?.some(bot => bot.id === item.id))} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
         leftControls={modelBot && <BotModelPicker key={modelBot} botId={modelBot} running={replying} />}
         sending={stopping} editableWhileSending={stopping} running={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined} />} />
   </section>

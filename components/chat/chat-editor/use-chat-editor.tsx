@@ -20,7 +20,7 @@ import { stepPrompt } from '@/lib/chat/prompt-history'
 import { touchKeyboard } from '@/lib/touch-keyboard'
 import { withBasePath } from '@/lib/base-path'
 import { chatEditorSchemaExtensions } from './schema'
-import { docToStored, isLongPaste, storedToDoc, type ChipKind, type JSONNode, type MentionAttrs } from './serialize'
+import { docToStored, isLongPaste, pastedFileName, storedToDoc, type ChipKind, type JSONNode, type MentionAttrs } from './serialize'
 import { ChatChipContext, ImageView, PastedView, SourceFileView, type ChatChipRenderer } from './chips'
 
 /** A row of the `@`, `/` or `$` menu. */
@@ -95,7 +95,7 @@ export function useChatEditor(composer: ChatComposerState, options: {
   const emitted = useRef(field.stored)
   const recall = useRef<{ at: number | null; draft: string }>({ at: null, draft: '' })
 
-  const skillsWanted = !!field.commands?.length
+  const skillsWanted = field.skills
   const skills = useSWR(skillsWanted && trigger && trigger.char !== '@' ? ['personal-skills'] : null, readSkills, { revalidateOnFocus: false, shouldRetryOnError: false })
 
   hydrate.current = stored => storedToDoc(stored, {
@@ -105,6 +105,7 @@ export function useChatEditor(composer: ChatComposerState, options: {
     people: field.people,
     skills: skills.data?.map(skill => ({ slug: skill.slug, name: skill.name })),
     files: !!field.runId,
+    attachments: field.attachments,
   })
 
   const suggestion = (char: Char) => ({
@@ -113,8 +114,8 @@ export function useChatEditor(composer: ChatComposerState, options: {
     // After a space, or straight after Chinese or Japanese text and punctuation (「看一下@CHAT」); never inside an address.
     allowedPrefixes: [' ', '\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef'],
     // `/` only opens a line that starts the message, as the textarea's command menu did.
-    ...(char === '/' ? { startOfLine: true, allow: ({ range }: { range: { from: number } }) => range.from <= 1 && (!!live.current.composer.field.commands?.length) } : {}),
-    ...(char === '$' ? { allow: () => !!live.current.composer.field.commands?.length } : {}),
+    ...(char === '/' ? { startOfLine: true, allow: ({ range }: { range: { from: number } }) => range.from <= 1 && (!!live.current.composer.field.commands?.length || live.current.composer.field.skills) } : {}),
+    ...(char === '$' ? { allow: () => live.current.composer.field.skills } : {}),
     ...(char === '@' ? { allow: () => { const current = live.current.composer.field; return !!(current.workspaceId || current.people?.length || current.runId) } } : {}),
     items: () => [],
     command: ({ editor, range, props }: { editor: Editor; range: { from: number; to: number }; props: Pick }) => {
@@ -221,8 +222,11 @@ export function useChatEditor(composer: ChatComposerState, options: {
         const text = event.clipboardData?.getData('text/plain') ?? ''
         if (!isLongPaste(text)) return false
         event.preventDefault()
+        // Where the chat takes files it goes as a text attachment; otherwise the chip sends its text.
+        const current = live.current.composer.field
+        const [upload] = current.takesFiles ? current.addFiles([new File([text], pastedFileName(), { type: 'text/plain' })]) : []
         const { from, to } = view.state.selection
-        const pasted = view.state.schema.nodes.pasted.create({ text })
+        const pasted = view.state.schema.nodes.pasted.create({ text, fileKey: upload && !upload.error ? upload.key : null })
         view.dispatch(view.state.tr.replaceWith(from, to, pasted).scrollIntoView())
         return true
       },
@@ -249,11 +253,12 @@ export function useChatEditor(composer: ChatComposerState, options: {
 
   // The images drawn inline: the strip leaves them out; one removed from the field is removed from the message.
   const shownImages = useRef<string[]>([])
-  function reportImages(current: Editor) {
+  function reportImages(current: Editor, removeGone = true) {
     const keys: string[] = []
-    current.state.doc.descendants(node => { if (node.type.name === 'image' && node.attrs.fileKey) keys.push(String(node.attrs.fileKey)) })
+    // Images and collapsed pastes: each chip that stands for an attached file.
+    current.state.doc.descendants(node => { if (node.attrs.fileKey) keys.push(String(node.attrs.fileKey)) })
     const { field: currentField, removeFile } = live.current.composer
-    for (const key of shownImages.current) if (!keys.includes(key)) void removeFile(currentField.fileOf(key)?.id ?? key)
+    if (removeGone) for (const key of shownImages.current) if (!keys.includes(key)) void removeFile(currentField.fileOf(key)?.id ?? key)
     shownImages.current = keys
     currentField.setInline(keys)
   }
@@ -265,10 +270,13 @@ export function useChatEditor(composer: ChatComposerState, options: {
     const focused = editor.isFocused
     editor.commands.setContent(hydrate.current(field.stored), { emitUpdate: false })
     // The stored draft carries no inline images: any still attached go back to the strip, never out of the message.
-    shownImages.current = []
-    field.setInline([])
+    // A collapsed paste's file comes back as its chip.
+    reportImages(editor, false)
     if (focused) editor.commands.focus('end')
   }, [editor, field.stored]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A saved draft's collapsed pastes are chips from the start: the strip leaves their files out.
+  useEffect(() => { if (editor) reportImages(editor, false) }, [editor]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reads, callers and the composer's own frame focus the field through the same handle the textarea gave.
   useEffect(() => {
