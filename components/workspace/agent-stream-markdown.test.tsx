@@ -54,7 +54,7 @@ test('a half-written bold or table never shows its markers while it streams', as
   assert.doesNotMatch(container.textContent ?? '', /\||-/, 'a table without its delimiter row stays hidden')
   assert.match(container.textContent ?? '', /Steps:/)
   await render('Steps:\n\n| Step | State |\n| --- | --- |\n| Build | do', true)
-  await settle(() => /do$/.test(container.querySelector('tbody')?.textContent ?? ''))
+  await settle(() => (container.querySelector('tbody')?.textContent ?? '').endsWith('do'))
   assert.ok(container.querySelector('table'), 'the table draws once its delimiter row is whole')
   assert.doesNotMatch(container.textContent ?? '', /\|/)
 })
