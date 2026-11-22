@@ -6,7 +6,7 @@ import { Window } from 'happy-dom'
 
 mock.module('@/lib/intl/i18n-client', { namedExports: {
   useLocale: () => 'en',
-  useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
+  useTranslations: (namespace: string) => (key: string, values?: { time?: string }) => values?.time ? `${namespace}.${key} ${values.time}` : `${namespace}.${key}`,
   useFormatter: () => ({ dateTime: (value: Date) => `at:${value.toISOString()}` }),
 } })
 
@@ -32,14 +32,22 @@ after(() => browser.happyDOM.close())
 const reply = () => container.querySelector('button[aria-label="AiElements.message.reply"]') as HTMLButtonElement | null
 
 test('the line shows when the message was sent, then Reply and Copy, then what the caller adds', async () => {
-  const at = Date.UTC(2026, 10, 19, 14, 41)
+  const at = Date.UTC(2025, 10, 19, 14, 41)
   await act(async () => root.render(<ReplyActions at={at} copyText="the reply" onQuote={() => {}}><span data-extra="" /></ReplyActions>))
   const line = container.querySelector('[data-slot="message-actions"]')!
   const time = line.querySelector('time')!
   assert.equal(time.getAttribute('datetime'), new Date(at).toISOString())
-  assert.equal(time.textContent, `at:${new Date(at).toISOString()}`)
+  assert.match(time.textContent!, /Nov 19/)
+  assert.equal(time.getAttribute('title'), `at:${new Date(at).toISOString()}`)
   const order = [...line.children].map(child => child.tagName === 'TIME' ? 'time' : child.getAttribute('aria-label') ?? (child.hasAttribute('data-extra') ? 'extra' : child.tagName))
   assert.deepEqual(order, ['time', 'AiElements.message.reply', 'AiElements.message.copy', 'extra'])
+})
+
+test('a message from today shows today and the clock, not the date (as the centred stamp)', async () => {
+  const at = Date.now()
+  await act(async () => root.render(<ReplyActions at={at} copyText="the reply" />))
+  const clock = new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(at)
+  assert.equal(container.querySelector('time')!.textContent, `ChatTime.today ${clock}`)
 })
 
 test('Reply puts the whole message in the composer as a quote', async () => {

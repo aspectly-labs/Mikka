@@ -1,7 +1,8 @@
 'use client'
 
-import type { ReactNode } from 'react'
-import { useFormatter, useTranslations } from '@/lib/intl/i18n-client'
+import { useState, type ReactNode } from 'react'
+import { useFormatter, useLocale, useTranslations } from '@/lib/intl/i18n-client'
+import { chatStampText } from '@/lib/chat-time-stamps'
 import { Quote } from '@/components/icons'
 import { MessageAction, MessageActions } from '@/components/ai-elements/message'
 import { CopyAction, HOVER_ACTIONS, REPLY_ACTIONS } from '@/components/chat/copy-action'
@@ -30,10 +31,14 @@ export function ReplyActions({ at, copyText, quoteText, onQuote, hover = false, 
 }) {
   const t = useTranslations('AiElements.message')
   const format = useFormatter()
+  const words = useTranslations('ChatTime')
+  const locale = useLocale()
+  // As the centred stamp (message-time-stamp.tsx): 「今天 15:40」, 「昨天 9:05」, the weekday within six days, then the date.
+  const [now] = useState(() => Date.now())
   return <MessageActions className={cn('items-center', hover ? HOVER_ACTIONS : REPLY_ACTIONS)}>
     {at !== undefined && Number.isFinite(at) && at > 0 && <time dateTime={new Date(at).toISOString()} className="px-1 text-xs tabular-nums text-muted-foreground"
       title={format.dateTime(new Date(at), { dateStyle: 'full', timeStyle: 'short' })}>
-      {format.dateTime(new Date(at), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+      {chatStampText(at, now, locale, { today: time => words('today', { time }), yesterday: time => words('yesterday', { time }) })}
     </time>}
     {onQuote && <MessageAction tooltip={t('reply')} onClick={() => onQuote(quotable(quoteText ?? copyText))}><Quote aria-hidden="true" /></MessageAction>}
     <CopyAction text={copyText} />

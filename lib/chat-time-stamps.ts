@@ -29,7 +29,8 @@ export function chatStampText(at: number, now: number, locale: string, words: St
   const days = Math.round((startOfDay(now) - startOfDay(at)) / 86_400_000)
   if (days === 0) return words.today(time)
   if (days === 1) return words.yesterday(time)
-  if (days > 1 && days < 7) return new Intl.DateTimeFormat(locale, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(at)
+  // The weekday and the clock apart: zh-CN's combined pattern runs them together (「周五12:50」).
+  if (days > 1 && days < 7) return `${new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(at)} ${time}`
   const sameYear = new Date(at).getFullYear() === new Date(now).getFullYear()
   return new Intl.DateTimeFormat(locale, { ...(sameYear ? {} : { year: 'numeric' }), month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(at)
 }
