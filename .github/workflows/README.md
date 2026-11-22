@@ -47,7 +47,8 @@ The required checks are `UI policy (strict)` and `Production build and browser i
 on both the PR and its queue candidate. `GitGuardian Security Checks` remains optional
 and unchanged. The echo-only compatibility workflow has been removed.
 Draft PRs fail both gates until marked Ready. On PRs targeting main, the database gate
-checks that trusted selection succeeded and the deferred DB jobs skipped.
+checks that trusted selection succeeded and the deferred DB jobs skipped, with a visible
+“Database checks deferred to merge queue” summary and check notice when DB suites are selected.
 
 On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path
@@ -403,6 +404,29 @@ a frozen install on a miss. PRs do not upload dependency caches. See
 [cache boundaries and performance evidence](../../docs/ci/1765-optimizations.md).
 `ci-dependencies.yml` warms Desktop's Linux dependency key when install
 inputs change on main; dispatch it to repopulate evicted or changed-image keys.
+
+## Scheduled offline journeys and deployment route probes
+
+`nightly-journey.yml` runs `pnpm test:e2e:mvp --grep @journey` at 06:43 UTC
+and on manual dispatch, on `main` only. It uses a fresh local PostgreSQL 17
+`mikka_e2e` service and scripted LiteLLM, E2B, Slack and GitHub boundaries.
+It does not read model keys or create a preview database. The `@p0` tag
+identifies core journeys; it does not add browser execution to pull-request CI.
+
+The nightly job restores the official compiled renderer from the successful
+public service producer for its exact main source, using the normal Actions
+artifact token only during that read. It verifies the original web build and
+archive, compiles the local API/Eve, and reports the tested source separately
+from the actual reused web source and private overlay SHA. Missing exact-source
+publication fails the job. The evidence audit must pass before reports upload.
+This proves the local scripted composition, not a live model or deployment.
+
+`production-smoke.yml` resolves the API's serving source through the anonymous
+version endpoint and reads that immutable main commit's generated route list.
+Its route probe uses undeclared methods, checking dispatch status and `Allow`
+without credentials or business handlers; a missing route or 5xx fails before
+the existing account sign-in and capability-read smoke. Internal production
+rollout and flag deadlines follow the [production acceptance decision](../../docs/design/decisions/2026-11-20-1905-internal-production-acceptance.md).
 
 ## Engineering sandbox
 

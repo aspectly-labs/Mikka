@@ -9,6 +9,7 @@ import { workspaceListChanged } from '@/lib/live/lists'
 import { mirrorLegacySetting } from './legacy-mirrors'
 import { SETTINGS_REGISTRY, parseSettingsPatch, resolveSettingValue, settingDefinition, settingsResetInput, type SettingDefinition } from './registry'
 import { personalSettingValues, workspaceSettingValues } from './schema'
+import { validateAndMirrorKeyboardShortcuts } from './keyboard-shortcuts'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Reader = Pick<typeof db, 'select'>
@@ -34,7 +35,8 @@ async function readValues(context: SettingsContext, database: Reader = db, scope
   const personal = await database.select().from(personalSettingValues).where(and(eq(personalSettingValues.userId, context.userId),
     or(isNull(personalSettingValues.workspaceId), eq(personalSettingValues.workspaceId, context.workspaceId))))
   const workspace = await database.select().from(workspaceSettingValues).where(eq(workspaceSettingValues.workspaceId, context.workspaceId))
-  const values = Object.fromEntries(Object.values(SETTINGS_REGISTRY).map((field: SettingDefinition) => {
+  const fields: SettingDefinition[] = Object.values(SETTINGS_REGISTRY)
+  const values = Object.fromEntries(fields.filter(field => scope === 'personal' || field.scope.includes(scope)).map(field => {
     const own = personal.find(row => row.key === field.key && row.workspaceId === (field.personalContext === 'workspace' ? context.workspaceId : null))
     return [field.key, resolveSettingValue(field.key, scope === 'personal' ? unpack(own) : null, unpack(workspace.find(row => row.key === field.key)))]
   }))
@@ -77,10 +79,14 @@ export async function writeSettings(context: SettingsContext, scope: SettingScop
     await requireWorkspace(workspaceTx, context.workspaceId, context.userId, scope === 'workspace')
     const result = await db.transaction(async tx => {
       if (scope === 'personal') await tx.select({ id: users.id }).from(users).where(eq(users.id, context.userId)).for('no key update')
+      if (scope === 'personal') await validateAndMirrorKeyboardShortcuts(tx, context.userId, values)
       await writeRows(tx, scope, context, values)
       return readValues(context, tx, scope)
     })
-    await workspaceListChanged(workspaceTx, context.workspaceId, ['workspace_settings'])
+    // Pure keyboard writes already refresh this account's active workspaces.
+    if (scope === 'workspace' || Object.keys(values).some(key => !settingDefinition(key).action)) {
+      await workspaceListChanged(workspaceTx, context.workspaceId, ['workspace_settings'])
+    }
     return result
   })
 }
