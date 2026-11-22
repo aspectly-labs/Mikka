@@ -5113,7 +5113,18 @@
       "included": "你的订阅或 API Key",
       "calls": "{count} 次调用",
       "unpricedCalls": "另有 {count} 次调用没有单次价格",
-      "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
+      "includedNote": "不扣 Mikka 额度；订阅不按次计价。",
+      "breakdown": "模型与机器",
+      "source": "来源",
+      "includedShort": "订阅或 Key",
+      "notCharged": "{label} · 不计费",
+      "machine": "云机器",
+      "machineSized": "云机器 · {vcpu} vCPU · {gib} GiB",
+      "machineUnbilled": "{duration} · 未经 Mikka 计费",
+      "underMinute": "不到 1 分钟",
+      "minutes": "{minutes} 分钟",
+      "hours": "{hours} 小时 {minutes} 分钟",
+      "breakdownFailed": "读不到明细。"
     }
   },
   "Computer": {

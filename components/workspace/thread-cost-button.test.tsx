@@ -133,3 +133,54 @@ test('the button reads the thread cost and shows nothing when the read is refuse
   await show(<mod.ThreadCostButton runId="run-2" />)
   assert.equal(trigger()?.textContent, '$2.00')
 })
+
+/** The breakdown's rows, drawn as plain text so the test reads exactly what each column says. */
+function Rows({ breakdown }: { breakdown: import('./thread-cost-button').ThreadCostBreakdown }) {
+  const rows = mod.useThreadCostBreakdownRows(breakdown)
+  return <ul>{rows.map(row => <li key={row.key} data-row={row.key}>{[row.label, row.detail, row.mikka, row.included].join('|')}</li>)}</ul>
+}
+const row = (key: string) => document.querySelector(`[data-row="${key}"]`)?.textContent
+const model = (name: string, calls: number, credits = none, subscription = none, apiKey = none) => ({
+  model: name, calls, inputTokens: 0, outputTokens: 0, bySource: { credits, subscription, api_key: apiKey },
+})
+
+test('each model shows what went through Mikka beside what the person paid themselves, never summed', async () => {
+  await show(<Rows breakdown={{ machines: [], models: [
+    model('claude-opus-5-5', 3, { microUsd: 420_000, unpricedReceipts: 0 }),
+    model('gpt-6-luna', 12, none, { microUsd: 0, unpricedReceipts: 12 }),
+    model('deepseek-v4.1-flash', 2, { microUsd: 16_667, unpricedReceipts: 1 }, none, { microUsd: 1_600_000, unpricedReceipts: 0 }),
+  ] }} />)
+  assert.equal(row('model:claude-opus-5-5'), 'Opus 5.5|3 次调用|$0.42|—')
+  assert.equal(row('model:gpt-6-luna'), 'GPT-6 Luna|12 次调用|—|12 次调用', 'a subscription call is counted, not priced, and Mikka shows no zero')
+  assert.equal(row('model:deepseek-v4.1-flash'), 'DeepSeek V4.1 Flash|2 次调用|$0.01+|$1.60', 'a settling row is a floor with a +')
+})
+
+test('a model with nothing settled reads as settling, never $0.00', async () => {
+  await show(<Rows breakdown={{ machines: [], models: [model('claude-opus-5-5', 1, { microUsd: 0, unpricedReceipts: 1 })] }} />)
+  assert.equal(row('model:claude-opus-5-5'), 'Opus 5.5|1 次调用|结算中|—')
+})
+
+test('machines show their running time and prepaid charge; one Mikka did not bill shows no amount', async () => {
+  await show(<Rows breakdown={{ models: [], machines: [
+    { size: 'standard-3', billing: 'metered', seconds: 7_800, meteredMicroUsd: 433_333, chargedMicroUsd: 450_000, unpricedReceipts: 0 },
+    { size: null, billing: 'unknown_size', seconds: 300, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 1 },
+    { size: null, billing: 'unbilled', seconds: 42, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 0 },
+  ] }} />)
+  assert.equal(row('machine:metered:standard-3'), '云机器 · 2 vCPU · 8 GiB|2 小时 10 分钟|$0.45|—')
+  assert.equal(row('machine:unknown_size:'), '云机器|5 分钟|结算中|—')
+  assert.equal(row('machine:unbilled:'), '云机器|不到 1 分钟 · 未经 Mikka 计费|—|—')
+})
+
+test('the breakdown reads the model and machine groupings, and a refusal is a failure, not an empty list', async () => {
+  function Probe({ runId }: { runId: string }) {
+    const { breakdown, failed } = mod.useThreadCostBreakdown(runId, true)
+    return <p data-probe="">{failed ? 'failed' : breakdown ? `${breakdown.models.length}/${breakdown.machines.length}` : 'loading'}</p>
+  }
+  reply = { ...cost(), models: [model('claude-opus-5-5', 1)], machines: [] }
+  await show(<Probe runId="run-1" />)
+  assert.deepEqual(reads, [['run-1', 'model'], ['run-1', 'machine']])
+  assert.equal(document.querySelector('[data-probe]')?.textContent, '1/0')
+  reply = { error: 'runNotFound' }
+  await show(<Probe runId="run-2" />)
+  assert.equal(document.querySelector('[data-probe]')?.textContent, 'failed')
+})

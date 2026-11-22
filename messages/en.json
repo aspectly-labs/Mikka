@@ -5113,7 +5113,18 @@
       "included": "Your subscription or API key",
       "calls": "{count, plural, one {# call} other {# calls}}",
       "unpricedCalls": "Plus {count, plural, one {# call} other {# calls}} with no per-call price",
-      "includedNote": "Not charged to Mikka credits. A subscription has no per-call price."
+      "includedNote": "Not charged to Mikka credits. A subscription has no per-call price.",
+      "breakdown": "Models and machines",
+      "source": "Source",
+      "includedShort": "Subscription or key",
+      "notCharged": "{label} · not charged",
+      "machine": "Cloud machine",
+      "machineSized": "Cloud machine · {vcpu} vCPU · {gib} GiB",
+      "machineUnbilled": "{duration} · not billed through Mikka",
+      "underMinute": "under 1 min",
+      "minutes": "{minutes} min",
+      "hours": "{hours} h {minutes} min",
+      "breakdownFailed": "Couldn't read the breakdown."
     }
   },
   "Computer": {

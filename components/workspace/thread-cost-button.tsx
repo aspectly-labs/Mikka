@@ -5,9 +5,13 @@ import { useFormatter, useTranslations } from '@/lib/intl/i18n-client'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { readThreadCost } from '@/app/actions/task-runs'
-import type { ThreadCost } from '@/lib/thread-cost'
+import { MACHINE_SIZES } from '@/lib/cloud-computer/machine-pricing'
+import { modelDisplayName } from '@/lib/model-display-name'
+import type { ThreadCost, ThreadCostAmount, ThreadMachineCost, ThreadModelCost } from '@/lib/thread-cost'
 
 export const threadCostKey = (runId: string) => ['thread-cost', runId] as const
+/** The popover's per-model and per-machine read; the thread panel rereads it with threadCostKey while it is open. */
+export const threadCostBreakdownKey = (runId: string) => ['thread-cost', runId, 'breakdown'] as const
 
 /**
  * What a thread has cost (readThreadCost, #2934), or null until a read succeeds. A refusal ({ error }, not the
@@ -18,6 +22,21 @@ export function useThreadCost(runId: string): ThreadCost | null {
   const { data } = useSWR(threadCostKey(runId), () => readThreadCost(runId, 'thread'),
     { revalidateOnFocus: false, shouldRetryOnError: false, keepPreviousData: false })
   return data && 'totals' in data && data.totals ? data : null
+}
+
+export type ThreadCostBreakdown = { models: ThreadModelCost[]; machines: ThreadMachineCost[] }
+
+/**
+ * The popover's breakdown (Figma 1318:2 section 14, 「模型与机器」): readThreadCost grouped by model and by machine,
+ * read only while the popover is open. A refusal is a failed read, never an empty breakdown.
+ */
+export function useThreadCostBreakdown(runId: string, open: boolean) {
+  const { data, error, mutate } = useSWR(open ? threadCostBreakdownKey(runId) : null, async (): Promise<ThreadCostBreakdown> => {
+    const [byModel, byMachine] = await Promise.all([readThreadCost(runId, 'model'), readThreadCost(runId, 'machine')])
+    if (!('totals' in byModel) || !('totals' in byMachine)) throw new Error('thread cost breakdown refused')
+    return { models: byModel.models ?? [], machines: byMachine.machines ?? [] }
+  }, { revalidateOnFocus: false, shouldRetryOnError: false })
+  return { breakdown: data ?? null, failed: Boolean(error) && !data, retry: () => { void mutate() } }
 }
 
 export type ThreadCostRow = { label: string; value: string; note?: string }
@@ -80,6 +99,60 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
     note: hasIncluded ? t('includedNote') : undefined,
   }
 }
+
+/** One line of the breakdown: what it is, then what went through Mikka and what the person's own subscription or key paid. */
+export type ThreadCostBreakdownRow = { key: string; label: string; detail?: string; mikka: string; included: string }
+
+/**
+ * The breakdown's words, by the same rules as the header (useThreadCostText):
+ * - 「经由 Mikka」 is what settlement recorded. A row with calls still settling is a floor cut to whole cents with a "+",
+ *   or the word 结算中 under a cent; never a zero.
+ * - The subscription or key column is never added to the Mikka figure. A subscription call has no per-call price, so
+ *   it is counted, not priced.
+ * - A column with nothing in it is a dash: no receipt, not a zero amount.
+ * - A machine is billed from its prepaid chunks (chargedMicroUsd). One with no Mikka charge says so and shows no amount.
+ */
+export function useThreadCostBreakdownRows(breakdown: ThreadCostBreakdown): ThreadCostBreakdownRow[] {
+  const t = useTranslations('IssueThreads.cost')
+  const format = useFormatter()
+  const money = (microUsd: number) => microUsd > 0 && microUsd < 10_000
+    ? t('underCent', { amount: format.number(0.01, CURRENCY) })
+    : format.number(microUsd / 1e6, CURRENCY)
+  const mikka = ({ microUsd, unpricedReceipts }: ThreadCostAmount) => {
+    if (!unpricedReceipts) return microUsd > 0 ? money(microUsd) : NONE
+    const floor = Math.floor(microUsd / 10_000) * 10_000
+    return floor > 0 ? `${money(floor)}+` : t('settling')
+  }
+  const included = (amounts: ThreadCostAmount[]) => {
+    const priced = amounts.reduce((sum, a) => sum + a.microUsd, 0)
+    const calls = amounts.reduce((sum, a) => sum + a.unpricedReceipts, 0)
+    return priced > 0 ? money(priced) : calls > 0 ? t('calls', { count: calls }) : NONE
+  }
+  const duration = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 1) return t('underMinute')
+    return minutes < 60 ? t('minutes', { minutes }) : t('hours', { hours: Math.floor(minutes / 60), minutes: minutes % 60 })
+  }
+  const models = breakdown.models.map(row => ({
+    key: `model:${row.model}`,
+    label: modelDisplayName(row.model).name || row.model,
+    detail: t('calls', { count: row.calls }),
+    mikka: mikka(row.bySource.credits),
+    included: included([row.bySource.subscription, row.bySource.api_key]),
+  }))
+  const machines = breakdown.machines.map(row => {
+    const size = row.size ? MACHINE_SIZES[row.size] : null
+    return {
+      key: `machine:${row.billing}:${row.size ?? ''}`,
+      label: size ? t('machineSized', { vcpu: size.vcpu, gib: size.gib }) : t('machine'),
+      detail: row.billing === 'unbilled' ? t('machineUnbilled', { duration: duration(row.seconds) }) : duration(row.seconds),
+      mikka: row.billing === 'unbilled' ? NONE : mikka({ microUsd: row.chargedMicroUsd, unpricedReceipts: row.unpricedReceipts }),
+      included: NONE,
+    }
+  })
+  return [...models, ...machines]
+}
+const NONE = '—'
 
 /**
  * The thread header's cost (#2922 item 1, Figma 1318:2 section 01), as the community header draws it. The hosted

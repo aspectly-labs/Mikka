@@ -89,7 +89,8 @@ mock.module(at('components/workspace/factory-acceptance-pane.tsx'), { namedExpor
 mock.module(at('components/workspace/thread-changes.tsx'), { namedExports: { ThreadChangesPane: () => <p data-private-pane="">Private changes</p>, ChangesTabLabel: () => <>Changes</> } })
 // The header's cost is the thread owner's own read (#2922); the marker shows where the panel offers it.
 mock.module(at('components/workspace/thread-cost-button.tsx'), { namedExports: {
-  threadCostKey: (runId: string) => ['thread-cost', runId], ThreadCostButton: ({ runId }: { runId: string }) => <span data-thread-cost={runId} />,
+  threadCostKey: (runId: string) => ['thread-cost', runId], threadCostBreakdownKey: (runId: string) => ['thread-cost', runId, 'breakdown'],
+  ThreadCostButton: ({ runId }: { runId: string }) => <span data-thread-cost={runId} />,
 } })
 mock.module(at('components/workspace/self-improvement.tsx'), { namedExports: { ThreadFeedback: () => null } })
 type ComposerProps = { label: string; value: string; submitDisabled?: boolean; onSubmit: () => void; onChange: (value: string) => void }
