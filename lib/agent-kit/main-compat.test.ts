@@ -185,6 +185,13 @@ stub('../db/index.ts',{
   assert.equal(applicationLease,false,'claim cannot check out a second APP client')
   applicationLease=true
   return applicationClient
+ },
+ async query(raw:string,args:unknown[]=[]){
+  const sql=compactSql(raw)
+  assert.ok(sql.includes('WITH RECURSIVE')&&sql.includes('agent_runs'),`Unexpected claim pool query: ${sql}`)
+  assert.equal(args[0],requestedRunId);assert.equal(args[1],owner)
+  const now=new Date()
+  return {rows:[{depthExceeded:false,rootRunId:requestedRunId,runId:requestedRunId,status:currentRun.status,outcome:null,pauseReason:null,failureDetails:null,stopRequestedAt:currentRun.stopRequestedAt??null,createdAt:now,finishedAt:null,factoryStage:null,rootCreatedAt:now}]}
  }},
  withDatabaseClient:async<T>(client:typeof applicationClient,operation:()=>Promise<T>)=>{
   assert.equal(client,applicationClient)
