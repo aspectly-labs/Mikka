@@ -2246,12 +2246,20 @@
       "notifications": {
         "title": "Notifications"
       },
+      "shortcuts": {
+        "title": "Shortcuts",
+        "keywords": "hotkeys keybindings dictation terminal"
+      },
       "security": {
         "title": "Security"
       },
+      "mcp": {
+        "title": "MCP and plugins",
+        "keywords": "MCP plugins tools marketplace"
+      },
       "connections": {
         "title": "Integrations",
-        "keywords": "connections plugins MCP"
+        "keywords": "connections apps"
       },
       "models": {
         "title": "Models and subscriptions",
@@ -2265,8 +2273,17 @@
         "title": "Devices"
       },
       "developer": {
-        "title": "Personal access tokens",
-        "nav": "API"
+        "title": "API",
+        "nav": "API",
+        "keywords": "personal access tokens PAT service accounts"
+      },
+      "git": {
+        "title": "Git and pull requests",
+        "keywords": "commits branches PR review"
+      },
+      "memory": {
+        "title": "Memory",
+        "keywords": "facts suggestions auto-approve"
       },
       "general": {
         "title": "Workspace general"
@@ -2288,6 +2305,10 @@
       "usage": {
         "title": "Usage"
       },
+      "activity": {
+        "title": "Activity",
+        "keywords": "contributions hours metrics"
+      },
       "billing": {
         "title": "Billing"
       },
@@ -2299,11 +2320,13 @@
         "title": "Run environments"
       },
       "issue-states": {
-        "title": "Issue states",
+        "title": "Issue states and labels",
         "nav": "Issue states and labels"
       },
       "team-skills": {
-        "title": "Team skills"
+        "title": "Skills",
+        "nav": "Skills",
+        "keywords": "team skills"
       }
     },
     "appearance": {

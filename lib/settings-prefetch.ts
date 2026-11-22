@@ -41,6 +41,7 @@ const READS: Partial<Record<SettingsSectionId, (workspaceId: string) => [key: Ke
   security: () => [[settingsKeys.password(), () => settingsRead<Result<typeof getPasswordStatus>>('password')], [settingsKeys.sessions(), () => settingsRead<Result<typeof listSessions>>('sessions')]],
   notifications: () => [[settingsKeys.preferences(), () => settingsRead<Result<typeof getPreferences>>('preferences')]],
   logins: () => [[settingsKeys.savedLogins(), () => settingsRead<Result<typeof listSavedLogins>>('saved-logins')]],
+  mcp: () => [[connectedAppsKey, readConnectedApps]],
   // 连接 is also the rail's 插件 page: the Composio apps' state, a GET.
   connections: () => [[connectedAppsKey, readConnectedApps]],
   general: id => [
@@ -62,7 +63,7 @@ const READS: Partial<Record<SettingsSectionId, (workspaceId: string) => [key: Ke
 
 export function prefetchSettingsSection(section: SettingsSectionId, workspaceId: string | undefined, cache: Cache, mutate: ReturnType<typeof useSWRConfig>['mutate']) {
   const reads = READS[section]
-  if (!reads || (!workspaceId && !['preferences', 'appearance', 'security', 'notifications', 'logins', 'connections'].includes(section))) return
+  if (!reads || (!workspaceId && !['preferences', 'appearance', 'security', 'notifications', 'logins', 'mcp', 'connections'].includes(section))) return
   for (const [key, read] of reads(workspaceId ?? '')) {
     void prefetchScopedRead(cache, mutate, key, read)
   }

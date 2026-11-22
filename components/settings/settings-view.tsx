@@ -162,13 +162,15 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'environments': return workspaceId && !preview ? <><EnvironmentsSettings key={workspaceId} workspaceId={workspaceId} /><SecretsPage side="workspace" onSide={() => onSection('logins')} workspaceId={workspaceId} workspaceName={workspaceName} waiting={waiting} /></> : waiting
     case 'issue-states': return workspaceId && !preview ? <IssueStatesSettings key={workspaceId} workspaceId={workspaceId} /> : waiting
     case 'logins':
-    case 'secrets': return <SecretsPage side={section === 'logins' ? 'mine' : 'workspace'} onSide={side => onSection(side === 'mine' ? 'logins' : 'environments')} workspaceId={workspaceId && !preview ? workspaceId : undefined} workspaceName={workspaceName} waiting={waiting} />
+    case 'secrets': return <SecretsPage side={section === 'logins' ? 'mine' : 'workspace'} onSide={side => onSection(side === 'mine' ? 'logins' : 'secrets')} workspaceId={workspaceId && !preview ? workspaceId : undefined} workspaceName={workspaceName} waiting={waiting} />
     case 'preferences': return <><GeneralInterface /><PreferencesSettings />{workspaceId && !preview && !workspaceError && <RestoreSetupChecklist key={workspaceId} workspaceId={workspaceId} />}</>
     case 'appearance': return <AppearanceSettings />
-    case 'instructions': return <MemorySettings />
+    case 'instructions':
+    case 'memory': return <MemorySettings />
     case 'threads': return <ThreadSettings workspaceId={workspaceId} personal={personal} admin={admin} />
     case 'notifications': return <NotificationSettings />
     case 'team-skills': return <TeamSkillsSettings admin={admin} workspaceId={workspaceId} />
+    case 'mcp': return <PluginsView section="connections" rootLabel={t('sections.mcp.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'connections': return <PluginsView section="connections" rootLabel={t('sections.connections.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'models': return <>{workspaceId && !preview ? <ApiAndSubscriptions key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} team={team} cloudUserKey={community ? userKey : undefined} /> : waiting}</>
     case 'developer': return workspaceId && !preview ? <AccessTokensSettings key={workspaceId} workspaceId={workspaceId} /> : waiting

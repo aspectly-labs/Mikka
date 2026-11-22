@@ -8,12 +8,12 @@ export type SettingsGroup = 'personal' | 'agent' | 'review' | 'workspace'
 export const SETTINGS_GROUPS = ['personal', 'agent', 'review', 'workspace'] as const satisfies readonly SettingsGroup[]
 
 export type SettingsSectionId =
-  | 'preferences' | 'appearance' | 'account' | 'security' | 'notifications' | 'models'
-  | 'environments' | 'connections' | 'logins' | 'developer' | 'computers'
-  | 'instructions' | 'threads'
-  | 'shortcuts' | 'git' | 'review-repositories' | 'review-config' | 'activity'
-  | 'general' | 'issue-states' | 'team-skills' | 'members' | 'teams' | 'permissions' | 'secrets'
-  | 'audit' | 'organization' | 'usage' | 'billing' | 'cloud'
+  | 'preferences' | 'appearance' | 'account' | 'security' | 'notifications' | 'shortcuts'
+  | 'models' | 'environments' | 'mcp' | 'connections' | 'developer' | 'secrets' | 'logins' | 'computers'
+  | 'instructions' | 'team-skills' | 'threads' | 'git' | 'memory'
+  | 'review-repositories' | 'review-config'
+  | 'general' | 'organization' | 'issue-states' | 'members' | 'teams'
+  | 'billing' | 'usage' | 'activity' | 'permissions' | 'audit' | 'cloud'
   | 'referrals' | 'experiments' | 'cloud-credentials'
 
 /**
@@ -30,29 +30,31 @@ export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, Setting
   account: 'available',
   security: 'available',
   notifications: 'available',
+  shortcuts: 'available',
   models: 'available',
   environments: 'available',
+  mcp: 'available',
   connections: 'available',
-  logins: 'available',
   developer: 'available',
+  secrets: 'available',
+  logins: 'available',
   computers: 'available',
   instructions: 'available',
+  'team-skills': 'available',
   threads: 'available',
-  shortcuts: 'pending',
-  git: 'pending',
+  git: 'available',
+  memory: 'available',
   'review-repositories': 'skipped',
   'review-config': 'skipped',
   general: 'available',
   organization: 'available',
   'issue-states': 'available',
-  'team-skills': 'available',
   members: 'available',
   teams: 'available',
   billing: 'available',
   usage: 'available',
-  activity: 'pending',
+  activity: 'available',
   permissions: 'available',
-  secrets: 'available',
   audit: 'available',
   cloud: 'available',
   referrals: 'skipped',
@@ -153,30 +155,32 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'account', group: 'personal', title: 'Profile' },
   { id: 'security', group: 'personal', title: 'Security' },
   { id: 'notifications', group: 'personal', title: 'Notifications' },
+  { id: 'shortcuts', group: 'personal', title: 'Shortcuts' },
   { id: 'models', group: 'personal', title: 'Models and subscriptions' },
   { id: 'environments', group: 'personal', title: 'Run environments' },
+  { id: 'mcp', group: 'personal', title: 'MCP and plugins' },
   { id: 'connections', group: 'personal', title: 'Integrations' },
-  // Personal secrets stay one click from an old link; the sidebar entry is 集成.
-  { id: 'logins', group: 'personal', title: 'Secrets and logins', sidebar: false },
   { id: 'developer', group: 'personal', title: 'Personal access tokens' },
+  { id: 'secrets', group: 'personal', title: 'Secrets and environment' },
+  // Personal secrets stay one click from an old link; the sidebar entry is 密钥与环境.
+  { id: 'logins', group: 'personal', title: 'Secrets and logins', sidebar: false },
   { id: 'computers', group: 'personal', title: 'Devices' },
   { id: 'instructions', group: 'agent', title: 'Instructions' },
+  { id: 'team-skills', group: 'agent', title: 'Skills' },
   { id: 'threads', group: 'agent', title: 'Threads' },
-  { id: 'shortcuts', group: 'personal', title: 'Shortcuts' },
   { id: 'git', group: 'agent', title: 'Git and pull requests' },
+  { id: 'memory', group: 'agent', title: 'Memory' },
   { id: 'review-repositories', group: 'review', title: 'Review repositories' },
   { id: 'review-config', group: 'review', title: 'Review config' },
   { id: 'general', group: 'workspace', title: 'Workspace general' },
   { id: 'organization', group: 'workspace', title: 'Organization' },
   { id: 'issue-states', group: 'workspace', title: 'Issue states' },
-  { id: 'team-skills', group: 'workspace', title: 'Team skills' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
   { id: 'billing', group: 'workspace', title: 'Billing' },
   { id: 'usage', group: 'workspace', title: 'Usage' },
   { id: 'activity', group: 'workspace', title: 'Activity' },
   { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true, sidebar: false },
-  { id: 'secrets', group: 'workspace', title: 'Secrets and environment', sidebar: false },
   { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
   { id: 'cloud', group: 'workspace', title: 'Mikka Cloud' },
   { id: 'referrals', group: 'personal', title: 'Referrals' },
@@ -200,7 +204,6 @@ const LEGACY: Record<string, SettingsSectionId> = {
   devices: 'computers',
   workspace: 'general',
   bots: 'models',
-  memory: 'instructions',
   privacy: 'account',
 }
 

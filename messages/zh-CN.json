@@ -2246,12 +2246,20 @@
       "notifications": {
         "title": "通知"
       },
+      "shortcuts": {
+        "title": "快捷键",
+        "keywords": "按键 热键 语音输入 终端"
+      },
       "security": {
         "title": "安全"
       },
+      "mcp": {
+        "title": "MCP 与插件",
+        "keywords": "MCP 插件 工具 市场"
+      },
       "connections": {
         "title": "集成",
-        "keywords": "连接 插件 MCP"
+        "keywords": "连接 应用"
       },
       "models": {
         "title": "模型与订阅",
@@ -2265,8 +2273,17 @@
         "title": "设备"
       },
       "developer": {
-        "title": "个人访问令牌",
-        "nav": "API"
+        "title": "API",
+        "nav": "API",
+        "keywords": "个人访问令牌 PAT 服务账号 token"
+      },
+      "git": {
+        "title": "Git 与拉取请求",
+        "keywords": "提交 分支 PR 审阅"
+      },
+      "memory": {
+        "title": "记忆",
+        "keywords": "事实 建议 自动审批"
       },
       "general": {
         "title": "工作区常规"
@@ -2288,6 +2305,10 @@
       "usage": {
         "title": "用量"
       },
+      "activity": {
+        "title": "活动",
+        "keywords": "贡献 工时 指标"
+      },
       "billing": {
         "title": "计费"
       },
@@ -2299,11 +2320,13 @@
         "title": "运行环境"
       },
       "issue-states": {
-        "title": "任务状态",
+        "title": "任务状态与标签",
         "nav": "任务状态与标签"
       },
       "team-skills": {
-        "title": "团队技能"
+        "title": "技能",
+        "nav": "技能",
+        "keywords": "团队技能 Skill"
       }
     },
     "appearance": {
