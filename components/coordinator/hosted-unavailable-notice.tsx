@@ -5,21 +5,17 @@ import useSWR, { useSWRConfig } from 'swr'
 import { toast } from 'sonner'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { Info } from '@/components/icons'
-import { getBotModelMenu } from '@/app/actions/execution-settings'
 import { getCreditShare, updateCreditShare } from '@/app/actions/personal-policy'
 import { Alert, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import type { BotModelMenu } from '@/lib/bot-model-menu-view'
 import { getHostedUsage } from '@/lib/billing/verification-client'
 import { Link } from '@/i18n/navigation'
 import { settingsHref } from '@/lib/settings-sections'
 import { useActionError } from '@/lib/use-action-error'
 import { botModelMenuKey, openModelPicker } from './bot-model-picker'
+import { useBotModelMenu } from '@/hooks/use-bot-model-menu'
 import { COMPOSER_NOTICE } from './composer-notice'
 import { ConnectSubscriptionButton } from '@/components/billing/connect-subscription-dialog'
-
-/** The last model menu any notice read, for a Bot whose menu is not read yet */
-let lastMenu: BotModelMenu | undefined
 
 /**
  * Model readiness above the composer, before sending. If no model can be
@@ -32,11 +28,7 @@ export function HostedUnavailableNotice({ botId }: { botId: string | null }) {
   const t = useTranslations('Coordinator.modelPicker')
   const actionError = useActionError()
   const { mutate } = useSWRConfig()
-  // On a switch to another Bot (the chat and this notice mount anew) the notice shows the last answer it had until this
-  // Bot's is read: readiness is mostly the workspace's credits and connections, and the composer does not grow under a
-  // chat already drawn at its end
-  const menu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId), { keepPreviousData: true, fallbackData: lastMenu })
-  if (menu.data) lastMenu = menu.data
+  const menu = useBotModelMenu(botId)
   const current = menu.data?.current
   const needsChoice = current?.kind === 'none'
   const unavailable = current?.kind === 'hosted' && !current.available

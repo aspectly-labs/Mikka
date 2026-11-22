@@ -11,8 +11,8 @@ import { modelVendorName } from '@/components/labels/model-vendor-mark'
 
 export type ModelPickerT = ReturnType<typeof useTranslations<'Coordinator.modelPicker'>>
 
-/** The SWR key of a chat's model menu. */
-export const botModelMenuKey = (botId: string | null) => ['bot-model-menu', botId ?? 'coordinator'] as const
+import { botModelMenuKey } from './use-bot-model-menu'
+export { botModelMenuKey, useBotModelMenu } from './use-bot-model-menu'
 
 const OPEN_EVENT = 'mikka:open-model-picker'
 
