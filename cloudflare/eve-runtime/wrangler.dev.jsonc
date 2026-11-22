@@ -16,8 +16,12 @@
     "EVE_PUBLIC_ORIGIN": "https://mikka-eve-epic3076-dev.workers.dev",
     "MIKKA_EVE_HOST_RESIDENCY": "on-demand",
     "MIKKA_EVE_IDLE_TIMEOUT": "3m",
-    "EVE_ENV_WORKFLOW_TARGET_WORLD": "@mikka/eve-cloudflare-world"
+    "EVE_ENV_WORKFLOW_TARGET_WORLD": "@mikka/eve-cloudflare-world",
+    "EVE_ENV_MIKKA_DEPLOYMENT_ID": "8ba495970a-1-1"
   },
+  "services": [
+    { "binding": "EVE_WORLD", "service": "mikka-eve-world-dev", "entrypoint": "WorldService" }
+  ],
   "durable_objects": {
     "bindings": [{ "name": "EVE_RUNTIME", "class_name": "EveRuntime" }]
   },
