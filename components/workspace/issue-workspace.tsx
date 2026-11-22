@@ -616,7 +616,9 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
     if (boardBusy || leaving.current) return
     const bot = target.kind === 'bot' ? bots.find(item => item.id === target.botId) ?? (created?.id === target.botId ? created : undefined) : undefined
     if (target.kind === 'bot' && !bot) return
-    if (target.kind === 'bot' || target.kind === 'coordinator') void preloadPage('coordinator', target)
+    // The chunk only: the chat's first read starts once the switch commits (useChatHold below). Asked for here it would
+    // sit in front of the flushes `leave` runs first, since server actions run one at a time, and delay the switch.
+    if (target.kind === 'bot' || target.kind === 'coordinator') void preloadPage('coordinator')
     void leave(() => {
       lastChat.current = target
       if (bot) setCreatedBot(created?.id === bot.id ? created : undefined)
