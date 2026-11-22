@@ -108,7 +108,7 @@ export function createLiteLLMScenarios() {
  * provider probe the local key seeder verifies against). */
 export function fakeLiteLLMRoutes(scenarios) {
   const state = scenarios ?? createLiteLLMScenarios()
-  return async function routes(request, response, url, { readBody, json, log } = {}) {
+  return async function routes(request, response, url, { readBody, json, log: _log } = {}) {
     const reply = json ?? ((value, status = 200) => { response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); return true })
     // The native model gateway authenticates with x-litellm-api-key (upstream.ts);
     // the plain Authorization header is the other accepted form.
