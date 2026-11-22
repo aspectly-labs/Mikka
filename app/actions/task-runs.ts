@@ -9,7 +9,7 @@ import { readCompactRunFailure, runFailureBrief, type CompactRunFailure } from '
 
 import { createHash } from 'node:crypto'
 import { headers } from '@/lib/server-runtime/headers'
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { deviceOnlineStates, deviceSessionOpen } from '@/lib/device-presence'
 import { gatewayConfig } from '@/lib/builtin-gateway/config'
 import { ActionFailureError } from '@/lib/action-error'
@@ -79,7 +79,7 @@ async function readTaskRuns() {
     expiresAt: sql<Date | null>`(select min(r."createdAt")+${runHistoryWindow} from agent_runs r where r."issueId"=${agentRuns.issueId} and r."userId"=${agentRuns.userId} and r."workspaceId"=${agentRuns.workspaceId} and r."createdAt">now()-${runHistoryWindow})`.as('expiresAt'),
     harnesses: sql<string[]>`array(select a.harness from agent_runs r join agents a on a.id=r."agentId" where r."issueId"=${agentRuns.issueId} and r."userId"=${agentRuns.userId} and r."workspaceId"=${agentRuns.workspaceId} and r."createdAt" > now() - ${runHistoryWindow} group by a.harness order by max(r."createdAt") desc)`.as('harnesses'),
   }).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).innerJoin(issues, eq(issues.id, agentRuns.issueId))
-    .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), visibility.predicate, isNotNull(agentRuns.issueId), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
+    .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), visibility.predicate, isNotNull(agentRuns.issueId), isNull(agentRuns.threadDeletedAt), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
     .orderBy(agentRuns.issueId, desc(agentRuns.createdAt), desc(agentRuns.id)).limit(200).as('latest_task_runs')
   // Select the same 200 issues first. Bot decoration is a one-to-one join in
   // this database; a missing or foreign bot cannot remove or duplicate a task.
@@ -188,7 +188,7 @@ async function readThreads(known?: string, previous?: ListPosition[]) {
       pauseReason: agentRuns.pauseReason, stopReason: agentRuns.stopReason, awaitingApproval: runAwaitingApproval.as('awaitingApproval'), threadReplacedBy: agentRuns.threadReplacedBy,
     }).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(devices, eq(devices.id, agentRuns.deviceId))
       .leftJoin(conversationReads, joinThreadRead(session.user.id))
-      .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
+      .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), isNull(agentRuns.threadDeletedAt), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
       .orderBy(desc(sql`greatest(${agentRuns.lastReplyAt}, ${agentRuns.updatedAt})`), desc(agentRuns.createdAt), desc(agentRuns.id)).limit(200)
     const signature = await queryVersionWithExpiry(snapshot, sql`min(snapshot."createdAt")+${runHistoryWindow}`)
     const version = createHash('sha256').update(JSON.stringify([session.user.id, context.workspace.id, signature.version])).digest('hex').slice(0, 32)
@@ -349,6 +349,84 @@ export async function readSubagentRuns(runId: string): Promise<ActionResult<impo
   const { pool } = await import('@/lib/db')
   const runs = await (await import('@/lib/subagent-runs')).readSubagentRuns(pool, { ownerId, workspaceId, runId })
   return runs ?? { error: 'runNotFound' }
+}
+
+/** Every run of the thread's chain, so each list that shows one of them reads again. */
+async function threadListsChanged(runIds: readonly string[]) {
+  const { pool } = await import('@/lib/db')
+  const { runListChanged } = await import('@/lib/live/lists')
+  for (const id of runIds) await runListChanged(pool, id)
+}
+
+async function chainRunIds(ownerId: string, runId: string) {
+  const { pool } = await import('@/lib/db')
+  const chain = await (await import('@/lib/run-chain')).readRunChain(pool, ownerId, runId)
+  return chain?.attempts.map(attempt => attempt.runId) ?? []
+}
+
+/**
+ * Deletes a thread (#2936, ⋯ 删除): it leaves every list at once and can be restored for 30 days
+ * (lib/thread-lifecycle.ts). A thread that is still working is not deleted. Only its owner, in its Workspace.
+ */
+export async function deleteThread(runId: string): Promise<ActionResult<import('@/lib/thread-lifecycle').ThreadDeletion, 'runNotFound' | 'threadWorking'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const result = await (await import('@/lib/thread-lifecycle')).deleteThread(pool, { ownerId, workspaceId, runId })
+  if (result === 'working') return { error: 'threadWorking' }
+  if (!result) return { error: 'runNotFound' }
+  await threadListsChanged(await chainRunIds(ownerId, runId))
+  return result
+}
+
+/** Restores a thread deleted less than 30 days ago (#2936). Only its owner, in its Workspace. */
+export async function restoreThread(runId: string): Promise<ActionResult<import('@/lib/thread-lifecycle').ThreadDeletion, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const result = await (await import('@/lib/thread-lifecycle')).restoreThread(pool, { ownerId, workspaceId, runId })
+  if (!result) return { error: 'runNotFound' }
+  await threadListsChanged(await chainRunIds(ownerId, runId))
+  return result
+}
+
+/** A thread's tags (#2936, ⋯ 标签); with `tags`, replaces them (lib/thread-lifecycle.ts normalizeThreadTags). Owner only. */
+export async function threadTags(runId: string, tags?: string[]): Promise<ActionResult<{ threadId: string; tags: string[] }, 'runNotFound' | 'validationGeneric'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const lifecycle = await import('@/lib/thread-lifecycle')
+  const normalized = tags === undefined ? undefined : lifecycle.normalizeThreadTags(tags)
+  if (normalized === null) return { error: 'validationGeneric' }
+  const { pool } = await import('@/lib/db')
+  const result = await lifecycle.threadTags(pool, { ownerId, workspaceId, runId }, normalized)
+  if (!result) return { error: 'runNotFound' }
+  if (normalized) await threadListsChanged([result.threadId])
+  return result
+}
+
+/**
+ * What ⋯ 做成自动化 opens the automation editor with (#2936): every run sent to this thread. The editor saves it through
+ * createAutomation, which checks the thread again. Owner only; a thread with no task cannot run again.
+ */
+export async function threadAutomationSeed(runId: string): Promise<ActionResult<{ singleThreadId: string; title: string; prompt: string }, 'runNotFound' | 'threadCannotContinue'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const seed = await (await import('@/lib/thread-lifecycle')).threadAutomationSeed(pool, { ownerId, workspaceId, runId })
+  if (seed === 'noTask') return { error: 'threadCannotContinue' }
+  return seed ?? { error: 'runNotFound' }
+}
+
+type ForkError = 'runNotFound' | 'messageRequired' | 'validationGeneric' | 'threadCannotContinue' | 'threadReplaced' | 'threadModelUnavailable' | 'agentRepoMissing' | 'runInvalid'
+/**
+ * Fork from a message (#2936, ⋯ 分叉 and the message's More menu): a new thread of the same task that starts from this
+ * thread up to the message, with the person's instruction (lib/thread-continue.ts forkThread). The source thread is
+ * replaced by it (one thread per task). Owner only.
+ */
+export async function forkThread(input: { runId: string; itemId?: string | null; mode: 'full' | 'summary'; text: string; requestId: string }): Promise<ActionResult<{ runId: string; threadId: string; replacedThreadId: string | null }, ForkError | import('@/lib/action-result').ActionErrorCode>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  try {
+    return await (await import('@/lib/thread-continue')).forkThread(ownerId, workspaceId, input)
+  } catch (error) {
+    if (error instanceof ActionFailureError) return { error: error.code as import('@/lib/action-result').ActionErrorCode }
+    throw error
+  }
 }
 
 export async function readConversationOrganization(target: ConversationTarget) {

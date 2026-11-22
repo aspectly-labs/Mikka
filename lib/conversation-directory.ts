@@ -82,7 +82,7 @@ function conversationQuery() {
           ORDER BY p."pullRequest"->>'url',p."updatedAt" DESC,p."runId" DESC
         ) by_url
       ) delivered
-    WHERE root."issueId" IS NULL OR i.id IS NOT NULL
+    WHERE (root."issueId" IS NULL OR i.id IS NOT NULL) AND root."threadDeletedAt" IS NULL
   ), visible AS (
     SELECT *,to_char(touched AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,
       (manual IS NOT NULL OR (days>0 AND NOT pinned AND state='idle' AND greatest(touched,restored)<now()-days*interval '1 day')) AS archived

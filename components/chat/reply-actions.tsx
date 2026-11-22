@@ -13,8 +13,8 @@ import { cn } from '@/lib/utils'
  * a reply cites, reactions). Reply quotes the whole message into the composer, the same quote 引用 makes from selected
  * words, cut to the same length (lib/chat-quote.ts REPLY_QUOTE_MAX) so a long reply cannot push a message over the send
  * limit. It stays on screen, quiet until hovered (R-83 revised 2026-11-10); the thread panel keeps it to hover
- * (decision 2026-11-10-2002 A). The More menu waits for its first action that is not already on this line (fork, side chat and rerun
- * need #2936).
+ * (decision 2026-11-10-2002 A). The line stays as Figma section 15 draws it, with no More menu (Alex, 2026-11-22): a thread's
+ * fork and other lifecycle actions live in its ⋯ menu.
  */
 export function ReplyActions({ at, copyText, quoteText, onQuote, hover = false, children }: {
   /** When the message was sent, as a timestamp in ms. */

@@ -1585,6 +1585,7 @@
     "runChainEnded": "This task has already stopped; there is nothing left to stop.",
     "threadDeliveryUnavailable": "This thread cannot use that delivery mode right now.",
     "threadStopping": "The thread is stopping",
+    "threadWorking": "The thread is still working. Stop it first.",
     "secretNotFound": "That secret or variable no longer exists.",
     "secretNameReserved": "This name is reserved by the runtime (for example PATH, HOME, proxy, TLS, loader, git, E2B or MIKKA variables). Choose another name.",
     "secretPermissionDenied": "Only workspace admins can do this. Members can add and edit repository secrets and variables.",
@@ -5181,6 +5182,23 @@
       "todo": "Updated todos",
       "commandFailed": "Command failed ({command})",
       "commandFailedCode": "Command failed ({command}) · exit {code}"
+    },
+    "lifecycle": {
+      "fork": "Fork",
+      "forkSummary": "Fork with summary",
+      "forkInstruction": "What should the fork do?",
+      "forkFailed": "Couldn't fork",
+      "tags": "Tags",
+      "tagPlaceholder": "Add a tag",
+      "removeTag": "Remove {tag}",
+      "tagsFailed": "Tags not saved",
+      "automation": "Make this an automation",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this thread?",
+      "deleted": "Thread deleted",
+      "undo": "Undo",
+      "deleteFailed": "Thread not deleted",
+      "restoreFailed": "Couldn't restore the thread"
     }
   },
   "Computer": {

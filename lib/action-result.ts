@@ -103,6 +103,7 @@ export const ACTION_ERROR_CODES = [
   'threadRecoveryUnavailable',
   'runChainEnded',
   'threadStopping',
+  'threadWorking',
   'threadDeliveryUnavailable',
   'apiKeyNotFound',
   'factoryQuestionNeedsAnswerTool',
