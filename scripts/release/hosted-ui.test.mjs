@@ -137,7 +137,7 @@ test('the main OTA path reaches the shared private policy before either producti
   assert.equal(checkout.with.ref, '${{ steps.operations.outputs.source }}')
   assert.equal(checkout.with['persist-credentials'], false)
   assert.ok(steps.indexOf(steps.find(step => step.name === 'Remove source App credentials')) < steps.indexOf(checkout))
-  assert.deepEqual(job.permissions, { contents: 'read', 'id-token': 'write' }, 'no new workflow permissions')
+  assert.deepEqual(job.permissions, { contents: 'read', actions: 'read', 'id-token': 'write' }, 'OTA evidence downloads require read-only artifact access')
 })
 
 test('production OTA rechecks the same source and staged overlay after checkout and before publication', async () => {
