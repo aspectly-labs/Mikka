@@ -43,6 +43,10 @@ export async function retainGitUndo(database: WorkspaceQuery, request: Workspace
   receipt: WorkspaceReadReceipt, mask: Masker, ownerId: string) {
   if (request.kind !== 'git_revert_apply' && request.kind !== 'git_checkpoint_restore'
     && request.kind !== 'file_save' && request.kind !== 'file_rename' && request.kind !== 'file_delete') return
+  // A replayed write reports idempotent and carries no fresh capture: the
+  // row's original Undo bytes stay as the first execution stored them.
+  const result = receipt.result
+  if (result.ok && 'idempotent' in result && result.idempotent) return
   const undo = receipt.gitUndo
   if (!undo) return mark(database, request.operationId, ownerId, 'none')
   if (!mask.sourcePolicy) return mark(database, request.operationId, ownerId, 'none')

@@ -363,7 +363,8 @@ async function readWorkspaceUndo(command: WorkspaceReadCommand, entry: JournalEn
     // Every fence is proved before the first write.
     for (const { file, observed, bytes, done } of planned) {
       if (done) continue
-      if (bytes) await writePinnedFile(opened.root, file.path, bytes, file.mode === '100755', { fence: observed.fence })
+      if (bytes) await writePinnedFile(opened.root, file.path, bytes, file.mode === '100755',
+        observed.exists ? { fence: observed.fence } : { createOnly: true })
       else await deletePinnedFile(opened.root, file.path, observed.fence)
       const after = await observePath(opened.root, file.path)
       if (after.exists !== file.existed || (bytes && after.contentSha256 !== file.sha256)) throw conflict()
@@ -584,10 +585,11 @@ async function readCheckpointRestore(command: WorkspaceReadCommand, entry: Journ
 }
 
 function fileResult(identity: WorkspaceReadCommand['identity'], kind: 'file_saved' | 'file_renamed' | 'file_deleted',
-  operationId: string, headSha: string, path: string, newPath: string | null, after: GitWorkingFence, idempotent: boolean): WorkspaceFileWriteResult {
+  operationId: string, headSha: string, path: string, newPath: string | null, after: ObservedFile, idempotent: boolean): WorkspaceFileWriteResult {
   return workspaceFileWriteResult.parse({ ok: true, identity, kind, observedAt: new Date().toISOString(), availability: 'online',
     revision: { source: 'working', headSha, baseSha: null, version: digest(JSON.stringify([headSha, path, newPath, after])) },
-    operationId, appliedAt: new Date().toISOString(), headSha, path, newPath, after, idempotent })
+    operationId, appliedAt: new Date().toISOString(), headSha, path, newPath, idempotent,
+    after: { exists: after.exists, mode: after.mode, size: after.size, contentSha256: after.contentSha256, workingVersion: after.workingVersion } })
 }
 
 function expectedFenceMatches(observed: ObservedFile, expected: { exists: boolean; contentSha256: string | null
@@ -638,9 +640,10 @@ async function readWorkspaceFileWrite(command: WorkspaceReadCommand, entry: Jour
         base64: observed.bytes?.toString('base64') ?? '', sha256: observed.contentSha256 ?? digest(''),
         after: { exists: true, contentSha256: afterSha } }]
       if ((await headSha(git)) !== head) throw conflict()
-      const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, null,
-        fenceOf(request.path, head, after), applied.idempotent)
-      return { result, files: [], ...(observed.exists && !observed.bytes && !applied.idempotent ? {} : { gitUndo: { files: applied.undo } }) }
+      const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, null, after, applied.idempotent)
+      // A replayed write keeps the first execution's Undo capture: rebuilding
+      // it now would store the already-written bytes as the "before" state.
+      return { result, files: [], ...(!applied.idempotent && !(observed.exists && !observed.bytes) ? { gitUndo: { files: applied.undo } } : {}) }
     }
     if (request.kind === 'file_rename') {
       const target = await observePath(opened.root, request.newPath, WORKSPACE_MAX_FILE_BYTES)
@@ -664,9 +667,8 @@ async function readWorkspaceFileWrite(command: WorkspaceReadCommand, entry: Jour
         { path: request.path, existed: true, mode: observed.mode, base64: observed.bytes?.toString('base64') ?? '',
           sha256: observed.contentSha256 ?? digest(''), after: { exists: false, contentSha256: null } }]
       if ((await headSha(git)) !== head) throw conflict()
-      const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, request.newPath,
-        fenceOf(request.newPath, head, after), applied.idempotent)
-      return { result, files: [], ...(observed.bytes || applied.idempotent ? { gitUndo: { files: applied.undo } } : {}) }
+      const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, request.newPath, after, applied.idempotent)
+      return { result, files: [], ...(applied.idempotent ? {} : { gitUndo: { files: applied.undo } }) }
     }
     // file_delete
     if (!observed.exists) applied.idempotent = true
@@ -680,9 +682,8 @@ async function readWorkspaceFileWrite(command: WorkspaceReadCommand, entry: Jour
       base64: observed.bytes?.toString('base64') ?? '', sha256: observed.contentSha256 ?? digest(''),
       after: { exists: false, contentSha256: null } }]
     if ((await headSha(git)) !== head) throw conflict()
-    const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, null,
-      fenceOf(request.path, head, after), applied.idempotent)
-    return { result, files: [], ...(observed.bytes || applied.idempotent ? { gitUndo: { files: applied.undo } } : {}) }
+    const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, null, after, applied.idempotent)
+    return { result, files: [], ...(!applied.idempotent && observed.bytes ? { gitUndo: { files: applied.undo } } : {}) }
   } catch (cause) { return failure(command, cause) } finally { await closeRoot(directory) }
 }
 
