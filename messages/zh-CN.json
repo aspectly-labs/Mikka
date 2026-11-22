@@ -9236,7 +9236,6 @@
       "retry": "重试",
       "noMachine": "还没有机器",
       "noEnvironment": "没有运行环境",
-      "botNote": "这个 Bot 的新线程在这个环境里运行。",
       "machine": "机器",
       "spec": "{cpu} vCPU · {memory} GB",
       "cpu": "CPU",

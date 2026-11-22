@@ -9236,7 +9236,6 @@
       "retry": "Retry",
       "noMachine": "No machine yet",
       "noEnvironment": "No run environment",
-      "botNote": "New threads of this Bot run in this environment.",
       "machine": "Machine",
       "spec": "{cpu} vCPU · {memory} GB",
       "cpu": "CPU",
