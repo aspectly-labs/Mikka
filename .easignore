@@ -109,6 +109,7 @@ yarn-error.log*
 
 # Keep credentials, repository metadata, generated outputs and evidence off Expo.
 .git
+/.agents/
 .env*
 node_modules/
 docs/
