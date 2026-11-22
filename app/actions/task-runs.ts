@@ -328,6 +328,18 @@ export async function readThreadCost(runId: string, groupBy: import('@/lib/threa
   return cost ?? { error: 'runNotFound' }
 }
 
+/**
+ * A thread's summary for its header and right column (#2935): cost totals, machine, repository, branch and context
+ * in one read (lib/thread-summary.ts). Only the thread's owner in its workspace reads it; any other reader gets runNotFound.
+ */
+export async function readThreadSummary(runId: string): Promise<ActionResult<import('@/lib/thread-summary').ThreadSummary, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const catalogue = await (await import('@/lib/model-catalog-server')).modelCatalog()
+  const summary = await (await import('@/lib/thread-summary')).readThreadSummary(pool, { ownerId, workspaceId, runId, catalogue })
+  return summary ?? { error: 'runNotFound' }
+}
+
 export async function readConversationOrganization(target: ConversationTarget) {
   return organizeTarget(target, await conversationActor())
 }
