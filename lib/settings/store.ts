@@ -31,7 +31,8 @@ function pack(field: SettingDefinition, raw: SettingValue | null): StoredSetting
 
 
 async function readValues(context: SettingsContext, kind: 'personal' | 'team', database: Reader = db, scope: SettingScope = 'personal'): Promise<SettingsView> {
-  const values = await readRuntimeSettings(database, Object.keys(SETTINGS_REGISTRY) as SettingKey[],
+  const keys = Object.values(SETTINGS_REGISTRY).filter(field => scope === 'personal' || field.scope.includes(scope)).map(field => field.key as SettingKey)
+  const values = await readRuntimeSettings(database, keys,
     { workspaceId: context.workspaceId, ...(scope === 'personal' ? { userId: context.userId } : {}) })
   return { workspaceId: context.workspaceId, values, workCreation: workCreationView(kind, values.newWorkVisibility, values.allowPrivateNewWork.value) }
 }
