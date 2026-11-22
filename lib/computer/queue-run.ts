@@ -50,6 +50,8 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
   idempotencyKey?: string; execution?: AgentExecution
   /** A quota continuation's key (lib/run-quota.ts): frozen as given instead of choosing the credential. */
   apiKey?: RunApiKey
+  /** A quota continuation's Mikka-额度 slot (lib/run-quota.ts): frozen as given instead of choosing the credential. */
+  credits?: { model: string }
   /** The API key the 优先使用的模型 entry names; used only when the run may use it (lib/run-credential-source.ts). */
   apiKeyId?: string
   /** The dispatcher's exact subscription selection; an id is reauthorized here, never an owner grant. */

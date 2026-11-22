@@ -156,7 +156,7 @@ async function continuationDefinition(run: Run, prompt: string, key: RunApiKey |
       definition.cliModelSelection = 'explicit'
       definition.credits = { model: creditsModel }
       delete definition.subscription
-      delete (definition as Record<string, unknown>).apiKey
+      delete (definition as unknown as Record<string, unknown>).apiKey
       definition.definitionDigest = workerDefinitionDigest(definition)
     }
     // Cloud continuations are queued on the Bot's parent device before a new child is provisioned.
@@ -423,6 +423,7 @@ export function resumeQuotaPausedRunOnCredits(userId: string, runId: string, mod
 /** #2938 (5): every quota-paused run the owner has — the bulk switch's candidates. */
 /** Chain-root ids of the person's quota-paused runs: the ids the paused cards use (#2938 (4)). */
 async function quotaPausedThreadIds(query: Tx, userId: string): Promise<string[]> {
+  const { sql } = await import('drizzle-orm')
   const { rows } = await query.execute(sql`
     SELECT DISTINCT root.id::text AS id FROM agent_runs p
     JOIN LATERAL (

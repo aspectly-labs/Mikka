@@ -55,10 +55,10 @@ export async function setConnectionModels(user: RequestWorkspaceUser, connection
       `SELECT "modelSettings" FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND epoch=$3 FOR UPDATE`,
       [connectionId, user.id, connection.epoch])
     if (!current) throw new ActionFailureError('executionAccountUnavailable')
-    const models = { ...(current.modelSettings?.models ?? {}) }
-    for (const [id, enabled] of Object.entries(updates)) models[id] = { ...(models[id] ?? {}), enabled, fresh: false, manual: true }
+    const models = { ...current.modelSettings?.models }
+    for (const [id, enabled] of Object.entries(updates)) models[id] = { ...models[id], enabled, fresh: false, manual: true }
     await client.query(`UPDATE byos_connections SET "modelSettings"=$2::jsonb WHERE id=$1`,
-      [connectionId, JSON.stringify({ ...(current.modelSettings ?? {}), models })])
+      [connectionId, JSON.stringify({ ...current.modelSettings, models })])
     await client.query('COMMIT')
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   return connectionModels(user, connectionId)

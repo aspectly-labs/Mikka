@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
-import { pool } from '../lib/db.js'
+import { pool } from '../lib/db'
 import { connectionModels, setConnectionModels } from '../lib/connection-models.js'
 import { seedUser, seedWorkspace } from './support/workspace-admin-db.js'
 import { tokenWorkspace } from '../lib/tokens/principal.js'
