@@ -4189,7 +4189,8 @@
       "modelRejected": "Model request rejected",
       "quotaChecking": "Subscription usage unconfirmed",
       "runtimeUnavailable": "Subscription unsupported in this runtime",
-      "modelNotReported": "The cloud computer didn't report this model"
+      "modelNotReported": "The cloud computer didn't report this model",
+      "modelRequired": "No model set up — the request did not run"
     },
     "quota": {
       "used": "{name} quota used up",
@@ -8430,6 +8431,7 @@
       "quotaChecking": "Subscription limit being checked",
       "runtimeUnavailable": "This environment does not support that subscription",
       "modelNotReported": "The cloud computer did not report this model",
+      "modelRequired": "No model set up — the request did not run",
       "hostedQuotaUsed": "Mikka limit reached",
       "hostedPaused": "Mikka limit temporarily unavailable",
       "temporarilyUnavailable": "Temporarily unavailable",
