@@ -24,11 +24,11 @@ mock.module('swr', { defaultExport: key => {
   return {}
 }, namedExports: { unstable_serialize: JSON.stringify, useSWRConfig: () => ({ mutate: async key => {
   if (Array.isArray(key) && key[0] === 'issue') {
-    reads.push('issue-detail')
+    reads.push(`issue-detail:${key[1]}`)
     return issue
   }
-  if (Array.isArray(key) && key[0] === 'issue-connections') reads.push('revalidate-connections')
-  if (Array.isArray(key) && key[0] === 'issue-threads') reads.push('issue-threads')
+  if (Array.isArray(key) && key[0] === 'issue-connections') reads.push(`revalidate-connections:${key[1]}`)
+  if (Array.isArray(key) && key[0] === 'issue-threads') reads.push(`issue-threads:${key[1]}`)
   if (typeof key === 'function') {
     assert.equal(key(['issues', 'another-owner', 'workspace']), false)
     if (key(['issues', 'owner', 'workspace'])) reads.push('viewer-list')
@@ -412,7 +412,7 @@ test('a stale Task property write reloads the detail and keeps the draft for one
     field.value = '2027-04-02'
     const submit = () => act(async () => field.form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))
     await submit()
-    assert.deepEqual(reads, ['issue-detail'])
+    assert.deepEqual(reads, ['issue-detail:task'])
     assert.equal(writes.length, 1)
     assert.equal(document.querySelector('#issue-action-value'), field)
     assert.equal(field.value, '2027-04-02')
@@ -452,14 +452,14 @@ test('inline and menu subtask creation refresh a stale parent and save once on e
         submit = () => act(async () => { await frame.subtasks.onCreate(title) })
       }
       await submit()
-      assert.deepEqual(reads, ['issue-detail'], entry)
+      assert.deepEqual(reads, ['issue-detail:task'], entry)
       assert.equal(writes.length, 1)
       if (entry === 'menu') assert.equal(document.querySelector('#issue-action-value').value, title)
       await submit()
       assert.deepEqual(writes, [startingRevision, startingRevision + 1].map(revision => ({
         id: issue.id, revision, kind: 'child', title, includeSubissues: false,
       })))
-      assert.deepEqual(reads, ['issue-detail', 'revalidate-connections', 'issue-threads', 'issue-detail', 'viewer-list'])
+      assert.deepEqual(reads, ['issue-detail:task', 'revalidate-connections:task', 'issue-threads:task', 'issue-detail:task', 'viewer-list'])
       assert.equal(issue.priority, 'high')
       assert.notEqual(issue.id, child.id)
     } finally { await dispose() }
@@ -485,6 +485,6 @@ test('a failed inline relation read does not block the independent menu form or 
     field.value = 'Valid title'
     await submit()
     assert.deepEqual(createChild.mock.calls.map(call => call.arguments[0].title), ['   ', 'Valid title'])
-    assert.deepEqual(reads, ['revalidate-connections', 'issue-threads', 'issue-detail', 'viewer-list'])
+    assert.deepEqual(reads, ['revalidate-connections:task', 'issue-threads:task', 'issue-detail:task', 'viewer-list'])
   } finally { await dispose() }
 })
