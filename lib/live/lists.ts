@@ -82,6 +82,18 @@ export async function groupListTargets(database: Database, workspaceDatabase: Da
   return (await workspaceScopes(workspaceDatabase, group.workspaceId, rows.map(row => row.memberId))).map(scope => target(scope, ['group_list']))
 }
 
+/** The group chats a Bot is an active member of: its look is part of each group's avatar in the chat list (R-36). */
+async function botGroups(database: Database, botId: string) {
+  const { rows } = await database.query<{ conversationId: string }>(
+    `SELECT DISTINCT "conversationId" FROM conversation_members WHERE "memberType"='bot' AND "memberId"=$1 AND "leftAt" IS NULL`, [botId])
+  return rows.map(row => row.conversationId)
+}
+
+/** Each group a Bot is in re-reads its list row, for its members only: the row carries the Bot's face (GroupSummary.bots). */
+export async function botGroupListTargets(database: Database, workspaceDatabase: Database, botId: string) {
+  return mergeTargets((await Promise.all((await botGroups(database, botId)).map(id => groupListTargets(database, workspaceDatabase, id)))).flat())
+}
+
 export async function botListTargets(database: Database, workspaceDatabase: Database, botId: string) {
   const { rows: [bot] } = await database.query<{ ownerId: string; workspaceId: string }>('SELECT "ownerId","workspaceId" FROM bots WHERE id=$1', [botId])
   if (!bot) return []
@@ -142,6 +154,8 @@ export const botRemovedChanged = (executor: object, ownerId: string, workspaceId
   ...(await workspaceScopes(workspace, workspaceId, [ownerId])).map(scope => target(scope, ['bot_list', 'thread_list', 'task_run_list'])),
   ...await ownerListTargets(workspace, ownerId, ['bot_chat_list']),
 ]))
+/** A Bot's name or look changed: the group lists that show it re-read (botGroupListTargets). */
+export const botGroupsChanged = (executor: object, botId: string) => changed(executor, `bot-groups:${botId}`, (db, workspace) => botGroupListTargets(db, workspace, botId))
 export const groupListChanged = (executor: object, conversationId: string, removedUserId: string | null = null) => changed(executor, `group:${conversationId}:${removedUserId ?? ''}`, (db, workspace) => groupListTargets(db, workspace, conversationId, removedUserId))
 export const groupListReadChanged = (executor: object, conversationId: string, ownerId: string) => changed(executor, `group-read:${conversationId}:${ownerId}`, async (db, workspace) => (await groupListTargets(db, workspace, conversationId)).filter(value => value.scope.ownerId === ownerId))
 /** Only the reader's channel in the selected workspace consumes this receipt. */

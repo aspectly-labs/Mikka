@@ -41,10 +41,11 @@ export function GroupPillAvatar({ id, title }: { id: string; title: string }) {
 }
 
 /**
- * The chat list's group avatar: the members already read for the group page, else the Bot faces the group list carries
- * (GroupSummary.bots), so the row and the page draw the same avatar; mounting a row never starts a member request.
+ * The chat list's group avatar: the Bot faces the group list carries (GroupSummary.bots), which a Bot's new look pushes
+ * (botGroupsChanged), so the row and the page draw the same avatar; an older server's list without them falls back to
+ * the members already read for the group page. Mounting a row never starts a member request.
  */
 export function CachedGroupAvatar({ id, title, bots }: { id: string; title: string; bots?: GroupSummary['bots'] }) {
   const { data: members } = useSWR<GroupMember[]>(groupMembersKey(id), null)
-  return <GroupAvatar title={title} members={members ?? bots?.map(bot => ({ ...bot, name: '', memberType: 'bot' as const }))} />
+  return <GroupAvatar title={title} members={bots ? bots.map(bot => ({ ...bot, name: '', memberType: 'bot' as const })) : members} />
 }

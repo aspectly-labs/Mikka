@@ -97,7 +97,7 @@ const render = async (messages: GroupMessage[]) => {
 
 test('Factory task and thread references in bot and agent replies are real links; sent user text keeps its existing rendering', async () => {
   await render([message('user', 1, handoff), message('bot', 2, handoff), message('agent', 3, handoff)])
-  const replies = [...container.querySelectorAll('ol[aria-label="messages"] > li')].slice(1)
+  const replies = [...container.querySelectorAll('ol[aria-label="messages"] > li:not([data-entry="group-start"])')].slice(1)
   assert.equal(replies.length, 2)
   for (const reply of replies) {
     assert.deepEqual([...reply.querySelectorAll('a')].map(link => ({ text: link.textContent, href: link.getAttribute('href') })), [
@@ -124,7 +124,7 @@ test('a committed named chat title revalidates only the group list supplying the
 
 test('group replies use the existing Markdown HTML and URL protections', async () => {
   await render([message('bot', 1, '<script>alert(1)</script>\n\n[bad](javascript:alert%281%29)\n\n' + handoff)])
-  const reply = container.querySelector('ol[aria-label="messages"] > li')!
+  const reply = container.querySelector('ol[aria-label="messages"] > li:not([data-entry="group-start"])')!
   assert.ok(reply)
   assert.equal(reply.querySelector('script'), null)
   assert.equal(reply.querySelector('a[href^="javascript:"]'), null)
@@ -140,7 +140,7 @@ test('anchored exchanges follow their author run once and open the linked transc
   exchangeReads.length = 0
   await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
   const list = container.querySelector('ol[aria-label="messages"]')!
-  const rows = [...list.children]
+  const rows = [...list.children].filter(row => row.getAttribute('data-entry') !== 'group-start')
   assert.deepEqual(rows.map(row => row.getAttribute('data-entry')), ['message-1', 'message-2', 'exchange:linked-exchange', 'message-3'], 'the exchange is a line of its own after its anchor\'s run of messages')
   assert.equal(lastThreadScreen()?.entries?.find(entry => entry.id === 'exchange:linked-exchange')?.role === 'bot' && (lastThreadScreen()!.entries!.find(entry => entry.id === 'exchange:linked-exchange') as { event?: true }).event, true, 'a line about the chat, with no author')
   const marker = rows[2].querySelector('button')!
@@ -161,9 +161,9 @@ test('anchored exchanges follow their author run once and open the linked transc
 
 test('another person\'s messages are the thread\'s messages under their author line, in plain text', async () => {
   await render([1, 2].map(position => ({ ...message('user', position, handoff), authorId: 'peer' })))
-  const entries = lastThreadScreen()!.entries!
+  const entries = lastThreadScreen()!.entries!.filter(entry => entry.id !== 'group-start')
   assert.deepEqual(entries.map(entry => entry.role === 'bot' ? entry.author?.id : null), ['user:peer', 'user:peer'], 'one author, so the thread names them once')
-  const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li')]
+  const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li:not([data-entry="group-start"])')]
   assert.equal(container.querySelectorAll('[data-slot="group-author"]').length, 1)
   const words = [...container.querySelectorAll('[data-slot="user-message-text"]')]
   assert.equal(rows.length, 2)
@@ -280,17 +280,18 @@ test('the group is the Bot chat\'s thread: the person\'s messages are theirs, ev
   await render([message('user', 1, 'Who checks this?'), message('bot', 2, 'I will'), message('user', 3, 'Thanks'), message('bot', 4, 'Done'), message('agent', 5, 'Checks are green')])
   const screen = lastThreadScreen()!
   assert.equal(screen.modelPicker, false, 'a group has no Bot of its own to pick a model for')
-  assert.deepEqual(screen.entries!.map(entry => entry.role === 'person' ? 'person' : `${entry.author?.name}${entry.author?.quiet ? ' (quiet)' : ''}`),
+  assert.deepEqual(screen.entries!.filter(entry => entry.id !== 'group-start').map(entry => entry.role === 'person' ? 'person' : `${entry.author?.name}${entry.author?.quiet ? ' (quiet)' : ''}`),
     ['person', 'Design Bot', 'person', 'Design Bot', 'Build Agent'], 'every reply names its author; none is quiet in a group')
+  assert.ok(screen.entries!.every(entry => entry.role === 'person' || entry.event || entry.author?.header), 'each speaker heads its words as LobeHub\'s group chat')
   const sender = (row: Element) => row.querySelector('[data-slot="group-author"]')?.textContent ?? null
-  assert.deepEqual([...container.querySelectorAll('ol[aria-label="messages"] > li')].map(sender), [null, 'Design Bot', null, 'Design Bot', 'Build Agent'])
+  assert.deepEqual([...container.querySelectorAll('ol[aria-label="messages"] > li:not([data-entry="group-start"])')].map(sender), [null, 'Design Bot', null, 'Design Bot', 'Build Agent'])
   groupMembers = []
 })
 
 test('every group message\'s line waits for hover and focus, as the Bot chat\'s (decision 2026-11-22-1500)', async () => {
   const { HOVER_ACTIONS } = await import('@/components/chat/copy-action')
   await render([message('user', 1, 'Mine'), message('bot', 2, 'Reply')])
-  const lines = [...container.querySelectorAll('ol[aria-label="messages"] > li')].map(row => row.querySelector('[data-slot="message-actions"]')!)
+  const lines = [...container.querySelectorAll('ol[aria-label="messages"] > li:not([data-entry="group-start"])')].map(row => row.querySelector('[data-slot="message-actions"]')!)
   assert.equal(lines.length, 2)
   for (const line of lines) for (const name of HOVER_ACTIONS.split(' ')) assert.ok(line.classList.contains(name), name)
   assert.equal(lines[1].querySelector('time'), null, 'a reply\'s author line already says when')
@@ -302,4 +303,32 @@ test('before its first page the group shows every chat\'s one skeleton, not a li
   assert.ok(container.querySelector('[data-loading-placeholder]'), 'ConversationPageLoading')
   assert.equal(container.querySelector('ol'), null)
   assert.equal(container.querySelector('textarea'), null, 'the thread screen comes with the first page')
+})
+
+test('while Bots answer, the thread names each one with its mark, as a chat shows who is typing', async () => {
+  groupMembers = [{ id: 'design', name: 'Design Bot', memberType: 'bot' }, { id: 'build', name: 'Build Bot', memberType: 'bot' }]
+  pages = [{ messages: [message('user', 1, '@Design Bot @Build Bot check this')], nextBefore: null, agentStatus: { status: 'running' },
+    answering: [{ memberType: 'bot', id: 'build' }, { memberType: 'bot', id: 'design' }] }]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  const writing = lastThreadScreen()!.entries!.filter(entry => entry.role === 'bot' && entry.streaming)
+  assert.deepEqual(writing.map(entry => entry.role === 'bot' ? [entry.id, entry.author?.name] : null), [['answering:bot:build', 'Build Bot'], ['answering:bot:design', 'Design Bot']])
+  assert.ok(writing.every(entry => entry.role === 'bot' && entry.author?.mark), 'each with its own mark')
+  assert.deepEqual([...container.querySelectorAll('[data-slot="group-author"]')].map(node => node.textContent), ['Build Bot', 'Design Bot'])
+  pages = [{ messages: [message('user', 1, 'anyone?')], nextBefore: null, agentStatus: { status: 'queued' }, answering: [] }]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  assert.deepEqual(lastThreadScreen()!.entries!.filter(entry => entry.role === 'bot' && entry.streaming).map(entry => entry.id), ['answering'], 'not yet taken: the group\'s own wait')
+  groupMembers = []
+})
+
+test('the start of the group opens its history with its avatar, name and members, once the first message is loaded', async () => {
+  groupMembers = [{ id: 'owner', name: 'Owner', memberType: 'user' }, { id: 'bot', name: 'Design Bot', memberType: 'bot' }]
+  await render([message('user', 1, 'hello')])
+  const start = lastThreadScreen()!.entries![0]!
+  assert.equal(start.id, 'group-start')
+  assert.ok(start.role === 'bot' && start.event, 'a line about the chat, with no author')
+  assert.match(container.querySelector('[data-group-start]')?.textContent ?? '', /Fixture group.*you.*Design Bot/)
+  pages = [{ messages: [message('user', 2, 'later')], nextBefore: '1' }]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  assert.equal(container.querySelector('[data-group-start]'), null, 'older messages still to load: not the start yet')
+  groupMembers = []
 })
