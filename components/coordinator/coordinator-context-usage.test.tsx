@@ -33,7 +33,7 @@ after(async () => {
   await page.happyDOM.close()
 })
 
-const usage = (used: number): ConversationUsage => ({ estimated: true, used, compactAt: 100_000, share: Math.round(used / 1_000), compactsNextTurn: false, keepRecent: 20_000 })
+const usage = (used: number): ConversationUsage => ({ estimated: true, used, compactAt: 100_000, share: Math.round(used / 1_000), compactsNextTurn: false, keepRecent: 20_000, hasSummary: false, windowTokens: null })
 
 test('the composer shows a ring of the share; the figures are in its name, its tooltip and the panel', async () => {
   await act(async () => root.render(<CoordinatorContextUsage usage={usage(43_000)} />))
