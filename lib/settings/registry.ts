@@ -156,13 +156,14 @@ export function personalSettingWorkspace(field: Pick<SettingDefinition, 'persona
   return field.personalContext === 'workspace' ? workspaceId : null
 }
 
-const STORED_COLUMN = { integer: '"integerValue"', boolean: '"booleanValue"', string: '"textValue"', 'string[]': '"textArrayValue"' } as const
+const STORED_COLUMN = { integer: '"integerValue"', boolean: '"booleanValue"', string: '"textValue"' } as const
+type ScalarSettingKey = { [K in SettingKey]: (typeof SETTINGS_REGISTRY)[K]['type'] extends keyof typeof STORED_COLUMN ? K : never }[SettingKey]
 
 /** One resolution rule for a query: the member's own value, then the workspace's, then the
  * registry default. `owner` and `workspace` are the caller's own placeholders. */
-export function resolvedSettingSql(key: SettingKey, owner: string, workspace: string): string {
+export function resolvedSettingSql(key: ScalarSettingKey, owner: string, workspace: string): string {
   const field = SETTINGS_REGISTRY[key]
-  const column = STORED_COLUMN[field.type as keyof typeof STORED_COLUMN]
+  const column = STORED_COLUMN[field.type]
   const scope = personalSettingWorkspace(field, workspace) ?? 'NULL'
   const fallback = typeof field.defaultValue === 'string' ? `'${field.defaultValue.replaceAll("'", "''")}'` : String(field.defaultValue)
   return `coalesce((SELECT ${column} FROM personal_setting_values

@@ -66,7 +66,7 @@ export function ConversationDirectory({ ownerId, workspaceId, botId, automationI
   // The picker shows what the thread archiver will use: the member's own interval when they set
   // one, otherwise the workspace's inherited interval, never the account default on top of it.
   const resolvedKey = workspaceId ? settingsKeys.personalSettings(workspaceId) : null
-  const resolved = useSWR(resolvedKey, () => settingsRead<SettingsView>('personal', { workspace: workspaceId }))
+  const resolved = useSWR(resolvedKey, () => settingsRead<SettingsView>('personal', { workspaceId }))
   const resolvedDays = resolved.data?.values.archiveIdleAfterDays?.value
   const archiveDays = typeof resolvedDays === 'number' ? resolvedDays : prefs.data?.archiveIdleAfterDays
   const [saving,setSaving] = useState(false)

@@ -20,10 +20,11 @@ mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', u
 const stub = (file: string, namedExports: Record<string, unknown>) => mock.module(new URL(file, import.meta.url).href, { namedExports })
 function readPreferences() { reads++; return pendingRead ?? { archiveIdleAfterDays: days } }
 const view = (value: number) => ({ workspaceId: 'workspace', values: { archiveIdleAfterDays: { value, source: inherited === null ? 'personal' : 'workspace' } } })
-function read(name: string) {
+function read(name: string, query?: { workspaceId?: string }) {
   if (name !== 'personal') return readPreferences()
   reads++
-  return pendingRead ? pendingRead.then(settings => view(settings.archiveIdleAfterDays)) : view(inherited ?? days)
+  return pendingRead ? pendingRead.then(settings => view(settings.archiveIdleAfterDays))
+    : view((query?.workspaceId === 'workspace' ? inherited : null) ?? days)
 }
 stub('../../lib/settings-read.ts', { settingsRead: read })
 stub('../../app/actions/preferences.ts', { getPreferences: readPreferences, updatePreferences: async ({ archiveIdleAfterDays }: { archiveIdleAfterDays: number }) => {

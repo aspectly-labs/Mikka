@@ -17,7 +17,8 @@ if (!databaseUrl && process.env.REQUIRE_DB === '1') throw new Error('REQUIRE_DB=
 const dbTest = databaseUrl ? test : test.skip
 
 dbTest('one read of a device\'s runs finds its stops, messages and queued runs', async t => {
-  const [{ createRequestDatabaseScope, pool }, { deviceWork }] = await Promise.all([import('./db'), import('./device-link')])
+  const [{ createRequestDatabaseScope, pool }, { deviceWork }, { claimLocalRun }, { deviceSessionHeld }] =
+    await Promise.all([import('./db'), import('./device-link'), import('./computer/claim'), import('./device-session')])
   const scope = createRequestDatabaseScope(databaseUrl!)
   const owner = `test-device-work-${randomUUID()}`
   const device = randomUUID(), other = randomUUID(), agent = randomUUID()
@@ -61,6 +62,13 @@ dbTest('one read of a device\'s runs finds its stops, messages and queued runs',
     await pool.query('update devices set "maxConcurrentRuns"=4 where id=$1', [device])
     assert.deepEqual((await deviceWork(device, [], { queued: true })).queuedRuns.sort(), [ids.queued, ids.skippedQueued].sort(), 'raising the limit offers the waiting runs again')
     await pool.query('update devices set "maxConcurrentRuns"=3 where id=$1', [device])
+    await pool.query(`update agent_runs set status='paused',"pauseReason"='quota_exhausted',"leaseExpiresAt"=NULL where id=$1`, [ids.running])
+    assert.deepEqual((await deviceWork(device, [], { queued: true })).queuedRuns.sort(), [ids.queued, ids.skippedQueued].sort(),
+      'a quota pause with no lease leaves a slot available to a different run')
+    await pool.query('update devices set "sessionOpenedAt"=now() where id=$1', [device])
+    const racing = await Promise.all([ids.queued, ids.skippedQueued].map(id =>
+      claimLocalRun(pool, id, device, new Date(Date.now() + 60_000), undefined, tx => deviceSessionHeld(tx, device))))
+    assert.deepEqual(racing, ['claimed', 'claimed'], 'two offers that fit both claim successfully')
     assert.deepEqual(await deviceWork(other, [ids.elsewhere], { queued: true }), { commands: [], queuedRuns: [] })
 
     // Taken back by the server (decision 2026-11-17-2215): a session close ended the lease,
