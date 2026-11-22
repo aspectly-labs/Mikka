@@ -706,6 +706,8 @@ test('the line under the person own messages shows only a time the message reall
   thread = { ...base, createdAt: new Date('2026-11-20T15:00:00Z') }
   const html = render()
   const item = (words: string) => html.split('<li').find(part => part.includes(words)) ?? ''
+  assert.ok(item('Timed message.'), 'the timed message renders')
+  assert.ok(item('Untimed message.'), 'the untimed message still renders, only without a time')
   assert.match(item('Timed message.'), /<time[^>]*dateTime="2026-11-20T15:42:00.000Z"/i)
   assert.doesNotMatch(item('Untimed message.'), /<time/)
 })
