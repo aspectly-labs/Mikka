@@ -7,6 +7,8 @@ import { useTranslations } from '@/lib/intl/i18n-client'
 import { listAgents } from '@/app/actions/agents'
 import { ChatComposer, ChatComposerAttachment } from '@/components/coordinator/chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
+import { MessageTimeStamp } from '@/components/chat/message-time-stamp'
+import { stampStarts } from '@/lib/chat-time-stamps'
 import type { ThreadGroupRow, ThreadTranscriptMessage } from '@/components/slots/thread-contract'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { namedConversationModelBot } from '@/lib/named-conversation-model'
@@ -221,12 +223,18 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // Whom the person's messages go to, for the chat-message slot: the group.
   const speaker = { id: group.id, name: group.title || t('untitled') }
 
-  const rows: ThreadGroupRow[] = authorRuns(messages).flatMap((run): ThreadGroupRow[] => {
+  // The centred time over each group of messages (#2922): the first run, and each run after a quiet gap.
+  const runs = authorRuns(messages)
+  const stamped = stampStarts(runs.map(run => Date.parse(run.messages[0]?.createdAt ?? '')))
+  const rows: ThreadGroupRow[] = runs.flatMap((run, index): ThreadGroupRow[] => {
     const mine = run.authorType === 'user' && run.authorId === userId
     const name = authorName(run.authorType, run.authorId)
     const bot = run.authorType === 'bot' ? member('bot', run.authorId) : undefined
+    // A Bot's or Agent's reply is its words alone, as in a thread (#2922); another person keeps their mark and name.
+    const reply = run.authorType !== 'user'
+    const at = Date.parse(run.messages[0]?.createdAt ?? '')
     return [{
-      kind: 'author', id: run.key, mine, name,
+      kind: 'author', id: run.key, mine, name, ...(reply ? { quiet: true } : {}), ...(stamped[index] ? { before: <MessageTimeStamp at={at} /> } : {}),
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
       messages: run.messages.map((message): ThreadTranscriptMessage => {
         // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.
@@ -236,7 +244,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
           body: <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>,
           ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="end" /> } }
-        : { id: message.id, message: { from: 'bot', speaker, presentation: 'group-received',
+        : { id: message.id, message: { from: 'bot', speaker, presentation: reply ? 'group-reply' : 'group-received',
           body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} />,
           ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }

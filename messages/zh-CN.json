@@ -9152,5 +9152,14 @@
       "label": "并发子 Agent 数量",
       "keywords": "子 Agent|并发|限制"
     }
+  },
+  "ChatTime": {
+    "today": "今天 {time}",
+    "yesterday": "昨天 {time}"
+  },
+  "MergeWaiting": {
+    "line": "等你合并 <pr></pr>",
+    "dismiss": "忽略",
+    "dismissFailed": "忽略失败"
   }
 }

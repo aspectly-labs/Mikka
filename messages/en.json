@@ -9152,5 +9152,14 @@
       "label": "Concurrent subagents",
       "keywords": "agent|concurrency|limit"
     }
+  },
+  "ChatTime": {
+    "today": "Today {time}",
+    "yesterday": "Yesterday {time}"
+  },
+  "MergeWaiting": {
+    "line": "Waiting on you to merge <pr></pr>",
+    "dismiss": "Dismiss",
+    "dismissFailed": "Dismiss failed"
   }
 }

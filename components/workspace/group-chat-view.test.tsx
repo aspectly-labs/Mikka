@@ -270,3 +270,22 @@ test('the named conversation mounts the existing picker for the sole or explicit
     assert.equal(chip(), null)
   } finally { groupMembers = []; membersError = undefined }
 })
+
+test('a Bot\'s or Agent\'s reply is its words alone, and a centred time opens each group of messages (#2922)', async () => {
+  const at = (minutes: number) => new Date(Date.UTC(2026, 10, 4, 18, minutes)).toISOString()
+  await render([
+    { ...message('user', 1, 'Fix the loading state'), createdAt: at(0) },
+    { ...message('bot', 2, 'On it'), createdAt: at(1) },
+    { ...message('agent', 3, 'Checks are green'), createdAt: at(40) },
+  ])
+  const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li')]
+  assert.equal(rows.length, 3)
+  assert.deepEqual(rows.map(row => row.querySelectorAll('[data-time-stamp] time').length), [1, 0, 1], 'the first message and the one after a quiet gap')
+  assert.equal(rows[2].querySelector('[data-time-stamp] time')!.getAttribute('datetime'), at(40))
+  for (const reply of rows.slice(1)) {
+    assert.ok(reply.querySelector('[data-group-reply]'), 'plain words, no bubble')
+    assert.equal(reply.querySelector('[data-slot="bubble"]'), null)
+    const name = [...reply.querySelectorAll('span')].find(span => span.textContent === 'bot' || span.textContent === 'Agent' || span.textContent === 'agent')
+    if (name) assert.equal(name.className, 'sr-only', 'the name is for screen readers only')
+  }
+})

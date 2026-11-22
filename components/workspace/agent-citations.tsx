@@ -22,6 +22,8 @@ import { TaskRunMark, TaskStatusIcon, useRunIndicatorLabel, useTaskStatusLabel }
 import { threadIndicatorOf, runIndicatorOf } from '@/lib/task-state'
 import { ThreadStatus } from '@/components/workspace/thread-status-icon'
 import { openThread } from '@/components/workspace/workspace-navigation'
+import { PullRequestChip, pullRequestLabel } from '@/components/chat/pull-request-chip'
+import { citedPullRequest, pullChipState } from '@/lib/pull-chip'
 
 export type LinkPreviews = Record<string, LinkPreview | null>
 
@@ -204,6 +206,11 @@ export function CitationChip({ id, kind, after }: { id: string; kind: CitationKi
 export function WebCitation({ url, label }: { url: string; label: string | null }) {
   const citations = useAgentCitations()
   if (!citations) return <a href={url} className="text-primary underline underline-offset-4" target="_blank" rel="noopener noreferrer">{label ?? url}</a>
+  // A pull request is a PR chip (#2922): its state from the tasks and threads this chat already looked up, none when unknown.
+  if (pullRequestLabel(url)) {
+    const pull = citedPullRequest(url, citations.sources)
+    return <PullRequestChip url={url} state={pull ? pullChipState(pull.state, pull.checks) : null} />
+  }
   return <LinkCitation url={url} label={label} preview={citations.previews[url]} />
 }
 

@@ -18,6 +18,10 @@ export function ChatMessage({ from, compact = false, presentation = 'default', d
     </Bubble>
     {after}
   </>
+  if (presentation === 'group-reply') return <>
+    <div data-group-reply="" className="min-w-0 max-w-full break-words">{body}</div>
+    {after}
+  </>
   if (presentation === 'suggestion') return <>
     {lead}
     {body && <Bubble variant="secondary" align="end" className={cn(PERSON_BUBBLE, compact ? 'max-w-[90%]' : 'max-w-[min(26rem,80%)]')}>

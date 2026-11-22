@@ -51,6 +51,7 @@ import { ActivityExpansionContext, ReplyActivity, useActivityExpansion, useThrea
 import { CHAT_SURFACE, ChatWaiting } from '@ui-slot/chat-message'
 import { ChatComposer, ChatComposerAttachment } from './chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
+import { MergeWaitingLine, useMergeWaitings } from '@/components/chat/merge-waiting-line'
 import { useConversationPanels, useWorkTabs } from '@/components/coordinator/conversation-panels'
 import type { ThreadEntry, ThreadEntryPart, ThreadScrolledRow } from '@/components/slots/thread-contract'
 import { factoryQuestionUnavailable, useFactoryQuestions } from '@/hooks/use-factory-questions'
@@ -579,6 +580,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const tNavAll = useTranslations()
   // The Coordinator's chat docks the person's pending Factory questions; a read follows the chat's own version.
   const factory = useFactoryQuestions(data?.version ?? data?.cursor ?? null, Boolean(!embedded && !botId && data))
+  // A PR a thread from this chat delivered, waiting on the person to merge it (#2922): one line at the chat's end.
+  const mergeWaitings = useMergeWaitings(embedded ? [] : items.flatMap(item => cardsOf(item, false).flatMap(id => {
+    const run = sources?.[id]
+    return run?.kind === 'run' && run.issue ? [{ issueId: run.issue.id, pulls: run.pullRequests ?? [] }] : []
+  })))
   if (!embedded) {
     // The live failure as the thread's error line: a plain failure says 回复失败 (or why the wake failed) once, on the
     // line, with 重试 under it; a failure with its own reason (cloud, refusal, subscription, API balance) keeps its notice.
@@ -623,7 +629,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
         parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
       entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-        // The reply's author line already shows its time; the line under it does not repeat it.
+        // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
         actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
           <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
           {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
@@ -634,10 +640,15 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
         ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
       ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
+    for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
+      parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
     // Before the reply has anything to show: the Bot's turn, still empty, with its caret.
     if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
       entries.push({ id: 'waiting', role: 'bot', at: Date.now(), parts: [], streaming: true })
     if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
+    // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.
+    const quietAuthor = { id: botId ?? 'coordinator', name, mark: avatar('pill'), quiet: true }
+    for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = quietAuthor
     const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
       ? <p role="status">{tNav('writingWelcome')}</p>
       : <p>{t('empty', { name })}</p>) : undefined
