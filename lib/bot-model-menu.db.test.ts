@@ -289,7 +289,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const keyOption = apiKeyOptionId(key.id, "deepseek-chat");
     let keyMenu = await botModelMenu(pool, settings, alice, null);
     assert.equal(keyMenu.groups.find((group) => group.kind === "apiKey")?.credentialLabel, `····${key.last4}`);
-    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options, [{ id: keyOption, modelId: "deepseek-chat", provider: "deepseek" }]);
+    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options, [{ id: keyOption, modelId: "deepseek-chat", provider: "deepseek", route: { keyId: key.id, label: `····${key.last4}`, source: "byok" } }]);
     // Picked by its option id, as the web's action and the iOS app's PUT /api/mobile/model both send it.
     const { chooseBotModel } = await import("./bot-model-menu");
     keyMenu = await chooseBotModel(pool, settings, alice, null, keyOption);

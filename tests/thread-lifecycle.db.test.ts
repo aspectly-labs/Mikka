@@ -34,7 +34,7 @@ test.after(async () => {
 test('fork full replays transcript and anchors to the chain root; side thread anchors to its message', async () => {
   const { rootId } = await fixture()
   const attempt = randomUUID()
-  await pool.query(`INSERT INTO agent_runs (id,"userId","agentId",status,"retryOf") SELECT $1,"userId","agentId",'succeeded',$2 FROM agent_runs WHERE id=$2`, [attempt, rootId])
+  await pool.query(`INSERT INTO agent_runs (id,"userId","agentId","workspaceId","issueId",status,"retryOf") SELECT $1,"userId","agentId","workspaceId","issueId",'succeeded',$2 FROM agent_runs WHERE id=$2`, [attempt, rootId])
   kept.push(attempt)
   await pool.query(`INSERT INTO run_messages (id,"runId","userId",text) VALUES ($1,$2,$3,'first'),($4,$5,$3,'second')`, [randomUUID(), rootId, owner.id, randomUUID(), rootId])
 
