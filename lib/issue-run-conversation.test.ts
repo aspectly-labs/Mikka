@@ -16,6 +16,7 @@ function resultStep(output: unknown, toolDurationMs?: unknown) {
 test('successful commands expose output and the measured duration, independent of batch insert time', () => {
   assert.deepEqual(resultStep('3 tests passed\n', 1250), {
     id: 'cmd', name: 'bash', detail: 'pnpm test', command: 'pnpm test', failed: false, output: '3 tests passed\n', ms: 1250,
+    kind: 'shell', status: 'ok', title: 'pnpm test', outputTail: '3 tests passed\n', outputRef: 'cmd',
   })
   const succeeded = resultStep({ exitCode: 0, output: 'ok\n' }, 0)
   assert.equal(succeeded.exitCode, 0)
@@ -53,7 +54,7 @@ test('failed calls still mark failure without exposing error text, and unmatched
   ], [])
   assert.ok(item.kind === 'steps')
   assert.equal(item.count, 1)
-  assert.deepEqual(item.steps, [{ id: 'failed', name: 'bash', detail: null, failed: true, ms: 42 }])
+  assert.deepEqual(item.steps, [{ id: 'failed', name: 'bash', detail: null, failed: true, ms: 42, kind: 'shell', status: 'failed', title: 'bash', outputRef: 'failed' }])
 })
 
 test('output uses persisted workspace masking and masks credentials again before truncation', () => {
@@ -149,12 +150,15 @@ test('a folded steps line keeps each tool call so it can open: name, what it ran
   assert.ok(steps.kind === 'steps')
   assert.equal(steps.count, 4)
   assert.deepEqual(steps.steps.slice(0, 2), [
-    { id: '1', name: 'Bash', detail: 'pnpm test --watch=false', command: 'pnpm   test\n --watch=false', failed: true },
-    { id: '2', name: 'apply_patch', detail: 'a.ts, b.ts', failed: false },
+    { id: '1', name: 'Bash', detail: 'pnpm test --watch=false', command: 'pnpm   test\n --watch=false', failed: true,
+      kind: 'shell', status: 'failed', title: 'pnpm   test\n --watch=false', outputRef: '1' },
+    { id: '2', name: 'apply_patch', detail: 'a.ts, b.ts', failed: false,
+      kind: 'edit', status: 'running', title: 'a.ts, b.ts', outputRef: '2' },
   ])
   assert.equal(steps.steps[2].detail?.length, 200)
   assert.ok(steps.steps[2].detail?.endsWith('…'))
-  assert.deepEqual(steps.steps[3], { id: '4', name: 'tool', detail: null, failed: false })
+  assert.deepEqual(steps.steps[3], { id: '4', name: 'tool', detail: null, failed: false,
+    kind: 'other', status: 'running', title: 'tool', outputRef: '4' })
 })
 
 test('steps carry structured fields (#2937): kind, status, title, outputTail and outputRef across the call lifecycle', () => {

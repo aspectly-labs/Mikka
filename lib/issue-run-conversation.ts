@@ -83,7 +83,7 @@ const COMMAND_STEPS = new Set(['bash', 'shell', 'execute'])
 export const isCommandStep = (step: Pick<ThreadStep, 'name'>) => COMMAND_STEPS.has(step.name.toLowerCase())
 
 /** Codex records its combined output and exit code in a single result. */
-function commandResult(value: unknown) {
+export function commandResult(value: unknown) {
   if (value && typeof value === 'object' && 'output' in value && typeof value.output === 'string'
     && 'exitCode' in value && (value.exitCode === null || (typeof value.exitCode === 'number' && Number.isInteger(value.exitCode)))) {
     return { output: value.output, exitCode: value.exitCode }
