@@ -40,6 +40,18 @@ export async function namedOutsideToken(user: ApiUser, named: readonly (string |
   return scope ? outside(scope, named) : false
 }
 
+/** An SQL predicate restricting a workspaceId column to the token's scope, for
+ * queries whose LIMIT must apply after the filter. Empty for an unscoped
+ * caller; a personal-scoped token also keeps the unlinked (null) rows. */
+export async function tokenScopeFilter(user: ApiUser, column: string, parameter: number) {
+  const scope = tokenScope(user)
+  if (!scope) return { sql: '', params: [] as string[] }
+  const sql = await scope.personal()
+    ? ` AND (${column} = $${parameter} OR ${column} IS NULL)`
+    : ` AND ${column} = $${parameter}`
+  return { sql, params: [scope.workspaceId] }
+}
+
 /** Thread tenant is immutable even after its source links are removed. */
 export async function runsOutsideToken(user: ApiUser, runIds: readonly string[]): Promise<Set<string>> {
   if (!runIds.length) return new Set()
