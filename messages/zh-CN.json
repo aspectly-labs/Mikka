@@ -4477,6 +4477,7 @@
     "pleaseSignInFirst": "请先登录。",
     "unableToLoadChatHistoryPleaseTry": "无法读取聊天历史，请稍后重试。",
     "activeAgentsNoParameters": "此接口不接受任何参数。",
+    "activeAgentsGroupNotFound": "群不存在或你不是成员。",
     "conversationNotFound": "找不到此会话。",
     "thisMessageWasAlreadySubmittedPleaseAsk": "此轮消息不能重复提交，请新建一轮提问。",
     "invalidMessageIDPleaseAskANew": "消息标识无效，请新建一轮提问。",

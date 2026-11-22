@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { agentRuns, agents, coordinatorBots, coordinatorSessions, devices, bots, conversations, groupTurns } from '@/lib/db/schema'
+import { agentRuns, agents, conversationMembers, coordinatorBots, coordinatorSessions, devices, bots, conversations, groupTurns } from '@/lib/db/schema'
 import type * as schema from '@/lib/db/schema'
 import { coordinatorLeaseActive } from '@/lib/coordinator/lease'
 import { deviceSessionOpen } from './device-presence'
@@ -55,12 +55,42 @@ export function sortActiveAgents(list: ActiveAgent[]): ActiveAgent[] {
   return [...list].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
-export async function listActiveAgents(database: Database, userId: string, now = new Date(), workspaceId?: string): Promise<ActiveAgent[]> {
+/** The group's non-user member ids, split by kind; left members do not count. */
+async function conversationMemberIds(database: Database, conversationId: string): Promise<{ agents: string[]; bots: string[] }> {
+  const rows = await database.select({ memberType: conversationMembers.memberType, memberId: conversationMembers.memberId })
+    .from(conversationMembers)
+    .where(and(eq(conversationMembers.conversationId, conversationId), isNull(conversationMembers.leftAt)))
+  return {
+    agents: rows.filter(row => row.memberType === 'agent').map(row => row.memberId),
+    bots: rows.filter(row => row.memberType === 'bot').map(row => row.memberId),
+  }
+}
+
+/** A signed-in person may scope the strip to a group they are a user member of. */
+export async function isConversationUserMember(database: Database, conversationId: string, userId: string): Promise<boolean> {
+  const rows = await database.select({ memberId: conversationMembers.memberId }).from(conversationMembers)
+    .where(and(
+      eq(conversationMembers.conversationId, conversationId),
+      eq(conversationMembers.memberType, 'user'),
+      eq(conversationMembers.memberId, userId),
+      isNull(conversationMembers.leftAt),
+    )).limit(1)
+  return rows.length > 0
+}
+
+export async function listActiveAgents(database: Database, userId: string, now = new Date(), workspaceId?: string, conversationId?: string): Promise<ActiveAgent[]> {
+  // A group-scoped read returns only that group's members (#101): accounts show
+  // every agent they own, a group shows only the agents and bots enrolled in it.
+  const members = conversationId ? await conversationMemberIds(database, conversationId) : null
+  const agentIds = members?.agents ?? []
+  const botIds = members?.bots ?? []
+  if (members && !agentIds.length && !botIds.length) return []
   const startedAt = sql<Date>`coalesce(${agentRuns.startedAt}, ${agentRuns.createdAt})`.mapWith(agentRuns.createdAt)
   const [rows, [session], workingBots] = await Promise.all([
+    members && !agentIds.length ? [] :
     database.select({ agentId: agents.id, name: runBotName, runId: agentRuns.id, issueId: agentRuns.issueId, status: agentRuns.status, startedAt })
       .from(agentRuns)
-      .innerJoin(agents, and(eq(agents.id, agentRuns.agentId), eq(agents.userId, userId)))
+      .innerJoin(agents, and(eq(agents.id, agentRuns.agentId), eq(agents.userId, userId), members ? inArray(agents.id, agentIds) : undefined))
       .leftJoin(devices, and(eq(devices.id, agentRuns.deviceId), eq(devices.ownerId, userId)))
       .where(and(
         eq(agentRuns.userId, userId),
@@ -71,12 +101,13 @@ export async function listActiveAgents(database: Database, userId: string, now =
       )),
     // The Coordinator's chat is its bot row's (coordinator_bots).
     database.select({ botId: coordinatorBots.botId, leaseHolder: coordinatorSessions.leaseHolder, leaseUntil: coordinatorSessions.leaseUntil, updatedAt: coordinatorSessions.updatedAt })
-      .from(coordinatorSessions).innerJoin(coordinatorBots, and(eq(coordinatorBots.botId, coordinatorSessions.botId), eq(coordinatorBots.ownerId, userId), workspaceId ? eq(coordinatorBots.workspaceId, workspaceId) : undefined))
+      .from(coordinatorSessions).innerJoin(coordinatorBots, and(eq(coordinatorBots.botId, coordinatorSessions.botId), eq(coordinatorBots.ownerId, userId), workspaceId ? eq(coordinatorBots.workspaceId, workspaceId) : undefined, members ? inArray(coordinatorBots.botId, botIds) : undefined))
       .where(eq(coordinatorSessions.userId, userId)).orderBy(desc(coordinatorSessions.updatedAt)).limit(1),
+    members && !botIds.length ? [] :
     database.select({ id: bots.id, name: bots.name, color: bots.color, shape: bots.shape, startedAt: groupTurns.updatedAt })
       .from(groupTurns)
       .innerJoin(conversations, and(eq(conversations.id, groupTurns.conversationId), eq(conversations.createdBy, userId)))
-      .innerJoin(bots, and(eq(bots.id, groupTurns.botId), eq(bots.ownerId, userId), eq(bots.workspaceId, conversations.workspaceId)))
+      .innerJoin(bots, and(eq(bots.id, groupTurns.botId), eq(bots.ownerId, userId), eq(bots.workspaceId, conversations.workspaceId), members ? inArray(bots.id, botIds) : undefined))
       .where(and(eq(groupTurns.status, 'running'), gt(groupTurns.updatedAt, new Date(now.getTime() - 60_000)), workspaceId ? eq(bots.workspaceId, workspaceId) : undefined)),
   ])
   const list = mergeAgentRuns(rows)
@@ -91,17 +122,37 @@ export async function listActiveAgents(database: Database, userId: string, now =
   return sortActiveAgents(list)
 }
 
-type Copy = { pleaseSignIn: string; unavailable: string; noParameters: string }
+type Copy = { pleaseSignIn: string; unavailable: string; noParameters: string; groupNotFound: string }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export type ActiveAgentsScope = {
+  /** Whether the signed-in person is a user member of the conversation. */
+  member: (userId: string, conversationId: string) => Promise<boolean>
+  /** The group-filtered read: only that conversation's agent/bot members. */
+  list: (userId: string, conversationId: string) => Promise<ActiveAgent[]>
+}
 
 /**
  * GET /api/agent/sessions/active, without the framework: the route passes the
  * signed-in user (or null) and the reader, so this is testable without a DB.
+ * `?conversation=<id>` scopes the result to that group's members when `scope`
+ * is given; a caller who is not a user member gets the same 404 as a group
+ * that does not exist.
  */
-export async function activeAgentsResponse(request: Request, userId: string | null, list: (userId: string) => Promise<ActiveAgent[]>, copy: Copy): Promise<Response> {
+export async function activeAgentsResponse(request: Request, userId: string | null, list: (userId: string) => Promise<ActiveAgent[]>, copy: Copy, scope?: ActiveAgentsScope): Promise<Response> {
   const headers = { 'Cache-Control': 'private, no-store' }
   if (!userId) return Response.json({ error: copy.pleaseSignIn }, { status: 401, headers })
-  if ([...new URL(request.url).searchParams.keys()].length) return Response.json({ error: copy.noParameters }, { status: 400, headers })
+  const params = [...new URL(request.url).searchParams.entries()]
+  const conversation = params.length === 1 && params[0][0] === 'conversation' && scope ? params[0][1] : null
+  if (params.length && !conversation) return Response.json({ error: copy.noParameters }, { status: 400, headers })
   try {
+    if (conversation) {
+      if (!UUID.test(conversation) || !await scope!.member(userId, conversation))
+        return Response.json({ error: copy.groupNotFound }, { status: 404, headers })
+      const agents = await scope!.list(userId, conversation)
+      return Response.json(agents.length ? { agents, polledAt: new Date().toISOString() } : { agents: [] }, { headers })
+    }
     const agents = await list(userId)
     return Response.json(agents.length ? { agents, polledAt: new Date().toISOString() } : { agents: [] }, { headers })
   } catch {

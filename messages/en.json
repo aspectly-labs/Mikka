@@ -4477,6 +4477,7 @@
     "pleaseSignInFirst": "Please sign in first.",
     "unableToLoadChatHistoryPleaseTry": "Unable to load chat history. Please try again.",
     "activeAgentsNoParameters": "This endpoint takes no parameters.",
+    "activeAgentsGroupNotFound": "Group not found or you are not a member.",
     "conversationNotFound": "Conversation not found.",
     "thisMessageWasAlreadySubmittedPleaseAsk": "This message was already submitted. Please ask a new question.",
     "invalidMessageIDPleaseAskANew": "Invalid message ID. Please ask a new question.",
