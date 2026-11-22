@@ -3,7 +3,7 @@ import 'server-only'
 // Rules: no value (secret or env) ever leaves this module; list/create/replace/delete return metadata only. Every write runs in one
 // MIKKA-DB transaction and calls the audit hook inside it, so #432's recordAudit(tx, …) slots in
 // and an audit failure rolls the write back. targetLabel is always the NAME, never the value.
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { workspaceSecrets } from '@/lib/db/secrets-schema'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
@@ -128,7 +128,7 @@ export async function requireSecretPermission(userId: string, workspaceId: strin
 /** Any member. Metadata only: no value is ever read back (secret or env). */
 export async function listWorkspaceSecrets(userId: string, workspaceId: string): Promise<WorkspaceSecretView[]> {
   await requireSecretPermission(userId, workspaceId, 'secret.list')
-  const rows = await guardSecretsDb(() => db.select().from(workspaceSecrets).where(eq(workspaceSecrets.workspaceId, workspaceId))
+  const rows = await guardSecretsDb(() => db.select().from(workspaceSecrets).where(and(eq(workspaceSecrets.workspaceId, workspaceId), ne(workspaceSecrets.scopeType, 'thread')))
     .orderBy(asc(workspaceSecrets.scopeType), asc(workspaceSecrets.scopeRef), asc(workspaceSecrets.name)))
   return views(workspaceId, rows)
 }

@@ -46,6 +46,11 @@ test('thread references + thread env vars', { skip: !dbUrl }, async t => {
   const expanded = expandReferences(resolved)
   assert.match(expanded, /<references>/)
   assert.match(expanded, /\[bot\]/)
+  // An archived bot still resolves but is reported as archived.
+  await pool.query('UPDATE bots SET "archivedAt"=now() WHERE id=$1', [bot])
+  const archived = await resolveThreadReferences(pool, owner, workspace.id, [{ type: 'bot', id: bot }])
+  assert.equal(archived[0].state, 'ok')
+  assert.equal(archived[0].detail, 'archived')
 
   // Thread-scoped env var: stored encrypted, metadata returns names only,
   // runtime secrets decrypt for the matching thread scope ref.
