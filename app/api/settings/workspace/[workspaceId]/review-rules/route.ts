@@ -1,4 +1,3 @@
-import { z } from 'zod'
 import {
   deleteWorkspaceReviewRule,
   getWorkspaceReviewRules,
@@ -13,11 +12,7 @@ type Context = { params: Promise<{ workspaceId: string }> }
 async function optionalDeleteBody(request: Request): Promise<unknown> {
   const text = await request.text()
   if (!text.trim()) return {}
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new z.ZodError([{ code: 'custom', path: [], message: 'Invalid JSON body' }])
-  }
+  try { return JSON.parse(text) } catch { return null }
 }
 
 export const GET = withRequestLog('/api/settings/workspace/[workspaceId]/review-rules', (_request: Request, context: Context) =>
@@ -32,8 +27,6 @@ export const PATCH = freshSessionRoute(
 
 export const DELETE = freshSessionRoute(
   withRequestLog('/api/settings/workspace/[workspaceId]/review-rules', (request: Request, context: Context) =>
-    settingsResponse(async () =>
-      deleteWorkspaceReviewRule((await context.params).workspaceId, await optionalDeleteBody(request).catch(() => null)),
-    ),
+    settingsResponse(async () => deleteWorkspaceReviewRule((await context.params).workspaceId, await optionalDeleteBody(request))),
   ),
 )

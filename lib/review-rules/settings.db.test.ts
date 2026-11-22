@@ -262,6 +262,18 @@ dbTest('workspace admin CRUDs workspace default reviewRule and per-repository ov
     assert.equal(rejected.status, 400)
   }
 
+  // Malformed JSON and invalid DELETE payloads fail with 400 without mutating stored rows
+  const malformedDelete = await reviewRulesRoute.DELETE(
+    new Request(`http://127.0.0.1/api/settings/${path}`, {
+      method: 'DELETE',
+      body: '{invalid-json',
+      headers: { 'Content-Type': 'application/json' },
+    }),
+    context(),
+  )
+  assert.equal(malformedDelete.status, 400)
+  assert.equal((await reviewRulesRoute.DELETE(request(path, 'DELETE', { unknown: true }), context())).status, 400)
+
   // Replaying additive SQL migration twice preserves all saved rules
   const migration = await readFile(new URL('../../drizzle/20261122004735_workspace_review_rules.sql', import.meta.url), 'utf8')
   await pool.query(migration)

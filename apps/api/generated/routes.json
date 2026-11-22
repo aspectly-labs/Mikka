@@ -2673,7 +2673,7 @@
         "GET",
         "PATCH"
       ],
-      "sourceHash": "e0d3aad0d293ed82ebbec85c6d79e1357cdbe265e5a0f0c5c80cf514cdb2e43b"
+      "sourceHash": "675d762f653ba115bf894daf8a94964c05478ca278d9805e16ca1c65614a4ea9"
     },
     {
       "path": "/mikka/api/settings/[read]",
