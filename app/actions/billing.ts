@@ -10,6 +10,8 @@ import { pointsPurchase, pointsPurchaseUrl } from '@/lib/billing/points-purchase
 import { workspaceCreditBillingView, type CreditBillingView } from '@/lib/billing/history'
 import { readWorkspaceBillingSettings, writeWorkspaceAutoRecharge } from '@/lib/billing/settings'
 import type { WorkspaceBillingSettingsView } from '@/lib/billing/contract'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
+import { requireUser } from '@/lib/issue-access'
 import { currentDesktopSession } from '@/lib/desktop-rpc/session'
 
 /** 设置 › 计费. Admins only. */
@@ -100,8 +102,8 @@ export async function getHostedUsage(workspaceId?: string) {
 
 export async function getBillingSettings(workspaceId?: string): Promise<ActionResult<WorkspaceBillingSettingsView>> {
   return workspaceAction(async () => {
-    const actor = await currentWorkspaceActor(workspaceId)
-    return readWorkspaceBillingSettings(actor.userId, actor.workspaceId)
+    const [user, actor] = await Promise.all([requireUser(), currentWorkspaceActor(workspaceId)])
+    return readWorkspaceBillingSettings(actor.userId, actor.workspaceId, user[enterprisePrincipal])
   })
 }
 
@@ -110,8 +112,8 @@ async function saveAutoRechargePolicyActionBody(
   workspaceId?: string,
 ): Promise<ActionResult<WorkspaceBillingSettingsView>> {
   return workspaceAction(async () => {
-    const actor = await currentWorkspaceActor(workspaceId)
-    return writeWorkspaceAutoRecharge(actor.userId, actor.workspaceId, policy)
+    const [user, actor] = await Promise.all([requireUser(), currentWorkspaceActor(workspaceId)])
+    return writeWorkspaceAutoRecharge(actor.userId, actor.workspaceId, policy, user[enterprisePrincipal])
   })
 }
 

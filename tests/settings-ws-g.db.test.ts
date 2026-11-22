@@ -60,6 +60,9 @@ test('WS-G device policy/repositories, billing settings, ops metrics and usage e
     import('../app/api/workspaces/[workspaceId]/governance/usage/route'),
     import('../lib/computer/local-authority'),
   ])
+  // One connection per pool proves WS -> APP lock ordering and zero nested pool checkouts.
+  pool.options.max = 1
+  workspacePool.options.max = 1
 
   const userA = await seedUser(pool, 'wsg-owner-a')
   const adminA = await seedUser(pool, 'wsg-admin-a')
@@ -262,6 +265,46 @@ test('WS-G device policy/repositories, billing settings, ops metrics and usage e
       preserves: ['repository_checkpoint'],
       excludes: ['process_memory', 'native_session', 'ignored_files', 'credentials'],
     })
+
+    // Verify enterprisePrincipal forwarding on an enforceSso organization workspace without ambient headers()
+    const ssoOrg = randomUUID()
+    await workspacePool.query(
+      `INSERT INTO mikka_organizations (id, name, "createdBy")
+       VALUES ($1, 'Enterprise Policy Org', $2)`,
+      [ssoOrg, userA],
+    )
+    await workspacePool.query(
+      `INSERT INTO mikka_organization_members ("organizationId", "userId", role, name, email)
+       VALUES ($1, $2, 'owner', 'Owner A', 'ownera@example.invalid'), ($1, $3, 'admin', 'Admin A', 'admina@example.invalid')`,
+      [ssoOrg, userA, adminA],
+    )
+    await workspacePool.query(
+      `INSERT INTO mikka_organization_workspaces ("organizationId", "workspaceId")
+       VALUES ($1, $2)`,
+      [ssoOrg, workspaceA.id],
+    )
+    await pool.query(
+      `INSERT INTO enterprise_org_policy ("organizationId", "enforceSso")
+       VALUES ($1, true)`,
+      [ssoOrg],
+    )
+    try {
+      // Unverified password session without SSO session is denied when enterprisePrincipal is forwarded (403, never 500 headers() crash!)
+      currentActor = { id: adminA }
+      const ssoDenied = await devicePolicyRoute.GET(
+        jsonReq(`https://mikka.test/api/devices/${boundDeviceA}/policy?workspaceId=${workspaceA.id}`),
+        policyCtx(boundDeviceA),
+      )
+      assert.equal(ssoDenied.status, 403)
+      const ssoPatchDenied = await devicePolicyRoute.PATCH(
+        jsonReq(`https://mikka.test/api/devices/${boundDeviceA}/policy?workspaceId=${workspaceA.id}`, 'PATCH', { schedulingEnabled: false }),
+        policyCtx(boundDeviceA),
+      )
+      assert.equal(ssoPatchDenied.status, 403)
+    } finally {
+      await pool.query('DELETE FROM enterprise_org_policy WHERE "organizationId"=$1', [ssoOrg])
+      await workspacePool.query('DELETE FROM mikka_organizations WHERE id=$1', [ssoOrg])
+    }
 
     // Reject 'ask' tier with 400
     assert.equal(

@@ -7,6 +7,7 @@ import { connectForCommitEffects } from '@/lib/db/commit-effects'
 import { workspaceDb } from '@/lib/workspace-db'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
+import type { EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { ActionFailureError } from '@/lib/action-error'
 import { deviceIsOnline } from '@/lib/device-presence'
 import { notifyDeviceWork } from '@/lib/device-gateway-notify'
@@ -26,6 +27,14 @@ import {
 export interface DevicePolicyActor {
   userId: string
   tokenWorkspaceId?: string | null
+  principal?: EnterprisePrincipal
+}
+
+type WorkspaceTx = Parameters<Parameters<typeof workspaceDb.transaction>[0]>[0]
+interface WorkspacePolicyScope {
+  ws: WorkspaceTx
+  workspaceId: string
+  role: 'admin' | 'member'
 }
 
 const LIVE_RUN_STATUSES = ['queued', 'preparing', 'running', 'paused', 'waiting_input', 'finishing'] as const
@@ -81,37 +90,45 @@ function toDevicePolicyView(row: LockedDevicePolicyRow): DevicePolicyView {
   }
 }
 
-async function authorizeDevicePolicyAccess(
+/**
+ * Match Mikka's repo-wide WS -> APP lock order: when `workspaceId` is present,
+ * open the outer `workspaceDb` transaction and verify membership + enterprise
+ * principal before taking any `devices` lock on `pool`.
+ */
+async function withDevicePolicyWorkspaceScope<T>(
   actor: DevicePolicyActor,
-  deviceOwnerId: string,
-  deviceId: string,
   workspaceId: string | undefined,
-  appClient: { query: (sql: string, params?: unknown[]) => Promise<{ rowCount: number | null }> },
-) {
+  work: (scope: WorkspacePolicyScope | null) => Promise<T>,
+): Promise<T> {
   if (actor.tokenWorkspaceId && (!workspaceId || actor.tokenWorkspaceId !== workspaceId)) {
     throw new WorkspaceError('workspaceAccessDenied')
   }
-  if (deviceOwnerId === actor.userId) {
-    if (workspaceId) {
-      await workspaceDb.transaction(ws => requireWorkspace(ws, workspaceId, actor.userId))
-    }
-    return
-  }
-  if (!workspaceId) throw new WorkspaceError('workspaceAccessDenied')
-  await workspaceDb.transaction(async ws => {
-    const { membership } = await requireWorkspace(ws, workspaceId, actor.userId)
-    if (membership.role !== 'admin') throw new WorkspaceError('workspaceAccessDenied')
-    const [ownerMembership] = await ws
-      .select({ userId: workspaceMembers.userId })
-      .from(workspaceMembers)
-      .where(and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, deviceOwnerId),
-        eq(workspaceMembers.status, 'active'),
-      ))
-      .for('share')
-    if (!ownerMembership) throw new WorkspaceError('workspaceAccessDenied')
+  if (!workspaceId) return work(null)
+  return workspaceDb.transaction(async ws => {
+    const { membership } = await requireWorkspace(ws, workspaceId, actor.userId, false, actor.principal)
+    return work({ ws, workspaceId, role: membership.role as 'admin' | 'member' })
   })
+}
+
+async function assertLockedDevicePolicyAccess(
+  actor: DevicePolicyActor,
+  deviceOwnerId: string,
+  deviceId: string,
+  scope: WorkspacePolicyScope | null,
+  appClient: { query: (sql: string, params?: unknown[]) => Promise<{ rowCount: number | null }> },
+) {
+  if (deviceOwnerId === actor.userId) return
+  if (!scope || scope.role !== 'admin') throw new WorkspaceError('workspaceAccessDenied')
+  const [ownerMembership] = await scope.ws
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(and(
+      eq(workspaceMembers.workspaceId, scope.workspaceId),
+      eq(workspaceMembers.userId, deviceOwnerId),
+      eq(workspaceMembers.status, 'active'),
+    ))
+    .for('share')
+  if (!ownerMembership) throw new WorkspaceError('workspaceAccessDenied')
   const binding = await appClient.query(
     `SELECT 1 FROM device_project_checkouts
        WHERE "deviceId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3
@@ -122,7 +139,7 @@ async function authorizeDevicePolicyAccess(
      SELECT 1 FROM cloud_machines
        WHERE "deviceId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3
      LIMIT 1`,
-    [deviceId, deviceOwnerId, workspaceId],
+    [deviceId, deviceOwnerId, scope.workspaceId],
   )
   if (!binding.rowCount) throw new WorkspaceError('workspaceAccessDenied')
 }
@@ -158,20 +175,22 @@ export async function readDevicePolicy(
 ): Promise<DevicePolicyView> {
   const deviceId = parseDeviceUuid(rawDeviceId)
   const workspaceId = parseOptionalWorkspaceId(rawWorkspaceId)
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const device = await queryDevicePolicyRow(client, deviceId, 'SHARE')
-    if (!device) throw new ActionFailureError('deviceNotFound')
-    await authorizeDevicePolicyAccess(actor, device.ownerId, deviceId, workspaceId, client)
-    await client.query('COMMIT')
-    return toDevicePolicyView(device)
-  } catch (error) {
-    await client.query('ROLLBACK')
-    throw error
-  } finally {
-    client.release()
-  }
+  return withDevicePolicyWorkspaceScope(actor, workspaceId, async scope => {
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const device = await queryDevicePolicyRow(client, deviceId, 'SHARE')
+      if (!device) throw new ActionFailureError('deviceNotFound')
+      await assertLockedDevicePolicyAccess(actor, device.ownerId, deviceId, scope, client)
+      await client.query('COMMIT')
+      return toDevicePolicyView(device)
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
+  })
 }
 
 /**
@@ -191,41 +210,43 @@ export async function writeDevicePolicy(
     throw new WorkspaceError('workspaceAccessDenied')
   }
   const workspaceId = parsed.workspaceId ?? queryWs
-  const client = await connectForCommitEffects(pool)
-  let updated: LockedDevicePolicyRow
-  try {
-    await client.query('BEGIN')
-    const current = await queryDevicePolicyRow(client, deviceId, 'UPDATE')
-    if (!current) throw new ActionFailureError('deviceNotFound')
-    await authorizeDevicePolicyAccess(actor, current.ownerId, deviceId, workspaceId, client)
-    const nextScheduling = parsed.schedulingEnabled ?? current.enabled
-    const nextComputerUse = parsed.computerUseEnabled ?? current.computerUseEnabled
-    await client.query(
-      `UPDATE devices
-       SET enabled=$2, "computerUseEnabled"=$3, "updatedAt"=now()
-       WHERE id=$1`,
-      [deviceId, nextScheduling, nextComputerUse],
-    )
-    if (current.computerUseEnabled && !nextComputerUse) {
-      const active = await client.query<{ id: string }>(
-        `SELECT id FROM agent_runs
-         WHERE "deviceId"=$1 AND "userId"=$2 AND "stopRequestedAt" IS NULL
-           AND status = ANY($3::text[])`,
-        [deviceId, current.ownerId, [...RUNNING_AUTHORITY_STATUSES]],
+  const updated = await withDevicePolicyWorkspaceScope(actor, workspaceId, async scope => {
+    const client = await connectForCommitEffects(pool)
+    try {
+      await client.query('BEGIN')
+      const current = await queryDevicePolicyRow(client, deviceId, 'UPDATE')
+      if (!current) throw new ActionFailureError('deviceNotFound')
+      await assertLockedDevicePolicyAccess(actor, current.ownerId, deviceId, scope, client)
+      const nextScheduling = parsed.schedulingEnabled ?? current.enabled
+      const nextComputerUse = parsed.computerUseEnabled ?? current.computerUseEnabled
+      await client.query(
+        `UPDATE devices
+         SET enabled=$2, "computerUseEnabled"=$3, "updatedAt"=now()
+         WHERE id=$1`,
+        [deviceId, nextScheduling, nextComputerUse],
       )
-      if (active.rows.length) {
-        await stopRunsForPolicyChange(client, { kind: 'runs', runIds: active.rows.map(row => row.id) })
+      if (current.computerUseEnabled && !nextComputerUse) {
+        const active = await client.query<{ id: string }>(
+          `SELECT id FROM agent_runs
+           WHERE "deviceId"=$1 AND "userId"=$2 AND "stopRequestedAt" IS NULL
+             AND status = ANY($3::text[])`,
+          [deviceId, current.ownerId, [...RUNNING_AUTHORITY_STATUSES]],
+        )
+        if (active.rows.length) {
+          await stopRunsForPolicyChange(client, { kind: 'runs', runIds: active.rows.map(row => row.id) })
+        }
       }
+      await ownerListChanged(client, current.ownerId, ['thread_list', 'device_list'])
+      const row = (await queryDevicePolicyRow(client, deviceId, 'SHARE'))!
+      await client.query('COMMIT')
+      return row
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
     }
-    await ownerListChanged(client, current.ownerId, ['thread_list', 'device_list'])
-    updated = (await queryDevicePolicyRow(client, deviceId, 'SHARE'))!
-    await client.query('COMMIT')
-  } catch (error) {
-    await client.query('ROLLBACK')
-    throw error
-  } finally {
-    client.release()
-  }
+  })
   notifyDeviceWork(deviceId)
   return toDevicePolicyView(updated)
 }

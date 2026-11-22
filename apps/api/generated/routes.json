@@ -918,7 +918,7 @@
         "GET",
         "PATCH"
       ],
-      "sourceHash": "448288fbe0d5f8a6a3de90a5cba49e58ca22157b010ff21dcd719975882470f4"
+      "sourceHash": "bde1841b35fb88c069584b7a75632f66b72dc850753b00243935a7c93af9ee42"
     },
     {
       "path": "/mikka/api/devices/[deviceId]/repositories",

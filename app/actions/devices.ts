@@ -2,6 +2,8 @@
 
 import { withFreshSession } from '@/lib/fresh-session'
 import type { ActionResult } from '@/lib/action-result'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
+import { tokenWorkspace } from '@/lib/tokens/principal'
 import { requireUser } from '@/lib/issue-access'
 import { workspaceAction } from '@/lib/workspace-admin/action'
 import {
@@ -11,6 +13,7 @@ import {
   readDevicePolicy,
   upsertDeviceRepository,
   writeDevicePolicy,
+  type DevicePolicyActor,
 } from '@/lib/settings/device-policy'
 import type {
   DeleteDeviceRepositoryInput,
@@ -22,10 +25,19 @@ import type {
   UpsertDeviceRepositoryInput,
 } from '@/lib/settings/device-policy-contract'
 
+async function currentDevicePolicyActor(): Promise<DevicePolicyActor> {
+  const user = await requireUser()
+  return {
+    userId: user.id,
+    tokenWorkspaceId: user[tokenWorkspace],
+    principal: user[enterprisePrincipal],
+  }
+}
+
 export async function getPolicy(deviceId: string, workspaceId?: string): Promise<ActionResult<DevicePolicyView>> {
   return workspaceAction(async () => {
-    const user = await requireUser()
-    return readDevicePolicy({ userId: user.id }, deviceId, workspaceId)
+    const actor = await currentDevicePolicyActor()
+    return readDevicePolicy(actor, deviceId, workspaceId)
   })
 }
 
@@ -35,15 +47,15 @@ async function updatePolicyBody(
   workspaceId?: string,
 ): Promise<ActionResult<DevicePolicyView>> {
   return workspaceAction(async () => {
-    const user = await requireUser()
-    return writeDevicePolicy({ userId: user.id }, deviceId, input, workspaceId)
+    const actor = await currentDevicePolicyActor()
+    return writeDevicePolicy(actor, deviceId, input, workspaceId)
   })
 }
 
 export async function listRepositories(deviceId: string): Promise<ActionResult<DeviceRepositoryListView>> {
   return workspaceAction(async () => {
-    const user = await requireUser()
-    return listDeviceRepositories({ userId: user.id }, deviceId)
+    const actor = await currentDevicePolicyActor()
+    return listDeviceRepositories(actor, deviceId)
   })
 }
 
@@ -52,8 +64,8 @@ async function upsertRepositoryBody(
   input: UpsertDeviceRepositoryInput,
 ): Promise<ActionResult<DeviceRepositoryItem>> {
   return workspaceAction(async () => {
-    const user = await requireUser()
-    return upsertDeviceRepository({ userId: user.id }, deviceId, input)
+    const actor = await currentDevicePolicyActor()
+    return upsertDeviceRepository(actor, deviceId, input)
   })
 }
 
@@ -62,8 +74,8 @@ async function patchRepositoryBody(
   input: PatchDeviceRepositoryInput,
 ): Promise<ActionResult<DeviceRepositoryItem>> {
   return workspaceAction(async () => {
-    const user = await requireUser()
-    return patchDeviceRepository({ userId: user.id }, deviceId, input)
+    const actor = await currentDevicePolicyActor()
+    return patchDeviceRepository(actor, deviceId, input)
   })
 }
 
@@ -72,8 +84,8 @@ async function deleteRepositoryBody(
   input: DeleteDeviceRepositoryInput,
 ): Promise<ActionResult<{ deleted: true; id: string; repoKey: string }>> {
   return workspaceAction(async () => {
-    const user = await requireUser()
-    return deleteDeviceRepository({ userId: user.id }, deviceId, input)
+    const actor = await currentDevicePolicyActor()
+    return deleteDeviceRepository(actor, deviceId, input)
   })
 }
 

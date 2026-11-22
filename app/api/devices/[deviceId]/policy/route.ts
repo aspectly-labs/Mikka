@@ -1,5 +1,6 @@
 import { freshSessionRoute } from '@/lib/fresh-session'
 import { withRequestLog } from '@/lib/request-log'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { readDevicePolicy, writeDevicePolicy } from '@/lib/settings/device-policy'
 import { readRequiredJsonBody, requireDeviceApiSession, wsGJsonResponse } from '@/lib/settings/device-policy-http'
 
@@ -11,7 +12,11 @@ export const GET = freshSessionRoute(withRequestLog('/api/devices/[deviceId]/pol
     const { deviceId } = await context.params
     const workspaceId = new URL(request.url).searchParams.get('workspaceId')
     return readDevicePolicy(
-      { userId: session.user.id, tokenWorkspaceId: session.tokenWorkspaceId },
+      {
+        userId: session.user.id,
+        tokenWorkspaceId: session.tokenWorkspaceId,
+        principal: session.user[enterprisePrincipal],
+      },
       deviceId,
       workspaceId,
     )
@@ -25,7 +30,11 @@ export const PATCH = freshSessionRoute(withRequestLog('/api/devices/[deviceId]/p
     const workspaceId = new URL(request.url).searchParams.get('workspaceId')
     const body = await readRequiredJsonBody(request)
     return writeDevicePolicy(
-      { userId: session.user.id, tokenWorkspaceId: session.tokenWorkspaceId },
+      {
+        userId: session.user.id,
+        tokenWorkspaceId: session.tokenWorkspaceId,
+        principal: session.user[enterprisePrincipal],
+      },
       deviceId,
       body,
       workspaceId,
