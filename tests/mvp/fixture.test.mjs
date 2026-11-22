@@ -18,6 +18,8 @@ import { artifactSubmittedEvent } from '../../lib/coordinator-events.ts'
 import { startMvpServices } from './services.mjs'
 import { traceGitHubEnvironment } from './trace-codex.mjs'
 import { hasBoundMvpTransport, installMvpTransport, MVP_DECISION_KEY, verifyMvpTransport } from './transport.mjs'
+import { fakeLiteLLMRoutes } from './fake-litellm.mjs'
+import { LOCAL_LITELLM_KEY } from '../../scripts/dev-local/services.mjs'
 
 const database = 'postgresql://ci:fixture@127.0.0.1:5432/mikka_e2e'
 const isolated = { CI: 'true', GITHUB_ACTIONS: 'true', MIKKA_MVP_E2E: '1', MIKKA_TEST_MODE: '1', E2E_DATABASE_URL: database, MIKKA_DATABASE_URL: database, DATABASE_URL: database }
@@ -298,6 +300,28 @@ test('synthetic MVP transport binds the active fetch path, preserves requests an
     assert.equal(hasBoundMvpTransport(env), false)
   } finally {
     restore()
+  }
+})
+
+test('the shared fake LiteLLM accepts the native gateway header and a string Responses input', async () => {
+  const routes = fakeLiteLLMRoutes()
+  const server = new Server(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1')
+    const readBody = async () => { let body = ''; for await (const chunk of request) body += chunk; return JSON.parse(body || '{}') }
+    if (!(await routes(request, response, url, { readBody }))) { response.writeHead(404); response.end('unrouted') }
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${server.address().port}`
+  try {
+    // The native model gateway authenticates with x-litellm-api-key (lib/model-gateway/upstream.ts).
+    const native = await fetch(`${origin}/litellm/v1/responses`, { method: 'POST', headers: { 'x-litellm-api-key': `Bearer ${LOCAL_LITELLM_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'mikka-default', input: 'say hi' }) })
+    assert.equal(native.status, 200)
+    const bearer = await fetch(`${origin}/litellm/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${LOCAL_LITELLM_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'mikka-default', input: [{ role: 'user', content: 'say hi' }] }) })
+    assert.equal(bearer.status, 200)
+    const denied = await fetch(`${origin}/litellm/v1/responses`, { method: 'POST', headers: { 'x-litellm-api-key': 'Bearer wrong', 'content-type': 'application/json' }, body: '{"model":"mikka-default","input":"hi"}' })
+    assert.equal(denied.status, 401)
+  } finally {
+    await new Promise(resolve => server.close(resolve))
   }
 })
 
