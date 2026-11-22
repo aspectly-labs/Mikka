@@ -3027,6 +3027,26 @@
       "sourceHash": "cd49a4d17ff60e20d56e050860e405c62d76d40e6a0dcb8ae0ce7d6d07664e83"
     },
     {
+      "path": "/mikka/api/threads/[runId]/steps/[stepId]/cancel",
+      "template": "/api/threads/[runId]/steps/[stepId]/cancel",
+      "source": "app/api/threads/[runId]/steps/[stepId]/cancel/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "de738146b790fa0fb8dc03746b865753caf048f7d286be8721f9560b4f06c1d7"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/steps/[stepId]/output",
+      "template": "/api/threads/[runId]/steps/[stepId]/output",
+      "source": "app/api/threads/[runId]/steps/[stepId]/output/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "4cad750b4765919e9bf306d958d984d1a7bffbfde5e4497752d934be62dcb766"
+    },
+    {
       "path": "/mikka/api/v1/artifacts",
       "template": "/api/v1/artifacts",
       "source": "app/api/v1/artifacts/route.ts",
