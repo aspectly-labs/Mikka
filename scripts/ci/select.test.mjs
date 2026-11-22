@@ -127,7 +127,7 @@ test('every heavy consumer uses the same trusted triage and required names remai
 
 test('the actual required gate scripts reject drafts, unselected failures and selected skips', () => {
   const workflow = yaml.load(readFileSync('.github/workflows/ui-policy.yml','utf8'))
-  const uiChecks = ['CORE', 'INTEGRATION', 'SOURCE', 'DAEMON', 'ANALYTICS', 'GOVERNANCE']
+  const uiChecks = ['CORE', 'INTEGRATION', 'SOURCE', 'DAEMON', 'ANALYTICS', 'GOVERNANCE', 'CANDIDATE']
   for (const job of ['ui-policy','browser-tests']) {
     const steps = workflow.jobs[job].steps
     const draftGate = steps.find(step => step.name === 'Draft PR is not a validated merge candidate')
