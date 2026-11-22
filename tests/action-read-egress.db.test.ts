@@ -404,7 +404,7 @@ test('thread identity reads keep owner-only, live membership and checkpoint beha
             queryShapes: result.reads.map(read => ({ tables: [...read.text.matchAll(/(?:from|join)\s+"?([a-z_]+)"?/gi)].map(match => match[1]), fields: read.fields })) }))
           sub.diagnostic(JSON.stringify({ read: 'thread-' + action + '-' + label, beforeResultBytes: baseline.reads[0].bytes, resultBytes: selected.bytes,
             selectQueries: result.reads.length, allResultBytes: result.reads.reduce((sum, read) => sum + read.bytes, 0), rowCount: selected.rows, fields: selected.fields }))
-          samples.push({ read: selected, route, expectedFields: action === 'find-issue' && issueId === null ? ['id', 'userId', 'issueId', 'workspaceId'] : ['id', 'userId'], baselineBytes: baseline.reads[0].bytes, scoped: result.reads.every(read => read.route === route), queries: result.reads.length, expectedQueries })
+          samples.push({ read: selected, route, expectedFields: action === 'find-issue' && issueId === null ? ['id', 'userId', 'issueId', 'workspaceId'] : ['id', 'userId', 'workspaceId'], baselineBytes: baseline.reads[0].bytes, scoped: result.reads.every(read => read.route === route), queries: result.reads.length, expectedQueries })
         }
       }
       for (const sample of samples) {
