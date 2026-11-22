@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
-import { listActivity } from '@/app/actions/settings-activity'
+import type { listActivity } from '@/app/actions/settings-activity'
 import type { getUsage } from '@/app/actions/usage'
 import { BotAvatar } from '@/components/nav/bot-avatar'
 import { SettingRow, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
@@ -93,7 +93,7 @@ export function ActivitySettings({
 
   const timeline = useSWR(
     ['settings:activity-timeline', activityFilter] as const,
-    ([, filter]) => listActivity({ filter }),
+    ([, filter]) => settingsRead<Awaited<ReturnType<typeof listActivity>>>('activity', { filter }),
     SWR_IDLE_SAFE,
   )
   const firstPage = timeline.data && !timeline.data.error ? timeline.data : null
@@ -112,7 +112,7 @@ export function ActivitySettings({
     setLoadingMore(true)
     setLoadMoreError(null)
     try {
-      const result = await listActivity({ filter: activityFilter, cursor: nextCursor })
+      const result = await settingsRead<Awaited<ReturnType<typeof listActivity>>>('activity', { filter: activityFilter, cursor: nextCursor })
       if (result.error) {
         setLoadMoreError(t('timelineLoadFailed'))
         return
