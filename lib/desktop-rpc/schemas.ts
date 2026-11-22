@@ -154,6 +154,12 @@ export const desktopActionSchemas = {
   'agents.getOlderIssueThread': tuple(uuid.nullable(), uuid, threadHistoryPosition),
   'agents.getThreadChanges': tuple(uuid.nullable(), uuid),
   'agents.getThreadMachine': tuple(uuid.nullable(), uuid),
+  'agents.listThreadPulls': tuple(uuid.nullable(), uuid),
+  'agents.setThreadPullMergeWhenReady': tuple(uuid.nullable(), uuid, object({ repo: text(200).min(1), number: z.number().int().positive(), headSha: text(64).min(40).max(64), enabled: bool, confirmFailedChecks: bool.optional() })),
+  'agents.syncThreadPullMerges': tuple(uuid.nullable(), uuid),
+  'agents.getThreadGitStatus': tuple(uuid.nullable(), uuid),
+  'agents.getThreadGitHistory': tuple(uuid.nullable(), uuid, object({ cursor: text(256).optional(), limit: z.number().int().min(1).max(50).optional() }).optional()),
+  'agents.listThreadGitCheckpoints': tuple(uuid.nullable(), uuid),
   'agents.getThreadInstructions': tuple(uuid.nullable(), uuid),
   'agents.sendIssueThreadReply': tuple(object({ expectedOwnerId: text(256).optional(), expectedWorkspaceId: uuid.optional(), issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), requestId: uuid.optional(), retryOriginalSession: z.literal(true).optional(), questionWakeGeneration: uuid.optional(), modelChoice: threadModelChoice.optional(), delivery: z.enum(['queue','steer','interrupt']).optional() })),
   'agents.createThreadReplyVersion': tuple(object({issueId:uuid.nullable(),runId:uuid,change:z.discriminatedUnion('operation',[

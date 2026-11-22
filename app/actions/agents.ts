@@ -804,6 +804,106 @@ export async function getThreadName(runId: string): Promise<string | null> {
   return key ? `${key} ${source.issue.title}` : source.issue.title
 }
 
+
+/** #2940 item 5: the pull requests a thread's chain published, owner only —
+ * the publication receipt is the requester's own record, like the run-location
+ * icon getThreadMachine serves. */
+export async function listThreadPulls(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/pulls', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-pulls')).listThreadPulls(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 5: arm or clear "merge when ready" on a pull this thread
+ * published. The intent never merges by itself — a read or poll drains it
+ * through mergePullRequest's own gates, as the person with their token. */
+export async function setThreadPullMergeWhenReady(issueId: string | null, runId: string, input: { repo: string; number: number; headSha: string; enabled: boolean; confirmFailedChecks?: boolean }) {
+  return withDatabaseOperation('/actions/threads/pulls/merge-intent', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const { rows: [meta] } = await pool.query<{ issueId: string | null; workspaceId: string | null }>('SELECT "issueId","workspaceId" FROM agent_runs WHERE id=$1', [row.id])
+    const pulls = await import('@/lib/thread-pulls')
+    const state = await pulls.setThreadPullMergeIntent(pool, user.id, meta?.workspaceId ?? null, meta?.issueId ?? null, row.id, input)
+    if (state === 'armed') {
+      const chain = await readRunChain(pool, row.userId, row.id)
+      const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+      await pulls.drainThreadPullMergeIntents(pool, user.id, runIds)
+    }
+    return { state }
+  })
+}
+
+/** #2940 item 5: one poll drains every armed merge intent on the thread's
+ * chain — the "when ready" tick. Still-blocked pulls stay armed. */
+export async function syncThreadPullMerges(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/pulls/merge-sync', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-pulls')).drainThreadPullMergeIntents(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 6: the review actor for this session — the same shape the git
+ * HTTP routes build, so the thread adapter reaches the existing git service
+ * unchanged rather than re-implementing it. */
+async function threadReviewActor() {
+  const session = await auth.api.getSession({ headers: await headers() })
+  if (!session?.user) throw new ActionFailureError('authRequired')
+  const context = await loadWorkspaceContext(undefined, session.user)
+  return { userId: session.user.id, workspaceId: context.workspace.id, credential: session.tokenWorkspaceId
+    ? { kind: 'pat' as const, id: z.uuid().parse(session.session.id.slice(4)) }
+    : { kind: 'session' as const, id: session.session.id } }
+}
+
+async function threadGitScope(issueId: string | null, runId: string) {
+  const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+  if (row.userId !== user.id) return null
+  const { rows: [meta] } = await pool.query<{ deviceRepoId: string | null }>('SELECT "deviceRepoId" FROM agent_runs WHERE id=$1', [row.id])
+  if (!meta?.deviceRepoId) return null
+  return { actor: await threadReviewActor(), runId: row.id, repoId: meta.deviceRepoId }
+}
+
+/** #2940 item 6: git status adapted to the thread — resolves the run's repo
+ * itself and delegates to lib/coding-workspace/git unchanged. */
+export async function getThreadGitStatus(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-status', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { getRunGitStatus } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await getRunGitStatus({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId)).value
+  })
+}
+
+/** #2940 item 6: git history adapted to the thread, paged like the route. */
+export async function getThreadGitHistory(issueId: string | null, runId: string, input?: { cursor?: string; limit?: number }) {
+  return withDatabaseOperation('/actions/threads/git-history', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunGitHistory } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunGitHistory({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId,
+      { ...(input?.cursor ? { cursor: input.cursor } : {}), limit: input?.limit ?? 20 })).value
+  })
+}
+
+/** #2940 item 3/6: the run's checkpoint/snapshot list, adapted to the thread. */
+export async function listThreadGitCheckpoints(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-checkpoints', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunCheckpoints } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunCheckpoints({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId))
+  })
+}
+
 /** Asks the daemon to stop the run; it repeats until the run has ended. */
 export async function stopRun(runId: string): Promise<{ stoppedRunIds: string[] }> {
   return withOwnWorkspaceRun(runId, userId => requestRunStop(userId, runId))
