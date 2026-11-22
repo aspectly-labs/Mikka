@@ -218,13 +218,16 @@ export type SettingsVisibility = {
   cloudAdmin?: boolean
   /** A UI layer draws 组织. */
   organization?: boolean
-  /** Accepted by hosted sidebar callers for memory-gate compatibility. */
   memory?: boolean
 }
 
+export function settingsSectionEnabled(id: SettingsSectionId, { memory }: Pick<SettingsVisibility, 'memory'>): boolean {
+  return id !== 'instructions' || memory === true
+}
+
 /** One place decides whether a section is listed. The sidebar and search both ask this. */
-export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false }: SettingsVisibility): boolean {
-  if (SETTINGS_SECTION_STATUS[section.id] !== 'available' || section.sidebar === false) return false
+export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false, memory }: SettingsVisibility): boolean {
+  if (SETTINGS_SECTION_STATUS[section.id] !== 'available' || section.sidebar === false || !settingsSectionEnabled(section.id, { memory })) return false
   if (section.adminOnly && !admin) return false
   if (personal && TEAM_ONLY_SECTIONS.has(section.id)) return false
   if (!billing && section.id === 'billing') return false

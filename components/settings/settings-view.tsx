@@ -37,7 +37,8 @@ import { AuditLogSettings } from '@/components/settings/audit-log-settings'
 import { UsageSettings } from '@/components/settings/usage-settings'
 import { BillingSettings } from '@/components/settings/billing-settings'
 import { useWorkspace } from '@/hooks/use-workspace'
-import { settingsHref, TEAM_ONLY_SECTIONS, WIDE_SETTINGS_SECTIONS, type SettingsSectionId } from '@/lib/settings-sections'
+import { useGatedFeature } from '@/hooks/use-feature-availability'
+import { settingsHref, settingsSectionEnabled, TEAM_ONLY_SECTIONS, WIDE_SETTINGS_SECTIONS, type SettingsSectionId } from '@/lib/settings-sections'
 import { useRouter } from '@/i18n/navigation'
 import { pushSettingsHistory } from '@/lib/settings-navigation'
 import type { RailDestination } from '@/components/nav/icon-rail'
@@ -76,6 +77,7 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
   const [localSection, setSection] = useState<SettingsSectionId>(activeSection ?? initialSection ?? 'preferences')
   const { data: workspace, error: workspaceError, mutate: refreshWorkspace } = useWorkspace(userKey ?? user.email, workspaceId)
   const requestedSection = activeSection ?? localSection
+  const memory = useGatedFeature('memory')
   const billing = workspace !== undefined && workspace.edition !== 'community'
   const community = workspace?.edition === 'community'
   const cloudAdmin = community && workspace?.serverAdmin === true
@@ -84,7 +86,7 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
   // Team settings show once the workspace is known to be a team, as admin-only ones wait for the role.
   const team = workspace !== undefined && !personal
   // A personal workspace has no 身份与访问. The public page draws team permissions; the official slot replaces that body.
-  const section = (requestedSection === 'billing' && !billing) || (requestedSection === 'cloud' && !cloudAdmin) || (requestedSection === 'organization' && !team) ? 'preferences' : requestedSection
+  const section = (requestedSection === 'billing' && !billing) || (requestedSection === 'cloud' && !cloudAdmin) || (requestedSection === 'organization' && !team) || !settingsSectionEnabled(requestedSection, { memory }) ? 'preferences' : requestedSection
   const router = useRouter()
   // A personal workspace has no team settings (decision 2026-11-01-2310); an old link to one opens 偏好设置 instead.
   const teamOnly = personal && TEAM_ONLY_SECTIONS.has(requestedSection)
