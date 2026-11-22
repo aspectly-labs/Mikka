@@ -25,7 +25,8 @@ import { ThreadRunPlace } from './thread-run-place'
 import { acceptedProducerOutcome, isThreadRun, threadQuestionView } from '@/lib/issue-threads'
 import { threadComposerHarness } from '@/lib/run-model-fallback-view'
 import { QUOTE_SOURCE_ATTR, SelectionQuote } from '@/components/chat/selection-quote'
-import { ReplyActions } from '@/components/chat/reply-actions'
+import { ReplyActions, type ReplyMoreAction } from '@/components/chat/reply-actions'
+import { ThreadForkDialog, type ThreadForkRequest } from './thread-fork-dialog'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { splitChatFiles } from '@mikka/protocol/chat-attachments'
 import { ChatFileCards } from '@/components/chat/chat-file-cards'
@@ -70,6 +71,7 @@ import { ThreadModelFallbackNotice, ThreadQuotaPausedCard, ThreadQuotaSwitchLine
 import { cn } from '@/lib/utils'
 import { ThreadArtifactChips } from './artifact-review'
 import { ArtifactIcon } from '@/components/icons/artifact-icon'
+import { GitBranch } from '@/components/icons'
 import type { ThreadViewAction } from '@/components/slots/thread-header-contract'
 import { AcceptanceStateBadge, useAcceptanceTasks } from './factory-acceptance'
 import { FactoryAcceptancePane } from './factory-acceptance-pane'
@@ -149,6 +151,8 @@ export function IssueThreadPanel(props: IssueThreadPanelProps) {
 
 function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare = false, initialTab = 'chat', onOpenThread, onOpenTask, name: listedName, changeRequest, focusRunId, transcriptOnly = false, attempt, collect, beforeEntries, afterEntries, childEntries, openSender }: IssueThreadPanelProps) {
   const t = useTranslations('IssueThreads')
+  const tLifecycle = useTranslations('IssueThreads.lifecycle')
+  const [forking, setForking] = useState<ThreadForkRequest | null>(null)
   const tArtifact = useTranslations('ArtifactsPage')
   const messages = useMessages()
   const runErrorText = useRunErrorText()
@@ -464,6 +468,21 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     const sourceRunId = nested?.id ?? (data.historyPage?.chain === runId ? runId : data.chunkCursor?.runs === 1 ? data.chunkCursor.runId : null)
     return sourceRunId ? <ThreadReplyVersions {...base} anchorRunId={sourceRunId} anchorKey={nested ? part.slice(nested.id.length+1) : part} operation="rerun" text={item.text} /> : null
   }
+  // Where 从这里分叉 starts (#2936): the run the reply belongs to and its own item id there, as versionControl finds them.
+  const forkPoint = (item: (typeof items)[number]) => {
+    if (transcriptOnly || !issueId || !data?.thread.ownedByCurrentUser || item.kind !== 'agent') return null
+    const part = item.id.slice('text:'.length)
+    const nested = data.live?.runs.find(run=>part.startsWith(run.id+':'))
+    const sourceRunId = nested?.id ?? (data.historyPage?.chain === runId ? runId : data.chunkCursor?.runs === 1 ? data.chunkCursor.runId : null)
+    return sourceRunId ? { runId: sourceRunId, itemId: `text:${nested ? part.slice(nested.id.length+1) : part}` } : null
+  }
+  const forkActions = (item: (typeof items)[number]): ReplyMoreAction[] => {
+    const point = forkPoint(item)
+    return point ? [
+      { id: 'fork', label: tLifecycle('forkFromHere'), icon: GitBranch, onSelect: () => setForking({ ...point, mode: 'full' }) },
+      { id: 'fork-summary', label: tLifecycle('forkSummary'), icon: GitBranch, onSelect: () => setForking({ ...point, mode: 'summary' }) },
+    ] : []
+  }
   const waiting = !data && (error
     ? <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void mutate() }} />
     : <div role="status" aria-label={t('loading')} data-thread-loading className="flex flex-col gap-3"><Skeleton className="h-5 w-40" /><Skeleton className="ml-auto h-12 w-3/4" /><Skeleton className="h-12 w-2/3" /></div>)
@@ -574,7 +593,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
           ? <ComputerCard botId={item.botId} runId={item.runId} task={item.task} state={active ? 'working' : (view?.status ?? data.thread.status) === 'succeeded' ? 'done' : 'failed'} />
           : <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground" data-slot="thread-stages">{item.stages.map((stage, index) => <span key={index} className={cn(!stage.ok && 'text-destructive-foreground')}>
             {t(`stages.${stage.stage}`)} {t('stages.duration', { seconds: (stage.ms / 1000).toFixed(1) })} {stage.ok ? '✓' : '✗'}</span>)}</p> }
-      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions hover at={item.at || undefined} copyText={item.text} quoteText={openWords.join('\n\n')}
+      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions hover at={item.at || undefined} copyText={item.text} quoteText={openWords.join('\n\n')} more={forkActions(item)}
           onQuote={replyBlocked || changeRequest ? undefined : text => { setReplyQuote(text); inputRef.current?.focus() }}>{versionControl(item)}<AgentCitationsContext value={citations.settled}><CitationSources text={item.text} /></AgentCitationsContext></ReplyActions> } : {}), ...(active && item === items.at(-1) ? { streaming: true } : {}) })
     }
     if (failure && !providerExplained) bot('failure', [{ kind: 'text', text: failureText.message ?? '', node: <div data-slot="thread-failure" className="flex flex-wrap items-start gap-2">
@@ -702,5 +721,6 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     : viewingArtifacts && artifacts ? <ThreadArtifactsPane groups={artifacts.groups} focusId={artifacts.focusId} mediaTaskId={artifacts.factoryTaskId ?? runId} />
     : conversation}
     {!readOnly && <SelectionQuote root={rootRef} onQuote={text => { setReplyQuote(text); inputRef.current?.focus() }} />}
+    <ThreadForkDialog request={forking} onClose={() => setForking(null)} onForked={id => onOpenThread ? onOpenThread(id) : openThread(id, issueId)} />
   </section>
 }

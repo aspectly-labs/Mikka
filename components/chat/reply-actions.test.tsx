@@ -81,3 +81,22 @@ test('the thread panel keeps the line to hover; elsewhere it stays on screen', a
   assert.ok(!line().includes(HOVER_ACTIONS.split(' ')[0]))
   assert.ok(line().includes(REPLY_ACTIONS.split(' ')[0]))
 })
+
+test('More appears only with rows, after Copy, and a row runs its action (#2936)', async () => {
+  await act(async () => root.render(<ReplyActions copyText="a reply" />))
+  assert.equal(container.querySelector('button[aria-label="AiElements.message.more"]'), null, 'no rows, no More')
+  const chosen: string[] = []
+  const Glyph = () => <svg />
+  await act(async () => root.render(<ReplyActions copyText="a reply" more={[
+    { id: 'fork', label: 'Fork from here', icon: Glyph, onSelect: () => { chosen.push('fork') } },
+    { id: 'fork-summary', label: 'Fork with summary', icon: Glyph, onSelect: () => { chosen.push('summary') } },
+  ]} />))
+  const line = container.querySelector('[data-slot="message-actions"]')!
+  const labels = [...line.querySelectorAll('button')].map(button => button.getAttribute('aria-label'))
+  assert.deepEqual(labels, ['AiElements.message.copy', 'AiElements.message.more'])
+  await act(async () => { (line.querySelector('button[aria-label="AiElements.message.more"]') as HTMLButtonElement).click() })
+  const rows = [...document.querySelectorAll('[role="menuitem"]')] as HTMLElement[]
+  assert.deepEqual(rows.map(row => row.textContent), ['Fork from here', 'Fork with summary'])
+  await act(async () => { rows[1]!.click() })
+  assert.deepEqual(chosen, ['summary'])
+})

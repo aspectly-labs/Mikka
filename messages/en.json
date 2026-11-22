@@ -5145,6 +5145,24 @@
       "todo": "Updated todos",
       "commandFailed": "Command failed ({command})",
       "commandFailedCode": "Command failed ({command}) · exit {code}"
+    },
+    "lifecycle": {
+      "fork": "Fork",
+      "forkSummary": "Fork with summary",
+      "forkFromHere": "Fork from here",
+      "forkInstruction": "What should the fork do?",
+      "forkFailed": "Couldn't fork",
+      "tags": "Tags",
+      "tagPlaceholder": "Add a tag",
+      "removeTag": "Remove {tag}",
+      "tagsFailed": "Tags not saved",
+      "automation": "Make this an automation",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this thread?",
+      "deleted": "Thread deleted",
+      "undo": "Undo",
+      "deleteFailed": "Thread not deleted",
+      "restoreFailed": "Couldn't restore the thread"
     }
   },
   "Computer": {
@@ -6570,7 +6588,8 @@
       "copied": "Copied",
       "copyFailed": "Couldn't copy",
       "quote": "Quote",
-      "reply": "Reply"
+      "reply": "Reply",
+      "more": "More"
     }
   },
   "GroupTask": {

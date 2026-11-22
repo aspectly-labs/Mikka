@@ -50,7 +50,7 @@ stub('hooks/use-live-key.tsx', { useLiveKey: Empty, useLiveKeys: Empty, useLiveS
 stub('components/artifacts/artifact-card.tsx', { ArtifactKindIcon: Empty, ArtifactAuthorAvatar: Empty })
 stub('components/artifacts/artifact-share.tsx', { ArtifactShare: Empty })
 stub('components/artifacts/selection-actions.tsx', { SelectionActions: Empty })
-stub('components/ui/dialog.tsx', { Dialog: Pass, DialogContent: ({ children }: { children?: ReactNode }) => <div role="dialog">{children}</div>, DialogTitle: Pass, DialogDescription: Pass, DialogHeader: Pass, DialogTrigger: Pass })
+stub('components/ui/dialog.tsx', { Dialog: Pass, DialogContent: ({ children }: { children?: ReactNode }) => <div role="dialog">{children}</div>, DialogTitle: Pass, DialogDescription: Pass, DialogHeader: Pass, DialogFooter: Pass, DialogTrigger: Pass })
 stub('components/workspace/factory-acceptance.tsx', { useAcceptanceTasks: () => ({ tasks: [], allTasks: [] }), useThreadAcceptance: () => null, AcceptanceStateBadge: Empty, FactoryAcceptance: Empty, FactoryAcceptancePanel: Empty })
 stub('components/workspace/factory-acceptance-pane.tsx', { FactoryAcceptancePane: Empty })
 stub('components/workspace/thread-changes.tsx', { ThreadChangesPane: Empty, ChangesTabLabel: Empty })
