@@ -12,3 +12,4 @@ Public deployment verification contracts:
 
 - [Service manifest deployment contract](deploy-pipeline.md): public build provenance, service selection, verification evidence and recovery inputs.
 - [API route registration probe](route-probe.md)
+- [Zero-residency baseline](zero-residency-baseline.md): container compute inventory, ownership matrix and contract check for epic #3076.

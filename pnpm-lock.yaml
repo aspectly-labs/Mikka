@@ -714,6 +714,12 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
+  cloudflare/zero-residency:
+    devDependencies:
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@25.9.9)(happy-dom@15.11.7)(vite@8.3.6(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0))
+
   packages/config:
     dependencies:
       '@eslint/js':
