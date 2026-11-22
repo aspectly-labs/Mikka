@@ -7,15 +7,19 @@ import {
   patchThread, restoreThread, sharedThread, spawnThread,
 } from '../lib/thread-lifecycle.js'
 import { seedAgent, seedIssue, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db.js'
+import { tokenWorkspace } from '../lib/tokens/principal.js'
 
-const owner = { id: '' }
-const outsider = { id: '' }
+const owner = { id: '', [tokenWorkspace]: '' }
+const outsider = { id: '', [tokenWorkspace]: '' }
 const kept: string[] = []
 
 async function fixture() {
   owner.id = await seedUser(pool, 'life-owner')
   outsider.id = await seedUser(pool, 'life-other')
   const workspace = await seedWorkspace(pool, owner.id, [{ userId: owner.id, role: 'admin' }])
+  // A workspace-pinned token's scope: runsOutsideToken requires it.
+  owner[tokenWorkspace] = workspace.id
+  outsider[tokenWorkspace] = workspace.id
   const agentId = await seedAgent(pool, owner.id)
   const issueId = await seedIssue(pool, owner.id, workspace.id)
   const rootId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'succeeded' })

@@ -3,6 +3,9 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { pool } from '@/lib/db'
 import { readRunChain } from '@/lib/run-chain'
 import { runOutsideToken } from '@/lib/tokens/scope'
+import { runListChanged } from '@/lib/live/lists'
+import { runChanged } from '@/lib/live/panels'
+import { notifyDeviceWork } from '@/lib/device-gateway-notify'
 import { ScheduleStore } from '@/lib/schedules/store'
 import type { RequestWorkspaceUser } from '@/lib/request-workspace'
 
@@ -21,11 +24,12 @@ type Run = Record<string, any>
 
 export function isRunId(value: unknown): value is string { return typeof value === 'string' && UUID.test(value) }
 
-/** The run only its owner may touch, inside their token's pinned workspace. */
+/** The run only its owner may touch, inside their token's pinned workspace and a bound Task — revoked Task access ends lifecycle writes too. */
 async function ownedRun(user: ApiUser, runId: string, { includeDeleted = false } = {}): Promise<Run | null> {
   if (!isRunId(runId)) return null
   const { rows: [run] } = await pool.query(
-    `SELECT * FROM agent_runs WHERE id=$1${includeDeleted ? '' : ` AND "deletedAt" IS NULL`}`, [runId])
+    `SELECT * FROM agent_runs WHERE id=$1${includeDeleted ? '' : ` AND "deletedAt" IS NULL`}
+       AND ("issueId" IS NULL OR EXISTS (SELECT 1 FROM issues i WHERE i.id=agent_runs."issueId" AND i."workspaceId"=agent_runs."workspaceId" AND i."ownershipState"='bound'))`, [runId])
   if (!run || run.userId !== user.id) return null
   if (await runOutsideToken(user, runId)) return null
   return run
@@ -40,9 +44,13 @@ const RUN_COPY_COLUMNS = `"userId","issueId","agentId","deviceId","deviceRepoId"
 
 export type ThreadRelation = 'fork' | 'side' | 'subagent'
 
+/** Every run id of the thread rooted at $1 (the root plus all continuations). */
+const CHAIN_SQL = `WITH RECURSIVE chain AS (SELECT id FROM agent_runs WHERE id=$1
+  UNION ALL SELECT r.id FROM agent_runs r JOIN chain ON r."continuesRunId"=chain.id OR r."retryOf"=chain.id)`
+
 async function transcriptExcerpt(sourceRootId: string, limit = 20): Promise<string> {
   const { rows } = await pool.query(
-    `SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM agent_runs WHERE id=$1 OR "continuesRunId"=$1 OR "retryOf"=$1) ORDER BY "createdAt" DESC LIMIT $2`,
+    `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) ORDER BY "createdAt" DESC LIMIT $2`,
     [sourceRootId, limit])
   return rows.reverse().map(row => String(row.text)).join('\n')
 }
@@ -59,11 +67,13 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   if (!root) return null
   const relation = input.relation
   if (input.fromMessageId) {
-    const { rows: [message] } = await pool.query(`SELECT id FROM run_messages WHERE id=$1 AND "runId" IN (SELECT id FROM agent_runs WHERE id=$2 OR "continuesRunId"=$2 OR "retryOf"=$2)`, [input.fromMessageId, root])
+    const { rows: [message] } = await pool.query(`${CHAIN_SQL} SELECT id FROM run_messages WHERE id=$2 AND "runId" IN (SELECT id FROM chain)`, [root, input.fromMessageId])
     if (!message) return null
   }
+  // A full replay also carries the person's follow-up inputs, not just the first prompt.
+  const replay = relation === 'fork' && input.mode !== 'summary' ? (await transcriptExcerpt(root, 50)).slice(0, 8000) : ''
   const prompt = relation === 'fork' && input.mode !== 'summary'
-    ? source.prompt
+    ? `${source.prompt}${replay ? `\n\n${replay}` : ''}`
     : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20)).slice(0, 6000)}`
   const id = randomUUID()
   const { rows: [run] } = await pool.query(
@@ -75,13 +85,27 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   // the owner keeps their run_messages as the copied conversation state.
   if (relation === 'fork' && input.mode !== 'summary') {
     await pool.query(
-      `INSERT INTO run_messages(id,"runId","userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt")
-       SELECT gen_random_uuid(),$1,"userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
-       WHERE "runId" IN (SELECT id FROM agent_runs WHERE id=$2 OR "continuesRunId"=$2 OR "retryOf"=$2)
+      `${CHAIN_SQL} INSERT INTO run_messages(id,"runId","userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt")
+       SELECT gen_random_uuid(),$2,"userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
+       WHERE "runId" IN (SELECT id FROM chain)
          AND ($3::uuid IS NULL OR "createdAt" <= (SELECT "createdAt" FROM run_messages WHERE id=$3))
        ORDER BY "createdAt"`,
-      [id, root, input.fromMessageId ?? null])
+      [root, id, input.fromMessageId ?? null])
+    // The agent's own answers and tool calls live in the chunk stream; copy it
+    // too, renumbering seq because several source runs feed one new run.
+    await pool.query(
+      `${CHAIN_SQL} INSERT INTO run_chunks(id,"runId",seq,chunk,"createdAt")
+       SELECT gen_random_uuid(),$2,ROW_NUMBER() OVER (ORDER BY "createdAt",seq),chunk,"createdAt" FROM run_chunks
+       WHERE "runId" IN (SELECT id FROM chain) ORDER BY "createdAt",seq`,
+      [root, id])
   }
+  // Wake the child's execution: a device run pings its device; a cloud run gets a machine claim.
+  if (run.deviceId) notifyDeviceWork(String(run.deviceId))
+  else if (run.workspaceId) {
+    const { startThreadMachine } = await import('@/lib/run-leases')
+    await startThreadMachine({ userId: user.id, workspaceId: String(run.workspaceId) }, String(run.id)).catch(() => undefined)
+  }
+  await runListChanged(pool, String(run.id)); await runChanged(pool, String(run.id))
   return run
 }
 
@@ -125,7 +149,7 @@ export async function sharedThread(token: string): Promise<Run | null> {
      JOIN agent_runs r ON r.id=s."runId" WHERE s."tokenHash"=$1 AND s."revokedAt" IS NULL AND r."deletedAt" IS NULL`, [hashToken(token)])
   if (!run) return null
   const { rows: messages } = await pool.query(
-    `SELECT id,text,origin,"createdAt" FROM run_messages WHERE "runId" IN (SELECT id FROM agent_runs WHERE id=$1 OR "continuesRunId"=$1 OR "retryOf"=$1) ORDER BY "createdAt" LIMIT 200`, [run.id])
+    `${CHAIN_SQL} SELECT id,text,origin,"createdAt" FROM run_messages WHERE "runId" IN (SELECT id FROM chain) ORDER BY "createdAt" LIMIT 200`, [run.id])
   return { ...run, messages }
 }
 
@@ -140,14 +164,17 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
     const { rows: [issue] } = await pool.query(`SELECT id,"userId","workspaceId" FROM issues WHERE id=$1`, [input.taskId])
     if (!issue || (issue.userId !== user.id && issue.workspaceId !== source.workspaceId)) return 'forbidden'
   }
-  const sets: string[] = [], params: unknown[] = [root]
-  if (input.taskId !== undefined) { params.push(input.taskId); sets.push(`"issueId"=$${params.length}`) }
+  // Task retarget spans the whole chain — continuations join on "issueId", so a
+  // root-only move would split the thread. Tags live on the root the lists read.
+  if (input.taskId !== undefined)
+    await pool.query(`${CHAIN_SQL} UPDATE agent_runs SET "issueId"=$2 WHERE id IN (SELECT id FROM chain)`, [root, input.taskId])
   if (input.tags !== undefined) {
     if (!Array.isArray(input.tags) || input.tags.length > 20 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 60)) return null
-    params.push(JSON.stringify(input.tags)); sets.push(`tags=$${params.length}::jsonb`)
+    await pool.query(`UPDATE agent_runs SET tags=$2::jsonb WHERE id=$1`, [root, JSON.stringify(input.tags)])
   }
-  if (!sets.length) return source
-  const { rows: [run] } = await pool.query(`UPDATE agent_runs SET ${sets.join(',')} WHERE id=$1 RETURNING *`, params)
+  if (input.taskId === undefined && input.tags === undefined) return source
+  await runListChanged(pool, root); await runChanged(pool, root)
+  const { rows: [run] } = await pool.query(`SELECT * FROM agent_runs WHERE id=$1`, [root])
   return run ?? null
 }
 
@@ -157,7 +184,10 @@ export async function deleteThread(user: ApiUser, runId: string): Promise<boolea
   if (!source) return null
   const root = await rootRunId(user, runId)
   if (!root) return null
-  const { rowCount } = await pool.query(`UPDATE agent_runs SET "deletedAt"=now(),"deletedBy"=$2 WHERE id=$1 AND "deletedAt" IS NULL`, [root, user.id])
+  // Deleting marks the whole chain, so no continuation stays dispatchable.
+  const { rowCount } = await pool.query(
+    `${CHAIN_SQL} UPDATE agent_runs SET "deletedAt"=now(),"deletedBy"=$2 WHERE id IN (SELECT id FROM chain) AND "deletedAt" IS NULL`, [root, user.id])
+  await runListChanged(pool, root); await runChanged(pool, root)
   return Boolean(rowCount)
 }
 
@@ -167,7 +197,8 @@ export async function restoreThread(user: ApiUser, runId: string): Promise<boole
   const root = await rootRunId(user, runId)
   if (!root) return null
   const { rowCount } = await pool.query(
-    `UPDATE agent_runs SET "deletedAt"=NULL,"deletedBy"=NULL WHERE id=$1 AND "deletedAt" > now() - interval '1 day' * ${THREAD_RECOVERY_DAYS}`, [root])
+    `${CHAIN_SQL} UPDATE agent_runs SET "deletedAt"=NULL,"deletedBy"=NULL WHERE id IN (SELECT id FROM chain) AND "deletedAt" > now() - interval '1 day' * ${THREAD_RECOVERY_DAYS}`, [root])
+  await runListChanged(pool, root); await runChanged(pool, root)
   return Boolean(rowCount)
 }
 
@@ -204,13 +235,16 @@ export async function moveThread(user: ApiUser, runId: string, target: { deviceI
   if (!source) return null
   const root = await rootRunId(user, runId)
   if (!root) return null
+  // Execution moves with the thread: every run in the chain, not just the root.
   if (target.deviceId === 'cloud') {
-    await pool.query(`UPDATE agent_runs SET "deviceId"=NULL,"deviceRepoId"=NULL,"machineAuthority"=true WHERE id=$1`, [root])
-    return true
+    await pool.query(`${CHAIN_SQL} UPDATE agent_runs SET "deviceId"=NULL,"deviceRepoId"=NULL,"machineAuthority"=true WHERE id IN (SELECT id FROM chain)`, [root])
+  } else {
+    if (!isRunId(target.deviceId)) return null
+    const { rows: [device] } = await pool.query(`SELECT id FROM devices WHERE id=$1 AND "ownerId"=$2`, [target.deviceId, user.id])
+    if (!device) return null
+    await pool.query(`${CHAIN_SQL} UPDATE agent_runs SET "deviceId"=$2,"machineAuthority"=false WHERE id IN (SELECT id FROM chain)`, [root, target.deviceId])
   }
-  if (!isRunId(target.deviceId)) return null
-  const { rows: [device] } = await pool.query(`SELECT id FROM devices WHERE id=$1 AND "ownerId"=$2`, [target.deviceId, user.id])
-  if (!device) return null
-  await pool.query(`UPDATE agent_runs SET "deviceId"=$2,"machineAuthority"=false WHERE id=$1`, [root, target.deviceId])
+  if (target.deviceId !== 'cloud') notifyDeviceWork(target.deviceId)
+  await runListChanged(pool, root); await runChanged(pool, root)
   return true
 }

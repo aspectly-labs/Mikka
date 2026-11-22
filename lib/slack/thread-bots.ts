@@ -13,7 +13,10 @@ export async function rememberSlackThreadBot(query: Query, thread: SlackThreadKe
 
 /** The Bot a thread was routed to, while it is still the person's own live Bot in this workspace. */
 export async function slackThreadBot(query: Query, thread: SlackThreadKey, ownerId: string, workspaceId: string): Promise<string | null> {
-  const { rows: [row] } = await query.query<{ botId: string }>(`SELECT t."botId" FROM slack_thread_bots t JOIN bots b ON b.id=t."botId"
+  // A thread bound to a run (#2936) routes to that run's Bot, not the remembered one.
+  const { rows: [row] } = await query.query<{ botId: string }>(`SELECT COALESCE(r."botId", t."botId") AS "botId" FROM slack_thread_bots t
+    LEFT JOIN agent_runs r ON r.id=t."boundRunId" AND r."deletedAt" IS NULL
+    JOIN bots b ON b.id=COALESCE(r."botId", t."botId")
     WHERE t."linkId"=$1 AND t."channelId"=$2 AND t."threadTs"=$3 AND t."ownerId"=$4 AND b."ownerId"=$4 AND b."workspaceId"=$5 AND b."archivedAt" IS NULL`,
   [thread.linkId, thread.channelId, thread.threadTs, ownerId, workspaceId])
   return row?.botId ?? null
