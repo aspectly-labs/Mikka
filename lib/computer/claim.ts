@@ -10,6 +10,11 @@ import { runListChanged } from '@/lib/live/lists'
 import { armDueTimerAfterCommit } from '@/lib/due-timer'
 import { advanceTaskAfterRunStart } from '@/lib/task-status-run-start'
 import { taskActivityChanged } from '@/lib/factory/activity-live'
+import { freeDeviceSlots } from '@/lib/device-capacity'
+
+async function lockDeviceCapacity(tx: PoolClient, deviceId: string) {
+  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended('device-capacity:' || $1::uuid::text,0))", [deviceId])
+}
 
 /** The existing local daemon cannot operate a Bot's cloud desktop. Keep its
  * claim serialized with Bot binding and fail closed until a cloud worker with
@@ -23,10 +28,14 @@ export async function claimLocalRun(pool: Pool, runId: string, deviceId: string,
   const client = await connectForCommitEffects(pool)
   try {
     await client.query('BEGIN')
+    await lockDeviceCapacity(client, deviceId)
+    await client.query('SELECT id FROM devices WHERE id=$1 FOR SHARE', [deviceId])
     await executionIdentityForRun(client, runId)
     if (beforeClaim && (await beforeClaim(client)) === false) { await client.query('ROLLBACK'); return 'unavailable' }
     const run = (await client.query('SELECT id FROM agent_runs WHERE id=$1 AND "deviceId"=$2 AND status=$3 AND "stopRequestedAt" IS NULL AND "workspaceId"=$4 AND "userId"=$5 FOR UPDATE', [runId, deviceId, 'queued', stored.workspaceId, stored.userId])).rows[0]
     if (!run) { await client.query('COMMIT'); return 'unavailable' }
+    // The device's saved concurrency limit is enforced here, where the claim commits.
+    if (await freeDeviceSlots(client, deviceId) < 1) { await client.query('COMMIT'); return 'unavailable' }
     await assertRunProfileClaim(client, runId)
     if(await prepareLocalClaimBinding(client,runId,subscriptionBindingId)==='cloud-required'){await client.query('COMMIT');return 'cloud-required'}
     await client.query('UPDATE agent_runs SET status=$2,"startedAt"=now(),"leaseExpiresAt"=$3,"updatedAt"=now() WHERE id=$1', [runId, 'preparing', leaseExpiresAt])
@@ -69,10 +78,12 @@ export async function claimCloudRun(pool: Pool, actor: { userId: string; workspa
     // repository tasks under any policy, and its claim never carries a computer grant.
     if (desktop && computerPermission(policy?.permission) !== 'allow') { await client.query('COMMIT'); return null }
     const permission: ComputerPermission = desktop ? 'allow' : 'deny'
+    await lockDeviceCapacity(client, deviceId)
     await executionIdentityForRun(client, runId)
     if (beforeClaim && (await beforeClaim(client)) === false) { await client.query('ROLLBACK'); return null }
     const run = (await client.query<typeof import('@/lib/db/schema').agentRuns.$inferSelect>('SELECT * FROM agent_runs WHERE id=$1 AND "deviceId"=$2 AND "userId"=$3 AND status=$4 AND "stopRequestedAt" IS NULL AND "workspaceId"=$5 FOR UPDATE', [runId, deviceId, actor.userId, 'queued', stored.workspaceId])).rows[0]
     if (!run) { await client.query('COMMIT'); return null }
+    if (await freeDeviceSlots(client, deviceId) < 1) { await client.query('COMMIT'); return null }
     await assertLockedRunProfileClaim(client, run)
     // Every cloud thread runs on its own thread machine; the Bot's computer serves only the Bot.
     const binding = (await client.query(`SELECT b."botId",1 AS display FROM computer_run_bindings b

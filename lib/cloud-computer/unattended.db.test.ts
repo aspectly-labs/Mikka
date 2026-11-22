@@ -4,6 +4,7 @@ import { randomUUID,createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { before,after,beforeEach,mock,test } from 'node:test'
 import { Pool } from 'pg'
+import { applySettingsMigration } from '../../tests/support/settings-migration'
 import { browserEffects, type BrowserEffect, type BrowserMutation, type VisualObservation } from './visual-contract'
 import type { judgeVisualBrowserAction } from './visual-model'
 
@@ -35,6 +36,7 @@ before(async()=>{
  await pool.query(`CREATE TABLE "user"(id text PRIMARY KEY);INSERT INTO "user" VALUES('alice'),('bob');CREATE TABLE agent_runs(id uuid PRIMARY KEY);CREATE TABLE devices(id uuid PRIMARY KEY);CREATE TABLE suggestions(id uuid PRIMARY KEY,"botId" uuid);CREATE TABLE device_repos(id uuid PRIMARY KEY)`)
  for(const file of ['20261027164501_cloud_computers.sql','20261029011635_subagents_thread_machines.sql','20261029080000_unattended_browser_runtime.sql','20261029080001_owner_cloud_machines.sql']) await pool.query(await readFile(new URL('../../drizzle/'+file,import.meta.url),'utf8'))
  await pool.query(await readFile(new URL('../../drizzle/20261121053829_cloud_machine_error_code.sql',import.meta.url),'utf8'))
+ await applySettingsMigration(pool)
  await pool.query(`CREATE TABLE user_e2b_keys ("userId" text PRIMARY KEY); CREATE TABLE workspace_e2b_keys ("createdBy" text); INSERT INTO user_e2b_keys VALUES ('alice'),('bob')`)
  await pool.query(`CREATE TABLE workspace_computer_policies("workspaceId" uuid PRIMARY KEY,permission text DEFAULT 'allow',version bigint DEFAULT 0,external_write_permissions jsonb DEFAULT '{}',external_write_policy_version bigint DEFAULT 0);
  CREATE TABLE agent_kit_heads(owner_id text,bot_id uuid,workspace_id uuid,external_write_permissions jsonb DEFAULT '{}',external_write_policy_version bigint DEFAULT 0);

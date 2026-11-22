@@ -113,7 +113,7 @@ export interface ServerLink {
   report(deviceId: string, report: DeviceReport): Promise<DeviceReportResult>
   listRepos(deviceId: string): Promise<DeviceRepo[]>
   /** Ids of queued runs pinned to this device. */
-  pendingRuns(deviceId: string): Promise<string[]>
+  pendingRuns(deviceId: string, skip?: readonly string[]): Promise<string[]>
   /** Fails with `RunNotPinnedHereError` for runs pinned elsewhere. */
   claimRun(deviceId: string, runId: string, signal?: AbortSignal, options?: { initialRepository: true }): Promise<RunAssignment>
   localComputerAuthority?(deviceId: string, runId: string): Promise<NonNullable<RunAssignment['localComputer']>>
@@ -495,10 +495,10 @@ export class MemoryServer {
         this.check()
         return this.repos.get(deviceId) ?? []
       },
-      pendingRuns: async (deviceId) => {
+      pendingRuns: async (deviceId, skip) => {
         this.check()
         return [...this.runs]
-          .filter(([, r]) => r.deviceId === deviceId && r.state === "queued")
+          .filter(([id, r]) => r.deviceId === deviceId && r.state === "queued" && !skip?.includes(id))
           .map(([id]) => id)
       },
       claimRun: async (deviceId, runId) => {

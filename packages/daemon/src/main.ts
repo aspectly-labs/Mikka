@@ -288,6 +288,7 @@ export class Daemon {
   private refusedRuns = new Set<string>()
   /** Runs a commands read reported queued: being claimed, or failed until the next pass retries them. */
   private queuedClaims = new Map<string, "claiming" | "failed">()
+  private deferredQueueClaims = new Set<string>()
   private quota: QuotaPoller | null = null
   /** Aborts the daemon's own requests (claims, reads) when it stops. */
   private lifetime = new AbortController()
@@ -1016,6 +1017,7 @@ export class Daemon {
   /** One read after a push, or right after the socket opens. Wait is zero: the signal already arrived. */
   private async pullSignaledWork(deviceId: string, signal: AbortSignal) {
     const failedClaims = [...this.queuedClaims].flatMap(([id, state]) => state === "failed" ? [id] : [])
+    const pendingAtRead = this.pendingQueueClaims()
     const skipRuns = [...failedClaims, ...this.refusedRuns, ...this.stopping, ...this.ended].slice(0, COMMANDS_MAX_SKIP)
     let queued: string[] = []
     const commands = await this.options.link.fetchCommands(deviceId, 0, {
@@ -1033,7 +1035,7 @@ export class Daemon {
     })
     if (this.stopped || signal.aborted) return
     await this.applyCommands(commands)
-    if (queued.length > 0) this.claimQueued(queued)
+    if (queued.length > 0) this.claimQueued(this.unreservedOffers(queued, pendingAtRead))
     // Confirm delivery, retaining IDs on failure so the next read retries without redelivery.
     while ((this.unacked.size > 0 || this.refusedSteers.size > 0) && !signal.aborted) {
       const ids = [...this.unacked].slice(0, 500)
@@ -1043,6 +1045,29 @@ export class Daemon {
       for (const id of ids) this.unacked.delete(id)
       for (const id of refused) this.refusedSteers.delete(id)
     }
+  }
+
+  private pendingQueueClaims() {
+    return [...this.queuedClaims].flatMap(([runId, state]) => state === "claiming" ? [runId] : [])
+  }
+
+  private unreservedOffers(offered: string[], pendingAtRead: string[]) {
+    const pending = new Set([...pendingAtRead, ...this.pendingQueueClaims()])
+    const candidates = offered.filter(runId => !pending.has(runId))
+    const available = Math.max(0, offered.length - pending.size)
+    if (available < candidates.length) {
+      let settled = false
+      for (const runId of pending) {
+        if (this.queuedClaims.get(runId) === "claiming") this.deferredQueueClaims.add(runId)
+        else settled = true
+      }
+      if (settled) void this.syncWithServer()
+    }
+    return candidates.slice(0, available)
+  }
+
+  private recheckDeferredOffers(runId: string) {
+    if (this.deferredQueueClaims.delete(runId)) void this.syncWithServer()
   }
 
   /** Starts claiming the reported queued runs; true when any claim began. */
@@ -1057,13 +1082,15 @@ export class Daemon {
         () => {
           if (this.initialRepositorySync?.runId === runId) this.initialRepositorySync.received?.()
           this.queuedClaims.delete(runId)
+          this.recheckDeferredOffers(runId)
         },
         (error: unknown) => {
           if (this.initialRepositorySync?.runId === runId) this.initialRepositorySync.received?.()
           this.queuedClaims.set(runId, "failed")
           // The server has no open session for this device: redial, and the reopened socket claims again.
-          if (error instanceof DeviceSessionRequiredError) { this.session?.redial(); return }
+          if (error instanceof DeviceSessionRequiredError) { this.deferredQueueClaims.delete(runId); this.session?.redial(); return }
           this.log.warn({ run_id: runId, err: error }, "could not start run")
+          this.recheckDeferredOffers(runId)
         }
       )
     }
@@ -1561,13 +1588,24 @@ export class Daemon {
         await this.supervisor.resumeAll(true)
         // Claims that failed after a commands read reported them are retried here.
         for (const [runId, state] of this.queuedClaims) if (state === "failed") this.queuedClaims.delete(runId)
-        for (const runId of await link.pendingRuns(deviceId)) {
-          if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) continue
-          await this.claimAndStart(runId).catch((error: unknown) => {
-            // No open session on the server: this pass ends and the socket is redialed.
-            if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
-            this.log.warn({ run_id: runId, err: error }, "could not start run")
-          })
+        const skip = new Set([...this.queuedClaims.keys(), ...this.refusedRuns].slice(0, COMMANDS_MAX_SKIP))
+        while (true) {
+          const pendingAtRead = this.pendingQueueClaims()
+          const offered = this.unreservedOffers((await link.pendingRuns(deviceId, [...skip])).filter(runId => !skip.has(runId)), pendingAtRead)
+          if (!offered.length) break
+          let retry = false
+          for (const runId of offered) {
+            skip.add(runId)
+            if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) { retry = true; continue }
+            try { await this.claimAndStart(runId) }
+            catch (error) {
+              // No open session on the server: this pass ends and the socket is redialed.
+              if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
+              this.log.warn({ run_id: runId, err: error }, "could not start run")
+              retry = true
+            }
+          }
+          if (!retry || skip.size >= COMMANDS_MAX_SKIP) break
         }
       }
       await this.pruneWorktrees()
