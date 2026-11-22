@@ -167,6 +167,7 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'review-config', group: 'review', title: 'Review config' },
   { id: 'general', group: 'workspace', title: 'Workspace general' },
   { id: 'organization', group: 'workspace', title: 'Organization' },
+  // Capy's Issue states (decision 2026-11-19-2115): members read them, admins edit them.
   { id: 'issue-states', group: 'workspace', title: 'Issue states' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
