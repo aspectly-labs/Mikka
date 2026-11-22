@@ -45,17 +45,21 @@ export function StartupGate({ children }: { children: ReactNode }) {
         : Promise.resolve(false)
       const version = await within(versionInfo(), CHECK_MS, null)
       if (typeof version?.mobileUpdateUrl === 'string') updateUrl = version.mobileUpdateUrl
-      if (required || buildTooOld(Application.nativeBuildVersion, version?.minMobileBuild)
-        || typeof version?.minApiVersion === 'number' && version.minApiVersion > HOSTED_API_VERSION) {
+      if (required || buildTooOld(Application.nativeBuildVersion, version?.minMobileBuild)) {
         required = true
         return set({ kind: 'tooOld', url: updateUrl })
       }
+      const floorRequired = typeof version?.minApiVersion === 'number' && version.minApiVersion > HOSTED_API_VERSION
       if (await ota) {
         set({ kind: 'updating' })
         // The launch's own background check may have fetched it first (isNew is then false); either way the newest download opens.
         if (await within(Updates.fetchUpdateAsync().then(() => true), DOWNLOAD_MS, false)) {
           try { await Updates.reloadAsync(); return } catch { /* opens on the running version */ }
         }
+      }
+      if (floorRequired) {
+        required = true
+        return set({ kind: 'tooOld', url: updateUrl })
       }
       set({ kind: 'ready' })
     })()

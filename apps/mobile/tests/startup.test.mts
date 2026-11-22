@@ -22,10 +22,10 @@ test('a check that hangs or fails gives the fallback', async () => {
   assert.equal(await within(Promise.reject(new Error('offline')), 50, 'skip'), 'skip')
 })
 
-test('a running mobile app turns a server upgrade refusal into its existing update screen', async t => {
+test('startup recovers an API floor with OTA but preserves native and runtime upgrade gates', async t => {
   const { Window } = await import('happy-dom')
   const browser = new Window({ url: 'https://fixture.example' })
-  Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true, __DEV__: true })
+  Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true, __DEV__: false })
   const { act, createElement } = await import('react')
   const { createRoot } = await import('react-dom/client')
   const opened: string[] = []
@@ -37,18 +37,39 @@ test('a running mobile app turns a server upgrade refusal into its existing upda
     Pressable: ({ children, onPress, disabled }: { children: unknown; onPress: () => void; disabled: boolean }) => createElement('button', { onClick: onPress, disabled }, children),
   } })
   mock.module('expo-application', { namedExports: { nativeBuildVersion: '100' } })
-  mock.module('expo-updates', { namedExports: { isEnabled: false } })
+  let available = false, fetchFails = false, reloadFails = false
+  const fetchUpdateAsync = mock.fn(async () => { if (fetchFails) throw new Error('download failed') })
+  const reloadAsync = mock.fn(async () => { if (reloadFails) throw new Error('reload failed') })
+  mock.module('expo-updates', { namedExports: { isEnabled: true, checkForUpdateAsync: async () => ({ isAvailable: available }), fetchUpdateAsync, reloadAsync } })
   mock.module(new URL('../components/icons.tsx', import.meta.url).href, { namedExports: { Spinner: () => createElement('span', null, 'checking') } })
   mock.module(new URL('../components/Text.tsx', import.meta.url).href, { namedExports: { Text } })
   mock.module(new URL('../lib/config.ts', import.meta.url).href, { namedExports: { API_URL: base } })
   mock.module(new URL('../lib/tracing.ts', import.meta.url).href, { namedExports: { mobileTraceHeaders: () => ({}) } })
   mock.module(new URL('../lib/theme.ts', import.meta.url).href, { namedExports: { colors: {} } })
-  t.mock.method(globalThis, 'fetch', async () => Response.json({ minMobileBuild: 0, minApiVersion: 0, mobileUpdateUrl: update }))
+  let minMobileBuild = 0, minApiVersion = 0
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ minMobileBuild, minApiVersion, mobileUpdateUrl: update }))
   const { StartupGate } = await import('../components/StartupGate.tsx')
   const root = createRoot(document.body)
   try {
     await act(async () => root.render(createElement(StartupGate, null, createElement('span', null, 'signed-in app'))))
     assert.equal(document.body.textContent, 'signed-in app')
+    for (const scenario of [
+      { name: 'floor with OTA', available: true, fetchFails: false, reloadFails: false, minMobileBuild: 0, downloads: 1, reloads: 1, text: 'checking正在更新' },
+      { name: 'floor without OTA', available: false, fetchFails: false, reloadFails: false, minMobileBuild: 0, downloads: 0, reloads: 0, text: '请更新到最新版更新' },
+      { name: 'floor with failed download', available: true, fetchFails: true, reloadFails: false, minMobileBuild: 0, downloads: 1, reloads: 0, text: '请更新到最新版更新' },
+      { name: 'floor with failed reload', available: true, fetchFails: false, reloadFails: true, minMobileBuild: 0, downloads: 1, reloads: 1, text: '请更新到最新版更新' },
+      { name: 'native build too old', available: true, fetchFails: false, reloadFails: false, minMobileBuild: 200, downloads: 0, reloads: 0, text: '请更新到最新版更新' },
+    ]) {
+      ;({ available, fetchFails, reloadFails, minMobileBuild } = scenario)
+      minApiVersion = 2
+      fetchUpdateAsync.mock.resetCalls(); reloadAsync.mock.resetCalls()
+      await act(async () => root.render(createElement(StartupGate, { key: scenario.name }, createElement('span', null, 'signed-in app'))))
+      assert.equal(fetchUpdateAsync.mock.callCount(), scenario.downloads, scenario.name)
+      assert.equal(reloadAsync.mock.callCount(), scenario.reloads, scenario.name)
+      assert.equal(document.body.textContent, scenario.text, scenario.name)
+    }
+    available = false; minApiVersion = 0; minMobileBuild = 0
+    await act(async () => root.render(createElement(StartupGate, { key: 'runtime' }, createElement('span', null, 'signed-in app'))))
     await act(async () => requireMobileUpdate('https://other.example.test/mikka'))
     assert.equal(document.body.textContent, 'signed-in app')
     await act(async () => requireMobileUpdate(base))
