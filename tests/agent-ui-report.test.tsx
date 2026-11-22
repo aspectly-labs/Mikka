@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { before } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { NextIntlClientProvider } from '@/lib/intl/i18n-client'
 import { createParser } from '@openuidev/lang-core'
@@ -7,11 +7,14 @@ import messages from '../messages/en.json'
 import chineseMessages from '../messages/zh-CN.json'
 import { agentComponentCatalog, createAgentLibrary } from '../lib/agent-ui-catalog'
 import { detectAgentUISource } from '../lib/agent-ui-source'
-import { actionPrompt, AgentGenerativeUI } from '../components/workspace/agent-generative-ui'
+import { actionPrompt, AgentGenerativeUI, preloadAgentOpenUI } from '../components/workspace/agent-generative-ui'
 import { ReplyBubbles } from '../components/workspace/agent-text-bubble'
 import { AgentCitationsContext } from '../components/workspace/agent-citations'
 import { TaskPresentationsContext } from '../hooks/use-task-collection'
 import { taskPresentation } from '../lib/task-presentation'
+
+// The OpenUI renderer is a lazy chunk in the app; load it first so the server render draws cards.
+before(() => preloadAgentOpenUI())
 
 const library = createAgentLibrary()
 const parser = createParser(library.toJSONSchema(), library.root)

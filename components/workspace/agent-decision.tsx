@@ -3,11 +3,12 @@
 import { useDecisionSubmission } from '@/hooks/use-decision-submission'
 import { useAgentCopy } from '@/hooks/use-agent-copy'
 import { useLocale, useTranslations } from '@/lib/intl/i18n-client'
-import { createContext, use, useState, type ReactElement, type ReactNode } from 'react'
+import { use, useState, type ReactElement, type ReactNode } from 'react'
 import { Check, ChevronRight, ExternalLink } from '@/components/icons'
 import { GITHUB_APP_INSTALL_URL } from '@/lib/github/repository-match'
 import { Link } from '@/i18n/navigation'
 import { useIsStreaming } from '@openuidev/react-lang'
+import { ReplyAnswer } from './reply-answer'
 import { ApprovalCard, type ApprovalCardStatus } from '@/components/agents/approval-card'
 import type { DateRangePickerLabels } from '@/components/motion/date-range-picker'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -160,11 +161,7 @@ function answerable(question: AgentQuestion) {
   return Boolean(question.options?.length || question.allowCustom || question.input === 'switch' || question.input === 'slider' || question.input === 'dateRange')
 }
 
-/**
- * What the person said right after this reply, when the host knows it: a
- * choice card shows that answer picked after a reload (Figma 379:5694).
- */
-export const ReplyAnswer = createContext<string | null>(null)
+export { ReplyAnswer } from './reply-answer'
 
 /**
  * One question with a few answers (Figma 379:5694, 395:24805, 395:24642): the
