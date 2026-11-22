@@ -11,6 +11,7 @@ import { SETTINGS_REGISTRY, parseSettingsPatch, personalSettingWorkspace, settin
 import { readRuntimeSettings, type StoredSettingValue } from './runtime'
 import { personalSettingValues, workspaceSettingValues } from './schema'
 import { workCreationView } from './work-creation-policy'
+import { validateAndMirrorKeyboardShortcuts } from './keyboard-shortcuts'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Reader = Pick<typeof db, 'execute'>
@@ -28,7 +29,9 @@ function pack(field: SettingDefinition, raw: SettingValue | null): StoredSetting
 }
 
 async function readValues(context: SettingsContext, kind: 'personal' | 'team', database: Reader = db, scope: SettingScope = 'personal'): Promise<SettingsView> {
-  const values = await readRuntimeSettings(database, Object.keys(SETTINGS_REGISTRY) as SettingKey[],
+  const keys = (Object.keys(SETTINGS_REGISTRY) as SettingKey[]).filter(key =>
+    scope === 'personal' || settingDefinition(key).scope.includes(scope))
+  const values = await readRuntimeSettings(database, keys,
     { workspaceId: context.workspaceId, ...(scope === 'personal' ? { userId: context.userId } : {}) })
   return { workspaceId: context.workspaceId, values, workCreation: workCreationView(kind, values.newWorkVisibility, values.allowPrivateNewWork.value) }
 }
@@ -69,10 +72,14 @@ export async function writeSettings(context: SettingsContext, scope: SettingScop
     const { workspace } = await requireWorkspace(workspaceTx, context.workspaceId, context.userId, scope === 'workspace')
     const result = await db.transaction(async tx => {
       if (scope === 'personal') await tx.select({ id: users.id }).from(users).where(eq(users.id, context.userId)).for('no key update')
+      if (scope === 'personal') await validateAndMirrorKeyboardShortcuts(tx, context.userId, values)
       await writeRows(tx, scope, context, values)
       return readValues(context, workspace.kind, tx, scope)
     })
-    await workspaceListChanged(workspaceTx, context.workspaceId, ['workspace_settings'])
+    // Pure keyboard writes already refresh this account's active workspaces.
+    if (scope === 'workspace' || Object.keys(values).some(key => !settingDefinition(key).action)) {
+      await workspaceListChanged(workspaceTx, context.workspaceId, ['workspace_settings'])
+    }
     return result
   })
 }

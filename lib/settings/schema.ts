@@ -31,3 +31,10 @@ export const workspaceInstructions = pgTable('workspace_instructions', {
   instructions: text('instructions').notNull().default(''),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [check('workspace_instructions_length', sql`char_length(${table.instructions}) <= 2000`)])
+
+/** Null restores the action default; empty text explicitly disables it. */
+export const keyboardShortcuts = pgTable('keyboard_shortcuts', {
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  actionId: text('actionId').notNull(), binding: text('binding'),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [primaryKey({ columns: [table.userId, table.actionId] })])
