@@ -1,6 +1,5 @@
 'use client'
 
-import { BotPermissionsSettings } from './bot-permissions'
 import { Component, type ReactNode, useEffect, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
@@ -37,7 +36,7 @@ import { AuditLogSettings } from '@/components/settings/audit-log-settings'
 import { UsageSettings } from '@/components/settings/usage-settings'
 import { BillingSettings } from '@/components/settings/billing-settings'
 import { useWorkspace } from '@/hooks/use-workspace'
-import { settingsHref, TEAM_ONLY_SECTIONS, type SettingsSectionId } from '@/lib/settings-sections'
+import { settingsHref, TEAM_ONLY_SECTIONS, WIDE_SETTINGS_SECTIONS, type SettingsSectionId } from '@/lib/settings-sections'
 import { useRouter } from '@/i18n/navigation'
 import { pushSettingsHistory } from '@/lib/settings-navigation'
 import type { RailDestination } from '@/components/nav/icon-rail'
@@ -110,7 +109,7 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
     if (preview || !roleKnown || !resolvedWorkspaceId) return
     prefetchSettingsSection(section, resolvedWorkspaceId, cache, mutate)
   }, [preview, roleKnown, resolvedWorkspaceId, section, cache, mutate])
-  const title = t(`sections.${section}.title`)
+  const title = t.has(`sections.${section}.title` as never) ? t(`sections.${section}.title` as never) : t('sections.preferences.title')
   const routedBody = section === 'members' || section === 'teams'
   const openSection = (next: SettingsSectionId) => {
     const href = settingsHref(next, workspaceId)
@@ -128,7 +127,7 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
     <SettingsContentFrame parent={t('title')} title={title}>
 
       {accountError && <FieldError className="px-6 py-2">{accountError}</FieldError>}
-      {routedBody ? <SettingsContent className="gap-6 max-md:pt-1">
+      {routedBody ? <SettingsContent wide={WIDE_SETTINGS_SECTIONS.has(section)} className="gap-6 max-md:pt-1">
         {preview ? <FieldError>{t('workspaceUnavailable')}</FieldError> : workspaceError || mismatchedWorkspace
           ? <InlineLoadError message={isSettingsAccessError(workspaceError) ? members('noAccessDescription') : t('workspaceUnavailable')}
               retryLabel={common('retry')} onRetry={() => { void refreshWorkspace() }} />
@@ -136,12 +135,11 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
           {section === 'members' && <GovernancePlan workspaceId={resolvedWorkspaceId} />}
           <MembersScreen key={resolvedWorkspaceId} section={section} workspaceId={resolvedWorkspaceId} inviteInitially={inviteInitially} onSection={openSection} />
         </> : <p role="status" className="text-sm text-muted-foreground">{t('workspaceLoading')}</p>}
-      </SettingsContent> : <SettingsContent key={section} className={cn('gap-6 max-md:pt-1', enter)}>
+      </SettingsContent> : <SettingsContent key={section} wide={WIDE_SETTINGS_SECTIONS.has(section)} className={cn('gap-6 max-md:pt-1', enter)}>
         {section === 'computers' ? <>
           <DevicesSettings workspaceId={resolvedWorkspaceId} />
           <WebServerControl settings />
           <DesktopServerSettings />
-          {resolvedWorkspaceId && !preview ? <BotPermissionsSettings admin={admin} workspaceId={resolvedWorkspaceId} /> : null}
         </> : <h1 className="text-xl font-semibold max-md:sr-only">{title}</h1>}
         <SectionBody t={t} section={section} user={user} userKey={userKey} googleEnabled={googleEnabled} workspaceId={resolvedWorkspaceId} workspaceName={workspace?.workspace.name} personal={personal} team={team} admin={admin} community={community} workspaceError={Boolean(workspaceError) || (workspace !== undefined && !resolvedWorkspaceId)} linearNotice={linearNotice} preview={preview} onSignOut={onSignOut} signingOut={signingOut} onSection={next => { if (!activeSection || !pushSettingsHistory(settingsHref(next, workspaceId), workspaceId)) setSection(next) }} />
       </SettingsContent>}
@@ -167,7 +165,7 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'preferences': return <><GeneralInterface /><PreferencesSettings />{workspaceId && !preview && !workspaceError && <RestoreSetupChecklist key={workspaceId} workspaceId={workspaceId} />}</>
     case 'appearance': return <AppearanceSettings />
     case 'instructions': return <MemorySettings />
-    case 'threads': return <ThreadSettings workspaceId={workspaceId} personal={personal} />
+    case 'threads': return <ThreadSettings workspaceId={workspaceId} personal={personal} admin={admin} />
     case 'notifications': return <NotificationSettings />
     case 'connections': return <PluginsView section="connections" rootLabel={t('sections.connections.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'models': return <>{workspaceId && !preview ? <ApiAndSubscriptions key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} team={team} cloudUserKey={community ? userKey : undefined} /> : waiting}</>

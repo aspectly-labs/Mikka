@@ -2235,9 +2235,6 @@
         "title": "线程",
         "keywords": "标题"
       },
-      "memory": {
-        "title": "记忆与建议"
-      },
       "account": {
         "title": "个人资料",
         "keywords": "账户 资料 隐私"
@@ -2255,9 +2252,6 @@
         "title": "集成",
         "keywords": "连接 插件 MCP"
       },
-      "bot-permissions": {
-        "title": "应用与运行权限"
-      },
       "models": {
         "title": "模型与订阅",
         "nav": "模型",
@@ -2265,9 +2259,6 @@
       },
       "logins": {
         "title": "密钥与登录"
-      },
-      "privacy": {
-        "title": "数据与隐私"
       },
       "computers": {
         "title": "设备"
@@ -2309,15 +2300,7 @@
       "issue-states": {
         "title": "任务状态",
         "nav": "任务状态与标签"
-      },
-      "shortcuts": { "title": "快捷键" },
-      "git": { "title": "Git" },
-      "review-repositories": { "title": "审阅仓库" },
-      "review-config": { "title": "审阅配置" },
-      "activity": { "title": "活动" },
-      "referrals": { "title": "推荐" },
-      "experiments": { "title": "实验" },
-      "cloud-credentials": { "title": "云凭据" }
+      }
     },
     "appearance": {
       "title": "外观",
@@ -2429,7 +2412,8 @@
       "theme_slate": "蓝灰",
       "theme_lilac": "淡紫",
       "theme_bright": "纸白",
-      "theme_midnight": "午夜"
+      "theme_midnight": "午夜",
+      "pendingBadge": "待接入"
     },
     "profile": {
       "heading": "账户信息",
@@ -2527,7 +2511,8 @@
       "replayOnboarding": "重新播放引导",
       "replay": "重新播放",
       "replaying": "正在重新播放…",
-      "transferPick": "选择成员"
+      "transferPick": "选择成员",
+      "pendingBadge": "待接入"
     },
     "computerPolicy": {
       "heading": "电脑操作",
@@ -2915,48 +2900,6 @@
       "save": "保存",
       "changePassword": "改密码",
       "actions": "{site} 的操作"
-    },
-    "botPermissions": {
-      "loading": "正在读取权限…",
-      "rule": "每个应用对整个工作区只有一个档位，工作区里的所有 Bot 都用它；工具列表来自应用的真实目录。",
-      "workspaceScope": "这些设置作用于本工作区的所有 Bot。",
-      "allTools": "所有工具",
-      "allToolsCount": "所有工具 · {count} 项",
-      "tools": "查看工具",
-      "toolsCount": "{count} 个工具 · {readOnly} 个只读",
-      "toolsLoading": "正在读取工具…",
-      "toolsFailed": "工具列表读取失败",
-      "readOnly": "只读",
-      "write": "可写",
-      "mode": "审批方式",
-      "modes": {
-        "ask": "按规则处理",
-        "read_only": "只读"
-      },
-      "empty": "还没有连接应用",
-      "level": {
-        "workspaceDefault": "默认（按工作区设置）",
-        "runDefault": "默认（按运行策略）",
-        "default": "默认（由 Decision API 判断）",
-        "allow": "直接做",
-        "ask": "先问你",
-        "deny": "不允许"
-      },
-      "run": {
-        "install_dependency": "安装依赖",
-        "write_outside_repo": "写仓库外的文件",
-        "git_push": "推送代码",
-        "network": "访问网络",
-        "computer_use": "操作电脑"
-      },
-      "errors": {
-        "readFailed": "权限读取失败",
-        "saveFailed": "保存失败",
-        "writePolicyChanged": "设置刚被改过，已重新读取",
-        "agentPolicyUnavailable": "这项设置现在保存不了",
-        "workspaceAccessDenied": "只有管理员能改工作区设置",
-        "noBotInWorkspace": "这个工作区还没有 Bot。新建一个 Bot 后才能读取和保存工作区的应用权限。"
-      }
     },
     "workspaceLoading": "正在读取工作区…",
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
@@ -3879,7 +3822,7 @@
       "subagents": "子代理",
       "subagentsHint": "线程启动时使用的并发与嵌套限制。",
       "parallel": "并行子代理",
-      "parallelHint": "这个线程树中可同时运行的子代理数量。",
+      "parallelHint": "同一成员在该工作区同时运行的浏览器子代理上限。",
       "depth": "嵌套深度",
       "depthHint": "设为 1 时，子代理不能再启动子代理。",
       "countWorkspace": "{count} · 工作区",
@@ -3894,7 +3837,9 @@
       "either": "任一发生时",
       "workspaceDefault": "工作区默认",
       "triggersError": "重新生成时机更新失败",
-      "loadError": "线程标题设置读取失败"
+      "loadError": "线程标题设置读取失败",
+      "pendingBadge": "待接入",
+      "runtimeDecided": "由执行端决定"
     },
     "issueStates": {
       "open": "未关闭",

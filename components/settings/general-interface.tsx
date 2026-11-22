@@ -13,7 +13,7 @@ import { RAIL_PAGE_IDS, type RailPageId, type RunKeyAction } from '@/lib/ui-pref
 
 const ACTIONS = ['steer', 'interrupt', 'queue'] as const satisfies readonly RunKeyAction[]
 
-/** 常规, frame 1508:588. Every row saves on user_preferences.uiPreferences and the client reads it back. */
+/** 常规, frame 1508:588. Interface and composer key bindings persist via SETTINGS_REGISTRY. */
 export function GeneralInterface() {
   const t = useTranslations('Settings.appearance')
   const nav = useTranslations()
@@ -29,7 +29,7 @@ export function GeneralInterface() {
   const pages = ui.sidebarPages ?? RAIL_PAGE_IDS
   return <>
     <SettingsSection title={t('interface')}>
-      <SettingRow title={t('sidebarPages')} description={t('sidebarPagesHint')}>
+      <SettingRow title={t('sidebarPages')}>
         <Button type="button" size="icon" variant="ghost" aria-label={t('sidebarPages')} onClick={() => { setDraftPages([...pages]); setPagesOpen(true) }}><Pencil /></Button>
       </SettingRow>
       <SettingRow title={t('sidebarLayout')} description={t('sidebarLayoutHint')}>
@@ -38,7 +38,7 @@ export function GeneralInterface() {
       <SettingRow title={t('pinPages')} description={t('pinPagesHint')}>
         <SettingSwitch label={t('pinPages')} checked={ui.pinPages} onCheckedChange={checked => { void save({ pinPages: checked }) }} />
       </SettingRow>
-      <SettingRow title={t('openInApp')} description={t('openInAppHint')}>
+      <SettingRow title={t('openInApp')}>
         <SettingSwitch label={t('openInApp')} checked={ui.openInDesktop} onCheckedChange={checked => { void save({ openInDesktop: checked }) }} />
       </SettingRow>
       <SettingRow title={t('scrollTop')} description={t('scrollTopHint')}>
@@ -46,16 +46,16 @@ export function GeneralInterface() {
       </SettingRow>
     </SettingsSection>
     <SettingsSection title={t('input')}>
-      <SettingRow title={t('enter')} description={t('enterHint')}>
+      <SettingRow title={t('enter')}>
         <SettingSelect label={t('enter')} value={ui.enterAction} options={actionOptions} onValueChange={value => { if (isAction(value)) void save({ enterAction: value }) }} />
       </SettingRow>
-      <SettingRow title={t('modEnter')} description={t('modEnterHint')}>
+      <SettingRow title={t('modEnter')}>
         <SettingSelect label={t('modEnter')} value={ui.modEnterAction} options={actionOptions} onValueChange={value => { if (isAction(value)) void save({ modEnterAction: value }) }} />
       </SettingRow>
-      <SettingRow title={t('altEnter')} description={t('altEnterHint')}>
+      <SettingRow title={t('altEnter')}>
         <SettingSelect label={t('altEnter')} value={ui.altEnterAction} options={actionOptions} onValueChange={value => { if (isAction(value)) void save({ altEnterAction: value }) }} />
       </SettingRow>
-      <SettingRow title={t('microphone')} description={t('microphoneHint')}>
+      <SettingRow title={t('microphone')}>
         <span className="text-sm text-muted-foreground">{t('systemDefault')}</span>
       </SettingRow>
     </SettingsSection>

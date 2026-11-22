@@ -2235,9 +2235,6 @@
         "title": "Threads",
         "keywords": "titles"
       },
-      "memory": {
-        "title": "Memory and suggestions"
-      },
       "account": {
         "title": "Profile",
         "keywords": "account privacy"
@@ -2255,9 +2252,6 @@
         "title": "Integrations",
         "keywords": "connections plugins MCP"
       },
-      "bot-permissions": {
-        "title": "App & run permissions"
-      },
       "models": {
         "title": "Models and subscriptions",
         "nav": "Models",
@@ -2265,9 +2259,6 @@
       },
       "logins": {
         "title": "Secrets and logins"
-      },
-      "privacy": {
-        "title": "Data and privacy"
       },
       "computers": {
         "title": "Devices"
@@ -2309,15 +2300,7 @@
       "issue-states": {
         "title": "Issue states",
         "nav": "Issue states and labels"
-      },
-      "shortcuts": { "title": "Shortcuts" },
-      "git": { "title": "Git" },
-      "review-repositories": { "title": "Review repositories" },
-      "review-config": { "title": "Review config" },
-      "activity": { "title": "Activity" },
-      "referrals": { "title": "Referrals" },
-      "experiments": { "title": "Experiments" },
-      "cloud-credentials": { "title": "Cloud credentials" }
+      }
     },
     "appearance": {
       "title": "Appearance",
@@ -2429,7 +2412,8 @@
       "theme_slate": "Blue gray",
       "theme_lilac": "Lilac",
       "theme_bright": "Paper",
-      "theme_midnight": "Midnight"
+      "theme_midnight": "Midnight",
+      "pendingBadge": "Pending"
     },
     "profile": {
       "heading": "Account",
@@ -2527,7 +2511,8 @@
       "replayOnboarding": "Replay onboarding",
       "replay": "Replay",
       "replaying": "Replaying…",
-      "transferPick": "Choose a member"
+      "transferPick": "Choose a member",
+      "pendingBadge": "Pending"
     },
     "computerPolicy": {
       "heading": "Computer use",
@@ -2915,48 +2900,6 @@
       "save": "Save",
       "changePassword": "Change password",
       "actions": "Actions for {site}"
-    },
-    "botPermissions": {
-      "loading": "Reading permissions…",
-      "rule": "Each app has one access level for the whole workspace; every Bot uses it. Tools come from the provider's real catalogue.",
-      "workspaceScope": "These settings apply to every Bot in this workspace.",
-      "allTools": "All tools",
-      "allToolsCount": "All tools · {count}",
-      "tools": "View tools",
-      "toolsCount": "{count} tools · {readOnly} read-only",
-      "toolsLoading": "Reading tools…",
-      "toolsFailed": "Couldn't read the tool list",
-      "readOnly": "read-only",
-      "write": "can write",
-      "mode": "Approval",
-      "modes": {
-        "ask": "By the rules",
-        "read_only": "Read only"
-      },
-      "empty": "No apps connected",
-      "level": {
-        "workspaceDefault": "Default (workspace setting)",
-        "runDefault": "Default (run policy)",
-        "default": "Default (Decision API)",
-        "allow": "On its own",
-        "ask": "Asks you first",
-        "deny": "Not allowed"
-      },
-      "run": {
-        "install_dependency": "Install dependencies",
-        "write_outside_repo": "Write outside the repository",
-        "git_push": "Push code",
-        "network": "Use the network",
-        "computer_use": "Use the computer"
-      },
-      "errors": {
-        "readFailed": "Couldn't read the permissions",
-        "saveFailed": "Couldn't save",
-        "writePolicyChanged": "The settings just changed; read again",
-        "agentPolicyUnavailable": "This setting can't be saved right now",
-        "workspaceAccessDenied": "Only admins can change workspace settings",
-        "noBotInWorkspace": "This workspace has no Bot yet. Create one to read and save its app permissions."
-      }
     },
     "workspaceLoading": "Loading the workspace…",
     "workspaceUnavailable": "Couldn't load the workspace. Refresh and try again.",
@@ -3879,7 +3822,7 @@
       "subagents": "Subagents",
       "subagentsHint": "Concurrency and nesting used when a thread starts.",
       "parallel": "Parallel subagents",
-      "parallelHint": "How many subagents this thread tree can run at once.",
+      "parallelHint": "Max concurrent browser subagents per member in this workspace.",
       "depth": "Nesting depth",
       "depthHint": "At 1, a subagent cannot start another subagent.",
       "countWorkspace": "{count} · workspace",
@@ -3894,7 +3837,9 @@
       "either": "Either happens",
       "workspaceDefault": "Workspace default",
       "triggersError": "Could not update the title triggers",
-      "loadError": "Could not load thread title settings"
+      "loadError": "Could not load thread title settings",
+      "pendingBadge": "Pending",
+      "runtimeDecided": "Set by runtime"
     },
     "issueStates": {
       "open": "Open",

@@ -21,6 +21,7 @@ import { cardVerificationKey } from '@/components/billing/free-allowance-section
 import { computerPolicyKey, readComputerPolicy } from '@/hooks/settings/use-team-permissions'
 import { connectedAppsKey, readConnectedApps } from '@/components/plugins/connected-apps'
 import { currentMonth } from '@/lib/usage/month'
+import { fetchSettingsData } from '@/lib/settings-data'
 import { settingsRead } from '@/lib/settings-read'
 import type { SettingsSectionId } from '@/lib/settings-sections'
 import { settingsKeys } from '@/lib/swr/keys'
@@ -34,8 +35,9 @@ type Result<F extends (...args: never[]) => unknown> = Awaited<ReturnType<F>>
  * here in step with its section.
  */
 const READS: Partial<Record<SettingsSectionId, (workspaceId: string) => [key: Key, read: () => Promise<unknown>][]>> = {
-  preferences: () => [[settingsKeys.issuePrefix(), () => settingsRead<Result<typeof getIssuePrefixState>>('issue-prefix')]],
-  threads: id => [[settingsKeys.threadTitles(id), () => settingsRead('thread-titles', { workspace: id })]],
+  preferences: () => [[settingsKeys.personalRegistry(), () => fetchSettingsData('/api/settings/personal')], [settingsKeys.issuePrefix(), () => settingsRead<Result<typeof getIssuePrefixState>>('issue-prefix')]],
+  appearance: () => [[settingsKeys.personalRegistry(), () => fetchSettingsData('/api/settings/personal')]],
+  threads: id => [[settingsKeys.threadTitles(id), () => settingsRead('thread-titles', { workspace: id })], [settingsKeys.workspaceRegistry(id), () => fetchSettingsData(`/api/settings/workspace/${encodeURIComponent(id)}`)]],
   security: () => [[settingsKeys.password(), () => settingsRead<Result<typeof getPasswordStatus>>('password')], [settingsKeys.sessions(), () => settingsRead<Result<typeof listSessions>>('sessions')]],
   notifications: () => [[settingsKeys.preferences(), () => settingsRead<Result<typeof getPreferences>>('preferences')]],
   logins: () => [[settingsKeys.savedLogins(), () => settingsRead<Result<typeof listSavedLogins>>('saved-logins')]],
@@ -60,7 +62,7 @@ const READS: Partial<Record<SettingsSectionId, (workspaceId: string) => [key: Ke
 
 export function prefetchSettingsSection(section: SettingsSectionId, workspaceId: string | undefined, cache: Cache, mutate: ReturnType<typeof useSWRConfig>['mutate']) {
   const reads = READS[section]
-  if (!reads || (!workspaceId && !['preferences', 'security', 'notifications', 'logins', 'connections'].includes(section))) return
+  if (!reads || (!workspaceId && !['preferences', 'appearance', 'security', 'notifications', 'logins', 'connections'].includes(section))) return
   for (const [key, read] of reads(workspaceId ?? '')) {
     void prefetchScopedRead(cache, mutate, key, read)
   }

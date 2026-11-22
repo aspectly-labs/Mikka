@@ -2,25 +2,27 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
+import type { SettingsView } from '@mikka/protocol/settings'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { SettingRow, SettingSelect, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
-import { useWorkspaceGeneral } from '@/hooks/settings/use-workspace-general'
 import { updatePreferences } from '@/app/actions/preferences'
+import { patchWorkspaceSettings } from '@/app/actions/settings'
 import { useThreadTitleSettings } from '@/hooks/settings/use-thread-title-settings'
+import { fetchSettingsData, settingsReadOptions } from '@/lib/settings-data'
 import { settingsRead } from '@/lib/settings-read'
+import { settingItemPending, settingItemShown, withPendingSuffix } from '@/lib/settings-sections'
 import { settingsKeys } from '@/lib/swr/keys'
 import type { ThreadTitleTriggers } from '@/lib/thread-title'
 
 const TRIGGERS = ['first_run_ended', 'pull_opened', 'either'] as const satisfies readonly ThreadTitleTriggers[]
 const ARCHIVE_DAYS = [3, 7, 14, 30, 90] as const
-const PARALLEL = [1, 2, 4, 8, 16] as const
-const DEPTH = [1, 2, 3, 4] as const
+const PARALLEL = [1, 2, 4, 6, 8, 12, 16, 20] as const
 
-/** 线程, frame 1508:73. Title instructions and archive save. Sub-agent limits have no API. */
-export function ThreadSettings({ workspaceId, personal }: { workspaceId?: string; personal: boolean }) {
+/** 线程, frame 1508:73. Title instructions, idle archive, and workspace subagent concurrency save to registered settings. */
+export function ThreadSettings({ workspaceId, personal, admin = false }: { workspaceId?: string; personal: boolean; admin?: boolean }) {
   const t = useTranslations('Settings.threadTitles')
   const [scope, setScope] = useState<'mine' | 'workspace'>('mine')
   const shown = scope === 'workspace' && workspaceId && !personal ? 'workspace' : 'mine'
@@ -31,33 +33,54 @@ export function ThreadSettings({ workspaceId, personal }: { workspaceId?: string
     </div> : null}
     <TitleScope key={`${workspaceId ?? ''}:${shown}`} scope={shown} workspaceId={workspaceId} />
     {shown === 'mine' ? <ArchiveSection /> : null}
-    <SubagentLimits workspaceId={workspaceId} />
+    {workspaceId ? <SubagentLimits workspaceId={workspaceId} canEdit={admin || personal} /> : null}
   </>
 }
 
-function SubagentLimits({ workspaceId }: { workspaceId?: string }) {
+function SubagentLimits({ workspaceId, canEdit }: { workspaceId: string; canEdit: boolean }) {
   const t = useTranslations('Settings.threadTitles')
-  const general = useWorkspaceGeneral(workspaceId)
-  const current = general.data
-  if (general.loading) return <SettingsLoading label={t('subagents')} rows={2} />
-  if (!current) return null
-  const parallel = PARALLEL.map(count => ({ value: String(count), label: t('countWorkspace', { count }) }))
-  const depth = DEPTH.map(count => ({ value: String(count), label: t('countWorkspace', { count }) }))
-  const busy = general.saving !== null
-  return <SettingsSection title={t('subagents')} description={t('subagentsHint')}>
-    <SettingRow title={t('parallel')} description={t('parallelHint')}>
-      <SettingSelect label={t('parallel')} value={String(current.parallelSubagents)} disabled={!current.canEdit || busy} options={parallel} onValueChange={value => {
-        const next = Number(value)
-        if (PARALLEL.includes(next as typeof PARALLEL[number]) && next !== current.parallelSubagents) void general.patch({ parallelSubagents: next })
-      }} />
-    </SettingRow>
-    <SettingRow title={t('depth')} description={t('depthHint')}>
-      <SettingSelect label={t('depth')} value={String(current.nestDepth)} disabled={!current.canEdit || busy} options={depth} onValueChange={value => {
-        const next = Number(value)
-        if (DEPTH.includes(next as typeof DEPTH[number]) && next !== current.nestDepth) void general.patch({ nestDepth: next })
-      }} />
-    </SettingRow>
-  </SettingsSection>
+  const common = useTranslations('Common')
+  const read = useSWR<SettingsView>(
+    settingsKeys.workspaceRegistry(workspaceId),
+    () => fetchSettingsData<SettingsView>(`/api/settings/workspace/${encodeURIComponent(workspaceId)}`),
+    settingsReadOptions,
+  )
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<number | null>(null)
+  if (read.isLoading && !read.data) return <SettingsLoading label={t('subagents')} rows={2} />
+  if (read.error && !read.data) return <SettingsSaveError message={t('loadError')} retryLabel={common('retry')} onRetry={() => { void read.mutate() }} />
+  const raw = read.data?.values?.subagentMaxConcurrent?.value
+  const current = typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= 20 ? raw : 6
+  const values = PARALLEL.includes(current as typeof PARALLEL[number]) ? PARALLEL : [...PARALLEL, current].sort((a, b) => a - b)
+  const options = values.map(count => ({ value: String(count), label: t('countWorkspace', { count }) }))
+  const depthPending = settingItemPending('threads.subagentDepth')
+  const pendingTag = t('pendingBadge')
+
+  function saveMaxConcurrent(next: number) {
+    setBusy(true)
+    setFailed(null)
+    void patchWorkspaceSettings(workspaceId, { values: { subagentMaxConcurrent: next } }).then(async result => {
+      if ('error' in result && result.error) { setFailed(next); return }
+      await read.mutate(result as SettingsView, { revalidate: false })
+    }).catch(() => setFailed(next)).finally(() => setBusy(false))
+  }
+
+  return <>
+    <SettingsSection title={t('subagents')}>
+      <SettingRow title={t('parallel')} description={t('parallelHint')}>
+        {canEdit
+          ? <SettingSelect label={t('parallel')} value={String(current)} disabled={busy} options={options} onValueChange={value => {
+            const next = Number(value)
+            if (Number.isInteger(next) && next >= 1 && next <= 20 && next !== current) saveMaxConcurrent(next)
+          }} />
+          : <span>{t('countWorkspace', { count: current })}</span>}
+      </SettingRow>
+      {settingItemShown('threads.subagentDepth') && <SettingRow title={depthPending ? withPendingSuffix(t('depth'), pendingTag) : t('depth')} description={t('depthHint')}>
+        <span className="text-muted-foreground">{t('runtimeDecided')}</span>
+      </SettingRow>}
+    </SettingsSection>
+    {failed !== null ? <SettingsSaveError message={t('saveError')} retryLabel={common('retry')} onRetry={() => saveMaxConcurrent(failed)} /> : null}
+  </>
 }
 
 function TitleScope({ scope, workspaceId }: { scope: 'mine' | 'workspace'; workspaceId?: string | null }) {
@@ -85,7 +108,7 @@ function TitleScope({ scope, workspaceId }: { scope: 'mine' | 'workspace'; works
         titles.setTriggers(value === 'workspace' ? null : value as ThreadTitleTriggers)
       }} />
     </SettingRow>
-    {titles.message ? <p role={titles.message.kind === 'saved' ? 'status' : 'alert'} className="px-5 py-3 text-sm text-muted-foreground">{titles.message.text}</p> : null}
+    {titles.message ? <p role={titles.message.kind === 'saved' ? 'status' : 'alert'} className="px-4 py-3 text-sm text-muted-foreground">{titles.message.text}</p> : null}
     <Dialog open={editing} onOpenChange={setEditing}>
       <DialogContent>
         <DialogHeader><DialogTitle>{t('command')}</DialogTitle></DialogHeader>

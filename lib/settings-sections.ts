@@ -1,6 +1,7 @@
 /**
- * Settings sections, in the order of Figma page 1508:2 (Capy's four groups).
- * The sidebar, URL parsing and the page body all read this list.
+ * Settings sections and item-level backend availability, in the order of
+ * 2026-11-21 Figma page 1508:2 (Capy's four groups).
+ * The sidebar, URL parsing and the page bodies all read this single source of truth.
  */
 export type SettingsGroup = 'personal' | 'agent' | 'review' | 'workspace'
 
@@ -15,6 +16,119 @@ export type SettingsSectionId =
   | 'audit' | 'organization' | 'usage' | 'billing' | 'cloud'
   | 'referrals' | 'experiments' | 'cloud-credentials'
 
+/**
+ * Three-tier display rule (#3118):
+ * - `available`: live backend, rendered normally.
+ * - `pending`: backend not wired yet; sidebar pages stay unexposed until built, and in-page items append `· 待接入` and stay disabled.
+ * - `skipped`: explicitly omitted ("不做" or UI-only proposal); centrally hidden with zero links.
+ */
+export type SettingAvailability = 'available' | 'pending' | 'skipped'
+
+export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, SettingAvailability>> = {
+  preferences: 'available',
+  appearance: 'available',
+  account: 'available',
+  security: 'available',
+  notifications: 'available',
+  models: 'available',
+  environments: 'available',
+  connections: 'available',
+  logins: 'available',
+  developer: 'available',
+  computers: 'available',
+  instructions: 'available',
+  threads: 'available',
+  shortcuts: 'pending',
+  git: 'pending',
+  'review-repositories': 'skipped',
+  'review-config': 'skipped',
+  general: 'available',
+  organization: 'available',
+  'issue-states': 'available',
+  members: 'available',
+  teams: 'available',
+  billing: 'available',
+  usage: 'available',
+  activity: 'pending',
+  permissions: 'available',
+  secrets: 'available',
+  audit: 'available',
+  cloud: 'available',
+  referrals: 'skipped',
+  experiments: 'skipped',
+  'cloud-credentials': 'skipped',
+}
+
+export type SettingItemId =
+  | 'appearance.sync'
+  | 'appearance.colorScheme'
+  | 'appearance.theme'
+  | 'appearance.myThemes'
+  | 'appearance.colors'
+  | 'appearance.dashboardBackground'
+  | 'appearance.backgroundEffect'
+  | 'appearance.codeFontSize'
+  | 'appearance.diffView'
+  | 'appearance.diffColors'
+  | 'appearance.hiddenFiles'
+  | 'environments.networkAccess'
+  | 'threads.subagentMaxConcurrent'
+  | 'threads.subagentDepth'
+  | 'workspace.newWorkVisibility'
+  | 'workspace.workVisibility'
+  | 'workspace.allowPrivate'
+
+export const SETTINGS_ITEM_STATUS: Readonly<Record<SettingItemId, SettingAvailability>> = {
+  'appearance.sync': 'available',
+  'appearance.colorScheme': 'available',
+  'appearance.theme': 'available',
+  'appearance.myThemes': 'pending',
+  'appearance.colors': 'available',
+  'appearance.dashboardBackground': 'pending',
+  'appearance.backgroundEffect': 'available',
+  'appearance.codeFontSize': 'available',
+  'appearance.diffView': 'available',
+  'appearance.diffColors': 'available',
+  'appearance.hiddenFiles': 'available',
+  'environments.networkAccess': 'skipped',
+  'threads.subagentMaxConcurrent': 'available',
+  'threads.subagentDepth': 'pending',
+  'workspace.newWorkVisibility': 'pending',
+  'workspace.workVisibility': 'pending',
+  'workspace.allowPrivate': 'pending',
+}
+
+export function settingSectionStatus(id: SettingsSectionId): SettingAvailability {
+  return SETTINGS_SECTION_STATUS[id]
+}
+
+export function settingItemStatus(id: SettingItemId): SettingAvailability {
+  return SETTINGS_ITEM_STATUS[id]
+}
+
+export function settingItemShown(id: SettingItemId): boolean {
+  return SETTINGS_ITEM_STATUS[id] !== 'skipped'
+}
+
+export function settingItemPending(id: SettingItemId): boolean {
+  return SETTINGS_ITEM_STATUS[id] === 'pending'
+}
+
+export function withPendingSuffix(label: string, pendingTag: string): string {
+  return `${label} · ${pendingTag}`
+}
+
+/** Wide table pages (#3118 frames 08/10/25/27/28/29/37): 776px content column instead of 564px. */
+export const WIDE_SETTINGS_SECTIONS: ReadonlySet<SettingsSectionId> = new Set([
+  'shortcuts',
+  'environments',
+  'members',
+  'teams',
+  'usage',
+  'activity',
+  'audit',
+])
+
 export interface SettingsSectionDef {
   id: SettingsSectionId
   group: SettingsGroup
@@ -24,18 +138,15 @@ export interface SettingsSectionDef {
   adminOnly?: boolean
   /** Has its own route instead of `?section=`. */
   routed?: boolean
-  /**
-   * No page body yet: left out of the sidebar. A link opens 常规.
-   * Delete the flag when its UI lands.
-   */
+  /** No page body yet (`SETTINGS_SECTION_STATUS[id] === 'pending'`). */
   unbuilt?: true
-  /** Decided not to build (推荐奖励, 实验功能, 云凭据). Not a link. */
+  /** Omitted (`SETTINGS_SECTION_STATUS[id] === 'skipped'`). Not a link. */
   withheld?: true
   /** Reachable by an old or direct URL, not listed in the sidebar. */
   sidebar?: false
 }
 
-export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
+const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] = [
   { id: 'preferences', group: 'personal', title: 'General' },
   { id: 'appearance', group: 'personal', title: 'Appearance' },
   { id: 'account', group: 'personal', title: 'Profile' },
@@ -50,13 +161,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
   { id: 'computers', group: 'personal', title: 'Devices' },
   { id: 'instructions', group: 'agent', title: 'Instructions' },
   { id: 'threads', group: 'agent', title: 'Threads' },
-  // Hidden until #2956 merges. Do not render placeholder data for these.
-  // shortcuts: P9. git, review-repositories, review-config: P5. activity: P8.
-  // MCP server detail (P4) stays on 集成 until that API exists.
-  { id: 'shortcuts', group: 'personal', title: 'Shortcuts', unbuilt: true },
-  { id: 'git', group: 'agent', title: 'Git and pull requests', unbuilt: true },
-  { id: 'review-repositories', group: 'review', title: 'Review repositories', unbuilt: true },
-  { id: 'review-config', group: 'review', title: 'Review config', unbuilt: true },
+  { id: 'shortcuts', group: 'personal', title: 'Shortcuts' },
+  { id: 'git', group: 'agent', title: 'Git and pull requests' },
+  { id: 'review-repositories', group: 'review', title: 'Review repositories' },
+  { id: 'review-config', group: 'review', title: 'Review config' },
   { id: 'general', group: 'workspace', title: 'Workspace general' },
   { id: 'organization', group: 'workspace', title: 'Organization' },
   { id: 'issue-states', group: 'workspace', title: 'Issue states' },
@@ -64,15 +172,24 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
   { id: 'billing', group: 'workspace', title: 'Billing' },
   { id: 'usage', group: 'workspace', title: 'Usage' },
-  { id: 'activity', group: 'workspace', title: 'Activity', unbuilt: true },
+  { id: 'activity', group: 'workspace', title: 'Activity' },
   { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true, sidebar: false },
   { id: 'secrets', group: 'workspace', title: 'Secrets and environment', sidebar: false },
   { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
   { id: 'cloud', group: 'workspace', title: 'Mikka Cloud' },
-  { id: 'referrals', group: 'personal', title: 'Referrals', withheld: true },
-  { id: 'experiments', group: 'personal', title: 'Experiments', withheld: true },
-  { id: 'cloud-credentials', group: 'personal', title: 'Cloud credentials', withheld: true },
+  { id: 'referrals', group: 'personal', title: 'Referrals' },
+  { id: 'experiments', group: 'personal', title: 'Experiments' },
+  { id: 'cloud-credentials', group: 'personal', title: 'Cloud credentials' },
 ]
+
+export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = RAW_SECTIONS.map(section => {
+  const status = SETTINGS_SECTION_STATUS[section.id]
+  return {
+    ...section,
+    ...(status === 'pending' ? { unbuilt: true as const } : {}),
+    ...(status === 'skipped' ? { withheld: true as const } : {}),
+  }
+})
 
 /** Section ids from before the four groups. Old links open the page that now holds the content. */
 const LEGACY: Record<string, SettingsSectionId> = {
@@ -83,7 +200,6 @@ const LEGACY: Record<string, SettingsSectionId> = {
   bots: 'models',
   memory: 'instructions',
   privacy: 'account',
-  'bot-permissions': 'computers',
 }
 
 /**
@@ -99,23 +215,24 @@ export type SettingsVisibility = {
   cloudAdmin?: boolean
   /** A UI layer draws 组织. */
   organization?: boolean
+  /** Accepted by hosted sidebar callers for memory-gate compatibility. */
+  memory?: boolean
 }
 
 /** One place decides whether a section is listed. The sidebar and search both ask this. */
 export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false }: SettingsVisibility): boolean {
-  if (section.withheld || section.unbuilt || section.sidebar === false) return false
+  if (SETTINGS_SECTION_STATUS[section.id] !== 'available' || section.sidebar === false) return false
   if (section.adminOnly && !admin) return false
   if (personal && TEAM_ONLY_SECTIONS.has(section.id)) return false
   if (!billing && section.id === 'billing') return false
   if (!cloudAdmin && section.id === 'cloud') return false
-  // 身份与访问 is in the public list too. The official slot draws the identity page; without it the page shows team permissions.
   return true
 }
 
-const openable = new Set<string>(SETTINGS_SECTIONS.filter(s => !s.unbuilt && !s.withheld).map(s => s.id))
-const known = new Set<string>(SETTINGS_SECTIONS.filter(s => !s.withheld).map(s => s.id))
+const openable = new Set<string>(SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available').map(s => s.id))
+const known = new Set<string>(SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] !== 'skipped').map(s => s.id))
 
-/** True for any `?section=` value settings can open, current, unbuilt (opens 常规) or legacy. Withheld ids are not links. */
+/** True for any `?section=` value settings can open: available, pending (falls back to 常规) or legacy. Skipped ids are not links. */
 export function isSettingsSectionParam(section: string): boolean {
   return known.has(section) || Object.hasOwn(LEGACY, section)
 }
@@ -125,7 +242,7 @@ export function resolveSettingsSection(pathname: string, section: string | null 
   if (pathname.endsWith('/settings/members')) return 'members'
   if (pathname.endsWith('/settings/teams')) return 'teams'
   if (section && openable.has(section)) return section as SettingsSectionId
-  if (section && section in LEGACY) return LEGACY[section]
+  if (section && Object.hasOwn(LEGACY, section)) return LEGACY[section]
   return 'preferences'
 }
 

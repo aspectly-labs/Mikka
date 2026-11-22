@@ -48,7 +48,6 @@ for (const [path, exports] of Object.entries({
   '../computer/computer-screen': ['ComputerScreen'],
   '../computer/computer-viewer': ['ComputerViewer'],
   '../computer/computer-agents': ['useConversationThread'],
-  './bot-permissions': ['BotPermissionsSettings'],
   '../plugins/plugins-view': ['PluginsView'],
   './team-permissions-settings': ['TeamPermissionsSettings'],
   './payment-designation-settings': ['PaymentDesignationSettings'],
