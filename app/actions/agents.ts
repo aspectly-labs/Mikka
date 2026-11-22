@@ -741,6 +741,7 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
     if (!refs.success) throw new ActionFailureError('validationGeneric')
     const resolved = await (await import('@/lib/thread-references')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data)
     body = (await import('@/lib/thread-references')).expandReferences(resolved) + body
+    if (body.length > 10_000) throw new ActionFailureError('messageRequired')
   }
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
   return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
@@ -781,11 +782,9 @@ export async function btwIssueThreadMessage(input: { issueId: string | null; run
 export async function getThreadContextStats(input: { issueId: string | null; runId: string }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
-  const { rows: chain } = await pool.query<{ id: string; root: string }>(
-    `WITH RECURSIVE c AS (SELECT id,id AS root FROM agent_runs WHERE id=$2
-       UNION ALL SELECT r.id,c.root FROM agent_runs r JOIN c ON r."retryOf"=c.id OR r."continuesRunId"=c.id)
-     SELECT id,root FROM c`, [user.id, row.id])
-  return { usage: await readContextUsage(chain.map(r => r.id), chain[0]?.root ?? row.id, row.id) }
+  const { readRunChain } = await import('@/lib/run-chain')
+  const chain = await readRunChain(pool, user.id, row.id)
+  return { usage: await readContextUsage(chain?.attempts.map(a => a.runId) ?? [row.id], chain?.rootRunId ?? row.id, chain?.latestRunId ?? row.id) }
 }
 export async function compactThread(input: { issueId: string | null; runId: string }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
@@ -799,10 +798,11 @@ export async function compactThread(input: { issueId: string | null; runId: stri
 export async function listThreadEnvVars(input: { issueId: string | null; runId: string }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
-  const { pool } = await import('@/lib/db')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
   const { rows } = await pool.query<{ id: string; name: string; note: string; updatedAt: Date }>(
     `SELECT id,name,note,"updatedAt" FROM workspace_secrets WHERE "workspaceId"=$1 AND "scopeType"='thread' AND "scopeRef"=$2 ORDER BY name`,
-    [row.workspaceId, row.id])
+    [row.workspaceId, scopeRef])
   return { env: rows.map(r => ({ id: r.id, name: r.name, note: r.note, updatedAt: r.updatedAt })) }
 }
 export async function setThreadEnvVar(input: { issueId: string | null; runId: string; name: string; value: string }) {
@@ -811,14 +811,18 @@ export async function setThreadEnvVar(input: { issueId: string | null; runId: st
   if (!name.success || !value.success) throw new ActionFailureError('validationGeneric')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
   const { setThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
-  return { env: await setThreadScopeSecret(user.id, row.workspaceId, row.id, { name: name.data, value: value.data }) }
+  return { env: await setThreadScopeSecret(user.id, row.workspaceId, scopeRef, { name: name.data, value: value.data }) }
 }
 export async function deleteThreadEnvVar(input: { issueId: string | null; runId: string; name: string }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
   const { deleteThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
-  await deleteThreadScopeSecret(user.id, row.workspaceId, row.id, input.name)
+  await deleteThreadScopeSecret(user.id, row.workspaceId, scopeRef, input.name)
   return { deleted: true }
 }
 

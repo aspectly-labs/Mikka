@@ -63,8 +63,9 @@ export async function taskSecretMetadata(workspaceId: string | null, repository:
 }
 
 export async function taskSecretSnapshot(workspaceId: string | null, repository: string | null, ownerId: string,
-  query: Pick<typeof db, 'select'> = db): Promise<string> {
-  return snapshotOf(await taskSecretMetadata(workspaceId, repository, ownerId, query))
+  query: Pick<typeof db, 'select'> = db, names?: readonly string[], workspaceSecretIds?: readonly string[],
+  threadRunId?: string | null): Promise<string> {
+  return snapshotOf(await taskSecretMetadata(workspaceId, repository, ownerId, query, names, workspaceSecretIds, threadRunId))
 }
 
 /** Workspace-scoped secrets and env vars, decrypted. Repository-scoped rows are not included. */

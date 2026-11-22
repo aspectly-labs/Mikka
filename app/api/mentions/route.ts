@@ -31,25 +31,25 @@ export async function GET(request: Request) {
       return NextResponse.json({ type, items: page.items.map(item => ({ type: 'task', id: item.id, title: item.title, detail: item.type === 'task' ? `${item.identifier ?? ''} ${item.status}`.trim() : null })) }, { headers })
     }
     if (type === 'bot') {
-      const { rows } = await pool.query<{ id: string; name: string; status: string }>(
-        `SELECT id,name,status FROM bots WHERE "workspaceId"=$1 AND ($2='' OR name ILIKE $3 ESCAPE '\\') ORDER BY name LIMIT 20`,
+      const { rows } = await pool.query<{ id: string; name: string; publicRole: string }>(
+        `SELECT id,name,"publicRole" FROM bots WHERE "workspaceId"=$1 AND ($2='' OR name ILIKE $3 ESCAPE '\\' OR "slackAlias" ILIKE $3 ESCAPE '\\') ORDER BY name LIMIT 20`,
         [workspaceId, q, like])
-      return NextResponse.json({ type, items: rows.map(r => ({ type: 'bot', id: r.id, title: r.name, detail: r.status })) }, { headers })
+      return NextResponse.json({ type, items: rows.map(r => ({ type: 'bot', id: r.id, title: r.name, detail: r.publicRole || null })) }, { headers })
     }
     if (type === 'thread') {
       const { rows } = await pool.query<{ id: string; status: string; title: string | null }>(
-        `SELECT r.id,r.status,COALESCE(i.identifier||' '||i.title,i.title) AS title FROM agent_runs r
+        `SELECT r.id,r.status,COALESCE(i."issuedIdentifier"||' '||i.title,i.title) AS title FROM agent_runs r
           LEFT JOIN issues i ON i.id=r."issueId"
-          WHERE r."userId"=$1 AND r."workspaceId"=$2 AND ($3='' OR i.title ILIKE $4 ESCAPE '\\' OR i.identifier ILIKE $4 ESCAPE '\\')
+          WHERE r."userId"=$1 AND r."workspaceId"=$2 AND ($3='' OR i.title ILIKE $4 ESCAPE '\\' OR i."issuedIdentifier" ILIKE $4 ESCAPE '\\')
           ORDER BY r."createdAt" DESC LIMIT 20`, [session.user.id, workspaceId, q, like])
       return NextResponse.json({ type, items: rows.map(r => ({ type: 'thread', id: r.id, title: r.title, detail: r.status })) }, { headers })
     }
     if (type === 'pr') {
       const { rows } = await pool.query<{ url: string; title: string | null; state: string | null }>(
-        `SELECT "pullRequest"->>'url' AS url,"pullRequest"->>'title' AS title,"pullRequest"->>'state' AS state
-          FROM run_publications WHERE "userId"=$1 AND "pullRequest" IS NOT NULL
-          AND ($2='' OR "pullRequest"->>'title' ILIKE $3 ESCAPE '\\' OR "pullRequest"->>'url' ILIKE $3 ESCAPE '\\')
-          ORDER BY "updatedAt" DESC LIMIT 20`, [session.user.id, q, like])
+        `SELECT p."pullRequest"->>'url' AS url,p."pullRequest"->>'title' AS title,p."pullRequest"->>'state' AS state
+          FROM run_publications p JOIN issues i ON i.id=p."issueId" WHERE p."userId"=$1 AND i."workspaceId"=$2 AND p."pullRequest" IS NOT NULL
+          AND ($3='' OR p."pullRequest"->>'title' ILIKE $4 ESCAPE '\\' OR p."pullRequest"->>'url' ILIKE $4 ESCAPE '\\')
+          ORDER BY p."updatedAt" DESC LIMIT 20`, [session.user.id, workspaceId, q, like])
       return NextResponse.json({ type, items: rows.map(r => ({ type: 'pr', id: r.url, title: r.title, detail: r.state })) }, { headers })
     }
     if (type === 'file') {
@@ -58,7 +58,10 @@ export async function GET(request: Request) {
           WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "expiresAt">clock_timestamp()
           AND ($3='' OR EXISTS (SELECT 1 FROM jsonb_array_elements(files) f WHERE f->>'path' ILIKE $4 ESCAPE '\\'))
           ORDER BY id DESC LIMIT 20`, [session.user.id, workspaceId, q, like])
-      return NextResponse.json({ type, items: rows.map(r => ({ type: 'file', id: r.id, title: r.files?.[0]?.path ?? null, detail: `${r.files?.length ?? 0} file${r.files?.length === 1 ? '' : 's'}` })) }, { headers })
+      return NextResponse.json({ type, items: rows.map(r => {
+        const idx = q ? Math.max(0, (r.files ?? []).findIndex(f => f.path?.toLowerCase().includes(q.toLowerCase()))) : 0
+        return { type: 'file', id: r.id, offset: idx, title: r.files?.[idx]?.path ?? null, detail: `${r.files?.length ?? 0} file${r.files?.length === 1 ? '' : 's'}` }
+      }) }, { headers })
     }
     return NextResponse.json({ error: 'searchInvalidParam' }, { status: 400, headers })
   } catch (error) {
