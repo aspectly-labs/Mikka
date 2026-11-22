@@ -29,8 +29,12 @@ export function checkedRun(run, path, { event, successful = true, automaticDeplo
   assert.equal(run.path, path)
   assert.equal(run.head_branch, 'main')
   const automatic = (path === producer && run.event === 'push') || (automaticDeployment && path === deployment && run.event === 'workflow_run')
-  assert.ok(trustedActor(run.actor, automatic))
-  assert.ok(trustedActor(run.triggering_actor, automatic))
+  // Dispatch runs are gated by repository write access, not a fixed actor list.
+  const dispatch = run.event === 'workflow_dispatch'
+  if (!dispatch) {
+    assert.ok(trustedActor(run.actor, automatic))
+    assert.ok(trustedActor(run.triggering_actor, automatic))
+  }
   assert.match(run.head_sha ?? '', sha)
   assert.match(String(run.id), number)
   assert.match(String(run.run_attempt), number)

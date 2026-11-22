@@ -60,8 +60,11 @@ test('merge queue provenance is accepted only on automatic main runs with both b
       assert.throws(() => selectAutomaticCandidate(event(forged), forged, source))
     }
   }
+  // Dispatch is open to any repo writer: a bot-dispatched run passes the actor
+  // check on every workflow path; event mismatches still throw.
   for (const path of [producer, '.github/workflows/cloud-services-ci.yml', '.github/workflows/cloudflare-app-deploy.yml'])
-    assert.throws(() => checkedRun({ ...original, path, event: 'workflow_dispatch' }, path))
+    assert.equal(checkedRun({ ...original, path, event: 'workflow_dispatch' }, path).id, 101)
+  assert.throws(() => checkedRun({ ...original, path: producer, event: 'workflow_dispatch' }, producer, { event: 'push' }))
 })
 
 test('merge queue identity cannot select a manual stage, rollback or production promotion', async () => {
