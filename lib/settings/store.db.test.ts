@@ -580,7 +580,7 @@ dbTest('archive and pin writers publish exact directory scopes after commit and 
   const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
   process.env.DEVICE_GATEWAY_URL = `http://127.0.0.1:${(receiver.address() as { port: number }).port}`
   process.env.DEVICE_GATEWAY_PUSH_SECRET = 'settings-directory-live-fixture'
-  const drain = async () => { while (scheduledLive.length) await scheduledLive.shift()!(); assert.deepEqual(errors, []) }
+  const drain = async () => { while (scheduledLive.length) { const work = scheduledLive.shift()!; await (typeof work === 'function' ? work() : work) } assert.deepEqual(errors, []) }
   const expected = (scopes: { ownerId: string; workspaceId: string }[]) => new Set(scopes.flatMap(scope => ['thread_list', 'group_list'].map(kind => `${liveChannelId(scope)}:${kind}:${scope.workspaceId}`)))
   const received = () => new Set(sent.map(value => `${value.channel}:${value.key}`))
   const revisions = async () => (await pool.query('SELECT kind,revision FROM live_revisions WHERE id=$1 AND kind IN (\'thread_list\',\'group_list\') ORDER BY kind', [workspaceId])).rows
