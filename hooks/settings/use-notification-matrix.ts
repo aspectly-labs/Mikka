@@ -187,7 +187,11 @@ function applyOptimisticValues(current: SettingsView | undefined, patch: Record<
   for (const [key, value] of Object.entries(patch)) {
     baseValues[key] = { value, source: 'personal' }
   }
-  return { workspaceId: current?.workspaceId ?? '', values: baseValues }
+  return {
+    workspaceId: current?.workspaceId ?? '',
+    values: baseValues,
+    workCreation: current?.workCreation ?? { configured: { value: 'private', source: 'workspace' }, effectiveVisibility: 'private', privateAllowed: true, reason: 'personal_workspace' },
+  }
 }
 
 /**
