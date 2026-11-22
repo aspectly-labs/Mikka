@@ -219,6 +219,23 @@ describe.each(["claude_code", "codex", "cursor"] as const)(
   },
 )
 
+// Claude Code's newer task tools build the plan one call at a time: TaskCreate's result names the task, which
+// TaskUpdate then addresses. The id comes from the CLI's structured result and rides on the call's output chunk.
+it("claude: keeps the id TaskCreate gave each task, so its later updates find it", async () => {
+  const { server, daemon } = await setup()
+  const runId = queue(server, "claude_code", "TASKS")
+  await started(daemon, runId)
+  await ended(daemon, runId)
+  const chunks = server.chunksFor(runId)
+  const outputs = chunks.flatMap(c => c.type === "tool-output-available" ? [[c.toolCallId, c.planTask?.id ?? null]] : [])
+  expect(outputs).toEqual([["toolu_task_1", "1"], ["toolu_task_2", "2"], ["toolu_task_3", null], ["toolu_task_4", null]])
+  const inputs = chunks.flatMap(c => c.type === "tool-input-available" ? [[c.toolName, c.input]] : [])
+  expect(inputs).toEqual([
+    ["TaskCreate", { subject: "Read the brief", description: "Read it" }], ["TaskCreate", { subject: "Write NOTES.md", description: "Write it" }],
+    ["TaskUpdate", { taskId: "1", status: "completed" }], ["TaskUpdate", { taskId: "2", status: "in_progress" }],
+  ])
+})
+
 describe("the issue branch", () => {
   const PERSON = {
     GIT_AUTHOR_NAME: "Person",

@@ -18,7 +18,6 @@ import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
 import { activityLineBadgeShown, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems } from '@/lib/issue-run-conversation'
-import { runPlan } from '@/lib/thread-plan'
 import { useThreadStepRows } from './thread-step-rows'
 import { ThreadReplyVersions } from './thread-reply-versions'
 import { ThreadExecutionIdentity } from './thread-execution-identity'
@@ -348,8 +347,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     if (delivery.rows.some(row => confirmedIds.has(row.id))) delivery.setRows(current => current.filter(row => !confirmedIds.has(row.id)))
   }, [confirmedIds, delivery.rows, delivery.setRows])
   const items = useMemo(() => data ? threadItems(data.chunks, data.messages, runId) : [], [data, runId])
-  // The live run's newest plan (its TodoWrite / update_plan), pinned above the composer until the run ends.
-  const plan = useMemo(() => data && active ? runPlan(data, liveRunId) : null, [data, active, liveRunId])
+  // The live run's plan, read by the server over all of the run's chunks (whichever page is held), pinned above the
+  // composer until the run ends.
+  const plan = active ? data?.plan ?? null : null
   // The jump index, from the items already built: never a second fold of the stream.
   const outline = threadOutline(items)
   // A failed run says why under the stage that stopped, else at the end of the conversation.
