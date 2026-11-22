@@ -238,7 +238,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
       messages: run.messages.map((message): ThreadTranscriptMessage => {
         // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.
-        const line = { actions: <ReplyActions hover at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body }
+        const line = { actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body }
         return mine
         ? { id: message.id, message: { from: 'person', speaker,
           body: <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>,

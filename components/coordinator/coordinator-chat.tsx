@@ -557,7 +557,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
       ]
       if (!item.suggestion || text || attachments.length) entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-        actions: item.text ? <ReplyActions hover at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
+        actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
       if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
       continue
     }
@@ -571,13 +571,18 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     const artifacts = item.artifacts.flatMap(id => data?.artifacts[id] ? [{ id, name: data.artifacts[id].title }] : [])
     if (artifacts.length) parts.push({ kind: 'artifacts', items: artifacts, onOpen: openArtifact, ...(embedded ? { activeId: embedded.activeArtifactId } : {}) })
     if (item.failure) parts.push(item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()) }} /> })
-    if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
-      parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
+    // The read end rides at the end of the reply's action line, the reply's last row, so it adds no row of its own (an
+    // empty part cost the thread's 12px gap plus its pixel). The line's opacity does not hide it from IntersectionObserver.
+    // A reply with no line (no words) still marks its end with a part of its own.
+    const readEnd = !live && item.position === unreadItems.findLast(row => row.reportable)?.position ? <VisibleReadEnd onSeen={unread.reportEnd} /> : null
+    const lined = Boolean(item.text && !streaming)
+    if (readEnd && !lined) parts.push({ kind: 'text', text: '', node: readEnd })
     entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
       // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
-      actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
+      actions: lined ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
         <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
         {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
+        {readEnd}
       </ReplyActions> : undefined })
   }
   for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,

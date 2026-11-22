@@ -72,12 +72,10 @@ test('Reply quotes the whole message, cut like a selection so a long reply never
   assert.ok(quoted[1].endsWith('…'))
 })
 
-test('the thread panel keeps the line to hover; elsewhere it stays on screen', async () => {
-  const { HOVER_ACTIONS, REPLY_ACTIONS } = await import('./copy-action')
-  await act(async () => root.render(<ReplyActions copyText="x" hover />))
-  const line = () => container.querySelector('[data-slot="message-actions"]')!.className
-  assert.ok(line().includes(HOVER_ACTIONS.split(' ')[0]))
-  await act(async () => root.render(<ReplyActions copyText="x" />))
-  assert.ok(!line().includes(HOVER_ACTIONS.split(' ')[0]))
-  assert.ok(line().includes(REPLY_ACTIONS.split(' ')[0]))
+test('every line waits for hover or focus, is always there on touch, and keeps its space at rest (decision 2026-11-22-1500)', async () => {
+  await act(async () => root.render(<ReplyActions copyText="x" onQuote={() => {}} />))
+  const classes = container.querySelector('[data-slot="message-actions"]')!.className.split(' ')
+  for (const name of ['opacity-0', 'group-hover/message:opacity-100', 'focus-within:opacity-100', 'pointer-coarse:opacity-100'])
+    assert.ok(classes.includes(name), name)
+  assert.ok(!classes.some(name => /^(hidden|invisible|h-0)$|:hidden$|:invisible$/.test(name)), 'only the opacity changes, so the row keeps its space')
 })
