@@ -214,7 +214,9 @@ export async function environmentSecretSnapshot(workspaceId: string, repository:
         : eq(workspaceSecrets.scopeType, 'workspace')),
       ...(threadRunId ? [and(eq(workspaceSecrets.scopeType, 'thread'), eq(workspaceSecrets.scopeRef, threadRunId))!] : []))))
   // A final Environment claim must still resolve every selected reference.
-  if (shared.filter(row => ids.includes(row.id)).length !== ids.length) throw new CodedError('task_secret_unavailable', { detail: 'configuration' })
+  // Postgres reports UUIDs lowercase; an uppercase stored id must still count.
+  const wanted = new Set(ids.map(id => id.toLowerCase()))
+  if (shared.filter(row => wanted.has(row.id.toLowerCase())).length !== wanted.size) throw new CodedError('task_secret_unavailable', { detail: 'configuration' })
   const own = await query.select({ id: userSecrets.id, name: userSecrets.name, kind: userSecrets.kind, ciphertext: userSecrets.ciphertext,
     iv: userSecrets.iv, keyVersion: userSecrets.keyVersion, delivery: userSecrets.delivery }).from(userSecrets)
     .where(eq(userSecrets.userId, ownerId))
