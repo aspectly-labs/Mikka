@@ -79,7 +79,6 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     await pool.query('DELETE FROM agent_runs WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM bot_desktops WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM cloud_machines WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
@@ -115,7 +114,6 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog") VALUES ($1,$2,$3,'codex','connected',1,$5,$4,'synthetic-subject',$6)`, [connection, id, ws.id, 'a'.repeat(64), `synthetic-${connection}`, JSON.stringify({ revision: '1', models: ['gpt-5'] })])
     await pool.query('UPDATE byos_connections SET quota=$2::jsonb WHERE id=$1', [connection, JSON.stringify({ vendor: 'codex', source: 'official', status: 'ok', plan: null, observedAt: new Date().toISOString(), windows: [{ kind: 'five_hour', used: .2, resetsAt: new Date(Date.now() + 3_600_000).toISOString() }] })])
     await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId") VALUES ($1,$2,$3,'catalogue',$4,1,'codex_cpa','gpt-5')`, [randomUUID(), id, ws.id, connection])
-    await pool.query(`INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)`, [id, ws.id])
     if (e2bKey) await pool.query(`INSERT INTO workspace_e2b_keys ("workspaceId",ciphertext,iv,"keyVersion",last4,"createdBy","updatedBy") VALUES ($1,'x','x',1,'abcd',$2,$2)`, [ws.id, id])
     await order.changeOrder(pool, { ownerId: id, workspaceId: ws.id }, { kind: 'location', location: 'cloud' })
     return { id, workspaceId: ws.id, issueId, botId, connection }
