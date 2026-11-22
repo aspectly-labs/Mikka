@@ -91,7 +91,7 @@ export async function readThreadCost(
 
   // Failed receipts were released and charged nothing; every other state is real usage.
   const { rows: receipts } = await q.query(
-    `SELECT model,"billingSource" AS source,state,"costMicroUsd" AS cost,"inputTokens" AS input,"outputTokens" AS output,"usageRunId"::text AS "runId"
+    `SELECT id,model,"billingSource" AS source,state,"costMicroUsd" AS cost,"inputTokens" AS input,"outputTokens" AS output,"usageRunId"::text AS "runId"
       FROM hosted_usage WHERE "usageRunId"=ANY($1::uuid[]) AND state<>'failed'`,
     [runIds],
   )
@@ -126,7 +126,9 @@ export async function readThreadCost(
     if (source === 'credits') add(credits, cost)
     else { add(included, cost); add(included.bySource[source], cost) }
     const model = String(receipt.model)
-    if (model.startsWith(MACHINE_PREFIX)) {
+    // A prepayment is known by machineChunkId's receipt id, never by its label alone:
+    // a custom API-key provider can name a model anything, including a machine label.
+    if (String(receipt.id).startsWith('machine:') && source === 'credits' && model.startsWith(MACHINE_PREFIX)) {
       const size = model.slice(MACHINE_PREFIX.length)
       const run = String(receipt.runId)
       runSizes.set(run, (runSizes.get(run) ?? new Set()).add(size))
