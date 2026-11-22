@@ -19,7 +19,6 @@ const owner = `settings-admin-${randomUUID()}`, member = `settings-member-${rand
 const workspaceId = randomUUID(), otherWorkspaceId = randomUUID()
 let currentUser: { id: string; email: string; name: string } | null = null
 let sessionId = 'settings-test-session'
-const liveJobs: (() => Promise<void>)[] = []
 let pool: (typeof import('@/lib/db'))['pool']
 let workspacePool: (typeof import('@/lib/workspace-db'))['workspacePool']
 let personal: typeof import('@/app/api/settings/personal/route')
@@ -40,8 +39,6 @@ before(async () => {
   mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) } })
   mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en', getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
   mock.module('@/lib/session', { namedExports: { getSession: async () => currentUser ? { user: currentUser, session: { id: sessionId } } : null } })
-  const server = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { ...server, after: (work: () => Promise<void>) => { liveJobs.push(work) } } })
   mock.module('@/lib/suggestions/sources', { namedExports: { connectedComposioApps: async () => [] } })
   ;({ pool } = await import('@/lib/db'))
   pool.options.max = 1
@@ -583,7 +580,7 @@ dbTest('archive and pin writers publish exact directory scopes after commit and 
   const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
   process.env.DEVICE_GATEWAY_URL = `http://127.0.0.1:${(receiver.address() as { port: number }).port}`
   process.env.DEVICE_GATEWAY_PUSH_SECRET = 'settings-directory-live-fixture'
-  const drain = async () => { while (liveJobs.length) await liveJobs.shift()!(); assert.deepEqual(errors, []) }
+  const drain = async () => { while (scheduledLive.length) await scheduledLive.shift()!(); assert.deepEqual(errors, []) }
   const expected = (scopes: { ownerId: string; workspaceId: string }[]) => new Set(scopes.flatMap(scope => ['thread_list', 'group_list'].map(kind => `${liveChannelId(scope)}:${kind}:${scope.workspaceId}`)))
   const received = () => new Set(sent.map(value => `${value.channel}:${value.key}`))
   const revisions = async () => (await pool.query('SELECT kind,revision FROM live_revisions WHERE id=$1 AND kind IN (\'thread_list\',\'group_list\') ORDER BY kind', [workspaceId])).rows
