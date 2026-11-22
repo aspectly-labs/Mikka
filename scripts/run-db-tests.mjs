@@ -164,6 +164,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/message-references.ts', file: 'tests/message-references.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/usage-limits.ts', file: 'tests/usage-limits.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/thread-summary.ts', file: 'tests/thread-summary.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/thread-workspace.ts', file: 'tests/thread-workspace.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/subagent-runs.ts', file: 'tests/subagent-runs.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/thread-lifecycle.ts', file: 'tests/thread-lifecycle.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/turn-usage.ts', file: 'tests/turn-usage.db.test.ts', script: 'test:workspace-admin-db' },
