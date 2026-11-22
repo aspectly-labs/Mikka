@@ -203,7 +203,7 @@ export function useChatNav({ bots, archivedBots = [], followedBots = [], shareab
       if (row.kind === 'group') {
         const target: ChatTarget = { kind: 'group', id: row.group.id, title: row.group.title, workspaceId: row.group.workspaceId }
         const unread = Boolean(Number(row.group.unreadCount) || row.group.markedUnread)
-        return { id: row.group.id, kind: 'group', name: row.group.title || i18nText('Nav.untitledConversation'), unread, preview: previewText(row.group.lastMessage?.body), at: row.group.lastMessage?.createdAt ?? row.group.createdAt, current: activeKind === 'group' && activeId === row.group.id, target, avatar: <CachedGroupAvatar id={row.group.id} title={row.group.title || i18nText('Nav.untitledConversation')} />, actions: groupActions(row.group, target, unread) }
+        return { id: row.group.id, kind: 'group', name: row.group.title || i18nText('Nav.untitledConversation'), unread, preview: previewText(row.group.lastMessage?.body), at: row.group.lastMessage?.createdAt ?? row.group.createdAt, current: activeKind === 'group' && activeId === row.group.id, target, avatar: <CachedGroupAvatar id={row.group.id} title={row.group.title || i18nText('Nav.untitledConversation')} bots={row.group.bots} />, actions: groupActions(row.group, target, unread) }
       }
       const target: ChatTarget = { kind: 'bot', botId: row.bot.id }
       // 标为已读 reads the Bot's own chat; its threads' unread stay with the threads.

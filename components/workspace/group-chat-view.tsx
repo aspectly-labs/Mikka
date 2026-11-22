@@ -12,7 +12,6 @@ import { stampStarts } from '@/lib/chat-time-stamps'
 import type { ThreadGroupRow, ThreadTranscriptMessage } from '@/components/slots/thread-contract'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { namedConversationModelBot } from '@/lib/named-conversation-model'
-import { CHAT_SURFACE } from '@ui-slot/chat-message'
 import { Button } from '@/components/ui/button'
 import { GroupLeaveAction } from './group-leave-action'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -23,6 +22,7 @@ import { PersonReferences, ThreadReferencePicker } from './thread-references'
 import { VisibleReadEnd } from './visible-read-end'
 import { ThreadHeader } from './thread-header'
 import { ConversationPill } from '@/components/nav/conversation-pill'
+import { FRAME_OWNS_HEADER } from '@/components/app-shell'
 import { GroupAvatar, groupMembersKey, memberAvatar, useGroupMembers } from '@/components/nav/group-avatar'
 import { useLiveKey } from '@/hooks/use-live-key'
 import { LetterAvatar } from '@/components/nav/letter-avatar'
@@ -32,7 +32,6 @@ import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { ReplyActions } from '@/components/chat/reply-actions'
-import { cn } from '@/lib/utils'
 import { mentionsIn } from '@/lib/group-mentions'
 import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
 import { AgentExchangeMarker } from './agent-exchange'
@@ -87,6 +86,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // Navigation keeps unsent text and the same in-flight promise's result; it never resends.
   const delivery = useChatDelivery<GroupSend>(`group:${userId}:${group.workspaceId}:${group.id}`, feedback('sendUncertain'))
   const submittedDraft = useRef<string | null>(null)
+  // Send-pinning (as the Bot chat's): each own send counts, and its message (then its stored copy) stands at the top.
+  const [pin, setPin] = useState<{ sends: number; submission: string | null; stored: string | null }>({ sends: 0, submission: null, stored: null })
+  const pinStored = useCallback((submission: string, stored: string) => setPin(current => current.submission === submission ? { ...current, stored } : current), [])
   const [messagesRejected, setMessagesRejected] = useState(false)
   const [membersRejected, setMembersRejected] = useState(false)
   const departed = useRef(false)
@@ -162,9 +164,11 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       if (departed.current) { delivery.finish(item.id, {}); return }
       void groupSubmissionMessageId(userId, group.id, item.id).then(storedId => {
         delivery.setRows(current => current.map(row => row.id === item.id && !row.storedId ? { ...row, storedId } : row))
+        pinStored(item.id, storedId)
       }).catch(() => undefined)
       const sent = await postGroupMessage(group.id, item.text, item.mentions, fetch, { requestId: item.id, expectedOwnerId: userId, expectedWorkspaceId: group.workspaceId })
       delivery.finish(item.id, { storedId: sent.id })
+      pinStored(item.id, sent.id)
       if (!departed.current) void mutate().catch(() => undefined)
     } catch (error) {
       const status = error instanceof GroupMessagesRequestError ? error.status : undefined
@@ -176,9 +180,11 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const send = () => {
     const text = draft.trim()
     if (!text || submittedDraft.current === draft) return
-    void deliver({ id: crypto.randomUUID(), at: Date.now(), text, mentions: mentionsIn(text, members) }, () => {
+    const id = crypto.randomUUID()
+    void deliver({ id, at: Date.now(), text, mentions: mentionsIn(text, members) }, () => {
       submittedDraft.current = draft
       setDraft('')
+      setPin(current => ({ sends: current.sends + 1, submission: id, stored: null }))
     })
   }
   const first = pages?.[0]
@@ -215,7 +221,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const [following, setFollowing] = useViewState(`group:${group.id}:following`, true)
   const scroller = useViewScroll<HTMLDivElement>(`group:${group.id}:messages`, !!pages)
   const end = `${messages.at(-1)?.id}:${unsent.length}:${!!first?.agentStatus}`
-  useEffect(() => { if (following) scroller.current?.scrollTo({ top: scroller.current.scrollHeight }) }, [end, following, scroller])
+  const pinTarget = pin.stored && receivedIds.has(pin.stored) ? pin.stored : pin.submission
   const authorName = (type: 'user' | 'agent' | 'bot', id: string) => type === 'user'
     ? id === userId ? t('you') : member(type, id)?.name || people.get(id) || t('member')
     : member(type, id)?.name ?? (type === 'agent' ? agents.find(agent => agent.id === id)?.name : undefined) ?? t('bot')
@@ -230,17 +236,18 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     const mine = run.authorType === 'user' && run.authorId === userId
     const name = authorName(run.authorType, run.authorId)
     const bot = run.authorType === 'bot' ? member('bot', run.authorId) : undefined
-    // A Bot's or Agent's reply is its words alone, as in a thread (#2922); another person keeps their mark and name.
+    // A Bot's or Agent's reply is its words with no bubble (#2922); in a group every run opens with its sender's mark and
+    // name, as LobeHub's group chat, so several Bots stay told apart (decision 2026-11-22-1500-group-chat-as-bot-chat).
     const reply = run.authorType !== 'user'
     const at = Date.parse(run.messages[0]?.createdAt ?? '')
     return [{
-      kind: 'author', id: run.key, mine, name, ...(reply ? { quiet: true } : {}), ...(stamped[index] ? { before: <MessageTimeStamp at={at} /> } : {}),
+      kind: 'author', id: run.key, mine, name, ...(stamped[index] ? { before: <MessageTimeStamp at={at} /> } : {}),
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
       messages: run.messages.map((message): ThreadTranscriptMessage => {
         // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.
         const line = { actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body }
         return mine
-        ? { id: message.id, message: { from: 'person', speaker,
+        ? { id: message.id, message: { from: 'person', speaker, presentation: 'group-sent',
           body: <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>,
           ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="end" /> } }
@@ -257,7 +264,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   })
   for (const item of unsent) rows.push({
     kind: 'pending', id: item.id, phase: item.phase,
-    message: { from: 'person', speaker, body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage> },
+    message: { from: 'person', speaker, presentation: 'group-sent', body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage> },
     after: item.phase === 'failed' && <span role="alert" className="flex items-center gap-2 text-xs text-destructive-foreground">{item.error}<Button variant="ghost" size="xs" onClick={() => { void deliver(item) }}>{t('retry')}</Button></span>,
   })
   if (first?.agentStatus) rows.push({ kind: 'notice', id: 'answering', label: t('answering'), content: <span className="rounded-2xl bg-muted px-4 py-3"><Spinner aria-hidden="true" /></span> })
@@ -266,12 +273,13 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       : !pages ? <div aria-busy="true" className="flex flex-col gap-3 py-4"><Skeleton className="h-9 w-2/3" /><Skeleton className="ml-auto h-9 w-1/2" /><Skeleton className="h-9 w-3/5" /></div>
         : messages.length === 0 && !unsent.length ? <p className="py-6 text-sm text-muted-foreground">{t('empty')}</p> : null
 
-  return <section aria-label={group.title || t('untitled')} data-testid="group-chat" className={cn('relative flex min-h-0 w-full flex-1 flex-col', CHAT_SURFACE)}>
+  return <section aria-label={group.title || t('untitled')} data-testid="group-chat" className="relative flex min-h-0 w-full flex-1 flex-col">
     {namedChat
       ? <ThreadHeader standalone issueId={null} runId={group.id} title={group.title || t('untitled')} headingRef={titleHeading}
           onTitleChanged={() => { void refreshCache(botKeys.groups(userId, group.workspaceId)) }}
           onStop={null} place={null} acceptanceBadge={null} identity={null} />
-      : <ConversationPill name={group.title || t('untitled')} avatar={<GroupAvatar title={group.title || t('untitled')} members={members} />} />}
+      // A frame with its own head draws no title pill over a chat, as the Bot chat (FRAME_OWNS_HEADER).
+      : !FRAME_OWNS_HEADER && <ConversationPill name={group.title || t('untitled')} avatar={<GroupAvatar title={group.title || t('untitled')} members={members} />} />}
     {onLeft && !refused && !accessRejected && mayLeaveGroup(members, userId)
       ? <div className="flex h-14 shrink-0 items-center justify-end px-4">
           <GroupLeaveAction group={group} userId={userId} onLeft={() => {
@@ -285,7 +293,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       : namedChat ? null : <div aria-hidden="true" className="hidden h-14 shrink-0 md:block" />}
     <ThreadScreen host="page" transcript={{
       kind: 'group', rows, placeholder,
-      scroll: { ref: scroller, label: t('messages'), onScroll: event => { const node = event.currentTarget; const next = node.scrollHeight - node.scrollTop - node.clientHeight < 56; if (next !== following) setFollowing(next) } },
+      scroll: { ref: scroller, label: t('messages'), end, following, pin: { sends: pin.sends, target: pinTarget, busy: replying }, onScroll: event => { const node = event.currentTarget; const next = node.scrollHeight - node.scrollTop - node.clientHeight < 56; if (next !== following) setFollowing(next) } },
       before: older && <Button variant="ghost" size="sm" className="self-center text-muted-foreground" disabled={loadingOlder} onClick={() => { void setSize(size + 1) }}>{loadingOlder && <Spinner data-icon="inline-start" role="presentation" aria-hidden="true" />}{loadingOlder ? t('loadingOlder') : t('older')}</Button>,
       after: <>
         {first?.routingError && !first.agentStatus && <p className="text-center text-xs text-muted-foreground">{t('noTaker')}</p>}

@@ -14,7 +14,8 @@ export type ChatMessageProps = {
   compact?: boolean
   /** Existing message frames: received group words. */
   /** `group-reply`: a Bot's or Agent's words in a group chat, plain text with no bubble (#2922). */
-  presentation?: 'default' | 'group-received' | 'group-reply'
+  /** `group-sent`: the person's own words in a group chat, as the Bot chat draws them. Group frames draw `actions` (hover-only). */
+  presentation?: 'default' | 'group-received' | 'group-reply' | 'group-sent'
   /** An embedded chat's local row until stored history replaces it; the caller owns its status copy and retry action. */
   delivery?: { phase: 'sending' | 'accepted' | 'failed'; label: ReactNode; retry?: ReactNode }
   /** The reply is still streaming: no actions yet. */
@@ -37,4 +38,3 @@ export type ChatMessageProps = {
 /** Before a reply has anything to show. */
 export type ChatWaitingProps = { speaker: ChatSpeaker }
 
-/** The slot module also exports `CHAT_SURFACE`: classes for the chat's own surface (its background), '' for none. */

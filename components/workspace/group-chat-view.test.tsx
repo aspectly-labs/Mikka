@@ -285,7 +285,36 @@ test('a Bot\'s or Agent\'s reply is its words alone, and a centred time opens ea
   for (const reply of rows.slice(1)) {
     assert.ok(reply.querySelector('[data-group-reply]'), 'plain words, no bubble')
     assert.equal(reply.querySelector('[data-slot="bubble"]'), null)
-    const name = [...reply.querySelectorAll('span')].find(span => span.textContent === 'bot' || span.textContent === 'Agent' || span.textContent === 'agent')
-    if (name) assert.equal(name.className, 'sr-only', 'the name is for screen readers only')
+  }
+})
+
+test('in a group every run opens with its sender\'s mark and name, as LobeHub\'s group chat; the person\'s own do not', async () => {
+  groupMembers = [{ id: 'bot', name: 'Design Bot', memberType: 'bot' }, { id: 'agent', name: 'Build Agent', memberType: 'agent' }]
+  await render([message('user', 1, 'Who checks this?'), message('bot', 2, 'I will'), message('user', 3, 'Thanks'), message('bot', 4, 'Done'), message('agent', 5, 'Checks are green')])
+  const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li')]
+  const sender = (row: Element) => row.querySelector('[data-slot="group-author"]')?.textContent ?? null
+  assert.deepEqual(rows.map(sender), [null, 'Design Bot', null, 'Design Bot', 'Build Agent'])
+  assert.equal(rows[0].querySelector('.sr-only')?.textContent, 'you', 'the person\'s own name is for screen readers only')
+  groupMembers = []
+})
+
+test('the person\'s own messages take the row\'s width, so a short message keeps one line', async () => {
+  await render([message('user', 1, '第 32 条消息。')])
+  const bubble = container.querySelector('[data-group-sent]')!
+  assert.ok(bubble, 'the person\'s words in the group\'s sent bubble')
+  const column = bubble.closest('[data-message-id]')!.parentElement!
+  assert.ok(column.classList.contains('w-full'), 'the column is as wide as the row, not shrink-wrapped to its bubble')
+  assert.equal([...column.classList].some(name => name.startsWith('max-w-')), false)
+})
+
+test('every group message keeps its actions to hover and focus, as the Bot chat', async () => {
+  const { HOVER_ACTIONS } = await import('@/components/chat/copy-action')
+  await render([message('user', 1, 'Mine'), message('bot', 2, 'Reply')])
+  const lines = [...container.querySelectorAll('[data-message-id]')].map(node => node.querySelector('[data-slot="message-actions"], [class*="group-hover/message"]'))
+  assert.equal(lines.length, 2)
+  for (const [index, line] of lines.entries()) {
+    assert.ok(line, `message ${index} has its actions line`)
+    for (const name of HOVER_ACTIONS.split(' ')) assert.ok(line!.classList.contains(name), `${name} on message ${index}`)
+    assert.ok(line!.closest('.group\\/message'), 'inside its own hover target')
   }
 })
