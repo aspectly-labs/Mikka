@@ -20,10 +20,10 @@ async function ownedConnection(user: RequestWorkspaceUser, connectionId: string)
     `SELECT id,"workspaceId",provider,epoch,"modelCatalog","modelSettings" FROM byos_connections
      WHERE id=$1 AND "ownerId"=$2 AND state='connected' AND "removedAt" IS NULL`,
     [connectionId, user.id])
+  if (!connection) throw new ActionFailureError('executionAccountUnavailable')
   // A workspace-bound token stays inside its workspace even though the connection is account-scoped.
   if (user[tokenWorkspace] && connection.workspaceId !== user[tokenWorkspace])
     throw new ActionFailureError('executionAccountUnavailable')
-  if (!connection) throw new ActionFailureError('executionAccountUnavailable')
   return connection
 }
 
