@@ -41,8 +41,9 @@ test('thread summary read', { skip: !dbUrl }, async t => {
   await pool.query(`INSERT INTO run_publications ("runId","userId","issueId","remoteUrl","remoteKey",identifier,branch,"baseBranch")
     VALUES ($1,$2,$3,'https://github.com/acme/widgets.git','v2/github.com/acme/widgets','MIK-7','mikka/mik-7','main')`, [next, owner, issue])
 
-  const receipt = (run: string, cost: number | null, source: string) => pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","billingSource","usageRunId","usageThreadId")
-    VALUES ($1,$2,'claude-sonnet','settled',$3,$4,$5,$6)`, [randomUUID(), workspace.id, cost, source, run, root])
+  // A credits receipt records the part the platform funded at settlement; this one was charged in full.
+  const receipt = (run: string, cost: number | null, source: string) => pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","billingSource","usageRunId","usageThreadId","platformMicroUsd")
+    VALUES ($1,$2,'claude-sonnet','settled',$3,$4,$5,$6,$7)`, [randomUUID(), workspace.id, cost, source, run, root, source === 'credits' ? 0 : null])
   await receipt(root, 1_500, 'credits')
   await receipt(next, null, 'subscription') // a subscription's cost is unknown, never zero
 
@@ -64,6 +65,8 @@ test('thread summary read', { skip: !dbUrl }, async t => {
     assert.deepEqual(summary.cost, {
       credits: { microUsd: 1_500, unpricedReceipts: 0 },
       included: { microUsd: 0, unpricedReceipts: 1, bySource: { subscription: { microUsd: 0, unpricedReceipts: 1 }, api_key: { microUsd: 0, unpricedReceipts: 0 } } },
+      covered: { microUsd: 0, receipts: 0 },
+      fundingUnknown: { microUsd: 0, receipts: 0 },
     })
     assert.deepEqual(summary.machine, { kind: 'cloud', size: 'standard-2', state: 'running' })
     assert.deepEqual(summary.repo, { key: 'v2/github.com/acme/widgets', name: 'acme/widgets' })
