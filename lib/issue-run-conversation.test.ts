@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { activityLineBadgeShown, chainChunks, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, runSummaryText, runSummaryView, threadItems, threadStepOutput } from './issue-run-conversation'
+import { turnChoiceShown, activityLineBadgeShown, chainChunks, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, runSummaryText, runSummaryView, threadItems, threadStepOutput } from './issue-run-conversation'
 import { createSecretMasker, withCredentialMasking } from './secrets/mask'
 import { maskStreamedChunks } from './secrets/stream-mask'
 
@@ -276,4 +276,11 @@ test('a run has one Stop: the composer while it works there, the header only whe
   assert.equal(headerStopShown({ canStop: true, working: false, composerStop: true }), true, 'waiting for an answer: the composer sends')
   assert.equal(headerStopShown({ canStop: true, working: true, composerStop: false }), true, 'no composer on screen')
   assert.equal(headerStopShown({ canStop: false, working: true, composerStop: false }), false)
+})
+
+test('the queue / steer choice needs a draft as well as a run that takes one', () => {
+  assert.equal(turnChoiceShown(true, ''), false)
+  assert.equal(turnChoiceShown(true, '  \n'), false)
+  assert.equal(turnChoiceShown(true, 'also the dark theme'), true)
+  assert.equal(turnChoiceShown(false, 'also the dark theme'), false)
 })

@@ -1,7 +1,7 @@
 import { captureRunFailure } from '@mikka/protocol/run-failure'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { coordinatorChatState } from './chat-state'
+import { coordinatorChatState, coordinatorTurnStoppable } from './chat-state'
 import { MAX_WAKE_ATTEMPTS } from './wake-recovery'
 
 const now = new Date('2026-10-31T12:00:00Z')
@@ -104,4 +104,15 @@ test('a structured failure belongs only to its failed input and remains hidden w
   assert.equal(coordinatorChatState(session, [event], now).failureDetails, undefined)
   assert.equal(coordinatorChatState({ ...session, leaseHolder: 'wrun_new', leaseUntil: future }, [], now).failureDetails, undefined)
   assert.equal(coordinatorChatState({ ...session, lastError: null }, [], now).failureDetails, undefined)
+})
+
+test('the sidebar spins only for a turn its chat can stop: a running turn, not input still waiting for one', () => {
+  // Input still waiting for its turn: the chat says it waits for the reply, with no Stop, so the sidebar does not spin.
+  assert.equal(coordinatorChatState(undefined, [event], now).working, true)
+  assert.equal(coordinatorTurnStoppable(undefined, now), false)
+  assert.equal(coordinatorTurnStoppable({ leaseHolder: null, leaseUntil: null, lastError: null }, now), false)
+  // A turn holds the lease (stopChatTurn cancels that session), or eve accepted the message and runs it.
+  assert.equal(coordinatorTurnStoppable({ leaseHolder: 'session', leaseUntil: future, lastError: null }, now), true)
+  assert.equal(coordinatorTurnStoppable({ leaseHolder: 'session', leaseUntil: expired, lastError: null }, now), false)
+  assert.equal(coordinatorTurnStoppable({ leaseHolder: null, leaseUntil: null, lastError: null, nativePending: true }, now), true)
 })

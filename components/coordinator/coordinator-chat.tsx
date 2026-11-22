@@ -20,6 +20,7 @@ import { useActionError } from '@/lib/use-action-error'
 import { Alert, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { turnChoiceShown } from '@/lib/issue-run-conversation'
 import { CircleHelp } from '@/components/icons'
 import { toast } from 'sonner'
 import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCitations } from '@/components/workspace/agent-citations'
@@ -248,7 +249,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const sending = sends > 0
   const [turnPolicy, setTurnPolicy] = useViewState<'queue' | 'steer'>('eve:turn-policy', 'queue')
   // The queue choice is about the next message: it shows while a turn runs and a draft waits to go.
-  const turnOptions = working && turnConfirmed && !resuming && draft.trim() ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
+  const turnOptions = turnChoiceShown(working && turnConfirmed && !resuming, draft) ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
     onChange={event => setTurnPolicy(event.target.value === 'steer' ? 'steer' : 'queue')}>
     <NativeSelectOption value="queue">{threadCopy('deliveryModes.queue')}</NativeSelectOption>
     <NativeSelectOption value="steer">{threadCopy('deliveryModes.steer')}</NativeSelectOption>

@@ -36,6 +36,14 @@ export function headerStopShown({ canStop, working, composerStop }: { canStop: b
   return canStop && !(working && composerStop)
 }
 
+/**
+ * The queue / steer choice for a message sent mid-run stands beside the composer only while there is a draft to send,
+ * in a Bot chat and a thread alike: an empty composer while it works is the Stop button alone (decision 2026-11-22-1600).
+ */
+export function turnChoiceShown(available: boolean, draft: string) {
+  return available && draft.trim().length > 0
+}
+
 export const RUN_STOP_TIMEOUT_MS = 30_000
 
 /** A persisted request retains its deadline across polling and reloads. */

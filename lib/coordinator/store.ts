@@ -25,7 +25,7 @@ import { artifactSummaries, type ArtifactSummary } from '@/lib/artifacts/store'
 import { runSummaryText } from '@/lib/issue-run-conversation'
 import { threadName } from '@/lib/issue-threads'
 import { SUBAGENT_FACTS_SQL, subagentFacts } from '@/lib/subagent-runs'
-import { coordinatorChatState } from './chat-state'
+import { coordinatorChatState, coordinatorTurnStoppable } from './chat-state'
 import { compactChatMessage, compactChatToolMetadata, summaryChatMessage } from './chat-projection'
 import { projectMessageDisplays } from './display-projection'
 import type { ChatToolMetadata, ChatToolMetadataRow } from './chat-tool-metadata'
@@ -540,7 +540,7 @@ export interface BotChatSummary {
   muted?: boolean
   hidden?: boolean
   pinOrder?: number | null
-  /** A turn is active, or pending input is new or holds its first live delivery lease. */
+  /** A turn its chat can stop runs now (`coordinatorTurnStoppable`): the sidebar's spinner means the chat has Stop. */
   working: boolean
 }
 
@@ -561,24 +561,15 @@ export async function botChatSnapshot(reader: IssueReader) {
     .from(coordinatorMessages).where(and(eq(coordinatorMessages.userId, userId), inArray(coordinatorMessages.botId, botIds), sql`${coordinatorMessages.message}->>'role' <> 'tool'`))
     .orderBy(coordinatorMessages.botId, desc(coordinatorMessages.position))
   const sessions = await db.select({ botId: coordinatorSessions.botId, leaseHolder: coordinatorSessions.leaseHolder, leaseUntil: coordinatorSessions.leaseUntil, lastError: coordinatorSessions.lastError }).from(coordinatorSessions).where(and(eq(coordinatorSessions.userId, userId), inArray(coordinatorSessions.botId, botIds)))
-  const waiting = await db.select({ botId: coordinatorEvents.botId, kind: coordinatorEvents.kind, tier: coordinatorEvents.tier, wakeAttempts: coordinatorEvents.wakeAttempts, wakeLeaseUntil: coordinatorEvents.wakeLeaseUntil, wakeLastError: coordinatorEvents.wakeLastError })
+  // A bot whose only news is input still waiting for its turn is listed, not spinning (`coordinatorTurnStoppable`).
+  const waiting = await db.selectDistinct({ botId: coordinatorEvents.botId })
     .from(coordinatorEvents).where(and(eq(coordinatorEvents.userId, userId), inArray(coordinatorEvents.botId, botIds), isNull(coordinatorEvents.deliveredAt)))
   const now = new Date()
-  const expiries = [
-    ...sessions.flatMap(session => coordinatorLeaseActive(session, now) && session.leaseUntil ? [session.leaseUntil] : []),
-    ...waiting.flatMap(event => event.tier !== 'background' && event.kind !== 'matter_handoff' && event.wakeAttempts === 1 && event.wakeLeaseUntil && event.wakeLeaseUntil > now ? [event.wakeLeaseUntil] : []),
-  ]
+  // Only a turn's lease running out changes `working` without a write.
+  const expiries = sessions.flatMap(session => coordinatorLeaseActive(session, now) && session.leaseUntil ? [session.leaseUntil] : [])
   const result: Record<string, BotChatSummary> = {}
-  const waitingByBot = Map.groupBy(waiting, event => event.botId)
-  for (const session of sessions) {
-    if (!session.botId) continue
-    const events = waitingByBot.get(session.botId) ?? []
-    result[session.botId] = { line: null, at: null, working: coordinatorChatState(session, events, now).working }
-    waitingByBot.delete(session.botId)
-  }
-  for (const [botId, events] of waitingByBot) {
-    if (botId) result[botId] = { line: null, at: null, working: coordinatorChatState(undefined, events, now).working }
-  }
+  for (const { botId } of waiting) if (botId) result[botId] = { line: null, at: null, working: false }
+  for (const session of sessions) if (session.botId) result[session.botId] = { line: null, at: null, working: coordinatorTurnStoppable(session, now) }
   for(const row of latest)if(row.botId&&row.nativePending)result[row.botId]={line:null,at:null,working:true}
   const projected = await projectMessageDisplays(db, userId, latest)
   const lines = projected.flatMap(row => {

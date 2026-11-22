@@ -30,6 +30,16 @@ function causeOf(session: Session | undefined, event: WaitingEvent): string | un
   return session.lastError
 }
 
+/**
+ * A turn the chat can stop runs now: one holding the lease (stop cancels that session, stop-turn.ts) or one eve accepted
+ * and runs. The sidebar's working spinner reads this, so a spinning Bot always has a Stop in its chat (decision
+ * 2026-11-22-1600; one running state, as LobeHub reads its sidebar's loading and its Stop from the same operation).
+ * Input still waiting for its turn is not this: the chat then says it waits for the reply, without Stop.
+ */
+export function coordinatorTurnStoppable(session: Session | undefined, now = new Date()): boolean {
+  return Boolean(session?.nativePending) || coordinatorLeaseActive(session, now)
+}
+
 /** A wake lease acknowledges inbox delivery, not the duration of a model turn. */
 export function coordinatorChatState(session: Session | undefined, waiting: readonly WaitingEvent[], now = new Date(), last?: LastMessage): CoordinatorChatState {
   if(session?.nativePending)return {working:true,error:null}
