@@ -22,7 +22,7 @@ export const SECRET_POLICY = {
 } as const
 
 /** Can a member write a row with this scope? (No environment dimension: a value reaches every run of its scope.) */
-export const memberMayWrite = (target: SecretTarget) => SECRET_POLICY.memberScopes.includes(target.scopeType)
+export const memberMayWrite = (target: SecretTarget) => (SECRET_POLICY.memberScopes as readonly string[]).includes(target.scopeType)
 
 /**
  * The matrix. `targets` are every row state the action touches: for create the new values,
