@@ -13,7 +13,8 @@ export type ChatMessageProps = {
   /** The chat inside the Artifact reader: narrower bubbles. */
   compact?: boolean
   /** Existing message frames: received group words or a sent suggestion's extra words. */
-  presentation?: 'default' | 'group-received' | 'suggestion'
+  /** `group-reply`: a Bot's or Agent's words in a group chat, plain text with no bubble (#2922). */
+  presentation?: 'default' | 'group-received' | 'group-reply' | 'suggestion'
   /** An embedded chat's local row until stored history replaces it; the caller owns its status copy and retry action. */
   delivery?: { phase: 'sending' | 'accepted' | 'failed'; label: ReactNode; retry?: ReactNode }
   /** The reply is still streaming: no actions yet. */

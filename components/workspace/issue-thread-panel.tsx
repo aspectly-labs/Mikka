@@ -42,6 +42,7 @@ import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { ChatComposerAttachment } from '@/components/coordinator/chat-composer'
 import { choiceFromMenu, threadModelKey, type ThreadModelChoice } from '@/lib/thread-model-choice'
 import { ThreadScreen } from '@ui-slot/thread'
+import { MergeWaitingLine, useMergeWaitings } from '@/components/chat/merge-waiting-line'
 import { useConversationPanels } from '@/components/coordinator/conversation-panels-context'
 import type { ThreadEntry, ThreadEntryPart, ThreadHost } from '@/components/slots/thread-contract'
 import { atTheirTime } from '@/lib/thread-child-entries'
@@ -217,6 +218,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const hasArtifacts = tabbed && !readRejected && (artifacts?.count ?? 0) > 0
   const viewingArtifacts = hasArtifacts && tab === 'artifacts'
   const extraArtifactCount = hasArtifacts && artifacts ? artifacts.groups.captures.length + artifacts.groups.pullRequests.length : 0
+  // The task waiting on the person to merge this thread's PR (#2922): one line at the transcript's end, on the main thread surface.
+  const mergeWaitings = useMergeWaitings(issueId && tabbed && !readRejected ? [{ issueId,
+    pulls: (artifacts?.groups.pullRequests ?? []).flatMap(pull => pull.group === 'pullRequests' && pull.state ? [{ url: pull.url, state: pull.state }] : []) }] : [])
   // An evidence link opens its thread on Artifact, once; the person can move to another tab after.
   const linked = useRef<string | null>(null)
   const linkedFocus = artifacts?.focusId ?? null
@@ -586,6 +590,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       {readEnd}
     </>
     if (readEnd || data.thread.quota?.switched.length || modelFallback.length || !active || extraArtifactCount > 0 || data.thread.feedbackEligible) bot('tail', [{ kind: 'text', text: '', node: tail }])
+    if (!active) for (const waiting of mergeWaitings) entries.push({ id: `${runId}:merge-waiting:${waiting.issueId}`, role: 'bot', event: true, at: Date.now(),
+      parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={data.live?.issueWorkspaceId ?? null} /> }] })
     if (active && !items.length) bot('waiting', [], { streaming: true })
   }
   if (!readRejected) for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: row.text,

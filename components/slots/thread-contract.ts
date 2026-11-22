@@ -165,7 +165,9 @@ export type ThreadTranscriptMessage = { id: string } & (
 )
 
 export type ThreadGroupRow =
-  | { kind: 'author'; id: string; mine: boolean; name: string; mark?: ReactNode; messages: ThreadTranscriptMessage[] }
+  /** `quiet`: a Bot's or Agent's reply, its words alone with no mark or visible name (#2922); screen readers still get the name. */
+  /** `before`: what goes above the run in its own item, the centred time over its group (#2922). */
+  | { kind: 'author'; id: string; mine: boolean; quiet?: boolean; name: string; mark?: ReactNode; before?: ReactNode; messages: ThreadTranscriptMessage[] }
   | { kind: 'pending'; id: string; phase: 'sending' | 'accepted' | 'failed'; message: ChatMessageProps; after?: ReactNode }
   | { kind: 'notice'; id: string; label: string; content: ReactNode }
 

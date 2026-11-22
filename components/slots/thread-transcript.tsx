@@ -34,11 +34,14 @@ export function ThreadTranscript({ host, transcript, composer, beforeComposer }:
           {transcript.before}
           <ol aria-label={transcript.scroll.label} className="flex flex-col gap-4">
             {transcript.rows.map(row => row.kind === 'author'
-              ? <li key={row.id} className={cn('flex', row.mine ? 'flex-col items-end gap-1' : 'items-end gap-2')}>
-                {!row.mine && row.mark}
-                <div className={cn('flex min-w-0 flex-col gap-1', row.mine ? 'max-w-[min(26rem,80%)] items-end' : 'max-w-[min(35rem,85%)]')}>
-                  {row.mine ? <span className="sr-only">{row.name}</span> : <span className="text-xs font-medium text-muted-foreground">{row.name}</span>}
-                  {row.messages.map(entry => <TranscriptMessage key={entry.id} entry={entry} />)}
+              ? <li key={row.id} className="flex flex-col gap-4">
+                {row.before}
+                <div className={cn('flex', row.mine ? 'flex-col items-end gap-1' : 'items-end gap-2')}>
+                  {!row.mine && !row.quiet && row.mark}
+                  <div className={cn('flex min-w-0 flex-col gap-1', row.mine ? 'max-w-[min(26rem,80%)] items-end' : row.quiet ? 'w-full' : 'max-w-[min(35rem,85%)]')}>
+                    {row.mine || row.quiet ? <span className="sr-only">{row.name}</span> : <span className="text-xs font-medium text-muted-foreground">{row.name}</span>}
+                    {row.messages.map(entry => <TranscriptMessage key={entry.id} entry={entry} />)}
+                  </div>
                 </div>
               </li>
               : row.kind === 'pending'
