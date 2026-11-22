@@ -87,6 +87,10 @@ mock.module(at('components/workspace/factory-acceptance.tsx'), { namedExports: {
 } })
 mock.module(at('components/workspace/factory-acceptance-pane.tsx'), { namedExports: { FactoryAcceptancePane: () => <p data-private-pane="">Private acceptance notes</p> } })
 mock.module(at('components/workspace/thread-changes.tsx'), { namedExports: { ThreadChangesPane: () => <p data-private-pane="">Private changes</p>, ChangesTabLabel: () => <>Changes</> } })
+// The header's cost is the thread owner's own read (#2922); the marker shows where the panel offers it.
+mock.module(at('components/workspace/thread-cost-button.tsx'), { namedExports: {
+  threadCostKey: (runId: string) => ['thread-cost', runId], ThreadCostButton: ({ runId }: { runId: string }) => <span data-thread-cost={runId} />,
+} })
 mock.module(at('components/workspace/self-improvement.tsx'), { namedExports: { ThreadFeedback: () => null } })
 type ComposerProps = { label: string; value: string; submitDisabled?: boolean; onSubmit: () => void; onChange: (value: string) => void }
 let composer: ComposerProps | null = null
@@ -295,6 +299,12 @@ test('an open thread ends in the composer whether it runs or has ended', () => {
 test('the Artifact window and the thread column keep the composer', () => {
   assert.match(render({ bare: true }), /data-required-thread-screen=""[\s\S]*data-composer=""/, 'Artifact window uses the same screen')
   assert.match(render({ bare: false, issueId: null, onOpenTask: undefined }), /data-required-thread-screen=""[\s\S]*data-composer=""/, 'the full thread column without a Task uses the required screen')
+})
+
+test('only the thread owner is offered its cost in the header', () => {
+  assert.match(render({ bare: false }), /data-thread-cost="run-1"/)
+  thread = { ...base, ownedByCurrentUser: false }
+  assert.doesNotMatch(render({ bare: false }), /data-thread-cost/)
 })
 
 test('a thread the viewer cannot read in full has no composer', () => {

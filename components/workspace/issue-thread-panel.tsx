@@ -51,6 +51,7 @@ import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { MikkaMark } from '@/components/brand/mikka-mark'
 import { navigate, openTask } from './workspace-navigation'
 import { ThreadHeader } from './thread-header'
+import { threadCostKey } from './thread-cost-button'
 import { ThreadStatus } from './thread-status-icon'
 import { PersonReferences, ThreadReferencePicker } from './thread-references'
 import { ThreadOutlineIndex } from './thread-outline-index'
@@ -187,9 +188,13 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }, [backgroundFailed, runId, mutate, readFailedMessage, retryLabel])
   const liveRuns = data?.live?.runs ?? [{ id: runId, workspaceId: null }]
   const liveKeys = [unstable_serialize(key)]
+  const costKey = unstable_serialize(threadCostKey(runId))
   // A push this thread already read is skipped; only the opened run's keys carry a revision.
   useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'thread' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'thread', reference.id) } })), liveKeys, null, { minIntervalMs: 2000 })
-  useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'run' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'run', reference.id) } })), liveKeys, null)
+  useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'run' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'run', reference.id) } })), [...liveKeys, costKey], null)
+  // Receipts settle with no push of their own: the thread's activity (each model step) and its runs' state changes
+  // reread the header's cost, at most every 10 s while it streams (no polling, #1212).
+  useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'thread' as const })), [costKey], null, { minIntervalMs: 10_000 })
   useLiveKey('factory_issue', issueId, liveKeys, data?.live?.issueWorkspaceId ?? null, { deadline: data?.live?.questionDeadline })
   // A thread whose candidate waits for acceptance offers the acceptance view in More.
   const { tasks: acceptanceTasks, allTasks } = useAcceptanceTasks(transcriptOnly ? null : issueId)
@@ -677,7 +682,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       widen={widen ?? undefined} liveRunId={liveRunId}
       place={detail ? <ThreadRunPlace issueId={issueId} runId={runId} status={view?.status ?? data?.thread.status ?? ''} harness={detail.harness} botName={detail.agentName} /> : null}
       acceptanceBadge={acceptance ? <AcceptanceStateBadge task={acceptance} /> : null}
-      identity={data?.thread.ownedByCurrentUser ? <ThreadExecutionIdentity runId={liveRunId} /> : null} />}
+      identity={data?.thread.ownedByCurrentUser ? <ThreadExecutionIdentity runId={liveRunId} /> : null}
+      showCost={data?.thread.ownedByCurrentUser ?? false} />}
     {tabbed && data && !readRejected && <ThreadArtifactsReader issueId={issueId} runId={runId} runIds={[runId, ...(data.thread.attempts ?? []).map(attempt => attempt.runId)]}
       conversation={isThreadRun(data.thread)} status={view?.status ?? data.thread.status} onRead={setArtifacts} />}
     {viewingChanges ? (changes.state === 'ready'
