@@ -43,7 +43,6 @@ stub('./composio.ts', {
     return actionError ? { error: actionError } : { data: { summary: 'event' }, accountId: args[3] } },
 })
 stub('./coordinator-event-store.ts', { recordCoordinatorEvent: async () => {} })
-stub('./cloud-computer/credential-reviews.ts', { executeCredentialOperation: async (...args: unknown[]) => { reviews.push(['credential', ...args.slice(1)]); return { data: {} } } })
 stub('./cloud-computer/action-reviews.ts', { scrubBrowserMutation: async (_q: unknown, actionId: string) => { scrubs.push(actionId) } })
 const appCalls: unknown[][] = []
 stub('./app-tools-server.ts', { executeAppToolCall: async (_client: unknown, userId: string, call: { toolkit: string }, accountId: string | null) => { appCalls.push([userId, call.toolkit, accountId]); return { successful: true, data: {} } } })
@@ -109,14 +108,10 @@ test('a model-selected account is frozen in the proposal', async () => {
   assert.equal(row.connectedAccountId, 'selected-account')
 })
 
-test('credential reviews retain their own approval authority without a Composio account', async () => {
-  calls.length = 0; reviews.length = 0
-  for (const approve of [true, false]) {
-    row = { id: 'review', action: 'credential_operation', input: { summary: 'Review' }, connectedAccountId: null, createdAt: new Date() }
-    const result = await actions.decidePendingAction('u', 'review', approve)
-    assert.equal(result.status, approve ? 'done' : 'declined')
-    assert.deepEqual(reviews.at(-1), ['credential', 'u', { summary: 'Review' }, approve])
-  }
+test('a credential review row is no longer an approval', async () => {
+  calls.length = 0; reviews.length = 0; scrubs.length = 0
+  row = { id: 'review', action: 'credential_operation', input: { summary: 'Review' }, connectedAccountId: null, createdAt: new Date() }
+  await assert.rejects(actions.decidePendingAction('u', 'review', true), /pendingActionUnavailable/)
   assert.deepEqual(calls, [])
 })
 
