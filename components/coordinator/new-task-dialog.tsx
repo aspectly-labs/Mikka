@@ -28,6 +28,7 @@ import { useTaskDictation } from './use-task-dictation'
 import { NewTask } from '@ui-slot/new-task'
 import { TaskWorkspace } from '@ui-slot/task-workspace'
 import { useTaskWorkspace } from '@/hooks/use-task-workspace'
+import type { TaskWorkspaceState } from '@/lib/task-workspace-state'
 import type { NewTaskProps } from '@/components/slots/new-task-contract'
 
 const MAX_LENGTH = 8000
@@ -134,12 +135,15 @@ export function NewTaskDialog({ open, onOpenChange, project: pageProject, projec
     if (!name || !workspaceId || pending.current || projectPicker.pending || dictation.state !== 'idle') return
     pending.current = true
     setSending(true)
+    let ready: TaskWorkspaceState
     try {
       // One fresh read must confirm the captured workspace is still the one shown before anything is sent.
-      const confirmed = await target.confirm(workspaceId)
-      if (confirmed.status === 'mismatch') { toast.error(t('workspaceChanged')); return }
-      if (confirmed.status !== 'ready') { toast.error(t('workspaceUnconfirmed'), { action: { label: tCommon('retry'), onClick: () => { void submit() } } }); return }
-    } catch { toast.error(t('workspaceUnconfirmed')); return }
+      ready = await target.confirm(workspaceId)
+    } catch {
+      ready = { status: 'error' }
+    }
+    if (ready.status === 'mismatch') { toast.error(t('workspaceChanged')); pending.current = false; setSending(false); return }
+    if (ready.status !== 'ready') { toast.error(t('workspaceUnconfirmed'), { action: { label: tCommon('retry'), onClick: () => { void submit() } } }); pending.current = false; setSending(false); return }
     try {
       const requestId = createRequests.current.get(fingerprint) ?? crypto.randomUUID()
       createRequests.current.set(fingerprint, requestId)
