@@ -121,6 +121,32 @@ test('artifact links freeze defaults and enforce their scope at metadata and HTM
     assert.equal((await metadata.GET(spoofed, { params: Promise.resolve({ token: text.token }) })).status, 404)
   })
 
+  await t.test('an SSO-admitted teammate reads a workspace share without impersonating its issuer', async () => {
+    const share = await create(markdown.id, 'workspace')
+    const org = randomUUID(), provider = randomUUID(), session = randomUUID(), identity = randomUUID()
+    const issuer = 'https://workspace-share.example.invalid'
+    const { enterprisePrincipal } = await import('../lib/enterprise/principal')
+    await workspacePool.query('INSERT INTO mikka_organizations (id,name,"createdBy") VALUES ($1,\'SSO share fixture\',$2)', [org, owner])
+    try {
+      await workspacePool.query('INSERT INTO mikka_organization_workspaces ("workspaceId","organizationId") VALUES ($1,$2)', [workspace.id, org])
+      await pool.query('INSERT INTO enterprise_org_policy ("organizationId","enforceSso") VALUES ($1,true)', [org])
+      await pool.query(`INSERT INTO enterprise_sso_provider (id,"providerId","organizationScopeId","userId",issuer,domain,"domainVerified","oidcConfig","domainTokenHash")
+        VALUES ($1,$2,$3,$4,$5,$6,true,'{}',$7)`, [randomUUID(), provider, org, owner, issuer, `${org}.example.invalid`, randomUUID()])
+      await pool.query('INSERT INTO enterprise_identity (id,"providerId",issuer,subject,"userId") VALUES ($1,$2,$3,$4,$4)', [identity, provider, issuer, member])
+      await pool.query(`INSERT INTO session (id,token,"userId","expiresAt","createdAt","updatedAt","enterpriseOrganizationId","enterpriseProviderId","enterpriseIdentityId")
+        VALUES ($1,$2,$3,now()+interval '1 hour',now(),now(),$4,$5,$6)`, [session, randomUUID(), member, org, provider, identity])
+      assert.equal(await store.sharedArtifact(share.token, { id: member }), null)
+      const viewer = { id: member, [enterprisePrincipal]: { kind: 'session' as const, sessionId: session } }
+      assert.equal((await store.sharedArtifact(share.token, viewer))?.content, markdown.content)
+    } finally {
+      await pool.query('DELETE FROM session WHERE id=$1', [session])
+      await pool.query('DELETE FROM enterprise_identity WHERE id=$1', [identity])
+      await pool.query('DELETE FROM enterprise_sso_provider WHERE "providerId"=$1', [provider])
+      await pool.query('DELETE FROM enterprise_org_policy WHERE "organizationId"=$1', [org])
+      await workspacePool.query('DELETE FROM mikka_organizations WHERE id=$1', [org])
+    }
+  })
+
   await t.test('viewer suspension/removal, issuer suspension and explicit revocation close metadata and frames', async () => {
     const scoped = await create(html.id, 'workspace')
     const updateMember = (userId: string, status: string) => workspacePool.query('UPDATE mikka_workspace_members SET status=$3 WHERE "workspaceId"=$1 AND "userId"=$2', [workspace.id, userId, status])

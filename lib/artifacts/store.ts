@@ -17,7 +17,7 @@ import { artifactStorage, getArtifactObject, putArtifactObject } from '@/lib/art
 import { artifactChanged } from '@/lib/live/artifacts'
 import { taskActivityChanged } from '@/lib/factory/activity-live'
 import { artifactAccess, artifactReadAccess, artifactWorkspace, submissionWorkspace, type ArtifactReader } from './access'
-import { activeTaskWorkspaces, taskReaderScope, withTaskWorkspace } from '@/lib/task-workspace'
+import { activeTaskWorkspaces, activeWorkspaceShareIssuer, taskReaderScope, withTaskWorkspace } from '@/lib/task-workspace'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { readWorkspaceSharingDefaults } from '@/lib/settings/workspace-sharing'
 import { artifactShareVisibilityInput } from './share-input'
@@ -308,6 +308,10 @@ async function sharedArtifactAccess(token: string, viewer?: ShareViewer) {
     const reader = typeof viewer === 'function' ? await viewer() : viewer
     if (!reader || share.visibility === 'private' && taskReaderScope(reader).userId !== share.createdBy) return null
     if (!(await activeTaskWorkspaces(reader, share.workspaceId)).length) return null
+    if (share.visibility === 'workspace') {
+      if (!await activeWorkspaceShareIssuer(share.createdBy, share.workspaceId)) return null
+      return and(eq(artifacts.id, share.artifactId), eq(artifacts.userId, share.createdBy), eq(artifacts.workspaceId, share.workspaceId))
+    }
   }
   // A removed/suspended issuer cannot leave an anonymous back door into a tenant.
   return and(eq(artifacts.id, share.artifactId), await artifactAccess(share.createdBy))

@@ -137,13 +137,14 @@ before(async () => {
             return { rows: [] }
           },
           session: { client: txClient } }
-        await client.query('BEGIN')
+        observeCommitEffects(txClient)
+        await txClient.query('BEGIN')
         try {
           const result = await work(tx)
-          await client.query('COMMIT')
+          await txClient.query('COMMIT')
           return result
         } catch (error) {
-          await client.query('ROLLBACK')
+          await txClient.query('ROLLBACK')
           inserted.length = before
           throw error
         }

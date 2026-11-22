@@ -106,7 +106,7 @@ test('a picked model and repository are saved on the new Bot', async () => {
   await settle()
   await act(async () => { props!.onName('Builder'); props!.model.onChange('binding-sonnet'); props!.repository.onChange('') })
   await act(async () => props!.onSubmit())
-  assert.deepEqual(created[0], { name: 'Builder', color: created[0].color, shape: created[0].shape, repository: null })
+  assert.deepEqual(created[0], { name: 'Builder', color: created[0].color, shape: created[0].shape, repository: null, visibility: 'private' })
   assert.deepEqual(chosen, [['new-bot', 'binding-sonnet']])
   assert.equal(opened, 'new-bot')
   assert.deepEqual(selectedScopes, ['shown-team', 'shown-team', 'shown-team'])

@@ -62,7 +62,7 @@ export async function createOwnedBot(owner: { ownerId: string; workspaceId: stri
     await access_.assertBotAccessInput(actor, access ?? policy.effectiveVisibility, subscribers ?? [])
     workCreationVisibility(policy, access)
     try {
-      await db.insert(bots).values({ ...bot, ...owner, ...botSettingsColumns(settings), environmentId, model: model === undefined ? defaults!.defaultModel : model })
+      await tx.insert(bots).values({ ...bot, ...owner, ...botSettingsColumns(settings), environmentId, model: model === undefined ? defaults!.defaultModel : model })
     } catch (error) {
       if (aliasConflict(error)) throw new ActionFailureError('botAliasTaken', undefined, undefined, { cause: error })
       // 23505 is the per-person, per-workspace name index.
@@ -71,7 +71,7 @@ export async function createOwnedBot(owner: { ownerId: string; workspaceId: stri
       throw new ActionFailureError('validationGeneric', undefined, undefined, { cause: error })
     }
     await initializeWorkVisibility(tx, actor, { kind: 'bot', id: bot.id, visibility: access })
-    await botListChanged(db, bot.id)
+    await botListChanged(tx, bot.id)
     // Access and followers need the Bot's policy row, which its insert registered.
     if (subscribers?.length) await access_.setBotSubscribers(actor, bot.id, subscribers)
   })))

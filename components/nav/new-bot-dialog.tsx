@@ -123,7 +123,7 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     setSaving(true)
     try {
       const bot = await createBot({ name: trimmed, color, shape, ...(repository === undefined ? {} : { repository: repository === NO_REPOSITORY ? null : repository }),
-        ...(environment === undefined ? {} : { environmentId: environment }), ...(crewTarget ? { crewTarget } : {}), ...(access === 'shared' ? { visibility: access } : {}) }, workspaceId)
+        ...(environment === undefined ? {} : { environmentId: environment }), ...(crewTarget ? { crewTarget } : {}), visibility: access }, workspaceId)
       if (effort !== NO_EFFORT) {
         const saved = await setBotEffort(bot.id, effort, workspaceId).catch(() => ({ error: 'notSaved' }))
         if (saved.error) toast.error(tModel('notSaved'))

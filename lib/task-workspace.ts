@@ -11,7 +11,7 @@ import { workspaces, workspaceMembers } from '@/lib/db/workspace-schema'
 import { organizationWorkspaces } from '@/lib/db/governance-schema'
 import * as workspaceDatabase from '@/lib/workspace-db'
 import { tokenWorkspace } from '@/lib/tokens/principal'
-import { filterEnterpriseWorkspaceLinks, filterEnterpriseWorkspaces, type EnterpriseAuthExecutor } from '@/lib/enterprise/access'
+import { enterpriseShareIssuerActive, filterEnterpriseWorkspaceLinks, filterEnterpriseWorkspaces, type EnterpriseAuthExecutor } from '@/lib/enterprise/access'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { currentTransactionBoundary } from '@/lib/db/transaction-boundary'
 
@@ -122,6 +122,16 @@ function membership(userId: string, workspaceId?: string,
   )
 }
 
+/** For a stored workspace share after the viewer has been admitted. The
+ * issuer must still belong to the tenant, but is not the request principal. */
+export async function activeWorkspaceShareIssuer(userId: string, workspaceId: string): Promise<boolean> {
+  const [row] = await workspaceDb.select({ organizationId: readerOrganization.organizationId }).from(readerWorkspace)
+    .innerJoin(readerMember, eq(readerMember.workspaceId, readerWorkspace.id))
+    .leftJoin(readerOrganization, eq(readerOrganization.workspaceId, readerWorkspace.id))
+    .where(membership(userId, workspaceId, readerWorkspace, readerMember)).limit(1)
+  return !!row && enterpriseShareIssuerActive(userId, row.organizationId)
+}
+
 /** Read on every operation, or reuse only the membership held by this exact
  * active lease. Enterprise policy and principal are checked on every call. */
 export async function activeTaskWorkspaces(reader: Reader, requestedId?: string, appExecutor?: EnterpriseAuthExecutor): Promise<TaskWorkspace[]> {
@@ -195,4 +205,3 @@ export async function requireTaskWorkspace(reader: Reader, workspaceId: string, 
   if (!workspace) throw new ActionFailureError('workspaceAccessDenied')
   return workspace
 }
-
