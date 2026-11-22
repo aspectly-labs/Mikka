@@ -34,11 +34,13 @@ function snapshotOf(secrets: Array<{ name: string; revision?: string }>): string
 /** Metadata only, in the caller's claim/renewal transaction. No plaintext is
  * opened and no data-plane request calls this function. */
 export async function taskSecretMetadata(workspaceId: string | null, repository: string | null, ownerId: string,
-  query: Pick<typeof db, 'select'> = db, names?: readonly string[], workspaceSecretIds?: readonly string[]): Promise<Array<{ id: string; name: string; kind: 'secret' | 'env'; revision: string; delivery: SecretDelivery }>> {
+  query: Pick<typeof db, 'select'> = db, names?: readonly string[], workspaceSecretIds?: readonly string[], threadRunId?: string | null): Promise<Array<{ id: string; name: string; kind: 'secret' | 'env'; revision: string; delivery: SecretDelivery }>> {
   if (names && !names.length) return []
-  const scope = repository
-    ? or(eq(workspaceSecrets.scopeType, 'workspace'), and(eq(workspaceSecrets.scopeType, 'repository'), eq(workspaceSecrets.scopeRef, repository.toLowerCase())))
-    : eq(workspaceSecrets.scopeType, 'workspace')
+  const scoped = [
+    ...(repository ? [and(eq(workspaceSecrets.scopeType, 'repository'), eq(workspaceSecrets.scopeRef, repository.toLowerCase()))!] : []),
+    ...(threadRunId ? [and(eq(workspaceSecrets.scopeType, 'thread'), eq(workspaceSecrets.scopeRef, threadRunId))!] : []),
+  ]
+  const scope = scoped.length ? or(eq(workspaceSecrets.scopeType, 'workspace'), ...scoped) : eq(workspaceSecrets.scopeType, 'workspace')
   const shared = workspaceId && (workspaceSecretIds === undefined || workspaceSecretIds.length) ? await query.select({ id: workspaceSecrets.id, name: workspaceSecrets.name, kind: workspaceSecrets.kind,
     ciphertext: workspaceSecrets.ciphertext, iv: workspaceSecrets.iv, keyVersion: workspaceSecrets.keyVersion, delivery: workspaceSecrets.delivery,
     scopeType: workspaceSecrets.scopeType, scopeRef: workspaceSecrets.scopeRef }).from(workspaceSecrets)
@@ -133,13 +135,15 @@ export async function loadUserRuntimeSecrets(ownerId: string, env: Env = process
   })
 }
 
-export async function loadTaskRuntimeSecrets(workspaceId: string | null, repository: string | null, env: Env = process.env, ownerId?: string | null): Promise<RuntimeSecret[]> {
+export async function loadTaskRuntimeSecrets(workspaceId: string | null, repository: string | null, env: Env = process.env, ownerId?: string | null, threadRunId?: string | null): Promise<RuntimeSecret[]> {
   const repo = repository?.toLowerCase() ?? null
-  const scope = repo
-    ? or(eq(workspaceSecrets.scopeType, 'workspace'), and(eq(workspaceSecrets.scopeType, 'repository'), eq(workspaceSecrets.scopeRef, repo)))
-    : eq(workspaceSecrets.scopeType, 'workspace')
+  const scoped = [
+    ...(repo ? [and(eq(workspaceSecrets.scopeType, 'repository'), eq(workspaceSecrets.scopeRef, repo))!] : []),
+    ...(threadRunId ? [and(eq(workspaceSecrets.scopeType, 'thread'), eq(workspaceSecrets.scopeRef, threadRunId))!] : []),
+  ]
+  const scope = scoped.length ? or(eq(workspaceSecrets.scopeType, 'workspace'), ...scoped) : eq(workspaceSecrets.scopeType, 'workspace')
   const rows = workspaceId ? await guardSecretsDb(() => db.select().from(workspaceSecrets).where(and(eq(workspaceSecrets.workspaceId, workspaceId), scope))) : []
-  const rank = (row: typeof rows[number]) => row.scopeType === 'repository' ? 1 : 0
+  const rank = (row: typeof rows[number]) => row.scopeType === 'thread' ? 2 : row.scopeType === 'repository' ? 1 : 0
   const merged = new Map<string, RuntimeSecret>()
   for (const row of [...rows].sort((a, b) => rank(a) - rank(b))) merged.set(row.name, openRuntime(row, env))
   // The run owner's own secrets win over workspace and repository values of the same name.
@@ -161,9 +165,9 @@ export interface TaskSecretInjection {
   snapshot?: string
 }
 
-export async function taskSecretInjection(workspaceId: string | null, repository: string | null, env: Env = process.env, skipped?: { actorId: string; audit: SecretAuditHook }, ownerId?: string | null): Promise<TaskSecretInjection> {
+export async function taskSecretInjection(workspaceId: string | null, repository: string | null, env: Env = process.env, skipped?: { actorId: string; audit: SecretAuditHook }, ownerId?: string | null, threadRunId?: string | null): Promise<TaskSecretInjection> {
   if (!workspaceSecretsConfigured(env)) return { env: {}, secretNames: [], protectedSecrets: [], unavailable: [] }
-  const secrets = await loadTaskRuntimeSecrets(workspaceId, repository, env, ownerId)
+  const secrets = await loadTaskRuntimeSecrets(workspaceId, repository, env, ownerId, threadRunId)
   return partitionTaskSecrets(workspaceId, secrets, skipped)
 }
 

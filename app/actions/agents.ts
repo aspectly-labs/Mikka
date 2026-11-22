@@ -689,7 +689,7 @@ function safeHttpUrl(value: string) {
 }
 
 /** Something a person says in a running thread; the daemon delivers it to the agent. */
-export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string }): Promise<{ runId: string; continued: boolean }> {
+export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string; references?: import('@/lib/thread-references').ThreadReference[] }): Promise<{ runId: string; continued: boolean }> {
   const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
   if (!text.success) throw new ActionFailureError('messageRequired')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
@@ -735,8 +735,90 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
       }
     }
   }
+  let body = text.data
+  if (input.references?.length) {
+    const refs = z.array((await import('@/lib/thread-references')).threadReference).max(20).safeParse(input.references)
+    if (!refs.success) throw new ActionFailureError('validationGeneric')
+    const resolved = await (await import('@/lib/thread-references')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data)
+    body = (await import('@/lib/thread-references')).expandReferences(resolved) + body
+  }
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
-  return sendThreadMessage(user.id,row.id,text.data,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
+  return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
+}
+
+/** #2941 item 3: preview cards for the composer's typed references. Same
+ * resolution the send runs; never throws per reference. */
+export async function getReferencePreview(input: { issueId: string | null; runId: string; references: import('@/lib/thread-references').ThreadReference[] }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  const refs = z.array((await import('@/lib/thread-references')).threadReference).max(20).safeParse(input.references)
+  if (!refs.success) throw new ActionFailureError('validationGeneric')
+  return { references: await (await import('@/lib/thread-references')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data) }
+}
+
+/** #2941 item 4: a side note stored in the thread that does NOT wake the
+ * agent — the daemon reads it as context on the next ordinary turn. */
+export async function btwIssueThreadMessage(input: { issueId: string | null; runId: string; text: string }) {
+  const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
+  if (!text.success) throw new ActionFailureError('messageRequired')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { pool } = await import('@/lib/db')
+  const { runMessages } = await import('@/lib/db/schema')
+  const { MAILBOX_NOTIFICATION_LIMIT } = await import('@/lib/mailbox-notification-budget')
+  const { personalRunMessageText } = await import('@/lib/personal-run-message')
+  const id = crypto.randomUUID()
+  await pool.transaction(async tx => {
+    await tx.insert(runMessages).values({ id, runId: row.id, userId: user.id,
+      text: personalRunMessageText(id, `/btw ${text.data}`, 'user'), origin: 'owner',
+      mailboxWakeDepth: MAILBOX_NOTIFICATION_LIMIT })
+  })
+  return { stored: true }
+}
+
+/** #2941 item 4: context stats consistent with the summary read (same
+ * conversationUsage module). `compact` asks the agent to fold now via a
+ * waking peer directive. */
+export async function getThreadContextStats(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { rows: chain } = await pool.query<{ id: string; root: string }>(
+    `WITH RECURSIVE c AS (SELECT id,id AS root FROM agent_runs WHERE id=$2
+       UNION ALL SELECT r.id,c.root FROM agent_runs r JOIN c ON r."retryOf"=c.id OR r."continuesRunId"=c.id)
+     SELECT id,root FROM c`, [user.id, row.id])
+  return { usage: await readContextUsage(chain.map(r => r.id), chain[0]?.root ?? row.id, row.id) }
+}
+export async function compactThread(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  await addRunMessage(user.id, { runId: row.id, text: '/compact — fold the working context now.' }, 'peer')
+  return { requested: true }
+}
+
+/** #2941 item 5: thread-scoped env vars — names only, values never read back. */
+export async function listThreadEnvVars(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { pool } = await import('@/lib/db')
+  const { rows } = await pool.query<{ id: string; name: string; note: string; updatedAt: Date }>(
+    `SELECT id,name,note,"updatedAt" FROM workspace_secrets WHERE "workspaceId"=$1 AND "scopeType"='thread' AND "scopeRef"=$2 ORDER BY name`,
+    [row.workspaceId, row.id])
+  return { env: rows.map(r => ({ id: r.id, name: r.name, note: r.note, updatedAt: r.updatedAt })) }
+}
+export async function setThreadEnvVar(input: { issueId: string | null; runId: string; name: string; value: string }) {
+  const name = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).max(256).safeParse(input.name)
+  const value = z.string().min(1).max(8192).safeParse(input.value)
+  if (!name.success || !value.success) throw new ActionFailureError('validationGeneric')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { setThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
+  return { env: await setThreadScopeSecret(user.id, row.workspaceId, row.id, { name: name.data, value: value.data }) }
+}
+export async function deleteThreadEnvVar(input: { issueId: string | null; runId: string; name: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { deleteThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
+  await deleteThreadScopeSecret(user.id, row.workspaceId, row.id, input.name)
+  return { deleted: true }
 }
 
 /**

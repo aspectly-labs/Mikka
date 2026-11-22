@@ -320,7 +320,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   try {
     taskInjection = projectEnvironment
       ? await environmentSecretInjection(taskWorkspaceId!, taskRepository, projectEnvironment, process.env, run.userId)
-      : await taskSecretInjection(taskWorkspaceId, taskRepository, process.env, undefined, run.userId)
+      : await taskSecretInjection(taskWorkspaceId, taskRepository, process.env, undefined, run.userId, run.id)
     taskEnv = taskInjection.env
     taskSecretNames = taskInjection.secretNames
   } catch { return NextResponse.json({ code: 'task_secret_unavailable', detail: 'configuration' }, { status: 409 }) }

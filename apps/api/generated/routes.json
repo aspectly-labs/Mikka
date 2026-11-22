@@ -1638,6 +1638,16 @@
       "sourceHash": "4920419cd70590235f6541e068e8b4aae6a080c93534c12d262ddd7d704c2556"
     },
     {
+      "path": "/mikka/api/mentions",
+      "template": "/api/mentions",
+      "source": "app/api/mentions/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "maxDuration": 30,
+      "sourceHash": "70cb0dcdcfd054f18734f10ee699833c9bb352d7d38cc7cc9e706b0a70c777cd"
+    },
+    {
       "path": "/mikka/api/mobile/artifacts/[id]",
       "template": "/api/mobile/artifacts/[id]",
       "source": "app/api/mobile/artifacts/[id]/route.ts",
@@ -3593,7 +3603,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "6ffe94b724e974e4c32e5646583bae46d1410f7582ebc247255d67b98b3ae371"
+      "sourceHash": "0510d976aa5c24c52b922e1a53b548fbebe2cc8cae19ed98388f8d11b29dff35"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
