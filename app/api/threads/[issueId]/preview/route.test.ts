@@ -10,7 +10,7 @@ const preview = {
 }
 mock.module(new URL('../../../../../lib/api-auth.ts', import.meta.url).href, { namedExports: { auth: { api: { getSession: async () => signedIn ? { user: identity } : null } } } })
 mock.module(new URL('../../../../../lib/thread-preview.ts', import.meta.url).href, { namedExports: {
-  readThreadPreview: async (userId: string, id: string) => { assert.equal(userId, identity.id); assert.equal(id, issueId); reads++; return allowed ? preview : null },
+  readThreadPreview: async (user: { id: string }, id: string) => { assert.equal(user.id, identity.id); assert.equal(id, issueId); reads++; return allowed ? preview : null },
 } })
 let GET: typeof import('./route')['GET']
 before(async () => { ({ GET } = await import('./route')) })
