@@ -373,7 +373,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     catch (error) { if (error instanceof AgentProfileAdmissionError) return rejectProfile(error); throw error }
     if (claim !== 'claimed') return NextResponse.json({ error: claim === 'cloud-required' ? 'Cloud computer worker required.' : 'Run is no longer queued for this device.' }, { status: 409 })
   }
-  if (device.kind !== 'cloud' && device.computerUse?.installed) {
+  if (device.kind !== 'cloud' && device.computerUseEnabled !== false && device.computerUse?.installed) {
     const current = await localComputerAuthority(pool, caller.userId, deviceId, runId)
     if (current && (!caller.scopeWorkspaceId || caller.scopeWorkspaceId === current.workspaceId)) localComputer = current
   }
@@ -495,7 +495,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const resolvedPolicy = { ...cliPolicy.policy, permissions: { ...cliPolicy.policy.permissions, git_push: push } }
   // A read-only run cannot change its worktree.
   const executionPolicy = run.agentDefinition?.readOnly ? applyApprovalMode(resolvedPolicy, 'read_only') : resolvedPolicy
-  const computerPermission = computer?.permission ?? localComputer?.permission
+  const computerPermission = device.computerUseEnabled === false
+    ? 'deny' as const
+    : (computer?.permission ?? localComputer?.permission)
   // Computer authority comes from its persisted claim; retain every trusted
   // CLI restriction and its revision when attaching that independent grant.
   const policy = computerPermission

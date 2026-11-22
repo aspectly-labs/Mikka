@@ -20,6 +20,13 @@ import { API_KEY_PRESETS } from '@/lib/model-api-key-providers'
 import { gatewayFeaturesSchema } from '@/lib/model-gateway/features'
 import { setAppPolicyInput } from '@/lib/app-policy/apps'
 import { POINTS_PURCHASE_AMOUNTS } from '@/lib/billing/hosted-usage'
+import { autoRechargeInputSchema } from '@/lib/billing/auto-recharge-schema'
+import {
+  deleteDeviceRepositoryInput,
+  patchDeviceRepositoryInput,
+  updateDevicePolicyInput,
+  upsertDeviceRepositoryInput,
+} from '@/lib/settings/device-policy-contract'
 import { MAX_READ_BATCH, READ_BATCH_ACTIONS, type ReadBatchCall } from './read-batch-contract'
 import { USER_FACT_KINDS } from '@/lib/profile/kinds'
 import { definitionSchema as scheduleDefinition, webhookBatchListInput, webhookBatchInput } from '@/lib/schedules/contract'
@@ -191,6 +198,15 @@ export const desktopActionSchemas = {
   'billing.startPointsPurchase': tuple(uuid, z.number().refine(amount => (POINTS_PURCHASE_AMOUNTS as readonly number[]).includes(amount))),
   'billing.startChatPointsPurchase': tuple(z.number().finite().positive(), bot),
   'billing.startCardVerification': inWorkspace,
+  'billing.getBillingSettings': inWorkspace,
+  'billing.saveAutoRechargePolicy': tuple(autoRechargeInputSchema, workspace),
+  'devices.getPolicy': tuple(uuid, workspace),
+  'devices.updatePolicy': tuple(uuid, updateDevicePolicyInput, workspace),
+  'devices.listRepositories': oneId,
+  'devices.upsertRepository': tuple(uuid, upsertDeviceRepositoryInput),
+  'devices.patchRepository': tuple(uuid, patchDeviceRepositoryInput),
+  'devices.deleteRepository': tuple(uuid, deleteDeviceRepositoryInput),
+  'ops-metrics.getWorkspaceOpsMetrics': inWorkspace,
   'bots.listBots': none,
   'bots.pollBots': inWorkspace,
   'bots.createBot': tuple(object({ name: text(200).trim().min(1), color: text(50).min(1), shape: text(50).min(1), model: text(1000).nullish(), repository: text(2048).nullish(), ...botSettingFields,

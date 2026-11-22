@@ -9,6 +9,21 @@ export interface AutoRechargePolicyView {
   revision: number
 }
 
+export interface BillingReceiptsPolicyView {
+  receiptsManagedBy: 'stripe_portal'
+  source: 'provider'
+}
+
+export interface WorkspaceBillingSettingsView {
+  workspaceId: string
+  accountWorkspaceId: string
+  canManageRecharge: boolean
+  receiptsManagedBy: 'stripe_portal'
+  source: 'provider'
+  receipts: BillingReceiptsPolicyView
+  autoRecharge: AutoRechargePolicyView
+}
+
 export interface BillingView {
   configured: boolean
   /** A resource price must be configured separately from the historical seat price. */
@@ -27,6 +42,8 @@ export interface BillingView {
   planPoints: number | null
   purchasedPoints: number
   autoRecharge?: AutoRechargePolicyView
+  receiptsManagedBy?: 'stripe_portal'
+  receipts?: BillingReceiptsPolicyView
 }
 
 export interface CreditTransaction {
