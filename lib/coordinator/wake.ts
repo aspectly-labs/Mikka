@@ -25,14 +25,14 @@ export async function coordinatorEnabled(ownerId?: string, botId: string | null 
 }
 
 /** No answer leaves the event pending; it does not become background, result or a request for human approval. */
-export async function triageInbox(userId: string, botId: string, signal = new AbortController().signal, wakeDeadline = Infinity): Promise<void> {
+export async function triageInbox(userId: string, botId: string, signal = new AbortController().signal, wakeDeadline = Infinity, priorityEventId?: string): Promise<void> {
   'use step'
   const { hostedBillingScope } = await import('@/lib/abuse/context')
   const { executionWorkspace } = await import('@/lib/execution-settings')
   const scope = { userId, botId }
   // Stop admitting work at the batch deadline; an admitted call owns its full transport timeout.
   const deadline = Date.now() + TRIAGE_BATCH_BUDGET_MS
-  const outcome = await runTriageBatch(await untriagedEvents(userId, botId), {
+  const outcome = await runTriageBatch(await untriagedEvents(userId, botId, priorityEventId), {
     canClassify: () => Date.now() < deadline && Date.now() + decisionTimeoutMs() <= wakeDeadline,
     claim: event => claimTriageAttempt(event, scope),
     deliverUser: event => setEventTier(event.id, 'attention', scope),
@@ -77,7 +77,7 @@ export async function wakeCoordinator(userId: string, signal?: AbortSignal): Pro
 
 /** Product outbox delivery only. eve owns turn queueing, retry and recovery. */
 async function wakeChat(scope: { userId: string; botId: string }, signal?: AbortSignal, deadline = Infinity, eventId?: string) {
-  await triageInbox(scope.userId,scope.botId,signal,deadline)
+  await triageInbox(scope.userId,scope.botId,signal,deadline,eventId)
   if (signal?.aborted) return 'deferred' as const
   const { rows: events } = await pool.query<{ id: string; workspaceId: string }>(`
     SELECT e.id, b."workspaceId" FROM coordinator_events e

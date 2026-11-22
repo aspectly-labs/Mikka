@@ -314,6 +314,14 @@ dbTest('durable attempts advance past one inbox batch and persist only a matchin
     })
     const first=await store.untriagedEvents(owner, coordinator)
     assert.equal(first.length,50)
+    const [outsideBatch] = (await db.select().from(schema.coordinatorEvents)
+      .where(eq(schema.coordinatorEvents.userId, owner))).filter(item => !first.some(prior => prior.id === item.id))
+    assert.ok(outsideBatch)
+    const prioritized = await store.untriagedEvents(owner, coordinator, outsideBatch.id)
+    assert.equal(prioritized.length, 50)
+    assert.equal(prioritized[0].id, outsideBatch.id, 'the replay target is selected before the inbox batch limit')
+    assert.deepEqual((await store.untriagedEvents(owner, coordinator, randomUUID())).map(item => item.id), first.map(item => item.id),
+      'a missing or foreign replay target cannot change scoped inbox ordering')
     const event=first[0],identity={userId:owner,botId:coordinator}
     const claims=await Promise.all([store.claimTriageAttempt(event,identity),store.claimTriageAttempt(event,identity)])
     const tokens=claims.filter((value):value is Date=>value!==null)

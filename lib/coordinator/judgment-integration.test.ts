@@ -24,7 +24,7 @@ stub('../abuse/context.ts',{hostedBillingScope:{
  run:(scope:unknown,work:()=>unknown)=>{assert.deepEqual(scope,{workspaceId:'fixture-workspace',ownerId:'synthetic'});return work()},
 }})
 stub('./store.ts',{
- untriagedEvents:async(_userId:string,botId:string|null)=>events.filter(e=>e.tier===null&&(e.botId??null)===botId),
+ untriagedEvents:async(_userId:string,botId:string|null,priorityEventId?:string)=>events.filter(e=>e.tier===null&&(e.botId??null)===botId).sort((a,b)=>Number(b.id===priorityEventId)-Number(a.id===priorityEventId)).slice(0,50),
  claimTriageAttempt:async(event:typeof events[number],scope:unknown)=>{assert.deepEqual(scope,{userId:'synthetic',botId:event.botId??null});event.lastTriageAttemptAt=new Date();return event.lastTriageAttemptAt},
  completeTriageAttempt:async(event:typeof events[number],scope:unknown,attemptedAt:Date,judgment:{tier:string;execution:unknown})=>{assert.deepEqual(scope,{userId:'synthetic',botId:event.botId??null});assert.equal(event.lastTriageAttemptAt,attemptedAt);assert.ok(judgment.execution);event.tier=judgment.tier;return true},
  setEventTier:async(id:string,tier:string,scope:unknown)=>{assert.deepEqual(scope,{userId:'synthetic',botId:null});events.find(e=>e.id===id)!.tier=tier;return true},
@@ -193,6 +193,24 @@ test('replay delivers only the requested event in its own chat', async () => {
  assert.deepEqual(sentEvents, ['target'])
  assert.equal(await wake.replayCoordinatorWake('target'), false)
  assert.equal(await wake.replayCoordinatorWake('missing'), false)
+})
+test('replay triages its requested event before older pending events consume admission', async () => {
+ const fetch = globalThis.fetch, now = Date.now()
+ let elapsed = 0
+ const clock = mock.method(Date, 'now', () => now + elapsed)
+ try {
+  events = Array.from({ length: 51 }, (_, i) => ({ id: `older-${i}`, botId: 'target-bot', kind: 'run_blocked' as const, payload: {}, tier: null }))
+  events.push({ id: 'priority-replay', botId: 'target-bot', kind: 'run_blocked', payload: {}, tier: null })
+  globalThis.fetch = async (input, init) => { elapsed += 10_001; return fetch(input, init) }
+  assert.equal(await wake.replayCoordinatorWake('priority-replay'), true)
+  assert.equal(events.at(-1)?.tier, 'result')
+  assert.ok(events.slice(0, -1).every(event => event.tier === null))
+  assert.deepEqual(sentEvents, ['priority-replay'])
+  assert.equal(requests.length, 1)
+ } finally {
+  globalThis.fetch = fetch
+  clock.mock.restore()
+ }
 })
 test('replay without a usable classification reports deferred rather than delivered', async () => {
  events = [{ id: 'pending-replay', botId: 'target-bot', kind: 'run_blocked', payload: {}, tier: null }]

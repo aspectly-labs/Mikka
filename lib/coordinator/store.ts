@@ -73,13 +73,13 @@ export async function wakingChats(userId: string): Promise<string[]> {
 /** Direct user delivery first. Runtime ordering uses the last attempt, falling
  * back to original creation time. Trying a slow event advances the durable
  * cursor instead of repeatedly hiding all events after the oldest batch. */
-export async function untriagedEvents(userId: string, botId: string) {
+export async function untriagedEvents(userId: string, botId: string, priorityEventId?: string) {
   const reader = await chatReader(userId, botId)
   const retryBefore = new Date(Date.now() - TRIAGE_RETRY_COOLDOWN_MS - decisionTimeoutMs())
   const events = await db.select().from(coordinatorEvents)
     .where(and(eventsOf(userId, botId), isNull(coordinatorEvents.deliveredAt), isNull(coordinatorEvents.tier),
       or(eq(coordinatorEvents.kind, 'user_message'), isNull(coordinatorEvents.lastTriageAttemptAt), lt(coordinatorEvents.lastTriageAttemptAt, retryBefore))))
-    .orderBy(desc(eq(coordinatorEvents.kind, 'user_message')), asc(sql`coalesce(${coordinatorEvents.lastTriageAttemptAt}, ${coordinatorEvents.createdAt})`), asc(coordinatorEvents.id)).limit(INBOX_BATCH)
+    .orderBy(...(priorityEventId ? [desc(eq(coordinatorEvents.id, priorityEventId))] : []), desc(eq(coordinatorEvents.kind, 'user_message')), asc(sql`coalesce(${coordinatorEvents.lastTriageAttemptAt}, ${coordinatorEvents.createdAt})`), asc(coordinatorEvents.id)).limit(INBOX_BATCH)
   const runIds = [...new Set(events.flatMap(event => event.runId ? [event.runId] : []))]
   // Reuse the existing visibility gate; teammate projections stay restricted.
   const observed = new Map((runIds.length ? await visibleRuns(reader, { runIds, limit: runIds.length, brief: true }) : [])
