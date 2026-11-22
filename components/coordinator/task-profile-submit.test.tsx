@@ -70,6 +70,8 @@ mock.module(new URL('../workspace/issue-metadata-controls.tsx', import.meta.url)
 // The account menu's read: what the server shows as the current workspace, and how often the create action re-read it.
 type Shown = { id: string; name: string; kind: string } | null
 let shown: Shown = null, nextShown: Shown = null, switcherReads = 0, readFails = false, switcherError: Error | undefined
+// A different workspace another tab may switch to while the dialog is open.
+const otherWorkspace: Shown = { id: '12250000-0000-4000-8000-000000000099', name: 'Other workspace', kind: 'team' }
 // After the fresh read answers: another tab switches before the create request is sent.
 let afterRead: (() => void) | null = null
 const switcher = (workspace: Shown) => workspace ? { workspace, accounts: [{ choices: [workspace] }] } : undefined
