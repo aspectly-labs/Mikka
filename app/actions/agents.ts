@@ -856,11 +856,19 @@ export async function closeThreadTerminal(issueId: string | null, runId: string,
   return withDatabaseOperation('/actions/threads/terminal/close', async () => {
     const ctx = await threadSessionAuthority(issueId, runId)
     if (!ctx) return null
-    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId }, async (authority, client) => {
-      const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
-      const result = await revokeReviewSession(authority, { kind: 'terminal', id: input.id }, client)
-      return { closed: !result.pending }
-    })
+    // Confirm the lease inside the authority transaction, then release the
+    // SQL locks before the provider close — the HTTP close handler's order.
+    const authority = await ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId },
+      async (current, client) => {
+        const { readReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+        const lease = await readReviewSession(current, { kind: 'terminal', id: input.id, name: input.name ?? '' }, client)
+        if (!lease) return null
+        return current
+      })
+    if (!authority) return { closed: false }
+    const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const result = await revokeReviewSession(authority, { kind: 'terminal', id: input.id })
+    return { closed: !result.pending }
   })
 }
 
@@ -909,11 +917,17 @@ export async function closeThreadBrowser(issueId: string | null, runId: string, 
   return withDatabaseOperation('/actions/threads/browser/close', async () => {
     const ctx = await threadSessionAuthority(issueId, runId)
     if (!ctx) return null
-    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId }, async (authority, client) => {
-      const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
-      const result = await revokeReviewSession(authority, { kind: 'preview', id: input.id }, client)
-      return { closed: !result.pending }
-    })
+    const authority = await ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId },
+      async (current, client) => {
+        const { readReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+        const lease = await readReviewSession(current, { kind: 'preview', id: input.id }, client)
+        if (!lease) return null
+        return current
+      })
+    if (!authority) return { closed: false }
+    const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const result = await revokeReviewSession(authority, { kind: 'preview', id: input.id })
+    return { closed: !result.pending }
   })
 }
 

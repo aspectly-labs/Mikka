@@ -121,10 +121,18 @@ export async function drainThreadPullMergeIntents(database: Pick<Pool, 'query'>,
       `UPDATE thread_pull_merge_intents SET "updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 AND state='armed' RETURNING id`,
       [intent.id, ownerId])
     if (!armed.length) continue
-    const outcome = await mergePullRequest(ownerId, {
+    // A provider error (expired token, network) blocks this intent only —
+    // it must not abort the drain or the read that invoked it.
+    let outcome
+    try {
+      outcome = await mergePullRequest(ownerId, {
       repo: intent.repo, number: intent.number,
       expectedHeadSha: intent.headSha, confirmFailedChecks: intent.confirmFailedChecks,
     }, deps)
+    } catch {
+      results.push({ repo: intent.repo, number: intent.number, outcome: 'armed', code: null })
+      continue
+    }
     if (outcome.kind === 'merged') {
       await database.query(
         `UPDATE thread_pull_merge_intents SET state='merged',"mergeCommitSha"=$3,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 AND state='armed'`,
