@@ -88,29 +88,33 @@ test('a PR webhook records its line counts on the delivery and on the tasks it b
     const saved = await task(delivered)
     assert.deepEqual(saved.content.attrs.mikka.pullRequests, [
       { url: other, state: 'open' },
-      // Only the counts change; the task's own PR state is not this sync's to move.
-      { url, state: 'open', title: 'Fix the login page', additions: 18, deletions: 4 },
+      // The metadata copy is the single read source: this sync moves the state too (#1863).
+      { url, state: 'merged', title: 'Fix the login page', additions: 18, deletions: 4 },
     ])
     assert.deepEqual(saved.content.content, [{ type: 'paragraph', content: [{ type: 'text', text: 'Body stays' }] }])
-    assert.equal(saved.revision, 2)
-    assert.deepEqual(await versions(delivered), [{ actor_type: 'system', actor_id: 'github-webhook', revision: 2 }])
+    assert.equal(saved.revision, 3)
+    assert.deepEqual(await versions(delivered), [
+      { actor_type: 'system', actor_id: 'publication-webhook', revision: 2 },
+      { actor_type: 'system', actor_id: 'github-webhook', revision: 3 },
+    ])
     const { rows: [publication] } = await pool.query('SELECT "pullRequest" FROM run_publications WHERE "runId"=$1', [runId])
     assert.deepEqual(publication.pullRequest, { url, state: 'merged', title: 'Fix the login page', additions: 18, deletions: 4 })
     // A task with no delivery for this PR is never touched.
     assert.equal((await task(unrelated)).revision, 1)
     assert.deepEqual((await task(unrelated)).content.attrs.mikka.pullRequests, [{ url, state: 'open' }])
 
-    // The same counts again, or an event without counts, write nothing new.
+    // An open-state event carries new truth (reopened) and is mirrored; an event without
+    // counts or with the same counts then writes nothing new.
     await refreshPublishedPullRequest('pull_request', event({ additions: 18, deletions: 4 }), pool)
     await refreshPublishedPullRequest('pull_request', event({}), pool)
     await refreshPublishedPullRequest('pull_request', event({ additions: 18 }), pool)
-    assert.equal((await task(delivered)).revision, 2)
-    assert.equal((await versions(delivered)).length, 1)
+    assert.equal((await task(delivered)).revision, 4)
+    assert.equal((await versions(delivered)).length, 3)
 
     // New counts are a new version.
     await refreshPublishedPullRequest('pull_request', event({ additions: 25, deletions: 6 }), pool)
     assert.deepEqual((await task(delivered)).content.attrs.mikka.pullRequests[1], { url, state: 'open', title: 'Fix the login page', additions: 25, deletions: 6 })
-    assert.deepEqual((await versions(delivered)).map(row => row.revision), [2, 3])
+    assert.deepEqual((await versions(delivered)).map(row => row.revision), [2, 3, 4, 5])
 
     const taskId = randomUUID(), attemptId = randomUUID(), candidateId = randomUUID(), headSha = 'a'.repeat(40), newHead = 'b'.repeat(40)
     const fixture = await pool.connect()

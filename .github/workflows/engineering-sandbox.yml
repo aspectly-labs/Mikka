@@ -1,13 +1,11 @@
 name: Cloudflare engineering sandbox
 on:
-  pull_request:
-    paths: &runner_paths
+  push:
+    branches: [main]
+    paths:
       - 'cloudflare/engineering-sandbox/**'
       - 'scripts/engineering-sandbox.mjs'
       - '.github/workflows/engineering-sandbox.yml'
-  push:
-    branches: [main]
-    paths: *runner_paths
   workflow_dispatch:
     inputs:
       issue:
