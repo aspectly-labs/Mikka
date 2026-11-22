@@ -221,6 +221,11 @@ test('group read routes advance actual group history without opening private DMs
     assert.equal(segments.length, 2)
     assert.equal(segments[0].linkedConversationId, segments[1].linkedConversationId)
     assert.deepEqual([segments[1].firstPosition, segments[1].lastPosition, segments[1].messageCount], ['3','4','2'])
+    // The reused transcript's second segment names the second group message, not the first.
+    const secondAnchor = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND body='second'`, [source])).rows[0].id
+    const secondReplies = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND position BETWEEN 3 AND 4`, [segments[1].linkedConversationId])).rows.map(row => row.id)
+    assert.equal(secondReplies.length, 2)
+    for (const id of secondReplies) assert.ok(billed.includes(`group:${secondAnchor}:${id}`), `second-segment reply ${id} is billed under the second group message`)
     assert.equal(JSON.stringify(await (await linked(segments[0].id, '?before=999')).json()).includes('second'), false)
     assert.equal((await (await call('GET', source)).json()).unreadCount, 3, 'private message positions do not add source unread messages')
     // Remove a source peer while its initial model response is in flight.
