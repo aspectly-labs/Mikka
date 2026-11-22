@@ -103,8 +103,10 @@ const STATUS: Record<ChangedFile['status'], GitStatus> = { added: 'added', delet
  * `+x −y` lane from the thread's changes, a row menu (Open, View thread diff, Copy path), and selection opening a
  * file. `onExpand` hears a folder opened that has not been read yet, so the caller can load it lazily.
  */
-function PierreTree({ paths, changed, query, onOpen, onExpand, label }: {
+function PierreTree({ paths, changed, query, onOpen, onExpand, label, open = false }: {
   paths: readonly string[]; changed: ChangedFile[]; query: string; label: string
+  /** Every folder open from the start: a short list of changed files, not a checkout read a folder at a time. */
+  open?: boolean
   onOpen?: (path: string) => void; onExpand?: (path: string) => void
 }) {
   const t = useTranslations('RightColumn.files')
@@ -114,7 +116,7 @@ function PierreTree({ paths, changed, query, onOpen, onExpand, label }: {
   const opener = useRef(onOpen)
   opener.current = onOpen
   const { model } = useFileTree({
-    paths, density: 'compact', initialExpansion: 'closed', flattenEmptyDirectories: false,
+    paths, density: 'compact', initialExpansion: open ? 'open' : 'closed', flattenEmptyDirectories: false,
     gitStatus: changed.map(file => ({ path: file.path, status: STATUS[file.status] })),
     labels: { contextMenuTrigger: t('actionsShort'), gitStatusTitles: { added: t('status.added'), deleted: t('status.deleted'), modified: t('status.modified'), renamed: t('status.renamed') } },
     composition: { contextMenu: { enabled: true, triggerMode: 'both', buttonVisibility: 'when-needed' } },
@@ -255,7 +257,7 @@ function ChangedList({ files, query, empty }: { files: ChangedFile[]; query: str
   const t = useTranslations('RightColumn.files')
   const paths = useMemo(() => files.map(file => file.path), [files])
   if (!files.length) return <Note>{empty}</Note>
-  return <PierreTree key={paths.join('\n')} paths={paths} changed={files} query={query} label={t('thread')} />
+  return <PierreTree key={paths.join('\n')} paths={paths} changed={files} query={query} label={t('thread')} open />
 }
 
 function UploadList({ uploads, query }: { uploads: Upload[]; query: string }) {
