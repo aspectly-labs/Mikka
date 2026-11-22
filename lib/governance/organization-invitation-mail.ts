@@ -43,11 +43,18 @@ export function organizationInvitationMail(
 }
 
 async function optedOutInvitationRecipients(emails: string[]): Promise<Set<string>> {
+  const normalized = emails.map(email => email.toLowerCase())
   const { rows } = await pool.query<{ email: string }>(
-    `SELECT lower(u.email) AS email FROM user_preferences p
-       JOIN "user" u ON u.id = p."userId"
-      WHERE NOT p."organizationInvitationEmails" AND u."emailVerified" AND lower(u.email) = ANY($1::text[])`,
-    [emails],
+    `SELECT lower(u.email) AS email
+       FROM "user" u
+       LEFT JOIN personal_setting_values s
+         ON s."userId" = u.id AND s."workspaceId" IS NULL AND s.key = 'notifyEmailInvitations'
+       LEFT JOIN user_preferences p
+         ON p."userId" = u.id
+      WHERE u."emailVerified"
+        AND lower(u.email) = ANY($1::text[])
+        AND NOT COALESCE(s."booleanValue", p."organizationInvitationEmails", true)`,
+    [normalized],
   )
   return new Set(rows.map(row => row.email))
 }

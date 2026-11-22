@@ -152,6 +152,38 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
   await Promise.all([...new Set(rows.filter(row => row.changed).map(row => row.runId))].map(id => runListChanged(database, id, true)))
   // The PR badge on each task it was delivered on asks GitHub again (#1212); the state itself never crosses.
   await pullRequestStatusChanged(database, rows.flatMap(row => row.issueId ? [row.issueId] : []))
+  // The task's metadata copy is the single source the Factory read prefers (#1863): mirror the
+  // new state there, under each issue's own tenant. Every matched delivery is considered, not
+  // only ones this event changed, so a redelivery still repairs a mirror that failed before.
+  const metaIssues = [...new Set(rows.flatMap(row => row.issueId ? [row.issueId] : []))]
+  if (metaIssues.length) {
+    await database.query(
+      `WITH locked AS MATERIALIZED (
+         SELECT i.id FROM issues i WHERE i.id = ANY($3::uuid[])
+           AND jsonb_typeof(i.content #> '{attrs,mikka,pullRequests}')='array'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') e
+             WHERE lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) AND e->>'state' IS DISTINCT FROM $2)
+         ORDER BY i.id FOR UPDATE OF i
+       ), saved AS (
+         UPDATE issues i SET content=jsonb_set(i.content,'{attrs,mikka,pullRequests}',(
+             SELECT jsonb_agg(CASE WHEN lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) THEN e || jsonb_build_object('state',$2) ELSE e END ORDER BY n)
+             FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') WITH ORDINALITY AS list(e,n))),
+           revision=i.revision+1,"updatedAt"=now()
+         FROM locked WHERE i.id=locked.id
+           -- The mirror is a separate autocommitted statement: a newer webhook may have moved a
+           -- delivery on since this one's update committed. Recheck under the issue lock that
+           -- every delivery of this PR for the task still holds this event's patch, so an older
+           -- event cannot paint over a newer event's state.
+           AND EXISTS (SELECT 1 FROM run_publications p WHERE p."issueId"=i.id
+             AND lower(rtrim(p."pullRequest"->>'url','/'))=lower(rtrim($1,'/')) AND p."pullRequest" @> $4::jsonb)
+           AND NOT EXISTS (SELECT 1 FROM run_publications p WHERE p."issueId"=i.id
+             AND lower(rtrim(p."pullRequest"->>'url','/'))=lower(rtrim($1,'/')) AND NOT p."pullRequest" @> $4::jsonb)
+         RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
+       INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
+       SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'system','publication-webhook' FROM saved`,
+      [key, state, metaIssues, patch],
+    )
+  }
   // 已完成 once the last PR Mikka delivered on a task is merged: forward only, and a status the person set since the
   // work began is kept (lib/task-status-advance.ts). A redelivery finds the task already there and changes nothing.
   if (state === 'merged') {

@@ -1302,7 +1302,6 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
       assert.equal((await templateCall(assuredToken, templateInput)).status, 403)
     } finally {
       await pool.query('delete from issues where id=any($1::uuid[])', [[personalTaskId, organizationTaskId]])
-      await pool.query('delete from workspace_subscription_shares where "ownerId"=$1 and "workspaceId"=$2', [userId, personalWorkspaceId])
       await pool.query('delete from session where id=$1', [plainSessionId])
       await pool.query('delete from workspace_computer_policies where "workspaceId"=$1', [workspaceId])
       await pool.query('delete from enterprise_org_policy where "organizationId"=$1', [organizationId])
@@ -1407,7 +1406,6 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     } finally {
       await pool.query('delete from enterprise_break_glass where "organizationId"=$1 and "sessionId"=any($2::text[])', [organizationId, sessionIds])
       await pool.query('delete from issues where id=any($1::uuid[])', [[taskId, personalTaskId]])
-      await pool.query('delete from workspace_subscription_shares where "ownerId"=$1 and "workspaceId"=$2', [adminId, personalWorkspaceId])
       await pool.query('delete from session where id=any($1::text[])', [sessionIds])
       await pool.query('delete from mikka_workspaces where id=any($1::uuid[])', [[workspaceId, personalWorkspaceId]])
       await pool.query('delete from enterprise_org_policy where "organizationId"=$1', [organizationId])
