@@ -228,7 +228,12 @@ async function readRunGitIdentity(tx: PoolClient, userId: string, workspaceId: s
 }
 
 /** Resolve a run's exact owner, Bot and worker; then read the workspace policy. */
-export async function lockCliRunPolicy(tx: PoolClient, runId: string, userId: string, options: { freezeHierarchy?: boolean } = {}) {
+export async function lockCliRunPolicy(
+  tx: PoolClient,
+  runId: string,
+  userId: string,
+  options: { freezeHierarchy?: boolean; includeGitIdentity?: boolean } = {},
+) {
   // Policy must precede Factory/task/run locks. Read the task with the run,
   // then freeze any new hierarchy only after acquiring the policy locks.
   const result = await tx.query<CliTaskRow & { botId: string | null; agentId: string; issueId: string | null; runWorkspaceId: string | null; policyCeiling: unknown; hierarchy: unknown }>(`SELECT "botId","agentId","issueId",r."agentDefinition"->'policyCeiling' AS "policyCeiling",
@@ -250,7 +255,7 @@ export async function lockCliRunPolicy(tx: PoolClient, runId: string, userId: st
       AND (cli_policy_hierarchy IS NULL OR cli_policy_hierarchy=$3::jsonb) RETURNING id`, [runId,userId,task.hierarchy])
     if (!frozen.rowCount) throw new Error('agentPolicyChanged')
   }
-  const gitIdentity = await readRunGitIdentity(tx, userId, run.runWorkspaceId)
+  const gitIdentity = options.includeGitIdentity ? await readRunGitIdentity(tx, userId, run.runWorkspaceId) : undefined
   const resolved: typeof current & { gitIdentity?: RunGitIdentity } = gitIdentity ? { ...current, gitIdentity } : current
   if (run.policyCeiling == null) return resolved
   const ceiling = runPolicySchema.safeParse(run.policyCeiling)
@@ -324,12 +329,18 @@ export function cliPolicyGuard(runId: string, userId: string, membership: CliMem
 }
 
 /** Read an authenticated run's policy under the same locks used by decisions. */
-export async function readCliRunPolicy(pool: Pick<Pool, 'connect'>, runId: string, userId: string, guard: CliMembershipGuard = realCliMembershipGuard) {
+export async function readCliRunPolicy(
+  pool: Pick<Pool, 'connect'>,
+  runId: string,
+  userId: string,
+  guard: CliMembershipGuard = realCliMembershipGuard,
+  options?: { includeGitIdentity?: boolean },
+) {
   // The work resolved the policy in this transaction and still holds its locks
   // (advisory, FOR SHARE) through COMMIT, so the membership lease is taken for
   // that same result instead of resolving it a second time (12 statements).
   let current: Awaited<ReturnType<typeof lockCliRunPolicy>> | undefined
-  return writeTransaction(pool, async tx => (current = await lockCliRunPolicy(tx, runId, userId)), {
+  return writeTransaction(pool, async tx => (current = await lockCliRunPolicy(tx, runId, userId, options)), {
     guard: (_tx, signal) => policyMemberships(current!, userId, signal, guard),
   })
 }

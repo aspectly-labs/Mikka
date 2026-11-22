@@ -227,7 +227,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     || loopbackGateway && request.headers.get(MODEL_GATEWAY_LOOPBACK_HEADER) !== '1')) return NextResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
   let cliPolicy: Awaited<ReturnType<typeof readCliRunPolicy>>
   try {
-    cliPolicy = await readCliRunPolicy(pool, runId, caller.userId)
+    cliPolicy = await readCliRunPolicy(pool, runId, caller.userId, undefined, { includeGitIdentity: true })
     for (const workspaceId of Array.from(new Set([...cliPolicy.workspaceIds, ...(subscription ? [subscription.workspaceId] : [])]))) {
       const scope = { workspaceId, ownerId: caller.userId }
       const model = frozenKey?.model ?? frozenCredits?.model ?? run.agentDefinition?.model ?? subscription?.modelId ?? 'native-default'
