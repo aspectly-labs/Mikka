@@ -100,8 +100,9 @@ const components: NonNullable<ComponentProps<typeof Markdown>['components']> = {
   // LobeHub's lists (:178-213, :363-368): 0.33em between items (gap-1), the marker in the secondary colour.
   ul: ({ node: _node, ...props }) => <ul {...props} className="flex list-disc flex-col gap-1 ps-6 marker:text-muted-foreground" />,
   ol: ({ node: _node, ...props }) => <ol {...props} className="flex list-decimal flex-col gap-1 ps-6 marker:text-muted-foreground" />,
-  // LobeHub's quote (:37-45): a 4px bar at the start and secondary text, no fill.
-  blockquote: ({ node: _node, ...props }) => <blockquote {...props} className="border-s-4 border-rule ps-4 text-muted-foreground" />,
+  // LobeHub's quote (:37-45): a 4px bar at the start, no fill. Its text stays the body colour, not LobeHub's secondary: the
+  // official palette's `--muted-foreground` (black at 45%) is 3.35:1 on white, under AA for body text (UX audit I).
+  blockquote: ({ node: _node, ...props }) => <blockquote {...props} className="border-s-4 border-rule ps-4 text-foreground" />,
   a: ({ node: _node, ...props }) => <CitationAnchor {...props} />,
   img: MarkdownImage,
   pre: MarkdownPre,

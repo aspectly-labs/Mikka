@@ -33,12 +33,13 @@ test('a small card keeps its headings near its own size', () => {
 })
 
 // lobe-ui style.css :240-251 (0.5em between paragraphs), :37-45 (blockquote), :178-213 and :363-368 (lists).
-test('paragraphs sit 8px apart, a quote is a start bar and list markers are secondary', () => {
+test('paragraphs sit 8px apart, a quote is a start bar in the body colour and list markers are secondary', () => {
   const html = renderToStaticMarkup(<AgentMarkdown text={SAMPLE} />)
   const root = classOf(html, 'div')
   assert.ok(root.includes('gap-2') && !root.includes('gap-3'), root.join(' '))
   const quote = classOf(html, 'blockquote')
-  assert.deepEqual(quote.filter(name => /^(?:bg-|rounded|border-s-4|border-rule|ps-4|text-muted-foreground)/.test(name)).sort(), ['border-rule', 'border-s-4', 'ps-4', 'text-muted-foreground'])
+  // Body colour: the official palette's muted text is 3.35:1 on white, under AA for a quote's body text.
+  assert.deepEqual(quote.filter(name => /^(?:bg-|rounded|border-s-4|border-rule|ps-4|text-)/.test(name)).sort(), ['border-rule', 'border-s-4', 'ps-4', 'text-foreground'])
   assert.ok(classOf(html, 'ul').includes('marker:text-muted-foreground'))
   assert.ok(classOf(html, 'code').includes('text-xs'), 'inline code is about 0.875em of the body')
   assert.match(html, /<div role="separator" class="h-1"><\/div>/)
