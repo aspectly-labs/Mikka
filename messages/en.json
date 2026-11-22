@@ -1055,7 +1055,8 @@
       },
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "Installation commands are unavailable",
-      "reconnectTitle": "Reconnect"
+      "reconnectTitle": "Reconnect",
+      "desktopLink": "Download the desktop app"
     },
     "setup": "Set up repository and agent",
     "offlineSince": "Offline · {time}",

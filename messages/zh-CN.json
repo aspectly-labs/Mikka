@@ -1055,7 +1055,8 @@
       },
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "安装命令暂不可用",
-      "reconnectTitle": "重新连接"
+      "reconnectTitle": "重新连接",
+      "desktopLink": "下载桌面端"
     },
     "setup": "设置仓库和 Agent",
     "offlineSince": "离线 · {time}",
