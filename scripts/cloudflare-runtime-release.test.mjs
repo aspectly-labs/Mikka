@@ -34,7 +34,7 @@ const api = { version: 1, provider: 'github-actions', repository: 'alexj11324/Mi
 api.publicBuildSettings = { publicSha, privateSha: overlaySha, publication: 'registry-only', NEXT_PUBLIC_POSTHOG_KEY: 'public-analytics',
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_public', NEXT_PUBLIC_TURNSTILE_SITE_KEY: 'public-turnstile', NEXT_PUBLIC_COMPUTER_ENABLED: '1' }
 api.publicBuildSettingsSha256 = createHash('sha256').update(JSON.stringify(api.publicBuildSettings)).digest('hex')
-const env = { GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REPOSITORY_ID: '1427517699',
+const env = { GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963',
   GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: publicSha,
   GITHUB_WORKFLOW_SHA: publicSha, GITHUB_WORKFLOW_REF: 'alexj11324/Mikka/.github/workflows/cloudflare-eve-image.yml@refs/heads/main',
   GITHUB_ACTOR: 'alexj11324', GITHUB_ACTOR_ID: '183887963', GITHUB_TRIGGERING_ACTOR: 'alexj11324',
@@ -163,7 +163,7 @@ test('prebuilt packaging carries accepted API resource bytes into the official E
       deploymentId: release, preset: 'node-server', resources: [resource] }))
     await mkdir(join(work, 'apps/eve/.output/server'), { recursive: true })
     await writeFile(join(work, 'apps/eve/.output/server/index.mjs'), 'export default {}\n')
-    await writeFile(join(work, 'apps/eve/.output/mikka-eve-build.json'), JSON.stringify({ version: 1, eve: '1.0.0-rc.9',
+    await writeFile(join(work, 'apps/eve/.output/mikka-eve-build.json'), JSON.stringify({ version: 1, eve: '1.3.0',
       revision: publicSha, preset: 'node-server', world: '@mikka/eve-cloudflare-world', worldVersion: '5.1.0' }))
     await cp(new URL('../cloudflare/eve-runtime/runtime', import.meta.url), join(work, 'cloudflare/eve-runtime/runtime'), { recursive: true })
     await packageEve({ root: work, preset: 'node-server' })
@@ -334,9 +334,9 @@ test('maintenance patch is captured from the genuine driver and changes only ins
     const original = git('rev-parse', 'HEAD')
     const patch = 'diff --git a/dist/storage.js b/dist/storage.js\n--- a/dist/storage.js\n+++ b/dist/storage.js\n@@ -1,3 +1,3 @@\n before\n-old\n+patched\n after\n'
     const sha = createHash('sha256').update(patch).digest('hex')
-    await mkdir(join(work, 'patches'))
-    await writeFile(join(work, 'patches/@workflow__world-postgres@5.2.0.patch'), patch)
-    git('add', 'patches')
+    await mkdir(join(work, 'cloudflare/eve-runtime/backports'), { recursive: true })
+    await writeFile(join(work, 'cloudflare/eve-runtime/backports/@workflow__world-postgres@5.2.0.patch'), patch)
+    git('add', 'cloudflare')
     commit('reviewed startup patch on current main')
     const driver = git('rev-parse', 'HEAD')
     const runnerTemp = join(work, 'node_modules/runner-temp')
@@ -471,4 +471,15 @@ test('hosted model budget backport admits only the reviewed constant and restore
     assert.equal(normal.status, 0, normal.stderr)
     assert.equal((await readFile(environment.COMPILED_POLICY_OBSERVATION, 'utf8')).split(' ')[0], sha(original), 'absent input keeps the original compiler path')
   } finally { await rm(work, { recursive: true, force: true }) }
+})
+
+
+test('an organization runtime publisher accepts an unchanged protected API receipt from before transfer', () => {
+  const repository = 'aspectly-labs/Mikka'
+  const transferred = { ...env, GITHUB_REPOSITORY: repository, GITHUB_REPOSITORY_OWNER_ID: '359279274',
+    GITHUB_WORKFLOW_REF: repository + '/.github/workflows/cloudflare-eve-image.yml@refs/heads/main' }
+  const original = JSON.stringify(api)
+  assert.equal(releaseIdentity(transferred, 'eve', api).repository, repository)
+  assert.equal(JSON.stringify(api), original)
+  assert.throws(() => releaseIdentity(transferred, 'eve', { ...api, repository }), /cloudflare-api-image/)
 })

@@ -818,7 +818,7 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
       onCreated={id => { refreshTaskPages(); open(id) }} onAdded={() => { void refreshTaskPages() }} initialText={typedAhead}
 
       onOpenChange={open => { setCreating(open); if (!open) setTypedAhead('') }} />}
-    {onboardingOpen && <Onboarding computer={onboarding?.computer} saveKey={saveOnboardingKey} workspaceId={listWorkspaceId} onDone={bot => { setOnboardingOpen(false); if (bot) openChat({ kind: 'bot', botId: bot.id }, bot); else setCreating(true) }} />}
+    {onboardingOpen && <Onboarding computer={onboarding?.computer} saveKey={saveOnboardingKey} workspaceId={listWorkspaceId} onDone={bot => { setOnboardingOpen(false); if (bot) openChat({ kind: 'bot', botId: bot.id }, bot); else openChat({ kind: 'coordinator' }) }} />}
     <NewGroupDialog key={`group:${listWorkspaceId}`} workspaceId={listWorkspaceId} bots={bots} purpose={creation === 'conversation' ? creation : undefined} open={creation !== null} onOpenChange={open => { if (!open) closeComposer() }}
       onCreated={group => {
         if (creation === 'conversation') setDirectoryRevision(value => value + 1)
@@ -936,11 +936,11 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
     {/* Opening, closing and handing the column to a thread are instant (R-37). */}
     {isConversation && !panelsInFrame && panelOpen && !rightTaken && <ContextPanel key="context-panel" workspaceId={listWorkspaceId} issues={tasks} threads={threads} threadsLoading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} onClose={() => showPanel(false)}
       conversation={activeBot ? { id: activeBot.id, name: activeBot.name, color: activeBot.color, shape: activeBot.shape, kind: 'bot' } : { id: coordinatorBot?.id, name: i18nText('Nav.coordinator'), kind: 'coordinator', updatedAt: coordinatorUpdatedAt }} />}
-    {groupPanel && panelOpen && !rightTaken && <GroupPanel key={`group-panel:${groupPanel.id}`} group={groupPanel} onClose={() => showPanel(false)} />}
+    {groupPanel && panelOpen && !rightTaken && <GroupPanel key={`group-panel:${groupPanel.id}`} group={groupPanel} userId={user.id} bots={groupPanel.workspaceId === listWorkspaceId ? bots : undefined} onClose={() => showPanel(false)} />}
     {groupPanel && !rightTaken && <Sheet open={panelSheet} onOpenChange={setPanelSheet}>
       <SheetContent side="right" instant showCloseButton={false} className="gap-0 p-0 data-[side=right]:w-full sm:max-w-sm">
         <SheetHeader className="sr-only"><SheetTitle>{i18nText('Shell.panel.label')}</SheetTitle></SheetHeader>
-        <GroupPanel sheet group={groupPanel} onClose={() => setPanelSheet(false)} />
+        <GroupPanel sheet group={groupPanel} userId={user.id} bots={groupPanel.workspaceId === listWorkspaceId ? bots : undefined} onClose={() => setPanelSheet(false)} />
       </SheetContent>
     </Sheet>}
     {isConversation && !panelsInFrame && !rightTaken && <Sheet open={panelSheet} onOpenChange={setPanelSheet}>
