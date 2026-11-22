@@ -265,3 +265,17 @@ test('a chat scrolled up comes back where it was; one left at its end is left to
   await act(async () => new Promise(resolve => setTimeout(resolve, 10)))
   assert.equal(scrollNode().scrollTop, 0, 'left at its end: not pulled back to the old end')
 })
+
+test('while a saved place is put back the node says so, a moment past the restore, so a list following its end lets go', async () => {
+  savedScroll(840)
+  await renderScroll({ rows: 2 })
+  assert.equal(scrollNode().hasAttribute('data-view-restoring'), true, 'the rows are not there yet: still restoring')
+  await renderScroll()
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)) })
+  assert.equal(scrollNode().scrollTop, 840)
+  assert.equal(scrollNode().hasAttribute('data-view-restoring'), false, 'gone a moment after the place is back')
+  await act(async () => root.render(null))
+  savedScroll(0)
+  await renderScroll()
+  assert.equal(scrollNode().hasAttribute('data-view-restoring'), false, 'nothing to restore: no mark')
+})
