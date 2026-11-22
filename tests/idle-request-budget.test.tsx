@@ -268,6 +268,8 @@ Object.assign(fixtures, {
     pulls: [{ url: PULL_REQUEST, state: 'merged' }],
     pinned: false, state: 'working', status: 'doing', harness: 'claude_code',
   }] } }),
+  // A run's dispatched sub-agents (#2939): none in this fixture, read once on mount and then only on live pushes.
+  'task-runs.readSubagentRuns': () => [],
   'task-runs.pollTaskRuns': () => ({ items: [{ issueId: ISSUE, runId: RUN, issueTitle: 'Fix sign-in redirect', agentId: AGENT, agentName: 'Claude Code', status: 'running', outcome: null, error: null, finishedAt: null, bot: null, harnesses: ['claude_code'] }], live }),
   'execution-settings.getBotModelMenu': () => ({ groups: [{ kind: 'subscription', provider: 'claude', plan: 'Max', credentialLabel: 'ada@example.invalid', options: [{ id: 'binding-1', modelId: 'claude-sonnet-4-6', provider: 'claude' }] }],
     current: { id: 'binding-1', modelId: 'claude-sonnet-4-6', provider: 'claude', kind: 'subscription', chosen: false, available: true } }),
