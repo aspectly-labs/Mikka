@@ -479,7 +479,6 @@
     "retryIn": "{seconds} 秒后可重试",
     "verifyLinkInvalid": "验证链接无效、已过期或已使用。如邮箱尚未验证，请重新发送。",
     "verifyEmailLink": "验证邮箱或重新发送验证邮件",
-    "retryVerification": "重试人机验证",
     "signupRefusal": {
       "disposableEmail": "不支持临时邮箱，请使用常用邮箱。",
       "signupRateLimited": "注册请求过多，请稍后重试。",
@@ -496,7 +495,8 @@
     "emailRequired": "邮箱不能为空",
     "emailInvalid": "邮箱格式无效",
     "passwordRequired": "密码不能为空",
-    "passwordTooShort": "密码至少 8 位字符"
+    "passwordTooShort": "密码至少 8 位字符",
+    "retryVerification": "重试人机验证"
   },
   "Metadata": {
     "title": "Mikka · 任务与文档工作台",
@@ -3314,7 +3314,6 @@
       "othersUsage": "团队成员可以用它跑自己的 Bot，用量算在你的 API 账单上。",
       "afterQuota": "订阅额度用完后，自动改用 API Key",
       "afterQuotaBilling": "同一个模型改用你的 API Key 继续跑，按服务商的价格付费",
-      "afterQuotaNoKey": "需要先添加支持同一模型的 API Key，才会按服务商价格继续运行",
       "sectionTitle": "API Key",
       "none": "还没有 API Key",
       "loading": "正在读取 API Key…",
@@ -3350,7 +3349,8 @@
         "manageButton": "模型",
         "manageLabel": "选择 {name} 能用的模型",
         "empty": "服务商没有返回可用模型"
-      }
+      },
+      "afterQuotaNoKey": "需要先添加支持同一模型的 API Key，才会按服务商价格继续运行"
     },
     "modelOrder": {
       "fallbackNeedsKey": "需先添加 API 密钥并连接订阅。",
@@ -4201,7 +4201,6 @@
     },
     "loadError": "线程加载失败。",
     "failedTitle": "回复失败",
-    "modelRequired": "任务未启动：未选择模型。",
     "replyToolUnavailable": "回复未完成，请重试",
     "apiBalance": "API 余额不足",
     "subscriptionRefusal": {
@@ -4288,10 +4287,6 @@
       "cloudCredits": "Mikka Cloud 额度",
       "ownProvider": "自带服务商",
       "hostedUnavailable": "Mikka 额度在这个工作区不可用",
-      "noModelSelected": "未选择模型",
-      "noModelConnections": "没有可用的模型连接",
-      "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
-      "setUpModel": "设置模型",
       "changeModel": "换模型",
       "useMyPoints": "把我的点数用于这个团队",
       "apiKey": "API Key",
@@ -4320,7 +4315,11 @@
         "ownProvider": "用这台服务器自带的服务商",
         "usedUntil": "{service} 订阅到 {time} 前用完了",
         "usedUp": "{service} 订阅额度用完了"
-      }
+      },
+      "noModelSelected": "未选择模型",
+      "noModelConnections": "没有可用的模型连接",
+      "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
+      "setUpModel": "设置模型"
     },
     "empty": "告诉 {name} 你要做什么",
     "events": {
@@ -4521,7 +4520,8 @@
         "raw": "原始数据",
         "dispatched": "已派发"
       }
-    }
+    },
+    "modelRequired": "任务未启动：未选择模型。"
   },
   "AgentCopy": {
     "pleaseSignInFirst": "请先登录。",
@@ -5574,6 +5574,8 @@
       "details": "详情",
       "expand": "放大窗口",
       "collapse": "缩小窗口",
+      "workspaceChanged": "打开此对话框后工作区已切换，任务没有创建。请重新打开新建任务，在当前显示的工作区创建。",
+      "workspaceUnconfirmed": "无法确认工作区，任务没有创建。已保留你输入的内容。",
       "createMore": "继续新建",
       "created": "任务已创建",
       "createdTask": "已创建 {identifier}",
@@ -9104,6 +9106,22 @@
     "merge": "合并",
     "mergeAnyway": "仍然合并，{count} 项失败",
     "mergeFailed": "合并没有完成。"
+  },
+  "MobileTaskPush": {
+    "workspaceUnconfirmed": "无法确认工作区"
+  },
+  "TaskWorkspace": {
+    "label": "工作区",
+    "createIn": "创建到 {name}",
+    "fixed": "任务创建时已确定归属，不能转到其他工作区。",
+    "otherWorkspace": "其他工作区",
+    "loading": "正在读取工作区",
+    "error": "无法读取工作区",
+    "retry": "重试",
+    "mismatchCreate": "现在是 {current}",
+    "mismatchCreateHint": "此对话框是在 {target} 打开的。重新打开新建任务，才会创建到 {current}。",
+    "mismatchDetail": "不是当前显示的工作区（{current}）。切换到 {target} 后再处理此任务。",
+    "unknownWorkspace": "其他工作区"
   },
   "SettingsRegistry": {
     "archiveIdleAfterDays": {

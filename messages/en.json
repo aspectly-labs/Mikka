@@ -479,7 +479,6 @@
     "retryIn": "Try again in {seconds}s",
     "verifyLinkInvalid": "This verification link is invalid, expired or already used. If your email is not verified yet, send a new link.",
     "verifyEmailLink": "Verify your email or resend the link",
-    "retryVerification": "Retry verification",
     "signupRefusal": {
       "disposableEmail": "Temporary email addresses aren't supported. Please use a regular address.",
       "signupRateLimited": "Too many sign-up attempts. Please try again later.",
@@ -496,7 +495,8 @@
     "emailRequired": "Email is required",
     "emailInvalid": "Enter a valid email address",
     "passwordRequired": "Password is required",
-    "passwordTooShort": "Password must be at least 8 characters"
+    "passwordTooShort": "Password must be at least 8 characters",
+    "retryVerification": "Retry verification"
   },
   "Metadata": {
     "title": "Mikka · Tasks and documents workspace",
@@ -3314,7 +3314,6 @@
       "othersUsage": "Team members can use it to run their own bots. Usage is billed to your API account.",
       "afterQuota": "Use an API key when subscription quota runs out",
       "afterQuotaBilling": "The same model continues on your API key, billed at the provider’s price",
-      "afterQuotaNoKey": "Add an API key for the same model before this can continue at the provider’s price",
       "sectionTitle": "API keys",
       "none": "No API keys yet",
       "loading": "Loading API keys…",
@@ -3350,7 +3349,8 @@
         "manageButton": "Models",
         "manageLabel": "Choose models for {name}",
         "empty": "No models returned by this provider"
-      }
+      },
+      "afterQuotaNoKey": "Add an API key for the same model before this can continue at the provider’s price"
     },
     "modelOrder": {
       "fallbackNeedsKey": "Add an API key and connect a subscription to use this.",
@@ -4201,7 +4201,6 @@
     },
     "loadError": "Could not load the conversation.",
     "failedTitle": "Reply failed",
-    "modelRequired": "No task started: no model selected.",
     "replyToolUnavailable": "This reply could not be completed. Please try again.",
     "apiBalance": "Insufficient API balance",
     "subscriptionRefusal": {
@@ -4288,10 +4287,6 @@
       "cloudCredits": "Mikka Cloud credits",
       "ownProvider": "Own provider",
       "hostedUnavailable": "Mikka credits can’t run in this workspace",
-      "noModelSelected": "No model selected",
-      "noModelConnections": "No usable model connections",
-      "noCreditsOrConnections": "No Mikka credits or usable model connections",
-      "setUpModel": "Set up a model",
       "changeModel": "Change model",
       "useMyPoints": "Use my points for this team",
       "apiKey": "API Key",
@@ -4320,7 +4315,11 @@
         "ownProvider": "Runs on this server's own provider",
         "usedUntil": "{service} subscription is used up until {time}",
         "usedUp": "{service} subscription is used up"
-      }
+      },
+      "noModelSelected": "No model selected",
+      "noModelConnections": "No usable model connections",
+      "noCreditsOrConnections": "No Mikka credits or usable model connections",
+      "setUpModel": "Set up a model"
     },
     "empty": "Tell {name} what you need",
     "events": {
@@ -4521,7 +4520,8 @@
         "raw": "Raw data",
         "dispatched": "Dispatched"
       }
-    }
+    },
+    "modelRequired": "No task started: no model selected."
   },
   "AgentCopy": {
     "pleaseSignInFirst": "Please sign in first.",
@@ -5574,6 +5574,8 @@
       "details": "Details",
       "expand": "Bigger window",
       "collapse": "Smaller window",
+      "workspaceChanged": "The workspace changed after this dialog opened. Nothing was created; reopen New task to create it in the workspace shown now.",
+      "workspaceUnconfirmed": "Couldn't confirm the workspace, so nothing was created. Your text is kept.",
       "createMore": "Create more",
       "created": "Task created",
       "createdTask": "Created {identifier}",
@@ -9104,6 +9106,22 @@
     "merge": "Merge",
     "mergeAnyway": "Merge anyway, {count} failing",
     "mergeFailed": "Could not merge."
+  },
+  "MobileTaskPush": {
+    "workspaceUnconfirmed": "Couldn't confirm workspace"
+  },
+  "TaskWorkspace": {
+    "label": "Workspace",
+    "createIn": "Create in {name}",
+    "fixed": "Fixed when the task was created. A task can't move to another workspace.",
+    "otherWorkspace": "Another workspace",
+    "loading": "Loading workspace",
+    "error": "Couldn't load the workspace",
+    "retry": "Try again",
+    "mismatchCreate": "Now in {current}",
+    "mismatchCreateHint": "This dialog was opened for {target}. Reopen New task to create it in {current}.",
+    "mismatchDetail": "Not the workspace shown now ({current}). Switch to {target} to work on this task.",
+    "unknownWorkspace": "another workspace"
   },
   "SettingsRegistry": {
     "archiveIdleAfterDays": {
