@@ -87,6 +87,7 @@ test('Analytics reports its real build and browser result without a second queue
 
 test('the protected parent requires Analytics on merge candidates and PRs without a queue', () => {
   const gate = workflow('ui-policy').jobs['ui-policy'].steps.find(step => step.name === 'Require every selected CI job')
+  assert.ok(gate, 'the required gate is named, not assumed to be the first step')
   for (const [event, base] of [['pull_request', 'main'], ['pull_request', 'dev'], ['merge_group', '']]) {
     for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
       const candidate = event === 'merge_group'
@@ -98,6 +99,9 @@ test('the protected parent requires Analytics on merge candidates and PRs withou
         'candidate-checks': { result: candidate ? 'success' : 'skipped' },
         'frontend-screenshots': { result: event === 'pull_request' ? 'success' : 'skipped' },
       } }
+      for (const [, name] of JSON.stringify(gate.env).matchAll(/needs\.([\w-]+)/g)) {
+        if (!context.needs[name]) context.needs[name] = { result: 'success' }
+      }
       const env = { ...Object.fromEntries(Object.entries(gate.env).map(([key, value]) => [key, evaluate(value, context)])), GITHUB_STEP_SUMMARY: '/dev/null' }
       const expected = candidate || base === 'dev' ? 'success' : 'skipped'
       assert.equal(spawnSync('bash', ['-e', '-c', gate.run], { env }).status, result === expected ? 0 : 1, `${event}/${base}/${result}`)
