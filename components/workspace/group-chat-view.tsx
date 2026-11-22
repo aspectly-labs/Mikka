@@ -242,7 +242,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // The start of the group, once its first message is loaded: its avatar, name and members, as a chat app opens a
   // conversation's history (LobeHub's group welcome, Slack's channel start) and the Bot chat's first time divider.
   if (pages && !older && messages.length) entries.push({ id: 'group-start', role: 'bot', at: Date.parse(messages[0]!.createdAt), event: true, parts: [{ kind: 'text',
-    text: title, node: <div data-group-start="" className="flex flex-col items-center gap-2 pt-6 pb-2 text-center">
+    text: title, node: <div data-group-start="" data-event-line="" className="flex flex-col items-center gap-2 pt-6 pb-2 text-center">
       <GroupAvatar title={title} members={members} size="profile" />
       <p className="text-base font-semibold text-foreground">{title}</p>
       {members.length > 0 && <p className="max-w-full text-xs text-muted-foreground">{memberList.format(members.map(item => item.memberType === 'user' && item.id === userId ? t('you') : item.name))}</p>}
@@ -290,7 +290,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       const after = next && 'stored' in next ? next.stored : undefined
       if (after && after.authorType === stored.authorType && after.authorId === stored.authorId) return shown
       const lines = waiting.map((exchange): ThreadEntry => ({ id: `exchange:${exchange.linkId}`, role: 'bot', at, event: true,
-        parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <AgentExchangeMarker exchange={exchange} /> }] }))
+        parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <div data-event-line=""><AgentExchangeMarker exchange={exchange} /></div> }] }))
       waiting = []
       return [shown, ...lines]
     },
@@ -311,7 +311,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     if (!answering.length) entries.push({ id: 'answering', role: 'bot', at: Date.now(), streaming: true, parts: [waiting('group')] })
   }
   const lastAt = entries.at(-1)?.at ?? 0
-  const line = (key: string, text: string) => entries.push({ id: key, role: 'bot', at: lastAt, event: true, parts: [{ kind: 'text', text, node: <p role="status" className="text-center text-xs text-muted-foreground">{text}</p> }] })
+  const line = (key: string, text: string) => entries.push({ id: key, role: 'bot', at: lastAt, event: true, parts: [{ kind: 'text', text, node: <p role="status" data-event-line="" className="text-center text-xs text-muted-foreground">{text}</p> }] })
   if (first?.routingError && !first.agentStatus) line('no-taker', t('noTaker'))
   if (first?.stopped && !first.agentStatus) line('stopped', t('stopped'))
   // A named chat is read once its newest message has been seen.
