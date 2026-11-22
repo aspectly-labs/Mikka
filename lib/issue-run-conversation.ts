@@ -60,8 +60,22 @@ export function runFailureText(status: string, error: string | null | undefined)
 export type ThreadStage = { stage: 'repository' | 'worktree' | 'agent_start'; ms: number; ok: boolean }
 const THREAD_STAGES = new Set<ThreadStage['stage']>(['repository', 'worktree', 'agent_start'])
 
-/** One tool call in a folded "N steps" line: its name, the one input that says what it did, and whether it failed. */
-export type ThreadStep = { id: string; name: string; detail: string | null; failed: boolean; command?: string; output?: string; exitCode?: number | null; ms?: number }
+/** The coarse family a reader groups a tool call by (#2937). */
+export type ThreadStepKind = 'read' | 'search' | 'shell' | 'edit' | 'other'
+/** A call's lifecycle: running until its output lands, then ok / failed / cancelled. */
+export type ThreadStepStatus = 'running' | 'ok' | 'failed' | 'cancelled'
+
+const STEP_KIND_MAP: Record<string, ThreadStepKind> = {
+  bash: 'shell', shell: 'shell', execute: 'shell',
+  read: 'read', view: 'read', cat: 'read', read_file: 'read',
+  grep: 'search', glob: 'search', search: 'search', find: 'search', websearch: 'search', web_search: 'search',
+  edit: 'edit', write: 'edit', apply_patch: 'edit', str_replace: 'edit', multiedit: 'edit', notebookedit: 'edit',
+}
+
+/** One tool call in a folded "N steps" line: its name, the one input that says what it did, and whether it failed.
+ * `kind`/`status`/`title`/`outputTail`/`outputRef` are derived from the chunk stream so older chunks still read (#2937). */
+export type ThreadStep = { id: string; name: string; detail: string | null; failed: boolean; command?: string; output?: string; exitCode?: number | null; ms?: number;
+  kind: ThreadStepKind; status: ThreadStepStatus; title: string; outputTail?: string; outputRef?: string }
 
 /** Claude Code's `Bash`, Codex's `bash`/`shell` and Cursor's `execute` run a command; every other step is a tool (as iOS
  * apps/mobile/features/tasks/model/thread-steps.ts counts them, #1770). */
@@ -169,21 +183,27 @@ export function threadItems(
       if (isCommandStep(step) && chunk.input && typeof chunk.input === 'object' && 'command' in chunk.input && typeof chunk.input.command === 'string' && chunk.input.command.trim()) {
         step.command = stepText(chunk.input.command)
       }
+      step.kind = STEP_KIND_MAP[step.name.toLowerCase()] ?? 'other'
+      step.status = 'running'
+      step.title = step.command ?? step.detail ?? step.name
+      step.outputRef = step.id
       calls.set(step.id, step)
       if (last?.kind === 'steps') { last.count += 1; last.steps.push(step) }
       else items.push({ kind: 'steps', id: `steps:${index}`, count: 1, steps: [step], at: time })
-    } else if ((chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error') && typeof chunk.toolCallId === 'string') {
+    } else if ((chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error' || chunk.type === 'tool-output-cancelled') && typeof chunk.toolCallId === 'string') {
       const step = calls.get(chunk.toolCallId)
       if (step) {
-        if (chunk.type === 'tool-output-error') step.failed = true
+        if (chunk.type === 'tool-output-cancelled') { step.failed = true; step.status = 'cancelled' }
+        else if (chunk.type === 'tool-output-error') { step.failed = true; step.status = 'failed' }
         else {
           const output = stepText(chunk.output)
-          if (output !== undefined) step.output = output
+          if (output !== undefined) { step.output = output; step.outputTail = output.slice(-2000) }
           const code = isCommandStep(step) ? commandResult(chunk.output)?.exitCode : undefined
           if (code !== undefined) {
             step.exitCode = code
             step.failed = code !== null && code !== 0
           }
+          step.status = step.failed ? 'failed' : 'ok'
         }
         // `at` is the batch's insert time, not tool execution time. Historical chunks stay unknown.
         if (typeof chunk.toolDurationMs === 'number' && Number.isFinite(chunk.toolDurationMs) && chunk.toolDurationMs >= 0) step.ms = chunk.toolDurationMs

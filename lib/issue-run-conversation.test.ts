@@ -157,6 +157,24 @@ test('a folded steps line keeps each tool call so it can open: name, what it ran
   assert.deepEqual(steps.steps[3], { id: '4', name: 'tool', detail: null, failed: false })
 })
 
+test('steps carry structured fields (#2937): kind, status, title, outputTail and outputRef across the call lifecycle', () => {
+  const at = new Date()
+  const items = threadItems([
+    { chunk: { type: 'tool-input-available', toolCallId: 'r', toolName: 'Read', input: { file_path: '/a.ts' } }, at },
+    { chunk: { type: 'tool-output-available', toolCallId: 'r', output: 'x'.repeat(3000) }, at },
+    { chunk: { type: 'tool-input-available', toolCallId: 's', toolName: 'grep', input: { pattern: 'foo' } }, at },
+    { chunk: { type: 'tool-input-available', toolCallId: 'c', toolName: 'bash', input: { command: 'sleep 9' } }, at },
+    { chunk: { type: 'tool-output-cancelled', toolCallId: 'c' }, at },
+  ], [])
+  assert.ok(items[0].kind === 'steps')
+  const [read, grep, bash] = items[0].steps
+  assert.deepEqual({ kind: read.kind, status: read.status, title: read.title, ref: read.outputRef },
+    { kind: 'read', status: 'ok', title: '/a.ts', ref: 'r' })
+  assert.equal(read.outputTail, 'x'.repeat(2000), 'tail keeps the last 2000 chars')
+  assert.deepEqual({ kind: grep.kind, status: grep.status }, { kind: 'search', status: 'running' })
+  assert.deepEqual({ kind: bash.kind, status: bash.status }, { kind: 'shell', status: 'cancelled' })
+})
+
 test('a thread shows one computer card only for its own run', () => {
   const at = new Date()
   const card = { type: 'data-computer', data: { botId: 'bot-a', runId: 'run-a', task: 'Open the page', state: 'working' } }
