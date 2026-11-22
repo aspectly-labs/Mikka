@@ -1,9 +1,12 @@
 import type { EveMessage, EveToolPart } from 'eve/client'
+import { eveStreamId } from './stream-id'
 /** A tool a live reply is using, as the stream reports it. */
 export type CoordinatorLiveTool = { call: string; name: string; state: 'running' | 'done' | 'error'; input?: string; output?: string; quote?: string; at?: number; target?: string; displayName?: string; errorCode?: string; errorDetail?: string }
 
 export type CoordinatorLiveReply = {
   id: string
+  /** The eve turn it belongs to; its stored row's stream id comes from it (lib/eve/stream-id.ts). */
+  turnId?: string
   text: string
   committedThrough?: number
   quiet?: boolean
@@ -31,7 +34,7 @@ function tool(part: EveToolPart, at: number): CoordinatorLiveTool {
 export function coordinatorAgentReplies(messages: readonly EveMessage[], persistedStreamIds: readonly string[] = [], sessionId?: string): CoordinatorLiveReply[] {
   const saved = new Set(persistedStreamIds)
   return messages.flatMap(message => {
-    if (message.role !== 'assistant' || message.metadata?.imported || saved.has(message.id) || (sessionId && message.metadata?.turnId && saved.has(`eve:${sessionId}:${message.metadata.turnId}`))) return []
+    if (message.role !== 'assistant' || message.metadata?.imported || saved.has(message.id) || (sessionId && message.metadata?.turnId && saved.has(eveStreamId(sessionId, message.metadata.turnId)))) return []
     let text = '', reasoning = '', thinking = false
     const tools: CoordinatorLiveTool[] = []
     for (const part of message.parts) {
@@ -40,7 +43,7 @@ export function coordinatorAgentReplies(messages: readonly EveMessage[], persist
       else if (part.type === 'tool' && !part.hidden) tools.push(tool(part, text.length))
     }
     if (!text && !reasoning && !tools.length) return []
-    return [{ id: message.id, text, tools,
+    return [{ id: message.id, ...(message.metadata?.turnId ? { turnId: message.metadata.turnId } : {}), text, tools,
       ...(message.metadata?.status === 'streaming' ? {} : { committedThrough: 0 }),
       ...(reasoning || thinking ? { thinking: { ms: 0, ...(thinking ? { since: 0 } : {}), text: reasoning } } : {}),
     }]
