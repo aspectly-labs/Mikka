@@ -19,11 +19,11 @@ export function ActivityList({ children, ...data }: { children: ReactNode; 'data
  * with a spinner while the model thinks, open as the words stream in; "Thought for N seconds" with a check once it
  * stops, closed. A reader's own click wins either way. Without readable reasoning it is a line that does not open.
  */
-export function ActivityThinking({ running, title, text, onOpen }: ActivityThinkingProps) {
+export function ActivityThinking({ running, title, elapsed, text, onOpen }: ActivityThinkingProps) {
   const [open, setOpen] = useState<boolean>()
   const line = <TraceLine status={running ? 'running' : undefined}>
     <TraceIcon>{running ? <Spinner /> : <CircleCheck />}</TraceIcon>
-    <TraceTitle>{title}</TraceTitle>
+    <TraceTitle>{title}{elapsed && <span data-reply-elapsed="" className="ml-1.5 text-tertiary tabular-nums">{elapsed}</span>}</TraceTitle>
   </TraceLine>
   if (text === undefined) return <div data-activity-thinking={running ? 'active' : 'done'} data-reasoning="none">{line}</div>
   return <TraceCollapsible data-activity-thinking={running ? 'active' : 'done'} data-reasoning="readable" open={open ?? running}

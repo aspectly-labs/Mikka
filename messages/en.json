@@ -4358,6 +4358,7 @@
     },
     "activity": {
       "thinking": "Thinking",
+      "waited": "{seconds}s",
       "running": "{tool}",
       "thought": "Thought for {seconds, plural, one {# second} other {# seconds}}",
       "thoughtStored": "Thought",
