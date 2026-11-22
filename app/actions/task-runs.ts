@@ -341,6 +341,43 @@ export async function readThreadSummary(runId: string): Promise<ActionResult<imp
 }
 
 /**
+ * A thread's machine workspace for the right column's Files and Setup tabs (#2928, #2940): its checkout, machine,
+ * frozen Environment and uploads (lib/thread-workspace.ts). Only the thread's owner reads it; anyone else gets runNotFound.
+ */
+export async function readThreadWorkspace(runId: string): Promise<ActionResult<import('@/lib/thread-workspace').ThreadWorkspace, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const read = await (await import('@/lib/thread-workspace')).readThreadWorkspace(pool, { ownerId, workspaceId, runId })
+  return read ?? { error: 'runNotFound' }
+}
+
+/**
+ * The live sandbox's latest recorded load (CPU, memory, disk) for the Setup tab, read from the provider without waking
+ * it; null for a thread that runs elsewhere or is not running. Only the thread's owner reads it.
+ */
+export async function readThreadMachineMetrics(runId: string): Promise<import('@/lib/thread-workspace').ThreadMachineMetrics | null> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const { readComputerMetrics } = await import('@/lib/computer/e2b-provider')
+  try {
+    return await (await import('@/lib/thread-workspace')).readThreadMachineMetrics(pool, { ownerId, workspaceId, runId },
+      (owner, sandboxId, start, end) => readComputerMetrics(owner, sandboxId, start, end, AbortSignal.timeout(12_000)))
+  } catch (failure) {
+    // The provider is unreachable or the sandbox is gone: the tab shows no numbers, never stale or made-up ones.
+    console.warn('[thread-workspace] machine metrics unavailable', failure instanceof Error ? failure.message : failure)
+    return null
+  }
+}
+
+/** The files the person sent in their chat with a Bot, for the Files tab's Uploads view; null when the Bot is not in this workspace. */
+export async function readBotChatUploads(botId: string): Promise<ActionResult<import('@/lib/thread-workspace').ThreadWorkspace['uploads'], 'botNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const uploads = await (await import('@/lib/thread-workspace')).readBotChatUploads(pool, { ownerId, workspaceId, botId })
+  return uploads ?? { error: 'botNotFound' }
+}
+
+/**
  * The sub-agents a thread dispatched (#2939): its child runs, oldest first, each with what its card shows. Only the
  * thread's owner reads them; any other reader gets runNotFound. A child's change reaches the parent's `run` live key.
  */
