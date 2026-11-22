@@ -24,9 +24,8 @@ import { ThreadExecutionIdentity } from './thread-execution-identity'
 import { ThreadRunPlace } from './thread-run-place'
 import { acceptedProducerOutcome, isThreadRun, threadQuestionView } from '@/lib/issue-threads'
 import { threadComposerHarness } from '@/lib/run-model-fallback-view'
-import { MessageActions } from '@/components/ai-elements/message'
-import { CopyAction, HOVER_ACTIONS } from '@/components/chat/copy-action'
 import { QUOTE_SOURCE_ATTR, SelectionQuote } from '@/components/chat/selection-quote'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { splitChatFiles } from '@mikka/protocol/chat-attachments'
 import { ChatFileCards } from '@/components/chat/chat-file-cards'
@@ -540,7 +539,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
           const files = splitChatFiles(item.text)
           entries.push({ id, role: 'bot', at: at(item.at),
             author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} /> },
-            actions: <MessageActions className={HOVER_ACTIONS}><CopyAction text={files.text} /></MessageActions>,
+            actions: <ReplyActions at={item.at ? at(item.at) : undefined} copyText={files.text} />,
             parts: [{ kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}>
               <span data-thread-item={item.id}><PersonReferences text={files.text} /></span>
               <ChatFileCards files={files.files} sent />
@@ -556,7 +555,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
           ? <ComputerCard botId={item.botId} runId={item.runId} task={item.task} state={active ? 'working' : (view?.status ?? data.thread.status) === 'succeeded' ? 'done' : 'failed'} />
           : <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground" data-slot="thread-stages">{item.stages.map((stage, index) => <span key={index} className={cn(!stage.ok && 'text-destructive-foreground')}>
             {t(`stages.${stage.stage}`)} {t('stages.duration', { seconds: (stage.ms / 1000).toFixed(1) })} {stage.ok ? '✓' : '✗'}</span>)}</p> }
-      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <MessageActions className={cn('self-start', HOVER_ACTIONS)}><CopyAction text={item.text} />{versionControl(item)}<AgentCitationsContext value={citations.settled}><CitationSources text={item.text} /></AgentCitationsContext></MessageActions> } : {}), ...(active && item === items.at(-1) ? { streaming: true } : {}) })
+      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions at={item.at || undefined} copyText={item.text} onQuote={readOnly ? undefined : text => { setReplyQuote(text); inputRef.current?.focus() }}>{versionControl(item)}<AgentCitationsContext value={citations.settled}><CitationSources text={item.text} /></AgentCitationsContext></ReplyActions> } : {}), ...(active && item === items.at(-1) ? { streaming: true } : {}) })
     }
     if (failure && !providerExplained) bot('failure', [{ kind: 'text', text: failureText.message ?? '', node: <div data-slot="thread-failure" className="flex flex-wrap items-start gap-2">
       <FieldError>{failureText.message}</FieldError>
@@ -591,7 +590,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       <ChatFileCards files={files.files} sent />
     </AgentCitationsContext>
     const previous = entry.actions
-    entry.actions = <MessageActions className={HOVER_ACTIONS}><CopyAction text={files.text} />{previous}</MessageActions>
+    entry.actions = <ReplyActions at={entry.at || undefined} copyText={files.text}>{previous}</ReplyActions>
   }
   if (!data && collect) entries.push({ id: `${runId}:loading`, role: 'bot', event: true, at: 0, parts: [{ kind: 'text', text: '', node: waiting }] })
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.

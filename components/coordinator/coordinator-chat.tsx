@@ -73,6 +73,7 @@ import { ArtifactQuoteChip, ArtifactQuoteLine, QuoteChip, QuoteLine } from '@/co
 import { MessageActions } from '@/components/ai-elements/message'
 import { CopyAction, REPLY_ACTIONS } from '@/components/chat/copy-action'
 import { SelectionQuote } from '@/components/chat/selection-quote'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { replyCopyText } from '@/lib/chat-copy'
 import type { ArtifactChatSlot } from '@/components/artifacts/artifact-viewer'
@@ -591,7 +592,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
         ]
         entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-          actions: item.text ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}><CopyAction text={text} />{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</MessageActions> : undefined })
+          actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
         if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t('failedTitle'), actions: <FailureReason retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
         continue
       }
@@ -608,11 +609,10 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
         parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
       entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-        actions: item.text && !streaming ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}>
-          <CopyAction text={replyCopyText(item.text)} />
+        actions: item.text && !streaming ? <ReplyActions at={item.createdAt ? at : undefined} copyText={replyCopyText(item.text)} onQuote={quoteReply}>
           <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
           {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
-        </MessageActions> : undefined })
+        </ReplyActions> : undefined })
     }
     for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
       status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,

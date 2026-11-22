@@ -15,7 +15,7 @@ let membersError: Error | undefined
 mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en',
   useTranslations: () => (key: string) => key,
   useMessages: () => ({ AgentCopy: {} }),
-  useFormatter: () => ({}),
+  useFormatter: () => ({ dateTime: (value: Date) => value.toISOString() }),
 } })
 const infinite: { config?: Record<string, unknown> } = {}
 const liveKeys: unknown[][] = []
