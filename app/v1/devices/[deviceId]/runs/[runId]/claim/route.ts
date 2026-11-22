@@ -111,7 +111,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'queued'), eq(agentRuns.userId, caller.userId), isNull(agentRuns.stopRequestedAt)))
     .limit(1)
   if (!run) return NextResponse.json({ error: 'Run is not queued for this device.' }, { status: 409 })
-  if (run.agentDefinition?.customMcp?.servers.length && request.headers.get(TASK_MCP_HEADER) !== TASK_MCP_VERSION) {
+  const taskMcpVersion = request.headers.get(TASK_MCP_HEADER)
+  const previewToolFilters = taskMcpVersion === '2'
+  if (run.agentDefinition?.customMcp?.servers.length && taskMcpVersion !== TASK_MCP_VERSION && !previewToolFilters) {
     await failRunForDaemonUpgrade(runId,deviceId,caller.userId)
     return NextResponse.json({error:'Upgrade the Mikka daemon before using native MCP servers.',code:'daemonUpgradeRequired',protocolVersion:DAEMON_PROTOCOL_VERSION,minVersion:MIN_DAEMON_VERSION,daemonVersions:await daemonVersions()},{status:409})
   }
@@ -344,7 +346,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       }
       return NextResponse.json({error:'MCP configuration unavailable.',code:'mcpUnavailable'},{status:409})
     }
-    const compatible = taskMcpForDaemon(servers, request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1')
+    const compatible = taskMcpForDaemon(servers, previewToolFilters || request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1')
     if (compatible.length !== servers.length) {
       await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
       return NextResponse.json({ error: 'Upgrade the Mikka daemon before using MCP tool filters.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
