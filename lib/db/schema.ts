@@ -458,7 +458,7 @@ export const deviceTokenDevices = pgTable('device_token_devices', {
 export const deviceRepos = pgTable('device_repos', {
   id: uuid('id').primaryKey(), deviceId: uuid('deviceId').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   userId: text('userId').notNull(), repoPath: text('repoPath').notNull(), remoteUrl: text('remoteUrl'),
-  baseBranch: text('baseBranch').default('main'), verifyCommand: text('verifyCommand'),
+  baseBranch: text('baseBranch'), verifyCommand: text('verifyCommand'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('device_repos_key').on(table.deviceId, table.repoPath)])
 
@@ -517,7 +517,7 @@ export const agentRuns = pgTable('agent_runs', {
   dispatchKey: text('dispatchKey'),
   /** Hash of the original dispatch parameters; rejects reuse for different work. */
   dispatchFingerprint: text('dispatchFingerprint'),
-  baseBranch: text('baseBranch').default('main'),
+  baseBranch: text('baseBranch'),
   sessionId: text('sessionId'), worktreePath: text('worktreePath'),
   observedModel: varchar('observedModel', { length: 500 }),
   stopReason: text('stopReason'), error: text('error'),
