@@ -25,12 +25,10 @@ mock.module(new URL('../eve/server-client.ts', import.meta.url).href, { namedExp
 // per delivery; the fixture answers it and can be flipped to a stale grant.
 const credentials: string[] = []
 let credentialReply = { repository: { id: '22', installationId: '11', full_name: 'o/r' }, token: 'fixture-token' }
-mock.module(new URL('./user-access.ts', import.meta.url).href, { namedExports: {
-  githubRepositoryReadCredential: async (_userId: string, remoteKey: string) => {
-    credentials.push(remoteKey)
-    return credentialReply
-  },
-} })
+const readCredential = async (_userId: string, remoteKey: string) => {
+  credentials.push(remoteKey)
+  return credentialReply
+}
 
 test('a redelivered workflow result wakes the owning run once and stays a no-op after delivery', { skip: !valid, timeout: 120_000 }, async () => {
   const { pool } = await import('../db')
@@ -51,7 +49,7 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     const eventCount = () => pool.query<{ n: number; ids: string[] }>(`SELECT count(*)::int n, array_agg(id ORDER BY "createdAt") ids FROM coordinator_events WHERE "runId"=$1`, [runId]).then(r => r.rows[0])
     const sendsBefore = sends.length
 
-    await acceptWorkflowResult(result)
+    await acceptWorkflowResult(result, { readCredential })
     assert.equal(sends.length, sendsBefore + 1, 'the first accepted result wakes its owning Bot once')
     assert.deepEqual(sends.at(-1)!.scope, { ownerId: owner, workspaceId, botId, surface: 'web' })
     const first = await eventCount()
@@ -71,36 +69,36 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     // A GitHub redelivery has a new delivery id but the same result identity:
     // while Eve has not acknowledged it, the stored event is resent under its
     // own id — never a second coordinator event.
-    await acceptWorkflowResult({ ...result, deliveryId: 'delivery-2' })
+    await acceptWorkflowResult({ ...result, deliveryId: 'delivery-2' }, { readCredential })
     assert.equal(sends.at(-1)!.eventId, first.ids[0], 'a pending receipt resends the same event, not a new one')
     assert.equal((await eventCount()).n, 1)
 
     // Once the receipt is marked, the replay is a complete no-op.
     await pool.query(`UPDATE coordinator_events SET "deliveredAt"=now() WHERE "runId"=$1`, [runId])
-    await acceptWorkflowResult({ ...result, deliveryId: 'delivery-3' })
+    await acceptWorkflowResult({ ...result, deliveryId: 'delivery-3' }, { readCredential })
     assert.equal(sends.length, sendsBefore + 2, 'a delivered result accepts without waking the Bot again')
     assert.equal((await eventCount()).n, 1)
-    await acceptWorkflowResult({ ...result, conclusion: 'success' })
+    await acceptWorkflowResult({ ...result, conclusion: 'success' }, { readCredential })
     assert.equal(sends.length, sendsBefore + 2, 'a conflicting outcome for the identical attempt is refused')
 
     // A later attempt is a new result; a replayed old attempt cannot reopen it.
-    await acceptWorkflowResult({ ...result, attempt: 2, conclusion: 'success', deliveryId: 'delivery-4' })
+    await acceptWorkflowResult({ ...result, attempt: 2, conclusion: 'success', deliveryId: 'delivery-4' }, { readCredential })
     assert.equal(sends.length, sendsBefore + 3)
     assert.equal((await eventCount()).n, 2)
     await pool.query(`UPDATE coordinator_events SET "deliveredAt"=now() WHERE "runId"=$1`, [runId])
-    await acceptWorkflowResult(result)
+    await acceptWorkflowResult(result, { readCredential })
     assert.equal(sends.length, sendsBefore + 3, 'attempt 1 cannot overwrite attempt 2')
     assert.deepEqual((await publication()).workflowResults?.['33'], { headSha, run: 44, attempt: 2, conclusion: 'success' })
 
     // A delivery matching no published run never reaches authority checks or any Bot.
     const credentialCalls = credentials.length
-    await acceptWorkflowResult({ ...result, repositoryId: 23, repository: 'other/r' })
+    await acceptWorkflowResult({ ...result, repositoryId: 23, repository: 'other/r' }, { readCredential })
     assert.equal(credentials.length, credentialCalls)
     assert.equal(sends.length, sendsBefore + 3)
 
     // A live credential that no longer names this installation drops the receipt.
     credentialReply = { repository: { id: '22', installationId: '12', full_name: 'o/r' }, token: 'fixture-token' }
-    await acceptWorkflowResult({ ...result, attempt: 3, deliveryId: 'delivery-5' })
+    await acceptWorkflowResult({ ...result, attempt: 3, deliveryId: 'delivery-5' }, { readCredential })
     assert.equal(sends.length, sendsBefore + 3, 'a stale installation grant suppresses the queued result')
     assert.equal((await eventCount()).n, 2)
   } finally {
