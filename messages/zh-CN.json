@@ -5124,7 +5124,8 @@
       "includedHeading": "你的订阅或 API Key（不扣 Mikka 额度）",
       "viaSubscription": "订阅",
       "viaApiKey": "API Key",
-      "covered": "已覆盖，不计费"
+      "covered": "平台承担（不计费）",
+      "coveredLine": "{zero}（原价 {amount}）"
     }
   },
   "Computer": {

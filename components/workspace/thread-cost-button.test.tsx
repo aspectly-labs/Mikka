@@ -47,12 +47,13 @@ after(async () => {
 
 const none = { microUsd: 0, unpricedReceipts: 0 }
 /** `included` is the sum of the subscription and API key sources, as readThreadCost reports it. */
-const cost = (credits = none, subscription = none, apiKey = none): ThreadCost => ({
+const nothing = { microUsd: 0, receipts: 0 }
+const cost = (credits = none, subscription = none, apiKey = none, funding: { covered?: typeof nothing; fundingUnknown?: typeof nothing } = {}): ThreadCost => ({
   threadId: 'run-1', groupBy: 'thread',
   totals: { credits, included: {
     microUsd: subscription.microUsd + apiKey.microUsd, unpricedReceipts: subscription.unpricedReceipts + apiKey.unpricedReceipts,
     bySource: { subscription, api_key: apiKey },
-  } },
+  }, covered: funding.covered ?? nothing, fundingUnknown: funding.fundingUnknown ?? nothing },
 })
 
 let mounts = 0
@@ -141,9 +142,10 @@ function Rows({ breakdown }: { breakdown: import('./thread-cost-button').ThreadC
   return <>{list('charged', charged)}{list('included', included)}</>
 }
 const lines = (name: string) => [...document.querySelectorAll(`[data-list="${name}"] li`)].map(item => item.textContent)
-const model = (name: string, calls: number, credits = none, subscription = none, apiKey = none) => ({
-  model: name, calls, inputTokens: 0, outputTokens: 0, bySource: { credits, subscription, api_key: apiKey },
+const model = (name: string, calls: number, credits = none, subscription = none, apiKey = none, covered = nothing, fundingUnknown = nothing) => ({
+  model: name, calls, inputTokens: 0, outputTokens: 0, bySource: { credits, subscription, api_key: apiKey }, covered, fundingUnknown,
 })
+const machine = { coveredMicroUsd: 0, fundingUnknownMicroUsd: 0 }
 
 test('what went through Mikka and what the person paid themselves are separate lists, never summed', async () => {
   await show(<Rows breakdown={{ machines: [], models: [
@@ -163,19 +165,35 @@ test('a model with nothing settled reads as settling, never $0.00, and a zero li
 
 test('machines come first with their running time and prepaid charge; one Mikka did not bill is not listed as a charge', async () => {
   await show(<Rows breakdown={{ models: [model('claude-opus-5-5', 1, { microUsd: 10_000, unpricedReceipts: 0 })], machines: [
-    { size: 'standard-3', billing: 'metered', seconds: 7_800, meteredMicroUsd: 433_333, chargedMicroUsd: 450_000, unpricedReceipts: 0 },
-    { size: null, billing: 'unknown_size', seconds: 300, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 1 },
-    { size: null, billing: 'unbilled', seconds: 42, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 0 },
+    { size: 'standard-3', billing: 'metered', seconds: 7_800, meteredMicroUsd: 433_333, chargedMicroUsd: 450_000, unpricedReceipts: 0, ...machine },
+    { size: null, billing: 'unknown_size', seconds: 300, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 1, ...machine },
+    { size: null, billing: 'unbilled', seconds: 42, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 0, ...machine },
   ] }} />)
   assert.deepEqual(lines('charged'), ['云机器 · 2 vCPU · 8 GiB|2 小时 10 分钟|$0.45', '云机器|5 分钟|结算中', 'Opus 5.5|$0.01'])
 })
 
-test('a covered amount, once receipts carry it, is a muted line of its own and never part of the charge', async () => {
-  const covered: ThreadCost = { ...cost({ microUsd: 500_000, unpricedReceipts: 0 }) }
-  covered.totals.covered = { microUsd: 2_000_000, unpricedReceipts: 0 }
-  await show(<mod.ThreadCostView cost={covered} />)
+test('platform-funded usage is a muted row of its own, never part of the charge', async () => {
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 500_000, unpricedReceipts: 0 }, none, none, { covered: { microUsd: 2_000_000, receipts: 3 } })} />)
   assert.equal(trigger()?.textContent, '$0.50')
-  assert.match(await open(), /已覆盖，不计费\$2\.00/)
+  assert.match(await open(), /平台承担（不计费）\$2\.00/)
+})
+
+test('receipts settled before funding was recorded still count as charged, so an existing thread does not drop', async () => {
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 0, unpricedReceipts: 0 }, none, none, { fundingUnknown: { microUsd: 1_240_000, receipts: 4 } })} />)
+  assert.equal(trigger()?.textContent, '$1.24')
+  assert.match(await open(), /经由 Mikka\$1\.24/)
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 0, unpricedReceipts: 1 }, none, none, { fundingUnknown: { microUsd: 1_240_000, receipts: 4 } })} />)
+  assert.equal(trigger()?.textContent, '$1.24+', 'a settling receipt still gives the +')
+})
+
+test('a breakdown line the platform paid for in full shows $0 with its list cost; unknown funding counts as charged', async () => {
+  await show(<Rows breakdown={{ models: [
+    model('claude-opus-5-5', 2, none, none, none, { microUsd: 420_000, receipts: 2 }),
+    model('claude-sonnet-5-5', 3, { microUsd: 100_000, unpricedReceipts: 0 }, none, none, { microUsd: 50_000, receipts: 1 }, { microUsd: 200_000, receipts: 1 }),
+  ], machines: [
+    { size: 'standard-3', billing: 'metered', seconds: 600, meteredMicroUsd: 33_333, chargedMicroUsd: 0, unpricedReceipts: 0, coveredMicroUsd: 33_334, fundingUnknownMicroUsd: 0 },
+  ] }} />)
+  assert.deepEqual(lines('charged'), ['云机器 · 2 vCPU · 8 GiB|10 分钟|$0.00（原价 $0.03）', 'Opus 5.5|$0.00（原价 $0.42）', 'Sonnet 5.5|$0.30'])
 })
 
 test('the breakdown reads the model and machine groupings, and a refusal is a failure, not an empty list', async () => {

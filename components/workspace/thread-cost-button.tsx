@@ -72,7 +72,10 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
   const money = (microUsd: number) => microUsd > 0 && microUsd < 10_000
     ? t('underCent', { amount: format.number(0.01, CURRENCY) })
     : format.number(microUsd / 1e6, CURRENCY)
-  const { credits, included } = cost.totals
+  const { included, covered, fundingUnknown } = cost.totals
+  // What Mikka charged: the workspace's own money, plus receipts settled before funding was recorded (they were all
+  // shown as cost before, so an existing thread's figure does not drop). Covered usage is never part of it.
+  const credits = { microUsd: cost.totals.credits.microUsd + fundingUnknown.microUsd, unpricedReceipts: cost.totals.credits.unpricedReceipts }
   const pending = credits.unpricedReceipts > 0
   // With calls still settling the figure is a floor, so it is cut to whole cents, never rounded up; under a cent
   // settled it is no floor at all and reads as settling.
@@ -90,11 +93,8 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
     value: includedPriced ? money(included.microUsd) : t('calls', { count: included.unpricedReceipts }),
     note: includedPriced && includedUnpriced ? t('unpricedCalls', { count: included.unpricedReceipts }) : undefined,
   })
-  // Platform-funded turns, once receipts say which (ThreadCost.totals.covered): muted, never part of the charge.
-  const covered = cost.totals.covered
-  if (covered && (covered.microUsd > 0 || covered.unpricedReceipts > 0)) rows.push({
-    id: 'covered', label: t('covered'), value: covered.microUsd > 0 ? money(covered.microUsd) : t('calls', { count: covered.unpricedReceipts }),
-  })
+  // What the platform paid (a free-message turn, free credit), at list cost: its own muted row, never part of the charge.
+  if (covered.microUsd > 0) rows.push({ id: 'covered', label: t('covered'), value: money(covered.microUsd) })
   if (settling) return { figure: t('settling'), label: t('labelSettling'), title: t('title'), rows, note: hasIncluded ? t('includedNote') : undefined }
   return {
     figure: pending ? `${amount}+` : amount,
@@ -117,6 +117,8 @@ export type ThreadCostBreakdownRows = { charged: ThreadCostBreakdownRow[]; inclu
  * - Usage on the person's own subscription or key is its own list, one line per model and source, never added to the
  *   Mikka figure. A subscription call has no per-call price, so it is counted, not priced.
  * - A machine is billed from its prepaid chunks (chargedMicroUsd); one Mikka did not bill is not a charge and is left out.
+ * - Charged includes receipts settled before funding was recorded (fundingUnknown), as the header does. A line the
+ *   platform paid for in full shows $0 with its list cost; a partly covered line shows only what was charged.
  */
 export function useThreadCostBreakdownRows(breakdown: ThreadCostBreakdown): ThreadCostBreakdownRows {
   const t = useTranslations('IssueThreads.cost')
@@ -129,6 +131,8 @@ export function useThreadCostBreakdownRows(breakdown: ThreadCostBreakdown): Thre
     const floor = Math.floor(microUsd / 10_000) * 10_000
     return floor > 0 ? `${money(floor)}+` : t('settling')
   }
+  // A line the platform paid for in full reads 「$0.00（原价 $0.42）」: not a charge, its list cost shown beside it.
+  const coveredOnly = (microUsd: number) => microUsd > 0 ? t('coveredLine', { zero: format.number(0, CURRENCY), amount: money(microUsd) }) : null
   const own = ({ microUsd, unpricedReceipts }: ThreadCostAmount) =>
     microUsd > 0 ? money(microUsd) : unpricedReceipts > 0 ? t('calls', { count: unpricedReceipts }) : null
   const duration = (seconds: number) => {
@@ -140,7 +144,8 @@ export function useThreadCostBreakdownRows(breakdown: ThreadCostBreakdown): Thre
   const included: ThreadCostBreakdownRow[] = []
   // Machines first, as Capy lists them, then the models.
   for (const row of breakdown.machines) {
-    const value = row.billing === 'unbilled' ? null : charge({ microUsd: row.chargedMicroUsd, unpricedReceipts: row.unpricedReceipts })
+    const value = row.billing === 'unbilled' ? null
+      : charge({ microUsd: row.chargedMicroUsd + row.fundingUnknownMicroUsd, unpricedReceipts: row.unpricedReceipts }) ?? coveredOnly(row.coveredMicroUsd)
     if (!value) continue
     const size = row.size ? MACHINE_SIZES[row.size] : null
     charged.push({ key: `machine:${row.billing}:${row.size ?? ''}`, value, detail: duration(row.seconds),
@@ -148,7 +153,8 @@ export function useThreadCostBreakdownRows(breakdown: ThreadCostBreakdown): Thre
   }
   for (const row of breakdown.models) {
     const label = modelDisplayName(row.model).name || row.model
-    const value = charge(row.bySource.credits)
+    const value = charge({ microUsd: row.bySource.credits.microUsd + row.fundingUnknown.microUsd, unpricedReceipts: row.bySource.credits.unpricedReceipts })
+      ?? coveredOnly(row.covered.microUsd)
     if (value) charged.push({ key: `model:${row.model}`, label, value })
     for (const source of ['subscription', 'api_key'] as const) {
       const paid = own(row.bySource[source])

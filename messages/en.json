@@ -5124,7 +5124,8 @@
       "includedHeading": "Your subscription or API key (not charged to Mikka credits)",
       "viaSubscription": "Subscription",
       "viaApiKey": "API key",
-      "covered": "Covered, not charged"
+      "covered": "Covered by Mikka (not charged)",
+      "coveredLine": "{zero} ({amount} list)"
     }
   },
   "Computer": {
