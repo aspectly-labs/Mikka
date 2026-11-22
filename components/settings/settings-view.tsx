@@ -50,7 +50,7 @@ import { prefetchSettingsSection } from '@/lib/settings-prefetch'
 import { FieldError } from '@/components/ui/field'
 import { InlineLoadError } from '@/components/load-error'
 import { isSettingsAccessError } from '@/lib/settings-data'
-import { GovernancePlan, GovernanceTemplates } from '@ui-slot/settings-governance'
+import { GovernancePlan, GovernanceTemplates, GovernanceUsage } from '@ui-slot/settings-governance'
 import { ORGANIZATION_SETTINGS, OrganizationSettings } from '@ui-slot/settings-organization'
 import { toast } from 'sonner'
 
@@ -193,7 +193,7 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'organization': return !preview ? (ORGANIZATION_SETTINGS
       ? <OrganizationSettings key={workspaceId ?? 'organization-only'} workspaceId={workspaceId ?? ''} personal={!team} />
       : workspaceId ? <TeamPermissionsSettings key={workspaceId} workspaceId={workspaceId} /> : null) : waiting
-    case 'usage': return workspaceId && !preview ? <UsageSettings key={workspaceId} workspaceId={workspaceId} personal={personal} /> : waiting
+    case 'usage': return workspaceId && !preview ? <><UsageSettings key={workspaceId} workspaceId={workspaceId} personal={personal} />{team && <GovernanceUsage key={`governance-${workspaceId}`} workspaceId={workspaceId} />}</> : waiting
     case 'activity': return workspaceId && !preview ? <ActivitySettings key={workspaceId} workspaceId={workspaceId} admin={admin} personal={personal} /> : waiting
     case 'billing': return workspaceId && !preview ? <>{team && <PaymentDesignationSettings key={`payment-${workspaceId}`} workspaceId={workspaceId} />}<BillingSettings key={workspaceId} workspaceId={workspaceId} personal={personal} admin={admin} /></> : waiting
     // Bots of people who left are a team's (decision 2026-11-02-0203); they moved here with Bot 与 Agents' removal (2026-11-02-1400).
