@@ -1,7 +1,7 @@
 'use client'
 
 import { useAgentCopy } from '@/hooks/use-agent-copy'
-import { Children, createContext, isValidElement, memo, use, useMemo, type ComponentProps, type ReactNode } from 'react'
+import { Children, createContext, isValidElement, lazy, memo, Suspense, use, useMemo, type ComponentProps, type ReactNode } from 'react'
 import { AgentCodeBlock } from './agent-code-block'
 import dynamic from '@/lib/client-runtime/dynamic'
 import Markdown from 'react-markdown'
@@ -11,6 +11,7 @@ import { remarkCitations } from '@/lib/coordinator/citations'
 import { CitationAnchor, useAgentCitations } from './agent-citations'
 import { hasMathDelimiters } from '@/lib/math-delimiters'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useReducedMotion } from '@/lib/hooks/use-reduced-motion'
 
 const MermaidDiagram = dynamic(() => import('./agent-mermaid').then(module => module.AgentMermaid), {
   ssr: false,
@@ -20,10 +21,22 @@ const MermaidDiagram = dynamic(() => import('./agent-mermaid').then(module => mo
 const remarkPlugins = [remarkGfm]
 const NO_PLUGINS: [] = []
 const MathMarkdown = dynamic(() => import('./agent-math-markdown').then(module => module.AgentMathMarkdown))
+/**
+ * The streaming engine (agent-stream-markdown.tsx), fetched when a reply first streams: with the KaTeX it checks
+ * formulas with it is about 105 KB gzipped, which a chat that only reads stored replies never needs. Until it arrives
+ * the reply draws whole, as stored text does.
+ */
+const StreamMarkdown = lazy(() => import('./agent-stream-markdown').then(module => ({ default: module.AgentStreamMarkdown })))
 
 export type AgentMarkdownProps = {
   text: string
+  /** The reply is still arriving: its code and diagram blocks say so. */
   isStreaming?: boolean
+  /**
+   * This text is the part still growing (default: `isStreaming`): it is revealed at the pace it arrives with each new
+   * character fading in. Otherwise, with reduced motion, and once it ends, the whole text shows at once.
+   */
+  live?: boolean
   size?: 'small' | 'default' | 'large' | 'small-heavy' | 'large-heavy'
 }
 
@@ -86,6 +99,23 @@ function MarkdownPre({ children }: { children?: ReactNode }) {
     : <AgentCodeBlock code={source} language={language} isStreaming={isStreaming} />}</div>
 }
 
+type HastNode = { type: string; tagName?: string; value?: string; children?: HastNode[] }
+/**
+ * A link's words as one string while they fade in: the streaming engine wraps text in its own fading element, and a
+ * web citation reads its label as text. Null when the link holds anything else.
+ */
+function streamedText(node: unknown): string | null {
+  const children = (node as HastNode | undefined)?.children
+  if (!children?.some(child => child.tagName === 'streamdown-tail')) return null
+  let text = ''
+  for (const child of children) {
+    if (child.type === 'text') text += child.value ?? ''
+    else if (child.tagName === 'streamdown-tail') text += (child.children ?? []).map(part => part.value ?? '').join('')
+    else return null
+  }
+  return text
+}
+
 /**
  * Defined once: react-markdown uses these as element types, so a new function per render would remount every
  * paragraph, chip and code block on each streamed token, replaying their enter animations (the chat flashed).
@@ -103,7 +133,7 @@ const components: NonNullable<ComponentProps<typeof Markdown>['components']> = {
   // LobeHub's quote (:37-45): a 4px bar at the start, no fill. Its text stays the body colour, not LobeHub's secondary: the
   // official palette's `--muted-foreground` (black at 45%) is 3.35:1 on white, under AA for body text (UX audit I).
   blockquote: ({ node: _node, ...props }) => <blockquote {...props} className="border-s-4 border-rule ps-4 text-foreground" />,
-  a: ({ node: _node, ...props }) => <CitationAnchor {...props} />,
+  a: ({ node, children, ...props }) => <CitationAnchor {...props}>{streamedText(node) ?? children}</CitationAnchor>,
   img: MarkdownImage,
   pre: MarkdownPre,
   code: MarkdownCode,
@@ -118,22 +148,28 @@ const components: NonNullable<ComponentProps<typeof Markdown>['components']> = {
   hr: () => <div role="separator" className="h-1" />,
 }
 
-export function AgentMarkdownContent({ text, isStreaming = false, size = 'default', mathRemarkPlugins = NO_PLUGINS, rehypePlugins = NO_PLUGINS }: AgentMarkdownProps & {
+export function AgentMarkdownContent({ text, isStreaming = false, live = isStreaming, size = 'default', mathRemarkPlugins = NO_PLUGINS, rehypePlugins = NO_PLUGINS }: AgentMarkdownProps & {
   mathRemarkPlugins?: NonNullable<ComponentProps<typeof Markdown>['remarkPlugins']>
   rehypePlugins?: NonNullable<ComponentProps<typeof Markdown>['rehypePlugins']>
 }) {
   const cites = Boolean(useAgentCitations())
   const plugins = useMemo(() => [...remarkPlugins, ...mathRemarkPlugins, ...(cites ? [remarkCitations] : [])], [mathRemarkPlugins, cites])
+  const reduced = useReducedMotion()
+  // Stored text, reduced motion and the end of the stream draw the whole text at once (Mikka's settle rule: no drain).
+  const whole = <Markdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} skipHtml components={components}>{text}</Markdown>
 
-  // Blocks 8px apart: LobeHub's 0.5em between paragraphs (:240-251) is 7px on the thread's 14px body.
-  return <div data-agent-markdown data-size={size} className={cn('agent-markdown flex min-w-0 max-w-full flex-col gap-2 break-words text-sm leading-5.25 [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex_.cjk_fallback]:font-sans', {
+  // Blocks 8px apart: LobeHub's 0.5em between paragraphs (:240-251) is 7px on the thread's 14px body. The streaming
+  // engine's own wrapper is not a box, so its blocks keep that gap.
+  return <div data-agent-markdown data-size={size} className={cn('agent-markdown flex min-w-0 max-w-full flex-col gap-2 break-words text-sm leading-5.25 [&>.streamdown-animated]:contents [&_.katex-display]:max-w-full [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex_.cjk_fallback]:font-sans', {
     'text-xs': size === 'small' || size === 'small-heavy',
     'text-md': size === 'large' || size === 'large-heavy',
     'font-semibold': size === 'small-heavy' || size === 'large-heavy',
   })}>
     <MarkdownSize value={size}>
       <MarkdownStreaming value={isStreaming}>
-        <Markdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} skipHtml components={components}>{text}</Markdown>
+        {live && !reduced
+          ? <Suspense fallback={whole}><StreamMarkdown text={text} math={mathRemarkPlugins !== NO_PLUGINS} components={components} remarkPlugins={plugins} rehypePlugins={rehypePlugins} /></Suspense>
+          : whole}
       </MarkdownStreaming>
     </MarkdownSize>
   </div>

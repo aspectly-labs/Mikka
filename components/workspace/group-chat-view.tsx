@@ -245,11 +245,13 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   })
   // The one projection (lib/conversation/project.ts) decides each entry's id, side, time and delivery state; the group
   // adds its words, author lines, reply lines and the exchange markers after an author's run.
+  // The reply still arriving: the newest message while the group answers, when a Bot or Agent wrote it.
+  const arriving = replying && messages.at(-1)?.authorType !== 'user' ? messages.at(-1)?.id : undefined
   entries.push(...projectEntries(conversation, {
     text: (text, message) => {
       const source = message.metadata?.source as GroupSource
       const reply = 'stored' in source && source.stored.authorType !== 'user'
-      return { kind: 'text', text, node: reply ? <AgentMarkdown text={text} /> : <CollapsibleMessage><UserMessageText text={text} renderText={referenceText} /></CollapsibleMessage> }
+      return { kind: 'text', text, node: reply ? <AgentMarkdown text={text} isStreaming={'stored' in source && source.stored.id === arriving} /> : <CollapsibleMessage><UserMessageText text={text} renderText={referenceText} /></CollapsibleMessage> }
     },
     decorate: (entry, message) => {
       const source = message.metadata?.source as GroupSource
