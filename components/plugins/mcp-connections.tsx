@@ -90,7 +90,7 @@ export function useMcpConnections(workspaceId?: string) {
     finally { setPending(false) }
   }
 
-  return { data: page, error: read.error, blocked, pending, unconfirmed, check, update, create }
+  return { data: page, error: read.error, isLoading: read.isLoading, mutate: read.mutate, blocked, pending, unconfirmed, check, update, create }
 }
 
 /** The owner grants access only to the current workspace, as API-key sharing does. */
