@@ -5,6 +5,7 @@ import { sourcedEventMessage } from './message-safety'
 import { visibleRuns } from '@/lib/agent-runs'
 import { threadNamePrompt } from '@/lib/run-bot-name'
 import { credentialMasker, maskCredentials, maskDeep } from '@/lib/secrets/mask'
+import { toolCitations } from './tool-detail'
 import { issuesForUser } from '@/lib/issues-for-user'
 import { issueVisibility, type IssueReader } from '@/lib/issue-visibility'
 import 'server-only'
@@ -410,7 +411,9 @@ export async function chatViewState(userId: string, limit = 200, botId: string, 
     ...coordinatorChatState(session, waiting, now, lastMessage),
     // An event line names its thread or task as a chip (C1); its stored text is the model's, never shown.
     sources: await citationSources(reader, [...items.filter(item => item.from === 'coordinator').map(item => item.text),
-      ...items.flatMap(item => item.line ? [item.line.runId && `[[run:${item.line.runId}]]`, item.line.issueId && `[[issue:${item.line.issueId}]]`].filter((text): text is string => !!text) : [])], items.flatMap(item => item.threads)),
+      ...items.flatMap(item => item.line ? [item.line.runId && `[[run:${item.line.runId}]]`, item.line.issueId && `[[issue:${item.line.issueId}]]`].filter((text): text is string => !!text) : []),
+      // A tool row that read or changed a task or thread opens to its chip (Alex, 2026-11-22).
+      ...items.flatMap(item => item.activity?.tools.flatMap(toolCitations) ?? [])], items.flatMap(item => item.threads)),
     artifacts: await artifactSummaries(reader, items.flatMap(item => [...item.artifacts, ...(item.quote ? [item.quote.artifactId] : [])])),
     continuation: { after, prefix: await chatPrefix(userId, botId, after), cursor: last },
     ...(hasMore && rows[0] ? { historyBefore: rows[0].position } : {}),

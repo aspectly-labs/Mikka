@@ -294,7 +294,8 @@ test('every group message\'s line waits for hover and focus, as the Bot chat\'s 
   const lines = [...container.querySelectorAll('ol[aria-label="messages"] > li:not([data-entry="group-start"])')].map(row => row.querySelector('[data-slot="message-actions"]')!)
   assert.equal(lines.length, 2)
   for (const line of lines) for (const name of HOVER_ACTIONS.split(' ')) assert.ok(line.classList.contains(name), name)
-  assert.equal(lines[1].querySelector('time'), null, 'a reply\'s author line already says when')
+  // No time beside a name or over the messages (decision 2026-11-22-2000): each bar says when, on hover.
+  for (const line of lines) assert.ok(line.querySelector('time'), 'the bar says when it was sent')
 })
 
 test('before its first page the group shows every chat\'s one skeleton, not a list of its own', async () => {

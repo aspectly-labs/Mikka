@@ -83,9 +83,10 @@ function MarkdownImage({ alt }: { alt?: string }) {
 
 function MarkdownTable({ node: _node, ...props }: ComponentProps<'table'> & { node?: unknown }) {
   const agentCopy = useAgentCopy()
-  // LobeHub's table (:266-306): as wide as its content up to the column, rounded, outlined, a filled header and roomy cells.
+  // LobeHub's table (:266-306), rounded, outlined, a filled header and roomy cells, as wide as the message column (Alex,
+  // 2026-11-22: every block in a message spans the text's width); a wider one scrolls inside (table-container).
   // The outline is `--rule`, a solid grey in both themes (R-31: never white at low opacity in dark mode).
-  return <div tabIndex={0} role="region" aria-label={agentCopy.markdownTable} className="w-fit max-w-full overflow-hidden rounded-md border border-rule"><Table {...props} /></div>
+  return <div tabIndex={0} role="region" aria-label={agentCopy.markdownTable} className="w-full overflow-hidden rounded-md border border-rule"><Table {...props} /></div>
 }
 
 function MarkdownPre({ children }: { children?: ReactNode }) {

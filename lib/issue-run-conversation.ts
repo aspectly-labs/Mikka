@@ -110,6 +110,8 @@ export type ThreadStepStatus = 'running' | 'ok' | 'failed'
 export type ThreadStep = {
   id: string; name: string; detail: string | null; failed: boolean; command?: string; output?: string; exitCode?: number | null; ms?: number
   kind: ThreadStepKind; status: ThreadStepStatus; target?: string; scope?: string; outputTruncated?: true
+  /** The call's input as JSON, masked and cut as the output is, for the opened row (an edit's diff, a tool's inputs). */
+  input?: string
 }
 
 /** Claude Code's, Codex's and Cursor's (ACP `kind`) tool names by kind; matched without case. */
@@ -283,6 +285,9 @@ function toolStep(part: ToolLike, where: ConversationPartMeta | undefined): Thre
   if (isCommandStep(step) && part.input && typeof part.input === 'object' && 'command' in part.input && typeof part.input.command === 'string' && part.input.command.trim()) {
     step.command = stepText(part.input.command)
   }
+  // A command's input is its command, already kept above.
+  const input = !step.command && part.input && typeof part.input === 'object' ? stepTextCut(part.input) : undefined
+  if (input && !input.cut) step.input = JSON.stringify(maskDeep(part.input, credentialMasker))
   if (part.state === 'output-error') { step.failed = true; step.status = 'failed' }
   else if (part.state === 'output-available') {
     step.status = 'ok'

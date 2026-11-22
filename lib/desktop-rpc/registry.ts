@@ -176,6 +176,7 @@ const functions = {
   'coordinator.coordinatorHistory': actions8.coordinatorHistory,
   'coordinator.coordinatorCitationSources': actions8.coordinatorCitationSources,
   'coordinator.coordinatorReasoning': actions8.coordinatorReasoning,
+  'coordinator.coordinatorToolCall': actions8.coordinatorToolCall,
   'coordinator.pollBotChatSummaries': actions8.pollBotChatSummaries,
   'coordinator.welcomeCoordinator': actions8.welcomeCoordinator,
   'coordinator.stopCoordinatorTurn': actions8.stopCoordinatorTurn,

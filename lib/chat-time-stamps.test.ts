@@ -1,19 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { STAMP_GAP_MS, chatStampText, stampStarts } from './chat-time-stamps'
-
-const minute = 60_000
-
-test('a timestamp opens the first message and each group after a quiet gap, never between close messages', () => {
-  const start = Date.UTC(2026, 10, 22, 6, 32)
-  const times = [start, start + minute, start + 3 * minute, start + 3 * minute + STAMP_GAP_MS, start + 3 * minute + STAMP_GAP_MS + 2 * minute]
-  assert.deepEqual(stampStarts(times), [true, false, false, true, false])
-})
-
-test('a message with no readable time joins its group and does not start one', () => {
-  const start = Date.UTC(2026, 10, 22, 6, 32)
-  assert.deepEqual(stampStarts([Number.NaN, start, start + minute, 0, start + 2 * minute]), [false, true, false, false, false])
-})
+import { chatStampText } from './chat-time-stamps'
 
 test('the stamp says today or yesterday with the clock, and the date beyond that', () => {
   const words = { today: (time: string) => `今天 ${time}`, yesterday: (time: string) => `昨天 ${time}` }

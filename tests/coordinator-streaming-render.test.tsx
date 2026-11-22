@@ -17,6 +17,7 @@ import { AgentInteractionContext } from '../components/workspace/agent-interacti
 const reasoningCalls: [string | null, readonly number[]][] = []
 mock.module(new URL('../app/actions/coordinator.ts', import.meta.url).href, { namedExports: {
   coordinatorReasoning: async (botId: string | null, positions: readonly number[]) => { reasoningCalls.push([botId, positions]); return 'Check the login redirect first.' },
+  coordinatorToolCall: async () => null,
 } })
 const browser = new Window({ url: 'https://mikka.example/' })
 let createRoot: typeof import('react-dom/client')['createRoot']
@@ -174,26 +175,23 @@ test('a reply draws its thinking and its tools as shadcn Trace rows: several cal
     assert.match(text(), /Check the login/, 'the running row is open, so its words show as they stream')
     assert.equal(group()?.getAttribute('data-activity-group'), 'running')
     await settle(() => rows().length === 3)
-    assert.deepEqual(rows(), [['done', 'Create taskFix login', null], ['running', 'Start task', 'running'], ['error', 'Dispatch Factory task· Factory task not found', 'error']],
+    assert.deepEqual(rows(), [['done', 'Create issueFix login', null], ['running', 'Dispatch run', 'running'], ['error', 'Dispatch factory task· Factory task not found', 'error']],
       'verb and object; an answered error is a failure with its reason')
     assert.doesNotMatch(text(), /dispatch_factory_task|i1|factoryNotFound/, 'raw input and output start closed')
-    // Opened, a call says what it did in words first; its raw data is one more click away, under 「Raw data」.
+    // Opened, a call says what it did in words, and only that: no raw data under it (Alex, 2026-11-22).
     const click = (selector: string) => act(async () => { (view.container.querySelector(selector) as HTMLButtonElement).click() })
     await click('[data-activity-tool="done"] button')
     await settle(() => Boolean(view.container.querySelector('[data-activity-tool="done"] [data-activity-detail]')))
     assert.equal(view.container.querySelector('[data-activity-tool="done"] [data-activity-detail]')?.textContent, 'TitleFix login')
-    assert.doesNotMatch(text(), /i1/, 'the raw output starts folded')
-    await click('[data-activity-tool="done"] [data-activity-raw] button')
-    await settle(() => /i1/.test(text()))
-    assert.equal(view.container.querySelectorAll('[data-activity-tool="done"] [data-slot="code-block"]')[1]?.textContent, '{"id":"i1"}', 'the output in a code block, after the input')
-    await click('[data-activity-tool="error"] button')
-    await click('[data-activity-tool="error"] [data-activity-raw] button')
-    await settle(() => /factoryNotFound/.test(text()))
-    assert.equal(view.container.querySelector('[data-activity-tool="error"] [data-slot="code-block"]')?.getAttribute('data-variant'), 'destructive')
+    assert.doesNotMatch(text(), /i1/, 'no raw output')
+    assert.equal(view.container.querySelector('[data-activity-raw]'), null, 'no raw data section')
+    // A failure says its reason on its row and opens to nothing more.
+    assert.equal(view.container.querySelector('[data-activity-tool="error"] button'), null)
+    assert.doesNotMatch(text(), /factoryNotFound/)
 
     // Stored: one summary line, closed, side effects first, with how many failed; a call that never returned failed too.
     await view.render(<ReplyActivity tools={[tools[2], { ...tools[2], call: 'c9' }]} />)
-    assert.equal(group()?.querySelector('[data-slot="trace-title"]')?.textContent, 'Dispatch Factory task', 'nothing succeeded: the line names the failed call')
+    assert.equal(group()?.querySelector('[data-slot="trace-title"]')?.textContent, 'Dispatch factory task', 'nothing succeeded: the line names the failed call')
     await view.render(<ReplyActivity tools={[...tools, { call: 'c5', name: 'get_issue', state: 'done' as const }]} />)
     assert.equal(group()?.getAttribute('data-activity-group'), 'error')
     assert.ok(group()?.querySelector('[data-slot="trace-icon"] svg.text-destructive-foreground'), 'a failure is an icon, a colour and a word together (R-87)')
@@ -203,7 +201,7 @@ test('a reply draws its thinking and its tools as shadcn Trace rows: several cal
     assert.equal(group()?.querySelector('[data-activity-failed]')?.textContent, '2 failed', 'the failure count sits outside the summary, so it never truncates')
     // Stored, a tool that never returned failed: the docs' row for a call that is not streaming.
     await view.render(<ReplyActivity tools={[tools[1]]} />)
-    assert.deepEqual(rows(), [['error', 'Start task', 'error']])
+    assert.deepEqual(rows(), [['error', 'Dispatch run', 'error']])
     // A tool with nothing to show is a line that does not open.
     await view.render(<ReplyActivity tools={[{ call: 'c4', name: 'create_issue', state: 'done' }]} />)
     assert.equal(view.container.querySelector('[data-activity-tool] button'), null)
@@ -294,9 +292,9 @@ test('an opened dispatch reads 「Handed to」 its coding agent and its thread c
     assert.equal(quote?.textContent, note, 'the whole note, from the call\'s own quote, though the input preview cut it')
     assert.match(quote?.querySelector('span')?.className ?? '', /line-clamp-3/)
     const shown = view.container.textContent ?? ''
-    assert.doesNotMatch(shown, /"runId"|\{/, 'no raw JSON until 「Raw data」 is opened')
+    assert.doesNotMatch(shown, /"runId"|\{/, 'no raw JSON')
     assert.doesNotMatch(shown, MARKUP, 'no ids')
-    assert.ok(view.container.querySelector('[data-activity-raw]'), 'the raw data is there, folded')
+    assert.equal(view.container.querySelector('[data-activity-raw]'), null, 'no raw data section')
 
     // A thread the chat has not loaded: who it went to and its state in words, as the thread list groups it (R-52).
     await view.render(<AgentCitationsContext value={{ ...base, sources: known }}><ReplyActivity key="unloaded" tools={[{ ...dispatch, output: jsonbText({ runId: THREAD, status: 'queued', harness: 'codex' }) }]} /></AgentCitationsContext>)
@@ -306,21 +304,16 @@ test('an opened dispatch reads 「Handed to」 its coding agent and its thread c
     // A failed call says nothing in words and draws no quote: its row names the reason.
     const failed = { call: 'm1', name: 'send_email', state: 'done' as const, input: jsonbText({ to: 'a@example.com', subject: 'Hi', body: 'Hello there' }), output: '{"error": "forbidden"}' }
     await view.render(<AgentCitationsContext value={citations}><ReplyActivity key="failed" tools={[failed]} /></AgentCitationsContext>)
-    await act(async () => { (view.container.querySelector('[data-activity-tool="error"] button') as HTMLButtonElement).click() })
-    await settle(() => Boolean(view.container.querySelector('[data-activity-raw]')))
+    assert.equal(view.container.querySelector('[data-activity-tool="error"] button'), null, 'nothing to open')
     assert.equal(view.container.querySelector('[data-activity-detail]'), null)
     assert.doesNotMatch(view.container.querySelector('[data-activity-tool="error"]')?.textContent ?? '', /a@example\.com|Hello there|error: forbidden/)
 
-    // A raw SDK failure is never the row's words: one line in the reader's language, the text only under 原始数据 (#1516).
+    // A raw SDK failure is never shown: one line in the reader's language, and nothing to open (#1516; no raw data).
     const raw = "AI_NoSuchToolError: Model tried to call unavailable tool 'none'. Available tools: get_issue."
     await view.render(<AgentCitationsContext value={citations}><ReplyActivity key="unknown" tools={[{ call: 'u1', name: 'none', state: 'error' as const, input: '{}', output: raw }]} /></AgentCitationsContext>)
     const unknownTitle = () => view.container.querySelector('[data-activity-tool="error"] [data-slot="trace-title"]')?.textContent
     assert.equal(unknownTitle(), 'Unknown step· failed, skipped')
-    await act(async () => { (view.container.querySelector('[data-activity-tool="error"] button') as HTMLButtonElement).click() })
-    await settle(() => Boolean(view.container.querySelector('[data-activity-raw]')))
-    await act(async () => { (view.container.querySelector('[data-activity-raw] button') as HTMLButtonElement).click() })
-    await settle(() => Boolean(view.container.querySelector('[data-activity-raw] [data-slot="code-block"]')))
-    assert.match(view.container.querySelector('[data-activity-raw]')?.textContent ?? '', /AI_NoSuchToolError/)
+    assert.doesNotMatch(view.container.textContent ?? '', /AI_NoSuchToolError/)
 
     // Inside a group, an opened row reads the same.
     await view.render(<AgentCitationsContext value={citations}><ReplyActivity key="group" tools={[{ call: 'g1', name: 'get_issue', state: 'done' as const, input: '{"identifier": "MIK-1"}' }, dispatch]} /></AgentCitationsContext>)

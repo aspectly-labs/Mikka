@@ -276,9 +276,8 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       }
       const stored = source.stored
       const at = Date.parse(stored.createdAt)
-      // The line under every message, as the Bot chat's (on hover, decision 2026-11-22-1500): Copy and its reactions;
-      // a person's message says when it was sent, a reply's author line already does.
-      const actions = <ReplyActions at={stored.authorType !== 'user' ? undefined : at} copyText={stored.body}><MessageReactions reactions={reactions[stored.id]} align={entry.role === 'person' ? 'end' : 'start'} /></ReplyActions>
+      // The bar under every message, as LobeHub's (on hover, decision 2026-11-22-2000): when it was sent, Copy and its reactions.
+      const actions = <ReplyActions at={at} copyText={stored.body}><MessageReactions reactions={reactions[stored.id]} align={entry.role === 'person' ? 'end' : 'start'} /></ReplyActions>
       const shown: ThreadEntry = entry.role === 'person' ? { ...entry, body: words(stored.body), actions } : (() => {
         const name = authorName(stored.authorType, stored.authorId)
         const bot = stored.authorType === 'bot' ? member('bot', stored.authorId) : undefined

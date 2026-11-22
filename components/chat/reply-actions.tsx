@@ -10,12 +10,14 @@ import { quotable } from '@/lib/chat-quote'
 import { cn } from '@/lib/utils'
 
 /**
- * The line under a message (#2922, Figma `1318:59`): when it was sent, Reply, Copy, then what the caller adds (the pages
+ * The bar under a message (#2922, Figma `1318:59`): when it was sent, Reply, Copy, then what the caller adds (the pages
  * a reply cites, reactions). Reply quotes the whole message into the composer, the same quote 引用 makes from selected
  * words, cut to the same length (lib/chat-quote.ts REPLY_QUOTE_MAX) so a long reply cannot push a message over the send
- * limit. Every message's line waits for hover or focus and keeps its space (`HOVER_ACTIONS`, decision 2026-11-22-1500),
- * always shown on a touch screen. Edit (the person's message) and Regenerate (a reply) sit beside Copy as icons, as
- * under a Claude or ChatGPT message, with ‹ 1/2 › before them when the turn has earlier versions (decision
+ * limit. Every message's bar waits for hover or focus and keeps its space (`HOVER_ACTIONS`, decision 2026-11-22-1500),
+ * always shown on a touch screen; in the hosted thread it is LobeHub's pill, 8px under the message, on the left under a
+ * reply and on the right under the person's bubble (decision 2026-11-22-2000). The time is only here: the chat draws
+ * none beside a name or over the messages. Edit (the person's message) and Regenerate (a reply) sit beside Copy as
+ * icons, as under a Claude or ChatGPT message, with ‹ 1/2 › before them when the turn has earlier versions (decision
  * 2026-11-22-1700). There is still no More menu: a thread's fork and other lifecycle actions live in its ⋯ menu.
  */
 export function ReplyActions({ at, copyText, quoteText, onQuote, onEdit, onRegenerate, versions, children }: {
@@ -38,7 +40,7 @@ export function ReplyActions({ at, copyText, quoteText, onQuote, onEdit, onRegen
   const format = useFormatter()
   const words = useTranslations('ChatTime')
   const locale = useLocale()
-  // As the centred stamp (message-time-stamp.tsx): 「今天 15:40」, 「昨天 9:05」, the weekday within six days, then the date.
+  // 「今天 15:40」, 「昨天 9:05」, the weekday within six days, then the date (lib/chat-time-stamps.ts).
   const [now] = useState(() => Date.now())
   return <MessageActions className={cn('items-center', HOVER_ACTIONS)}>
     {at !== undefined && Number.isFinite(at) && at > 0 && <time dateTime={new Date(at).toISOString()} className="px-1 text-xs tabular-nums text-muted-foreground"

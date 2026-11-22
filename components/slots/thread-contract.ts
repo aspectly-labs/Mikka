@@ -13,7 +13,7 @@ import type { ChatComposerProps } from './chat-composer-contract'
 /** A tool the reply used, or the thinking before it, as one row. */
 export type ThreadToolRow = {
   id: string
-  /** What it did, in the person's words. */
+  /** The tool's English title (lib/tool-title.ts), whatever the UI language: 「Read file」, 「Run command」. */
   label: string
   status: 'running' | 'done' | 'failed' | 'stopped'
   /** How long it took, once done; a running tool counts up from `startedAt`. */
@@ -23,6 +23,8 @@ export type ThreadToolRow = {
   error?: string
   /** A short note after the label (its target, a count). */
   note?: string
+  /** The path, query, URL or command it acted on, for its opened details (a read file's language, a search's query). */
+  target?: string
   /** Recorded input, output or reasoning for the expanded row. */
   input?: string
   detail?: string
@@ -32,7 +34,17 @@ export type ThreadToolRow = {
   kind?: ThreadToolKind
   /** Only the end of its output was kept. */
   outputTruncated?: boolean
+  /** The whole call, read only when its row is opened (a Bot chat keeps previews): `key` names the read for caching. */
+  full?: ThreadToolFull
+  /**
+   * Mikka's own app tools (Get issue, Update issue, …): what an opened row shows, the task or thread chip it read or
+   * changed; `false` when the row already says everything, so it does not open (Alex, 2026-11-22).
+   */
+  view?: ReactNode | false
 }
+
+/** A tool call's whole input and output, each cut at about 64 KB and marked when cut. */
+export type ThreadToolFull = { key: string; load: () => Promise<{ input?: string; output?: string; inputCut?: true; outputCut?: true } | null> }
 
 export type ThreadToolKind = 'read' | 'search' | 'shell' | 'edit' | 'web' | 'delegate' | 'todo' | 'other'
 
@@ -75,7 +87,7 @@ export type ThreadEntry =
     streaming?: boolean
     stopped?: boolean
     /** Who wrote it, where the conversation has more than one Agent (a task's attempts): shown where it changes. */
-    author?: { id: string; name: string; mark: ReactNode; /** An Agent's reply, as Capy's: its words with no author line (Alex, 2026-11-15). */ quiet?: boolean; /** Its name opens where the message came from: a child thread's first message, its parent thread. */ onOpen?: () => void; /** A group's speaker, as LobeHub's group chat: a header with a larger mark and the name, the time on hover, the words aligned under the name (Alex, 2026-11-22). */ header?: boolean }
+    author?: { id: string; name: string; mark: ReactNode; /** An Agent's reply, as Capy's: its words with no author line (Alex, 2026-11-15). The hosted thread now heads every reply as LobeHub's and ignores it (decision 2026-11-22-2000). */ quiet?: boolean; /** Its name opens where the message came from: a child thread's first message, its parent thread. */ onOpen?: () => void; /** A header as LobeHub's chat: the mark at 28px and the name, the words under them (Alex, 2026-11-22; decision 2026-11-22-2000). */ header?: boolean }
     /** A line about the chat (an event, a quota switch), not the Bot's words: it has no author line, and the reply after it shows its own. */
     event?: true
     /** Copy, the pages it cites, reactions. */

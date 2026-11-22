@@ -494,8 +494,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const citations = useLiveCitations(citationTexts, citationBase)
   // A layer's thread screen (slot `thread`) draws the conversation from these rows: each part as Mikka renders it, the
   // run's Agent as the author line, its steps as tool rows.
-  // As Capy, an Agent's reply is its words alone: the author stays for screen readers and the switch of Agent, unseen.
-  const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} />, quiet: true } : undefined
+  // As LobeHub's chat, an Agent's reply opens with its mark and name (Alex, 2026-11-22: chat look as LobeHub, except avatars).
+  const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} />, header: true } : undefined
   const at = (value: number | string | Date | undefined) => (value === undefined ? 0 : new Date(value).getTime()) || (data ? new Date(data.thread.createdAt).getTime() : Date.now())
   const entries: ThreadEntry[] = []
   /** Each message's own send time, when it has one; the line under it shows nothing rather than a fallback. */

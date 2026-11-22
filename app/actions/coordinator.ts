@@ -23,7 +23,8 @@ import { botChats, chatVersionState, chatView, citationSources, storedReasoning,
 import * as chatStore from '@/lib/coordinator/store'
 import { refreshChatMetadata, type UnchangedChat } from '@/lib/coordinator/chat-poll'
 import type { CitationSource } from '@/lib/coordinator/citations'
-import { reasoningText } from '@/lib/coordinator/reasoning-mask'
+import { reasoningText, storedToolText } from '@/lib/coordinator/reasoning-mask'
+import { readCoordinatorToolCall, type StoredToolCall } from '@/lib/coordinator/tool-call-read'
 import { credentialChatFingerprints } from '@/lib/credentials/chat-guard'
 import { and, eq, sql } from 'drizzle-orm'
 import { chatBotId, type openChatBotId } from '@/lib/coordinator/coordinator-bot'
@@ -196,6 +197,28 @@ export async function coordinatorReasoning(botId: string | null, positions: read
   const fingerprints = await credentialChatFingerprints(user.id)
   const texts = (await storedReasoning(user.id, bot.id, parsed.data)).flatMap(text => reasoningText(user.id, text, fingerprints) ?? [])
   return texts.length ? texts.join('\n\n') : null
+}
+
+const toolCallSchema = z.object({ position: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), toolCallId: z.string().min(1).max(200) })
+
+/**
+ * One stored tool call of this bot's chat, whole up to about 64 KB each way, for the row the person opened (Alex,
+ * 2026-11-22: as Claude, ChatGPT and Cursor). The chat's own reads keep only previews. Owner-only: the bot must be
+ * the person's, in the workspace they have open. Stored messages are masked when saved; a side that still holds one
+ * of the person's saved secrets is left out, as reasoning is. Null when there is no such call.
+ */
+export async function coordinatorToolCall(botId: string | null, position: number, toolCallId: string): Promise<StoredToolCall | null> {
+  const parsed = toolCallSchema.safeParse({ position, toolCallId })
+  if (!parsed.success) return null
+  const user = await getUser()
+  const bot = await ownBot(user, botId)
+  const call = await readCoordinatorToolCall(pool, { ownerId: user.id, workspaceId: bot.workspaceId, botId: bot.id, ...parsed.data })
+  if (!call) return null
+  const fingerprints = await credentialChatFingerprints(user.id)
+  const safe = (text: string | undefined) => text === undefined ? undefined : storedToolText(user.id, text, fingerprints)
+  const input = safe(call.input), output = safe(call.output)
+  return { ...(input !== undefined ? { input, ...(call.inputCut ? { inputCut: true as const } : {}) } : {}),
+    ...(output !== undefined ? { output, ...(call.outputCut ? { outputCut: true as const } : {}) } : {}) }
 }
 
 /** Each bot's latest line and whether it is answering, for the bot list. */

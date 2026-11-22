@@ -49,7 +49,6 @@ export function ActivityTool({ tool }: { tool: ActivityToolView }) {
     <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
     <TraceCollapsibleContent className="flex flex-col gap-2">
       {tool.details}
-      {tool.raw}
     </TraceCollapsibleContent>
   </TraceCollapsible>
 }

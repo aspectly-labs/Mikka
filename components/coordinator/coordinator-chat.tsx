@@ -150,7 +150,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // Send-time paywall: a message on Mikka 额度 with nothing to pay is not sent (decision 2026-11-15-1900).
   const paywall = usePaywall(botId)
   const name = bot?.name ?? t('label')
-  const avatar = (size: 'pill' | 'profile', mood?: 'thinking') => <BotAvatar {...(bot ? { id: bot.id, color: bot.color, shape: bot.shape } : COORDINATOR_AVATAR)} size={size} mood={mood} />
+  const avatar = (size: 'pill' | 'message' | 'profile', mood?: 'thinking') => <BotAvatar {...(bot ? { id: bot.id, color: bot.color, shape: bot.shape } : COORDINATOR_AVATAR)} size={size} mood={mood} />
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const actionError = useActionError()
   const { cache, mutate: mutateAll } = useSWRConfig()
@@ -635,7 +635,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       continue
     }
     const parts: ThreadEntryPart[] = item.welcome ? [] : replyRows(item, live).map((segment, index): ThreadEntryPart => segment.kind === 'tools'
-      ? { kind: 'tools', id: `${key}-tools-${index}`, tools: toolRows(segment.tools, { live: streaming, ...(index === 0 && item.activity ? { thinking: live ? liveThinking(live) : undefined, thought: item.activity.thought } : {}) }) }
+      ? { kind: 'tools', id: `${key}-tools-${index}`, tools: toolRows(segment.tools, { live: streaming, citations, ...(live ? {} : { stored: { botId, position: item.position } }), ...(index === 0 && item.activity ? { thinking: live ? liveThinking(live) : undefined, thought: item.activity.thought } : {}) }) }
       : { kind: 'text', text: segment.text, node: <ReplyAnswer value={live ? null : answers.get(item.position) ?? null}><CoordinatorReply text={segment.text} carded={cardsOf(item, Boolean(live)).join(',')} citations={live ? streaming ? liveCitations.streaming : liveCitations.settled : citations} isStreaming={streaming} /></ReplyAnswer> })
     for (const id of cardsOf(item, Boolean(live))) {
       const run = sources?.[id]
@@ -651,8 +651,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     const lined = Boolean(item.text && !streaming)
     if (readEnd && !lined) parts.push({ kind: 'text', text: '', node: readEnd })
     entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-      // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
-      actions: lined ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply} onRegenerate={revision.onRegenerate(item)}>
+      // When it was sent waits in its action bar, on hover, as LobeHub's (no centred time over the messages).
+      actions: lined ? <ReplyActions at={item.createdAt ? at : undefined} copyText={replyCopyText(item.text)} onQuote={quoteReply} onRegenerate={revision.onRegenerate(item)}>
         <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
         {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
         {readEnd}
@@ -690,9 +690,9 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   if (failedAt === null && !welcomeFailed && !quotaStopped && (modelRequired || welcomeRequestFailed || (data?.error && !working)))
     entries.push({ id: `failure:${lastSaid?.position ?? 'chat'}`, role: 'bot', at: Date.now(), parts: [plainFailure ? liveFailurePart
       : { kind: 'error', failure: 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: failureNotice }] })
-  // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.
-  const quietAuthor = { id: botId ?? 'coordinator', name, mark: avatar('pill'), quiet: true }
-  for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = quietAuthor
+  // As LobeHub's chat, the Bot's reply opens with its mark and name (Alex, 2026-11-22: chat look as LobeHub, except avatars).
+  const botAuthor = { id: botId ?? 'coordinator', name, mark: avatar('message'), header: true }
+  for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = botAuthor
   const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
     ? <p role="status">{tNav('writingWelcome')}</p>
     : <p>{t('empty', { name })}</p>) : undefined
