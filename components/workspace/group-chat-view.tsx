@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWRInfinite, { unstable_serialize as infiniteKey } from 'swr/infinite'
 import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
-import { useTranslations } from '@/lib/intl/i18n-client'
+import { useLocale, useTranslations } from '@/lib/intl/i18n-client'
 import { listAgents } from '@/app/actions/agents'
 import { ChatComposerAttachment } from '@/components/coordinator/chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
@@ -11,6 +11,7 @@ import type { ThreadEntry } from '@/components/slots/thread-contract'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
 import { ConversationPageLoading } from '@/components/workspace/workspace-loading'
 import { navigate, openTask } from '@/components/workspace/workspace-navigation'
+import { useConversationPanels } from '@/components/coordinator/conversation-panels-context'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { namedConversationModelBot } from '@/lib/named-conversation-model'
 import { Button } from '@/components/ui/button'
@@ -72,11 +73,14 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   people: Map<string, string>
 }) {
   const t = useTranslations('GroupChat')
+  const locale = useLocale()
   const composerInput = useRef<HTMLTextAreaElement>(null)
   const titleHeading = useRef<HTMLHeadingElement>(null)
   const { mutate: refreshCache } = useSWRConfig()
   const namedChat = group.creationPurpose === 'conversation'
   const feedback = useTranslations('Coordinator')
+  // A frame that owns the panel hands the group's 详情 to the thread's work area (issue-workspace.tsx).
+  const panels = useConversationPanels()
   const { data: agents = [] } = useSWR('agents', listAgents)
   // The pill's avatar is the members' bloubs (R-36); the right column's 详情 reads the same request.
   const { data: memberPage, error: membersError } = useGroupMembers(group.id)
@@ -220,11 +224,20 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     ? id === userId ? t('you') : member(type, id)?.name || people.get(id) || t('member')
     : member(type, id)?.name ?? (type === 'agent' ? agents.find(agent => agent.id === id)?.name : undefined) ?? t('bot')
   const title = group.title || t('untitled')
+  const memberList = new Intl.ListFormat(locale, { type: 'conjunction' })
 
   // The group as the Bot chat's thread (AgentThreadScreen, decision 2026-11-22-1510-group-chat-as-bot-chat): the
   // person's messages are theirs; every other member's, a Bot's or an Agent's is the block's agent message with its own
   // author line (mark and name, shown where the author changes), as LobeHub's group chat heads each speaker's turn.
   const entries: ThreadEntry[] = []
+  // The start of the group, once its first message is loaded: its avatar, name and members, as a chat app opens a
+  // conversation's history (LobeHub's group welcome, Slack's channel start) and the Bot chat's first time divider.
+  if (pages && !older && messages.length) entries.push({ id: 'group-start', role: 'bot', at: Date.parse(messages[0]!.createdAt), event: true, parts: [{ kind: 'text',
+    text: title, node: <div data-group-start="" className="flex flex-col items-center gap-2 pt-6 pb-2 text-center">
+      <GroupAvatar title={title} members={members} size="profile" />
+      <p className="text-base font-semibold text-foreground">{title}</p>
+      {members.length > 0 && <p className="max-w-full text-xs text-muted-foreground">{memberList.format(members.map(item => item.memberType === 'user' && item.id === userId ? t('you') : item.name))}</p>}
+    </div> }] })
   // A Bot-to-Bot exchange is a line about the chat after its anchor's run of messages, not anyone's words.
   let waiting: GroupExchange[] = []
   const flush = (at: number) => {
@@ -246,7 +259,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       const name = authorName(message.authorType, message.authorId)
       const bot = message.authorType === 'bot' ? member('bot', message.authorId) : undefined
       entries.push({ id, role: 'bot', at, actions,
-        author: { id: `${message.authorType}:${message.authorId}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> },
+        author: { id: `${message.authorType}:${message.authorId}`, name, header: true, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> },
         parts: [{ kind: 'text', text: message.body, node: reply ? <AgentMarkdown text={message.body} /> : words }] })
     }
     waiting.push(...exchanges.get(message.position) ?? [])
@@ -266,7 +279,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       const name = authorName(who.memberType, who.id)
       const bot = who.memberType === 'bot' ? member('bot', who.id) : undefined
       entries.push({ id: `answering:${who.memberType}:${who.id}`, role: 'bot', at: Date.now(), streaming: true, parts: [waiting(who.id)],
-        author: { id: `${who.memberType}:${who.id}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> } })
+        author: { id: `${who.memberType}:${who.id}`, name, header: true, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> } })
     }
     // Queued, not yet taken by a Bot: the group's own wait.
     if (!answering.length) entries.push({ id: 'answering', role: 'bot', at: Date.now(), streaming: true, parts: [waiting('group')] })
@@ -301,7 +314,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       }} />
     </div>}
     {/* The chat's one skeleton, as every chat opens (ConversationPageLoading, delayed 200ms). */}
-    {!pages && !blockingCode ? <ConversationPageLoading /> : <ThreadScreen host="page" modelPicker={false} botId={null} name={title} mark={<GroupAvatar title={title} members={members} />}
+    {!pages && !blockingCode ? <ConversationPageLoading /> : <ThreadScreen host="page" modelPicker={false} panels={panels} botId={null} name={title} mark={<GroupAvatar title={title} members={members} />}
       entries={blockingCode ? [] : entries} empty={empty} transcriptLabel={t('messages')}
       older={older ? { loading: loadingOlder, onLoad: () => { void setSize(size + 1) } } : undefined}
       working={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined}

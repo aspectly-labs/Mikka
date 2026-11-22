@@ -80,7 +80,8 @@ function AddMembers({ group, bots, members, open, onOpenChange, onAdded }: { gro
  * manages membership here — the API keeps the same checks. No computer: a
  * group has none, a bot's own chat shows its.
  */
-export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { group: { id: string; title: string }; userId?: string; bots?: readonly BotView[]; onClose: () => void; sheet?: boolean }) {
+/** `frameTab`: the 详情 tab of a frame that owns the panel (the chat's work area): the tab names it, so no header of its own. */
+export function GroupPanel({ group, userId, bots, onClose, sheet = false, frameTab = false }: { group: { id: string; title: string }; userId?: string; bots?: readonly BotView[]; onClose: () => void; sheet?: boolean; frameTab?: boolean }) {
   const t = useTranslations('Shell.panel')
   const { data: members, error, mutate } = useGroupMembers(group.id)
   const [adding, setAdding] = useState(false)
@@ -118,10 +119,10 @@ export function GroupPanel({ group, userId, bots, onClose, sheet = false }: { gr
   }
   // R-37: opening and closing are instant, no motion (decision 2026-11-01-2320).
   return <aside ref={asideRef} aria-label={t('label')}
-    className={cn('relative min-h-0 shrink-0 flex-col', sheet ? 'flex size-full' : 'hidden w-(--group-panel-width) overflow-hidden border-l bg-background xl:flex', resize.dragging && 'select-none')}>
-    {!sheet && <ResizeHandle resize={resize} label={tCommon('resize.groupPanel')} edge="start" onDoubleClick={widen.reset} />}
-    <div className={cn('flex min-h-0 flex-1 flex-col', !sheet && 'min-w-80')}>
-      <PanelHeader variant="group" title={t('details')} actions={[]} onClose={onClose} widen={sheet ? undefined : { wide: widen.wide, onToggle: widen.onToggle }} />
+    className={cn('relative min-h-0 shrink-0 flex-col', sheet || frameTab ? 'flex size-full' : 'hidden w-(--group-panel-width) overflow-hidden border-l bg-background xl:flex', resize.dragging && 'select-none')}>
+    {!sheet && !frameTab && <ResizeHandle resize={resize} label={tCommon('resize.groupPanel')} edge="start" onDoubleClick={widen.reset} />}
+    <div className={cn('flex min-h-0 flex-1 flex-col', !sheet && !frameTab && 'min-w-80')}>
+      {!frameTab && <PanelHeader variant="group" title={t('details')} actions={[]} onClose={onClose} widen={sheet ? undefined : { wide: widen.wide, onToggle: widen.onToggle }} />}
       <div className="flex shrink-0 flex-col items-center gap-3 px-4 pt-9 pb-4">
         <GroupAvatar title={group.title} members={members} size="profile" />
         <h2 className="max-w-full truncate text-xl font-semibold">{group.title}</h2>
