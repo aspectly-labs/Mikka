@@ -1561,13 +1561,23 @@ export class Daemon {
         await this.supervisor.resumeAll(true)
         // Claims that failed after a commands read reported them are retried here.
         for (const [runId, state] of this.queuedClaims) if (state === "failed") this.queuedClaims.delete(runId)
-        for (const runId of await link.pendingRuns(deviceId)) {
-          if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) continue
-          await this.claimAndStart(runId).catch((error: unknown) => {
-            // No open session on the server: this pass ends and the socket is redialed.
-            if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
-            this.log.warn({ run_id: runId, err: error }, "could not start run")
-          })
+        const skip = new Set([...this.queuedClaims.keys(), ...this.refusedRuns].slice(0, COMMANDS_MAX_SKIP))
+        while (true) {
+          const offered = (await link.pendingRuns(deviceId, [...skip])).filter(runId => !skip.has(runId))
+          if (!offered.length) break
+          let retry = false
+          for (const runId of offered) {
+            skip.add(runId)
+            if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) { retry = true; continue }
+            try { await this.claimAndStart(runId) }
+            catch (error) {
+              // No open session on the server: this pass ends and the socket is redialed.
+              if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
+              this.log.warn({ run_id: runId, err: error }, "could not start run")
+              retry = true
+            }
+          }
+          if (!retry || skip.size >= COMMANDS_MAX_SKIP) break
         }
       }
       await this.pruneWorktrees()

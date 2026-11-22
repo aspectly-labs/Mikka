@@ -48,6 +48,7 @@ import {
   DAEMON_RPC_ERRORS,
   DEVICE_SESSION_HEADER,
   DEVICE_SESSION_VERSION,
+  COMMANDS_SKIP_PARAM,
   devicePaths,
   fsPaths,
   fsRequestsResponse,
@@ -461,10 +462,10 @@ export class HttpServerLink implements ServerLink {
     return repos
   }
 
-  async pendingRuns(deviceId: string) {
+  async pendingRuns(deviceId: string, skip: readonly string[] = []) {
     const { runIds } = await this.call(
       "GET",
-      devicePaths.pendingRuns(checkId(deviceId)),
+      devicePaths.pendingRuns(checkId(deviceId)) + (skip.length ? `&${new URLSearchParams({ [COMMANDS_SKIP_PARAM]: skip.join(",") })}` : ""),
       { schema: pendingRunsResponse }
     )
     return runIds

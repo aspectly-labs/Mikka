@@ -171,7 +171,8 @@ async function machine(hint = true, options: { delayedClaim?: boolean; cloud?: b
   const started = vi.spyOn(daemon.supervisor, 'start')
   const warnings = vi.spyOn(daemon.log, 'warn')
   cleanups.push(async () => { registration.resolve(); repositories.resolve(); claimResponse.resolve(); await daemon.stop() })
-  return { daemon, deviceId, runId, link, calls, recipe, started, registration, registerEntered, repositories, reposEntered,
+  const queueNext = () => server.queueRun(deviceId, { issueId: 'issue-2', repoId: 'repo-1', baseBranch: 'main', harness: 'mock', prompt: 'next queued run', fixture: 'stall' })
+  return { daemon, deviceId, runId, link, calls, recipe, started, registration, registerEntered, repositories, reposEntered, queueNext,
     claimEntered, claimResponse, queue: (runIds: string[]) => { queuedRuns = runIds }, commandsEntered, warnings, claimOptions, revoke: () => { revoked = true; server.requestStop(runId) } }
 }
 
@@ -356,6 +357,23 @@ it('settles the repository handoff when the initial claim is refused', async () 
   expect(f.calls.filter(name => name === 'repos')).toHaveLength(1)
   expect(f.started).not.toHaveBeenCalled()
   await f.daemon.stop()
+})
+
+it('starts the next offered run after an older queued claim is refused', async () => {
+  const f = await machine(false)
+  const next = f.queueNext()
+  const offered = f.link.pendingRuns
+  const claim = f.link.claimRun
+  f.link.pendingRuns = async (...args) => (await offered(...args)).slice(0, 1)
+  f.link.claimRun = async (...args) => {
+    if (args[1] === f.runId) throw new Error('Fixture claim refused without leaving the queue')
+    return claim(...args)
+  }
+  f.queue([f.runId])
+  f.repositories.resolve(); f.registration.resolve()
+  await waitFor(() => f.started.mock.calls.length === 1)
+  expect(f.started.mock.calls[0][0].runId).toBe(next)
+  expect(f.calls.filter(name => name === 'commands')).toHaveLength(1)
 })
 
 it.each(['report-refused', 'credential-rotated', 'uninstall'] as const)('keeps the original initial barrier with claim settings (%s)', async refusal => {
