@@ -34,8 +34,10 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     else process.env.GITHUB_APP_ID = appId
     await fixture.close()
   })
+  // The repository, account and installation `tests/fakes/github.mjs` serves.
+  const repo = 'mikka-e2e/core-loop', remoteKey = `v2/github.com/${repo}`, repositoryId = 789, installationId = 99, githubAccountId = '456'
   const repositoryReads = () => fixture.github.requests.filter((request: { method: string; path: string }) =>
-    request.method === 'GET' && request.path === '/github/repos/mikka-e2e/core-loop').length
+    request.method === 'GET' && request.path === `/github/repos/${repo}`).length
   const { pool } = await import('../db')
   const { saveGitHubConnection } = await import('./connection')
   const { acceptWorkflowResult } = await import('./workflow-result-store')
@@ -44,14 +46,14 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
   try {
     await pool.query(`INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES ($1,'WF owner',$2,true,now(),now())`, [owner, `${owner}@example.invalid`])
     await pool.query(`INSERT INTO agents (id,"userId",name,harness) VALUES ($1,$2,'Coder','codex')`, [agentId, owner])
-    await saveGitHubConnection(owner, { githubAccountId: '456', githubLogin: 'mvp-owner-456' }, { access_token: 'mikka-local-synthetic-user-token' })
+    await saveGitHubConnection(owner, { githubAccountId, githubLogin: `mvp-owner-${githubAccountId}` }, { access_token: 'mikka-local-synthetic-user-token' })
     const workspaceId = await seedFixtureWorkspace(pool, owner)
     await pool.query(`INSERT INTO issues (id,"userId","workspaceId",title,content,status,priority) VALUES ($1,$2,$3,'CI fixture',$4,'review','normal')`, [issueId, owner, workspaceId, JSON.stringify({ type: 'doc', content: [{ type: 'paragraph' }] })])
     await pool.query(`INSERT INTO bots (id,"ownerId","workspaceId",name) VALUES ($1,$2,$3,'CI bot')`, [botId, owner, workspaceId])
     await pool.query(`INSERT INTO agent_runs (id,"userId","issueId","workspaceId","botId","agentId",status,prompt) VALUES ($1,$2,$3,$4,$5,$6,'succeeded','CI fixture')`, [runId, owner, issueId, workspaceId, botId, agentId])
-    await pool.query(`INSERT INTO run_publications ("runId","userId","issueId","remoteUrl","remoteKey",branch,status,"pullRequest") VALUES ($1,$2,$3,'https://github.com/mikka-e2e/core-loop','v2/github.com/mikka-e2e/core-loop','mikka/ci-7','published',$4)`, [runId, owner, issueId, JSON.stringify({ url: 'https://github.com/mikka-e2e/core-loop/pull/7', headSha })])
-    await pool.query(`INSERT INTO github_repository_installations ("userId","remoteKey","githubAccountId","installationId","repositoryId") VALUES ($1,'v2/github.com/mikka-e2e/core-loop','456',99,789)`, [owner])
-    const result = { version: 1 as const, deliveryId: 'delivery-1', installationId: 99, repositoryId: 789, repository: 'mikka-e2e/core-loop',
+    await pool.query(`INSERT INTO run_publications ("runId","userId","issueId","remoteUrl","remoteKey",branch,status,"pullRequest") VALUES ($1,$2,$3,$4,$5,'mikka/ci-7','published',$6)`, [runId, owner, issueId, `https://github.com/${repo}`, remoteKey, JSON.stringify({ url: `https://github.com/${repo}/pull/7`, headSha })])
+    await pool.query(`INSERT INTO github_repository_installations ("userId","remoteKey","githubAccountId","installationId","repositoryId") VALUES ($1,$2,$3,$4,$5)`, [owner, remoteKey, githubAccountId, installationId, repositoryId])
+    const result = { version: 1 as const, deliveryId: 'delivery-1', installationId, repositoryId, repository: repo,
       workflowId: 33, workflowRunId: 44, attempt: 1, headSha, branch: 'mikka/ci-7', conclusion: 'failure' as const }
     const eventCount = () => pool.query<{ n: number; ids: string[] }>(`SELECT count(*)::int n, array_agg(id ORDER BY "createdAt") ids FROM coordinator_events WHERE "runId"=$1`, [runId]).then(r => r.rows[0])
     const sendsBefore = sends.length
@@ -64,7 +66,7 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     assert.equal(sends.at(-1)!.eventId, first.ids[0])
     const [row] = (await pool.query<{ dedupeKey: string; tier: string; issueId: string; payload: { source: string; deliveryId: string } }>(
       `SELECT "dedupeKey",tier,"issueId",payload FROM coordinator_events WHERE id=$1`, [first.ids[0]])).rows
-    assert.equal(row.dedupeKey, `github-workflow:${runId}:99:789:33:44:1:${headSha}`)
+    assert.equal(row.dedupeKey, `github-workflow:${runId}:${installationId}:${repositoryId}:33:44:1:${headSha}`)
     assert.equal(row.tier, 'result')
     assert.equal(row.issueId, issueId)
     assert.equal(row.payload.source, 'github_workflow_run')
