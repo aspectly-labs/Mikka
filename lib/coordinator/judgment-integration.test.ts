@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import { before, beforeEach, after, mock, test } from 'node:test'
 import { DECISION_MODEL, decisionRequestInput, validatedAnswers } from './decision'
 const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg=='
@@ -7,6 +8,7 @@ const priorUrl=process.env.MIKKA_LITELLM_URL
 const priorKey=process.env.MIKKA_LITELLM_MASTER_KEY, priorFetch=globalThis.fetch, priorConsole=console.error
 let events: Array<{id:string;kind:'run_finished'|'run_question'|'run_blocked'|'issue_done'|'user_message';payload:Record<string,unknown>;tier:string|null;lastTriageAttemptAt?:Date|null}>=[]
 let starts=0
+let dueScopes: Array<{ userId: string; botId: string }> = []
 const requests: Array<Record<string,unknown>>=[]
 let response:unknown
 const stub=(path:string,namedExports:Record<string,unknown>)=>mock.module(new URL(path,import.meta.url).href,{namedExports})
@@ -32,6 +34,7 @@ stub('../attention/store.ts',{releaseAttention:async()=>{}})
 stub('../default-model.ts',{defaultModelAvailable:async()=>true})
 stub('./coordinator-bot.ts',{coordinatorBot:async()=>({botId:'fixture-bot',workspaceId:'fixture-workspace'})})
 stub('../db/index.ts',{pool:{query:async(sql:string)=>{
+ if(sql.includes('SELECT DISTINCT "userId","botId" FROM coordinator_events'))return {rows:dueScopes}
  if(sql.includes('SELECT e.id, b."workspaceId" FROM coordinator_events e'))return {rows:events.filter(e=>e.tier!==null&&e.tier!=='background').map(e=>({id:e.id,workspaceId:'fixture-workspace'}))}
  throw new Error('Unexpected SQL in decision boundary fixture')
 }}})
@@ -45,12 +48,87 @@ before(async()=>{
  globalThis.fetch=async(input,init)=>{assert.equal(String(input),'https://litellm.example/v1/decisions');requests.push(JSON.parse(String(init?.body)));return Response.json({model:DECISION_MODEL,...(response as object)},{headers:{'x-litellm-call-id':'synthetic-generation','x-litellm-response-cost':'0'}})}
  wake=await import('./wake');group=await import('./route-group');transport=await import('./decide')
 })
-beforeEach(()=>{process.env.MIKKA_LITELLM_URL='https://litellm.example';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-no-provider';events=[];starts=0;requests.length=0;response={answers:[{type:'choice',name:'tier',choice:'result'}]}})
+beforeEach(()=>{process.env.MIKKA_LITELLM_URL='https://litellm.example';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-no-provider';events=[];dueScopes=[];starts=0;requests.length=0;response={answers:[{type:'choice',name:'tier',choice:'result'}]}})
 after(()=>{if(priorUrl===undefined)delete process.env.MIKKA_LITELLM_URL;else process.env.MIKKA_LITELLM_URL=priorUrl;globalThis.fetch=priorFetch;console.error=priorConsole;if(priorKey===undefined)delete process.env.MIKKA_LITELLM_MASTER_KEY;else process.env.MIKKA_LITELLM_MASTER_KEY=priorKey})
 test('every runtime event reaches the actual model adapter instead of failed/blocked heuristics',async()=>{
  events=['run_finished','run_question','run_blocked','issue_done'].map((kind,i)=>({id:String(i),kind:kind as 'run_finished',payload:{status:'failed',reason:'already recoverable'},tier:null}))
  await wake.wakeCoordinator('synthetic')
  assert.equal(requests.length,4);assert.ok(events.every(e=>e.tier==='result'));assert.equal(starts,4)
+})
+test('a decision slower than ten seconds still classifies, without starting another runtime event', async () => {
+ const fetch = globalThis.fetch
+ const timeout = process.env.MIKKA_DECISION_TIMEOUT_MS
+ try {
+  process.env.MIKKA_DECISION_TIMEOUT_MS = '30000'
+  globalThis.fetch = async (input, init) => {
+   await delay(16_700, undefined, { signal: init?.signal ?? undefined })
+   return fetch(input, init)
+  }
+  events = ['slow', 'later'].map(id => ({ id, kind: 'run_blocked' as const, payload: {}, tier: null }))
+  await wake.triageInbox('synthetic', null!)
+  assert.equal(events[0].tier, 'result')
+  assert.equal(events[1].tier, null)
+  assert.equal(requests.length, 1)
+ } finally {
+  globalThis.fetch = fetch
+  if (timeout === undefined) delete process.env.MIKKA_DECISION_TIMEOUT_MS
+  else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
+ }
+})
+test('outer cancellation still reaches the actual decision transport with a configured timeout', async () => {
+ const fetch = globalThis.fetch, timeout = process.env.MIKKA_DECISION_TIMEOUT_MS
+ const controller = new AbortController()
+ let cancelled = false
+ try {
+  process.env.MIKKA_DECISION_TIMEOUT_MS = '45000'
+  globalThis.fetch = async (_input, init) => {
+   assert.ok(init?.signal)
+   controller.abort()
+   cancelled = init.signal.aborted
+   init.signal.throwIfAborted()
+   throw new Error('cancelled transport must not continue')
+  }
+  events = [{ id: 'cancelled', kind: 'run_blocked', payload: {}, tier: null }]
+  await wake.triageInbox('synthetic', null!, controller.signal)
+  assert.equal(cancelled, true)
+  assert.equal(events[0].tier, null)
+  assert.equal(requests.length, 0)
+ } finally {
+  globalThis.fetch = fetch
+  if (timeout === undefined) delete process.env.MIKKA_DECISION_TIMEOUT_MS
+  else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
+ }
+})
+test('the bounded sweep defers inference that cannot fit its remaining handler budget', async () => {
+ const timeout = process.env.MIKKA_DECISION_TIMEOUT_MS
+ try {
+  dueScopes = [{ userId: 'synthetic', botId: null! }]
+  events = [{ id: 'deferred', kind: 'run_blocked', payload: {}, tier: null }]
+  process.env.MIKKA_DECISION_TIMEOUT_MS = '45000'
+  const result = await wake.retryCoordinatorWakes()
+  assert.equal(result.due, 1)
+  assert.equal(result.deferred, 1)
+  assert.equal(requests.length, 0)
+  assert.equal(events[0].lastTriageAttemptAt, undefined)
+ } finally {
+  if (timeout === undefined) delete process.env.MIKKA_DECISION_TIMEOUT_MS
+  else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
+ }
+})
+test('the bounded sweep classifies when a full decision window fits, and handles an empty outbox', async () => {
+ const timeout = process.env.MIKKA_DECISION_TIMEOUT_MS
+ try {
+  process.env.MIKKA_DECISION_TIMEOUT_MS = '30000'
+  assert.equal((await wake.retryCoordinatorWakes()).due, 0)
+  dueScopes = [{ userId: 'synthetic', botId: null! }]
+  events = [{ id: 'sweep', kind: 'run_blocked', payload: {}, tier: null }]
+  assert.equal((await wake.retryCoordinatorWakes()).started, 1)
+  assert.equal(events[0].tier, 'result')
+  assert.equal(starts, 1)
+ } finally {
+  if (timeout === undefined) delete process.env.MIKKA_DECISION_TIMEOUT_MS
+  else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
+ }
 })
 test('unavailable or malformed model results leave the event pending and do not wake',async()=>{
  for(const body of [{answers:[]},{answers:[{type:'choice',name:'tier',choice:'forged'}]},{answers:[{type:'predicate',name:'tier',probability:1}]}]){

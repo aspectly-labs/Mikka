@@ -31,6 +31,7 @@ import type { ChatToolMetadata, ChatToolMetadataRow } from './chat-tool-metadata
 import { coordinatorLeaseActive } from './lease'
 import { readPreferences } from '@/lib/preferences'
 import { TRIAGE_RETRY_COOLDOWN_MS } from './triage-batch'
+import { decisionTimeoutMs } from './decision-timeout'
 import type { TriageJudgment } from './triage-batch'
 import type { DecisionExecution } from './decide'
 import { scheduleChatResultSchema } from '@/lib/schedules/chat-result'
@@ -74,7 +75,7 @@ export async function wakingChats(userId: string): Promise<string[]> {
  * cursor instead of repeatedly hiding all events after the oldest batch. */
 export async function untriagedEvents(userId: string, botId: string) {
   const reader = await chatReader(userId, botId)
-  const retryBefore = new Date(Date.now() - TRIAGE_RETRY_COOLDOWN_MS)
+  const retryBefore = new Date(Date.now() - TRIAGE_RETRY_COOLDOWN_MS - decisionTimeoutMs())
   const events = await db.select().from(coordinatorEvents)
     .where(and(eventsOf(userId, botId), isNull(coordinatorEvents.deliveredAt), isNull(coordinatorEvents.tier),
       or(eq(coordinatorEvents.kind, 'user_message'), isNull(coordinatorEvents.lastTriageAttemptAt), lt(coordinatorEvents.lastTriageAttemptAt, retryBefore))))
@@ -94,7 +95,7 @@ export async function setEventTier(id: string, tier: CoordinatorEventTier, scope
 
 type TriageEventRecord = typeof coordinatorEvents.$inferSelect
 export async function claimTriageAttempt(event: TriageEventRecord, scope: { userId: string; botId: string }): Promise<Date | null> {
-  const now = new Date(), retryBefore = new Date(now.getTime() - TRIAGE_RETRY_COOLDOWN_MS)
+  const now = new Date(), retryBefore = new Date(now.getTime() - TRIAGE_RETRY_COOLDOWN_MS - decisionTimeoutMs())
   const [claimed] = await db.update(coordinatorEvents).set({ lastTriageAttemptAt: now })
     .where(and(eventsOf(scope.userId, scope.botId), eq(coordinatorEvents.id, event.id), ne(coordinatorEvents.kind, 'user_message'),
       isNull(coordinatorEvents.deliveredAt), isNull(coordinatorEvents.tier),

@@ -8,7 +8,7 @@ const secret = 'synthetic-isolated-cron-secret'
 const eventId = '00000000-0000-4000-8000-000000000176'
 mock.module(new URL('../../../../lib/coordinator/wake.ts', import.meta.url).href, { namedExports: {
   retryCoordinatorWakes: async () => { sweeps++; if (fail) throw new Error('private-error-secret'); return { due: 3, started: 1, deferred: 1, failed: 1, exhausted: 0 } },
-  replayCoordinatorWake: async (id: string) => { replays.push(id); return true },
+  replayCoordinatorWake: async (id: string, signal: AbortSignal) => { assert.ok(signal instanceof AbortSignal); assert.equal(signal.aborted, false); replays.push(id); return true },
 } })
 let GET: typeof import('./route')['GET'], POST: typeof import('./route')['POST']
 before(async () => { ({ GET, POST } = await import('./route')) })
