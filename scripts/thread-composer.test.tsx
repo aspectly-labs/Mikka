@@ -747,3 +747,12 @@ test('the line under the person own messages shows only a time the message reall
   assert.match(item('Timed message.'), /<time[^>]*dateTime="2026-11-20T15:42:00.000Z"/i)
   assert.doesNotMatch(item('Untimed message.'), /<time/)
 })
+
+test('a thread keeps one attachment scope, its own run, while the read moves to a continuation, so a reload keeps the draft’s files', () => {
+  render()
+  const before = shownThread?.composer.attachmentScope
+  thread = { ...base, continuation: { id: 'run-2', status: 'succeeded', stopping: false } }
+  render()
+  assert.deepEqual(before, { kind: 'thread', id: 'run-1' })
+  assert.deepEqual(shownThread?.composer.attachmentScope, { kind: 'thread', id: 'run-1' }, 'a scope change would drop the draft’s attachments (use-chat-files)')
+})

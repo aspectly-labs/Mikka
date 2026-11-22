@@ -683,7 +683,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     older={olderPosition ? { loading: olderState === 'loading', auto: olderState === 'idle', onLoad: () => { void loadOlder() } } : undefined}
     working={working} onStop={working && canStop ? () => { void stop() } : undefined}
     composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, leftControls: modelControl, label: composerUnavailable ? t(data && !isThreadRun(data.thread) ? 'checkEnded' : 'replyUnavailable') : t('composer', { agent: harnessLabel(threadComposerHarness(detail?.harness ?? '', liveRunId, modelFallback)) }), value: draft, onChange: setDraft, onSubmit: () => { void send() },
-      attachmentScope: { kind: 'thread', id: liveRunId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
+      // The thread's own run, not the live attempt: a scope change drops the draft's files, and the server takes files
+      // from any attempt of the chain (lib/chat-attachments/store.ts).
+      attachmentScope: { kind: 'thread', id: runId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
       running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands, historyKey: `thread:${runId}` }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
     plan={plan ?? undefined}

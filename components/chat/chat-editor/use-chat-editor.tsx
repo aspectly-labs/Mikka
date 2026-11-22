@@ -14,7 +14,7 @@ import type { ChatComposerState } from '@/hooks/use-chat-composer'
 import { useThreadWorkspace } from '@/hooks/use-thread-workspace'
 import { referenceQueryReady, type ThreadReference } from '@/lib/thread-references'
 import { referenceKey, type MessageReference, type ReferenceType } from '@/lib/composer-references'
-import { searchFiles } from '@/lib/right-column/workspace-files'
+import { searchFiles, WorkspaceFilesError } from '@/lib/right-column/workspace-files'
 import { sendsMessage } from '@/lib/send-key'
 import { stepPrompt } from '@/lib/chat/prompt-history'
 import { touchKeyboard } from '@/lib/touch-keyboard'
@@ -78,6 +78,13 @@ export function useChatEditor(composer: ChatComposerState, options: {
 }) {
   const t = useTranslations('ChatEditor')
   const tReferences = useTranslations('ThreadReferences')
+  const tFiles = useTranslations('RightColumn.files')
+  // Why the run's files cannot be read, in the Files tab's words (components/right-column/files-tab.tsx).
+  const fileFailure = (error: unknown) => {
+    const code = error instanceof WorkspaceFilesError ? error.code : 'unknown'
+    return code === 'workspace_machine_unavailable' ? tFiles('machineUnavailable') : code === 'workspace_checkout_unavailable' ? tFiles('checkoutUnavailable')
+      : code === 'workspace_not_found' ? tFiles('notFound') : tFiles('readFailed', { code })
+  }
   const field = composer.field
   const live = useRef({ composer, options })
   live.current = { composer, options }
@@ -354,8 +361,15 @@ export function useChatEditor(composer: ChatComposerState, options: {
   const rows = sections.flatMap(section => section.rows)
   menuRows.current = rows
   const searching = (referencesWanted && references.loading) || (filesWanted && (workspace.loading || files.loading)) || (skillsWanted && trigger?.char !== '@' && !skills.data && !skills.error)
-  const failed = (referencesWanted && references.failed) || (filesWanted && (files.failed || !!workspace.error)) || (!!trigger && trigger.char !== '@' && !!skills.error)
-  const status = rows.length ? undefined : searching ? tReferences('searching') : failed ? tReferences('error') : tReferences('empty')
+  // Each source answers for itself: files that cannot be read never turn a reference search that worked into an error.
+  const failed = (referencesWanted && references.failed) || (!!trigger && trigger.char !== '@' && !!skills.error)
+  const filesFailure = !filesWanted || workspace.loading ? null
+    : !checkout ? (workspace.error || workspace.refused || workspace.data ? tFiles('noCheckout') : null)
+    : files.failed ? fileFailure(files.error) : null
+  // Said only where files were what was asked for (`@file:`, `@folder:`) or nothing else could answer.
+  const filesAsked = kind === 'file' || kind === 'folder' || !referencesWanted
+  const status = rows.length ? undefined : searching ? tReferences('searching') : failed ? tReferences('error')
+    : filesFailure && filesAsked ? filesFailure : tReferences('empty')
   menuSearching.current = !rows.length && !!searching
   const shown = Math.min(active, Math.max(0, rows.length - 1))
   menuActive.current = shown
@@ -397,7 +411,7 @@ export function useChatEditor(composer: ChatComposerState, options: {
 
 /** One debounced search; its last results stay while the next run, so a growing query never blinks to 「正在搜索」. */
 function useLookup<T>(signature: string | null, read: () => Promise<T[]>) {
-  const [state, setState] = useState<{ signature: string; items?: T[]; failed?: boolean } | null>(null)
+  const [state, setState] = useState<{ signature: string; items?: T[]; failed?: boolean; error?: unknown } | null>(null)
   const reader = useRef(read)
   reader.current = read
   useEffect(() => {
@@ -407,10 +421,11 @@ function useLookup<T>(signature: string | null, read: () => Promise<T[]>) {
       try {
         const items = await reader.current()
         if (current) setState({ signature, items })
-      } catch { if (current) setState({ signature, failed: true }) }
+      } catch (error) { if (current) setState({ signature, failed: true, error }) }
     }, 180)
     return () => { current = false; clearTimeout(timer) }
   }, [signature])
-  if (!signature) return { items: undefined, loading: false, failed: false }
-  return { items: state?.items, loading: state?.signature !== signature, failed: state?.signature === signature && !!state.failed }
+  if (!signature) return { items: undefined, loading: false, failed: false, error: undefined }
+  const failed = state?.signature === signature && !!state.failed
+  return { items: state?.items, loading: state?.signature !== signature, failed, error: failed ? state?.error : undefined }
 }
