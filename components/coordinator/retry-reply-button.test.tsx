@@ -17,6 +17,7 @@ const submitted: { text: string; context: { retryOf?: number } | undefined }[] =
 let chatItems: import('@/lib/coordinator/context').ChatItem[] = []
 let chatError: string | null = null
 let chatEnabled = false
+const serverStops: (string | null)[] = []
 let streamStatus: 'idle' | 'resuming' | 'busy' = 'idle'
 let streamError: Error | false = false
 // The stream's server view (a running or failed turn) and its live replies.
@@ -93,7 +94,7 @@ mock.module(new URL('../ui/alert-dialog.tsx', import.meta.url).href, { namedExpo
 mock.module(new URL('../../app/actions/coordinator.ts', import.meta.url).href, { namedExports: {
   retryCoordinatorTurn: async () => { calls++; if (reply instanceof Error) throw reply; if (typeof reply === 'function') return reply(); return reply },
   coordinatorTurnVersions: async () => [], reviseCoordinatorTurn: async () => ({ queued: true }),
-  getCoordinatorChat: async () => ({}), pollCoordinatorChat: async () => ({}), syncCoordinatorChat: async () => ({}), coordinatorHistory: async () => historyPage, stopCoordinatorTurn: async () => ({}),
+  getCoordinatorChat: async () => ({}), pollCoordinatorChat: async () => ({}), syncCoordinatorChat: async () => ({}), coordinatorHistory: async () => historyPage, stopCoordinatorTurn: async (botId: string | null) => { serverStops.push(botId); return { stopped: true } },
   welcomeCoordinator: async () => { welcomeCalls++; if (welcomeReply instanceof Error) throw welcomeReply; if (typeof welcomeReply === 'function') return welcomeReply(); return welcomeReply }, coordinatorCitationSources: async () => ({}),
 } })
 mock.module(new URL('../../app/actions/execution-settings.ts', import.meta.url).href, { namedExports: { getBotModelMenu: async () => ({}) } })
@@ -780,21 +781,36 @@ test('with no model to answer, Send waits and the one notice says why; a Bot tha
   assert.equal(screen?.composer.submitDisabled, false)
 })
 
-test('Stop waits for the server to run the turn a moment; the queue choice shows only with a draft to queue', async () => {
+test('Stop is there the moment a send is accepted: accepted input waiting for its turn is stopped on the server', async () => {
+  chatEnabled = true
+  serverStops.length = 0
+  chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  streamStatus = 'busy'
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  assert.equal(screen?.onStop, undefined, 'a send the server has not accepted has no Stop')
+  // The server accepted it and it waits for its turn (the sidebar spins for the same state): Stop is there, and it
+  // stops that input on the server, before any turn takes it.
+  chatData = { items: chatItems, enabled: true, working: true, error: null, artifacts: {} }
+  await show()
+  assert.equal(typeof screen?.onStop, 'function', 'accepted input waiting for its turn can be stopped')
+  await act(async () => { screen!.onStop!() })
+  assert.deepEqual(serverStops, [null], 'Stop before a turn runs goes to the server for this chat')
+  chatData = null
+})
+
+test('a running turn has Stop at once, and the queue choice shows only with a draft to queue', async () => {
   chatEnabled = true
   chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
   streamStatus = 'busy'
   const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
   await show()
-  assert.equal(screen?.onStop, undefined, 'a send still on its way has no Stop')
   await act(async () => composer.onChange('next message'))
   assert.equal(container.querySelector('select'), null)
   streamView = runningTurn()
   await show()
-  assert.equal(screen?.onStop, undefined, 'a turn that fails at once never flashes Stop')
+  assert.equal(typeof screen?.onStop, 'function', 'a running turn has Stop at once')
   assert.ok(container.querySelector('select'), 'a draft can wait for the next turn or join this one')
-  await act(async () => new Promise(resolve => setTimeout(resolve, 450)))
-  assert.equal(typeof screen?.onStop, 'function')
   await act(async () => composer.onChange(''))
   assert.equal(container.querySelector('select'), null, 'nothing to queue: no choice in the footer')
 })

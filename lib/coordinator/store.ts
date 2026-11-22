@@ -25,7 +25,7 @@ import { artifactSummaries, type ArtifactSummary } from '@/lib/artifacts/store'
 import { runSummaryText } from '@/lib/issue-run-conversation'
 import { threadName } from '@/lib/issue-threads'
 import { SUBAGENT_FACTS_SQL, subagentFacts } from '@/lib/subagent-runs'
-import { coordinatorChatState } from './chat-state'
+import { coordinatorChatState, coordinatorTurnStoppable } from './chat-state'
 import { compactChatMessage, compactChatToolMetadata, summaryChatMessage } from './chat-projection'
 import { projectMessageDisplays } from './display-projection'
 import type { ChatToolMetadata, ChatToolMetadataRow } from './chat-tool-metadata'
@@ -540,7 +540,7 @@ export interface BotChatSummary {
   muted?: boolean
   hidden?: boolean
   pinOrder?: number | null
-  /** A turn is active, or pending input is new or holds its first live delivery lease. */
+  /** What the chat's 停止 can stop (`coordinatorTurnStoppable`): a turn, or input accepted and waiting for one. */
   working: boolean
 }
 
@@ -568,16 +568,16 @@ export async function botChatSnapshot(reader: IssueReader) {
     ...sessions.flatMap(session => coordinatorLeaseActive(session, now) && session.leaseUntil ? [session.leaseUntil] : []),
     ...waiting.flatMap(event => event.tier !== 'background' && event.kind !== 'matter_handoff' && event.wakeAttempts === 1 && event.wakeLeaseUntil && event.wakeLeaseUntil > now ? [event.wakeLeaseUntil] : []),
   ]
+  // The spinner is what the chat's 停止 can stop, input waiting for its turn included (`coordinatorTurnStoppable`).
   const result: Record<string, BotChatSummary> = {}
   const waitingByBot = Map.groupBy(waiting, event => event.botId)
   for (const session of sessions) {
     if (!session.botId) continue
-    const events = waitingByBot.get(session.botId) ?? []
-    result[session.botId] = { line: null, at: null, working: coordinatorChatState(session, events, now).working }
+    result[session.botId] = { line: null, at: null, working: coordinatorTurnStoppable(session, waitingByBot.get(session.botId) ?? [], now) }
     waitingByBot.delete(session.botId)
   }
   for (const [botId, events] of waitingByBot) {
-    if (botId) result[botId] = { line: null, at: null, working: coordinatorChatState(undefined, events, now).working }
+    if (botId) result[botId] = { line: null, at: null, working: coordinatorTurnStoppable(undefined, events, now) }
   }
   for(const row of latest)if(row.botId&&row.nativePending)result[row.botId]={line:null,at:null,working:true}
   const projected = await projectMessageDisplays(db, userId, latest)

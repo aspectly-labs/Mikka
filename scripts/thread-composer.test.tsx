@@ -36,6 +36,7 @@ let versionScenario: { read: () => Promise<unknown[]>; write: (request: { change
 let liveRead = false
 let readFailure: unknown = null
 let readHold: Promise<void> | null = null
+let deliveryRead: { modes: string[]; queued: object[] } | null = null
 let observeChanges = false
 let changesReads = 0
 let changesRead: { state: string; changes?: object } | null = null
@@ -79,7 +80,7 @@ mock.module(at('app/actions/agents.ts'), { namedExports: {
   issueReads++
   if (readHold) await readHold
   if (readFailure) throw readFailure
-  return { thread, chunks: [{ chunk: { type: 'text-delta', id: 'a', delta: 'Done.' }, at: new Date(0) }], messages: [], chunksAppend: false }
+  return { thread, chunks: [{ chunk: { type: 'text-delta', id: 'a', delta: 'Done.' }, at: new Date(0) }], messages: [], chunksAppend: false, ...(deliveryRead ? { delivery: deliveryRead } : {}) }
 }, getThreadChanges: async () => { changesReads++; return { state: 'none' } }, getThreadInstructions: async () => '', getThreadMachine: async () => null, sendIssueThreadMessage: async () => {}, sendIssueThreadReply: async (request: { requestId: string; text: string }) => { replyCalls++; return postReply(request) }, stopRun: async () => ({}) } })
 mock.module(at('app/actions/artifacts.ts'), { namedExports: { listRunArtifacts: async () => [], listTaskArtifacts: async () => [] } })
 mock.module(at('components/workspace/factory-acceptance.tsx'), { namedExports: {
@@ -134,7 +135,7 @@ before(async () => {
 const base = { id: 'run-1', issueId: 'issue-1', status: 'succeeded', outcome: null, question: null, continuation: null, stopping: false, ownedByCurrentUser: true,
   createdAt: new Date(0), finishedAt: new Date(0), latestRunId: 'run-1', prompt: 'Fix it', stopRequestedAt: null, replyAvailable: true, retryAvailable: true, quota: null, feedbackEligible: false,
   detail: { name: 'ZHIX-2 Fix it', agentName: 'Claude Code', harness: 'claude_code', summary: null } }
-beforeEach(() => { draftQuote = null; storedMessages = []; shownThread = undefined; versionScenario = null; buildGate = undefined; postReply = async () => ({ sent: true }); thread = { ...base }; acceptance = null; composer = null; replyCalls = 0; draftText = ''; pageChecks = 0; liveRead = false; observeChanges = false; changesReads = 0; readFailure = null; readHold = null; changesRead = null; issueReads = 0; notices.clear(); browser.sessionStorage.clear() })
+beforeEach(() => { deliveryRead = null; draftQuote = null; storedMessages = []; shownThread = undefined; versionScenario = null; buildGate = undefined; postReply = async () => ({ sent: true }); thread = { ...base }; acceptance = null; composer = null; replyCalls = 0; draftText = ''; pageChecks = 0; liveRead = false; observeChanges = false; changesReads = 0; readFailure = null; readHold = null; changesRead = null; issueReads = 0; notices.clear(); browser.sessionStorage.clear() })
 afterEach(async () => { if (root) { await act(async () => root!.unmount()); root = null; container.remove() } })
 after(() => browser.close())
 const render = (props: Partial<Parameters<typeof IssueThreadPanel>[0]> = {}) => renderToStaticMarkup(<IntlProvider locale="en" timeZone="UTC" messages={messages}>
@@ -522,6 +523,19 @@ for (const scenario of retainedPanelStates) {
     assert.equal(replyCalls, 0)
   })
 }
+
+test('the queue / steer choice waits for a draft, as in a Bot chat: an empty composer of a working thread has none', async () => {
+  const runId = crypto.randomUUID()
+  thread = { ...base, id: runId, latestRunId: runId, status: 'running', finishedAt: null }
+  deliveryRead = { modes: ['queue', 'steer'], queued: [] }
+  await renderLive('owner:workspace', { runId })
+  const choice = () => container.querySelector('select[aria-label="While the agent is working"]')
+  assert.equal(choice(), null, 'nothing typed: no choice beside the Stop button')
+  await act(async () => composer!.onChange('also check dark mode'))
+  assert.ok(choice(), 'a typed draft offers queue or steer')
+  await act(async () => composer!.onChange('   '))
+  assert.equal(choice(), null)
+})
 
 test('an offline bundled renderer still submits its thread reply once', async t => {
   Object.defineProperty(browser.navigator, 'onLine', { configurable: true, value: false })

@@ -6,7 +6,7 @@ import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
 import { withBasePath } from '@/lib/base-path'
 import { checkPageBuildBeforeAction } from '@/lib/app-build'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import { coordinatorHistory, retryCoordinatorTurn, welcomeCoordinator, type CoordinatorChat as Chat } from '@/app/actions/coordinator'
+import { coordinatorHistory, retryCoordinatorTurn, stopCoordinatorTurn, welcomeCoordinator, type CoordinatorChat as Chat } from '@/app/actions/coordinator'
 import { getBotModelMenu } from '@/app/actions/execution-settings'
 import type { BotModelMenu } from '@/lib/bot-model-menu-view'
 import { metadataEntities } from '@/lib/coordinator/chat-poll'
@@ -20,6 +20,7 @@ import { useActionError } from '@/lib/use-action-error'
 import { Alert, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { turnChoiceShown } from '@/lib/issue-run-conversation'
 import { CircleHelp } from '@/components/icons'
 import { toast } from 'sonner'
 import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCitations } from '@/components/workspace/agent-citations'
@@ -97,8 +98,6 @@ type ChatRead = Chat & { requestedAt?: number }
 type BotChatSource = { item: Chat['items'][number] } | { live: CoordinatorLiveReply } | { local: ChatDelivery<PersonalChatSend> }
 /** Pushes closer together than this share one read; the stream shows a turn's words meanwhile. */
 const CHAT_MERGE_MS = 2_000
-/** How long the server's turn runs before Stop shows (UX audit 2026-11-22: a quick failure flashed it). */
-const STOP_DELAY_MS = 400
 /** How long a turn is busy before its empty waiting row shows. */
 const WAITING_ROW_DELAY_MS = 150
 
@@ -222,13 +221,13 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // The server has the turn running (or waiting on the person): only then do Stop and the queue choice show, so a send
   // the server refuses never flashes them (UX audit 2026-11-22, issue 1).
   const turnConfirmed = activeTurn(stream.view) !== undefined
-  // Stop joins the footer once the turn has run a moment, so a turn that fails at once never moves the footer twice.
-  const [stopShown, setStopShown] = useState(false)
-  useEffect(() => {
-    if (!turnConfirmed) { setStopShown(false); return }
-    const timer = setTimeout(() => setStopShown(true), STOP_DELAY_MS)
-    return () => clearTimeout(timer)
-  }, [turnConfirmed])
+  // Stop is there the moment a send is accepted (decision 2026-11-22-1600, as ChatGPT and Claude), with no delay: it is the
+  // send button's own face, so nothing moves (CLS 0). Accepted input not yet running is the server's to stop
+  // (stopCoordinatorTurn ends it before any turn takes it); a refused send never shows Stop. The sidebar reads the same
+  // state (coordinatorTurnStoppable). `acceptedSend` covers the moment between the send's acceptance and the next read.
+  const [acceptedSend, setAcceptedSend] = useState(false)
+  useEffect(() => { setAcceptedSend(false) }, [data])
+  const stoppable = turnConfirmed || Boolean(data?.working) || acceptedSend
   useEffect(() => { reconnectStream.current = stream.reconnect }, [stream.reconnect])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
   // Each chat keeps where the person was reading, as a group chat does; one read to its end follows the latest.
@@ -248,7 +247,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const sending = sends > 0
   const [turnPolicy, setTurnPolicy] = useViewState<'queue' | 'steer'>('eve:turn-policy', 'queue')
   // The queue choice is about the next message: it shows while a turn runs and a draft waits to go.
-  const turnOptions = working && turnConfirmed && !resuming && draft.trim() ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
+  const turnOptions = turnChoiceShown(working && turnConfirmed && !resuming, draft) ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
     onChange={event => setTurnPolicy(event.target.value === 'steer' ? 'steer' : 'queue')}>
     <NativeSelectOption value="queue">{threadCopy('deliveryModes.queue')}</NativeSelectOption>
     <NativeSelectOption value="steer">{threadCopy('deliveryModes.steer')}</NativeSelectOption>
@@ -480,7 +479,9 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   async function stop() {
     setStopping(true)
     try {
-      await stream.cancel()
+      // A running turn stops through its stream; input accepted but not yet running is stopped on the server, atomically.
+      if (turnConfirmed) await stream.cancel()
+      else { const result = await stopCoordinatorTurn(botId); if (result.error) throw new Error(result.error) }
       await mutate()
     } catch { setStopping(false); toast.error(actionError()) }
   }
@@ -518,6 +519,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       waitingAdmissions.current.delete(command.id)
       const outcome = await submit(command.text, command.context, command.id, command.turnPolicy)
       if (outcome.kind !== 'accepted') return fail(failureMessage(outcome) ?? t('sendUncertain'))
+      setAcceptedSend(true)
       delivery.finish(command.id, {})
       if (command.context.notes) browser?.removeMany(command.context.notes.map(note => note.n))
       void mutate().catch(() => undefined)
@@ -734,7 +736,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         // Scrolling near the top loads the page before, as LobeHub's useEarlierHistoryTrigger does.
         older={data?.historyBefore ? { loading: loadingHistory, auto: true, onLoad: () => void loadHistory() } : undefined}
         historyPrepend={historyPrepend} scrollRef={transcript}
-        working={working && !stopping} onStop={turnConfirmed && stopShown && !resuming && !stopping ? () => { void stop() } : undefined}
+        working={working && !stopping} onStop={stoppable && !resuming && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
           references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands, historyKey: stateKey }}

@@ -30,6 +30,15 @@ function causeOf(session: Session | undefined, event: WaitingEvent): string | un
   return session.lastError
 }
 
+/**
+ * What a chat's 停止 can stop, and so what the sidebar's spinner shows (decision 2026-11-22-1600, as ChatGPT and Claude:
+ * from the moment a send is accepted): a running turn, input eve accepted, and input waiting for its turn, which
+ * stopChatTurn ends before any turn takes it (stop-before-turn.ts). One state for the chat's Stop and the sidebar.
+ */
+export function coordinatorTurnStoppable(session: Session | undefined, waiting: readonly WaitingEvent[], now = new Date(), last?: LastMessage): boolean {
+  return coordinatorChatState(session, waiting, now, last).working
+}
+
 /** A wake lease acknowledges inbox delivery, not the duration of a model turn. */
 export function coordinatorChatState(session: Session | undefined, waiting: readonly WaitingEvent[], now = new Date(), last?: LastMessage): CoordinatorChatState {
   if(session?.nativePending)return {working:true,error:null}

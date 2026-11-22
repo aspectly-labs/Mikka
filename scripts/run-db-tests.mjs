@@ -146,6 +146,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/tokens/store.ts', file: 'tests/personal-access-tokens.db.test.ts', script: 'test:pat-db' },
   { marker: 'lib/api-auth.ts', file: 'tests/personal-access-token-api.db.test.ts', script: 'test:pat-api-db' },
   { marker: 'lib/coordinator/bot-instructions.ts', file: 'lib/coordinator/bot-chats.db.test.ts', script: 'test:bot-chats-db' },
+  { marker: 'lib/coordinator/stop-before-turn.ts', file: 'lib/coordinator/stop-before-turn.db.test.ts', script: 'test:stop-before-turn-db' },
   { marker: 'lib/workspace-admin/bot-threads.ts', file: 'tests/bot-threads.db.test.ts', script: 'test:bot-threads-db' },
   { marker: 'lib/coordinator/store.ts', file: 'tests/coordinator-task-binding.db.ts', script: 'test:coordinator-task-binding-db' },
   { marker: 'lib/coordinator/native-store.ts', file: 'lib/coordinator/native-store.test.ts', script: 'test:coordinator-native' },

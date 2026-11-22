@@ -17,7 +17,7 @@ import { sendReviewChange, type ReviewChangeTarget } from '@/lib/factory/review-
 import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
-import { activityLineBadgeShown, conversationItems, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadPeople } from '@/lib/issue-run-conversation'
+import { activityLineBadgeShown, conversationItems, headerStopShown, runFailureText, turnChoiceShown, runIsActive, runIsWorking, runStopTimeoutRemaining, threadPeople } from '@/lib/issue-run-conversation'
 import { useFoldedChunks } from '@/lib/conversation/folded'
 import { interleave } from '@/lib/conversation/interleave'
 import { splitRunScoped } from '@/lib/conversation/ids'
@@ -656,7 +656,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     onDelete: row.status === 'queued' ? () => void updateQueue(row.id, 'cancel') : undefined }))
   const queueControls = <>
     <ThreadQueuedMessages rows={queued} paused={Boolean(quotaPaused)} />
-    {modes.length > 0 && <div className="flex px-3"><NativeSelect size="sm" aria-label={t('deliveryMode')} value={selectedMode} onChange={event => {
+    {turnChoiceShown(modes.length > 0, draft) && <div className="flex px-3"><NativeSelect size="sm" aria-label={t('deliveryMode')} value={selectedMode} onChange={event => {
       const next = modes.find(mode => mode === event.target.value)
       if (next) setDeliveryMode(next)
     }}>{modes.map(mode => <NativeSelectOption key={mode} value={mode}>{t(`deliveryModes.${mode}`)}</NativeSelectOption>)}</NativeSelect></div>}
