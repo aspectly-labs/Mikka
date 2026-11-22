@@ -30,6 +30,7 @@ import { navigate, openTask, openThread } from '@/components/workspace/workspace
 import { CoordinatorReply } from './coordinator-reply'
 import { botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
+import { ThreadQueuedMessages } from '@/components/workspace/thread-queued-messages'
 import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { useCoordinatorSubmit, type CoordinatorMessageContext } from './use-coordinator-submit'
 import { useCoordinatorAgent } from './use-coordinator-agent'
@@ -275,13 +276,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const received = useMemo(() => new Set(items.flatMap(item => item.from === 'person' && item.submissionId ? [item.submissionId] : [])), [items])
   const localMessages = delivery.rows.filter(row => !received.has(row.id))
   const waitingRows = delivery.rows.filter(row => waitingAdmissions.current.has(row.id))
-  const queuedNotice = working && waitingRows.length > 0 ? <div className="flex flex-col gap-1" aria-live="polite">
-    {waitingRows.map(row => <div key={row.id} className="flex min-w-0 items-center gap-2">
-      <span className="shrink-0 text-xs">{threadCopy('deliveryQueued')}</span>
-      <span className="min-w-0 flex-1 truncate text-sm">{row.text}</span>
-      <Button type="button" size="xs" variant="ghost" onClick={() => cancelWaitingAdmission(row.id)}>{threadCopy('deliveryCancel')}</Button>
-    </div>)}
-  </div> : null
+  // Messages waiting for the turn to end, in the thread's queued list (Figma 1318:2 section 20); 删除 takes one back.
+  const queuedNotice = working ? <ThreadQueuedMessages rows={waitingRows.map(row => ({ id: row.id, text: row.text, onDelete: () => cancelWaitingAdmission(row.id) }))} /> : null
   useEffect(() => {
     if (delivery.rows.some(row => received.has(row.id))) delivery.setRows(current => current.filter(row => !received.has(row.id)))
   }, [received, delivery.rows, delivery.setRows])
@@ -627,6 +623,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
+        under={!embedded && data?.context ? <div data-slot="thread-under-composer" className="flex min-w-0 items-center justify-end px-1"><CoordinatorContextUsage usage={data.context} /></div> : undefined}
         pending={[
           ...(embedded?.quote ? [{ id: 'artifact-quote', name: embedded.quote.label ?? embedded.quote.text, meta: tMessage('quote'), onRemove: embedded.clearQuote }] : []),
           ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),

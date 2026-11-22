@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import useSWR from 'swr'
 import { getThreadMachine, getThreadChanges } from '@/app/actions/agents'
 import { listRunArtifacts } from '@/app/actions/artifacts'
+import { readThreadSummary } from '@/app/actions/task-runs'
 
 // SWR reads on mount and when the key changes. Only a state change within
 // the same mounted run needs an explicit refresh of that run's existing row.
@@ -29,6 +30,19 @@ export function useThreadMachine(issueId: string | null, runId: string, status: 
     revalidateOnFocus: false, dedupingInterval: 0,
   })
   useStatusRefresh(runId, issueId, status, read.mutate)
+  return read
+}
+
+/**
+ * The thread's summary (lib/thread-summary.ts): machine size, repository and branch, for the row under the composer.
+ * Read once per run state, never on a timer; a reader who does not own the thread reads null.
+ */
+export function useThreadSummary(runId: string, status: string) {
+  const read = useSWR(['thread-summary', runId], async () => {
+    const result = await readThreadSummary(runId)
+    return result.error ? null : result
+  }, { revalidateOnFocus: false, dedupingInterval: 0 })
+  useStatusRefresh(runId, null, status, read.mutate)
   return read
 }
 

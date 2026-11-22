@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import { ChevronRight, Info } from '@/components/icons'
+import { ChevronRight } from '@/components/icons'
 import { resumeQuotaPausedRunOnApiKey, retryQuotaPausedRun } from '@/app/actions/agents'
-import { Alert, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { FieldError } from '@/components/ui/field'
 import { Item, ItemActions, ItemContent, ItemMedia, ItemTitle } from '@/components/ui/item'
@@ -77,12 +77,15 @@ export function ThreadQuotaSwitchLine({ switched }: { switched: ThreadQuotaView[
 }
 
 /**
- * A thread whose run paused because its subscription ran out: when it resets,
- * and the way on. 用 API Key 继续 once the person has a key (添加 API Key 继续
- * takes them to add one), and 重置后重试 with the original credential once it resets.
+ * A thread whose run paused because its subscription hit its usage limit, above the composer (Figma `1318:2`
+ * section 20, #2926): 「已暂停 · 用量上限 · 订阅名」, until when, and the ways on that exist for this thread: 立即重试
+ * with the original credential once the limit resets, 用 API Key 继续 once the person has a key (添加 API Key 继续
+ * takes them to add one), and 查看用量. Capy's 全部重试, 全部改用 Mikka 额度 and 稍后 act on every paused thread;
+ * Mikka has no such write (#2938), so they are not offered.
  */
 export function ThreadQuotaPausedCard({ paused, onContinued }: { paused: NonNullable<ThreadQuotaView['paused']>; onContinued: () => unknown }) {
   const t = useTranslations('Coordinator.quota')
+  const card = useTranslations('ThreadUnderComposer.paused')
   const resetTime = useResetTime()
   const [pending, setPending] = useState<'key' | 'retry' | null>(null)
   const [failed, setFailed] = useState(false)
@@ -102,19 +105,21 @@ export function ThreadQuotaPausedCard({ paused, onContinued }: { paused: NonNull
     catch { setFailed(true) }
     finally { setPending(null) }
   }
-  const title = t('used', { name: subscriptionName(paused.subscription, paused.plan) })
-  const detail = paused.resetsAt && !reset ? t('resets', { time: resetTime(paused.resetsAt) }) : null
-  return <div className="flex flex-col gap-1">
-    <Alert data-thread-quota-paused role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 pr-1.5">
-      <Info aria-hidden="true" className="shrink-0" />
-      <AlertTitle className="min-w-0 flex-1 basis-48 font-normal">{detail ? `${title} · ${detail}` : title}</AlertTitle>
-      <span className="ml-auto flex shrink-0 items-center gap-1">
-        {paused.keyReady
-          ? <Button size="sm" disabled={pending !== null} onClick={() => void run('key')}>{t('useKey')}</Button>
-          : <Button size="sm" nativeButton={false} role="link" render={<Link href={settingsHref('models')} />}>{t('addKey')}</Button>}
-        <Button size="sm" variant="outline" disabled={!reset || pending !== null} onClick={() => void run('retry')}>{t('retryAfterReset')}</Button>
-      </span>
-    </Alert>
-    {failed && <FieldError className="px-3 text-xs">{t('continueFailed')}</FieldError>}
-  </div>
+  const name = subscriptionName(paused.subscription, paused.plan)
+  const detail = paused.resetsAt && !reset ? card('until', { name, time: resetTime(paused.resetsAt) }) : reset ? card('reset', { name }) : card('paused', { name })
+  return <section data-thread-quota-paused role="status" aria-label={card('label')} className="flex min-w-0 flex-col gap-2 rounded-xl border border-rule bg-card px-3 py-2.5">
+    <div className="flex min-w-0 items-center gap-2">
+      <Badge tone="warning" size="sm">{card('badge')}</Badge>
+      <span className="min-w-0 truncate text-xs text-muted-foreground">{card('kind', { name })}</span>
+    </div>
+    <p className="text-sm">{detail}</p>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" variant="secondary" disabled={!reset || pending !== null} onClick={() => void run('retry')}>{card('tryNow')}</Button>
+      {paused.keyReady
+        ? <Button size="sm" variant="outline" disabled={pending !== null} onClick={() => void run('key')}>{t('useKey')}</Button>
+        : <Button size="sm" variant="outline" nativeButton={false} role="link" render={<Link href={settingsHref('models')} />}>{t('addKey')}</Button>}
+      <Button size="sm" variant="ghost" nativeButton={false} role="link" render={<Link href={settingsHref('usage')} />}>{card('seeUsage')}</Button>
+    </div>
+    {failed && <FieldError className="text-xs">{t('continueFailed')}</FieldError>}
+  </section>
 }
