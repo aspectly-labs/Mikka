@@ -11,7 +11,7 @@ import { normalizeRepository } from '@mikka/protocol/repository'
 import { SKILL_ARTIFACT_HEADER } from '@mikka/protocol/skill'
 import { POLICY_SNAPSHOT_HEADER } from '@mikka/protocol/policy-snapshot'
 import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-secrets'
-import { TASK_MCP_HEADER, TASK_MCP_VERSION, type TaskMcpServer } from '@mikka/protocol'
+import { TASK_MCP_HEADER, TASK_MCP_TOOL_FILTER_HEADER, TASK_MCP_VERSION, type TaskMcpServer } from '@mikka/protocol'
 import { policyDistributionContext } from '../lib/agent-tool-approval/policy-distribution'
 import { verifyPolicySnapshot } from '@mikka/protocol/node-policy-snapshot'
 import { POST } from '../app/v1/devices/[deviceId]/runs/[runId]/claim/route'
@@ -57,6 +57,8 @@ function fixture() {
     secretCapability: undefined as string | undefined,
     nativeMcpServers: undefined as TaskMcpServer[] | undefined,
     taskMcpVersion: TASK_MCP_VERSION as string,
+    taskMcpToolFilter: false,
+    mcpRevoked: false,
     secretInjection: undefined as Partial<TaskSecretInjection> | undefined,
     secretSnapshot: undefined as string | undefined,
     secretReads: [] as unknown[][],
@@ -90,7 +92,7 @@ function fixture() {
 async function claim(probe: ReturnType<typeof fixture>, preparation = ['skill-preflight','policy','secrets','publication','claim','skill-claim','benchmark-claim','token','settings'], expectsProjectAdmission = true) {
   const diagnostics: unknown[][] = []
   const errors = mock.method(console, 'error', (...args: unknown[]) => { diagnostics.push(args) })
-  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: probe.taskMcpVersion } : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
+  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: probe.taskMcpVersion } : {}),...(probe.taskMcpToolFilter ? {[TASK_MCP_TOOL_FILTER_HEADER]:'1'} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
   finally {
     errors.mock.restore()
     // The route logs only error names. Keep the intentional refusal distinct
@@ -288,6 +290,21 @@ test('a preview daemon advertising MCP version 2 receives its filtered connectio
   const response = await claim(probe)
   assert.equal(response.status, 200)
   assert.deepEqual((await response.json()).mcp.servers, probe.nativeMcpServers)
+})
+
+test('the current daemon receives filtered MCP, unless the grant is revoked before response', async () => {
+  for (const revoke of [false, true]) {
+    const probe = fixture()
+    Object.assign(probe.run, { agentDefinition: { harness: 'codex', customMcp: { servers: [{ id: 'fixture-mcp' }] } } })
+    probe.taskMcpToolFilter = true
+    probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: ['write_docs'] }]
+    probe.beforeToken = async () => { probe.mcpRevoked = revoke }
+    const response = await claim(probe)
+    assert.equal(response.status, revoke ? 409 : 200)
+    const body = await response.json()
+    if (revoke) assert.deepEqual(body, { error: 'Run access changed before claim response.' })
+    else assert.deepEqual(body.mcp.servers, probe.nativeMcpServers)
+  }
 })
 function validCheckpoint(): RunCheckpoint {
   return {baseCommit:'a'.repeat(40),patch:gzipSync(Buffer.alloc(0)).toString('base64'),files:0,takenAt:new Date().toISOString()}

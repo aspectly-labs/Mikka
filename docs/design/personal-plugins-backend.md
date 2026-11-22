@@ -23,7 +23,7 @@ be supplied in request bodies; all row operations include the authenticated owne
 | `POST /api/integrations/mcp` | `{name,url,transport?:"http"\|"sse",enabled?:boolean,auth?:{name,value}}` | `{server}`; enabled defaults to true |
 | `PATCH /api/integrations/mcp` | `{id,name?,enabled?,auth?:{name,value}\|null}` | `{server}`; null removes authentication |
 | `DELETE /api/integrations/mcp` | `{id}` | `{deleted:true}` |
-| `POST /api/integrations/mcp/refresh` | `{serverId,cursor?}` | Without a cursor, checks the enabled HTTP or SSE connection, saves the discovered tool catalogue, and returns its first page. With a cursor, returns names after that cursor from the latest saved catalogue without contacting the server. STDIO discovery stays on the task machine. |
+| `POST /api/integrations/mcp/refresh` | `{serverId,cursor?}` | Without a cursor, checks the enabled HTTP or SSE connection, saves the discovered tool catalogue, and returns its first page. With a cursor, returns names after that cursor from the latest saved catalogue without contacting the server. Both modes return `503 mcpUnavailable` if the connection is not connected, even if a saved catalogue exists. Disabled connections and STDIO return `409`; STDIO discovery stays on the task machine. |
 | `PATCH /api/integrations/mcp/shares` | `{serverId,workspaceId,shared}` | Owner-authorized workspace share state |
 | `GET /api/skills?id={id}` | One personal installation ID | `{skill}` with the pinned metadata, including disabled installations. Missing and other owners’ IDs return 404 |
 | `GET /api/skills` | — | `{skills,count,scope:"personal"}`; metadata includes source kind, source revision/path and SHA-256 |

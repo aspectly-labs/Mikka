@@ -48,6 +48,12 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
   return authority
 }
 
+export async function lockNativeMcpAuthority(query: Query, userId: string, authority: McpAuthority) {
+  if (!authority.servers.length) return
+  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [authority.servers.map(server => server.id)])
+  await validateMcpAuthority(query, userId, authority)
+}
+
 /** Existing workspace membership governs an explicit resource grant, never an implicit loan. */
 export class WorkspaceMcpStore {
   constructor(readonly pool: Pool, readonly membership?: Query) {}

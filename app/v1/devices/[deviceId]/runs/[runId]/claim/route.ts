@@ -25,6 +25,8 @@ import { assertLiteLLMModelTransport, assertUnmanagedModelTransport, assertSubsc
 import { ModelAdmissionError } from '@/lib/model-admission/contract'
 import { liteLLMBaseUrl } from '@/lib/model-gateway/litellm-client'
 import { db, pool } from '@/lib/db'
+import { captureDatabaseQuery } from '@/lib/db/commit-effects'
+import { PluginError, type McpAuthority } from '@/lib/plugins/contracts'
 import { runChanged } from '@/lib/live/panels'
 import { agentRuns, agents, deviceRepos } from '@/lib/db/schema'
 import { authenticateDevice, ownedDeviceWithReport } from '@/lib/device-link'
@@ -332,8 +334,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     return NextResponse.json({ error: 'Upgrade the Mikka daemon before using protected task Secrets.', code: 'daemonUpgradeRequired', daemonVersions: await daemonVersions() }, { status: 409 })
   }
   let servers: TaskMcpServer[] = []
+  let mcpAuthority: McpAuthority | undefined
   if (run.agentDefinition?.customMcp && ['claude_code','codex','cursor'].includes(harness)) {
-    try { servers = await (await import('@/lib/plugins/runtime')).personalPlugins.nativeMcpConnections(caller.userId,run.agentDefinition.customMcp,run.agentDefinition.projectExecution?.environment?.id ?? null) }
+    try {
+      const assignment = await (await import('@/lib/plugins/runtime')).personalPlugins.nativeMcpAssignment(caller.userId, run.agentDefinition.customMcp, run.agentDefinition.projectExecution?.environment?.id ?? null)
+      servers = assignment.servers
+      mcpAuthority = assignment.authority
+    }
     catch (error) {
       logCodedError(new CodedError('mcpUnavailable',{cause:error}),{runId:run.id})
       const now = new Date()
@@ -621,6 +628,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (Boolean(currentEnvironment) !== Boolean(projectEnvironment) || currentEnvironment &&
       (currentEnvironment.id !== projectEnvironment?.id || currentEnvironment.revision !== projectEnvironment?.revision
         || current.agentDefinition?.projectExecution?.workspaceId !== workspaceId)) return false
+    if (mcpAuthority?.servers.length) {
+      try {
+        const { lockNativeMcpAuthority } = await import('@/lib/plugins/workspace-mcp')
+        await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
+      } catch (error) { if (error instanceof PluginError) return false; throw error }
+    }
     if (taskInjection.snapshot === undefined) return true
     if (workspaceId && !current.agentDefinition?.executionIdentity && !await executionMembersActive(workspaceId, [current.userId])) return false
     const [currentRepo] = await tx.select({ remoteUrl: deviceRepos.remoteUrl }).from(deviceRepos).where(eq(deviceRepos.id, repo.id)).limit(1)

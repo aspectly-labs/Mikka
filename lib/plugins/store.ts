@@ -102,13 +102,18 @@ export class PersonalPluginStore {
   }
   /** One admission-time export to the authorized task/eve runtime. No secret enters its snapshot. */
   async nativeMcpConnections(userId: string, authority: McpAuthority, environmentId?: string | null): Promise<TaskMcpServer[]> {
+    return (await this.nativeMcpAssignment(userId, authority, environmentId)).servers
+  }
+
+  async nativeMcpAssignment(userId: string, authority: McpAuthority, environmentId?: string | null) {
     const store = new WorkspaceMcpStore(this.pool,this.membership)
     const requested = environmentId === undefined ? authority : { ...authority, environmentId }
     const authorized = await store.validate(userId,await scopedMcpAuthority(this.pool,requested))
-    return Promise.all(authorized.servers.map(async grant => {
+    const servers = await Promise.all(authorized.servers.map(async grant => {
       const connection = await this.mcpConnection(userId,grant.id,grant.revision,authorized)
       return connection.native ?? taskMcpServerSchema.parse({ name:`mcp_${grant.id.replaceAll('-','')}`, transport:connection.transport,url:connection.url,headers:connection.headers,...(connection.disabledTools.length ? { disabledTools:connection.disabledTools } : {}) })
     }))
+    return { authority: authorized, servers }
   }
 
   async listSkills(userId: string): Promise<InstalledSkill[]> {
