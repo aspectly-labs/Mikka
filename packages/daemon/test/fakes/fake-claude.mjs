@@ -228,6 +228,17 @@ lines.on("line", async (line) => {
     result()
     return
   }
+  // `PLAN` writes a to-do list, then revises it, as TodoWrite does.
+  if (message.includes("PLAN")) {
+    const todo = (id, todos) => {
+      out({ type: "assistant", message: { id: `msg_${++n}`, content: [{ type: "tool_use", id, name: "TodoWrite", input: { todos } }] } })
+      out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "Todos have been modified successfully" }] } })
+    }
+    todo("toolu_plan_1", [{ content: "Read the brief", status: "in_progress", activeForm: "Reading the brief" }, { content: "Write NOTES.md", status: "pending", activeForm: "Writing NOTES.md" }])
+    todo("toolu_plan_2", [{ content: "Read the brief", status: "completed", activeForm: "Reading the brief" }, { content: "Write NOTES.md", status: "in_progress", activeForm: "Writing NOTES.md" }])
+    result()
+    return
+  }
   if (message.includes("MODEL")) {
     if (message.includes("DELAYED")) {
       await new Promise(resolve => setTimeout(resolve, 50))
