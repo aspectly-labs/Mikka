@@ -80,12 +80,16 @@ export async function setAppPolicy(actor: { id: string; name: string }, workspac
  * is their own, one per person (lib/coordinator/coordinator-bot.ts), and is
  * not governed here, as before it had a bot row. Work with no bot (botId
  * null) is not either. A bot whose row is gone is refused.
+ *
+ * Decision 2026-11-01-2240: the policy governs only sharing — a bot acting
+ * for its own owner (`ownerId`, the person whose connections the run uses)
+ * is never stopped by it.
  */
-export async function botMayUseApp(botId: string | null | undefined, app: string): Promise<boolean> {
+export async function botMayUseApp(botId: string | null | undefined, app: string, ownerId?: string): Promise<boolean> {
   if (!botId) return true
-  const [row] = await db.select({ access: workspaceAppPolicies.access, workspaceId: bots.workspaceId, coordinator: sql<boolean>`exists (select 1 from coordinator_bots cb where cb."botId" = ${bots.id})` }).from(bots)
+  const [row] = await db.select({ access: workspaceAppPolicies.access, ownerId: bots.ownerId, coordinator: sql<boolean>`exists (select 1 from coordinator_bots cb where cb."botId" = ${bots.id})` }).from(bots)
     .leftJoin(workspaceAppPolicies, and(eq(workspaceAppPolicies.workspaceId, bots.workspaceId), eq(workspaceAppPolicies.app, app)))
     .where(eq(bots.id, botId)).limit(1)
   if (!row) return false
-  return row.coordinator || row.access !== 'deny'
+  return row.coordinator || row.ownerId === ownerId || row.access !== 'deny'
 }

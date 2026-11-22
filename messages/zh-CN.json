@@ -1055,7 +1055,8 @@
       },
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "安装命令暂不可用",
-      "reconnectTitle": "重新连接"
+      "reconnectTitle": "重新连接",
+      "desktopLink": "下载桌面端"
     },
     "setup": "设置仓库和 Agent",
     "offlineSince": "离线 · {time}",
@@ -2294,6 +2295,9 @@
       },
       "issue-states": {
         "title": "任务状态"
+      },
+      "team-skills": {
+        "title": "团队技能"
       }
     },
     "appearance": {
@@ -3779,6 +3783,22 @@
         "purple": "紫色",
         "red": "红色"
       }
+    },
+    "teamSkills": {
+      "title": "团队技能",
+      "empty": "还没有团队技能",
+      "loadError": "无法读取团队技能注册表。",
+      "actError": "未能更改，请重试。",
+      "approve": "批准",
+      "withdraw": "撤回",
+      "status": {
+        "pending": "待审核",
+        "approved": "已批准",
+        "withdrawn": "已撤回"
+      },
+      "withdrawTitle": "撤回 {name}？",
+      "withdrawBody": "撤回不可撤销：选择了这个版本、尚未完成的运行会停止。",
+      "cancel": "取消"
     }
   },
   "TelegramBot": {
@@ -4186,7 +4206,8 @@
       "modelRejected": "模型请求被拒绝",
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
-      "modelNotReported": "云电脑没报告能跑这个模型"
+      "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行"
     },
     "quota": {
       "used": "{name} 额度已用完",
@@ -5474,7 +5495,17 @@
       "open": "打开右栏",
       "filterBot": "按派出者筛选",
       "allBots": "全部派出者",
-      "closeAllThreads": "关闭全部线程"
+      "closeAllThreads": "关闭全部线程",
+      "addMember": "添加成员",
+      "addMembers": "添加成员到 {group}",
+      "noMoreBots": "你的所有 Bot 都已在群里。",
+      "membersWriteError": "无法修改成员。",
+      "cancel": "取消",
+      "add": "添加",
+      "removeMember": "移除 {name}",
+      "memberRemoved": "已移除 {name}",
+      "undo": "撤销",
+      "leadRestoreError": "{name} 已恢复；主持角色可能未恢复。"
     },
     "suggestions": {
       "title": "建议",
@@ -8417,6 +8448,7 @@
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
       "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行",
       "hostedQuotaUsed": "Mikka 额度已用完",
       "hostedPaused": "Mikka 额度暂时不可用",
       "temporarilyUnavailable": "暂时不可用",

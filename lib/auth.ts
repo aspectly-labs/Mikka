@@ -123,11 +123,27 @@ export const auth = betterAuth({
       before: async user => ({ data: { ...user, image: user.image || newUserAvatar(user.name || user.email) } }),
       // Every person's first workspace is their personal one (decision 2026-11-02-1500). Loading any
       // workspace page creates it too, so a failure here only delays it.
-      after: async user => {
+      after: async (user, ctx) => {
         try {
           const { ensurePersonalWorkspace } = await import('@/lib/personal-workspace')
           await ensurePersonalWorkspace({ id: user.id, email: user.email, name: user.name }, 'zh-CN')
         } catch (error) { console.error('Personal workspace at sign-up failed', error instanceof Error ? error.name : 'UnknownError') }
+        // One completed registration, attributed to the validated first touch
+        // from the shared marketing/app cookie. Sign-ins and failed attempts
+        // never reach this hook.
+        try {
+          const { serverPostHog } = await import('@/lib/posthog-server')
+          const posthog = serverPostHog()
+          if (posthog) {
+            const { parseFirstTouch, firstTouchProperties } = await import('@/lib/first-touch')
+            const { isSmokeAccountEmail } = await import('@/lib/smoke-account')
+            posthog.capture({ distinctId: user.id, event: 'registration_completed', properties: {
+              app: 'mikka', environment: process.env.NODE_ENV,
+              ...firstTouchProperties(parseFirstTouch(ctx?.headers?.get('cookie'))),
+              ...(isSmokeAccountEmail(user.email) ? { test_account: true } : {}),
+            } })
+          }
+        } catch { /* analytics never blocks sign-up */ }
       },
     } },
     account: {
