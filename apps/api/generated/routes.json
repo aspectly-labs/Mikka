@@ -1214,6 +1214,15 @@
       "sourceHash": "e1247cd20b4580838f14142cf5a3832d928b351373f90696f746a993ca146d71"
     },
     {
+      "path": "/mikka/api/factory/tasks/[taskId]/execution",
+      "template": "/api/factory/tasks/[taskId]/execution",
+      "source": "app/api/factory/tasks/[taskId]/execution/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "253e0662bc02199a9651f2398bcd59ad09482d15d0c3a8eb778abddf10677e2a"
+    },
+    {
       "path": "/mikka/api/factory/tasks/[taskId]/flow",
       "template": "/api/factory/tasks/[taskId]/flow",
       "source": "app/api/factory/tasks/[taskId]/flow/route.ts",
