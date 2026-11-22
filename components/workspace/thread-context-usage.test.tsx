@@ -42,7 +42,10 @@ const usage = (over: Partial<ContextCharSources> = {}) => contextUsageFromCounts
 test('the status line shows the brief estimate and opens its measured and unmeasured segments', async () => {
   await act(async () => root.render(<ThreadContextUsage usage={usage()} />))
   const trigger = document.querySelector('button')!
-  assert.equal(trigger.textContent, '上下文 10K/25K')
+  // A ring, not words (Figma 1318:2 sections 01 and 14): the share at a glance, the figures on hover.
+  assert.equal(trigger.textContent, '')
+  assert.equal(trigger.querySelector('[data-slot="context-ring"]')?.getAttribute('data-share'), '40')
+  assert.equal(trigger.getAttribute('title'), '上下文，提纲已用 10K，上限 25K')
   assert.equal(trigger.getAttribute('aria-label'), '上下文，提纲已用 10K，上限 25K')
   assert.equal(trigger.getAttribute('aria-expanded'), 'false')
   await act(async () => trigger.click())

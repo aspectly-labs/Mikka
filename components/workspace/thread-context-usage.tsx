@@ -1,6 +1,7 @@
 'use client'
 
 import { useTranslations } from '@/lib/intl/i18n-client'
+import { ContextRing } from '@/components/chat/context-ring'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Progress, ProgressTrack } from '@/components/ui/progress'
@@ -26,9 +27,9 @@ export function ThreadContextUsage({ usage }: { usage: ContextUsage }) {
   const used = compact.format(usage.promptUsed), budget = compact.format(usage.promptBudget)
   return <Popover>
     <PopoverTrigger render={<Button variant="ghost" size="xs" data-slot="thread-context-usage"
-      aria-label={t('contextUsage', { used, budget })}
-      className="shrink-0 gap-1 px-1.5 text-xs tabular-nums text-muted-foreground" />}>
-      {t('context')} {used}<span aria-hidden="true">/</span>{budget}
+      aria-label={t('contextUsage', { used, budget })} title={t('contextUsage', { used, budget })}
+      className="shrink-0 px-1.5 text-muted-foreground" />}>
+      <ContextRing share={share} />
     </PopoverTrigger>
     <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-3">
       <div className="flex items-baseline justify-between gap-2">
