@@ -163,6 +163,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/thread-cost.ts', file: 'tests/thread-cost.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/thread-summary.ts', file: 'tests/thread-summary.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/subagent-runs.ts', file: 'tests/subagent-runs.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/thread-lifecycle.ts', file: 'tests/thread-lifecycle.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/turn-usage.ts', file: 'tests/turn-usage.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/run-bot-name.ts', file: 'tests/run-agent-names.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/run-outcome-judge.ts', file: 'tests/run-outcomes.db.test.ts', script: 'test:workspace-admin-db' },

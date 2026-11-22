@@ -1585,6 +1585,7 @@
     "runChainEnded": "这个任务已经停了，没有可停止的运行。",
     "threadDeliveryUnavailable": "当前线程无法按这种方式投递消息。",
     "threadStopping": "线程正在停止",
+    "threadWorking": "线程还在工作，先停下它",
     "secretNotFound": "该密钥或环境变量已不存在。",
     "secretNameReserved": "该名称为运行环境保留（例如 PATH、HOME、代理、TLS、加载器、git、E2B 或 MIKKA 相关变量），请换一个名称。",
     "secretPermissionDenied": "只有工作区管理员可以执行此操作。成员可以添加和编辑仓库级的密钥与环境变量。",
