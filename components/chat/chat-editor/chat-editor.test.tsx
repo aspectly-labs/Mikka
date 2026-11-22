@@ -136,6 +136,20 @@ test('Escape closes a menu without leaving the field or sending', async () => {
   assert.equal(latest.editor.menu, null)
 })
 
+test('Escape stops a run in a thread composer too, with or without words (decision 2026-11-22-1600)', async () => {
+  let stops = 0
+  await mount('Also check the dark theme', { running: true, thread: true, onStop: () => { stops++ } })
+  assert.equal(latest.state.stoppable, false, 'typed words keep the button Send')
+  const escape = await key({ key: 'Escape' })
+  assert.equal(escape.defaultPrevented, true)
+  assert.equal(stops, 1)
+  assert.equal(latest.value, 'Also check the dark theme', 'the draft stays')
+  await act(async () => root.render(<ViewStateProvider scope="owner:workspace"><Chat initial="" extra={{}} /></ViewStateProvider>))
+  await settle()
+  await key({ key: 'Escape' })
+  assert.equal(stops, 1, 'with nothing running Esc stops nothing')
+})
+
 test('/ lists the chat’s commands; picking one runs it and clears the field', async () => {
   let ran = 0
   await mount('', { commands: [{ id: 'new', name: '/new', description: 'New chat', run: () => { ran++ } }] })
