@@ -24,7 +24,8 @@ export async function claimLocalRun(pool: Pool, runId: string, deviceId: string,
   const client = await connectForCommitEffects(pool)
   try {
     await client.query('BEGIN')
-    await client.query('SELECT id FROM devices WHERE id=$1 FOR NO KEY UPDATE', [deviceId])
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`device-capacity:${deviceId}`])
+    await client.query('SELECT id FROM devices WHERE id=$1 FOR SHARE', [deviceId])
     await executionIdentityForRun(client, runId)
     if (beforeClaim && (await beforeClaim(client)) === false) { await client.query('ROLLBACK'); return 'unavailable' }
     const run = (await client.query('SELECT id FROM agent_runs WHERE id=$1 AND "deviceId"=$2 AND status=$3 AND "stopRequestedAt" IS NULL AND "workspaceId"=$4 AND "userId"=$5 FOR UPDATE', [runId, deviceId, 'queued', stored.workspaceId, stored.userId])).rows[0]

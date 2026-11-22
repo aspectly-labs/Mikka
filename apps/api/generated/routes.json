@@ -3584,7 +3584,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "057e15c0e9bddfac6f896080773d80ce7c6268b9df63438002de4dda2ace767f"
+      "sourceHash": "67d666afcc8bbbd76c8db00d5a3331906c125b8c11e0967cc5c73f6d9d63debc"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/attachments/[id]",

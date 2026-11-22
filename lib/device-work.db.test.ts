@@ -69,6 +69,13 @@ dbTest('one read of a device\'s runs finds its stops, messages and queued runs',
     const racing = await Promise.all([ids.queued, ids.skippedQueued].map(id =>
       claimLocalRun(pool, id, device, new Date(Date.now() + 60_000), undefined, tx => deviceSessionHeld(tx, device))))
     assert.deepEqual(racing, ['claimed', 'claimed'], 'two offers that fit both claim successfully')
+    await pool.query('UPDATE devices SET "maxConcurrentRuns"=2 WHERE id=$1', [device])
+    await pool.query("UPDATE agent_runs SET status='queued', \"leaseExpiresAt\"=NULL WHERE id=ANY($1::uuid[])", [[ids.queued, ids.skippedQueued]])
+    const competing = await Promise.all([ids.queued, ids.skippedQueued].map(id =>
+      claimLocalRun(pool, id, device, new Date(Date.now() + 60_000), undefined, tx => deviceSessionHeld(tx, device))))
+    assert.deepEqual(competing.sort(), ['claimed', 'unavailable'])
+    const statuses = await pool.query('SELECT status FROM agent_runs WHERE id=ANY($1::uuid[]) ORDER BY status', [[ids.queued, ids.skippedQueued]])
+    assert.deepEqual(statuses.rows.map(row => row.status), ['preparing', 'queued'])
     assert.deepEqual(await deviceWork(other, [ids.elsewhere], { queued: true }), { commands: [], queuedRuns: [] })
 
     // Taken back by the server (decision 2026-11-17-2215): a session close ended the lease,

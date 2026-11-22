@@ -214,6 +214,14 @@ test('a device request is fenced by its first statement, with no check up front,
   t.diagnostic(JSON.stringify({ queuedRunsRequestDbBytes: bytes }))
   assert.ok(bytes < 8000, `a queued-runs poll read ${bytes} B`)
 
+  const oldest = randomUUID(), newest = randomUUID()
+  await raw.query(`INSERT INTO agent_runs(id,"userId","agentId","deviceId",status,"createdAt")
+    VALUES($1,$3,$4,$5,'queued',now()-interval '1 minute'),($2,$3,$4,$5,'queued',now())`, [oldest, newest, f.owner, f.agent, f.device])
+  await raw.query('UPDATE devices SET "maxConcurrentRuns"=1 WHERE id=$1', [f.device])
+  assert.deepEqual(await (await get()).json(), { runIds: [] })
+  await raw.query('UPDATE devices SET "maxConcurrentRuns"=2 WHERE id=$1', [f.device])
+  assert.deepEqual(await (await get()).json(), { runIds: [oldest] })
+
   // Revoked after authentication, before the handler's first statement: that statement refuses, the route answers 401.
   const fenced = withDeviceRoute(async () => {
     await revokeDeviceCredential(raw, f.owner, f.tokenId)
