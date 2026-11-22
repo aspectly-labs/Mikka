@@ -1,5 +1,5 @@
 import { NextResponse } from '@/lib/server-runtime/server'
-import { authBaseURL } from '@/lib/auth'
+import { auth, authBaseURL } from '@/lib/auth'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
 import { getComposio } from '@/lib/composio'
 import { isComposioCallbackVerifierConfigured } from '@/lib/composio-config'
@@ -13,9 +13,11 @@ import { withRequestLog } from '@/lib/request-log'
  * What the desktop app opens in the system browser for a Composio link:
  * `?intent=` from POST /api/integrations/composio/connect/intent. The token is
  * one use, so the first claim wins the browser session; it alone binds the
- * link to the app's account — the browser needs no session of its own and the
- * whole flow lands directly on the provider. Every answer the app can hear
- * ends as a redirect to the loopback it named (RFC 8252 §7.3).
+ * link to the app's account — so the browser must be signed in as that
+ * account before anything starts: a link handed to someone else would link
+ * their provider account to the app's account. Once it is, the whole flow
+ * lands directly on the provider, and every answer the app can hear ends as a
+ * redirect to the loopback it named (RFC 8252 §7.3).
  */
 function pluginsFailed(request: Request) {
   return NextResponse.redirect(new URL(withBasePath('/?settings=integrations&composio=callback-failed'), request.url))
@@ -30,10 +32,17 @@ function loopbackResult(intent: { returnTo: string; returnState: string }, resul
 
 async function handleGET(request: Request) {
   const token = new URL(request.url).searchParams.get('intent')
-  const prior = await readComposioConnectIntent(pool, token)
-  const back = () => prior ? loopbackResult(prior, 'failed') : pluginsFailed(request)
-  // The intent names the app's account and its loopback: the claim below is
-  // the only thing that decides whose link this is.
+  const intent = await readComposioConnectIntent(pool, token)
+  const back = () => intent ? loopbackResult(intent, 'failed') : pluginsFailed(request)
+  if (!intent) return pluginsFailed(request)
+  // The browser must be this link's account before Composio starts; claim
+  // only afterwards, so a sign-in round trip can still spend the token.
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (session?.user?.id !== intent.userId) {
+    const url = new URL(request.url)
+    const next = `${url.pathname.startsWith(BASE_PATH) ? url.pathname.slice(BASE_PATH.length) : url.pathname}${url.search}`
+    return NextResponse.redirect(new URL(withBasePath(`/sign-in?next=${encodeURIComponent(next)}`), request.url))
+  }
   const claimed = await claimComposioConnectIntent(pool, token)
   if (!claimed) return back()
   const composio = getComposio()
