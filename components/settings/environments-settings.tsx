@@ -10,8 +10,7 @@ import { listProjectSetupVersions, rollbackProjectSetup, saveEnvironment, setPro
 import type { EnvironmentConfiguration, ProjectSetupHistory } from '@/lib/project-resources/contracts'
 import { isReservedEnvName, SECRET_NAME } from '@/lib/secrets/format'
 import type { ActionResult } from '@/lib/action-result'
-import { MACHINE_SIZES, isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
-import { cn } from '@/lib/utils'
+import { MACHINE_SIZES, QUOTA_GATED_SIZES, isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 import { settingsRead } from '@/lib/settings-read'
 import { settingsKeys } from '@/lib/swr/keys'
 import { readAccessFailure } from '@/lib/swr/persistent-cache'
@@ -250,9 +249,8 @@ function EnvironmentEditor({ workspaceId, environment, onClose, onSaved, onRefus
   const [approved, setApproved] = useState(environment?.configuration.setup?.approved ?? false)
   const [machineSize, setMachineSize] = useState<MachineSize | 'default'>(environment?.defaultMachineSize ?? 'default')
   const sizes = [{ value: 'default', label: t('machineSizeDefault') }, ...(Object.keys(MACHINE_SIZES) as MachineSize[])
-    .map(value => ({ value, label: t('machineSizeOption', { vcpu: MACHINE_SIZES[value].vcpu, gib: MACHINE_SIZES[value].gib }) }))]
-  const [pending, setPending] = useState(false)
-  const [failure, setFailure] = useState<string | null>(null)
+    .map(value => ({ value, label: t('machineSizeOption', { vcpu: MACHINE_SIZES[value].vcpu, gib: MACHINE_SIZES[value].gib }) + (QUOTA_GATED_SIZES.has(value) ? ` · ${t('machineSizeQuotaGated')}` : '') }))]
+  const [pending, setPending] = useState(false), [failure, setFailure] = useState<string | null>(null)
   const options = (['any', 'local', 'cloud'] as const).map(value => ({ value, label: t(`runtimes.${value}`) }))
   const harnessOptions = (['any', 'claude_code', 'codex', 'cursor'] as const).map(value => ({ value, label: tp(`harnesses.${value}`) }))
 

@@ -63,6 +63,7 @@ for the part of Mikka you are changing. Development and acceptance rules live in
 - [Shared web and desktop runtime](operations/web-runtime.md) documents build
   outputs, startup and rollback.
 - [Hosted operations](operations/README.md) directs authorized operators to the private deployment and credential runbooks.
+- [Zero-residency baseline](operations/zero-residency-baseline.md) inventories Cloudflare and Oracle compute residency with per-service ownership for epic #3076.
 - [Web deployment](operations/web-deploy.md) and [production smoke](production-smoke.md) retain links to their private operating guides.
 - [Tracing](operations/tracing.md) locates requests and database queries.
 - [Hosted credential operations](infisical-cloud.md) points to the private operating guide.

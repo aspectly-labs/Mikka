@@ -127,7 +127,9 @@ type LocalDispatchInput = { issueId: string; agentId: string; repo: string; note
   /** The API key the 优先使用的模型 entry names; the run uses it only when it may (lib/run-credential-source.ts). */
   apiKeyId?: string
   /** Exact server-selected identity; reauthorized for this owner, Agent and workspace at queue time. */
-  subscriptionBindingId?: string }
+  subscriptionBindingId?: string
+  /** Host-only: a live parent's worker delegation marker (lib/mcp/run-delegation.ts). */
+  delegation?: { parentRunId: string } }
 export async function queueRun(userId: string, input: LocalDispatchInput, botId: string | null = null, execution?: AgentExecution, requestEventId?: string, dispatch: RunDispatchOrigin = {}) {
   return queueAdmittedRun(userId, input, botId, execution, requestEventId, { source: dispatch.source ?? null, origin: dispatch.origin ?? 'web', originRef: dispatch.originRef ?? null })
 }
@@ -310,7 +312,43 @@ async function queueAdmittedRun(userId: string, input: Omit<LocalDispatchInput, 
       .catch(error => { if (error instanceof ExecutionIdentityError) throw new ActionFailureError('executionAccountUnavailable'); throw error })
   }
   return (await import('@/lib/run-admission-store')).acceptLocalRun({ id: runId, userId, botId, issueId: issue.id, agentId: agent.id, deviceId: agent.deviceId,
-    deviceRepoId: repo.id, prompt, promptTaskLength, source: dispatch.source, origin: dispatch.origin, originRef: dispatch.originRef, definition: agentDefinition!, profileSourceRunId: input.threadRunId, factoryContext: internal?.factoryContext, ...(requestEventId ? { requestEventId } : {}), ...(parsed.data.requestKey ? { dispatch: { issueId: issue.id, agentId: agent.id, deviceRepoId: repo.id, note: parsed.data.note, requestKey: parsed.data.requestKey, ...(parsed.data.subscriptionBindingId ? { subscriptionBindingId: parsed.data.subscriptionBindingId } : {}) } } : {}), ...(internal ? { continuation: true, sourceRunId: internal.sourceRunId, frozenSourceRunId: internal.frozenSourceRunId } : {}) }, internal?.client)
+    deviceRepoId: repo.id, prompt, promptTaskLength, source: dispatch.source, origin: dispatch.origin, originRef: dispatch.originRef, definition: agentDefinition!, profileSourceRunId: input.threadRunId, factoryContext: internal?.factoryContext, ...(requestEventId ? { requestEventId } : {}), ...(parsed.data.requestKey ? { dispatch: { issueId: issue.id, agentId: agent.id, deviceRepoId: repo.id, note: parsed.data.note, requestKey: parsed.data.requestKey, ...(parsed.data.subscriptionBindingId ? { subscriptionBindingId: parsed.data.subscriptionBindingId } : {}) } } : {}), ...(internal ? { continuation: true, sourceRunId: internal.sourceRunId, frozenSourceRunId: internal.frozenSourceRunId } : {}), ...(input.delegation ? { delegation: input.delegation, continuation: true } : {}) }, internal?.client)
+}
+
+/** A live run's own delegation surface (docs/factory/3089-run-delegation.md, #3089):
+ * queue one bounded child on the parent's exact Agent, computer, repository and
+ * task, with the parent's frozen model/credential/policy ceiling. The server
+ * resolves every dispatch input from the parent row; `acceptLocalRun` re-runs
+ * the full admission under the task's dispatch lock and is the only grant.
+ * Cloud-machine parents and delegated children are refused for this increment. */
+export async function queueDelegatedRun(parentRunId: string, userId: string, input: { task: string; requestKey: string }) {
+  const invalid = new ActionFailureError('runInvalid', { reason: 'delegationUnavailable' })
+  const parsed = z.object({ task: z.string().trim().min(1).max(4000), requestKey: z.string().trim().min(1).max(140) }).safeParse(input)
+  if (!parsed.success) throw invalid
+  const [parent] = await db.select({ id: agentRuns.id, issueId: agentRuns.issueId, workspaceId: agentRuns.workspaceId, agentId: agentRuns.agentId, deviceId: agentRuns.deviceId,
+    deviceRepoId: agentRuns.deviceRepoId, botId: agentRuns.botId, status: agentRuns.status, stopRequestedAt: agentRuns.stopRequestedAt,
+    definition: agentRuns.agentDefinition }).from(agentRuns)
+    .where(and(eq(agentRuns.id, parentRunId), eq(agentRuns.userId, userId))).limit(1)
+  const definition = parent?.definition
+  if (!parent?.issueId || !parent.agentId || !parent.deviceId || !parent.deviceRepoId || !definition?.model || !definition.harness ||
+      !UNFINISHED_RUN_STATUSES.includes(parent.status as never) || parent.stopRequestedAt || definition.delegation?.parentRunId) throw invalid
+  const [repo] = await db.select({ remoteUrl: deviceRepos.remoteUrl }).from(deviceRepos)
+    .where(and(eq(deviceRepos.id, parent.deviceRepoId), eq(deviceRepos.userId, userId))).limit(1)
+  const [device] = await db.select({ kind: devices.kind }).from(devices)
+    .where(and(eq(devices.id, parent.deviceId), eq(devices.ownerId, userId))).limit(1)
+  if (!repo?.remoteUrl || device?.kind !== 'local') throw invalid
+  return queueAdmittedRun(userId, {
+    issueId: parent.issueId!, agentId: parent.agentId!, repo: repo.remoteUrl, note: parsed.data.task, model: definition.model!,
+    ...(definition.subscription?.bindingId ? { subscriptionBindingId: definition.subscription.bindingId } : {}),
+    ...(definition.apiKey?.keyId ? { apiKeyId: definition.apiKey.keyId } : {}),
+    ...(definition.modelDispatch ? { modelDispatch: definition.modelDispatch } : {}),
+    ...(definition.agentProfile ? { agentProfile: definition.agentProfile } : {}),
+    ...(definition.policyCeiling ? { policyCeiling: definition.policyCeiling } : {}),
+    ...(definition.readOnly ? { readOnly: true } : {}),
+    ...(definition.pinnedDeviceId ? { pinnedDeviceId: definition.pinnedDeviceId } : {}),
+    threadRunId: parent.id, requestKey: `delegate:${parent.id}:${parsed.data.requestKey}`,
+    delegation: { parentRunId: parent.id },
+  }, parent.botId, undefined, definition.repositoryAdmission?.requestEventId, { source: 'mcp', origin: 'api', originRef: { kind: 'api' } })
 }
 
 /** A Factory run's model: the host's choice; else a rerun's source run's own; else 优先使用的模型 for the Agent's computer. */
