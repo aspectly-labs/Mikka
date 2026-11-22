@@ -131,6 +131,21 @@ test('settings device and contribution HTTP reads preserve owner, tenant and rol
     assert.deepEqual(value.threadCosts, { available: false, reason: 'thread_cost_ledger_pending', items: null })
     assert.equal(value.dateSource, 'recorded_events')
     assert.ok(!JSON.stringify(value).includes('https://github.com'))
+    const groupReply = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace.id, issueId: null })
+    await pool.query(`UPDATE agent_runs SET kind='group_chat',"createdAt"='2026-11-19T16:00:00Z' WHERE id=$1`, [groupReply])
+    const nextDayRetry = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace.id, issueId: issue })
+    await pool.query(`UPDATE agent_runs SET "retryOf"=$2,"createdAt"='2026-11-20T12:00:00Z' WHERE id=$1`, [nextDayRetry, run])
+    const ownerMetadata = JSON.stringify({ type: 'doc', attrs: { mikka: {
+      assignee: { kind: 'member', id: owner, name: 'Owner', image: null }, pullRequests: [] } } })
+    for (const [revision, status, at] of [[4, 'todo', '2026-11-19T16:00:00Z'], [5, 'done', '2026-11-19T17:00:00Z']] as const) {
+      await pool.query(`INSERT INTO issue_versions(id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id,"createdAt")
+        VALUES($1,$2,$3,$4,'Fixture',$5::jsonb,$6,'normal','user',$7,$8)`,
+      [randomUUID(), issue, owner, revision, ownerMetadata, status, owner, at])
+    }
+    assert.deepEqual((await (await readActivity()).json()).contributions.sort((a: { memberId: string }, b: { memberId: string }) => a.memberId.localeCompare(b.memberId)), [
+      { day: '2026-11-19', memberId: owner, completedTasks: 0, mergedPullRequests: 0, threads: 1 },
+      { day: '2026-11-19', memberId: member, completedTasks: 1, mergedPullRequests: 1, threads: 0 },
+    ].sort((a, b) => a.memberId.localeCompare(b.memberId)))
     assert.deepEqual((await (await readActivity('?from=2026-11-20&to=2026-11-20')).json()).contributions, [])
     assert.equal((await readActivity('?from=2026-11-31')).status, 400)
     assert.equal((await readActivity('?groupBy=invalid')).status, 400)

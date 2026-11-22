@@ -6,7 +6,7 @@ import { withTaskWorkspace } from '@/lib/task-workspace'
 import { readGovernanceLease } from '@/lib/governance/lease'
 import { GovernanceError } from '@/lib/governance/errors'
 import { usageRange } from '@/lib/governance/usage'
-import { runChainSql, RUN_CHAIN_MAX_DEPTH } from '@/lib/run-chain'
+import { isRunChainRootSql } from '@/lib/run-chain'
 import type { EnterpriseReader } from '@/lib/enterprise/principal'
 import { threadCostsPending, type WorkspaceContributionDay, type WorkspaceSettingsActivity } from './device-activity-contract'
 
@@ -26,8 +26,7 @@ export async function readWorkspaceSettingsActivity(reader: EnterpriseReader, wo
     if (scope.role !== 'admin') throw new GovernanceError('access_denied')
     const { rows: members } = await workspacePool.query<{ userId: string }>(`SELECT "userId" FROM mikka_workspace_members
       WHERE "workspaceId"=$1 AND status='active' ORDER BY "userId"`, [workspaceId])
-    const { rows } = await pool.query<WorkspaceContributionDay>(`WITH RECURSIVE
-      ${runChainSql('r."workspaceId"=$1 AND r."userId"=ANY($2::text[])', '$6')},
+    const { rows } = await pool.query<WorkspaceContributionDay>(`WITH
       visible_tasks AS (
         SELECT i.id,i."userId" FROM issues i WHERE i."workspaceId"=$1 AND i."ownershipState"='bound'
           AND ${issueMetadata('i')}->>'deletedAt' IS NULL
@@ -46,8 +45,10 @@ export async function readWorkspaceSettingsActivity(reader: EnterpriseReader, wo
           CASE WHEN actor_type='user' THEN actor_id END,"userId") AS member
         FROM versions WHERE previous_revision=revision-1
       ), completion_events AS (
-        SELECT DISTINCT "issueId",date_trunc('day',at AT TIME ZONE 'UTC') AS day,member
+        SELECT DISTINCT ON ("issueId",date_trunc('day',at AT TIME ZONE 'UTC'))
+          "issueId",date_trunc('day',at AT TIME ZONE 'UTC') AS day,member
         FROM credited WHERE status='done' AND previous_status<>'done' AND at>=$3 AND at<$4
+        ORDER BY "issueId",date_trunc('day',at AT TIME ZONE 'UTC'),at,revision
       ), pull_events AS (
         SELECT DISTINCT ON (rtrim(pull->>'url','/')) rtrim(pull->>'url','/') AS url,c.at,c.member
         FROM credited c CROSS JOIN LATERAL jsonb_array_elements(c.pulls) pull
@@ -61,13 +62,14 @@ export async function readWorkspaceSettingsActivity(reader: EnterpriseReader, wo
         SELECT to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD'),member,0,1,0 FROM pull_events WHERE at>=$3 AND at<$4
         UNION ALL
         SELECT to_char(r."createdAt" AT TIME ZONE 'UTC','YYYY-MM-DD'),r."userId",0,0,1
-        FROM assigned a JOIN agent_runs r ON r.id=a.id
-        WHERE a.id=a.root AND NOT a."depthExceeded" AND r."createdAt">=$3 AND r."createdAt"<$4
+        FROM agent_runs r
+        WHERE r."workspaceId"=$1 AND r."userId"=ANY($2::text[])
+          AND r.kind<>'group_chat' AND r."createdAt">=$3 AND r."createdAt"<$4 AND ${isRunChainRootSql('r')}
           AND (r."issueId" IS NULL OR r."issueId" IN (SELECT id FROM visible_tasks))
       )
       SELECT day,member AS "memberId",sum(tasks)::int AS "completedTasks",sum(pulls)::int AS "mergedPullRequests",sum(threads)::int AS threads
       FROM events WHERE member=ANY($2::text[]) GROUP BY day,member ORDER BY day,member`,
-    [workspaceId, members.map(member => member.userId), from, to, reader.id, RUN_CHAIN_MAX_DEPTH])
+    [workspaceId, members.map(member => member.userId), from, to, reader.id])
     return { workspaceId, from: from.toISOString(), toExclusive: to.toISOString(), timeZone: 'UTC', groupBy: 'member',
       dateSource: 'recorded_events', contributions: rows, threadCosts: threadCostsPending }
   })
