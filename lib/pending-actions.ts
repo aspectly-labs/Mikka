@@ -48,7 +48,7 @@ export async function decidePendingAction(userId: string, id: string, approve: b
   let error: string | null = null
   let outcome: Record<string, string> = {}
   // An approved card still requires current workspace app admission.
-  const blocked = approve ? await approvalPolicyBlock(row) : null
+  const blocked = approve ? await approvalPolicyBlock(userId, row) : null
   if (blocked) {
     status = 'failed'
     error = blocked
@@ -78,7 +78,7 @@ export async function decidePendingAction(userId: string, id: string, approve: b
  * The 团队权限 › 允许使用的应用 admission still applies to an approved
  * account or store-app call. Historical action Allow/Ask/Deny does not.
  */
-async function approvalPolicyBlock(row: { action: string; botId: string | null; input: unknown }): Promise<string | null> {
+async function approvalPolicyBlock(userId: string, row: { action: string; botId: string | null; input: unknown }): Promise<string | null> {
   let toolkit: string
   if (isApprovalAction(row.action)) {
     toolkit = COMPOSIO_ACTIONS[row.action].toolkit
