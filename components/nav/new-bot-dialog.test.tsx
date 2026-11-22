@@ -131,6 +131,29 @@ for (const scenario of ['shared default', 'explicit private', 'private disabled'
   else assert.equal(Object.hasOwn(created[0], 'visibility'), false)
 })
 
+test('reopening New Bot waits for fresh access policy in the same settings cache', async t => {
+  shareable = true
+  let next = Promise.resolve(Response.json({ workspaceId: 'shown-team', workCreation: { effectiveVisibility: 'private', privateAllowed: true } }))
+  t.mock.method(globalThis, 'fetch', () => next)
+  const show = (open: boolean) => render(dialog(open, undefined, 'shown-team'))
+  await show(true)
+  await settle()
+  assert.equal(props!.access?.value, 'private')
+  await show(false)
+  let finish!: (value: Response) => void
+  next = new Promise(resolve => { finish = resolve })
+  await show(true)
+  await act(async () => props!.onName('Builder'))
+  assert.equal(props!.access?.value, null)
+  await act(async () => props!.onSubmit())
+  assert.equal(created.length, 0)
+  await act(async () => finish(Response.json({ workspaceId: 'shown-team', workCreation: { effectiveVisibility: 'shared', privateAllowed: false } })))
+  await settle()
+  assert.equal(props!.access?.value, 'shared')
+  await act(async () => props!.onSubmit())
+  assert.equal(Object.hasOwn(created[0], 'visibility'), false)
+})
+
 test('without a pick, only a model the Coordinator chose is pinned; an unchosen default is left to the resolver', async () => {
   await render(dialog(true))
   await settle()

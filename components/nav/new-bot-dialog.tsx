@@ -16,7 +16,8 @@ import { botModelMenuKey, modelGroupHeading, modelGroupTag, modelPriceTag } from
 import type { BotModelMenu } from '@/lib/bot-model-menu-view'
 import { modelDisplayName } from '@/lib/model-display-name'
 import { useActionError } from '@/lib/use-action-error'
-import { fetchSettingsData, settingsReadOptions } from '@/lib/settings-data'
+import { fetchSettingsData } from '@/lib/settings-data'
+import { useLiveKey } from '@/hooks/use-live-key'
 import { DEFAULT_BOT_COLOR, DEFAULT_BOT_SHAPE, type BotColor, type BotShape } from './bot-avatar'
 import { NO_EFFORT, NO_REPOSITORY, type NewBotChoice, type NewBotDetail } from '@/components/slots/new-bot-contract'
 import { NewBot } from '@ui-slot/new-bot'
@@ -60,8 +61,14 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     return result
   }, { shouldRetryOnError: false, revalidateOnFocus: false })
   const { data: devices = [] } = useSWR(open ? 'devices' : null, listDevices, { shouldRetryOnError: false, revalidateOnFocus: false })
-  const policy = useSWR<SettingsView>(open && environments.data?.shareable ? ['new-bot-work-creation', workspaceId] : null,
-    () => fetchSettingsData(`/api/settings/personal${workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ''}`), settingsReadOptions)
+  const policyKey = open && environments.data?.shareable
+    ? `/api/settings/personal${workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ''}`
+    : null
+  const policy = useSWR<SettingsView>(policyKey, fetchSettingsData, {
+    dedupingInterval: 0, revalidateIfStale: true, revalidateOnFocus: false, shouldRetryOnError: false,
+  })
+  const policyWorkspace = policy.data?.workspaceId ?? workspaceId
+  useLiveKey('workspace_settings', policyKey ? policyWorkspace : null, policyKey ? [policyKey] : [], policyWorkspace)
 
   const modelChoices: NewBotChoice[] = (menu.data?.groups ?? []).flatMap(group => {
     const source = modelGroupHeading(tModel, group)
@@ -114,7 +121,8 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     choices: effortChoices, value: effort, label: effortChoices.find(choice => choice.value === effort)?.label ?? t('effortDefault'),
     onChange: setEffort, disabled: saving,
   }
-  const workCreation = policy.data?.workCreation
+  const workCreation = policy.isValidating || policy.error ? undefined : policy.data?.workCreation
+  const awaitingPolicy = !environments.data && !environments.error || !!policyKey && !workCreation && !policy.error
   const explicitAccess = access && access.workspaceId === workspaceId && (access.value === 'shared' || workCreation?.privateAllowed) ? access.value : undefined
   const accessValue = explicitAccess ?? workCreation?.effectiveVisibility ?? null
   const accessChoices: NewBotChoice[] = [
@@ -134,7 +142,7 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
 
   async function submit() {
     const trimmed = name.trim()
-    if (!trimmed || saving) return
+    if (!trimmed || saving || awaitingPolicy) return
     setSaving(true)
     try {
       const bot = await createBot({ name: trimmed, color, shape, ...(repository === undefined ? {} : { repository: repository === NO_REPOSITORY ? null : repository }),
@@ -167,5 +175,5 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     onColor={setColor} onShape={setShape} model={modelDetail} repository={repositoryDetail}
     environment={environmentDetail} machine={machineDetail} effort={effortDetail}
     // A personal workspace has no one to share with: no Access row there.
-    access={environments.data?.shareable ? accessDetail : undefined} saving={saving} onSubmit={() => { void submit() }} /> : null
+    access={environments.data?.shareable ? accessDetail : undefined} saving={saving || awaitingPolicy} onSubmit={() => { void submit() }} /> : null
 }
