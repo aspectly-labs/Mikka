@@ -2,7 +2,7 @@
 
 import { AppFrame, WindowBar } from '@/components/app-shell'
 import { IconRail } from '@/components/nav/icon-rail'
-import { SearchPill } from '@/components/nav/global-search'
+import { SearchPill } from '@/components/nav/search-pill'
 import { BrowserToggle } from '@/components/browser/browser-toggle'
 import type { SettingsFrameProps } from '@/components/slots/settings-frame-contract'
 

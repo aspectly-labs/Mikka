@@ -5,7 +5,7 @@ import { ThreadReadEnd } from '@/components/workspace/thread-read-end'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import type { ThreadDeliveryMode } from '@/lib/thread-delivery'
 import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { unstable_serialize, useSWRConfig } from 'swr'
 import { useMessages, useTranslations } from '@/lib/intl/i18n-client'
 import { toast } from 'sonner'
@@ -79,8 +79,6 @@ import { ThreadArtifactChips } from './artifact-review'
 import { ArtifactIcon } from '@/components/icons/artifact-icon'
 import type { ThreadViewAction } from '@/components/slots/thread-header-contract'
 import { AcceptanceStateBadge, useAcceptanceTasks } from './factory-acceptance'
-import { FactoryAcceptancePane } from './factory-acceptance-pane'
-import { ThreadChangesPane } from './thread-changes'
 import { ThreadArtifactsPane, ThreadArtifactsReader, type ThreadArtifactsRead } from './thread-artifacts'
 
 import { ThreadFeedback } from './self-improvement'
@@ -90,6 +88,12 @@ import { closeOnEscape, useFocusReturn } from '@/hooks/use-focus-return'
 import { heldRevision } from '@/lib/live/revisions'
 import { useLiveKey, useLiveKeys } from '@/hooks/use-live-key'
 import { readAccessFailure } from '@/lib/swr/persistent-cache'
+
+// The diff viewer (@pierre/diffs) and the acceptance pane load when their tab opens, not with the thread.
+const LazyAcceptancePane = lazy(() => import('./factory-acceptance-pane').then(module => ({ default: module.FactoryAcceptancePane })))
+const LazyChangesPane = lazy(() => import('./thread-changes').then(module => ({ default: module.ThreadChangesPane })))
+const FactoryAcceptancePane = (props: ComponentProps<typeof LazyAcceptancePane>) => <Suspense fallback={null}><LazyAcceptancePane {...props} /></Suspense>
+const ThreadChangesPane = (props: ComponentProps<typeof LazyChangesPane>) => <Suspense fallback={null}><LazyChangesPane {...props} /></Suspense>
 
 /**
  * 查看完整指令: what the Agent was sent around the task (Factory guidance, repository

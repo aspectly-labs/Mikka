@@ -2,16 +2,14 @@
 
 import { useContext, useMemo, useState } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import { Bot, FileDiff, FolderClosed, ListTodo, Plus, RotateCw, Search, SquarePen, Users } from '@/components/icons'
+import { Bot, FileDiff, FolderClosed, ListTodo, Plus, RotateCw, SquarePen, Users } from '@/components/icons'
 import type { listIssues } from '@/app/actions/issues'
 import type { listProjects } from '@/app/actions/projects'
 import type { Thread } from '@/app/actions/task-runs'
 import { threadSearchHits } from '@/lib/thread-search'
 import { threadName } from './thread-list'
 import type { BotView } from '@/app/actions/bots'
-import { Button } from '@/components/ui/button'
 import type { StatusTone } from '@/lib/status-appearance'
-import { ShortcutKeys } from '@/components/shortcut-keys'
 import type { SavedAgentSession } from '@/lib/agent-history'
 import { matchesQuery, mergeById, type SiteSearchItem } from '@/lib/site-search'
 import { useSiteSearch, type ListedSource } from '@/hooks/use-site-search'
@@ -32,16 +30,7 @@ type HistoryHit = Extract<SiteSearchItem, { type: 'history' }>
 const TASK_STATE_TONE = { waiting: 'warning', blocked: 'destructive', failed: 'destructive', running: 'info', queued: 'neutral', todo: 'neutral', done: 'success', canceled: 'neutral', duplicate: 'neutral' } as const satisfies Record<TaskState, StatusTone>
 
 
-/** The search pill centered in the window bar (Comma's shell); it opens the results below it. */
-export function SearchPill({ onSearch }: { onSearch: () => void }) {
-  const t = useTranslations('Shell')
-  return <Button variant="outline" size="sm" aria-label={t('searchLabel')} aria-keyshortcuts="Control+k Meta+k" onClick={onSearch} className="h-7 w-full min-w-0 justify-center gap-2 rounded-full px-3 text-xs font-normal text-muted-foreground hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
-    <Search data-icon="inline-start" />
-    <span className="truncate">{t('searchPlaceholder')}</span>
-    {/* Keycaps a step off the pill, so Ctrl and K read as keys in light mode too (chat-12, work-15). */}
-    <ShortcutKeys keys={['mod', 'K']} className="*:data-[slot=kbd]:bg-muted" />
-  </Button>
-}
+export { SearchPill } from './search-pill'
 
 type GlobalSearchProps = {
   open: boolean

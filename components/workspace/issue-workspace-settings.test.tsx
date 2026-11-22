@@ -162,6 +162,7 @@ let browserFits = true
 mock.module('@/components/browser/browser-toggle', { namedExports: { useBrowserFits: () => browserFits, BrowserToggle: ({ onToggle }: { onToggle: () => void }) => <Button onClick={onToggle}>browser</Button> } })
 mock.module('@/components/ui/sheet', { namedExports: { Sheet: ({ open, children }: { open?: boolean; children?: ReactNode }) => open ? <aside data-panel-sheet="">{children}</aside> : null, SheetContent: plain, SheetHeader: plain, SheetTitle: plain, SheetDescription: plain } })
 mock.module('@/components/nav/global-search', { namedExports: { GlobalSearch: ({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) => open ? <div data-search-open=""><Button onClick={() => onOpenChange(false)}>dismiss search</Button></div> : null, SearchPill: ({ onSearch }: { onSearch: () => void }) => <Button onClick={onSearch}>search</Button> } })
+mock.module('@/components/nav/search-pill', { namedExports: { SearchPill: ({ onSearch }: { onSearch: () => void }) => <Button onClick={onSearch}>search</Button> } })
 mock.module('@/components/coordinator/new-task-dialog', { namedExports: { NewTaskDialog: ({ open, onCreated }: { open: boolean; onCreated: (id: string) => void }) => {
   acknowledgeNewTask = onCreated
   return open ? <div data-new-task-open="" /> : null

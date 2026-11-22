@@ -3,7 +3,7 @@ import { useTranslations } from '@/lib/intl/i18n-client'
 
 import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, SquareUserRound } from '@/components/icons'
-import posthog from 'posthog-js'
+import { withPostHog } from '@/lib/analytics/posthog'
 import { saveTeam } from '@/app/actions/teams'
 import { SettingsContent, SettingsGroup, SettingsRow } from '@/components/ui/settings-layout'
 import { Input } from '@/components/ui/input'
@@ -44,7 +44,7 @@ export function TeamForm({ workspaceId, team, existingIdentifiers = [], editable
     try {
       const result = await saveTeam({ id: team?.id, workspaceId, name, identifier, description })
       if (!result.ok) { setError(result.error); return }
-      posthog.capture(team ? 'mikka_team_updated' : 'mikka_team_created')
+      withPostHog(posthog => posthog.capture(team ? 'mikka_team_updated' : 'mikka_team_created'))
       onSaved(result.data.id)
     } catch { setError(i18nText("FeatureCopy.c_85f5c4d3")) }
     finally { busy.current = false; setPending(false) }

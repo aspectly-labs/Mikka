@@ -2,13 +2,13 @@
 
 import useSWR from 'swr'
 import { useEffect, useRef, useSyncExternalStore } from 'react'
-import posthog from 'posthog-js'
+import { onPostHogFlags, postHogFlag } from '@/lib/analytics/posthog'
 import { withBasePath } from '@/lib/base-path'
 import { personalApprovalWorkspace } from '@/lib/live/approval-cache'
 import type { WorkspaceSwitcher } from '@/lib/workspace-switcher'
 
-const subscribe = (notify: () => void) => posthog.onFeatureFlags(() => notify())
-const flagHint = () => posthog.getFeatureFlag('mikka-personal-writes-off', { send_event: false })
+const subscribe = onPostHogFlags
+const flagHint = () => postHogFlag('mikka-personal-writes-off')
 const serverHint = () => undefined
 
 /** The browser's flag is only a hint to reread the server capability. Server

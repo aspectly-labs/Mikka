@@ -23,7 +23,8 @@ import type { TaskBlock } from '@/lib/task-blocked'
 import { TaskPresentationsContext } from '@/hooks/use-task-collection'
 import { useListExpiry } from '@/hooks/use-list-expiry'
 import { getLinearBoardSync } from '@/app/actions/linear-sync'
-import { CoordinatorChat } from '@/components/coordinator/coordinator-chat'
+import dynamic from '@/lib/client-runtime/dynamic'
+import { loadCoordinator } from './page-loaders'
 import { NewTaskDialog } from '@/components/coordinator/new-task-dialog'
 import { ConversationPill } from '@/components/nav/conversation-pill'
 import { CoordinatorAvatar } from '@/components/nav/bot-avatar'
@@ -38,6 +39,9 @@ import { BOARD_SETTINGS_KEY as SETTINGS_KEY, BOARD_VIEW_EVENT as VIEW_EVENT } fr
 import type { BoardMenuItem } from '@/components/slots/board-contract'
 import { ISSUE_PRIORITIES } from './issue-properties'
 import { ResizablePane } from '@/components/ui/resizable-pane'
+
+// The Coordinator's chat (eve, its reply renderer) loads with the board's chat pane, not with the board.
+const CoordinatorChat = dynamic(loadCoordinator)
 
 type Issue = Awaited<ReturnType<typeof listIssues>>[number]
 type FilterField = 'status' | 'priority' | 'assignee' | 'creator' | 'labels' | 'project' | 'agentState'

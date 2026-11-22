@@ -2,17 +2,17 @@
 
 import { useCallback, useSyncExternalStore } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import posthog from 'posthog-js'
+import { onPostHogFlags, postHogFlag } from '@/lib/analytics/posthog'
 import { computerMock } from '@/lib/computer/client'
 import { computerAcceptancePreview, computerProductionEnabled, featureAvailability, gatedFeatureEnabled, gatedFeatures, killSwitches, productionFlagDefault, upcomingFeatures, type GatedFeature, type UpcomingFeature } from '@/lib/feature-flags'
 
-const subscribe = (notify: () => void) => posthog.onFeatureFlags(() => notify())
+const subscribe = onPostHogFlags
 const serverSnapshot = () => undefined
 
 export function useFeatureAvailability(feature: UpcomingFeature) {
   const t = useTranslations()
   const key = upcomingFeatures[feature].key
-  const snapshot = useCallback(() => posthog.getFeatureFlag(key, { send_event: false }), [key])
+  const snapshot = useCallback(() => postHogFlag(key), [key])
   const value = useSyncExternalStore(subscribe, snapshot, serverSnapshot)
   const availability = featureAvailability(feature, value)
   return { ...availability, reason: t(availability.reason as never) }
@@ -20,7 +20,7 @@ export function useFeatureAvailability(feature: UpcomingFeature) {
 
 export function useGatedFeature(feature: GatedFeature) {
   const key = gatedFeatures[feature]
-  const snapshot = useCallback(() => posthog.getFeatureFlag(key, { send_event: false }), [key])
+  const snapshot = useCallback(() => postHogFlag(key), [key])
   const value = useSyncExternalStore(subscribe, snapshot, serverSnapshot)
   return !process.env.NEXT_PUBLIC_POSTHOG_KEY ? productionFlagDefault(key) : gatedFeatureEnabled(value)
 }
@@ -32,6 +32,6 @@ export function useCloudComputer() {
 
 /** A bot's 电脑 tab: always there unless the deployment's kill switch says exactly true. */
 export function useComputerTab() {
-  const snapshot = useCallback(() => posthog.getFeatureFlag(killSwitches.computerTab, { send_event: false }), [])
+  const snapshot = useCallback(() => postHogFlag(killSwitches.computerTab), [])
   return useSyncExternalStore(subscribe, snapshot, serverSnapshot) !== true
 }

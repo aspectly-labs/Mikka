@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from '@/lib/client-runtime/navigation'
 import useSWR, { useSWRConfig } from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import posthog from 'posthog-js'
+import { withPostHog } from '@/lib/analytics/posthog'
 import { changeTeamMember, deleteTeam, getTeamDeletionImpact, loadTeamDirectory, removeTeamGrouping, saveTeam } from '@/app/actions/teams'
 import { fetchTeamDirectory, fetchTeamMembers, isSettingsAccessError, settingsReadOptions, teamDirectoryKey, teamMembersKey } from '@/lib/settings-data'
 import { pushSettingsHistory } from '@/lib/settings-navigation'
@@ -190,7 +190,7 @@ export function useTeamForm({ workspaceId, team, existingIdentifiers = [], edita
     try {
       const result = await saveTeam({ id: team?.id, workspaceId, name, identifier, description })
       if (!result.ok) { setError(result.error); return }
-      posthog.capture(team ? 'mikka_team_updated' : 'mikka_team_created')
+      withPostHog(posthog => posthog.capture(team ? 'mikka_team_updated' : 'mikka_team_created'))
       onSaved(result.data.id)
     } catch { setError(t('FeatureCopy.c_85f5c4d3')) }
     finally { busy.current = false; setPending(false) }

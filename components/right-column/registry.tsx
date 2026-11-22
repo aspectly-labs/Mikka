@@ -4,9 +4,12 @@ import { useCallback, useMemo, type ReactNode } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import type { ThreadPanelGroup, ThreadPanelTab, ThreadPanelTabId } from '@/components/slots/thread-contract'
 import { ChangesTab } from './changes-tab'
-import { FilesTab } from './files-tab'
+import dynamic from '@/lib/client-runtime/dynamic'
 import { SetupTab } from './setup-tab'
 import { RightColumnNavigation, type RightColumnScope } from './scope'
+
+// The file tree (@pierre/trees) loads when the Files tab opens.
+const FilesTab = dynamic(() => import('./files-tab').then(module => module.FilesTab))
 
 export { RightColumnNavigation, useRightColumnNavigation, type RightColumnScope } from './scope'
 

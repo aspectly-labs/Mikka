@@ -3,9 +3,12 @@
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { Skeleton } from '@/components/ui/skeleton'
 import { InlineLoadError } from '@/components/load-error'
-import { ThreadChangesPane } from '@/components/workspace/thread-changes'
+import dynamic from '@/lib/client-runtime/dynamic'
 import { useThreadChanges } from '@/hooks/use-thread-run-reads'
 import type { RightColumnScope } from './scope'
+
+// The diff viewer (@pierre/diffs) loads with this tab, not with the thread.
+const ThreadChangesPane = dynamic(() => import('@/components/workspace/thread-changes').then(module => module.ThreadChangesPane))
 
 /** Changes (Figma 1318:7): the thread's saved diff, the same read-only pane its ⋯ 改动 view draws (getThreadChanges). */
 export function ChangesTab({ scope }: { scope: Extract<RightColumnScope, { kind: 'thread' }> }) {
