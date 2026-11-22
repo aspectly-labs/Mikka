@@ -31,7 +31,8 @@ import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { cn } from '@/lib/utils'
 import { mentionsIn } from '@/lib/group-mentions'
-import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupMessagePage } from '@/lib/group-messages'
+import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
+import { AgentExchangeMarker } from './agent-exchange'
 import { toast } from 'sonner'
 import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
 import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
@@ -106,6 +107,16 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const pagesKey = infiniteKey(pageKey(group.id))
   useLiveKey('group_chat', group.id, [pagesKey, unstable_serialize(groupMembersKey(group.id))], group.workspaceId, { minIntervalMs: GROUP_MERGE_MS, revisions: { [pagesKey]: pages?.[0]?.revision } })
   const messages = useMemo(() => pages ? chronological(pages) : [], [pages])
+  const exchanges = useMemo(() => {
+    const byAnchor = new Map<string, GroupExchange[]>()
+    for (const page of pages ?? []) for (const item of page.timeline ?? []) {
+      if (item.type !== 'agent_exchange') continue
+      const list = byAnchor.get(item.anchorPosition) ?? []
+      if (!list.some(link => link.linkId === item.linkId)) list.push(item)
+      byAnchor.set(item.anchorPosition, list)
+    }
+    return byAnchor
+  }, [pages])
   const receivedIds = useMemo(() => new Set(messages.map(message => message.id)), [messages])
   useEffect(() => {
     if (delivery.rows.some(row => row.storedId && receivedIds.has(row.storedId))) delivery.setRows(current => current.filter(row => !row.storedId || !receivedIds.has(row.storedId)))
@@ -209,11 +220,11 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // Whom the person's messages go to, for the chat-message slot: the group.
   const speaker = { id: group.id, name: group.title || t('untitled') }
 
-  const rows: ThreadGroupRow[] = authorRuns(messages).map(run => {
+  const rows: ThreadGroupRow[] = authorRuns(messages).flatMap((run): ThreadGroupRow[] => {
     const mine = run.authorType === 'user' && run.authorId === userId
     const name = authorName(run.authorType, run.authorId)
     const bot = run.authorType === 'bot' ? member('bot', run.authorId) : undefined
-    return {
+    return [{
       kind: 'author', id: run.key, mine, name,
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
       messages: run.messages.map((message): ThreadTranscriptMessage => mine
@@ -223,7 +234,11 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
         : { id: message.id, message: { from: 'bot', speaker, presentation: 'group-received',
           body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} />,
           after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }),
-    }
+    }, ...run.messages.flatMap(message => exchanges.get(message.position) ?? []).map((exchange): ThreadGroupRow => ({
+      kind: 'notice', id: `exchange:${exchange.linkId}`,
+      label: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }),
+      content: <AgentExchangeMarker exchange={exchange} />,
+    }))]
   })
   for (const item of unsent) rows.push({
     kind: 'pending', id: item.id, phase: item.phase,
