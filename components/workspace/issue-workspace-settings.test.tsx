@@ -287,6 +287,7 @@ test('a valid browser request from a board clears only competing columns and ope
   browser.history.replaceState({}, '', `/?workspace=workspace-one&account=active&section=all-issues&thread=${selectedRun}&task=${selectedRun}&threads=all`)
   await act(async () => root.render(<OfficialIssueWorkspace user={user} initialSection="all-issues" />))
   await act(async () => assert.equal(openBrowserAddress('/preview'), true))
+  await settleLazy()
   assert.equal(container.querySelectorAll('[data-browser-pane]').length, 1)
   const params = new URL(browser.location.href).searchParams
   assert.equal(params.get('section'), 'all-issues')
@@ -357,6 +358,7 @@ test('a valid browser request reveals the conversation browser tab without chang
   await act(async () => root.render(<OfficialIssueWorkspace user={user} />))
   assert.equal(container.querySelectorAll('[data-browser-pane]').length, 0)
   await act(async () => assert.equal(openBrowserAddress('/preview'), true))
+  await settleLazy()
   assert.equal(container.querySelectorAll('[data-browser-pane]').length, 1)
   const params = new URL(browser.location.href).searchParams
   assert.equal(params.get('bot'), bot.id)
@@ -393,6 +395,12 @@ const bar = () => container.querySelector('[data-slot="window-bar"]')
 const rail = () => container.querySelector('[role="navigation"][aria-label="Main navigation"]')
 const button = (text: string) => [...container.querySelectorAll('button')].find(node => node.textContent === text)!
 const pin = async (text: string) => { await act(async () => notes!.add({ kind: 'element', url: 'https://fixture.example/page', label: 'Fixture element', selector: '#fixture', note: text })) }
+// Pages, overlays and dialogs are lazy chunks (lib/client-runtime/dynamic.tsx, lazy-dialog.tsx): release the held
+// chunks and let their imports land.
+async function settleLazy(ready: () => unknown = () => !container.querySelector('[data-loading-placeholder]')) {
+  await act(async () => { releaseChunk(); await chunkReady })
+  for (let i = 0; i < 200 && !ready(); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+}
 async function go(href: string) {
   browser.history.pushState({}, '', href)
   await render()
@@ -570,6 +578,10 @@ test('a new Team task ACK invalidates the scoped first page before opening its d
   scopedTeamFixture = true
   browser.history.replaceState({}, '', `/?workspace=${workspaceId}&team=${teamIssuesId}&section=team-issues`)
   await render({ initialSection: 'team-issues' })
+  await settleLazy()
+  // The creation dialog's code loads the first time it opens (lazyDialog).
+  await act(async () => { browser.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'c', bubbles: true })) })
+  await settleLazy(() => acknowledgeNewTask)
   const acknowledged = acknowledgeNewTask
   assert.ok(acknowledged, 'the authorized Team creation dialog must be wired')
   assert.equal(scopedTeamPageMutations, 0)
@@ -900,9 +912,11 @@ test('Review keyboard targets the actual active work task after its URL was cons
   assert.equal(new URLSearchParams(browser.location.search).has('task'), false)
   await act(async () => reportWorkTask!(taskOne))
   await act(async () => reviewShortcut())
+  await settleLazy()
   assert.equal(reviewedTask(), taskOne)
   await act(async () => { closeReview(); reportWorkTask!(taskTwo) })
   await act(async () => reviewShortcut())
+  await settleLazy()
   assert.equal(reviewedTask(), taskTwo)
   await act(async () => { closeReview(); reportWorkTask!(null) })
   await act(async () => reviewShortcut())
