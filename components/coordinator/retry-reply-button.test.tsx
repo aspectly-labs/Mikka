@@ -39,6 +39,7 @@ const modelPicks: (string | null)[] = []
 // A chat whose welcome failed: its read, the model menu's 可用, the refusal code and whether the tab is visible.
 let chatData: Record<string, unknown> | null = null
 let menu: unknown = undefined
+let menuLoading = false
 let visibility: 'visible' | 'hidden' = 'visible'
 let versionReads = 0
 let pageRefreshRequired = false
@@ -113,7 +114,7 @@ mock.module(new URL('../../lib/app-build.ts', import.meta.url).href, { namedExpo
 mock.module('@/lib/client-runtime/navigation', { namedExports: { usePathname: () => pathname, useSearchParams: () => new URLSearchParams(search) } })
 mock.module(new URL('../../i18n/navigation.ts', import.meta.url).href, { namedExports: { Link: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>, useRouter: () => ({ push: nothing }), usePathname: () => pathname } })
 mock.module('sonner', { namedExports: { toast: Object.assign((...args: unknown[]) => { notices.push(args) }, { error: nothing }) } })
-mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-turn-versions' ? { data: undefined, mutate: async () => {} } : Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
+mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-turn-versions' ? { data: undefined, mutate: async () => {} } : Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, isLoading: menuLoading, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
 mock.module(new URL('./use-coordinator-submit.ts', import.meta.url).href, { namedExports: { useCoordinatorSubmit: () => ({ submit: async (text: string, context?: { retryOf?: number }) => { submissions++; submitted.push({ text, context }); return { kind: 'accepted' } }, failureMessage: () => 'fixture failed' }) } })
 mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: streamReplies, error: streamError, reconnect: nothing, status: streamStatus, view: streamView, session: { sessionId: 'wrun_fixture' } }) } })
 mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null } })
@@ -159,7 +160,7 @@ before(async () => {
   ;({ VersionGuard } = await import('../version-guard'))
   Object.defineProperty(browser.document, 'visibilityState', { configurable: true, get: () => visibility })
 })
-beforeEach(() => { mounts.clear(); resetConversation(); streamStatus = 'idle'; streamError = false; streamView = emptySessionView(); streamReplies = []; historyPage = {}; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
+beforeEach(() => { menuLoading = false; mounts.clear(); resetConversation(); streamStatus = 'idle'; streamError = false; streamView = emptySessionView(); streamReplies = []; historyPage = {}; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
 afterEach(async () => { await act(async () => root.unmount()); container.remove() })
 after(() => browser.happyDOM.close())
 const render = async (onQueued = async () => {}) => { await act(async () => root.render(<RetryReplyButton botId={null} onQueued={onQueued} />)) }
@@ -924,4 +925,18 @@ test('each Bot chat comes back where the person left it', async () => {
   assert.equal(view().scrollTop, 0, 'another Bot\'s chat has its own place')
   await show('bot-a')
   assert.equal(view().scrollTop, 600)
+})
+
+test('the footer\'s notices and the row under the composer keep their place while the reads land', async () => {
+  chatEnabled = true
+  menuLoading = true
+  chatItems = [{ id: 'fixture-unanswered', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  chatEnabled = false
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  assert.doesNotMatch(container.textContent ?? '', /Coordinator.unavailable/, 'no notice before the model menu is read')
+  assert.ok(screen?.under, 'the row under the composer is there before the chat\'s context')
+  menuLoading = false
+  await show()
+  assert.match(container.textContent ?? '', /Coordinator.unavailable/)
 })
