@@ -51,7 +51,7 @@ import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { MikkaMark } from '@/components/brand/mikka-mark'
 import { navigate, openTask } from './workspace-navigation'
 import { ThreadHeader } from './thread-header'
-import { ThreadCostButton, threadCostKey } from './thread-cost-button'
+import { threadCostKey } from './thread-cost-button'
 import { ThreadStatus } from './thread-status-icon'
 import { PersonReferences, ThreadReferencePicker } from './thread-references'
 import { ThreadOutlineIndex } from './thread-outline-index'
@@ -673,7 +673,7 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
       place={detail ? <ThreadRunPlace issueId={issueId} runId={runId} status={view?.status ?? data?.thread.status ?? ''} harness={detail.harness} botName={detail.agentName} /> : null}
       acceptanceBadge={acceptance ? <AcceptanceStateBadge task={acceptance} /> : null}
       identity={data?.thread.ownedByCurrentUser ? <ThreadExecutionIdentity runId={liveRunId} /> : null}
-      cost={data?.thread.ownedByCurrentUser ? <ThreadCostButton runId={runId} /> : null} />}
+      showCost={data?.thread.ownedByCurrentUser ?? false} />}
     {tabbed && data && !readRejected && <ThreadArtifactsReader issueId={issueId} runId={runId} runIds={[runId, ...(data.thread.attempts ?? []).map(attempt => attempt.runId)]}
       conversation={isThreadRun(data.thread)} status={view?.status ?? data.thread.status} onRead={setArtifacts} />}
     {viewingChanges ? (changes.state === 'ready'

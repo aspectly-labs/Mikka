@@ -59,25 +59,25 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
   // settled it is no floor at all and reads as settling.
   const floor = Math.floor(credits.microUsd / 10_000) * 10_000
   const settling = pending && floor === 0
-  const amount = pending ? money(floor) : money(credits.microUsd)
-  const rows: ThreadCostRow[] = [{
-    label: t('credits'),
-    // The panel shows what has settled, even under a cent; only nothing settled at all reads as settling.
-    value: pending && credits.microUsd === 0 ? t('settling') : money(credits.microUsd),
-    note: credits.unpricedReceipts > 0 ? t('unsettled', { count: credits.unpricedReceipts }) : undefined,
-  }]
-  const usedOwn = included.microUsd > 0 || included.unpricedReceipts > 0
-  if (usedOwn) rows.push({
+  const amount = money(pending ? floor : credits.microUsd)
+  // The panel shows what has settled, even under a cent; only nothing settled at all reads as settling.
+  const settled = pending && credits.microUsd === 0 ? t('settling') : money(credits.microUsd)
+  const rows: ThreadCostRow[] = [{ label: t('credits'), value: settled, note: pending ? t('unsettled', { count: credits.unpricedReceipts }) : undefined }]
+  const includedPriced = included.microUsd > 0
+  const includedUnpriced = included.unpricedReceipts > 0
+  const hasIncluded = includedPriced || includedUnpriced
+  if (hasIncluded) rows.push({
     label: t('included'),
-    value: included.microUsd > 0 ? money(included.microUsd) : t('calls', { count: included.unpricedReceipts }),
-    note: included.microUsd > 0 && included.unpricedReceipts > 0 ? t('unpricedCalls', { count: included.unpricedReceipts }) : undefined,
+    value: includedPriced ? money(included.microUsd) : t('calls', { count: included.unpricedReceipts }),
+    note: includedPriced && includedUnpriced ? t('unpricedCalls', { count: included.unpricedReceipts }) : undefined,
   })
+  if (settling) return { figure: t('settling'), label: t('labelSettling'), title: t('title'), rows, note: hasIncluded ? t('includedNote') : undefined }
   return {
-    figure: settling ? t('settling') : amount + (pending ? '+' : ''),
-    label: settling ? t('labelSettling') : pending ? t('labelAtLeast', { amount }) : t('label', { amount }),
+    figure: pending ? `${amount}+` : amount,
+    label: t(pending ? 'labelAtLeast' : 'label', { amount }),
     title: t('title'),
     rows,
-    note: usedOwn ? t('includedNote') : undefined,
+    note: hasIncluded ? t('includedNote') : undefined,
   }
 }
 

@@ -46,9 +46,13 @@ after(async () => {
 })
 
 const none = { microUsd: 0, unpricedReceipts: 0 }
-const cost = (credits = none, included = none): ThreadCost => ({
+/** `included` is the sum of the subscription and API key sources, as readThreadCost reports it. */
+const cost = (credits = none, subscription = none, apiKey = none): ThreadCost => ({
   threadId: 'run-1', groupBy: 'thread',
-  totals: { credits, included: { ...included, bySource: { subscription: included, api_key: none } } },
+  totals: { credits, included: {
+    microUsd: subscription.microUsd + apiKey.microUsd, unpricedReceipts: subscription.unpricedReceipts + apiKey.unpricedReceipts,
+    bySource: { subscription, api_key: apiKey },
+  } },
 })
 
 let mounts = 0
@@ -107,9 +111,16 @@ test('subscription calls are counted apart, never added to the charge or called 
 })
 
 test('an API key usage with a price is shown as its own amount', async () => {
-  await show(<mod.ThreadCostView cost={cost({ microUsd: 500_000, unpricedReceipts: 0 }, { microUsd: 3_000_000, unpricedReceipts: 0 })} />)
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 500_000, unpricedReceipts: 0 }, none, { microUsd: 3_000_000, unpricedReceipts: 0 })} />)
   assert.equal(trigger()?.textContent, '$0.50')
   assert.match(await open(), /你的订阅或 API Key\$3\.00/)
+})
+
+test('an API key amount beside subscription calls counts the calls that have no price', async () => {
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 500_000, unpricedReceipts: 0 }, { microUsd: 0, unpricedReceipts: 4 }, { microUsd: 3_000_000, unpricedReceipts: 0 })} />)
+  const panel = await open()
+  assert.match(panel, /你的订阅或 API Key\$3\.00/)
+  assert.match(panel, /另有 4 次调用没有单次价格/)
 })
 
 test('the button reads the thread cost and shows nothing when the read is refused', async () => {
