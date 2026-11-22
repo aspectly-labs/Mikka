@@ -71,6 +71,7 @@ const functions = {
   'review-settings.getCodeReviewRepositories': reviewSettingsActions.getCodeReviewRepositories,
   'review-settings.saveCodeReviewRepository': reviewSettingsActions.saveCodeReviewRepository,
   'review-settings.deleteCodeReviewRepository': reviewSettingsActions.deleteCodeReviewRepository,
+  'settings.patchDeviceConcurrency': settingsActions.patchDeviceConcurrency,
   'desktop.readBatch': createReadBatch(() => desktopActions),
   'desktop.bootstrap': desktopBootstrap,
   'desktop.session': desktopSession,

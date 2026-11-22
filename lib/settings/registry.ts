@@ -252,6 +252,16 @@ export const SETTINGS_REGISTRY = {
     type: 'string', guard: z.enum(['private', 'workspace', 'link']), defaultValue: 'link', options: ['private', 'workspace', 'link'],
     personalOverride: false, writeAccess: { workspace: 'admin' }, personalContext: 'workspace',
   },
+  protectManualThreadTitles: {
+    ...inherited, key: 'protectManualThreadTitles', group: 'threads', page: 'threads',
+    ...settingMetadata('protectManualThreadTitles'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true, personalContext: 'workspace',
+  },
+  keepPinnedThreadsActive: {
+    ...inherited, key: 'keepPinnedThreadsActive', group: 'threads', page: 'threads',
+    ...settingMetadata('keepPinnedThreadsActive'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true, personalContext: 'workspace',
+  },
   memoryAutoApprove: {
     ...personalAccount, key: 'memoryAutoApprove', group: 'memory', page: 'instructions',
     ...settingMetadata('memoryAutoApprove'),
@@ -334,6 +344,27 @@ export type SettingValueFor<K extends SettingKey> = z.output<(typeof SETTINGS_RE
 
 export function personalSettingWorkspace(field: Pick<SettingDefinition, 'personalContext'>, workspaceId: string): string | null {
   return field.personalContext === 'workspace' ? workspaceId : null
+}
+export type SettingValueFor<K extends SettingKey> = z.output<(typeof SETTINGS_REGISTRY)[K]['guard']>
+
+export function personalSettingWorkspace(field: Pick<SettingDefinition, 'personalContext'>, workspaceId: string): string | null {
+  return field.personalContext === 'workspace' ? workspaceId : null
+}
+
+const STORED_COLUMN = { integer: '"integerValue"', boolean: '"booleanValue"', string: '"textValue"' } as const
+type ScalarSettingKey = { [K in SettingKey]: (typeof SETTINGS_REGISTRY)[K]['type'] extends keyof typeof STORED_COLUMN ? K : never }[SettingKey]
+
+/** One resolution rule for a query: the member's own value, then the workspace's, then the
+ * registry default. `owner` and `workspace` are the caller's own placeholders. */
+export function resolvedSettingSql(key: ScalarSettingKey, owner: string, workspace: string): string {
+  const field = SETTINGS_REGISTRY[key]
+  const column = STORED_COLUMN[field.type]
+  const scope = personalSettingWorkspace(field, workspace) ?? 'NULL'
+  const fallback = typeof field.defaultValue === 'string' ? `'${field.defaultValue.replaceAll("'", "''")}'` : String(field.defaultValue)
+  return `coalesce((SELECT ${column} FROM personal_setting_values
+      WHERE "userId"=${owner} AND "workspaceId" IS NOT DISTINCT FROM ${scope}::uuid AND key='${key}'),
+    (SELECT ${column} FROM workspace_setting_values WHERE "workspaceId"=${workspace} AND key='${key}'),
+    ${fallback})`
 }
 
 export function settingDefinition(key: string): SettingDefinition {

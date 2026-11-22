@@ -41,3 +41,5 @@ export interface SettingsPatch {
 export type ShareVisibility = 'private' | 'workspace' | 'link'
 export interface ResolvedShareVisibility { value: ShareVisibility; source: SettingSource }
 export interface WorkspaceSharingDefaults { thread: ResolvedShareVisibility; artifact: ResolvedShareVisibility }
+/** Device capacity is explicit device state, not an inherited personal preference. */
+export interface DeviceConcurrencySettings { deviceId: string; maxConcurrentRuns: number }

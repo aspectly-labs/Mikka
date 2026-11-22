@@ -1,6 +1,7 @@
 import { settingsPatchInput, settingsResetInput } from '@/lib/settings/registry'
 import { reviewRepositoryInput, reviewRepositoryKey } from '@/lib/code-review/settings-contract'
 import { artifactShareInput } from '@/lib/artifacts/share-input'
+import { deviceConcurrencyInput } from '@/lib/settings/device-input'
 import { AVATAR_MAX_BYTES, isAvatarContentType } from '../account/avatar-file'
 import { deletePasskeyInputSchema, renamePasskeyInputSchema } from '@/lib/account/passkeys-contract'
 import { threadModelChoice } from '@/lib/thread-model-choice'
@@ -334,6 +335,7 @@ export const desktopActionSchemas = {
   'review-settings.getCodeReviewRepositories': oneId,
   'review-settings.saveCodeReviewRepository': tuple(uuid, reviewRepositoryInput),
   'review-settings.deleteCodeReviewRepository': tuple(uuid, z.strictObject({ repository: reviewRepositoryKey })),
+  'settings.patchDeviceConcurrency': tuple(uuid, deviceConcurrencyInput, workspace),
   'thread-title-settings.getThreadTitleSettings': inWorkspace,
   'thread-title-settings.saveThreadTitleSettings': tuple(object({ workspaceId: workspace, scope: z.enum(['workspace', 'mine']), instructions: text(1000).optional(), triggers: z.enum(['first_run_ended', 'pull_opened', 'either']).nullable().optional() })),
   'issues.listIssues': none,

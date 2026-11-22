@@ -16,6 +16,9 @@ test('inheritance retains explicit zero/empty overrides and falls through null t
   assert.deepEqual(resolveSettingValue('appearanceTheme', 'oled', null), { value: 'oled', source: 'personal' })
   assert.deepEqual(resolveSettingValue('appearanceAccentColor', '#ff5500', null), { value: '#ff5500', source: 'personal' })
   assert.deepEqual(resolveSettingValue('sidebarPages', [], ['chats']), { value: [], source: 'personal' })
+  assert.deepEqual(resolveSettingValue('protectManualThreadTitles', false, true), { value: false, source: 'personal' })
+  assert.deepEqual(resolveSettingValue('keepPinnedThreadsActive', null, false), { value: false, source: 'workspace' })
+  assert.deepEqual(resolveSettingValue('keepPinnedThreadsActive', null, null), { value: true, source: 'default' })
 })
 
 test('server guards reject unknown fields, invalid scope, coercion and out-of-range values', () => {

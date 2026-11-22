@@ -339,6 +339,34 @@ test('run result publication commits one owner-scoped result through retries and
       }
     })
 
+    await t.test('local completion wakes the same device after the slot is released', async t => {
+      const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
+      const { NextRequest } = await import('../lib/server-runtime/server')
+      const f = await fixture()
+      const previousUrl = process.env.DEVICE_GATEWAY_URL, previousSecret = process.env.DEVICE_GATEWAY_PUSH_SECRET
+      process.env.DEVICE_GATEWAY_URL = 'http://127.0.0.1:9'
+      process.env.DEVICE_GATEWAY_PUSH_SECRET = randomUUID()
+      const originalFetch = globalThis.fetch
+      const observed: string[] = []
+      t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) !== `http://127.0.0.1:9/v1/devices/${f.deviceId}/push`) return originalFetch(input, init)
+        const { rows: [run] } = await pool.query('select status from agent_runs where id=$1', [f.runId])
+        observed.push(run.status)
+        return new Response(null, { status: 204 })
+      })
+      try {
+        const scope = createRequestScope(new NextRequest('http://127.0.0.1/mikka/v1/runs/complete'))
+        await runRequestScope(scope, async () => {
+          assert.ok(await persistRunCompletion(f.userId, f.runId, { stopReason: 'timeout' }))
+          await scope.after.finish()
+        })
+        assert.deepEqual(observed, ['failed'])
+      } finally {
+        if (previousUrl === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previousUrl
+        if (previousSecret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previousSecret
+      }
+    })
+
     await t.test('device completion and server terminal transitions persist diagnostics under their existing fences', async () => {
       const { completeRunForDevice } = await import('../lib/run-completion')
       const { failRunForDaemonUpgrade } = await import('../lib/run-leases')

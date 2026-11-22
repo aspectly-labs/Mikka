@@ -199,7 +199,7 @@ async function completionTransaction(userId: string, runId: string, completion: 
     const factoryBound = await lockFactoryCompletionTasks(client, userId, runId)
     const [issue] = hint.issueId ? await tx.select().from(issues).where(eq(issues.id, hint.issueId)).for('update') : []
     await lockCompletionSkillScopes(client, userId, runId, hint, factoryBound)
-    const [owned] = await tx.select({ run: agentRuns }).from(agentRuns).innerJoin(devices, eq(devices.id, agentRuns.deviceId))
+    const [owned] = await tx.select({ run: agentRuns, deviceKind: devices.kind }).from(agentRuns).innerJoin(devices, eq(devices.id, agentRuns.deviceId))
       .where(owner).for('update', { of: agentRuns })
     if (!owned || owned.run.workspaceId !== stored.workspaceId || owned.run.issueId !== hint.issueId || owned.run.deviceRepoId !== hint.deviceRepoId) return null
     let run = owned.run
@@ -266,6 +266,7 @@ async function completionTransaction(userId: string, runId: string, completion: 
       await runChanged(tx, runId)
       await tx.update(runTokens).set({ revokedAt: new Date() }).where(and(eq(runTokens.runId, runId), isNull(runTokens.revokedAt)))
       await settleRunCompletionEffects(client, run, completion.stopReason, factoryBound, completion.report)
+      if (owned.deviceKind === 'local') wakeDevice = run.deviceId
       if (quota) {
         const settled = await (await import('./run-quota')).settleQuotaExhausted(tx, run, quota, resetsAt, client)
         if (settled.cloud) quotaCloud = { run, plan: quota, resetsAt }

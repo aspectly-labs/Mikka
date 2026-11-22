@@ -50,6 +50,7 @@ export const settingsKeys = {
   preferences: () => 'preferences' as const,
   personalRegistry: () => 'settings:personal' as const,
   workspaceRegistry: (id: string) => ['settings:workspace', id] as const,
+  personalSettings: (workspaceId: string) => `settings:personal:${workspaceId}` as const,
   password: () => 'account:password' as const,
   sessions: () => 'account:sessions' as const,
   savedLogins: () => 'account:saved-logins' as const,

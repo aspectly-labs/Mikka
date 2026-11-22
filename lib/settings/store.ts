@@ -1,11 +1,12 @@
 import 'server-only'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { ResolvedSetting, SettingScope, SettingValue, SettingsView } from '@mikka/protocol/settings'
 import { db } from '@/lib/db'
 import { users } from '@/lib/db/schema'
 import { workspaceDb } from '@/lib/workspace-db'
 import { requireWorkspace } from '@/lib/workspace-access'
-import { workspaceListChanged } from '@/lib/live/lists'
+import { threadDirectorySettingsChanged, workspaceListChanged } from '@/lib/live/lists'
+import { wakeTokens, wakeWorkflowAfterCommit } from '@/lib/workflow-wake'
 import { mirrorLegacySetting } from './legacy-mirrors'
 import { SETTINGS_REGISTRY, parseSettingsPatch, personalSettingWorkspace, settingDefinition, settingsResetInput, type SettingDefinition, type SettingKey } from './registry'
 import { readRuntimeSettings, type StoredSettingValue } from './runtime'
@@ -64,6 +65,18 @@ async function writeRows(tx: Transaction, scope: SettingScope, context: Settings
     }
     if (field.mirror) await mirrorCodeReviewSetting(tx, scope, context, field.mirror, value)
     await mirrorLegacySetting(key)?.(tx, scope, context, value)
+  }
+  if (Object.hasOwn(values, 'keepPinnedThreadsActive') || scope === 'workspace' && Object.hasOwn(values, 'archiveIdleAfterDays')) {
+    await threadDirectorySettingsChanged(tx, context.workspaceId, scope === 'personal' ? context.userId : undefined)
+  }
+  if (scope === 'workspace' && Object.hasOwn(values, 'subagentMaxConcurrent')) {
+    // Raising capacity wakes the existing waiting workflows after commit; no new polling loop.
+    const limit = Number(values.subagentMaxConcurrent ?? SETTINGS_REGISTRY.subagentMaxConcurrent.defaultValue)
+    const { rows } = await tx.execute<{ id: string }>(sql`SELECT id FROM (
+      SELECT id,row_number() OVER (PARTITION BY "ownerId" ORDER BY "createdAt",id) AS position
+      FROM bot_subagents WHERE "workspaceId"=${context.workspaceId} AND status='queued'
+    ) waiting WHERE position<=${limit}`)
+    for (const { id } of rows) wakeWorkflowAfterCommit(tx, wakeTokens.subagent(id))
   }
 }
 
