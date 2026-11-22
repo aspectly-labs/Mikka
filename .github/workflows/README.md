@@ -136,6 +136,12 @@ product regression. Main pushes and merge groups continue normal full coverage.
   This prevents GitHub from evicting an older *pending* main verification,
   in addition to not cancelling a running main job. Superseded PR checks may
   still be cancelled.
+- Device Gateway, Minute Worker, Engineering Sandbox and E2B offline release
+  validation use their existing main workflows. Production Readiness, Read
+  Cache Production, Cloud Core and Task Attachment offline guards run on
+  relevant main pushes. Their production acceptance entry points retain
+  their existing dispatch and authorization conditions. The unified
+  protected Cloudflare publisher continues to own main image builds.
 
 ## Cloud worker template release
 
