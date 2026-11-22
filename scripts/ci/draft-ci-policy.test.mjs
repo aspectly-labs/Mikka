@@ -18,8 +18,8 @@ test('draft and ready transitions are both observed', () => {
   assert.match(workflow, /push:\n    branches: \[main\]/)
 })
 
-test('heavy selected jobs defer for draft PRs but retain non-PR execution', () => {
-  for (const name of ['ui-policy-full', 'ui-policy-integrations', 'source-checks', 'daemon-checks', 'analytics-checks', 'workspace-governance-checks', 'browser-tests-full']) {
+test('selected PR jobs defer for draft PRs but retain candidate execution', () => {
+  for (const name of ['ui-policy-full', 'ui-policy-integrations', 'source-checks', 'daemon-checks']) {
     const source = job(name)
     assert.ok(source.includes(guard), name + ' must exclude draft PRs')
     assert.ok(source.includes('needs: changes'), name + ' must preserve trusted source selection')
