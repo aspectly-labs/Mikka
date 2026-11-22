@@ -25,6 +25,7 @@ import { assertLiteLLMModelTransport, assertUnmanagedModelTransport, assertSubsc
 import { ModelAdmissionError } from '@/lib/model-admission/contract'
 import { liteLLMBaseUrl } from '@/lib/model-gateway/litellm-client'
 import { db, pool } from '@/lib/db'
+import { readRunChain } from '@/lib/run-chain'
 import { runChanged } from '@/lib/live/panels'
 import { agentRuns, agents, deviceRepos } from '@/lib/db/schema'
 import { authenticateDevice, ownedDeviceWithReport } from '@/lib/device-link'
@@ -317,7 +318,6 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     || !(subscription ? subscription.workspaceId === caller.scopeWorkspaceId : frozenKey || frozenCredits) || !cloudDesktop && !repo.remoteUrl
     || taskWorkspaceId && taskWorkspaceId !== caller.scopeWorkspaceId)) return NextResponse.json({ error: 'Cloud computer worker unavailable.' }, { status: 409 })
   let taskInjection: TaskSecretInjection
-  const { readRunChain } = await import('@/lib/run-chain')
   const threadScopeRunId = (await readRunChain(pool, run.userId, run.id))?.rootRunId ?? run.id
   try {
     taskInjection = projectEnvironment
