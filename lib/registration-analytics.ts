@@ -1,5 +1,5 @@
 import 'server-only'
-import { headers } from 'next/headers'
+import { headers } from '@/lib/server-runtime/headers'
 import { afterJob } from '@/lib/background'
 import { serverPostHog } from '@/lib/posthog-server'
 import { isSmokeAccountEmail } from '@/lib/smoke-account'
