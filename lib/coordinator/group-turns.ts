@@ -1,5 +1,5 @@
-import { groupTurnRef } from '../usage-turn-ref'
 import { createHash, randomUUID } from 'node:crypto'
+import { groupTurnRef } from '../usage-turn-ref'
 import { serverRunFailure } from '@/lib/run-failure-details'
 
 import { hostedBillingScope } from '@/lib/abuse/context'
@@ -166,7 +166,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
     const modelScope = <T>(work: () => Promise<T>, replyId?: string) => {
       session.assertHeld()
       const turnRef = groupTurnRef(root.messageId, replyId)
-      return hostedBillingScope.run({ workspaceId: root.workspaceId, ownerId: root.userId, ...(turnRef ? { turnRef } : {}) }, work)
+      return hostedBillingScope.run({ workspaceId: root.workspaceId, ownerId: root.userId, turnRef }, work)
     }
     messageId = root.messageId
     // Listen before the claim: a stop that commits after it is pushed to this

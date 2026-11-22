@@ -15,11 +15,13 @@
  */
 export type UsageTurnRef = `eve:${string}` | `group:${string}` | `run:${string}`
 
+/** The longest reference the column's CHECK constraint accepts. */
+export const MAX_TURN_REF_LENGTH = 400
 /** Mirrors the column's CHECK constraint (drizzle/20261122084255_hosted_usage_turn_ref.sql). */
 const TURN_REF = /^(eve|group|run):[A-Za-z0-9:_.-]+$/
 
 export function isUsageTurnRef(value: unknown): value is UsageTurnRef {
-  return typeof value === 'string' && value.length <= 400 && TURN_REF.test(value)
+  return typeof value === 'string' && value.length <= MAX_TURN_REF_LENGTH && TURN_REF.test(value)
 }
 
 /** A reference only when every part is a plain id; otherwise none, so a malformed id never fails the model call. */

@@ -1,5 +1,6 @@
 import type { LanguageModel } from 'ai'
 import { WORKFLOW_SERIALIZE, WORKFLOW_DESERIALIZE } from '@workflow/serde'
+import { isUsageTurnRef, type UsageTurnRef } from '../usage-turn-ref'
 type Model = Extract<LanguageModel, { specificationVersion: 'v4' }>
 /** Non-secret billing scope crosses durable steps; the provider never does. */
 export class HostedWorkflowModel implements Model {
@@ -11,7 +12,7 @@ export class HostedWorkflowModel implements Model {
     readonly botId: string | null,
     readonly modelId: string,
     /** The Bot chat turn this model serves (lib/usage-turn-ref.ts), recorded on each call's receipt. */
-    readonly turnRef: string | null = null,
+    readonly turnRef: UsageTurnRef | null = null,
   ) {}
   static [WORKFLOW_SERIALIZE](value: HostedWorkflowModel) {
     return {
@@ -27,7 +28,7 @@ export class HostedWorkflowModel implements Model {
     modelId: string
     turnRef?: string | null
   }) {
-    return new HostedWorkflowModel(value.ownerId, value.botId, value.modelId, value.turnRef ?? null)
+    return new HostedWorkflowModel(value.ownerId, value.botId, value.modelId, isUsageTurnRef(value.turnRef) ? value.turnRef : null)
   }
   async doGenerate(options: Parameters<Model['doGenerate']>[0]) {
     'use step'

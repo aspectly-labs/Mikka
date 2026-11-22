@@ -6,6 +6,8 @@ import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectS
 import { createOnlyCommand, dispatchReceiptInput } from '@/lib/task-create-command'
 import { taskListPageInput } from '@/lib/task-list-page'
 import { taskPresentationsInput } from '@/lib/task-presentation-input'
+import { MAX_TURN_REFS } from '@/lib/turn-usage-limits'
+import { MAX_TURN_REF_LENGTH } from '@/lib/usage-turn-ref'
 import { z } from 'zod'
 import { threadHistoryInput, threadHistoryPosition } from '@/lib/thread-history'
 import { projectInput, projectPatch } from '@/lib/project-input'
@@ -400,7 +402,7 @@ export const desktopActionSchemas = {
   'tokens.createAccessToken': tuple(object({ name: text(200).trim().min(1), expiresAt: z.iso.datetime().nullish() }), workspace),
   'tokens.revokeAccessToken': tuple(object({ id: uuid }), workspace),
   'usage.getUsage': tuple(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(), workspace),
-  'usage.readTurnUsage': tuple(z.array(text(400)).max(200), workspace),
+  'usage.readTurnUsage': tuple(z.array(text(MAX_TURN_REF_LENGTH)).max(MAX_TURN_REFS), workspace),
   'user-secrets.listMySecrets': inWorkspace,
   'user-secrets.createMySecret': tuple(object({ ...secretBase, overrideWorkspace: bool.optional() }), workspace),
   'user-secrets.replaceMySecret': tuple(object({ id: uuid, value: secret.optional(), note: text(2000).optional() }), workspace),

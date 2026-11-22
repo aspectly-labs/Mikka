@@ -1,4 +1,7 @@
 import { isUsageTurnRef, type UsageTurnRef } from './usage-turn-ref'
+import { MAX_TURN_REFS } from './turn-usage-limits'
+
+export { MAX_TURN_REFS }
 
 /**
  * The model calls of conversation turns (#2934 item 5), for the line under a reply (#2922). Receipts are read by the
@@ -22,7 +25,6 @@ export interface TurnUsage {
   source: 'credits' | 'subscription' | 'api_key'
 }
 
-export const MAX_TURN_REFS = 200
 const SOURCE_ORDER = ['credits', 'subscription', 'api_key'] as const
 
 export async function readTurnUsage(
