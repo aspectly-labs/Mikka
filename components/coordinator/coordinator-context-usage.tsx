@@ -11,8 +11,8 @@ import type { ConversationUsage } from '@/lib/coordinator/context-usage'
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
 /**
- * How full the Coordinator's conversation is: one button reading
- * `上下文 23.4K/100K`, opening what the number means.
+ * How full the Coordinator's conversation is: a ring of the share (ContextRing); the figures are in its
+ * tooltip, its accessible name and the panel it opens, which explains what the number means.
  *
  * Every figure is an estimate from stored text (lib/coordinator/
  * context-usage.ts), and the fold threshold is a real constant rather than a
@@ -25,9 +25,9 @@ export function CoordinatorContextUsage({ usage }: { usage: ConversationUsage })
   const used = compact.format(usage.used)
   const compactAt = compact.format(usage.compactAt)
   return <Popover>
-    <PopoverTrigger render={<Button variant="ghost" size="xs" data-slot="coordinator-context-usage"
+    <PopoverTrigger render={<Button variant="ghost" size="icon-xs" data-slot="coordinator-context-usage"
       aria-label={t('contextUsage', { used, compactAt })} title={t('contextUsage', { used, compactAt })}
-      className="shrink-0 px-1.5 text-muted-foreground" />}>
+      className="shrink-0 text-muted-foreground" />}>
       <ContextRing share={usage.share} />
     </PopoverTrigger>
     <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-3">

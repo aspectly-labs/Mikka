@@ -11,8 +11,8 @@ import type { ContextSegmentKey, ContextUsage } from '@/lib/context-usage'
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
 /**
- * What the run holds, in the thread's status line: one button reading
- * `上下文 23.4k / 25k` for the brief, opening the measured segments.
+ * What the run holds, in the thread's status line: a ring of the share (ContextRing); the figures are in its
+ * tooltip, its accessible name and the panel it opens with the measured segments.
  *
  * Every figure is an estimate from stored text (lib/context-usage.ts), so the
  * panel says 估算, and the segments this host cannot read are named rather than
@@ -26,9 +26,9 @@ export function ThreadContextUsage({ usage }: { usage: ContextUsage }) {
   const share = usage.promptBudget > 0 ? Math.min(100, Math.round(usage.promptUsed / usage.promptBudget * 100)) : 0
   const used = compact.format(usage.promptUsed), budget = compact.format(usage.promptBudget)
   return <Popover>
-    <PopoverTrigger render={<Button variant="ghost" size="xs" data-slot="thread-context-usage"
+    <PopoverTrigger render={<Button variant="ghost" size="icon-xs" data-slot="thread-context-usage"
       aria-label={t('contextUsage', { used, budget })} title={t('contextUsage', { used, budget })}
-      className="shrink-0 px-1.5 text-muted-foreground" />}>
+      className="shrink-0 text-muted-foreground" />}>
       <ContextRing share={share} />
     </PopoverTrigger>
     <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-3">
