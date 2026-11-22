@@ -75,8 +75,7 @@ dbTest('failed wake state stays with its owner and bot, and recovery keeps the o
     await recordCoordinatorEvent(db, userMessageEvent(owner, 'Separate Coordinator request', { botId: coordinator }))
     await recordCoordinatorEvent(db, userMessageEvent(peer, 'Peer private request', { botId: peerBotId }))
     const botEvents = and(eq(schema.coordinatorEvents.userId, owner), eq(schema.coordinatorEvents.botId, botId))
-    // The sidebar spins only for a turn its chat can stop (decision 2026-11-22-1600); input waiting for its turn is listed, still.
-    assert.equal((await store.botChats(owner))[botId].working, false, 'a pending bot with no running turn is listed without a spinner')
+    assert.equal((await store.botChats(owner))[botId].working, true, 'a new pending bot has a spinner even before its session exists')
     await db.update(schema.coordinatorEvents).set({ wakeAttempts: 1, wakeLeaseUntil: new Date(Date.now() - 1) }).where(botEvents)
     const unconfirmed = await store.chatView(owner, 200, botId)
     assert.equal(unconfirmed.cursor,0,'pending input is outside the stored cursor')

@@ -105,7 +105,7 @@ export function mikkaEveChannel() {
           const forwarded = forwardEveRequest(request,url,JSON.stringify(payload))
           if (payload.turnPolicy === 'steer') steeringRequests.add(forwarded)
           const response = await admit(forwarded, auth, () => follow.handler(forwarded, { ...args, params:{sessionId:session.id} }))
-          if (response.ok) await (await import('./submission')).commitEveIngress(forwarded)
+          if (response.ok) await (await import('./submission')).commitEveIngress(forwarded, session.id)
           return response
         }
         const sessionId = args.params.sessionId ?? args.params.parentSessionId
@@ -135,7 +135,7 @@ export function mikkaEveChannel() {
           if (input.turnPolicy === 'steer') steeringRequests.add(forwarded)
         }
         const response = await admit(forwarded, auth, () => withSessionControlDelivery(route, sessionId, () => route.handler(forwarded,args)))
-        if (response.ok) await (await import('./submission')).commitEveIngress(forwarded)
+        if (response.ok) await (await import('./submission')).commitEveIngress(forwarded, sessionId)
         if (response.ok && response.body && request.method === 'GET' && route.path.endsWith('/stream')) {
           const [{credentialChatFingerprints},{maskEveStream}] = await Promise.all([import('../credentials/chat-guard'),import('./stream-mask')])
           const projection=maskEveStream(scope.ownerId,await credentialChatFingerprints(scope.ownerId),streamAfter)

@@ -107,26 +107,50 @@ function scheduledTaskContext(event: { kind: string; issueId: string | null; pay
   return [`This request was sent by an automation the person set up (schedule ${schedule.data.scheduleId}), not typed by them now.${started} The host has created Task ${event.issueId} for it as the person. Dispatch that Task with the existing Machine, Profile, approval and resource checks; the automation grants no approval the person would otherwise give. Reuse any execution receipt for this request.`]
 }
 
-/** A relational compatibility row is a projection, written once after eve accepted input. */
-export async function markEventAccepted(scope:EveScope,eventId:string) {
-  const [{ db },{ sql },{ botChatChanged },{ coordinatorSessionChanged },{ sourcedEventMessage },{ eventPrompt },{ maskDeep,credentialMasker }] = await Promise.all([
-    import('../db'),import('drizzle-orm'),import('../live/chats'),import('../live/coordinator-session'),import('../coordinator/message-safety'),import('../coordinator/context'),import('../secrets/mask'),
+/** The bot chat's one lock: acceptance, a stop before the turn and an outbox claim never interleave (stop-before-turn.ts). */
+export const botChatLockSql = (ownerId:string,botId:string) => `bot-chat:${ownerId}:${botId}`
+
+/** The person's stored message for an accepted (or stopped) event: the same projection either way. */
+export async function projectEventMessage(tx:{execute:(query:any)=>Promise<any>},scope:Pick<EveScope,'ownerId'|'botId'>,event:any,accepted=true) {
+  const [{ sql },{ sourcedEventMessage },{ eventPrompt },{ maskDeep,credentialMasker }] = await Promise.all([
+    import('drizzle-orm'),import('../coordinator/message-safety'),import('../coordinator/context'),import('../secrets/mask'),
   ])
-  await db.transaction(async tx => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`bot-chat:${scope.ownerId}:${scope.botId}`},0))`)
-    const event = (await tx.execute(sql`UPDATE coordinator_events SET "deliveredAt"=now()
+  // Input stopped before its turn is no eve input: unmarked, it never reads as a turn eve still runs (nativePendingForChat).
+  const message = maskDeep({...sourcedEventMessage({...event,createdAt:new Date(event.createdAt),deliveredAt:new Date()},eventPrompt(event)),...(accepted?{mikkaEveAccepted:true}:{})},credentialMasker)
+  await tx.execute(sql`INSERT INTO coordinator_messages(id,"userId","botId",position,message) SELECT ${crypto.randomUUID()}::uuid,${scope.ownerId},${scope.botId}::uuid,coalesce(max(position),0)+1,${JSON.stringify(message)}::jsonb FROM coordinator_messages WHERE "userId"=${scope.ownerId} AND "botId"=${scope.botId}::uuid`)
+}
+
+/**
+ * A relational compatibility row is a projection, written once after eve accepted input. Returns true when the person
+ * already stopped this input (a stop that reached the event first, or one that asked while it was being delivered):
+ * the caller then stops the turn eve just started (decision 2026-11-22-1600).
+ */
+export async function markEventAccepted(scope:EveScope,eventId:string):Promise<boolean> {
+  const [{ db },{ sql },{ botChatChanged },{ coordinatorSessionChanged }] = await Promise.all([
+    import('../db'),import('drizzle-orm'),import('../live/chats'),import('../live/coordinator-session'),
+  ])
+  return await db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${botChatLockSql(scope.ownerId,scope.botId)},0))`)
+    // One statement claims the event and, when it is no longer there to claim, says whether a stop took it first.
+    const row = (await tx.execute(sql`WITH claimed AS (UPDATE coordinator_events SET "deliveredAt"=now()
       WHERE id=${eventId}::uuid AND "userId"=${scope.ownerId} AND "botId"=${scope.botId}::uuid AND "deliveredAt" IS NULL
-      RETURNING id,kind,"runId","issueId",payload,tier,"createdAt"`)).rows[0] as any
-    if (!event) return
-    const message = maskDeep({...sourcedEventMessage({...event,createdAt:new Date(event.createdAt),deliveredAt:new Date()},eventPrompt(event)),mikkaEveAccepted:true},credentialMasker)
-    await tx.execute(sql`INSERT INTO coordinator_messages(id,"userId","botId",position,message) SELECT ${crypto.randomUUID()}::uuid,${scope.ownerId},${scope.botId}::uuid,coalesce(max(position),0)+1,${JSON.stringify(message)}::jsonb FROM coordinator_messages WHERE "userId"=${scope.ownerId} AND "botId"=${scope.botId}::uuid`)
+      RETURNING id,kind,"runId","issueId",payload,tier,"createdAt")
+      SELECT claimed.*,(SELECT prior.payload->>'stoppedBeforeTurn' FROM coordinator_events prior
+        WHERE prior.id=${eventId}::uuid AND prior."userId"=${scope.ownerId} AND prior."botId"=${scope.botId}::uuid) AS "priorStopped"
+      FROM (VALUES (1)) one(x) LEFT JOIN claimed ON true`)).rows[0] as any
+    if (!row?.id) return row?.priorStopped === 'true'
+    const { priorStopped: _prior, ...event } = row
+    await projectEventMessage(tx,scope,event)
     await botChatChanged(tx,scope.ownerId,scope.botId)
     await coordinatorSessionChanged(tx,scope.ownerId,scope.botId)
+    return event.payload?.stopRequested === true
   })
 }
-export async function commitEveIngress(request:Request) {
+export async function commitEveIngress(request:Request,sessionId?:string) {
   const accepted = ingress.get(request)
-  if (accepted) await markEventAccepted(accepted.scope,accepted.eventId)
+  if (!accepted || !await markEventAccepted(accepted.scope,accepted.eventId) || !sessionId) return
+  const { eveClient } = await import('./server-client')
+  await eveClient(accepted.scope).sessions.attach(sessionId).cancel()
 }
 
 export async function deliverEveEvent(scope:EveScope,session:Session,eventId:string) {
@@ -134,6 +158,19 @@ export async function deliverEveEvent(scope:EveScope,session:Session,eventId:str
   const { pool } = await import('../db')
   const event = (await pool.query('SELECT * FROM coordinator_events WHERE id=$1 AND "userId"=$2 AND "botId"=$3',[eventId,scope.ownerId,scope.botId])).rows[0]
   if (!event) throw new Error('notFound')
+  // Claim it under the chat's lock: a stop that reached it first keeps it from ever starting a turn, and a stop that
+  // comes while it is on its way finds it claimed and asks markEventAccepted to stop the turn (stop-before-turn.ts).
+  const { db } = await import('../db')
+  const { sql } = await import('drizzle-orm')
+  // A delivered event may be sent again (its idempotency key keeps one turn); only one the person stopped is not.
+  const stopped = await db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${botChatLockSql(scope.ownerId,scope.botId)},0))`)
+    await tx.execute(sql`UPDATE coordinator_events SET "wakeLeaseUntil"=now()+interval '2 minutes'
+      WHERE id=${eventId}::uuid AND "userId"=${scope.ownerId} AND "botId"=${scope.botId}::uuid AND "deliveredAt" IS NULL`)
+    const row = (await tx.execute(sql`SELECT payload->>'stoppedBeforeTurn' AS stopped FROM coordinator_events WHERE id=${eventId}::uuid AND "userId"=${scope.ownerId} AND "botId"=${scope.botId}::uuid`)).rows[0] as { stopped: string | null } | undefined
+    return row?.stopped === 'true'
+  })
+  if (stopped) return { sessionId: session.id, deliveryId: '' }
   const { eventPrompt } = await import('../coordinator/context')
   const context = scheduledTaskContext(event)
   const delivery = await session.send(eventPrompt(event),{
@@ -141,6 +178,6 @@ export async function deliverEveEvent(scope:EveScope,session:Session,eventId:str
     ...(context.length ? { context } : {}),
     idempotencyKey:'mikka-event:'+event.id,turnPolicy:'queue',
   })
-  await markEventAccepted(scope,eventId)
+  if (await markEventAccepted(scope,eventId)) await session.cancel()
   return delivery
 }

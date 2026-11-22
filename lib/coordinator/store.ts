@@ -540,7 +540,7 @@ export interface BotChatSummary {
   muted?: boolean
   hidden?: boolean
   pinOrder?: number | null
-  /** A turn its chat can stop runs now (`coordinatorTurnStoppable`): the sidebar's spinner means the chat has Stop. */
+  /** What the chat's 停止 can stop (`coordinatorTurnStoppable`): a turn, or input accepted and waiting for one. */
   working: boolean
 }
 
@@ -561,15 +561,24 @@ export async function botChatSnapshot(reader: IssueReader) {
     .from(coordinatorMessages).where(and(eq(coordinatorMessages.userId, userId), inArray(coordinatorMessages.botId, botIds), sql`${coordinatorMessages.message}->>'role' <> 'tool'`))
     .orderBy(coordinatorMessages.botId, desc(coordinatorMessages.position))
   const sessions = await db.select({ botId: coordinatorSessions.botId, leaseHolder: coordinatorSessions.leaseHolder, leaseUntil: coordinatorSessions.leaseUntil, lastError: coordinatorSessions.lastError }).from(coordinatorSessions).where(and(eq(coordinatorSessions.userId, userId), inArray(coordinatorSessions.botId, botIds)))
-  // A bot whose only news is input still waiting for its turn is listed, not spinning (`coordinatorTurnStoppable`).
-  const waiting = await db.selectDistinct({ botId: coordinatorEvents.botId })
+  const waiting = await db.select({ botId: coordinatorEvents.botId, kind: coordinatorEvents.kind, tier: coordinatorEvents.tier, wakeAttempts: coordinatorEvents.wakeAttempts, wakeLeaseUntil: coordinatorEvents.wakeLeaseUntil, wakeLastError: coordinatorEvents.wakeLastError })
     .from(coordinatorEvents).where(and(eq(coordinatorEvents.userId, userId), inArray(coordinatorEvents.botId, botIds), isNull(coordinatorEvents.deliveredAt)))
   const now = new Date()
-  // Only a turn's lease running out changes `working` without a write.
-  const expiries = sessions.flatMap(session => coordinatorLeaseActive(session, now) && session.leaseUntil ? [session.leaseUntil] : [])
+  const expiries = [
+    ...sessions.flatMap(session => coordinatorLeaseActive(session, now) && session.leaseUntil ? [session.leaseUntil] : []),
+    ...waiting.flatMap(event => event.tier !== 'background' && event.kind !== 'matter_handoff' && event.wakeAttempts === 1 && event.wakeLeaseUntil && event.wakeLeaseUntil > now ? [event.wakeLeaseUntil] : []),
+  ]
+  // The spinner is what the chat's 停止 can stop, input waiting for its turn included (`coordinatorTurnStoppable`).
   const result: Record<string, BotChatSummary> = {}
-  for (const { botId } of waiting) if (botId) result[botId] = { line: null, at: null, working: false }
-  for (const session of sessions) if (session.botId) result[session.botId] = { line: null, at: null, working: coordinatorTurnStoppable(session, now) }
+  const waitingByBot = Map.groupBy(waiting, event => event.botId)
+  for (const session of sessions) {
+    if (!session.botId) continue
+    result[session.botId] = { line: null, at: null, working: coordinatorTurnStoppable(session, waitingByBot.get(session.botId) ?? [], now) }
+    waitingByBot.delete(session.botId)
+  }
+  for (const [botId, events] of waitingByBot) {
+    if (botId) result[botId] = { line: null, at: null, working: coordinatorTurnStoppable(undefined, events, now) }
+  }
   for(const row of latest)if(row.botId&&row.nativePending)result[row.botId]={line:null,at:null,working:true}
   const projected = await projectMessageDisplays(db, userId, latest)
   const lines = projected.flatMap(row => {
