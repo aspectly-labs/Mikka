@@ -495,7 +495,8 @@
     "emailRequired": "邮箱不能为空",
     "emailInvalid": "邮箱格式无效",
     "passwordRequired": "密码不能为空",
-    "passwordTooShort": "密码至少 8 位字符"
+    "passwordTooShort": "密码至少 8 位字符",
+    "retryVerification": "重试人机验证"
   },
   "Metadata": {
     "title": "Mikka · 任务与文档工作台",
@@ -3324,7 +3325,8 @@
         "manageButton": "模型",
         "manageLabel": "选择 {name} 能用的模型",
         "empty": "服务商没有返回可用模型"
-      }
+      },
+      "afterQuotaNoKey": "需要先添加支持同一模型的 API Key，才会按服务商价格继续运行"
     },
     "modelOrder": {
       "fallbackNeedsKey": "需先添加 API 密钥并连接订阅。",
@@ -4265,7 +4267,11 @@
         "ownProvider": "用这台服务器自带的服务商",
         "usedUntil": "{service} 订阅到 {time} 前用完了",
         "usedUp": "{service} 订阅额度用完了"
-      }
+      },
+      "noModelSelected": "未选择模型",
+      "noModelConnections": "没有可用的模型连接",
+      "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
+      "setUpModel": "设置模型"
     },
     "empty": "告诉 {name} 你要做什么",
     "events": {
@@ -4466,7 +4472,8 @@
         "raw": "原始数据",
         "dispatched": "已派发"
       }
-    }
+    },
+    "modelRequired": "任务未启动：未选择模型。"
   },
   "AgentCopy": {
     "pleaseSignInFirst": "请先登录。",
@@ -5918,7 +5925,13 @@
     "notSent": "未发送",
     "answering": "正在回复",
     "noTaker": "没有 Bot 接这条，@ 它的名字",
-    "stopped": "已停止"
+    "stopped": "已停止",
+    "exchange": {
+      "marker": "{names} — {count} 条私聊",
+      "title": "{names}",
+      "empty": "这次私聊没有消息。",
+      "loadError": "无法加载这次私聊。"
+    }
   },
   "DeviceSetup": {
     "title": "设置 {device}",
@@ -8168,7 +8181,16 @@
       "providerOn": "{on}/{total} 个已启用",
       "firstModel": "任务先用",
       "noFirstModel": "还没有可用的模型",
-      "keyProvider": "服务商"
+      "keyProvider": "服务商",
+      "catalog": "模型",
+      "catalogFailed": "无法读取模型",
+      "catalogLoading": "正在读取模型…",
+      "subscriptionNoModels": "已连接的订阅还没有返回模型",
+      "noSubscriptions": "还没有连接订阅",
+      "keyNoModels": "已添加的 API Key 还没有返回模型",
+      "noApiKeys": "还没有添加 API Key",
+      "customNoModels": "自定义服务商还没有返回模型",
+      "connectedNoModels": "已连接的订阅或 API Key 还没有返回模型"
     }
   },
   "CodeReview": {
@@ -9047,5 +9069,23 @@
     "mismatchCreateHint": "此对话框是在 {target} 打开的。重新打开新建任务，才会创建到 {current}。",
     "mismatchDetail": "不是当前显示的工作区（{current}）。切换到 {target} 后再处理此任务。",
     "unknownWorkspace": "其他工作区"
+  },
+  "SettingsRegistry": {
+    "archiveIdleAfterDays": {
+      "label": "归档闲置线程",
+      "keywords": "归档|闲置"
+    },
+    "threadTitleInstructions": {
+      "label": "线程标题指令",
+      "keywords": "标题|指令"
+    },
+    "threadTitleTriggers": {
+      "label": "更新线程标题",
+      "keywords": "标题|拉取请求"
+    },
+    "subagentMaxConcurrent": {
+      "label": "并发子 Agent 数量",
+      "keywords": "子 Agent|并发|限制"
+    }
   }
 }

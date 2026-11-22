@@ -495,7 +495,8 @@
     "emailRequired": "Email is required",
     "emailInvalid": "Enter a valid email address",
     "passwordRequired": "Password is required",
-    "passwordTooShort": "Password must be at least 8 characters"
+    "passwordTooShort": "Password must be at least 8 characters",
+    "retryVerification": "Retry verification"
   },
   "Metadata": {
     "title": "Mikka · Tasks and documents workspace",
@@ -3324,7 +3325,8 @@
         "manageButton": "Models",
         "manageLabel": "Choose models for {name}",
         "empty": "No models returned by this provider"
-      }
+      },
+      "afterQuotaNoKey": "Add an API key for the same model before this can continue at the provider’s price"
     },
     "modelOrder": {
       "fallbackNeedsKey": "Add an API key and connect a subscription to use this.",
@@ -4265,7 +4267,11 @@
         "ownProvider": "Runs on this server's own provider",
         "usedUntil": "{service} subscription is used up until {time}",
         "usedUp": "{service} subscription is used up"
-      }
+      },
+      "noModelSelected": "No model selected",
+      "noModelConnections": "No usable model connections",
+      "noCreditsOrConnections": "No Mikka credits or usable model connections",
+      "setUpModel": "Set up a model"
     },
     "empty": "Tell {name} what you need",
     "events": {
@@ -4466,7 +4472,8 @@
         "raw": "Raw data",
         "dispatched": "Dispatched"
       }
-    }
+    },
+    "modelRequired": "No task started: no model selected."
   },
   "AgentCopy": {
     "pleaseSignInFirst": "Please sign in first.",
@@ -5918,7 +5925,13 @@
     "notSent": "Not sent",
     "answering": "Replying",
     "noTaker": "No bot took this. @ one by name",
-    "stopped": "Stopped"
+    "stopped": "Stopped",
+    "exchange": {
+      "marker": "{names} — {count} exchange messages",
+      "title": "{names}",
+      "empty": "This exchange has no messages.",
+      "loadError": "The exchange could not be loaded."
+    }
   },
   "DeviceSetup": {
     "title": "Set up {device}",
@@ -8168,7 +8181,16 @@
       "providerOn": "{on}/{total} enabled",
       "firstModel": "Tasks start with",
       "noFirstModel": "No usable model yet",
-      "keyProvider": "Provider"
+      "keyProvider": "Provider",
+      "catalog": "Model catalogue",
+      "catalogFailed": "Could not load models",
+      "catalogLoading": "Loading models…",
+      "subscriptionNoModels": "These subscriptions have not reported any models",
+      "noSubscriptions": "No subscription connected",
+      "keyNoModels": "These API keys have not reported any models",
+      "noApiKeys": "No API keys added",
+      "customNoModels": "These custom providers have not reported any models",
+      "connectedNoModels": "Your connections have not reported any models"
     }
   },
   "CodeReview": {
@@ -9047,5 +9069,23 @@
     "mismatchCreateHint": "This dialog was opened for {target}. Reopen New task to create it in {current}.",
     "mismatchDetail": "Not the workspace shown now ({current}). Switch to {target} to work on this task.",
     "unknownWorkspace": "another workspace"
+  },
+  "SettingsRegistry": {
+    "archiveIdleAfterDays": {
+      "label": "Archive idle threads",
+      "keywords": "archive|idle|days"
+    },
+    "threadTitleInstructions": {
+      "label": "Thread title instructions",
+      "keywords": "title|naming"
+    },
+    "threadTitleTriggers": {
+      "label": "Update thread titles",
+      "keywords": "title|pull request|PR"
+    },
+    "subagentMaxConcurrent": {
+      "label": "Concurrent subagents",
+      "keywords": "agent|concurrency|limit"
+    }
   }
 }

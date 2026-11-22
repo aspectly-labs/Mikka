@@ -89,14 +89,22 @@ One command sets up a container: `eval "$(scripts/dev/bootstrap-local.sh)"`
 the cloud environment's setup script so every session starts ready. It
 provides:
 
-- **Node 22 and 24** are supported throughout the app, Eve, API and daemon.
-  Bootstrap defaults to **24** from `.node-version`; production images stay on 24.
-  CI runs selected core/integration unit and database suites on both versions.
-  `local-device-node22.yml` also builds and starts the app and packaged Eve on
-  both versions; it retains the daemon/installer compatibility tests.
+- **Node 24** is what Mikka builds, tests and ships on. Bootstrap uses **24**
+  from `.node-version`; production images stay on 24. CI runs only Node 24
+  ([2026-11-22-1430](design/decisions/2026-11-22-1430-ci-node24-only.md)):
+  Node 22 is no longer tested, though `engines` still reads `>=22`.
+  `local-device-node22.yml` builds and starts the app and packaged Eve on 24 and
+  runs the daemon/installer tests.
 - **PostgreSQL 17** at `127.0.0.1:5432`, database `mikka_e2e`; migrations with
   `pnpm migrate` (it runs by itself when every target is a loopback database;
   a remote database off Vercel still needs `MIGRATE=1` and `--allow-remote`).
+  If the box has no server, start one locally — e.g.
+  `docker run -d --name mikka-pg -e POSTGRES_USER=e2e -e POSTGRES_PASSWORD=e2e-local-only -e POSTGRES_DB=mikka_e2e -p 127.0.0.1:5432:5432 postgres:17`
+  — point the application URLs at it
+  (`export E2E_DATABASE_URL=postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e`
+  with `MIKKA_DATABASE_URL` and `DATABASE_URL` set to the same value), then
+  `pnpm migrate`. A missing local dependency is installed, never a
+  reason to leave a database suite to CI.
 - **Chromium** for UI screenshots: the container's
   `/opt/pw-browsers/chromium`. Never run `playwright install`.
 
