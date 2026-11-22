@@ -46,7 +46,7 @@ export function subagentFacts(value: unknown): SubagentFacts {
 }
 
 export class SubagentLinkError extends Error {
-  constructor(readonly code: 'runNotFound' | 'subagentParentMismatch' | 'subagentParentFixed' | 'subagentParentCycle') { super(code); this.name = 'SubagentLinkError' }
+  constructor(readonly code: 'runNotFound' | 'subagentParentMismatch' | 'subagentParentFixed' | 'subagentParentCycle', options?: { cause?: unknown }) { super(code, options); this.name = 'SubagentLinkError' }
 }
 
 /**
@@ -64,7 +64,7 @@ export async function linkSubagentRun(q: RunChainQueryable, ownerId: string, inp
       RETURNING c.id`, [input.childRunId, input.parentRunId, ownerId, brief]))
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
-    for (const code of ['subagentParentMismatch', 'subagentParentFixed', 'subagentParentCycle'] as const) if (message.includes(code)) throw new SubagentLinkError(code)
+    for (const code of ['subagentParentMismatch', 'subagentParentFixed', 'subagentParentCycle'] as const) if (message.includes(code)) throw new SubagentLinkError(code, { cause: error })
     throw error
   }
   if (!rows.length) throw new SubagentLinkError('runNotFound')
@@ -84,6 +84,8 @@ export type SubagentRun = {
   /** Its newest run, whose state the card shows. */
   latestRunId: string
   issueId: string | null
+  /** The child thread's own short title, once it has one: the card's line when no brief was written. */
+  title: string | null
   harness: string
   status: string
   outcome: string | null
@@ -101,7 +103,7 @@ export async function readSubagentRuns(q: RunChainQueryable, input: { ownerId: s
   const { rows: [parent] } = await q.query('SELECT "workspaceId" FROM agent_runs WHERE id=$1 AND "userId"=$2', [input.runId, input.ownerId])
   if (!parent || parent.workspaceId !== input.workspaceId) return null
   const { rows } = await q.query(`
-    SELECT c.id, latest.id AS "latestRunId", c."issueId", coalesce(a.harness, latest."agentDefinition"->>'harness', '') AS harness,
+    SELECT c.id, latest.id AS "latestRunId", c."issueId", c.title, coalesce(a.harness, latest."agentDefinition"->>'harness', '') AS harness,
       latest.status, latest.outcome, latest."stopReason", c."createdAt", ${SUBAGENT_FACTS_SQL('latest')} AS facts, c.brief AS "rootBrief"
     FROM agent_runs c
     CROSS JOIN LATERAL (
@@ -119,7 +121,7 @@ export async function readSubagentRuns(q: RunChainQueryable, input: { ownerId: s
   return rows.map(row => {
     const facts = subagentFacts(row.facts)
     return {
-      id: String(row.id), latestRunId: String(row.latestRunId), issueId: (row.issueId as string | null) ?? null, harness: String(row.harness),
+      id: String(row.id), latestRunId: String(row.latestRunId), issueId: (row.issueId as string | null) ?? null, title: (row.title as string | null) ?? null, harness: String(row.harness),
       status: String(row.status), outcome: (row.outcome as string | null) ?? null, stopReason: (row.stopReason as string | null) ?? null,
       createdAt: new Date(row.createdAt as string | Date).toISOString(),
       // The brief belongs to the dispatch: a continuation keeps the line its first run was handed.
