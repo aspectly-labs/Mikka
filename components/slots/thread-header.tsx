@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { ThreadHeaderProps, ThreadStatusLineProps } from './thread-header-contract'
 
-export function ThreadHeader({ title, viewTitle, headingRef, onBack, onClose, onStop, onOpenTask, place, acceptanceBadge, identity, views = [] }: ThreadHeaderProps) {
+export function ThreadHeader({ title, viewTitle, headingRef, onBack, onClose, onStop, onOpenTask, place, acceptanceBadge, identity, cost, views = [] }: ThreadHeaderProps) {
   const t = useTranslations('IssueThreads')
   const nav = useTranslations('Nav')
   return <header className={cn('flex h-12 shrink-0 items-center gap-2 border-b border-rule px-4', onBack && 'pl-2')}>
@@ -21,6 +21,7 @@ export function ThreadHeader({ title, viewTitle, headingRef, onBack, onClose, on
     {place}
     {acceptanceBadge}
     <span className="flex-1" />
+    {cost}
     {identity}
     {/* Stop lives here for every live run, also one waiting for an answer, whose composer button sends. */}
     {onStop && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground" aria-label={t('stop')} data-slot="thread-stop" onClick={onStop} />}><Square data-icon="inline-start" className="fill-current" /></TooltipTrigger><TooltipContent side="bottom">{t('stop')}</TooltipContent></Tooltip>}

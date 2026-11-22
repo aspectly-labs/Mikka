@@ -5077,6 +5077,15 @@
       "minutes": "{m} 分 {s} 秒",
       "minutesOnly": "{m} 分",
       "hours": "{h} 小时 {m} 分"
+    },
+    "cost": {
+      "label": "本会话费用 {amount}",
+      "title": "本会话",
+      "credits": "Mikka 额度",
+      "included": "你的订阅或 API Key",
+      "unpriced": "{count} 次调用的费用还没结算",
+      "note": "按 Mikka 结算时记录的金额，包含本会话的每一次运行。",
+      "includedNote": "用你自己的订阅或 API Key 产生的用量不扣 Mikka 额度。"
     }
   },
   "Computer": {

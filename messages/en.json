@@ -5077,6 +5077,15 @@
       "minutes": "{m}m {s}s",
       "minutesOnly": "{m}m",
       "hours": "{h}h {m}m"
+    },
+    "cost": {
+      "label": "This conversation cost {amount}",
+      "title": "This conversation",
+      "credits": "Mikka credits",
+      "included": "Your subscription or API key",
+      "unpriced": "{count, plural, one {# call has} other {# calls have}} no settled cost yet",
+      "note": "What Mikka recorded at settlement for every run in this conversation.",
+      "includedNote": "Usage on your own subscription or API key is not charged to Mikka credits."
     }
   },
   "Computer": {

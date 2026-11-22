@@ -51,6 +51,7 @@ import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { MikkaMark } from '@/components/brand/mikka-mark'
 import { navigate, openTask } from './workspace-navigation'
 import { ThreadHeader } from './thread-header'
+import { ThreadCostButton, threadCostKey } from './thread-cost-button'
 import { ThreadStatus } from './thread-status-icon'
 import { PersonReferences, ThreadReferencePicker } from './thread-references'
 import { ThreadOutlineIndex } from './thread-outline-index'
@@ -188,7 +189,8 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
   const liveKeys = [unstable_serialize(key)]
   // A push this thread already read is skipped; only the opened run's keys carry a revision.
   useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'thread' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'thread', reference.id) } })), liveKeys, null, { minIntervalMs: 2000 })
-  useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'run' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'run', reference.id) } })), liveKeys, null)
+  // A run's events also settle its receipts, so they reread the header's cost (no polling, #1212).
+  useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'run' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'run', reference.id) } })), [...liveKeys, unstable_serialize(threadCostKey(runId))], null)
   useLiveKey('factory_issue', issueId, liveKeys, data?.live?.issueWorkspaceId ?? null, { deadline: data?.live?.questionDeadline })
   // A thread whose candidate waits for acceptance offers the acceptance view in More.
   const { tasks: acceptanceTasks, allTasks } = useAcceptanceTasks(transcriptOnly ? null : issueId)
@@ -667,7 +669,8 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
       widen={widen ?? undefined} liveRunId={liveRunId}
       place={detail ? <ThreadRunPlace issueId={issueId} runId={runId} status={view?.status ?? data?.thread.status ?? ''} harness={detail.harness} botName={detail.agentName} /> : null}
       acceptanceBadge={acceptance ? <AcceptanceStateBadge task={acceptance} /> : null}
-      identity={data?.thread.ownedByCurrentUser ? <ThreadExecutionIdentity runId={liveRunId} /> : null} />}
+      identity={data?.thread.ownedByCurrentUser ? <ThreadExecutionIdentity runId={liveRunId} /> : null}
+      cost={data?.thread.ownedByCurrentUser ? <ThreadCostButton runId={runId} /> : null} />}
     {tabbed && data && !readRejected && <ThreadArtifactsReader issueId={issueId} runId={runId} runIds={[runId, ...(data.thread.attempts ?? []).map(attempt => attempt.runId)]}
       conversation={isThreadRun(data.thread)} status={view?.status ?? data.thread.status} onRead={setArtifacts} />}
     {viewingChanges ? (changes.state === 'ready'
