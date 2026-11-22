@@ -91,6 +91,19 @@ export async function readReviewSession(authority: TaskReviewAuthority, options:
   return row ? leaseView(row) : null
 }
 
+/** Every live lease of this run under the caller's credential, for the list read. */
+export async function listReviewSessions(authority: TaskReviewAuthority,
+  database?: Database): Promise<Array<{ kind: ReviewSessionKind; name: string; expiresAt: string }>> {
+  const db = database ?? (await import('../db')).pool
+  const { rows } = await db.query<StoredLease>(`SELECT * FROM coding_review_sessions
+    WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND "bindingId"=$4
+      AND "credentialKind"=$5 AND "credentialId"=$6 AND "revokedAt" IS NULL AND "expiresAt">clock_timestamp()
+    ORDER BY kind,name`,
+  [authority.runId, authority.ownerId, authority.workspaceId, authority.bindingId,
+    authority.credential.kind, authority.credential.id])
+  return rows.map(row => ({ kind: row.kind, name: row.name, expiresAt: row.expiresAt.toISOString() }))
+}
+
 /** Call only after the matching gateway's close ACK, or before any capability
  * was issued. Network detach is not a close: the gateway owns its grace time. */
 export async function closeReviewSession(authority: TaskReviewAuthority, options: { kind: ReviewSessionKind; id?: string; name?: string }, database?: Database) {

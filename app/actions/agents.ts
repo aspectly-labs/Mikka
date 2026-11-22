@@ -244,7 +244,7 @@ const threadColumns = {
 const threadCursorColumns = { ...threadColumns, prompt: sql<string>`coalesce(${threadNameLines}, '')` }
 
 // Read-only location and changes need authority, not conversation content.
-const threadIdentityColumns = { id: agentRuns.id, userId: agentRuns.userId }
+const threadIdentityColumns = { id: agentRuns.id, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId }
 
 const { title: _title, prompt: _prompt, promptTaskStart: _promptTaskStart, promptTaskLength: _promptTaskLength, sessionId: _sessionId, deviceRepoId: _deviceRepoId, report: _report, error: _error, ...threadListColumns } = threadColumns
 
