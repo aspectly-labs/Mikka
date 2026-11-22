@@ -76,7 +76,7 @@ export async function wakeCoordinator(userId: string, signal?: AbortSignal): Pro
 }
 
 /** Product outbox delivery only. eve owns turn queueing, retry and recovery. */
-async function wakeChat(scope: { userId: string; botId: string }, signal?: AbortSignal, deadline = Infinity) {
+async function wakeChat(scope: { userId: string; botId: string }, signal?: AbortSignal, deadline = Infinity, eventId?: string) {
   await triageInbox(scope.userId,scope.botId,signal,deadline)
   if (signal?.aborted) return 'deferred' as const
   const { rows: events } = await pool.query<{ id: string; workspaceId: string }>(`
@@ -84,7 +84,8 @@ async function wakeChat(scope: { userId: string; botId: string }, signal?: Abort
     JOIN bots b ON b.id = e."botId" AND b."ownerId" = e."userId"
     WHERE e."userId" = $1 AND e."botId" = $2 AND e."deliveredAt" IS NULL
       AND (e.kind = 'user_message' OR (e.tier IS NOT NULL AND e.tier <> 'background'))
-    ORDER BY e."createdAt", e.id LIMIT 50`, [scope.userId, scope.botId])
+      AND ($3::uuid IS NULL OR e.id = $3::uuid)
+    ORDER BY e."createdAt", e.id LIMIT 50`, [scope.userId, scope.botId, eventId ?? null])
   if (!events.length) return 'deferred' as const
   const { sendEveEvent } = await import('../eve/server-client')
   for (const event of events) {
@@ -115,8 +116,8 @@ export async function retryCoordinatorWakes(deadline = Date.now()+45_000) {
 }
 
 export async function replayCoordinatorWake(eventId:string, signal?: AbortSignal) {
-  const row = (await pool.query<{userId:string}>('SELECT "userId" FROM coordinator_events WHERE id=$1 AND "deliveredAt" IS NULL',[eventId])).rows[0]
-  if (!row) return false
-  await wakeCoordinator(row.userId, signal)
-  return true
+  if (signal?.aborted) return false
+  const row = (await pool.query<{userId:string;botId:string|null}>('SELECT "userId","botId" FROM coordinator_events WHERE id=$1 AND "deliveredAt" IS NULL',[eventId])).rows[0]
+  if (!row?.botId || signal?.aborted || !await coordinatorEnabled(row.userId, row.botId)) return false
+  return await wakeChat({ userId: row.userId, botId: row.botId }, signal, Infinity, eventId) === 'started'
 }
