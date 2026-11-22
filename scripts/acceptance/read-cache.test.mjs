@@ -296,12 +296,23 @@ test('the HTTP scenario exercises real cursor arguments, account isolation, delt
         if (phase === 'changed') return { version: changed, issue: { title: 'Read cache changed' } }
         return args.length === 1 ? { version, issue: { content: { type: 'doc' } } } : { unchanged: true, version }
       }
+      if (name === 'loadEarlierIssueActivity') {
+        assert.deepEqual(args, [issueIds[0], 3, id(10)])
+        return { page: { items: [], hasMore: false, predecessor: null, cursor: null } }
+      }
+      if (name === 'pollIssueActivityPage') {
+        if (phase === 'removed') return { error: 'issueNotFound' }
+        if (phase === 'changed') return { snapshot: { version: changed, hasMore: false, predecessor: null, items: [id(8), id(9), id(10), id(11)].map((value, index) => ({ id: value, revision: index + 1 })) } }
+        if (args.length === 1) return { snapshot: { version, hasMore: false, predecessor: null, items: [id(8), id(9), id(10)].map((value, index) => ({ id: value, revision: index + 1 })) } }
+        assert.equal(args[1], version)
+        return { snapshot: { unchanged: true, version } }
+      }
       const ids = name === 'syncIssueList' ? issueIds : name === 'syncThreadList' ? runIds : [id(8), id(9), id(10)]
-      if (phase === 'removed') return name === 'pollIssueVersionSummaries' ? { error: 'issueNotFound' } : { snapshot: { delta: true, items: [], positions: positions(ids.slice(1)), version: changed } }
+      if (phase === 'removed') return { snapshot: { delta: true, items: [], positions: positions(ids.slice(1)), version: changed } }
       if (phase === 'changed') return { snapshot: { delta: true, items: [{ id: ids[0] }], positions: positions(ids), version: changed } }
-      const cold = name === 'pollIssueVersionSummaries' ? args.length === 1 : args.length === 0
+      const cold = args.length === 0
       if (!cold) {
-        assert.equal(args[name === 'pollIssueVersionSummaries' ? 1 : 0], version)
+        assert.equal(args[0], version)
         assert.deepEqual(args.at(-1), positions(ids))
       }
       return { snapshot: cold ? { version, items: ids.map(value => ({ id: value })), positions: positions(ids) } : { unchanged: true, version } }
@@ -310,5 +321,5 @@ test('the HTTP scenario exercises real cursor arguments, account isolation, delt
   await exerciseReadCases({ owner: client('owner'), peer: client('peer'), fixture, environment })
   assert.equal(phase, 'removed')
   for (const scenario of ['cold', 'warm', 'reload-restored', 'peer-denied', 'peer-isolation', 'one-row-delta', 'deleted']) assert.ok(calls.some(call => call.scenario === scenario), scenario)
-  assert.ok(calls.some(call => call.name === 'pollIssueVersionSummaries' && call.scenario === 'deleted'))
+  assert.ok(calls.some(call => call.name === 'pollIssueActivityPage' && call.scenario === 'deleted'))
 })
