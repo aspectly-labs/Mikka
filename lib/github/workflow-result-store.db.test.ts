@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { mock, test } from 'node:test'
 import { isE2eTarget } from '../../tests/helpers/e2e-target.mjs'
 import { seedFixtureWorkspace } from '../../tests/helpers/task-workspace'
+import { githubFixture } from '../../tests/fakes/github-fixture.mjs'
 
 const target = process.env.E2E_DATABASE_URL
 const valid = isE2eTarget(target) && target === process.env.MIKKA_DATABASE_URL && target === process.env.DATABASE_URL
@@ -21,32 +22,36 @@ mock.module(new URL('../eve/server-client.ts', import.meta.url).href, { namedExp
     return { sessionId: 'fixture-session', deliveryId: 'fixture-delivery' }
   },
 } })
-// The live repository credential is a network read the hosted receiver repeats
-// per delivery; the fixture answers it and can be flipped to a stale grant.
-const credentials: string[] = []
-let credentialReply = { repository: { id: '22', installationId: '11', full_name: 'o/r' }, token: 'fixture-token' }
-mock.module(new URL('./user-access.ts', import.meta.url).href, { namedExports: {
-  githubRepositoryReadCredential: async (_userId: string, remoteKey: string) => {
-    credentials.push(remoteKey)
-    return credentialReply
-  },
-} })
-
-test('a redelivered workflow result wakes the owning run once and stays a no-op after delivery', { skip: !valid, timeout: 120_000 }, async () => {
+test('a redelivered workflow result wakes the owning run once and stays a no-op after delivery', { skip: !valid, timeout: 120_000 }, async t => {
+  // The live repository recheck goes through the real GitHub client to the
+  // shared HTTP fake; the stale-grant case is an installation it does not name.
+  const fixture = await githubFixture(), originalFetch = globalThis.fetch, appId = process.env.GITHUB_APP_ID
+  process.env.GITHUB_APP_ID = '123'
+  globalThis.fetch = fixture.fetch
+  t.after(async () => {
+    globalThis.fetch = originalFetch
+    if (appId === undefined) delete process.env.GITHUB_APP_ID
+    else process.env.GITHUB_APP_ID = appId
+    await fixture.close()
+  })
+  const repositoryReads = () => fixture.github.requests.filter((request: { method: string; path: string }) =>
+    request.method === 'GET' && request.path === '/github/repos/mikka-e2e/core-loop').length
   const { pool } = await import('../db')
+  const { saveGitHubConnection } = await import('./connection')
   const { acceptWorkflowResult } = await import('./workflow-result-store')
   const owner = `wfr-${randomUUID()}`, agentId = randomUUID(), botId = randomUUID(), runId = randomUUID(), issueId = randomUUID()
   const headSha = 'a'.repeat(40)
   try {
     await pool.query(`INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES ($1,'WF owner',$2,true,now(),now())`, [owner, `${owner}@example.invalid`])
     await pool.query(`INSERT INTO agents (id,"userId",name,harness) VALUES ($1,$2,'Coder','codex')`, [agentId, owner])
+    await saveGitHubConnection(owner, { githubAccountId: '456', githubLogin: 'mvp-owner-456' }, { access_token: 'mikka-local-synthetic-user-token' })
     const workspaceId = await seedFixtureWorkspace(pool, owner)
     await pool.query(`INSERT INTO issues (id,"userId","workspaceId",title,content,status,priority) VALUES ($1,$2,$3,'CI fixture',$4,'review','normal')`, [issueId, owner, workspaceId, JSON.stringify({ type: 'doc', content: [{ type: 'paragraph' }] })])
     await pool.query(`INSERT INTO bots (id,"ownerId","workspaceId",name) VALUES ($1,$2,$3,'CI bot')`, [botId, owner, workspaceId])
     await pool.query(`INSERT INTO agent_runs (id,"userId","issueId","workspaceId","botId","agentId",status,prompt) VALUES ($1,$2,$3,$4,$5,$6,'succeeded','CI fixture')`, [runId, owner, issueId, workspaceId, botId, agentId])
-    await pool.query(`INSERT INTO run_publications ("runId","userId","issueId","remoteUrl","remoteKey",branch,status,"pullRequest") VALUES ($1,$2,$3,'https://github.com/o/r','v2/github.com/o/r','mikka/ci-7','published',$4)`, [runId, owner, issueId, JSON.stringify({ url: 'https://github.com/o/r/pull/7', headSha })])
-    await pool.query(`INSERT INTO github_repository_installations ("userId","remoteKey","githubAccountId","installationId","repositoryId") VALUES ($1,'v2/github.com/o/r','12',11,22)`, [owner])
-    const result = { version: 1 as const, deliveryId: 'delivery-1', installationId: 11, repositoryId: 22, repository: 'o/r',
+    await pool.query(`INSERT INTO run_publications ("runId","userId","issueId","remoteUrl","remoteKey",branch,status,"pullRequest") VALUES ($1,$2,$3,'https://github.com/mikka-e2e/core-loop','v2/github.com/mikka-e2e/core-loop','mikka/ci-7','published',$4)`, [runId, owner, issueId, JSON.stringify({ url: 'https://github.com/mikka-e2e/core-loop/pull/7', headSha })])
+    await pool.query(`INSERT INTO github_repository_installations ("userId","remoteKey","githubAccountId","installationId","repositoryId") VALUES ($1,'v2/github.com/mikka-e2e/core-loop','456',99,789)`, [owner])
+    const result = { version: 1 as const, deliveryId: 'delivery-1', installationId: 99, repositoryId: 789, repository: 'mikka-e2e/core-loop',
       workflowId: 33, workflowRunId: 44, attempt: 1, headSha, branch: 'mikka/ci-7', conclusion: 'failure' as const }
     const eventCount = () => pool.query<{ n: number; ids: string[] }>(`SELECT count(*)::int n, array_agg(id ORDER BY "createdAt") ids FROM coordinator_events WHERE "runId"=$1`, [runId]).then(r => r.rows[0])
     const sendsBefore = sends.length
@@ -59,12 +64,12 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     assert.equal(sends.at(-1)!.eventId, first.ids[0])
     const [row] = (await pool.query<{ dedupeKey: string; tier: string; issueId: string; payload: { source: string; deliveryId: string } }>(
       `SELECT "dedupeKey",tier,"issueId",payload FROM coordinator_events WHERE id=$1`, [first.ids[0]])).rows
-    assert.equal(row.dedupeKey, `github-workflow:${runId}:11:22:33:44:1:${headSha}`)
+    assert.equal(row.dedupeKey, `github-workflow:${runId}:99:789:33:44:1:${headSha}`)
     assert.equal(row.tier, 'result')
     assert.equal(row.issueId, issueId)
     assert.equal(row.payload.source, 'github_workflow_run')
     assert.equal(row.payload.deliveryId, 'delivery-1')
-    assert.deepEqual(credentials, ['v2/github.com/o/r'], 'the admitted result rechecked live repository authority')
+    assert.equal(repositoryReads(), 1, 'the admitted result rechecked live repository authority')
     const publication = () => pool.query<{ pullRequest: { workflowResults?: Record<string, unknown> } }>(`SELECT "pullRequest" FROM run_publications WHERE "runId"=$1`, [runId]).then(r => r.rows[0].pullRequest)
     assert.deepEqual((await publication()).workflowResults?.['33'], { headSha, run: 44, attempt: 1, conclusion: 'failure' })
 
@@ -93,21 +98,23 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     assert.deepEqual((await publication()).workflowResults?.['33'], { headSha, run: 44, attempt: 2, conclusion: 'success' })
 
     // A delivery matching no published run never reaches authority checks or any Bot.
-    const credentialCalls = credentials.length
+    const requestCount = fixture.github.requests.length
     await acceptWorkflowResult({ ...result, repositoryId: 23, repository: 'other/r' })
-    assert.equal(credentials.length, credentialCalls)
+    assert.equal(fixture.github.requests.length, requestCount)
     assert.equal(sends.length, sendsBefore + 3)
 
-    // A live credential that no longer names this installation drops the receipt.
-    credentialReply = { repository: { id: '22', installationId: '12', full_name: 'o/r' }, token: 'fixture-token' }
-    await acceptWorkflowResult({ ...result, attempt: 3, deliveryId: 'delivery-5' })
+    // A live credential that no longer names the recorded installation drops the receipt.
+    await pool.query(`UPDATE github_repository_installations SET "installationId"=12 WHERE "userId"=$1`, [owner])
+    const readsBeforeStale = repositoryReads()
+    await acceptWorkflowResult({ ...result, installationId: 12, attempt: 3, deliveryId: 'delivery-5' })
+    assert.equal(repositoryReads(), readsBeforeStale + 1, 'the stale grant reached the live repository recheck')
     assert.equal(sends.length, sendsBefore + 3, 'a stale installation grant suppresses the queued result')
     assert.equal((await eventCount()).n, 2)
   } finally {
-    credentialReply = { repository: { id: '22', installationId: '11', full_name: 'o/r' }, token: 'fixture-token' }
     await pool.query(`DELETE FROM coordinator_events WHERE "runId"=$1`, [runId])
     await pool.query(`DELETE FROM run_publications WHERE "runId"=$1`, [runId])
     await pool.query(`DELETE FROM github_repository_installations WHERE "userId"=$1`, [owner])
+    await pool.query(`DELETE FROM github_connections WHERE "userId"=$1`, [owner])
     await pool.query(`DELETE FROM agent_runs WHERE id=$1`, [runId])
     await pool.query(`DELETE FROM bots WHERE id=$1`, [botId])
     await pool.query(`DELETE FROM issues WHERE id=$1`, [issueId])

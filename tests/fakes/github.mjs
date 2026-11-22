@@ -55,7 +55,7 @@ export function createGitHubRoutes({ getScenario, getPullRequests, observe, git,
   }
   if (path === `/user/${githubUser.id}` && method === 'GET') { readAccess(); return reply(githubUser) }
   if (path === `${REPO_PATH}/collaborators/${githubUser.login}/permission` && method === 'GET') { readAccess(); return reply({ permission: 'write', user: githubUser }) }
-  if (path === REPO_PATH && method === 'GET') { readAccess(); return reply({ id: REPOSITORY_ID, full_name: 'mikka-e2e/core-loop', default_branch: 'trunk', allow_merge_commit: true, allow_squash_merge: false, allow_rebase_merge: false }) }
+  if (path === REPO_PATH && method === 'GET') { readAccess(); return reply({ id: REPOSITORY_ID, full_name: 'mikka-e2e/core-loop', private: false, default_branch: 'trunk', allow_merge_commit: true, allow_squash_merge: false, allow_rebase_merge: false }) }
   const currentCommit = branch => git(scenario.barePath, ['rev-parse', '--verify', `refs/heads/${branch}`])
   const mergeState = async pr => {
     const rule = rules.get(pr.number) ?? {}
