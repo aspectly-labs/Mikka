@@ -58,11 +58,27 @@ jobs:
                   mergeStateStatus
                   mergeQueueEntry { id }
                   stackEntry { id }
+                  timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+                    nodes {
+                      ... on RemovedFromMergeQueueEvent {
+                        actor { login }
+                      }
+                    }
+                  }
                 }
               }
             }' --jq '.data.node')
           if ! jq -e '.mergeStateStatus == "CLEAN" and .mergeQueueEntry == null and .stackEntry == null' <<< "$state" >/dev/null; then
             echo "PR #$pr_number is not eligible, is already queued, or belongs to a stack"
+            exit 0
+          fi
+          # A removal whose actor is not github-merge-queue — including one with
+          # no recorded actor — was a deliberate pull or is unattributable;
+          # never put such a PR back.
+          removals=$(jq -r '.timelineItems.nodes | length' <<< "$state")
+          remover=$(jq -r '.timelineItems.nodes[0].actor.login // ""' <<< "$state")
+          if [ "$removals" -gt 0 ] && [ "$remover" != "github-merge-queue" ]; then
+            echo "PR #$pr_number was pulled from the merge queue by $remover; not re-enqueueing"
             exit 0
           fi
           checks=$(gh pr checks "$pr_number" --repo "$GITHUB_REPOSITORY" --required --json bucket) || {

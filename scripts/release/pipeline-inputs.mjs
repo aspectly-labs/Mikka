@@ -334,6 +334,12 @@ export async function selectPromotion({ env = process.env, api = github } = {}) 
   return { status: 'selected', source: selected.manifest.sourceCommit, operations: env.INPUT_OPERATIONS_SOURCE, report }
 }
 
+// Node 24 appends the assertion diff to a custom message; report only the code.
+export function selectionError(error) {
+  const code = error instanceof Error ? error.message.split('\n', 1)[0] : ''
+  return /^pipeline_[a-z_]+$/.test(code) ? code : 'pipeline_selection_failed'
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === 'promote'), 'pipeline_usage_invalid')
@@ -342,10 +348,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       Object.entries(output).map(([key, value]) => `${key}=${value}\n`).join(''))
     console.log(JSON.stringify({ status: output.status, source: output.source }))
   } catch (error) {
-    // Node's assert surfaces the code alone today, but match a leading code so a
-    // runtime that appends diff details still reports the check, not the mask.
-    const coded = error instanceof Error && error.message.match(/^pipeline_[a-z_]+/)
-    console.error(coded ? coded[0] : 'pipeline_selection_failed')
+    console.error(selectionError(error))
     process.exitCode = 1
   }
 }

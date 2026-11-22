@@ -29,3 +29,58 @@ test('public schema is serializable metadata with bilingual row search and no se
   assert.equal('guard' in row, false)
   assert.deepEqual(row.writeAccess, { personal: 'owner', workspace: 'admin' })
 })
+
+test('gitAuthorName and gitAuthorEmail inherit across personal, workspace and default with strict guards', () => {
+  assert.deepEqual(resolveSettingValue('gitAuthorName', null, null), { value: '', source: 'default' })
+  assert.deepEqual(resolveSettingValue('gitAuthorName', null, 'Team Bot'), { value: 'Team Bot', source: 'workspace' })
+  assert.deepEqual(resolveSettingValue('gitAuthorName', 'Alice', 'Team Bot'), { value: 'Alice', source: 'personal' })
+  assert.deepEqual(resolveSettingValue('gitAuthorName', '', 'Team Bot'), { value: '', source: 'personal' })
+
+  assert.deepEqual(resolveSettingValue('gitAuthorEmail', null, null), { value: '', source: 'default' })
+  assert.deepEqual(resolveSettingValue('gitAuthorEmail', null, 'bot@team.example'), { value: 'bot@team.example', source: 'workspace' })
+  assert.deepEqual(resolveSettingValue('gitAuthorEmail', 'alice@example.com', 'bot@team.example'), { value: 'alice@example.com', source: 'personal' })
+  assert.deepEqual(resolveSettingValue('gitAuthorEmail', '', 'bot@team.example'), { value: '', source: 'personal' })
+
+  assert.deepEqual(parseSettingsPatch('personal', { values: { gitAuthorName: '  Alice  ', gitAuthorEmail: '  alice@example.com  ' } }), {
+    gitAuthorName: 'Alice',
+    gitAuthorEmail: 'alice@example.com',
+  })
+  assert.deepEqual(parseSettingsPatch('workspace', { values: { gitAuthorName: '', gitAuthorEmail: '' } }), {
+    gitAuthorName: '',
+    gitAuthorEmail: '',
+  })
+  assert.deepEqual(parseSettingsPatch('personal', { values: { gitAuthorName: null, gitAuthorEmail: null } }), {
+    gitAuthorName: null,
+    gitAuthorEmail: null,
+  })
+
+  for (const invalid of [
+    { gitAuthorName: '   ' },
+    { gitAuthorName: 'x'.repeat(101) },
+    { gitAuthorName: 'Alice <bob@example.com>' },
+    { gitAuthorName: 'Alice\nBob' },
+    { gitAuthorName: 42 },
+    { gitAuthorEmail: '   ' },
+    { gitAuthorEmail: 'not-an-email' },
+    { gitAuthorEmail: 'alice@' },
+    { gitAuthorEmail: 42 },
+  ]) {
+    assert.throws(() => parseSettingsPatch('personal', { values: invalid }))
+    assert.throws(() => parseSettingsPatch('workspace', { values: invalid }))
+  }
+
+  const schema = settingsSchema()
+  const nameEntry = schema.find(entry => entry.key === 'gitAuthorName')
+  const emailEntry = schema.find(entry => entry.key === 'gitAuthorEmail')
+  assert.ok(nameEntry && emailEntry)
+  assert.equal(nameEntry.group, 'git')
+  assert.equal(nameEntry.page, 'git')
+  assert.equal(emailEntry.group, 'git')
+  assert.equal(emailEntry.page, 'git')
+  assert.deepEqual(nameEntry.scope, ['personal', 'workspace'])
+  assert.deepEqual(emailEntry.scope, ['personal', 'workspace'])
+  assert.equal(nameEntry.personalOverride, true)
+  assert.equal(emailEntry.personalOverride, true)
+  assert.equal(nameEntry.label['zh-CN'], '提交作者')
+  assert.equal(emailEntry.label['zh-CN'], '提交邮箱')
+})
