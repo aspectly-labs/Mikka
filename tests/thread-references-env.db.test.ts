@@ -17,6 +17,7 @@ test('thread references + thread env vars', { skip: !dbUrl }, async t => {
   t.after(() => pool.end())
   const { resolveThreadReferences, expandReferences } = await import('../lib/thread-references-server')
   const { setThreadScopeSecret, deleteThreadScopeSecret } = await import('../lib/secrets/thread-scope')
+  const { listWorkspaceSecrets } = await import('../lib/secrets/store')
   const { loadTaskRuntimeSecrets } = await import('../lib/secrets/runtime')
 
   const owner = await seedUser(pool, 'ref-owner')
@@ -62,6 +63,9 @@ test('thread references + thread env vars', { skip: !dbUrl }, async t => {
   const runtime = await loadTaskRuntimeSecrets(workspace.id, null, process.env, owner, runId)
   const found = runtime.find(r => r.name === 'THREAD_TOKEN')
   assert.equal(found?.value, 'secret-value-1', 'claim-side runtime decrypts the thread var')
+  // The workspace settings list must not surface thread-scoped names/metadata.
+  const list = await listWorkspaceSecrets(owner, workspace.id)
+  assert.equal(list.find(r => r.scopeType === 'thread'), undefined, 'thread vars stay out of the workspace secrets list')
   // A different run id must not see the var.
   const otherRun = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace.id, issueId: issue })
   const otherRuntime = await loadTaskRuntimeSecrets(workspace.id, null, process.env, owner, otherRun)
