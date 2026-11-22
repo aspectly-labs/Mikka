@@ -4,8 +4,11 @@ import type { ReactNode, Ref } from 'react'
 import type { SendKey } from '@/lib/send-key'
 import type { ChatFileScope } from '@mikka/protocol/chat-attachments'
 
+/** What a caller may do with the composer's field: a textarea in the default slot, the chat editor in the hosted one. */
+export type ChatComposerInput = { focus(options?: FocusOptions): void; setSelectionRange?(start: number, end: number): void }
+
 export type ChatComposerProps = {
-  ref: Ref<HTMLTextAreaElement | null>
+  ref: Ref<ChatComposerInput | null>
   value: string
   onChange: (value: string) => void
   onSubmit: () => void
@@ -42,7 +45,15 @@ export type ChatComposerProps = {
    * and the ＋ menu's Reference rows search. A reference shows as one chip in the draft
    * and is sent as its marker (lib/composer-references.ts). Absent: no references.
    */
-  references?: { workspaceId: string }
+  references?: {
+    workspaceId: string
+    /** The thread's run: `@` also searches its workspace's files and folders (`/api/runs/:id/workspace/files`). */
+    runId?: string
+  }
+  /** The people and Bots `@` can name (a group chat's members); a chip is sent as `@Name` (lib/group-mentions.ts). */
+  people?: readonly { id: string; name: string; kind: 'person' | 'bot' }[]
+  /** Where the person's earlier prompts are kept (a thread's or chat's own key): Up in an empty composer recalls them. */
+  historyKey?: string
   /** The `/` commands this chat can run; only commands with a working action are listed. */
   commands?: ChatComposerCommand[]
 }

@@ -734,7 +734,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         working={working && !stopping} onStop={turnConfirmed && stopShown && !resuming && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
-          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands }}
+          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands, historyKey: stateKey }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
         under={!embedded && data?.context ? <div data-slot="thread-under-composer" className="flex min-w-0 items-center justify-end px-1"><CoordinatorContextUsage usage={data.context} /></div> : undefined}
         pending={[
