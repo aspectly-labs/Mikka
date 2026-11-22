@@ -11,7 +11,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActionError } from '@/lib/use-action-error'
 
-/** Where a fork starts: a message of one run of the thread (ThreadItem.id), or the whole thread when it names none. */
+/** Where a fork starts: a run of the thread, and a message of it (ThreadItem.id) or, naming none, the whole run. */
 export type ThreadForkRequest = { runId: string; itemId?: string | null; mode: 'full' | 'summary' }
 
 /**
@@ -39,7 +39,7 @@ export function ThreadForkDialog({ request, onClose, onForked }: { request: Thre
   }
   return <Dialog open={Boolean(request)} onOpenChange={open => { if (!open && !busy) onClose() }}>
     <DialogContent showCloseButton={false}>
-      <DialogHeader><DialogTitle>{t(request?.mode === 'summary' ? 'forkSummary' : request?.itemId ? 'forkFromHere' : 'fork')}</DialogTitle></DialogHeader>
+      <DialogHeader><DialogTitle>{t(request?.mode === 'summary' ? 'forkSummary' : 'fork')}</DialogTitle></DialogHeader>
       <form className="flex flex-col gap-4" onSubmit={event => { event.preventDefault(); void submit() }}>
         <FieldGroup><Field>
           <FieldLabel htmlFor="thread-fork-instruction" className="sr-only">{t('forkInstruction')}</FieldLabel>

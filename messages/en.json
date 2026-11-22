@@ -5149,7 +5149,6 @@
     "lifecycle": {
       "fork": "Fork",
       "forkSummary": "Fork with summary",
-      "forkFromHere": "Fork from here",
       "forkInstruction": "What should the fork do?",
       "forkFailed": "Couldn't fork",
       "tags": "Tags",
@@ -6588,8 +6587,7 @@
       "copied": "Copied",
       "copyFailed": "Couldn't copy",
       "quote": "Quote",
-      "reply": "Reply",
-      "more": "More"
+      "reply": "Reply"
     }
   },
   "GroupTask": {

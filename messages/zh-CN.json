@@ -5149,7 +5149,6 @@
     "lifecycle": {
       "fork": "分叉",
       "forkSummary": "带摘要分叉",
-      "forkFromHere": "从这里分叉",
       "forkInstruction": "分叉后要做什么",
       "forkFailed": "分叉失败",
       "tags": "标签",
@@ -6588,8 +6587,7 @@
       "copied": "已复制",
       "copyFailed": "复制失败",
       "quote": "引用",
-      "reply": "回复",
-      "more": "更多"
+      "reply": "回复"
     }
   },
   "GroupTask": {
