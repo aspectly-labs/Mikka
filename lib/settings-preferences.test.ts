@@ -39,6 +39,42 @@ test('legacy wallpaper colors normalize and unsynced appearance stays device-loc
   assert.equal(resolved.sources.codeFontSize, 'default')
 })
 
+test('preset theme sync ignores stale local fill/foreground while mikka custom colors and null resets persist cleanly', () => {
+  const withCustom = splitUiPreferencesPatch(
+    { fill: '#fff5f8', foreground: '#3b1d2a', accentDark: '#ff88aa', border: '#aa5500' },
+    true,
+  )
+  assert.equal(withCustom.localChanged, true)
+  const syncedForest = resolveUiPreferencesFromSettings({
+    values: {
+      appearanceSync: { value: true, source: 'personal' },
+      appearanceTheme: { value: 'forest', source: 'personal' },
+      appearanceAccentColor: { value: '#3f8f4e', source: 'personal' },
+    },
+  }, withCustom.nextLocal)
+  assert.equal(syncedForest.ui.themeId, 'forest')
+  assert.equal(syncedForest.ui.fill, '#f3f7f2', 'named preset theme must not leak stale local fill into ColorRow')
+  assert.equal(syncedForest.ui.foreground, '#1b2b1c', 'named preset theme must not leak stale local foreground into ColorRow')
+  assert.equal(syncedForest.ui.border, '#aa5500')
+
+  const syncedMikka = resolveUiPreferencesFromSettings({
+    values: {
+      appearanceSync: { value: true, source: 'personal' },
+      appearanceTheme: { value: 'mikka', source: 'personal' },
+    },
+  }, withCustom.nextLocal)
+  assert.equal(syncedMikka.ui.fill, '#fff5f8')
+  assert.equal(syncedMikka.ui.foreground, '#3b1d2a')
+
+  const cleared = splitUiPreferencesPatch(
+    { accentDark: null, fillDark: null, foregroundDark: null, border: null },
+    true,
+    withCustom.nextLocal,
+  )
+  assert.equal(cleared.nextLocal.border, null)
+  assert.equal(cleared.nextLocal.accentDark, null)
+})
+
 test('send key: Enter sends by default, Shift+Enter breaks the line', () => {
   assert.equal(sendsMessage(key()), true)
   assert.equal(sendsMessage(key(), 'enter'), true)

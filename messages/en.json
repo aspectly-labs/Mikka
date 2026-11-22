@@ -2443,6 +2443,7 @@
       "theme_lilac": "Lilac",
       "theme_bright": "Paper",
       "theme_midnight": "Midnight",
+      "resetColors": "Restore defaults",
       "pendingBadge": "Pending"
     },
     "profile": {
