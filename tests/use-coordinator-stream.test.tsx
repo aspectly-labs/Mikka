@@ -99,7 +99,7 @@ test('a first-turn no-model refusal is not a thread load error, but transport fa
     if (failRead) return Response.json({ error: 'unavailable' }, { status: 503 })
     return new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value } }), { headers })
   }
-  const container = document.createElement('div')
+  const container = browser.document.createElement('div') as unknown as HTMLDivElement
   document.body.append(container)
   const root = createRoot(container)
   let output!: ReturnType<typeof useCoordinatorAgent>
