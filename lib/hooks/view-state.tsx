@@ -3,6 +3,15 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { CLEAR_VIEW_STATE_EVENT, VIEW_STATE_PREFIX } from '../chat-drafts'
 
+/**
+ * A chat's unsent draft and the person's earlier prompts outlive the window (closing it must not lose what was being
+ * written), so they go to localStorage; other browsing state stays with this window's session. Both are cleared on
+ * logout (lib/chat-drafts.ts).
+ */
+const durable = (key: string) => key.endsWith(':draft') || key.endsWith(':history')
+/** The most one durable cell may take (in UTF-16 units of its JSON), so drafts cannot fill the origin's quota. */
+export const DURABLE_MAX = 64 * 1024
+
 /** Browsing state lives for this window's session, separate from saved product settings. */
 export function createViewStore(scope: string | null) {
   const values = new Map<string, unknown>()
@@ -20,7 +29,8 @@ export function createViewStore(scope: string | null) {
     get<T,>(key: string, fallback: T): T {
       if (!values.has(key) && scope && typeof window !== 'undefined') {
         try {
-          const saved = window.sessionStorage.getItem(storageKey(key))
+          // A draft saved before drafts moved to localStorage is still in this window's session.
+          const saved = (durable(key) ? window.localStorage.getItem(storageKey(key)) : null) ?? window.sessionStorage.getItem(storageKey(key))
           if (saved !== null) values.set(key, JSON.parse(saved))
         } catch { /* The in-memory store still works when storage is unavailable. */ }
       }
@@ -35,7 +45,17 @@ export function createViewStore(scope: string | null) {
       if (!active || (generation !== undefined && generation !== this.generation(key))) return
       values.set(key, value)
       if (scope) {
-        try { window.sessionStorage.setItem(storageKey(key), JSON.stringify(value)) } catch { /* storage unavailable */ }
+        try {
+          const saved = JSON.stringify(value)
+          if (!durable(key)) window.sessionStorage.setItem(storageKey(key), saved)
+          else {
+            window.sessionStorage.removeItem(storageKey(key))
+            // An empty draft (sent, cleared) leaves nothing behind; one past the cap lives only in this window.
+            if (value === '' || (Array.isArray(value) && !value.length)) window.localStorage.removeItem(storageKey(key))
+            else if (saved.length > DURABLE_MAX) { window.localStorage.removeItem(storageKey(key)); window.sessionStorage.setItem(storageKey(key), saved) }
+            else window.localStorage.setItem(storageKey(key), saved)
+          }
+        } catch { /* storage unavailable or full */ }
       }
       // Copy out first: a listener may unsubscribe another while it runs, and
       // iterating the live Set would then skip whichever one sat after it.

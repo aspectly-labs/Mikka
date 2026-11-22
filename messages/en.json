@@ -4894,6 +4894,19 @@
     "pullRequests": "Pull requests",
     "broken": "Deleted, or you no longer have access"
   },
+  "ChatEditor": {
+    "people": "People",
+    "bots": "Bots",
+    "files": "Files and folders",
+    "skills": "Skills",
+    "pasted": "Pasted text · {lines, plural, =1 {1 line} other {# lines}}",
+    "expand": "Show pasted text",
+    "removePasted": "Remove pasted text",
+    "remove": "Remove {name}",
+    "image": "Image",
+    "uploading": "{percent}%",
+    "uploadFailed": "Upload failed"
+  },
   "IssueThreads": {
     "composerModelUnknown": "Model not reported",
     "composerModelRequested": "Requested {model}",

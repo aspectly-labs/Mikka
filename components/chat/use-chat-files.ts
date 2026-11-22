@@ -37,6 +37,8 @@ export function useChatFiles(
   const removals = useRef(new Map<string, AbortController | null>())
   const [, renderRemovals] = useReducer((revision: number) => revision + 1, 0)
   const uploads = useRef(new Map<string, AbortController>())
+  // Which upload became which file: an inline image chip names its upload, and keeps naming it once it is a file.
+  const uploaded = useRef(new Map<string, string>())
   const scopeKey = scope ? `${scope.kind}:${scope.id}` : ''
   const previousScope = useRef(scopeKey)
   useEffect(() => {
@@ -90,6 +92,7 @@ export function useChatFiles(
       const draft = splitChatFiles(current.current.value)
       const next = withChatFiles(draft.text, [...draft.files, file])
       if (next.length > MESSAGE_MAX) throw new ChatUploadError('tooLong')
+      uploaded.current.set(item.key, file.id)
       change(next)
       setPending((items) => items.filter((entry) => entry.key !== item.key))
     } catch (error) {
@@ -109,8 +112,10 @@ export function useChatFiles(
       uploads.current.delete(item.key)
     }
   }
-  function add(files: File[]) {
-    if (!current.current.scope || current.current.blocked) return
+  /** The uploads it starts, each with its key (a refused file is listed with its error). */
+  function add(files: File[]): PendingChatFile[] {
+    if (!current.current.scope || current.current.blocked) return []
+    const added: PendingChatFile[] = []
     const occupied = splitChatFiles(current.current.value).files.length + uploads.current.size
     for (const [index, file] of files.entries()) {
       const error =
@@ -128,9 +133,11 @@ export function useChatFiles(
         percent: 0,
         error,
       }
+      added.push(item)
       if (error) setPending((items) => [...items, item])
       else void start(item)
     }
+    return added
   }
   function finishRemoval(id: string) {
     removals.current.delete(id)
@@ -189,6 +196,8 @@ export function useChatFiles(
     pending,
     add,
     remove,
+    /** The file an upload became, once it has. */
+    idOf: (key: string) => uploaded.current.get(key),
     retry: (item: PendingChatFile) => {
       void start(item)
     },

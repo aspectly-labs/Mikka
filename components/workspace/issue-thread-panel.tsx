@@ -662,7 +662,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     </span>)
   const referenceWorkspace = liveRuns.find(run => run.id === liveRunId)?.workspaceId
   // `@`, the ＋ menu's Reference rows and the reference chips belong to the composer (#2924).
-  const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? { workspaceId: referenceWorkspace } : undefined
+  const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? { workspaceId: referenceWorkspace, runId: liveRunId } : undefined
   const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen host={host} botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
     panels={bare || transcriptOnly || collect ? undefined : panels}
     historyPrepend={historyPrepend}
@@ -670,7 +670,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     working={working} onStop={working && canStop ? () => { void stop() } : undefined}
     composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, leftControls: modelControl, label: composerUnavailable ? t(data && !isThreadRun(data.thread) ? 'checkEnded' : 'replyUnavailable') : t('composer', { agent: harnessLabel(threadComposerHarness(detail?.harness ?? '', liveRunId, modelFallback)) }), value: draft, onChange: setDraft, onSubmit: () => { void send() },
       attachmentScope: { kind: 'thread', id: liveRunId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
-      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands }}
+      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands, historyKey: `thread:${runId}` }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
     notices={<>
       {olderState === 'failed' && olderPosition && <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void loadOlder() }} />}
