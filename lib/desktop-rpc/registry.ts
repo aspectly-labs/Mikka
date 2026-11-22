@@ -13,6 +13,8 @@ import * as actions2 from '@/app/actions/app-policy'
 import * as actions3 from '@/app/actions/artifacts'
 import * as actions4 from '@/app/actions/audit-log'
 import * as actions5 from '@/app/actions/billing'
+import * as deviceSettingsActions from '@/app/actions/devices'
+import * as opsMetricsActions from '@/app/actions/ops-metrics'
 import * as actions6 from '@/app/actions/bots'
 import * as actions7 from '@/app/actions/collaboration'
 import * as actions8 from '@/app/actions/coordinator'
@@ -119,6 +121,15 @@ const functions = {
   'billing.startPointsPurchase': actions5.startPointsPurchase,
   'billing.startChatPointsPurchase': actions5.startChatPointsPurchase,
   'billing.startCardVerification': actions5.startCardVerification,
+  'billing.getBillingSettings': actions5.getBillingSettings,
+  'billing.saveAutoRechargePolicy': actions5.saveAutoRechargePolicy,
+  'devices.getPolicy': deviceSettingsActions.getPolicy,
+  'devices.updatePolicy': deviceSettingsActions.updatePolicy,
+  'devices.listRepositories': deviceSettingsActions.listRepositories,
+  'devices.upsertRepository': deviceSettingsActions.upsertRepository,
+  'devices.patchRepository': deviceSettingsActions.patchRepository,
+  'devices.deleteRepository': deviceSettingsActions.deleteRepository,
+  'ops-metrics.getWorkspaceOpsMetrics': opsMetricsActions.getWorkspaceOpsMetrics,
   'bots.listBots': actions6.listBots,
   'bots.pollBots': actions6.pollBots,
   'bots.createBot': actions6.createBot,

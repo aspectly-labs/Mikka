@@ -911,6 +911,28 @@
       "sourceHash": "b06f9c685cbf147c32ea37d2b60f92475bae5db7b3308ebf3b50ae82eb85bd4a"
     },
     {
+      "path": "/mikka/api/devices/[deviceId]/policy",
+      "template": "/api/devices/[deviceId]/policy",
+      "source": "app/api/devices/[deviceId]/policy/route.ts",
+      "methods": [
+        "GET",
+        "PATCH"
+      ],
+      "sourceHash": "448288fbe0d5f8a6a3de90a5cba49e58ca22157b010ff21dcd719975882470f4"
+    },
+    {
+      "path": "/mikka/api/devices/[deviceId]/repositories",
+      "template": "/api/devices/[deviceId]/repositories",
+      "source": "app/api/devices/[deviceId]/repositories/route.ts",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH",
+        "PUT"
+      ],
+      "sourceHash": "048413be4999e49f72e4216d8d1c8b0df5ea68acfb2fe3bd9bd707c4edeae786"
+    },
+    {
       "path": "/mikka/api/drive/scopes",
       "template": "/api/drive/scopes",
       "source": "app/api/drive/scopes/route.ts",
@@ -3297,6 +3319,17 @@
       "sourceHash": "bd60a94023cce9abde48be48eb86f2951369ef5c65fb0fc77402e61880fddc24"
     },
     {
+      "path": "/mikka/api/workspaces/[workspaceId]/billing/settings",
+      "template": "/api/workspaces/[workspaceId]/billing/settings",
+      "source": "app/api/workspaces/[workspaceId]/billing/settings/route.ts",
+      "methods": [
+        "GET",
+        "PATCH",
+        "PUT"
+      ],
+      "sourceHash": "e4f63580f0da5c9aaf7cdac00d9e9c7374ee04c74f2974609c067ae04ad98f99"
+    },
+    {
       "path": "/mikka/api/workspaces/[workspaceId]/computer-policy",
       "template": "/api/workspaces/[workspaceId]/computer-policy",
       "source": "app/api/workspaces/[workspaceId]/computer-policy/route.ts",
@@ -3353,6 +3386,15 @@
         "POST"
       ],
       "sourceHash": "e34f9278bd0826591eb1dd2966728c9a40075bad14e86cf86e300f58cb07d9bf"
+    },
+    {
+      "path": "/mikka/api/workspaces/[workspaceId]/ops-metrics",
+      "template": "/api/workspaces/[workspaceId]/ops-metrics",
+      "source": "app/api/workspaces/[workspaceId]/ops-metrics/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "001b95401718f619e042841021278c5733a153b295f9e070f0e8d97bb381d35a"
     },
     {
       "path": "/mikka/api/workspaces/[workspaceId]/personal-default-project",
@@ -3593,7 +3635,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "121fa3cfb05e49fef05589beea162a9dd61603a6b821f1ed187ac693a4c00354"
+      "sourceHash": "18653fa47f770f883a176000e016687a3e38c3f63ff8a304519807da6c31b304"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

@@ -237,8 +237,8 @@ function normalizeRepositoryInput(raw: string) {
     return normalizeRepository(canonicalGithub ? canonicalGithub[1]! : trimmed, {
       allowFile: daemonTestMode(process.env),
     })
-  } catch {
-    throw new ActionFailureError('repoPathInvalid')
+  } catch (error) {
+    throw new ActionFailureError('repoPathInvalid', undefined, undefined, { cause: error })
   }
 }
 
