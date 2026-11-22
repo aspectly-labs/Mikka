@@ -43,6 +43,7 @@ stub('lib/home.tsx', { useHome: () => ({}) })
 stub('lib/theme.ts', { colors: { prOpen: 'green', merged: 'purple', danger: 'red', tertiary: 'grey' }, LIST_INSET: 0, SPACE: { block: 8 } })
 stub('lib/web.ts', { openOnWeb: none })
 stub('lib/push-route.ts', { taskLinkAttempt: () => undefined })
+stub('lib/task-push-app.ts', { readPushedTask: none })
 stub('lib/live-keys.ts', { taskDetailLive: none })
 stub('features/tasks/model/task-presentation-read.ts', { readPresentedTask: none })
 const at = '2026-11-15T06:00:00Z'

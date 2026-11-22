@@ -58,6 +58,8 @@ const until = async (check: () => boolean) => { for (let i = 0; i < 200 && !chec
 
 async function reset() {
   await servers.select('legacy')
+  // A signed-in push opens only over a remembered user (lib/navigate.ts openPush).
+  await servers.remember('legacy', { id: 'user-a', name: 'User A', email: 'a@fixture.test' })
   apiCache.setIdentity('legacy:user-a', 'user-a')
   stored.set(keyA, beta); stored.delete(keyB)
   pushed.length = 0; alerts.length = 0; requests.length = 0; replies = []

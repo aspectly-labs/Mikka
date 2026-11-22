@@ -5,7 +5,6 @@ import type { Root } from 'react-dom/client'
 import { Window } from 'happy-dom'
 import type { AgentProfilesView } from '../settings/factory-profiles-data'
 import type { CoordinatorMessageContext } from './use-coordinator-submit'
-import type { SubmitOutcome } from '../../lib/eve/client'
 
 // Source component contracts in Node, not a browser acceptance test. The
 // existing Select primitive is reduced to its value/disabled/onChange contract.
@@ -87,7 +86,6 @@ mock.module(new URL('../../lib/settings-data.ts', import.meta.url).href, { named
   },
 } })
 // What the next submissions answer, in order; accepted once these run out.
-let outcomes: SubmitOutcome[] = []
 let refuseWorkspace = false
 mock.module(new URL('../../app/actions/issues.ts', import.meta.url).href, { namedExports: { createTaskOnly: async (command: import('../../lib/task-create-command').CreateOnlyCommand) => {
   manualCommands.push(command)
@@ -161,7 +159,7 @@ before(async () => {
   ;({ StartWorkDialog } = await import('./start-work-dialog'))
 })
 beforeEach(() => {
-  manualCommands.length = 0; failManual = false; requireConsent = false; botList = []; refuseWorkspace = false; outcomes = []
+  manualCommands.length = 0; failManual = false; requireConsent = false; botList = []; refuseWorkspace = false
   shown = { id: workspaceId, name: 'Fixture workspace', kind: 'team' }; nextShown = null; switcherReads = 0; readFails = false; switcherError = undefined; afterRead = null
   options = { viewerId: 'viewer', members: [{ id: 'viewer', name: 'Viewer', image: null }], labels: [] }
   submitted.length = 0; refreshes = 0; readError = undefined; cacheRefreshes.length = 0; toasts.length = 0; dispatchedTask = undefined
