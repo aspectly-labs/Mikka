@@ -9,7 +9,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { unstable_serialize, useSWRConfig } from 'swr'
 import { useMessages, useTranslations } from '@/lib/intl/i18n-client'
 import { toast } from 'sonner'
-import { ChevronDown } from '@/components/icons'
 import { getThreadInstructions, stopRun, getThreadContinuationModels } from '@/app/actions/agents'
 import { useThreadChanges } from '@/hooks/use-thread-run-reads'
 import { useIssueThreadRead } from '@/hooks/use-issue-thread-read'
@@ -18,7 +17,8 @@ import { sendReviewChange, type ReviewChangeTarget } from '@/lib/factory/review-
 import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
-import { runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems, threadStepOutput } from '@/lib/issue-run-conversation'
+import { runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems } from '@/lib/issue-run-conversation'
+import { useThreadStepRows } from './thread-step-rows'
 import { ThreadReplyVersions } from './thread-reply-versions'
 import { ThreadExecutionIdentity } from './thread-execution-identity'
 import { ThreadRunPlace } from './thread-run-place'
@@ -299,7 +299,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const rootRef = useRef<HTMLElement>(null)
   const [sending, setSending] = useState(false)
   // As Capy, a finished run's steps fold under its activity line; the line opens them.
-  const [stepsOpen, setStepsOpen] = useState(false)
+  const stepRows = useThreadStepRows()
   // false, or what to say: the refusal's reason when the server gave one (threadReplaced…), else 发送失败.
   const [sendFailed, setSendFailed] = useState<string | false>(false)
 
@@ -517,12 +517,10 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       const line = stopRequested ? t('stopping') : waitingForReply ? t('activityLine.waiting')
         : active ? t('activityLine.working', { duration })
         : [t('activityLine.worked', { duration }), ...status === 'failed' ? [t('activityLine.failed')] : status === 'stopped' || status === 'cancelled' ? [t('activityLine.stopped')] : []].join(' · ')
-      const folds = !active && items.some(item => item.kind === 'steps')
+      // A finished run's tool groups stay in place, folded, as Codex shows them (#2923, Figma 1318:63).
       entries.push({ id: `${runId}:activity`, role: 'bot', at: at(data.thread.createdAt), event: true, parts: [{ kind: 'text', text: line, node:
         <div data-attempt-section={runId} data-event-line="" data-activity-line="" className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-          {folds ? <Button type="button" variant="ghost" size="xs" aria-expanded={stepsOpen} onClick={() => setStepsOpen(value => !value)} className="text-muted-foreground">
-            {line}<ChevronDown data-icon="inline-end" aria-hidden className={cn('transition-transform', stepsOpen && 'rotate-180')} />
-          </Button> : <span role="status">{line}</span>}
+          <span role="status">{line}</span>
           {showBadge && <ThreadStatus status={status} outcome={outcome} waiting={waitingForReply} icon={false} />}
           <ThreadOutlineIndex entries={outline} />
         </div> }] })
@@ -541,7 +539,6 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     // Every reply the open message holds, for Reply; Copy keeps the newest words, as before.
     let openWords: string[] = []
     for (const item of items) {
-      if (item.kind === 'steps' && !active && !stepsOpen) continue
       if (item.kind === 'person') {
         open = null
         openWords = []
@@ -563,8 +560,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       }
       if (item.kind === 'agent') openWords = open ? [...openWords, item.text] : [item.text]
       const part: ThreadEntryPart = item.kind === 'agent' ? { kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}><div {...{ [QUOTE_SOURCE_ATTR]: '' }}><AgentMarkdown text={item.text} isStreaming={active} /></div></AgentCitationsContext> }
-        : item.kind === 'steps' ? { kind: 'tools', id: `${runId}:${item.id}`, tools: item.steps.map(step => ({ id: step.id, label: step.name, status: step.failed ? 'failed' as const : 'done' as const,
-          ms: step.ms, note: step.detail ?? undefined, command: step.command, detail: threadStepOutput(step), exitCode: step.exitCode ?? undefined })) }
+        : item.kind === 'steps' ? { kind: 'tools', id: `${runId}:${item.id}`, tools: stepRows(item.steps, active) }
         : item.kind === 'error' ? { kind: 'error', text: item.text }
         : { kind: 'text', text: '', node: item.kind === 'computer'
           ? <ComputerCard botId={item.botId} runId={item.runId} task={item.task} state={active ? 'working' : (view?.status ?? data.thread.status) === 'succeeded' ? 'done' : 'failed'} />
@@ -610,7 +606,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }
   if (!data && collect) entries.push({ id: `${runId}:loading`, role: 'bot', event: true, at: 0, parts: [{ kind: 'text', text: '', node: waiting }] })
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.
-  useEffect(() => { if (collect) collect(runId, entries) }, [collect, runId, data, error, active, canRetry, sending, view?.status, retryLabel, delivery.rows, stepsOpen, citations.settled, olderState]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (collect) collect(runId, entries) }, [collect, runId, data, error, active, canRetry, sending, view?.status, retryLabel, delivery.rows, citations.settled, olderState]) // eslint-disable-line react-hooks/exhaustive-deps
   if (collect) return null
   async function updateQueue(messageId: string, action: 'cancel' | 'sendNow') {
     try {

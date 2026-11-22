@@ -4478,7 +4478,13 @@
         "usedTools": "用了 {count} 个工具",
         "usingTools": "正在使用工具…",
         "showAll": "展开全部",
-        "showLess": "收起"
+        "showLess": "收起",
+        "shell": "Shell",
+        "succeeded": "成功",
+        "running": "运行中",
+        "stopped": "已停止",
+        "seconds": "{seconds} 秒",
+        "truncated": "输出过长，只保留了一部分"
       },
       "detail": {
         "handedTo": "交给",
@@ -5126,6 +5132,17 @@
       "viaApiKey": "API Key",
       "covered": "平台承担（不计费）",
       "coveredLine": "{zero}（原价 {amount}）"
+    },
+    "tool": {
+      "read": "已读取 {target}",
+      "search": "已搜索“{target}”",
+      "searchIn": "已在 {scope} 中搜索“{target}”",
+      "edit": "已编辑 {target}",
+      "web": "已打开 {target}",
+      "delegate": "已派出 {target}",
+      "todo": "已更新待办",
+      "commandFailed": "命令失败 ({command})",
+      "commandFailedCode": "命令失败 ({command}) · exit {code}"
     }
   },
   "Computer": {
@@ -7971,15 +7988,22 @@
     },
     "toolKinds": {
       "search": "搜索了 {count} 次",
-      "read": "读了 {count} 个文件",
-      "edit": "改了 {count} 个文件",
-      "command": "跑了 {count} 条命令",
+      "read": "已读取 {count} 个文件",
+      "edit": "编辑了 {count} 个文件",
+      "command": "运行了 {count} 条命令",
       "web": "查了 {count} 次网页",
       "delegate": "派出了 {count} 个子线程",
       "todo": "更新了待办",
       "other": "用了 {count} 个工具",
       "separator": "，",
       "failed": "{failed} 个失败"
+    },
+    "toolsRunningKind": {
+      "shell": "正在运行命令",
+      "read": "正在读取文件",
+      "search": "正在搜索",
+      "edit": "正在编辑文件",
+      "web": "正在查看网页"
     }
   },
   "HostedOnboarding": {

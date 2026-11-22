@@ -284,7 +284,10 @@ export function useThreadToolRows() {
     }] : []),
     ...tools.map(tool => {
       const row = view(tool, live)
-      return { id: row.key, label: row.title, status: row.state === 'running' ? 'running' as const : row.state === 'error' ? 'failed' as const : 'done' as const,
+      const action = toolAction(tool.name)
+      // What it did, for the group's words (#2923): the Coordinator's own tools are web reads, dispatches or other tools.
+      const kind = action === 'searchWeb' || action === 'readWeb' ? 'web' as const : action === 'dispatch' || action === 'dispatchFactory' ? 'delegate' as const : 'other' as const
+      return { id: row.key, label: row.title, kind, status: row.state === 'running' ? 'running' as const : row.state === 'error' ? 'failed' as const : 'done' as const,
         ...(row.why ? { error: row.why } : {}), ...(row.target ? { note: row.target } : {}), input: row.input, detail: row.output }
     }),
   ]

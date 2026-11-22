@@ -55,3 +55,12 @@ it('preserves the existing availability behavior for an item without a status', 
   expect(codexItemChunks('completed', legacy, new Set(), '/tmp'))
     .toEqual([{ type: 'tool-output-available', toolCallId: 'legacy', output: [] }])
 })
+
+it('keeps the end of a long command output and marks that its start was cut (#2937)', () => {
+  const command = { type: 'commandExecution' as const, id: 'cmd', command: 'pnpm test', exitCode: 1, aggregatedOutput: `HEAD${'x'.repeat(5000)}TAIL` }
+  expect(codexItemChunks('completed', command, new Set(), '/tmp')).toEqual([{
+    type: 'tool-output-available', toolCallId: 'cmd', output: { exitCode: 1, output: command.aggregatedOutput.slice(-4000) }, outputTruncated: true,
+  }])
+  expect(codexItemChunks('completed', { ...command, aggregatedOutput: 'ok' }, new Set(), '/tmp'))
+    .toEqual([{ type: 'tool-output-available', toolCallId: 'cmd', output: { exitCode: 1, output: 'ok' } }])
+})

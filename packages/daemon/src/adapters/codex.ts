@@ -50,7 +50,7 @@ import { requireRunToolApproval } from "../agents/tool-approval"
 import { codexMcpServer, hasRunAppServers, nativeMcpProcess, registeredRunAppServer, type RunApps } from "../agents/run-apps"
 import { taskMcpSecretValues } from '@mikka/protocol'
 import { rawCliShellAvailable, runPolicy } from "../permissions"
-import type { RunChunk } from "../chunks"
+import { toolOutputTail, type RunChunk } from "../chunks"
 import { DAEMON_VERSION } from "../paths"
 import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
@@ -260,6 +260,7 @@ export function codexItemChunks(
         : []
     case "commandExecution": {
       const command = item as Extract<ThreadItem, { type: "commandExecution" }>
+      const tail = toolOutputTail(command.aggregatedOutput ?? "")
       return phase === "started"
         ? [
             {
@@ -275,8 +276,9 @@ export function codexItemChunks(
               toolCallId: item.id,
               output: {
                 exitCode: command.exitCode,
-                output: (command.aggregatedOutput ?? "").slice(-4000),
+                output: tail.text,
               },
+              ...(tail.truncated ? { outputTruncated: true as const } : {}),
             },
           ]
     }

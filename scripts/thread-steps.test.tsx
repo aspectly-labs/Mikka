@@ -35,8 +35,8 @@ afterEach(async () => { await act(async () => { root.unmount() }); container.rem
 after(() => { browser.close() })
 
 const steps = [
-  { id: 'a', name: 'Bash', detail: 'pnpm test', failed: false },
-  { id: 'b', name: 'Edit', detail: 'lib/run.ts', failed: true },
+  { id: 'a', name: 'Bash', detail: 'pnpm test', failed: false, kind: 'shell' as const, status: 'ok' as const },
+  { id: 'b', name: 'Edit', detail: 'lib/run.ts', failed: true, kind: 'edit' as const, status: 'failed' as const },
 ]
 
 test('a "Ran N commands · Called N tools" line opens to list each step and closes again', async () => {

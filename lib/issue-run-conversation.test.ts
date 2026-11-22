@@ -15,7 +15,7 @@ function resultStep(output: unknown, toolDurationMs?: unknown) {
 
 test('successful commands expose output and the measured duration, independent of batch insert time', () => {
   assert.deepEqual(resultStep('3 tests passed\n', 1250), {
-    id: 'cmd', name: 'bash', detail: 'pnpm test', command: 'pnpm test', failed: false, output: '3 tests passed\n', ms: 1250,
+    id: 'cmd', name: 'bash', detail: 'pnpm test', command: 'pnpm test', failed: false, output: '3 tests passed\n', ms: 1250, kind: 'shell', status: 'ok',
   })
   const succeeded = resultStep({ exitCode: 0, output: 'ok\n' }, 0)
   assert.equal(succeeded.exitCode, 0)
@@ -23,6 +23,7 @@ test('successful commands expose output and the measured duration, independent o
   assert.equal(threadStepOutput(succeeded), 'ok\n')
   const failed = resultStep({ exitCode: 2, output: 'failure output' })
   assert.equal(failed.failed, true)
+  assert.equal(failed.status, 'failed')
   assert.equal(failed.exitCode, 2)
   assert.equal(threadStepOutput(failed), 'failure output')
   assert.equal(threadStepOutput(resultStep('plain output\n')), 'plain output\n')
@@ -42,6 +43,8 @@ test('long output retains both ends and marks truncation', () => {
   assert.ok(output.endsWith('\nTAIL'))
   assert.match(output, /\[output truncated\]/)
   assert.ok(output.length < 8300)
+  assert.equal(resultStep(`HEAD\n${'x'.repeat(20_000)}\nTAIL`).outputTruncated, true)
+  assert.ok(!('outputTruncated' in resultStep('short')))
 })
 
 test('failed calls still mark failure without exposing error text, and unmatched results add no steps', () => {
@@ -53,7 +56,7 @@ test('failed calls still mark failure without exposing error text, and unmatched
   ], [])
   assert.ok(item.kind === 'steps')
   assert.equal(item.count, 1)
-  assert.deepEqual(item.steps, [{ id: 'failed', name: 'bash', detail: null, failed: true, ms: 42 }])
+  assert.deepEqual(item.steps, [{ id: 'failed', name: 'bash', detail: null, failed: true, ms: 42, kind: 'shell', status: 'failed' }])
 })
 
 test('output uses persisted workspace masking and masks credentials again before truncation', () => {
@@ -149,12 +152,13 @@ test('a folded steps line keeps each tool call so it can open: name, what it ran
   assert.ok(steps.kind === 'steps')
   assert.equal(steps.count, 4)
   assert.deepEqual(steps.steps.slice(0, 2), [
-    { id: '1', name: 'Bash', detail: 'pnpm test --watch=false', command: 'pnpm   test\n --watch=false', failed: true },
-    { id: '2', name: 'apply_patch', detail: 'a.ts, b.ts', failed: false },
+    { id: '1', name: 'Bash', detail: 'pnpm test --watch=false', command: 'pnpm   test\n --watch=false', failed: true, kind: 'shell', status: 'failed' },
+    { id: '2', name: 'apply_patch', detail: 'a.ts, b.ts', failed: false, kind: 'edit', status: 'running', target: 'a.ts, b.ts' },
   ])
   assert.equal(steps.steps[2].detail?.length, 200)
   assert.ok(steps.steps[2].detail?.endsWith('…'))
-  assert.deepEqual(steps.steps[3], { id: '4', name: 'tool', detail: null, failed: false })
+  assert.equal(steps.steps[2].target?.length, 200, 'a target is one line too')
+  assert.deepEqual(steps.steps[3], { id: '4', name: 'tool', detail: null, failed: false, kind: 'other', status: 'running' })
 })
 
 test('a thread shows one computer card only for its own run', () => {
@@ -211,4 +215,45 @@ test('a folded steps row counts commands and tools the way iOS does (#1770)', as
   assert.deepEqual(threadStepCounts([{ name: 'Bash' }, { name: 'bash' }, { name: 'Edit' }]), { commands: 2, tools: 1 })
   assert.deepEqual(threadStepCounts([{ name: 'Read' }]), { commands: 0, tools: 1 })
   assert.deepEqual(threadStepCounts([]), { commands: 0, tools: 0 })
+})
+
+// #2937: the structured fields the thread folds by, from Claude Code's and Codex's chunks as their adapters write them
+// (packages/daemon/src/adapters/claude.ts claudeChunks, codex.ts codexItemChunks); old rows read the same way.
+test('tool calls carry kind, status, target and the daemon\'s truncation mark (#2937)', async () => {
+  const { threadStepStatus } = await import('./issue-run-conversation')
+  const at = new Date(0)
+  const claude = [
+    { type: 'tool-input-available', toolCallId: 'r', toolName: 'Read', input: { file_path: 'components/task-detail-skeleton.tsx' } },
+    { type: 'tool-output-available', toolCallId: 'r', output: 'export function Skeleton() {}' },
+    { type: 'tool-input-available', toolCallId: 'g', toolName: 'Grep', input: { pattern: 'TaskDetailLoading', path: 'components/workspace' } },
+    { type: 'tool-output-available', toolCallId: 'g', output: 'components/workspace/task-detail.tsx' },
+    { type: 'tool-input-available', toolCallId: 'b', toolName: 'Bash', input: { command: 'pnpm lint:ui', description: 'Lint' } },
+    { type: 'tool-output-available', toolCallId: 'b', output: 'x'.repeat(4000), outputTruncated: true },
+    { type: 'tool-input-available', toolCallId: 'm', toolName: 'mcp__github__pull_request_read', input: { pullNumber: 2837 } },
+  ]
+  const codex = [
+    { type: 'tool-input-available', toolCallId: 'c', toolName: 'bash', input: { command: 'pnpm lint:ui' } },
+    { type: 'tool-output-available', toolCallId: 'c', output: { exitCode: 1, output: '1 problem' } },
+    { type: 'tool-input-available', toolCallId: 'p', toolName: 'apply_patch', input: { files: ['a.ts', 'b.ts'] } },
+    { type: 'tool-output-available', toolCallId: 'p', output: { status: 'completed' } },
+  ]
+  const steps = (chunks: Record<string, unknown>[]) => {
+    const [item] = threadItems(chunks.map(chunk => ({ chunk, at })), [])
+    assert.ok(item.kind === 'steps')
+    return item.steps
+  }
+  assert.deepEqual(steps(claude).map(({ kind, status, target, scope, outputTruncated }) => ({ kind, status, target, scope, outputTruncated })), [
+    { kind: 'read', status: 'ok', target: 'components/task-detail-skeleton.tsx', scope: undefined, outputTruncated: undefined },
+    { kind: 'search', status: 'ok', target: 'TaskDetailLoading', scope: 'components/workspace', outputTruncated: undefined },
+    { kind: 'shell', status: 'ok', target: undefined, scope: undefined, outputTruncated: true },
+    { kind: 'other', status: 'running', target: undefined, scope: undefined, outputTruncated: undefined },
+  ])
+  assert.deepEqual(steps(codex).map(({ kind, status, target, exitCode }) => ({ kind, status, target, exitCode })), [
+    { kind: 'shell', status: 'failed', target: undefined, exitCode: 1 },
+    { kind: 'edit', status: 'ok', target: 'a.ts, b.ts', exitCode: undefined },
+  ])
+  const running = steps(claude).at(-1)!
+  assert.equal(threadStepStatus(running, true), 'running')
+  assert.equal(threadStepStatus(running, false), 'cancelled', 'a call its ended run left running never finished')
+  assert.equal(threadStepStatus(steps(codex)[0], false), 'failed')
 })
