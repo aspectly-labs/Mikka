@@ -11,7 +11,7 @@ for (const preset of ['node-server']) test(`eve ${preset} build selects the upst
   await mkdir(join(root,'node_modules/eve'),{recursive:true})
   const output=join(root,'apps/eve','.output')
   await mkdir(output,{recursive:true})
-  await writeFile(join(root,'node_modules/eve/package.json'),JSON.stringify({version:'1.0.0-rc.9'}))
+  await writeFile(join(root,'node_modules/eve/package.json'),JSON.stringify({version:'1.3.0'}))
   const revision='a'.repeat(40),calls=[]
   await buildEve({root,env:{NITRO_PRESET:preset,MIKKA_BUILD_REVISION:revision,...preset==='node-server'?{VERCEL:'1'}:{}},execute(binary,args,options){
     calls.push({binary,args,options})
@@ -21,7 +21,7 @@ for (const preset of ['node-server']) test(`eve ${preset} build selects the upst
     assert.equal(options.env.VERCEL,undefined)
   }})
   assert.equal(calls.length,1)
-  assert.deepEqual(JSON.parse(await readFile(join(output,'mikka-eve-build.json'),'utf8')),{version:1,eve:'1.0.0-rc.9',revision,preset})
+  assert.deepEqual(JSON.parse(await readFile(join(output,'mikka-eve-build.json'),'utf8')),{version:1,eve:'1.3.0',revision,preset})
 })
 
 test('retired preset is rejected before build execution', async () => {

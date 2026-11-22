@@ -12,7 +12,7 @@ test('Node packaging rejects mixed revisions and includes Eve and application re
   await mkdir(source, { recursive: true })
   await mkdir(join(output, 'lib'), { recursive: true })
   const revision = 'a'.repeat(40)
-  const agent = { version: 1, revision, eve: '1.0.0-rc.9', preset: 'node-server' }
+  const agent = { version: 1, revision, eve: '1.3.0', preset: 'node-server' }
   const save = (path, value) => writeFile(path, JSON.stringify(value))
   await save(join(source, 'mikka-eve-build.json'), agent)
   await writeFile(join(source, 'eve-entry.mjs'), 'export default 1')

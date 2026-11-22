@@ -1,13 +1,8 @@
 name: CI
 
-# Merge-blocking source and database checks run on GitHub's PR merge candidate,
-# not a same-repository branch push. This avoids duplicating the same expensive
-# jobs and detects integration failures against the target branch at PR time.
-# - pull_request: premerge checks (same-repo and fork PRs);
-# - merge_group: synthetic queue candidate, if a queue is enabled later;
-# - push main: postmerge verification of each distinct main commit.
-# CI runs no browser tests (decision 2026-11-01-1520). Preserve the existing
-# protected status-check names.
+# Pull requests to main run selected source and unit checks. Merge queue candidates
+# also run database shards and applicable acceptance on the combined commit.
+# Main retains each distinct postmerge run. Keep the protected check names.
 on:
   push:
     branches: [main]
@@ -83,16 +78,12 @@ jobs:
           JS
 
   ui-policy-full:
-    name: Core unit checks${{ matrix.node == '22' && ' (Node 22)' || '' }}
+    name: Core unit checks
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.core == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     # Fixed standard Linux image; host namespace/security policy stays unchanged.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22', '24']
     env:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
@@ -101,7 +92,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/pnpm-install
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           ffmpeg-github-token: ${{ github.token }}
       - name: Ensure FFmpeg for Factory evidence acceptance regressions
         timeout-minutes: 5
@@ -121,16 +112,12 @@ jobs:
         run: pnpm test:governance
 
   ui-policy-integrations:
-    name: Integration unit checks${{ matrix.node == '22' && ' (Node 22)' || '' }}
+    name: Integration unit checks
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.integration == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     # Fixed standard Linux image; host namespace/security policy stays unchanged.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22', '24']
     env:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
@@ -139,7 +126,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/pnpm-install
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           ffmpeg-github-token: ${{ github.token }}
       - name: Ensure FFmpeg for real recording regressions
         run: |
@@ -147,6 +134,13 @@ jobs:
             sudo "$(command -v node)" scripts/ci/apt-mirrors.mjs
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y ffmpeg
+          fi
+      - name: Ensure isolated process support for HTTP provider fixtures
+        run: |
+          if ! command -v bwrap >/dev/null; then
+            sudo "$(command -v node)" scripts/ci/apt-mirrors.mjs
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y bubblewrap
           fi
       - name: Run selected integration tasks through Nx Core
         run: node scripts/ci/run-units.mjs integration
@@ -286,11 +280,11 @@ jobs:
         env:
           MIKKA_DAEMON_DIST_DIR: ${{ steps.daemon-package.outputs.package-directory }}
 
-  # PR specializations are reusable jobs so the stable gate can require their
+  # Acceptance suites are reusable jobs so the stable gate can require their
   # actual conclusions. Main retains its existing independent release workflows.
   analytics-checks:
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.analytics == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
+    if: github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) && needs.changes.outputs.analytics == 'true'
     uses: ./.github/workflows/analytics-ssr.yml
     with:
       selected: true
@@ -301,16 +295,20 @@ jobs:
     # Exact-main acceptance stays in the standalone postmerge push workflow.
     needs: changes
     if: >-
-      (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
-      needs.changes.result == 'success' && needs.changes.outputs.db == 'true' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
+      (github.event_name == 'merge_group' ||
+       (github.event_name == 'pull_request' && github.base_ref != 'main' && github.event.pull_request.draft != true)) &&
+      needs.changes.result == 'success' && needs.changes.outputs.db == 'true'
     uses: ./.github/workflows/workspace-governance-acceptance.yml
+
+  candidate-checks:
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/ci-merge-candidate.yml
 
   ui-policy:
     # The required check name. It reports success when only documentation
     # changed; otherwise it mirrors the full suite's result.
     name: UI policy (strict)
-    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks]
+    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, candidate-checks]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -321,17 +319,19 @@ jobs:
       - name: Draft PR is not a validated merge candidate
         if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
         run: |
-          echo 'Draft: full required CI runs after Ready for review; no merge authorization.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Draft: mark Ready for review to run the PR checks.' >> "$GITHUB_STEP_SUMMARY"
           exit 1
-      - name: Require every selected source, unit and daemon job
+      - name: Require every selected CI job
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           EXPECT_CORE: ${{ needs.changes.outputs.core }}
           EXPECT_INTEGRATION: ${{ needs.changes.outputs.integration }}
           EXPECT_SOURCE: ${{ needs.changes.outputs.source }}
           EXPECT_DAEMON: ${{ needs.changes.outputs.daemon }}
-          EXPECT_ANALYTICS: ${{ github.event_name != 'push' && needs.changes.outputs.analytics == 'true' }}
-          EXPECT_GOVERNANCE: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.db == 'true' }}
+          EXPECT_ANALYTICS: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.analytics == 'true' }}
+          EXPECT_GOVERNANCE: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main')) && needs.changes.outputs.db == 'true' }}
+          EXPECT_CANDIDATE: ${{ github.event_name == 'merge_group' }}
+          CANDIDATE: ${{ needs.candidate-checks.result }}
           GOVERNANCE: ${{ needs.workspace-governance-checks.result }}
           ANALYTICS: ${{ needs.analytics-checks.result }}
           CORE: ${{ needs.ui-policy-full.result }}
@@ -340,7 +340,7 @@ jobs:
           DAEMON: ${{ needs.daemon-checks.result }}
         run: |
           test "$CHANGES_RESULT" = success
-          for name in CORE INTEGRATION SOURCE DAEMON ANALYTICS GOVERNANCE; do
+          for name in CORE INTEGRATION SOURCE DAEMON ANALYTICS GOVERNANCE CANDIDATE; do
             expected="EXPECT_$name"
             case "${!expected}" in
               true) test "${!name}" = success ;;
@@ -348,7 +348,7 @@ jobs:
               *) exit 1 ;;
             esac
           done
-          echo 'All selected source/unit/daemon and governance jobs succeeded.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'All selected CI jobs succeeded.' >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: always()
@@ -361,16 +361,15 @@ jobs:
   browser-tests-full:
     # CI runs no browser tests (decision 2026-11-01-1520); this job keeps the
     # database suites that the required check names cover.
-    name: Database checks (${{ matrix.shard }})${{ matrix.node == '22' && ' (Node 22)' || '' }}
+    name: Database checks (${{ matrix.shard }})
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
+    if: needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true))
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(needs.changes.outputs.db_matrix).shard }}
-        node: ['22', '24']
     services:
       postgres:
         image: postgres:17
@@ -404,7 +403,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/pnpm-install
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           ffmpeg-github-token: ${{ github.token }}
       # The .deb files apt downloads for the packages below, keyed on the package
       # list and the runner image (a new image can carry newer dependencies).
@@ -498,12 +497,12 @@ jobs:
       - name: Draft PR is not a validated merge candidate
         if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
         run: |
-          echo 'Draft: full DB/required CI runs after Ready for review; no merge authorization.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Draft: mark Ready for review to run the PR checks.' >> "$GITHUB_STEP_SUMMARY"
           exit 1
       - name: Require every selected database shard
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          EXPECT_DB: ${{ needs.changes.outputs.db }}
+          EXPECT_DB: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.db == 'true' }}
           DB_RESULT: ${{ needs.browser-tests-full.result }}
         run: |
           test "$CHANGES_RESULT" = success

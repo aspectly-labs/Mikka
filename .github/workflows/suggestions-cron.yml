@@ -2,7 +2,7 @@ name: Minute Worker
 on:
   push:
     branches: [main]
-    paths: &minute_paths
+    paths:
       - 'cloudflare/suggestions-cron/**'
       - 'scripts/suggestions-cron/**'
       - 'scripts/device-gateway/deploy.mjs'
@@ -11,8 +11,6 @@ on:
       - 'scripts/release/cloudflare-promoted-web.mjs'
       - 'scripts/release/cloudflare-promoted-web.test.mjs'
       - '.github/workflows/suggestions-cron.yml'
-  pull_request:
-    paths: *minute_paths
   workflow_dispatch:
 permissions:
   contents: read
