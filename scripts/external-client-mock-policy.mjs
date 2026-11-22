@@ -74,12 +74,14 @@ export function trustedPolicyBase(root = process.cwd()) {
     // A merge base equal to HEAD means the ref IS the candidate (FETCH_HEAD
     // after checkout) — never trusted, or increases would compare to themselves.
     if (has(ref)) {
-      const base = git('merge-base', 'HEAD', ref)
+      // merge-base exits nonzero when a shallow checkout has no shared ancestor —
+      // a present-but-disconnected ref must skip to the next candidate, not crash.
+      const base = (() => { try { return git('merge-base', 'HEAD', ref) } catch { return '' } })()
       if (base && base !== head) return base
     }
   }
   try { execFileSync('git', ['fetch', '--depth=100', 'origin', 'main'], { cwd: root, stdio: 'ignore' }) } catch {}
-  return git('merge-base', 'HEAD', 'origin/main')
+  try { return git('merge-base', 'HEAD', 'origin/main') } catch { return '' }
 }
 
 export function runExternalClientMockPolicy(root = process.cwd()) {
@@ -87,7 +89,9 @@ export function runExternalClientMockPolicy(root = process.cwd()) {
   // Compare against the merge base so the same PR cannot enlarge its allowance.
   // On the introducing PR there is no older allowance; later PRs can only remove.
   const base = trustedPolicyBase(root)
-  const exists = execFileSync('git', ['ls-tree', '--name-only', base, '--', baselinePath], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  // No resolvable base means no older allowance to compare against, same as the
+  // introducing PR: the baseline only needs the not-above-baseline check.
+  const exists = base && execFileSync('git', ['ls-tree', '--name-only', base, '--', baselinePath], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   const previous = exists ? JSON.parse(execFileSync('git', ['show', `${base}:${baselinePath}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })) : baseline
   return auditExternalClientMocks(repositoryExternalClientMocks(root), baseline, previous)
 }

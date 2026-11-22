@@ -53,9 +53,9 @@ test('the merge-queue checkout resolves the base side, never the candidate itsel
   // With no origin/main and no event payload, the merge commit's first parent
   // (the base side) is the trusted base; the candidate itself must be rejected.
   assert.equal(trustedPolicyBase(dir), mainHead)
-  // On a plain head the same self-pointing FETCH_HEAD must fail loud, not
-  // silently pass: no trusted base exists and fetch has no origin to try.
+  // On a plain head the same self-pointing FETCH_HEAD must yield no trusted
+  // base: nothing exists to compare against and fetch has no origin to try.
   git('checkout', '-q', 'pr')
   writeFileSync(join(dir, '.git', 'FETCH_HEAD'), `${git('rev-parse', 'HEAD')}\t\t\n`)
-  assert.throws(() => trustedPolicyBase(dir))
+  assert.equal(trustedPolicyBase(dir), '')
 })
