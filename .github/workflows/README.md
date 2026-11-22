@@ -12,6 +12,11 @@ affected source, unit and daemon checks on Node 24 only
 PRs targeting dev, which has no merge queue, retain selected acceptance in the
 protected UI check.
 
+Merge queue autopilot checks the PR head after CI or Browser gate completes.
+It adds an eligible same-repository PR to the end of the queue once all required
+checks pass. Stacks and PRs included in an open batch follow their owner's merge
+flow. The GitHub App installation token lets queue candidates trigger CI.
+
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
 Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
