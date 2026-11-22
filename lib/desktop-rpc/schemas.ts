@@ -400,7 +400,7 @@ export const desktopActionSchemas = {
   'tokens.createAccessToken': tuple(object({ name: text(200).trim().min(1), expiresAt: z.iso.datetime().nullish() }), workspace),
   'tokens.revokeAccessToken': tuple(object({ id: uuid }), workspace),
   'usage.getUsage': tuple(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(), workspace),
-  'usage.readTurnUsage': z.union([tuple(z.array(text(400)).max(200)), tuple(z.array(text(400)).max(200), workspace)]),
+  'usage.readTurnUsage': tuple(z.array(text(400)).max(200), workspace),
   'user-secrets.listMySecrets': inWorkspace,
   'user-secrets.createMySecret': tuple(object({ ...secretBase, overrideWorkspace: bool.optional() }), workspace),
   'user-secrets.replaceMySecret': tuple(object({ id: uuid, value: secret.optional(), note: text(2000).optional() }), workspace),

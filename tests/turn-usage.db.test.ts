@@ -19,10 +19,11 @@ test('turn usage read', { skip: !dbUrl }, async t => {
   const bot = eveTurnRef(randomUUID(), randomUUID())!
   const group = groupTurnRef(randomUUID())!
   const theirs = groupTurnRef(randomUUID())!
-  const receipt = (values: { ref: string | null; actor: string; workspaceId?: string; model?: string; state?: string; cost: number | null; source: string | null; tokens: [number, number]; id?: string }) =>
+  // payer: the workspace whose balance paid (a member's personal one with shared credits); usage: where it was used.
+  const receipt = (values: { ref: string | null; actor: string | null; owner?: string; workspaceId?: string; payer?: string; model?: string; state?: string; cost: number | null; source: string | null; tokens: [number, number]; id?: string }) =>
     pool.query(`INSERT INTO hosted_usage (id,"workspaceId","usageWorkspaceId","actorId","executionOwnerId",model,state,"costMicroUsd","billingSource","usageTurnRef","inputTokens","outputTokens")
-      VALUES ($1,$2,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10)`, [values.id ?? randomUUID(), values.workspaceId ?? workspace.id, values.actor,
-      values.model ?? 'claude-sonnet', values.state ?? 'settled', values.cost, values.source, values.ref, values.tokens[0], values.tokens[1]])
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [values.id ?? randomUUID(), values.payer ?? values.workspaceId ?? workspace.id, values.workspaceId ?? workspace.id,
+      values.actor, values.owner ?? values.actor, values.model ?? 'claude-sonnet', values.state ?? 'settled', values.cost, values.source, values.ref, values.tokens[0], values.tokens[1]])
 
   // One Bot chat turn: three calls, one still pending, one released.
   await receipt({ ref: bot, actor: owner, cost: 1_000, source: 'credits', tokens: [100, 10] })
@@ -35,6 +36,15 @@ test('turn usage read', { skip: !dbUrl }, async t => {
   // A group turn a teammate started, and one of the owner's turns in another workspace.
   await receipt({ ref: theirs, actor: teammate, cost: 700, source: 'credits', tokens: [7, 7] })
   await receipt({ ref: bot, actor: owner, workspaceId: other.id, cost: 4_000, source: 'credits', tokens: [4, 4] })
+  // Paid from the owner's shared personal credits for a team chat: the owner still sees it in the team.
+  const personal = await seedWorkspace(pool, owner, [{ userId: owner, role: 'admin' }])
+  const shared = groupTurnRef(randomUUID(), { type: 'bot', id: randomUUID() })!
+  await receipt({ ref: shared, actor: owner, payer: personal.id, cost: 250, source: 'credits', tokens: [25, 2] })
+  // A call that ran for the owner with no separate actor recorded.
+  const ran = eveTurnRef(randomUUID(), 'turn_2')!
+  await receipt({ ref: ran, actor: null, owner, cost: 90, source: 'credits', tokens: [9, 1] })
+  // Refused before its request started: settled at 0 with no tokens, not a call.
+  await receipt({ ref: ran, actor: owner, cost: 0, source: 'credits', tokens: [0, 0] })
   // A receipt from before turns were recorded: never attached to any turn.
   await receipt({ ref: null, actor: owner, cost: 8_000, source: 'credits', tokens: [8, 8] })
 
@@ -43,6 +53,14 @@ test('turn usage read', { skip: !dbUrl }, async t => {
     assert.deepEqual(Object.keys(usage).sort(), [bot, group].sort())
     assert.deepEqual(usage[bot], { models: ['claude-sonnet', 'claude-haiku'], calls: 2, inputTokens: 150, outputTokens: 15, costMicroUsd: 1_500, unpricedCalls: 0, source: 'credits' })
     assert.deepEqual(usage[group], { models: ['gpt-5'], calls: 2, inputTokens: 30, outputTokens: 3, costMicroUsd: 300, unpricedCalls: 1, source: 'api_key' })
+  })
+
+  await t.test('shared credits and calls run for the reader count; a refused call does not', async () => {
+    const usage = await readTurnUsage(pool, { readerId: owner, workspaceId: workspace.id, refs: [shared, ran] })
+    assert.deepEqual([usage[shared]?.costMicroUsd, usage[shared]?.calls], [250, 1])
+    assert.deepEqual([usage[ran]?.costMicroUsd, usage[ran]?.calls], [90, 1])
+    assert.deepEqual(await readTurnUsage(pool, { readerId: owner, workspaceId: personal.id, refs: [shared] }), {}, 'the paying workspace is not where it was used')
+    assert.deepEqual(await readTurnUsage(pool, { readerId: teammate, workspaceId: workspace.id, refs: [shared, ran] }), {})
   })
 
   await t.test('only the person who made the calls reads them, only in that workspace', async () => {

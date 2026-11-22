@@ -159,10 +159,12 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
         throw error
       }
     }
-    const modelScope = <T>(work: () => Promise<T>) => {
+    // A member's generation is recorded under its own reply's reference (group:<message>:<member>); routing and
+    // corrections the whole turn shares under group:<message> (lib/usage-turn-ref.ts).
+    const modelScope = <T>(work: () => Promise<T>, member?: { memberType?: string; id: string }) => {
       session.assertHeld()
-      // Each reply's replyToId is the message that started this turn (lib/usage-turn-ref.ts).
-      return hostedBillingScope.run({ workspaceId: root.workspaceId, ownerId: root.userId, turnRef: groupTurnRef(root.messageId) }, work)
+      const turnRef = groupTurnRef(root.messageId, member && { type: member.memberType ?? 'agent', id: member.id })
+      return hostedBillingScope.run({ workspaceId: root.workspaceId, ownerId: root.userId, ...(turnRef ? { turnRef } : {}) }, work)
     }
     messageId = root.messageId
     // Listen before the claim: a stop that commits after it is pushed to this
@@ -255,7 +257,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
             if (addsNothing(reply.text) || !reply.text.trim()) await recordGroupTraceEvent(client, messageId!, { id: `silent:${eventId}`, type: 'silent', memberId: agent.id })
             return reply
           }
-          if (agent.memberType !== 'bot') return modelScope(() => generate(input))
+          if (agent.memberType !== 'bot') return modelScope(() => generate(input), agent)
           const { withDatabaseClient } = await import('@/lib/db')
           return withDatabaseClient(client, async () => {
             let selected = selections.get(agent.id) ?? root.modelSelections?.[agent.id]
@@ -266,7 +268,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
               await client.query(`UPDATE group_turns SET "modelSelections"=jsonb_set("modelSelections",ARRAY[$2::text],$3::jsonb,true) WHERE "messageId"=$1`, [messageId, agent.id, JSON.stringify(selected)])
               selections.set(agent.id, selected!)
             }
-            return modelScope(() => generate({ ...input, modelRuntime: selected }))
+            return modelScope(() => generate({ ...input, modelRuntime: selected }), agent)
           })
         }),
         async status(id, outcome = 'succeeded') {

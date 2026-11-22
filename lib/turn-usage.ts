@@ -32,12 +32,14 @@ export async function readTurnUsage(
   const refs = [...new Set(input.refs.filter(isUsageTurnRef))].slice(0, MAX_TURN_REFS)
   const result: Record<string, TurnUsage> = {}
   if (!refs.length) return result
-  // Failed receipts were released and charged nothing; machine prepayments are not model calls.
+  // Failed receipts were released and charged nothing; machine prepayments are not model calls. A call refused
+  // before its request started settles at 0 with 0 tokens and is not a call either.
   const { rows } = await q.query(
     `SELECT "usageTurnRef" AS ref,model,"billingSource" AS source,state,"costMicroUsd" AS cost,
         "inputTokens" AS input,"outputTokens" AS output
       FROM hosted_usage
       WHERE "usageTurnRef"=ANY($1::text[]) AND state<>'failed' AND id NOT LIKE 'machine:%'
+        AND NOT (state='settled' AND "costMicroUsd"=0 AND "inputTokens"=0 AND "outputTokens"=0)
         AND COALESCE("usageWorkspaceId","workspaceId")=$2::uuid AND $3::text IN ("actorId","executionOwnerId")`,
     [refs, input.workspaceId, input.readerId],
   )

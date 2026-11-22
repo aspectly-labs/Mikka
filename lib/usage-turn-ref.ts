@@ -4,8 +4,13 @@
  * how a daemon names its text blocks.
  *
  * - Bot chat: `eve:<session>:<turn>`, the same id the saved reply carries as `mikkaStreamId` (lib/eve/projection.ts).
- * - Group chat: `group:<message>`, the person's message that started the turn; each reply's `replyToId` is that id.
+ * - Group chat: a member's reply is `group:<message>:<type>-<member>`, from the reply's `replyToId`, `authorType` and
+ *   `authorId`; routing and corrections the whole turn shares are `group:<message>`.
  * - Agent thread: `run:<run>:<turn>` (written by the gateway once the daemon names its turn; #2934 follow-up).
+ *
+ * Written today only for calls paid from Mikka 额度 through hosted_usage reserve. Not yet: a Bot or group Bot on the
+ * person's subscription or own API key, an agent thread, a delegated Eve session (recorded under its own session) and
+ * Decisions in tool steps. A turn with no entry has unknown usage, never zero.
  */
 export type UsageTurnRef = `eve:${string}` | `group:${string}` | `run:${string}`
 
@@ -23,5 +28,6 @@ function ref(kind: 'eve' | 'group' | 'run', ...parts: string[]): UsageTurnRef | 
 }
 
 export const eveTurnRef = (sessionId: string, turnId: string) => ref('eve', sessionId, turnId)
-export const groupTurnRef = (messageId: string) => ref('group', messageId)
+export const groupTurnRef = (messageId: string, member?: { type: string; id: string }) =>
+  member ? ref('group', messageId, `${member.type}-${member.id}`) : ref('group', messageId)
 export const runTurnRef = (runId: string, turnId: string) => ref('run', runId, turnId)
