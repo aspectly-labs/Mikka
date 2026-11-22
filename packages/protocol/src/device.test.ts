@@ -15,6 +15,15 @@ import {
   runPatchSchema,
 } from "./device"
 import { TASK_SECRET_MAX_CAPABILITIES, TASK_SECRET_MAX_TOKEN_BYTES } from './task-secrets'
+import { TASK_MCP_VERSION, taskMcpForDaemon, type TaskMcpServer } from './task-mcp'
+
+it('keeps v1 negotiation and withholds restricted MCP credentials from daemons without tool filtering', () => {
+  const open: TaskMcpServer = { name: 'mcp_open', transport: 'http', url: 'https://example.invalid/mcp', headers: {} }
+  const restricted: TaskMcpServer = { ...open, name: 'mcp_restricted', headers: { Authorization: 'fixture' }, disabledTools: ['write'] }
+  expect(TASK_MCP_VERSION).toBe('1')
+  expect(taskMcpForDaemon([{ ...open, disabledTools: [] }, restricted], false)).toEqual([open])
+  expect(taskMcpForDaemon([open, restricted], true)).toEqual([open, restricted])
+})
 
 describe("device online state", () => {
   const opened = "2026-10-16T12:00:00.000Z"

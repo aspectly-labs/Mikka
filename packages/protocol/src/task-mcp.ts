@@ -1,9 +1,8 @@
 import { z } from 'zod'
 
 export const TASK_MCP_HEADER = 'x-mikka-task-mcp'
-export const TASK_MCP_VERSION = '2'
-/** Version 1 daemons decode assignments strictly and reject `disabledTools`. */
-export const TASK_MCP_VERSIONS = ['1', '2'] as const
+export const TASK_MCP_VERSION = '1'
+export const TASK_MCP_TOOL_FILTER_HEADER = 'x-mikka-task-mcp-tool-filter'
 
 const atom = z.string().min(1).max(4096).refine(value => !/[\r\n\0]/.test(value))
 export const mcpEnvironmentSchema = z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string().max(16_384).refine(value => !value.includes('\0')))
@@ -21,8 +20,7 @@ export function taskMcpSecretValues(servers: readonly TaskMcpServer[] = []): str
   return servers.flatMap(server => Object.values(server.transport === 'stdio' ? server.env : server.headers)).filter(Boolean)
 }
 
-/** What a daemon of this task MCP version accepts: version 1 knows no disabled tools. */
-export function taskMcpForVersion(servers: TaskMcpServer[], version: string | null): TaskMcpServer[] {
-  if (version === TASK_MCP_VERSION) return servers
-  return servers.map(({ disabledTools: _disabledTools, ...server }) => server as TaskMcpServer)
+export function taskMcpForDaemon(servers: TaskMcpServer[], supportsToolFilter: boolean): TaskMcpServer[] {
+  if (supportsToolFilter) return servers
+  return servers.flatMap(({ disabledTools, ...server }) => disabledTools?.length ? [] : [server])
 }

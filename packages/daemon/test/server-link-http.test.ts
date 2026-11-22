@@ -156,6 +156,8 @@ describe("HttpServerLink", () => {
 
   it('advertises strict local-worktree continuation and preserves the required assignment', async () => {
     const fetcher = (async (_url, init) => {
+      expect(new Headers(init?.headers).get('x-mikka-task-mcp')).toBe('1')
+      expect(new Headers(init?.headers).get('x-mikka-task-mcp-tool-filter')).toBe('1')
       expect(new Headers(init?.headers).get(RECOVERY_WORKTREE_HEADER)).toBe('1')
       expect(new Headers(init?.headers).get(RUN_CREDENTIALS_HEADER)).toBe('1')
       expect(new Headers(init?.headers).get(SUBSCRIPTION_MODEL_CATALOGUE_HEADER)).toBe('1')
