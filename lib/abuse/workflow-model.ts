@@ -10,20 +10,24 @@ export class HostedWorkflowModel implements Model {
     readonly ownerId: string,
     readonly botId: string | null,
     readonly modelId: string,
+    /** The Bot chat turn this model serves (lib/usage-turn-ref.ts), recorded on each call's receipt. */
+    readonly turnRef: string | null = null,
   ) {}
   static [WORKFLOW_SERIALIZE](value: HostedWorkflowModel) {
     return {
       ownerId: value.ownerId,
       botId: value.botId,
       modelId: value.modelId,
+      turnRef: value.turnRef,
     }
   }
   static [WORKFLOW_DESERIALIZE](value: {
     ownerId: string
     botId: string | null
     modelId: string
+    turnRef?: string | null
   }) {
-    return new HostedWorkflowModel(value.ownerId, value.botId, value.modelId)
+    return new HostedWorkflowModel(value.ownerId, value.botId, value.modelId, value.turnRef ?? null)
   }
   async doGenerate(options: Parameters<Model['doGenerate']>[0]) {
     'use step'
@@ -35,7 +39,7 @@ export class HostedWorkflowModel implements Model {
     const { hostedBillingScope } = await import('./context')
     const identity = await stepIdentity()
     const workspaceId = await executionWorkspace(this.ownerId, this.botId)
-    return hostedBillingScope.run({ workspaceId, ownerId: this.ownerId, actorId: this.ownerId }, () => workflowFailureCall(async () => (
+    return hostedBillingScope.run({ workspaceId, ownerId: this.ownerId, actorId: this.ownerId, ...(this.turnRef ? { turnRef: this.turnRef } : {}) }, () => workflowFailureCall(async () => (
       await hostedModel(
         workspaceId,
         this.modelId,
@@ -59,7 +63,7 @@ export class HostedWorkflowModel implements Model {
     const { hostedBillingScope } = await import('./context')
     const identity = await stepIdentity()
     const workspaceId = await executionWorkspace(this.ownerId, this.botId)
-    const result = await hostedBillingScope.run({ workspaceId, ownerId: this.ownerId, actorId: this.ownerId }, () => workflowFailureStream(async () => {
+    const result = await hostedBillingScope.run({ workspaceId, ownerId: this.ownerId, actorId: this.ownerId, ...(this.turnRef ? { turnRef: this.turnRef } : {}) }, () => workflowFailureStream(async () => {
       const model = await hostedModel(workspaceId, this.modelId, undefined, this.ownerId, { operation: this.botId ? 'bot' : 'coordinator' })
       requestedAt = Date.now()
       return model.doStream({ ...options, prompt: withCacheBreakpoints(options.prompt, 'anthropic') })

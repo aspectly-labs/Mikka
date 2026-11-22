@@ -1,3 +1,4 @@
+import { groupTurnRef } from '../usage-turn-ref'
 import { createHash, randomUUID } from 'node:crypto'
 import { serverRunFailure } from '@/lib/run-failure-details'
 
@@ -160,7 +161,8 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
     }
     const modelScope = <T>(work: () => Promise<T>) => {
       session.assertHeld()
-      return hostedBillingScope.run({ workspaceId: root.workspaceId, ownerId: root.userId }, work)
+      // Each reply's replyToId is the message that started this turn (lib/usage-turn-ref.ts).
+      return hostedBillingScope.run({ workspaceId: root.workspaceId, ownerId: root.userId, turnRef: groupTurnRef(root.messageId) }, work)
     }
     messageId = root.messageId
     // Listen before the claim: a stop that commits after it is pushed to this

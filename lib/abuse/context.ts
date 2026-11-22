@@ -12,6 +12,8 @@ export const hostedBillingScope = new AsyncLocalStorage<{
   projectId?: string | null
   threadId?: string | null
   runId?: string | null
+  /** The conversation turn the call serves (lib/usage-turn-ref.ts); stored as hosted_usage."usageTurnRef". */
+  turnRef?: string | null
   billingSource?: 'credits'
   /** True only after server authorization established each resource binding. */
   attributionComplete?: boolean

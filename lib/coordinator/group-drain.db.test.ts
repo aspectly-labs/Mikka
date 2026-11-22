@@ -21,12 +21,14 @@ test('draining a group looks up its workspace once and bills each message to its
   }, true)
   assert.equal(group.status, 201)
   const { id } = group.body as { id: string }
+  const sent: string[] = []
   for (const sender of [owner, peer]) {
     const message = await handleGroup(pool, async () => true, {
       ...request, userId: sender, resource: 'messages', id,
       body: JSON.stringify({ body: 'Please reply', mentions: [{ memberType: 'agent', memberId: agent }] }),
     }, true)
     assert.equal(message.status, 201)
+    sent.push((message.body as { id: string }).id)
   }
 
   const { groupRuntime } = await import('./group-runtime')
@@ -48,7 +50,8 @@ test('draining a group looks up its workspace once and bills each message to its
   })
   const foreignScope = { workspaceId: randomUUID(), ownerId: 'unrelated', creditShareOwnerId: 'unrelated' }
   await hostedBillingScope.run(foreignScope, () => drainGroupTurns(id, Date.now() + 60_000))
-  assert.deepEqual(payers, [{ workspaceId: workspace.id, ownerId: owner }, { workspaceId: workspace.id, ownerId: peer }])
+  // Each call names the turn it serves: the message that started it (lib/usage-turn-ref.ts).
+  assert.deepEqual(payers, [{ workspaceId: workspace.id, ownerId: owner, turnRef: `group:${sent[0]}` }, { workspaceId: workspace.id, ownerId: peer, turnRef: `group:${sent[1]}` }])
   assert.equal(workspaceReads, 1)
   await drainGroupTurns(id, Date.now())
   assert.equal(workspaceReads, 1, 'an expired drain does not start a turn')

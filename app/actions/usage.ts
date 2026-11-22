@@ -13,3 +13,15 @@ export async function getUsage(month?: string, workspaceId?: string): Promise<Ac
     return workspaceUsage(actor.userId, actor.workspaceId, usageMonth.parse(month ?? currentMonth()))
   })
 }
+
+/**
+ * The model calls behind conversation turns, for the line under a reply (#2934 item 5, #2922): model, tokens and cost
+ * per turn reference (lib/usage-turn-ref.ts). The reader sees only calls they made or that ran for them.
+ */
+export async function readTurnUsage(refs: string[], workspaceId?: string): Promise<ActionResult<Awaited<ReturnType<typeof import('@/lib/turn-usage')['readTurnUsage']>>>> {
+  return workspaceAction(async () => {
+    const actor = await currentWorkspaceActor(workspaceId)
+    const [{ pool }, { readTurnUsage: read }] = await Promise.all([import('@/lib/db'), import('@/lib/turn-usage')])
+    return read(pool, { readerId: actor.userId, workspaceId: actor.workspaceId, refs })
+  })
+}
