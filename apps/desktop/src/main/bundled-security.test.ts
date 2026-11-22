@@ -169,11 +169,12 @@ test('service identity management forwards only its declared human-session metho
   const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
   const governance = `/api/workspaces/${workspace}/governance`
   for (const method of methods) assert.equal(allowedApiPath(governance, method), method === 'GET', method)
+  for (const method of methods) assert.equal(allowedApiPath(governance + '/usage', method), method === 'GET', `${method} ${governance}/usage`)
   const routes = [[directory, 'POST'], [item, 'PATCH'], [item + '/projects', 'PUT'], [item + '/credential', 'POST']]
   for (const [path, mutation] of routes) {
     for (const method of methods) assert.equal(allowedApiPath(path, method), method === 'GET' || method === mutation, `${method} ${path}`)
   }
-  for (const path of [governance.replace(workspace, 'unknown'), governance + '/usage', directory.replace(workspace, 'unknown'), directory + '/bad-id', item + '/unknown',
+  for (const path of [governance.replace(workspace, 'unknown'), governance.replace(workspace, 'unknown') + '/usage', directory.replace(workspace, 'unknown'), directory + '/bad-id', item + '/unknown',
     item + '/credential/rotate', item + '/projects/', '/api/service-identity/projects']) {
     for (const method of methods) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
   }
