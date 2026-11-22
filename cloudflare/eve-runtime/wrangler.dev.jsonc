@@ -13,7 +13,7 @@
   },
   "vars": {
     "EVE_RELEASE_ID": "epic3076-dev-1",
-    "EVE_PUBLIC_ORIGIN": "https://mikka-eve-epic3076-dev.workers.dev",
+    "EVE_PUBLIC_ORIGIN": "https://mikka-eve-epic3076-dev.orvilo-preview.workers.dev",
     "MIKKA_EVE_HOST_RESIDENCY": "on-demand",
     "MIKKA_EVE_IDLE_TIMEOUT": "3m",
     "EVE_ENV_WORKFLOW_TARGET_WORLD": "@mikka/eve-cloudflare-world",
