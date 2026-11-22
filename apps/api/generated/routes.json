@@ -238,7 +238,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "4f2452fb0acdd3b616d28c0c1bcd30d87b5a1f5f838500fe0bc9dbe03e3d2d9d"
+      "sourceHash": "7581487eb20c13af96a60b2c11a38d71005b3bd98236aff091a75d10d2a1317c"
     },
     {
       "path": "/mikka/api/bots/[botId]/computer/runtimes",
@@ -1212,6 +1212,15 @@
         "GET"
       ],
       "sourceHash": "e1247cd20b4580838f14142cf5a3832d928b351373f90696f746a993ca146d71"
+    },
+    {
+      "path": "/mikka/api/factory/tasks/[taskId]/execution",
+      "template": "/api/factory/tasks/[taskId]/execution",
+      "source": "app/api/factory/tasks/[taskId]/execution/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "253e0662bc02199a9651f2398bcd59ad09482d15d0c3a8eb778abddf10677e2a"
     },
     {
       "path": "/mikka/api/factory/tasks/[taskId]/flow",
@@ -3593,7 +3602,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "121fa3cfb05e49fef05589beea162a9dd61603a6b821f1ed187ac693a4c00354"
+      "sourceHash": "6ffe94b724e974e4c32e5646583bae46d1410f7582ebc247255d67b98b3ae371"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

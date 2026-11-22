@@ -1055,7 +1055,8 @@
       },
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "安装命令暂不可用",
-      "reconnectTitle": "重新连接"
+      "reconnectTitle": "重新连接",
+      "desktopLink": "下载桌面端"
     },
     "setup": "设置仓库和 Agent",
     "offlineSince": "离线 · {time}",
@@ -2290,6 +2291,9 @@
       },
       "issue-states": {
         "title": "任务状态"
+      },
+      "team-skills": {
+        "title": "团队技能"
       }
     },
     "appearance": {
@@ -3290,6 +3294,7 @@
       "othersUsage": "团队成员可以用它跑自己的 Bot，用量算在你的 API 账单上。",
       "afterQuota": "订阅额度用完后，自动改用 API Key",
       "afterQuotaBilling": "同一个模型改用你的 API Key 继续跑，按服务商的价格付费",
+      "afterQuotaNoKey": "需要先添加支持同一模型的 API Key，才会按服务商价格继续运行",
       "sectionTitle": "API Key",
       "none": "还没有 API Key",
       "loading": "正在读取 API Key…",
@@ -3761,6 +3766,22 @@
         "purple": "紫色",
         "red": "红色"
       }
+    },
+    "teamSkills": {
+      "title": "团队技能",
+      "empty": "还没有团队技能",
+      "loadError": "无法读取团队技能注册表。",
+      "actError": "未能更改，请重试。",
+      "approve": "批准",
+      "withdraw": "撤回",
+      "status": {
+        "pending": "待审核",
+        "approved": "已批准",
+        "withdrawn": "已撤回"
+      },
+      "withdrawTitle": "撤回 {name}？",
+      "withdrawBody": "撤回不可撤销：选择了这个版本、尚未完成的运行会停止。",
+      "cancel": "取消"
     }
   },
   "TelegramBot": {
@@ -4153,6 +4174,7 @@
     },
     "loadError": "线程加载失败。",
     "failedTitle": "回复失败",
+    "modelRequired": "任务未启动：未选择模型。",
     "replyToolUnavailable": "回复未完成，请重试",
     "apiBalance": "API 余额不足",
     "subscriptionRefusal": {
@@ -4167,7 +4189,8 @@
       "modelRejected": "模型请求被拒绝",
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
-      "modelNotReported": "云电脑没报告能跑这个模型"
+      "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行"
     },
     "quota": {
       "used": "{name} 额度已用完",
@@ -5455,7 +5478,17 @@
       "open": "打开右栏",
       "filterBot": "按派出者筛选",
       "allBots": "全部派出者",
-      "closeAllThreads": "关闭全部线程"
+      "closeAllThreads": "关闭全部线程",
+      "addMember": "添加成员",
+      "addMembers": "添加成员到 {group}",
+      "noMoreBots": "你的所有 Bot 都已在群里。",
+      "membersWriteError": "无法修改成员。",
+      "cancel": "取消",
+      "add": "添加",
+      "removeMember": "移除 {name}",
+      "memberRemoved": "已移除 {name}",
+      "undo": "撤销",
+      "leadRestoreError": "{name} 已恢复；主持角色可能未恢复。"
     },
     "suggestions": {
       "title": "建议",
@@ -5921,7 +5954,13 @@
     "notSent": "未发送",
     "answering": "正在回复",
     "noTaker": "没有 Bot 接这条，@ 它的名字",
-    "stopped": "已停止"
+    "stopped": "已停止",
+    "exchange": {
+      "marker": "{names} — {count} 条私聊",
+      "title": "{names}",
+      "empty": "这次私聊没有消息。",
+      "loadError": "无法加载这次私聊。"
+    }
   },
   "DeviceSetup": {
     "title": "设置 {device}",
@@ -8171,7 +8210,16 @@
       "providerOn": "{on}/{total} 个已启用",
       "firstModel": "任务先用",
       "noFirstModel": "还没有可用的模型",
-      "keyProvider": "服务商"
+      "keyProvider": "服务商",
+      "catalog": "模型",
+      "catalogFailed": "无法读取模型",
+      "catalogLoading": "正在读取模型…",
+      "subscriptionNoModels": "已连接的订阅还没有返回模型",
+      "noSubscriptions": "还没有连接订阅",
+      "keyNoModels": "已添加的 API Key 还没有返回模型",
+      "noApiKeys": "还没有添加 API Key",
+      "customNoModels": "自定义服务商还没有返回模型",
+      "connectedNoModels": "已连接的订阅或 API Key 还没有返回模型"
     }
   },
   "CodeReview": {
@@ -8383,6 +8431,7 @@
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
       "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行",
       "hostedQuotaUsed": "Mikka 额度已用完",
       "hostedPaused": "Mikka 额度暂时不可用",
       "temporarilyUnavailable": "暂时不可用",
@@ -9048,9 +9097,77 @@
       "label": "更新线程标题",
       "keywords": "标题|拉取请求"
     },
+    "gitAuthorName": {
+      "label": "提交作者",
+      "keywords": "提交|作者|姓名|git"
+    },
+    "gitAuthorEmail": {
+      "label": "提交邮箱",
+      "keywords": "提交|作者|邮箱|git"
+    },
     "subagentMaxConcurrent": {
       "label": "并发子 Agent 数量",
       "keywords": "子 Agent|并发|限制"
+    },
+    "memoryAutoApprove": {
+      "label": "自动审批低风险记忆",
+      "keywords": "记忆|自动审批|低风险"
+    },
+    "dndEnabled": {
+      "label": "定时免打扰",
+      "keywords": "免打扰|静音|排程"
+    },
+    "dndStart": {
+      "label": "免打扰开始时间",
+      "keywords": "免打扰|开始|时间"
+    },
+    "dndEnd": {
+      "label": "免打扰结束时间",
+      "keywords": "免打扰|结束|时间"
+    },
+    "dndDays": {
+      "label": "免打扰重复日期",
+      "keywords": "免打扰|日期|星期"
+    },
+    "notifyMobileDecide": {
+      "label": "手机推送：需要你决策",
+      "keywords": "手机|推送|决策"
+    },
+    "notifyMobileReview": {
+      "label": "手机推送：待审阅",
+      "keywords": "手机|推送|审阅"
+    },
+    "notifyMobileFinished": {
+      "label": "手机推送：线程完成",
+      "keywords": "手机|推送|线程完成"
+    },
+    "notifyMobileBriefing": {
+      "label": "手机推送：每日简报",
+      "keywords": "手机|推送|简报"
+    },
+    "notifyDesktopDecide": {
+      "label": "桌面通知：需要你决策",
+      "keywords": "桌面|通知|决策"
+    },
+    "notifyDesktopReview": {
+      "label": "桌面通知：待审阅",
+      "keywords": "桌面|通知|审阅"
+    },
+    "notifyDesktopFinished": {
+      "label": "桌面通知：线程完成",
+      "keywords": "桌面|通知|线程完成"
+    },
+    "notifyDesktopBriefing": {
+      "label": "桌面通知：每日简报",
+      "keywords": "桌面|通知|简报"
+    },
+    "notifyEmailInvitations": {
+      "label": "组织邀请邮件",
+      "keywords": "邮件|邀请|组织"
+    },
+    "notificationSound": {
+      "label": "通知提示音",
+      "keywords": "提示音|声音|静音"
     }
   }
 }
