@@ -8384,6 +8384,7 @@
       "quotaChecking": "Subscription limit being checked",
       "runtimeUnavailable": "This environment does not support that subscription",
       "modelNotReported": "The cloud computer did not report this model",
+      "modelRequired": "No model set up — the request did not run",
       "hostedQuotaUsed": "Mikka limit reached",
       "hostedPaused": "Mikka limit temporarily unavailable",
       "temporarilyUnavailable": "Temporarily unavailable",

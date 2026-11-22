@@ -8384,6 +8384,7 @@
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
       "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行",
       "hostedQuotaUsed": "Mikka 额度已用完",
       "hostedPaused": "Mikka 额度暂时不可用",
       "temporarilyUnavailable": "暂时不可用",
