@@ -457,6 +457,38 @@ export async function getThreadMachine(issueId: string | null, runId: string): P
 }
 
 /**
+ * The thread summary header read (#2935): machine {kind,size,state}, repository,
+ * branch, and context used with its real model-catalog limit. Owner-only like
+ * getThreadMachine; cost waits on its source (A) and returns null until it lands.
+ */
+export async function getThreadSummary(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/summary', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const latestRunId = chain?.latestRunId ?? row.id
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    const [{ readThreadMachine }, { readThreadLocation }] = await Promise.all([
+      import('@/lib/thread-machine-view'), import('@/lib/thread-summary')])
+    const [machine, context, location] = await Promise.all([
+      readThreadMachine(pool, user.id, runIds),
+      readContextUsage(runIds, row.id, latestRunId),
+      readThreadLocation(pool, user.id, latestRunId)])
+    const { catalogIdFor, catalogModel } = await import('@/lib/model-catalog')
+    const windowTokens = context.model
+      ? catalogModel(catalogIdFor(context.model) ?? context.model)?.contextWindow ?? null
+      : null
+    return {
+      cost: null,
+      machine: machine ? { kind: machine.kind, size: location.machineSize, state: machine.state } : null,
+      repository: location.repository,
+      branch: location.branch,
+      context: { ...context, windowTokens },
+    }
+  })
+}
+
+/**
  * What this thread's run holds (lib/context-usage.ts). One query counts every
  * character in SQL and returns no text: a cursor read must stay small, so the
  * brief cannot be sent again to be measured (tests/thread-detail-bytes.db.test.ts).
