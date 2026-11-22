@@ -504,7 +504,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           EXPECT_DB: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.db == 'true' }}
           DB_RESULT: ${{ needs.browser-tests-full.result }}
-          DEFER_DB: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.draft != true && needs.changes.outputs.db == 'true' }}
+          DB_SELECTED: ${{ needs.changes.outputs.db }}
           DB_SUITES: ${{ needs.changes.outputs.db_suites }}
           DB_MATRIX: ${{ needs.changes.outputs.db_matrix }}
         run: |
@@ -514,7 +514,7 @@ jobs:
             false) test "$DB_RESULT" = skipped ;;
             *) exit 1 ;;
           esac
-          if [ "$DEFER_DB" = true ]; then
+          if [ "$DB_SELECTED" = true ] && [ "$EXPECT_DB" = false ]; then
             message='Database checks deferred to merge queue'
             if [ -n "$DB_SUITES" ]; then message="$message; suites: $DB_SUITES"; fi
             if [ -n "$DB_MATRIX" ]; then
@@ -522,9 +522,6 @@ jobs:
               message="$message; shard count: $shards"
             fi
             printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
-            message="${message//'%'/'%25'}"
-            message="${message//$'\r'/'%0D'}"
-            message="${message//$'\n'/'%0A'}"
             printf '::notice::%s\n' "$message"
           else
             echo "Database gate: $DB_RESULT; complete inventory validated in Changed files." >> "$GITHUB_STEP_SUMMARY"
