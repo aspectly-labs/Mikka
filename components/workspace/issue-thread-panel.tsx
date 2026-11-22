@@ -549,8 +549,11 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         continue
       }
       const part: ThreadEntryPart = item.kind === 'agent' ? { kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}><div {...{ [QUOTE_SOURCE_ATTR]: '' }}><AgentMarkdown text={item.text} isStreaming={active} /></div></AgentCitationsContext> }
-        : item.kind === 'steps' ? { kind: 'tools', id: `${runId}:${item.id}`, tools: item.steps.map(step => ({ id: step.id, label: step.name, status: step.failed ? 'failed' as const : 'done' as const,
-          ms: step.ms, note: step.detail ?? undefined, command: step.command, detail: threadStepOutput(step), exitCode: step.exitCode ?? undefined })) }
+        : item.kind === 'steps' ? { kind: 'tools', id: `${runId}:${item.id}`, tools: item.steps.map(step => ({ id: step.id, label: step.name,
+          kind: step.kind, title: step.title, runId, outputRef: step.outputRef,
+          status: step.status === 'cancelled' ? 'stopped' as const : step.status === 'running' ? 'running' as const
+            : step.failed || step.status === 'failed' ? 'failed' as const : 'done' as const,
+          ms: step.ms, note: step.detail ?? undefined, command: step.command, detail: step.outputTail ?? threadStepOutput(step), exitCode: step.exitCode ?? undefined })) }
         : item.kind === 'error' ? { kind: 'error', text: item.text }
         : { kind: 'text', text: '', node: item.kind === 'computer'
           ? <ComputerCard botId={item.botId} runId={item.runId} task={item.task} state={active ? 'working' : (view?.status ?? data.thread.status) === 'succeeded' ? 'done' : 'failed'} />
