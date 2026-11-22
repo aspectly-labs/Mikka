@@ -90,6 +90,7 @@ export function useChatEditor(composer: ChatComposerState, options: {
   // The menu's rows and the picked row for the plugin's key handler, which runs outside React's render.
   const menuRows = useRef<Row[]>([])
   const menuActive = useRef(0)
+  const menuSearching = useRef(false)
   const hydrate = useRef<(stored: string) => JSONNode>(() => ({ type: 'doc', content: [{ type: 'paragraph' }] }))
   const emitted = useRef(field.stored)
   const recall = useRef<{ at: number | null; draft: string }>({ at: null, draft: '' })
@@ -109,6 +110,8 @@ export function useChatEditor(composer: ChatComposerState, options: {
   const suggestion = (char: Char) => ({
     char,
     pluginKey: keys[char],
+    // After a space, or straight after Chinese or Japanese text and punctuation (「看一下@CHAT」); never inside an address.
+    allowedPrefixes: [' ', '\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef'],
     // `/` only opens a line that starts the message, as the textarea's command menu did.
     ...(char === '/' ? { startOfLine: true, allow: ({ range }: { range: { from: number } }) => range.from <= 1 && (!!live.current.composer.field.commands?.length) } : {}),
     ...(char === '$' ? { allow: () => !!live.current.composer.field.commands?.length } : {}),
@@ -158,6 +161,8 @@ export function useChatEditor(composer: ChatComposerState, options: {
     const menuOpen = !!triggerRef.current
     if (menuOpen && (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'Escape' || event.key === 'Tab')) return false
     if (menuOpen && event.key === 'Enter' && menuRows.current.length) return false
+    // A search still on its way: Enter waits for its rows rather than sending the half-typed `@name`.
+    if (menuOpen && event.key === 'Enter' && menuSearching.current) { event.preventDefault(); return true }
     if (event.key === 'Enter') {
       const plain = !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey
       // A touch keyboard has no Shift+Enter: Enter is a new line and Send stays the button.
@@ -343,6 +348,7 @@ export function useChatEditor(composer: ChatComposerState, options: {
   const searching = (referencesWanted && references.loading) || (filesWanted && (workspace.loading || files.loading)) || (skillsWanted && trigger?.char !== '@' && !skills.data && !skills.error)
   const failed = (referencesWanted && references.failed) || (filesWanted && (files.failed || !!workspace.error)) || (!!trigger && trigger.char !== '@' && !!skills.error)
   const status = rows.length ? undefined : searching ? tReferences('searching') : failed ? tReferences('error') : tReferences('empty')
+  menuSearching.current = !rows.length && !!searching
   const shown = Math.min(active, Math.max(0, rows.length - 1))
   menuActive.current = shown
 
