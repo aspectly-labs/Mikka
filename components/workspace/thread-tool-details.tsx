@@ -3,6 +3,7 @@
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { useMemo, useState } from 'react'
 import { ansiToLines, CodeBlock as TerminalCode, CodeBlockContent as TerminalContent } from '@/components/reui/code-block/code-block'
+import { Button } from '@/components/ui/button'
 import { CodeBlock, CodeBlockContent, CodeBlockFooter, CodeBlockHeader, CodeBlockTitle } from '@/components/ui/code-block'
 import { cn } from '@/lib/utils'
 
@@ -48,10 +49,10 @@ export function ThreadToolDetails({ command, input, output, exitCode, status, ms
       {status === 'running' && !outputLines && <div className="shrink-0 text-xs text-muted-foreground">{t('waiting')}</div>}
     </div>
     <CodeBlockFooter className={cn('justify-end pb-2 tabular-nums', failed && 'text-destructive-foreground')}>
-      {loadOutput && full === null && <button type="button" disabled={loading} onClick={() => { setLoading(true); void loadOutput().then(setFull).finally(() => setLoading(false)) }}
+      {loadOutput && full === null && <Button type="button" variant="bare" size="bare" disabled={loading} onClick={() => { setLoading(true); void loadOutput().then(setFull).finally(() => setLoading(false)) }}
         className="me-auto text-muted-foreground underline-offset-2 hover:underline disabled:opacity-60" data-thread-tool-load="">
         {loading ? t('loadingOutput') : t('fullOutput')}
-      </button>}
+      </Button>}
       {seconds && `${seconds}s · `}{state}
     </CodeBlockFooter>
   </CodeBlock>
@@ -66,10 +67,10 @@ export function ThreadToolDetails({ command, input, output, exitCode, status, ms
       <CodeBlockContent wrap className="max-h-64" data-thread-tool-output="">{shown}</CodeBlockContent>
     </>}
     <CodeBlockFooter className={cn('justify-end tabular-nums', failed && 'text-destructive-foreground')}>
-      {loadOutput && full === null && <button type="button" disabled={loading} onClick={() => { setLoading(true); void loadOutput().then(setFull).finally(() => setLoading(false)) }}
+      {loadOutput && full === null && <Button type="button" variant="bare" size="bare" disabled={loading} onClick={() => { setLoading(true); void loadOutput().then(setFull).finally(() => setLoading(false)) }}
         className="me-auto text-muted-foreground underline-offset-2 hover:underline disabled:opacity-60" data-thread-tool-load="">
         {loading ? t('loadingOutput') : t('fullOutput')}
-      </button>}
+      </Button>}
       {seconds && `${seconds}s · `}{state}
     </CodeBlockFooter>
   </CodeBlock>
