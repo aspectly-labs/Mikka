@@ -204,13 +204,24 @@ function environmentSnapshot(configuration: EnvironmentSecretConfiguration, secr
 export async function environmentSecretSnapshot(workspaceId: string, repository: string | null,
   configuration: EnvironmentSecretConfiguration, ownerId: string, query: Pick<typeof db, 'select'> = db,
   threadRunId?: string | null): Promise<string> {
-  const metadata = await taskSecretMetadata(workspaceId, repository, ownerId, query, undefined, configuration.secretIds)
+  const ids = [...new Set(configuration.secretIds)]
+  const shared = await query.select({ id: workspaceSecrets.id, name: workspaceSecrets.name, kind: workspaceSecrets.kind,
+    ciphertext: workspaceSecrets.ciphertext, iv: workspaceSecrets.iv, keyVersion: workspaceSecrets.keyVersion, delivery: workspaceSecrets.delivery,
+    scopeType: workspaceSecrets.scopeType, scopeRef: workspaceSecrets.scopeRef }).from(workspaceSecrets)
+    .where(and(eq(workspaceSecrets.workspaceId, workspaceId), or(
+      and(inArray(workspaceSecrets.id, ids), repository
+        ? or(eq(workspaceSecrets.scopeType, 'workspace'), and(eq(workspaceSecrets.scopeType, 'repository'), eq(workspaceSecrets.scopeRef, repository.toLowerCase())))!
+        : eq(workspaceSecrets.scopeType, 'workspace')),
+      ...(threadRunId ? [and(eq(workspaceSecrets.scopeType, 'thread'), eq(workspaceSecrets.scopeRef, threadRunId))!] : []))))
+  // A final Environment claim must still resolve every selected reference.
+  if (shared.filter(row => ids.includes(row.id)).length !== ids.length) throw new CodedError('task_secret_unavailable', { detail: 'configuration' })
+  const own = await query.select({ id: userSecrets.id, name: userSecrets.name, kind: userSecrets.kind, ciphertext: userSecrets.ciphertext,
+    iv: userSecrets.iv, keyVersion: userSecrets.keyVersion, delivery: userSecrets.delivery }).from(userSecrets)
+    .where(eq(userSecrets.userId, ownerId))
   const effective = new Map<string, { name: string; revision?: string }>(Object.keys(configuration.variables).map(name => [name, { name }]))
-  for (const secret of metadata) effective.set(secret.name, secret)
-  if (threadRunId) for (const row of await query.select({ id: workspaceSecrets.id, name: workspaceSecrets.name, kind: workspaceSecrets.kind,
-      ciphertext: workspaceSecrets.ciphertext, iv: workspaceSecrets.iv, keyVersion: workspaceSecrets.keyVersion, delivery: workspaceSecrets.delivery }).from(workspaceSecrets)
-      .where(and(eq(workspaceSecrets.workspaceId, workspaceId), eq(workspaceSecrets.scopeType, 'thread'), eq(workspaceSecrets.scopeRef, threadRunId))))
-    effective.set(row.name, { name: row.name, revision: secretRevision(row) })
+  const rank = (row: typeof shared[number]) => row.scopeType === 'thread' ? 2 : row.scopeType === 'repository' ? 1 : 0
+  for (const row of [...shared].sort((a, b) => rank(a) - rank(b))) effective.set(row.name, { name: row.name, revision: secretRevision(row) })
+  for (const row of own) effective.set(row.name, { name: row.name, revision: secretRevision(row) })
   return environmentSnapshot(configuration, [...effective.values()])
 }
 
@@ -226,12 +237,13 @@ export async function environmentSecretInjection(workspaceId: string, repository
   if (rows.length !== ids.length) throw new E2BKeyError('e2b_unavailable', 'environment secret reference unavailable')
   const merged = new Map<string, RuntimeSecret>(Object.entries(configuration.variables).map(([name, value]) => [name, { name, value, kind: 'env' }]))
   for (const row of rows.toSorted((a, b) => Number(a.scopeType === 'repository') - Number(b.scopeType === 'repository'))) merged.set(row.name, openRuntime(row, env))
-  if (ownerId && workspaceSecretsConfigured(env)) for (const secret of await loadUserRuntimeSecrets(ownerId, env)) merged.set(secret.name, secret)
-  // Thread env vars outrank every configured reference, as taskSecretInjection ranks them.
+  // Thread env vars outrank every configured reference; the run owner's own
+  // secrets then outrank them, exactly as loadTaskRuntimeSecrets orders it.
   if (threadRunId && workspaceSecretsConfigured(env))
     for (const row of await guardSecretsDb(() => db.select().from(workspaceSecrets).where(and(
         eq(workspaceSecrets.workspaceId, workspaceId), eq(workspaceSecrets.scopeType, 'thread'), eq(workspaceSecrets.scopeRef, threadRunId)))))
       merged.set(row.name, openRuntime(row, env))
+  if (ownerId && workspaceSecretsConfigured(env)) for (const secret of await loadUserRuntimeSecrets(ownerId, env)) merged.set(secret.name, secret)
   const secrets = [...merged.values()]
   const injection = await partitionTaskSecrets(workspaceId, secrets)
   return { ...injection, ...(workspaceSecretsConfigured(env) ? { snapshot: environmentSnapshot(configuration, secrets) } : { snapshot: undefined }) }
