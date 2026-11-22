@@ -162,8 +162,8 @@ function conversationWithMemory({ session, rows }: Awaited<ReturnType<typeof rea
   // 使用记忆 off (the app's 记忆 setting): the prompt leaves the memory out; it stays saved.
   const memory = memoryEnabled ? session?.memory ?? '' : ''
   // A failed message retried with 重新发送 is not said twice: the new attempt stands for it.
-  return { summary: session?.summary ?? null, memory, messages: rows.filter(row => (row.message as { mikkaRetried?: unknown }).mikkaRetried !== true).map(row => {
-    const { mikkaStreamId: _streamId, mikkaStopped: _stopped, mikkaFailure: _failure, mikkaFailureDetails: _details, mikkaRetried: _retried, mikkaScheduleResult: _schedule, mikkaDisplay: _display, ...message } = row.message
+  return { summary: session?.summary ?? null, memory, messages: rows.filter(row => (row.message as { mikkaRetried?: unknown }).mikkaRetried !== true && !(row.message as { mikkaSuperseded?: unknown }).mikkaSuperseded).map(row => {
+    const { mikkaStreamId: _streamId, mikkaStopped: _stopped, mikkaFailure: _failure, mikkaFailureDetails: _details, mikkaRetried: _retried, mikkaSuperseded: _superseded, mikkaScheduleResult: _schedule, mikkaDisplay: _display, ...message } = row.message
     const schedule = scheduleChatResultSchema.safeParse(_schedule)
     // Status-only receipts have a localized display line, not an empty model reply.
     if (message.role === 'assistant' && !message.content && schedule.success) {

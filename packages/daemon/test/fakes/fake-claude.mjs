@@ -228,6 +228,19 @@ lines.on("line", async (line) => {
     result()
     return
   }
+  // `TASKS` builds the plan with the newer task tools: TaskCreate (its structured result names the task's id), then TaskUpdate.
+  if (message.includes("TASKS")) {
+    const call = (id, name, input, content, structured) => {
+      out({ type: "assistant", message: { id: `msg_${++n}`, content: [{ type: "tool_use", id, name, input }] } })
+      out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content }] }, tool_use_result: structured })
+    }
+    call("toolu_task_1", "TaskCreate", { subject: "Read the brief", description: "Read it" }, "Task #1 created successfully: Read the brief", { task: { id: "1", subject: "Read the brief" } })
+    call("toolu_task_2", "TaskCreate", { subject: "Write NOTES.md", description: "Write it" }, "Task #2 created successfully: Write NOTES.md", { task: { id: "2", subject: "Write NOTES.md" } })
+    call("toolu_task_3", "TaskUpdate", { taskId: "1", status: "completed" }, "Updated task #1 status", { success: true, taskId: "1", updatedFields: ["status"] })
+    call("toolu_task_4", "TaskUpdate", { taskId: "2", status: "in_progress" }, "Updated task #2 status", { success: true, taskId: "2", updatedFields: ["status"] })
+    result()
+    return
+  }
   // `PLAN` writes a to-do list, then revises it, as TodoWrite does.
   if (message.includes("PLAN")) {
     const todo = (id, todos) => {

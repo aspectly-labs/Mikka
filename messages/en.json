@@ -1529,6 +1529,8 @@
     "runNotActive": "This run has ended and has no answerable question.",
     "threadReplaced": "A newer thread took this task over. Send it there.",
     "threadCannotContinue": "This thread works on no task, so it can’t run again.",
+    "chatRevisionUnavailable": "This message can no longer be edited or regenerated.",
+    "chatRevisionBusy": "Wait for the reply to finish, then try again.",
     "threadRecoveryUnavailable": "The original session cannot be resumed right now.",
     "factoryQuestionNeedsAnswerTool": "Use the Factory question answer tool to provide a verifiable response.",
     "savedLoginNotFound": "This login does not exist or was already deleted.",
@@ -4895,6 +4897,20 @@
     "pullRequests": "Pull requests",
     "broken": "Deleted, or you no longer have access"
   },
+  "ChatEditor": {
+    "people": "People",
+    "bots": "Bots",
+    "files": "Files and folders",
+    "skills": "Skills",
+    "pasted": "Pasted text · {lines, plural, =1 {1 line} other {# lines}}",
+    "pastedFile": "Pasted text",
+    "expand": "Show pasted text",
+    "removePasted": "Remove pasted text",
+    "remove": "Remove {name}",
+    "image": "Image",
+    "uploading": "{percent}%",
+    "uploadFailed": "Upload failed"
+  },
   "IssueThreads": {
     "composerModelUnknown": "Model not reported",
     "composerModelRequested": "Requested {model}",
@@ -6634,7 +6650,15 @@
       "copied": "Copied",
       "copyFailed": "Couldn't copy",
       "quote": "Quote",
-      "reply": "Reply"
+      "reply": "Reply",
+      "edit": "Edit",
+      "regenerate": "Regenerate",
+      "editCancel": "Cancel",
+      "editSend": "Send",
+      "editLabel": "Edit message",
+      "previousVersion": "Previous version",
+      "nextVersion": "Next version",
+      "versionPosition": "{current} / {total}"
     }
   },
   "GroupTask": {
@@ -9304,7 +9328,8 @@
         "too_large": "Too large to show",
         "unsupported": "This file can't be shown"
       },
-      "truncated": "… the rest of the file is not shown"
+      "truncated": "… the rest of the file is not shown",
+      "actionsShort": "More actions"
     },
     "setup": {
       "loadFailed": "Couldn't read where this thread runs",
@@ -9330,7 +9355,8 @@
       "install": "Setup command",
       "unapproved": "Not approved",
       "copyFiles": "Copied files ({count})",
-      "edit": "Edit in settings"
+      "edit": "Edit in settings",
+      "botNote": "New threads of this Bot run in this environment."
     },
     "menu": {
       "search": "Search tabs",

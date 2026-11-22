@@ -4,8 +4,11 @@ import type { ReactNode, Ref } from 'react'
 import type { SendKey } from '@/lib/send-key'
 import type { ChatFileScope } from '@mikka/protocol/chat-attachments'
 
+/** What a caller may do with the composer's field: a textarea in the default slot, the chat editor in the hosted one. */
+export type ChatComposerInput = { focus(options?: FocusOptions): void; setSelectionRange?(start: number, end: number): void }
+
 export type ChatComposerProps = {
-  ref: Ref<HTMLTextAreaElement | null>
+  ref: Ref<ChatComposerInput | null>
   value: string
   onChange: (value: string) => void
   onSubmit: () => void
@@ -13,7 +16,7 @@ export type ChatComposerProps = {
   placeholder?: string
   /** Waiting for a reply. With `onStop`, the send button turns into stop. */
   sending?: boolean
-  /** The other side keeps working and still takes messages. With `onStop`, the button is stop until something is typed. */
+  /** The other side keeps working and still takes messages. With `onStop`, the button is stop until something is typed; Esc stops either way. */
   running?: boolean
   /** Keep the draft editable while a thread waits for its stop acknowledgement. */
   editableWhileSending?: boolean
@@ -32,7 +35,7 @@ export type ChatComposerProps = {
   footer?: ReactNode
   /** The person's send key (偏好设置); the caller reads it from their preferences. */
   sendKey?: SendKey
-  /** A thread's composer, not a bot chat's: choosing a chat focuses only the latter, and Esc never stops the run (decision 2026-11-02-0301). */
+  /** A thread's composer, not a bot chat's: choosing a chat focuses only the latter. Esc stops either while it works (decision 2026-11-22-1600). */
   thread?: boolean
   attachmentScope?: ChatFileScope
   /** Keep a saved draft editable while blocking new files. */
@@ -42,7 +45,20 @@ export type ChatComposerProps = {
    * and the ＋ menu's Reference rows search. A reference shows as one chip in the draft
    * and is sent as its marker (lib/composer-references.ts). Absent: no references.
    */
-  references?: { workspaceId: string }
+  references?: {
+    workspaceId: string
+    /** The thread's run: `@` also searches its workspace's files and folders (`/api/runs/:id/workspace/files`). */
+    runId?: string
+  }
+  /** The people and Bots `@` can name (a group chat's members); a chip is sent as `@Name` (lib/group-mentions.ts). */
+  people?: readonly { id: string; name: string; kind: 'person' | 'bot' }[]
+  /**
+   * The chat's agents can use the person's installed skills (`/api/skills`): `/` and `$` list them. Defaults to
+   * whether the chat has `/` commands (a Bot chat, a thread); a group chat says so when it holds one of their Bots.
+   */
+  skills?: boolean
+  /** Where the person's earlier prompts are kept (a thread's or chat's own key): Up in an empty composer recalls them. */
+  historyKey?: string
   /** The `/` commands this chat can run; only commands with a working action are listed. */
   commands?: ChatComposerCommand[]
 }

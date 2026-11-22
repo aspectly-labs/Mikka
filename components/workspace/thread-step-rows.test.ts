@@ -13,14 +13,14 @@ const { threadItems } = await import('@/lib/issue-run-conversation')
 const { useThreadStepRows } = await import('./thread-step-rows')
 
 const at = new Date(0)
-const steps = (chunks: Record<string, unknown>[]) => {
-  const [item] = threadItems(chunks.map(chunk => ({ chunk, at })), [])
+const steps = async (chunks: Record<string, unknown>[]) => {
+  const [item] = await threadItems(chunks.map(chunk => ({ chunk, at })), [])
   assert.ok(item.kind === 'steps')
   return item.steps
 }
 
-test('a run\'s tool calls are named by what they did, from the structured fields (#2923, #2937)', () => {
-  const rows = useThreadStepRows()(steps([
+test('a run\'s tool calls are named by what they did, from the structured fields (#2923, #2937)', async () => {
+  const rows = useThreadStepRows()(await steps([
     { type: 'tool-input-available', toolCallId: 'r', toolName: 'Read', input: { file_path: 'task-detail-skeleton.tsx' } },
     { type: 'tool-output-available', toolCallId: 'r', output: 'export {}' },
     { type: 'tool-input-available', toolCallId: 'g', toolName: 'Grep', input: { pattern: 'TaskDetailLoading', path: 'components/workspace' } },
@@ -46,8 +46,8 @@ test('a run\'s tool calls are named by what they did, from the structured fields
   assert.ok(!('note' in rows[0]), 'a named row does not repeat its target')
 })
 
-test('a call its ended run left running reads as stopped', () => {
-  const [row] = useThreadStepRows()(steps([{ type: 'tool-input-available', toolCallId: 'b', toolName: 'Bash', input: { command: 'pnpm build' } }]), false)
+test('a call its ended run left running reads as stopped', async () => {
+  const [row] = useThreadStepRows()(await steps([{ type: 'tool-input-available', toolCallId: 'b', toolName: 'Bash', input: { command: 'pnpm build' } }]), false)
   assert.equal(row.status, 'stopped')
   assert.equal(row.label, 'pnpm build')
 })

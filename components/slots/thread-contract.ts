@@ -139,6 +139,12 @@ export type ThreadScreenProps = {
   /** A reader without a reply target does not get a composer. */
   readOnly?: boolean
   scrollRef?: RefObject<HTMLDivElement | null>
+  /**
+   * Filled by a screen whose rows are not all mounted (the official one lists only the rows near the view): scrolls an
+   * entry's row to the top of the view by its id, and says whether the id is listed. Absent or false: the row is in the
+   * document, and a caller scrolls to it there.
+   */
+  revealRef?: RefObject<((entryId: string) => boolean) | null>
   /** Chips that go out with the next message (a quote, a browser note), each with Remove. */
   pending: { id: string; name: string; meta?: string; onRemove: () => void }[]
   /** Notices that wait above the composer (quota, sign in again, actions to approve). */
@@ -170,6 +176,8 @@ export type ThreadScreenProps = {
     tabs: ThreadPanelTab[]; reveal: number; revealId: string | null
     /** The real active work tab's task, or null for another tab. */
     onActiveTask?: (taskId: string | null) => void
+    /** Where this conversation's right-column tabs are kept on this device (#2927): open, order and the one in front. */
+    stateKey?: string
   }
   /**
    * Tabs the chat opens itself in the same work area (FRAME_OWNS_PANEL, decision 2026-11-10): a task's view

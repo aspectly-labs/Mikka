@@ -77,7 +77,7 @@ test('streamed tokens, in any batches, never show a chip marker or id; each chip
         await view.render(<CoordinatorReply text={text} citations={{ ...base, pending: true }} isStreaming />)
         assert.doesNotMatch(view.container.textContent ?? '', MARKUP, `sizes ${sizes}: ${text}`)
       }
-      // The words appear a few characters at a time (lib/hooks/use-smooth-text.ts): wait for the last of them.
+      // The words appear at the pace they arrive (AgentMarkdown's streaming engine): wait for the last of them.
       const chips = () => view.container.querySelectorAll('[data-slot="inline-citation-trigger"]').length
       const pending = () => view.container.querySelectorAll('[data-citation-pending]').length
       await settle(() => chips() === 1 && pending() === 2, () => assert.doesNotMatch(view.container.textContent ?? '', MARKUP))

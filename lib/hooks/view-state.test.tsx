@@ -191,8 +191,8 @@ test('malformed saved JSON falls back without breaking the screen', async () => 
   assert.equal(container.textContent, 'recovered')
 })
 
-function ScrollReader({ id = 'list', rows = 15, ready = true }: { id?: string; rows?: number; ready?: boolean }) {
-  const scroll = useViewScroll<HTMLDivElement>(id, ready)
+function ScrollReader({ id = 'list', rows = 15, ready = true, anchor }: { id?: string; rows?: number; ready?: boolean; anchor?: 'start' | 'end' }) {
+  const scroll = useViewScroll<HTMLDivElement>(id, ready, true, anchor)
   const attach = useCallback((node: HTMLDivElement | null) => {
     scroll.current = node
     if (!node) return
@@ -250,4 +250,18 @@ test('user scrolling cancels a pending restore instead of pulling the list back 
   await renderScroll()
   await act(async () => new Promise(resolve => setTimeout(resolve, 10)))
   assert.equal(scrollNode().scrollTop, 100)
+})
+
+test('a chat scrolled up comes back where it was; one left at its end is left to its owner, which follows the latest', async () => {
+  await renderScroll({ id: 'chat', anchor: 'end' })
+  await move(400)
+  await act(async () => root.render(null))
+  await renderScroll({ id: 'chat', anchor: 'end' })
+  assert.equal(scrollNode().scrollTop, 400, 'scrolled up: restored')
+  await move(1300)
+  await act(async () => root.render(null))
+  // New messages arrived meanwhile: the old end is no longer the end, so it is not restored.
+  await renderScroll({ id: 'chat', anchor: 'end', rows: 20 })
+  await act(async () => new Promise(resolve => setTimeout(resolve, 10)))
+  assert.equal(scrollNode().scrollTop, 0, 'left at its end: not pulled back to the old end')
 })

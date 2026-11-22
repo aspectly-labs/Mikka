@@ -45,6 +45,9 @@ mock.module('sonner', { namedExports: { toast: {
   error: (_message: string, options: { id: string; action?: { onClick: (event: Event) => void } }) => { notices.set(options.id, options) },
   dismiss: (id: string) => { notices.delete(id) }, success: () => {},
 } } })
+// The thread's held chunks; a read through the fetcher folds them before they show (hooks/use-issue-thread-read.ts),
+// so this fixture's read, which skips the fetcher, is folded once before the tests render it.
+const doneChunks = [{ chunk: { type: 'text-delta', id: 'a', delta: 'Done.' }, at: new Date(0) }]
 mock.module('swr', {
   defaultExport: (key: unknown, fetcher: never, options: never) => (
     versionScenario && (key === null || Array.isArray(key)) ||
@@ -52,7 +55,7 @@ mock.module('swr', {
   )
     ? actualSWR.default(key, fetcher, options)
     : Array.isArray(key) && key[0] === 'issue-thread'
-    ? { data: thread && { thread, chunks: [{ chunk: { type: 'text-delta', id: 'a', delta: 'Done.' }, at: new Date(0) }], messages: storedMessages, context: runContext }, mutate: () => {} }
+    ? { data: thread && { thread, chunks: doneChunks, messages: storedMessages, context: runContext }, mutate: () => {} }
     // Where the thread runs is its own read (thread-run-place.tsx); none here.
     : Array.isArray(key) && key[0] === 'thread-machine' ? { data: null, mutate: () => {} }
     : Array.isArray(key) && key[0] === 'thread-changes' ? { data: changesRead, mutate: () => {} }
@@ -123,7 +126,11 @@ let createRoot: typeof import('react-dom/client')['createRoot']
 let root: Root | null = null
 let container: HTMLDivElement
 let refreshRead: () => Promise<unknown>
-before(async () => { ({ createRoot } = await import('react-dom/client')); ({ IssueThreadPanel } = await import('../components/workspace/issue-thread-panel')) })
+before(async () => {
+  ({ createRoot } = await import('react-dom/client')); ({ IssueThreadPanel } = await import('../components/workspace/issue-thread-panel'))
+  const { primeFold } = await import('../lib/conversation/folded')
+  await primeFold('thread:run-1', doneChunks)
+})
 const base = { id: 'run-1', issueId: 'issue-1', status: 'succeeded', outcome: null, question: null, continuation: null, stopping: false, ownedByCurrentUser: true,
   createdAt: new Date(0), finishedAt: new Date(0), latestRunId: 'run-1', prompt: 'Fix it', stopRequestedAt: null, replyAvailable: true, retryAvailable: true, quota: null, feedbackEligible: false,
   detail: { name: 'ZHIX-2 Fix it', agentName: 'Claude Code', harness: 'claude_code', summary: null } }
@@ -482,7 +489,9 @@ test('the root panel resolves its accepted latest continuation without changing 
   assert.equal(replyCalls, 0)
 })
 
-const retainedPanelStates: { name: string; task?: Partial<FactoryTask>; run?: Record<string, unknown>; group: string; stopping?: boolean }[] = [
+// A working or waiting run is its activity line alone, with no badge beside it (activityLineBadgeShown, one running
+// indicator); `group: null` checks that the accepted candidate does not add one either.
+const retainedPanelStates: { name: string; task?: Partial<FactoryTask>; run?: Record<string, unknown>; group: string | null; stopping?: boolean }[] = [
   { name: 'another issue', task: { issueId: 'other-issue' }, group: 'waiting' },
   { name: 'an earlier candidate producer', task: { candidateRunId: 'older-run' }, group: 'waiting' },
   { name: 'a missing current candidate', task: { candidateId: null }, group: 'waiting' },
@@ -492,10 +501,10 @@ const retainedPanelStates: { name: string; task?: Partial<FactoryTask>; run?: Re
   { name: 'a failed producer', run: { status: 'failed', outcome: 'blocked' }, group: 'blocked' },
   { name: 'a historical failed review', task: { candidateRunId: 'producer-run' }, run: { status: 'failed', outcome: 'blocked' }, group: 'blocked' },
   { name: 'a later successful continuation', run: { latestRunId: 'run-2', continuation: { id: 'run-2', status: 'succeeded', outcome: 'needs_input', stopping: false } }, group: 'waiting' },
-  { name: 'an active run', run: { status: 'running' }, group: 'running' },
-  { name: 'a waiting input run', run: { status: 'waiting_input' }, group: 'waiting' },
-  { name: 'an unanswered question', run: { question: 'waiting' }, group: 'waiting' },
-  { name: 'a resuming question', run: { question: 'resuming', latestRunId: 'run-2', continuation: { id: 'run-2', status: 'queued', stopping: false } }, group: 'running' },
+  { name: 'an active run', run: { status: 'running' }, group: null },
+  { name: 'a waiting input run', run: { status: 'waiting_input' }, group: null },
+  { name: 'an unanswered question', run: { question: 'waiting' }, group: null },
+  { name: 'a resuming question', run: { question: 'resuming', latestRunId: 'run-2', continuation: { id: 'run-2', status: 'queued', stopping: false } }, group: null },
   { name: 'a failed question wake', run: { question: 'resuming', latestRunId: 'run-2', continuation: { id: 'run-2', status: 'queued', stopping: false }, questionWake: { generation: 'wake-1', error: 'Original task machine unavailable' } }, group: 'blocked' },
   { name: 'a quota-paused run', run: { status: 'paused' }, group: 'blocked' },
   { name: 'a requested stop', run: { status: 'running', stopping: true }, group: 'running', stopping: true },
@@ -507,7 +516,8 @@ for (const scenario of retainedPanelStates) {
     const html = render()
     assert.doesNotMatch(html, /data-group="resolved"/)
     if (scenario.stopping) assert.match(html, /Stopping[^<]*<\/span>/)
-    else expectStatusBadge(html, scenario.group, scenario.name)
+    else if (scenario.group) expectStatusBadge(html, scenario.group, scenario.name)
+    else assert.doesNotMatch(html, /<span\b(?=[^>]*data-slot="badge")(?=[^>]*data-group=)/, scenario.name)
     assert.equal(pageChecks, 0)
     assert.equal(replyCalls, 0)
   })
@@ -686,7 +696,8 @@ test('a version with a lost confirmation or stale read-back keeps its request un
     </IntlProvider>
   </SWRConfig>))
   async function click(label: string) {
-    const button = [...document.querySelectorAll('button')].find(el => el.textContent === label)
+    // The trigger is an icon on the message's line, named by its label (decision 2026-11-22-1700).
+    const button = [...document.querySelectorAll('button')].find(el => el.textContent === label || el.getAttribute('aria-label') === label)
     assert.ok(button, label)
     assert.equal(button.disabled, false)
     await act(async () => button.click())

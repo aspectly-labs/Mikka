@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useId, useRef, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { toast } from 'sonner'
 import { TEXT_ATTACHMENT_ACCEPT, textAttachment } from '@/lib/text-attachment'
@@ -8,8 +8,13 @@ import { MESSAGE_MAX } from '@/lib/message-limits'
 import { sendsMessage } from '@/lib/send-key'
 import { CHAT_FILE_ACCEPT } from '@mikka/protocol/chat-attachments'
 import { useChatFiles } from '@/components/chat/use-chat-files'
-import type { ChatComposerProps } from '@/components/slots/chat-composer-contract'
+import type { ChatComposerInput, ChatComposerProps } from '@/components/slots/chat-composer-contract'
+import { useViewState } from '@/lib/hooks/view-state'
+import { rememberPrompt } from '@/lib/chat/prompt-history'
 import { useComposerReferences } from '@/hooks/use-composer-references'
+
+/** The default slot's field is a textarea; the hosted one is the chat editor, which handles its own caret and size. */
+const textareaOf = (node: ChatComposerInput | null) => (node as HTMLElement | null)?.tagName === 'TEXTAREA' ? node as HTMLTextAreaElement : null
 
 /**
  * Everything a chat composer does, for the chat-composer slot to draw
@@ -17,19 +22,26 @@ import { useComposerReferences } from '@/hooks/use-composer-references'
  * drop and paste, the length limit. The default slot and the hosted layer both
  * call it, so the two composers cannot behave differently.
  */
-export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands }: ChatComposerProps) {
+export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands, people, historyKey, skills }: ChatComposerProps) {
   const tShell = useTranslations('Shell')
   const fileRef = useRef<HTMLInputElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const inputRef = useRef<ChatComposerInput | null>(null)
   const fileId = useId()
   const attachDisabled = sending || disabled || attachmentDisabled
   const files = useChatFiles(value, onChange, attachmentScope, attachDisabled, tShell)
   const stoppable = !!onStop && (sending || (running && !value.trim()))
   const canSend = !sending && !submitDisabled && !disabled && !files.locked && !!value.trim()
-  const references = useComposerReferences({ stored: files.text, setStored: files.edit, input: () => inputRef.current,
+  const references = useComposerReferences({ stored: files.text, setStored: files.edit, input: () => textareaOf(inputRef.current),
     workspaceId: referenceScope?.workspaceId, commands, disabled: disabled || (sending && !editableWhileSending && !onStop) })
 
-  const setInput = (node: HTMLTextAreaElement | null) => {
+  // The person's earlier prompts here, newest last; kept with the drafts (lib/hooks/view-state.tsx), cleared on logout.
+  const [history, setHistory] = useViewState<string[]>(historyKey ? `${historyKey}:history` : 'composer:history:none', [])
+  // Images drawn in the field as chips (the chat editor): the attachment strip leaves them out while they upload fine.
+  const [inline, setInlineState] = useState<string[]>([])
+  const setInline = useCallback((keys: string[]) => setInlineState(previous => previous.length === keys.length && previous.every((key, index) => key === keys[index]) ? previous : keys), [])
+  const inlineIds = new Set(inline.flatMap(key => [key, files.idOf(key) ?? key]))
+
+  const setInput = (node: ChatComposerInput | null) => {
     inputRef.current = node
     if (typeof ref === 'function') ref(node)
     else if (ref) ref.current = node
@@ -38,7 +50,7 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
   // Browsers without `field-sizing: content` get the same one-line-to-max-height growth from scrollHeight,
   // so the draft never scrolls sideways.
   useEffect(() => {
-    const input = inputRef.current
+    const input = textareaOf(inputRef.current)
     if (!input) return
     if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content')) return
     input.style.height = 'auto'
@@ -63,12 +75,17 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
 
   /** Files from the picker, a drop or a paste: uploaded as chat files where the chat takes them, otherwise read in as text. */
   function addFiles(items: File[]) {
-    if (attachDisabled) return
-    if (attachmentScope) files.add(items)
-    else void attachText(items)
+    if (attachDisabled) return []
+    if (attachmentScope) return files.add(items)
+    void attachText(items)
+    return []
   }
 
-  function submit() { if (canSend) onSubmit() }
+  function submit() {
+    if (!canSend) return
+    if (historyKey) setHistory(previous => rememberPrompt(previous, files.text))
+    onSubmit()
+  }
 
   return {
     /** The draft as the textarea shows it: attached files' markers are kept out of it, and each reference shows as its name. */
@@ -86,10 +103,44 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
     length: value.length > MESSAGE_MAX - 500 ? { count: value.length, max: MESSAGE_MAX } : null,
     files: files.files,
     pending: files.pending,
+    /** The attachment strip's files: all but the images the field draws as chips (a failed upload stays, with its retry). */
+    strip: {
+      files: files.files.filter(file => !inlineIds.has(file.id)),
+      pending: files.pending.filter(item => item.state === 'error' || !inlineIds.has(item.key)),
+    },
+    /**
+     * What the chat editor (components/chat/chat-editor) binds to: the stored draft (file markers kept out), the
+     * sources its `@`, `/` and `$` menus read, the person's earlier prompts, and the files it draws inline.
+     */
+    field: {
+      stored: files.text,
+      setStored: files.edit,
+      /** The longest the stored draft may grow: the message limit less its file markers. */
+      maxLength: MESSAGE_MAX - (value.length - files.text.length),
+      disabled,
+      history,
+      workspaceId: referenceScope?.workspaceId,
+      runId: referenceScope?.runId,
+      commands,
+      /** `/` and `$` list the person's installed skills. */
+      skills: skills ?? !!commands?.length,
+      people,
+      sendKey,
+      thread,
+      addFiles,
+      takesFiles: !!attachmentScope,
+      setInline,
+      /** The draft's attached files, so a collapsed paste's file opens as its chip again. */
+      attachments: files.files,
+      fileOf: (key: string) => files.files.find(file => file.id === (files.idOf(key) ?? key)) ?? null,
+      pendingOf: (key: string) => files.pending.find(item => item.key === key) ?? null,
+    },
     removeFile: files.remove,
     retryFile: files.retry,
     /** The button shows stop instead of send. */
     stoppable,
+    /** Esc in the field stops: whatever answers, also with words typed (decision 2026-11-22-1600). */
+    escapeStops: !!onStop && (sending || running),
     stop: onStop,
     canSend,
     submit,
@@ -104,8 +155,9 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
     onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
       const { key, shiftKey, metaKey, ctrlKey } = event
       if (references.onKeyDown(event)) return
-      // In a bot chat Esc stops the reply, as the stop button does.
-      if (key === 'Escape' && stoppable && !thread && !event.nativeEvent.isComposing) { event.preventDefault(); onStop?.(); return }
+      // Esc stops whatever answers, in every chat, also with words typed (decision 2026-11-22-1600, as Claude Code and Codex):
+      // the button is Send then, so Esc is the way to Stop. An open menu took Esc above; a composing input method keeps it.
+      if (key === 'Escape' && onStop && (sending || running) && !event.nativeEvent.isComposing) { event.preventDefault(); onStop(); return }
       if (!sendsMessage({ key, shiftKey, metaKey, ctrlKey, isComposing: event.nativeEvent.isComposing }, sendKey)) return
       event.preventDefault()
       submit()
@@ -116,6 +168,8 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
       event.dataTransfer.dropEffect = attachDisabled ? 'none' : 'copy'
     },
     onDrop(event: DragEvent) {
+      // The chat editor took it already (its file handler).
+      if (event.defaultPrevented) return
       const dropped = Array.from(event.dataTransfer.files)
       if (!dropped.length) return
       event.preventDefault()
@@ -123,6 +177,7 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
       addFiles(dropped)
     },
     onPaste(event: ClipboardEvent) {
+      if (event.defaultPrevented) return
       const pasted = Array.from(event.clipboardData.files)
       if (!pasted.length) return
       event.preventDefault()

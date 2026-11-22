@@ -3,6 +3,15 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { CLEAR_VIEW_STATE_EVENT, VIEW_STATE_PREFIX } from '../chat-drafts'
 
+/**
+ * A chat's unsent draft and the person's earlier prompts outlive the window (closing it must not lose what was being
+ * written), so they go to localStorage; other browsing state stays with this window's session. Both are cleared on
+ * logout (lib/chat-drafts.ts).
+ */
+const durable = (key: string) => key.endsWith(':draft') || key.endsWith(':history')
+/** The most one durable cell may take (in UTF-16 units of its JSON), so drafts cannot fill the origin's quota. */
+export const DURABLE_MAX = 64 * 1024
+
 /** Browsing state lives for this window's session, separate from saved product settings. */
 export function createViewStore(scope: string | null) {
   const values = new Map<string, unknown>()
@@ -20,7 +29,8 @@ export function createViewStore(scope: string | null) {
     get<T,>(key: string, fallback: T): T {
       if (!values.has(key) && scope && typeof window !== 'undefined') {
         try {
-          const saved = window.sessionStorage.getItem(storageKey(key))
+          // A draft saved before drafts moved to localStorage is still in this window's session.
+          const saved = (durable(key) ? window.localStorage.getItem(storageKey(key)) : null) ?? window.sessionStorage.getItem(storageKey(key))
           if (saved !== null) values.set(key, JSON.parse(saved))
         } catch { /* The in-memory store still works when storage is unavailable. */ }
       }
@@ -35,7 +45,17 @@ export function createViewStore(scope: string | null) {
       if (!active || (generation !== undefined && generation !== this.generation(key))) return
       values.set(key, value)
       if (scope) {
-        try { window.sessionStorage.setItem(storageKey(key), JSON.stringify(value)) } catch { /* storage unavailable */ }
+        try {
+          const saved = JSON.stringify(value)
+          if (!durable(key)) window.sessionStorage.setItem(storageKey(key), saved)
+          else {
+            window.sessionStorage.removeItem(storageKey(key))
+            // An empty draft (sent, cleared) leaves nothing behind; one past the cap lives only in this window.
+            if (value === '' || (Array.isArray(value) && !value.length)) window.localStorage.removeItem(storageKey(key))
+            else if (saved.length > DURABLE_MAX) { window.localStorage.removeItem(storageKey(key)); window.sessionStorage.setItem(storageKey(key), saved) }
+            else window.localStorage.setItem(storageKey(key), saved)
+          }
+        } catch { /* storage unavailable or full */ }
       }
       // Copy out first: a listener may unsubscribe another while it runs, and
       // iterating the live Set would then skip whichever one sat after it.
@@ -104,18 +124,26 @@ export function useViewState<T,>(key: string, initial: T): [T, Dispatch<SetState
   return [value, setValue]
 }
 
-type Position = { top: number; left: number }
+type Position = { top: number; left: number; end?: boolean }
 
-/** Restores after asynchronous rows/expanded groups arrive, without fighting user scrolling. */
-export function useViewScroll<T extends HTMLElement>(key: string, ready = true, restoreSaved = true) {
+/** How near the end a list counts as read to its end, as the thread's following does (agent-thread.tsx). */
+const AT_END_PX = 40
+
+/**
+ * Restores after asynchronous rows/expanded groups arrive, without fighting user scrolling.
+ * `anchor: 'end'` is a chat's: left at its end (or never left), it is not restored, so its owner keeps it at the
+ * latest message, new ones included; scrolled up, it comes back where it was.
+ */
+export function useViewScroll<T extends HTMLElement>(key: string, ready = true, restoreSaved = true, anchor: 'start' | 'end' = 'start') {
   const store = useViewStore()
   const ref = useRef<T>(null)
   useLayoutEffect(() => {
     const node = ref.current
     if (!node || !ready) return
     const cell = `scroll:${key}`
-    const saved = restoreSaved ? store.get<Position | null>(cell, null) : null
-    if (!saved && restoreSaved) { node.scrollTop = 0; node.scrollLeft = 0 }
+    const stored = restoreSaved ? store.get<Position | null>(cell, null) : null
+    const saved = anchor === 'end' && stored?.end ? null : stored
+    if (!saved && restoreSaved && anchor === 'start') { node.scrollTop = 0; node.scrollLeft = 0 }
     let restoring = !!saved
     const restore = () => {
       if (!restoring || !saved) return
@@ -124,7 +152,8 @@ export function useViewScroll<T extends HTMLElement>(key: string, ready = true, 
       if (Math.abs(node.scrollTop - saved.top) < 1 && Math.abs(node.scrollLeft - saved.left) < 1) restoring = false
     }
     const save = () => {
-      if (!restoring) store.set(cell, { top: node.scrollTop, left: node.scrollLeft })
+      if (!restoring) store.set(cell, { top: node.scrollTop, left: node.scrollLeft,
+        ...(anchor === 'end' ? { end: node.scrollHeight - node.scrollTop - node.clientHeight < AT_END_PX } : {}) })
     }
     const interact = () => { restoring = false }
     restore()
@@ -149,6 +178,6 @@ export function useViewScroll<T extends HTMLElement>(key: string, ready = true, 
       node.removeEventListener('keydown', interact)
       window.removeEventListener('pagehide', save)
     }
-  }, [store, key, ready, restoreSaved])
+  }, [store, key, ready, restoreSaved, anchor])
   return ref
 }

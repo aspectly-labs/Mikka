@@ -1,6 +1,6 @@
 'use client'
 
-import { useViewState } from '@/lib/hooks/view-state'
+import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
 import { withBasePath } from '@/lib/base-path'
@@ -33,7 +33,7 @@ import { CoordinatorReply } from './coordinator-reply'
 import { botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
 import { ThreadQueuedMessages } from '@/components/workspace/thread-queued-messages'
-import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
+import { isWebChatOffline, useChatDelivery, type ChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { useCoordinatorSubmit, type CoordinatorMessageContext } from './use-coordinator-submit'
 import { useCoordinatorAgent } from './use-coordinator-agent'
 import { activeTurn } from 'eve/events'
@@ -62,6 +62,7 @@ import { useUnreadIndicators } from '@/lib/hooks/use-unread-indicators'
 import { openArtifact as openArtifactWindow } from '@/components/workspace/workspace-navigation'
 import { SelectionQuote } from '@/components/chat/selection-quote'
 import { ReplyActions } from '@/components/chat/reply-actions'
+import { showTurnVersion, useTurnRevision } from './use-turn-revision'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { replyCopyText } from '@/lib/chat-copy'
 import type { ArtifactChatSlot } from '@/components/artifacts/artifact-viewer'
@@ -79,6 +80,10 @@ import { ChatEventLine } from './chat-event-line'
 import { waitingQuestionRuns } from '@/lib/coordinator/waiting-questions'
 import { RetryReplyButton } from './retry-reply-button'
 import { COMPOSER_NOTICE } from './composer-notice'
+import { blockingNotice, modelBlocked, streamLoadFailed } from '@/lib/coordinator/chat-footer'
+import { eveTurnMessageId, storedChatMessageId } from '@/lib/conversation/ids'
+import { useConversation } from '@/lib/conversation/store'
+import type { ConversationMessage } from '@/lib/conversation/model'
 
 
 /** Text put into the composer from elsewhere; `suggestionId` when it came from a 建议 item. */
@@ -88,8 +93,14 @@ export type CoordinatorPrefill = { text: string; nonce: number; suggestionId?: s
 type PersonalChatSend = ChatSubmission & { context: CoordinatorMessageContext; turnPolicy?: 'queue' | 'steer' }
 
 type ChatRead = Chat & { requestedAt?: number }
+/** What a Bot chat message was built from: a stored row, the live reply, or the person's unsent message. */
+type BotChatSource = { item: Chat['items'][number] } | { live: CoordinatorLiveReply } | { local: ChatDelivery<PersonalChatSend> }
 /** Pushes closer together than this share one read; the stream shows a turn's words meanwhile. */
 const CHAT_MERGE_MS = 2_000
+/** How long the server's turn runs before Stop shows (UX audit 2026-11-22: a quick failure flashed it). */
+const STOP_DELAY_MS = 400
+/** How long a turn is busy before its empty waiting row shows. */
+const WAITING_ROW_DELAY_MS = 150
 
 /** The SWR key of a chat: the Coordinator's, or one bot's. */
 /** A passing usage limit (another turn running, a cost read): the next send works without anything changing. */
@@ -191,6 +202,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   useLiveKeys(hasSources ? sourceScopes.map(workspaceId => ({ kind: 'issue_list' as const, id: workspaceId, workspaceId })) : [], [unstable_serialize(metadataKey)], null, { minIntervalMs: CHAT_MERGE_MS })
   useEffect(() => watchPageVisibility(() => { if (document.visibilityState === 'hidden' && shown.current.chat) shown.current.metadataStale = true }), [])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  // Each page of older messages put above the transcript, for the thread to keep its place (ThreadScreenProps.historyPrepend).
+  const [historyPrepend, setHistoryPrepend] = useState(0)
   async function loadHistory() {
     if (!data?.historyBefore || loadingHistory) return
     setLoadingHistory(true)
@@ -199,14 +212,27 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       const through = persisted[1] ? persisted[1].position - 1 : data.historyBefore - 1
       const page = await coordinatorHistory(botId, through)
       await mutate(current => current ? { ...current, items: [...page.items, ...current.items.filter(item => item.pending || item.position > through)], sources: { ...current.sources, ...page.sources }, artifacts: { ...current.artifacts, ...page.artifacts }, historyBefore: page.historyBefore } : current, { revalidate: false })
+      if (page.items.length) setHistoryPrepend(count => count + 1)
     } catch { toast.error(actionError()) } finally { setLoadingHistory(false) }
   }
   // A sent message waits in the inbox for its turn: the stream opens now, so the first words show as they come.
   const stream = useCoordinatorAgent({ botId, enabled: Boolean(data), persistedStreamIds: data?.persistedStreamIds, revalidate: mutate })
   const working = stream.status === 'busy'
   const resuming = stream.status === 'resuming'
+  // The server has the turn running (or waiting on the person): only then do Stop and the queue choice show, so a send
+  // the server refuses never flashes them (UX audit 2026-11-22, issue 1).
+  const turnConfirmed = activeTurn(stream.view) !== undefined
+  // Stop joins the footer once the turn has run a moment, so a turn that fails at once never moves the footer twice.
+  const [stopShown, setStopShown] = useState(false)
+  useEffect(() => {
+    if (!turnConfirmed) { setStopShown(false); return }
+    const timer = setTimeout(() => setStopShown(true), STOP_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [turnConfirmed])
   useEffect(() => { reconnectStream.current = stream.reconnect }, [stream.reconnect])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
+  // Each chat keeps where the person was reading, as a group chat does; one read to its end follows the latest.
+  const transcript = useViewScroll<HTMLDivElement>(`${stateKey}:transcript`, Boolean(data), true, 'end')
   const [draft, setDraft] = useViewState(`${stateKey}:draft`, '')
   const updateDraft = setDraft
   // Carry existing window drafts into the new account/workspace-scoped store once.
@@ -221,7 +247,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const [sends, setSends] = useState(0)
   const sending = sends > 0
   const [turnPolicy, setTurnPolicy] = useViewState<'queue' | 'steer'>('eve:turn-policy', 'queue')
-  const turnOptions = working && !resuming ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
+  // The queue choice is about the next message: it shows while a turn runs and a draft waits to go.
+  const turnOptions = working && turnConfirmed && !resuming && draft.trim() ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
     onChange={event => setTurnPolicy(event.target.value === 'steer' ? 'steer' : 'queue')}>
     <NativeSelectOption value="queue">{threadCopy('deliveryModes.queue')}</NativeSelectOption>
     <NativeSelectOption value="steer">{threadCopy('deliveryModes.steer')}</NativeSelectOption>
@@ -340,6 +367,9 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // tab, and once per failure (store.retryFailedTurn), so a visit never fires another refused turn.
   const welcomeModel = useSWR<BotModelMenu>(welcomeNeedsModel || (welcomeFailed && (refusal || modelRequired)) ? botModelMenuKey(botId ?? null) : null, () => getBotModelMenu(botId ?? null))
   const runnable = welcomeModel.data?.current?.available
+  // What the composer's model picker reads: with nothing that can answer, Send waits and the one notice says why.
+  const modelMenu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId))
+  const noModel = modelBlocked(modelMenu.data)
   const retriedWelcomeModel = useRef<string | null>(null)
   const wasRunnable = useRef<boolean | undefined>(undefined)
   const rewelcomed = useRef<string | null>(null)
@@ -373,7 +403,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     {welcomeRequestFailed && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="welcome-request">{welcomeError}</AlertTitle><Button variant="ghost" size="sm" disabled={welcoming} onClick={() => { void requestWelcome(false, true) }}>{tCommon('retry')}</Button></Alert>}
     {cloudCode && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="cloud">{cloudErrors(`${cloudCode}.default`)}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><CloudFailureAction code={cloudCode} fallback={retry} /></span></Alert>}
     {refusal && <HostedRefusalNotice code={refusal} botId={botId} retry={retry} onQueued={mutate} />}
-    {paywall.dialog}
     {declined && declined !== 'quotaUsed' && <SubscriptionRefusalNotice notice={declined} retry={retry} botId={botId} />}
     {apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="balance">{t('apiBalance')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button></span></Alert>}
     {data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}>{wakeError ? <AlertTitle>{t(`wakeErrors.${wakeError}`)}</AlertTitle> : <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="failed">{t('failedTitle')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">{retry}</span></>}</Alert>}
@@ -440,6 +469,14 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // again while the turn ends on the server, keeping what it had said.
   const [stopping, setStopping] = useState(false)
   useEffect(() => { if (!working) setStopping(false) }, [working])
+  // The empty waiting row joins the transcript only after the turn has been busy a moment: a quick refusal or a quick
+  // first word never flashes it (UX audit 2026-11-22, issue 5).
+  const [waitedLong, setWaitedLong] = useState(false)
+  useEffect(() => {
+    if (!working) { setWaitedLong(false); return }
+    const timer = setTimeout(() => setWaitedLong(true), WAITING_ROW_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [working])
   async function stop() {
     setStopping(true)
     try {
@@ -537,10 +574,38 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const liveFailurePart: ThreadEntryPart = plainFailure
     ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : t('failedTitle'), actions: <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
     : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
-  const rows = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: String(item.pending ? `pending-${item.position}` : item.streamId ?? item.position) })),
-    ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))]
+  // One conversation (lib/conversation): stored rows, the live reply and the person's unsent messages in one store, each
+  // under the id it keeps from the moment it shows (a submission id, `eve:<session>:<turn>`), in one order. A message
+  // the server stores replaces its unsent or live self in place: nothing remounts and nothing moves on commit.
+  const storedMessages = useMemo(() => items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion')
+    .map((item): ConversationMessage => ({ id: storedChatMessageId(item), role: item.from === 'person' ? 'user' : 'assistant', parts: [{ type: 'text', text: item.text }],
+      metadata: { at: item.createdAt ? Date.parse(item.createdAt) : 0, source: { item } satisfies BotChatSource } })), [items, staleEvents])
+  const conversation = useConversation(`bot:${botId ?? 'coordinator'}`, {
+    stored: storedMessages,
+    live: stream.replies.map((reply): ConversationMessage => ({ id: reply.key, role: 'assistant', parts: [{ type: 'text', text: reply.text }],
+      metadata: { at: 0, streaming: reply.committedThrough === undefined, source: { live: reply } satisfies BotChatSource } })),
+    optimistic: localMessages.map((row): ConversationMessage => ({ id: row.id, role: 'user', parts: [{ type: 'text', text: row.text }],
+      metadata: { at: row.at, delivery: row.phase === 'accepted' ? 'sent' : row.phase, ...(row.error ? { deliveryError: row.error } : {}), source: { local: row } satisfies BotChatSource } })),
+  })
+  // Edit and Regenerate on the latest turn, and its earlier versions (decision 2026-11-22-1700).
+  const revision = useTurnRevision({ botId: botId ?? null, items, idle: !working && !resuming && !sending && !localMessages.length && !stream.replies.length, refresh: () => { void mutate() } })
+  const turnOf = new Map<string, string>()
   const entries: ThreadEntry[] = []
-  for (const { item, live, key } of rows) {
+  for (const message of conversation) {
+    const source = message.metadata?.source as BotChatSource
+    const key = message.id
+    if ('local' in source) {
+      const row = source.local
+      entries.push({ id: key, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
+        ...(messageReferences(row.text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={splitReplyQuote(row.text).text} /></AgentCitationsContext> } : {}),
+        status: message.metadata?.delivery ?? 'sent', deliveryMessage: message.metadata?.deliveryError,
+        attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
+          ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
+        ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
+      continue
+    }
+    const item = 'item' in source ? source.item : streamedItem(source.live, stopping)
+    const live = 'live' in source ? stopping && source.live.committedThrough === undefined ? { ...source.live, committedThrough: -1 } : source.live : undefined
     const at = item.createdAt ? Date.parse(item.createdAt) : Date.now()
     const streaming = Boolean(live && live.committedThrough === undefined)
     if (item.from === 'event') {
@@ -558,9 +623,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         ...(quote ? [{ id: 'reply-quote', name: quote, meta: tMessage('quote') }] : []),
         ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
       ]
+      const editor = revision.editor(item, text)
+      if (item.submissionId) turnOf.set(key, item.submissionId)
       if (!item.suggestion || text || attachments.length) entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-        ...(messageReferences(text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={text} /></AgentCitationsContext> } : {}),
-        actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
+        ...(editor ? { body: editor } : messageReferences(text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={text} /></AgentCitationsContext> } : {}),
+        actions: item.text && !editor ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text} onEdit={revision.shown(item.submissionId) ? undefined : revision.onEdit(item)} versions={revision.pager(item)}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
       if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
       continue
     }
@@ -582,42 +649,71 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     if (readEnd && !lined) parts.push({ kind: 'text', text: '', node: readEnd })
     entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
       // When it was sent waits in its action bar, on hover, as LobeHub's (no centred time over the messages).
-      actions: lined ? <ReplyActions at={item.createdAt ? at : undefined} copyText={replyCopyText(item.text)} onQuote={quoteReply}>
+      actions: lined ? <ReplyActions at={item.createdAt ? at : undefined} copyText={replyCopyText(item.text)} onQuote={quoteReply} onRegenerate={revision.onRegenerate(item)}>
         <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
         {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
         {readEnd}
       </ReplyActions> : undefined })
   }
-  for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
-    ...(messageReferences(row.text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={splitReplyQuote(row.text).text} /></AgentCitationsContext> } : {}),
-    status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
-    attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
-      ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
-    ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
+  // A turn paged back to an earlier version shows that version's words in place of the live turn.
+  for (const [person, submissionId] of turnOf) {
+    const version = revision.shown(submissionId)
+    if (!version) continue
+    const start = entries.findIndex(entry => entry.id === person)
+    const next = entries.findIndex((entry, index) => index > start && entry.role === 'person')
+    const replies = entries.slice(start + 1, next < 0 ? undefined : next).flatMap(entry => entry.role === 'bot' && !entry.event ? [entry.id] : [])
+    entries.splice(0, entries.length, ...showTurnVersion(entries, { person, replies, submissionId }, version, words => [{ kind: 'text', text: words,
+      node: <CoordinatorReply text={words} carded="" citations={citations} isStreaming={false} /> }]))
+  }
   for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
     parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
-  // Before the reply has anything to show: the Bot's turn with its Thinking row, counting the seconds since the
-  // person's message once past 2 s (LobeHub's wait for the first token); after a retry, since the row appeared.
-  if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping) {
+  // Before the reply has anything to show: the Bot's turn with its Thinking row, once the turn has taken a moment,
+  // counting the seconds since the person's message once past 2 s (LobeHub's wait for the first token).
+  // The conversation's last word, the person's unsent message included: a turn answering it waits on the Bot's side.
+  const lastWord = conversation.findLast(message => { const source = message.metadata?.source as BotChatSource; return !('item' in source && source.item.from === 'event') })
+  const answered = lastWord?.role === 'assistant' && lastWord.parts.some(part => part.type === 'text' && part.text)
+  if (working && waitedLong && lastWord && !answered && !stream.replies.length && !stopping) {
     const asked = entries.at(-1)
-    entries.push({ id: 'waiting', role: 'bot', at: Date.now(), streaming: true,
+    // Keyed as the reply it waits for (`eve:<session>:<turn>`) once the server has the turn: the first words fill this
+    // row instead of replacing it.
+    const turnId = activeTurn(stream.view)?.turnId
+    entries.push({ id: stream.session?.sessionId && turnId ? eveTurnMessageId(stream.session.sessionId, turnId) : 'waiting', role: 'bot', at: Date.now(), streaming: true,
       parts: [{ kind: 'text', text: '', node: <ReplyWaiting {...(asked?.role === 'person' ? { since: asked.at } : {})} /> }] })
   }
   if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
+  // One error surface (lib/conversation): a turn's failure is the Bot's error line at the chat's end even when it has no
+  // message of the person's to sit under; the composer keeps notices for what stops a send before it leaves.
+  const quotaStopped = !refusal && declined === 'quotaUsed'
+  if (failedAt === null && !welcomeFailed && !quotaStopped && (modelRequired || welcomeRequestFailed || (data?.error && !working)))
+    entries.push({ id: `failure:${lastSaid?.position ?? 'chat'}`, role: 'bot', at: Date.now(), parts: [plainFailure ? liveFailurePart
+      : { kind: 'error', failure: 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: failureNotice }] })
   // As LobeHub's chat, the Bot's reply opens with its mark and name (Alex, 2026-11-22: chat look as LobeHub, except avatars).
   const botAuthor = { id: botId ?? 'coordinator', name, mark: avatar('message'), header: true }
   for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = botAuthor
   const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
     ? <p role="status">{tNav('writingWelcome')}</p>
     : <p>{t('empty', { name })}</p>) : undefined
-  const notices = <>
-    {(loadError || stream.error) && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
-    {failedAt === null && !welcomeFailed && failureNotice}
+  // One blocking notice above the composer, the first that applies (UX audit 2026-11-22, issue 1): a chat that did not
+  // load, the newest turn's failure when it has no message to sit under, a quota that stopped it, no model to answer,
+  // a quota about to run out, no Bot to answer. 线程加载失败 is for a read that failed, never for a turn that did.
+  const notice = blockingNotice({
+    load: Boolean(loadError) || streamLoadFailed(stream.error, stream.view, delivery.rows.some(row => row.phase === 'failed')),
+    quotaStopped,
+    model: !data?.error && noModel,
+    quota: !refusal && !data?.error && Boolean(modelMenu.data?.current.quota),
+    unanswered,
+  })
+  // The footer's notices wait for the model menu, which says whether anything can answer, so they join together
+  // instead of one by one; a chat's own failure joins with its read (a Bot switch grew the footer as each read landed).
+  const footerReady = Boolean(loadError || !modelMenu.isLoading)
+  const notices = !footerReady ? null : <>
+    {notice === 'load' && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
+    {paywall.dialog}
     <EveInteractions agent={stream} />
-    {!data?.error && <HostedUnavailableNotice botId={botId} />}
-    {!refusal && (declined === 'quotaUsed' || !data?.error) && <QuotaNotice botId={botId} stopped={declined === 'quotaUsed'}
+    {notice === 'model' && <HostedUnavailableNotice botId={botId} />}
+    {(notice === 'quota' || notice === 'quotaStopped') && <QuotaNotice botId={botId} stopped={notice === 'quotaStopped'}
       retry={(label, disabled) => <RetryReplyButton botId={botId} onQueued={mutate} label={label} disabled={disabled} />} />}
-    {unanswered && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48">{t('unavailable', { name })}</AlertTitle></Alert>}
+    {notice === 'unanswered' && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48">{t('unavailable', { name })}</AlertTitle></Alert>}
     {botId && <SubagentLoginNeeds botId={botId} />}
     {/* One live sentence, not a stored event line; the thread is an inline link inside it (decision 2026-11-10). */}
     {waitingQuestions.length > 0 && <p data-slot="waiting-questions" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-xs text-muted-foreground">
@@ -635,13 +731,16 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       <ThreadScreen host={embedded ? 'embedded' : compact ? 'column' : 'page'} panel={panel} botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={panel ? undefined : panels} work={work.work}
         transcriptLabel={bot ? t('conversationWith', { name: bot.name }) : t('conversation')}
         loadingLabel={!data && !loadError ? tCommon('loading') : undefined}
-        older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
-        working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
-        composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
+        // Scrolling near the top loads the page before, as LobeHub's useEarlierHistoryTrigger does.
+        older={data?.historyBefore ? { loading: loadingHistory, auto: true, onLoad: () => void loadHistory() } : undefined}
+        historyPrepend={historyPrepend} scrollRef={transcript}
+        working={working && !stopping} onStop={turnConfirmed && stopShown && !resuming && !stopping ? () => { void stop() } : undefined}
+        composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
-          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands }}
+          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands, historyKey: stateKey }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
-        under={!embedded && data?.context ? <div data-slot="thread-under-composer" className="flex min-w-0 items-center justify-end px-1"><CoordinatorContextUsage usage={data.context} /></div> : undefined}
+        // The row keeps its height before the read arrives (the ring's own), so the footer never grows after a switch.
+        under={!embedded ? <div data-slot="thread-under-composer" className="flex min-h-6 min-w-0 items-center justify-end px-1">{data?.context && <CoordinatorContextUsage usage={data.context} />}</div> : undefined}
         pending={[
           ...(embedded?.quote ? [{ id: 'artifact-quote', name: embedded.quote.label ?? embedded.quote.text, meta: tMessage('quote'), onRemove: embedded.clearQuote }] : []),
           ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, mock, test } from 'node:test'
-import { act, createContext, type ReactNode } from 'react'
+import { act, createContext, useEffect, type ReactNode } from 'react'
 import type { Root } from 'react-dom/client'
 import { Window } from 'happy-dom'
-import { emptySessionView } from 'eve/events'
+import { emptySessionView, foldEvents, type SessionView } from 'eve/events'
 import { ViewStateProvider } from '@/lib/hooks/view-state'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -17,14 +17,29 @@ const submitted: { text: string; context: { retryOf?: number } | undefined }[] =
 let chatItems: import('@/lib/coordinator/context').ChatItem[] = []
 let chatError: string | null = null
 let chatEnabled = false
-let streamStatus: 'idle' | 'resuming' = 'idle'
+let streamStatus: 'idle' | 'resuming' | 'busy' = 'idle'
 let streamError: Error | false = false
+// The stream's server view (a running or failed turn) and its live replies.
+let streamView: SessionView = emptySessionView()
+let streamReplies: import('@/lib/eve/chat-view').CoordinatorLiveReply[] = []
+let historyPage: unknown = {}
+/** A transcript viewport for the fixture: 2400px of rows in a 200px view. */
+function scrollable(node: HTMLElement) {
+  if (Object.getOwnPropertyDescriptor(node, 'scrollTop')) return
+  let top = 0
+  Object.defineProperties(node, { clientHeight: { configurable: true, get: () => 200 }, scrollHeight: { configurable: true, get: () => 2400 },
+    scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, 2200)) } } })
+}
+const eveMeta = (line: number) => ({ position: { line, index: 0 }, at: '2026-11-22T00:00:00Z', endOfLine: true })
+const runningTurn = () => foldEvents(emptySessionView(), [{ type: 'turn.started', data: { turnId: 'turn-1' }, meta: eveMeta(0) }] as never)
+const failedTurn = () => foldEvents(runningTurn(), [{ type: 'turn.settled', data: { turnId: 'turn-1', outcome: 'failed', error: { code: 'HOOK_FAILED', message: 'fixture' } }, meta: eveMeta(1) }] as never)
 let welcomeReply: unknown = { queued: true }
 let welcomeCalls = 0
 const modelPicks: (string | null)[] = []
 // A chat whose welcome failed: its read, the model menu's 可用, the refusal code and whether the tab is visible.
 let chatData: Record<string, unknown> | null = null
 let menu: unknown = undefined
+let menuLoading = false
 let visibility: 'visible' | 'hidden' = 'visible'
 let versionReads = 0
 let pageRefreshRequired = false
@@ -33,6 +48,12 @@ let serverVersion: { build: string } = { build: 'fixture-current' }
 const notices: unknown[] = []
 const notes = [{ n: 1, kind: 'region' as const, url: 'https://example.com', label: 'fixture', note: 'keep this note', rect: { x: 0, y: 0, width: 1, height: 1, viewportWidth: 1, viewportHeight: 1 } }]
 let screen: import('../slots/thread-contract').ThreadScreenProps | undefined
+/** How many times each row mounted: a row that keeps its key from the moment it shows mounts once. */
+const mounts = new Map<string, number>()
+function Mounted({ id, children }: { id: string; children: ReactNode }) {
+  useEffect(() => { mounts.set(id, (mounts.get(id) ?? 0) + 1) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return <>{children}</>
+}
 let composer: { sending?: boolean; editableWhileSending?: boolean; value: string; onChange: (value: string) => void; onSubmit: () => void }
 const plain = ({ children }: { children?: ReactNode }) => <div>{children}</div>
 const nothing = () => null
@@ -46,18 +67,18 @@ mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports
     composer = props.composer
     screen = props
     const { entries } = props
-    return <><div data-official-thread="" data-thread-host={props.host} data-panel={props.panel ? '' : undefined}>
-    {props.notices}{entries?.map(entry => entry.role === 'person' ? <div key={entry.id} data-testid={entry.status === 'failed' ? 'failed-message' : 'local-message'}>
+    return <><div data-official-thread="" data-thread-host={props.host} data-panel={props.panel ? '' : undefined} ref={node => { if (node) scrollable(node); if (props.scrollRef) props.scrollRef.current = node }}>
+    {props.notices}{entries?.map(entry => <Mounted key={entry.id} id={entry.id}>{entry.role === 'person' ? <div data-testid={entry.status === 'failed' ? 'failed-message' : 'local-message'}>
       {entry.text}{entry.attachments?.map(item => <span key={item.id} data-attachment={item.id}>{item.name}</span>)}{entry.deliveryMessage}
       {entry.onRetry && <Button onClick={entry.onRetry}>Retry</Button>}{entry.actions}
-    </div> : <div key={entry.id} data-event={entry.event ? '' : undefined}>{entry.parts.map((part, i) =>
+    </div> : <div data-event={entry.event ? '' : undefined}>{entry.parts.map((part, i) =>
       part.kind === 'error' ? <span key={i} data-message-failure={part.failure}>{part.text}{part.actions}</span>
       : part.kind === 'text' && entry.event ? <span key={i}>{part.node}</span>
-      : part.kind === 'artifacts' ? <span key={i} data-artifacts={part.activeId ?? ''}>{part.items.map(item => item.name).join(',')}</span> : null)}{entry.actions}</div>)}
+      : part.kind === 'artifacts' ? <span key={i} data-artifacts={part.activeId ?? ''}>{part.items.map(item => item.name).join(',')}</span> : null)}{entry.actions}</div>}</Mounted>)}
   </div><div data-composer="">
     {props.pending.map(chip => <span key={chip.id} data-pending={chip.id}>{chip.name}<Button onClick={chip.onRemove}>{`remove ${chip.id}`}</Button></span>)}
     {props.controls}
-    <Textarea ref={props.composer.ref} value={props.composer.value} onChange={event => props.composer.onChange(event.target.value)} />
+    <Textarea ref={props.composer.ref as import("react").Ref<HTMLTextAreaElement>} value={props.composer.value} onChange={event => props.composer.onChange(event.target.value)} />
     <Button onClick={props.composer.onSubmit}>fixture-send</Button>
   </div></>
   },
@@ -71,7 +92,8 @@ mock.module(new URL('../ui/alert-dialog.tsx', import.meta.url).href, { namedExpo
 } })
 mock.module(new URL('../../app/actions/coordinator.ts', import.meta.url).href, { namedExports: {
   retryCoordinatorTurn: async () => { calls++; if (reply instanceof Error) throw reply; if (typeof reply === 'function') return reply(); return reply },
-  getCoordinatorChat: async () => ({}), pollCoordinatorChat: async () => ({}), syncCoordinatorChat: async () => ({}), coordinatorHistory: async () => ({}), stopCoordinatorTurn: async () => ({}),
+  coordinatorTurnVersions: async () => [], reviseCoordinatorTurn: async () => ({ queued: true }),
+  getCoordinatorChat: async () => ({}), pollCoordinatorChat: async () => ({}), syncCoordinatorChat: async () => ({}), coordinatorHistory: async () => historyPage, stopCoordinatorTurn: async () => ({}),
   welcomeCoordinator: async () => { welcomeCalls++; if (welcomeReply instanceof Error) throw welcomeReply; if (typeof welcomeReply === 'function') return welcomeReply(); return welcomeReply }, coordinatorCitationSources: async () => ({}),
 } })
 mock.module(new URL('../../app/actions/execution-settings.ts', import.meta.url).href, { namedExports: { getBotModelMenu: async () => ({}) } })
@@ -92,9 +114,9 @@ mock.module(new URL('../../lib/app-build.ts', import.meta.url).href, { namedExpo
 mock.module('@/lib/client-runtime/navigation', { namedExports: { usePathname: () => pathname, useSearchParams: () => new URLSearchParams(search) } })
 mock.module(new URL('../../i18n/navigation.ts', import.meta.url).href, { namedExports: { Link: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>, useRouter: () => ({ push: nothing }), usePathname: () => pathname } })
 mock.module('sonner', { namedExports: { toast: Object.assign((...args: unknown[]) => { notices.push(args) }, { error: nothing }) } })
-mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
+mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-turn-versions' ? { data: undefined, mutate: async () => {} } : Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, isLoading: menuLoading, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
 mock.module(new URL('./use-coordinator-submit.ts', import.meta.url).href, { namedExports: { useCoordinatorSubmit: () => ({ submit: async (text: string, context?: { retryOf?: number }) => { submissions++; submitted.push({ text, context }); return { kind: 'accepted' } }, failureMessage: () => 'fixture failed' }) } })
-mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: [], error: streamError, reconnect: nothing, status: streamStatus, view: emptySessionView(), session: { sessionId: 'wrun_fixture' } }) } })
+mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: streamReplies, error: streamError, reconnect: nothing, status: streamStatus, view: streamView, session: { sessionId: 'wrun_fixture' } }) } })
 mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null } })
 mock.module(new URL('../workspace/agent-interaction.tsx', import.meta.url).href, { namedExports: { AgentInteractionContext: createContext({}) } })
 mock.module(new URL('../workspace/agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: plain } })
@@ -107,10 +129,12 @@ mock.module(new URL('../browser/browser-notes.tsx', import.meta.url).href, { nam
 for (const [file, names] of [
   ['./coordinator-reply.tsx', ['CoordinatorReply']], ['./chat-event-line.tsx', ['ChatEventLine']], ['./thread-card.tsx', ['ThreadCard']], 
   ['./pending-actions.tsx', ['PendingActions']], ['./subagent-login-needs.tsx', ['SubagentLoginNeeds']],
-  ['./hosted-unavailable-notice.tsx', ['HostedUnavailableNotice']], ['./quota-notice.tsx', ['QuotaNotice', 'QuotaSwitchLine']],
   ['../billing/hosted-refusal-notice.tsx', ['HostedRefusalNotice']], ['../nav/bot-avatar.tsx', ['BotAvatar', 'COORDINATOR_AVATAR']],
   ['../artifacts/artifact-card.tsx', ['ArtifactCard', 'ArtifactChip']], ['../workspace/artifact-review.tsx', ['ArtifactReviewCard']],
 ] as const) mock.module(new URL(file, import.meta.url).href, { namedExports: Object.fromEntries(names.map(name => [name, nothing])) })
+// The notices above the composer, as markers: which one shows is the chat's choice (one at a time).
+mock.module(new URL('./hosted-unavailable-notice.tsx', import.meta.url).href, { namedExports: { HostedUnavailableNotice: () => <span data-notice="model" /> } })
+mock.module(new URL('./quota-notice.tsx', import.meta.url).href, { namedExports: { QuotaSwitchLine: nothing, QuotaNotice: ({ stopped }: { stopped: boolean }) => <span data-notice={stopped ? 'quota-stopped' : 'quota'} /> } })
 mock.module(new URL('./coordinator-context-usage.tsx', import.meta.url).href, { namedExports: { CoordinatorContextUsage: () => <span data-context-usage="" /> } })
 mock.module(new URL('./bot-model-picker.tsx', import.meta.url).href, { namedExports: { BotModelPicker: nothing, openModelPicker: (botId: string | null) => { modelPicks.push(botId) }, botModelMenuKey: (botId: string | null) => ['bot-model-menu', botId ?? 'coordinator'] } })
 let quoteReply: (text: string) => void = nothing
@@ -120,6 +144,7 @@ let container: HTMLDivElement, root: Root
 let createRoot: typeof import('react-dom/client')['createRoot']
 let RetryReplyButton: typeof import('./retry-reply-button')['RetryReplyButton']
 let CoordinatorChat: typeof import('./coordinator-chat')['CoordinatorChat']
+let resetConversation: typeof import('@/lib/conversation/store')['resetConversation']
 let VersionGuard: typeof import('../version-guard')['VersionGuard']
 before(async () => {
   Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element })
@@ -131,10 +156,11 @@ before(async () => {
   ;({ createRoot } = await import('react-dom/client'))
   ;({ RetryReplyButton } = await import('./retry-reply-button'))
   ;({ CoordinatorChat } = await import('./coordinator-chat'))
+  ;({ resetConversation } = await import('@/lib/conversation/store'))
   ;({ VersionGuard } = await import('../version-guard'))
   Object.defineProperty(browser.document, 'visibilityState', { configurable: true, get: () => visibility })
 })
-beforeEach(() => { streamStatus = 'idle'; streamError = false; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
+beforeEach(() => { menuLoading = false; mounts.clear(); resetConversation(); streamStatus = 'idle'; streamError = false; streamView = emptySessionView(); streamReplies = []; historyPage = {}; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
 afterEach(async () => { await act(async () => root.unmount()); container.remove() })
 after(() => browser.happyDOM.close())
 const render = async (onQueued = async () => {}) => { await act(async () => root.render(<RetryReplyButton botId={null} onQueued={onQueued} />)) }
@@ -200,13 +226,25 @@ for (const code of ['executionModelUnknown', 'HOOK_FAILED', 'HOOK_FAILED · ref 
   assert.doesNotMatch(container.textContent ?? '', /Coordinator.unavailable/)
 })
 
-test('an unchanged native stream error and disabled chat reproduce the composer warnings without a model-required failure', async () => {
+test('a turn that failed in the stream is the chat\'s failure line, not 线程加载失败: one notice shows', async () => {
+  // Eve reports a turn's recorded failure in its error too; that is not a load failure (UX audit 2026-11-22, issue 1).
   streamError = new Error('HOOK_FAILED')
+  streamView = failedTurn()
   chatItems = [{ id: 'fixture-disabled', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z', failure: { kind: 'failed', raw: 'HOOK_FAILED' } }]
   await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
-  assert.ok(container.querySelector('[data-chat-failure="load"]'))
+  assert.equal(container.querySelector('[data-chat-failure="load"]'), null)
   assert.match(container.textContent ?? '', /Coordinator.unavailable/)
   assert.equal(welcomeCalls, 0)
+})
+
+test('a stream that failed to load is the one notice: no other notice stacks under it', async () => {
+  streamError = new Error('Session stream disconnected.')
+  menu = { current: { id: 'none', kind: 'none', available: false } }
+  chatItems = [{ id: 'fixture-disabled', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.ok(container.querySelector('[data-chat-failure="load"]'))
+  assert.equal(container.querySelector('[data-notice]'), null)
+  assert.doesNotMatch(container.textContent ?? '', /Coordinator.unavailable/)
 })
 
 for (const live of [true, false]) test(`a ${live ? 'current' : 'historical'} cloud quota refusal offers cloud billing without resending`, async () => {
@@ -254,7 +292,9 @@ for (const state of ['live', 'welcome', 'welcome-empty', 'past'] as const) test(
   const notice = container.querySelector(`[data-message-failure="${kind}"]`)
   assert.ok(notice)
   assert.equal(container.querySelectorAll('[data-message-failure]').length, 1, 'the historical notice is not marked again by its surrounding error line')
-  assert.match(notice.textContent ?? '', /Coordinator.failedTitle/)
+  // The line says 回复失败 once: a past notice under it does not repeat the generic words.
+  assert.match((state === 'past' ? container : notice).textContent ?? '', /Coordinator.failedTitle/)
+  assert.equal((container.textContent?.match(/Coordinator\.failedTitle/g) ?? []).length, 1)
   const button = notice.querySelector<HTMLButtonElement>('button')!
   assert.equal(button.textContent, state === 'past' ? 'Coordinator.resend' : 'Common.retry')
   assert.equal(calls, 0)
@@ -725,4 +765,178 @@ for (const pending of [false, true]) test(`a ${pending ? 'sending' : 'handed-ove
   assert.equal(container.querySelector('[data-testid="local-message"]'), null, 'no person bubble repeats the card')
   assert.equal(container.querySelector('[data-attachment="suggestion"]'), null)
   assert.equal(container.querySelector('[data-slot="suggestion-card"]'), null)
+})
+
+test('with no model to answer, Send waits and the one notice says why; a Bot that cannot answer does not stack under it', async () => {
+  menu = { current: { id: 'none', kind: 'none', available: false } }
+  chatItems = [{ id: 'fixture-unanswered', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.deepEqual([...container.querySelectorAll('[data-notice]')].map(node => node.getAttribute('data-notice')), ['model'])
+  assert.doesNotMatch(container.textContent ?? '', /Coordinator.unavailable/)
+  assert.equal(screen?.composer.submitDisabled, true)
+  menu = { current: { id: 'credits:fixture/model', kind: 'hosted', available: true, quota: { subscription: 'claude', plan: null, resetsAt: null } } }
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.deepEqual([...container.querySelectorAll('[data-notice]')].map(node => node.getAttribute('data-notice')), ['quota'])
+  assert.equal(screen?.composer.submitDisabled, false)
+})
+
+test('Stop waits for the server to run the turn a moment; the queue choice shows only with a draft to queue', async () => {
+  chatEnabled = true
+  chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  streamStatus = 'busy'
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  assert.equal(screen?.onStop, undefined, 'a send still on its way has no Stop')
+  await act(async () => composer.onChange('next message'))
+  assert.equal(container.querySelector('select'), null)
+  streamView = runningTurn()
+  await show()
+  assert.equal(screen?.onStop, undefined, 'a turn that fails at once never flashes Stop')
+  assert.ok(container.querySelector('select'), 'a draft can wait for the next turn or join this one')
+  await act(async () => new Promise(resolve => setTimeout(resolve, 450)))
+  assert.equal(typeof screen?.onStop, 'function')
+  await act(async () => composer.onChange(''))
+  assert.equal(container.querySelector('select'), null, 'nothing to queue: no choice in the footer')
+})
+
+test('the empty waiting row joins only after the turn has been busy for 150 ms', async () => {
+  chatEnabled = true
+  chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  streamStatus = 'busy'
+  streamView = runningTurn()
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  // The waiting row is keyed as the reply it waits for, so the reply's first words fill it rather than replace it.
+  assert.equal(screen?.entries?.some(entry => entry.id === 'eve:wrun_fixture:turn-1'), false)
+  await act(async () => new Promise(resolve => setTimeout(resolve, 200)))
+  assert.equal(screen?.entries?.some(entry => entry.id === 'eve:wrun_fixture:turn-1'), true)
+})
+
+test('a sent message and a streamed reply keep their row keys when they are stored', async () => {
+  chatEnabled = true
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  await act(async () => composer.onChange('Keep my row'))
+  await act(async () => composer.onSubmit())
+  const sent = screen!.entries!.find(entry => entry.role === 'person')!.id
+  // The reply streams, keyed as the row it will be stored as.
+  streamReplies = [{ id: 'eve-message-1', key: 'eve:wrun_fixture:turn-1', turnId: 'turn-1', text: 'Streaming words', committedThrough: 0 }]
+  await show()
+  const streamed = screen!.entries!.find(entry => entry.role === 'bot')!.id
+  assert.equal(streamed, 'eve:wrun_fixture:turn-1')
+  // Both are stored: the person's message under the submission id it went with, the reply under its stream id.
+  streamReplies = []
+  chatItems = [
+    { id: 'stored-1', position: 7, from: 'person', text: 'Keep my row', submissionId: sent, tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' },
+    { id: 'stored-2', position: 8, from: 'coordinator', text: 'Streaming words', streamId: 'eve:wrun_fixture:turn-1', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:01Z' },
+  ]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.id), [sent, streamed])
+})
+
+test('from send to commit, and through a second turn, every row mounts once (one conversation, one id)', async () => {
+  chatEnabled = true
+  chatItems = [{ id: 'stored-0', position: 0, from: 'coordinator', text: 'Welcome.', tools: [], threads: [], artifacts: [], createdAt: '2026-11-21T00:00:00Z' }]
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  await act(async () => composer.onChange('First question'))
+  await act(async () => composer.onSubmit())
+  const sent = screen!.entries!.find(entry => entry.role === 'person')!.id
+  // The server has the turn: after a moment its row waits, already keyed as the reply.
+  streamStatus = 'busy'
+  streamView = runningTurn()
+  await show()
+  await act(async () => new Promise(resolve => setTimeout(resolve, 200)))
+  const reply = 'eve:wrun_fixture:turn-1'
+  assert.ok(screen!.entries!.some(entry => entry.id === reply), 'the waiting row is the reply')
+  streamReplies = [{ id: 'eve-message-1', key: reply, turnId: 'turn-1', text: 'Streaming', }]
+  await show()
+  streamReplies = [{ id: 'eve-message-1', key: reply, turnId: 'turn-1', text: 'Streaming words.', committedThrough: 0 }]
+  await show()
+  // Stored: the person's row under its submission id, the reply under its stream id.
+  streamReplies = []
+  streamStatus = 'idle'
+  streamView = emptySessionView()
+  chatItems = [chatItems[0],
+    { id: 'stored-1', position: 1, from: 'person', text: 'First question', submissionId: sent, tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' },
+    { id: 'stored-2', position: 2, from: 'coordinator', text: 'Streaming words.', streamId: reply, tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:01Z' },
+  ]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.id), ['0', sent, reply])
+  // A second turn leaves the first turn's rows alone.
+  await act(async () => composer.onChange('Second question'))
+  await act(async () => composer.onSubmit())
+  streamReplies = [{ id: 'eve-message-2', key: 'eve:wrun_fixture:turn-2', turnId: 'turn-2', text: 'Again.' }]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.role), ['bot', 'person', 'bot', 'person', 'bot'])
+  assert.deepEqual([...mounts.entries()].filter(([, count]) => count !== 1), [], 'no row mounted twice')
+  assert.equal(mounts.get(sent), 1)
+  assert.equal(mounts.get(reply), 1)
+})
+
+test('a turn eve splits around a message the person wrote mid-turn keeps each part in place, by its segment', async () => {
+  chatEnabled = true
+  streamStatus = 'busy'
+  streamView = runningTurn()
+  chatItems = [{ id: 'stored-1', position: 1, from: 'person', text: 'Start', submissionId: 'fixture-start', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' }]
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  streamReplies = [{ id: 'eve-a', key: 'eve:wrun_fixture:turn-1', turnId: 'turn-1', text: 'Before.' }]
+  await show()
+  await act(async () => composer.onChange('Also check the footer'))
+  await act(async () => composer.onSubmit())
+  const mid = screen!.entries!.find(entry => entry.role === 'person' && entry.text === 'Also check the footer')!.id
+  streamReplies = [{ id: 'eve-a', key: 'eve:wrun_fixture:turn-1', turnId: 'turn-1', text: 'Before.', committedThrough: 0 }, { id: 'eve-b', key: 'eve:wrun_fixture:turn-1:1', turnId: 'turn-1', text: 'After.' }]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.id), ['fixture-start', 'eve:wrun_fixture:turn-1', mid, 'eve:wrun_fixture:turn-1:1'])
+  assert.deepEqual([...mounts.values()].filter(count => count !== 1), [])
+})
+
+test('a turn that failed with no message under it is the Bot\'s error line, never a composer notice', async () => {
+  // A wake turn after the Bot's last reply failed: no message of the person's carries its mark.
+  chatData = { items: [
+    { id: 'fixture-asked', position: 1, from: 'person', text: 'Check the build', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' },
+    { id: 'fixture-reply', position: 2, from: 'coordinator', text: 'Started a thread.', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:01Z' },
+  ], enabled: true, working: false, error: 'turn_failed', artifacts: {} }
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(container.querySelectorAll('[data-message-failure]').length, 1, 'one error line, on the Bot\'s side')
+  const outside = [...container.querySelectorAll('[data-chat-failure]')].filter(node => !node.closest('[data-message-failure]'))
+  assert.equal(outside.length, 0, 'no failure notice above the composer')
+})
+
+test('scrolling near the top loads older messages, and each page added above counts for the thread', async () => {
+  chatData = { items: [{ id: 'fixture-reply', position: 201, from: 'coordinator', text: 'Latest', tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:00:00Z' }],
+    enabled: true, working: false, error: null, artifacts: {}, historyBefore: 201 }
+  historyPage = { items: [{ id: 'fixture-older', position: 1, from: 'coordinator', text: 'Older', tools: [], threads: [], artifacts: [], createdAt: '2026-11-01T04:00:00Z' }], sources: {}, artifacts: {}, historyBefore: 0 }
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(screen?.older?.auto, true)
+  assert.equal(screen?.historyPrepend ?? 0, 0)
+  await act(async () => screen!.older!.onLoad())
+  assert.equal(screen?.historyPrepend, 1)
+})
+
+test('each Bot chat comes back where the person left it', async () => {
+  const bot = (id: string) => ({ id, name: id }) as NonNullable<Parameters<typeof CoordinatorChat>[0]['bot']>
+  chatData = { items: Array.from({ length: 12 }, (_, i) => ({ id: `m${i}`, position: i + 1, from: 'coordinator', text: `Reply ${i}`, tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:00:00Z' })), enabled: true, working: false, error: null, artifacts: {} }
+  const show = (id: string) => act(async () => root.render(<ViewStateProvider scope="fixture-owner:workspace"><CoordinatorChat bot={bot(id)} onOpenIssue={nothing} userId="fixture-owner" /></ViewStateProvider>))
+  const view = () => container.querySelector('[data-official-thread]') as HTMLElement
+  await show('bot-a')
+  view().scrollTop = 600
+  await act(async () => view().dispatchEvent(new browser.Event('scroll') as unknown as Event))
+  await show('bot-b')
+  assert.equal(view().scrollTop, 0, 'another Bot\'s chat has its own place')
+  await show('bot-a')
+  assert.equal(view().scrollTop, 600)
+})
+
+test('the footer\'s notices and the row under the composer keep their place while the reads land', async () => {
+  chatEnabled = true
+  menuLoading = true
+  chatItems = [{ id: 'fixture-unanswered', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  chatEnabled = false
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  assert.doesNotMatch(container.textContent ?? '', /Coordinator.unavailable/, 'no notice before the model menu is read')
+  assert.ok(screen?.under, 'the row under the composer is there before the chat\'s context')
+  menuLoading = false
+  await show()
+  assert.match(container.textContent ?? '', /Coordinator.unavailable/)
 })
