@@ -72,8 +72,12 @@ export async function stopGroupReply(id: string, fetcher: typeof fetch = fetch):
   if (!response.ok) throw new GroupMessagesRequestError(response.status === 401 ? 'unauthorized' : response.status === 404 ? 'not_found' : 'unavailable', response.status)
 }
 
-/** A poll that already shows the latest message keeps that page. New messages are prepended; a full page replaces it. */
-export function mergeGroupPoll(previous: GroupMessagePage | null, next: GroupMessagePage): GroupMessagePage {
+/**
+ * A cursor read of the newest page merged into the page held (no timer reads a group: the group's live key triggers
+ * the read, hooks/use-live-key.tsx). A read with nothing new keeps the held page; new messages are prepended; a full
+ * page replaces it.
+ */
+export function mergeGroupRead(previous: GroupMessagePage | null, next: GroupMessagePage): GroupMessagePage {
   if (!previous) return next
   // Nothing new since the shown page: it is current at this read's revision.
   // A fresh exchange may still arrive without a new message — carry unseen markers forward.

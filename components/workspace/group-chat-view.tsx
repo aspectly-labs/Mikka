@@ -31,18 +31,22 @@ import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { ReplyActions } from '@/components/chat/reply-actions'
 import { mentionsIn } from '@/lib/group-mentions'
-import { chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
+import { chronological, fetchGroupMessages, mergeGroupRead, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessage, type GroupMessagePage } from '@/lib/group-messages'
 import { AgentExchangeMarker } from './agent-exchange'
 import { toast } from 'sonner'
 import { useViewState } from '@/lib/hooks/view-state'
-import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
+import { isWebChatOffline, useChatDelivery, type ChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { checkPageBuildBeforeAction } from '@/lib/app-build'
 import { groupSubmissionMessageId } from '@/lib/group-submission'
+import { useConversation } from '@/lib/conversation/store'
+import type { ConversationMessage } from '@/lib/conversation/model'
 import { useActionError } from '@/lib/use-action-error'
 import { readAccessFailure } from '@/lib/swr/persistent-cache'
 
 /** A message the person sent that the server has not stored yet; a failed one waits for 重试. */
 type GroupSend = ChatSubmission & { mentions: ReturnType<typeof mentionsIn> }
+/** What a group chat message was built from: a stored message or the person's unsent one. */
+type GroupSource = { stored: GroupMessage } | { unsent: ChatDelivery<GroupSend> }
 
 /** The newest page and the members re-read on the group's live key, at most this often while a reply streams in. */
 const GROUP_MERGE_MS = 500
@@ -99,7 +103,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       const known = shown.current?.id === id ? shown.current.page : null
       const after = known ? newestGroupPosition(known.messages) : null
       const page = await fetchGroupMessages(id, null, fetch, after)
-      const merged = mergeGroupPoll(known, page)
+      const merged = mergeGroupRead(known, page)
       shown.current = { id, page: merged }
       return merged
     },
@@ -231,10 +235,27 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <AgentExchangeMarker exchange={exchange} /> }] })
     waiting = []
   }
-  messages.forEach((message, index) => {
+  // One conversation (lib/conversation/store.ts), as the Bot chat's: a stored message keeps the id its unsent bubble had
+  // (the submission id, `sentAs`), unsent messages follow in the order they were sent, and nothing remounts on commit.
+  const conversation = useConversation(`group:${group.id}`, {
+    stored: messages.map((message): ConversationMessage => ({ id: sentAs[message.id] ?? message.id, role: message.authorType === 'user' && message.authorId === userId ? 'user' : 'assistant',
+      parts: [{ type: 'text', text: message.body }], metadata: { at: Date.parse(message.createdAt), source: { stored: message } satisfies GroupSource } })),
+    optimistic: unsent.map((item): ConversationMessage => ({ id: item.id, role: 'user', parts: [{ type: 'text', text: item.text }],
+      metadata: { at: item.at, delivery: item.phase === 'failed' ? 'failed' : 'sending', ...(item.error ? { deliveryError: item.error } : {}), source: { unsent: item } satisfies GroupSource } })),
+  })
+  conversation.forEach((entry, index) => {
+    const source = entry.metadata?.source as GroupSource
+    const id = entry.id
+    if ('unsent' in source) {
+      const item = source.unsent
+      entries.push({ id, role: 'person', at: item.at, text: item.text,
+        body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage>,
+        status: entry.metadata?.delivery === 'failed' ? 'failed' : 'sending', ...(item.phase === 'failed' ? { deliveryMessage: entry.metadata?.deliveryError, onRetry: () => { void deliver(item) } } : {}) })
+      return
+    }
+    const message = source.stored
     const at = Date.parse(message.createdAt)
-    const mine = message.authorType === 'user' && message.authorId === userId
-    const id = sentAs[message.id] ?? message.id
+    const mine = entry.role === 'user'
     const reply = message.authorType !== 'user'
     // The line under every message, as the Bot chat's: when it was sent, Copy and its reactions (#2922); every line waits
     // for hover or focus (decision 2026-11-22-1500, components/chat/reply-actions.tsx).
@@ -249,12 +270,10 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
         parts: [{ kind: 'text', text: message.body, node: reply ? <AgentMarkdown text={message.body} /> : words }] })
     }
     waiting.push(...exchanges.get(message.position) ?? [])
-    const next = messages[index + 1]
-    if (!next || next.authorType !== message.authorType || next.authorId !== message.authorId) flush(at)
+    const next = (conversation[index + 1]?.metadata?.source as GroupSource | undefined)
+    const after = next && 'stored' in next ? next.stored : undefined
+    if (!after || after.authorType !== message.authorType || after.authorId !== message.authorId) flush(at)
   })
-  for (const item of unsent) entries.push({ id: item.id, role: 'person', at: item.at, text: item.text,
-    body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage>,
-    status: item.phase === 'failed' ? 'failed' : 'sending', ...(item.phase === 'failed' ? { deliveryMessage: item.error, onRetry: () => { void deliver(item) } } : {}) })
   const lastAt = entries.at(-1)?.at ?? 0
   const line = (key: string, text: string) => entries.push({ id: key, role: 'bot', at: lastAt, event: true, parts: [{ kind: 'text', text, node: <p role="status" className="text-center text-xs text-muted-foreground">{text}</p> }] })
   if (first?.routingError && !first.agentStatus) line('no-taker', t('noTaker'))
