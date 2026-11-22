@@ -36,7 +36,6 @@ import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AgentMarkdown } from './agent-markdown'
-import { useSmoothText } from '@/lib/hooks/use-smooth-text'
 import { ComputerCard } from '@/components/computer/computer-card'
 import { issueKeys } from '@/lib/swr/keys'
 import type { IssueView } from '@/app/actions/issues'
@@ -572,7 +571,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         continue
       }
       if (item.kind === 'agent') openWords = open ? [...openWords, item.text] : [item.text]
-      const part: ThreadEntryPart = item.kind === 'agent' ? { kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}><div {...{ [QUOTE_SOURCE_ATTR]: '' }}><SmoothAgentMarkdown text={item.text} isStreaming={active} live={active && item === items.at(-1)} /></div></AgentCitationsContext> }
+      const part: ThreadEntryPart = item.kind === 'agent' ? { kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}><div {...{ [QUOTE_SOURCE_ATTR]: '' }}><AgentMarkdown text={item.text} isStreaming={active} live={active && item === items.at(-1)} /></div></AgentCitationsContext> }
         : item.kind === 'steps' ? { kind: 'tools', id: `${runId}:${item.id}`, tools: stepRows(item.steps, active) }
         : item.kind === 'error' ? { kind: 'error', text: item.text }
         : { kind: 'text', text: '', node: item.kind === 'computer'
@@ -708,9 +707,4 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     : conversation}
     {!readOnly && <SelectionQuote root={rootRef} onQuote={text => { setReplyQuote(text); inputRef.current?.focus() }} />}
   </section>
-}
-
-/** The Agent's words; the newest while the run works appears a few characters at a time (lib/hooks/use-smooth-text.ts). */
-function SmoothAgentMarkdown({ text, isStreaming, live }: { text: string; isStreaming: boolean; live: boolean }) {
-  return <AgentMarkdown text={useSmoothText(text, live)} isStreaming={isStreaming} />
 }

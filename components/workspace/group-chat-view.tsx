@@ -226,6 +226,8 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // The centred time over each group of messages (#2922): the first run, and each run after a quiet gap.
   const runs = authorRuns(messages)
   const stamped = stampStarts(runs.map(run => Date.parse(run.messages[0]?.createdAt ?? '')))
+  // The reply still arriving: the newest message while the group answers, when a Bot or Agent wrote it.
+  const arriving = replying && messages.at(-1)?.authorType !== 'user' ? messages.at(-1)?.id : undefined
   const rows: ThreadGroupRow[] = runs.flatMap((run, index): ThreadGroupRow[] => {
     const mine = run.authorType === 'user' && run.authorId === userId
     const name = authorName(run.authorType, run.authorId)
@@ -245,7 +247,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
           ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="end" /> } }
         : { id: message.id, message: { from: 'bot', speaker, presentation: reply ? 'group-reply' : 'group-received',
-          body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} />,
+          body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} isStreaming={message.id === arriving} />,
           ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }
       }),
