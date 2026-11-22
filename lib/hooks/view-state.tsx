@@ -145,17 +145,27 @@ export function useViewScroll<T extends HTMLElement>(key: string, ready = true, 
     const saved = anchor === 'end' && stored?.end ? null : stored
     if (!saved && restoreSaved && anchor === 'start') { node.scrollTop = 0; node.scrollLeft = 0 }
     let restoring = !!saved
+    // While a saved place is put back the node says so: a list that follows its end (the official thread) lets this
+    // scroll stop the following, and keeps any other scroll nobody asked for from doing so.
+    // The mark outlasts the restore by a moment, as the scroll it caused arrives a frame later.
+    let unmark: ReturnType<typeof setTimeout> | undefined
+    const mark = () => {
+      clearTimeout(unmark)
+      if (restoring) node.setAttribute('data-view-restoring', '')
+      else if (node.hasAttribute('data-view-restoring')) unmark = setTimeout(() => node.removeAttribute('data-view-restoring'), 200)
+    }
     const restore = () => {
       if (!restoring || !saved) return
       node.scrollTop = saved.top
       node.scrollLeft = saved.left
       if (Math.abs(node.scrollTop - saved.top) < 1 && Math.abs(node.scrollLeft - saved.left) < 1) restoring = false
+      mark()
     }
     const save = () => {
       if (!restoring) store.set(cell, { top: node.scrollTop, left: node.scrollLeft,
         ...(anchor === 'end' ? { end: node.scrollHeight - node.scrollTop - node.clientHeight < AT_END_PX } : {}) })
     }
-    const interact = () => { restoring = false }
+    const interact = () => { restoring = false; mark() }
     restore()
     const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(restore)
     const observe = () => { resize?.observe(node); for (const child of node.children) resize?.observe(child) }
@@ -170,6 +180,7 @@ export function useViewScroll<T extends HTMLElement>(key: string, ready = true, 
     window.addEventListener('pagehide', save)
     return () => {
       save()
+      clearTimeout(unmark); node.removeAttribute('data-view-restoring')
       resize?.disconnect(); mutation.disconnect()
       node.removeEventListener('scroll', save)
       node.removeEventListener('wheel', interact)

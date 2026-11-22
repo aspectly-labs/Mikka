@@ -6,7 +6,8 @@ import { NO_MODEL, type BotModelMenu } from '../../lib/bot-model-menu-view'
 
 let data: BotModelMenu | undefined
 const cache = new Map()
-mock.module('swr', { namedExports: { useSWRConfig: () => ({ cache }) }, defaultExport: (key: readonly string[] | null) => ({ data: key?.[0] === 'bot-model-menu' ? data : undefined, mutate: async () => {} }) })
+const swrOptions = new Map<string, unknown>()
+mock.module('swr', { namedExports: { useSWRConfig: () => ({ cache }) }, defaultExport: (key: readonly string[] | null, _fetch: unknown, options?: unknown) => { if (key?.[0]) swrOptions.set(key[0], options); return { data: key?.[0] === 'bot-model-menu' ? data ?? (options as { fallbackData?: BotModelMenu } | undefined)?.fallbackData : undefined, mutate: async () => {} } } })
 mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: () => (key: string, args?: Record<string, string>) => args?.name ? `${key}: ${args.name}` : key } })
 mock.module(new URL('../../app/actions/execution-settings.ts', import.meta.url).href, { namedExports: {
   getBotModelMenu: async () => data, chooseBotModel: async () => data, refreshBotModelMenuAction: async () => data,
@@ -67,6 +68,15 @@ test('skipping setup explains why priced models cannot run and links to model se
   const html = renderNotice()
   assert.match(html, /noCreditsOrConnections/)
   assert.match(html, /href="\/settings\?section=models"[^>]*>setUpModel<\/a>/)
+})
+
+test('on a switch to another Bot the notice shows the last answer until the new one is read', () => {
+  data = { current: NO_MODEL, groups: [] }
+  assert.match(renderNotice(), /noModelConnections/)
+  // Another Bot's chat mounts its own notice; its menu is not read yet
+  data = undefined
+  assert.match(renderToStaticMarkup(<HostedUnavailableNotice botId="other-bot" />), /noModelConnections/)
+  assert.equal((swrOptions.get('bot-model-menu') as { keepPreviousData?: boolean }).keepPreviousData, true)
 })
 
 test('without any model sources, the notice links to setup without claiming a credit shortage', () => {

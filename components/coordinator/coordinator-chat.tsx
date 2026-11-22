@@ -32,6 +32,7 @@ import { PersonReferences } from '@/components/workspace/thread-references'
 import { messageReferences } from '@/lib/composer-references'
 import { CoordinatorReply } from './coordinator-reply'
 import { botModelMenuKey, openModelPicker } from './bot-model-picker'
+import { useBotModelMenu } from '@/hooks/use-bot-model-menu'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
 import { ThreadQueuedMessages } from '@/components/workspace/thread-queued-messages'
 import { isWebChatOffline, useChatDelivery, type ChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
@@ -367,7 +368,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const welcomeModel = useSWR<BotModelMenu>(welcomeNeedsModel || (welcomeFailed && (refusal || modelRequired)) ? botModelMenuKey(botId ?? null) : null, () => getBotModelMenu(botId ?? null))
   const runnable = welcomeModel.data?.current?.available
   // What the composer's model picker reads: with nothing that can answer, Send waits and the one notice says why.
-  const modelMenu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId))
+  const modelMenu = useBotModelMenu(botId)
   const noModel = modelBlocked(modelMenu.data)
   const retriedWelcomeModel = useRef<string | null>(null)
   const wasRunnable = useRef<boolean | undefined>(undefined)
@@ -707,7 +708,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   })
   // The footer's notices wait for the model menu, which says whether anything can answer, so they join together
   // instead of one by one; a chat's own failure joins with its read (a Bot switch grew the footer as each read landed).
-  const footerReady = Boolean(loadError || !modelMenu.isLoading)
+  // A menu read for another Bot stands in until this one's is read (useBotModelMenu), so a switch draws the footer at once
+  const footerReady = Boolean(loadError || modelMenu.data || !modelMenu.isLoading)
   const notices = !footerReady ? null : <>
     {notice === 'load' && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
     {paywall.dialog}
