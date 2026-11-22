@@ -19,10 +19,12 @@ import type { ThreadOutlineEntry } from '@/lib/thread-outline'
  * index and the list cannot disagree about which row is which. Positions are
  * never used: a jump to the wrong message is worse than no jump.
  */
-export function ThreadOutlineIndex({ entries }: { entries: readonly ThreadOutlineEntry[] }) {
+export function ThreadOutlineIndex({ entries, onReveal }: { entries: readonly ThreadOutlineEntry[]; onReveal?: (id: string) => boolean }) {
   const t = useTranslations('IssueThreads')
   if (entries.length < 2) return null
   const reveal = (id: string) => {
+    // A screen that mounts only the rows near the view scrolls to an off-screen row itself.
+    if (onReveal?.(id)) return
     // The transcript is the popover's sibling under the same scroll root.
     const row = document.querySelector(`[data-thread-item="${CSS.escape(id)}"]`)
     row?.scrollIntoView({ block: 'start', behavior: 'smooth' })

@@ -242,6 +242,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     setTab('artifacts')
   }, [linkedFocus, setTab])
   const transcript = useViewScroll<HTMLDivElement>(`thread:${runId}:chat`, !!data && !viewingChanges && !accepting && !viewingArtifacts)
+  // A screen that lists only the rows near the view reveals an off-screen row itself (ThreadScreenProps.revealRef).
+  const revealRow = useRef<((entryId: string) => boolean) | null>(null)
   const olderPosition = data?.historyPage?.before
   async function loadOlder(box = transcript.current as HTMLElement | null) {
     const page = data?.historyPage
@@ -541,7 +543,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         <div data-attempt-section={runId} data-event-line="" data-activity-line="" className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
           <span role="status">{line}</span>
           {showBadge && <ThreadStatus status={status} outcome={outcome} waiting={waitingForReply} icon={false} />}
-          <ThreadOutlineIndex entries={outline} />
+          <ThreadOutlineIndex entries={outline} onReveal={id => revealRow.current?.(`${runId}:${id}`) ?? false} />
         </div> }] })
     }
     if (!attempt && asked && !independentCheck) { open = null; sentAt.set(`${runId}:prompt`, at(data.thread.createdAt)); entries.push({ id: `${runId}:prompt`, role: 'person', at: at(data.thread.createdAt), text: asked }) }
@@ -669,7 +671,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const referenceWorkspace = liveRuns.find(run => run.id === liveRunId)?.workspaceId
   // `@`, the ＋ menu's Reference rows and the reference chips belong to the composer (#2924).
   const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? { workspaceId: referenceWorkspace, runId: liveRunId } : undefined
-  const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen host={host} botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
+  const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen host={host} botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} revealRef={revealRow} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
     panels={bare || transcriptOnly || collect ? undefined : panels}
     historyPrepend={historyPrepend}
     older={olderPosition ? { loading: olderState === 'loading', auto: olderState === 'idle', onLoad: () => { void loadOlder() } } : undefined}
