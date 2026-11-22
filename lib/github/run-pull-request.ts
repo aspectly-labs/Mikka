@@ -238,6 +238,7 @@ export async function openRunPullRequest(options: Options & {
     }
     let autoMergeEnabled = false
     let autoMergeError: PublicationErrorCode | undefined
+    let autoMergeRetryable = false
     if (options.autoMerge && !pr.draft && pr.state === 'open' && !pr.merged_at) {
       if (!pr.node_id) throw new PublicationError('github_request_failed')
       const nodeId = pr.node_id
@@ -256,10 +257,11 @@ export async function openRunPullRequest(options: Options & {
         } catch (error) {
           if (!(error instanceof PublicationError)) throw error
           autoMergeError = error.code
+          autoMergeRetryable = error.retryable
         }
       })
     }
-    return { url: pr.html_url, ...(pr.title ? { title: pr.title } : {}), state: pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open', ...lines, ...review, ...(evidenceDigest ? { evidenceDigest } : {}), ...(autoMergeEnabled ? { autoMergeEnabled } : {}), ...(autoMergeError ? { autoMergeError } : {}) }
+    return { url: pr.html_url, ...(pr.title ? { title: pr.title } : {}), state: pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open', ...lines, ...review, ...(evidenceDigest ? { evidenceDigest } : {}), ...(autoMergeEnabled ? { autoMergeEnabled } : {}), ...(autoMergeError ? { autoMergeError } : {}), ...(autoMergeRetryable ? { autoMergeRetryable: true } : {}) }
   }
   const enriched = async (raw: unknown): Promise<PublishedPullRequest> => {
     // The original POST/list is already a complete authority receipt. Never

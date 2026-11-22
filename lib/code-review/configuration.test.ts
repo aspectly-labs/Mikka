@@ -15,3 +15,10 @@ test('an ignore list that fits is listed in full', () => {
   assert.match(instructions, /\["vendor\/\*\*","docs\/\*\*"\]/)
   assert.doesNotMatch(instructions, /further saved globs/)
 })
+
+test('a Factory review includes the whole saved ignore list', () => {
+  const paths = Array.from({ length: 100 }, (_, index) => `${'directory'.repeat(25)}/${index}/**`)
+  const instructions = codeReviewInstructions({ model: '', severity: 'medium', ignoredPaths: paths, output: 'comments' }, 'factory')
+  assert.ok(instructions.includes(JSON.stringify(paths)))
+  assert.doesNotMatch(instructions, /further saved globs/)
+})

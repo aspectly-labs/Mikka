@@ -152,6 +152,27 @@ test('run result publication commits one owner-scoped result through retries and
       assert.deepEqual(next, { titlePrefix: '[changed-personal]', autoMerge: false, defaultDraft: true })
     })
 
+    await t.test('a retryable native auto-merge error preserves the PR and retries without creating another', async () => {
+      const { writeSettings } = await import('../lib/settings/store')
+      const f = await fixture()
+      await writeSettings({ userId: f.userId, workspaceId: f.workspaceId }, 'workspace', { values: { prAutoMerge: true } })
+      await prepareRunPublication(assignment(f), f.remoteUrl)
+      await persistRunCompletion(f.userId, f.runId, completion(f))
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.autoMerge, true)
+        return { ...prFor(f), autoMergeError: 'github_unavailable', autoMergeRetryable: true }
+      }), { done: false })
+      const pending = await receipt(f)
+      assert.equal(pending.pullRequest.url, prFor(f).url)
+      assert.equal(pending.autoMergeRequestedAt, null)
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.autoMerge, true)
+        assert.equal(input.allowCreate, false)
+        return { ...prFor(f), autoMergeEnabled: true }
+      }), { done: true })
+      assert.equal((await receipt(f)).pullRequest.autoMergeEnabled, true)
+    })
+
     await t.test('auto merge reads its held SQL transaction and cannot override withdrawal, drafts, failed verification or Factory review evidence', async () => {
       const { writeSettings } = await import('../lib/settings/store')
       const { automaticMergeReadiness } = await import('../lib/code-review/auto-merge')

@@ -38,6 +38,7 @@ export interface PublishedPullRequest {
   /** GitHub acknowledged its native queue; this is not a merged receipt. */
   autoMergeEnabled?: boolean
   autoMergeError?: PublicationErrorCode
+  autoMergeRetryable?: true
   /** Present for deliveries recorded after #541. */
   title?: string
   url: string

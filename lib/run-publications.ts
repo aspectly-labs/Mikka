@@ -368,7 +368,7 @@ async function withPublicationAuthority<T>(claim: Publication, work: (value: { p
     if (admission && !accepted) throw new PublicationError('publication_mismatch')
     // The pull request opens with the run owner's own GitHub credential
     // (decision 2026-11-02-1600); no Mikka setting or approval gates it.
-    return work({ publication, run, report, allowCreate: readIssueMetadata(task.content).pullRequests.length < 10 }, client)
+    return work({ publication, run, report, allowCreate: !publication.pullRequest?.autoMergeRetryable && readIssueMetadata(task.content).pullRequests.length < 10 }, client)
     }))) } finally { client.release() }
   })
 }
@@ -479,6 +479,11 @@ export async function publishRunResult(runId: string, openPullRequest: OwnerPull
         return write()
       }) })
     if (visualEvidence && pullRequest.evidenceDigest !== visualEvidence.digest) throw new PublicationError('factory_public_evidence_required')
+    if (pullRequest.autoMergeRetryable && claim.attempts < MAX_ATTEMPTS) {
+      await db.update(runPublications).set({ status: 'pending', pullRequest, errorCode: pullRequest.autoMergeError, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
+        .where(and(eq(runPublications.runId, runId), eq(runPublications.leaseToken, claim.leaseToken!)))
+      return { done: false }
+    }
     const done = await settlePublication(claim, { pullRequest, errorCode: pullRequest.autoMergeError })
     if (done) await resumePublicationEvidenceHandoff(claim.userId, runId)
     return { done: done && !await automaticPublicationPending(runId) }
@@ -488,7 +493,7 @@ export async function publishRunResult(runId: string, openPullRequest: OwnerPull
       await db.update(runPublications).set({ status: 'pending', errorCode: error.code, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() }).where(and(eq(runPublications.runId, runId), eq(runPublications.leaseToken, claim.leaseToken!)))
       return { done: false }
     }
-    return { done: await settlePublication(claim, { errorCode: error.code }) }
+    return { done: await settlePublication(claim, { pullRequest: claim.pullRequest ?? undefined, errorCode: error.code }) }
   }
 }
 
@@ -504,7 +509,7 @@ async function resumePublicationEvidenceHandoff(userId: string, runId: string) {
 /** The durable workflow's exhausted-error path still produces a chat result. */
 export async function failRunPublication(runId: string): Promise<{ done: boolean }> {
   const claim = await claimPublication(runId)
-  if (claim) return { done: await settlePublication(claim, { errorCode: 'github_unavailable' }) }
+  if (claim) return { done: await settlePublication(claim, { pullRequest: claim.pullRequest ?? undefined, errorCode: 'github_unavailable' }) }
   const row = await publicationDelivery(runId)
   return { done: !row || WORKFLOW_DONE.includes(row.status) }
 }

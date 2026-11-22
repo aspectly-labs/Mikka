@@ -28,7 +28,7 @@ test('a signed workflow receipt preserves the configured task branch and rejects
   }
 })
 
-function stub(options: { branch?: string; autoMerge?: 'enabled' | 'denied' | 'wrong-id'; installation?: 'allowed' | 'denied'; title?: string; userId?: number; repository?: 'missing' | 'renamed'; existing?: unknown[]; create?: 'timeout' | '422' | 'malformed'; head?: string; lines?: { additions: number; deletions: number }; review?: boolean; checksDenied?: boolean; detailFailure?: number | 'timeout'; detailOverride?: Record<string, unknown>; createdOverride?: Record<string, unknown> } = {}) {
+function stub(options: { branch?: string; autoMerge?: 'enabled' | 'denied' | 'wrong-id' | 'rate-limited'; installation?: 'allowed' | 'denied'; title?: string; userId?: number; repository?: 'missing' | 'renamed'; existing?: unknown[]; create?: 'timeout' | '422' | 'malformed'; head?: string; lines?: { additions: number; deletions: number }; review?: boolean; checksDenied?: boolean; detailFailure?: number | 'timeout'; detailOverride?: Record<string, unknown>; createdOverride?: Record<string, unknown> } = {}) {
   const calls: { path: string; method: string; body: Record<string, unknown> | null; authorization: string }[] = []
   const branch = options.branch ?? input.branch
   const fixturePr = { ...pr, head: { ...pr.head, ref: branch } }
@@ -74,6 +74,7 @@ function stub(options: { branch?: string; autoMerge?: 'enabled' | 'denied' | 'wr
     }
     if (path === '/graphql' && String(body?.query).includes('enablePullRequestAutoMerge')) {
       if (options.autoMerge === 'denied') return Response.json({}, { status: 403 })
+      if (options.autoMerge === 'rate-limited') return Response.json({}, { status: 429 })
       return Response.json({ data: { enablePullRequestAutoMerge: { pullRequest: { id: options.autoMerge === 'wrong-id' ? 'different-pr' : pr.node_id, autoMergeRequest: { enabledAt: '2026-11-20T19:00:00Z' } } } } })
     }
     if (path === '/graphql') return Response.json({ data: { convertPullRequestToDraft: { pullRequest: { id: pr.node_id, isDraft: true } } } })
@@ -199,6 +200,15 @@ test('auto merge reports native refusal, wrong identity and changed head without
     }
     await assert.rejects(openRunPullRequest({ ...input, autoMerge: true, verificationStatus: 'passed', fetcher }), { code })
   }
+})
+
+test('a GitHub rate limit preserves the published PR and marks auto-merge retryable', async () => {
+  const { fetcher } = stub({ review: true, autoMerge: 'rate-limited' })
+  const result = await openRunPullRequest({ ...input, autoMerge: true, verificationStatus: 'passed', fetcher })
+  assert.equal(result.url, pr.html_url)
+  assert.equal(result.autoMergeEnabled, undefined)
+  assert.equal(result.autoMergeError, 'github_unavailable')
+  assert.equal(result.autoMergeRetryable, true)
 })
 
 test('opens one issue-marked PR on the default branch with the person\'s own token, after checking it is theirs', async () => {
