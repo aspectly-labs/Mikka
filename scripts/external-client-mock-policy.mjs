@@ -56,11 +56,37 @@ export function repositoryExternalClientMocks(root = process.cwd()) {
     .flatMap(file => externalClientMocks(file, readFileSync(resolve(root, file), 'utf8')))
 }
 
+// Merge-queue candidates check out a synthetic ref (gh-readonly-queue/...) with
+// no origin/main. Resolve the trusted base from the event payload, a fetched
+// ref, or the merge commit's first parent (the base side on queue checkouts).
+export function trustedPolicyBase(root = process.cwd()) {
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  const has = ref => { try { git('rev-parse', '--verify', `${ref}^{commit}`); return true } catch { return false } }
+  const candidates = []
+  try {
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? '', 'utf8'))
+    candidates.push(event.merge_group?.base_sha, event.pull_request?.base?.sha)
+  } catch {}
+  candidates.push('origin/main', 'FETCH_HEAD')
+  if (has('HEAD^2')) candidates.push('HEAD^1')
+  const head = git('rev-parse', 'HEAD')
+  for (const ref of candidates.filter(Boolean)) {
+    // A merge base equal to HEAD means the ref IS the candidate (FETCH_HEAD
+    // after checkout) — never trusted, or increases would compare to themselves.
+    if (has(ref)) {
+      const base = git('merge-base', 'HEAD', ref)
+      if (base && base !== head) return base
+    }
+  }
+  try { execFileSync('git', ['fetch', '--depth=100', 'origin', 'main'], { cwd: root, stdio: 'ignore' }) } catch {}
+  return git('merge-base', 'HEAD', 'origin/main')
+}
+
 export function runExternalClientMockPolicy(root = process.cwd()) {
   const baseline = JSON.parse(readFileSync(resolve(root, baselinePath), 'utf8'))
   // Compare against the merge base so the same PR cannot enlarge its allowance.
   // On the introducing PR there is no older allowance; later PRs can only remove.
-  const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  const base = trustedPolicyBase(root)
   const exists = execFileSync('git', ['ls-tree', '--name-only', base, '--', baselinePath], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   const previous = exists ? JSON.parse(execFileSync('git', ['show', `${base}:${baselinePath}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })) : baseline
   return auditExternalClientMocks(repositoryExternalClientMocks(root), baseline, previous)
