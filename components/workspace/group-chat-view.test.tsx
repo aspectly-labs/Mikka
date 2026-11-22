@@ -337,3 +337,12 @@ test('the start of the group opens its history with its avatar, name and members
   assert.equal(container.querySelector('[data-group-start]'), null, 'older messages still to load: not the start yet')
   groupMembers = []
 })
+
+test('every line about the group is an event line, so the thread draws no author over it', async () => {
+  const exchange: GroupExchange = { type: 'agent_exchange', linkId: 'link', anchorPosition: '1', count: '1', participants: [{ id: 'agent', name: 'Agent', harness: 'codex', avatarUrl: null }] }
+  pages = [{ messages: [message('user', 1, 'hello')], timeline: [exchange], nextBefore: null, routingError: { code: 'none' } }]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  const lines = lastThreadScreen()!.entries!.filter(entry => entry.role === 'bot' && entry.event).map(entry => entry.id)
+  assert.deepEqual(lines, ['group-start', 'exchange:link', 'no-taker'])
+  for (const id of lines) assert.ok(container.querySelector(`[data-entry="${id}"] [data-event-line]`), `${id} carries data-event-line`)
+})
