@@ -34,6 +34,8 @@ export function isSkeletonHandover(now = performance.now()) {
  * its own before the first read (hosted styles/globals.css), and shows it at once while this attribute is set.
  */
 const HANDOVER_ATTRIBUTE = 'data-chat-skeleton'
+/** Longer than the in-app hand-over: the screen that takes over may first be styled a busy moment later. */
+const CSS_HANDOVER_MS = 1_000
 let clearHandover: ReturnType<typeof setTimeout> | undefined
 
 /** Count a skeleton as on screen until the returned cleanup runs. */
@@ -46,7 +48,7 @@ function retainSkeleton() {
     visible -= 1
     lastVisibleAt = performance.now()
     clearTimeout(clearHandover)
-    clearHandover = setTimeout(() => { if (visible === 0) document.documentElement.removeAttribute(HANDOVER_ATTRIBUTE) }, SKELETON_HANDOVER_MS)
+    clearHandover = setTimeout(() => { if (visible === 0) document.documentElement.removeAttribute(HANDOVER_ATTRIBUTE) }, CSS_HANDOVER_MS)
   }
 }
 

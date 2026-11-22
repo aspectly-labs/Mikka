@@ -99,6 +99,8 @@ test('a skeleton that takes over from one on screen paints at once, and one that
   await act(async () => root.render(<></>))
   assert.equal(document.documentElement.hasAttribute('data-chat-skeleton'), true, 'still a hand-over just after')
   await settle()
+  assert.equal(document.documentElement.hasAttribute('data-chat-skeleton'), true, 'kept a while longer for a screen styled late')
+  await wait(1_000)
   assert.equal(document.documentElement.hasAttribute('data-chat-skeleton'), false)
 })
 
