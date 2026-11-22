@@ -33,6 +33,13 @@ it('drops tool names that contain command-line credentials without dropping the 
     .toEqual([{ name: 'safe_tool', description: 'echoed [redacted]' }])
 })
 
+it('retains ordinary log-level tool names but still removes credentials echoed beside them', () => {
+  expect(scrubMcpCheckTools([
+    { name: 'debug_status' }, { name: 'tool_fixture_secret' }, { name: 'status', description: 'echoed fixture_secret' },
+  ], { name: 'mcp_local', transport: 'stdio', command: 'fixture', args: [], env: { LOG_LEVEL: 'debug', PROVIDER_SETTING: 'fixture_secret' } }))
+    .toEqual([{ name: 'debug_status', description: '' }, { name: 'status', description: 'echoed [redacted]' }])
+})
+
 describe("device online state", () => {
   const opened = "2026-10-16T12:00:00.000Z"
 

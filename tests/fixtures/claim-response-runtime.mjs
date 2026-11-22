@@ -324,6 +324,7 @@ const sources = new Map([
     }`],
   ['/lib/secrets/runtime.ts', secretSource],
   ['/lib/run-completion-effects.ts', 'export async function afterRunEnded(ownerId,runId){const p=globalThis.claimResponseProbe;(p.endedRuns??=[]).push({ownerId,runId})}'],
+  ['/lib/plugins/runtime.ts', 'export const personalPlugins = { async nativeMcpConnections() { return globalThis.claimResponseProbe.nativeMcpServers } };'],
   ['/lib/run-leases.ts', 'export async function latestCheckpoint(){const p=globalThis.claimResponseProbe;p.preparation.push("checkpoint");return structuredClone(p.checkpoint)};export async function failRunForDaemonUpgrade(...args){const p=globalThis.claimResponseProbe;p.preparation.push("daemon-upgrade");(p.upgradeRefusals??=[]).push(args);p.run.status="failed";p.run.stopReason="error";return true};export async function failQueuedSubscriptionRuntime(...args){const p=globalThis.claimResponseProbe;p.preparation.push("subscription-preflight");p.runtimeRefusal=args;p.run.status="failed";return true}'],
   ['/lib/daemon-release.ts', 'export function daemonTooOld(){return false};export async function daemonVersions(){return {min:"0.0.1",latest:"0.0.1"}}'],
   ['/lib/app-tools-server.ts', `import assert from 'node:assert/strict'

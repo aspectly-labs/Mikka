@@ -329,6 +329,28 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
     return NextResponse.json({ error: 'Upgrade the Mikka daemon before using protected task Secrets.', code: 'daemonUpgradeRequired', daemonVersions: await daemonVersions() }, { status: 409 })
   }
+  let servers: TaskMcpServer[] = []
+  if (run.agentDefinition?.customMcp && ['claude_code','codex','cursor'].includes(harness)) {
+    try { servers = await (await import('@/lib/plugins/runtime')).personalPlugins.nativeMcpConnections(caller.userId,run.agentDefinition.customMcp,run.agentDefinition.projectExecution?.environment?.id ?? null) }
+    catch (error) {
+      logCodedError(new CodedError('mcpUnavailable',{cause:error}),{runId:run.id})
+      const now = new Date()
+      const [failed] = await db.update(agentRuns).set({status:'failed',stopReason:'error',error:'mcpUnavailable',failureDetails:serverRunFailure(runId,now),finishedAt:now,updatedAt:now})
+        .where(and(eq(agentRuns.id,run.id),eq(agentRuns.userId,caller.userId),eq(agentRuns.deviceId,deviceId),eq(agentRuns.status,'queued'),isNull(agentRuns.stopRequestedAt)))
+        .returning({ id: agentRuns.id })
+      if (failed) {
+        await Promise.all([runListChanged(db,run.id),runChanged(db,run.id)])
+        await afterRunEnded(caller.userId,run.id)
+      }
+      return NextResponse.json({error:'MCP configuration unavailable.',code:'mcpUnavailable'},{status:409})
+    }
+    const compatible = taskMcpForDaemon(servers, request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1')
+    if (compatible.length !== servers.length) {
+      await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
+      return NextResponse.json({ error: 'Upgrade the Mikka daemon before using MCP tool filters.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
+    }
+    servers = compatible
+  }
   if (device.kind === 'cloud') {
     // A task machine (E2B's claude or codex template, decision 2026-11-01-2335) has no desktop: its
     // worker reports no computer broker. It takes repository tasks only; a computer task stays queued.
@@ -399,21 +421,6 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   timings.next('assignment_context')
   const startupAttributes = cloudStartupRunAttributes(runId)
   const githubRepository = /^v2\/github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(repo.repoPath) && harness !== 'mock'
-  // Resolve native configuration outside the optional hand-in-token catch. A
-  // revoked connection must visibly fail the task, never remove all MCP tools.
-  let servers: TaskMcpServer[] = []
-  if (run.agentDefinition?.customMcp && ['claude_code','codex','cursor'].includes(harness)) {
-    try { servers = await (await import('@/lib/plugins/runtime')).personalPlugins.nativeMcpConnections(caller.userId,run.agentDefinition.customMcp,run.agentDefinition.projectExecution?.environment?.id ?? null) }
-    catch (error) {
-      logCodedError(new CodedError('mcpUnavailable',{cause:error}),{runId:run.id})
-      const now = new Date()
-      await db.update(agentRuns).set({status:'failed',stopReason:'error',error:'mcpUnavailable',failureDetails:serverRunFailure(runId,now),finishedAt:now,updatedAt:now})
-        .where(and(eq(agentRuns.id,run.id),eq(agentRuns.userId,caller.userId),eq(agentRuns.deviceId,deviceId),eq(agentRuns.status,'preparing')))
-      await Promise.all([runListChanged(db,run.id),runChanged(db,run.id)])
-      await afterRunEnded(caller.userId,run.id)
-      return NextResponse.json({error:'MCP configuration unavailable.',code:'mcpUnavailable'},{status:409})
-    }
-  }
   const preparedCredentials = receivesRunCredentials ? Promise.allSettled([
     // Each phase fails with its own code, so a refused claim names which
     // credential failed and keeps the provider's own code as its cause.
@@ -443,12 +450,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         let apps = harness === 'claude_code' || harness === 'codex'
           ? await (await import('@/lib/app-tools-server')).runAppToolkits(caller.userId, run.botId ?? null).catch(() => [])
           : []
-        const daemonServers = servers.length ? taskMcpForDaemon(servers, request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1') : []
         return { url: mcpResourceURL ?? new URL(withBasePath('/api/mcp'), request.url).toString(), token,
           decisionCatalogue: RUN_DECISION_CATALOGUE,
           mailboxCatalogue: { version: 1 as const, transport: 'mikka-stateless-2025-06-18' as const, tools },
           ...(tools.length ? { mailbox: true as const } : {}), ...(apps.length ? { apps } : {}),
-          ...(daemonServers.length ? { servers: daemonServers } : {}) }
+          ...(servers.length ? { servers } : {}) }
       })
       .catch((error: unknown) => { if (servers.length) throw new CodedError('mcpUnavailable',{cause:error}); console.error('Could not issue a run token', { name:error instanceof Error ? error.name : typeof error }); return undefined })
   // A retry after a lost lease works on in the lost attempt's worktree and,

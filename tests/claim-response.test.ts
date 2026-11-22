@@ -11,6 +11,7 @@ import { normalizeRepository } from '@mikka/protocol/repository'
 import { SKILL_ARTIFACT_HEADER } from '@mikka/protocol/skill'
 import { POLICY_SNAPSHOT_HEADER } from '@mikka/protocol/policy-snapshot'
 import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-secrets'
+import { TASK_MCP_HEADER, TASK_MCP_VERSION, type TaskMcpServer } from '@mikka/protocol'
 import { policyDistributionContext } from '../lib/agent-tool-approval/policy-distribution'
 import { verifyPolicySnapshot } from '@mikka/protocol/node-policy-snapshot'
 import { POST } from '../app/v1/devices/[deviceId]/runs/[runId]/claim/route'
@@ -54,6 +55,7 @@ function fixture() {
     modelCredentialCapability: false,
     catalogueCapability: false,
     secretCapability: undefined as string | undefined,
+    nativeMcpServers: undefined as TaskMcpServer[] | undefined,
     secretInjection: undefined as Partial<TaskSecretInjection> | undefined,
     secretSnapshot: undefined as string | undefined,
     secretReads: [] as unknown[][],
@@ -87,7 +89,7 @@ function fixture() {
 async function claim(probe: ReturnType<typeof fixture>, preparation = ['skill-preflight','policy','secrets','publication','claim','skill-claim','benchmark-claim','token','settings'], expectsProjectAdmission = true) {
   const diagnostics: unknown[][] = []
   const errors = mock.method(console, 'error', (...args: unknown[]) => { diagnostics.push(args) })
-  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
+  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: TASK_MCP_VERSION } : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
   finally {
     errors.mock.restore()
     // The route logs only error names. Keep the intentional refusal distinct
@@ -264,6 +266,17 @@ test('task access database errors are not misclassified as a permission denial',
   const probe = fixture(), failure = new Error('synthetic task access database fault')
   probe.issueAccessError = failure
   await assert.rejects(() => claim(probe, []), error => error === failure)
+})
+
+test('a daemon without tool filters gets an upgrade notice before leasing an MCP-enabled run', async () => {
+  const probe = fixture()
+  Object.assign(probe.run, { agentDefinition: { harness: 'codex', customMcp: { servers: [{ id: 'fixture-mcp' }] } } })
+  probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: ['write_docs'] }]
+  const response = await claim(probe, ['skill-preflight', 'policy', 'secrets', 'daemon-upgrade'])
+  assert.equal(response.status, 409)
+  assert.equal((await response.json()).code, 'daemonUpgradeRequired')
+  assert.equal(probe.run.status, 'failed')
+  assert.equal(probe.run.leaseExpiresAt, null)
 })
 function validCheckpoint(): RunCheckpoint {
   return {baseCommit:'a'.repeat(40),patch:gzipSync(Buffer.alloc(0)).toString('base64'),files:0,takenAt:new Date().toISOString()}

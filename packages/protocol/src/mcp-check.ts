@@ -21,7 +21,10 @@ export type McpDeviceCheckReceipt = z.infer<typeof mcpDeviceCheckReceiptSchema>
 export function scrubMcpCheckTools(tools: { name: string; description?: string }[], server: Extract<TaskMcpServer, { transport: 'stdio' }>) {
   // A credential reaches the process as an environment value or as a command-line argument,
   // and a server may echo either one back in a tool's name or description.
-  const secrets = [...Object.values(server.env), ...commandLineSecrets(server.args ?? [])].filter(Boolean)
+  const environmentSecrets = Object.entries(server.env)
+    .filter(([name, value]) => !(name === 'LOG_LEVEL' && /^(trace|debug|info|warn|error|fatal|silent)$/i.test(value)))
+    .map(([, value]) => value)
+  const secrets = [...environmentSecrets, ...commandLineSecrets(server.args ?? [])].filter(Boolean)
   const needles = secrets.flatMap(value => [value, encodeURIComponent(value), btoa(Array.from(new TextEncoder().encode(value), byte => String.fromCharCode(byte)).join(''))]).sort((a, b) => b.length - a.length)
   const scrub = (value: string) => needles.reduce((result, secret) => result.split(secret).join('[redacted]'), value)
   return tools.flatMap(tool => scrub(tool.name) !== tool.name ? [] :

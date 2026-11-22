@@ -185,7 +185,13 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       try {
         await assert.rejects(oauth.accessToken(owner, installed.id), /mcpOAuthUnavailable/)
         assert.equal((await connections.detail(owner, installed.id)).status, 'connected')
+        const checked = await connections.check(owner, installed.id)
+        assert.equal(checked.status, 'check_failed')
+        assert.equal(checked.failureReason, 'mcpOAuthUnavailable')
+        assert.equal(checked.authorizationUrl, null)
+        assert.equal((await connections.detail(owner, installed.id)).status, 'check_failed')
       } finally { failRefresh = false }
+      assert.equal((await connections.check(owner, installed.id)).status, 'connected')
       const { mcpAuthority } = await personal.snapshot(member, pool, workspace)
       assert.ok(mcpAuthority)
       const [native] = await personal.nativeMcpConnections(member, mcpAuthority)
