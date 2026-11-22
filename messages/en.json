@@ -1055,7 +1055,8 @@
       },
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "Installation commands are unavailable",
-      "reconnectTitle": "Reconnect"
+      "reconnectTitle": "Reconnect",
+      "desktopLink": "Download the desktop app"
     },
     "setup": "Set up repository and agent",
     "offlineSince": "Offline · {time}",
@@ -2300,6 +2301,9 @@
       "issue-states": {
         "title": "Issue states",
         "nav": "Issue states and labels"
+      },
+      "team-skills": {
+        "title": "Team skills"
       }
     },
     "appearance": {
@@ -3875,6 +3879,22 @@
         "purple": "Purple",
         "red": "Red"
       }
+    },
+    "teamSkills": {
+      "title": "Team skills",
+      "empty": "No team skills yet",
+      "loadError": "The team skill registry could not be read.",
+      "actError": "Could not be changed. Try again.",
+      "approve": "Approve",
+      "withdraw": "Withdraw",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "withdrawn": "Withdrawn"
+      },
+      "withdrawTitle": "Withdraw {name}?",
+      "withdrawBody": "Withdrawal is permanent: unfinished runs that selected this version stop.",
+      "cancel": "Cancel"
     }
   },
   "TelegramBot": {
@@ -4282,7 +4302,8 @@
       "modelRejected": "Model request rejected",
       "quotaChecking": "Subscription usage unconfirmed",
       "runtimeUnavailable": "Subscription unsupported in this runtime",
-      "modelNotReported": "The cloud computer didn't report this model"
+      "modelNotReported": "The cloud computer didn't report this model",
+      "modelRequired": "No model set up — the request did not run"
     },
     "quota": {
       "used": "{name} quota used up",
@@ -5570,7 +5591,17 @@
       "open": "Open panel",
       "filterBot": "Filter by dispatcher",
       "allBots": "All dispatchers",
-      "closeAllThreads": "Close all threads"
+      "closeAllThreads": "Close all threads",
+      "addMember": "Add members",
+      "addMembers": "Add members to {group}",
+      "noMoreBots": "All your Bots are already in this group.",
+      "membersWriteError": "The members could not be changed.",
+      "cancel": "Cancel",
+      "add": "Add",
+      "removeMember": "Remove {name}",
+      "memberRemoved": "Removed {name}",
+      "undo": "Undo",
+      "leadRestoreError": "{name} is back; their lead role may not have been restored."
     },
     "suggestions": {
       "title": "Suggestions",
@@ -8521,7 +8552,8 @@
       "wakeExhausted": "Reply retries stopped",
       "apiBalance": "API balance too low",
       "replyIncomplete": "Reply did not finish. Please try again.",
-      "replyFailed": "Reply failed"
+      "replyFailed": "Reply failed",
+      "modelRequired": "No model set up — the request did not run"
     },
     "item": "{count} item",
     "items": "{count} items"

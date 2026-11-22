@@ -10,6 +10,7 @@ import { SecurityAndSignIn } from '@ui-slot/settings-security'
 import { RestoreSetupChecklist } from '@/components/coordinator/setup-checklist'
 import { PreferencesSettings } from '@ui-slot/settings-preferences'
 import { AppearanceSettings } from '@/components/settings/appearance-settings'
+import { TeamSkillsSettings } from './team-skills-settings'
 import { GeneralInterface } from '@/components/settings/general-interface'
 import { WorkspaceGeneral } from '@ui-slot/settings-general'
 import { MembersScreen } from '@ui-slot/settings-members'
@@ -160,6 +161,7 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
 
     case 'environments': return workspaceId && !preview ? <><EnvironmentsSettings key={workspaceId} workspaceId={workspaceId} /><SecretsPage side="workspace" onSide={() => onSection('logins')} workspaceId={workspaceId} workspaceName={workspaceName} waiting={waiting} /></> : waiting
     case 'issue-states': return workspaceId && !preview ? <IssueStatesSettings key={workspaceId} workspaceId={workspaceId} /> : waiting
+    case 'team-skills': return workspaceId && !preview ? <TeamSkillsSettings key={workspaceId} admin={admin} workspaceId={workspaceId} /> : waiting
     case 'logins':
     case 'secrets': return <SecretsPage side={section === 'logins' ? 'mine' : 'workspace'} onSide={side => onSection(side === 'mine' ? 'logins' : 'environments')} workspaceId={workspaceId && !preview ? workspaceId : undefined} workspaceName={workspaceName} waiting={waiting} />
     case 'preferences': return <><GeneralInterface /><PreferencesSettings />{workspaceId && !preview && !workspaceError && <RestoreSetupChecklist key={workspaceId} workspaceId={workspaceId} />}</>

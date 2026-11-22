@@ -20,7 +20,7 @@ test('every nav item has exactly one section, in the Figma 1508:2 group order', 
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !s.withheld && !s.unbuilt && s.sidebar !== false).map(s => s.id), ['preferences', 'appearance', 'account', 'security', 'notifications', 'models', 'environments', 'connections', 'developer', 'computers'])
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld).map(s => s.id), ['instructions', 'threads'])
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'review' && !s.unbuilt && !s.withheld).map(s => s.id), [])
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'organization', 'issue-states', 'members', 'teams', 'billing', 'usage', 'audit', 'cloud'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'organization', 'issue-states', 'team-skills', 'members', 'teams', 'billing', 'usage', 'audit', 'cloud'])
 })
 
 test('old links keep landing on the page that now holds their content, and deleted bot-permissions is not a legacy alias', () => {
@@ -123,7 +123,7 @@ test('a current id wins over a legacy alias with the same name', () => {
 test('a personal workspace has every setting of the workspace itself; only what is between people is a team\'s', () => {
   const personal = visibleSettingsSections({ admin: true, personal: true }).map(s => s.id)
   const account = SETTINGS_SECTIONS.filter(s => (s.group === 'personal' || s.group === 'agent') && SETTINGS_SECTION_STATUS[s.id] === 'available' && s.sidebar !== false).map(s => s.id)
-  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'billing', 'usage'])
+  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'team-skills', 'billing', 'usage'])
   const team = visibleSettingsSections({ admin: true }).map(s => s.id)
   for (const id of ['general', 'organization', 'members', 'teams', 'environments', 'audit', 'usage', 'billing']) assert.ok(team.includes(id), id)
   assert.equal(team.includes('permissions'), false)

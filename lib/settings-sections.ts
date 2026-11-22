@@ -14,7 +14,7 @@ export type SettingsSectionId =
   | 'shortcuts' | 'git' | 'review-repositories' | 'review-config' | 'activity'
   | 'general' | 'issue-states' | 'members' | 'teams' | 'permissions' | 'secrets'
   | 'audit' | 'organization' | 'usage' | 'billing' | 'cloud'
-  | 'referrals' | 'experiments' | 'cloud-credentials'
+  | 'referrals' | 'experiments' | 'cloud-credentials' | 'team-skills'
 
 /**
  * Three-tier display rule (#3118):
@@ -45,6 +45,7 @@ export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, Setting
   general: 'available',
   organization: 'available',
   'issue-states': 'available',
+  'team-skills': 'available',
   members: 'available',
   teams: 'available',
   billing: 'available',
@@ -169,6 +170,7 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'organization', group: 'workspace', title: 'Organization' },
   // Capy's Issue states (decision 2026-11-19-2115): members read them, admins edit them.
   { id: 'issue-states', group: 'workspace', title: 'Issue states' },
+  { id: 'team-skills', group: 'workspace', title: 'Team skills' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
   { id: 'billing', group: 'workspace', title: 'Billing' },
