@@ -456,31 +456,9 @@ export async function getThreadMachine(issueId: string | null, runId: string): P
   })
 }
 
-/**
- * What this thread's run holds (lib/context-usage.ts). One query counts every
- * character in SQL and returns no text: a cursor read must stay small, so the
- * brief cannot be sent again to be measured (tests/thread-detail-bytes.db.test.ts).
- * It covers the whole run chain and the whole stored brief whatever the cursor
- * returned, so a cursor read reports the same usage as a full one.
- */
+/** What this thread's run holds; the one reader is lib/context-usage-read.ts. */
 async function readContextUsage(runIds: string[], rootRunId: string, latestRunId: string): Promise<import('@/lib/context-usage').ContextUsage> {
-  const { CONTEXT_CHARS_SQL, contextUsageFromCounts } = await import('@/lib/context-usage')
-  const { rows: [counted] } = await pool.query<Record<string, string | number | null>>(CONTEXT_CHARS_SQL, [runIds, rootRunId, latestRunId])
-  const count = (value: unknown) => Number(value ?? 0) || 0
-  const counts = (ascii: unknown, other: unknown) => ({ ascii: count(ascii), other: count(other) })
-  return contextUsageFromCounts({
-    prompt: counts(counted?.promptAscii, counted?.promptOther),
-    // The task range is sliced in SQL by the recorded code points, and is empty
-    // when the range does not hold (lib/thread-prompt.ts rejects it there).
-    task: counts(counted?.taskAscii, counted?.taskOther),
-    messages: counts(counted?.messageAscii, counted?.messageOther),
-    conversation: counts(counted?.conversationAscii, counted?.conversationOther),
-    ...(typeof counted?.selectedModel === 'string' || typeof counted?.servedModel === 'string' ? { composerModel: {
-      selected: typeof counted?.selectedModel === 'string' ? counted.selectedModel : null,
-      served: typeof counted?.servedModel === 'string' ? counted.servedModel : null,
-    } } : {}),
-    model: typeof counted?.model === 'string' ? counted.model : null,
-  })
+  return (await import('@/lib/context-usage-read')).readContextUsage(pool, runIds, rootRunId, latestRunId)
 }
 
 /** Load the whole-history estimate after the conversation's first page. */
