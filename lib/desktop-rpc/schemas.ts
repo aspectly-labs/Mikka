@@ -166,6 +166,8 @@ export const desktopActionSchemas = {
   'agents.stopRun': oneId,
   'agents.resumeQuotaPausedRunOnApiKey': oneId,
   'agents.retryQuotaPausedRun': oneId,
+  'agents.resumeQuotaPausedRunOnCredits': tuple(object({ runId: uuid, model: z.string() })),
+  'agents.resumeAllQuotaPausedOnCredits': tuple(object({ model: z.string() })),
   'agents.sendDeviceCommand': tuple(object({ deviceId: uuid, kind: z.enum(['redetect', 'restart', 'update']) })),
   'app-policy.getAppPolicy': inWorkspace,
   'app-policy.updateAppPolicy': tuple(setAppPolicyInput, workspace),

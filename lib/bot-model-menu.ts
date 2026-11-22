@@ -68,15 +68,22 @@ export async function botModelMenu(
   })();
   const preferenceRead = botModelPreference(pool, scope, botId);
   const catalogueRead = enabledRead.then(enabled => enabled ? creditsModels(scope.ownerId) : []);
+  // #2938 (2): LiteLLM list pricing rides every menu option, whichever route serves it.
+  const pricingRead = import("./model-catalog-server").then(async ({ modelCatalog }) =>
+    new Map((await modelCatalog()).map(model => [model.id, model.pricing] as const))).catch(() => new Map<string, never>());
   const ownerNamesRead = keysRead.then(({ keys }) => {
     const sharedOwners = [...new Set(keys.filter((key) => !key.mine).map((key) => key.ownerId))];
     return sharedOwners.length ? memberNames(scope.workspaceId, sharedOwners) : new Map<string, string>();
   });
   const choiceRead = Promise.all([subscriptionsRead, keysRead, preferenceRead]).then(([{ allRows, rows }, { allKeys, keys }, preference]) =>
     resolveBotModelChoice(pool, settings, scope, botId, preference, { rows, keys, now, fallback: { rows: allRows, keys: allKeys } }));
-  const [{ rows }, { keys }, { points }, enabled, preference, catalogue, ownerNames, choice] = await Promise.all([
-    subscriptionsRead, keysRead, pointsRead, enabledRead, preferenceRead, catalogueRead, ownerNamesRead, choiceRead,
+  const [{ rows }, { keys }, { points }, enabled, preference, catalogue, ownerNames, choice, pricing] = await Promise.all([
+    subscriptionsRead, keysRead, pointsRead, enabledRead, preferenceRead, catalogueRead, ownerNamesRead, choiceRead, pricingRead,
   ]);
+  const priceFor = (modelId: string) => {
+    const price = pricing.get(modelId);
+    return price ? { price: { input: price.input, output: price.output } } : {};
+  };
   // Claude first, then ChatGPT/Codex, as the resolver orders them (orchestration §2).
   const ordered = [
     ...rows.filter((row) => row.provider === "claude"),
@@ -93,11 +100,14 @@ export async function botModelMenu(
       options: [],
     };
     subscriptions.set(key, group);
-    group.options.push({ id: row.bindingId, modelId: row.modelId, provider: row.provider });
+    group.options.push({ id: row.bindingId, modelId: row.modelId, provider: row.provider,
+      ...priceFor(row.modelId),
+      route: { source: "subscription", connectionId: String(row.connectionId), ...(group.credentialLabel ? { label: group.credentialLabel } : {}) } });
   }
   // API keys and custom providers that reach bot chats (C22): the person's own, then teammates' shared ones.
   const keyOptions = (key: (typeof keys)[number]) =>
-    key.models.map((model) => ({ id: apiKeyOptionId(key.id, model), modelId: model, provider: key.provider }));
+    key.models.map((model) => ({ id: apiKeyOptionId(key.id, model), modelId: model, provider: key.provider,
+      ...priceFor(model), route: { source: "byok" as const, keyId: key.id, label: keyLabel(key) } }));
   const keyLabel = (key: (typeof keys)[number]) => [key.name, key.last4 ? `····${key.last4}` : null].filter(Boolean).join(" ") || key.provider;
   const ownKeys = keys.filter((key) => key.mine);
   // Mikka 额度: every catalogue model, listed whenever the source is on; the balance is checked when a message is sent
@@ -108,6 +118,7 @@ export async function botModelMenu(
     id: creditsOptionId(model.id), modelId: model.id, provider: "mikka", ...(model.name ? { name: model.name } : {}),
     ...(model.pricing ? { price: { input: model.pricing.input, output: model.pricing.output } } : {}),
     ...(featured ? { featured } : {}), ...(hostedSource ? { hostedSource } : {}),
+    route: { source: "credits" as const },
   });
   const { FEATURED_MODELS } = await import("./model-catalog");
   const featured = new Set<string>(FEATURED_MODELS);

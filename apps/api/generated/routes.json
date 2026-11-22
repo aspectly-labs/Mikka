@@ -494,6 +494,25 @@
       "sourceHash": "20cb235d69ee4abe87809b5596e40df712b48b2ae21ead1892fbec260b4db697"
     },
     {
+      "path": "/mikka/api/connections/[id]/models",
+      "template": "/api/connections/[id]/models",
+      "source": "app/api/connections/[id]/models/route.ts",
+      "methods": [
+        "GET",
+        "PATCH"
+      ],
+      "sourceHash": "c41211140873357b302b038386a0f9eea57746bb79eb912a89ac20c4cee3572c"
+    },
+    {
+      "path": "/mikka/api/connections/[id]/models/refresh",
+      "template": "/api/connections/[id]/models/refresh",
+      "source": "app/api/connections/[id]/models/refresh/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "7d6e63ed75b6590e892a26db05c00d330e4305ff3fb9221926974353057f3923"
+    },
+    {
       "path": "/mikka/api/conversation-links/[id]/messages",
       "template": "/api/conversation-links/[id]/messages",
       "source": "app/api/conversation-links/[id]/messages/route.ts",

@@ -144,12 +144,20 @@ export async function planQuotaExhausted(query: Query, run: Run): Promise<QuotaP
 }
 
 /** The continuation's definition: on the key, or (null key) on the run's own credential. */
-async function continuationDefinition(run: Run, prompt: string, key: RunApiKey | null, queued?: Run): Promise<WorkerDefinitionSnapshot | null> {
+async function continuationDefinition(run: Run, prompt: string, key: RunApiKey | null, queued?: Run, creditsModel?: string): Promise<WorkerDefinitionSnapshot | null> {
   if (!run.workspaceId || (queued && queued.workspaceId !== run.workspaceId)) throw new ActionFailureError('executionAccountUnavailable')
   const snapshot = run.agentDefinition!
   await revalidateExecutionIdentity(pool, run)
   const definition = key ? apiKeyWorkerDefinition(snapshot, prompt, key) : retryWorkerDefinition(snapshot, prompt)
   if (definition) {
+    // #2938 (5): a credits continuation runs the chosen LiteLLM model on Mikka 额度.
+    if (creditsModel) {
+      definition.model = creditsModel
+      definition.cliModelSelection = 'explicit'
+      delete definition.subscription
+      delete (definition as Record<string, unknown>).apiKey
+      definition.definitionDigest = workerDefinitionDigest(definition)
+    }
     // Cloud continuations are queued on the Bot's parent device before a new child is provisioned.
     // Copy standing instructions from the source, but retain the new host-admitted placement.
     if (queued) {
@@ -169,7 +177,7 @@ async function continuationDefinition(run: Run, prompt: string, key: RunApiKey |
 }
 
 /** A device run's continuation, in the caller's transaction, after the original ended. */
-async function queueDeviceContinuation(tx: Tx, query: Query, run: Run, key: RunApiKey | null): Promise<string> {
+async function queueDeviceContinuation(tx: Tx, query: Query, run: Run, key: RunApiKey | null, creditsModel?: string): Promise<string> {
   await assertRunProjectResources(query, run)
   const id = crypto.randomUUID()
   const copied = quotaContinuationPrompt(run)
@@ -181,7 +189,7 @@ async function queueDeviceContinuation(tx: Tx, query: Query, run: Run, key: RunA
     // The continuation keeps the paused run's entry; a legacy run keeps the
     // host's automatic recovery as its origin rather than guessing 'web'.
     ...resolveRunOrigin({ sourceRun: run, defaultOrigin: run.source === 'mcp' ? 'api' : 'automation' }),
-    agentDefinition: await continuationDefinition(run, prompt, key), deviceId: run.deviceId, deviceRepoId: run.deviceRepoId,
+    agentDefinition: await continuationDefinition(run, prompt, key, undefined, creditsModel), deviceId: run.deviceId, deviceRepoId: run.deviceRepoId,
     status: 'queued', kind: run.kind, baseBranch: run.baseBranch, ...copied, attempt: run.attempt, retryOf: run.id,
   })
   await runListChanged(tx, id)
@@ -190,7 +198,7 @@ async function queueDeviceContinuation(tx: Tx, query: Query, run: Run, key: RunA
 }
 
 /** A cloud run's continuation goes through the cloud queue (like a lost run's), keyed so a repeat finds the same run. */
-export async function queueCloudQuotaContinuation(hint: Run, cloud: CloudBinding, key: RunApiKey | null): Promise<string> {
+export async function queueCloudQuotaContinuation(hint: Run, cloud: CloudBinding, key: RunApiKey | null, creditsModel?: string): Promise<string> {
   if (!hint.workspaceId || cloud.workspaceId !== hint.workspaceId) throw new ActionFailureError('executionAccountUnavailable')
   return withQuotaRunWorkspace(hint.userId, hint.id, async workspaceId => {
     if (workspaceId !== hint.workspaceId || workspaceId !== cloud.workspaceId) throw new ActionFailureError('executionAccountUnavailable')
@@ -237,7 +245,7 @@ export async function queueCloudQuotaContinuation(hint: Run, cloud: CloudBinding
         const [queued] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, run.userId), eq(agentRuns.workspaceId, workspaceId))).limit(1)
         if (!queued) throw new ActionFailureError('runNotFound')
         await db.update(agentRuns).set({ retryOf: run.id, attempt: run.attempt, kind: run.kind, baseBranch: run.baseBranch,
-          agentDefinition: await continuationDefinition(run, queued.prompt, key, queued), updatedAt: new Date() }).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, run.userId), eq(agentRuns.workspaceId, workspaceId)))
+          agentDefinition: await continuationDefinition(run, queued.prompt, key, queued, creditsModel), updatedAt: new Date() }).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, run.userId), eq(agentRuns.workspaceId, workspaceId)))
         await runListChanged(client, runId)
         await runChanged(client, runId)
         return runId
@@ -275,7 +283,10 @@ export async function settleQuotaExhausted(tx: Tx, run: Run, plan: QuotaPlan, re
     await recordCoordinatorEvent(tx, runCredentialSwitchedEvent(run, plan.from, plan.key, retryRunId, resetsAt))
     return { cloud: false, deviceId: run.deviceId }
   }
-  await recordCoordinatorEvent(tx, runQuotaPausedEvent(run, plan.from, resetsAt, plan.why))
+  const paused = await tx.select({ id: agentRuns.id }).from(agentRuns)
+    .where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.status, 'paused'), eq(agentRuns.pauseReason, 'quota_exhausted')))
+  const event = runQuotaPausedEvent(run, plan.from, resetsAt, plan.why)
+  await recordCoordinatorEvent(tx, { ...event, payload: { ...event.payload, pausedThreadIds: paused.map(row => String(row.id)) } })
   return { cloud: false }
 }
 
@@ -341,10 +352,10 @@ async function lockPaused(tx: Pick<Tx, 'select' | 'execute'>, userId: string, ru
  * subscription or login (if the quota is still out, it pauses again).
  * Owner only; a repeat returns the continuation already queued.
  */
-async function continuePausedRun(userId: string, runId: string, mode: 'apiKey' | 'original'): Promise<{ runId: string }> {
+async function continuePausedRun(userId: string, runId: string, mode: 'apiKey' | 'original' | 'credits', creditsModel?: string): Promise<{ runId: string }> {
   return withQuotaRunWorkspace(userId, runId, async workspaceId => {
   const client = await pool.connect()
-  let cloud: { run: Run; plan: QuotaScope; key: QuotaApiKey | null } | null = null
+  let cloud: { run: Run; plan: QuotaScope; key: QuotaApiKey | null; creditsModel?: string } | null = null
   let result: { runId: string } | null = null
   let wake: string | null | undefined
   try {
@@ -356,9 +367,9 @@ async function continuePausedRun(userId: string, runId: string, mode: 'apiKey' |
       if (!scope) throw new ActionFailureError('runInvalid')
       const key = mode === 'apiKey' ? await quotaKey(client, run, scope) ?? null : null
       if (mode === 'apiKey' && !key) throw new ActionFailureError('apiKeyNotFound')
-      if (scope.cloud) { cloud = { run, plan: scope, key }; return }
+      if (scope.cloud) { cloud = { run, plan: scope, key, creditsModel }; return }
       if (!await endPausedRun(tx, run.id, userId, workspaceId)) throw new ActionFailureError('runNotActive')
-      const retryRunId = await queueDeviceContinuation(tx, client, run, key)
+      const retryRunId = await queueDeviceContinuation(tx, client, run, key, mode === 'credits' ? creditsModel : undefined)
       if (key) await recordCoordinatorEvent(tx, runCredentialSwitchedEvent(run, scope.from, key, retryRunId, run.quotaResetsAt?.toISOString() ?? null))
       wake = run.deviceId
       result = { runId: retryRunId }
@@ -366,10 +377,10 @@ async function continuePausedRun(userId: string, runId: string, mode: 'apiKey' |
   } finally { client.release() }
   if (wake) notifyDeviceWork(wake)
   if (result) return afterContinue(userId, result)
-  const pending = cloud as { run: Run; plan: QuotaScope; key: QuotaApiKey | null } | null
+  const pending = cloud as { run: Run; plan: QuotaScope; key: QuotaApiKey | null; creditsModel?: string } | null
   if (!pending) throw new ActionFailureError('runNotActive')
   let retryRunId: string
-  try { retryRunId = await queueCloudQuotaContinuation(pending.run, pending.plan.cloud!, pending.key) }
+  try { retryRunId = await queueCloudQuotaContinuation(pending.run, pending.plan.cloud!, pending.key, pending.creditsModel) }
   catch (cause) {
     if (cause instanceof ActionFailureError) throw cause
     throw new ActionFailureError('runInvalid', undefined, undefined, { cause })
@@ -401,6 +412,28 @@ export function resumeQuotaPausedRunOnApiKey(userId: string, runId: string) {
 /** For the quota card: retry a quota-paused run with its original credential (after the reset). */
 export function retryQuotaPausedRun(userId: string, runId: string) {
   return continuePausedRun(userId, runId, 'original')
+}
+
+/** For the quota card: move a quota-paused run onto a Mikka 额度 model. */
+export function resumeQuotaPausedRunOnCredits(userId: string, runId: string, model: string) {
+  return continuePausedRun(userId, runId, 'credits', model)
+}
+
+/** #2938 (5): every quota-paused run the owner has — the bulk switch's candidates. */
+export async function pausedQuotaRuns(userId: string): Promise<string[]> {
+  return (await pool.query<{ id: string }>(
+    `SELECT id::text AS id FROM agent_runs WHERE "userId"=$1 AND status='paused' AND "pauseReason"='quota_exhausted' AND "deletedAt" IS NULL ORDER BY "createdAt"`,
+    [userId])).rows.map(row => row.id)
+}
+
+/** #2938 (5): bulk-switch all quota-paused threads to Mikka 额度; per-run failures are skipped. */
+export async function resumeAllQuotaPausedOnCredits(userId: string, model: string): Promise<{ runId: string; continued: string | null }[]> {
+  const results: { runId: string; continued: string | null }[] = []
+  for (const runId of await pausedQuotaRuns(userId)) {
+    try { results.push({ runId, continued: (await continuePausedRun(userId, runId, 'credits', model)).runId }) }
+    catch { results.push({ runId, continued: null }) }
+  }
+  return results
 }
 
 /** For the quota card: whether a key the paused run could go on with exists now (added since it paused). */

@@ -99,6 +99,8 @@ const functions = {
   'agents.stopRun': actions1.stopRun,
   'agents.resumeQuotaPausedRunOnApiKey': actions1.resumeQuotaPausedRunOnApiKey,
   'agents.retryQuotaPausedRun': actions1.retryQuotaPausedRun,
+  'agents.resumeQuotaPausedRunOnCredits': actions1.resumeQuotaPausedRunOnCredits,
+  'agents.resumeAllQuotaPausedOnCredits': actions1.resumeAllQuotaPausedOnCredits,
   'agents.sendDeviceCommand': actions1.sendDeviceCommand,
   'app-policy.getAppPolicy': actions2.getAppPolicy,
   'app-policy.updateAppPolicy': actions2.updateAppPolicy,
