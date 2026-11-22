@@ -187,6 +187,8 @@ test('a policy refresh never submits an explicit Private selection as Shared', a
   privateAllowed = false
   await act(async () => { await refresh() })
   assert.equal(props!.access?.value, null)
+  assert.equal(props!.access?.label, 'Coordinator.modelPicker.unavailable')
+  assert.deepEqual(props!.access?.choices.map(choice => choice.value), ['shared'])
   assert.equal(props!.access?.disabled, false)
   await act(async () => props!.onSubmit())
   assert.equal(created.length, 0)
