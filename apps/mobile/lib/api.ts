@@ -1,5 +1,5 @@
 import { Platform } from 'react-native'
-import * as SecureStore from 'expo-secure-store'
+import { secureStorage as SecureStore } from '@/lib/secure-storage'
 import { validTraceparent } from '@mikka/protocol/trace-context'
 import { authClient } from '@/lib/auth'
 import { currentAccount } from '@/lib/config'
