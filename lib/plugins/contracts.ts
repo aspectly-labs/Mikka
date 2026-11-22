@@ -31,7 +31,18 @@ export const installSkillSchema = z.object({
   source: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9_.-]{1,100}$/),
   slug: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/),
 }).strict()
-export const updateSkillSchema = z.object({ id: z.uuid(), enabled: z.boolean() }).strict()
+export const createManualSkillSchema = z.object({
+  name: z.string().trim().min(1).max(80).refine(value => !/[\r\n\0]/.test(value)),
+  slug: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/),
+  instructions: z.string().trim().min(1).max(12_000).refine(value => !value.includes('\0')),
+}).strict()
+export const createSkillSchema = z.union([installSkillSchema, createManualSkillSchema])
+export const updateSkillSchema = z.object({
+  id: z.uuid(),
+  enabled: z.boolean().optional(),
+  name: z.string().trim().min(1).max(80).refine(value => !/[\r\n\0]/.test(value)).optional(),
+  instructions: z.string().trim().min(1).max(12_000).refine(value => !value.includes('\0')).optional(),
+}).strict().refine(value => value.enabled !== undefined || value.name !== undefined || value.instructions !== undefined)
 export type McpServerView = {
   id: string; name: string; url: string; transport: 'http' | 'sse' | 'stdio'; enabled: boolean;
   revision: number; authKind: 'header' | 'none' | 'env'; createdAt: string;

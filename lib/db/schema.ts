@@ -38,6 +38,24 @@ export const userOnboarding = pgTable('user_onboarding', {
   completedAt: timestamp('completedAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/** Native WebAuthn passkeys (@better-auth/passkey@1.7.12). */
+export const passkeys = pgTable('passkey', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  publicKey: text('publicKey').notNull(),
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  credentialID: text('credentialID').notNull(),
+  counter: integer('counter').notNull().default(0),
+  deviceType: text('deviceType').notNull(),
+  backedUp: boolean('backedUp').notNull().default(false),
+  transports: text('transports'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
+  aaguid: text('aaguid'),
+}, table => [
+  uniqueIndex('passkey_credential_id_unique').on(table.credentialID),
+  index('passkey_user_id_idx').on(table.userId),
+])
+
 /** An unfinished first-run guide's place: its step and what was done or skipped (decision 2026-11-15-1900). */
 export const userOnboardingProgress = pgTable('user_onboarding_progress', {
   userId: text('userId').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
@@ -203,6 +221,8 @@ export const bots = pgTable('bots', {
   name: text('name').notNull(),
   /** Public duties visible to group participants; never populated from private instructions. */
   publicRole: text('publicRole').notNull().default(''),
+  /** Private standing instructions for this Bot (≤2000 chars); never exposed to group participants or mixed with agents.instructions. */
+  instructions: text('instructions').notNull().default(''),
   /** A bloub colour id, see components/nav/bot-avatar.tsx. */
   color: text('color').notNull().default('encre'),
   shape: text('shape').notNull().default('cercle'),
@@ -402,6 +422,8 @@ export const devices = pgTable('devices', {
   computerUse: jsonb('computerUse').$type<{ installed: boolean; version: string | null }>().notNull().default({ installed: false, version: null }),
   /** Off: the device stays registered but the orchestrator gives it no runs. */
   enabled: boolean('enabled').notNull().default(true),
+  /** Off: runs on this device receive no local or cloud desktop computer-use grant (binary allow/deny). */
+  computerUseEnabled: boolean('computerUseEnabled').notNull().default(true),
   /** Retired 「允许自动调度」 (decision 2026-11-02-1400 merged it into enabled, 参与调度); kept for old rows, no longer read. */
   autoSchedule: boolean('autoSchedule'),
   /** The person renamed it; a daemon re-register keeps this name. */
@@ -461,6 +483,7 @@ export const deviceTokenDevices = pgTable('device_token_devices', {
 export const deviceRepos = pgTable('device_repos', {
   id: uuid('id').primaryKey(), deviceId: uuid('deviceId').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   userId: text('userId').notNull(), repoPath: text('repoPath').notNull(), remoteUrl: text('remoteUrl'),
+  localPath: text('localPath'),
   baseBranch: text('baseBranch'), verifyCommand: text('verifyCommand'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('device_repos_key').on(table.deviceId, table.repoPath)])

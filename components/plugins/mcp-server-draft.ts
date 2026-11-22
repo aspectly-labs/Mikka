@@ -1,3 +1,5 @@
+const FORBIDDEN_MCP_HEADER = /^(?:host|cookie|set-cookie|connection|content-length|transfer-encoding|proxy-.*|x-forwarded-.*)$/i
+
 /** Values entered in the connection form. Credentials are write-only. */
 export type McpServerDraft = {
   name: string
@@ -22,14 +24,24 @@ export function mcpServerInput(draft: McpServerDraft): McpCreateInput {
     if (!row.name && !row.value) continue
     const name = row.name.trim()
     const key = draft.transport === 'stdio' ? name : name.toLowerCase()
-    if (!name || !row.value || names.has(key) ||
-      !(draft.transport === 'stdio' ? /^[A-Za-z_][A-Za-z0-9_]*$/ : /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/).test(name)) throw new Error('invalidMcpVariables')
+    const validName = draft.transport === 'stdio'
+      ? /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
+      : (/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) && !FORBIDDEN_MCP_HEADER.test(name))
+    if (!name || !row.value || names.has(key) || !validName) throw new Error('invalidMcpVariables')
     names.add(key)
     values[name] = row.value
   }
   const base = { name: draft.name.trim(), enabled: true as const }
   if (!base.name) throw new Error('invalidMcpName')
-  if (draft.transport !== 'stdio') return { ...base, transport: draft.transport, url: draft.url.trim(), ...(names.size ? { headers: values } : {}) }
+  if (draft.transport !== 'stdio') {
+    const url = draft.url.trim()
+    let parsedUrl: URL
+    try { parsedUrl = new URL(url) } catch { throw new Error('invalidMcpUrl') }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
+      throw new Error('invalidMcpUrl')
+    }
+    return { ...base, transport: draft.transport, url, ...(names.size ? { headers: values } : {}) }
+  }
   const command = draft.command.trim()
   if (!command) throw new Error('invalidMcpCommand')
   return { ...base, transport: 'stdio', command,

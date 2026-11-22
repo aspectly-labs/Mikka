@@ -1,8 +1,9 @@
 import { settingsPatchInput, settingsResetInput } from '@/lib/settings/registry'
 import { AVATAR_MAX_BYTES, isAvatarContentType } from '../account/avatar-file'
+import { deletePasskeyInputSchema, renamePasskeyInputSchema } from '@/lib/account/passkeys-contract'
 import { threadModelChoice } from '@/lib/thread-model-choice'
 import { archiveIdleDays, conversationTargetInput, directoryInput } from '@/lib/conversation-directory-input'
-import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
+import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
 import { createOnlyCommand, dispatchReceiptInput } from '@/lib/task-create-command'
 import { taskListPageInput } from '@/lib/task-list-page'
 import { taskPresentationsInput } from '@/lib/task-presentation-input'
@@ -21,12 +22,20 @@ import { API_KEY_PRESETS } from '@/lib/model-api-key-providers'
 import { gatewayFeaturesSchema } from '@/lib/model-gateway/features'
 import { setAppPolicyInput } from '@/lib/app-policy/apps'
 import { POINTS_PURCHASE_AMOUNTS } from '@/lib/billing/hosted-usage'
+import { autoRechargeInputSchema } from '@/lib/billing/auto-recharge-schema'
+import {
+  deleteDeviceRepositoryInput,
+  patchDeviceRepositoryInput,
+  updateDevicePolicyInput,
+  upsertDeviceRepositoryInput,
+} from '@/lib/settings/device-policy-contract'
 import { MAX_READ_BATCH, READ_BATCH_ACTIONS, type ReadBatchCall } from './read-batch-contract'
 import { USER_FACT_KINDS } from '@/lib/profile/kinds'
 import { definitionSchema as scheduleDefinition, webhookBatchListInput, webhookBatchInput } from '@/lib/schedules/contract'
-import { DEVICE_DESCRIPTION_MAX } from '@/lib/device-name'
+import { DEVICE_DESCRIPTION_MAX, DEVICE_NAME_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
 import { THREAD_COST_GROUPINGS } from '@/lib/thread-cost-grouping'
+import { updateWorkspaceInput } from '@/lib/workspace-admin/general-input'
 
 const uuid = z.uuid()
 const id = z.string().min(1).max(200)
@@ -44,7 +53,8 @@ const none = tuple()
 const inWorkspace = tuple(workspace)
 /** Bot Profile's settings (lib/bot-settings.ts); the server checks each again. */
 const botSettingFields = { alias: text(64).nullable().optional(), environmentId: uuid.nullable().optional(), crewTarget: taskDestinationSchema.nullable().optional(),
-  defaultAgent: z.enum(BOT_DEFAULT_AGENTS).nullable().optional(), defaultProfileId: uuid.nullable().optional(), runsOn: botRunsOnSchema.nullable().optional() }
+  defaultAgent: z.enum(BOT_DEFAULT_AGENTS).nullable().optional(), defaultProfileId: uuid.nullable().optional(), runsOn: botRunsOnSchema.nullable().optional(),
+  instructions: text(8000).transform(value => value.trim()).refine(value => [...value].length <= 2000).optional() }
 const memoryScope = z.discriminatedUnion('kind', [
   object({ kind: z.literal('global'), ids: z.tuple([]) }),
   object({ kind: z.literal('workspaces'), ids: z.array(uuid).min(1).max(50) }),
@@ -140,8 +150,12 @@ export const desktopActionSchemas = {
   'account.revokeOtherSessions': none,
   'account.requestDataExport': none,
   'account.deleteAccount': tuple(object({ email: z.email().max(254) })),
+  'passkeys.listPasskeys': none,
+  'passkeys.renamePasskey': tuple(renamePasskeyInputSchema),
+  'passkeys.deletePasskey': tuple(deletePasskeyInputSchema),
   'agents.listDevices': none,
   'agents.pollDevices': none,
+  'agents.createDeviceToken': tuple(object({ name: text(DEVICE_NAME_MAX).trim().min(1) })),
   'agents.setDeviceEnabled': tuple(object({ deviceId: uuid, enabled: bool })),
   'agents.renameDevice': tuple(uuid, text(100).trim().min(1)),
   'agents.setDeviceDescription': tuple(uuid, z.string().trim().max(DEVICE_DESCRIPTION_MAX)),
@@ -189,6 +203,15 @@ export const desktopActionSchemas = {
   'billing.startPointsPurchase': tuple(uuid, z.number().refine(amount => (POINTS_PURCHASE_AMOUNTS as readonly number[]).includes(amount))),
   'billing.startChatPointsPurchase': tuple(z.number().finite().positive(), bot),
   'billing.startCardVerification': inWorkspace,
+  'billing.getBillingSettings': inWorkspace,
+  'billing.saveAutoRechargePolicy': tuple(autoRechargeInputSchema, workspace),
+  'devices.getPolicy': tuple(uuid, workspace),
+  'devices.updatePolicy': tuple(uuid, updateDevicePolicyInput, workspace),
+  'devices.listRepositories': oneId,
+  'devices.upsertRepository': tuple(uuid, upsertDeviceRepositoryInput),
+  'devices.patchRepository': tuple(uuid, patchDeviceRepositoryInput),
+  'devices.deleteRepository': tuple(uuid, deleteDeviceRepositoryInput),
+  'ops-metrics.getWorkspaceOpsMetrics': inWorkspace,
   'bots.listBots': none,
   'bots.pollBots': inWorkspace,
   'bots.createBot': tuple(object({ name: text(200).trim().min(1), color: text(50).min(1), shape: text(50).min(1), model: text(1000).nullish(), repository: text(2048).nullish(), ...botSettingFields,
@@ -283,6 +306,11 @@ export const desktopActionSchemas = {
   'settings.resetPersonalSettings': tuple(settingsResetInput, workspace),
   'settings.resetWorkspaceSettings': tuple(uuid, settingsResetInput),
   'settings.getSettingsSchema': none,
+  'settings.getInstructionPreview': tuple(object({ workspaceId: workspace, environmentId: uuid.optional(), botId: uuid.optional() }).optional()),
+  'project-resources.getEnvironmentInstructions': tuple(uuid, uuid),
+  'project-resources.saveEnvironmentInstructions': tuple(saveEnvironmentInstructionsInput),
+  'bots.getBotInstructions': tuple(uuid, workspace),
+  'bots.saveBotInstructions': tuple(object({ botId: uuid, instructions: text(8000).transform(value => value.trim()).refine(value => [...value].length <= 2000), workspaceId: workspace })),
   'thread-title-settings.getThreadTitleSettings': inWorkspace,
   'thread-title-settings.saveThreadTitleSettings': tuple(object({ workspaceId: workspace, scope: z.enum(['workspace', 'mine']), instructions: text(1000).optional(), triggers: z.enum(['first_run_ended', 'pull_opened', 'either']).nullable().optional() })),
   'issues.listIssues': none,
@@ -426,7 +454,7 @@ export const desktopActionSchemas = {
   'workspace-settings.getWorkspaceDeletionImpact': inWorkspace,
   'workspace-settings.getWorkspaceTransferTargets': inWorkspace,
   'workspace-settings.listArchivedBots': inWorkspace,
-  'workspace-settings.updateWorkspace': tuple(object({ name: text(120).trim().min(1).optional(), slug: slug.optional(), icon: text(400_000).nullish() }), workspace),
+  'workspace-settings.updateWorkspace': tuple(updateWorkspaceInput.extend({ slug: slug.optional() }), workspace),
   'workspace-settings.transferWorkspace': tuple(id, workspace),
   'workspace-settings.deleteWorkspace': tuple(uuid, text(120).min(1)),
   'workspace-settings.takeOverArchivedBot': tuple(uuid, workspace),

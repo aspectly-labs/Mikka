@@ -1,4 +1,5 @@
 import * as settingsActions from '@/app/actions/settings'
+import * as instructionActions from '@/app/actions/instructions'
 import * as taskDomainActions from '@/app/actions/task-domain'
 import * as projectResourcesActions from '@/app/actions/project-resources'
 import * as enabledModels from '@/app/actions/enabled-models'
@@ -8,11 +9,14 @@ import { desktopBootstrap, desktopSession, desktopAccounts, desktopWorkspaceLink
 import type { DesktopActions } from './handler'
 import { createReadBatch } from './read-batch'
 import * as actions0 from '@/app/actions/account'
+import * as passkeyActions from '@/app/actions/passkeys'
 import * as actions1 from '@/app/actions/agents'
 import * as actions2 from '@/app/actions/app-policy'
 import * as actions3 from '@/app/actions/artifacts'
 import * as actions4 from '@/app/actions/audit-log'
 import * as actions5 from '@/app/actions/billing'
+import * as deviceSettingsActions from '@/app/actions/devices'
+import * as opsMetricsActions from '@/app/actions/ops-metrics'
 import * as actions6 from '@/app/actions/bots'
 import * as actions7 from '@/app/actions/collaboration'
 import * as actions8 from '@/app/actions/coordinator'
@@ -58,6 +62,11 @@ const functions = {
   'settings.resetPersonalSettings': settingsActions.resetPersonalSettings,
   'settings.resetWorkspaceSettings': settingsActions.resetWorkspaceSettings,
   'settings.getSettingsSchema': settingsActions.getSettingsSchema,
+  'settings.getInstructionPreview': instructionActions.getInstructionPreview,
+  'project-resources.getEnvironmentInstructions': instructionActions.getEnvironmentInstructions,
+  'project-resources.saveEnvironmentInstructions': instructionActions.updateEnvironmentInstructions,
+  'bots.getBotInstructions': instructionActions.getBotInstructions,
+  'bots.saveBotInstructions': instructionActions.updateBotInstructions,
   'desktop.readBatch': createReadBatch(() => desktopActions),
   'desktop.bootstrap': desktopBootstrap,
   'desktop.session': desktopSession,
@@ -74,8 +83,12 @@ const functions = {
   'account.revokeOtherSessions': actions0.revokeOtherSessions,
   'account.requestDataExport': actions0.requestDataExport,
   'account.deleteAccount': actions0.deleteAccount,
+  'passkeys.listPasskeys': passkeyActions.listPasskeys,
+  'passkeys.renamePasskey': passkeyActions.renamePasskey,
+  'passkeys.deletePasskey': passkeyActions.deletePasskey,
   'agents.listDevices': actions1.listDevices,
   'agents.pollDevices': actions1.pollDevices,
+  'agents.createDeviceToken': actions1.createDeviceToken,
   'agents.setDeviceEnabled': actions1.setDeviceEnabled,
   'agents.renameDevice': actions1.renameDevice,
   'agents.setDeviceDescription': actions1.setDeviceDescription,
@@ -121,6 +134,15 @@ const functions = {
   'billing.startPointsPurchase': actions5.startPointsPurchase,
   'billing.startChatPointsPurchase': actions5.startChatPointsPurchase,
   'billing.startCardVerification': actions5.startCardVerification,
+  'billing.getBillingSettings': actions5.getBillingSettings,
+  'billing.saveAutoRechargePolicy': actions5.saveAutoRechargePolicy,
+  'devices.getPolicy': deviceSettingsActions.getPolicy,
+  'devices.updatePolicy': deviceSettingsActions.updatePolicy,
+  'devices.listRepositories': deviceSettingsActions.listRepositories,
+  'devices.upsertRepository': deviceSettingsActions.upsertRepository,
+  'devices.patchRepository': deviceSettingsActions.patchRepository,
+  'devices.deleteRepository': deviceSettingsActions.deleteRepository,
+  'ops-metrics.getWorkspaceOpsMetrics': opsMetricsActions.getWorkspaceOpsMetrics,
   'bots.listBots': actions6.listBots,
   'bots.pollBots': actions6.pollBots,
   'bots.createBot': actions6.createBot,

@@ -88,6 +88,8 @@ export async function readBillingAccount(workspaceId: string, env: Env, members?
     planPointsLimit: (await planGrantLimit(workspaceId)) / MICRO_USD_PER_POINT || null,
     purchasedPoints: balance.purchased / MICRO_USD_PER_POINT,
     autoRecharge: autoRechargePolicy(billing),
+    receiptsManagedBy: 'stripe_portal',
+    receipts: { receiptsManagedBy: 'stripe_portal', source: 'provider' },
   }
 }
 

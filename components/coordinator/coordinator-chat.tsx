@@ -134,7 +134,6 @@ function PersonWords({ text, before }: { text: string; before?: ReactNode }) {
   return <CollapsibleMessage>{quote && <QuoteLine slot="reply-quote" text={quote} />}{before}<UserMessageText text={words} /></CollapsibleMessage>
 }
 
-
 /**
  * The person's conversation with their Coordinator, which dispatches agents to
  * issues, or with one of their bots: a bot runs on the same harness with its
@@ -500,7 +499,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   }
 
   /** Sends `text` to the Coordinator or bot, with the browser's notes when `withNotes`: sent, failed (now a failed bubble), or skipped. */
-  async function deliver(text: string, withNotes = false, retryOf?: number, previous?: PersonalChatSend, releaseDraft?: () => void): Promise<'sent' | 'failed' | 'skipped'> {
+  async function deliver(text: string, withNotes = false, retryOf?: number, previous?: PersonalChatSend, releaseDraft?: () => void, policy?: 'queue' | 'steer'): Promise<'sent' | 'failed' | 'skipped'> {
     if (!text || resuming || unavailable) return 'skipped'
     // A double-click can enter twice before React paints the emptied draft.
     // A different draft has its own journal ID and may enter Eve immediately.
@@ -508,7 +507,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     if (!previous && draftInFlight.current.has(draftKey)) return 'skipped'
     const notes = withNotes && browser?.notes.length ? [...browser.notes] : undefined
     const command = previous ?? { id: crypto.randomUUID(), at: Date.now(), text,
-      ...(working ? { turnPolicy } : {}),
+      ...(working ? { turnPolicy: policy ?? turnPolicy } : {}),
       context: { quote: embedded?.quote, botId, notes, expectedWorkspaceId: selectedWorkspaceId ?? undefined, expectedOwnerId: userId ?? liveOwner ?? undefined,
         ...(retryOf !== undefined ? { retryOf } : {}) } }
     if (!delivery.begin(command)) return 'skipped'
@@ -554,7 +553,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     const outcome = await deliver(text)
     return outcome === 'sent' ? { sent: true } : { sent: false, reason: outcome === 'failed' ? lastSendFailure.current : undefined }
   }
-  async function send(event?: FormEvent) {
+  async function send(event?: FormEvent, policy?: 'queue' | 'steer') {
     event?.preventDefault()
     const text = draft.trim()
     if (text && await paywall.blocked({ model: true })) return
@@ -564,13 +563,18 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       setReplyQuote(null)
       embedded?.clearQuote()
       suggestion.current = null
-    }) : 'skipped'
+    }, policy) : 'skipped'
     if (result !== 'sent') return
     if (id) {
       await fetch(withBasePath(`/api/suggestions/${id}`), { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined)
       void mutateAll(key => typeof key === 'string' && key.includes('/api/suggestions'))
       void mutateAll(key => key === 'threads' || Array.isArray(key) && key[0] === 'threads')
     }
+  }
+
+  function onRunKey(action: 'steer' | 'queue' | 'interrupt') {
+    if (action === 'interrupt') void stop()
+    else void send(undefined, action)
   }
 
   // 全部展开 / 全部收起 for the chat's tool groups (R-83).
@@ -677,6 +681,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
           working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
           composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
+            onRunKey,
             attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
           pending={[
             ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),
@@ -815,6 +820,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       {turnOptions}{queuedNotice}</>}
         composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={inputRef} label={bot ? t('inputTo', { name: bot.name }) : t('input')} placeholder={placeholder} value={draft} onChange={updateDraft} sending={resuming} editableWhileSending={resuming} onSubmit={() => { void send() }} attachmentScope={data?.botId ? { kind: 'bot', id: data.botId } : undefined}
         running={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
+        onRunKey={onRunKey}
         leftControls={<div className="flex min-w-0 items-center gap-1">
           <BotModelPicker botId={botId ?? null} running={working || sending} />
           {/* How near the next fold is (lib/coordinator/context-usage.ts). Beside the model chip,

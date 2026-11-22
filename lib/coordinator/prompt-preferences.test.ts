@@ -119,6 +119,10 @@ stub('../github/user-access.ts', { readAuthorizedIssue: forbidden })
 stub('../pending-action-store.ts', { proposeAction: forbidden, writeAccountAction: forbidden, proposeRepositoryPush: forbidden })
 stub('../telegram/client.ts', { postTelegramText: forbidden })
 stub('../../workflows/coordinator/tool-scope.ts', { assertNativeToolScope: forbidden })
+stub('./environment-instructions.ts', {
+  instructionsWithEnvironment: (_instructions: string) => _instructions,
+  readScopedPromptInstructionsForBot: async () => ({ environmentId: null, environmentInstructions: '', botInstructions: '' }),
+})
 mock.module('@/lib/server-runtime/server', { namedExports: { NextResponse: Response, after: () => {} } })
 
 let composer: typeof import('./product-instructions'), store: typeof import('./store'), personal: typeof import('./personal-instructions')

@@ -3,7 +3,7 @@ import { ReadResponseError } from '@/lib/swr/retry'
 
 /** The reads `GET /api/settings/[read]` serves; each is the function a section used to call as a server action. */
 export type SettingsRead =
-  | 'password' | 'sessions' | 'preferences' | 'issue-prefix' | 'saved-logins'
+  | 'password' | 'sessions' | 'preferences' | 'issue-prefix' | 'saved-logins' | 'activity'
   | 'workspace-general' | 'transfer-targets' | 'deletion-impact'
   | 'app-policy' | 'share-policy' | 'secrets' | 'e2b-key' | 'usage' | 'billing' | 'credit-billing' | 'card-verification' | 'audit'
   | 'payment-designation' | 'credit-share'
