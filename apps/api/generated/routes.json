@@ -2106,7 +2106,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "4a60164a9bc0886878215991da1673c8ac3eb7396e0651c3ca98ca1c67cd6697"
+      "sourceHash": "b9801d4f09f288ed7ae40f670fb950759df0b24269d7a1c6bb3dd897e4875d26"
     },
     {
       "path": "/mikka/api/organizations/[organizationId]/drive/[volumeId]/file-versions",
@@ -2143,7 +2143,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "fe8d407ae3dbeb7e0353cdf26c14b4563abe040beb5e98d2d73d5a09e7e0a0dd"
+      "sourceHash": "84866949d14229155e250eca13007b98f22cdd8b480860b5b8c714607734956f"
     },
     {
       "path": "/mikka/api/organizations/[organizationId]/drive/[volumeId]/versions",
