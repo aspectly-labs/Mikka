@@ -165,6 +165,7 @@ test('all upcoming features fail closed, even if the remote switch is accidental
 test('gated features are on only when the remote flag is exactly true', () => {
   assert.equal(gatedFeatures.cloudComputer, 'mikka-cloud-computer')
   assert.equal(gatedFeatures.computerBilling, 'mikka-computer-billing')
+  assert.equal(gatedFeatures.memory, 'mikka-memory')
   assert.deepEqual(proactiveFeatures, { profile: 'mikka-proactive-profile', research: 'mikka-proactive-research' })
   for (const remote of [undefined, false, 'control', 'true']) assert.equal(gatedFeatureEnabled(remote), false)
   assert.equal(gatedFeatureEnabled(true), true)
@@ -467,4 +468,27 @@ test('patched FFmpeg provenance accepts only the exact frozen patch hash and ori
   await rm(join(root, packageDirectory, 'ffmpeg'))
   await symlink(join(root, packageDirectory, 'alternate'), join(root, packageDirectory, 'ffmpeg'))
   await assert.rejects(verifyRuntimeResources(root, built), /symlinks/)
+})
+
+test('acquisition fields keep bounded UTM labels and referring domains, never raw URLs', () => {
+  const event = sanitizeAnalyticsEvent({ event: '$pageview', properties: {
+    $current_url: 'https://app.aspectlylabs.com/mikka/tasks', distinct_id: 'u1',
+    utm_source: 'HackerNews', utm_medium: 'social', utm_campaign: 'launch',
+    $referring_domain: 'news.ycombinator.com',
+    $session_entry_utm_source: 'Substack', $session_entry_referring_domain: 'sub.example.co.uk',
+    utm_content: 'https://evil.example/payload?token=1', $referrer: 'https://x.test/?secret=1',
+    first_touch_source: 'newsletter', first_touch_utm_source: 'hn', first_touch_landing: '/mikka',
+  } })
+  const p = event.properties
+  assert.equal(p.utm_source, 'hackernews')
+  assert.equal(p.utm_medium, 'social')
+  assert.equal(p.utm_campaign, 'launch')
+  assert.equal(p.$referring_domain, 'news.ycombinator.com')
+  assert.equal(p.$session_entry_utm_source, 'substack')
+  assert.equal(p.$session_entry_referring_domain, 'sub.example.co.uk')
+  assert.equal(p.first_touch_source, 'newsletter')
+  assert.equal(p.first_touch_utm_source, 'hn')
+  assert.equal(p.first_touch_landing, '/mikka')
+  assert.equal(p.utm_content, undefined)
+  assert.equal(p.$referrer, undefined)
 })
