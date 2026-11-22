@@ -38,6 +38,10 @@ test('workspace app policy', { skip: !dbUrl }, async t => {
     assert.equal(await store.botMayUseApp(bot, 'gmail'), true)
     assert.equal(await store.botMayUseApp(otherBot, 'slack'), true)
     assert.equal(await store.botMayUseApp(null, 'slack'), true)
+    // 2240: the policy governs sharing only — the owner uses their own bot's connections even while denied,
+    // and it never lets another member's bot through on the owner's behalf.
+    assert.equal(await store.botMayUseApp(bot, 'slack', member), true, "the owner's own bot is never stopped")
+    assert.equal(await store.botMayUseApp(bot, 'slack', admin), false, "another member's shared use is still governed")
     assert.equal(await store.botMayUseApp('00000000-0000-4000-8000-000000000000', 'slack'), false, 'an unknown bot is refused')
     const { rows } = await pool.query('select action, metadata from workspace_audit_events where "workspaceId"=$1', [ws.id])
     assert.deepEqual(rows, [{ action: 'integration.permission_changed', metadata: { integration: 'slack', capability: 'use', from: 'allow', to: 'deny' } }])

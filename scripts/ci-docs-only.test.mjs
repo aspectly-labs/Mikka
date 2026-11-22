@@ -249,6 +249,8 @@ test('a trusted stdin wrapper can import the paired classifier without running i
 test('blocking CI checks synthetic PR merge candidates once and preserves every main run', () => {
   const source = readFileSync('.github/workflows/ui-policy.yml', 'utf8')
   const events = source.split('\npermissions:')[0]
+  // Draft and ready-for-review must re-run the merge candidate. The types list
+  // is what delivers those events; merge_group stays the next trigger.
   assert.match(events, /on:\n  push:\n    branches: \[main\]\n  pull_request:\n    types: \[opened, reopened, synchronize, ready_for_review, converted_to_draft\]\n  merge_group:/)
   assert.doesNotMatch(events, /branches-ignore:/)
   assert.doesNotMatch(source, /github\.event\.pull_request\.head\.repo\.full_name != github\.repository/)
@@ -270,15 +272,15 @@ test('CI partitions DB suites across isolated jobs and requires source and daemo
   const database = job('browser-tests-full')
   assert.match(database, /fail-fast: false/)
   assert(database.includes('shard: ${{ fromJSON(needs.changes.outputs.db_matrix).shard }}'))
-  assert(database.includes("node: ['22', '24']"))
+  assert(!database.includes("'22'"))
   assert(database.includes("github.base_ref != 'main' && github.event.pull_request.draft != true"))
   assert(job('browser-tests').includes("EXPECT_DB: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.db == 'true' }}"))
   assert(job('workspace-governance-checks').includes("github.event_name == 'merge_group'"))
   assert(job('analytics-checks').includes("github.event_name != 'pull_request'"))
   assert(job('candidate-checks').includes("github.event_name == 'merge_group'"))
   assert(job('ui-policy').includes('needs.candidate-checks.result'))
-  assert(database.includes('node-version: ${{ matrix.node }}'))
-  assert(database.includes("name: Database checks (${{ matrix.shard }})${{ matrix.node == '22' && ' (Node 22)' || '' }}"))
+  assert(database.includes('node-version: 24'))
+  assert(database.includes('name: Database checks (${{ matrix.shard }})\n'))
   assert(database.includes('DB_TEST_SHARD: ${{ matrix.shard }}'))
   assert(database.includes('DB_TEST_SELECTED: ${{ needs.changes.outputs.db_suites }}'))
   assert.match(database, /services:\n      postgres:\n        image: postgres:17/)
