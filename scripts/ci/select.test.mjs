@@ -238,7 +238,36 @@ test('the actual required gate scripts reject drafts, unselected failures and se
         }
       }
     }
-    if(job==='browser-tests') { assert(run({EXPECT_DB:'false',DB_RESULT:'skipped'}));assert(!run({EXPECT_DB:'false',DB_RESULT:'failure'})) }
+    if(job==='browser-tests') {
+      assert(run({EXPECT_DB:'false',DB_RESULT:'skipped'}))
+      assert(!run({EXPECT_DB:'false',DB_RESULT:'failure'}))
+      const step = steps.find(step => step.name === 'Require every selected database shard')
+      const evaluate = (base, draft, db) => runInNewContext(step.env.DEFER_DB.slice(3, -2), {
+        github: { event_name: 'pull_request', base_ref: base, event: { pull_request: { draft } } },
+        needs: { changes: { outputs: { db } } },
+      })
+      assert.equal(evaluate('main', false, 'true'), true)
+      for (const args of [['main', true, 'true'], ['main', false, 'false'], ['dev', false, 'true']]) assert.equal(evaluate(...args), false)
+      assert.equal(step.env.DB_SUITES, '${{ needs.changes.outputs.db_suites }}')
+      assert.equal(step.env.DB_MATRIX, '${{ needs.changes.outputs.db_matrix }}')
+      for (const details of [{}, { DB_SUITES: '["test:example-db"]', DB_MATRIX: '{"shard":["1/2","2/2"]}' }]) {
+        const root = mkdtempSync(join(tmpdir(), 'mikka-db-deferral-'))
+        try {
+          const summary = join(root, 'summary.md')
+          const output = execFileSync('bash', ['-e', '-c', script], { encoding: 'utf8', env: {
+            PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary, CHANGES_RESULT: 'success',
+            EXPECT_DB: 'false', DB_RESULT: 'skipped', DEFER_DB: 'true', ...details,
+          } })
+          assert(output.includes('::notice::Database checks deferred to merge queue'))
+          const content = readFileSync(summary, 'utf8')
+          assert(content.startsWith('Database checks deferred to merge queue'))
+          assert(!content.includes('Database gate: skipped'))
+          if (details.DB_SUITES) for (const text of ['test:example-db', 'shard count: 2']) {
+            assert(output.includes(text)); assert(content.includes(text))
+          }
+        } finally { rmSync(root, { recursive: true, force: true }) }
+      }
+    }
   }
 })
 
