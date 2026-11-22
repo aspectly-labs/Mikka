@@ -1054,6 +1054,7 @@
         "start": "3 上线",
         "startAlone": "上线"
       },
+      "downloadDesktop": "下载 Mikka 桌面版",
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "安装命令暂不可用",
       "reconnectTitle": "重新连接",
@@ -4320,7 +4321,8 @@
       "noModelSelected": "未选择模型",
       "noModelConnections": "没有可用的模型连接",
       "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
-      "setUpModel": "设置模型"
+      "setUpModel": "设置模型",
+      "noModelSetUp": "还没有配置模型"
     },
     "empty": "告诉 {name} 你要做什么",
     "events": {

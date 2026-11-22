@@ -1054,6 +1054,7 @@
         "start": "3 Start",
         "startAlone": "Start"
       },
+      "downloadDesktop": "Download Mikka Desktop",
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "Installation commands are unavailable",
       "reconnectTitle": "Reconnect",
@@ -4320,7 +4321,8 @@
       "noModelSelected": "No model selected",
       "noModelConnections": "No usable model connections",
       "noCreditsOrConnections": "No Mikka credits or usable model connections",
-      "setUpModel": "Set up a model"
+      "setUpModel": "Set up a model",
+      "noModelSetUp": "no model set up"
     },
     "empty": "Tell {name} what you need",
     "events": {
