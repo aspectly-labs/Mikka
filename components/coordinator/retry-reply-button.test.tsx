@@ -887,12 +887,15 @@ test('a turn eve splits around a message the person wrote mid-turn keeps each pa
 })
 
 test('a turn that failed with no message under it is the Bot\'s error line, never a composer notice', async () => {
-  chatData = { items: [], enabled: true, working: false, error: 'HOOK_FAILED', artifacts: {} }
-  welcomeReply = { queued: true }
+  // A wake turn after the Bot's last reply failed: no message of the person's carries its mark.
+  chatData = { items: [
+    { id: 'fixture-asked', position: 1, from: 'person', text: 'Check the build', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' },
+    { id: 'fixture-reply', position: 2, from: 'coordinator', text: 'Started a thread.', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:01Z' },
+  ], enabled: true, working: false, error: 'turn_failed', artifacts: {} }
   await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
-  const errors = container.querySelectorAll('[data-message-failure]')
-  assert.equal(errors.length, 1, 'one error line')
-  assert.equal(container.querySelectorAll('[data-composer] [data-slot="alert"], [data-chat-failure]').length - container.querySelectorAll('[data-message-failure] [data-chat-failure]').length, 0, 'no failure notice outside the message')
+  assert.equal(container.querySelectorAll('[data-message-failure]').length, 1, 'one error line, on the Bot\'s side')
+  const outside = [...container.querySelectorAll('[data-chat-failure]')].filter(node => !node.closest('[data-message-failure]'))
+  assert.equal(outside.length, 0, 'no failure notice above the composer')
 })
 
 test('scrolling near the top loads older messages, and each page added above counts for the thread', async () => {
