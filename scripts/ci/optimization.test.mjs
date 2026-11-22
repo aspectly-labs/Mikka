@@ -93,6 +93,7 @@ test('the protected parent requires success from selected Analytics work', () =>
       'ui-policy-full': { result: 'skipped' }, 'ui-policy-integrations': { result: 'skipped' },
       'source-checks': { result: 'skipped' }, 'daemon-checks': { result: 'skipped' },
       'workspace-governance-checks': { result: 'skipped' }, 'analytics-checks': { result },
+      'frontend-screenshots': { result: 'success' },
     } }
     const env = { ...Object.fromEntries(Object.entries(gate.env).map(([key, value]) => [key, evaluate(value, context)])), GITHUB_STEP_SUMMARY: '/dev/null' }
     assert.equal(spawnSync('bash', ['-e', '-c', gate.run], { env }).status, result === 'success' ? 0 : 1, result)

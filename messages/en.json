@@ -9216,6 +9216,74 @@
       "label": "Update thread titles",
       "keywords": "title|pull request|PR"
     },
+    "appearanceSync": {
+      "label": "Sync appearance",
+      "keywords": "appearance|sync|devices"
+    },
+    "appearanceColorScheme": {
+      "label": "Display mode",
+      "keywords": "theme|light|dark|system|mode"
+    },
+    "appearanceTheme": {
+      "label": "Color theme",
+      "keywords": "theme|palette|oled|appearance"
+    },
+    "appearanceAccentColor": {
+      "label": "Accent color",
+      "keywords": "accent|color|hex|theme"
+    },
+    "appearanceBackgroundEffect": {
+      "label": "Background effect",
+      "keywords": "background|effect|colorful"
+    },
+    "codeFontSize": {
+      "label": "Code font size",
+      "keywords": "code|font|size|diff"
+    },
+    "diffView": {
+      "label": "Diff view",
+      "keywords": "diff|unified|split|code"
+    },
+    "diffColors": {
+      "label": "Diff colors",
+      "keywords": "diff|colors|accessibility|blue|green"
+    },
+    "hiddenFiles": {
+      "label": "Fold hidden files",
+      "keywords": "hidden|files|fold|generated|pull request"
+    },
+    "sidebarPages": {
+      "label": "Sidebar pages",
+      "keywords": "sidebar|navigation|pages|rail"
+    },
+    "sidebarLayout": {
+      "label": "Sidebar layout",
+      "keywords": "sidebar|layout|hybrid|columns"
+    },
+    "pinPages": {
+      "label": "Pin pages",
+      "keywords": "pin|tasks|pull requests|sidebar"
+    },
+    "openInDesktop": {
+      "label": "Open links in desktop app",
+      "keywords": "desktop|links|open"
+    },
+    "scrollNewToTop": {
+      "label": "Scroll new messages to top",
+      "keywords": "scroll|messages|thread"
+    },
+    "enterAction": {
+      "label": "Enter while running",
+      "keywords": "enter|steer|interrupt|queue|input"
+    },
+    "modEnterAction": {
+      "label": "Command/Ctrl + Enter while running",
+      "keywords": "shortcut|enter|steer|interrupt|queue"
+    },
+    "altEnterAction": {
+      "label": "Option/Alt + Enter while running",
+      "keywords": "shortcut|alt|enter|steer|interrupt|queue"
+    },
     "subagentMaxConcurrent": {
       "label": "Concurrent subagents",
       "keywords": "agent|concurrency|limit"

@@ -24,7 +24,6 @@ import { USER_FACT_KINDS } from '@/lib/profile/kinds'
 import { definitionSchema as scheduleDefinition, webhookBatchListInput, webhookBatchInput } from '@/lib/schedules/contract'
 import { DEVICE_DESCRIPTION_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
-import { uiPreferencesSchema } from '@/lib/ui-preferences'
 import { updateWorkspaceInput } from '@/lib/workspace-admin/general-input'
 
 const uuid = z.uuid()
@@ -80,7 +79,6 @@ const preferences = object({
   proactive: bool, pushDecide: bool, pushReview: bool, pushFinished: bool, pushBriefing: bool,
   organizationInvitationEmails: bool, pushWhen: z.enum(['always', 'away']), memoryEnabled: bool, sendKey: z.enum(['enter', 'modEnter']),
   personalInstructions: text(8000).transform(value => value.trim()).refine(value => [...value].length <= 2000), dailySuggestions: bool,
-  ui: uiPreferencesSchema.strict(),
 }).partial()
 const listPositions = (limit: number) => z.array(object({ id: uuid, version })).max(limit)
   .refine(rows => new Set(rows.map(row => row.id)).size === rows.length)

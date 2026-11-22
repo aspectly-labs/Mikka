@@ -9216,6 +9216,74 @@
       "label": "更新线程标题",
       "keywords": "标题|拉取请求"
     },
+    "appearanceSync": {
+      "label": "外观同步",
+      "keywords": "外观|同步|设备"
+    },
+    "appearanceColorScheme": {
+      "label": "显示模式",
+      "keywords": "主题|浅色|深色|跟随系统|模式"
+    },
+    "appearanceTheme": {
+      "label": "配色主题",
+      "keywords": "主题|配色|OLED|外观"
+    },
+    "appearanceAccentColor": {
+      "label": "强调色",
+      "keywords": "强调色|颜色|主题"
+    },
+    "appearanceBackgroundEffect": {
+      "label": "背景效果",
+      "keywords": "背景|效果|彩色"
+    },
+    "codeFontSize": {
+      "label": "代码字号",
+      "keywords": "代码|字号|字体|差异"
+    },
+    "diffView": {
+      "label": "差异视图",
+      "keywords": "差异|统一|并排|代码"
+    },
+    "diffColors": {
+      "label": "差异颜色",
+      "keywords": "差异|颜色|色觉|红绿|蓝橙"
+    },
+    "hiddenFiles": {
+      "label": "折叠隐藏文件",
+      "keywords": "隐藏文件|折叠|生成内容|拉取请求"
+    },
+    "sidebarPages": {
+      "label": "侧栏显示页面",
+      "keywords": "侧栏|导航|页面"
+    },
+    "sidebarLayout": {
+      "label": "侧栏布局",
+      "keywords": "侧栏|布局|混合|分栏"
+    },
+    "pinPages": {
+      "label": "页面置顶",
+      "keywords": "置顶|任务|拉取请求|侧栏"
+    },
+    "openInDesktop": {
+      "label": "在桌面应用打开链接",
+      "keywords": "桌面应用|链接|打开"
+    },
+    "scrollNewToTop": {
+      "label": "将新消息滚到顶部",
+      "keywords": "滚动|消息|线程"
+    },
+    "enterAction": {
+      "label": "运行中按 Enter",
+      "keywords": "Enter|引导|中断|队列|输入"
+    },
+    "modEnterAction": {
+      "label": "运行中按 ⌘ / Ctrl + Enter",
+      "keywords": "快捷键|Enter|引导|中断|队列"
+    },
+    "altEnterAction": {
+      "label": "运行中按 ⌥ / Alt + Enter",
+      "keywords": "快捷键|Alt|Enter|引导|中断|队列"
+    },
     "subagentMaxConcurrent": {
       "label": "并发子 Agent 数量",
       "keywords": "子 Agent|并发|限制"

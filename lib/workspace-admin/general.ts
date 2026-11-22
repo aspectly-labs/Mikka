@@ -25,18 +25,11 @@ export interface WorkspaceGeneral {
   slug: string | null
   icon: string | null
   taskPrefix: string | null
-  parallelSubagents: number
-  nestDepth: number
-  newWorkVisibility: 'inherit' | 'members' | 'private'
-  workspaceWorkVisibility: 'members' | 'private'
-  allowPrivate: boolean
 }
 
 function profile(workspace: typeof workspaces.$inferSelect): WorkspaceGeneral {
   return {
     id: workspace.id, name: workspace.name, slug: workspace.slug, icon: workspace.icon, taskPrefix: workspace.taskPrefix,
-    parallelSubagents: workspace.parallelSubagents, nestDepth: workspace.nestDepth,
-    newWorkVisibility: workspace.newWorkVisibility, workspaceWorkVisibility: workspace.workspaceWorkVisibility, allowPrivate: workspace.allowPrivate,
   }
 }
 
@@ -67,11 +60,7 @@ export async function updateWorkspaceGeneral(actorId: string, workspaceId: strin
     const changes: Partial<typeof workspaces.$inferInsert> = {}
     if (values.name !== undefined && values.name !== workspace.name) changes.name = values.name
     if (icon !== undefined && icon !== workspace.icon) changes.icon = icon
-    function assignChanged<K extends keyof typeof values & keyof typeof changes & keyof typeof workspace>(key: K) {
-      const next = values[key]
-      if (next !== undefined && next !== workspace[key]) changes[key] = next
-    }
-    for (const key of ['taskPrefix', 'parallelSubagents', 'nestDepth', 'newWorkVisibility', 'workspaceWorkVisibility', 'allowPrivate'] as const) assignChanged(key)
+    if (values.taskPrefix !== undefined && values.taskPrefix !== workspace.taskPrefix) changes.taskPrefix = values.taskPrefix
     if (values.slug !== undefined && values.slug !== workspace.slug) {
       // Serialize namespace changes across Workspaces before checking redirects.
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('mikka-workspace-slugs', 0))`)

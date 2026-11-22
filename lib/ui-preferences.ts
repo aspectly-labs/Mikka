@@ -1,7 +1,11 @@
-// Personal interface preferences stored on user_preferences.uiPreferences.
-// Client-safe: the settings page, the composer and the icon rail all read it.
+// Personal interface and appearance preferences backed by SETTINGS_REGISTRY
+// (personal_setting_values generic typed KV, zero JSONB columns).
+// Pure client-only items (per-device local theme/colors when appearanceSync === false,
+// secondary surface/foreground/border hex overrides and local custom theme drafts)
+// stay in browser localStorage under UI_LOCAL_STORAGE_KEY.
 
 import { z } from 'zod'
+import type { SettingSource, SettingValue, SettingsView } from '@mikka/protocol/settings'
 
 export const RAIL_PAGE_IDS = ['chats', 'pulls', 'automations', 'suggestions', 'board', 'plugins', 'artifacts'] as const
 export type RailPageId = (typeof RAIL_PAGE_IDS)[number]
@@ -15,6 +19,7 @@ export const DIFF_VIEWS = ['unified', 'split'] as const
 export const DIFF_COLORS = ['redGreen', 'blue'] as const
 export const HIDDEN_FILES = ['generated', 'none', 'all'] as const
 export const BACKGROUNDS = ['none', 'color'] as const
+export const BACKGROUND_EFFECTS = ['none', 'colorful'] as const
 
 export const UI_THEMES = [
   { id: 'mikka', accent: '#2365db', fill: '#ffffff', foreground: '#171717' },
@@ -34,10 +39,11 @@ export const UI_THEMES = [
 ] as const
 
 export type UiThemeId = (typeof UI_THEMES)[number]['id']
-const THEME_IDS = UI_THEMES.map(theme => theme.id) as [UiThemeId, ...UiThemeId[]]
-const HEX = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+export const UI_THEME_IDS = UI_THEMES.map(theme => theme.id) as [UiThemeId, ...UiThemeId[]]
+export const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
+const HEX = z.string().regex(HEX_COLOR_PATTERN)
 
-export const BACKGROUND_EFFECTS = ['none', 'colorful'] as const
+export const UI_LOCAL_STORAGE_KEY = 'mikka:ui-local'
 
 export interface CustomTheme { id: string; name: string; accent: string; fill: string; foreground: string }
 
@@ -111,7 +117,7 @@ export const uiPreferencesSchema = z.object({
   microphone: z.literal('system'),
   appearanceSync: z.boolean(),
   colorScheme: z.enum(COLOR_SCHEMES),
-  themeId: z.enum(THEME_IDS),
+  themeId: z.enum(UI_THEME_IDS),
   accent: HEX,
   fill: HEX,
   foreground: HEX,
@@ -132,7 +138,48 @@ export const uiPreferencesSchema = z.object({
 
 export type UiPreferencesPatch = z.infer<typeof uiPreferencesSchema>
 
-/** Fills anything the stored object left out. An empty column is the defaults. */
+/** Pure client-only appearance state kept in localStorage on this device. */
+const localUiSchema = z.object({
+  colorScheme: z.enum(COLOR_SCHEMES),
+  themeId: z.enum(UI_THEME_IDS),
+  accent: HEX,
+  backgroundEffect: z.enum(BACKGROUND_EFFECTS),
+  fill: HEX,
+  foreground: HEX,
+  accentDark: HEX.nullable(),
+  fillDark: HEX.nullable(),
+  foregroundDark: HEX.nullable(),
+  border: HEX.nullable(),
+  background: z.enum(BACKGROUNDS),
+  customThemes: z.array(z.object({ id: z.string().min(1).max(40), name: z.string().min(1).max(40), accent: HEX, fill: HEX, foreground: HEX })).max(24),
+}).partial()
+
+export type LocalUiPreferences = z.infer<typeof localUiSchema>
+
+/** Canonical SETTINGS_REGISTRY keys owned by personal appearance and interface settings. */
+export const APPEARANCE_REGISTRY_KEYS = [
+  'appearanceSync',
+  'appearanceColorScheme',
+  'appearanceTheme',
+  'appearanceAccentColor',
+  'appearanceBackgroundEffect',
+  'codeFontSize',
+  'diffView',
+  'diffColors',
+  'hiddenFiles',
+] as const
+
+export const INTERFACE_REGISTRY_KEYS = [
+  'sidebarPages',
+  'sidebarLayout',
+  'pinPages',
+  'openInDesktop',
+  'scrollNewToTop',
+  'enterAction',
+  'modEnterAction',
+  'altEnterAction',
+] as const
+
 function migrateStored(stored: unknown) {
   if (!stored || typeof stored !== 'object') return stored
   const value = { ...(stored as Record<string, unknown>) }
@@ -147,6 +194,134 @@ export function normalizeUi(stored: unknown): UiPreferences {
   const { wallpaper, ...value } = patch.success ? patch.data : {}
   return { ...DEFAULT_UI, ...value, background: wallpaper === 'color' ? wallpaper : value.background ?? DEFAULT_UI.background,
     sidebarPages: value.sidebarPages ?? DEFAULT_UI.sidebarPages }
+}
+
+export function readLocalUiPreferences(storage: Pick<Storage, 'getItem'> | null = typeof window === 'undefined' ? null : window.localStorage): LocalUiPreferences {
+  if (!storage) return {}
+  try {
+    const raw = storage.getItem(UI_LOCAL_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = localUiSchema.safeParse(JSON.parse(raw))
+    return parsed.success ? parsed.data : {}
+  } catch {
+    return {}
+  }
+}
+
+export function writeLocalUiPreferences(next: LocalUiPreferences, storage: Pick<Storage, 'setItem'> | null = typeof window === 'undefined' ? null : window.localStorage) {
+  if (!storage) return
+  try {
+    storage.setItem(UI_LOCAL_STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    // Ignore storage quota or private-mode refusal.
+  }
+}
+
+/**
+ * Resolves effective UiPreferences from P1 SETTINGS_REGISTRY values plus pure client-only state.
+ * When `appearanceSync === false`, per-device `colorScheme`, `themeId`, `accent` and `backgroundEffect`
+ * in `local` override the server values on this device without mutating remote settings.
+ */
+export function resolveUiPreferencesFromSettings(
+  view: Pick<SettingsView, 'values'> | null | undefined,
+  local: LocalUiPreferences = {},
+): { ui: UiPreferences; sources: Record<string, SettingSource> } {
+  const values = view?.values ?? {}
+  const sources: Record<string, SettingSource> = {}
+  for (const key of [...APPEARANCE_REGISTRY_KEYS, ...INTERFACE_REGISTRY_KEYS]) {
+    sources[key] = values[key]?.source ?? 'default'
+  }
+  const pagesRaw = values.sidebarPages?.value
+  const allRailSelected = Array.isArray(pagesRaw) && pagesRaw.length === RAIL_PAGE_IDS.length && RAIL_PAGE_IDS.every(id => pagesRaw.includes(id))
+  const sidebarPages = Array.isArray(pagesRaw)
+    ? (allRailSelected && values.sidebarPages?.source === 'default' ? null : pagesRaw.filter((id): id is RailPageId => (RAIL_PAGE_IDS as readonly string[]).includes(id)))
+    : null
+  const appearanceSync = typeof values.appearanceSync?.value === 'boolean' ? values.appearanceSync.value : DEFAULT_UI.appearanceSync
+  const themeFromServer = typeof values.appearanceTheme?.value === 'string' ? values.appearanceTheme.value : DEFAULT_UI.themeId
+  const themeId = (!appearanceSync && local.themeId ? local.themeId : themeFromServer) as UiThemeId
+  const preset = themeById(themeId)
+  const serverAccent = typeof values.appearanceAccentColor?.value === 'string' ? values.appearanceAccentColor.value : preset.accent
+  const raw = {
+    sidebarPages,
+    sidebarLayout: values.sidebarLayout?.value ?? DEFAULT_UI.sidebarLayout,
+    pinPages: values.pinPages?.value ?? DEFAULT_UI.pinPages,
+    openInDesktop: values.openInDesktop?.value ?? DEFAULT_UI.openInDesktop,
+    scrollNewToTop: values.scrollNewToTop?.value ?? DEFAULT_UI.scrollNewToTop,
+    enterAction: values.enterAction?.value ?? DEFAULT_UI.enterAction,
+    modEnterAction: values.modEnterAction?.value ?? DEFAULT_UI.modEnterAction,
+    altEnterAction: values.altEnterAction?.value ?? DEFAULT_UI.altEnterAction,
+    appearanceSync,
+    colorScheme: !appearanceSync && local.colorScheme ? local.colorScheme : (values.appearanceColorScheme?.value ?? DEFAULT_UI.colorScheme),
+    themeId,
+    accent: !appearanceSync && local.accent ? local.accent : serverAccent,
+    fill: local.fill ?? preset.fill,
+    foreground: local.foreground ?? preset.foreground,
+    accentDark: local.accentDark ?? null,
+    fillDark: local.fillDark ?? null,
+    foregroundDark: local.foregroundDark ?? null,
+    border: local.border ?? null,
+    background: local.background ?? 'none',
+    backgroundEffect: !appearanceSync && local.backgroundEffect ? local.backgroundEffect : (values.appearanceBackgroundEffect?.value ?? DEFAULT_UI.backgroundEffect),
+    customThemes: local.customThemes ?? [],
+    codeSize: values.codeFontSize?.value ?? DEFAULT_UI.codeSize,
+    diffView: values.diffView?.value ?? DEFAULT_UI.diffView,
+    diffColor: values.diffColors?.value ?? DEFAULT_UI.diffColor,
+    hiddenFiles: values.hiddenFiles?.value ?? DEFAULT_UI.hiddenFiles,
+  }
+  return { ui: normalizeUi(raw), sources }
+}
+
+/**
+ * Splits a UI preference patch into server SETTINGS_REGISTRY values and client-local overrides.
+ * When `appearanceSync` is false (either already or set false in this patch), theme/scheme/accent/effect
+ * stay local to this device instead of writing `personal_setting_values`.
+ */
+export function splitUiPreferencesPatch(
+  patch: UiPreferencesPatch,
+  currentSync: boolean,
+  currentLocal: LocalUiPreferences = {},
+): { registryValues: Record<string, SettingValue | null>; nextLocal: LocalUiPreferences; localChanged: boolean } {
+  const parsed = uiPreferencesSchema.parse(migrateStored(patch) ?? {})
+  const effectiveSync = parsed.appearanceSync ?? currentSync
+  const registryValues: Record<string, SettingValue | null> = {}
+  const nextLocal: LocalUiPreferences = { ...currentLocal }
+  let localChanged = false
+
+  if (parsed.appearanceSync !== undefined) registryValues.appearanceSync = parsed.appearanceSync
+  if (parsed.sidebarPages !== undefined) registryValues.sidebarPages = parsed.sidebarPages === null ? null : parsed.sidebarPages
+  if (parsed.sidebarLayout !== undefined) registryValues.sidebarLayout = parsed.sidebarLayout
+  if (parsed.pinPages !== undefined) registryValues.pinPages = parsed.pinPages
+  if (parsed.openInDesktop !== undefined) registryValues.openInDesktop = parsed.openInDesktop
+  if (parsed.scrollNewToTop !== undefined) registryValues.scrollNewToTop = parsed.scrollNewToTop
+  if (parsed.enterAction !== undefined) registryValues.enterAction = parsed.enterAction
+  if (parsed.modEnterAction !== undefined) registryValues.modEnterAction = parsed.modEnterAction
+  if (parsed.altEnterAction !== undefined) registryValues.altEnterAction = parsed.altEnterAction
+  if (parsed.codeSize !== undefined) registryValues.codeFontSize = parsed.codeSize
+  if (parsed.diffView !== undefined) registryValues.diffView = parsed.diffView
+  if (parsed.diffColor !== undefined) registryValues.diffColors = parsed.diffColor
+  if (parsed.hiddenFiles !== undefined) registryValues.hiddenFiles = parsed.hiddenFiles
+
+  if (effectiveSync) {
+    if (parsed.colorScheme !== undefined) registryValues.appearanceColorScheme = parsed.colorScheme
+    if (parsed.themeId !== undefined) registryValues.appearanceTheme = parsed.themeId
+    if (parsed.accent !== undefined) registryValues.appearanceAccentColor = parsed.accent
+    if (parsed.backgroundEffect !== undefined) registryValues.appearanceBackgroundEffect = parsed.backgroundEffect
+  } else {
+    if (parsed.colorScheme !== undefined) { nextLocal.colorScheme = parsed.colorScheme; localChanged = true }
+    if (parsed.themeId !== undefined) { nextLocal.themeId = parsed.themeId; localChanged = true }
+    if (parsed.accent !== undefined) { nextLocal.accent = parsed.accent; localChanged = true }
+    if (parsed.backgroundEffect !== undefined) { nextLocal.backgroundEffect = parsed.backgroundEffect; localChanged = true }
+  }
+
+  const background = parsed.background ?? (parsed.wallpaper === 'color' ? 'color' : parsed.wallpaper)
+  if (background !== undefined) { nextLocal.background = background; localChanged = true }
+  for (const key of ['fill', 'foreground', 'accentDark', 'fillDark', 'foregroundDark', 'border', 'customThemes'] as const) {
+    if (parsed[key] !== undefined) {
+      ;(nextLocal as Record<string, unknown>)[key] = parsed[key]
+      localChanged = true
+    }
+  }
+  return { registryValues, nextLocal, localChanged }
 }
 
 export function themeById(id: string) {

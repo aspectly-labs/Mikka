@@ -150,3 +150,63 @@ dbTest('migration upgrade preserves zero and scoped title overrides; replay pres
   assert.equal(view.values.archiveIdleAfterDays.source, 'default')
   await assert.rejects(pool.query('INSERT INTO workspace_setting_values ("workspaceId",key,"integerValue","booleanValue") VALUES ($1,\'invalid\',1,true)', [workspaceId]), { code: '23514' })
 })
+
+dbTest('appearance and interface registry fields persist per account, reject unauthorized/workspace writes, and reset to defaults', async () => {
+  as(null)
+  assert.equal((await personal.PATCH(request('personal', 'PATCH', patch({ appearanceTheme: 'oled' })))).status, 401)
+  as(outsider)
+  assert.equal((await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', patch({ appearanceTheme: 'oled' })))).status, 403)
+  as(owner)
+  assert.equal((await workspace.PATCH(request(`workspace/${workspaceId}`, 'PATCH', patch({ appearanceTheme: 'oled' })), context())).status, 400)
+  as(member)
+  assert.equal((await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', { ...patch({ appearanceTheme: 'oled' }), userId: owner }))).status, 400)
+  assert.equal((await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', patch({ appearanceAccentColor: 'not-a-hex' })))).status, 400)
+
+  const initial = await (await personal.GET(request(`personal?workspaceId=${workspaceId}`))).json()
+  assert.deepEqual(initial.values.appearanceSync, { value: true, source: 'default' })
+  assert.deepEqual(initial.values.appearanceColorScheme, { value: 'system', source: 'default' })
+  assert.deepEqual(initial.values.appearanceTheme, { value: 'mikka', source: 'default' })
+  assert.deepEqual(initial.values.codeFontSize, { value: 'default', source: 'default' })
+
+  const saved = await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', patch({
+    appearanceSync: false,
+    appearanceColorScheme: 'dark',
+    appearanceTheme: 'oled',
+    appearanceAccentColor: '#7aa2ff',
+    appearanceBackgroundEffect: 'none',
+    codeFontSize: 'large',
+    diffView: 'split',
+    diffColors: 'blue',
+    hiddenFiles: 'all',
+    sidebarPages: ['chats', 'pulls'],
+    sidebarLayout: 'columns',
+  })))
+  assert.equal(saved.status, 200)
+  const updated = await saved.json()
+  assert.deepEqual(updated.values.appearanceSync, { value: false, source: 'personal' })
+  assert.deepEqual(updated.values.appearanceColorScheme, { value: 'dark', source: 'personal' })
+  assert.deepEqual(updated.values.appearanceTheme, { value: 'oled', source: 'personal' })
+  assert.deepEqual(updated.values.appearanceAccentColor, { value: '#7aa2ff', source: 'personal' })
+  assert.deepEqual(updated.values.appearanceBackgroundEffect, { value: 'none', source: 'personal' })
+  assert.deepEqual(updated.values.codeFontSize, { value: 'large', source: 'personal' })
+  assert.deepEqual(updated.values.diffView, { value: 'split', source: 'personal' })
+  assert.deepEqual(updated.values.diffColors, { value: 'blue', source: 'personal' })
+  assert.deepEqual(updated.values.hiddenFiles, { value: 'all', source: 'personal' })
+  assert.deepEqual(updated.values.sidebarPages, { value: ['chats', 'pulls'], source: 'personal' })
+  assert.deepEqual(updated.values.sidebarLayout, { value: 'columns', source: 'personal' })
+
+  // Another member never sees member's personal appearance overrides.
+  as(owner)
+  const ownerView = await (await personal.GET(request(`personal?workspaceId=${workspaceId}`))).json()
+  assert.deepEqual(ownerView.values.appearanceTheme, { value: 'mikka', source: 'default' })
+
+  // Group reset restores appearance keys to default while preserving interface group overrides.
+  as(member)
+  const reset = await personalReset.POST(request(`personal/reset?workspaceId=${workspaceId}`, 'POST', { group: 'appearance' }))
+  assert.equal(reset.status, 200)
+  const afterReset = await reset.json()
+  assert.deepEqual(afterReset.values.appearanceSync, { value: true, source: 'default' })
+  assert.deepEqual(afterReset.values.appearanceTheme, { value: 'mikka', source: 'default' })
+  assert.deepEqual(afterReset.values.codeFontSize, { value: 'default', source: 'default' })
+  assert.deepEqual(afterReset.values.sidebarLayout, { value: 'columns', source: 'personal' })
+})

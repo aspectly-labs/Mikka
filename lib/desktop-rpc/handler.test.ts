@@ -172,7 +172,7 @@ test('registry schemas reject forged authority, malformed nested input and extra
 
 test('browser settings saves forward supported patches and reject invalid input before writing', async () => {
   const origin = 'https://app.example'
-  const preferences = 'preferences.updatePreferences'
+  const personal = 'settings.patchPersonalSettings'
   const workspace = 'workspace-settings.updateWorkspace'
   const calls: unknown[][] = []
   const invoke = async (args: never[]) => { calls.push(args); return args[0] }
@@ -181,7 +181,7 @@ test('browser settings saves forward supported patches and reject invalid input 
     authenticate: async headers => headers.get('cookie') === 'session=settings' ? owner : null,
     scope: async (_session, work) => work(),
     actions: {
-      [preferences]: { args: desktopActionSchemas[preferences], invoke },
+      [personal]: { args: desktopActionSchemas[personal], invoke },
       [workspace]: { args: desktopActionSchemas[workspace], invoke },
     },
   })
@@ -191,10 +191,9 @@ test('browser settings saves forward supported patches and reject invalid input 
     body: JSON.stringify({ version: 1, action, args: encode(args) }),
   }))
   const valid = [
-    [preferences, [{ ui: { sidebarLayout: 'columns' } }]],
-    [preferences, [{ ui: { colorScheme: 'dark' } }]],
+    [personal, [{ values: { sidebarLayout: 'columns' } }, owner]],
+    [personal, [{ values: { appearanceColorScheme: 'dark' } }, owner]],
     [workspace, [{ taskPrefix: 'QAPR' }, owner]],
-    [workspace, [{ allowPrivate: true }, owner]],
   ] as const
   for (const [action, args] of valid) {
     const response = await save(action, [...args])
@@ -204,10 +203,9 @@ test('browser settings saves forward supported patches and reject invalid input 
   assert.deepEqual(calls, valid.map(([, args]) => args))
 
   const invalid: [string, unknown[]][] = [
-    [preferences, [{ ui: { colorScheme: 'invalid' } }]],
-    [preferences, [{ ui: { userId: peer } }]],
+    [personal, [{ userId: peer, values: { appearanceColorScheme: 'dark' } }, owner]],
     [workspace, [{ taskPrefix: 'TOOLONG' }, owner]],
-    [workspace, [{ allowPrivate: 'true' }, owner]],
+    [workspace, [{ allowPrivate: true }, owner]],
     [workspace, [{ userId: peer }, owner]],
   ]
   for (const [action, args] of invalid) {
