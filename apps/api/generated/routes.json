@@ -2434,10 +2434,11 @@
       "template": "/api/runs/[runId]/workspace/files",
       "source": "app/api/runs/[runId]/workspace/files/route.ts",
       "methods": [
-        "GET"
+        "GET",
+        "POST"
       ],
       "maxDuration": 30,
-      "sourceHash": "c4d25619c57d98909d4f74c99680754ecf0c2b7072eb1fb5c6add2990128542c"
+      "sourceHash": "9dce5f0f908d0d26c0e68bda2f9a094b55a4fe71f29159b7334cf908cbb0d592"
     },
     {
       "path": "/mikka/api/runs/[runId]/workspace/git/checkpoints",
