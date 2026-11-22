@@ -4356,6 +4356,7 @@
     },
     "activity": {
       "thinking": "思考中",
+      "waited": "{seconds} 秒",
       "running": "正在{tool}",
       "thought": "思考了 {seconds} 秒",
       "thoughtStored": "已思考",

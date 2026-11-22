@@ -41,7 +41,7 @@ import { heldRevision } from '@/lib/live/revisions'
 import { useLiveCitations } from './use-live-citations'
 import type { CoordinatorLiveReply } from '@/lib/eve/chat-view'
 import { firstThreadCards, staleEventPositions } from '@/lib/coordinator/chat-dedupe'
-import { useThreadToolRows } from './reply-activity'
+import { ReplyWaiting, useThreadToolRows } from './reply-activity'
 import { ChatComposerAttachment } from './chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
 import { MergeWaitingLine, useMergeWaitings } from '@/components/chat/merge-waiting-line'
@@ -587,9 +587,13 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
   for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
     parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
-  // Before the reply has anything to show: the Bot's turn, still empty, with its caret.
-  if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
-    entries.push({ id: 'waiting', role: 'bot', at: Date.now(), parts: [], streaming: true })
+  // Before the reply has anything to show: the Bot's turn with its Thinking row, counting the seconds since the
+  // person's message once past 2 s (LobeHub's wait for the first token); after a retry, since the row appeared.
+  if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping) {
+    const asked = entries.at(-1)
+    entries.push({ id: 'waiting', role: 'bot', at: Date.now(), streaming: true,
+      parts: [{ kind: 'text', text: '', node: <ReplyWaiting {...(asked?.role === 'person' ? { since: asked.at } : {})} /> }] })
+  }
   if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
   // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.
   const quietAuthor = { id: botId ?? 'coordinator', name, mark: avatar('pill'), quiet: true }
