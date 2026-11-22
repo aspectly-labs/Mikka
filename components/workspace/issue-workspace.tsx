@@ -7,19 +7,15 @@ import { toast } from 'sonner'
 import { useSearchParams } from '@/lib/client-runtime/navigation'
 import { usePathname, useRouter } from '@/i18n/navigation'
 import dynamic from '@/lib/client-runtime/dynamic'
+import { lazyDialog } from '@/lib/client-runtime/lazy-dialog'
+import { SearchPill } from '@/components/nav/search-pill'
 import { Columns3, List, Plus, Search } from '@/components/icons'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { IconRail, type RailDestination } from '@/components/nav/icon-rail'
 import { useChatNav, type ChatTarget } from '@/components/nav/bot-list'
-import { NewGroupDialog } from '@/components/nav/new-group-dialog'
 import { threadName } from '@/components/nav/thread-list'
-import { NewBotDialog } from '@/components/nav/new-bot-dialog'
 import type { E2BKeyResult, OnboardingComputer } from '@/components/onboarding/onboarding'
-import { Onboarding } from '@ui-slot/onboarding'
 import type { LegacyChatRequest } from './legacy-chat-archive'
-import { TeamHome } from '@/components/teams/team-home'
-import { ArtifactsPage } from '@ui-slot/artifacts'
-import { MemoryPage } from '@ui-slot/memory'
 import type { CoordinatorPrefill } from '@/components/coordinator/coordinator-chat'
 import { INBOX_PHONE_HEADER, INBOX_TITLE, InboxPage } from '@ui-slot/inbox'
 import { AppFrame, AppShellContent, FRAME_OWNS_HEADER, FRAME_OWNS_PANEL, SignOutBoundary, WindowBar } from '@/components/app-shell'
@@ -28,16 +24,10 @@ import { useRightColumnTabs, type RightColumnScope } from '@/components/right-co
 import type { ThreadPanelTabId } from '@/components/slots/thread-contract'
 import * as settingsFrameSlot from '@ui-slot/settings-frame'
 import * as reviewSummarySlot from '@ui-slot/review-summary'
-import { PluginsPage } from '@ui-slot/plugins'
-import { ReviewPage } from '@ui-slot/review-page'
 import { closeReview, openReview, useReviewPage } from '@/hooks/code-review/use-review-page'
 import { IssueList } from './issue-list'
-import { BoardPage } from './board-page'
 import { showBoardView } from './board-view'
-import { NewTaskDialog } from '@/components/coordinator/new-task-dialog'
-import { GlobalSearch, SearchPill } from '@/components/nav/global-search'
 import { ConversationDirectory } from './conversation-directory'
-import { PullDirectoryPage } from '@ui-slot/pull-directory'
 import { ContextPanel } from '@/components/nav/context-panel'
 import { ConversationReferenceTitles, conversationReferenceTitles } from './conversation-reference-titles'
 import { GroupPanel } from '@/components/nav/group-panel'
@@ -46,7 +36,6 @@ import { GroupPillAvatar } from '@/components/nav/group-avatar'
 import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
-import { BrowserPane } from '@/components/browser/browser-pane'
 import { browserAddressRequest, browserAddressVersion, subscribeBrowserAddress } from '@/lib/browser/navigation'
 import { ThreadColumn } from './thread-column'
 import { AllThreadsColumn, AllThreadsToggle } from '@/components/nav/all-threads'
@@ -83,13 +72,11 @@ import { listProjectTeams } from '@/app/actions/team-relations'
 import { WorkspaceOverview } from './workspace-overview'
 import { GroupChatView } from './group-chat-view'
 import { GroupLeaveAction } from './group-leave-action'
-import { DeleteBotDialog } from '@/components/nav/delete-bot-dialog'
-import { RenameThreadDialog } from '@/components/nav/rename-thread-dialog'
 import { renameConversation } from '@/app/actions/task-runs'
 import { archiveBot, deleteBot, listArchivedOwnBots } from '@/app/actions/bots'
 import type { GroupSummary } from '@/lib/group-messages'
 import { forgetGroupReads, useGroupMembershipLoss } from './group-membership-cache'
-import { AutomationsPageLoading, BoardPageLoading, ConversationPageLoading, ProjectsPageLoading, SettingsPageLoading, TaskPageLoading, WorkspaceLoading } from './workspace-loading'
+import { AutomationsPageLoading, BoardPageLoading, ConversationPageLoading, ProjectsPageLoading, SettingsPageLoading, TaskPageLoading, WorkspaceContentLoading, WorkspaceLoading } from './workspace-loading'
 import { InlineLoadError } from '@/components/load-error'
 import { SuggestionsRefresh } from '@/components/suggestions/suggestion-feed'
 import { backToTaskOrigin, closeTask, dropQueryKeys, goTo, LEGACY_TASKS_SECTION, navigate as navigateWorkspace, NAVIGATE_EVENT, NEW_CONVERSATION_EVENT, openedFromList, openTask, openThread, queryMoved, readLocation, sameLocation, sectionFor, taskOrigin, tidyAddress, toggleAllThreads, type WorkspaceLocation, type WorkspaceSection } from './workspace-navigation'
@@ -128,6 +115,23 @@ async function saveOnboardingKey(apiKey: string): Promise<E2BKeyResult> {
 }
 
 // Each page's chunk stands in as the page it replaces: its own bar, its title, then a grey body.
+// Pages other than the chat, overlays and closed dialogs are their own chunks: a chat's first load
+// carries none of them (LobeHub's route- and feature-level lazy loading, scratchpad bundle notes).
+const TeamHome = dynamic(() => import('@/components/teams/team-home').then(module => module.TeamHome), { loading: WorkspaceContentLoading })
+const ArtifactsPage = dynamic(() => import('@ui-slot/artifacts').then(module => module.ArtifactsPage), { loading: WorkspaceContentLoading })
+const MemoryPage = dynamic(() => import('@ui-slot/memory').then(module => module.MemoryPage), { loading: WorkspaceContentLoading })
+const PluginsPage = dynamic(() => import('@ui-slot/plugins').then(module => module.PluginsPage), { loading: WorkspaceContentLoading })
+const PullDirectoryPage = dynamic(() => import('@ui-slot/pull-directory').then(module => module.PullDirectoryPage), { loading: WorkspaceContentLoading })
+const Onboarding = dynamic(() => import('@ui-slot/onboarding').then(module => module.Onboarding))
+const ReviewPage = dynamic(() => import('@ui-slot/review-page').then(module => module.ReviewPage))
+const GlobalSearch = dynamic(() => import('@/components/nav/global-search').then(module => module.GlobalSearch))
+const RenameThreadDialog = dynamic(() => import('@/components/nav/rename-thread-dialog').then(module => module.RenameThreadDialog))
+const DeleteBotDialog = dynamic(() => import('@/components/nav/delete-bot-dialog').then(module => module.DeleteBotDialog))
+const BoardPage = dynamic(() => import('./board-page').then(module => module.BoardPage), { loading: () => <BoardPageLoading /> })
+const BrowserPane = dynamic(() => import('@/components/browser/browser-pane').then(module => module.BrowserPane))
+const NewTaskDialog = lazyDialog(() => import('@/components/coordinator/new-task-dialog').then(module => module.NewTaskDialog))
+const NewGroupDialog = lazyDialog(() => import('@/components/nav/new-group-dialog').then(module => module.NewGroupDialog))
+const NewBotDialog = lazyDialog(() => import('@/components/nav/new-bot-dialog').then(module => module.NewBotDialog))
 const TaskDetail = dynamic(() => import('./task-detail').then(module => module.TaskDetail), { loading: TaskPageLoading })
 const ArtifactWindow = dynamic(() => import('@/components/artifacts/artifact-window').then(module => module.ArtifactWindow), { ssr: false })
 const ProjectWorkspace = dynamic(() => import('./project-workspace').then(module => module.ProjectWorkspace), { loading: ProjectsPageLoading })

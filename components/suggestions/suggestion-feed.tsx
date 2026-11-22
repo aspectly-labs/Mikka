@@ -8,7 +8,7 @@ import { useLocale, useTranslations } from '@/lib/intl/i18n-client'
 import { Lightbulb, RotateCw } from '@/components/icons'
 import { toast } from 'sonner'
 import { sendSuggestion } from '@/app/actions/coordinator'
-import { coordinatorChatKey } from '@/components/coordinator/coordinator-chat'
+import { chatKeys } from '@/lib/swr/keys'
 import { ConversationPill } from '@/components/nav/conversation-pill'
 import { CoordinatorAvatar } from '@/components/nav/bot-avatar'
 import { Button } from '@/components/ui/button'
@@ -63,7 +63,7 @@ export function useSuggestions() {
       if (result.error) return actionError(result.error)
       if (result.queued !== true) return actionError()
       // SWR owns read errors. Refreshing projections cannot undo a committed handoff.
-      void Promise.allSettled([mutate(), mutateAll(SUGGESTION_COUNT_KEY), mutateAll(coordinatorChatKey()), mutateAll(key => key === 'threads' || Array.isArray(key) && key[0] === 'threads')])
+      void Promise.allSettled([mutate(), mutateAll(SUGGESTION_COUNT_KEY), mutateAll(chatKeys.detail()), mutateAll(key => key === 'threads' || Array.isArray(key) && key[0] === 'threads')])
       return null
     } catch { return actionError() }
   }
