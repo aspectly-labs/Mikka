@@ -162,6 +162,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/model-api-keys.ts', file: 'tests/model-api-keys.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/usage/read.ts', file: 'tests/usage.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/thread-cost.ts', file: 'tests/thread-cost.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/coordinator/tool-call-read.ts', file: 'tests/coordinator-tool-call.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/coordinator/turn-revisions.ts', file: 'tests/bot-chat-revisions.db.test.ts', script: 'test:activity-actor-db' },
   { marker: 'lib/thread-plan-read.ts', file: 'tests/thread-plan.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/message-references.ts', file: 'tests/message-references.db.test.ts', script: 'test:workspace-admin-db' },

@@ -4431,10 +4431,10 @@
         "thinkingDone": "Done thinking",
         "finished": "{tool} finished",
         "failed": "Failed",
-        "args": "Input",
+        "args": "Parameters",
         "command": "Command",
         "exitCode": "Exit code {code}",
-        "result": "Output",
+        "result": "Result",
         "waiting": "Waiting for result…",
         "empty": "No input or output",
         "usedTools": "Used {count, plural, one {# tool} other {# tools}}",
@@ -4447,7 +4447,8 @@
         "stopped": "Stopped",
         "seconds": "{seconds}s",
         "truncated": "The output was long; only part of it was kept",
-        "noMatches": "No matches"
+        "noMatches": "No matches",
+        "error": "Error"
       },
       "detail": {
         "handedTo": "Handed to",
@@ -4460,7 +4461,6 @@
         "to": "To",
         "subject": "Subject",
         "repository": "Repository",
-        "raw": "Raw data",
         "dispatched": "Dispatched"
       }
     },
@@ -5147,7 +5147,9 @@
       "coveredLine": "{zero} ({amount} list)"
     },
     "tool": {
-      "exitCode": "exit {code}"
+      "exitCode": "exit {code}",
+      "search": "\"{target}\"",
+      "searchIn": "\"{target}\" in {scope}"
     },
     "lifecycle": {
       "fork": "Fork",

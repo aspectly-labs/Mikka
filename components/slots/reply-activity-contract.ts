@@ -16,9 +16,7 @@ export type ActivityToolView = {
   why?: string
   /** Readable lines about the call (who a dispatch went to, its thread, a quote); null when there are none. */
   details: ReactNode
-  /** The raw input and output, folded under 「原始数据」 as the open-source chat draws them. */
-  raw: ReactNode
-  /** The raw input and output text, for a layer that draws its own. */
+  /** The input and output text, for a layer that draws its own. */
   input?: string
   output?: string
   /** False while running, or when there is nothing to open. */

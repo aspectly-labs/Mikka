@@ -4447,7 +4447,8 @@
         "stopped": "已停止",
         "seconds": "{seconds} 秒",
         "truncated": "输出过长，只保留了一部分",
-        "noMatches": "没有匹配"
+        "noMatches": "没有匹配",
+        "error": "错误"
       },
       "detail": {
         "handedTo": "交给",
@@ -4460,7 +4461,6 @@
         "to": "发给",
         "subject": "主题",
         "repository": "仓库",
-        "raw": "原始数据",
         "dispatched": "已派发"
       }
     },
@@ -5147,7 +5147,9 @@
       "coveredLine": "{zero}（原价 {amount}）"
     },
     "tool": {
-      "exitCode": "退出码 {code}"
+      "exitCode": "退出码 {code}",
+      "search": "\"{target}\"",
+      "searchIn": "\"{target}\" in {scope}"
     },
     "lifecycle": {
       "fork": "分叉",

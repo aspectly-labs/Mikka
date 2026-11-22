@@ -7,17 +7,16 @@ import {
   BellRing, BookOpen, Brain, CalendarDays, ChevronsDownUp, ChevronsUpDown, CircleStop, Factory, FolderGit2, Power, FolderOpen, Globe, ListChecks,
   Mail, MessageSquare, MessageSquareText, Pencil, Search, Send, SquarePlus, Wrench,
 } from '@/components/icons'
-import { coordinatorReasoning } from '@/app/actions/coordinator'
-import { CodeBlock, CodeBlockContent } from '@/components/ui/code-block'
+import { coordinatorReasoning, coordinatorToolCall } from '@/app/actions/coordinator'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { GitHubIcon } from '@/components/icons/brand-icons'
-import { TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceLine, TraceTitle } from '@/components/ui/trace'
 import { dispatchedRunId, toolAction, toolFailure, toolObjectId, toolSummary, toolTarget, toolUnknown, type ToolAction } from '@/lib/coordinator/tool-activity'
-import { CitationChip, useAgentCitations } from '@/components/workspace/agent-citations'
+import { AgentCitationsContext, CitationChip, useAgentCitations, type AgentCitations } from '@/components/workspace/agent-citations'
 import { threadGroupOfRun } from '@/components/workspace/thread-status-icon'
 import { HarnessLabel } from '@/components/labels/entity-labels'
-import { toolDetail, type ToolDetailLine } from '@/lib/coordinator/tool-detail'
+import { previewFields, toolDetail, type ToolDetailLine } from '@/lib/coordinator/tool-detail'
+import { commandLine, isWorkspaceRoot } from '@/components/workspace/thread-step-rows'
 import { toolTitle } from '@/lib/tool-title'
 import { threadStepKind } from '@/lib/issue-run-conversation'
 import { runThreadName } from '@/lib/coordinator/citations'
@@ -69,7 +68,7 @@ function useToolLabel() {
 
 /**
  * A failure's reason in words: a known error code in the person's language. Anything else (an SDK error class, an
- * English message) reads 「没执行成功，已跳过」; the raw text stays under 原始数据 (decision 2026-11-05-0330).
+ * English message) reads 「没执行成功，已跳过」, in words only (Alex, 2026-11-22: no raw data, as Claude and ChatGPT).
  */
 function useFailureReason() {
   const t = useTranslations('Coordinator.activity')
@@ -103,9 +102,9 @@ function useToolView() {
     return {
       key: tool.call, state: running ? 'running' : failed ? 'error' : 'done', icon: <Icon />,
       title: label, ...(target ? { target } : {}), ...(why ? { why } : {}),
-      details: <ToolDetail tool={tool} failed={failed} />, raw: <RawData tool={tool} failed={failed} />,
+      details: <ToolDetail tool={tool} failed={failed} />,
       ...(tool.input ? { input: tool.input } : {}), ...(tool.output ? { output: tool.output } : {}),
-      openable: Boolean(tool.input || tool.output) && !running, ...(card ? { card } : {}),
+      openable: toolDetail(tool, failed).length > 0 && !running, ...(card ? { card } : {}),
     }
   }
 }
@@ -117,7 +116,7 @@ function ToolRow({ tool, live }: { tool: ChatTool; live: boolean }) {
 /**
  * An opened call in words (R-83): what it was asked, what it acted on or made, what came back. A dispatch reads
  * 「交给 Claude Code」 and its thread's chip, then its note as a quote. Ids never show. A failed call shows nothing
- * here: its row names the reason, and what it was asked never happened.
+ * here: its row names the reason, and what it was asked never happened. There is no raw data under it (Alex, 2026-11-22).
  */
 function ToolDetail({ tool, failed }: { tool: ChatTool; failed: boolean }) {
   const lines = toolDetail(tool, failed)
@@ -181,18 +180,6 @@ function Quote({ text }: { text: string }) {
   if (!cut) return <div data-activity-quote="" className={quote}>{words}</div>
   return <Button variant="ghost" data-activity-quote="" aria-expanded={whole} onClick={() => setWhole(!whole)}
     className={cn('h-auto justify-start rounded-none border-0 py-0 pr-0 font-normal hover:bg-transparent hover:text-muted-foreground', quote)}>{words}</Button>
-}
-
-/** The call's raw input and output, folded under 「原始数据」, one more click away (R-83). */
-function RawData({ tool, failed }: { tool: ChatTool; failed: boolean }) {
-  const t = useTranslations('Coordinator.activity.detail')
-  return <TraceCollapsible data-activity-raw="">
-    <TraceCollapsibleTrigger><TraceLine><TraceTitle>{t('raw')}</TraceTitle></TraceLine></TraceCollapsibleTrigger>
-    <TraceCollapsibleContent className="flex flex-col gap-2">
-      {tool.input && <CodeBlock size="sm"><CodeBlockContent wrap className="max-h-40">{tool.input}</CodeBlockContent></CodeBlock>}
-      {tool.output && <CodeBlock size="sm" {...(failed ? { variant: 'destructive' as const } : {})}><CodeBlockContent wrap className="max-h-64">{tool.output}</CodeBlockContent></CodeBlock>}
-    </TraceCollapsibleContent>
-  </TraceCollapsible>
 }
 
 /** 全部展开 / 全部收起, always shown at the end of a group's summary; it opens or closes every group in the chat (R-83). */
@@ -292,6 +279,28 @@ export function ReplyWaiting({ since }: { since?: number }) {
     {...(waited >= WAIT_SECONDS_AFTER_MS ? { elapsed: t('waited', { seconds: Math.floor(waited / 1000) }) } : {})} /></ActivityList>
 }
 
+const DISPATCHES = new Set<ToolAction>(['dispatch', 'dispatchFactory', 'wake'])
+
+/** Whether an app tool has a chip or words beyond its row: a task or thread the chat can show, or what it was asked to say. */
+function hasAppView(tool: ChatTool, sources: Record<string, unknown> | undefined) {
+  return toolDetail(tool).some(line => line.kind === 'object' ? Boolean(sources?.[line.id]) : line.kind === 'quote')
+}
+
+/** An opened app tool: the task or thread chip it read or changed (identifier · title · status), then its words. */
+function AppToolView({ tool }: { tool: ChatTool }) {
+  const sources = useAgentCitations()?.sources
+  const lines = toolDetail(tool).filter(line => line.kind === 'object' || line.kind === 'quote')
+  return <div data-thread-tool-entity="" className="flex min-w-0 flex-col gap-1.5 text-sm text-foreground">
+    {lines.map((line, index) => {
+      const source = line.kind === 'object' ? sources?.[line.id] : undefined
+      // A task: the chat's own chip (its status and identifier), then its title.
+      return source?.kind === 'issue' ? <span key={index} className="flex min-w-0 items-center gap-1.5">
+        <CitationChip id={source.id} kind="issue" /><span className="min-w-0 truncate text-muted-foreground">{source.title}</span>
+      </span> : <ToolDetailRow key={index} line={line} />
+    })}
+  </div>
+}
+
 /**
  * A reply's thinking and tools as the thread slot's rows (components/slots/thread-contract.ts): the same words the
  * Trace rows above use – what it did to what, why it failed, the thinking's seconds – with the output as the detail.
@@ -300,7 +309,15 @@ export function useThreadToolRows() {
   const t = useTranslations('Coordinator.activity')
   const view = useToolView()
   const toolLabel = useToolLabel()
-  return (tools: readonly ChatTool[], { live, thinking, thought }: { live: boolean; thinking?: { active: boolean; seconds?: number; text?: string } | false; thought?: boolean }): ThreadToolRow[] => [
+  const tTool = useTranslations('IssueThreads.tool')
+  const around = useAgentCitations()
+  // `stored`: the reply's place in the chat, so an opened row reads its whole call (coordinatorToolCall); a reply still
+  // streaming has only what the stream sent.
+  // `citations`: the chat's, for an app tool's chip; the rows are drawn by the thread slot, outside the chat's context.
+  return (tools: readonly ChatTool[], { live, thinking, thought, stored, citations: given }: { live: boolean; thinking?: { active: boolean; seconds?: number; text?: string } | false; thought?: boolean; stored?: { botId: string | null; position: number }; citations?: AgentCitations }): ThreadToolRow[] => {
+    const citations = given ?? around
+    const sources = citations?.sources
+    return [
     ...(thinking || thought ? [{
       id: 'thinking', label: thinking && thinking.active ? t('thinking') : thinking && thinking.seconds ? t('thought', { seconds: thinking.seconds }) : t('thoughtStored'),
       status: thinking && thinking.active ? 'running' as const : 'done' as const, ...(thinking && !thinking.active && thinking.seconds !== undefined ? { ms: thinking.seconds * 1000 } : {}),
@@ -313,10 +330,24 @@ export function useThreadToolRows() {
       // reads and dispatches, else what a coding tool of that name does (a read file, a search), else another tool.
       const kind = action === 'searchWeb' || action === 'readWeb' ? 'web' as const : action === 'dispatch' || action === 'dispatchFactory' ? 'delegate' as const : threadStepKind(tool.name)
       // The row names the tool; running, its spinner says so (the template's), not words in front of an English title.
-      return { id: row.key, label: toolLabel(tool.name, toolUnknown(tool), tool.displayName), kind, status: row.state === 'running' ? 'running' as const : row.state === 'error' ? 'failed' as const : 'done' as const,
-        ...(row.why ? { error: row.why } : {}), ...(row.target ? { note: row.target, target: row.target } : {}), input: row.input, detail: row.output,
+      // Mikka's own tools open to the task or thread they read or changed, as the chat's chips; otherwise, and for a
+      // dispatch (its 子 Agent card stands under the reply), the row says all there is and does not open.
+      const app = action !== 'other'
+      // A command reads as in a thread: its command on the row, then its output in the command panel.
+      const commandText = kind === 'shell' ? previewFields(tool.input).command : undefined
+      const command = typeof commandText === 'string' && commandText.trim() ? commandText : undefined
+      // A search: what it looked for, quoted, and the folder unless it searched the workspace root.
+      const fields = kind === 'search' ? previewFields(tool.input) : {}
+      const sought = [fields.pattern, fields.query, fields.q].find((value): value is string => typeof value === 'string' && !!value.trim())
+      const folder = typeof fields.path === 'string' && fields.path.trim() && !isWorkspaceRoot(fields.path) ? fields.path.trim() : undefined
+      const search = sought ? folder ? tTool('searchIn', { target: sought, scope: folder }) : tTool('search', { target: sought }) : undefined
+      const appView = app ? row.state === 'done' && !DISPATCHES.has(action) && hasAppView(tool, sources) ? <AgentCitationsContext value={citations ?? null}><AppToolView tool={tool} /></AgentCitationsContext> : false as const : undefined
+      return { id: row.key, label: toolLabel(tool.name, toolUnknown(tool), tool.displayName), kind, ...(appView !== undefined ? { view: appView } : {}), status: row.state === 'running' ? 'running' as const : row.state === 'error' ? 'failed' as const : 'done' as const,
+        ...(row.why ? { error: row.why } : {}), ...(command ? { note: commandLine(command), command } : search ? { note: search, target: sought } : row.target ? { note: row.target, target: row.target } : {}), ...(command ? {} : { input: row.input }), detail: row.output,
         // The chat keeps a short preview of each output: one as long as that may be only its start, and says so.
-        ...((row.output?.length ?? 0) >= TOOL_PREVIEW_CHARS ? { outputTruncated: true } : {}) }
+        ...((row.output?.length ?? 0) >= TOOL_PREVIEW_CHARS ? { outputTruncated: true } : {}),
+        ...(stored && !app && row.state !== 'running' ? { full: { key: `${stored.botId ?? 'coordinator'}:${stored.position}:${tool.call}`, load: () => coordinatorToolCall(stored.botId, stored.position, tool.call) } } : {}) }
     }),
-  ]
+    ]
+  }
 }

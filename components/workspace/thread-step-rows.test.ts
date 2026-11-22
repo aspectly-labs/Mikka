@@ -34,7 +34,7 @@ test('a run\'s tool calls are named by what they did, from the structured fields
   // Alex, 2026-11-22: the tool's English title, then what it acted on, also in a Chinese UI.
   assert.deepEqual(rows.map(row => [row.label, row.note, row.kind, row.status]), [
     ['Read file', 'task-detail-skeleton.tsx', 'read', 'done'],
-    ['Search', 'TaskDetailLoading', 'search', 'done'],
+    ['Search', '"TaskDetailLoading" in components/workspace', 'search', 'done'],
     ['Run command', 'pnpm test --filter task-detail -u', 'shell', 'done'],
     ['Run command', 'pnpm lint:ui', 'shell', 'failed'],
     ['Pull request read', 'Mikka#2837', 'other', 'running'],
@@ -47,6 +47,15 @@ test('a run\'s tool calls are named by what they did, from the structured fields
   assert.equal(rows[2].exitCode, 0)
   assert.equal(rows[2].ms, 4100)
   assert.equal(rows[3].outputTruncated, true)
+})
+
+test('a search names its folder only when it is not the workspace root', async () => {
+  const rows = useThreadStepRows()(await steps([
+    { type: 'tool-input-available', toolCallId: 'a', toolName: 'Grep', input: { pattern: 'redirect', path: 'lib/auth' } },
+    { type: 'tool-input-available', toolCallId: 'b', toolName: 'Grep', input: { pattern: 'redirect', path: '.' } },
+    { type: 'tool-input-available', toolCallId: 'c', toolName: 'Grep', input: { pattern: 'redirect' } },
+  ]), true)
+  assert.deepEqual(rows.map(row => `${row.label} · ${row.note}`), ['Search · "redirect" in lib/auth', 'Search · "redirect"', 'Search · "redirect"'])
 })
 
 test('a call its ended run left running reads as stopped', async () => {

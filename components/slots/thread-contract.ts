@@ -34,7 +34,17 @@ export type ThreadToolRow = {
   kind?: ThreadToolKind
   /** Only the end of its output was kept. */
   outputTruncated?: boolean
+  /** The whole call, read only when its row is opened (a Bot chat keeps previews): `key` names the read for caching. */
+  full?: ThreadToolFull
+  /**
+   * Mikka's own app tools (Get issue, Update issue, …): what an opened row shows, the task or thread chip it read or
+   * changed; `false` when the row already says everything, so it does not open (Alex, 2026-11-22).
+   */
+  view?: ReactNode | false
 }
+
+/** A tool call's whole input and output, each cut at about 64 KB and marked when cut. */
+export type ThreadToolFull = { key: string; load: () => Promise<{ input?: string; output?: string; inputCut?: true; outputCut?: true } | null> }
 
 export type ThreadToolKind = 'read' | 'search' | 'shell' | 'edit' | 'web' | 'delegate' | 'todo' | 'other'
 

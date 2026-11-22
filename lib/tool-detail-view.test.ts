@@ -25,14 +25,21 @@ test('an edit is a diff of what it replaced; a write is the file it wrote', () =
     { type: 'file', path: 'c.md', language: 'markdown', code: '# Title' })
 })
 
-test('any other tool: its inputs as a short list, its output as text, or as JSON only when it is structured', () => {
-  assert.deepEqual(toolDetailView({ kind: 'other', input: JSON.stringify({ identifier: 'ALEX-45', limit: 5, filter: { state: 'open' } }), output: '找到 1 个任务' }),
-    { type: 'generic', fields: [{ key: 'identifier', value: 'ALEX-45' }, { key: 'limit', value: '5' }, { key: 'filter', value: '{"state":"open"}' }], output: { text: '找到 1 个任务', json: false } })
+test('any other tool, as AI Elements\' Tool: parameters only when the row does not show them, then the result or error', () => {
+  // The row shows ALEX-45: parameters that hold only that are not repeated.
+  assert.deepEqual(toolDetailView({ kind: 'other', target: 'ALEX-45', input: JSON.stringify({ identifier: 'ALEX-45' }), output: '找到 1 个任务' }),
+    { type: 'generic', output: { text: '找到 1 个任务', json: false } })
+  // More than the target: the whole input once, as JSON.
+  assert.deepEqual(toolDetailView({ kind: 'other', target: 'ALEX-45', input: JSON.stringify({ identifier: 'ALEX-45', limit: 5 }) }),
+    { type: 'generic', params: { text: '{\n  "identifier": "ALEX-45",\n  "limit": 5\n}', json: true } })
   const json = toolDetailView({ kind: 'other', input: '{}', output: '{"runId":"r1","status":"queued"}' })
-  assert.deepEqual(json, { type: 'generic', fields: [], output: { text: '{\n  "runId": "r1",\n  "status": "queued"\n}', json: true } })
-  // An input preview cut at 200 characters is not JSON: it stays one line, never a broken key list.
-  const cut = toolDetailView({ kind: 'other', input: '{"prompt":"修复登录重定向并补一条回归', output: undefined })
-  assert.deepEqual(cut, { type: 'generic', fields: [{ key: '', value: '{"prompt":"修复登录重定向并补一条回归' }] })
+  assert.deepEqual(json, { type: 'generic', output: { text: '{\n  "runId": "r1",\n  "status": "queued"\n}', json: true } })
+  // An input preview cut at 200 characters is not JSON: it is shown as it came, once.
+  assert.deepEqual(toolDetailView({ kind: 'other', input: '{"prompt":"修复登录重定向并补一条回归' }),
+    { type: 'generic', params: { text: '{"prompt":"修复登录重定向并补一条回归', json: false } })
+  // A failure is its error, not a read file.
+  assert.deepEqual(toolDetailView({ kind: 'read', target: 'a.ts', output: 'ENOENT: no such file', failed: true }),
+    { type: 'generic', output: { text: 'ENOENT: no such file', json: false }, error: true })
   assert.equal(toolDetailView({ kind: 'other' }), null, 'nothing recorded, nothing to open')
 })
 

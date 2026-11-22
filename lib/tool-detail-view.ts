@@ -1,7 +1,7 @@
 // What an opened tool call shows (Alex, 2026-11-22), as Claude Code, Codex and LobeHub show it: a file read is the
-// file's code, a search its matches, an edit its diff, any other tool its inputs as a short list and its output as
-// text, or as JSON only when it is structured. The raw input and output stay one click away under 原始数据. Pure, so
-// the rows and tests read a call the same way.
+// file's code, a search its matches, an edit its diff, any other tool its parameters (only when the row does not
+// already show them) and its result or error, as JSON only when structured. Nothing twice, no raw data. Pure, so the
+// rows and tests read a call the same way.
 
 export type ToolDetailKind = 'read' | 'search' | 'shell' | 'edit' | 'web' | 'delegate' | 'todo' | 'other'
 
@@ -11,7 +11,8 @@ export type ToolDetailView =
   | { type: 'file'; path?: string; language?: string; code: string }
   | { type: 'matches'; query?: string; lines: string[] }
   | { type: 'diff'; file: string; language?: string; lines: DiffLine[] }
-  | { type: 'generic'; fields: { key: string; value: string }[]; output?: { text: string; json: boolean } }
+  /** Any other tool, as AI Elements' Tool: its parameters only when the row does not show them, then its result or error. */
+  | { type: 'generic'; params?: { text: string; json: boolean }; output?: { text: string; json: boolean }; error?: true }
 
 /** A file's language from its extension, as the code block names them; none for an unknown one. */
 const EXTENSIONS: Record<string, string> = {
@@ -65,15 +66,6 @@ function withoutLineNumbers(code: string): string {
   return lines.length && lines.every(line => !line || numbered.test(line)) ? lines.map(line => line.replace(numbered, '')).join('\n') : code
 }
 
-const FIELD_MAX = 200
-
-/** One input field in a line: a string as it is, anything else as compact JSON, cut where a line ends. */
-function fieldValue(value: unknown): string {
-  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value)
-  const line = text.replace(/\s+/g, ' ').trim()
-  return line.length > FIELD_MAX ? `${line.slice(0, FIELD_MAX - 1)}…` : line
-}
-
 function splitLines(text: string) {
   return text.replace(/\r?\n$/, '').split(/\r?\n/)
 }
@@ -96,28 +88,30 @@ function editLines(input: Record<string, unknown>): DiffLine[] | null {
  * The readable view of a call: `kind` is what it did (lib/issue-run-conversation.ts `threadStepKind`), `target` the
  * path, query or URL it acted on, `input` and `output` as stored (JSON or text, possibly a cut preview).
  */
-export function toolDetailView({ kind, target, input, output }: { kind?: ToolDetailKind; target?: string; input?: string; output?: string }): ToolDetailView | null {
+export function toolDetailView({ kind, target, input, output, failed = false }: { kind?: ToolDetailKind; target?: string; input?: string; output?: string; failed?: boolean }): ToolDetailView | null {
   const args = record(parsed(input))
   const path = target ?? string(args?.file_path) ?? string(args?.path)
   const text = outputText(output)
-  if (kind === 'read' && text !== undefined && text.trim()) return { type: 'file', path, language: languageOf(path), code: withoutLineNumbers(text) }
-  if (kind === 'search' && text !== undefined) {
+  if (!failed && kind === 'read' && text !== undefined && text.trim()) return { type: 'file', path, language: languageOf(path), code: withoutLineNumbers(text) }
+  if (!failed && kind === 'search' && text !== undefined) {
     const lines = splitLines(text).filter(line => line.trim())
     return { type: 'matches', ...(target ? { query: target } : {}), lines }
   }
-  if (kind === 'edit' && args) {
+  if (!failed && kind === 'edit' && args) {
     const lines = editLines(args)
     const file = path ?? ''
     if (lines && file) return { type: 'diff', file, language: languageOf(file), lines }
     const content = string(args.content) ?? string(args.contents)
     if (content !== undefined) return { type: 'file', path, language: languageOf(path), code: content }
   }
-  const fields = args ? Object.entries(args).filter(([, value]) => value !== undefined && value !== null && value !== '').map(([key, value]) => ({ key, value: fieldValue(value) })) : []
-  // An input that is not a JSON object (a cut preview, a bare string) is its own one line.
-  if (!args && input?.trim()) fields.push({ key: '', value: fieldValue(input) })
-  if (!fields.length && (text === undefined || !text.trim())) return null
-  if (text === undefined || !text.trim()) return { type: 'generic', fields }
-  const structured = parsed(text)
+  // The row already shows the target: parameters show only when they hold more than it.
+  const extra = args ? Object.entries(args).filter(([, value]) => value !== undefined && value !== null && value !== '' && value !== target) : []
+  const params = args ? extra.length ? { text: JSON.stringify(args, null, 2), json: true } : undefined
+    : input?.trim() && input.trim() !== target ? { text: input.trim(), json: false } : undefined
+  const shown = text?.trim() ? text : undefined
+  if (!params && !shown) return null
+  const structured = shown === undefined ? undefined : parsed(shown)
   const json = structured !== undefined && typeof structured === 'object' && structured !== null
-  return { type: 'generic', fields, output: json ? { text: JSON.stringify(structured, null, 2), json: true } : { text, json: false } }
+  const result = shown === undefined ? undefined : json ? { text: JSON.stringify(structured, null, 2), json: true } : { text: shown, json: false }
+  return { type: 'generic', ...(params ? { params } : {}), ...(result ? { output: result } : {}), ...(failed && result ? { error: true as const } : {}) }
 }

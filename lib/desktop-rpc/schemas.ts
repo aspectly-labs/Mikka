@@ -245,6 +245,7 @@ export const desktopActionSchemas = {
   'coordinator.coordinatorHistory': tuple(bot, count, z.number().int().min(1).max(200).optional()),
   'coordinator.coordinatorCitationSources': tuple(z.array(uuid).min(1).max(50)),
   'coordinator.coordinatorReasoning': tuple(bot, z.array(positive).min(1).max(50)),
+  'coordinator.coordinatorToolCall': tuple(bot, positive, text(200).min(1)),
   'coordinator.pollBotChatSummaries': none,
   'coordinator.welcomeCoordinator': tuple(bot.optional()),
   'coordinator.stopCoordinatorTurn': tuple(bot.optional()),
