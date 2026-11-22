@@ -291,7 +291,9 @@ for (const state of ['live', 'welcome', 'welcome-empty', 'past'] as const) test(
   const notice = container.querySelector(`[data-message-failure="${kind}"]`)
   assert.ok(notice)
   assert.equal(container.querySelectorAll('[data-message-failure]').length, 1, 'the historical notice is not marked again by its surrounding error line')
-  assert.match(notice.textContent ?? '', /Coordinator.failedTitle/)
+  // The line says 回复失败 once: a past notice under it does not repeat the generic words.
+  assert.match((state === 'past' ? container : notice).textContent ?? '', /Coordinator.failedTitle/)
+  assert.equal((container.textContent?.match(/Coordinator\.failedTitle/g) ?? []).length, 1)
   const button = notice.querySelector<HTMLButtonElement>('button')!
   assert.equal(button.textContent, state === 'past' ? 'Coordinator.resend' : 'Common.retry')
   assert.equal(calls, 0)
