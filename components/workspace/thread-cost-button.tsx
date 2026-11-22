@@ -39,7 +39,7 @@ export function useThreadCostBreakdown(runId: string, open: boolean) {
   return { breakdown: data ?? null, failed: Boolean(error) && !data, retry: () => { void mutate() } }
 }
 
-export type ThreadCostRow = { label: string; value: string; note?: string }
+export type ThreadCostRow = { id: 'credits' | 'included' | 'covered'; label: string; value: string; note?: string }
 export type ThreadCostText = {
   /** What the header shows: an amount, or a word while nothing has settled. */
   figure: string
@@ -81,14 +81,19 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
   const amount = money(pending ? floor : credits.microUsd)
   // The panel shows what has settled, even under a cent; only nothing settled at all reads as settling.
   const settled = pending && credits.microUsd === 0 ? t('settling') : money(credits.microUsd)
-  const rows: ThreadCostRow[] = [{ label: t('credits'), value: settled, note: pending ? t('unsettled', { count: credits.unpricedReceipts }) : undefined }]
+  const rows: ThreadCostRow[] = [{ id: 'credits', label: t('credits'), value: settled, note: pending ? t('unsettled', { count: credits.unpricedReceipts }) : undefined }]
   const includedPriced = included.microUsd > 0
   const includedUnpriced = included.unpricedReceipts > 0
   const hasIncluded = includedPriced || includedUnpriced
   if (hasIncluded) rows.push({
-    label: t('included'),
+    id: 'included', label: t('included'),
     value: includedPriced ? money(included.microUsd) : t('calls', { count: included.unpricedReceipts }),
     note: includedPriced && includedUnpriced ? t('unpricedCalls', { count: included.unpricedReceipts }) : undefined,
+  })
+  // Platform-funded turns, once receipts say which (ThreadCost.totals.covered): muted, never part of the charge.
+  const covered = cost.totals.covered
+  if (covered && (covered.microUsd > 0 || covered.unpricedReceipts > 0)) rows.push({
+    id: 'covered', label: t('covered'), value: covered.microUsd > 0 ? money(covered.microUsd) : t('calls', { count: covered.unpricedReceipts }),
   })
   if (settling) return { figure: t('settling'), label: t('labelSettling'), title: t('title'), rows, note: hasIncluded ? t('includedNote') : undefined }
   return {
@@ -100,59 +105,58 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
   }
 }
 
-/** One line of the breakdown: what it is, then what went through Mikka and what the person's own subscription or key paid. */
-export type ThreadCostBreakdownRow = { key: string; label: string; detail?: string; mikka: string; included: string }
+/** One line of the breakdown: what it is, a muted detail, and its amount. */
+export type ThreadCostBreakdownRow = { key: string; label: string; detail?: string; value: string }
+/** What went through Mikka, then, under its own heading, what the person's own subscription or key paid. */
+export type ThreadCostBreakdownRows = { charged: ThreadCostBreakdownRow[]; included: ThreadCostBreakdownRow[] }
 
 /**
- * The breakdown's words, by the same rules as the header (useThreadCostText):
- * - 「经由 Mikka」 is what settlement recorded. A row with calls still settling is a floor cut to whole cents with a "+",
- *   or the word 结算中 under a cent; never a zero.
- * - The subscription or key column is never added to the Mikka figure. A subscription call has no per-call price, so
- *   it is counted, not priced.
- * - A column with nothing in it is a dash: no receipt, not a zero amount.
- * - A machine is billed from its prepaid chunks (chargedMicroUsd). One with no Mikka charge says so and shows no amount.
+ * The breakdown's words, by the same rules as the header (useThreadCostText), after Capy's 「Models and machines」:
+ * - 「经由 Mikka」 lists what settlement recorded. A row with calls still settling is a floor cut to whole cents with a
+ *   "+", or 结算中 under a cent; never a zero. A line with nothing charged is left out.
+ * - Usage on the person's own subscription or key is its own list, one line per model and source, never added to the
+ *   Mikka figure. A subscription call has no per-call price, so it is counted, not priced.
+ * - A machine is billed from its prepaid chunks (chargedMicroUsd); one Mikka did not bill is not a charge and is left out.
  */
-export function useThreadCostBreakdownRows(breakdown: ThreadCostBreakdown): ThreadCostBreakdownRow[] {
+export function useThreadCostBreakdownRows(breakdown: ThreadCostBreakdown): ThreadCostBreakdownRows {
   const t = useTranslations('IssueThreads.cost')
   const format = useFormatter()
   const money = (microUsd: number) => microUsd > 0 && microUsd < 10_000
     ? t('underCent', { amount: format.number(0.01, CURRENCY) })
     : format.number(microUsd / 1e6, CURRENCY)
-  const mikka = ({ microUsd, unpricedReceipts }: ThreadCostAmount) => {
-    if (!unpricedReceipts) return microUsd > 0 ? money(microUsd) : NONE
+  const charge = ({ microUsd, unpricedReceipts }: ThreadCostAmount) => {
+    if (!unpricedReceipts) return microUsd > 0 ? money(microUsd) : null
     const floor = Math.floor(microUsd / 10_000) * 10_000
     return floor > 0 ? `${money(floor)}+` : t('settling')
   }
-  const included = (amounts: ThreadCostAmount[]) => {
-    const priced = amounts.reduce((sum, a) => sum + a.microUsd, 0)
-    const calls = amounts.reduce((sum, a) => sum + a.unpricedReceipts, 0)
-    return priced > 0 ? money(priced) : calls > 0 ? t('calls', { count: calls }) : NONE
-  }
+  const own = ({ microUsd, unpricedReceipts }: ThreadCostAmount) =>
+    microUsd > 0 ? money(microUsd) : unpricedReceipts > 0 ? t('calls', { count: unpricedReceipts }) : null
   const duration = (seconds: number) => {
     const minutes = Math.floor(seconds / 60)
     if (minutes < 1) return t('underMinute')
     return minutes < 60 ? t('minutes', { minutes }) : t('hours', { hours: Math.floor(minutes / 60), minutes: minutes % 60 })
   }
-  const models = breakdown.models.map(row => ({
-    key: `model:${row.model}`,
-    label: modelDisplayName(row.model).name || row.model,
-    detail: t('calls', { count: row.calls }),
-    mikka: mikka(row.bySource.credits),
-    included: included([row.bySource.subscription, row.bySource.api_key]),
-  }))
-  const machines = breakdown.machines.map(row => {
+  const charged: ThreadCostBreakdownRow[] = []
+  const included: ThreadCostBreakdownRow[] = []
+  // Machines first, as Capy lists them, then the models.
+  for (const row of breakdown.machines) {
+    const value = row.billing === 'unbilled' ? null : charge({ microUsd: row.chargedMicroUsd, unpricedReceipts: row.unpricedReceipts })
+    if (!value) continue
     const size = row.size ? MACHINE_SIZES[row.size] : null
-    return {
-      key: `machine:${row.billing}:${row.size ?? ''}`,
-      label: size ? t('machineSized', { vcpu: size.vcpu, gib: size.gib }) : t('machine'),
-      detail: row.billing === 'unbilled' ? t('machineUnbilled', { duration: duration(row.seconds) }) : duration(row.seconds),
-      mikka: row.billing === 'unbilled' ? NONE : mikka({ microUsd: row.chargedMicroUsd, unpricedReceipts: row.unpricedReceipts }),
-      included: NONE,
+    charged.push({ key: `machine:${row.billing}:${row.size ?? ''}`, value, detail: duration(row.seconds),
+      label: size ? t('machineSized', { vcpu: size.vcpu, gib: size.gib }) : t('machine') })
+  }
+  for (const row of breakdown.models) {
+    const label = modelDisplayName(row.model).name || row.model
+    const value = charge(row.bySource.credits)
+    if (value) charged.push({ key: `model:${row.model}`, label, value })
+    for (const source of ['subscription', 'api_key'] as const) {
+      const paid = own(row.bySource[source])
+      if (paid) included.push({ key: `${source}:${row.model}`, label, detail: t(source === 'subscription' ? 'viaSubscription' : 'viaApiKey'), value: paid })
     }
-  })
-  return [...models, ...machines]
+  }
+  return { charged, included }
 }
-const NONE = '—'
 
 /**
  * The thread header's cost (#2922 item 1, Figma 1318:2 section 01), as the community header draws it. The hosted

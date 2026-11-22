@@ -55,6 +55,11 @@ export interface ThreadCost {
   totals: {
     credits: ThreadCostAmount
     included: ThreadCostAmount & { bySource: Record<Exclude<ThreadCostSource, 'credits'>, ThreadCostAmount> }
+    /**
+     * Seam for platform-funded (free) turns, not filled yet: their list cost, already left out of `credits`. The
+     * popover shows it muted as covered, never as a charge. Absent until receipts say which turns were free.
+     */
+    covered?: ThreadCostAmount
   }
   models?: ThreadModelCost[]
   machines?: ThreadMachineCost[]

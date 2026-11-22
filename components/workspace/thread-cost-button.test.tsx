@@ -134,41 +134,48 @@ test('the button reads the thread cost and shows nothing when the read is refuse
   assert.equal(trigger()?.textContent, '$2.00')
 })
 
-/** The breakdown's rows, drawn as plain text so the test reads exactly what each column says. */
+/** The breakdown's rows, drawn as plain text so the test reads exactly what each list says. */
 function Rows({ breakdown }: { breakdown: import('./thread-cost-button').ThreadCostBreakdown }) {
-  const rows = mod.useThreadCostBreakdownRows(breakdown)
-  return <ul>{rows.map(row => <li key={row.key} data-row={row.key}>{[row.label, row.detail, row.mikka, row.included].join('|')}</li>)}</ul>
+  const { charged, included } = mod.useThreadCostBreakdownRows(breakdown)
+  const list = (name: string, rows: typeof charged) => <ul data-list={name}>{rows.map(row => <li key={row.key}>{[row.label, row.detail, row.value].filter(Boolean).join('|')}</li>)}</ul>
+  return <>{list('charged', charged)}{list('included', included)}</>
 }
-const row = (key: string) => document.querySelector(`[data-row="${key}"]`)?.textContent
+const lines = (name: string) => [...document.querySelectorAll(`[data-list="${name}"] li`)].map(item => item.textContent)
 const model = (name: string, calls: number, credits = none, subscription = none, apiKey = none) => ({
   model: name, calls, inputTokens: 0, outputTokens: 0, bySource: { credits, subscription, api_key: apiKey },
 })
 
-test('each model shows what went through Mikka beside what the person paid themselves, never summed', async () => {
+test('what went through Mikka and what the person paid themselves are separate lists, never summed', async () => {
   await show(<Rows breakdown={{ machines: [], models: [
     model('claude-opus-5-5', 3, { microUsd: 420_000, unpricedReceipts: 0 }),
     model('gpt-6-luna', 12, none, { microUsd: 0, unpricedReceipts: 12 }),
     model('deepseek-v4.1-flash', 2, { microUsd: 16_667, unpricedReceipts: 1 }, none, { microUsd: 1_600_000, unpricedReceipts: 0 }),
   ] }} />)
-  assert.equal(row('model:claude-opus-5-5'), 'Opus 5.5|3 次调用|$0.42|—')
-  assert.equal(row('model:gpt-6-luna'), 'GPT-6 Luna|12 次调用|—|12 次调用', 'a subscription call is counted, not priced, and Mikka shows no zero')
-  assert.equal(row('model:deepseek-v4.1-flash'), 'DeepSeek V4.1 Flash|2 次调用|$0.01+|$1.60', 'a settling row is a floor with a +')
+  assert.deepEqual(lines('charged'), ['Opus 5.5|$0.42', 'DeepSeek V4.1 Flash|$0.01+'], 'a settling line is a floor with a +; a model Mikka did not charge is left out')
+  assert.deepEqual(lines('included'), ['GPT-6 Luna|订阅|12 次调用', 'DeepSeek V4.1 Flash|API Key|$1.60'], 'a subscription call is counted, not priced')
 })
 
-test('a model with nothing settled reads as settling, never $0.00', async () => {
-  await show(<Rows breakdown={{ machines: [], models: [model('claude-opus-5-5', 1, { microUsd: 0, unpricedReceipts: 1 })] }} />)
-  assert.equal(row('model:claude-opus-5-5'), 'Opus 5.5|1 次调用|结算中|—')
+test('a model with nothing settled reads as settling, never $0.00, and a zero line is hidden', async () => {
+  await show(<Rows breakdown={{ machines: [], models: [model('claude-opus-5-5', 1, { microUsd: 0, unpricedReceipts: 1 }), model('gpt-6-luna', 1)] }} />)
+  assert.deepEqual(lines('charged'), ['Opus 5.5|结算中'])
+  assert.deepEqual(lines('included'), [])
 })
 
-test('machines show their running time and prepaid charge; one Mikka did not bill shows no amount', async () => {
-  await show(<Rows breakdown={{ models: [], machines: [
+test('machines come first with their running time and prepaid charge; one Mikka did not bill is not listed as a charge', async () => {
+  await show(<Rows breakdown={{ models: [model('claude-opus-5-5', 1, { microUsd: 10_000, unpricedReceipts: 0 })], machines: [
     { size: 'standard-3', billing: 'metered', seconds: 7_800, meteredMicroUsd: 433_333, chargedMicroUsd: 450_000, unpricedReceipts: 0 },
     { size: null, billing: 'unknown_size', seconds: 300, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 1 },
     { size: null, billing: 'unbilled', seconds: 42, meteredMicroUsd: null, chargedMicroUsd: 0, unpricedReceipts: 0 },
   ] }} />)
-  assert.equal(row('machine:metered:standard-3'), '云机器 · 2 vCPU · 8 GiB|2 小时 10 分钟|$0.45|—')
-  assert.equal(row('machine:unknown_size:'), '云机器|5 分钟|结算中|—')
-  assert.equal(row('machine:unbilled:'), '云机器|不到 1 分钟 · 未经 Mikka 计费|—|—')
+  assert.deepEqual(lines('charged'), ['云机器 · 2 vCPU · 8 GiB|2 小时 10 分钟|$0.45', '云机器|5 分钟|结算中', 'Opus 5.5|$0.01'])
+})
+
+test('a covered amount, once receipts carry it, is a muted line of its own and never part of the charge', async () => {
+  const covered: ThreadCost = { ...cost({ microUsd: 500_000, unpricedReceipts: 0 }) }
+  covered.totals.covered = { microUsd: 2_000_000, unpricedReceipts: 0 }
+  await show(<mod.ThreadCostView cost={covered} />)
+  assert.equal(trigger()?.textContent, '$0.50')
+  assert.match(await open(), /已覆盖，不计费\$2\.00/)
 })
 
 test('the breakdown reads the model and machine groupings, and a refusal is a failure, not an empty list', async () => {
