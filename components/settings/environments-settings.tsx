@@ -34,7 +34,11 @@ const envVarKeySchema = z.string().regex(SECRET_NAME).refine(name => !isReserved
 const clientEnvironmentConfiguration = z.object({
   runtime: z.enum(['any', 'local', 'cloud']),
   harness: z.enum(['any', 'claude_code', 'codex', 'cursor']),
-  setup: z.object({ script: z.string().max(16_384) }).optional(),
+  setup: z.object({
+    command: z.string().max(16_384).optional(),
+    copyFiles: z.array(z.string().max(512)).max(100),
+    approved: z.boolean().optional(),
+  }).optional(),
   variables: z.record(envVarKeySchema, z.string().max(32_768)),
   secretIds: z.array(z.uuid()).max(100),
   repositoryKeys: z.array(z.string()).max(100),
@@ -166,7 +170,7 @@ export function EnvironmentsSettings({ workspaceId }: { workspaceId: string }) {
         </TableRow>}
         {filteredActive.map(environment => {
           const boundProjects = data.projects.filter(project => project.environmentId === environment.id).map(project => project.name)
-          const hasSetup = Boolean(environment.configuration.setup?.command || environment.configuration.setup?.copyFiles.length)
+          const hasSetup = Boolean(environment.configuration.setup?.command || environment.configuration.setup?.copyFiles?.length)
           const setupLabel = !hasSetup ? tp('envSetupDefault') : environment.configuration.setup?.approved ? tp('envSetupApproved') : tp('envSetupPending')
           return <TableRow key={environment.id}>
             <TableCell className="px-3 py-3 font-medium text-foreground">
@@ -242,7 +246,7 @@ function EnvironmentEditor({ workspaceId, environment, onClose, onSaved, onRefus
   const [harness, setHarness] = useState<EnvironmentConfiguration['harness']>(environment?.configuration.harness ?? 'any')
   const [variablesText, setVariablesText] = useState(() => Object.entries(environment?.configuration.variables ?? {}).map(([key, val]) => `${key}=${val}`).join('\n'))
   const [command, setCommand] = useState(environment?.configuration.setup?.command ?? '')
-  const [copyFiles, setCopyFiles] = useState(environment?.configuration.setup?.copyFiles.join('\n') ?? '')
+  const [copyFiles, setCopyFiles] = useState(environment?.configuration.setup?.copyFiles?.join('\n') ?? '')
   const [approved, setApproved] = useState(environment?.configuration.setup?.approved ?? false)
   const [machineSize, setMachineSize] = useState<MachineSize | 'default'>(environment?.defaultMachineSize ?? 'default')
   const sizes = [{ value: 'default', label: t('machineSizeDefault') }, ...(Object.keys(MACHINE_SIZES) as MachineSize[])

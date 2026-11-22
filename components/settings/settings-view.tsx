@@ -137,8 +137,8 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
           ? <InlineLoadError message={isSettingsAccessError(workspaceError) ? members('noAccessDescription') : t('workspaceUnavailable')}
               retryLabel={common('retry')} onRetry={() => { void refreshWorkspace() }} />
           : team && resolvedWorkspaceId ? <>
-          {section === 'members' && <GovernancePlan workspaceId={resolvedWorkspaceId} />}
           <MembersScreen key={resolvedWorkspaceId} section={section} workspaceId={resolvedWorkspaceId} inviteInitially={inviteInitially} onSection={openSection} />
+          {section === 'members' && <GovernancePlan workspaceId={resolvedWorkspaceId} />}
         </> : <p role="status" className="text-sm text-muted-foreground">{t('workspaceLoading')}</p>}
       </SettingsContent> : <SettingsContent key={section} wide={WIDE_SETTINGS_SECTIONS.has(section)} className={cn('gap-6 max-md:pt-1', enter)}>
         {section === 'computers' ? <>

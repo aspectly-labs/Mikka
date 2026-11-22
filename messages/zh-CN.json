@@ -2222,6 +2222,9 @@
       "members": {
         "title": "成员"
       },
+      "privacy": {
+        "title": "数据与隐私"
+      },
       "preferences": {
         "title": "常规"
       },
@@ -2461,7 +2464,7 @@
       "deleting": "正在删除…",
       "confirmDelete": "删除账户",
       "cancel": "取消",
-      "currentSession": "当前会话",
+      "currentSession": "当前登录",
       "danger": "危险操作",
       "account": "此账户"
     },

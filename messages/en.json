@@ -2222,6 +2222,9 @@
       "members": {
         "title": "Members"
       },
+      "privacy": {
+        "title": "Data & privacy"
+      },
       "preferences": {
         "title": "General"
       },
