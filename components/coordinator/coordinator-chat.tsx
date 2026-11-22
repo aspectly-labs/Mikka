@@ -1,6 +1,6 @@
 'use client'
 
-import { useViewState } from '@/lib/hooks/view-state'
+import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
 import { withBasePath } from '@/lib/base-path'
@@ -77,6 +77,7 @@ import { ChatEventLine } from './chat-event-line'
 import { waitingQuestionRuns } from '@/lib/coordinator/waiting-questions'
 import { RetryReplyButton } from './retry-reply-button'
 import { COMPOSER_NOTICE } from './composer-notice'
+import { blockingNotice, modelBlocked, streamLoadFailed } from '@/lib/coordinator/chat-footer'
 
 
 /** Text put into the composer from elsewhere; `suggestionId` when it came from a 建议 item. */
@@ -189,6 +190,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   useLiveKeys(hasSources ? sourceScopes.map(workspaceId => ({ kind: 'issue_list' as const, id: workspaceId, workspaceId })) : [], [unstable_serialize(metadataKey)], null, { minIntervalMs: CHAT_MERGE_MS })
   useEffect(() => watchPageVisibility(() => { if (document.visibilityState === 'hidden' && shown.current.chat) shown.current.metadataStale = true }), [])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  // Each page of older messages put above the transcript, for the thread to keep its place (ThreadScreenProps.historyPrepend).
+  const [historyPrepend, setHistoryPrepend] = useState(0)
   async function loadHistory() {
     if (!data?.historyBefore || loadingHistory) return
     setLoadingHistory(true)
@@ -197,14 +200,20 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       const through = persisted[1] ? persisted[1].position - 1 : data.historyBefore - 1
       const page = await coordinatorHistory(botId, through)
       await mutate(current => current ? { ...current, items: [...page.items, ...current.items.filter(item => item.pending || item.position > through)], sources: { ...current.sources, ...page.sources }, artifacts: { ...current.artifacts, ...page.artifacts }, historyBefore: page.historyBefore } : current, { revalidate: false })
+      if (page.items.length) setHistoryPrepend(count => count + 1)
     } catch { toast.error(actionError()) } finally { setLoadingHistory(false) }
   }
   // A sent message waits in the inbox for its turn: the stream opens now, so the first words show as they come.
   const stream = useCoordinatorAgent({ botId, enabled: Boolean(data), persistedStreamIds: data?.persistedStreamIds, revalidate: mutate })
   const working = stream.status === 'busy'
   const resuming = stream.status === 'resuming'
+  // The server has the turn running (or waiting on the person): only then do Stop and the queue choice show, so a send
+  // the server refuses never flashes them (UX audit 2026-11-22, issue 1).
+  const turnConfirmed = activeTurn(stream.view) !== undefined
   useEffect(() => { reconnectStream.current = stream.reconnect }, [stream.reconnect])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
+  // Each chat keeps where the person was reading, as a group chat does; one read to its end follows the latest.
+  const transcript = useViewScroll<HTMLDivElement>(`${stateKey}:transcript`, Boolean(data), true, 'end')
   const [draft, setDraft] = useViewState(`${stateKey}:draft`, '')
   const updateDraft = setDraft
   // Carry existing window drafts into the new account/workspace-scoped store once.
@@ -219,7 +228,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const [sends, setSends] = useState(0)
   const sending = sends > 0
   const [turnPolicy, setTurnPolicy] = useViewState<'queue' | 'steer'>('eve:turn-policy', 'queue')
-  const turnOptions = working && !resuming ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
+  const turnOptions = working && turnConfirmed && !resuming ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
     onChange={event => setTurnPolicy(event.target.value === 'steer' ? 'steer' : 'queue')}>
     <NativeSelectOption value="queue">{threadCopy('deliveryModes.queue')}</NativeSelectOption>
     <NativeSelectOption value="steer">{threadCopy('deliveryModes.steer')}</NativeSelectOption>
@@ -338,6 +347,9 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // tab, and once per failure (store.retryFailedTurn), so a visit never fires another refused turn.
   const welcomeModel = useSWR<BotModelMenu>(welcomeNeedsModel || (welcomeFailed && (refusal || modelRequired)) ? botModelMenuKey(botId ?? null) : null, () => getBotModelMenu(botId ?? null))
   const runnable = welcomeModel.data?.current?.available
+  // What the composer's model picker reads: with nothing that can answer, Send waits and the one notice says why.
+  const modelMenu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId))
+  const noModel = modelBlocked(modelMenu.data)
   const retriedWelcomeModel = useRef<string | null>(null)
   const wasRunnable = useRef<boolean | undefined>(undefined)
   const rewelcomed = useRef<string | null>(null)
@@ -371,7 +383,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     {welcomeRequestFailed && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="welcome-request">{welcomeError}</AlertTitle><Button variant="ghost" size="sm" disabled={welcoming} onClick={() => { void requestWelcome(false, true) }}>{tCommon('retry')}</Button></Alert>}
     {cloudCode && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="cloud">{cloudErrors(`${cloudCode}.default`)}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><CloudFailureAction code={cloudCode} fallback={retry} /></span></Alert>}
     {refusal && <HostedRefusalNotice code={refusal} botId={botId} retry={retry} onQueued={mutate} />}
-    {paywall.dialog}
     {declined && declined !== 'quotaUsed' && <SubscriptionRefusalNotice notice={declined} retry={retry} botId={botId} />}
     {apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="balance">{t('apiBalance')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button></span></Alert>}
     {data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}>{wakeError ? <AlertTitle>{t(`wakeErrors.${wakeError}`)}</AlertTitle> : <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="failed">{t('failedTitle')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">{retry}</span></>}</Alert>}
@@ -593,14 +604,27 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
     ? <p role="status">{tNav('writingWelcome')}</p>
     : <p>{t('empty', { name })}</p>) : undefined
+  // One blocking notice above the composer, the first that applies (UX audit 2026-11-22, issue 1): a chat that did not
+  // load, the newest turn's failure when it has no message to sit under, a quota that stopped it, no model to answer,
+  // a quota about to run out, no Bot to answer. 线程加载失败 is for a read that failed, never for a turn that did.
+  const quotaStopped = !refusal && declined === 'quotaUsed'
+  const notice = blockingNotice({
+    load: Boolean(loadError) || streamLoadFailed(stream.error, stream.view, delivery.rows.some(row => row.phase === 'failed')),
+    failure: failedAt === null && !welcomeFailed && !quotaStopped && Boolean(modelRequired || welcomeRequestFailed || (data?.error && !working)),
+    quotaStopped,
+    model: !data?.error && noModel,
+    quota: !refusal && !data?.error && Boolean(modelMenu.data?.current.quota),
+    unanswered,
+  })
   const notices = <>
-    {(loadError || stream.error) && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
-    {failedAt === null && !welcomeFailed && failureNotice}
+    {notice === 'load' && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
+    {notice === 'failure' && failureNotice}
+    {paywall.dialog}
     <EveInteractions agent={stream} />
-    {!data?.error && <HostedUnavailableNotice botId={botId} />}
-    {!refusal && (declined === 'quotaUsed' || !data?.error) && <QuotaNotice botId={botId} stopped={declined === 'quotaUsed'}
+    {notice === 'model' && <HostedUnavailableNotice botId={botId} />}
+    {(notice === 'quota' || notice === 'quotaStopped') && <QuotaNotice botId={botId} stopped={notice === 'quotaStopped'}
       retry={(label, disabled) => <RetryReplyButton botId={botId} onQueued={mutate} label={label} disabled={disabled} />} />}
-    {unanswered && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48">{t('unavailable', { name })}</AlertTitle></Alert>}
+    {notice === 'unanswered' && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48">{t('unavailable', { name })}</AlertTitle></Alert>}
     {botId && <SubagentLoginNeeds botId={botId} />}
     {/* One live sentence, not a stored event line; the thread is an inline link inside it (decision 2026-11-10). */}
     {waitingQuestions.length > 0 && <p data-slot="waiting-questions" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-xs text-muted-foreground">
@@ -618,9 +642,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       <ThreadScreen host={embedded ? 'embedded' : compact ? 'column' : 'page'} panel={panel} botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={panel ? undefined : panels} work={work.work}
         transcriptLabel={bot ? t('conversationWith', { name: bot.name }) : t('conversation')}
         loadingLabel={!data && !loadError ? tCommon('loading') : undefined}
-        older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
-        working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
-        composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
+        // Scrolling near the top loads the page before, as LobeHub's useEarlierHistoryTrigger does.
+        older={data?.historyBefore ? { loading: loadingHistory, auto: true, onLoad: () => void loadHistory() } : undefined}
+        historyPrepend={historyPrepend} scrollRef={transcript}
+        working={working && !stopping} onStop={turnConfirmed && !resuming && !stopping ? () => { void stop() } : undefined}
+        composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
         under={!embedded && data?.context ? <div data-slot="thread-under-composer" className="flex min-w-0 items-center justify-end px-1"><CoordinatorContextUsage usage={data.context} /></div> : undefined}
