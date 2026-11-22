@@ -41,7 +41,10 @@ async function handleGET(request: Request) {
   if (session?.user?.id !== intent.userId) {
     const url = new URL(request.url)
     const next = `${url.pathname.startsWith(BASE_PATH) ? url.pathname.slice(BASE_PATH.length) : url.pathname}${url.search}`
-    return NextResponse.redirect(new URL(withBasePath(`/sign-in?next=${encodeURIComponent(next)}`), request.url))
+    // A signed-in but different account stays on the sign-in page to switch
+    // (addAccount suppresses the automatic return that would loop forever).
+    const signin = `/sign-in?next=${encodeURIComponent(next)}${session?.user ? '&addAccount=1' : ''}`
+    return NextResponse.redirect(new URL(withBasePath(signin), request.url))
   }
   const claimed = await claimComposioConnectIntent(pool, token)
   if (!claimed) return back()

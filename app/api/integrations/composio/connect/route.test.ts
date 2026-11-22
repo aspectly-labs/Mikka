@@ -72,6 +72,8 @@ test('a browser that is not the intent\'s account must sign in first and spends 
     const signin = new URL(response.headers.get('location')!)
     assert.equal(signin.pathname, '/sign-in')
     assert.equal(signin.searchParams.get('next'), '/api/integrations/composio/connect?intent=coi_' + 't'.repeat(43))
+    // A different signed-in account is offered the switch, not an auto-return loop.
+    assert.equal(signin.searchParams.get('addAccount'), user ? '1' : null)
     assert.equal(authorized, null)
     assert.equal(linked.length, 0)
   }
