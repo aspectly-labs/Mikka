@@ -561,6 +561,13 @@ export const agentRuns = pgTable('agent_runs', {
   conversationPinnedAt: timestamp('conversationPinnedAt', { withTimezone: true }),
   /** On a thread's root run: the root of the thread that replaced it, when the person explicitly asked for a new one. */
   threadReplacedBy: uuid('threadReplacedBy').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  /** Thread relations (#2936 C / #2939 F): a child run's parent and why it hangs off it. */
+  parentRunId: uuid('parentRunId').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  threadRelation: text('threadRelation').$type<'fork' | 'side' | 'subagent' | null>(),
+  /** Sub-agent card fields (F #2939): the child's display name, its mark and the parent's one-line brief. */
+  name: varchar('name', { length: 120 }),
+  profile: jsonb('profile').$type<{ icon: string; color: string } | null>(),
+  brief: text('brief'),
   stopRequestedAt: timestamp('stopRequestedAt', { withTimezone: true }),
   /** Set with an explicit owner-scoped cancel request, never inferred from a policy or lease stop. */
   explicitStopRequested: boolean('explicitStopRequested').notNull().default(false),
@@ -568,7 +575,7 @@ export const agentRuns = pgTable('agent_runs', {
   finishedAt: timestamp('finishedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
-}, table => [index('agent_runs_device_status_idx').on(table.deviceId, table.status), index('agent_runs_issue_idx').on(table.issueId, table.createdAt), index('agent_runs_bot_created_idx').on(table.botId, table.createdAt.desc()).where(sql`${table.botId} is not null`), uniqueIndex('agent_runs_user_dispatch_key').on(table.userId, table.dispatchKey).where(sql`${table.dispatchKey} is not null`), index('agent_runs_retry_of_idx').on(table.retryOf).where(sql`${table.retryOf} is not null`), index('agent_runs_continues_run_idx').on(table.continuesRunId).where(sql`${table.continuesRunId} is not null`), index('agent_runs_status_lease_idx').on(table.status, table.leaseExpiresAt)])
+}, table => [index('agent_runs_device_status_idx').on(table.deviceId, table.status), index('agent_runs_issue_idx').on(table.issueId, table.createdAt), index('agent_runs_bot_created_idx').on(table.botId, table.createdAt.desc()).where(sql`${table.botId} is not null`), uniqueIndex('agent_runs_user_dispatch_key').on(table.userId, table.dispatchKey).where(sql`${table.dispatchKey} is not null`), index('agent_runs_retry_of_idx').on(table.retryOf).where(sql`${table.retryOf} is not null`), index('agent_runs_continues_run_idx').on(table.continuesRunId).where(sql`${table.continuesRunId} is not null`), index('agent_runs_parent_idx').on(table.parentRunId).where(sql`${table.parentRunId} is not null`), index('agent_runs_status_lease_idx').on(table.status, table.leaseExpiresAt)])
 
 /** Confirmed VM running intervals; mutable thread-machine custody is separate. */
 export const threadMachineSessions = pgTable('thread_machine_sessions', {

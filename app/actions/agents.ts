@@ -794,6 +794,12 @@ export async function getThreadContinuationModels(issueId: string, runId: string
  * a thread is one run, named for its work, never for its bot). Null when the
  * run is not this person's or works on no task.
  */
+/** A run's sub-agent cards (#2939): the parent's children with name, mark, brief and live state. */
+export async function listSubagentRuns(runId: string) {
+  const reader = await getWorkspaceReader()
+  return (await import('@/lib/subagent-runs')).listSubagentRuns(reader, runId)
+}
+
 export async function getThreadName(runId: string): Promise<string | null> {
   const reader = await getWorkspaceReader()
   const parsed = z.uuid().safeParse(runId)

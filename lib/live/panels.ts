@@ -90,13 +90,13 @@ export async function documentLiveWorkspace(database: Database, workspaceDatabas
 }
 
 export async function runLiveTargets(database: Database, workspaceDatabase: Database, runId: string, kind: 'run' | 'thread') {
-  const { rows: [run] } = await database.query<{ userId: string; issueId: string | null; retryOf: string | null; continuesRunId: string | null; origin: string | null }>(
-    `SELECT "userId","issueId","retryOf","continuesRunId","questionContinuation"->>'originRunId' AS origin FROM agent_runs WHERE id=$1`, [runId],
+  const { rows: [run] } = await database.query<{ userId: string; issueId: string | null; retryOf: string | null; continuesRunId: string | null; parentRunId: string | null; origin: string | null }>(
+    `SELECT "userId","issueId","retryOf","continuesRunId","parentRunId","questionContinuation"->>'originRunId' AS origin FROM agent_runs WHERE id=$1`, [runId],
   )
   if (!run) return []
   const ids = [runId]
   if (kind === 'run') {
-    const parents = [run.retryOf, run.continuesRunId, run.origin].filter((id): id is string => typeof id === 'string' && LIVE_ID.test(id))
+    const parents = [run.retryOf, run.continuesRunId, run.parentRunId, run.origin].filter((id): id is string => typeof id === 'string' && LIVE_ID.test(id))
     if (parents.length) {
       const { rows } = await database.query<{ id: string }>('SELECT id FROM agent_runs WHERE id=ANY($1::uuid[]) AND "userId"=$2 AND "issueId" IS NOT DISTINCT FROM $3::uuid', [parents, run.userId, run.issueId])
       ids.push(...rows.map(row => row.id))
