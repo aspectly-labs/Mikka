@@ -50,9 +50,9 @@ export async function resolveThreadReferences(database: Pick<Pool, 'query'>,
         }
         case 'bot': {
           if (!workspaceId) return broken(ref)
-          const { rows: [row] } = await database.query<{ name: string; status: string }>(
-            `SELECT name,status FROM bots WHERE id=$1 AND "workspaceId"=$2`, [ref.id, workspaceId])
-          return row ? { ...ref, state: 'ok', title: row.name, detail: row.status } : broken(ref)
+          const { rows: [row] } = await database.query<{ name: string; archivedAt: Date | null }>(
+            `SELECT name,"archivedAt" FROM bots WHERE id=$1 AND "workspaceId"=$2`, [ref.id, workspaceId])
+          return row ? { ...ref, state: 'ok', title: row.name, detail: row.archivedAt ? 'archived' : 'active' } : broken(ref)
         }
         case 'file': {
           const { rows: [row] } = await database.query<{ files: { path?: string; range?: { startLine?: number; endLine?: number } }[] }>(

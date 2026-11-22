@@ -16,7 +16,7 @@ export async function setThreadScopeSecret(userId: string, workspaceId: string, 
   if (isReservedEnvName(name)) throw Object.assign(new Error('secretNameReserved'), { code: 'secretNameReserved' })
   const columns = { workspaceId, kind: 'env' as const, name, scopeType: 'thread' as const, scopeRef: runId }
   const sealed = sealSecret(input.value, secretAad(columns))
-  const [saved] = await db.insert(workspaceSecrets).values({ id: crypto.randomUUID(), ...columns, note: '', delivery: null,
+  const [saved] = await db.insert(workspaceSecrets).values({ id: crypto.randomUUID(), ...columns, note: '', delivery: { mode: 'protected' },
     ...sealed, createdBy: userId, updatedBy: userId })
     .onConflictDoUpdate({ target: [workspaceSecrets.workspaceId, workspaceSecrets.scopeType, workspaceSecrets.scopeRef, workspaceSecrets.name],
       set: { ciphertext: sealed.ciphertext, iv: sealed.iv, keyVersion: sealed.keyVersion, updatedBy: userId, updatedAt: new Date() } })

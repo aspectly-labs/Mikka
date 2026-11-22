@@ -82,7 +82,7 @@ export function SecretsSettings({ workspaceId, workspaceName }: { workspaceId: s
             </TableRow></TableHeader>
             <TableBody>
               {shown.map(secret => {
-                const editable = role !== null && secretActionAllowed(role, 'secret.replace', [secret])
+                const editable = role !== null && secret.scopeType !== 'thread' && secretActionAllowed(role, 'secret.replace', [secret])
                 return <TableRow key={secret.id}>
                   <TableCell className="max-w-56 truncate pl-5 font-mono">{secret.name}</TableCell>
                   <TableCell><Badge variant="secondary">{t('kinds.secret')}</Badge>{secret.kind === 'env' && <span className="ml-1.5 text-xs text-muted-foreground">{t('notMasked')}</span>}</TableCell>
