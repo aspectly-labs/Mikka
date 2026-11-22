@@ -236,9 +236,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     const mine = message.authorType === 'user' && message.authorId === userId
     const id = sentAs[message.id] ?? message.id
     const reply = message.authorType !== 'user'
-    // The line under every message, as the Bot chat's: when it was sent, Copy and its reactions (#2922); a person's
-    // message keeps it to hover and focus.
-    const actions = <ReplyActions hover={!reply} at={at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
+    // The line under every message, as the Bot chat's: when it was sent, Copy and its reactions (#2922); every line waits
+    // for hover or focus (decision 2026-11-22-1500, components/chat/reply-actions.tsx).
+    const actions = <ReplyActions at={at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
     const words = <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>
     if (mine) entries.push({ id, role: 'person', at, text: message.body, body: words, actions })
     else {

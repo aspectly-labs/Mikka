@@ -62,7 +62,11 @@ export function mikkaEveChannel() {
         if (error instanceof ActionFailureError && error.code === 'accessChangeConfirmationRequired' && error.confirmable) accessRefusals.add(ctx.eve.request)
         throw error
       })
-      return { auth: { ...scopeAuth(scope), attributes: { ...scopeAuth(scope).attributes, sourceEventId: accepted.eventId } }, context: accepted.context, clientContext: [] }
+      // The first message after an Edit or Regenerate cleared the Bot's history brings the chat's remaining history back
+      // (lib/eve/revise.ts): the Bot then knows what the chat shows, without the turn it replaced.
+      const restored = scope.surface === 'web' && await (await import('../coordinator/turn-revisions')).claimRevisionImport((await import('../db')).pool, { userId: scope.ownerId, botId: scope.botId })
+      return { auth: { ...scopeAuth(scope), attributes: { ...scopeAuth(scope).attributes, sourceEventId: accepted.eventId } }, context: accepted.context, clientContext: [],
+        ...(restored ? { history: await priorHistory(scope) } : {}) }
     },
   })
   const follow = base.routes.find(route => route.transport !== 'websocket' && route.method === 'POST' && route.path === '/eve/v1/session/:sessionId') as HttpRouteDefinition | undefined

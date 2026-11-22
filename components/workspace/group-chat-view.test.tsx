@@ -292,12 +292,11 @@ test('the group is the Bot chat\'s thread: the person\'s messages are theirs, ev
   groupMembers = []
 })
 
-test('the line under a message is the Bot chat\'s: a person\'s keeps it to hover and focus, a reply\'s stays', async () => {
-  const { HOVER_ACTIONS, REPLY_ACTIONS } = await import('@/components/chat/copy-action')
+test('the line under a message is the Bot chat\'s: every line waits for hover and focus', async () => {
+  const { HOVER_ACTIONS } = await import('@/components/chat/copy-action')
   await render([message('user', 1, 'Mine'), message('bot', 2, 'Reply')])
   const lines = [...container.querySelectorAll('ol[aria-label="messages"] > li')].map(row => row.querySelector('[data-slot="message-actions"]')!)
   assert.equal(lines.length, 2)
   for (const name of HOVER_ACTIONS.split(' ')) assert.ok(lines[0].classList.contains(name), name)
-  for (const name of REPLY_ACTIONS.split(' ')) assert.ok(lines[1].classList.contains(name), name)
-  assert.equal(lines[1].classList.contains('opacity-0'), false)
+  for (const name of HOVER_ACTIONS.split(' ')) assert.ok(lines[1].classList.contains(name), name)
 })

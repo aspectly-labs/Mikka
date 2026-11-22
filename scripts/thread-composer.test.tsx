@@ -686,7 +686,8 @@ test('a version with a lost confirmation or stale read-back keeps its request un
     </IntlProvider>
   </SWRConfig>))
   async function click(label: string) {
-    const button = [...document.querySelectorAll('button')].find(el => el.textContent === label)
+    // The trigger is an icon on the message's line, named by its label (decision 2026-11-22-1700).
+    const button = [...document.querySelectorAll('button')].find(el => el.textContent === label || el.getAttribute('aria-label') === label)
     assert.ok(button, label)
     assert.equal(button.disabled, false)
     await act(async () => button.click())
