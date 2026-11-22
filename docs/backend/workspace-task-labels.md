@@ -127,7 +127,11 @@ uses the normal complete migration runner. The upgrade test copies the real
 task column/constraint/generated-column shape into a disposable schema,
 seeds legacy data before this migration, then executes the exact SQL twice.
 
-Rollback starts by reverting the new readers/writers. Existing name/color
+Rollback starts by reverting the new readers/writers. Until the database
+rollback runs, `mikka_sync_issue_labels` stays active, so the reverted
+application still cannot save a label name the registry does not hold: plan
+the two steps together when an unregistered name must be writable again.
+Existing name/color
 snapshots remain readable by the prior application. A later reviewed migration
 may remove both task triggers, their three helper functions, the reference table, entity table and
 new composite index. Keep `labelIds` in historical snapshots until their

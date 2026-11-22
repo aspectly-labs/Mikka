@@ -197,9 +197,14 @@ test('workspace task label HTTP management and real task writers preserve tenant
     try {
       await client.query(`CREATE SCHEMA "${schema}"`)
       await client.query(`SET search_path TO "${schema}",public`)
-      // The real migrated task shape, without triggers: this migration adds no
-      // task columns. This is the pre-label data boundary, not a replacement writer.
+      // The real migrated task shape. This migration adds no task columns, so the
+      // copy is the pre-label data boundary; the recorder below stands in for the
+      // existing write triggers the upgrade runs against, Linear sync among them.
       await client.query('CREATE TABLE issues (LIKE public.issues INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING GENERATED); ALTER TABLE issues ADD PRIMARY KEY(id)')
+      await client.query('CREATE TABLE issue_writes (id uuid NOT NULL, sync_source text)')
+      await client.query(`CREATE FUNCTION record_issue_write() RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN INSERT INTO issue_writes(id,sync_source) VALUES(NEW.id,current_setting('mikka.linear_sync_source',true)); RETURN NEW; END $fn$`)
+      await client.query('CREATE TRIGGER zz_record_issue_write AFTER UPDATE ON issues FOR EACH ROW EXECUTE FUNCTION record_issue_write()')
       for (const [id, tenant, name, color, created] of [[first, workspace.id, 'Bug', 'red', '2026-01-01'], [second, workspace.id, 'BUG', 'blue', '2026-01-02'],
         [historical, null, 'Unscoped', 'green', '2026-01-01'], [foreignTask, other.id, 'Bug', 'violet', '2026-01-01']]) {
         await client.query('INSERT INTO issues(id,"userId","workspaceId","ownershipState",title,content,status,priority,"createdAt") VALUES($1,$2,$3,CASE WHEN $3::uuid IS NULL THEN \'pending\' ELSE \'bound\' END,\'Task\',$4,\'todo\',\'normal\',$5)',
@@ -213,6 +218,9 @@ test('workspace task label HTTP management and real task writers preserve tenant
       assert.equal(rows.length, 2)
       assert.equal((await client.query('SELECT count(DISTINCT label_id)::int n FROM issue_label_refs WHERE issue_id=ANY($1::uuid[])', [[first, second]])).rows[0].n, 1)
       assert.deepEqual((await client.query('SELECT * FROM issues WHERE id=$1', [historical])).rows, historicalBefore)
+      const backfilled = (await client.query(`SELECT DISTINCT sync_source FROM issue_writes WHERE id=ANY($1::uuid[])`, [[first, second, foreignTask]])).rows
+      assert.deepEqual(backfilled, [{ sync_source: 'linear' }], 'the upgrade writes as a sync source so it queues no Linear sync')
+      assert.equal((await client.query('SELECT 1 FROM issue_writes WHERE id=$1', [historical])).rowCount, 0)
       const snapshot = async () => ({ tasks: (await client.query('SELECT * FROM issues ORDER BY id')).rows,
         labels: (await client.query('SELECT * FROM workspace_issue_labels ORDER BY id')).rows, refs: (await client.query('SELECT * FROM issue_label_refs ORDER BY issue_id,label_id')).rows })
       const once = await snapshot()

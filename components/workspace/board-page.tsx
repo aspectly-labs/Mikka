@@ -228,14 +228,16 @@ export function BoardPage({ issues: allIssues, userId, workspaceId, teamId, pres
       // listTaskRuns names a run's bot only when it is the person's own.
       case 'assignee': return [...(personFilters(issue, userId, { agents: myAgents, heldByMyBot: !!owners.get(issue.id)?.bot }).assignee ? [ME] : []), taskWorkOwner(issue.metadata)?.id ?? NONE]
       case 'creator': return personFilters(issue, userId, { agents: myAgents, heldByMyBot: false }).creator ? [ME] : []
-      case 'labels': return issue.metadata.labels.map(label => label.name)
+      // The registry folds label names case-insensitively, so a filter saved under an older spelling still matches.
+      case 'labels': return issue.metadata.labels.map(label => label.name.toLowerCase())
       case 'project': return [issue.projectId ?? NONE]
       case 'agentState': return [agentStates.get(issue.id) ?? NONE]
     }
   }
   const now = Date.now()
   const shown = issues
-    .filter(issue => Object.entries(filters).every(([field, values]) => !values?.length || valuesOf(issue, field as FilterField).some(value => values.includes(value))))
+    .filter(issue => Object.entries(filters).every(([field, values]) => !values?.length
+      || valuesOf(issue, field as FilterField).some(value => (field === 'labels' ? values.map(saved => saved.toLowerCase()) : values).includes(value))))
     .filter(issue => issue.status !== 'done' || now - new Date(issue.updatedAt).getTime() <= COMPLETED_DAYS[display.completed] * 86400000)
     .filter(issue => display.subtasks === 'show' || !issue.metadata.parentId)
     .toSorted((a, b) => (display.direction === 'asc' ? -1 : 1) * (display.sort === 'priority' ? (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9) || +new Date(b.updatedAt) - +new Date(a.updatedAt)

@@ -31,11 +31,14 @@ CREATE INDEX IF NOT EXISTS issue_label_refs_label_idx ON issue_label_refs(worksp
 
 -- Only readable legacy arrays participate. Case-insensitive duplicates become
 -- one entity; its spelling/color comes from the earliest task, then array order.
+-- A task restricted to named people never seeds the workspace registry: its label
+-- text would otherwise reach members who cannot read the task.
 WITH candidates AS (
   SELECT i.id,i."workspaceId" AS workspace_id,i."createdAt",l.value,l.ordinality
   FROM issues i CROSS JOIN LATERAL (SELECT coalesce(i.content->'attrs'->'mikka',i.content->'attrs'->'orvilo')->'labels' AS labels) m
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(m.labels)='array' THEN m.labels ELSE '[]'::jsonb END) WITH ORDINALITY l(value,ordinality)
   WHERE i."workspaceId" IS NOT NULL AND jsonb_typeof(m.labels)='array' AND jsonb_array_length(m.labels)<=12
+    AND NOT EXISTS (SELECT 1 FROM resource_access_policies p WHERE p.kind='task' AND p.id=i.id AND p.visibility='private')
     AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(m.labels) v WHERE jsonb_typeof(v->'name') IS DISTINCT FROM 'string'
       OR length(btrim(v->>'name')) NOT BETWEEN 1 AND 40 OR (v->>'color') IS NULL OR v->>'color' NOT IN ('violet','blue','green','yellow','red','gray'))
 ), chosen AS (
@@ -92,6 +95,10 @@ BEGIN
   incoming := NEW.content->'attrs'->metadata_key;
   IF TG_OP='UPDATE' THEN
     previous := coalesce(OLD.content->'attrs'->'mikka',OLD.content->'attrs'->'orvilo');
+    -- A task's first binding is the historical ownership backfill proving a tenant,
+    -- not a transfer. Its legacy names predate the registry, so they stay as written
+    -- instead of aborting the binding; only an explicit edit resolves them.
+    IF OLD."workspaceId" IS NULL THEN RETURN NEW; END IF;
     IF NEW."workspaceId" IS DISTINCT FROM OLD."workspaceId" THEN
       -- An explicit tenant move may only resolve names already present in the
       -- destination. A source label ID can never become a cross-tenant ref.
@@ -123,5 +130,11 @@ CREATE TRIGGER sync_issue_labels BEFORE INSERT OR UPDATE OF content,"workspaceId
 DROP TRIGGER IF EXISTS sync_issue_label_refs ON issues;
 CREATE TRIGGER sync_issue_label_refs AFTER INSERT OR UPDATE OF content,"workspaceId" ON issues FOR EACH ROW EXECUTE FUNCTION mikka_sync_issue_label_refs();
 
-UPDATE issues SET content=content WHERE "workspaceId" IS NOT NULL
-  AND jsonb_typeof(coalesce(content->'attrs'->'mikka',content->'attrs'->'orvilo')->'labels')='array';
+-- The backfill only rewrites a task's own label references. It is not an edit a
+-- Linear target has to learn about, so it runs as a sync source and leaves the
+-- outbox untouched; the setting is local to this statement's transaction.
+DO $$ BEGIN
+  PERFORM set_config('mikka.linear_sync_source','linear',true);
+  UPDATE issues SET content=content WHERE "workspaceId" IS NOT NULL
+    AND jsonb_typeof(coalesce(content->'attrs'->'mikka',content->'attrs'->'orvilo')->'labels')='array';
+END $$;

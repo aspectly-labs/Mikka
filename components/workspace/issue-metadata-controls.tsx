@@ -7,7 +7,7 @@ import { moveIssueToProject } from '@/app/actions/projects'
 import useSWR from 'swr'
 import { Box, Check, Circle, GitPullRequest, Link2, Tag, X } from '@/components/icons'
 import { getIssuePropertyOptions, updateIssueMetadata, type IssueMetadataPatch } from '@/app/actions/issue-metadata'
-import { LABEL_COLORS, labelKey, pullRequestKey, reconcileMetadataDraft, type IssueLabel, type IssueMetadata, type IssuePullRequest } from '@/lib/issue-metadata'
+import { labelKey, pullRequestKey, reconcileMetadataDraft, type IssueLabel, type IssueMetadata, type IssuePullRequest } from '@/lib/issue-metadata'
 import { taskProjectOptions } from '@/lib/task-project-options'
 import { useActionError } from '@/lib/use-action-error'
 import { Button } from '@/components/ui/button'
@@ -47,16 +47,13 @@ export function IssueMetadataControls({ task, section = 'all', compact = false, 
   onBusyChange?: (busy: boolean) => void
 }) {
   const tProperty = useTranslations('Metadata.property')
-  const tColors = useTranslations('Metadata.colors')
   const tPrState = useTranslations('Metadata.prState')
   const tCommon = useTranslations('Common')
-  const colorLabel = (value: IssueLabel['color']) => tColors.has(value as never) ? tColors(value as never) : value
   const prStates = (['open', 'draft', 'merged', 'closed'] as const).map(value => ({ value, label: tPrState(value), icon: PULL_REQUEST_ICONS[value] }))
   const titles: Record<Target, string> = { project: tProperty('setProject'), labels: tProperty('editLabels'), pullRequests: tProperty('managePullRequests'), invite: tProperty('invite') }
   const [target, setTarget] = useState<Target | null>(null)
   const { pending, error, setError, persist, project: moveToProject, accessChange, confirmAccess, cancelAccessChange } = useIssueMetadataSave({ task, disabled, onSaved, onBusyChange })
   const [name, setName] = useState('')
-  const [color, setColor] = useState<IssueLabel['color']>('violet')
   const [labels, setLabels] = useState<IssueLabel[]>([])
   const [prs, setPrs] = useState<IssuePullRequest[]>([])
   const [prState, setPrState] = useState<IssuePullRequest['state']>('open')
@@ -94,10 +91,8 @@ export function IssueMetadataControls({ task, section = 'all', compact = false, 
     event.preventDefault()
     let patch: IssueMetadataPatch = {}
     if (target === 'project') return
-    if (target === 'labels') {
-      const next = name.trim() ? [...labels.filter(label => label.name.toLowerCase() !== name.trim().toLowerCase()), { name: name.trim(), color }] : labels
-      patch = { labels: next }
-    }
+    // A task write never registers a label: the registry's settings page owns creation.
+    if (target === 'labels') patch = { labels }
     if (target === 'pullRequests') {
       const url = name.trim().replace(/\/$/, '')
       const existing = prs.find(pr => pullRequestKey(pr) === url)
@@ -154,10 +149,6 @@ export function IssueMetadataControls({ task, section = 'all', compact = false, 
               {[...new Map([...(options?.labels ?? []), ...labels].map(label => [label.name, label])).values()].length === 0
                 ? <Empty className="border border-dashed"><EmptyHeader><EmptyTitle>{tProperty('existingLabels')}</EmptyTitle><EmptyDescription>{tProperty('noLabelsYet')}</EmptyDescription></EmptyHeader></Empty>
                 : <FieldGroup className="gap-3">{[...new Map([...(options?.labels ?? []), ...labels].map(label => [label.name, label])).values()].map(label => <Field key={label.name} orientation="horizontal"><Checkbox id={`${fieldId}-${label.name}`} disabled={busy} checked={labels.some(item => item.name === label.name)} onCheckedChange={checked => setLabels(current => checked ? [...current.filter(item => item.name !== label.name), label] : current.filter(item => item.name !== label.name))} /><FieldLabel htmlFor={`${fieldId}-${label.name}`}><LabelDot color={label.color} />{label.name}</FieldLabel></Field>)}</FieldGroup>}
-            </FieldSet>
-            <FieldSet>
-              <FieldLegend variant="label">{tProperty('createLabel')}</FieldLegend>
-              <FieldGroup><Field><FieldLabel htmlFor={fieldId}>{tProperty('newLabelName')}</FieldLabel><Input id={fieldId} value={name} onChange={event => setName(event.target.value)} placeholder={tProperty('labelNamePlaceholder')} maxLength={40} disabled={busy} /></Field><Field><FieldLabel>{tProperty('labelColor')}</FieldLabel><IssuePropertyMenu label={tProperty('labelColor')} value={color} options={LABEL_COLORS.map(value => ({ value, label: colorLabel(value) }))} icon={Tag} disabled={busy} onChange={value => setColor(value as IssueLabel['color'])} /></Field></FieldGroup>
             </FieldSet>
           </>}
           {target === 'pullRequests' && <>

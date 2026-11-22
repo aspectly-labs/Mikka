@@ -6,17 +6,19 @@ import type { db } from '@/lib/db'
 import { ActionFailureError } from '@/lib/action-error'
 import { workspaceIssueLabels } from './schema'
 
-/** Compatibility names resolve within the already-admitted tenant. This never creates entities or writes colors. */
+/** Compatibility names resolve within the already-admitted tenant. This never creates entities or writes colors.
+ * Both sides are folded by the database, so a submitted name matches the registry under the server's collation
+ * rather than JavaScript's contextual Unicode case conversion. */
 export async function resolveTaskLabelNames(executor: Pick<typeof db, 'select'>, workspaceId: string, raw: unknown): Promise<TaskLabelReferences> {
   const names = z.array(z.string().trim().min(1).max(40)).max(12).parse(raw)
-  const keys = [...new Set(names.map(name => name.toLowerCase()))]
-  if (!keys.length) return { labelIds: [], labels: [] }
-  const rows = await executor.select({ id: workspaceIssueLabels.id, name: workspaceIssueLabels.name, color: workspaceIssueLabels.color }).from(workspaceIssueLabels)
-    .where(and(eq(workspaceIssueLabels.workspaceId, workspaceId), sql`lower(${workspaceIssueLabels.name}) = any(${sql.param(keys)}::text[])`))
-    .orderBy(asc(workspaceIssueLabels.id)).for('share', { noWait: true })
-  const byName = new Map(rows.map(row => [row.name.toLowerCase(), row]))
-  if (keys.some(key => !byName.has(key))) throw new ActionFailureError('issueMetadataInvalid')
-  const labels = keys.map(key => byName.get(key)!)
+  if (!names.length) return { labelIds: [], labels: [] }
+  const rows = await executor.select({ id: workspaceIssueLabels.id, name: workspaceIssueLabels.name, color: workspaceIssueLabels.color })
+    .from(sql`unnest(${sql.param(names)}::text[]) with ordinality as requested(name, ordinality)`)
+    .innerJoin(workspaceIssueLabels, and(eq(workspaceIssueLabels.workspaceId, workspaceId),
+      sql`lower(${workspaceIssueLabels.name}) = lower(requested.name)`))
+    .orderBy(asc(sql`requested.ordinality`)).for('share', { of: workspaceIssueLabels, noWait: true })
+  if (rows.length !== names.length) throw new ActionFailureError('issueMetadataInvalid')
+  const labels = rows.filter((row, index) => rows.findIndex(other => other.id === row.id) === index)
   return { labelIds: labels.map(label => label.id), labels: labels.map(({ name, color }) => ({ name, color })) }
 }
 

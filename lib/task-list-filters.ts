@@ -12,6 +12,8 @@ const has = (value: Record<string, unknown>) => sql`${issueMetadataSql} @> ${jso
 const anyOf = (parts: SQL[]) => parts.length === 1 ? parts[0] : or(...parts)!
 
 const assignedTo = (ids: readonly string[]) => anyOf(ids.map(id => has({ assignee: { id } })))
+/** The registry folds label names case-insensitively, so a filter saved under an older spelling still matches. */
+const labelled = (name: string) => sql`exists (select 1 from jsonb_array_elements(coalesce(${issueMetadataSql}->'labels', '[]'::jsonb) ) label where lower(label->>'name') = lower(${name}))`
 const mentions = (userId: string) => sql`jsonb_path_exists(${issues.content}, '$.** ? (@.type == "mention" && @.attrs.id == $u)', jsonb_build_object('u', ${userId}::text))`
 const follows = (userId: string) => has({ subscriberUserIds: [userId] })
 
@@ -24,7 +26,7 @@ export function taskListFilterPredicate(filters: TaskListFilters, userId: string
   const properties: SQL[] = []
   if (filters.assignee) properties.push(assignedTo(people(filters.assignee)))
   if (filters.creator) properties.push(sql`${issues.userId} = any(${sql.param(people(filters.creator))}::text[])`)
-  if (filters.labels) properties.push(anyOf(filters.labels.map(name => has({ labels: [{ name }] }))))
+  if (filters.labels) properties.push(anyOf(filters.labels.map(labelled)))
   if (filters.dueBefore || filters.dueAfter) properties.push(and(
     sql`(${issueMetadataSql}->>'dueDate') is not null`,
     filters.dueBefore ? sql`(${issueMetadataSql}->>'dueDate') <= ${filters.dueBefore}` : undefined,

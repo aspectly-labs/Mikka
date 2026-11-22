@@ -49,7 +49,8 @@ mock.module(new URL('../slots/new-task.tsx', import.meta.url).href, { namedExpor
     {props.assignee && props.assignee.choices.map(choice => <Button key={choice.value} data-assignee={choice.value} data-assignee-picked={choice.value === props.assignee!.value}
       onClick={() => props.assignee!.onChange(choice.value)}>{choice.label}</Button>)}
     {props.dueDate && props.dueDate.presets.map(preset => <Button key={preset.label} data-due={preset.label} onClick={() => props.dueDate!.onChange(preset.value)}>{preset.label}</Button>)}
-    {props.labels && <Button data-label-create onClick={() => props.labels!.onCreate('Bug')}>create label</Button>}
+    {props.labels && props.labels.choices.map(choice => <Button key={choice.name} data-label={choice.name} onClick={() => props.labels!.onToggle(choice.name)}>{choice.name}</Button>)}
+    {props.labels && <span data-label-create={props.labels.onCreate ? 'yes' : 'no'} />}
     {props.access && <>
       <Button data-access="members" onClick={() => props.access!.onChange('members')}>members</Button>
       {props.access.members.map(member => <Button key={member.value} data-access-member={member.value} onClick={() => props.access!.onToggleMember(member.value)}>{member.label}</Button>)}
@@ -406,7 +407,8 @@ test('a title is required; the create window sends priority, assignee, due date,
   await act(async () => container.querySelector<HTMLButtonElement>('[data-priority="high"]')!.click())
   await act(async () => container.querySelector<HTMLButtonElement>('[data-assignee="bot:bot-1"]')!.click())
   await act(async () => container.querySelector<HTMLButtonElement>('[data-due="Shell.newTaskDialog.due.tomorrow"]')!.click())
-  await act(async () => container.querySelector<HTMLButtonElement>('[data-label-create]')!.click())
+  assert.equal(container.querySelector('[data-label-create]')?.getAttribute('data-label-create'), 'no', 'a task form never registers a label')
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-label="Infra"]')!.click())
   await act(async () => container.querySelector<HTMLButtonElement>('[data-access="members"]')!.click())
   await act(async () => container.querySelector<HTMLButtonElement>('[data-access-member="mate"]')!.click())
   assert.equal(container.querySelector('[data-access-member="viewer"]'), null, 'the creator always has access')
@@ -417,7 +419,7 @@ test('a title is required; the create window sends priority, assignee, due date,
   assert.equal(command.priority, 'high')
   assert.deepEqual(command.assignee, { kind: 'bot', id: 'bot-1' })
   assert.match(command.dueDate ?? '', /^\d{4}-\d{2}-\d{2}$/)
-  assert.deepEqual(command.labels, [{ name: 'Bug', color: 'gray' }])
+  assert.deepEqual(command.labels, [{ name: 'Infra', color: 'blue' }])
   assert.deepEqual(command.access, { kind: 'members', memberIds: ['mate'] })
   assert.equal(submitted.length, 0, 'creating dispatches nothing')
   assert.equal(opened, 'one-task')

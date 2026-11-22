@@ -182,8 +182,7 @@ export function NewTaskDialog({ open, onOpenChange, project: pageProject, projec
   const knownLabels = [...new Map([...(options?.labels ?? []), ...labels].map(label => [label.name.toLowerCase(), label])).values()]
   const labelChoices: NewTaskProps['labels'] = { choices: knownLabels, value: labels.map(label => label.name), disabled: sending,
     onToggle: name => setLabels(current => current.some(label => label.name === name) ? current.filter(label => label.name !== name)
-      : [...current, knownLabels.find(label => label.name === name) ?? { name, color: 'gray' as const }].slice(0, 12)),
-    onCreate: name => { const value = name.trim().slice(0, 40); if (value && !labels.some(label => label.name.toLowerCase() === value.toLowerCase())) setLabels(current => [...current, { name: value, color: 'gray' as const }].slice(0, 12)) } }
+      : [...current, knownLabels.find(label => label.name === name) ?? { name, color: 'gray' as const }].slice(0, 12)) }
   // Only specific people needs someone else to name: a personal space has only its owner.
   const others = members.filter(person => person.id !== options?.viewerId)
   const accessChoice: NewTaskProps['access'] = others.length ? { value: access, onChange: setAccess, workspaceLabel: t('accessWorkspace'), disabled: sending,

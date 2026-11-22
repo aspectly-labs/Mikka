@@ -19,14 +19,14 @@ type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Reader = Pick<typeof db, 'select'>
 
 export class TaskLabelConflict extends Error {
-  constructor(readonly detail: 'name_taken' | 'changed') { super(detail); this.name = 'TaskLabelConflict' }
+  constructor(readonly detail: 'name_taken' | 'changed', options?: ErrorOptions) { super(detail, options); this.name = 'TaskLabelConflict' }
 }
 
 function databaseConflict(error: unknown): TaskLabelConflict | null {
   for (let cause: unknown = error; cause && typeof cause === 'object'; cause = (cause as { cause?: unknown }).cause) {
     const value = cause as { constraint?: string; code?: string }
-    if (value.constraint === 'workspace_issue_labels_name_key') return new TaskLabelConflict('name_taken')
-    if (value.code === '55P03' || value.code === '40P01' || value.code === '40001') return new TaskLabelConflict('changed')
+    if (value.constraint === 'workspace_issue_labels_name_key') return new TaskLabelConflict('name_taken', { cause: error })
+    if (value.code === '55P03' || value.code === '40P01' || value.code === '40001') return new TaskLabelConflict('changed', { cause: error })
   }
   return null
 }
@@ -44,7 +44,7 @@ async function inWorkspace<T>(reader: EnterpriseReader, workspaceId: string, adm
   try {
     return await withTaskWorkspace(reader, workspaceId, async (_workspace, membership) => {
       const { membership: current } = await requireWorkspace(membership, workspaceId, userId, admin,
-        typeof reader === 'string' ? undefined : reader[enterprisePrincipal])
+        typeof reader === 'string' ? undefined : reader[enterprisePrincipal], admin ? 'update' : 'share')
       return db.transaction(tx => work(tx, current.role === 'admin'))
     })
   } catch (error) { throw databaseConflict(error) ?? error }
