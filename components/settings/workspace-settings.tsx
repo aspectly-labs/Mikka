@@ -2,15 +2,16 @@
 
 import { useRef, useState, type ChangeEvent } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import { Check, Copy, Pencil } from '@/components/icons'
+import { Check, Copy, SquarePen } from '@/components/icons'
+import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { SettingRow, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
+import { SettingRow, SettingSelect, SettingSwitch, SettingsLoading, SettingsSaveError, SettingsSection, settingsSelectTriggerClass } from '@/components/settings/primitives'
 import { useGatedFeature } from '@/hooks/use-feature-availability'
 import { useReplayOnboarding } from '@/hooks/settings/use-preferences-page'
 import { settingItemPending, settingItemShown, withPendingSuffix } from '@/lib/settings-sections'
@@ -55,45 +56,45 @@ export function WorkspaceSettings({ workspaceId }: { userKey?: string; workspace
   // S-P: members read the same rows as plain values, plus the Sharing section (#2957).
   if (!current.canEdit) return <>
     <SettingsSection id="workspace-general" title={t('profile')}>
-      <SettingRow title={t('icon')}>{icon}</SettingRow>
-      <SettingRow title={t('name')}><span>{current.name}</span></SettingRow>
+      <SettingRow title={t('icon')} description={t('iconHint')}>{icon}</SettingRow>
+      <SettingRow title={t('name')} description={t('nameHint')}><span>{current.name}</span></SettingRow>
       <WorkspaceId id={current.id} />
       <SettingRow title={t('taskPrefix')} description={t('taskPrefixHint')}><span className="font-mono">{current.taskPrefix ?? ''}</span></SettingRow>
-      {current.slug && <SettingRow title={t('address')}><span className="break-all">{host}{current.slug}</span></SettingRow>}
+      {current.slug && <SettingRow title={t('address')}><span className="break-all font-mono text-xs">{host}{current.slug}</span></SettingRow>}
     </SettingsSection>
     {shareSection}
   </>
 
   return <>
     <SettingsSection id="workspace-general" title={t('profile')}>
-      <SettingRow title={t('icon')}>
+      <SettingRow title={t('icon')} description={t('iconHint')}>
+        <Input ref={fileRef} type="file" accept={WORKSPACE_ICON_TYPES.join(',')} className="sr-only" tabIndex={-1} aria-hidden="true" onChange={event => void pickIcon(event)} />
         <div className="flex items-center gap-2">
           {icon}
-          <Button type="button" variant="ghost" size="icon" aria-label={t('changeIcon')} disabled={saving !== null} onClick={() => fileRef.current?.click()}>
-            <Pencil data-icon />
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={t('changeIcon')} disabled={saving !== null} onClick={() => fileRef.current?.click()}>
+            <SquarePen />
           </Button>
-          <Input ref={fileRef} type="file" accept={WORKSPACE_ICON_TYPES.join(',')} className="sr-only" tabIndex={-1} aria-hidden="true" onChange={event => void pickIcon(event)} />
-          {current.icon ? <Button type="button" variant="ghost" size="default" disabled={saving !== null} onClick={() => void save('icon', null)}>{t('removeIcon')}</Button> : null}
+          {current.icon ? <Button type="button" variant="ghost" size="sm" disabled={saving !== null} onClick={() => void save('icon', null)}>{t('removeIcon')}</Button> : null}
         </div>
       </SettingRow>
-      <SettingRow title={t('name')}>
-        <Input aria-label={t('name')} className="w-full min-w-0" maxLength={120} value={name ?? current.name} disabled={saving === 'name'}
+      <SettingRow title={t('name')} description={t('nameHint')}>
+        <Input aria-label={t('name')} className="w-full border-border bg-background sm:w-64" maxLength={120} value={name ?? current.name} disabled={saving === 'name'}
           onChange={event => setName(event.target.value)} onBlur={() => commit('name')}
           onKeyDown={event => { if (event.key === 'Enter') commit('name'); if (event.key === 'Escape') setName(null) }} />
       </SettingRow>
       <WorkspaceId id={current.id} />
       <SettingRow title={t('taskPrefix')} description={t('taskPrefixHint')}>
-        <Input aria-label={t('taskPrefix')} className="w-24 font-mono uppercase" maxLength={4} value={prefix ?? current.taskPrefix ?? ''} disabled={saving === 'taskPrefix'}
+        <Input aria-label={t('taskPrefix')} className="w-full border-border bg-background font-mono uppercase sm:w-64" maxLength={4} value={prefix ?? current.taskPrefix ?? ''} disabled={saving === 'taskPrefix'}
           onChange={event => setPrefix(event.target.value)} onBlur={() => commit('taskPrefix')}
           onKeyDown={event => { if (event.key === 'Enter') commit('taskPrefix'); if (event.key === 'Escape') setPrefix(null) }} />
       </SettingRow>
       <SettingRow title={t('address')}>
-        <InputGroup className="w-full min-w-0">
-          <InputGroupAddon><InputGroupText>{host}</InputGroupText></InputGroupAddon>
-          <InputGroupInput aria-label={t('address')} className="min-w-0" maxLength={64} value={slug ?? current.slug ?? ''} disabled={saving === 'slug'}
+        <div className="flex w-full flex-col gap-1 sm:w-64">
+          {host && <span className="break-all font-mono text-xs text-muted-foreground">{host}</span>}
+          <Input aria-label={t('address')} className="w-full border-border bg-background" maxLength={64} value={slug ?? current.slug ?? ''} disabled={saving === 'slug'}
             onChange={event => setSlug(event.target.value)} onBlur={() => commit('slug')}
             onKeyDown={event => { if (event.key === 'Enter') commit('slug'); if (event.key === 'Escape') setSlug(null) }} />
-        </InputGroup>
+        </div>
       </SettingRow>
     </SettingsSection>
     {failed && <SettingsSaveError message={failed.message} retryLabel={commonT('retry')} onRetry={() => { if (general.failedPick) { fileRef.current?.click(); return } general.retry() }} />}
@@ -123,13 +124,13 @@ function WorkspaceSharingSection() {
   const allowPrivatePending = settingItemPending('workspace.allowPrivate')
   return <SettingsSection id="workspace-share" title={t('share')}>
     {settingItemShown('workspace.newWorkVisibility') && <SettingRow title={newWorkPending ? withPendingSuffix(t('newWorkVisibility'), pendingTag) : t('newWorkVisibility')} description={t('newWorkHint')}>
-      <span className="text-muted-foreground">{t('visibilityInherit')}</span>
+      <SettingSelect disabled label={t('newWorkVisibility')} value="inherit" options={[{ value: 'inherit', label: t('visibilityInherit') }]} onValueChange={() => {}} />
     </SettingRow>}
     {settingItemShown('workspace.workVisibility') && <SettingRow title={workVisPending ? withPendingSuffix(t('workspaceWorkVisibility'), pendingTag) : t('workspaceWorkVisibility')} description={t('workspaceWorkHint')}>
-      <span className="text-muted-foreground">{t('visibilityMembers')}</span>
+      <SettingSelect disabled label={t('workspaceWorkVisibility')} value="members" options={[{ value: 'members', label: t('visibilityMembers') }]} onValueChange={() => {}} />
     </SettingRow>}
     {settingItemShown('workspace.allowPrivate') && <SettingRow title={allowPrivatePending ? withPendingSuffix(t('allowPrivate'), pendingTag) : t('allowPrivate')} description={t('allowPrivateHint')}>
-      <span className="text-muted-foreground">{pendingTag}</span>
+      <SettingSwitch disabled label={t('allowPrivate')} checked onCheckedChange={() => {}} />
     </SettingRow>}
   </SettingsSection>
 }
@@ -137,11 +138,28 @@ function WorkspaceSharingSection() {
 function WorkspaceId({ id }: { id: string }) {
   const t = useTranslations('Settings.workspaceForm')
   const [copied, setCopied] = useState(false)
-  return <SettingRow title={t('id')}>
-    <span className="flex items-center gap-2 font-mono text-xs">
-      {id.slice(0, 4)}…{id.slice(-4)}
-      <Button type="button" size="icon" variant="ghost" aria-label={copied ? t('copied') : t('copyId')} onClick={() => { void navigator.clipboard.writeText(id).then(() => { setCopied(true) }) }}>{copied ? <Check data-icon /> : <Copy data-icon />}</Button>
-    </span>
+  const [copying, setCopying] = useState(false)
+  async function copy() {
+    if (copying) return
+    setCopying(true)
+    try {
+      await navigator.clipboard.writeText(id)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    } finally {
+      setCopying(false)
+    }
+  }
+  return <SettingRow title={t('id')} description={t('idHint')}>
+    <InputGroup className="w-full border-border bg-background sm:w-64">
+      <InputGroupInput aria-label={t('id')} readOnly value={`${id.slice(0, 4)}…${id.slice(-4)}`} className="font-mono text-xs" />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton size="icon-xs" busy={copying} aria-label={copied ? t('copied') : t('copyId')} onClick={() => void copy()}>
+          {copied ? <Check /> : <Copy />}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   </SettingRow>
 }
 
@@ -153,7 +171,7 @@ export function ReplayOnboarding() {
   return <>
     <SettingsSection id="workspace-onboarding">
       <SettingRow title={t('replayOnboarding')}>
-        <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void replay()}>{pending ? t('replaying') : t('replay')}</Button>
+        <Button type="button" variant="secondary" size="sm" busy={pending} onClick={() => void replay()}>{pending ? t('replaying') : t('replay')}</Button>
       </SettingRow>
     </SettingsSection>
     {error && <SettingsSaveError message={error} retryLabel={commonT('retry')} onRetry={() => void replay()} />}
@@ -174,15 +192,15 @@ function TransferWorkspaceDialog({ workspaceId, name, onClose, onDone, open = tr
     if (owner) onDone(owner)
   }
 
-  return <Dialog open={open} onOpenChangeComplete={onOpenChangeComplete} onOpenChange={open => { if (!open && !pending) onClose() }}>
-    <DialogContent>
+  return <Dialog open={open} onOpenChangeComplete={onOpenChangeComplete} onOpenChange={next => { if (!next && !pending) onClose() }}>
+    <DialogContent aria-describedby={undefined}>
       <DialogHeader><DialogTitle>{t('transferTitle', { name })}</DialogTitle></DialogHeader>
       <div className="flex flex-col gap-3 text-sm">
         {people
           ? people.length
             ? <Label className="flex flex-col items-start gap-1.5 font-normal text-muted-foreground">{t('transferTo')}
               <Select value={to} items={items} onValueChange={next => setTo(typeof next === 'string' ? next : null)}>
-                <SelectTrigger aria-label={t('transferTo')} className="w-full"><SelectValue placeholder={t('transferPick')} /></SelectTrigger>
+                <SelectTrigger aria-label={t('transferTo')} className={cn(settingsSelectTriggerClass, 'w-full')}><SelectValue placeholder={t('transferPick')} /></SelectTrigger>
                 <SelectContent><SelectGroup>{items.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
               </Select>
             </Label>
@@ -192,15 +210,16 @@ function TransferWorkspaceDialog({ workspaceId, name, onClose, onDone, open = tr
       </div>
       <DialogFooter>
         <Button type="button" variant="outline" disabled={pending} onClick={onClose}>{commonT('cancel')}</Button>
-        <Button type="button" disabled={pending || !canTransferTo(to)} onClick={() => void confirm()}>{pending ? t('transferring') : t('transfer')}</Button>
+        <Button type="button" busy={pending} disabled={pending || !canTransferTo(to)} onClick={() => void confirm()}>{pending ? t('transferring') : t('transfer')}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
 }
 
-/** S-I: lists what goes, then the name must be typed exactly. */
+/** S-I (frame 31): lists what goes, then the name must be typed exactly. */
 function DeleteWorkspaceDialog({ workspaceId, name, onClose, open = true, onOpenChangeComplete }: { workspaceId: string; name: string; onClose: () => void } & PresenceProps) {
   const t = useTranslations('Settings.workspaceForm')
+  const tp = useTranslations('Settings.polish')
   const computerBilling = useGatedFeature('computerBilling')
   const commonT = useTranslations('Common')
   const { counts, readError, reload, pending, error, remove } = useDeleteWorkspace(workspaceId)
@@ -210,27 +229,27 @@ function DeleteWorkspaceDialog({ workspaceId, name, onClose, open = true, onOpen
     await remove(typed)
   }
 
-  return <Dialog open={open} onOpenChangeComplete={onOpenChangeComplete} onOpenChange={open => { if (!open && !pending) onClose() }}>
-    <DialogContent>
+  return <Dialog open={open} onOpenChangeComplete={onOpenChangeComplete} onOpenChange={next => { if (!next && !pending) onClose() }}>
+    <DialogContent aria-describedby={undefined}>
       <DialogHeader><DialogTitle>{t('deleteTitle', { name })}</DialogTitle></DialogHeader>
       <div className="flex flex-col gap-3 text-sm">
-        <p className="text-muted-foreground">{t('deleteLead')}</p>
+        <p className="text-foreground">{t('deleteLead')}</p>
         {counts
-          ? <ul className="flex list-disc flex-col gap-1 pl-5">
+          ? <ul className="flex flex-col gap-1.5 text-foreground">
             <li>{t('deleteBots', { count: counts.bots })}</li>
             <li>{t('deleteTasks', { tasks: counts.tasks, teams: counts.teams })}</li>
             {computerBilling && counts.purchasedPoints > 0 && <li>{t('deletePoints', { points: counts.purchasedPoints })}</li>}
           </ul>
           : readError ? <SettingsSaveError message={readError} retryLabel={commonT('retry')} onRetry={() => { void reload() }} /> : <p role="status" className="text-muted-foreground">{t('loading')}</p>}
         <p className="text-muted-foreground">{t('deleteKept')}</p>
-        <Label className="flex flex-col items-start gap-1.5 font-normal text-muted-foreground">{t('deleteConfirmLabel', { name })}
-          <Input value={typed} autoComplete="off" onChange={event => setTyped(event.target.value)} />
+        <Label className="flex flex-col items-start gap-1.5 font-medium text-foreground">{t('deleteConfirmLabel', { name })}
+          <Input value={typed} placeholder={tp('workspaceNamePlaceholder')} className="border-border bg-background" autoComplete="off" onChange={event => setTyped(event.target.value)} />
         </Label>
         {error && <FieldError>{error}</FieldError>}
       </div>
       <DialogFooter>
         <Button type="button" variant="outline" disabled={pending} onClick={onClose}>{commonT('cancel')}</Button>
-        <Button type="button" variant="destructive" disabled={!counts || pending || typed.trim() !== name} onClick={() => void confirm()}>{pending ? t('deleting') : t('deleteWorkspace')}</Button>
+        <Button type="button" variant="destructive" busy={pending} disabled={!counts || pending || typed.trim() !== name} onClick={() => void confirm()}>{pending ? t('deleting') : tp('permanentDelete')}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
