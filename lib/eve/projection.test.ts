@@ -66,6 +66,18 @@ test('native failed outcomes preserve a closed provider code without publishing 
   assert.equal(JSON.stringify(messages).includes('Private provider diagnostic'),false)
 })
 
+test('a missing-model hook refusal surfaces its coded refusal, never the wrapper (#3028)',()=>{
+  for (const refusal of ['executionModelUnknown','subscription_model_unavailable']) {
+    const view=foldEvents(emptySessionView(),[
+      {type:'turn.started',data:{turnId:'turn_hooked',cause:{deliveryId:'delivery_hooked'},follows:null},meta:{position:{line:0,index:0},at:'2026-11-11T00:00:00Z',endOfLine:true}},
+      {type:'turn.settled',data:{turnId:'turn_hooked',outcome:'failed',error:{code:'HOOK_FAILED',message:`Hook "turn.started" failed: ${refusal}`}},meta:{position:{line:1,index:0},at:'2026-11-11T00:00:01Z',endOfLine:true}},
+    ])
+    const messages=projectEveTurn(view,'wrun_fixture','turn_hooked','failed')
+    assert.ok('mikkaFailure' in messages[0])
+    assert.equal(messages[0].mikkaFailure,refusal)
+  }
+})
+
 test('preparation refusals and safe references project without publishing hook diagnostics', () => {
   const reference = '11111111-1111-4111-8111-111111111111'
   const cases = [

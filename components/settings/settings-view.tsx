@@ -1,6 +1,7 @@
 'use client'
 
 import { BotPermissionsSettings } from './bot-permissions'
+import { TeamSkillsSettings } from './team-skills-settings'
 import { Component, type ReactNode, useEffect, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
@@ -34,6 +35,7 @@ import { AuditLogSettings } from '@/components/settings/audit-log-settings'
 import { UsageSettings } from '@/components/settings/usage-settings'
 import { BillingSettings } from '@/components/settings/billing-settings'
 import { useWorkspace } from '@/hooks/use-workspace'
+import { useGatedFeature } from '@/hooks/use-feature-availability'
 import { settingsHref, TEAM_ONLY_SECTIONS, type SettingsSectionId } from '@/lib/settings-sections'
 import { useRouter } from '@/i18n/navigation'
 import { pushSettingsHistory } from '@/lib/settings-navigation'
@@ -76,8 +78,10 @@ export function SettingsView({ user, userKey, googleEnabled = false, onRail, onS
   const billing = workspace !== undefined && workspace.edition !== 'community'
   const community = workspace?.edition === 'community'
   const cloudAdmin = community && workspace?.serverAdmin === true
+  // 记忆 is behind the `memory` PostHog flag while it does not work (gatedFeatures.memory).
+  const memory = useGatedFeature('memory')
   // 组织 exists only where a UI layer draws it (slot settings-organization).
-  const section = (requestedSection === 'billing' && !billing) || (requestedSection === 'cloud' && !cloudAdmin) || (requestedSection === 'organization' && !ORGANIZATION_SETTINGS) ? 'preferences' : requestedSection
+  const section = (requestedSection === 'billing' && !billing) || (requestedSection === 'cloud' && !cloudAdmin) || (requestedSection === 'organization' && !ORGANIZATION_SETTINGS) || (requestedSection === 'memory' && !memory) ? 'preferences' : requestedSection
   const admin = workspace?.role === 'admin'
   const personal = workspace?.workspace.kind === 'personal'
   // Team settings show once the workspace is known to be a team, as admin-only ones wait for the role.
@@ -161,6 +165,7 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'notifications': return <NotificationSettings />
     case 'memory': return <MemorySettings />
     case 'bot-permissions': return <BotPermissionsSettings admin={admin} workspaceId={workspaceId} />
+    case 'team-skills': return <TeamSkillsSettings admin={admin} workspaceId={workspaceId} />
     case 'connections': return <PluginsView section="connections" rootLabel={t('sections.connections.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'models': return <>{workspaceId && !preview ? <ApiAndSubscriptions key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} team={team} cloudUserKey={community ? userKey : undefined} /> : waiting}</>
     case 'developer': return workspaceId && !preview ? <AccessTokensSettings key={workspaceId} workspaceId={workspaceId} /> : waiting

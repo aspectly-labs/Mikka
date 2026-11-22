@@ -42,7 +42,7 @@ export function chatFailure(chat: { working: boolean; error: string | null; caus
 }
 
 // The code alone, or ending a wrapped message (`Error: …`, `Step "…" failed after 3 retries: …`).
-const CODE = /(?:^|: )([a-z][a-z0-9_]*(?: \([a-z][a-z0-9_]*\))?)$/
+const CODE = /(?:^|: )([a-zA-Z][a-zA-Z0-9_.:-]*(?: \([a-z][a-z0-9_]*\))?)$/
 const REFERENCED_CODE = /^[a-zA-Z][a-zA-Z0-9_.:-]{0,127} · ref [A-Za-z0-9_-]{1,128}$/
 // The model streaming boundary stores its closed refusal inside this SDK
 // envelope. Presentation only: tool text and other workflow steps do not
