@@ -322,7 +322,7 @@ test('automatic build-time publication binds the actual report source to current
   assert.equal(proof.artifact.id, 321)
   assert.match(proof.reportSha256, /^[a-f0-9]{64}$/)
   assert.equal(fixture.calls.filter(path => path === 'storage').length, 1)
-  const attested = { ...proof, web: { sourceCommit: SHA, publicBuild: SHA, webRunId: 456, webAttempt: 1 } }
+  const attested = { ...proof, web: { sourceCommit: SHA, publicBuild: SHA, provider: 'cloudflare', verifiedAt: '2026-11-18T10:00:00.000Z' } }
   assert.doesNotThrow(() => assertAttestation(expected(), attested))
   for (const mutate of [value => { value.workerSourceCommit = OTHER }, value => { value.artifact.repositoryId++ },
     value => { value.reportSha256 = 'invalid' }, value => { delete value.artifact }]) {
