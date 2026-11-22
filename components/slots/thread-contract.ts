@@ -186,14 +186,30 @@ export type ThreadTranscriptMessage = { id: string } & (
 export type ThreadGroupRow =
   /** `quiet`: a Bot's or Agent's reply, its words alone with no mark or visible name (#2922); screen readers still get the name. */
   /** `before`: what goes above the run in its own item, the centred time over its group (#2922). */
-  | { kind: 'author'; id: string; mine: boolean; quiet?: boolean; name: string; mark?: ReactNode; before?: ReactNode; messages: ThreadTranscriptMessage[] }
+  /** `byline`: a quiet reply's name as a small line, with no mark, where the replying speaker changes in a group
+   * (decision 2026-11-22-1500-group-chat-as-bot-chat). */
+  | { kind: 'author'; id: string; mine: boolean; quiet?: boolean; byline?: boolean; name: string; mark?: ReactNode; before?: ReactNode; messages: ThreadTranscriptMessage[] }
   | { kind: 'pending'; id: string; phase: 'sending' | 'accepted' | 'failed'; message: ChatMessageProps; after?: ReactNode }
   | { kind: 'notice'; id: string; label: string; content: ReactNode }
+
+export type TranscriptPin = {
+  /** Counts the person's own sends; only a change pins, never a load, a remount or someone else's message. */
+  sends: number
+  /** The message to stand at the top: the latest send's row, then its stored message once listed. */
+  target: string | null
+  /** A reply is being written: the space does not give way to scrolling while it grows. */
+  busy?: boolean
+}
 
 type TranscriptScroll = {
   label: string
   ref: RefObject<HTMLDivElement | null>
   onScroll: UIEventHandler<HTMLDivElement>
+  /** Changes whenever the newest message or the waiting rows change: a `following` chat goes to its end. */
+  end?: string
+  following?: boolean
+  /** Send-pinning, as the Bot chat's: after the person's own send their message stands at the top of the view. */
+  pin?: TranscriptPin
 }
 
 /** A group chat's transcript shares the screen without changing its DOM or its reader's state. */

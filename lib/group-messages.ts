@@ -122,6 +122,23 @@ export function authorRuns(messages: GroupMessage[]) {
   return runs
 }
 
+/**
+ * The reply runs that carry a small author line in a group chat: a Bot's or Agent's reply is quiet (#2922) except where
+ * the replying speaker changes, so a group with several Bots says who answered (decision 2026-11-22-1500-group-chat-as-bot-chat).
+ * The first reply in view names its speaker; a person's message between two replies by the same Bot does not repeat it.
+ */
+export function replyBylines(runs: readonly { key: string; authorType: GroupMessage['authorType']; authorId: string }[]): Set<string> {
+  const named = new Set<string>()
+  let previous: string | null = null
+  for (const run of runs) {
+    if (run.authorType === 'user') continue
+    const speaker = `${run.authorType}:${run.authorId}`
+    if (speaker !== previous) named.add(run.key)
+    previous = speaker
+  }
+  return named
+}
+
 /** GET a group API path; failures map to the same codes as the message pages. */
 async function readGroupApi<T>(path: string, pick: (body: unknown) => T | undefined, fetcher: typeof fetch): Promise<T> {
   let response: Response
@@ -138,7 +155,7 @@ const listIn = <T>(key: string) => (body: unknown) => {
 }
 
 /** A group chat the person is in, with its latest message (GET /api/conversations). */
-export type GroupSummary = { creationPurpose?: 'group' | 'conversation'; unreadCount?: string; markedUnread?: boolean; /** Who created it (conversations.createdBy); its owner, who cannot leave. */ createdBy?: string; /** The person's own 置顶 / 隐藏 for it (lib/chat-preferences.ts). */ pinned?: boolean; hidden?: boolean; pinOrder?: number | null; id: string; workspaceId: string; title: string; createdAt: string; lastMessage: GroupMessage | null }
+export type GroupSummary = { creationPurpose?: 'group' | 'conversation'; unreadCount?: string; markedUnread?: boolean; /** Who created it (conversations.createdBy); its owner, who cannot leave. */ createdBy?: string; /** The person's own 置顶 / 隐藏 for it (lib/chat-preferences.ts). */ pinned?: boolean; hidden?: boolean; pinOrder?: number | null; id: string; workspaceId: string; title: string; createdAt: string; lastMessage: GroupMessage | null; /** Its first Bot members' faces, for its avatar in the chat list (R-36); absent from an older server. */ bots?: { id: string; color: string | null; shape: string | null; coordinator?: boolean }[] }
 
 /** The person's group chats in one workspace, for the bot list (R-01). */
 export function fetchGroups(workspaceId: string, fetcher: typeof fetch = fetch): Promise<GroupSummary[]> {
