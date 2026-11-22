@@ -136,24 +136,33 @@ dbTest('device session reports: the newest socket owns the session, reports are 
       }
     })
 
-    await t.test('the backstop asks the gateway about devices concurrently, so a slow gateway cannot outlast the cron', async () => {
-      const others = await Promise.all([1, 2, 3].map(async n => { const g = await deviceFixture(pool, `session-concurrent-${n}`); await g.run('running'); return g }))
+    await t.test('the backstop checks up to 20 devices at a time', async t => {
+      const others = await Promise.all(Array.from({ length: 21 }, async (_, n) => { const g = await deviceFixture(pool, `session-concurrent-${n}`); await g.run('running'); return g }))
       const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
       const { createServer } = await import('node:http')
       const { once } = await import('node:events')
-      let inFlight = 0, peak = 0
       const server = createServer((_request, response) => {
-        peak = Math.max(peak, ++inFlight)
-        setTimeout(() => { inFlight--; response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ online: true })) }, 200)
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify({ online: true }))
       })
       server.listen(0, '127.0.0.1'); await once(server, 'listening')
       process.env.DEVICE_GATEWAY_URL = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`
       process.env.DEVICE_GATEWAY_PUSH_SECRET = 'isolated-session-backstop-secret'
+      const fetch = globalThis.fetch
+      let inFlight = 0, peak = 0
+      const asked = new Set<string>()
+      t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
+        if (!(url instanceof URL) || url.origin !== process.env.DEVICE_GATEWAY_URL) return fetch(url, options)
+        asked.add(url.pathname)
+        peak = Math.max(peak, ++inFlight)
+        try { return await fetch(url, options) } finally { inFlight-- }
+      })
       try {
         for (const [n, g] of others.entries()) await applyDeviceSessionReport(g.device, { state: 'connected', at: new Date().toISOString(), socketId: `socket-concur0${n}` })
         const { checked } = await closeLostDeviceSessions()
         assert.ok(checked >= others.length)
-        assert.ok(peak > 1, `status calls overlap (peak in flight: ${peak})`)
+        assert.equal(peak, 20, 'status calls overlap without exceeding the concurrency limit')
+        assert.ok(others.every(g => asked.has(`/v1/devices/${g.device}/status`)), 'all devices were checked')
       } finally {
         if (previous.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previous.url
         if (previous.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previous.secret
