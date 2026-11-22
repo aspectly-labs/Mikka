@@ -24,6 +24,7 @@ import { taskIdentifiers } from '@/lib/task-identifier-server'
 import { artifactSummaries, type ArtifactSummary } from '@/lib/artifacts/store'
 import { runSummaryText } from '@/lib/issue-run-conversation'
 import { threadName } from '@/lib/issue-threads'
+import { SUBAGENT_FACTS_SQL, subagentFacts } from '@/lib/subagent-runs'
 import { coordinatorChatState } from './chat-state'
 import { compactChatMessage, compactChatToolMetadata, summaryChatMessage } from './chat-projection'
 import { projectMessageDisplays } from './display-projection'
@@ -269,7 +270,7 @@ export async function citationSources(reader: IssueReader, texts: readonly strin
   // The prompt and tool count belong to the same authorized owner runs. One
   // bounded projection avoids opening a third APP connection beside tasks.
   const [ownedRuns, tasks] = await Promise.all([
-    ownIds.length ? db.select({ id: agentRuns.id, prompt: threadNamePrompt, title: agentRuns.title,
+    ownIds.length ? db.select({ id: agentRuns.id, prompt: threadNamePrompt, title: agentRuns.title, facts: sql<unknown>`${sql.raw(SUBAGENT_FACTS_SQL('agent_runs'))}`,
       steps: sql<number>`(select count(*) from ${runChunks} c where c."runId" = agent_runs.id
         and c.chunk->>'type' = 'tool-input-available')`.mapWith(Number),
     }).from(agentRuns).where(and(inArray(agentRuns.id, ownIds), eq(agentRuns.userId, userId))) : [],
@@ -278,6 +279,7 @@ export async function citationSources(reader: IssueReader, texts: readonly strin
   const prompts = new Map(ownedRuns.map(row => [row.id, row.prompt]))
   const titles = new Map(ownedRuns.map(row => [row.id, row.title]))
   const steps = new Map(ownedRuns.map(row => [row.id, row.steps]))
+  const facts = new Map(ownedRuns.map(row => [row.id, subagentFacts(row.facts)]))
   // Every cited and run task's display identifier in one lookup.
   const identifiers = await taskIdentifiers([
     ...issueRows.map(row => ({ id: row.id, ownerId: row.ownerId, scope: row.scope, number: readIssueMetadata(row.content).number, issuedIdentifier: row.issuedIdentifier })),
@@ -308,7 +310,8 @@ export async function citationSources(reader: IssueReader, texts: readonly strin
       // The full source and compact bot preview use the same authorized name, including a teammate's public harness.
       title: titles.get(row.id) ?? null,
       name: titles.get(row.id) || threadName(prompts.get(row.id) ?? '', issue && row.agentId ? '' : row.agentName), summary: runSummaryText(row), steps: steps.get(row.id) ?? 0,
-      createdAt: row.createdAt.toISOString(), finishedAt: row.finishedAt?.toISOString() ?? null }
+      createdAt: row.createdAt.toISOString(), finishedAt: row.finishedAt?.toISOString() ?? null,
+      ...(facts.has(row.id) ? { subagent: facts.get(row.id)! } : {}) }
   }
   return sources
 }

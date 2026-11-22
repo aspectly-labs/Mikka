@@ -22,14 +22,40 @@ export type ProfileMarkValue = { icon: ProfileGlyph; color: ProfileColor }
 export const PROFILE_MARK_STATES = ['working', 'idle', 'needs-you', 'failed'] as const
 export type ProfileMarkState = (typeof PROFILE_MARK_STATES)[number]
 
-const WORKING_STATUSES = new Set(['working', 'queued', 'preparing', 'running', 'finishing'])
-const NEEDS_YOU_STATUSES = new Set(['waiting-on-you', 'waiting_on_you', 'waiting_input', 'waiting', 'needs-you', 'needs_you'])
-const FAILED_STATUSES = new Set(['failed', 'error', 'blocked', 'paused'])
+/** A run's status labels (运行中 / 等你 / 完成 / 失败 / 排队): the sub-agent card's, and the source of its ProfileMark state. */
+export const RUN_MARK_STATUSES = ['working', 'needs-you', 'done', 'failed', 'queued'] as const
+export type RunMarkStatus = (typeof RUN_MARK_STATUSES)[number]
+
+const QUEUED_STATUSES = new Set(['queued', 'preparing'])
+const WORKING_STATUSES = new Set(['working', 'running', 'finishing'])
+const NEEDS_YOU_STATUSES = new Set(['waiting-on-you', 'waiting_on_you', 'waiting_input', 'waiting', 'needs-you', 'needs_you', 'paused'])
+const FAILED_STATUSES = new Set(['failed', 'error', 'blocked'])
+const IDLE_STATUSES = new Set(['idle'])
+
+/**
+ * One run's status label from its own fields: queued, working, needs you (waiting on an answer, paused, or ended on a
+ * question), failed, or done once it has ended. The one mapping behind both the label and the mark (Figma 1356:5208).
+ */
+export function runMarkStatusOf(run: { status?: string | null; outcome?: string | null; stopReason?: string | null }): RunMarkStatus {
+  const status = run.status?.trim().toLowerCase() ?? ''
+  const outcome = run.outcome?.trim().toLowerCase() ?? ''
+  if (QUEUED_STATUSES.has(status)) return 'queued'
+  if (WORKING_STATUSES.has(status)) return 'working'
+  if (NEEDS_YOU_STATUSES.has(status) || outcome === 'needs_input' || run.stopReason === 'asked_human') return 'needs-you'
+  if (FAILED_STATUSES.has(status) || outcome === 'failed' || outcome === 'blocked') return 'failed'
+  return 'done'
+}
+
+/** The ProfileMark state a status label draws (section 21): queued and done rest, still, in the Profile's own colour. */
+export function profileMarkStateOfStatus(status: RunMarkStatus): ProfileMarkState {
+  return status === 'working' ? 'working' : status === 'needs-you' ? 'needs-you' : status === 'failed' ? 'failed' : 'idle'
+}
 
 /** Shared status-to-ProfileMarkState mapping for sidebar rows, thread headers, task cards and sub-agent cards. */
 export function profileMarkStateOf(input: {
   status?: string | null
   outcome?: string | null
+  stopReason?: string | null
   waiting?: boolean
   group?: ThreadGroup | null
 }): ProfileMarkState {
@@ -40,12 +66,8 @@ export function profileMarkStateOf(input: {
     if (input.group === 'blocked') return 'failed'
     return 'idle'
   }
-  const status = input.status?.trim().toLowerCase() ?? ''
-  const outcome = input.outcome?.trim().toLowerCase() ?? ''
-  if (WORKING_STATUSES.has(status)) return 'working'
-  if (NEEDS_YOU_STATUSES.has(status) || outcome === 'needs_input') return 'needs-you'
-  if (FAILED_STATUSES.has(status) || outcome === 'failed' || outcome === 'blocked') return 'failed'
-  return 'idle'
+  if (IDLE_STATUSES.has(input.status?.trim().toLowerCase() ?? '')) return 'idle'
+  return profileMarkStateOfStatus(runMarkStatusOf(input))
 }
 
 /** `needs-you` and `failed` must always appear with adjacent state text, never colour alone (Figma 1346:5024). */

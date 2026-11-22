@@ -30,15 +30,17 @@ test('profileMarkStateOf maps canonical Figma statuses, ThreadGroups and raw run
   assert.equal(profileMarkStateOf({ group: 'resolved' }), 'idle')
 
   // Raw run statuses & waiting flag & outcome
-  for (const active of ['queued', 'preparing', 'running', 'finishing']) {
-    assert.equal(profileMarkStateOf({ status: active }), 'working', active)
-  }
+  for (const active of ['running', 'finishing']) assert.equal(profileMarkStateOf({ status: active }), 'working', active)
+  // Queued work has not started: its mark rests in its own colour, beside the 排队 label (one mapping, #2932).
+  for (const waiting of ['queued', 'preparing']) assert.equal(profileMarkStateOf({ status: waiting }), 'idle', waiting)
   assert.equal(profileMarkStateOf({ status: 'waiting_input' }), 'needs-you')
   assert.equal(profileMarkStateOf({ status: 'stopped', waiting: true }), 'needs-you')
   assert.equal(profileMarkStateOf({ status: 'stopped', outcome: 'needs_input' }), 'needs-you')
   assert.equal(profileMarkStateOf({ status: 'stopped', outcome: 'failed' }), 'failed')
   assert.equal(profileMarkStateOf({ status: 'stopped', outcome: 'blocked' }), 'failed')
-  assert.equal(profileMarkStateOf({ status: 'paused' }), 'failed')
+  // A paused run waits on the person (they took control, or the quota resets): it needs them, it did not fail.
+  assert.equal(profileMarkStateOf({ status: 'paused' }), 'needs-you')
+  assert.equal(profileMarkStateOf({ status: 'stopped', stopReason: 'asked_human' }), 'needs-you')
   assert.equal(profileMarkStateOf({ status: 'stopped', outcome: 'done' }), 'idle')
   assert.equal(profileMarkStateOf({}), 'idle')
 })

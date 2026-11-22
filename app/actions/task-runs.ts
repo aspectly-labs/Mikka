@@ -328,6 +328,17 @@ export async function readThreadCost(runId: string, groupBy: import('@/lib/threa
   return cost ?? { error: 'runNotFound' }
 }
 
+/**
+ * The sub-agents a thread dispatched (#2939): its child runs, oldest first, each with what its card shows. Only the
+ * thread's owner reads them; any other reader gets runNotFound. A child's change reaches the parent's `run` live key.
+ */
+export async function readSubagentRuns(runId: string): Promise<ActionResult<import('@/lib/subagent-runs').SubagentRun[], 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const runs = await (await import('@/lib/subagent-runs')).readSubagentRuns(pool, { ownerId, workspaceId, runId })
+  return runs ?? { error: 'runNotFound' }
+}
+
 export async function readConversationOrganization(target: ConversationTarget) {
   return organizeTarget(target, await conversationActor())
 }
