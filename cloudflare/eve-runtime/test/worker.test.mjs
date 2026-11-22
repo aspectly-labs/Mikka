@@ -148,7 +148,7 @@ test('a bound World service mints the private capability and registers the world
     async get() { return undefined }, async put() {},
   }
   const host = new EveRuntime({ storage, container: {
-    async interceptOutboundHttps(host, entrypoint) { intercepts.push(host) },
+    async interceptOutboundHttps(host, _entrypoint) { intercepts.push(host) },
   }, exports: { EveProductOutbound: x => x, EveWorldOutbound: x => x } }, { ...env, EVE_WORLD: { fetch: () => new Response('world') } })
   assert.equal(typeof host.envVars.MIKKA_EVE_WORLD_TOKEN, 'string')
   assert.equal(host.envVars.MIKKA_EVE_WORLD_TOKEN.length, 72)
@@ -163,7 +163,7 @@ test('an unbound World service leaves no capability or intercept behind', async 
     async get() { return undefined }, async put() {},
   }
   const host = new EveRuntime({ storage, container: {
-    async interceptOutboundHttps(host, entrypoint) { intercepts.push(host) },
+    async interceptOutboundHttps(host, _entrypoint) { intercepts.push(host) },
   }, exports: { EveProductOutbound: x => x, EveWorldOutbound: x => x } }, env)
   assert.equal(host.envVars.MIKKA_EVE_WORLD_TOKEN, undefined)
   await host.bindOutboundServices()

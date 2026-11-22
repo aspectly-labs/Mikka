@@ -4,7 +4,7 @@ import { eveWorldRequest } from '../runtime/world.mjs'
 
 const capability = 'world-capability-fixture-token'
 const authed = (path = 'https://world.internal/world/rpc', method = 'POST') =>
-  new Request(path, { method, headers: { 'x-mikka-world-capability': capability, 'content-type': 'application/cbor' }, body: method === 'POST' ? 'x' : undefined, duplex: 'half' })
+  new Request(path, { method, headers: { 'x-mikka-world-capability': capability, 'content-type': 'application/cbor' }, ...(method === 'POST' ? { body: 'x', duplex: 'half' } : {}) })
 
 test('only world.internal method allowlist reaches the bound service', async () => {
   const binding = { fetch: () => new Response('bound') }

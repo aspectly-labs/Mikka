@@ -126,7 +126,7 @@ test('a refused delivery retries with bounded backoff; malformed entries cannot 
 })
 
 test('World queue delivery is release-pinned and reaches the container by name', async () => {
-  const { env, calls } = runtimeEnv({ fetch: request => new Response('ok', { headers: { 'x-mikka-eve-release': 'fixture-1' } }) })
+  const { env, calls } = runtimeEnv({ fetch: _request => new Response('ok', { headers: { 'x-mikka-eve-release': 'fixture-1' } }) })
   const delivered = await eveWorkflowDelivery(new Request('https://eve.internal' + flowPath, {
     method: 'POST', headers: deliveryHeaders(), body: '{"queueName":"__wkf","x":1}',
   }), env)
