@@ -167,6 +167,20 @@ test('completed automatic staging can wake OTA, while a new main push cannot can
   assert.deepEqual(parsed.on.workflow_run, { workflows: ['Cloudflare application deployment'], types: ['completed'] })
   assert.ok(parsed.jobs.update.if.includes("github.event.workflow_run.event == 'workflow_run'"))
   assert.ok(parsed.jobs.update.if.includes('!github.event.workflow_run.head_repository.fork'))
+  assert.deepEqual(parsed.on.pull_request.types, ['ready_for_review', 'labeled'])
+  const admitted = github => Function('github', `return (${parsed.jobs.update.if})`)(github)
+  const base = { repository: 'aspectly-labs/Mikka', repository_id: '1427517699', repository_owner_id: '359279274' }
+  for (const [action, label, sameRepository, expected] of [
+    ['ready_for_review', '', true, true], ['labeled', 'mobile-preview', true, true],
+    ['labeled', 'unrelated', true, false], ['ready_for_review', '', false, false],
+  ]) {
+    assert.equal(admitted({ ...base, event_name: 'pull_request', event: { action, label: { name: label },
+      pull_request: { head: { repo: { full_name: sameRepository ? base.repository : 'fork/Mikka' } } } } }), expected)
+  }
+  assert.equal(admitted({ ...base, event_name: 'push' }), true)
+  const upstream = { event: 'workflow_run', head_branch: 'main', conclusion: 'success', repository: { id: 1427517699 }, head_repository: { id: 1427517699, fork: false } }
+  assert.equal(admitted({ ...base, event_name: 'workflow_run', event: { workflow_run: upstream } }), true)
+  assert.equal(admitted({ ...base, event_name: 'workflow_run', event: { workflow_run: { ...upstream, conclusion: 'failure' } } }), false)
   assert.equal(parsed.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
 })
 

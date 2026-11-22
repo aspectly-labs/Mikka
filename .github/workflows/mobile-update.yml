@@ -3,12 +3,14 @@ name: Mobile OTA update
 # Production OTA shares the deployment pipeline's default-off owner window
 # and completed staging proof. A main push still checks the client, but cannot
 # publish ahead of staging. A completed automatic deployment supplies the next
-# release opportunity without polling. PR previews keep their own EAS branch.
+# release opportunity without polling. PR previews keep their own EAS branch;
+# mark the PR Ready or apply the mobile-preview label to publish one.
 on:
   push:
     branches: [main]
     paths: ['apps/mobile/**', 'packages/protocol/**']
   pull_request:
+    types: [ready_for_review, labeled]
     paths: ['apps/mobile/**', 'packages/protocol/**']
   workflow_run:
     workflows: [Cloudflare application deployment]
@@ -46,6 +48,9 @@ jobs:
     name: EAS Update
     if: >-
       (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.event.action == 'ready_for_review' || github.event.label.name == 'mobile-preview'))) &&
       (github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'workflow_run' &&
        github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' &&

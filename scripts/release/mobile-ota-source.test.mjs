@@ -166,10 +166,10 @@ test('the existing bounded archive reader verifies the native digest and never f
   const bytes = Buffer.from(JSON.stringify(fixture().receipt))
   const archive = execFileSync('python3', ['-c', 'import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w",zipfile.ZIP_DEFLATED) as z: z.writestr("release.json",sys.stdin.buffer.read())\nsys.stdout.buffer.write(b.getvalue())'], { input: bytes })
   const { createHash } = await import('node:crypto')
-  const proof = { selected: true, artifact: { id: 210, sizeBytes: archive.length, sha256: createHash('sha256').update(archive).digest('hex') } }
+  const proof = { selected: true, artifact: { id: 210, repositoryId: 1427517699, sizeBytes: archive.length, sha256: createHash('sha256').update(archive).digest('hex') } }
   const fetched = await downloadReleaseReport(proof, { token: 'read-only-fixture', repository: 'aspectly-labs/Mikka', fetchImpl: async (url, init) => {
     if (url.startsWith('https://api.github.com/')) {
-      assert.equal(url, 'https://api.github.com/repos/aspectly-labs/Mikka/actions/artifacts/210/zip')
+      assert.equal(url, 'https://api.github.com/repositories/1427517699/actions/artifacts/210/zip')
       assert.equal(init.headers.authorization, 'Bearer read-only-fixture')
       return new Response(null, { status: 302, headers: { location: 'https://productionresultssa12.blob.core.windows.net/receipt' } })
     }

@@ -2,16 +2,12 @@ name: Production owner readiness
 # This workflow cannot dispatch a task. The historical paid comparison file
 # must not be present when publishing the acceptance branch from reviewed main.
 on:
-  pull_request:
+  push:
+    branches: [main, acceptance/proactive-1157-1163]
     paths:
       - '.github/workflows/production-readiness.yml'
       - '.github/workflows/model-provider-fallback-acceptance.yml'
       - '.github/workflows/project-decisions-acceptance.yml'
-      - 'scripts/acceptance/production-readiness*'
-  push:
-    branches: [acceptance/proactive-1157-1163]
-    paths:
-      - '.github/workflows/production-readiness.yml'
       - 'scripts/acceptance/production-readiness*'
   workflow_dispatch:
     inputs:
