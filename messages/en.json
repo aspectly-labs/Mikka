@@ -480,6 +480,7 @@
     "retryIn": "Try again in {seconds}s",
     "verifyLinkInvalid": "This verification link is invalid, expired or already used. If your email is not verified yet, send a new link.",
     "verifyEmailLink": "Verify your email or resend the link",
+    "retryVerification": "Retry verification",
     "signupRefusal": {
       "disposableEmail": "Temporary email addresses aren't supported. Please use a regular address.",
       "signupRateLimited": "Too many sign-up attempts. Please try again later.",
@@ -496,8 +497,7 @@
     "emailRequired": "Email is required",
     "emailInvalid": "Enter a valid email address",
     "passwordRequired": "Password is required",
-    "passwordTooShort": "Password must be at least 8 characters",
-    "retryVerification": "Retry verification"
+    "passwordTooShort": "Password must be at least 8 characters"
   },
   "Metadata": {
     "title": "Mikka · Tasks and documents workspace",
@@ -1054,11 +1054,11 @@
         "start": "3 Start",
         "startAlone": "Start"
       },
-      "downloadDesktop": "Download Mikka Desktop",
       "requirements": "Node.js 24+ · Git",
       "configurationFailed": "Installation commands are unavailable",
       "reconnectTitle": "Reconnect",
-      "desktopLink": "Download the desktop app"
+      "desktopLink": "Download the desktop app",
+      "downloadDesktop": "Download Mikka Desktop"
     },
     "setup": "Set up repository and agent",
     "offlineSince": "Offline · {time}",
@@ -1190,14 +1190,6 @@
       "subtitle": "Updates and discussion",
       "threads": "{count, plural, =0 {No discussions} =1 {1 discussion} other {# discussions}}",
       "resolved": "Resolved",
-      "timelineAll": "All",
-      "timelineComments": "Comments",
-      "timelineBots": "Agents & bots",
-      "timelineFilter": "Filter activity",
-      "timelineEarlier": "Show {count} earlier",
-      "timelineEarlierUnknown": "Show earlier",
-      "timelineLoadingEarlier": "Loading earlier activity…",
-      "timelineRetryEarlier": "Could not load earlier activity. Retry",
       "timelinePullOpened": "Opened {repo}#{number} {title}",
       "timelinePullMerged": "Merged {repo}#{number} {title}",
       "timelinePullFailed": "Could not load linked pull request activity. Retry",
@@ -1260,7 +1252,15 @@
       "estimateRemoved": "removed the estimate",
       "descriptionChanged": "edited the description",
       "unknownAssignee": "someone",
-      "separator": ", "
+      "separator": ", ",
+      "timelineAll": "All",
+      "timelineComments": "Comments",
+      "timelineBots": "Agents & bots",
+      "timelineFilter": "Filter activity",
+      "timelineEarlier": "Show {count} earlier",
+      "timelineEarlierUnknown": "Show earlier",
+      "timelineLoadingEarlier": "Loading earlier activity…",
+      "timelineRetryEarlier": "Could not load earlier activity. Retry"
     },
     "detail": {
       "readFailed": "Could not load this task. Please try again.",
@@ -2235,19 +2235,18 @@
       "privacy": {
         "title": "Data & privacy"
       },
-      "threads": {
-        "title": "Threads",
-        "keywords": "thread titles title instructions regenerate naming workspace default"
-      },
-      "memory": {
-        "title": "Memory and suggestions"
       "preferences": {
         "title": "General"
+      },
       "appearance": {
         "title": "Appearance"
+      },
       "instructions": {
         "title": "Instructions",
         "keywords": "memory suggestions"
+      },
+      "threads": {
+        "title": "Threads",
         "keywords": "titles"
       },
       "account": {
@@ -2271,8 +2270,6 @@
         "title": "MCP and plugins",
         "keywords": "MCP plugins tools marketplace"
       },
-      "bot-permissions": {
-        "title": "Run permissions"
       "connections": {
         "title": "Integrations",
         "keywords": "connections apps"
@@ -2343,6 +2340,9 @@
         "title": "Skills",
         "nav": "Skills",
         "keywords": "team skills"
+      },
+      "bot-permissions": {
+        "title": "Run permissions"
       }
     },
     "appearance": {
@@ -2851,7 +2851,6 @@
       "loading": "Loading integrations…",
       "loadFailed": "Could not load integration status.",
       "connectFailed": "Could not start the connection. Please try again.",
-      "connectCancelled": "The connection was cancelled in the browser.",
       "connectUnavailable": "App connections are not set up",
       "disconnectFailed": "Could not disconnect this account.",
       "connectionCompleted": "The Composio connection was verified for this Mikka account.",
@@ -2909,7 +2908,8 @@
       "githubAppOrganizationName": "Organization name",
       "githubNoMatch": "No repository matches this search",
       "githubClearSearch": "Clear search",
-      "githubNoRepository": "No repositories yet. Authorize the GitHub App to see them here"
+      "githubNoRepository": "No repositories yet. Authorize the GitHub App to see them here",
+      "connectCancelled": "The connection was cancelled in the browser."
     },
     "slackInstallation": {
       "title": "Slack bot",
@@ -3212,46 +3212,6 @@
       "changePassword": "Change password",
       "actions": "Actions for {site}"
     },
-    "botPermissions": {
-      "loading": "Reading permissions…",
-      "rule": "Each app has one access level for the whole workspace; every Bot uses it. Tools come from the provider's real catalogue.",
-      "workspaceScope": "These settings apply to every Bot in this workspace.",
-      "allTools": "All tools",
-      "allToolsCount": "All tools · {count}",
-      "tools": "View tools",
-      "toolsCount": "{count} tools · {readOnly} read-only",
-      "toolsLoading": "Reading tools…",
-      "toolsFailed": "Couldn't read the tool list",
-      "readOnly": "read-only",
-      "write": "can write",
-      "mode": "Approval",
-      "modes": {
-        "ask": "By the rules",
-        "read_only": "Read only"
-      },
-      "empty": "No apps connected",
-      "level": {
-        "workspaceDefault": "Default (workspace setting)",
-        "runDefault": "Default (run policy)",
-        "default": "Default (Decision API)",
-        "allow": "On its own",
-        "ask": "Asks you first",
-        "deny": "Not allowed"
-      "run": {
-        "install_dependency": "Install dependencies",
-        "write_outside_repo": "Write outside the repository",
-        "git_push": "Push code",
-        "network": "Use the network",
-        "computer_use": "Use the computer"
-      "errors": {
-        "readFailed": "Couldn't read the permissions",
-        "saveFailed": "Couldn't save",
-        "writePolicyChanged": "The settings just changed; read again",
-        "agentPolicyUnavailable": "This setting can't be saved right now",
-        "workspaceAccessDenied": "Only admins can change workspace settings",
-        "noBotInWorkspace": "This workspace has no Bot yet. Create one to manage run permissions.",
-        "noAgent": "Connect an Agent to manage run permissions."
-      }
     "workspaceLoading": "Loading the workspace…",
     "workspaceUnavailable": "Couldn't load the workspace. Refresh and try again.",
     "tokens": {
@@ -3867,22 +3827,17 @@
       "refreshTools": "Refresh tools",
       "nextTools": "Next page",
       "title": "Custom MCP",
-      "searchPlaceholder": "Search MCP servers",
       "loading": "Loading custom MCP connections",
       "share": "Share with workspace members",
       "shareLabel": "Share {name} with workspace members",
       "sharedBy": "Shared by {name}",
       "member": "Workspace member",
       "paused": "Disabled",
-      "enabled": "Enabled",
-      "enabledLabel": "Enable {name}",
       "onlyYou": "Only you",
       "sharedReadOnly": "Shared with workspace members",
       "unconfirmed": "State unconfirmed",
       "loadFailed": "Custom MCP connection state unavailable",
       "shareUnconfirmed": "Sharing change unconfirmed; current sharing state unknown",
-      "enabledUnconfirmed": "Connection state could not be confirmed",
-      "createUnconfirmed": "Could not confirm that the server was added",
       "checkAgain": "Check again",
       "confirmTitle": "Share {name} with members of {workspace}?",
       "currentWorkspace": "this workspace",
@@ -3890,7 +3845,6 @@
       "confirmShare": "Share connection",
       "add": "Add MCP server",
       "empty": "No MCP servers",
-      "noMatches": "No matching MCP servers",
       "name": "Name",
       "transport": "Connection type",
       "command": "Command",
@@ -3906,7 +3860,13 @@
       "addVariable": "Add variable",
       "addHeader": "Add header",
       "taskReadable": "The task machine and its CLI can read these credentials.",
-      "invalidConfiguration": "Check the server configuration and entry names."
+      "invalidConfiguration": "Check the server configuration and entry names.",
+      "searchPlaceholder": "Search MCP servers",
+      "enabled": "Enabled",
+      "enabledLabel": "Enable {name}",
+      "enabledUnconfirmed": "Connection state could not be confirmed",
+      "createUnconfirmed": "Could not confirm that the server was added",
+      "noMatches": "No matching MCP servers"
     },
     "devicesDetail": {
       "backToDevices": "Devices",
@@ -4080,6 +4040,7 @@
       "othersUsage": "Team members can use it to run their own bots. Usage is billed to your API account.",
       "afterQuota": "Use an API key when subscription quota runs out",
       "afterQuotaBilling": "The same model continues on your API key, billed at the provider’s price",
+      "afterQuotaNoKey": "Add an API key for the same model before this can continue at the provider’s price",
       "sectionTitle": "API keys",
       "none": "No API keys yet",
       "loading": "Loading API keys…",
@@ -4115,8 +4076,7 @@
         "manageButton": "Models",
         "manageLabel": "Choose models for {name}",
         "empty": "No models returned by this provider"
-      },
-      "afterQuotaNoKey": "Add an API key for the same model before this can continue at the provider’s price"
+      }
     },
     "modelOrder": {
       "fallbackNeedsKey": "Add an API key and connect a subscription to use this.",
@@ -4374,11 +4334,13 @@
           "arrow": "Arrow"
         },
         "colors": {
-          "blue": "Blue",
+          "ink": "Ink",
+          "graphite": "Graphite",
           "teal": "Teal",
+          "pink": "Pink",
+          "blue": "Blue",
           "emerald": "Emerald",
-          "violet": "Violet",
-          "pink": "Pink"
+          "violet": "Violet"
         }
       },
       "blankProfile": "Blank profile",
@@ -4596,12 +4558,6 @@
     },
     "threadTitles": {
       "title": "Thread titles",
-      "scope": {
-        "label": "Thread settings scope",
-        "mine": "Mine",
-        "workspace": "Workspace"
-      },
-      "workspaceReadOnly": "Workspace admins can edit",
       "instructions": "Title instructions",
       "instructionsMine": "How Mikka names the threads you start, on top of the workspace's instructions",
       "instructionsWorkspace": "How Mikka names every thread started in this workspace",
@@ -4639,7 +4595,13 @@
       "triggersError": "Could not update the title triggers",
       "loadError": "Could not load thread title settings",
       "pendingBadge": "Pending",
-      "runtimeDecided": "Set by runtime"
+      "runtimeDecided": "Set by runtime",
+      "scope": {
+        "label": "Thread settings scope",
+        "mine": "Mine",
+        "workspace": "Workspace"
+      },
+      "workspaceReadOnly": "Workspace admins can edit"
     },
     "threadsPage": {
       "add": "Add",
@@ -4831,6 +4793,49 @@
       "withdrawTitle": "Withdraw {name}?",
       "withdrawBody": "Withdrawal is permanent: unfinished runs that selected this version stop.",
       "cancel": "Cancel"
+    },
+    "botPermissions": {
+      "loading": "Reading permissions…",
+      "rule": "Each app has one access level for the whole workspace; every Bot uses it. Tools come from the provider's real catalogue.",
+      "workspaceScope": "These settings apply to every Bot in this workspace.",
+      "allTools": "All tools",
+      "allToolsCount": "All tools · {count}",
+      "tools": "View tools",
+      "toolsCount": "{count} tools · {readOnly} read-only",
+      "toolsLoading": "Reading tools…",
+      "toolsFailed": "Couldn't read the tool list",
+      "readOnly": "read-only",
+      "write": "can write",
+      "mode": "Approval",
+      "modes": {
+        "ask": "By the rules",
+        "read_only": "Read only"
+      },
+      "empty": "No apps connected",
+      "level": {
+        "workspaceDefault": "Default (workspace setting)",
+        "runDefault": "Default (run policy)",
+        "default": "Default (Decision API)",
+        "allow": "On its own",
+        "ask": "Asks you first",
+        "deny": "Not allowed"
+      },
+      "run": {
+        "install_dependency": "Install dependencies",
+        "write_outside_repo": "Write outside the repository",
+        "git_push": "Push code",
+        "network": "Use the network",
+        "computer_use": "Use the computer"
+      },
+      "errors": {
+        "readFailed": "Couldn't read the permissions",
+        "saveFailed": "Couldn't save",
+        "writePolicyChanged": "The settings just changed; read again",
+        "agentPolicyUnavailable": "This setting can't be saved right now",
+        "workspaceAccessDenied": "Only admins can change workspace settings",
+        "noBotInWorkspace": "This workspace has no Bot yet. Create one to manage run permissions.",
+        "noAgent": "Connect an Agent to manage run permissions."
+      }
     }
   },
   "TelegramBot": {
@@ -5223,6 +5228,7 @@
     },
     "loadError": "Could not load the conversation.",
     "failedTitle": "Reply failed",
+    "modelRequired": "No task started: no model selected.",
     "replyToolUnavailable": "This reply could not be completed. Please try again.",
     "apiBalance": "Insufficient API balance",
     "subscriptionRefusal": {
@@ -5309,6 +5315,10 @@
       "cloudCredits": "Mikka Cloud credits",
       "ownProvider": "Own provider",
       "hostedUnavailable": "Mikka credits can’t run in this workspace",
+      "noModelSelected": "No model selected",
+      "noModelConnections": "No usable model connections",
+      "noCreditsOrConnections": "No Mikka credits or usable model connections",
+      "setUpModel": "Set up a model",
       "changeModel": "Change model",
       "useMyPoints": "Use my points for this team",
       "apiKey": "API Key",
@@ -5338,10 +5348,6 @@
         "usedUntil": "{service} subscription is used up until {time}",
         "usedUp": "{service} subscription is used up"
       },
-      "noModelSelected": "No model selected",
-      "noModelConnections": "No usable model connections",
-      "noCreditsOrConnections": "No Mikka credits or usable model connections",
-      "setUpModel": "Set up a model",
       "noModelSetUp": "no model set up"
     },
     "empty": "Tell {name} what you need",
@@ -5543,8 +5549,7 @@
         "raw": "Raw data",
         "dispatched": "Dispatched"
       }
-    },
-    "modelRequired": "No task started: no model selected."
+    }
   },
   "AgentCopy": {
     "pleaseSignInFirst": "Please sign in first.",
@@ -6189,6 +6194,19 @@
       "takeoverFailed": "Could not take control. Try again.",
       "handbackFailed": "Could not hand back control. Try again."
     },
+    "approval": {
+      "action": {
+        "click": "Click the screen",
+        "type": "Type text",
+        "key": "Press a key",
+        "scroll": "Scroll",
+        "screenshot": "View the screen"
+      },
+      "allowRun": "Allow for this task",
+      "deny": "Deny",
+      "allow": "Allow",
+      "failed": "Not delivered. Try again."
+    },
     "addE2BKey": "Add E2B API Key",
     "e2bKeyNeeded": "Mikka Cloud runs on your own E2B key",
     "loading": "Connecting to the computer"
@@ -6597,8 +6615,6 @@
       "details": "Details",
       "expand": "Bigger window",
       "collapse": "Smaller window",
-      "workspaceChanged": "The workspace changed after this dialog opened. Nothing was created; reopen New task to create it in the workspace shown now.",
-      "workspaceUnconfirmed": "Couldn't confirm the workspace, so nothing was created. Your text is kept.",
       "createMore": "Create more",
       "created": "Task created",
       "createdTask": "Created {identifier}",
@@ -6635,7 +6651,9 @@
       "startWorkPromptWithNote": "Start work on task {task} \"{title}\" (issue {id}): {context}. {note}",
       "startWorkSent": "Sent to {bot}",
       "noDueDate": "No due date",
-      "createLabelNamed": "Create “{name}”"
+      "createLabelNamed": "Create “{name}”",
+      "workspaceChanged": "The workspace changed after this dialog opened. Nothing was created; reopen New task to create it in the workspace shown now.",
+      "workspaceUnconfirmed": "Couldn't confirm the workspace, so nothing was created. Your text is kept."
     },
     "board": {
       "toolbar": "Board toolbar",
@@ -6994,17 +7012,17 @@
     "answering": "Replying",
     "noTaker": "No bot took this. @ one by name",
     "stopped": "Stopped",
-    "workingStatus": {
-      "one": "{a} is working…",
-      "two": "{a} and {b} are working…",
-      "three": "{a}, {b} and {c} are working…",
-      "many": "{a}, {b} and {count, plural, one {# other} other {# others}} are working…"
-    },
     "exchange": {
       "marker": "{names} — {count} exchange messages",
       "title": "{names}",
       "empty": "This exchange has no messages.",
       "loadError": "The exchange could not be loaded."
+    },
+    "workingStatus": {
+      "one": "{a} is working…",
+      "two": "{a} and {b} are working…",
+      "three": "{a}, {b} and {c} are working…",
+      "many": "{a}, {b} and {count, plural, one {# other} other {# others}} are working…"
     }
   },
   "DeviceSetup": {
@@ -10132,22 +10150,6 @@
     "mergeAnyway": "Merge anyway, {count} failing",
     "mergeFailed": "Could not merge."
   },
-  "MobileTaskPush": {
-    "workspaceUnconfirmed": "Couldn't confirm workspace"
-  },
-  "TaskWorkspace": {
-    "label": "Workspace",
-    "createIn": "Create in {name}",
-    "fixed": "Fixed when the task was created. A task can't move to another workspace.",
-    "otherWorkspace": "Another workspace",
-    "loading": "Loading workspace",
-    "error": "Couldn't load the workspace",
-    "retry": "Try again",
-    "mismatchCreate": "Now in {current}",
-    "mismatchCreateHint": "This dialog was opened for {target}. Reopen New task to create it in {current}.",
-    "mismatchDetail": "Not the workspace shown now ({current}). Switch to {target} to work on this task.",
-    "unknownWorkspace": "another workspace"
-  },
   "SettingsRegistry": {
     "archiveIdleAfterDays": {
       "label": "Archive idle threads",
@@ -10241,42 +10243,6 @@
       "label": "Concurrent subagents",
       "keywords": "agent|concurrency|limit"
     },
-    "keyboardShortcutSearchOpen": {
-      "label": "Open search",
-      "keywords": "keyboard|shortcut|search|find|command"
-    },
-    "keyboardShortcutSettingsOpen": {
-      "label": "Open settings",
-      "keywords": "keyboard|shortcut|settings|preferences"
-    },
-    "keyboardShortcutTaskCreate": {
-      "label": "Create task",
-      "keywords": "keyboard|shortcut|task|create|issue"
-    },
-    "keyboardShortcutSidebarToggle": {
-      "label": "Toggle sidebar",
-      "keywords": "keyboard|shortcut|sidebar|navigation"
-    },
-    "keyboardShortcutReviewOpen": {
-      "label": "Open review",
-      "keywords": "keyboard|shortcut|review|task"
-    },
-    "keyboardShortcutBoardAssistantToggle": {
-      "label": "Toggle board assistant",
-      "keywords": "keyboard|shortcut|board|assistant|panel"
-    },
-    "keyboardShortcutDetailsToggle": {
-      "label": "Toggle details",
-      "keywords": "keyboard|shortcut|details|panel"
-    },
-    "keyboardShortcutDevicesAdd": {
-      "label": "Add device",
-      "keywords": "keyboard|shortcut|device|computer|connect"
-    },
-    "keyboardShortcutThemeToggle": {
-      "label": "Toggle appearance",
-      "keywords": "keyboard|shortcut|theme|appearance|dark|light"
-    },
     "memoryAutoApprove": {
       "label": "Auto-approve low-risk memories",
       "keywords": "memory|approve|automatic"
@@ -10336,6 +10302,58 @@
     "notificationSound": {
       "label": "Notification sound",
       "keywords": "sound|audio|tone|chime|mute"
+    },
+    "keyboardShortcutSearchOpen": {
+      "label": "Open search",
+      "keywords": "keyboard|shortcut|search|find|command"
+    },
+    "keyboardShortcutSettingsOpen": {
+      "label": "Open settings",
+      "keywords": "keyboard|shortcut|settings|preferences"
+    },
+    "keyboardShortcutTaskCreate": {
+      "label": "Create task",
+      "keywords": "keyboard|shortcut|task|create|issue"
+    },
+    "keyboardShortcutSidebarToggle": {
+      "label": "Toggle sidebar",
+      "keywords": "keyboard|shortcut|sidebar|navigation"
+    },
+    "keyboardShortcutReviewOpen": {
+      "label": "Open review",
+      "keywords": "keyboard|shortcut|review|task"
+    },
+    "keyboardShortcutBoardAssistantToggle": {
+      "label": "Toggle board assistant",
+      "keywords": "keyboard|shortcut|board|assistant|panel"
+    },
+    "keyboardShortcutDetailsToggle": {
+      "label": "Toggle details",
+      "keywords": "keyboard|shortcut|details|panel"
+    },
+    "keyboardShortcutDevicesAdd": {
+      "label": "Add device",
+      "keywords": "keyboard|shortcut|device|computer|connect"
+    },
+    "keyboardShortcutThemeToggle": {
+      "label": "Toggle appearance",
+      "keywords": "keyboard|shortcut|theme|appearance|dark|light"
     }
+  },
+  "MobileTaskPush": {
+    "workspaceUnconfirmed": "Couldn't confirm workspace"
+  },
+  "TaskWorkspace": {
+    "label": "Workspace",
+    "createIn": "Create in {name}",
+    "fixed": "Fixed when the task was created. A task can't move to another workspace.",
+    "otherWorkspace": "Another workspace",
+    "loading": "Loading workspace",
+    "error": "Couldn't load the workspace",
+    "retry": "Try again",
+    "mismatchCreate": "Now in {current}",
+    "mismatchCreateHint": "This dialog was opened for {target}. Reopen New task to create it in {current}.",
+    "mismatchDetail": "Not the workspace shown now ({current}). Switch to {target} to work on this task.",
+    "unknownWorkspace": "another workspace"
   }
 }
