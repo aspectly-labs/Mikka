@@ -33,7 +33,7 @@ import { CoordinatorReply } from './coordinator-reply'
 import { botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
 import { ThreadQueuedMessages } from '@/components/workspace/thread-queued-messages'
-import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
+import { isWebChatOffline, useChatDelivery, type ChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { useCoordinatorSubmit, type CoordinatorMessageContext } from './use-coordinator-submit'
 import { useCoordinatorAgent } from './use-coordinator-agent'
 import { activeTurn } from 'eve/events'
@@ -79,7 +79,10 @@ import { ChatEventLine } from './chat-event-line'
 import { waitingQuestionRuns } from '@/lib/coordinator/waiting-questions'
 import { RetryReplyButton } from './retry-reply-button'
 import { COMPOSER_NOTICE } from './composer-notice'
-import { blockingNotice, chatItemKey, liveReplyKeys, modelBlocked, streamLoadFailed } from '@/lib/coordinator/chat-footer'
+import { blockingNotice, modelBlocked, streamLoadFailed } from '@/lib/coordinator/chat-footer'
+import { eveTurnMessageId, storedChatMessageId } from '@/lib/conversation/ids'
+import { useConversation } from '@/lib/conversation/store'
+import type { ConversationMessage } from '@/lib/conversation/model'
 
 
 /** Text put into the composer from elsewhere; `suggestionId` when it came from a 建议 item. */
@@ -89,6 +92,8 @@ export type CoordinatorPrefill = { text: string; nonce: number; suggestionId?: s
 type PersonalChatSend = ChatSubmission & { context: CoordinatorMessageContext; turnPolicy?: 'queue' | 'steer' }
 
 type ChatRead = Chat & { requestedAt?: number }
+/** What a Bot chat message was built from: a stored row, the live reply, or the person's unsent message. */
+type BotChatSource = { item: Chat['items'][number] } | { live: CoordinatorLiveReply } | { local: ChatDelivery<PersonalChatSend> }
 /** Pushes closer together than this share one read; the stream shows a turn's words meanwhile. */
 const CHAT_MERGE_MS = 2_000
 /** How long the server's turn runs before Stop shows (UX audit 2026-11-22: a quick failure flashed it). */
@@ -568,14 +573,35 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const liveFailurePart: ThreadEntryPart = plainFailure
     ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : t('failedTitle'), actions: <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
     : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
-  // A row keeps its key from the moment it shows until it is stored (chat-footer.ts): nothing remounts on commit.
-  const storedRows = items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: chatItemKey(item) }))
-  const storedKeys = new Set(storedRows.map(row => row.key))
-  const liveKeys = liveReplyKeys(stream.replies, stream.session?.sessionId)
-  const rows = [...storedRows,
-    ...stream.replies.map((reply, index) => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: storedKeys.has(liveKeys[index]) ? reply.id : liveKeys[index] }))]
+  // One conversation (lib/conversation): stored rows, the live reply and the person's unsent messages in one store, each
+  // under the id it keeps from the moment it shows (a submission id, `eve:<session>:<turn>`), in one order. A message
+  // the server stores replaces its unsent or live self in place: nothing remounts and nothing moves on commit.
+  const storedMessages = useMemo(() => items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion')
+    .map((item): ConversationMessage => ({ id: storedChatMessageId(item), role: item.from === 'person' ? 'user' : 'assistant', parts: [{ type: 'text', text: item.text }],
+      metadata: { at: item.createdAt ? Date.parse(item.createdAt) : 0, source: { item } satisfies BotChatSource } })), [items, staleEvents])
+  const conversation = useConversation(`bot:${botId ?? 'coordinator'}`, {
+    stored: storedMessages,
+    live: stream.replies.map((reply): ConversationMessage => ({ id: reply.key, role: 'assistant', parts: [{ type: 'text', text: reply.text }],
+      metadata: { at: 0, streaming: reply.committedThrough === undefined, source: { live: reply } satisfies BotChatSource } })),
+    optimistic: localMessages.map((row): ConversationMessage => ({ id: row.id, role: 'user', parts: [{ type: 'text', text: row.text }],
+      metadata: { at: row.at, delivery: row.phase === 'accepted' ? 'sent' : row.phase, ...(row.error ? { deliveryError: row.error } : {}), source: { local: row } satisfies BotChatSource } })),
+  })
   const entries: ThreadEntry[] = []
-  for (const { item, live, key } of rows) {
+  for (const message of conversation) {
+    const source = message.metadata?.source as BotChatSource
+    const key = message.id
+    if ('local' in source) {
+      const row = source.local
+      entries.push({ id: key, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
+        ...(messageReferences(row.text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={splitReplyQuote(row.text).text} /></AgentCitationsContext> } : {}),
+        status: message.metadata?.delivery ?? 'sent', deliveryMessage: message.metadata?.deliveryError,
+        attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
+          ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
+        ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
+      continue
+    }
+    const item = 'item' in source ? source.item : streamedItem(source.live, stopping)
+    const live = 'live' in source ? stopping && source.live.committedThrough === undefined ? { ...source.live, committedThrough: -1 } : source.live : undefined
     const at = item.createdAt ? Date.parse(item.createdAt) : Date.now()
     const streaming = Boolean(live && live.committedThrough === undefined)
     if (item.from === 'event') {
@@ -623,22 +649,28 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         {readEnd}
       </ReplyActions> : undefined })
   }
-  for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
-    ...(messageReferences(row.text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={splitReplyQuote(row.text).text} /></AgentCitationsContext> } : {}),
-    status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
-    attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
-      ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
-    ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
   for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
     parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
   // Before the reply has anything to show: the Bot's turn with its Thinking row, once the turn has taken a moment,
   // counting the seconds since the person's message once past 2 s (LobeHub's wait for the first token).
-  if (working && waitedLong && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping) {
+  // The conversation's last word, the person's unsent message included: a turn answering it waits on the Bot's side.
+  const lastWord = conversation.findLast(message => { const source = message.metadata?.source as BotChatSource; return !('item' in source && source.item.from === 'event') })
+  const answered = lastWord?.role === 'assistant' && lastWord.parts.some(part => part.type === 'text' && part.text)
+  if (working && waitedLong && lastWord && !answered && !stream.replies.length && !stopping) {
     const asked = entries.at(-1)
-    entries.push({ id: 'waiting', role: 'bot', at: Date.now(), streaming: true,
+    // Keyed as the reply it waits for (`eve:<session>:<turn>`) once the server has the turn: the first words fill this
+    // row instead of replacing it.
+    const turnId = activeTurn(stream.view)?.turnId
+    entries.push({ id: stream.session?.sessionId && turnId ? eveTurnMessageId(stream.session.sessionId, turnId) : 'waiting', role: 'bot', at: Date.now(), streaming: true,
       parts: [{ kind: 'text', text: '', node: <ReplyWaiting {...(asked?.role === 'person' ? { since: asked.at } : {})} /> }] })
   }
   if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
+  // One error surface (lib/conversation): a turn's failure is the Bot's error line at the chat's end even when it has no
+  // message of the person's to sit under; the composer keeps notices for what stops a send before it leaves.
+  const quotaStopped = !refusal && declined === 'quotaUsed'
+  if (failedAt === null && !welcomeFailed && !quotaStopped && (modelRequired || welcomeRequestFailed || (data?.error && !working)))
+    entries.push({ id: `failure:${lastSaid?.position ?? 'chat'}`, role: 'bot', at: Date.now(), parts: [plainFailure ? liveFailurePart
+      : { kind: 'error', failure: 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: failureNotice }] })
   // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.
   const quietAuthor = { id: botId ?? 'coordinator', name, mark: avatar('pill'), quiet: true }
   for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = quietAuthor
@@ -648,10 +680,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // One blocking notice above the composer, the first that applies (UX audit 2026-11-22, issue 1): a chat that did not
   // load, the newest turn's failure when it has no message to sit under, a quota that stopped it, no model to answer,
   // a quota about to run out, no Bot to answer. 线程加载失败 is for a read that failed, never for a turn that did.
-  const quotaStopped = !refusal && declined === 'quotaUsed'
   const notice = blockingNotice({
     load: Boolean(loadError) || streamLoadFailed(stream.error, stream.view, delivery.rows.some(row => row.phase === 'failed')),
-    failure: failedAt === null && !welcomeFailed && !quotaStopped && Boolean(modelRequired || welcomeRequestFailed || (data?.error && !working)),
     quotaStopped,
     model: !data?.error && noModel,
     quota: !refusal && !data?.error && Boolean(modelMenu.data?.current.quota),
@@ -659,7 +689,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   })
   const notices = <>
     {notice === 'load' && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
-    {notice === 'failure' && failureNotice}
     {paywall.dialog}
     <EveInteractions agent={stream} />
     {notice === 'model' && <HostedUnavailableNotice botId={botId} />}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, mock, test } from 'node:test'
-import { act, createContext, type ReactNode } from 'react'
+import { act, createContext, useEffect, type ReactNode } from 'react'
 import type { Root } from 'react-dom/client'
 import { Window } from 'happy-dom'
 import { emptySessionView, foldEvents, type SessionView } from 'eve/events'
@@ -47,6 +47,12 @@ let serverVersion: { build: string } = { build: 'fixture-current' }
 const notices: unknown[] = []
 const notes = [{ n: 1, kind: 'region' as const, url: 'https://example.com', label: 'fixture', note: 'keep this note', rect: { x: 0, y: 0, width: 1, height: 1, viewportWidth: 1, viewportHeight: 1 } }]
 let screen: import('../slots/thread-contract').ThreadScreenProps | undefined
+/** How many times each row mounted: a row that keeps its key from the moment it shows mounts once. */
+const mounts = new Map<string, number>()
+function Mounted({ id, children }: { id: string; children: ReactNode }) {
+  useEffect(() => { mounts.set(id, (mounts.get(id) ?? 0) + 1) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return <>{children}</>
+}
 let composer: { sending?: boolean; editableWhileSending?: boolean; value: string; onChange: (value: string) => void; onSubmit: () => void }
 const plain = ({ children }: { children?: ReactNode }) => <div>{children}</div>
 const nothing = () => null
@@ -61,13 +67,13 @@ mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports
     screen = props
     const { entries } = props
     return <><div data-official-thread="" data-thread-host={props.host} data-panel={props.panel ? '' : undefined} ref={node => { if (node) scrollable(node); if (props.scrollRef) props.scrollRef.current = node }}>
-    {props.notices}{entries?.map(entry => entry.role === 'person' ? <div key={entry.id} data-testid={entry.status === 'failed' ? 'failed-message' : 'local-message'}>
+    {props.notices}{entries?.map(entry => <Mounted key={entry.id} id={entry.id}>{entry.role === 'person' ? <div data-testid={entry.status === 'failed' ? 'failed-message' : 'local-message'}>
       {entry.text}{entry.attachments?.map(item => <span key={item.id} data-attachment={item.id}>{item.name}</span>)}{entry.deliveryMessage}
       {entry.onRetry && <Button onClick={entry.onRetry}>Retry</Button>}{entry.actions}
-    </div> : <div key={entry.id} data-event={entry.event ? '' : undefined}>{entry.parts.map((part, i) =>
+    </div> : <div data-event={entry.event ? '' : undefined}>{entry.parts.map((part, i) =>
       part.kind === 'error' ? <span key={i} data-message-failure={part.failure}>{part.text}{part.actions}</span>
       : part.kind === 'text' && entry.event ? <span key={i}>{part.node}</span>
-      : part.kind === 'artifacts' ? <span key={i} data-artifacts={part.activeId ?? ''}>{part.items.map(item => item.name).join(',')}</span> : null)}{entry.actions}</div>)}
+      : part.kind === 'artifacts' ? <span key={i} data-artifacts={part.activeId ?? ''}>{part.items.map(item => item.name).join(',')}</span> : null)}{entry.actions}</div>}</Mounted>)}
   </div><div data-composer="">
     {props.pending.map(chip => <span key={chip.id} data-pending={chip.id}>{chip.name}<Button onClick={chip.onRemove}>{`remove ${chip.id}`}</Button></span>)}
     {props.controls}
@@ -136,6 +142,7 @@ let container: HTMLDivElement, root: Root
 let createRoot: typeof import('react-dom/client')['createRoot']
 let RetryReplyButton: typeof import('./retry-reply-button')['RetryReplyButton']
 let CoordinatorChat: typeof import('./coordinator-chat')['CoordinatorChat']
+let resetConversation: typeof import('@/lib/conversation/store')['resetConversation']
 let VersionGuard: typeof import('../version-guard')['VersionGuard']
 before(async () => {
   Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element })
@@ -147,10 +154,11 @@ before(async () => {
   ;({ createRoot } = await import('react-dom/client'))
   ;({ RetryReplyButton } = await import('./retry-reply-button'))
   ;({ CoordinatorChat } = await import('./coordinator-chat'))
+  ;({ resetConversation } = await import('@/lib/conversation/store'))
   ;({ VersionGuard } = await import('../version-guard'))
   Object.defineProperty(browser.document, 'visibilityState', { configurable: true, get: () => visibility })
 })
-beforeEach(() => { streamStatus = 'idle'; streamError = false; streamView = emptySessionView(); streamReplies = []; historyPage = {}; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
+beforeEach(() => { mounts.clear(); resetConversation(); streamStatus = 'idle'; streamError = false; streamView = emptySessionView(); streamReplies = []; historyPage = {}; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
 afterEach(async () => { await act(async () => root.unmount()); container.remove() })
 after(() => browser.happyDOM.close())
 const render = async (onQueued = async () => {}) => { await act(async () => root.render(<RetryReplyButton botId={null} onQueued={onQueued} />)) }
@@ -793,9 +801,10 @@ test('the empty waiting row joins only after the turn has been busy for 150 ms',
   streamStatus = 'busy'
   streamView = runningTurn()
   await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
-  assert.equal(screen?.entries?.some(entry => entry.id === 'waiting'), false)
+  // The waiting row is keyed as the reply it waits for, so the reply's first words fill it rather than replace it.
+  assert.equal(screen?.entries?.some(entry => entry.id === 'eve:wrun_fixture:turn-1'), false)
   await act(async () => new Promise(resolve => setTimeout(resolve, 200)))
-  assert.equal(screen?.entries?.some(entry => entry.id === 'waiting'), true)
+  assert.equal(screen?.entries?.some(entry => entry.id === 'eve:wrun_fixture:turn-1'), true)
 })
 
 test('a sent message and a streamed reply keep their row keys when they are stored', async () => {
@@ -806,7 +815,7 @@ test('a sent message and a streamed reply keep their row keys when they are stor
   await act(async () => composer.onSubmit())
   const sent = screen!.entries!.find(entry => entry.role === 'person')!.id
   // The reply streams, keyed as the row it will be stored as.
-  streamReplies = [{ id: 'eve-message-1', turnId: 'turn-1', text: 'Streaming words', committedThrough: 0 }]
+  streamReplies = [{ id: 'eve-message-1', key: 'eve:wrun_fixture:turn-1', turnId: 'turn-1', text: 'Streaming words', committedThrough: 0 }]
   await show()
   const streamed = screen!.entries!.find(entry => entry.role === 'bot')!.id
   assert.equal(streamed, 'eve:wrun_fixture:turn-1')
@@ -818,6 +827,72 @@ test('a sent message and a streamed reply keep their row keys when they are stor
   ]
   await show()
   assert.deepEqual(screen!.entries!.map(entry => entry.id), [sent, streamed])
+})
+
+test('from send to commit, and through a second turn, every row mounts once (one conversation, one id)', async () => {
+  chatEnabled = true
+  chatItems = [{ id: 'stored-0', position: 0, from: 'coordinator', text: 'Welcome.', tools: [], threads: [], artifacts: [], createdAt: '2026-11-21T00:00:00Z' }]
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  await act(async () => composer.onChange('First question'))
+  await act(async () => composer.onSubmit())
+  const sent = screen!.entries!.find(entry => entry.role === 'person')!.id
+  // The server has the turn: after a moment its row waits, already keyed as the reply.
+  streamStatus = 'busy'
+  streamView = runningTurn()
+  await show()
+  await act(async () => new Promise(resolve => setTimeout(resolve, 200)))
+  const reply = 'eve:wrun_fixture:turn-1'
+  assert.ok(screen!.entries!.some(entry => entry.id === reply), 'the waiting row is the reply')
+  streamReplies = [{ id: 'eve-message-1', key: reply, turnId: 'turn-1', text: 'Streaming', }]
+  await show()
+  streamReplies = [{ id: 'eve-message-1', key: reply, turnId: 'turn-1', text: 'Streaming words.', committedThrough: 0 }]
+  await show()
+  // Stored: the person's row under its submission id, the reply under its stream id.
+  streamReplies = []
+  streamStatus = 'idle'
+  streamView = emptySessionView()
+  chatItems = [chatItems[0],
+    { id: 'stored-1', position: 1, from: 'person', text: 'First question', submissionId: sent, tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' },
+    { id: 'stored-2', position: 2, from: 'coordinator', text: 'Streaming words.', streamId: reply, tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:01Z' },
+  ]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.id), ['0', sent, reply])
+  // A second turn leaves the first turn's rows alone.
+  await act(async () => composer.onChange('Second question'))
+  await act(async () => composer.onSubmit())
+  streamReplies = [{ id: 'eve-message-2', key: 'eve:wrun_fixture:turn-2', turnId: 'turn-2', text: 'Again.' }]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.role), ['bot', 'person', 'bot', 'person', 'bot'])
+  assert.deepEqual([...mounts.entries()].filter(([, count]) => count !== 1), [], 'no row mounted twice')
+  assert.equal(mounts.get(sent), 1)
+  assert.equal(mounts.get(reply), 1)
+})
+
+test('a turn eve splits around a message the person wrote mid-turn keeps each part in place, by its segment', async () => {
+  chatEnabled = true
+  streamStatus = 'busy'
+  streamView = runningTurn()
+  chatItems = [{ id: 'stored-1', position: 1, from: 'person', text: 'Start', submissionId: 'fixture-start', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' }]
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  streamReplies = [{ id: 'eve-a', key: 'eve:wrun_fixture:turn-1', turnId: 'turn-1', text: 'Before.' }]
+  await show()
+  await act(async () => composer.onChange('Also check the footer'))
+  await act(async () => composer.onSubmit())
+  const mid = screen!.entries!.find(entry => entry.role === 'person' && entry.text === 'Also check the footer')!.id
+  streamReplies = [{ id: 'eve-a', key: 'eve:wrun_fixture:turn-1', turnId: 'turn-1', text: 'Before.', committedThrough: 0 }, { id: 'eve-b', key: 'eve:wrun_fixture:turn-1:1', turnId: 'turn-1', text: 'After.' }]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.id), ['fixture-start', 'eve:wrun_fixture:turn-1', mid, 'eve:wrun_fixture:turn-1:1'])
+  assert.deepEqual([...mounts.values()].filter(count => count !== 1), [])
+})
+
+test('a turn that failed with no message under it is the Bot\'s error line, never a composer notice', async () => {
+  chatData = { items: [], enabled: true, working: false, error: 'HOOK_FAILED', artifacts: {} }
+  welcomeReply = { queued: true }
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  const errors = container.querySelectorAll('[data-message-failure]')
+  assert.equal(errors.length, 1, 'one error line')
+  assert.equal(container.querySelectorAll('[data-composer] [data-slot="alert"], [data-chat-failure]').length - container.querySelectorAll('[data-message-failure] [data-chat-failure]').length, 0, 'no failure notice outside the message')
 })
 
 test('scrolling near the top loads older messages, and each page added above counts for the thread', async () => {

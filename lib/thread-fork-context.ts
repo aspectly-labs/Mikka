@@ -53,6 +53,8 @@ function tail(text: string, max: number) {
 export async function forkNote(q: RunChainQueryable, ownerId: string, chain: RunChain, point: ForkPoint, mode: ForkMode, instruction: string): Promise<string | null> {
   const runs = await runsUpTo(q, ownerId, chain, point)
   if (!runs?.length) return null
+  // The thread view scopes ids to their run (lib/conversation/ids.ts); a run's own items here use the ids the run gave.
+  if (point.itemId) point = { ...point, itemId: point.itemId.replace(`:${point.runId}:`, ':') }
   const asked = runs[0].asked.trim().slice(0, ASK_MAX)
   let body: string
   if (mode === 'summary') {

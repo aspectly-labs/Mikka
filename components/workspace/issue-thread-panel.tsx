@@ -11,13 +11,16 @@ import { useMessages, useTranslations } from '@/lib/intl/i18n-client'
 import { toast } from 'sonner'
 import { getThreadInstructions, stopRun, getThreadContinuationModels } from '@/app/actions/agents'
 import { useThreadChanges } from '@/hooks/use-thread-run-reads'
-import { useIssueThreadRead } from '@/hooks/use-issue-thread-read'
+import { threadConversationKey, useIssueThreadRead } from '@/hooks/use-issue-thread-read'
 import { useActionError } from '@/lib/use-action-error'
 import { sendReviewChange, type ReviewChangeTarget } from '@/lib/factory/review-change'
 import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
-import { runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems } from '@/lib/issue-run-conversation'
+import { conversationItems, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadPeople } from '@/lib/issue-run-conversation'
+import { useFoldedChunks } from '@/lib/conversation/folded'
+import { interleave } from '@/lib/conversation/interleave'
+import { splitRunScoped } from '@/lib/conversation/ids'
 import { useThreadStepRows } from './thread-step-rows'
 import { ThreadReplyVersions } from './thread-reply-versions'
 import { ThreadExecutionIdentity } from './thread-execution-identity'
@@ -343,7 +346,11 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   useEffect(() => {
     if (delivery.rows.some(row => confirmedIds.has(row.id))) delivery.setRows(current => current.filter(row => !confirmedIds.has(row.id)))
   }, [confirmedIds, delivery.rows, delivery.setRows])
-  const items = useMemo(() => data ? threadItems(data.chunks, data.messages, runId) : [], [data, runId])
+  // One conversation (lib/conversation): the runs' chunks through the same fold the server reads with, people's
+  // messages in their place, every id stable from the moment it shows.
+  const folded = useFoldedChunks(threadConversationKey(runId), data?.chunks)
+  const threadConversation = useMemo(() => data ? interleave(folded, threadPeople(data.messages)) : [], [data, folded])
+  const items = useMemo(() => conversationItems(threadConversation, runId), [threadConversation, runId])
   // The jump index, from the items already built: never a second fold of the stream.
   const outline = threadOutline(items)
   // A failed run says why under the stage that stopped, else at the end of the conversation.
@@ -460,14 +467,13 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     if (!issueId || !data?.thread.ownedByCurrentUser || !['person','agent'].includes(item.kind)) return null
     const base = {issueId,runId,canRun:!active && data.thread.replyAvailable && !question,refresh:()=>{void mutate()}}
     if (item.kind === 'person' && item.mine) {
-      const source = data.messages.find(row=>row.id===item.id && row.editable)
-      return source?.sourceRunId ? <ThreadReplyVersions {...base} anchorRunId={source.sourceRunId} anchorKey={item.id} operation="edit" text={item.text} /> : null
+      const source = data.messages.find(row=>(row.submissionId ?? row.id)===item.id && row.editable)
+      return source?.sourceRunId ? <ThreadReplyVersions {...base} anchorRunId={source.sourceRunId} anchorKey={source.id} operation="edit" text={item.text} /> : null
     }
     if (item.kind !== 'agent') return null
-    const part = item.id.slice('text:'.length)
-    const nested = data.live?.runs.find(run=>part.startsWith(run.id+':'))
-    const sourceRunId = nested?.id ?? (data.historyPage?.chain === runId ? runId : data.chunkCursor?.runs === 1 ? data.chunkCursor.runId : null)
-    return sourceRunId ? <ThreadReplyVersions {...base} anchorRunId={sourceRunId} anchorKey={nested ? part.slice(nested.id.length+1) : part} operation="rerun" text={item.text} /> : null
+    // Every text id is scoped to its run (lib/conversation/ids.ts): the anchor is that run and the id the run gave it.
+    const scoped = splitRunScoped(item.id.slice('text:'.length))
+    return scoped ? <ThreadReplyVersions {...base} anchorRunId={scoped.runId} anchorKey={scoped.local} operation="rerun" text={item.text} /> : null
   }
   const waiting = !data && (error
     ? <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void mutate() }} />
@@ -603,7 +609,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={data.live?.issueWorkspaceId ?? null} /> }] })
     if (active && !items.length) bot('waiting', [], { streaming: true })
   }
-  if (!readRejected) for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: row.text,
+  // The unsent message already has the id its stored copy is keyed by (`<runId>:<submission id>`): nothing remounts.
+  if (!readRejected) for (const row of localMessages) entries.push({ id: `${runId}:${row.id}`, role: 'person', at: row.at, text: row.text,
     status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
     ...(row.phase === 'failed' && (!replyBlocked || row.review) ? { onRetry: () => { void send(undefined, undefined, row) } } : {}) })
   for (const entry of entries) {
