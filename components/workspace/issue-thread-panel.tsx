@@ -37,7 +37,7 @@ import { ComputerCard } from '@/components/computer/computer-card'
 import { issueKeys } from '@/lib/swr/keys'
 import type { IssueView } from '@/app/actions/issues'
 import type { IssueWorkSnapshot } from '@/app/actions/agents'
-import { harnessLabel, threadTopologyKey, type IssueThreadsRead } from './issue-threads'
+import { harnessLabel, threadTopologyKey, useIssueThreads, type IssueThreadsRead } from './issue-threads'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { ChatComposerAttachment } from '@/components/coordinator/chat-composer'
 import { choiceFromMenu, threadModelKey, type ThreadModelChoice } from '@/lib/thread-model-choice'
@@ -219,8 +219,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const viewingArtifacts = hasArtifacts && tab === 'artifacts'
   const extraArtifactCount = hasArtifacts && artifacts ? artifacts.groups.captures.length + artifacts.groups.pullRequests.length : 0
   // The task waiting on the person to merge this thread's PR (#2922): one line at the transcript's end, on the main thread surface.
-  const mergeWaitings = useMergeWaitings(issueId && tabbed && !readRejected ? [{ issueId,
-    pulls: (artifacts?.groups.pullRequests ?? []).flatMap(pull => pull.group === 'pullRequests' && pull.state ? [{ url: pull.url, state: pull.state }] : []) }] : [])
+  // Its PRs are the task's own (the read the Artifact reader below already holds); the Inbox attention says whether it waits.
+  const taskWork = useIssueThreads(issueId ?? '', Boolean(issueId && tabbed && !readRejected))
+  const mergeWaitings = useMergeWaitings(issueId && tabbed && !readRejected ? [{ issueId, pulls: taskWork.work?.presentation?.pullRequests ?? [] }] : [])
   // An evidence link opens its thread on Artifact, once; the person can move to another tab after.
   const linked = useRef<string | null>(null)
   const linkedFocus = artifacts?.focusId ?? null
