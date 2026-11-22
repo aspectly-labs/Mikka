@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { findThreadReferences } from '@/app/actions/task-runs'
 import { mentionAt, referenceMarker, referenceQueryReady, type ThreadReference } from '@/lib/thread-references'
@@ -19,7 +19,7 @@ export type ComposerSuggestions = {
   close: () => void
 }
 
-type Lookup = { signature: string; items?: ThreadReference[]; failed?: boolean }
+type Lookup = { signature: string; place: string; items?: ThreadReference[]; failed?: boolean }
 
 /** What a reference is called in a chip: a task by its code, a pull request as `repo#12`, a thread by its title. */
 export function chipLabel(item: ThreadReference): string {
@@ -77,6 +77,8 @@ export function useComposerReferences({ stored, setStored, input, workspaceId, c
   const slash = commands?.length && !insideToken ? slashCommandAt(display.text, at) : null
   const mention = workspaceId && !slash && !insideToken ? mentionAt(display.text, at) : null
   const signature = JSON.stringify([workspaceId, slash?.query, mention?.from, mention?.kind, mention?.query])
+  // The same mention as it grows: its last results stay until the next arrive, so the menu never blinks to 「正在搜索」.
+  const place = JSON.stringify([workspaceId, mention?.from, mention?.kind])
   const searching = Boolean(mention && referenceQueryReady(mention.query) && !disabled && dismissed !== signature)
   const listing = Boolean(slash && !disabled && dismissed !== signature)
 
@@ -86,15 +88,15 @@ export function useComposerReferences({ stored, setStored, input, workspaceId, c
     const timer = setTimeout(async () => {
       try {
         const items = mention.kind ? await findThreadReferences(workspaceId, mention.query, mention.kind) : await findThreadReferences(workspaceId, mention.query)
-        if (current) setLookup({ signature, items })
-      } catch { if (current) setLookup({ signature, failed: true }) }
+        if (current) setLookup({ signature, place, items })
+      } catch { if (current) setLookup({ signature, place, failed: true }) }
     }, 180)
     return () => { current = false; clearTimeout(timer) }
   }, [signature, searching]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => setActive(0), [signature])
 
-  const found = lookup?.signature === signature ? lookup : null
+  const found = lookup?.signature === signature ? lookup : lookup?.place === place && lookup.items ? lookup : null
   const sections: ComposerSuggestions['sections'] = []
   if (listing && slash) {
     const rows = commands!.filter(command => command.name.slice(1).startsWith(slash.query)).map(command => ({ id: `command:${command.id}`, label: command.name, description: command.description, kind: 'command' as const }))
@@ -110,9 +112,19 @@ export function useComposerReferences({ stored, setStored, input, workspaceId, c
   const status = searching ? !found ? t('searching') : found.failed ? t('error') : rows.length ? undefined : t('empty') : undefined
   const open = (listing && rows.length > 0) || searching
 
-  function focusAt(position: number) {
-    requestAnimationFrame(() => { const field = input(); field?.focus(); field?.setSelectionRange(position, position); setCaret(position) })
-  }
+  // The caret after a change the composer makes itself lands in the same commit as the new text, so nothing typed
+  // right after a pick goes in at an older place, and the caret never visibly jumps.
+  const pendingCaret = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    const position = pendingCaret.current
+    const field = input()
+    if (position === null || !field) return
+    pendingCaret.current = null
+    field.focus({ preventScroll: true })
+    field.setSelectionRange(position, position)
+    setCaret(position)
+  })
+  function focusAt(position: number) { pendingCaret.current = position }
 
   function pick(id: string) {
     if (id.startsWith('command:')) {
