@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
-import { pool } from '../lib/db.js'
+import { pool } from '../lib/db'
 import {
-  bindSlackThread, createThreadShare, deleteThread, listThreadChildren, moveThread,
+  bindSlackThread, createThreadShare, revokeThreadShares, deleteThread, listThreadChildren, moveThread,
   patchThread, restoreThread, sharedThread, spawnThread,
 } from '../lib/thread-lifecycle.js'
 import { seedAgent, seedIssue, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db.js'

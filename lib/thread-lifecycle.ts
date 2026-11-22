@@ -6,7 +6,7 @@ import { runOutsideToken } from '@/lib/tokens/scope'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { notifyDeviceWork } from '@/lib/device-gateway-notify'
-import { ScheduleStore } from '@/lib/schedules/store'
+import { schedules } from '@/lib/schedules/runtime'
 import type { RequestWorkspaceUser } from '@/lib/request-workspace'
 
 // #2936 thread lifecycle. A "thread" is its run chain rooted at the root run:
@@ -226,7 +226,7 @@ export async function threadToAutomation(user: ApiUser, runId: string, definitio
   if (!source) return null
   const root = await rootRunId(user, runId)
   if (!root) return null
-  const store = new ScheduleStore()
+  const store = schedules()
   const result = await store.command({ ownerId: user.id, workspaceId: source.workspaceId ?? null, botId: source.botId ?? null, direct: true },
     { action: 'create', requestId: randomUUID(), definition })
   const schedule = (result as { schedule?: { id: string } })?.schedule
