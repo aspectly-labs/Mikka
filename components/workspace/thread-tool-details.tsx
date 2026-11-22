@@ -28,7 +28,7 @@ export function ThreadToolDetails({ command, input, output, exitCode, status, ms
   // ✓ 成功 / 运行中 · 时长 / exit N — one state line, bottom right.
   const state = status === 'running' ? t('running')
     : exitCode !== undefined && exitCode !== 0 ? t('exitCode', { code: exitCode })
-    : exitCode !== undefined ? t('exitCode', { code: exitCode })
+    : status === 'failed' ? t('failed')
     : status === 'stopped' ? t('stopped')
     : t('succeeded')
   const failed = status === 'failed' || (exitCode !== undefined && exitCode !== 0)
