@@ -39,6 +39,7 @@ import { isWebChatOffline, useChatDelivery, type ChatDelivery, type ChatSubmissi
 import { checkPageBuildBeforeAction } from '@/lib/app-build'
 import { groupSubmissionMessageId } from '@/lib/group-submission'
 import { useConversation } from '@/lib/conversation/store'
+import { projectEntries } from '@/lib/conversation/project'
 import type { ConversationMessage } from '@/lib/conversation/model'
 import { useActionError } from '@/lib/use-action-error'
 import { readAccessFailure } from '@/lib/swr/persistent-cache'
@@ -228,13 +229,8 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // person's messages are theirs; every other member's, a Bot's or an Agent's is the block's agent message with its own
   // author line (mark and name, shown where the author changes), as LobeHub's group chat heads each speaker's turn.
   const entries: ThreadEntry[] = []
-  // A Bot-to-Bot exchange is a line about the chat after its anchor's run of messages, not anyone's words.
+  // Exchange markers waiting for the end of their anchor's author run.
   let waiting: GroupExchange[] = []
-  const flush = (at: number) => {
-    for (const exchange of waiting) entries.push({ id: `exchange:${exchange.linkId}`, role: 'bot', at, event: true,
-      parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <AgentExchangeMarker exchange={exchange} /> }] })
-    waiting = []
-  }
   // One conversation (lib/conversation/store.ts), as the Bot chat's: a stored message keeps the id its unsent bubble had
   // (the submission id, `sentAs`), unsent messages follow in the order they were sent, and nothing remounts on commit.
   const conversation = useConversation(`group:${group.id}`, {
@@ -243,37 +239,42 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     optimistic: unsent.map((item): ConversationMessage => ({ id: item.id, role: 'user', parts: [{ type: 'text', text: item.text }],
       metadata: { at: item.at, delivery: item.phase === 'failed' ? 'failed' : 'sending', ...(item.error ? { deliveryError: item.error } : {}), source: { unsent: item } satisfies GroupSource } })),
   })
-  conversation.forEach((entry, index) => {
-    const source = entry.metadata?.source as GroupSource
-    const id = entry.id
-    if ('unsent' in source) {
-      const item = source.unsent
-      entries.push({ id, role: 'person', at: item.at, text: item.text,
-        body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage>,
-        status: entry.metadata?.delivery === 'failed' ? 'failed' : 'sending', ...(item.phase === 'failed' ? { deliveryMessage: entry.metadata?.deliveryError, onRetry: () => { void deliver(item) } } : {}) })
-      return
-    }
-    const message = source.stored
-    const at = Date.parse(message.createdAt)
-    const mine = entry.role === 'user'
-    const reply = message.authorType !== 'user'
-    // The line under every message, as the Bot chat's: when it was sent, Copy and its reactions (#2922); every line waits
-    // for hover or focus (decision 2026-11-22-1500, components/chat/reply-actions.tsx).
-    const actions = <ReplyActions at={at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
-    const words = <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>
-    if (mine) entries.push({ id, role: 'person', at, text: message.body, body: words, actions })
-    else {
-      const name = authorName(message.authorType, message.authorId)
-      const bot = message.authorType === 'bot' ? member('bot', message.authorId) : undefined
-      entries.push({ id, role: 'bot', at, actions,
-        author: { id: `${message.authorType}:${message.authorId}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> },
-        parts: [{ kind: 'text', text: message.body, node: reply ? <AgentMarkdown text={message.body} /> : words }] })
-    }
-    waiting.push(...exchanges.get(message.position) ?? [])
-    const next = (conversation[index + 1]?.metadata?.source as GroupSource | undefined)
-    const after = next && 'stored' in next ? next.stored : undefined
-    if (!after || after.authorType !== message.authorType || after.authorId !== message.authorId) flush(at)
-  })
+  // The one projection (lib/conversation/project.ts) decides each entry's id, side, time and delivery state; the group
+  // adds its words, author lines, reply lines and the exchange markers after an author's run.
+  entries.push(...projectEntries(conversation, {
+    text: (text, message) => {
+      const source = message.metadata?.source as GroupSource
+      const reply = 'stored' in source && source.stored.authorType !== 'user'
+      return { kind: 'text', text, node: reply ? <AgentMarkdown text={text} /> : <CollapsibleMessage><UserMessageText text={text} renderText={referenceText} /></CollapsibleMessage> }
+    },
+    decorate: (entry, message) => {
+      const source = message.metadata?.source as GroupSource
+      const words = (text: string) => <CollapsibleMessage><UserMessageText text={text} renderText={referenceText} /></CollapsibleMessage>
+      if ('unsent' in source) {
+        const item = source.unsent
+        return entry.role === 'person' ? { ...entry, body: words(item.text), ...(item.phase === 'failed' ? { onRetry: () => { void deliver(item) } } : {}) } : entry
+      }
+      const stored = source.stored
+      const at = Date.parse(stored.createdAt)
+      // The line under every message, as the Bot chat's: when it was sent, Copy and its reactions (#2922); every line
+      // waits for hover or focus (decision 2026-11-22-1500, components/chat/reply-actions.tsx).
+      const actions = <ReplyActions at={at} copyText={stored.body}><MessageReactions reactions={reactions[stored.id]} align={entry.role === 'person' ? 'end' : 'start'} /></ReplyActions>
+      const shown: ThreadEntry = entry.role === 'person' ? { ...entry, body: words(stored.body), actions } : (() => {
+        const name = authorName(stored.authorType, stored.authorId)
+        const bot = stored.authorType === 'bot' ? member('bot', stored.authorId) : undefined
+        return { ...entry, actions, author: { id: `${stored.authorType}:${stored.authorId}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> } }
+      })()
+      // A Bot-to-Bot exchange is a line about the chat after its anchor's run of messages, not anyone's words.
+      waiting.push(...exchanges.get(stored.position) ?? [])
+      const next = conversation[conversation.indexOf(message) + 1]?.metadata?.source as GroupSource | undefined
+      const after = next && 'stored' in next ? next.stored : undefined
+      if (after && after.authorType === stored.authorType && after.authorId === stored.authorId) return shown
+      const lines = waiting.map((exchange): ThreadEntry => ({ id: `exchange:${exchange.linkId}`, role: 'bot', at, event: true,
+        parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <AgentExchangeMarker exchange={exchange} /> }] }))
+      waiting = []
+      return [shown, ...lines]
+    },
+  }))
   const lastAt = entries.at(-1)?.at ?? 0
   const line = (key: string, text: string) => entries.push({ id: key, role: 'bot', at: lastAt, event: true, parts: [{ kind: 'text', text, node: <p role="status" className="text-center text-xs text-muted-foreground">{text}</p> }] })
   if (first?.routingError && !first.agentStatus) line('no-taker', t('noTaker'))
