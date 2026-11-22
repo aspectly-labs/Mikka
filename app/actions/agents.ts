@@ -475,8 +475,11 @@ export async function getThreadSummary(issueId: string | null, runId: string) {
       readContextUsage(runIds, row.id, latestRunId),
       readThreadLocation(pool, user.id, latestRunId)])
     const { catalogIdFor, catalogModel } = await import('@/lib/model-catalog')
-    const windowTokens = context.model
-      ? catalogModel(catalogIdFor(context.model) ?? context.model)?.contextWindow ?? null
+    // The current attempt's model decides the window: after a continuation
+    // changes models, context.model is still the frozen original's.
+    const windowModel = context.composerModel?.served ?? context.composerModel?.selected ?? context.model
+    const windowTokens = windowModel
+      ? catalogModel(catalogIdFor(windowModel) ?? windowModel)?.contextWindow ?? null
       : null
     return {
       cost: null,
