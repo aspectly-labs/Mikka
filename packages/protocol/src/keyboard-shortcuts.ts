@@ -57,6 +57,7 @@ export function normalizeKeyboardShortcut(input: string): string | null {
     : /^f(?:[1-9]|1\d|2[0-4])$/.test(lower) ? lower.toUpperCase()
     : Object.hasOwn(namedCodes, lower) ? namedCodes[lower] : Object.hasOwn(punctuation, rawKey) ? punctuation[rawKey] : undefined
   if (!code) return null
+  if (code === 'F5' || (code === 'KeyR' && ['Mod', 'Ctrl', 'Meta'].some(modifier => active.has(modifier)))) return null
   // Focus, selection, dismissal and editor navigation remain owned by their
   // existing controls, including Shift+Tab and Shift+Arrow selection.
   if (navigationCodes.has(code) && [...active].every(modifier => modifier === 'Shift')) return null

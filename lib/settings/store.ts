@@ -35,7 +35,8 @@ async function readValues(context: SettingsContext, database: Reader = db, scope
   const personal = await database.select().from(personalSettingValues).where(and(eq(personalSettingValues.userId, context.userId),
     or(isNull(personalSettingValues.workspaceId), eq(personalSettingValues.workspaceId, context.workspaceId))))
   const workspace = await database.select().from(workspaceSettingValues).where(eq(workspaceSettingValues.workspaceId, context.workspaceId))
-  const values = Object.fromEntries(Object.values(SETTINGS_REGISTRY).map((field: SettingDefinition) => {
+  const fields: SettingDefinition[] = Object.values(SETTINGS_REGISTRY)
+  const values = Object.fromEntries(fields.filter(field => scope === 'personal' || field.scope.includes(scope)).map(field => {
     const own = personal.find(row => row.key === field.key && row.workspaceId === (field.personalContext === 'workspace' ? context.workspaceId : null))
     return [field.key, resolveSettingValue(field.key, scope === 'personal' ? unpack(own) : null, unpack(workspace.find(row => row.key === field.key)))]
   }))

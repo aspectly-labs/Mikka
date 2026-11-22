@@ -90,6 +90,9 @@ contains only the workspace ID. Other members and suspended memberships
 receive no shortcut invalidation. Refresh the personal settings view when
 this key changes.
 
+Desktop reserves F5 and Ctrl/Cmd+R for reload, including when combined
+with other modifiers. Settings rejects these bindings.
+
 Replace the original hardcoded keyboard listener for each action when
 consuming these bindings. Preserve the owning component's IME, repeat,
 editing, dialog, and action-readiness guards, and compare the full modifier
@@ -103,7 +106,8 @@ is an atomic compatibility mirror for rollback, not a read source. Adding
 an action after this table exists requires its declaration and metadata,
 without another migration or server action.
 
-The migration is additive and repeatable. To roll back application code,
-retain both tables and personal preferences. For the verified action
+The migration is additive and repeatable. A code rollback retains both
+tables and personal preferences but restores the old hardcoded bindings.
+Returning to a version that reads saved bindings applies them again. For the verified action
 inventory, conflict scopes, and rationale, see the
 [keyboard shortcut decision](../design/decisions/2026-11-20-1943-keyboard-shortcut-settings.md).

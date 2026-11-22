@@ -4,11 +4,13 @@ import { readFile } from 'node:fs/promises'
 import { after, before, mock, test } from 'node:test'
 import { SETTINGS_REGISTRY } from './registry'
 import { disposableDatabase } from '../../tests/helpers/e2e-target.mjs'
+import { captureFixtureLiveEffects } from '../../tests/support/live-runtime'
 
 const target = process.env.E2E_DATABASE_URL
 const available = disposableDatabase() && process.env.MIKKA_DATABASE_URL === target && process.env.DATABASE_URL === target
 if (!available && process.env.REQUIRE_DB === '1') throw new Error('Settings tests require an isolated loopback *_e2e database')
 const dbTest = available ? test : test.skip
+const scheduledLive = captureFixtureLiveEffects()
 const owner = `settings-admin-${randomUUID()}`, member = `settings-member-${randomUUID()}`, outsider = `settings-outsider-${randomUUID()}`
 const workspaceId = randomUUID(), otherWorkspaceId = randomUUID()
 let currentUser: { id: string; email: string; name: string } | null = null
@@ -175,6 +177,8 @@ dbTest('keyboard shortcuts are owner-only account settings with typed entity and
     assert.equal((await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', body))).status, 400)
   }
   assert.equal((await workspace.PATCH(request(`workspace/${workspaceId}`, 'PATCH', patch({ [key]: 'Mod+F3' })), context())).status, 400)
+  const workspaceView = await (await workspace.GET(request(`workspace/${workspaceId}`), context())).json()
+  assert.ok(!Object.keys(workspaceView.values).some(key => key.startsWith('keyboardShortcuts.')))
   assert.equal((await workspaceReset.POST(request(`workspace/${workspaceId}/reset`, 'POST', { group: 'keyboard_shortcuts' }), context())).status, 400)
   assert.equal((await pool.query('SELECT binding FROM keyboard_shortcuts WHERE "userId"=$1 AND "actionId"=\'search.open\'', [owner])).rows[0].binding, 'Mod+Shift+F2')
   as(outsider)
@@ -261,4 +265,26 @@ dbTest('account shortcut invalidation reaches only the owner in active workspace
   } finally {
     await workspacePool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [home, owner])
   }
+})
+
+dbTest('a committed shortcut PATCH publishes to every active workspace of the owner', async () => {
+  const home = homes.get(owner)!
+  const published: unknown[] = []
+  const transport = mock.module('@/lib/live/publish', { namedExports: {
+    sendLiveTargets: async (_database: unknown, targets: unknown[]) => { published.push(...targets) },
+  } })
+  try {
+    scheduledLive.length = 0
+    as(owner)
+    const result = await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', patch({ 'keyboardShortcuts.search.open': 'Alt+F7' })))
+    assert.equal(result.status, 200)
+    assert.ok(scheduledLive.length, 'the committed PATCH registered a live publish')
+    await Promise.all(scheduledLive.splice(0).map(work => typeof work === 'function' ? work() : work))
+    assert.equal(published.length, 2)
+    for (const id of [workspaceId, home]) assert.ok(published.some(target => {
+      assert.ok(target && typeof target === 'object')
+      const { scope, events } = target as { scope: { ownerId: string; workspaceId: string }; events: unknown[] }
+      return scope.ownerId === owner && scope.workspaceId === id && JSON.stringify(events) === JSON.stringify([{ kind: 'workspace_settings', id }])
+    }), id)
+  } finally { transport.restore() }
 })

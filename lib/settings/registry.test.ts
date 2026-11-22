@@ -36,9 +36,10 @@ test('keyboard bindings normalize aliases and physical keys while preserving nav
   assert.equal(normalizeKeyboardShortcut('ctrl+,'), 'Ctrl+Comma')
   assert.equal(normalizeKeyboardShortcut('Command+F12'), 'Meta+F12')
   assert.equal(normalizeKeyboardShortcut(''), '')
-  for (const value of ['Mod', 'Mod+Mod+K', 'Mod+Control+K', 'Mod++', 'Hyper+K', 'toString+K', '__proto__', 'constructor', 'Escape', 'Shift+Tab', 'ArrowDown', 'Shift+ArrowLeft']) {
+  for (const value of ['Mod', 'Mod+Mod+K', 'Mod+Control+K', 'Mod++', 'Hyper+K', 'toString+K', '__proto__', 'constructor', 'Escape', 'Shift+Tab', 'ArrowDown', 'Shift+ArrowLeft', 'F5', 'Shift+F5', 'Mod+KeyR', 'Ctrl+Shift+R', 'Meta+R']) {
     assert.equal(normalizeKeyboardShortcut(value), null, value)
   }
+  assert.equal(normalizeKeyboardShortcut('Alt+R'), 'Alt+KeyR')
   assert.deepEqual(parseSettingsPatch('personal', { values: { 'keyboardShortcuts.search.open': 'ctrl+k', 'keyboardShortcuts.theme.toggle': '' } }),
     { 'keyboardShortcuts.search.open': 'Ctrl+KeyK', 'keyboardShortcuts.theme.toggle': '' })
   assert.throws(() => parseSettingsPatch('workspace', { values: { 'keyboardShortcuts.search.open': 'Mod+K' } }))
