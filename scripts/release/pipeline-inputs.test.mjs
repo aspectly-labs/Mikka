@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +16,32 @@ const run = () => ({ id: 101, run_attempt: 2, path: producer, event: 'push', sta
   conclusion: 'success', head_sha: source, head_branch: 'main', actor: { id: 183887963 },
   triggering_actor: { id: 183887963 }, repository: repo, head_repository: repo })
 const event = original => ({ action: 'completed', repository: repo, workflow_run: structuredClone(original) })
+
+test('CLI reports only first-line pipeline codes and suppresses other error text', () => {
+  for (const [failure, expected] of [
+    ["baselineOrigin({ version: 1, target: 'staging', status: 'failed' })", 'pipeline_previous_release_requires_recovery'],
+    ["throw new Error('pipeline_repository_scope')", 'pipeline_repository_scope'],
+    ["throw new Error('private failure details')", 'pipeline_selection_failed'],
+    ["throw new Error('')", 'pipeline_selection_failed'],
+    ["throw new Error('private details\\npipeline_repository_scope')", 'pipeline_selection_failed'],
+    ["throw new Error('pipeline_repository_scope private details')", 'pipeline_selection_failed'],
+    ["throw 'pipeline_repository_scope'", 'pipeline_selection_failed'],
+  ]) {
+    const script = `
+      import { baselineOrigin } from './scripts/release/pipeline-inputs.mjs?fixture'
+      process.argv[1] = './scripts/release/pipeline-inputs.mjs'
+      process.env = new Proxy(process.env, { get(target, key) {
+        if (key === 'GITHUB_REPOSITORY_OWNER_ID') { ${failure} }
+        return target[key]
+      } })
+      await import('./scripts/release/pipeline-inputs.mjs')
+    `
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' })
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.equal(result.stderr, expected + '\n')
+  }
+})
 
 function manifestFixture(commit = source, legacy = false) {
   const digest = 'sha256:' + 'b'.repeat(64)

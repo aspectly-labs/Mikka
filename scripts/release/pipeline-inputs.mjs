@@ -342,7 +342,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       Object.entries(output).map(([key, value]) => `${key}=${value}\n`).join(''))
     console.log(JSON.stringify({ status: output.status, source: output.source }))
   } catch (error) {
-    console.error(error instanceof Error && /^pipeline_[a-z_]+$/.test(error.message) ? error.message : 'pipeline_selection_failed')
+    const code = error instanceof Error ? error.message.split('\n', 1)[0] : ''
+    console.error(/^pipeline_[a-z_]+$/.test(code) ? code : 'pipeline_selection_failed')
     process.exitCode = 1
   }
 }
