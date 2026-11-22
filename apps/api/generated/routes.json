@@ -2988,6 +2988,47 @@
       "sourceHash": "7cba525cf48eec394abb83552274c8ba069a3abecb52c459cf8a72e4864c9808"
     },
     {
+      "path": "/mikka/api/threads/shared/[token]",
+      "template": "/api/threads/shared/[token]",
+      "source": "app/api/threads/shared/[token]/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "fd5e170b2eccfd05d60666e7ad983cc4b8bfb8b08a0bdbfddc4d858c924f2ed6"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]",
+      "template": "/api/threads/[runId]",
+      "source": "app/api/threads/[runId]/route.ts",
+      "methods": [
+        "DELETE",
+        "PATCH"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "17ffd6933f69f13d41056a0019726cb9d735322e04cf096df5ad05d102c065f3"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/automation",
+      "template": "/api/threads/[runId]/automation",
+      "source": "app/api/threads/[runId]/automation/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "dc3e24ae80f72ad32397e5f557238b12c2dec8ecf69205bcc307d81df0725413"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/children",
+      "template": "/api/threads/[runId]/children",
+      "source": "app/api/threads/[runId]/children/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "b46d567eca86b911a5649e13780dd5b5667aaa90f0f386cf875fa6574d9b0dfa"
+    },
+    {
       "path": "/mikka/api/threads/[runId]/credentials",
       "template": "/api/threads/[runId]/credentials",
       "source": "app/api/threads/[runId]/credentials/route.ts",
@@ -3017,6 +3058,16 @@
       "sourceHash": "818adb34baa23ce865b747e3d3f017d2c80ea5848ef8bc11b75534c6f3d94841"
     },
     {
+      "path": "/mikka/api/threads/[runId]/fork",
+      "template": "/api/threads/[runId]/fork",
+      "source": "app/api/threads/[runId]/fork/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "664480564a046ff19dd889c47a5032a9b4d7ead5ac31ec00d2336de070051d8e"
+    },
+    {
       "path": "/mikka/api/threads/[runId]/machine",
       "template": "/api/threads/[runId]/machine",
       "source": "app/api/threads/[runId]/machine/route.ts",
@@ -3025,6 +3076,57 @@
       ],
       "maxDuration": 300,
       "sourceHash": "cd49a4d17ff60e20d56e050860e405c62d76d40e6a0dcb8ae0ce7d6d07664e83"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/move",
+      "template": "/api/threads/[runId]/move",
+      "source": "app/api/threads/[runId]/move/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "fafc5c246f596aa019b01382428c046d98d241f3b961bbe276e119f0717a30fe"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/restore",
+      "template": "/api/threads/[runId]/restore",
+      "source": "app/api/threads/[runId]/restore/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "57814b35ecefdeb8f2983348d63c0710fbea71e4e9b66e962d1f7898cdbf67c0"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/share",
+      "template": "/api/threads/[runId]/share",
+      "source": "app/api/threads/[runId]/share/route.ts",
+      "methods": [
+        "DELETE",
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "489077686d9f3fbf6262dc0f64f077246494c7e77010f0da93ccb6e01341b907"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/side-threads",
+      "template": "/api/threads/[runId]/side-threads",
+      "source": "app/api/threads/[runId]/side-threads/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "2a0b2f51215714d54d96f1c14e7476f83109a0861e021502ee6d7d09ac697413"
+    },
+    {
+      "path": "/mikka/api/threads/[runId]/slack-bind",
+      "template": "/api/threads/[runId]/slack-bind",
+      "source": "app/api/threads/[runId]/slack-bind/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 60,
+      "sourceHash": "364e21b69e0280238e0973944f6af9a826a6903b2e0e59d9be041502d1474244"
     },
     {
       "path": "/mikka/api/v1/artifacts",
