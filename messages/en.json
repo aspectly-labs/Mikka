@@ -6550,7 +6550,8 @@
       "copy": "Copy",
       "copied": "Copied",
       "copyFailed": "Couldn't copy",
-      "quote": "Quote"
+      "quote": "Quote",
+      "reply": "Reply"
     }
   },
   "GroupTask": {
