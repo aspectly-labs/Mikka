@@ -479,6 +479,7 @@
     "retryIn": "{seconds} 秒后可重试",
     "verifyLinkInvalid": "验证链接无效、已过期或已使用。如邮箱尚未验证，请重新发送。",
     "verifyEmailLink": "验证邮箱或重新发送验证邮件",
+    "retryVerification": "重试人机验证",
     "signupRefusal": {
       "disposableEmail": "不支持临时邮箱，请使用常用邮箱。",
       "signupRateLimited": "注册请求过多，请稍后重试。",
@@ -3289,6 +3290,7 @@
       "othersUsage": "团队成员可以用它跑自己的 Bot，用量算在你的 API 账单上。",
       "afterQuota": "订阅额度用完后，自动改用 API Key",
       "afterQuotaBilling": "同一个模型改用你的 API Key 继续跑，按服务商的价格付费",
+      "afterQuotaNoKey": "需要先添加支持同一模型的 API Key，才会按服务商价格继续运行",
       "sectionTitle": "API Key",
       "none": "还没有 API Key",
       "loading": "正在读取 API Key…",
@@ -4152,6 +4154,7 @@
     },
     "loadError": "线程加载失败。",
     "failedTitle": "回复失败",
+    "modelRequired": "任务未启动：未选择模型。",
     "replyToolUnavailable": "回复未完成，请重试",
     "apiBalance": "API 余额不足",
     "subscriptionRefusal": {
@@ -4237,6 +4240,10 @@
       "cloudCredits": "Mikka Cloud 额度",
       "ownProvider": "自带服务商",
       "hostedUnavailable": "Mikka 额度在这个工作区不可用",
+      "noModelSelected": "未选择模型",
+      "noModelConnections": "没有可用的模型连接",
+      "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
+      "setUpModel": "设置模型",
       "changeModel": "换模型",
       "useMyPoints": "把我的点数用于这个团队",
       "apiKey": "API Key",
@@ -5916,7 +5923,13 @@
     "notSent": "未发送",
     "answering": "正在回复",
     "noTaker": "没有 Bot 接这条，@ 它的名字",
-    "stopped": "已停止"
+    "stopped": "已停止",
+    "exchange": {
+      "marker": "{names} — {count} 条私聊",
+      "title": "{names}",
+      "empty": "这次私聊没有消息。",
+      "loadError": "无法加载这次私聊。"
+    }
   },
   "DeviceSetup": {
     "title": "设置 {device}",
@@ -8166,7 +8179,16 @@
       "providerOn": "{on}/{total} 个已启用",
       "firstModel": "任务先用",
       "noFirstModel": "还没有可用的模型",
-      "keyProvider": "服务商"
+      "keyProvider": "服务商",
+      "catalog": "模型",
+      "catalogFailed": "无法读取模型",
+      "catalogLoading": "正在读取模型…",
+      "subscriptionNoModels": "已连接的订阅还没有返回模型",
+      "noSubscriptions": "还没有连接订阅",
+      "keyNoModels": "已添加的 API Key 还没有返回模型",
+      "noApiKeys": "还没有添加 API Key",
+      "customNoModels": "自定义服务商还没有返回模型",
+      "connectedNoModels": "已连接的订阅或 API Key 还没有返回模型"
     }
   },
   "CodeReview": {
@@ -9029,5 +9051,23 @@
     "merge": "合并",
     "mergeAnyway": "仍然合并，{count} 项失败",
     "mergeFailed": "合并没有完成。"
+  },
+  "SettingsRegistry": {
+    "archiveIdleAfterDays": {
+      "label": "归档闲置线程",
+      "keywords": "归档|闲置"
+    },
+    "threadTitleInstructions": {
+      "label": "线程标题指令",
+      "keywords": "标题|指令"
+    },
+    "threadTitleTriggers": {
+      "label": "更新线程标题",
+      "keywords": "标题|拉取请求"
+    },
+    "subagentMaxConcurrent": {
+      "label": "并发子 Agent 数量",
+      "keywords": "子 Agent|并发|限制"
+    }
   }
 }
