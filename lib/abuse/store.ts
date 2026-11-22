@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { isUsageTurnRef } from '../usage-turn-ref'
 import { hostedBillingScope } from './context'
 import { resourceBudgetAdmission } from '../billing/resource-budgets'
 import { connectForCommitEffects } from '../db/commit-effects'
@@ -240,10 +241,11 @@ export class HostedUsageStore {
         throw new PaidResourceError('platform_paused')
       // The hold only gates admission; settlement charges the actual cost.
       await tx.query(
-        `INSERT INTO hosted_usage (id,"workspaceId",model,state,"holdMicroUsd","usageWorkspaceId","billingOrganizationId","executionOwnerId","actorId","usageProjectId","usageThreadId","usageRunId","attributionComplete","billingSource")
-          VALUES ($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        `INSERT INTO hosted_usage (id,"workspaceId",model,state,"holdMicroUsd","usageWorkspaceId","billingOrganizationId","executionOwnerId","actorId","usageProjectId","usageThreadId","usageRunId","attributionComplete","billingSource","usageTurnRef")
+          VALUES ($1,$2,$3,'pending',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [id, workspaceId, model, estimate, attribution.workspaceId, attribution.billingOrganizationId ?? null, attribution.ownerId ?? null,
-          attribution.actorId ?? attribution.ownerId ?? null, attribution.projectId ?? null, attribution.threadId ?? null, attribution.runId ?? null, attribution.attributionComplete ?? false, attribution.billingSource ?? null],
+          attribution.actorId ?? attribution.ownerId ?? null, attribution.projectId ?? null, attribution.threadId ?? null, attribution.runId ?? null, attribution.attributionComplete ?? false, attribution.billingSource ?? null,
+          isUsageTurnRef(attribution.turnRef) ? attribution.turnRef : null],
       )
       return { id, workspaceId }
     }) } finally { await quota?.close() }
