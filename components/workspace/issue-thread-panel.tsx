@@ -634,7 +634,7 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
   const referenceWorkspace = liveRuns.find(run => run.id === liveRunId)?.workspaceId
   const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? <ThreadReferencePicker draft={draft}
     workspaceId={referenceWorkspace} input={inputRef} onChange={setDraft} /> : null
-  const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
+  const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen host="column" botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
     panels={bare || transcriptOnly || collect ? undefined : panels}
     historyPrepend={historyPrepend}
     older={olderPosition ? { loading: olderState === 'loading', auto: olderState === 'idle', onLoad: () => { void loadOlder() } } : undefined}
