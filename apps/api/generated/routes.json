@@ -1645,7 +1645,7 @@
         "GET"
       ],
       "maxDuration": 30,
-      "sourceHash": "0d0913b99ab8034d704932400c85d2545dfae396d8ce20822274bbe963401575"
+      "sourceHash": "77afdd2c85c5da92daa38266edd973d1e1d1470323be94e79e4990b05a80c3d6"
     },
     {
       "path": "/mikka/api/mobile/artifacts/[id]",
