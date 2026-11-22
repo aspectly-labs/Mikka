@@ -9097,6 +9097,14 @@
       "label": "Update thread titles",
       "keywords": "title|pull request|PR"
     },
+    "gitAuthorName": {
+      "label": "Commit author name",
+      "keywords": "git|commit|author|name"
+    },
+    "gitAuthorEmail": {
+      "label": "Commit author email",
+      "keywords": "git|commit|author|email"
+    },
     "subagentMaxConcurrent": {
       "label": "Concurrent subagents",
       "keywords": "agent|concurrency|limit"

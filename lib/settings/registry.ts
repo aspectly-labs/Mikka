@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { gitAuthorEmailSchema, gitAuthorNameSchema } from '@mikka/protocol/device'
 import type { ResolvedSetting, SettingSchemaEntry, SettingScope, SettingValue } from '@mikka/protocol/settings'
 import { archiveIdleDays } from '@/lib/conversation-directory-input'
 import { DEFAULT_DND_SCHEDULE, DND_DAYS, DND_TIME_PATTERN, NOTIFICATION_SOUNDS } from '@/lib/push-allowed'
@@ -41,6 +42,18 @@ export const SETTINGS_REGISTRY = {
     ...inherited, key: 'threadTitleTriggers', group: 'threads', page: 'threads',
     ...settingMetadata('threadTitleTriggers'),
     type: 'string', guard: z.enum(THREAD_TITLE_TRIGGERS), defaultValue: DEFAULT_TITLE_TRIGGERS, options: [...THREAD_TITLE_TRIGGERS],
+    personalContext: 'workspace',
+  },
+  gitAuthorName: {
+    ...inherited, key: 'gitAuthorName', group: 'git', page: 'git',
+    ...settingMetadata('gitAuthorName'),
+    type: 'string', guard: gitAuthorNameSchema, defaultValue: '',
+    personalContext: 'workspace',
+  },
+  gitAuthorEmail: {
+    ...inherited, key: 'gitAuthorEmail', group: 'git', page: 'git',
+    ...settingMetadata('gitAuthorEmail'),
+    type: 'string', guard: gitAuthorEmailSchema, defaultValue: '',
     personalContext: 'workspace',
   },
   subagentMaxConcurrent: {
