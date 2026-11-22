@@ -17,7 +17,7 @@ import { sendReviewChange, type ReviewChangeTarget } from '@/lib/factory/review-
 import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
-import { runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems } from '@/lib/issue-run-conversation'
+import { activityLineBadgeShown, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems } from '@/lib/issue-run-conversation'
 import { runPlan } from '@/lib/thread-plan'
 import { useThreadStepRows } from './thread-step-rows'
 import { ThreadReplyVersions } from './thread-reply-versions'
@@ -524,8 +524,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       const status = view?.status ?? data.thread.status
       const outcome = acceptedProducerOutcome(data.thread, issueId, allTasks)
       const waitingForReply = question === 'waiting' || status === 'waiting_input'
-      // The list's fallback group for an unjudged run is not a request for input.
-      const showBadge = !stopRequested && (waitingForReply || runIsActive(status) || status === 'failed' || status === 'paused' || outcome !== null)
+      // The list's fallback group for an unjudged run is not a request for input. The line already says it works or waits,
+      // so the badge only adds what it does not (one running indicator, as Claude, ChatGPT and LobeHub).
+      const showBadge = activityLineBadgeShown(status, { waiting: waitingForReply, stopping: stopRequested, outcome })
       const started = new Date(data.thread.createdAt).getTime()
       const ended = data.thread.finishedAt ? new Date(data.thread.finishedAt).getTime() : Date.now()
       const seconds = Math.max(0, Math.round((ended - started) / 1000))
@@ -698,7 +699,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   // holds this panel (the official work area) gives it the scroller's height instead of growing with it.
   return <section ref={rootRef} aria-label={title} data-run-thread="" data-own-scroll="" className="flex h-full min-h-0 flex-col" onKeyDown={bare || !back ? undefined : event => closeOnEscape(event, headingRef.current, back)}>
     {!bare && <ThreadHeader issueId={issueId} runId={runId} title={title} viewTitle={viewTitle} headingRef={headingRef} onBack={back} onClose={onClose}
-      onStop={canStop ? () => { void stop() } : null} onOpenTask={onOpenTask} views={views}
+      onStop={headerStopShown({ canStop, working, composerStop: !viewingChanges && !(accepting && acceptance) && !(viewingArtifacts && artifacts) && !(readOnly && !changeRequest) })
+        ? () => { void stop() } : null} onOpenTask={onOpenTask} views={views}
       widen={widen ?? undefined} liveRunId={liveRunId}
       place={detail ? <ThreadRunPlace issueId={issueId} runId={runId} status={view?.status ?? data?.thread.status ?? ''} harness={detail.harness} botName={detail.agentName} /> : null}
       acceptanceBadge={acceptance ? <AcceptanceStateBadge task={acceptance} /> : null}

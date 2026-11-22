@@ -17,7 +17,7 @@ import { useComposerReferences } from '@/hooks/use-composer-references'
  * drop and paste, the length limit. The default slot and the hosted layer both
  * call it, so the two composers cannot behave differently.
  */
-export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands }: ChatComposerProps) {
+export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', attachmentScope, attachmentDisabled = false, references: referenceScope, commands }: ChatComposerProps) {
   const tShell = useTranslations('Shell')
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -104,8 +104,9 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
     onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
       const { key, shiftKey, metaKey, ctrlKey } = event
       if (references.onKeyDown(event)) return
-      // In a bot chat Esc stops the reply, as the stop button does.
-      if (key === 'Escape' && stoppable && !thread && !event.nativeEvent.isComposing) { event.preventDefault(); onStop?.(); return }
+      // Esc stops whatever answers, in every chat, also with words typed (decision 2026-11-22-1600, as Claude Code and Codex):
+      // the button is Send then, so Esc is the way to Stop. An open menu took Esc above; a composing input method keeps it.
+      if (key === 'Escape' && onStop && (sending || running) && !event.nativeEvent.isComposing) { event.preventDefault(); onStop(); return }
       if (!sendsMessage({ key, shiftKey, metaKey, ctrlKey, isComposing: event.nativeEvent.isComposing }, sendKey)) return
       event.preventDefault()
       submit()

@@ -14,6 +14,24 @@ export function runIsWorking(status: string) {
   return runIsActive(status) && status !== 'waiting_input'
 }
 
+/**
+ * The status badge beside a run's activity line (「正在工作 · 18 分」, 「在等你回复」) only adds what the line does not
+ * say: a working, waiting or stopping run is the line alone, as one running indicator in Claude, ChatGPT and LobeHub.
+ */
+export function activityLineBadgeShown(status: string, { waiting, stopping, outcome }: { waiting: boolean; stopping: boolean; outcome: unknown }) {
+  if (stopping || waiting || runIsActive(status)) return false
+  return status === 'failed' || status === 'paused' || outcome != null
+}
+
+/**
+ * A run has one Stop. While it works and its composer is on screen, that is the composer's send button (and Esc,
+ * decision 2026-11-22-1600); the header's stop stands in only where the composer cannot: a run waiting for an answer,
+ * whose composer sends (N1), a reader without a composer, or another view of the thread (改动, 验收).
+ */
+export function headerStopShown({ canStop, working, composerStop }: { canStop: boolean; working: boolean; composerStop: boolean }) {
+  return canStop && !(working && composerStop)
+}
+
 export const RUN_STOP_TIMEOUT_MS = 30_000
 
 /** A persisted request retains its deadline across polling and reloads. */

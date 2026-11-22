@@ -37,9 +37,9 @@ export function useFocusReturn(id: string, target: RefObject<HTMLElement | null>
 }
 
 /**
- * Esc in such a view: out of a text field to the view first (a thread's
- * composer never stops the run, decision 2026-11-02-0301), then it closes.
- * A menu, dialog or editor above it that took Esc keeps it.
+ * Esc in such a view: out of a text field to the view first, then it closes.
+ * A menu, dialog or editor above it that took Esc keeps it, and so does the
+ * composer while the run works: there Esc stops it (decision 2026-11-22-1600).
  */
 export function closeOnEscape(event: KeyboardEvent<HTMLElement>, view: HTMLElement | null, onClose: () => void) {
   if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || !event.currentTarget.contains(event.target as Node)) return
