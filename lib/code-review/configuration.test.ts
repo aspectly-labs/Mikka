@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { codeReviewInstructions } from './configuration'
+import { codeReviewInstructions, factoryReviewPreferences } from './configuration'
 
 test('a saved ignore list keeps the review request inside the 10,000-character task limit', () => {
   const paths = Array.from({ length: 100 }, (_, index) => `${'directory'.repeat(25)}/${index}/**`)
@@ -31,4 +31,13 @@ test('Factory preferences fit in the budget remaining after the original brief a
   assert.match(instructions, /further saved globs not listed here/)
   assert.match(instructions, /required acceptance criterion/)
   assert.equal(codeReviewInstructions(config, 'factory', 10), '')
+})
+
+test('supplementary characters use two code units in the Factory assignment budget', () => {
+  const prompt = '😀'.repeat(49_500)
+  const ignoredPaths = ['directory/'.repeat(24) + '**']
+  const config = { model: '', severity: 'medium', ignoredPaths, output: 'comments' } as const
+  const suffix = factoryReviewPreferences(config, prompt)
+  assert.match(suffix, /Required task acceptance criteria/)
+  assert.ok((prompt + suffix).length <= 100_000)
 })

@@ -166,6 +166,8 @@ test('run result publication commits one owner-scoped result through retries and
       const pending = await receipt(f)
       assert.equal(pending.pullRequest.url, prFor(f).url)
       assert.equal(pending.autoMergeRequestedAt, null)
+      assert.deepEqual(await publishRunResult(f.runId, async () => assert.fail('A duplicate workflow must respect the stored retry deadline')), { done: false, retryAt })
+      await pool.query('UPDATE run_publications SET "leaseExpiresAt"=now()-interval \'1 second\' WHERE "runId"=$1', [f.runId])
       assert.deepEqual(await publishRunResult(f.runId, async input => {
         assert.equal(input.autoMerge, true)
         assert.equal(input.allowCreate, false)

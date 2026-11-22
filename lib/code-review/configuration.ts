@@ -33,3 +33,8 @@ export function codeReviewInstructions(config: CodeReviewConfiguration, surface:
   const paths = ignoredPaths(config.ignoredPaths, surface === 'factory' ? available : Math.min(available, IGNORED_PATHS_BUDGET))
   return paths ? [lines[0], lines[1], prefix + paths + suffix, lines[2]].join('\n') : required
 }
+
+export function factoryReviewPreferences(config: CodeReviewConfiguration, prompt: string) {
+  const preferences = codeReviewInstructions(config, 'factory', 100_000 - prompt.length - 2)
+  return preferences ? '\n\n' + preferences : ''
+}

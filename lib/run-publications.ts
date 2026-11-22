@@ -298,7 +298,10 @@ async function completionTransaction(userId: string, runId: string, completion: 
 async function claimPublication(runId: string) {
   const now = new Date()
   const [claimed] = await db.update(runPublications).set({ status: 'processing', leaseToken: crypto.randomUUID(), leaseExpiresAt: new Date(now.getTime() + PUBLICATION_LEASE_MS), attempts: sql`${runPublications.attempts} + 1`, updatedAt: now })
-    .where(and(eq(runPublications.runId, runId), or(eq(runPublications.status, 'pending'), and(eq(runPublications.status, 'processing'), lte(runPublications.leaseExpiresAt, now)))))
+    .where(and(eq(runPublications.runId, runId), or(
+      and(eq(runPublications.status, 'pending'), isNull(runPublications.leaseExpiresAt)),
+      and(or(eq(runPublications.status, 'pending'), eq(runPublications.status, 'processing')), lte(runPublications.leaseExpiresAt, now)),
+    )))
     .returning()
   return claimed ?? null
 }
@@ -445,7 +448,9 @@ async function automaticPublicationPending(runId: string): Promise<boolean> {
 export async function publishRunResult(runId: string, openPullRequest: OwnerPullRequestOpener = openOwnerPullRequest): Promise<{ done: boolean; retryAt?: number }> {
   const claim = await claimPublication(runId)
   if (!claim) {
-    const [row] = await db.select({ status: runPublications.status, userId: runPublications.userId }).from(runPublications).where(eq(runPublications.runId, runId))
+    const [row] = await db.select({ status: runPublications.status, userId: runPublications.userId, availableAt: runPublications.leaseExpiresAt }).from(runPublications).where(eq(runPublications.runId, runId))
+    const availableAt = row?.status === 'pending' ? row.availableAt?.getTime() : undefined
+    if (availableAt && availableAt > Date.now()) return { done: false, retryAt: availableAt }
     if (row?.status === 'published') {
       await resumePublicationEvidenceHandoff(row.userId, runId)
       if (await automaticPublicationPending(runId)) return { done: false }
@@ -482,7 +487,8 @@ export async function publishRunResult(runId: string, openPullRequest: OwnerPull
     if (visualEvidence && pullRequest.evidenceDigest !== visualEvidence.digest) throw new PublicationError('factory_public_evidence_required')
     const { autoMergeRetryAt, ...receipt } = pullRequest
     if (receipt.autoMergeRetryable && claim.attempts < MAX_ATTEMPTS) {
-      await db.update(runPublications).set({ status: 'pending', pullRequest: receipt, errorCode: receipt.autoMergeError, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
+      // A pending row has no lease token; its timestamp fences when it may next be claimed.
+      await db.update(runPublications).set({ status: 'pending', pullRequest: receipt, errorCode: receipt.autoMergeError, leaseToken: null, leaseExpiresAt: autoMergeRetryAt ? new Date(autoMergeRetryAt) : null, updatedAt: new Date() })
         .where(and(eq(runPublications.runId, runId), eq(runPublications.leaseToken, claim.leaseToken!)))
       return { done: false, ...(autoMergeRetryAt ? { retryAt: autoMergeRetryAt } : {}) }
     }
@@ -492,7 +498,7 @@ export async function publishRunResult(runId: string, openPullRequest: OwnerPull
   } catch (error) {
     if (!(error instanceof PublicationError)) throw error
     if (error.retryable && claim.attempts < MAX_ATTEMPTS) {
-      await db.update(runPublications).set({ status: 'pending', errorCode: error.code, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() }).where(and(eq(runPublications.runId, runId), eq(runPublications.leaseToken, claim.leaseToken!)))
+      await db.update(runPublications).set({ status: 'pending', errorCode: error.code, leaseToken: null, leaseExpiresAt: error.retryAt ? new Date(error.retryAt) : null, updatedAt: new Date() }).where(and(eq(runPublications.runId, runId), eq(runPublications.leaseToken, claim.leaseToken!)))
       return { done: false, ...(error.retryAt ? { retryAt: error.retryAt } : {}) }
     }
     return { done: await settlePublication(claim, { errorCode: error.code }) }
