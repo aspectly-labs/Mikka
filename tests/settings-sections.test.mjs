@@ -30,7 +30,7 @@ test('hrefs keep the workspace and use the routed paths for members and teams', 
   assert.equal(resolveSettingsSection('/settings', 'threads'), 'threads')
 })
 
-const UNBUILT = ['developer']
+const UNBUILT = []
 // 组织 shows only where a UI layer draws it (`organization: true`); the open-source UI has none.
 const LAYER_ONLY = ['organization']
 

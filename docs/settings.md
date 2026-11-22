@@ -1,5 +1,8 @@
 # Settings surface
 
+The [registered settings backend](settings-backend/registry.md) defines typed
+writes, workspace inheritance, reset and row-search metadata for #2956.
+
 Each section is a small heading over one card of rows, as in
 Comma's 「模型与 API」 (decision 2026-10-30). This is the open-source default
 settings surface; the hosted settings are affectUI screens used as shipped
@@ -67,6 +70,13 @@ slot (`page: 'threads'`, `workspaceId`) and reuses `useThreadTitleSettings` and 
 read/write actions. Preferences keeps its ordinary personal settings; General
 keeps workspace identity, transfer and deletion. Neither repeats the title
 settings. See the [Threads settings decision](design/decisions/2026-11-19-threads-settings.md).
+
+
+The [organization security contract](design/decisions/2026-11-20-1900-settings-organization-security.md)
+defines native two-factor enrollment and recovery, organization MFA/grace
+requirements, DNS-verified domain admission and invitations with an explicit
+role/team scope. Organization membership alone continues to grant no workspace
+access.
 
 ## Run environments
 

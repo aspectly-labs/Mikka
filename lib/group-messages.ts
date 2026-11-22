@@ -1,5 +1,6 @@
 import { withBasePath } from '@/lib/base-path'
 import { ListReadScopeError } from './live/list-read'
+import type { GroupParticipant } from './group-participants'
 
 // Client side of GET /api/conversations/{id}/messages (lib/group-conversations-store.ts).
 // The server requires a signed-in active workspace member who is still in the group;
@@ -17,9 +18,10 @@ export type GroupMessage = {
   replyToId: string | null
   createdAt: string
 }
-/** The first page also says which member is answering (`agentStatus`, null when none) and whether the last message found no taker. */
-/** `stopped`: the latest reply was stopped (停止) by a member. */
-export type GroupMessagePage = { readRevision?: number; messages: GroupMessage[]; nextBefore: string | null; agentStatus?: { status: string } | null; routingError?: { code: string } | null; stopped?: boolean; unchanged?: boolean; appended?: boolean; /** The group_chat key's revision, read before this newest page. */ revision?: number }
+/** An `agent_exchange` timeline marker: two members had a private exchange anchored at a group message's position. The bounded transcript is readable through the link. */
+export type GroupExchange = { type: 'agent_exchange'; linkId: string; anchorPosition: string; count: string; participants: GroupParticipant[] }
+/** `timeline` interleaves each page's messages with the exchange markers anchored on them. */
+export type GroupMessagePage = { readRevision?: number; messages: GroupMessage[]; timeline?: ({ type: 'message'; id: string; position: string } | GroupExchange)[]; nextBefore: string | null; agentStatus?: { status: string } | null; routingError?: { code: string } | null; stopped?: boolean; unchanged?: boolean; appended?: boolean; /** The group_chat key's revision, read before this newest page. */ revision?: number }
 export type GroupMessagesError = 'unauthorized' | 'not_found' | 'unavailable'
 
 export class GroupMessagesRequestError extends Error {
@@ -74,11 +76,20 @@ export async function stopGroupReply(id: string, fetcher: typeof fetch = fetch):
 export function mergeGroupPoll(previous: GroupMessagePage | null, next: GroupMessagePage): GroupMessagePage {
   if (!previous) return next
   // Nothing new since the shown page: it is current at this read's revision.
-  if (next.unchanged) return { ...previous, agentStatus: next.agentStatus ?? null, routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision }
+  // A fresh exchange may still arrive without a new message — carry unseen markers forward.
+  if (next.unchanged) {
+    const seenLinks = new Set((previous.timeline ?? []).map(item => item.type === 'agent_exchange' ? item.linkId : item.id))
+    const addedItems = (next.timeline ?? []).filter(item => item.type === 'agent_exchange' && !seenLinks.has(item.linkId))
+    const timeline = addedItems.length ? [...addedItems, ...(previous.timeline ?? [])] : previous.timeline
+    return { ...previous, agentStatus: next.agentStatus ?? null, routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision, timeline }
+  }
   if (next.appended) {
     const seen = new Set(previous.messages.map(message => message.id))
     const added = next.messages.filter(message => !seen.has(message.id))
-    return { ...previous, ...next, messages: [...added, ...previous.messages], nextBefore: previous.nextBefore, unchanged: undefined, appended: undefined }
+    const seenLinks = new Set((previous.timeline ?? []).map(item => item.type === 'agent_exchange' ? item.linkId : item.id))
+    const addedItems = (next.timeline ?? []).filter(item => !seenLinks.has(item.type === 'agent_exchange' ? item.linkId : item.id))
+    const timeline = next.timeline ? [...addedItems, ...(previous.timeline ?? [])] : previous.timeline
+    return { ...previous, ...next, messages: [...added, ...previous.messages], timeline, nextBefore: previous.nextBefore, unchanged: undefined, appended: undefined }
   }
   return next
 }
