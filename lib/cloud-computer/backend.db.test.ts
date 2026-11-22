@@ -46,9 +46,9 @@ test('real DB: additive migration, subagent owner isolation and separate thread 
     await seedFixtureWorkspace(pool, stranger.userId, 'team', stranger.workspaceId)
     await pool.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,'bob','Bob','bob@example.invalid','member','active')`, [alice.workspaceId])
     await pool.query(`CREATE TABLE "user"(id text PRIMARY KEY);INSERT INTO "user" VALUES('alice'),('bob');
-      CREATE TABLE agent_runs(id uuid PRIMARY KEY,"userId" text,"agentId" uuid,"deviceId" uuid,"botId" uuid,"agentDefinition" jsonb,"workspaceId" uuid,status text,report jsonb,"stopRequestedAt" timestamptz,"finishedAt" timestamptz,"startedAt" timestamptz,"leaseExpiresAt" timestamptz,"updatedAt" timestamptz);
+      CREATE TABLE agent_runs(id uuid PRIMARY KEY,"userId" text,"agentId" uuid,"deviceId" uuid,"botId" uuid,"agentDefinition" jsonb,"workspaceId" uuid,status text,"pauseReason" text,report jsonb,"stopRequestedAt" timestamptz,"finishedAt" timestamptz,"startedAt" timestamptz,"leaseExpiresAt" timestamptz,"updatedAt" timestamptz);
       CREATE TABLE agents(id uuid PRIMARY KEY,"userId" text NOT NULL,harness text NOT NULL);
-      CREATE TABLE devices(id uuid PRIMARY KEY,"ownerId" text,kind text,enabled boolean DEFAULT true,"removedAt" timestamptz);
+      CREATE TABLE devices(id uuid PRIMARY KEY,"ownerId" text,kind text,enabled boolean DEFAULT true,"removedAt" timestamptz,"maxConcurrentRuns" integer NOT NULL DEFAULT 3);
       CREATE TABLE device_tokens("boundDeviceId" uuid,"revokedAt" timestamptz);
       CREATE TABLE device_repos(id uuid PRIMARY KEY);
       CREATE TABLE suggestions(id uuid PRIMARY KEY,"botId" uuid);

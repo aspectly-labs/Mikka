@@ -376,6 +376,36 @@ it('starts the next offered run after an older queued claim is refused', async (
   expect(f.calls.filter(name => name === 'commands')).toHaveLength(1)
 })
 
+it('reserves the only offer while a queued claim has not reached the server', async () => {
+  const f = await machine(false)
+  const next = f.queueNext()
+  const offered = f.link.pendingRuns
+  const claim = f.link.claimRun
+  const pending = deferred()
+  const release = deferred()
+  cleanups.push(async () => { release.resolve() })
+  const attempts: string[] = []
+  f.link.pendingRuns = async (...args) => (await offered(...args)).slice(0, 1)
+  f.link.claimRun = async (...args) => {
+    attempts.push(args[1])
+    if (args[1] === f.runId) {
+      pending.resolve()
+      await release.promise
+      throw new Error('Fixture claim refused before leasing')
+    }
+    return claim(...args)
+  }
+  f.queue([f.runId])
+  f.repositories.resolve(); f.registration.resolve()
+  await pending.promise
+  await f.daemon.syncWithServer()
+  expect(attempts).toEqual([f.runId])
+  f.queue([])
+  release.resolve()
+  await waitFor(() => f.started.mock.calls.length === 1)
+  expect(f.started.mock.calls[0][0].runId).toBe(next)
+})
+
 it.each(['report-refused', 'credential-rotated', 'uninstall'] as const)('keeps the original initial barrier with claim settings (%s)', async refusal => {
   vi.spyOn(service, 'uninstallService').mockResolvedValue()
   const adapter = vi.spyOn(MockAdapter.prototype, 'start')
