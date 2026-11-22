@@ -1,29 +1,6 @@
 name: Coding workspace review data plane
 on:
-  pull_request:
-    paths:
-      - 'lib/coding-workspace/**'
-      - 'app/api/tasks/**/review/**'
-      - 'scripts/e2b/preview-gateway*'
-      - 'scripts/e2b/preview-firewall*'
-      - 'scripts/e2b/preview-frameworks.test.py'
-      - 'scripts/e2b/preview-network-acceptance.mjs'
-      - 'scripts/e2b/preview-ingress-*'
-      - 'scripts/e2b/workspace-ingress-*'
-      - 'scripts/e2b/workspace-terminal-*'
-      - 'scripts/e2b/workspace-candidates*'
-      - 'scripts/e2b/fixtures/preview-frameworks/**'
-      - 'scripts/e2b/preview_firewall.py'
-      - 'scripts/e2b/terminal-gateway*'
-      - 'scripts/e2b/viewer-gateway.py'
-      - 'scripts/e2b/subagent-gateway.py'
-      - 'scripts/e2b/local-api-relay.py'
-      - 'scripts/e2b/start-prebuilt.sh'
-      - 'scripts/e2b/build-template*'
-      - 'packages/daemon/scripts/official-e2b-instance-bootstrap.sh'
-      - 'packages/daemon/scripts/workspace-ingress*'
-      - 'packages/protocol/src/coding-terminal*'
-      - '.github/workflows/coding-workspace-review.yml'
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
