@@ -121,6 +121,23 @@ dbTest('manual skills support offline creation, body inspection, owner-only edit
   )
   assert.equal(sharedRows.rowCount, 1)
 
+  // Organization-linked workspace with a shared skill must not abort borrowed WS transactions (resourceId text vs text[])
+  const orgId = randomUUID()
+  await pool.query('INSERT INTO mikka_organizations (id, name, "createdBy") VALUES ($1, $2, $3)', [orgId, 'Skill Org', ownerId])
+  await pool.query(
+    `INSERT INTO mikka_organization_members ("organizationId", "userId", role, status, name, email)
+     VALUES ($1, $2, 'owner', 'active', 'Pod3 Tester', $3)`,
+    [orgId, ownerId, `${ownerId}@acme.test`],
+  )
+  await pool.query('INSERT INTO mikka_organization_entitlements ("organizationId") VALUES ($1) ON CONFLICT DO NOTHING', [orgId])
+  await pool.query('INSERT INTO mikka_organization_workspaces ("workspaceId", "organizationId") VALUES ($1, $2)', [workspaceId, orgId])
+  const { readAgentProfileManagement } = await import('@/lib/factory/agent-profile')
+  const { withTaskWorkspace } = await import('@/lib/task-workspace')
+  const mgmt = await withTaskWorkspace(ownerId, workspaceId, () =>
+    readAgentProfileManagement(pool, { ownerId, workspaceId }),
+  )
+  assert.equal(mgmt.catalog.skills.some(item => item.id === `workspace:${created.id}`), true)
+
   // Edit manual skill name & instructions
   const editRes = await skillsRoute.PATCH(
     jsonReq('/api/skills', 'PATCH', {
