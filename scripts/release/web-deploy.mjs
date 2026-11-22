@@ -1,11 +1,10 @@
 // Release evidence for the Web Cloudflare serves: GitHub reads, the current-main fence,
 // Desktop source ancestry and the exact-source wait used by acceptance drivers.
 import { setTimeout as sleep } from 'node:timers/promises'
-import { officialMikkaRepository, publicRepositoryId } from '../cloudflare-source.mjs'
+import { publicRepositoryId } from '../cloudflare-source.mjs'
 
 const SHA = /^[a-f0-9]{40}$/
 export const PRODUCTION_VERSION_URL = 'https://app.aspectlylabs.com/mikka/api/version'
-const REPOSITORY = 'alexj11324/Mikka'
 
 export async function githubRead(path, { token, fetchImpl, timeoutMs = 20_000 }) {
   if (!token) throw Error('webDeploy:githubTokenRequired')
