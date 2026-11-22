@@ -12,7 +12,7 @@ export type SettingsSectionId =
   | 'environments' | 'connections' | 'logins' | 'developer' | 'computers'
   | 'instructions' | 'threads'
   | 'shortcuts' | 'git' | 'review-repositories' | 'review-config' | 'activity'
-  | 'general' | 'issue-states' | 'members' | 'teams' | 'permissions' | 'secrets'
+  | 'general' | 'issue-states' | 'team-skills' | 'members' | 'teams' | 'permissions' | 'secrets'
   | 'audit' | 'organization' | 'usage' | 'billing' | 'cloud'
   | 'referrals' | 'experiments' | 'cloud-credentials'
 
@@ -45,6 +45,7 @@ export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, Setting
   general: 'available',
   organization: 'available',
   'issue-states': 'available',
+  'team-skills': 'available',
   members: 'available',
   teams: 'available',
   billing: 'available',
@@ -168,6 +169,7 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'general', group: 'workspace', title: 'Workspace general' },
   { id: 'organization', group: 'workspace', title: 'Organization' },
   { id: 'issue-states', group: 'workspace', title: 'Issue states' },
+  { id: 'team-skills', group: 'workspace', title: 'Team skills' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
   { id: 'billing', group: 'workspace', title: 'Billing' },

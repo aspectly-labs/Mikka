@@ -26,7 +26,7 @@ const icons = {
   preferences: Settings, appearance: SlidersHorizontal, account: UserRound, security: Shield, notifications: Bell,
   models: Gauge, environments: Folder, connections: Blocks, logins: KeyRound, developer: SquareTerminal, computers: Monitor,
   instructions: Brain, threads: MessageSquareText, shortcuts: Keyboard, git: GitPullRequest, 'review-repositories': Folder, 'review-config': CircleCheck, activity: History,
-  general: Building2, 'issue-states': CircleDashed, members: Users, teams: SquareUserRound, permissions: ShieldCheck, secrets: HardDrive,
+  general: Building2, 'issue-states': CircleDashed, 'team-skills': Brain, members: Users, teams: SquareUserRound, permissions: ShieldCheck, secrets: HardDrive,
   audit: FileText, organization: Landmark, usage: ChartColumn, billing: CreditCard, cloud: Cloud,
   referrals: Star, experiments: Lightbulb, 'cloud-credentials': Cloud,
 } satisfies Record<SettingsSectionId, IconGlyph>

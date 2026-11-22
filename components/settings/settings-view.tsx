@@ -1,5 +1,6 @@
 'use client'
 
+import { TeamSkillsSettings } from './team-skills-settings'
 import { Component, type ReactNode, useEffect, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
@@ -167,6 +168,7 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'instructions': return <MemorySettings />
     case 'threads': return <ThreadSettings workspaceId={workspaceId} personal={personal} admin={admin} />
     case 'notifications': return <NotificationSettings />
+    case 'team-skills': return <TeamSkillsSettings admin={admin} workspaceId={workspaceId} />
     case 'connections': return <PluginsView section="connections" rootLabel={t('sections.connections.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'models': return <>{workspaceId && !preview ? <ApiAndSubscriptions key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} team={team} cloudUserKey={community ? userKey : undefined} /> : waiting}</>
     case 'developer': return workspaceId && !preview ? <AccessTokensSettings key={workspaceId} workspaceId={workspaceId} /> : waiting
