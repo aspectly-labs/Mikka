@@ -1,23 +1,27 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, mock, test } from 'node:test'
-import { act, createContext, type ReactNode, type Ref } from 'react'
+import { act, createContext, type ReactNode } from 'react'
 import type { Root } from 'react-dom/client'
 import { Window } from 'happy-dom'
 import { emptySessionView } from 'eve/events'
 import { ViewStateProvider } from '@/lib/hooks/view-state'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { DEFAULT_UI, publishUiPreferences } from '@/lib/ui-preferences'
 
 let reply: unknown = { queued: true }
 let calls = 0
 let currentBuild = true
 let buildCheck = async () => currentBuild
 let submissions = 0, removedNotes = 0, scrollRequests = 0
+const scrollTargets: { id: string; align: string }[] = []
 const submitted: { text: string; context: { retryOf?: number } | undefined }[] = []
+let submittedPolicy: 'queue' | 'steer' | undefined
+let submittedId: string | undefined
 let chatItems: import('@/lib/coordinator/context').ChatItem[] = []
 let chatError: string | null = null
 let chatEnabled = false
-let streamStatus: 'idle' | 'resuming' = 'idle'
+let streamStatus: 'idle' | 'busy' | 'resuming' = 'idle'
 let streamError: Error | false = false
 let welcomeReply: unknown = { queued: true }
 let welcomeCalls = 0
@@ -33,7 +37,7 @@ let serverVersion: { build: string } = { build: 'fixture-current' }
 const notices: unknown[] = []
 const notes = [{ n: 1, kind: 'region' as const, url: 'https://example.com', label: 'fixture', note: 'keep this note', rect: { x: 0, y: 0, width: 1, height: 1, viewportWidth: 1, viewportHeight: 1 } }]
 let ThreadTranscript: typeof import('../slots/thread-transcript')['ThreadTranscript']
-let composer: { sending?: boolean; editableWhileSending?: boolean; value: string; onChange: (value: string) => void; onSubmit: () => void }
+let composer: import('../slots/chat-composer-contract').ChatComposerProps
 const plain = ({ children }: { children?: ReactNode }) => <div>{children}</div>
 const nothing = () => null
 const artifactChat = { activeArtifactId: 'fixture-artifact', quote: null, clearQuote: nothing, openArtifact: nothing }
@@ -86,16 +90,22 @@ mock.module('@/lib/client-runtime/navigation', { namedExports: { usePathname: ()
 mock.module(new URL('../../i18n/navigation.ts', import.meta.url).href, { namedExports: { Link: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>, useRouter: () => ({ push: nothing }), usePathname: () => pathname } })
 mock.module('sonner', { namedExports: { toast: Object.assign((...args: unknown[]) => { notices.push(args) }, { error: nothing }) } })
 mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
-mock.module(new URL('./use-coordinator-submit.ts', import.meta.url).href, { namedExports: { useCoordinatorSubmit: () => ({ submit: async (text: string, context?: { retryOf?: number }) => { submissions++; submitted.push({ text, context }); return { kind: 'accepted' } }, failureMessage: () => 'fixture failed' }) } })
+mock.module(new URL('./use-coordinator-submit.ts', import.meta.url).href, { namedExports: { useCoordinatorSubmit: () => ({ submit: async (text: string, context?: { retryOf?: number }, id?: string, policy?: 'queue' | 'steer') => { submissions++; submitted.push({ text, context }); submittedId = id; submittedPolicy = policy; return { kind: 'accepted' } }, failureMessage: () => 'fixture failed' }) } })
 mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: [], error: streamError, reconnect: nothing, status: streamStatus, view: emptySessionView(), session: { sessionId: 'wrun_fixture' } }) } })
-mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null, ChatComposer: (props: { value: string; onChange: (value: string) => void; onSubmit: () => void; ref: Ref<HTMLTextAreaElement>; quote?: ReactNode }) => {
+mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null, ChatComposer: (props: import('../slots/chat-composer-contract').ChatComposerProps) => {
   composer = props
   return <div>{props.quote}<Textarea ref={props.ref} value={props.value} onChange={event => props.onChange(event.target.value)} /><Button onClick={props.onSubmit}>fixture-send</Button></div>
 } } })
 mock.module(new URL('../ui/message-scroller.tsx', import.meta.url).href, { namedExports: Object.fromEntries([
   ...['MessageScroller', 'MessageScrollerContent', 'MessageScrollerItem', 'MessageScrollerProvider', 'MessageScrollerViewport'].map(name => [name, plain]),
   ['MessageScrollerItem', ({ children, 'data-testid': testId }: { children?: ReactNode; 'data-testid'?: string }) => <div data-testid={testId}>{children}</div>],
-  ['MessageScrollerButton', nothing], ['useMessageScroller', () => ({ scrollToEnd: () => { scrollRequests++ } })],
+  ['MessageScrollerButton', nothing], ['useMessageScroller', () => ({
+    scrollToEnd: () => { scrollRequests++ },
+    scrollToMessage: (id: string, options: { align: string }) => {
+      scrollTargets.push({ id, align: options.align })
+      return true
+    },
+  })],
 ]) })
 mock.module(new URL('../workspace/agent-interaction.tsx', import.meta.url).href, { namedExports: { AgentInteractionContext: createContext({}) } })
 mock.module(new URL('../workspace/agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: plain } })
@@ -294,6 +304,7 @@ test('background chat catch-up preserves the reading position and an in-progress
 })
 
 test('an accepted send in this composer scrolls once; unrelated reads do not scroll again', async () => {
+  publishUiPreferences({ ...DEFAULT_UI, scrollNewToTop: false }, null)
   await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
   await act(async () => composer.onChange('a deliberate local send'))
   await act(async () => composer.onSubmit())
@@ -301,6 +312,37 @@ test('an accepted send in this composer scrolls once; unrelated reads do not scr
   assert.equal(scrollRequests, 1)
   await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
   assert.equal(scrollRequests, 1)
+  publishUiPreferences(DEFAULT_UI, null)
+})
+
+test('scroll-to-top targets the locally accepted message beside the artifact', async () => {
+  scrollTargets.length = 0
+  const renderChat = () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />)
+  await act(async () => renderChat())
+  await act(async () => composer.onChange('a deliberate local send'))
+  await act(async () => composer.onSubmit())
+  assert.equal(submissions, 1)
+  assert.equal(scrollRequests, 0)
+  assert.ok(submittedId)
+  assert.deepEqual(scrollTargets, [{ id: submittedId, align: 'start' }])
+  await act(async () => renderChat())
+  assert.equal(scrollTargets.length, 1)
+})
+
+for (const embedded of [undefined, artifactChat]) test(`the ${embedded ? 'artifact' : 'hosted thread'} composer forwards attachments and run-key delivery`, async () => {
+  streamStatus = 'busy'
+  chatData = { botId: 'fixture-bot', items: [], enabled: true, working: true, artifacts: {} }
+  await act(async () => root.render(<CoordinatorChat embedded={embedded} onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.ok(composer.leadingControls)
+  assert.deepEqual(composer.attachmentScope, { kind: 'bot', id: 'fixture-bot' })
+  if (embedded) assert.ok(composer.leftControls)
+  assert.equal(composer.running, true)
+  for (const policy of ['queue', 'steer'] as const) {
+    await act(async () => composer.onChange(policy))
+    await act(async () => composer.onRunKey!(policy))
+    assert.equal(submittedPolicy, policy)
+    assert.equal(submitted.at(-1)?.text, policy)
+  }
 })
 
 test('existing window drafts migrate once and survive a chat remount in the scoped store', async () => {

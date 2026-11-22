@@ -227,7 +227,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const resuming = stream.status === 'resuming'
   useEffect(() => { reconnectStream.current = stream.reconnect }, [stream.reconnect])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
-  const [localSend, setLocalSend] = useState({ key: stateKey, count: 0 })
+  const [localSend, setLocalSend] = useState<{ key: string; id: string } | null>(null)
   const [draft, setDraft] = useViewState(`${stateKey}:draft`, '')
   const updateDraft = setDraft
   // Carry existing window drafts into the new account/workspace-scoped store once.
@@ -532,7 +532,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       delivery.finish(command.id, {})
       if (command.context.notes) browser?.removeMany(command.context.notes.map(note => note.n))
       void mutate().catch(() => undefined)
-      setLocalSend(current => ({ key: stateKey, count: current.key === stateKey ? current.count + 1 : 1 }))
+      if (embedded) setLocalSend({ key: stateKey, id: command.id })
       return 'sent'
     } catch { return fail(t('sendUncertain')) } finally {
       waitingAdmissions.current.delete(command.id)
@@ -701,7 +701,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const transcriptRows: ThreadScrolledRow[] = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined, key: item.pending ? `pending-${item.position}` : item.streamId ?? item.position })),
               // After 停止 the reply in flight no longer draws as streaming (no cursor, no running activity) while it is stored.
               ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))].map(({ item, live, key }): ThreadScrolledRow => ({
-    id: String(key), messageId: live ? live.id : String(item.position),
+    id: String(key), messageId: live ? live.id : item.from === 'person' && item.submissionId ? item.submissionId : String(item.position),
     before: !live && dividerAt === item.position && <UnreadDivider />,
     arriving: live ? arriving(`stream-${live.id}`) : entering(item),
     attributes: live ? { 'data-coordinator-stream-id': live.id, 'data-streaming': live.committedThrough === undefined } : item.from === 'event' ? {} : { [MESSAGE_POSITION_ATTR]: item.position },
@@ -762,7 +762,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     <ActivityExpansionContext value={expansion}>
       <ThreadScreen host="embedded"
         transcript={{ kind: 'embedded', rows: transcriptRows, stateKey, startAtEnd, compact,
-          sentCount: data ? localSend.key === stateKey ? localSend.count : 0 : null,
+          acceptedMessage: localSend?.key === stateKey && (received.has(localSend.id) || localMessages.some(row => row.id === localSend.id)) ? localSend : null,
           scroll: { ref: transcript, label: bot ? t('conversationWith', { name: bot.name }) : t('conversation'),
             onScroll: event => { const node = event.currentTarget; const next = node.scrollHeight - node.scrollTop - node.clientHeight < 56; if (next !== following) setFollowing(next) } },
           before: <>{data?.historyBefore && <Button variant="ghost" size="sm" disabled={loadingHistory} onClick={() => void loadHistory()}>{tCommon('loadMore')}</Button>}

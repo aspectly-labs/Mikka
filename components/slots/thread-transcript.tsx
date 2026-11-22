@@ -4,6 +4,7 @@ import { Fragment, useEffect, useRef } from 'react'
 import { ChatMessage } from '@ui-slot/chat-message'
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport, useMessageScroller } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
+import { currentUiPreferences } from '@/lib/ui-preferences'
 import type { ThreadTranscriptMessage, ThreadTranscriptScreenProps } from './thread-contract'
 
 const ENTER = 'animate-in fade-in-0 duration-(--motion-base) motion-reduce:animate-none'
@@ -13,15 +14,16 @@ function TranscriptMessage({ entry }: { entry: ThreadTranscriptMessage }) {
   return entry.message ? <ChatMessage {...entry.message} /> : entry.content
 }
 
-/** Only an accepted send follows the end; a background read preserves the person's place. */
-function FollowSentMessages({ count }: { count: number | null }) {
-  const { scrollToEnd } = useMessageScroller()
-  const seen = useRef(count)
+function ScrollAcceptedMessage({ message }: { message: { id: string } | null }) {
+  const { scrollToEnd, scrollToMessage } = useMessageScroller()
+  const seen = useRef(message)
   useEffect(() => {
-    if (count === null) return
-    if (seen.current !== null && count > seen.current) scrollToEnd()
-    seen.current = count
-  }, [count, scrollToEnd])
+    if (!message || seen.current === message) return
+    if (currentUiPreferences().scrollNewToTop) {
+      if (!scrollToMessage(message.id, { align: 'start' })) return
+    } else scrollToEnd()
+    seen.current = message
+  }, [message, scrollToEnd, scrollToMessage])
   return null
 }
 
@@ -60,7 +62,7 @@ export function ThreadTranscript({ host, transcript, composer, beforeComposer }:
 
   return <>
     <MessageScrollerProvider key={transcript.stateKey} defaultScrollPosition={transcript.startAtEnd ? 'end' : 'start'} autoScroll>
-      <FollowSentMessages count={transcript.sentCount} />
+      <ScrollAcceptedMessage message={transcript.acceptedMessage} />
       <MessageScroller data-thread-host={host} className="min-h-0 flex-1">
         <MessageScrollerViewport ref={transcript.scroll.ref} onScroll={transcript.scroll.onScroll} aria-label={transcript.scroll.label} className={cn(!transcript.compact && HEADER_FADE)}>
           <MessageScrollerContent className={cn('flex w-full min-w-0 max-w-full flex-col gap-5 pb-6', transcript.compact ? 'px-3 pt-4' : 'px-4 pt-24 sm:px-6')}>

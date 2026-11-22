@@ -209,7 +209,7 @@ export type ThreadTranscriptScreenProps = {
       scroll: TranscriptScroll
       stateKey: string
       startAtEnd: boolean
-      sentCount: number | null
+      acceptedMessage: { id: string } | null
       compact: boolean
       rows: ThreadScrolledRow[]
       before?: ReactNode
