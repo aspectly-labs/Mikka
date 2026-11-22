@@ -9162,5 +9162,21 @@
     "line": "Waiting on you to merge <pr></pr>",
     "dismiss": "Dismiss",
     "dismissFailed": "Dismiss failed"
+  },
+  "Subagents": {
+    "title": "Sub-agents",
+    "status": {
+      "working": "Working",
+      "needs-you": "Needs you",
+      "done": "Done",
+      "failed": "Failed",
+      "queued": "Queued"
+    },
+    "count": "{count, plural, one {# sub-agent} other {# sub-agents}}",
+    "more": "{count, plural, one {# more sub-agent} other {# more sub-agents}}: {summary}",
+    "expand": "Show",
+    "collapse": "Hide",
+    "card": "{name}, {status}: {brief}",
+    "cardNoBrief": "{name}, {status}"
   }
 }

@@ -307,6 +307,7 @@ const functions = {
   'task-runs.readConversationOrganization': actions26.readConversationOrganization,
   'task-runs.readThreadCost': actions26.readThreadCost,
   'task-runs.readThreadSummary': actions26.readThreadSummary,
+  'task-runs.readSubagentRuns': actions26.readSubagentRuns,
   'task-runs.setConversationOrganization': actions26.setConversationOrganization,
   'task-runs.renameConversation': actions26.renameConversation,
   'task-runs.regenerateConversationTitle': actions26.regenerateConversationTitle,

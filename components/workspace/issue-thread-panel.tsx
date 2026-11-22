@@ -46,11 +46,12 @@ import { MergeWaitingLine, useMergeWaitings } from '@/components/chat/merge-wait
 import { useConversationPanels } from '@/components/coordinator/conversation-panels-context'
 import type { ThreadEntry, ThreadEntryPart, ThreadHost } from '@/components/slots/thread-contract'
 import { atTheirTime } from '@/lib/thread-child-entries'
+import { subagentRunSource, useSubagentRuns } from '@/hooks/use-subagent-runs'
 import { HarnessMark, harnessName, ProviderMark } from '@/components/labels/entity-labels'
 import { PersonAvatar } from '@/components/person-avatar'
 import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { MikkaMark } from '@/components/brand/mikka-mark'
-import { navigate, openTask } from './workspace-navigation'
+import { navigate, openTask, openThread } from './workspace-navigation'
 import { ThreadHeader } from './thread-header'
 import { threadCostBreakdownKey, threadCostKey } from './thread-cost-button'
 import { ThreadStatus } from './thread-status-icon'
@@ -192,6 +193,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const costKey = unstable_serialize(threadCostKey(runId))
   // The cost popover's breakdown, while it is open (SWR rereads only a mounted key).
   const breakdownKey = unstable_serialize(threadCostBreakdownKey(runId))
+  // The sub-agents this run dispatched (#2939), drawn under its reply; a child's change wakes this run's key.
+  const subagents = useSubagentRuns(readRejected ? null : runId)
   // A push this thread already read is skipped; only the opened run's keys carry a revision.
   useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'thread' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'thread', reference.id) } })), liveKeys, null, { minIntervalMs: 2000 })
   useLiveKeys(liveRuns.map(reference => ({ ...reference, kind: 'run' as const, revisions: { [liveKeys[0]]: heldRevision(data, 'run', reference.id) } })), [...liveKeys, costKey, breakdownKey], null)
@@ -588,6 +591,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       {data.thread.feedbackEligible && <ThreadFeedback runId={runId} />}
       {readEnd}
     </>
+    if (subagents.length) bot('subagents', subagents.map(child => ({ kind: 'task' as const, run: subagentRunSource(child), onOpen: () => onOpenThread ? onOpenThread(child.id) : openThread(child.id, child.issueId) })))
     if (readEnd || data.thread.quota?.switched.length || modelFallback.length || !active || extraArtifactCount > 0 || data.thread.feedbackEligible) bot('tail', [{ kind: 'text', text: '', node: tail }])
     if (!active) for (const waiting of mergeWaitings) entries.push({ id: `${runId}:merge-waiting:${waiting.issueId}`, role: 'bot', event: true, at: Date.now(),
       parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={data.live?.issueWorkspaceId ?? null} /> }] })
@@ -613,7 +617,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }
   if (!data && collect) entries.push({ id: `${runId}:loading`, role: 'bot', event: true, at: 0, parts: [{ kind: 'text', text: '', node: waiting }] })
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.
-  useEffect(() => { if (collect) collect(runId, entries) }, [collect, runId, data, error, active, canRetry, sending, view?.status, retryLabel, delivery.rows, citations.settled, olderState]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (collect) collect(runId, entries) }, [collect, runId, data, error, active, canRetry, sending, view?.status, retryLabel, delivery.rows, citations.settled, olderState, subagents]) // eslint-disable-line react-hooks/exhaustive-deps
   if (collect) return null
   async function updateQueue(messageId: string, action: 'cancel' | 'sendNow') {
     try {

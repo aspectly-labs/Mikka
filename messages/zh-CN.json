@@ -9162,5 +9162,21 @@
     "line": "等你合并 <pr></pr>",
     "dismiss": "忽略",
     "dismissFailed": "忽略失败"
+  },
+  "Subagents": {
+    "title": "子 Agent",
+    "status": {
+      "working": "运行中",
+      "needs-you": "等你",
+      "done": "完成",
+      "failed": "失败",
+      "queued": "排队"
+    },
+    "count": "{count} 个",
+    "more": "还有 {count} 个子 Agent：{summary}",
+    "expand": "展开",
+    "collapse": "收起",
+    "card": "{name}，{status}：{brief}",
+    "cardNoBrief": "{name}，{status}"
   }
 }

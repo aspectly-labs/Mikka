@@ -383,6 +383,7 @@ export const desktopActionSchemas = {
   'task-runs.readConversationOrganization': tuple(conversationTargetInput),
   'task-runs.readThreadCost': z.union([tuple(uuid), tuple(uuid, z.enum(THREAD_COST_GROUPINGS))]),
   'task-runs.readThreadSummary': tuple(uuid),
+  'task-runs.readSubagentRuns': tuple(uuid),
   'task-runs.setConversationOrganization': tuple(conversationTargetInput, object({ field: z.enum(['archived', 'pinned']), value: bool })),
   'task-runs.renameConversation': tuple(conversationTargetInput, text(400)),
   'task-runs.regenerateConversationTitle': tuple(conversationTargetInput),
