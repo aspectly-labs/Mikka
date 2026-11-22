@@ -154,6 +154,7 @@ async function continuationDefinition(run: Run, prompt: string, key: RunApiKey |
     if (creditsModel) {
       definition.model = creditsModel
       definition.cliModelSelection = 'explicit'
+      definition.credits = { model: creditsModel }
       delete definition.subscription
       delete (definition as Record<string, unknown>).apiKey
       definition.definitionDigest = workerDefinitionDigest(definition)
@@ -239,9 +240,9 @@ export async function queueCloudQuotaContinuation(hint: Run, cloud: CloudBinding
           // keeps the host's automatic recovery as its origin, never 'web'.
           ...resolveRunOrigin({ sourceRun: run, defaultOrigin: 'automation' }),
           allowLocalRecovery: run.agentDefinition?.allowLocalRecovery, sourceEventId: run.agentDefinition?.allowLocalRecovery ? request?.sourceEventId : undefined,
-          executionNote: quotaContinuationNote(), withoutBot: run.botId === null, idempotencyKey: `quota:${run.id}:${key ? 'api_key' : 'original'}`, threadRunId: run.id,
+          executionNote: quotaContinuationNote(), withoutBot: run.botId === null, idempotencyKey: `quota:${run.id}:${key ? 'api_key' : creditsModel ? 'credits' : 'original'}`, threadRunId: run.id,
           // Preserve the selected model and credential; tenant admission grants neither.
-          ...(key ? { apiKey: key, model: key.model } : { ...threadRunModel(run.agentDefinition), model: run.agentDefinition?.model ?? '' }) }, client)
+          ...(key ? { apiKey: key, model: key.model } : creditsModel ? { credits: { model: creditsModel }, model: creditsModel } : { ...threadRunModel(run.agentDefinition), model: run.agentDefinition?.model ?? '' }) }, client)
         const [queued] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, run.userId), eq(agentRuns.workspaceId, workspaceId))).limit(1)
         if (!queued) throw new ActionFailureError('runNotFound')
         await db.update(agentRuns).set({ retryOf: run.id, attempt: run.attempt, kind: run.kind, baseBranch: run.baseBranch,
@@ -283,10 +284,9 @@ export async function settleQuotaExhausted(tx: Tx, run: Run, plan: QuotaPlan, re
     await recordCoordinatorEvent(tx, runCredentialSwitchedEvent(run, plan.from, plan.key, retryRunId, resetsAt))
     return { cloud: false, deviceId: run.deviceId }
   }
-  const paused = await tx.select({ id: agentRuns.id }).from(agentRuns)
-    .where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.status, 'paused'), eq(agentRuns.pauseReason, 'quota_exhausted')))
+  const pausedThreadIds = await quotaPausedThreadIds(tx, run.userId)
   const event = runQuotaPausedEvent(run, plan.from, resetsAt, plan.why)
-  await recordCoordinatorEvent(tx, { ...event, payload: { ...event.payload, pausedThreadIds: paused.map(row => String(row.id)) } })
+  await recordCoordinatorEvent(tx, { ...event, payload: { ...event.payload, pausedThreadIds } })
   return { cloud: false }
 }
 
@@ -319,7 +319,8 @@ export async function continueCloudQuotaRun(run: Run, plan: QuotaPlan, resetsAt:
               const event = runBlockedEvent(locked.run, `Quota continuation requires unchanged, currently authorized project resources (${error.code}). No continuation was created; review the project configuration before retrying.`)
               await recordCoordinatorEvent(tx, { ...event, dedupeKey: `quota_resources_blocked:${run.id}`,
                 payload: { ...event.payload, reasonCode: error.code, resetsAt } })
-            } else await recordCoordinatorEvent(tx, runQuotaPausedEvent(locked.run, current.from, resetsAt, 'noApiKey'))
+            } else await recordCoordinatorEvent(tx, { ...runQuotaPausedEvent(locked.run, current.from, resetsAt, 'noApiKey'),
+              payload: { ...runQuotaPausedEvent(locked.run, current.from, resetsAt, 'noApiKey').payload, pausedThreadIds: await quotaPausedThreadIds(tx, run.userId) } })
           }))
         } finally { client.release() }
       }
@@ -420,9 +421,23 @@ export function resumeQuotaPausedRunOnCredits(userId: string, runId: string, mod
 }
 
 /** #2938 (5): every quota-paused run the owner has — the bulk switch's candidates. */
+/** Chain-root ids of the person's quota-paused runs: the ids the paused cards use (#2938 (4)). */
+async function quotaPausedThreadIds(query: Tx, userId: string): Promise<string[]> {
+  const { rows } = await query.execute(sql`
+    SELECT DISTINCT root.id::text AS id FROM agent_runs p
+    JOIN LATERAL (
+      WITH RECURSIVE up AS (
+        SELECT id,"retryOf","continuesRunId" FROM agent_runs WHERE id=p.id
+        UNION ALL
+        SELECT r.id,r."retryOf",r."continuesRunId" FROM agent_runs r JOIN up ON up."retryOf"=r.id OR up."continuesRunId"=r.id)
+      SELECT id FROM up WHERE "retryOf" IS NULL AND "continuesRunId" IS NULL LIMIT 1) root ON true
+    WHERE p."userId"=${userId} AND p.status='paused' AND p."pauseReason"='quota_exhausted'`)
+  return rows.map(row => String((row as { id: string }).id))
+}
+
 export async function pausedQuotaRuns(userId: string): Promise<string[]> {
   return (await pool.query<{ id: string }>(
-    `SELECT id::text AS id FROM agent_runs WHERE "userId"=$1 AND status='paused' AND "pauseReason"='quota_exhausted' AND "deletedAt" IS NULL ORDER BY "createdAt"`,
+    `SELECT id::text AS id FROM agent_runs WHERE "userId"=$1 AND status='paused' AND "pauseReason"='quota_exhausted' ORDER BY "createdAt"`,
     [userId])).rows.map(row => row.id)
 }
 

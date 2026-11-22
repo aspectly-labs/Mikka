@@ -139,7 +139,9 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     const binding = await (await import('./native-run-binding')).nativeRunBinding(client, actor.userId, input.agentId, target.harness, actor.workspaceId, input.subscriptionBindingId)
     if (input.subscriptionBindingId && (!binding || model !== binding.modelId)) throw new ComputerError(409, 'Bot subscription unavailable')
     const runBotId = input.withoutBot ? null : input.botId
-    const { subscription, apiKey, credits } = input.apiKey ? { subscription: null, apiKey: input.apiKey, credits: undefined } : await runCredentialSource(client, { ownerId: actor.userId, botId: runBotId, harness: target.harness, model, keyId: input.apiKeyId,
+    const { subscription, apiKey, credits } = input.apiKey ? { subscription: null, apiKey: input.apiKey, credits: undefined }
+      : input.credits ? { subscription: null, apiKey: undefined, credits: input.credits }
+      : await runCredentialSource(client, { ownerId: actor.userId, botId: runBotId, harness: target.harness, model, keyId: input.apiKeyId,
       botWorkspaceId: runBotId ? actor.workspaceId : null, choiceWorkspaceId: actor.workspaceId, subscription: binding })
     // A key selected before runtime preparation can be withdrawn during wake.
     if (input.apiKeyId && apiKey?.keyId !== input.apiKeyId) throw new ComputerError(409, 'Bot subscription unavailable')

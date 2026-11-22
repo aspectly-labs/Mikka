@@ -81,7 +81,9 @@ export async function botModelMenu(
     subscriptionsRead, keysRead, pointsRead, enabledRead, preferenceRead, catalogueRead, ownerNamesRead, choiceRead, pricingRead,
   ]);
   const priceFor = (modelId: string) => {
-    const price = pricing.get(modelId);
+    // Catalogue keys are gateway-shaped (`vendor/model`); a bare id matches its vendor entry.
+    const price = pricing.get(modelId)
+      ?? (modelId.includes('/') ? undefined : [...pricing.entries()].find(([id]) => id.endsWith(`/${modelId}`))?.[1]);
     return price ? { price: { input: price.input, output: price.output } } : {};
   };
   // Claude first, then ChatGPT/Codex, as the resolver orders them (orchestration §2).

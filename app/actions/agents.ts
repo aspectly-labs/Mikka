@@ -768,7 +768,8 @@ export async function getThreadReplyVersions(issueId:string|null,runId:string) {
 
 export async function changeQueuedThreadReply(input: { issueId: string | null; runId: string; messageId: string; action: 'cancel' | 'sendNow' | 'edit'; text?: string }) {
   return runAction(async () => {
-    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow'].includes(input.action)) throw new ActionFailureError('validationGeneric')
+    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow','edit'].includes(input.action)
+        || (input.action === 'edit' && !z.string().min(1).max(10_000).safeParse(input.text).success)) throw new ActionFailureError('validationGeneric')
     const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
     const requestHeaders = await headers()
     if (!desktopHumanSessionId() && (requestHeaders.has('authorization') || !requestHeaders.get('cookie'))) throw new ActionFailureError('authRequired')
