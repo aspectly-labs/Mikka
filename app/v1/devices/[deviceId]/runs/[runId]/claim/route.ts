@@ -64,7 +64,7 @@ import { personalMailboxEnabled } from '@/lib/personal-mailbox-config'
 import { remoteRepositoryRef, taskSecretInjection, taskSecretSnapshot, environmentSecretInjection, environmentSecretSnapshot, type TaskSecretInjection } from '@/lib/secrets/runtime'
 import { issueTaskSecretAccess } from '@/lib/secrets/task-access'
 import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-secrets'
-import { executionMembersActive } from '@/lib/execution-identity'
+import { executionMembersActive, ExecutionMcpAuthorityError } from '@/lib/execution-identity'
 import { cloudStartupPhases, cloudStartupRunAttributes, cloudStartupSpan } from '@/lib/computer/startup-tracing'
 import { cloudStartupDiagnosticEnv } from '@/lib/computer/startup-diagnostics'
 import { withRunProjectExecution } from '@/lib/project-resources/run-lease'
@@ -529,9 +529,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     await persistRunCompletion(caller.userId, runId, { stopReason: 'error', report: { summary: 'Frozen execution policy no longer fits the current owner policy.', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
     return NextResponse.json({ error: 'Frozen execution policy is no longer permitted.' }, { status: 409 })
   }
-  const failPreparingClaim = async (failure: CodedError, message: string) => {
+  const failPreparingClaim = async (failure: CodedError, message: string, diagnostic = failure) => {
     const now = new Date()
-    const failed = await db.update(agentRuns).set({ status: 'failed', stopReason: 'blocked', failureDetails: serverRunFailure(runId, now, failure), error: message, finishedAt: now, updatedAt: now })
+    const failed = await db.update(agentRuns).set({ status: 'failed', stopReason: 'blocked', failureDetails: serverRunFailure(runId, now, diagnostic), error: message, finishedAt: now, updatedAt: now })
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, caller.userId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'preparing'), eq(agentRuns.leaseExpiresAt, new Date(leaseExpiresAt)), isNull(agentRuns.stopRequestedAt))).returning({ id: agentRuns.id })
     if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId); await afterRunEnded(caller.userId, runId) }
     return NextResponse.json({ error: message, code: failure.code, ...(failure.detail ? { detail: failure.detail } : {}) }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
@@ -655,8 +655,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       throw error
     }
   }).catch((error: unknown) => {
-    if (error instanceof PluginError && error.code === 'mcpUnavailable') {
-      return failPreparingClaim(new CodedError('mcpUnavailable', { cause: error }), 'MCP configuration unavailable.')
+    if (error instanceof ExecutionMcpAuthorityError || error instanceof PluginError && error.code === 'mcpUnavailable') {
+      const failure = new CodedError('mcpUnavailable', { cause: error })
+      logCodedError(failure, { runId })
+      return failPreparingClaim(failure, 'MCP configuration unavailable.', new CodedError('run_mcp_unavailable'))
     }
     throw error
   })

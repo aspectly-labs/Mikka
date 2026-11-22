@@ -1,7 +1,7 @@
 import 'server-only'
 import { and, eq } from 'drizzle-orm'
 import { db, pool, withDatabaseClient } from '@/lib/db'
-import { revalidateExecutionIdentity, ExecutionIdentityError } from '@/lib/execution-identity'
+import { revalidateExecutionIdentity, ExecutionIdentityError, ExecutionMcpAuthorityError } from '@/lib/execution-identity'
 import { agentRuns, devices, issues } from '@/lib/db/schema'
 import { mayCompleteIssue, withRunWorkspace } from '@/lib/run-completion'
 
@@ -50,7 +50,10 @@ async function claimResponseTransaction(userId: string, hint: Pick<Run, 'id' | '
         const identity = await revalidateExecutionIdentity(pool, run)
         if (identity && identity.workspaceId !== workspaceId) return null
       }
-      catch (error) { if (error instanceof ExecutionIdentityError) return null; throw error }
+      catch (error) {
+        if (error instanceof ExecutionIdentityError && !(error instanceof ExecutionMcpAuthorityError)) return null
+        throw error
+      }
       if (authorizeResources && !await authorizeResources(run, tx)) return null
       return respond(run)
     }))

@@ -59,6 +59,7 @@ function fixture() {
     taskMcpVersion: TASK_MCP_VERSION as string,
     taskMcpToolFilter: false,
     mcpRevoked: false,
+    mcpChecks: [] as string[],
     secretInjection: undefined as Partial<TaskSecretInjection> | undefined,
     secretSnapshot: undefined as string | undefined,
     secretReads: [] as unknown[][],
@@ -306,8 +307,31 @@ test('the current daemon receives filtered MCP, unless the grant is revoked befo
       assert.deepEqual(body, { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
       assert.equal(probe.run.status, 'failed')
       assert.equal(probe.run.stopReason, 'blocked')
+      assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_mcp_unavailable')
     }
     else assert.deepEqual(body.mcp.servers, probe.nativeMcpServers)
+  }
+})
+
+test('a frozen MCP execution identity refuses revoked authority before the final fence and ends the claim', async () => {
+  for (const revoke of [false, true]) {
+    const probe = fixture()
+    const server = { id: 'fixture-mcp', ownerId: 'member', revision: 7, grantId: null }
+    const executionIdentity = localExecutionIdentity(workspaceId)
+    executionIdentity.resourceBindings.push({ kind: 'mcp', id: server.id, ownerId: server.ownerId, access: 'owner', revision: '7', workspaceId })
+    Object.assign(probe.run, { agentDefinition: { harness: 'codex', executionIdentity, customMcp: { workspaceId, servers: [server] } } })
+    probe.taskMcpToolFilter = true
+    probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: [] }]
+    probe.beforeToken = async () => { probe.mcpRevoked = revoke }
+    const response = await claim(probe)
+    assert.equal(response.status, revoke ? 409 : 200)
+    assert.deepEqual(probe.mcpChecks, revoke ? ['identity'] : ['identity', 'fence'])
+    if (revoke) {
+      assert.deepEqual(await response.json(), { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+      assert.equal(probe.run.status, 'failed')
+      assert.equal(probe.run.stopReason, 'blocked')
+      assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_mcp_unavailable')
+    } else assert.deepEqual((await response.json()).mcp.servers, probe.nativeMcpServers)
   }
 })
 function validCheckpoint(): RunCheckpoint {
