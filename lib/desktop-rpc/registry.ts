@@ -8,6 +8,7 @@ import { desktopBootstrap, desktopSession, desktopAccounts, desktopWorkspaceLink
 import type { DesktopActions } from './handler'
 import { createReadBatch } from './read-batch'
 import * as actions0 from '@/app/actions/account'
+import * as passkeyActions from '@/app/actions/passkeys'
 import * as actions1 from '@/app/actions/agents'
 import * as actions2 from '@/app/actions/app-policy'
 import * as actions3 from '@/app/actions/artifacts'
@@ -74,6 +75,9 @@ const functions = {
   'account.revokeOtherSessions': actions0.revokeOtherSessions,
   'account.requestDataExport': actions0.requestDataExport,
   'account.deleteAccount': actions0.deleteAccount,
+  'passkeys.listPasskeys': passkeyActions.listPasskeys,
+  'passkeys.renamePasskey': passkeyActions.renamePasskey,
+  'passkeys.deletePasskey': passkeyActions.deletePasskey,
   'agents.listDevices': actions1.listDevices,
   'agents.pollDevices': actions1.pollDevices,
   'agents.setDeviceEnabled': actions1.setDeviceEnabled,
