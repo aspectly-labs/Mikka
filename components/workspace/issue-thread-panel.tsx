@@ -563,7 +563,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
           const files = splitChatFiles(item.text)
           entries.push({ id, role: 'bot', at: at(item.at),
             author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} /> },
-            actions: <ReplyActions hover at={item.at ? at(item.at) : undefined} copyText={files.text} />,
+            actions: <ReplyActions at={item.at ? at(item.at) : undefined} copyText={files.text} />,
             parts: [{ kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}>
               <span data-thread-item={item.id}><PersonReferences text={files.text} /></span>
               <ChatFileCards files={files.files} sent />
@@ -579,7 +579,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
           ? <ComputerCard botId={item.botId} runId={item.runId} task={item.task} state={active ? 'working' : (view?.status ?? data.thread.status) === 'succeeded' ? 'done' : 'failed'} />
           : <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground" data-slot="thread-stages">{item.stages.map((stage, index) => <span key={index} className={cn(!stage.ok && 'text-destructive-foreground')}>
             {t(`stages.${stage.stage}`)} {t('stages.duration', { seconds: (stage.ms / 1000).toFixed(1) })} {stage.ok ? '✓' : '✗'}</span>)}</p> }
-      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions hover at={item.at || undefined} copyText={item.text} quoteText={openWords.join('\n\n')}
+      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions at={item.at || undefined} copyText={item.text} quoteText={openWords.join('\n\n')}
           onQuote={replyBlocked || changeRequest ? undefined : text => { setReplyQuote(text); inputRef.current?.focus() }}>{versionControl(item)}<AgentCitationsContext value={citations.settled}><CitationSources text={item.text} /></AgentCitationsContext></ReplyActions> } : {}), ...(active && item === items.at(-1) ? { streaming: true } : {}) })
     }
     if (failure && !providerExplained) bot('failure', [{ kind: 'text', text: failureText.message ?? '', node: <div data-slot="thread-failure" className="flex flex-wrap items-start gap-2">
@@ -619,7 +619,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       <ChatFileCards files={files.files} sent />
     </AgentCitationsContext>
     const previous = entry.actions
-    entry.actions = <ReplyActions hover at={sentAt.get(entry.id)} copyText={files.text}>{previous}</ReplyActions>
+    entry.actions = <ReplyActions at={sentAt.get(entry.id)} copyText={files.text}>{previous}</ReplyActions>
   }
   if (!data && collect) entries.push({ id: `${runId}:loading`, role: 'bot', event: true, at: 0, parts: [{ kind: 'text', text: '', node: waiting }] })
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.
