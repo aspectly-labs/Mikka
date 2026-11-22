@@ -34,7 +34,7 @@ test('environment settings GET keeps canonical storage, fresh membership and pri
   for (const [module, names] of Object.entries({
     '@/app/actions/account': ['getPasswordStatus', 'listSessions'],
     '@/app/actions/preferences': ['getPreferences'], '@/app/actions/issue-prefix': ['getIssuePrefixState'],
-    '@/app/actions/settings-activity': ['listSavedLogins'],
+    '@/app/actions/settings-activity': ['listActivity', 'listSavedLogins'],
     '@/app/actions/workspace-settings': ['getWorkspaceDeletionImpact', 'getWorkspaceGeneral', 'getWorkspaceTransferTargets'],
     '@/app/actions/app-policy': ['getAppPolicy'], '@/app/actions/personal-policy': ['getSharePolicy'],
     '@/app/actions/workspace-secrets': ['getE2BKeyCapability', 'listSecrets'], '@/app/actions/usage': ['getUsage'],
