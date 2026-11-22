@@ -45,6 +45,9 @@ mock.module('sonner', { namedExports: { toast: {
   error: (_message: string, options: { id: string; action?: { onClick: (event: Event) => void } }) => { notices.set(options.id, options) },
   dismiss: (id: string) => { notices.delete(id) }, success: () => {},
 } } })
+// The thread's held chunks; a read through the fetcher folds them before they show (hooks/use-issue-thread-read.ts),
+// so this fixture's read, which skips the fetcher, is folded once before the tests render it.
+const doneChunks = [{ chunk: { type: 'text-delta', id: 'a', delta: 'Done.' }, at: new Date(0) }]
 mock.module('swr', {
   defaultExport: (key: unknown, fetcher: never, options: never) => (
     versionScenario && (key === null || Array.isArray(key)) ||
@@ -52,7 +55,7 @@ mock.module('swr', {
   )
     ? actualSWR.default(key, fetcher, options)
     : Array.isArray(key) && key[0] === 'issue-thread'
-    ? { data: thread && { thread, chunks: [{ chunk: { type: 'text-delta', id: 'a', delta: 'Done.' }, at: new Date(0) }], messages: storedMessages, context: runContext }, mutate: () => {} }
+    ? { data: thread && { thread, chunks: doneChunks, messages: storedMessages, context: runContext }, mutate: () => {} }
     // Where the thread runs is its own read (thread-run-place.tsx); none here.
     : Array.isArray(key) && key[0] === 'thread-machine' ? { data: null, mutate: () => {} }
     : Array.isArray(key) && key[0] === 'thread-changes' ? { data: changesRead, mutate: () => {} }
@@ -123,7 +126,11 @@ let createRoot: typeof import('react-dom/client')['createRoot']
 let root: Root | null = null
 let container: HTMLDivElement
 let refreshRead: () => Promise<unknown>
-before(async () => { ({ createRoot } = await import('react-dom/client')); ({ IssueThreadPanel } = await import('../components/workspace/issue-thread-panel')) })
+before(async () => {
+  ({ createRoot } = await import('react-dom/client')); ({ IssueThreadPanel } = await import('../components/workspace/issue-thread-panel'))
+  const { primeFold } = await import('../lib/conversation/folded')
+  await primeFold('thread:run-1', doneChunks)
+})
 const base = { id: 'run-1', issueId: 'issue-1', status: 'succeeded', outcome: null, question: null, continuation: null, stopping: false, ownedByCurrentUser: true,
   createdAt: new Date(0), finishedAt: new Date(0), latestRunId: 'run-1', prompt: 'Fix it', stopRequestedAt: null, replyAvailable: true, retryAvailable: true, quota: null, feedbackEligible: false,
   detail: { name: 'ZHIX-2 Fix it', agentName: 'Claude Code', harness: 'claude_code', summary: null } }
@@ -686,7 +693,8 @@ test('a version with a lost confirmation or stale read-back keeps its request un
     </IntlProvider>
   </SWRConfig>))
   async function click(label: string) {
-    const button = [...document.querySelectorAll('button')].find(el => el.textContent === label)
+    // The trigger is an icon on the message's line, named by its label (decision 2026-11-22-1700).
+    const button = [...document.querySelectorAll('button')].find(el => el.textContent === label || el.getAttribute('aria-label') === label)
     assert.ok(button, label)
     assert.equal(button.disabled, false)
     await act(async () => button.click())

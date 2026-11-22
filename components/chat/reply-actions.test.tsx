@@ -87,3 +87,21 @@ test('every line waits for hover or focus, is always there on touch, and keeps i
     assert.ok(classes.includes(name), name)
   assert.ok(!classes.some(name => /^(hidden|invisible|h-0)$|:hidden$|:invisible$/.test(name)), 'only the opacity changes, so the row keeps its space')
 })
+
+test('Edit and Regenerate sit beside Copy as icons, with the version pager before Reply, and only where the caller offers them (decision 2026-11-22-1700)', async () => {
+  const pressed: string[] = []
+  await act(async () => root.render(<ReplyActions copyText="the reply" onQuote={() => {}} versions={<span data-pager="" />}
+    onEdit={() => pressed.push('edit')} onRegenerate={() => pressed.push('regenerate')} />))
+  const line = container.querySelector('[data-slot="message-actions"]')!
+  const order = [...line.children].map(child => child.getAttribute('aria-label') ?? (child.hasAttribute('data-pager') ? 'pager' : child.tagName))
+  assert.deepEqual(order, ['pager', 'AiElements.message.reply', 'AiElements.message.copy', 'AiElements.message.edit', 'AiElements.message.regenerate'])
+  for (const name of ['edit', 'regenerate']) {
+    const button = container.querySelector(`button[aria-label="AiElements.message.${name}"]`) as HTMLButtonElement
+    assert.ok(button.querySelector('svg'), `${name} is an icon`)
+    await act(async () => button.click())
+  }
+  assert.deepEqual(pressed, ['edit', 'regenerate'])
+  await act(async () => root.render(<ReplyActions copyText="the reply" />))
+  assert.equal(container.querySelector('button[aria-label="AiElements.message.edit"], button[aria-label="AiElements.message.regenerate"]'), null)
+  assert.match(line.className, /group-hover\/message:opacity-100/, 'the new icons wait for hover like the rest of the line')
+})

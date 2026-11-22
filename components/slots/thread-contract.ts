@@ -139,6 +139,12 @@ export type ThreadScreenProps = {
   /** A reader without a reply target does not get a composer. */
   readOnly?: boolean
   scrollRef?: RefObject<HTMLDivElement | null>
+  /**
+   * Filled by a screen whose rows are not all mounted (the official one lists only the rows near the view): scrolls an
+   * entry's row to the top of the view by its id, and says whether the id is listed. Absent or false: the row is in the
+   * document, and a caller scrolls to it there.
+   */
+  revealRef?: RefObject<((entryId: string) => boolean) | null>
   /** Chips that go out with the next message (a quote, a browser note), each with Remove. */
   pending: { id: string; name: string; meta?: string; onRemove: () => void }[]
   /** Notices that wait above the composer (quota, sign in again, actions to approve). */

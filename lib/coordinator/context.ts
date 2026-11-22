@@ -439,6 +439,8 @@ export function chatItems(rows: readonly (StoredMessage & { createdAt: Date; pen
     waiting.ids = []
   }
   for (const { id, position, message: storedMessage, createdAt, pending } of rows) {
+    // A turn an Edit or Regenerate replaced is read back only as a version (lib/coordinator/turn-revisions.ts).
+    if ((storedMessage as { mikkaSuperseded?: unknown }).mikkaSuperseded) continue
     const display = messageDisplay(storedMessage)
     const message = display?.kind === 'reply' ? { ...storedMessage, role: 'assistant' as const, content: storedMessage.role === 'assistant' && (storedMessage as { mikkaStopped?: unknown }).mikkaStopped === true && Array.isArray(storedMessage.content)
       ? [...storedMessage.content.filter(part => part.type !== 'text'), { type: 'text' as const, text: display.text }] : display.text }

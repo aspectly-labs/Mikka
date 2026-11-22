@@ -3,6 +3,10 @@
 import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
 import type { IssueThreadDetail } from '@/app/actions/agents'
 import { mergeThreadChunks } from '@/lib/issue-run-conversation'
+import { primeFold } from '@/lib/conversation/folded'
+
+/** The conversation layer's key for a thread (lib/conversation). */
+export const threadConversationKey = (runId: string) => `thread:${runId}`
 
 export function useIssueThreadRead(issueId: string | null, runId: string | null) {
   const { cache } = useSWRConfig()
@@ -15,9 +19,15 @@ export function useIssueThreadRead(issueId: string | null, runId: string | null)
       kind: 'history',
       ...(page?.latest ? { after: { chain: page.chain, count: page.count, position: page.latest } } : {}),
     })
-    if (!page || !read.historyPage?.append || !held) return mergeThreadChunks(held, read)
+    // The read is folded before it is shown, by the same fold the server reads with (lib/conversation/fold.ts).
+    if (!page || !read.historyPage?.append || !held) {
+      const next = mergeThreadChunks(held, read)
+      await primeFold(threadConversationKey(run), next.chunks)
+      return next
+    }
     const { messageUpdates, ...merged } = mergeThreadChunks(held, { ...read, chunksAppend: true })
     const updated = new Map(messageUpdates?.map(message => [message.id, message]))
+    await primeFold(threadConversationKey(run), merged.chunks)
     return {
       ...merged,
       chunksAppend: false,

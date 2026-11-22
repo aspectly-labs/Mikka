@@ -2,6 +2,7 @@
 
 - Date: 2026-11-22 15:00 UTC
 - Status: accepted
+- Amended by: [2026-11-22-1700-chat-edit-and-regenerate](2026-11-22-1700-chat-edit-and-regenerate.md) (Edit and Regenerate join the line as icons; still no More menu)
 - Supersedes in part: [2026-11-10-2002-chat-reply-actions-and-waiting](2026-11-10-2002-chat-reply-actions-and-waiting.md) (A, "reply actions are always there"). Its part B (the waiting sentence) stands.
 
 ## Context

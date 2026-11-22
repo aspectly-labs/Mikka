@@ -31,7 +31,7 @@ export async function readThreadHistory(runIds: string[], direction: 'latest' | 
     more,
     earliest: page[0] ? position(page[0]) : null,
     latest: page.length ? position(page[page.length - 1]) : null,
-    chunks: chainChunks(page.flatMap(row => row.chunk ? [{ runId: row.runId, chunk: row.chunk, at: row.createdAt }] : []), runIds.length > 1),
+    chunks: chainChunks(page.flatMap(row => row.chunk ? [{ runId: row.runId, seq: row.seq, chunk: row.chunk, at: row.createdAt }] : [])),
     messageIds: page.filter(row => row.lane === 1).map(row => row.id),
   }
 }

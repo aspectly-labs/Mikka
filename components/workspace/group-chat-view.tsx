@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { GroupLeaveAction } from './group-leave-action'
 import { botKeys } from '@/lib/swr/keys'
 import { withBasePath } from '@/lib/base-path'
-import { PersonReferences, ThreadReferencePicker } from './thread-references'
+import { PersonReferences } from './thread-references'
 import { VisibleReadEnd } from './visible-read-end'
 import { ThreadHeader } from './thread-header'
 import { ConversationPill } from '@/components/nav/conversation-pill'
@@ -32,18 +32,23 @@ import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { ReplyActions } from '@/components/chat/reply-actions'
 import { mentionsIn } from '@/lib/group-mentions'
-import { chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
+import { chronological, fetchGroupMessages, mergeGroupRead, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessage, type GroupMessagePage } from '@/lib/group-messages'
 import { AgentExchangeMarker } from './agent-exchange'
 import { toast } from 'sonner'
 import { useViewState } from '@/lib/hooks/view-state'
-import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
+import { isWebChatOffline, useChatDelivery, type ChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { checkPageBuildBeforeAction } from '@/lib/app-build'
 import { groupSubmissionMessageId } from '@/lib/group-submission'
+import { useConversation } from '@/lib/conversation/store'
+import { projectEntries } from '@/lib/conversation/project'
+import type { ConversationMessage } from '@/lib/conversation/model'
 import { useActionError } from '@/lib/use-action-error'
 import { readAccessFailure } from '@/lib/swr/persistent-cache'
 
 /** A message the person sent that the server has not stored yet; a failed one waits for 重试. */
 type GroupSend = ChatSubmission & { mentions: ReturnType<typeof mentionsIn> }
+/** What a group chat message was built from: a stored message or the person's unsent one. */
+type GroupSource = { stored: GroupMessage } | { unsent: ChatDelivery<GroupSend> }
 
 /** The newest page and the members re-read on the group's live key, at most this often while a reply streams in. */
 const GROUP_MERGE_MS = 500
@@ -99,7 +104,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       const known = shown.current?.id === id ? shown.current.page : null
       const after = known ? newestGroupPosition(known.messages) : null
       const page = await fetchGroupMessages(id, null, fetch, after)
-      const merged = mergeGroupPoll(known, page)
+      const merged = mergeGroupRead(known, page)
       shown.current = { id, page: merged }
       return merged
     },
@@ -189,6 +194,10 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const readRevision = first?.readRevision
   const referenceWorkspace = namedChat && readRevision !== undefined && !blockingCode && !accessRejected && !refused && !departed.current ? group.workspaceId : null
   const modelBot = namedConversationModelBot(referenceWorkspace && !membersError && !error ? referenceWorkspace : null, members, ownedBots, draft)
+  // `@` names the group's members in the composer; a Bot named so answers (lib/group-mentions.ts).
+  const mentionable = useMemo(() => members.filter(item => item.memberType !== 'user' || item.id !== userId)
+    .map(item => ({ id: item.id, name: item.name || (item.memberType === 'user' ? people.get(item.id) ?? '' : ''), kind: item.memberType === 'user' ? 'person' as const : 'bot' as const }))
+    .filter(item => item.name), [members, userId, people])
   const referenceText = referenceWorkspace ? (text: string, index: number) => <PersonReferences key={index} text={text} /> : undefined
   const lastMessageId = messages.at(-1)?.id ?? null
   const sentRead = useRef<string | null>(null)
@@ -224,37 +233,52 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // person's messages are theirs; every other member's, a Bot's or an Agent's is the block's agent message with its own
   // author line (mark and name, shown where the author changes), as LobeHub's group chat heads each speaker's turn.
   const entries: ThreadEntry[] = []
-  // A Bot-to-Bot exchange is a line about the chat after its anchor's run of messages, not anyone's words.
+  // Exchange markers waiting for the end of their anchor's author run.
   let waiting: GroupExchange[] = []
-  const flush = (at: number) => {
-    for (const exchange of waiting) entries.push({ id: `exchange:${exchange.linkId}`, role: 'bot', at, event: true,
-      parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <AgentExchangeMarker exchange={exchange} /> }] })
-    waiting = []
-  }
-  messages.forEach((message, index) => {
-    const at = Date.parse(message.createdAt)
-    const mine = message.authorType === 'user' && message.authorId === userId
-    const id = sentAs[message.id] ?? message.id
-    const reply = message.authorType !== 'user'
-    // The line under every message, as the Bot chat's (on hover, decision 2026-11-22-1500): Copy and its reactions;
-    // a person's message says when it was sent, a reply's author line already does.
-    const actions = <ReplyActions at={reply ? undefined : at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
-    const words = <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>
-    if (mine) entries.push({ id, role: 'person', at, text: message.body, body: words, actions })
-    else {
-      const name = authorName(message.authorType, message.authorId)
-      const bot = message.authorType === 'bot' ? member('bot', message.authorId) : undefined
-      entries.push({ id, role: 'bot', at, actions,
-        author: { id: `${message.authorType}:${message.authorId}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> },
-        parts: [{ kind: 'text', text: message.body, node: reply ? <AgentMarkdown text={message.body} /> : words }] })
-    }
-    waiting.push(...exchanges.get(message.position) ?? [])
-    const next = messages[index + 1]
-    if (!next || next.authorType !== message.authorType || next.authorId !== message.authorId) flush(at)
+  // One conversation (lib/conversation/store.ts), as the Bot chat's: a stored message keeps the id its unsent bubble had
+  // (the submission id, `sentAs`), unsent messages follow in the order they were sent, and nothing remounts on commit.
+  const conversation = useConversation(`group:${group.id}`, {
+    stored: messages.map((message): ConversationMessage => ({ id: sentAs[message.id] ?? message.id, role: message.authorType === 'user' && message.authorId === userId ? 'user' : 'assistant',
+      parts: [{ type: 'text', text: message.body }], metadata: { at: Date.parse(message.createdAt), source: { stored: message } satisfies GroupSource } })),
+    optimistic: unsent.map((item): ConversationMessage => ({ id: item.id, role: 'user', parts: [{ type: 'text', text: item.text }],
+      metadata: { at: item.at, delivery: item.phase === 'failed' ? 'failed' : 'sending', ...(item.error ? { deliveryError: item.error } : {}), source: { unsent: item } satisfies GroupSource } })),
   })
-  for (const item of unsent) entries.push({ id: item.id, role: 'person', at: item.at, text: item.text,
-    body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage>,
-    status: item.phase === 'failed' ? 'failed' : 'sending', ...(item.phase === 'failed' ? { deliveryMessage: item.error, onRetry: () => { void deliver(item) } } : {}) })
+  // The one projection (lib/conversation/project.ts) decides each entry's id, side, time and delivery state; the group
+  // adds its words, author lines, reply lines and the exchange markers after an author's run.
+  entries.push(...projectEntries(conversation, {
+    text: (text, message) => {
+      const source = message.metadata?.source as GroupSource
+      const reply = 'stored' in source && source.stored.authorType !== 'user'
+      return { kind: 'text', text, node: reply ? <AgentMarkdown text={text} /> : <CollapsibleMessage><UserMessageText text={text} renderText={referenceText} /></CollapsibleMessage> }
+    },
+    decorate: (entry, message) => {
+      const source = message.metadata?.source as GroupSource
+      const words = (text: string) => <CollapsibleMessage><UserMessageText text={text} renderText={referenceText} /></CollapsibleMessage>
+      if ('unsent' in source) {
+        const item = source.unsent
+        return entry.role === 'person' ? { ...entry, body: words(item.text), ...(item.phase === 'failed' ? { onRetry: () => { void deliver(item) } } : {}) } : entry
+      }
+      const stored = source.stored
+      const at = Date.parse(stored.createdAt)
+      // The line under every message, as the Bot chat's (on hover, decision 2026-11-22-1500): Copy and its reactions;
+      // a person's message says when it was sent, a reply's author line already does.
+      const actions = <ReplyActions at={stored.authorType !== 'user' ? undefined : at} copyText={stored.body}><MessageReactions reactions={reactions[stored.id]} align={entry.role === 'person' ? 'end' : 'start'} /></ReplyActions>
+      const shown: ThreadEntry = entry.role === 'person' ? { ...entry, body: words(stored.body), actions } : (() => {
+        const name = authorName(stored.authorType, stored.authorId)
+        const bot = stored.authorType === 'bot' ? member('bot', stored.authorId) : undefined
+        return { ...entry, actions, author: { id: `${stored.authorType}:${stored.authorId}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> } }
+      })()
+      // A Bot-to-Bot exchange is a line about the chat after its anchor's run of messages, not anyone's words.
+      waiting.push(...exchanges.get(stored.position) ?? [])
+      const next = conversation[conversation.indexOf(message) + 1]?.metadata?.source as GroupSource | undefined
+      const after = next && 'stored' in next ? next.stored : undefined
+      if (after && after.authorType === stored.authorType && after.authorId === stored.authorId) return shown
+      const lines = waiting.map((exchange): ThreadEntry => ({ id: `exchange:${exchange.linkId}`, role: 'bot', at, event: true,
+        parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <AgentExchangeMarker exchange={exchange} /> }] }))
+      waiting = []
+      return [shown, ...lines]
+    },
+  }))
   const lastAt = entries.at(-1)?.at ?? 0
   const line = (key: string, text: string) => entries.push({ id: key, role: 'bot', at: lastAt, event: true, parts: [{ kind: 'text', text, node: <p role="status" className="text-center text-xs text-muted-foreground">{text}</p> }] })
   if (first?.routingError && !first.agentStatus) line('no-taker', t('noTaker'))
@@ -292,9 +316,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       composer={{ ref: composerInput, leadingControls: <ChatComposerAttachment />, value: draft, onChange: value => { submittedDraft.current = null; setDraft(value) }, onSubmit: send,
         label: t('composer', { name: title }), disabled: !!blockingCode, attachmentScope: { kind: 'group', id: group.id },
         leftControls: modelBot ? <BotModelPicker key={modelBot} botId={modelBot} running={replying} /> : undefined,
-        sending: stopping, editableWhileSending: stopping, running: replying && !stopping }}
+        sending: stopping, editableWhileSending: stopping, running: replying && !stopping,
+        references: referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined, people: mentionable, historyKey: `group:${group.id}` }}
       pending={[]}
-      notices={referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
       questions={[]} onAnswer={async () => ({ status: 'unavailable', error: actionError() })}
       running={0} onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />}
   </section></AgentThemeProvider>

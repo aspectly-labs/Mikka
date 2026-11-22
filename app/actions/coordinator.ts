@@ -264,6 +264,32 @@ export async function retryCoordinatorTurn(botId: string | null = null): Promise
 }
 
 /**
+ * 编辑 on the person's last message, or 重新生成 on the reply to it (decision 2026-11-22-1700): the turn leaves the chat
+ * and the Bot's history, kept as a version, and the edited or the same words go again. Only the chat's owner, only the
+ * latest turn, and only a turn of words alone (no tool, thread or task happened in it); anything else is refused.
+ */
+export async function reviseCoordinatorTurn(botId: string | null, input: import('@/lib/coordinator/turn-revisions').RevisionInput): Promise<ActionResult<{ queued: true; submissionId: string } | { queued: false; reason: 'unavailable' | 'working' }>> {
+  return runAction(async () => {
+    const user = await getUser()
+    const bot = await ownBot(user, botId)
+    const { revisionInput } = await import('@/lib/coordinator/turn-revisions')
+    const parsed = revisionInput.safeParse(input)
+    if (!parsed.success) throw new ActionFailureError('validationGeneric')
+    if (!await coordinatorEnabled(user.id, bot.id)) return { queued: false as const, reason: 'unavailable' as const }
+    const { assertEveScope } = await import('@/lib/eve/scope')
+    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
+    return (await import('@/lib/eve/revise')).reviseEveTurn(scope, parsed.data, await headers())
+  })
+}
+
+/** The earlier versions of the chat's revised turns, by the submission id of the message that stands for each now. */
+export async function coordinatorTurnVersions(botId: string | null): Promise<Record<string, import('@/lib/coordinator/turn-revisions').TurnVersion[]>> {
+  const user = await getUser()
+  const bot = await ownBot(user, botId)
+  return (await import('@/lib/coordinator/turn-revisions')).readTurnVersions(db as never, user.id, bot.id)
+}
+
+/**
  * A tapped 建议 card goes to the Coordinator at once, with no composer step
  * (R-21): the message is the card itself, which the chat draws as the same
  * card and the Coordinator reads as the task. What came from the source app
