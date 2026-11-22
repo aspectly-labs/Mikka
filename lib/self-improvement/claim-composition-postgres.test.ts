@@ -23,8 +23,8 @@ test('retained PG claim composition: Factory terminal/lineage fence and native b
  closeWorkspace=await bindFixtureWorkspaceDatabase(pool)
  await createFixtureWorkspaceTables(pool)
  for(const sql of [
-  'CREATE TABLE devices(id uuid PRIMARY KEY,"ownerId" text NOT NULL)',
-  'CREATE TABLE agent_runs(id uuid PRIMARY KEY,"userId" text,"deviceId" uuid,"issueId" uuid,"agentId" uuid,"botId" uuid,"agentDefinition" jsonb,"retryOf" uuid,"workspaceId" uuid,status text,"stopRequestedAt" timestamptz,"startedAt" timestamptz,"leaseExpiresAt" timestamptz,"updatedAt" timestamptz)',
+  'CREATE TABLE devices(id uuid PRIMARY KEY,"ownerId" text NOT NULL,"maxConcurrentRuns" integer not null default 3)',
+  'CREATE TABLE agent_runs(id uuid PRIMARY KEY,"userId" text,"deviceId" uuid,"issueId" uuid,"agentId" uuid,"botId" uuid,"agentDefinition" jsonb,"retryOf" uuid,"workspaceId" uuid,status text,"stopRequestedAt" timestamptz,"pauseReason" text,"startedAt" timestamptz,"leaseExpiresAt" timestamptz,"updatedAt" timestamptz)',
   'CREATE TABLE factory_tasks(id uuid PRIMARY KEY,"userId" text,"issueId" uuid,status text,stage text,"attemptId" uuid)',
   'CREATE TABLE factory_attempts(id uuid PRIMARY KEY,"taskId" uuid,"runId" uuid,stage text,status text)',
   'CREATE TABLE computer_run_bindings("runId" uuid PRIMARY KEY)',
