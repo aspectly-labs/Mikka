@@ -33,6 +33,7 @@ export const issueKeys = {
   versions: (id: string) => ['versions', id] as const,
   activityVersions: (id: string) => ['issue-activity-versions', id] as const,
   connections: (id: string) => ['issue-connections', id] as const,
+  threads: (id: string) => ['issue-threads', id] as const,
   deleted: (id: string) => ['deleted-issue', id] as const,
   document: (id: string, clientId: number) => ['document-sync', id, clientId] as const,
 }

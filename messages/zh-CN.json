@@ -27,7 +27,8 @@
     "downloadFailed": "附件下载失败。",
     "readFailed": "附件加载失败。",
     "size": "请选择不超过 3 MiB 的非空文件。",
-    "limit": "每个任务最多 10 个文件。"
+    "limit": "每个任务最多 10 个文件。",
+    "storage": "文件存储暂时不可达。"
   },
   "Common": {
     "privacyPolicy": "隐私政策",
