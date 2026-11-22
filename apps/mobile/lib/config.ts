@@ -1,5 +1,5 @@
 import { Platform } from 'react-native'
-import { secureStorage as SecureStore } from '@/lib/secure-storage'
+import { secureStorage as SecureStore } from './secure-storage'
 import { storageAdapter } from '@better-auth/expo/client'
 import { MobileServerStore, type MobileServer } from './server-store'
 import { CLOUD_API_URL } from './server-discovery'

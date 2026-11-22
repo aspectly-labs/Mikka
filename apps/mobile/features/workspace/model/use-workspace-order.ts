@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Platform } from 'react-native'
-import { secureStorage as SecureStore } from '@/lib/secure-storage'
+import { secureStorage as SecureStore } from '../../../lib/secure-storage'
 import { parseWorkspaceOrder } from './workspace-order'
 import { currentAccount } from '@/lib/config'
 import { accountStorageKey } from '@/lib/server-store'

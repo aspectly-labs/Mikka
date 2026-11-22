@@ -1,6 +1,6 @@
 import * as AppleAuthentication from 'expo-apple-authentication'
 import * as Crypto from 'expo-crypto'
-import { secureStorage as SecureStore } from '@/lib/secure-storage'
+import { secureStorage as SecureStore } from './secure-storage'
 import { AppState, Platform } from 'react-native'
 import { authClient } from './auth'
 import { currentAccount } from './config'

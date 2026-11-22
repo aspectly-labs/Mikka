@@ -2,16 +2,21 @@
 // fails every call with a missing-entitlement error, so dev builds on the
 // iOS simulator fall back to a JSON file in the app sandbox. Release builds
 // and real devices always use SecureStore.
-import * as Device from 'expo-device'
-import { File, Paths } from 'expo-file-system'
 import * as ExpoSecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
 
 type JsonMap = Record<string, string>
 
-// Lazy: Paths.document is undefined on web and the Directory constructor
-// throws before secureStorage's platform guard can run.
+// expo-device and expo-file-system are lazily required: statically importing
+// them pulls in the Expo runtime, which crashes under Node test runners (and
+// Paths.document is undefined on web, where Directory's constructor throws)
+// before the platform guard can run. Metro and tsx both supply `require`.
+declare const require: (id: string) => unknown
+function isSimulator() {
+  return (require('expo-device') as typeof import('expo-device')).isDevice === false
+}
 function file() {
+  const { File, Paths } = require('expo-file-system') as typeof import('expo-file-system')
   return new File(Paths.document, 'mikka-dev-storage.json')
 }
 
@@ -44,6 +49,8 @@ const devFileStorage = {
   isAvailableAsync: async () => true,
 }
 
-export const secureStorage = __DEV__ && Platform.OS === 'ios' && !Device.isDevice
+// __DEV__ is a Metro-injected global absent under Node test runners.
+const isDev = (globalThis as { __DEV__?: boolean }).__DEV__ === true
+export const secureStorage = isDev && Platform.OS === 'ios' && isSimulator()
   ? devFileStorage
   : ExpoSecureStore
