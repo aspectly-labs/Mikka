@@ -84,11 +84,12 @@ const cronSecret = process.env.CRON_SECRET || LOCAL_CRON_SECRET
 const secretsKey = process.env.WORKSPACE_SECRETS_KEY || localSecretsKey(join(root, '.cache/dev-local'))
 // The workspace model key (DeepSeek preset): scripted by default — the fake
 // LiteLLM answers every local model call, so local-loop needs no real key.
-// MIKKA_DEV_REAL_MODELS=1 is the explicit off-by-default switch that restores
-// live-model acceptance (DEEPSEEK_API_KEY env or the named Infisical secret).
-// Held in memory for the seeder only; never written or printed.
+// MIKKA_DEV_REAL_MODELS=1 or a configured MIKKA_LITELLM_URL restores live-model
+// acceptance (DEEPSEEK_API_KEY env or the named Infisical secret) — a real
+// upstream would only reject the scripted placeholder key. Held in memory for
+// the seeder only; never written or printed.
 const skipModelSetup = process.env.MIKKA_DEV_SKIP_MODEL_SETUP === '1'
-const realModels = process.env.MIKKA_DEV_REAL_MODELS === '1'
+const realModels = process.env.MIKKA_DEV_REAL_MODELS === '1' || Boolean(process.env.MIKKA_LITELLM_URL)
 const deepseekKey = skipModelSetup ? undefined : realModels ? process.env.DEEPSEEK_API_KEY || await infisicalSecret('DEEPSEEK_API_KEY') : LOCAL_DEEPSEEK_KEY
 delete process.env.DEEPSEEK_API_KEY
 delete childEnv.DEEPSEEK_API_KEY
