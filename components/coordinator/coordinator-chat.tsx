@@ -70,8 +70,6 @@ import { openArtifact as openArtifactWindow } from '@/components/workspace/works
 import { ArtifactChip } from '@/components/artifacts/artifact-card'
 import { ArtifactReviewCard } from '@/components/workspace/artifact-review'
 import { ArtifactQuoteChip, ArtifactQuoteLine, QuoteChip, QuoteLine } from '@/components/artifacts/artifact-quote'
-import { MessageActions } from '@/components/ai-elements/message'
-import { CopyAction, REPLY_ACTIONS } from '@/components/chat/copy-action'
 import { SelectionQuote } from '@/components/chat/selection-quote'
 import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'

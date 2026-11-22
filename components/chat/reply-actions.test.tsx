@@ -59,3 +59,25 @@ test('without a way to quote there is no Reply, and an unknown time shows none',
   }
   assert.ok(container.querySelector('button[aria-label="AiElements.message.copy"]'))
 })
+
+test('Reply quotes the whole message, cut like a selection so a long reply never blocks the send', async () => {
+  const quoted: string[] = []
+  const long = 'a'.repeat(1_500)
+  await act(async () => root.render(<ReplyActions copyText="newest words" quoteText={'first reply\n\nnewest words'} onQuote={text => { quoted.push(text) }} />))
+  await act(async () => { reply()!.click() })
+  await act(async () => root.render(<ReplyActions copyText={long} onQuote={text => { quoted.push(text) }} />))
+  await act(async () => { reply()!.click() })
+  assert.equal(quoted[0], 'first reply\n\nnewest words', 'Reply takes every reply of the message, not only the newest Copy copies')
+  assert.equal(quoted[1].length, 1_001)
+  assert.ok(quoted[1].endsWith('…'))
+})
+
+test('the thread panel keeps the line to hover; elsewhere it stays on screen', async () => {
+  const { HOVER_ACTIONS, REPLY_ACTIONS } = await import('./copy-action')
+  await act(async () => root.render(<ReplyActions copyText="x" hover />))
+  const line = () => container.querySelector('[data-slot="reply-actions"]')!.className
+  assert.ok(line().includes(HOVER_ACTIONS.split(' ')[0]))
+  await act(async () => root.render(<ReplyActions copyText="x" />))
+  assert.ok(!line().includes(HOVER_ACTIONS.split(' ')[0]))
+  assert.ok(line().includes(REPLY_ACTIONS.split(' ')[0]))
+})

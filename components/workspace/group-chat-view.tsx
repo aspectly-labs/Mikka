@@ -217,15 +217,19 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     return {
       kind: 'author', id: run.key, mine, name,
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
-      messages: run.messages.map((message): ThreadTranscriptMessage => mine
+      messages: run.messages.map((message): ThreadTranscriptMessage => {
+        // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.
+        const line = { actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body }
+        return mine
         ? { id: message.id, message: { from: 'person', speaker,
           body: <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>,
-          actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body,
+          ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="end" /> } }
         : { id: message.id, message: { from: 'bot', speaker, presentation: 'group-received',
           body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} />,
-          actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body,
-          after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }),
+          ...line,
+          after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }
+      }),
     }
   })
   for (const item of unsent) rows.push({
