@@ -154,6 +154,7 @@ export const desktopActionSchemas = {
   'agents.getOlderIssueThread': tuple(uuid.nullable(), uuid, threadHistoryPosition),
   'agents.getThreadChanges': tuple(uuid.nullable(), uuid),
   'agents.getThreadMachine': tuple(uuid.nullable(), uuid),
+  'agents.getThreadSummary': tuple(uuid.nullable(), uuid),
   'agents.getThreadInstructions': tuple(uuid.nullable(), uuid),
   'agents.sendIssueThreadReply': tuple(object({ expectedOwnerId: text(256).optional(), expectedWorkspaceId: uuid.optional(), issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), requestId: uuid.optional(), retryOriginalSession: z.literal(true).optional(), questionWakeGeneration: uuid.optional(), modelChoice: threadModelChoice.optional(), delivery: z.enum(['queue','steer','interrupt']).optional() })),
   'agents.createThreadReplyVersion': tuple(object({issueId:uuid.nullable(),runId:uuid,change:z.discriminatedUnion('operation',[
