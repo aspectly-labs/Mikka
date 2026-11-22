@@ -41,6 +41,16 @@ Node 24 only ([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-n
 the original Node 24 protected-check names stay unchanged.
 
 ## Focused governance acceptance and superseded PR runs
+Merge queue autopilot checks the PR head after CI or Browser gate completes.
+It adds an eligible same-repository PR to the end of the queue once all required
+checks pass. Stacks and PRs included in an open batch follow their owner's merge
+flow. The GitHub App installation token lets queue candidates trigger CI.
+
+GitHub requires `UI policy (strict)`, `Production build and browser interactions`
+and `Browser tests (before merge)` on both the PR and its queue candidate.
+Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
+checks that trusted selection succeeded and the deferred DB jobs skipped.
+
 On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path
 policy from the candidate's immutable base and selects all checks if that base
@@ -310,6 +320,31 @@ Do not skip the required gates, silently accept failed/skipped dependencies or
 publish from a red PR. The workflows bootstrap the trusted Nx selector from
 `origin/main` and the immutable base; documentation-only PRs still publish their required gate names.
 CI source changes are not classified as documentation-only.
+
+## Protected Cloudflare operations
+
+`cloudflare-operations.yml` is the public protected entry for existing private
+operator capabilities. It verifies the actual main workflow, owner and OIDC
+claims before source credential access, then verifies the selected private
+checkout belongs to canonical operations main before installing or importing it.
+The private driver independently checks source and original Cloud Services
+qualification before selecting provider credentials and the fixed operation.
+The three marketing emergency recovery actions instead require authenticated
+original resource or permit evidence before any resource write.
+
+The entry uses `cloudflare-runtime-release`, read-only repository-scoped source
+App tokens and a separate public Actions token. Marketing uses its own website
+token, selected independently of operations ownership. Provider locators, fixed
+request documents, raw reports and recovery records stay private. Public output contains
+the operation status and a checksum for evidence retained and read back from the
+existing private storage. The original private workflows and prior receipts stay
+intact during the transition; source checks do not establish runtime acceptance.
+
+Public operator drivers are checked out at immutable approved source revisions
+before installing their locked dependencies. Canary and daemon revisions come
+from fixed reviewed private request files; an absent canary request refuses the
+operation. Manual observation is separate from the original scheduled observer
+and private JIT runner; admitting one does not prove the others work.
 
 ## Official UI overlay
 

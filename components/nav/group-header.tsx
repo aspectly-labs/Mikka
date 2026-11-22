@@ -7,9 +7,10 @@ import { Separator } from '@/components/ui/separator'
  * sit inside the collapsible's button. Exempt from style/no-horizontal-rule,
  * like the 「新」 unread divider.
  */
-export function GroupHeader({ children }: { children: ReactNode }) {
+export function GroupHeader({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return <span className="flex w-full items-center gap-3 px-2 py-1 text-xs text-muted-foreground">
     <span className="flex shrink-0 items-center gap-1">{children}</span>
     <Separator render={<span />} className="flex-1" />
+    {action}
   </span>
 }
