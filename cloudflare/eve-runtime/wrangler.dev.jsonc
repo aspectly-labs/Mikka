@@ -1,0 +1,45 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "mikka-eve-epic3076-dev",
+  "main": "src/entry.mjs",
+  "compatibility_date": "2026-11-11",
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": { "invocation_logs": false },
+    "traces": { "enabled": true }
+  },
+  "vars": {
+    "EVE_RELEASE_ID": "epic3076-dev-1",
+    "EVE_PUBLIC_ORIGIN": "https://mikka-eve-epic3076-dev.workers.dev",
+    "MIKKA_EVE_HOST_RESIDENCY": "on-demand",
+    "MIKKA_EVE_IDLE_TIMEOUT": "3m",
+    "EVE_ENV_WORKFLOW_TARGET_WORLD": "@mikka/eve-cloudflare-world"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "EVE_RUNTIME", "class_name": "EveRuntime" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EveRuntime"] }],
+  "containers": [{
+    "class_name": "EveRuntime",
+    "image": "./Dockerfile",
+    "image_build_context": "../..",
+    "instance_type": "basic",
+    "max_instances": 1,
+    "rollout_step_percentage": 100,
+    "rollout_active_grace_period": 60
+  }],
+  "queues": {
+    "producers": [{ "binding": "EVE_WAKE", "queue": "mikka-eve-wake" }],
+    "consumers": [{
+      "queue": "mikka-eve-wake",
+      "max_batch_size": 10,
+      "max_batch_timeout": 5,
+      "max_retries": 5,
+      "retry_delay": 30,
+      "dead_letter_queue": "mikka-eve-wake-dlq"
+    }]
+  }
+}
