@@ -6769,7 +6769,7 @@
       "github_credentials": "The GitHub credential is unavailable."
     },
     "run_mcp_unavailable": {
-      "default": "An MCP connection used by this task changed or is unavailable. Check its configuration and try again."
+      "default": "An MCP connection used by this task changed or is unavailable."
     },
     "run_failed": {
       "default": "The task could not be completed. Check the error details or try again."

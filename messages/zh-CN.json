@@ -6769,7 +6769,7 @@
       "github_credentials": "GitHub 凭据暂不可用。"
     },
     "run_mcp_unavailable": {
-      "default": "此任务使用的 MCP 连接已更改或暂不可用。请检查配置后重试。"
+      "default": "此任务使用的 MCP 连接已更改或暂不可用。"
     },
     "run_failed": {
       "default": "任务未能完成，请查看错误详情或重试。"

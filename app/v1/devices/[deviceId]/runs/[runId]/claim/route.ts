@@ -344,7 +344,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     catch (error) {
       logCodedError(new CodedError('mcpUnavailable',{cause:error}),{runId:run.id})
       const now = new Date()
-      const [failed] = await db.update(agentRuns).set({status:'failed',stopReason:'error',error:'mcpUnavailable',failureDetails:serverRunFailure(runId,now),finishedAt:now,updatedAt:now})
+      const [failed] = await db.update(agentRuns).set({status:'failed',stopReason:'error',error:'mcpUnavailable',failureDetails:serverRunFailure(runId,now,new CodedError('run_mcp_unavailable')),finishedAt:now,updatedAt:now})
         .where(and(eq(agentRuns.id,run.id),eq(agentRuns.userId,caller.userId),eq(agentRuns.deviceId,deviceId),eq(agentRuns.status,'queued'),isNull(agentRuns.stopRequestedAt)))
         .returning({ id: agentRuns.id })
       if (failed) {

@@ -59,6 +59,7 @@ function fixture() {
     taskMcpVersion: TASK_MCP_VERSION as string,
     taskMcpToolFilter: false,
     mcpRevoked: false,
+    mcpAssignmentError: undefined as Error | undefined,
     mcpChecks: [] as string[],
     secretInjection: undefined as Partial<TaskSecretInjection> | undefined,
     secretSnapshot: undefined as string | undefined,
@@ -291,6 +292,20 @@ test('a preview daemon advertising MCP version 2 receives its filtered connectio
   const response = await claim(probe)
   assert.equal(response.status, 200)
   assert.deepEqual((await response.json()).mcp.servers, probe.nativeMcpServers)
+})
+
+test('an unavailable MCP assignment records the MCP diagnostic without taking a lease', async () => {
+  const probe = fixture()
+  Object.assign(probe.run, { agentDefinition: { harness: 'codex', customMcp: { servers: [{ id: 'fixture-mcp' }] } } })
+  probe.taskMcpToolFilter = true
+  probe.nativeMcpServers = []
+  probe.mcpAssignmentError = Object.assign(new Error('mcpUnavailable'), { status: 403 })
+  const response = await claim(probe, ['skill-preflight', 'policy', 'secrets'])
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+  assert.equal(probe.run.status, 'failed')
+  assert.equal(probe.run.leaseExpiresAt, null)
+  assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_mcp_unavailable')
 })
 
 test('the current daemon receives filtered MCP, unless the grant is revoked before response', async () => {

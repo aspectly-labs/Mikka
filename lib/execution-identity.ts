@@ -61,8 +61,9 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
   if (definition.customMcp) {
     if (definition.customMcp.workspaceId !== workspaceId) return denied()
     const authority = await (await import('./plugins/workspace-mcp')).validateMcpAuthority(query, run.userId, definition.customMcp, membership).catch(error => {
-      if (error instanceof PluginError && error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
-      return denied()
+      if (!(error instanceof PluginError)) throw error
+      if (error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
+      throw new ExecutionIdentityError({ cause: error })
     })
     for (const grant of authority.servers) resourceBindings.push({ kind: 'mcp', id: grant.id, ownerId: grant.ownerId,
       access: grant.grantId ? 'workspace_share' : 'owner', revision: String(grant.revision),

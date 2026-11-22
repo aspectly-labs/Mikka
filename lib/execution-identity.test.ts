@@ -9,6 +9,7 @@ const id = (last: number) => `10000000-0000-4000-8000-${String(last).padStart(12
 function fixture() {
   const members = new Set(['requester', 'bot-owner', 'resource-owner'])
   const state = { botOwner: 'bot-owner', workspace: id(1), deviceOwner: 'requester', keyOwner: 'requester', share: false, enabled: true, kind: 'local', revision: '1', subscription: true, e2b: true }
+  const mcp = { queryError: undefined as Error | undefined }
   const definition = freezeWorkerDefinition({ harness: 'codex', instructions: '', prompt: 'A task', parent: null, executionId: null, model: 'example-model', apiKey: { keyId: id(2), model: 'example-model' } })
   const run = { userId: 'requester', botId: id(3), deviceId: id(4), agentDefinition: definition }
   const query = { async query(sql: string, args: unknown[]) {
@@ -16,6 +17,8 @@ function fixture() {
     if (sql.includes('FROM mikka_workspace_members')) rows = [...members].map(userId => ({ userId }))
     else if (sql.includes('FROM bots')) rows = [{ ownerId: state.botOwner, workspaceId: state.workspace }]
     else if (sql.includes('FROM devices')) rows = [{ ownerId: state.deviceOwner, kind: state.kind, enabled: state.enabled }]
+    else if (sql.includes('FROM mikka_workspaces w') && sql.includes('JOIN mikka_workspace_members')) rows = [{ id: state.workspace, kind: 'team', name: 'Requester' }]
+    else if (sql.includes('FROM personal_mcp_servers') && mcp.queryError) throw mcp.queryError
     else if (sql.includes('FROM model_api_keys')) rows = [{ ownerId: state.keyOwner, shared: state.share }]
     else if (sql.includes('FROM byos_bindings')) rows = state.subscription ? [{ ownerId: state.keyOwner, workspaceId: state.workspace, revision: state.revision, shared: state.share, modelId: 'example-model', route: 'codex_cli' }] : []
     else if (sql.includes('FROM user_e2b_keys')) rows = state.e2b ? [{ found: 1 }] : []
@@ -28,7 +31,7 @@ function fixture() {
     return { rows, rowCount: rows.length }
   } } as unknown as Pick<Pool, 'query'>
   const freeze = async () => definition.executionIdentity = await freezeExecutionIdentity(query, run, query)
-  return { state, members, definition, run, query, freeze }
+  return { state, members, definition, run, query, freeze, mcp }
 }
 
 test('borrowing a Bot uses the requester, their own device/account, and their private output', async () => {
@@ -47,6 +50,16 @@ test('borrowing a Bot uses the requester, their own device/account, and their pr
 test('a Bot owner cannot lend their personal device implicitly', async () => {
   const f = fixture(); f.state.deviceOwner = 'bot-owner'
   await assert.rejects(f.freeze, ExecutionIdentityError)
+})
+
+test('an MCP database failure is not converted into an identity denial', async () => {
+  const f = fixture()
+  f.definition.customMcp = { requester: f.run.userId, workspaceId: f.state.workspace, servers: [
+    { id: id(6), name: 'Docs', ownerId: f.run.userId, revision: 1, grantId: null },
+  ] }
+  const failure = new Error('synthetic MCP database fault')
+  f.mcp.queryError = failure
+  await assert.rejects(f.freeze, error => error === failure)
 })
 
 test('resource ownership is distinct from the Bot owner and explicit sharing is mandatory', async () => {
