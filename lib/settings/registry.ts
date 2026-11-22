@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { gitAuthorEmailSchema, gitAuthorNameSchema } from '@mikka/protocol/device'
 import type { ResolvedSetting, SettingSchemaEntry, SettingScope, SettingValue } from '@mikka/protocol/settings'
 import { archiveIdleDays } from '@/lib/conversation-directory-input'
+import { DEFAULT_DND_SCHEDULE, DND_DAYS, DND_TIME_PATTERN, NOTIFICATION_SOUNDS } from '@/lib/push-allowed'
 import { DEFAULT_TITLE_TRIGGERS, THREAD_TITLE_TRIGGERS, TITLE_INSTRUCTIONS_MAX } from '@/lib/thread-title'
 import {
   BACKGROUND_EFFECTS,
@@ -35,6 +36,8 @@ const personalAccount = {
   writeAccess: { personal: 'owner' } as const,
   personalContext: 'account' as const,
 }
+
+const dndDaysGuard = z.array(z.enum(DND_DAYS)).max(7).refine(days => new Set(days).size === days.length, { message: 'Duplicate days' })
 
 /** Adding a scalar field here gives it validation, typed persistence, reset and schema search. */
 export const SETTINGS_REGISTRY = {
@@ -158,6 +161,81 @@ export const SETTINGS_REGISTRY = {
     ...settingMetadata('subagentMaxConcurrent'),
     type: 'integer', guard: z.number().int().min(1).max(20), defaultValue: 6,
     personalOverride: false, writeAccess: { workspace: 'admin' }, personalContext: 'workspace',
+  },
+  memoryAutoApprove: {
+    ...personalAccount, key: 'memoryAutoApprove', group: 'memory', page: 'instructions',
+    ...settingMetadata('memoryAutoApprove'),
+    type: 'boolean', guard: z.boolean(), defaultValue: false,
+  },
+  dndEnabled: {
+    ...personalAccount, key: 'dndEnabled', group: 'notifications', page: 'notifications',
+    ...settingMetadata('dndEnabled'),
+    type: 'boolean', guard: z.boolean(), defaultValue: DEFAULT_DND_SCHEDULE.enabled,
+  },
+  dndStart: {
+    ...personalAccount, key: 'dndStart', group: 'notifications', page: 'notifications',
+    ...settingMetadata('dndStart'),
+    type: 'string', guard: z.string().regex(DND_TIME_PATTERN), defaultValue: DEFAULT_DND_SCHEDULE.start,
+  },
+  dndEnd: {
+    ...personalAccount, key: 'dndEnd', group: 'notifications', page: 'notifications',
+    ...settingMetadata('dndEnd'),
+    type: 'string', guard: z.string().regex(DND_TIME_PATTERN), defaultValue: DEFAULT_DND_SCHEDULE.end,
+  },
+  dndDays: {
+    ...personalAccount, key: 'dndDays', group: 'notifications', page: 'notifications',
+    ...settingMetadata('dndDays'),
+    type: 'string-array', guard: dndDaysGuard, defaultValue: [...DEFAULT_DND_SCHEDULE.days], options: [...DND_DAYS],
+  },
+  notifyMobileDecide: {
+    ...personalAccount, key: 'notifyMobileDecide', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyMobileDecide'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyMobileReview: {
+    ...personalAccount, key: 'notifyMobileReview', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyMobileReview'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyMobileFinished: {
+    ...personalAccount, key: 'notifyMobileFinished', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyMobileFinished'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyMobileBriefing: {
+    ...personalAccount, key: 'notifyMobileBriefing', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyMobileBriefing'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyDesktopDecide: {
+    ...personalAccount, key: 'notifyDesktopDecide', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyDesktopDecide'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyDesktopReview: {
+    ...personalAccount, key: 'notifyDesktopReview', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyDesktopReview'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyDesktopFinished: {
+    ...personalAccount, key: 'notifyDesktopFinished', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyDesktopFinished'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyDesktopBriefing: {
+    ...personalAccount, key: 'notifyDesktopBriefing', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyDesktopBriefing'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notifyEmailInvitations: {
+    ...personalAccount, key: 'notifyEmailInvitations', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notifyEmailInvitations'),
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  notificationSound: {
+    ...personalAccount, key: 'notificationSound', group: 'notifications', page: 'notifications',
+    ...settingMetadata('notificationSound'),
+    type: 'string', guard: z.enum(NOTIFICATION_SOUNDS), defaultValue: 'default', options: [...NOTIFICATION_SOUNDS],
   },
 } satisfies Record<string, SettingDefinition>
 

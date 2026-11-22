@@ -63,7 +63,7 @@ workspace/admin scope, typed persistence, reset and schema metadata. P2 owns
 consuming this setting at the subagent admission boundary; P1 only provides
 the setting contract and storage.
 
-### Appearance and interface keys (`#3110`)
+### Appearance, interface, memory and notification keys (`#3110`)
 
 Personal interface (`sidebarPages`, `sidebarLayout`, `pinPages`, `openInDesktop`,
 `scrollNewToTop`, `enterAction`, `modEnterAction`, `altEnterAction`) and
@@ -86,6 +86,13 @@ are not written to PostgreSQL:
   `appearance.dashboardBackground`, `threads.subagentDepth`, workspace sharing
   defaults) are centrally marked `pending` in `lib/settings-sections.ts` and
   rendered with `· 待接入` (`· Pending`) as disabled controls.
+
+Account-scoped personal fields (`personalContext: 'account'`, `scope: ['personal']`)
+for memory and notifications also persist in `personal_setting_values` (`workspaceId IS NULL`) without schema
+migrations:
+
+- **Memory (`group: 'memory'`, `page: 'instructions'`)**: `memoryAutoApprove` (`boolean`, default `false`) auto-approves non-conflicting extracted facts in `lib/profile/store.ts` while holding slot-contradicting facts as `'pending'` and keeping self-added (`'told'`) facts unconditionally `'approved'`.
+- **Notifications (`group: 'notifications'`, `page: 'notifications'`)**: scheduled Do Not Disturb (`dndEnabled`, `dndStart`, `dndEnd`, `dndDays`, evaluated in the person's IANA timezone from `readTimeZoneSetting` with `'UTC'` fallback), per-channel × category switches (`notifyMobileDecide`, `notifyMobileReview`, `notifyMobileFinished`, `notifyMobileBriefing`, `notifyDesktopDecide`, `notifyDesktopReview`, `notifyDesktopFinished`, `notifyDesktopBriefing`, `notifyEmailInvitations`, falling back to `user_preferences` when `null`), and preset `notificationSound` (`'default' | 'subtle' | 'chime' | 'none'`, see [notification sound decision](../design/decisions/2026-11-22-0050-notification-sound-presets.md)).
 
 Rollback deploys the prior application while retaining the additive tables.
 The mirrored legacy columns remain readable. Do not delete saved preferences
