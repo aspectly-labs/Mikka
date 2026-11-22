@@ -838,6 +838,10 @@ export async function mentionThreadBot(input: { issueId: string | null; runId: s
   const { rows: [bot] } = await pool.query<{ id: string; ownerId: string }>(
     `SELECT id,"ownerId" FROM bots WHERE id=$1 AND "workspaceId"=$2`, [botId.data, row.workspaceId])
   if (!bot) throw new ActionFailureError('botNotFound')
+  // A mention starts the bot's turn; require canSteer on the bot, as sendToBot does.
+  const { resourceActionAllowed } = await import('@/lib/resource-access/store')
+  if (!await resourceActionAllowed(db, user.id, { kind: 'bot', id: bot.id, workspaceId: row.workspaceId }, 'canSteer'))
+    throw new ActionFailureError('botNotFound')
   const { rows: [inserted] } = await pool.query<{ id: string }>(
     `INSERT INTO coordinator_events (id,"userId","botId",kind,"dedupeKey",payload,tier)
      VALUES ($1,$2,$3,'run_report',$4,$5,'result') ON CONFLICT ("dedupeKey") DO NOTHING RETURNING id`,

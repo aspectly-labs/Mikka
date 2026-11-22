@@ -321,7 +321,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const threadScopeRunId = (await readRunChain(pool, run.userId, run.id))?.rootRunId ?? run.id
   try {
     taskInjection = projectEnvironment
-      ? await environmentSecretInjection(taskWorkspaceId!, taskRepository, projectEnvironment, process.env, run.userId)
+      ? await environmentSecretInjection(taskWorkspaceId!, taskRepository, projectEnvironment, process.env, run.userId, threadScopeRunId)
       : await taskSecretInjection(taskWorkspaceId, taskRepository, process.env, undefined, run.userId, threadScopeRunId)
     taskEnv = taskInjection.env
     taskSecretNames = taskInjection.secretNames
@@ -619,7 +619,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (!currentRepo || remoteRepositoryRef(currentRepo.remoteUrl) !== taskRepository) return false
     try {
       const snapshot = currentEnvironment && workspaceId
-        ? await environmentSecretSnapshot(workspaceId, taskRepository, currentEnvironment, current.userId, tx)
+        ? await environmentSecretSnapshot(workspaceId, taskRepository, currentEnvironment, current.userId, tx, threadScopeRunId)
         : await taskSecretSnapshot(workspaceId, taskRepository, current.userId, tx, undefined, undefined, threadScopeRunId)
       return snapshot === taskInjection.snapshot
     } catch (error) {

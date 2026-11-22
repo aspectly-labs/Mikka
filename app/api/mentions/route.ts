@@ -38,9 +38,9 @@ export async function GET(request: Request) {
     }
     if (type === 'thread') {
       const { rows } = await pool.query<{ id: string; status: string; title: string | null }>(
-        `SELECT r.id,r.status,COALESCE(i."issuedIdentifier"||' '||i.title,i.title) AS title FROM agent_runs r
+        `SELECT r.id,r.status,COALESCE(i."issuedIdentifier"||' '||i.title,i.title,r.title) AS title FROM agent_runs r
           LEFT JOIN issues i ON i.id=r."issueId"
-          WHERE r."userId"=$1 AND r."workspaceId"=$2 AND ($3='' OR i.title ILIKE $4 ESCAPE '\\' OR i."issuedIdentifier" ILIKE $4 ESCAPE '\\')
+          WHERE r."userId"=$1 AND r."workspaceId"=$2 AND ($3='' OR i.title ILIKE $4 ESCAPE '\\' OR i."issuedIdentifier" ILIKE $4 ESCAPE '\\' OR r.title ILIKE $4 ESCAPE '\\')
           ORDER BY r."createdAt" DESC LIMIT 20`, [session.user.id, workspaceId, q, like])
       return NextResponse.json({ type, items: rows.map(r => ({ type: 'thread', id: r.id, title: r.title, detail: r.status })) }, { headers })
     }

@@ -1645,7 +1645,7 @@
         "GET"
       ],
       "maxDuration": 30,
-      "sourceHash": "70cb0dcdcfd054f18734f10ee699833c9bb352d7d38cc7cc9e706b0a70c777cd"
+      "sourceHash": "e7bfd6df10d2cb298a5cd05b4b89f8f3a079ad69af18554749495176671df804"
     },
     {
       "path": "/mikka/api/mobile/artifacts/[id]",
@@ -3603,7 +3603,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "0510d976aa5c24c52b922e1a53b548fbebe2cc8cae19ed98388f8d11b29dff35"
+      "sourceHash": "da0a16489d14172c266487cdc9f45acc1649d0cd79fac4dabed02ac47c2afe56"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
