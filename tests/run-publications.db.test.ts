@@ -176,6 +176,29 @@ test('run result publication commits one owner-scoped result through retries and
       assert.equal((await receipt(f)).pullRequest.autoMergeEnabled, true)
     })
 
+    await t.test('initial publication respects a stored GitHub rate-limit deadline before opening a PR', async () => {
+      const f = await fixture()
+      await prepareRunPublication(assignment(f), f.remoteUrl)
+      await persistRunCompletion(f.userId, f.runId, completion(f))
+      const retryAt = Date.now() + 20 * 60_000
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.allowCreate, true)
+        throw new PublicationError('github_unavailable', true, 429, retryAt)
+      }), { done: false, retryAt })
+      const pending = await receipt(f)
+      assert.equal(pending.status, 'pending')
+      assert.equal(pending.pullRequest, null)
+      assert.equal(pending.leaseToken, null)
+      assert.equal(pending.leaseExpiresAt.getTime(), retryAt)
+      assert.deepEqual(await publishRunResult(f.runId, async () => assert.fail('A duplicate workflow must not open the PR early')), { done: false, retryAt })
+      await pool.query('UPDATE run_publications SET "leaseExpiresAt"=now()-interval \'1 second\' WHERE "runId"=$1', [f.runId])
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.allowCreate, true)
+        return prFor(f)
+      }), { done: true })
+      assert.equal((await receipt(f)).pullRequest.url, prFor(f).url)
+    })
+
     await t.test('a failed retry keeps the PR state written after it claimed the publication', async () => {
       const f = await fixture()
       await prepareRunPublication(assignment(f), f.remoteUrl)
