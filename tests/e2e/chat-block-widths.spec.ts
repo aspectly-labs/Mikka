@@ -5,7 +5,8 @@ import { test as base, expect, app, browserClientHeaders, captureAuthenticationC
 import { recordAuthenticationSecrets } from '../../scripts/test-accounts/session.mjs'
 
 // Alex, 2026-11-22 (chat look as LobeHub): every block in a message spans the words' width, the full message column, so
-// none stands squat beside the text: a tool group, an expanded tool result, a code block, a table and the Crew cards.
+// none stands squat beside the text: a tool group, its summary and rows (as LobeHub's, no tree indent), an expanded tool
+// result, a code block, a table and the Crew cards.
 // The hosted thread draws the column (styles/globals.css `data-look="lobehub"`); this checks the laid-out widths.
 
 const test = base.extend<{ register: (page: Page) => Promise<{ email: string }> }>({
@@ -90,16 +91,14 @@ for (const [device, viewport] of [['desktop', { width: 1440, height: 1000 }], ['
     const text = (await words.boundingBox())!
     const blocks = {
       'tool group': await width('.ui-th-tools'),
+      'tool summary': await width('.ui-th-tools__head'),
+      'tool row': await width('summary.ui-th-tool'),
+      'expanded tool result': await width('details.ui-th-tool-details[open] > :not(summary)'),
       'code block': await width('.ui-th-text .agent-code-block'),
       table: await width('.ui-th-text [role="region"]:has(> [data-slot="table-container"])'),
       'Crew cards': await width('.ui-th-text [data-slot="subagents"]'),
       'one Crew card': await width('.ui-th-text [data-slot="subagents"] > :nth-child(2) > *'),
     }
     for (const [name, w] of Object.entries(blocks)) expect(Math.abs(w - text.width), `${name}: ${w} vs the words' ${text.width}`).toBeLessThanOrEqual(1)
-    // A tool's row and its result sit in the group's tree, one step in, and end where the words end.
-    for (const selector of ['summary.ui-th-tool', 'details.ui-th-tool-details[open] > :not(summary)']) {
-      const box = (await page.locator(selector).first().boundingBox())!
-      expect(Math.abs(box.x + box.width - (text.x + text.width)), selector).toBeLessThanOrEqual(1)
-    }
   })
 }

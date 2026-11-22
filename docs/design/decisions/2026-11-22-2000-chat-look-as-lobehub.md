@@ -21,7 +21,7 @@ Every chat drawn by `ThreadScreen` (hosted affectUI Agent / Thread, `mikka.look:
 5. **Action bar.** LobeHub's pill: 8px under the message, radius 8, 24px buttons, 2px inside, the faint fill (`--color-background-secondary-default`); on the left under a reply and on the right under the person's bubble (no fill there, as LobeHub). Mikka's own actions only: the time, Reply, Copy, the cited pages, reactions, and Edit and Regenerate where a thread has them. No More menu.
 6. **The person's bubble.** 8px 12px plus LobeHub's 4px Markdown line inset (12px all round), radius 12, the faint fill; one line is 46px tall.
 7. **Type.** The body stays 14px on 22.4px.
-8. **Every block spans the words' width** (Alex, 2026-11-22): a tool group, its rows' right edges and an expanded result, a code block, a Markdown table (scrolling inside when wider), the 子 Agent Crew cards (one card fills the row), an artifact card, the choice card and the model notice are as wide as the message column. `tests/e2e/chat-block-widths.spec.ts` checks it on desktop and phone.
+8. **Every block spans the words' width** (Alex, 2026-11-22): a tool group, its folded summary (a full-width 32px row box), its rows (no tree indent; 32px tall, 8px apart, as LobeHub's) and an expanded result, a code block, a Markdown table (scrolling inside when wider), the 子 Agent Crew cards (one card fills the row), an artifact card, the choice card and the model notice are as wide as the message column. `tests/e2e/chat-block-widths.spec.ts` checks it on desktop and phone.
 
 Exceptions, kept as Mikka's:
 
@@ -34,4 +34,5 @@ Exceptions, kept as Mikka's:
 - `MessageTimeStamp` and the 15-minute grouping (`stampStarts`) are removed; `lib/chat-time-stamps.ts` keeps the words for the bar's time.
 - `coordinator-chat.tsx` and `issue-thread-panel.tsx` give their replies a header author; the hosted slot heads every reply and no longer passes `quiet`.
 - The template's `mikka.before` slot stays, unused.
-- Remaining differences from LobeHub besides the exceptions: LobeHub reserves a 19px row above the person's bubble for the time on hover (Mikka keeps the time in the bar); a tool's row and result sit one tree step in from the group's head (they end where the words end).
+- The code block (beUI's, `components/agents/code-block.tsx`, used as shipped elsewhere) takes LobeHub's 8px corners and 32px header in the chat, by the hosted thread's CSS; its copy button and line numbers stay.
+- Remaining differences from LobeHub besides the exceptions: LobeHub reserves a 19px row above the person's bubble for the time on hover (Mikka keeps the time in the bar); Mikka's folding of tools stays its own; the code block keeps its 420px max height, line numbers and copy button.
