@@ -354,6 +354,7 @@ const functions = {
   'tokens.createAccessToken': actions30.createAccessToken,
   'tokens.revokeAccessToken': actions30.revokeAccessToken,
   'usage.getUsage': actions31.getUsage,
+  'usage.readTurnUsage': actions31.readTurnUsage,
   'user-secrets.listMySecrets': actions32.listMySecrets,
   'user-secrets.createMySecret': actions32.createMySecret,
   'user-secrets.replaceMySecret': actions32.replaceMySecret,

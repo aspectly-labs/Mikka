@@ -76,13 +76,15 @@ export async function recordWorkflowResult(database: Pick<Pool, 'connect'>, cand
   } finally { tx.release() }
 }
 
-export async function acceptWorkflowResult(result: WorkflowResult): Promise<void> {
+export async function acceptWorkflowResult(result: WorkflowResult,
+  deps: { readCredential?: typeof githubRepositoryReadCredential } = {}): Promise<void> {
   const [candidate, ambiguous] = await targets(pool, result)
   if (!candidate || ambiguous || newest(candidate.previous, result) === 'old') return
   // Frozen publication + installation is necessary, but a later user revoke
   // also has to win. Recheck the existing repository-specific read authority.
+  const readCredential = deps.readCredential ?? githubRepositoryReadCredential
   try {
-    const { repository } = await githubRepositoryReadCredential(candidate.ownerId, 'v2/github.com/' + result.repository)
+    const { repository } = await readCredential(candidate.ownerId, 'v2/github.com/' + result.repository)
     if (repository.id !== String(result.repositoryId) || repository.installationId !== String(result.installationId)) return
   } catch (error) {
     if (error instanceof GitHubAccessError && ['githubRepositoryForbidden','githubNotConnected','githubReconnectRequired'].includes(error.code)) return

@@ -224,7 +224,7 @@ export function createFactoryReconciler(
           const fallback = parsed.success ? parsed.data : undefined;
           if (run.stopRequestedAt || fallback?.state === "stopped") {
             await store.apply(userId, binding(task), factoryEventId("provider-stopped", run.id), {
-              action: "cancel", reason: "The original request ended before model recovery could continue.",
+              action: "cancel", reason: "The original request ended before model recovery could continue.", internal: true,
             }, tx);
             await commitFactoryTransaction(tx);
             recoveredItem++;
@@ -339,6 +339,7 @@ export function createFactoryReconciler(
             {
               action: "cancel",
               reason: `Run stopped: ${run.stopReason ?? run.status}`,
+              internal: true,
             },
             tx,
           );
