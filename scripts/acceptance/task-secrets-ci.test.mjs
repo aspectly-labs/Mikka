@@ -22,10 +22,12 @@ const workflow = { id: 456, name: RELEASE_NAME, path: RELEASE_WORKFLOW, state: '
 const started = new Date(Date.now() - 60_000).toISOString()
 const run = { id: 123, run_attempt: 2, workflow_id: workflow.id, name: RELEASE_NAME, path: RELEASE_WORKFLOW,
   head_sha: SHA, head_branch: 'main', event: 'push', status: 'completed', conclusion: 'success', run_started_at: started,
-  repository: { id: 1427517699, full_name: REPOSITORY }, head_repository: { id: 1427517699, full_name: REPOSITORY } }
+  repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } },
+  head_repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } } }
 const expected = { sourceCommit: SHA, runId: run.id, runAttempt: run.run_attempt, workflowId: workflow.id, event: run.event,
   repositoryId: run.repository.id, repositoryFullName: REPOSITORY }
 const env = () => ({ GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_run', GITHUB_REPOSITORY: REPOSITORY,
+  GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963',
   GITHUB_REF: 'refs/heads/main', GITHUB_SHA: SHA, GITHUB_RUN_ID: '990', GITHUB_RUN_ATTEMPT: '1', GITHUB_TOKEN: TOKEN,
   TASK_SECRETS_JOB_ID: '991', TASK_SECRETS_JOB_STARTED_AT: started, TASK_SECRETS_JOB_START_SOURCE: 'github_actions_job.started_at',
   APPLICATION_SHA: SHA, EXPECTED_SOURCE_SHA: SHA, EXPECTED_UPSTREAM_RUN_ID: '123', EXPECTED_UPSTREAM_RUN_ATTEMPT: '2',
@@ -46,6 +48,23 @@ function report(sourceCommit = SHA, workerSha = WORKER) {
     credentialRoute: 'subscription', replyVerified: true, replyVerifiedAfterTool: true,
   }])) }
 }
+
+test('the retired publication subscription gate is absent only in the verified build-time contract', () => {
+  const current = report(); delete current.subscriptionAcceptance
+  const bytes = Buffer.from(JSON.stringify(current))
+  const pins = releasePins(bytes, expected, WORKER, 'build_time')
+  assert.equal(pins.workerSourceCommit, SHA)
+  assert.equal(pins.workerSha, WORKER)
+  assert.equal(pins.templates.codex, 'candidate-codex')
+  assert.throws(() => releasePins(bytes, expected, WORKER), /task_secret_ci:report/)
+  assert.throws(() => releasePins(bytes, expected, WORKER, 'unknown'), /task_secret_ci:report/)
+  for (const mutate of [value => { value.sourceCommit = OTHER }, value => { value.workerSha = OTHER },
+    value => { value.templates.desktop.public = false }, value => { value.templates.claude.buildStatus = 'building' },
+    value => { value.templates.codex.name = 'unbound-template' }]) {
+    const invalid = structuredClone(current); mutate(invalid)
+    assert.throws(() => releasePins(Buffer.from(JSON.stringify(invalid)), expected, WORKER, 'build_time'), /task_secret_ci:report/)
+  }
+})
 function zip(entries) {
   const source = 'import io,json,sys,zipfile\nbuffer=io.BytesIO()\nwith zipfile.ZipFile(buffer,"w",zipfile.ZIP_DEFLATED) as archive:\n    for row in json.load(sys.stdin): archive.writestr(row["name"],row["value"])\nsys.stdout.buffer.write(buffer.getvalue())\n'
   return execFileSync('python3', ['-c', source], { input: JSON.stringify(entries), maxBuffer: MAX_ARCHIVE_BYTES + 1024,
@@ -237,13 +256,53 @@ function reader(fixture, mutate = () => {}) {
   return { calls, fetchImpl: async (url, options) => {
     calls.push(url); mutate(fixture, calls)
     assert.equal(options.headers.authorization, `Bearer ${TOKEN}`); assert.equal(options.redirect, 'error')
-    const data = { [`${API}/actions/workflows/e2b-official-runtime.yml`]: fixture.workflow, [`${API}/actions/runs/123`]: fixture.run,
-      [`${IMMUTABLE_API}/git/ref/heads/main`]: fixture.main, [`${API}/actions/runs/123/attempts/2/jobs?per_page=100`]: fixture.jobs,
-      [`${API}/actions/runs/123/artifacts?per_page=100`]: fixture.listing, [`${API}/actions/artifacts/321`]: fixture.artifact }
+    const data = { [`${IMMUTABLE_API}/actions/workflows/e2b-official-runtime.yml`]: fixture.workflow, [`${IMMUTABLE_API}/actions/runs/123`]: fixture.run,
+      [`${IMMUTABLE_API}/git/ref/heads/main`]: fixture.main, [`${IMMUTABLE_API}/actions/runs/123/attempts/2/jobs?per_page=100`]: fixture.jobs,
+      [`${IMMUTABLE_API}/actions/runs/123/artifacts?per_page=100`]: fixture.listing, [`${IMMUTABLE_API}/actions/artifacts/321`]: fixture.artifact }
     assert.ok(Object.hasOwn(data, url), 'only fixed read-only GitHub routes are used')
     return Response.json(data[url])
   } }
 }
+
+test('canonical Task release metadata uses immutable routes and keeps artifact identity checks', async () => {
+  // The native old-name run URL returned HTTP301 to this immutable repository
+  // route on 2026-11-21. A redirect:error reader cannot use the retired route.
+  const fixture = responseFixture(), environment = env()
+  environment.GITHUB_REPOSITORY = 'aspectly-labs/Mikka'
+  environment.GITHUB_REPOSITORY_OWNER_ID = '359279274'
+  fixture.run.event = 'workflow_run'
+  for (const key of ['repository', 'head_repository'])
+    fixture.run[key] = { id: 1427517699, full_name: environment.GITHUB_REPOSITORY, owner: { id: 359279274 } }
+  fixture.artifact.url = 'https://api.github.com/repos/aspectly-labs/Mikka/actions/artifacts/321'
+  fixture.artifact.archive_download_url = fixture.artifact.url + '/zip'
+  const calls = [], data = {
+    [`${IMMUTABLE_API}/actions/workflows/e2b-official-runtime.yml`]: fixture.workflow,
+    [`${IMMUTABLE_API}/actions/runs/123`]: fixture.run,
+    [`${IMMUTABLE_API}/git/ref/heads/main`]: fixture.main,
+    [`${IMMUTABLE_API}/actions/runs/123/attempts/2/jobs?per_page=100`]: fixture.jobs,
+    [`${IMMUTABLE_API}/actions/runs/123/artifacts?per_page=100`]: fixture.listing,
+    [`${IMMUTABLE_API}/actions/artifacts/321`]: fixture.artifact,
+  }
+  const fetchImpl = async (url, options) => {
+    calls.push(url)
+    assert.equal(options.redirect, 'error')
+    assert.equal(options.headers.authorization, `Bearer ${TOKEN}`)
+    if (url.startsWith(API + '/')) return new Response(null,
+      { status: 301, headers: { location: IMMUTABLE_API + url.slice(API.length) } })
+    assert.ok(Object.hasOwn(data, url), 'only the fixed immutable repository is read')
+    return Response.json(data[url])
+  }
+  const request = { env: environment, event: { workflow_run: structuredClone(fixture.run) }, files: relevant, fetchImpl }
+  const result = await verifyTaskRelease(request)
+  assert.equal(result.selected, true)
+  assert.equal(result.artifact.repositoryId, 1427517699)
+  assert.equal(result.artifact.id, 321)
+  assert.ok(calls.every(url => url.startsWith(IMMUTABLE_API + '/')))
+  assert.equal(calls.filter(url => url.endsWith('/actions/runs/123')).length, 2)
+  assert.equal(calls.filter(url => url.endsWith('/git/ref/heads/main')).length, 2)
+  fixture.artifact.url = fixture.artifact.url.replace('aspectly-labs', 'foreign')
+  await assert.rejects(verifyTaskRelease(request), /artifact_identity/)
+})
 
 test('live release verification rejects missing/duplicate artifacts and a rerun or moving main during the check', async () => {
   const good = reader(responseFixture())
@@ -279,7 +338,7 @@ function metadataFixture(t, mutate = () => {}) {
   writeFileSync(fixturePath, JSON.stringify(fixture)); writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(output, '')
   const setup = `import {readFileSync as fixtureRead} from 'node:fs'; const f=JSON.parse(fixtureRead(process.env.FIXTURE_PATH));\n`
     + `globalThis.fetch=async(url,options)=>{if(options.redirect!=='error'||options.headers.authorization!=='Bearer ${TOKEN}')throw Error('private');\n`
-    + `const routes={'${API}/actions/workflows/e2b-official-runtime.yml':f.workflow,'${API}/actions/runs/123':f.run,'${API}/git/ref/heads/main':f.main}; if(!Object.hasOwn(routes,url))throw Error('private');return Response.json(routes[url])};\n`
+    + `const routes={'${IMMUTABLE_API}/actions/workflows/e2b-official-runtime.yml':f.workflow,'${IMMUTABLE_API}/actions/runs/123':f.run,'${IMMUTABLE_API}/git/ref/heads/main':f.main}; if(!Object.hasOwn(routes,url))throw Error('private');return Response.json(routes[url])};\n`
   const result = spawnSync(process.execPath, ['--input-type=module'], { input: setup + metadataScript(), encoding: 'utf8',
     env: { PATH: process.env.PATH, ...fixture.environment, FIXTURE_PATH: fixturePath, GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: output } })
   return { ...result, output: readFileSync(output, 'utf8') }
@@ -296,6 +355,9 @@ test('the actual pre-checkout script permits current official release or exact m
 test('Cloudflare-triggered runtime metadata retains all pre-checkout identity checks', t => {
   const automatic = mutate => metadataFixture(t, value => {
     value.event.workflow_run.event = 'workflow_run'; value.run.event = 'workflow_run'
+    value.environment.GITHUB_REPOSITORY = 'aspectly-labs/Mikka'; value.environment.GITHUB_REPOSITORY_OWNER_ID = '359279274'
+    for (const source of [value.event.workflow_run, value.run]) for (const key of ['repository', 'head_repository'])
+      source[key] = { id: 1427517699, full_name: 'aspectly-labs/Mikka', owner: { id: 359279274 } }
     mutate?.(value)
   })
   const result = automatic()
@@ -304,7 +366,13 @@ test('Cloudflare-triggered runtime metadata retains all pre-checkout identity ch
   for (const mutate of [value => { value.event.workflow_run.head_repository.full_name = 'fork/Mikka' },
     value => { value.workflow.path = '.github/workflows/other.yml' }, value => { value.run.event = 'push' },
     value => { value.run.run_attempt++ }, value => { value.main.object.sha = OTHER },
-    value => { value.environment.GITHUB_RUN_ATTEMPT = '3' }]) {
+    value => { value.environment.GITHUB_RUN_ATTEMPT = '3' },
+    value => { value.environment.GITHUB_REPOSITORY_ID = '999' },
+    value => { value.environment.GITHUB_REPOSITORY_OWNER_ID = '183887963' },
+    value => { delete value.environment.GITHUB_REPOSITORY_OWNER_ID },
+    value => { value.event.workflow_run.repository.id++ },
+    value => { value.event.workflow_run.head_repository.owner.id = 183887963 },
+    value => { value.run.repository.owner.id = 183887963 }, value => { value.run.head_repository.id++ }]) {
     const refused = automatic(mutate)
     assert.equal(refused.status, 1); assert.equal(refused.output, '')
     assert.equal(refused.stderr.trim(), 'task_secret_source_refused')
@@ -450,7 +518,7 @@ test('real CI CLI binds artifact bytes then refuses changed source/attempt/publi
     + `if((o.method??'GET')!=='GET')throw Error('write_refused');if(url==='https://productionresultssa12.blob.core.windows.net/result'){if(o.headers)throw Error('token_forwarded');return new Response(Buffer.from(f.archive,'base64'))}\n`
     + `if(url==='https://app.aspectlylabs.com/mikka/api/version')return Response.json({build:f.publicBuild});if(o.headers.authorization!=='Bearer ${TOKEN}')throw Error('token_missing');\n`
     + `if(url==='${IMMUTABLE_API}/actions/artifacts/321/zip')return new Response(null,{status:302,headers:{location:'https://productionresultssa12.blob.core.windows.net/result'}});\n`
-    + `const routes={'${API}/actions/workflows/e2b-official-runtime.yml':f.workflow,'${API}/actions/runs/123':f.run,'${IMMUTABLE_API}/git/ref/heads/main':f.main,'${API}/actions/runs/123/attempts/2/jobs?per_page=100':f.jobs,'${API}/actions/runs/123/artifacts?per_page=100':f.listing,'${API}/actions/artifacts/321':f.artifact};if(!Object.hasOwn(routes,url))throw Error('route_refused');return Response.json(routes[url])};\n`)
+    + `const routes={'${IMMUTABLE_API}/actions/workflows/e2b-official-runtime.yml':f.workflow,'${IMMUTABLE_API}/actions/runs/123':f.run,'${IMMUTABLE_API}/git/ref/heads/main':f.main,'${IMMUTABLE_API}/actions/runs/123/attempts/2/jobs?per_page=100':f.jobs,'${IMMUTABLE_API}/actions/runs/123/artifacts?per_page=100':f.listing,'${IMMUTABLE_API}/actions/artifacts/321':f.artifact};if(!Object.hasOwn(routes,url))throw Error('route_refused');return Response.json(routes[url])};\n`)
   const cliEnv = { PATH: process.env.PATH, ...env(), GITHUB_SHA: source, APPLICATION_SHA: source, EXPECTED_SOURCE_SHA: source,
     EXPECTED_WORKER_SHA: worker, EXPECTED_WORKER_SOURCE_SHA: source, RUNNER_TEMP: temp, FIXTURE_PATH: fixturePath,
     GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: output, GITHUB_ENV: environment }

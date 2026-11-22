@@ -13,49 +13,6 @@ on:
     branches: [main]
     # The cheap check compares canonical installed-worker/template inputs
     # across the complete push. Unrelated app edits never acquire the release queue.
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-    paths: &runtime_paths
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'packages/daemon/**'
-      - 'packages/protocol/**'
-      - 'packages/config/**'
-      - 'patches/**'
-      - 'scripts/e2b/**'
-      - 'scripts/e2b/publish-template-env.mjs'
-      - 'lib/computer/official-runtime.ts'
-      - '.github/workflows/e2b-official-runtime.yml'
-      - '.github/workflows/e2b-template.yml'
-      - '.github/workflows/e2b-runtime-release.yml'
-      - 'scripts/e2b/cleanup-template-candidates.py'
-      - 'scripts/e2b/runtime-report.mjs'
-      - 'scripts/e2b/acceptance-daemon.mts'
-      - 'scripts/e2b/acceptance-bootstrap.mts'
-      - 'lib/captures/bootstrap-evidence.ts'
-      - 'app/api/runs/[runId]/evidence/route.ts'
-      # The wildcard also matches Next route brackets as literal directory names.
-      - 'app/api/runs/**/evidence/route.ts'
-      - 'lib/computer/anonymous-startup-hint.ts'
-      - 'scripts/acceptance/cloud-startup.mjs'
-      - 'scripts/acceptance/cloud-startup.test.mjs'
-      - 'scripts/acceptance/cloud-startup-evidence.mjs'
-      - 'scripts/acceptance/team-workspace.mjs'
-      - 'scripts/acceptance/team-workspace.test.mjs'
-      - 'lib/smoke-account.ts'
-      - 'scripts/release/web-deploy.mjs'
-      - 'scripts/release/web-deploy.test.mjs'
-      - 'scripts/release/cloudflare-promoted-web*.mjs'
-      - 'cloudflare/web/gateway.mjs'
-      - 'cloudflare/web/prepare.mjs'
-      # These paths select offline PR checks, not paid runtime build eligibility.
-      - '.github/workflows/model-provider-fallback-acceptance.yml'
-      - 'scripts/acceptance/model-provider-fallback.mjs'
-      - 'scripts/acceptance/model-provider-fallback.test.mjs'
-      - '.github/workflows/project-decisions-acceptance.yml'
-      - 'scripts/acceptance/project-decisions.mjs'
-      - 'scripts/acceptance/project-decisions.test.mjs'
   workflow_dispatch:
     inputs:
       runtime-refresh:
@@ -74,8 +31,6 @@ permissions:
 
 jobs:
   test:
-    # Skip expensive PR proof while drafting; main/manual runs are unaffected.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     # Only offline checks share a PR group. Main and manual runs each get their own.
     concurrency:
       group: e2b-offline-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
