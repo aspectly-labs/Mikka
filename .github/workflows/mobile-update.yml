@@ -3,7 +3,8 @@ name: Mobile OTA update
 # Publishes the iOS app's JavaScript as an EAS Update (decision
 # 2026-10-31-2010-ota-updates): main goes to the `production` channel that
 # TestFlight builds read; a pull request gets its own `pr-<n>` branch, which
-# can be opened in a preview build. Production reads the existing Expo token
+# can be opened in a preview build. Mark it Ready or apply the mobile-preview label.
+# Production reads the existing Expo token
 # from Infisical using the trusted main workload's OIDC identity. PR previews
 # retain their existing repository-secret delivery; forks cannot publish.
 # Production requires the official mobile UI checkout before publishing.
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths: ['apps/mobile/**', 'packages/protocol/**']
   pull_request:
+    types: [ready_for_review, labeled]
     paths: ['apps/mobile/**', 'packages/protocol/**']
   # A push to the private UI layer's mobile/ folder ships through this (docs/ui-overlay.md).
   workflow_dispatch:
@@ -29,7 +31,11 @@ env:
 
 jobs:
   update:
-    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274')))
+    if: >-
+      (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.event.action == 'ready_for_review' || github.event.label.name == 'mobile-preview')))
     name: EAS Update
     runs-on: ubuntu-latest
     timeout-minutes: 20
