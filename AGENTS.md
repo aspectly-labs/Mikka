@@ -62,7 +62,9 @@ environments do not inherit that image's setup.
 
 - Mikka supports Node.js 22 (latest 22.x) and 24 everywhere, including the app
   build/start and Eve. `.node-version`, bootstrap and production images default
-  to 24; that is not a runtime restriction. CI tests both supported majors.
+  to 24; that is not a runtime restriction. CI tests only Node 24
+  ([2026-11-22-1430](docs/design/decisions/2026-11-22-1430-ci-node24-only.md)),
+  so Node 22 is unverified.
 - The provisioned image uses Node.js 24.22.1, pnpm 10.34.3 and PostgreSQL 17.
   Its local application database is `mikka_e2e` on `127.0.0.1`, matching the
   isolated CI schema. Keep application database URLs on that isolated target.

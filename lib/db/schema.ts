@@ -72,6 +72,8 @@ export const issues = pgTable('issues', {
   /** Immutable issued identity; legacy aliases and publication receipts remain separate. */
   issuedIdentifier: text('issuedIdentifier'),
   id: uuid('id').primaryKey(), userId: text('userId').notNull(),
+  /** The owner-scope task number, generated from content.attrs.mikka.number (20261031000250). */
+  number: bigint('number', { mode: 'number' }).generatedAlwaysAs(sql`CASE WHEN content #>> '{attrs,mikka,number}' ~ '^[1-9][0-9]*$' THEN (content #>> '{attrs,mikka,number}')::bigint END`),
   /** Immutable tenant. NULL is reserved for quarantined historical records. */
   workspaceId: uuid('workspaceId'),
   ownershipState: text('ownershipState').$type<'bound' | 'pending'>().notNull().default('pending'),
@@ -101,7 +103,8 @@ export const issues = pgTable('issues', {
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('issues_owner_updated_idx').on(table.userId, table.updatedAt.desc()), index('issues_workspace_updated_idx').on(table.workspaceId, table.updatedAt.desc()),
   index('issues_source_schedule_idx').on(table.sourceScheduleId).where(sql`${table.sourceScheduleId} IS NOT NULL`),
-  check('issues_short_title_compact', sql`mikka_issue_short_title_valid(${table.shortTitle})`)])
+  check('issues_short_title_compact', sql`mikka_issue_short_title_valid(${table.shortTitle})`),
+  uniqueIndex('issues_owner_number_key').on(table.userId, table.number).where(sql`${table.number} is not null`)])
 /**
  * A workspace's task states (Capy's Issue states). `category` is one of ISSUE_STATUS_CODES and fixes `type`; each
  * category has one default. `name` NULL shows the category's translated name. Seeded by mikka_ensure_issue_states.
@@ -455,7 +458,7 @@ export const deviceTokenDevices = pgTable('device_token_devices', {
 export const deviceRepos = pgTable('device_repos', {
   id: uuid('id').primaryKey(), deviceId: uuid('deviceId').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   userId: text('userId').notNull(), repoPath: text('repoPath').notNull(), remoteUrl: text('remoteUrl'),
-  baseBranch: text('baseBranch').default('main'), verifyCommand: text('verifyCommand'),
+  baseBranch: text('baseBranch'), verifyCommand: text('verifyCommand'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('device_repos_key').on(table.deviceId, table.repoPath)])
 
@@ -514,7 +517,7 @@ export const agentRuns = pgTable('agent_runs', {
   dispatchKey: text('dispatchKey'),
   /** Hash of the original dispatch parameters; rejects reuse for different work. */
   dispatchFingerprint: text('dispatchFingerprint'),
-  baseBranch: text('baseBranch').default('main'),
+  baseBranch: text('baseBranch'),
   sessionId: text('sessionId'), worktreePath: text('worktreePath'),
   observedModel: varchar('observedModel', { length: 500 }),
   stopReason: text('stopReason'), error: text('error'),

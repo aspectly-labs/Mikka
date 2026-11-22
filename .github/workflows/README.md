@@ -3,38 +3,80 @@
 This guide maps required pull-request checks, release jobs and their source
 bindings. Current workflow files define the triggers and selected coverage.
 
-## Pull requests and merge candidates
+## Pull requests: blocking checks
 
 Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
 and Cloudflare API source qualification for PRs targeting main. CI runs
-affected source, unit and daemon checks. Its unit matrix runs Node 24 for PRs
-targeting main. PRs targeting dev, which has no merge queue, retain the two
-Node versions and selected acceptance in the protected UI check.
+affected source, unit and daemon checks on Node 24 only
+([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
+PRs targeting dev, which has no merge queue, retain selected acceptance in the
+protected UI check.
+
+- `ui-policy.yml` runs for `pull_request` and `merge_group`, not for each
+  same-repository branch push. Actions' default PR checkout runs GitHub's
+  synthetic merge commit, including the PR together with its target branch at
+  the time of the check. A changed PR head gets a new check run.
+- Keep `UI policy (strict)` and `Production build and browser interactions`
+  successful for non-documentation PRs; the latter gates the selected isolated PostgreSQL suites across 1–4 dynamic
+  shards. Full inventory validation runs even when DB execution is skipped. Despite its name, CI
+  does not build the production Web release artifact. The retired Vercel
+  `web-deploy.yml` workflow was removed on 2026-11-17.
+  Current Cloudflare native CI and the transitionary private-triggered OCI issuer
+  are **different** operations; neither changes long-term public build ownership.
+  See [build-source-of-truth.md](../../docs/operations/build-source-of-truth.md).
+- Ordinary acceptance uses API/CLI flows under decision 2026-11-01-1520.
+  Targeted Desktop and Analytics jobs retain their selected browser
+  checks. `browser-gate.yml` only keeps the protected check name
+  `Browser tests (before merge)` and passes at once; delete it once that name
+  is removed from the required checks in the repository settings.
+- `GitGuardian Security Checks` is a separate external required check.
+- All four existing required names remain intact. Do not silently replace
+  them with a new aggregate check until the GitHub branch-protection settings
+  have been migrated and verified.
+
+`local-device-node22.yml` now runs an actual app/Eve build and startup smoke
+on Node 24, retaining the daemon and installer tests. The core,
+integration and PG17 database jobs above also run the selected suites on
+Node 24 only ([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md));
+the original Node 24 protected-check names stay unchanged.
+
+## Focused governance acceptance and superseded PR runs
+Merge queue autopilot checks the PR head after CI or Browser gate completes.
+It adds an eligible same-repository PR to the end of the queue once all required
+checks pass. Stacks and PRs included in an open batch follow their owner's merge
+flow. The GitHub App installation token lets queue candidates trigger CI.
 
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
 Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
 checks that trusted selection succeeded and the deferred DB jobs skipped.
 
-On `merge_group`, CI retains the full Node 22 and 24 unit and PG17 shard
-matrices. Selected Analytics, Workspace Governance and specialty acceptance
+On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path
 policy from the candidate's immutable base and selects all checks if that base
-predates the policy. Node.js compatibility continues its separate candidate
-workflow with real App, Eve and local-device builds and startup on both majors.
+predates the policy. The Node.js compatibility candidate workflow keeps its real
+App, Eve and local-device build and startup on Node 24.
 
-The specialty checks cover app icon compilation, cloud computer, coding
-workspace, credential isolation, E2B subscription custody, Read Cache, Site
-Search, SSH, unattended sandbox and credential-free Cloudflare image builds.
-Use `workflow_dispatch` in the individual workflow where it is available to
-request its evidence before queueing.
+- `Workspace governance HTTP (Item 11)` now runs as a reusable job of
+  `ui-policy.yml` for PRs and merge groups that the trusted Nx selector
+  classifies as database-affecting. Global, permission, auth, schema,
+  workflow and unknown inputs expand coverage rather than silently skip it.
+  The required `UI policy (strict)` gate checks the selected job's actual
+  conclusion, and requires an intentional skip when unselected. Unrelated
+  UI PRs do not allocate an extra PostgreSQL-backed governance workflow.
+  On every `main` push, independent postmerge governance acceptance remains.
+- Browser compatibility, E2B PR runtime, E2B BYOS and SSH device workflows
+  cancel obsolete **same-PR** attempts. They never cancel main or manually
+  dispatched production publication or recovery.
+- All protected check names remain stable. In particular,
+  `Browser tests (before merge)` must remain until GitHub branch protection
+  is read and migrated; a read-only connector's 403 is not authorization
+  to remove it.
 
-Mark a same-repository mobile PR Ready or apply the `mobile-preview` label to
-publish a preview of the current PR to its `pr-<n>` EAS branch. Remove and reapply the
-label to publish a newer head. Production OTA still runs on its main push or
-existing manual dispatch.
+See [test ownership and CI cost](../../docs/ci/test-ownership.md) before
+adding or duplicating regression suites.
 
-## Main pushes
+## Draft pull requests
 
 `pr-acceptance.yml` separately checks the PR's `## Acceptance` declaration on
 open, edit, synchronize, reopen, ready and draft transitions. It executes only
@@ -63,16 +105,66 @@ the token in command arguments. This updates the same status and label. The
 trusted workflow itself starts automatically only after it exists on `main`.
 
 There are two intentionally different classes of PR checks:
-CI retains the existing postmerge checks for each distinct main commit.
-Device Gateway, Minute Worker, Engineering Sandbox and E2B offline release
-validation use their existing main workflows. Production Readiness, Read Cache
-Production, Cloud Core and Task Attachment offline guards run on relevant
-main pushes. Their production acceptance entry points retain their existing
-dispatch and authorization conditions. The unified protected Cloudflare
-publisher continues to own main image builds.
 
-See [test ownership and CI cost](../../docs/ci/test-ownership.md) before adding
-or duplicating suites.
+- **Required check names never become false green on drafts**: in the main `CI`
+  workflow, the lightweight selector and required aggregators (`UI policy
+  (strict)`, `Production build and browser interactions`) run on Draft PRs;
+  those aggregators explicitly **fail** until the PR is Ready. Core, Integration,
+  Source, Daemon, Analytics, Governance and DB runner-heavy jobs are deferred.
+  `ready_for_review` re-runs the complete applicable protected verification
+  even if the commit SHA has not changed. `Browser tests (before merge)` and
+  external GitGuardian retain their original workflows. A skipped required
+  job can be reported successful by GitHub; these named aggregators must never
+  skip or accept the draft as complete.
+- **Non-required specialized acceptances** (`E2B additive runtime release`
+  offline PR test, E2B subscription custody, Read cache API acceptance,
+  SSH device backend, Site search read contract and Unattended sandbox
+  acceptance) skip their runner jobs while the PR is a draft. Each workflow
+  explicitly handles `ready_for_review` to execute its real proof on the
+  same code even without an extra commit. On `converted_to_draft`, the
+  six jobs skip. The E2B offline job cancels an older eligible check when its
+  replacement enters the same PR group. An already running E2B check may
+  finish after conversion to draft.
+- Mobile OTA preview publication remains available on drafts for UI evidence
+  and TestFlight-oriented review. Other specialized evidence may have its
+  own intentional manual or source-version trigger.
+
+This reduces runner allocation during the local red→green cycle without
+mistaking a draft-only skipped result for proof that a Ready PR is safe to
+merge. Draft check failure means "not yet a merge candidate," not an ordinary
+product regression. Main pushes and merge groups continue normal full coverage.
+
+## Main pushes: postmerge checks
+
+- A push to `main` triggers the required `ui-policy.yml` checks again. Daemon
+  and desktop releases wait for that exact commit
+  (`scripts/release/ci-gate.mjs`). Production acceptance workflows have their
+  own successful-Web triggers and account queues.
+- The special suites (`analytics-ssr`, `cloud-computer`, `desktop`,
+  `e2b-byos`, `site-search`, `ssh-device-backend`, `unattended-sandbox`) run on
+  pull requests only, selected by trusted dependencies or their existing path filters; each can still be run
+  by hand (`workflow_dispatch`). Production Web is promoted through the
+  Cloudflare deployment workflow; Vercel publication was removed on 2026-11-17.
+- `publish-daemon.yml` uses daemon/package-input path filters.
+  `desktop-release.yml` also watches the shared frontend, UI and API inputs.
+  On a push it builds nothing and leaves a note in the run summary. The
+  installer is built when the Cloudflare deployment workflow's serving-release
+  observation shows current main, or from a dispatch carrying
+  `cloudflare_receipt`. A Markdown file under a
+  watched directory still matches those release filters. Read the exact
+  workflow paths before predicting release work.
+- The run-dispatch and Controlled Skill improvement suites run in the CI
+  database shards (`pnpm test:db`); they no longer have workflows of their own.
+- The `ui-policy.yml` concurrency key includes `github.run_id` only on `main`.
+  This prevents GitHub from evicting an older *pending* main verification,
+  in addition to not cancelling a running main job. Superseded PR checks may
+  still be cancelled.
+- Device Gateway, Minute Worker, Engineering Sandbox and E2B offline release
+  validation use their existing main workflows. Production Readiness, Read
+  Cache Production, Cloud Core and Task Attachment offline guards run on
+  relevant main pushes. Their production acceptance entry points retain
+  their existing dispatch and authorization conditions. The unified
+  protected Cloudflare publisher continues to own main image builds.
 
 ## Cloud worker template release
 
@@ -122,17 +214,6 @@ dispatch of **E2B additive runtime release** on current main with `reason` and
 `cloudflare_receipt` also starts it; a dispatch without a receipt fails before
 any template builder starts. Every gate rechecks the receipt against the live
 gateway and current main.
-
-The previous published worker source comes from the successful publication's
-`e2b-release-evidence-RUN-ATTEMPT` artifact. The reader recognizes `templates`
-and historical `subscriptions` jobs, verifies their original attempt and report,
-and compares the report's `sourceCommit`: a later workflow head can publish an
-earlier served commit. It reuses the official repository identity and downloads
-by immutable repository ID, retaining the report's original recorded identity.
-Missing, expired or inconsistent publication evidence
-fails the automatic comparison before a paid builder starts. The explicit manual
-retry below remains available to the release owner. Source and regression
-boundaries are recorded in the [runtime reuse evidence](../../docs/ci/2984-runtime-reuse.json).
 
 The Coding Workspace, Task VM and Task Secret consumers accept this official
 producer's `workflow_run` event alongside its retained push/manual events. The
@@ -239,6 +320,31 @@ Do not skip the required gates, silently accept failed/skipped dependencies or
 publish from a red PR. The workflows bootstrap the trusted Nx selector from
 `origin/main` and the immutable base; documentation-only PRs still publish their required gate names.
 CI source changes are not classified as documentation-only.
+
+## Protected Cloudflare operations
+
+`cloudflare-operations.yml` is the public protected entry for existing private
+operator capabilities. It verifies the actual main workflow, owner and OIDC
+claims before source credential access, then verifies the selected private
+checkout belongs to canonical operations main before installing or importing it.
+The private driver independently checks source and original Cloud Services
+qualification before selecting provider credentials and the fixed operation.
+The three marketing emergency recovery actions instead require authenticated
+original resource or permit evidence before any resource write.
+
+The entry uses `cloudflare-runtime-release`, read-only repository-scoped source
+App tokens and a separate public Actions token. Marketing uses its own website
+token, selected independently of operations ownership. Provider locators, fixed
+request documents, raw reports and recovery records stay private. Public output contains
+the operation status and a checksum for evidence retained and read back from the
+existing private storage. The original private workflows and prior receipts stay
+intact during the transition; source checks do not establish runtime acceptance.
+
+Public operator drivers are checked out at immutable approved source revisions
+before installing their locked dependencies. Canary and daemon revisions come
+from fixed reviewed private request files; an absent canary request refuses the
+operation. Manual observation is separate from the original scheduled observer
+and private JIT runner; admitting one does not prove the others work.
 
 ## Official UI overlay
 

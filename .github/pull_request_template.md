@@ -28,8 +28,6 @@
 - Product acceptance report or exact non-product exception:
 - CI run and final result (after Ready):
 
-<!-- Local acceptance (commands, origin, database), commit SHA; the CI run once it reports. -->
-
 ## Acceptance
 
 <!-- Choose one declaration and replace every placeholder. Evidence correctness
