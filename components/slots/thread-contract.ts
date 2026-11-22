@@ -212,4 +212,19 @@ export type ThreadTranscriptScreenProps = {
 /** The hosted shell waits for a task tab's existing save before removing it. */
 export const WorkTabCloseContext = createContext<((tabId: string) => Promise<boolean>) | null>(null)
 
-export type ThreadPanelTab = { id: 'overview' | 'browser' | `task:${string}` | `thread:${string}`; title: string; label?: string; content: ReactNode }
+/**
+ * A tab of the conversation's right column (#2927, Figma 1318:2 sections 02–10). The page's tabs come from the right
+ * column's registry (components/right-column/registry.tsx); the chat opens `task:` and `thread:` tabs itself.
+ * Reserved for the tabs other issues add on the same frame: `pr:<number>` (#2929), `tasks` (#2930), `terminal:<id>`.
+ */
+export type ThreadPanelTabId = 'overview' | 'changes' | 'files' | 'setup' | 'browser' | 'computer' | 'tasks' | 'artifacts' | 'memory'
+  | `task:${string}` | `thread:${string}` | `pr:${string}` | `terminal:${string}`
+
+/** Where the right column's ＋ menu lists a tab (Figma 1318:11, 1318:39): 常用, 相关, Crew (a Coordinator's) and 终端. */
+export type ThreadPanelGroup = 'common' | 'related' | 'crew' | 'terminals'
+
+export type ThreadPanelTab = {
+  id: ThreadPanelTabId; title: string; label?: string; content: ReactNode
+  /** Listed in the ＋ menu under its group, in registry order; absent: only opened by the chat or the page. */
+  menu?: { group: ThreadPanelGroup; shortcut?: string; /** Muted words on the right of its row (E2B desktop, a count). */ meta?: string }
+}

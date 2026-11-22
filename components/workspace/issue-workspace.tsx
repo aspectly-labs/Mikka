@@ -24,6 +24,8 @@ import type { CoordinatorPrefill } from '@/components/coordinator/coordinator-ch
 import { INBOX_PHONE_HEADER, INBOX_TITLE, InboxPage } from '@ui-slot/inbox'
 import { AppFrame, AppShellContent, FRAME_OWNS_HEADER, FRAME_OWNS_PANEL, SignOutBoundary, WindowBar } from '@/components/app-shell'
 import { ConversationPanels, EmbeddedTaskDetail, EmbeddedTaskLifecycle } from '@/components/coordinator/conversation-panels'
+import { useRightColumnTabs, type RightColumnScope } from '@/components/right-column/registry'
+import type { ThreadPanelTabId } from '@/components/slots/thread-contract'
 import * as settingsFrameSlot from '@ui-slot/settings-frame'
 import * as reviewSummarySlot from '@ui-slot/review-summary'
 import { PluginsPage } from '@ui-slot/plugins'
@@ -278,7 +280,7 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
   const { data: botChatSummaries } = useLiveBotChatList(user.id)
   const [panelOpen, setPanelOpen] = useState(true)
   // FRAME_OWNS_PANEL: which of the chat's work-area tabs the page last asked to show, counting up each time.
-  const [panelReveal, setPanelReveal] = useState<{ reveal: number; revealId: 'overview' | 'browser' | null }>({ reveal: 0, revealId: null })
+  const [panelReveal, setPanelReveal] = useState<{ reveal: number; revealId: ThreadPanelTabId | null }>({ reveal: 0, revealId: null })
   const browserRequestVersion = useSyncExternalStore(subscribeBrowserAddress, browserAddressVersion, () => 0)
   const handledBrowserRequest = useRef(browserAddressRequest() ? 0 : browserRequestVersion)
   useEffect(() => { try { if (window.localStorage.getItem('mikka:context-panel') === '0') setPanelOpen(false) } catch { /* storage unavailable */ } }, [])
@@ -793,11 +795,20 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
       showBrowser('address')
     }
   }, [browserRequestVersion, panelsInFrame, threadId, taskId, threadsView])
-  const conversationPanels = panelsInFrame ? { ...panelReveal, onActiveTask: onActiveWorkTask, tabs: [
-    { id: 'overview' as const, title: i18nText('Shell.panel.overview'), content: <ContextPanel key="context-panel" sheet frameTab workspaceId={listWorkspaceId} issues={tasks} threads={threads} threadsLoading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} onClose={() => {}}
+  // The right column's tabs come from its registry (components/right-column/registry.tsx, #2927): the page hands in the
+  // Overview and the browser, which need its own state; Changes, Files and Setup read the thread (or the Bot's chat).
+  const showRightColumnTab = useCallback((id: ThreadPanelTabId) => setPanelReveal(value => ({ reveal: value.reveal + 1, revealId: id })), [])
+  const rightColumnScope = useMemo<RightColumnScope | null>(() => !panelsInFrame ? null
+    : mainThreadId ? { kind: 'thread', runId: mainThreadId, issueId: mainThread?.issueId ?? null }
+      : activeBot ? { kind: 'bot', botId: activeBot.id, coordinator: false, environmentId: activeBot.environmentId ?? null }
+        : { kind: 'bot', botId: coordinatorBot?.id ?? null, coordinator: true, environmentId: coordinatorBot?.environmentId ?? null },
+  [panelsInFrame, mainThreadId, mainThread?.issueId, activeBot, coordinatorBot])
+  const rightColumnTabs = useRightColumnTabs(rightColumnScope, {
+    overview: { content: <ContextPanel key="context-panel" sheet frameTab workspaceId={listWorkspaceId} issues={tasks} threads={threads} threadsLoading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} onClose={() => {}}
       conversation={activeBot ? { id: activeBot.id, name: activeBot.name, color: activeBot.color, shape: activeBot.shape, kind: 'bot' } : { id: coordinatorBot?.id, name: i18nText('Nav.coordinator'), kind: 'coordinator', updatedAt: botChatSummaries && coordinatorBot ? botChatSummaries.items[coordinatorBot.id]?.at ?? undefined : undefined }} /> },
-    { id: 'browser' as const, title: i18nText('Browser.label'), content: <BrowserPane inTab onClose={() => showBrowser('closed')} /> },
-  ] } : undefined
+    browser: { content: <BrowserPane inTab onClose={() => showBrowser('closed')} /> },
+  }, showRightColumnTab)
+  const conversationPanels = panelsInFrame ? { ...panelReveal, onActiveTask: onActiveWorkTask, tabs: rightColumnTabs } : undefined
   // Stable while the live sessions stay put: the dialogs below read this, and a fresh array every render would rebuild them all.
   const conversationSessions = useMemo(() => {
     const saved = new Map((agentHistory?.sessions ?? []).map(session => [session.id, session]))
