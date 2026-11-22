@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { lstat, mkdtemp, open, readFile, realpath, rm, unlink, writeFile, type FileHandle } from 'node:fs/promises'
+import { mkdir, lstat, mkdtemp, open, readFile, realpath, rm, unlink, writeFile, type FileHandle } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -105,13 +105,17 @@ async function observePath(root: WorkspaceRoot, path: string, maximum = RESTORE_
   }
 }
 
-async function openParent(root: WorkspaceRoot, path: string) {
+async function openParent(root: WorkspaceRoot, path: string, create = false) {
   if (!visibleWorkspacePath(path) || !path) throw new CodingWorkspaceError('workspace_path_unavailable')
   const parts = path.split('/'), parents: FileHandle[] = []
   let parent = root.handle
   try {
     for (let index = 0; index < parts.length - 1; index++) {
-      const handle = await open(`/proc/self/fd/${parent.fd}/${parts[index]}`,
+      const segment = `/proc/self/fd/${parent.fd}/${parts[index]}`
+      // A create-only write makes its missing parents through the same pinned
+      // descriptor, so a swap of an intermediate name still lands inside root.
+      if (create) await mkdir(segment, { recursive: true })
+      const handle = await open(segment,
         constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
       parents.push(handle)
       const stat = await handle.stat({ bigint: true })
@@ -141,7 +145,7 @@ async function parentDirectoryExists(root: WorkspaceRoot, path: string) {
  * created O_EXCL so a concurrent creator is never overwritten. */
 async function writePinnedFile(root: WorkspaceRoot, path: string, bytes: Buffer, executable: boolean,
   expectation: { fence?: string; createOnly?: boolean }) {
-  const { parent, name, parents } = await openParent(root, path)
+  const { parent, name, parents } = await openParent(root, path, Boolean(expectation.createOnly))
   let target: FileHandle | undefined
   try {
     const targetPath = `/proc/self/fd/${parent.fd}/${name}`
@@ -629,8 +633,6 @@ async function readWorkspaceFileWrite(command: WorkspaceReadCommand, entry: Jour
       if (observed.exists && observed.contentSha256 === afterSha && observed.mode === afterMode) applied.idempotent = true
       else {
         if (!expectedFenceMatches(observed, expected)) throw conflict()
-        if (!observed.exists && !(await parentDirectoryExists(opened.root, request.path)))
-          throw new CodingWorkspaceError('workspace_path_unavailable')
         await writePinnedFile(opened.root, request.path, bytes, afterMode === '100755',
           observed.exists ? { fence: observed.fence } : { createOnly: true })
       }
@@ -655,7 +657,6 @@ async function readWorkspaceFileWrite(command: WorkspaceReadCommand, entry: Jour
         if (!expectedFenceMatches(observed, expected)) throw conflict()
         if (target.exists || !observed.exists) throw conflict()
         if (!observed.bytes) throw new CodingWorkspaceError('workspace_unsupported')
-        if (!(await parentDirectoryExists(opened.root, request.newPath))) throw new CodingWorkspaceError('workspace_path_unavailable')
         await writePinnedFile(opened.root, request.newPath, observed.bytes, observed.mode === '100755', { createOnly: true })
         await deletePinnedFile(opened.root, request.path, observed.fence)
       }
