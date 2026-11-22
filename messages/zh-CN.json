@@ -2570,6 +2570,7 @@
       "loading": "正在读取集成…",
       "loadFailed": "无法读取集成状态。",
       "connectFailed": "无法开始连接，请重试。",
+      "connectCancelled": "连接已在浏览器中取消。",
       "connectUnavailable": "应用连接未配置",
       "disconnectFailed": "无法断开此账户。",
       "connectionCompleted": "已验证此 Mikka 账号拥有该 Composio 连接。",

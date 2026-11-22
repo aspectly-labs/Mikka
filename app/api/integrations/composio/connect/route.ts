@@ -1,0 +1,58 @@
+import { NextResponse } from '@/lib/server-runtime/server'
+import { authBaseURL } from '@/lib/auth'
+import { BASE_PATH, withBasePath } from '@/lib/base-path'
+import { getComposio } from '@/lib/composio'
+import { isComposioCallbackVerifierConfigured } from '@/lib/composio-config'
+import { composioConnectRedirect } from '@/lib/composio-accounts'
+import { COMPOSIO_FLOW_COOKIE, composioFlowCookieOptions, encodeComposioFlow } from '@/lib/composio-flow'
+import { claimComposioConnectIntent, linkComposioConnectIntent, readComposioConnectIntent } from '@/lib/composio-connect-intent'
+import { pool } from '@/lib/db'
+import { withRequestLog } from '@/lib/request-log'
+
+/**
+ * What the desktop app opens in the system browser for a Composio link:
+ * `?intent=` from POST /api/integrations/composio/connect/intent. The token is
+ * one use, so the first claim wins the browser session; it alone binds the
+ * link to the app's account — the browser needs no session of its own and the
+ * whole flow lands directly on the provider. Every answer the app can hear
+ * ends as a redirect to the loopback it named (RFC 8252 §7.3).
+ */
+function pluginsFailed(request: Request) {
+  return NextResponse.redirect(new URL(withBasePath('/?settings=integrations&composio=callback-failed'), request.url))
+}
+
+function loopbackResult(intent: { returnTo: string; returnState: string }, result: 'connected' | 'failed' | 'cancelled') {
+  const url = new URL(intent.returnTo)
+  url.searchParams.set('state', intent.returnState)
+  url.searchParams.set('result', result)
+  return NextResponse.redirect(url)
+}
+
+async function handleGET(request: Request) {
+  const token = new URL(request.url).searchParams.get('intent')
+  const prior = await readComposioConnectIntent(pool, token)
+  const back = () => prior ? loopbackResult(prior, 'failed') : pluginsFailed(request)
+  // The intent names the app's account and its loopback: the claim below is
+  // the only thing that decides whose link this is.
+  const claimed = await claimComposioConnectIntent(pool, token)
+  if (!claimed) return back()
+  const composio = getComposio()
+  if (!composio || !isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)) return loopbackResult(claimed, 'failed')
+  try {
+    const session = await composio.create(claimed.userId)
+    const connection = await session.authorize(claimed.toolkit)
+    const redirect = composioConnectRedirect(connection.redirectUrl)
+    if (!redirect) return loopbackResult(claimed, 'failed')
+    // The link's connected account id lets the callback find this intent even
+    // when a browser drops the flow cookie; a forged one can only name a link
+    // Composio itself issued for this intent's user.
+    await linkComposioConnectIntent(pool, claimed.tokenHash, connection.id)
+    const response = NextResponse.redirect(redirect)
+    response.cookies.set(COMPOSIO_FLOW_COOKIE, encodeComposioFlow({ link: connection.id }), composioFlowCookieOptions(request.url, 600))
+    return response
+  } catch {
+    return loopbackResult(claimed, 'failed')
+  }
+}
+
+export const GET = withRequestLog('/api/integrations/composio/connect', handleGET)

@@ -2570,6 +2570,7 @@
       "loading": "Loading integrations…",
       "loadFailed": "Could not load integration status.",
       "connectFailed": "Could not start the connection. Please try again.",
+      "connectCancelled": "The connection was cancelled in the browser.",
       "connectUnavailable": "App connections are not set up",
       "disconnectFailed": "Could not disconnect this account.",
       "connectionCompleted": "The Composio connection was verified for this Mikka account.",

@@ -7,6 +7,8 @@ import { getComposio, readComposioAccountEmail, renameComposioAccount, retireCom
 import { chooseComposioDefault, listComposioAccountRecords, noteComposioEmailAttempt, saveComposioAccountEmail } from '@/lib/composio-account-store'
 import { followUpComposioConnect } from '@/lib/composio-connect'
 import { COMPOSIO_FLOW_COOKIE, composioFlowCookieOptions, decodeComposioFlow } from '@/lib/composio-flow'
+import { composioConnectIntentByLink } from '@/lib/composio-connect-intent'
+import { pool } from '@/lib/db'
 import { listComposioPages } from '@/lib/composio-pagination'
 import { isComposioCallbackVerifierConfigured } from '@/lib/composio-config'
 import { COMPOSIO_AUTH_CALLBACK_PATH } from '@/lib/auth-return'
@@ -29,6 +31,14 @@ function integrationRedirect(request: NextRequest, result: string) {
   return NextResponse.redirect(url)
 }
 
+/** A desktop app's answer lands on its own loopback listener (RFC 8252 §7.3), not on a page. */
+function loopbackResult(intent: { returnTo: string; returnState: string }, result: 'connected' | 'failed') {
+  const url = new URL(intent.returnTo)
+  url.searchParams.set('state', intent.returnState)
+  url.searchParams.set('result', result)
+  return NextResponse.redirect(url)
+}
+
 async function handleGET(request: NextRequest) {
   if (!isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)) {
     return new Response('Composio callback verifier is not configured.', { status: 503, headers: noStore })
@@ -40,9 +50,13 @@ async function handleGET(request: NextRequest) {
   }
 
   const session = await auth.api.getSession({ headers: request.headers })
+  const flow = decodeComposioFlow(request.cookies.get(COMPOSIO_FLOW_COOKIE)?.value)
+  // A desktop link names its account by intent: its callback needs no session
+  // of the browser's own, and its answer goes to the app's loopback.
+  const intent = flow?.link ? await composioConnectIntentByLink(pool, flow.link) : null
 
   noteLogUser(session?.user?.id)
-  if (!session?.user) {
+  if (!session?.user && !intent) {
     const params = new URLSearchParams({ next: COMPOSIO_AUTH_CALLBACK_PATH })
     const response = NextResponse.redirect(new URL(withBasePath(`/sign-in?${params}`), request.url))
     response.cookies.set(SESSION_COOKIE, sessionUri, composioFlowCookieOptions(request.url, 600))
@@ -51,19 +65,23 @@ async function handleGET(request: NextRequest) {
     return response
   }
 
+  const back = (result: 'connected' | 'callback-failed', attempt?: { returnTo: string; returnState: string } | null) =>
+    attempt ? loopbackResult(attempt, result === 'connected' ? 'connected' : 'failed') : integrationRedirect(request, result)
+
   const composio = getComposio()
   if (!composio) {
-    const response = integrationRedirect(request, 'callback-failed')
+    const response = back('callback-failed', intent)
     clearSessionCookie(request, response)
     response.headers.set('Cache-Control', noStore['Cache-Control'])
     return response
   }
 
   try {
-    const completed = await composio.connectedAccounts.completeAuth({ userId: session.user.id, sessionUri })
-    const userId = session.user.id
-    const flow = decodeComposioFlow(request.cookies.get(COMPOSIO_FLOW_COOKIE)?.value)
-    const replaceId = flow?.link === completed.connectedAccountId ? flow.replace : undefined
+    const completed = await composio.connectedAccounts.completeAuth({ userId: intent?.userId ?? session!.user.id, sessionUri })
+    const userId = intent?.userId ?? session!.user.id
+    // The flow cookie can drop; the connected account id Composio returned names the intent just as well.
+    const attempt = intent ?? await composioConnectIntentByLink(pool, completed.connectedAccountId)
+    const replaceId = attempt ? attempt.replaceAccountId ?? undefined : flow?.link === completed.connectedAccountId ? flow.replace : undefined
     let reconnectComplete = false
     try {
       const [items, records] = await Promise.all([
@@ -93,12 +111,12 @@ async function handleGET(request: NextRequest) {
     // Subscribe the new account's triggers and write the first briefing from what is there now.
     const timeZone = request.headers.get('x-vercel-ip-timezone')
     afterJob('after:suggestions-bootstrap', () => bootstrapSuggestions(userId, 'composio', timeZone))
-    const response = integrationRedirect(request, reconnectComplete ? 'connected' : 'callback-failed')
+    const response = back(reconnectComplete ? 'connected' : 'callback-failed', attempt)
     clearSessionCookie(request, response)
     response.headers.set('Cache-Control', noStore['Cache-Control'])
     return response
   } catch {
-    const response = integrationRedirect(request, 'callback-failed')
+    const response = back('callback-failed', intent)
     clearSessionCookie(request, response)
     response.headers.set('Cache-Control', noStore['Cache-Control'])
     return response

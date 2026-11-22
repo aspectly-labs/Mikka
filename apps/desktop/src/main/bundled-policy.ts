@@ -87,7 +87,7 @@ const ROUTES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   [/^\/api\/github\/pull-request-status$/, ['POST']],
   [/^\/api\/(self-improvement|mobile\/reactions)$/, ['GET', 'POST']],
   [/^\/api\/factory\/(?:agent-profiles|tasks|tasks\/route|questions)$/, ['GET', 'POST']],
-  [/^\/api\/integrations\/(github|github\/permissions|github\/tools|github\/repositories\/verification|github\/repositories\/pulls|github\/connect|github\/connect\/intent|github\/connect\/intent\/confirm|linear\/status|composio|composio\/credentials|composio\/catalog)$/, ['GET', 'POST', 'DELETE']],
+  [/^\/api\/integrations\/(github|github\/permissions|github\/tools|github\/repositories\/verification|github\/repositories\/pulls|github\/connect|github\/connect\/intent|github\/connect\/intent\/confirm|linear\/status|composio|composio\/credentials|composio\/catalog|composio\/connect\/intent)$/, ['GET', 'POST', 'DELETE']],
   [/^\/api\/integrations\/composio$/, ['PATCH']],
   [/^\/api\/(subscriptions\/enrollments|subscriptions\/enrollments\/handoff|subscriptions\/enrollments\/bind)$/, ['GET', 'POST']],
   [/^\/api\/(billing\/stripe|account\/deletion)$/, ['GET', 'POST', 'DELETE']],
