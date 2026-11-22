@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     if (type === 'task') {
       const input = parseInput(new URLSearchParams({ source: 'tasks', q, workspaceId: workspaceId! }), session.user.id)
       const read = await actAs(session.user, () => readSearchPage(session.user.id, input))
-      const page = await read.revalidate()
+      const page = await actAs(session.user, () => read.revalidate())
       return NextResponse.json({ type, items: page.items.map(item => ({ type: 'task', id: item.id, title: item.title, detail: item.type === 'task' ? `${item.identifier ?? ''} ${item.status}`.trim() : null })) }, { headers })
     }
     if (type === 'bot') {
