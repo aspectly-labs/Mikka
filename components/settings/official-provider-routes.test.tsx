@@ -40,6 +40,7 @@ slot('settings-governance', { GovernancePlan: none, GovernanceUsage: none, Gover
 mock.module('../nav/use-save-bot', { namedExports: { useSaveBot: (workspaceId: string | undefined) => async (id: string, patch: unknown) => { writes.push({ workspaceId, id, patch }) } } })
 mock.module('./settings-sidebar', { namedExports: { SettingsSidebar: none } })
 mock.module('@/hooks/use-workspace', { namedExports: { useWorkspace: () => ({ data: workspace, error: readError }) } })
+mock.module('posthog-js', { defaultExport: { onFeatureFlags: () => () => {}, getFeatureFlag: () => undefined } })
 mock.module('@/i18n/navigation', { namedExports: { Link: identity, usePathname: () => '/settings', useRouter: () => ({}) } })
 // The inactive settings sections and computer surfaces have their own data and tests.
 for (const [path, exports] of Object.entries({

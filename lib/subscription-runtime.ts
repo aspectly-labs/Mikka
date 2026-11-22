@@ -88,7 +88,7 @@ export function subscriptionRuntime(nativeBroker = false, custodyOnly = false, o
   return new SubscriptionService(new SubscriptionRepository(database), scope => {
     const snapshot = async (signal: AbortSignal | undefined, use: { bindingId: string; consumerId: string; runId?: string } | undefined, revision: unknown, allowMissingProjection = false) => {
       if (!use) throw new Error('subscription_access_unavailable')
-      const name = await authorizedAccessName(database, scope, use, revision, authorizeSubscriptionWorkspace, allowMissingProjection)
+      const name = await authorizedAccessName(database, scope, use, revision, allowMissingProjection)
       return subscriptionAccessSnapshot({ origin: infisicalOrigin, clientId: custodyId!, clientSecret: custodySecret!, project: accessProject ?? project, environment, path: accessPath, name, signal })
     }
     const resolve = sharedCustodyIdentity ? async (executionOnly: boolean, signal?: AbortSignal, use?: { bindingId: string; consumerId: string; runId?: string }, revision?: unknown) => {

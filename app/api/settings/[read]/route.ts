@@ -9,7 +9,7 @@ import { cacheReadAction } from '@/lib/cache-read-action'
 import { listActivity, listSavedLogins } from '@/app/actions/settings-activity'
 import { getWorkspaceDeletionImpact, getWorkspaceGeneral, getWorkspaceTransferTargets } from '@/app/actions/workspace-settings'
 import { getAppPolicy } from '@/app/actions/app-policy'
-import { getSharePolicy } from '@/app/actions/personal-policy'
+import { getCreditShare, getPaymentDesignation, getSharePolicy } from '@/app/actions/personal-policy'
 import { getE2BKeyCapability, listSecrets } from '@/app/actions/workspace-secrets'
 import { getUsage } from '@/app/actions/usage'
 import { cardVerificationStatus, getBilling, getCreditBilling } from '@/app/actions/billing'
@@ -41,6 +41,9 @@ const READS: Record<SettingsRead, (query: URLSearchParams) => Promise<unknown>> 
   'deletion-impact': query => getWorkspaceDeletionImpact(workspace(query)),
   'app-policy': query => getAppPolicy(workspace(query)),
   'share-policy': query => getSharePolicy(workspace(query)),
+  // 团队工作区专属 (#838, 决定 2310): 个人工作区视图里这两项不出现，函数返回成员视角的空值。
+  'payment-designation': query => getPaymentDesignation(workspace(query)),
+  'credit-share': query => getCreditShare(workspace(query)),
   secrets: query => listSecrets(workspace(query)),
   // The E2B row needs canEdit as well as the key's state.
   'e2b-key': query => getE2BKeyCapability(workspace(query)),

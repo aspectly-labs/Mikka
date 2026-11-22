@@ -225,12 +225,13 @@ export type SettingsVisibility = {
 }
 
 /** One place decides whether a section is listed. The sidebar and search both ask this. */
-export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false }: SettingsVisibility): boolean {
+export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false, memory = false }: SettingsVisibility): boolean {
   if (SETTINGS_SECTION_STATUS[section.id] !== 'available' || section.sidebar === false) return false
   if (section.adminOnly && !admin) return false
   if (personal && TEAM_ONLY_SECTIONS.has(section.id)) return false
   if (!billing && section.id === 'billing') return false
   if (!cloudAdmin && section.id === 'cloud') return false
+  if (!memory && section.id === 'memory') return false
   return true
 }
 

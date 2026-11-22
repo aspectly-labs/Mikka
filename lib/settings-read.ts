@@ -6,6 +6,7 @@ export type SettingsRead =
   | 'password' | 'sessions' | 'preferences' | 'issue-prefix' | 'saved-logins' | 'activity'
   | 'workspace-general' | 'transfer-targets' | 'deletion-impact'
   | 'app-policy' | 'share-policy' | 'secrets' | 'e2b-key' | 'usage' | 'billing' | 'credit-billing' | 'card-verification' | 'audit'
+  | 'payment-designation' | 'credit-share'
   | 'model-order' | 'bots' | 'workspace-bots' | 'api-keys' | 'environments' | 'thread-titles' | 'issue-states'
 
 /**

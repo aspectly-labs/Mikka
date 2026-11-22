@@ -36,7 +36,7 @@ test('environment settings GET keeps canonical storage, fresh membership and pri
     '@/app/actions/preferences': ['getPreferences'], '@/app/actions/issue-prefix': ['getIssuePrefixState'],
     '@/app/actions/settings-activity': ['listActivity', 'listSavedLogins'],
     '@/app/actions/workspace-settings': ['getWorkspaceDeletionImpact', 'getWorkspaceGeneral', 'getWorkspaceTransferTargets'],
-    '@/app/actions/app-policy': ['getAppPolicy'], '@/app/actions/personal-policy': ['getSharePolicy'],
+    '@/app/actions/app-policy': ['getAppPolicy'], '@/app/actions/personal-policy': ['getSharePolicy', 'getCreditShare', 'getPaymentDesignation'],
     '@/app/actions/workspace-secrets': ['getE2BKeyCapability', 'listSecrets'], '@/app/actions/usage': ['getUsage'],
     '@/app/actions/billing': ['cardVerificationStatus', 'getBilling', 'getCreditBilling'],
     '@/app/actions/audit-log': ['listAuditLog'], '@/app/actions/model-order': ['getModelOrder'],
