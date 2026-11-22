@@ -1,5 +1,5 @@
 import { ReviewAuthorityError, withTaskReviewAuthority } from '@/lib/coding-workspace/review-authority'
-import { readReviewSession, type ReviewSessionKind } from '@/lib/coding-workspace/review-sessions'
+import { type ReviewSessionKind } from '@/lib/coding-workspace/review-sessions'
 
 export const maxDuration = 30
 

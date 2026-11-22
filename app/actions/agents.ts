@@ -961,7 +961,7 @@ export async function listThreadChangedFiles(issueId: string | null, runId: stri
     if (row.userId !== user.id) return null
     const chain = await readRunChain(pool, row.userId, row.id)
     const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
-    return (await import('@/lib/thread-workspace')).listThreadChangedFiles(pool, user.id, user[tokenWorkspace] ?? null, runIds)
+    return (await import('@/lib/thread-workspace')).listThreadChangedFiles(pool, user.id, row.workspaceId ?? null, runIds)
   })
 }
 
@@ -970,7 +970,7 @@ export async function getThreadMachineDetail(issueId: string | null, runId: stri
   return withDatabaseOperation('/actions/threads/machine-detail', async () => {
     const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
     if (row.userId !== user.id) return null
-    return (await import('@/lib/thread-workspace')).getThreadMachineDetail(pool, user.id, user[tokenWorkspace] ?? null, row.id)
+    return (await import('@/lib/thread-workspace')).getThreadMachineDetail(pool, user.id, row.workspaceId ?? null, row.id)
   })
 }
 
@@ -980,7 +980,7 @@ export async function rerunThreadMachineSetup(issueId: string | null, runId: str
   return withDatabaseOperation('/actions/threads/machine-setup', async () => {
     const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
     if (row.userId !== user.id) return null
-    return (await import('@/lib/thread-workspace')).rerunThreadMachineSetup(pool, user.id, user[tokenWorkspace] ?? null, row.id)
+    return (await import('@/lib/thread-workspace')).rerunThreadMachineSetup(pool, user.id, row.workspaceId ?? null, row.id)
   })
 }
 
@@ -1034,11 +1034,12 @@ export async function syncThreadPullMerges(issueId: string | null, runId: string
  * HTTP routes build, so the thread adapter reaches the existing git service
  * unchanged rather than re-implementing it. */
 async function threadReviewActor() {
-  const session = await auth.api.getSession({ headers: await headers() })
+  const { getApiSession } = await import('@/lib/api-auth')
+  const session = await getApiSession({ headers: await headers(), query: { disableCookieCache: true } })
   if (!session?.user) throw new ActionFailureError('authRequired')
   const context = await loadWorkspaceContext(undefined, session.user)
-  return { userId: session.user.id, workspaceId: context.workspace.id, credential: session.tokenWorkspaceId
-    ? { kind: 'pat' as const, id: z.uuid().parse(session.session.id.slice(4)) }
+  return { userId: session.user.id, workspaceId: context.workspace.id, credential: session.tokenId
+    ? { kind: 'pat' as const, id: session.tokenId }
     : { kind: 'session' as const, id: session.session.id } }
 }
 

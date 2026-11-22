@@ -18,7 +18,7 @@ export type ReviewSessionTarget = { runIds: readonly string[] } | { userId: stri
 export type ReviewRevokeReason = 'run_control' | 'run_changed' | 'task_changed' | 'credential_revoked'
   | 'membership_changed' | 'machine_changed' | 'expired'
 type Database = Pick<Pool, 'query'>
-type StoredLease = ReviewRevokeTarget & { id: string; kind: ReviewSessionKind; taskId: string; deviceId: string; repoId: string
+type StoredLease = ReviewRevokeTarget & { id: string; kind: ReviewSessionKind; name: string; taskId: string; deviceId: string; repoId: string
   deviceTokenId: string; bindingId: string; machineEpoch: number; machineOperationId: string
   provider:'e2b' | 'cloudflare'; repositoryKey:string | null; reviewOperationId:string | null
   credentialKind: 'session' | 'pat'; credentialId: string; revokedAt: Date | null; expiresAt: Date }
