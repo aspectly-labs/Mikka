@@ -1,4 +1,5 @@
 import * as settingsActions from '@/app/actions/settings'
+import * as instructionActions from '@/app/actions/instructions'
 import * as taskDomainActions from '@/app/actions/task-domain'
 import * as projectResourcesActions from '@/app/actions/project-resources'
 import * as enabledModels from '@/app/actions/enabled-models'
@@ -58,6 +59,11 @@ const functions = {
   'settings.resetPersonalSettings': settingsActions.resetPersonalSettings,
   'settings.resetWorkspaceSettings': settingsActions.resetWorkspaceSettings,
   'settings.getSettingsSchema': settingsActions.getSettingsSchema,
+  'settings.getInstructionPreview': instructionActions.getInstructionPreview,
+  'project-resources.getEnvironmentInstructions': instructionActions.getEnvironmentInstructions,
+  'project-resources.saveEnvironmentInstructions': instructionActions.updateEnvironmentInstructions,
+  'bots.getBotInstructions': instructionActions.getBotInstructions,
+  'bots.saveBotInstructions': instructionActions.updateBotInstructions,
   'desktop.readBatch': createReadBatch(() => desktopActions),
   'desktop.bootstrap': desktopBootstrap,
   'desktop.session': desktopSession,

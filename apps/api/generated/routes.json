@@ -310,6 +310,16 @@
       "sourceHash": "2630c6b622ab2f3908982fd65299f6c1ea8ec0117ab92543727f3a056dc74b4b"
     },
     {
+      "path": "/mikka/api/bots/[botId]/instructions",
+      "template": "/api/bots/[botId]/instructions",
+      "source": "app/api/bots/[botId]/instructions/route.ts",
+      "methods": [
+        "GET",
+        "PATCH"
+      ],
+      "sourceHash": "41bd3cdc3c76185366249a12fa088fd23cace147e01f5d04bc6f2934a2436adb"
+    },
+    {
       "path": "/mikka/api/bots/[botId]/subagents",
       "template": "/api/bots/[botId]/subagents",
       "source": "app/api/bots/[botId]/subagents/route.ts",
@@ -2618,6 +2628,15 @@
       "sourceHash": "1ae572937b17828169896a9af96891a5ae25e2873e663e9612536f3e438e97f7"
     },
     {
+      "path": "/mikka/api/settings/instructions/preview",
+      "template": "/api/settings/instructions/preview",
+      "source": "app/api/settings/instructions/preview/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "bdfe4d617f6b400f78d661d92ccfd37cfc28c7bd033c48d95feaa4a48de71c42"
+    },
+    {
       "path": "/mikka/api/settings/personal",
       "template": "/api/settings/personal",
       "source": "app/api/settings/personal/route.ts",
@@ -3324,6 +3343,16 @@
         "POST"
       ],
       "sourceHash": "81720121935e7980e26a04f59982f2d4e9dc3c30f3758a165ca3cc9e4a1fc1af"
+    },
+    {
+      "path": "/mikka/api/workspaces/[workspaceId]/environments/[environmentId]/instructions",
+      "template": "/api/workspaces/[workspaceId]/environments/[environmentId]/instructions",
+      "source": "app/api/workspaces/[workspaceId]/environments/[environmentId]/instructions/route.ts",
+      "methods": [
+        "GET",
+        "PATCH"
+      ],
+      "sourceHash": "9e89040b55e85ef5025751babcff9aa90f80b80e3a1ae2c94bf02445520b70b7"
     },
     {
       "path": "/mikka/api/workspaces/[workspaceId]/governance",

@@ -61,6 +61,10 @@ stub('../issue-access.ts', { issueForUser: forbidden, requireUser: forbidden })
 stub('../telegram/client.ts', { postTelegramText: forbidden })
 stub('../attention/store.ts', { recordDecision: forbidden, settleTurn: forbidden })
 stub('../../workflows/coordinator/tool-scope.ts', { assertNativeToolScope: forbidden })
+stub('./environment-instructions.ts', {
+  instructionsWithEnvironment: (_instructions: string) => _instructions,
+  readScopedPromptInstructionsForBot: async () => ({ environmentId: null, environmentInstructions: '', botInstructions: '' }),
+})
 
 let composeEveInstructions: typeof import('./product-instructions')['composeEveInstructions']
 before(async () => {
