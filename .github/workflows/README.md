@@ -36,8 +36,8 @@ request its evidence before queueing.
 
 Mark a same-repository mobile PR Ready or apply the `mobile-preview` label to
 publish a preview of the current PR to its `pr-<n>` EAS branch. Remove and reapply the
-label to publish a newer head. Production OTA still runs on its main push or
-existing manual dispatch.
+label to publish a newer head. Production OTA still runs on its main push, after a successful automatic
+Cloudflare deployment (`workflow_run`), or by existing manual dispatch.
 
 ## Main pushes
 
