@@ -1,7 +1,7 @@
 'use client'
 
 import { useAgentCopy } from '@/hooks/use-agent-copy'
-import { Children, createContext, isValidElement, lazy, memo, Suspense, use, useEffect, useMemo, type ComponentProps, type ReactNode } from 'react'
+import { Children, createContext, isValidElement, lazy, memo, Suspense, use, useMemo, type ComponentProps, type ReactNode } from 'react'
 import { AgentCodeBlock } from './agent-code-block'
 import dynamic from '@/lib/client-runtime/dynamic'
 import Markdown from 'react-markdown'
@@ -21,19 +21,12 @@ const MermaidDiagram = dynamic(() => import('./agent-mermaid').then(module => mo
 const remarkPlugins = [remarkGfm]
 const NO_PLUGINS: [] = []
 const MathMarkdown = dynamic(() => import('./agent-math-markdown').then(module => module.AgentMathMarkdown))
-/** The streaming engine, fetched once the page is idle and drawn only for a reply that is arriving (agent-stream-markdown.tsx). */
-const loadStreamMarkdown = () => import('./agent-stream-markdown')
-const StreamMarkdown = lazy(() => loadStreamMarkdown().then(module => ({ default: module.AgentStreamMarkdown })))
-let streamPrefetched = false
-function usePrefetchStreamMarkdown() {
-  useEffect(() => {
-    if (streamPrefetched) return
-    streamPrefetched = true
-    const load = () => { void loadStreamMarkdown().catch(() => { streamPrefetched = false }) }
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(load, { timeout: 4000 })
-    else setTimeout(load, 1500)
-  }, [])
-}
+/**
+ * The streaming engine (agent-stream-markdown.tsx), fetched when a reply first streams: with the KaTeX it checks
+ * formulas with it is about 105 KB gzipped, which a chat that only reads stored replies never needs. Until it arrives
+ * the reply draws whole, as stored text does.
+ */
+const StreamMarkdown = lazy(() => import('./agent-stream-markdown').then(module => ({ default: module.AgentStreamMarkdown })))
 
 export type AgentMarkdownProps = {
   text: string
@@ -162,7 +155,6 @@ export function AgentMarkdownContent({ text, isStreaming = false, live = isStrea
   const cites = Boolean(useAgentCitations())
   const plugins = useMemo(() => [...remarkPlugins, ...mathRemarkPlugins, ...(cites ? [remarkCitations] : [])], [mathRemarkPlugins, cites])
   const reduced = useReducedMotion()
-  usePrefetchStreamMarkdown()
   // Stored text, reduced motion and the end of the stream draw the whole text at once (Mikka's settle rule: no drain).
   const whole = <Markdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} skipHtml components={components}>{text}</Markdown>
 

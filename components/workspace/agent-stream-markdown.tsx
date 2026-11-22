@@ -16,7 +16,7 @@ export type AgentStreamMarkdownProps = Pick<StreamdownProps, 'components' | 'rem
  * A reply while it arrives, through LobeHub's streaming engine (@lobehub/streamdown, as lobe-ui's chat): the text is
  * revealed at the pace it arrives (the `balanced` preset), the open tail is closed before parsing so a half-written
  * `**`, link, code fence or table never shows its markers, each new character fades in, and a block once finished is
- * parsed and drawn once, not again on every token. Loaded only for a reply that streams (agent-markdown.tsx).
+ * parsed and drawn once, not again on every token. Loaded when a reply first streams (agent-markdown.tsx).
  */
 export function AgentStreamMarkdown({ text, math = false, components, remarkPlugins, rehypePlugins }: AgentStreamMarkdownProps) {
   return <Streamdown content={text} components={components} remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} skipHtml
