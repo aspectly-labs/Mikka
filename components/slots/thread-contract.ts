@@ -28,7 +28,13 @@ export type ThreadToolRow = {
   detail?: string
   command?: string
   exitCode?: number
+  /** What it did (#2937), for the group's words and the row's icon: read, search, shell, edit, web, delegate, todo, other. */
+  kind?: ThreadToolKind
+  /** Only the end of its output was kept. */
+  outputTruncated?: boolean
 }
+
+export type ThreadToolKind = 'read' | 'search' | 'shell' | 'edit' | 'web' | 'delegate' | 'todo' | 'other'
 
 /** One part of a Bot's message, top to bottom as it happened. */
 export type ThreadEntryPart =

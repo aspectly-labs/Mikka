@@ -4478,7 +4478,13 @@
         "usedTools": "Used {count, plural, one {# tool} other {# tools}}",
         "usingTools": "Using tools…",
         "showAll": "Show all",
-        "showLess": "Show less"
+        "showLess": "Show less",
+        "shell": "Shell",
+        "succeeded": "Succeeded",
+        "running": "Running",
+        "stopped": "Stopped",
+        "seconds": "{seconds}s",
+        "truncated": "The output was long; only part of it was kept"
       },
       "detail": {
         "handedTo": "Handed to",
@@ -5114,6 +5120,17 @@
       "calls": "{count, plural, one {# call} other {# calls}}",
       "unpricedCalls": "Plus {count, plural, one {# call} other {# calls}} with no per-call price",
       "includedNote": "Not charged to Mikka credits. A subscription has no per-call price."
+    },
+    "tool": {
+      "read": "Read {target}",
+      "search": "Searched for “{target}”",
+      "searchIn": "Searched for “{target}” in {scope}",
+      "edit": "Edited {target}",
+      "web": "Opened {target}",
+      "delegate": "Started {target}",
+      "todo": "Updated todos",
+      "commandFailed": "Command failed ({command})",
+      "commandFailedCode": "Command failed ({command}) · exit {code}"
     }
   },
   "Computer": {
@@ -7916,6 +7933,13 @@
     "add": "Add",
     "model": "Select a model",
     "toolsRunning": "{count, plural, one {Running a tool} other {Running # tools in parallel}}",
+    "toolsRunningKind": {
+      "shell": "Running a command",
+      "read": "Reading files",
+      "search": "Searching",
+      "edit": "Editing files",
+      "web": "Browsing the web"
+    },
     "toolsRan": "{count, plural, one {Ran a tool} other {Ran # tools}}",
     "toolsRanTime": "{count, plural, one {Ran a tool} other {Ran # tools}} · {seconds}s",
     "toolsFailed": "{count, plural, one {Ran a tool} other {Ran # tools}} · {failed} failed",
