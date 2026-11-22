@@ -83,7 +83,7 @@ export async function teamSkillRunScope(tx: PoolClient, userId: string, run: { i
   if (!source) throw new ImprovementError('notFound')
   let task: Awaited<ReturnType<typeof lockCliTaskScope>>
   try { task = await lockCliTaskScope(tx, userId, run.issueId) }
-  catch { throw new ImprovementError('notFound') }
+  catch (error) { throw Object.assign(new ImprovementError('notFound'), { cause: error }) }
   const { rows: [bot] } = source.botId ? await tx.query<{ workspaceId: string }>(`SELECT "workspaceId" FROM bots
     WHERE id=$1 AND "ownerId"=$2 FOR SHARE`, [source.botId, userId]) : { rows: [] }
   if (source.botId && !bot) throw new ImprovementError('notFound')

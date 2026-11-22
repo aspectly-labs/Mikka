@@ -19,7 +19,7 @@ export async function mobileWebWorkspace(userId: string, target: string, session
     try {
       const { pool } = await import('./db')
       owned = (await pool.query<{ workspaceId: string }>('SELECT "workspaceId" FROM bots WHERE id=$1 AND "ownerId"=$2', [botId, userId])).rows[0]?.workspaceId
-    } catch { throw new MobileWebScopeError() }
+    } catch (error) { throw Object.assign(new MobileWebScopeError(), { cause: error }) }
     if (!owned || (workspaceId && owned !== workspaceId)) throw new MobileWebScopeError()
     workspaceId = owned
   }
@@ -34,7 +34,7 @@ export async function mobileWebWorkspace(userId: string, target: string, session
         if (members && row.workspace.kind !== 'team') throw new MobileWebScopeError()
       })
     }
-    catch { throw new MobileWebScopeError() }
+    catch (error) { throw Object.assign(new MobileWebScopeError(), { cause: error }) }
   }
   return workspaceId
 }

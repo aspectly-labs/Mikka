@@ -95,7 +95,7 @@ export async function executeCredentialLease(lease: string, origin: string, scop
     return { status: result.status as 'submitted' | 'session_applied' | 'guarded', origin }
   } catch (error) {
     if (error instanceof CredentialError && error.code === 'credential_outcome_unknown') throw error
-    if (dispatched && !responseReceived) throw new CredentialError('credential_outcome_unknown', 409)
-    throw new CredentialError()
+    if (dispatched && !responseReceived) throw Object.assign(new CredentialError('credential_outcome_unknown', 409), { cause: error })
+    throw Object.assign(new CredentialError(), { cause: error })
   }
 }

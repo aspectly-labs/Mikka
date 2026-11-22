@@ -131,8 +131,8 @@ export async function fillCredential(pool: Pool, lease: string, options: { kms?:
   } catch (error) {
     if (!completed) await client.query('ROLLBACK').catch(() => undefined)
     await pool.query(`INSERT INTO credential_access_events(user_id,bot_id,run_id,subagent_id,origin_seen,decision) VALUES($1,$2,$3,$4,$5,'denied_or_failed')`, [context.userId, caller.botId, caller.runId, caller.subagentId, context.origin]).catch(() => undefined)
-    if (effectStarted) throw new CredentialError('credential_outcome_unknown', 409)
+    if (effectStarted) throw Object.assign(new CredentialError('credential_outcome_unknown', 409), { cause: error })
     if (error instanceof CredentialError) throw error
-    throw new CredentialError()
+    throw Object.assign(new CredentialError(), { cause: error })
   } finally { plaintext?.fill(0); cdp?.close(); client.release() }
 }

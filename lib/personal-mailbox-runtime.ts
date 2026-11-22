@@ -38,7 +38,7 @@ async function assertMailboxScope(userId: string, botId: string | null, workspac
   try {
     const scope = await agentScope(userId, botId, client, workspaceClient)
     if (botId && scope.workspaceId !== workspaceId) throw new Error('Scope changed')
-  } catch { throw new MailboxError('Mailbox owner/workspace scope revoked', 403) }
+  } catch (error) { throw Object.assign(new MailboxError('Mailbox owner/workspace scope revoked', 403), { cause: error }) }
 }
 export async function personalConversationMailboxAdvertised(userId: string, botId: string | null, executionId?: string): Promise<MailboxToolName[]> {
   if (!personalMailboxEnabled() || !executionId) return []

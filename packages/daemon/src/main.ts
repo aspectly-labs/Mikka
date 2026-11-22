@@ -444,7 +444,7 @@ export class Daemon {
           } catch (error) {
             // A refusal carries the server's own fixed wording (a recording already going, the person holds the desktop).
             const detail = error instanceof DaemonError && typeof (error.data as { error?: unknown } | undefined)?.error === 'string' ? (error.data as { error: string }).error : undefined
-            throw Object.assign(new Error('Capture failed'), detail ? { safeMessage: detail } : {})
+            throw Object.assign(new Error('Capture failed'), detail ? { safeMessage: detail, cause: error } : { cause: error })
           }
         },
       })
