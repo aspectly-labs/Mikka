@@ -696,3 +696,16 @@ test('a version with a lost confirmation or stale read-back keeps its request un
   assert.equal(ids.length, 5)
   assert.equal(new Set(ids).size, 1, 'each retry recovers the original operation')
 })
+
+test('the line under the person own messages shows only a time the message really has', () => {
+  // A valid send time shows; an unknown one shows nothing, never the thread start that at() falls back to (#2922).
+  storedMessages = [
+    { id: 'timed', text: 'Timed message.', at: new Date('2026-11-20T15:42:00Z'), mine: true },
+    { id: 'untimed', text: 'Untimed message.', at: new Date(Number.NaN), mine: true },
+  ]
+  thread = { ...base, createdAt: new Date('2026-11-20T15:00:00Z') }
+  const html = render()
+  const item = (words: string) => html.split('<li').find(part => part.includes(words)) ?? ''
+  assert.match(item('Timed message.'), /<time[^>]*dateTime="2026-11-20T15:42:00.000Z"/i)
+  assert.doesNotMatch(item('Untimed message.'), /<time/)
+})
