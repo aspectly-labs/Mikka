@@ -77,7 +77,7 @@ import { ChatEventLine } from './chat-event-line'
 import { waitingQuestionRuns } from '@/lib/coordinator/waiting-questions'
 import { RetryReplyButton } from './retry-reply-button'
 import { COMPOSER_NOTICE } from './composer-notice'
-import { blockingNotice, modelBlocked, streamLoadFailed } from '@/lib/coordinator/chat-footer'
+import { blockingNotice, chatItemKey, liveReplyKeys, modelBlocked, streamLoadFailed } from '@/lib/coordinator/chat-footer'
 
 
 /** Text put into the composer from elsewhere; `suggestionId` when it came from a 建议 item. */
@@ -91,6 +91,8 @@ type ChatRead = Chat & { requestedAt?: number }
 const CHAT_MERGE_MS = 2_000
 /** How long the server's turn runs before Stop shows (UX audit 2026-11-22: a quick failure flashed it). */
 const STOP_DELAY_MS = 400
+/** How long a turn is busy before its empty waiting row shows. */
+const WAITING_ROW_DELAY_MS = 150
 
 /** The SWR key of a chat: the Coordinator's, or one bot's. */
 /** A passing usage limit (another turn running, a cost read): the next send works without anything changing. */
@@ -455,6 +457,14 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // again while the turn ends on the server, keeping what it had said.
   const [stopping, setStopping] = useState(false)
   useEffect(() => { if (!working) setStopping(false) }, [working])
+  // The empty waiting row joins the transcript only after the turn has been busy a moment: a quick refusal or a quick
+  // first word never flashes it (UX audit 2026-11-22, issue 5).
+  const [waitedLong, setWaitedLong] = useState(false)
+  useEffect(() => {
+    if (!working) { setWaitedLong(false); return }
+    const timer = setTimeout(() => setWaitedLong(true), WAITING_ROW_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [working])
   async function stop() {
     setStopping(true)
     try {
@@ -552,8 +562,12 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const liveFailurePart: ThreadEntryPart = plainFailure
     ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : t('failedTitle'), actions: <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
     : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
-  const rows = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: String(item.pending ? `pending-${item.position}` : item.streamId ?? item.position) })),
-    ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))]
+  // A row keeps its key from the moment it shows until it is stored (chat-footer.ts): nothing remounts on commit.
+  const storedRows = items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: chatItemKey(item) }))
+  const storedKeys = new Set(storedRows.map(row => row.key))
+  const liveKeys = liveReplyKeys(stream.replies, stream.session?.sessionId)
+  const rows = [...storedRows,
+    ...stream.replies.map((reply, index) => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: storedKeys.has(liveKeys[index]) ? reply.id : liveKeys[index] }))]
   const entries: ThreadEntry[] = []
   for (const { item, live, key } of rows) {
     const at = item.createdAt ? Date.parse(item.createdAt) : Date.now()
@@ -604,8 +618,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
   for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
     parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
-  // Before the reply has anything to show: the Bot's turn, still empty, with its caret.
-  if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
+  // Before the reply has anything to show: the Bot's turn, still empty, with its caret, once the turn has taken a moment.
+  if (working && waitedLong && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
     entries.push({ id: 'waiting', role: 'bot', at: Date.now(), parts: [], streaming: true })
   if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
   // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.

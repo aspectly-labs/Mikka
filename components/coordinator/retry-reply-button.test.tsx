@@ -775,6 +775,39 @@ test('Stop waits for the server to run the turn a moment; the queue choice shows
   assert.equal(container.querySelector('select'), null, 'nothing to queue: no choice in the footer')
 })
 
+test('the empty waiting row joins only after the turn has been busy for 150 ms', async () => {
+  chatEnabled = true
+  chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  streamStatus = 'busy'
+  streamView = runningTurn()
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(screen?.entries?.some(entry => entry.id === 'waiting'), false)
+  await act(async () => new Promise(resolve => setTimeout(resolve, 200)))
+  assert.equal(screen?.entries?.some(entry => entry.id === 'waiting'), true)
+})
+
+test('a sent message and a streamed reply keep their row keys when they are stored', async () => {
+  chatEnabled = true
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  await act(async () => composer.onChange('Keep my row'))
+  await act(async () => composer.onSubmit())
+  const sent = screen!.entries!.find(entry => entry.role === 'person')!.id
+  // The reply streams, keyed as the row it will be stored as.
+  streamReplies = [{ id: 'eve-message-1', turnId: 'turn-1', text: 'Streaming words', committedThrough: 0 }]
+  await show()
+  const streamed = screen!.entries!.find(entry => entry.role === 'bot')!.id
+  assert.equal(streamed, 'eve:wrun_fixture:turn-1')
+  // Both are stored: the person's message under the submission id it went with, the reply under its stream id.
+  streamReplies = []
+  chatItems = [
+    { id: 'stored-1', position: 7, from: 'person', text: 'Keep my row', submissionId: sent, tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:00Z' },
+    { id: 'stored-2', position: 8, from: 'coordinator', text: 'Streaming words', streamId: 'eve:wrun_fixture:turn-1', tools: [], threads: [], artifacts: [], createdAt: '2026-11-22T00:00:01Z' },
+  ]
+  await show()
+  assert.deepEqual(screen!.entries!.map(entry => entry.id), [sent, streamed])
+})
+
 test('scrolling near the top loads older messages, and each page added above counts for the thread', async () => {
   chatData = { items: [{ id: 'fixture-reply', position: 201, from: 'coordinator', text: 'Latest', tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:00:00Z' }],
     enabled: true, working: false, error: null, artifacts: {}, historyBefore: 201 }

@@ -1,8 +1,11 @@
 import { failure, turns, type SessionView } from 'eve/events'
+import { eveStreamId } from '@/lib/eve/stream-id'
+import type { CoordinatorLiveReply } from '@/lib/eve/chat-view'
 import type { BotModelMenu } from '@/lib/bot-model-menu-view'
 
 /**
- * The chat's footer (UX audit 2026-11-22, issue 1): one blocking notice above the composer, chosen by priority.
+ * The chat's footer and row identity (UX audit 2026-11-22, issues 1 and 5): one blocking notice above the composer,
+ * chosen by priority, and keys that survive a message's commit so no row remounts.
  */
 
 /** The blocking notices above the composer, highest first; only the first that applies shows. */
@@ -28,4 +31,30 @@ export function streamLoadFailed(error: Error | undefined, view: SessionView | u
 export function modelBlocked(menu: BotModelMenu | undefined) {
   const current = menu?.current
   return current?.kind === 'none' || (current?.kind === 'hosted' && !current.available)
+}
+
+type KeyedItem = { from: string; position: number; pending?: boolean; streamId?: string; submissionId?: string }
+
+/**
+ * A stored row's key: the person's message by the submission id it was sent with (the same id its unsent bubble
+ * had), a reply by its stream id (the id its live reply had), else its position.
+ */
+export function chatItemKey(item: KeyedItem) {
+  if (item.from === 'person' && item.submissionId) return item.submissionId
+  return item.pending ? `pending-${item.position}` : item.streamId ?? String(item.position)
+}
+
+/**
+ * A live reply's key: the stream id its stored row will carry (`eve:<session>:<turn>`, lib/eve/projection.ts), so
+ * the row keeps its key when the reply commits. A turn's later messages, which commit into the same row, keep their
+ * own ids.
+ */
+export function liveReplyKeys(replies: readonly CoordinatorLiveReply[], sessionId: string | undefined) {
+  const taken = new Set<string>()
+  return replies.map(reply => {
+    const streamId = sessionId && reply.turnId ? eveStreamId(sessionId, reply.turnId) : undefined
+    if (!streamId || taken.has(streamId)) return reply.id
+    taken.add(streamId)
+    return streamId
+  })
 }
