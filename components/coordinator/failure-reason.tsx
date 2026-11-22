@@ -60,7 +60,8 @@ export function FailureReason({ failure, botId, onResend, sending = false, retry
       : resend
   return <div data-failure-reason="" className={cn('flex flex-col gap-0.5', retry ? 'items-start' : 'items-end')}>
     <p data-message-failure="past" className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-      {showReason && <><CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />{reason}<span aria-hidden="true">·</span></>}{action}
+      {/* The chat's failure line already says 回复失败: only a more specific reason is added to it, on the same line. */}
+      {showReason && reason !== chat('failedTitle') && <><CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />{reason}<span aria-hidden="true">·</span></>}{action}
     </p>
     {/* The stored code only under 详情, never in place of the words (decision 2026-11-05-0330). */}
     {failure.raw && <RunErrorDetails code={failure.raw} />}
