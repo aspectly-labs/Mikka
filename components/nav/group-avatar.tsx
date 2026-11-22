@@ -1,7 +1,7 @@
 'use client'
 
 import useSWR from 'swr'
-import { fetchGroupMembers, type GroupMember } from '@/lib/group-messages'
+import { fetchGroupMembers, type GroupMember, type GroupSummary } from '@/lib/group-messages'
 import { cn } from '@/lib/utils'
 import { BotAvatar, COORDINATOR_AVATAR } from './bot-avatar'
 import { LetterAvatar } from './letter-avatar'
@@ -40,8 +40,11 @@ export function GroupPillAvatar({ id, title }: { id: string; title: string }) {
   return <GroupAvatar title={title} members={members} />
 }
 
-/** Sidebar reuse of an already read member list; mounting a row never starts a member request. */
-export function CachedGroupAvatar({ id, title }: { id: string; title: string }) {
+/**
+ * The chat list's group avatar: the members already read for the group page, else the Bot faces the group list carries
+ * (GroupSummary.bots), so the row and the page draw the same avatar; mounting a row never starts a member request.
+ */
+export function CachedGroupAvatar({ id, title, bots }: { id: string; title: string; bots?: GroupSummary['bots'] }) {
   const { data: members } = useSWR<GroupMember[]>(groupMembersKey(id), null)
-  return <GroupAvatar title={title} members={members} />
+  return <GroupAvatar title={title} members={members ?? bots?.map(bot => ({ ...bot, name: '', memberType: 'bot' as const }))} />
 }

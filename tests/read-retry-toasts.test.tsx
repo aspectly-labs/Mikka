@@ -50,7 +50,7 @@ stub('hooks/use-live-key.tsx', { useLiveKey: Empty, useLiveKeys: Empty, useLiveS
 stub('components/artifacts/artifact-card.tsx', { ArtifactKindIcon: Empty, ArtifactAuthorAvatar: Empty })
 stub('components/artifacts/artifact-share.tsx', { ArtifactShare: Empty })
 stub('components/artifacts/selection-actions.tsx', { SelectionActions: Empty })
-stub('components/ui/dialog.tsx', { Dialog: Pass, DialogContent: ({ children }: { children?: ReactNode }) => <div role="dialog">{children}</div>, DialogTitle: Pass, DialogDescription: Pass, DialogHeader: Pass, DialogTrigger: Pass })
+stub('components/ui/dialog.tsx', { Dialog: Pass, DialogContent: ({ children }: { children?: ReactNode }) => <div role="dialog">{children}</div>, DialogTitle: Pass, DialogDescription: Pass, DialogHeader: Pass, DialogTrigger: Pass , DialogFooter: Pass })
 stub('components/workspace/factory-acceptance.tsx', { useAcceptanceTasks: () => ({ tasks: [], allTasks: [] }), useThreadAcceptance: () => null, AcceptanceStateBadge: Empty, FactoryAcceptance: Empty, FactoryAcceptancePanel: Empty })
 stub('components/workspace/factory-acceptance-pane.tsx', { FactoryAcceptancePane: Empty })
 stub('components/workspace/thread-changes.tsx', { ThreadChangesPane: Empty, ChangesTabLabel: Empty })
@@ -80,13 +80,9 @@ stub('components/nav/bot-avatar.tsx', { BotAvatar: Empty, CoordinatorAvatar: Emp
 // The task page's layer frame (docs/ui-overlay.md task-detail); this test reads through the open-source layout.
 stub('components/workspace/task-detail-frame.tsx', { FramedTask: ({ titleField }: import('../components/workspace/task-detail-frame').FramedTaskProps) => <Input id="task-title" value={titleField.value} readOnly /> })
 stub('components/slots/task-conversation.tsx', { TaskConversation: ({ issueId, runId }: { issueId: string; runId: string }) => <ol data-task-conversation={issueId}><li>{runId}</li></ol> })
-stub('components/slots/thread.tsx', { ThreadScreen: (props: import('../components/slots/thread-contract').ThreadScreenProps | import('../components/slots/thread-contract').ThreadTranscriptScreenProps) => {
-  if ('transcript' in props) return <>
-    {'placeholder' in props.transcript && props.transcript.placeholder != null ? props.transcript.placeholder : <ol>{props.transcript.rows.map(row => <li key={row.id}>{'messages' in row
-      ? row.messages.map(entry => <span key={entry.id}>{entry.message ? entry.message.body : entry.content}</span>)
-      : 'message' in row ? row.message?.body : row.content}</li>)}</ol>}
-    {props.composer}
-  </>
+stub('components/workspace/agent-theme.tsx', { AgentThemeProvider: ({ children }: { children: import('react').ReactNode }) => <>{children}</> })
+stub('components/slots/thread.tsx', { ThreadScreen: (props: import('../components/slots/thread-contract').ThreadScreenProps) => {
+  if (props.entries && !props.entries.length && props.empty) return <>{props.empty}</>
   return <ol>{props.entries?.map(entry => <li key={entry.id}>{entry.role === 'person' ? entry.text : entry.parts.map((part, index) => part.kind === 'text' ? <span key={index}>{part.node}</span> : null)}</li>)}</ol>
 } })
 stub('components/workspace/message-reactions.tsx', { MessageReactions: Empty, useMessageReactions: () => ({}) })
@@ -106,7 +102,7 @@ stub('components/theme-provider.tsx', { ThemeProvider: Pass })
 stub('components/swr-defaults.tsx', { SWRDefaults: Pass })
 stub('components/blocks/auth-19/components/auth.tsx', { Auth: Pass })
 stub('components/blocks/auth-19/components/auth-card.tsx', { AuthCard: Pass })
-stub('components/workspace/workspace-loading.tsx', { WorkspaceLoading: Empty, TaskPageLoading: Empty })
+stub('components/workspace/workspace-loading.tsx', { WorkspaceLoading: Empty, TaskPageLoading: Empty, ConversationPageLoading: Empty, WorkspaceContentLoading: Empty, BoardPageLoading: Empty, ProjectsPageLoading: Empty, ProjectDetailLoading: Empty, AutomationsPageLoading: Empty, SettingsPageLoading: Empty, opensChat: () => false })
 stub('components/workspace/create-workspace-form.tsx', { CreateWorkspaceForm: Empty })
 stub('components/workspace/invitation-card.tsx', { InvitationCard: Empty, OrganizationInvitationCard: Empty })
 stub('components/device-authorization.tsx', { DeviceAuthorization: Empty })

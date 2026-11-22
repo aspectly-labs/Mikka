@@ -1155,6 +1155,7 @@
     "loading": "正在加载设备"
   },
   "Workspace": {
+    "documentTitle": "{name} · Mikka",
     "loadingEditor": "正在加载任务编辑器",
     "loading": "正在加载…",
     "loadingCreate": "正在加载新建任务…",
@@ -8085,6 +8086,14 @@
       "search": "正在搜索",
       "edit": "正在编辑文件",
       "web": "正在查看网页"
+    },
+    "plan": {
+      "title": "待办",
+      "label": "Agent 的待办清单",
+      "progress": "已完成 {completed}/{total} 项待办",
+      "pending": "待处理",
+      "inProgress": "进行中",
+      "completed": "已完成"
     }
   },
   "HostedOnboarding": {

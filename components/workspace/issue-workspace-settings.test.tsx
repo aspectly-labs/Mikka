@@ -53,7 +53,7 @@ let rosterError: Error | undefined
 let rosterRetries = 0
 const router = { push: (href: string) => browser.history.pushState({}, '', href), replace: (href: string) => browser.history.replaceState({}, '', href), refresh: nothing }
 
-mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: (namespace?: string) => Object.assign((key: string) => namespace ? `${namespace}.${key}` : key, { has: () => false }), useMessages: () => ({ IssueDetail: { work: { states: {} } }, GroupTask: { stage: {}, status: {} } }), useFormatter: () => ({ dateTime: () => '' }) } })
+mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: (namespace?: string) => Object.assign((key: string) => namespace ? `${namespace}.${key}` : key, { has: () => false }), useMessages: () => ({ IssueDetail: { work: { states: {} } }, GroupTask: { stage: {}, status: {} } }), useFormatter: () => ({ dateTime: () => '' }), useNow: () => new Date(0) } })
 mock.module('@/lib/client-runtime/navigation', { namedExports: { useSearchParams: () => new URLSearchParams(browser.location.search) } })
 mock.module('@/i18n/navigation', { namedExports: { getPathname: ({ href }: { href: string }) => href, usePathname: () => browser.location.pathname, useRouter: () => router } })
 mock.module('../settings/settings-link.tsx', { namedExports: { SettingsLink: ({ href, children }: { href: string; children?: ReactNode }) => <a href={href}>{children}</a> } })
@@ -99,7 +99,7 @@ mock.module('@/hooks/use-live-lists', { namedExports: {
 for (const [file, names] of [
   ['../../app/actions/projects.ts', ['listProjects', 'listWorkspaceProjects']], ['../../app/actions/teams.ts', ['listTeams']],
   ['../../app/actions/team-relations.ts', ['listProjectTeams']], ['../../app/actions/workspace-secrets.ts', ['saveE2BKey']],
-  ['../../app/actions/bots.ts', ['listBots', 'listBotsForWorkspace', 'archiveBot', 'deleteBot', 'listArchivedOwnBots']], ['../../app/actions/agents.ts', ['listAgents', 'getThreadName', 'findThreadIssue']],
+  ['../../app/actions/bots.ts', ['listBots', 'listBotsForWorkspace', 'archiveBot', 'deleteBot', 'listArchivedOwnBots']], ['../../app/actions/agents.ts', ['listDevices','pollDevices','createDeviceToken','setDeviceEnabled','renameDevice','setDeviceDescription','removeDevice','listLocalSshHosts','listAgents','listIssueThreads','pollIssueThreads','pollTaskDetail','findThreadIssue','getThreadMachine','getIssueThreadContext','getOlderIssueThread','getIssueThread','getThreadInstructions','getThreadChanges','sendIssueThreadMessage','sendIssueThreadReply','createThreadReplyVersion','getThreadReplyVersions','changeQueuedThreadReply','getThreadContinuationModels','getThreadName','stopRun','resumeQuotaPausedRunOnApiKey','retryQuotaPausedRun','sendDeviceCommand']],
 ] as const) mock.module(new URL(file, import.meta.url).href, { namedExports: Object.fromEntries(names.map(name => [name, async () => []])) })
 
 // Exercise the production lazy/Suspense boundary, with its chunk deliberately
@@ -220,6 +220,9 @@ let OfficialIssueWorkspace: typeof IssueWorkspace
 let SettingsShell: typeof import('../settings/settings-shell')['SettingsShell']
 let closeReview: typeof import('@/hooks/code-review/use-review-page')['closeReview']
 mock.module(new URL('../slots/review-summary.tsx', import.meta.url).href, { namedExports: { REVIEW_ENABLED: true, ReviewSummaryLine: empty } })
+// The right column's tabs pull in web components (@pierre/diffs) the test DOM lacks; their own tests cover them.
+for (const [file, name] of [['changes-tab', 'ChangesTab'], ['files-tab', 'FilesTab'], ['setup-tab', 'SetupTab']] as const)
+  mock.module(new URL(`../right-column/${file}.tsx`, import.meta.url).href, { namedExports: { [name]: () => null } })
 mock.module(new URL('../slots/review-page.tsx', import.meta.url).href, { namedExports: { ReviewPage: ({ taskId }: { taskId: string }) => <p data-review-task={taskId}>Review</p> } })
 before(async () => {
   for (const key of ['window', 'document', 'HTMLElement', 'Element', 'Node', 'MutationObserver', 'ResizeObserver', 'navigator'] as const) Object.defineProperty(globalThis, key, { configurable: true, value: key === 'window' ? browser : browser[key] })
@@ -321,7 +324,7 @@ test('a thread opened in the centre hands its work area to a frame that owns the
   await act(async () => root.render(<OfficialIssueWorkspace user={user} />))
   assert.ok(container.querySelector('[data-main-thread]'), 'the thread is the centre page')
   assert.ok(reportedPanels, 'and the frame was handed the Overview tab')
-  assert.deepEqual(reportedPanels?.tabs.map(tab => tab.id), ['overview', 'browser'])
+  assert.deepEqual(reportedPanels?.tabs.map(tab => tab.id), ['overview', 'changes', 'files', 'setup', 'browser'])
 })
 
 test('an explicit Bot mounts only its own composer after its roster resolves', async () => {
@@ -332,6 +335,7 @@ test('an explicit Bot mounts only its own composer after its roster resolves', a
   assert.equal(Boolean(container.querySelector('[data-chat]')), false)
   assert.equal(composerMounts, 0)
   assert.ok(container.querySelector('[role="status"]'))
+  assert.equal(browser.document.title, 'Mikka', 'no name before the Bot resolves')
 
   rosterError = new Error('roster unavailable')
   await render()
@@ -344,6 +348,7 @@ test('an explicit Bot mounts only its own composer after its roster resolves', a
   assert.equal(container.querySelector('[data-chat]')?.getAttribute('data-chat'), bot.name)
   assert.equal(composerMounts, 1)
   assert.equal(new URL(browser.location.href).searchParams.get('bot'), bot.id)
+  assert.equal(browser.document.title, 'Workspace.documentTitle', 'the tab names the Bot\'s chat once its roster resolves')
 })
 
 test('a valid browser request reveals the conversation browser tab without changing the selected Bot', async () => {

@@ -18,6 +18,7 @@ import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
 import { runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems } from '@/lib/issue-run-conversation'
+import { runPlan } from '@/lib/thread-plan'
 import { useThreadStepRows } from './thread-step-rows'
 import { ThreadReplyVersions } from './thread-reply-versions'
 import { ThreadExecutionIdentity } from './thread-execution-identity'
@@ -35,6 +36,7 @@ import { ChatFileCards } from '@/components/chat/chat-file-cards'
 import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConversationPageLoading } from './workspace-loading'
 import { AgentMarkdown } from './agent-markdown'
 import { useSmoothText } from '@/lib/hooks/use-smooth-text'
 import { ComputerCard } from '@/components/computer/computer-card'
@@ -344,6 +346,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     if (delivery.rows.some(row => confirmedIds.has(row.id))) delivery.setRows(current => current.filter(row => !confirmedIds.has(row.id)))
   }, [confirmedIds, delivery.rows, delivery.setRows])
   const items = useMemo(() => data ? threadItems(data.chunks, data.messages, runId) : [], [data, runId])
+  // The live run's newest plan (its TodoWrite / update_plan), pinned above the composer until the run ends.
+  const plan = useMemo(() => data && active ? runPlan(data, liveRunId) : null, [data, active, liveRunId])
   // The jump index, from the items already built: never a second fold of the stream.
   const outline = threadOutline(items)
   // A failed run says why under the stage that stopped, else at the end of the conversation.
@@ -471,7 +475,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }
   const waiting = !data && (error
     ? <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void mutate() }} />
-    : <div role="status" aria-label={t('loading')} data-thread-loading className="flex flex-col gap-3"><Skeleton className="h-5 w-40" /><Skeleton className="ml-auto h-12 w-3/4" /><Skeleton className="h-12 w-2/3" /></div>)
+    // The chat's one skeleton, as a Bot's chat opens (UX audit 2026-11-22 #3).
+    : <div data-thread-loading="" className="flex min-h-0 flex-1 flex-col"><ConversationPageLoading /></div>)
   const citationTexts = items.flatMap(item => item.kind === 'agent' || item.kind === 'person' ? [item.text] : [])
   const previews = useLinkPreviews(citationTexts)
   const citationBase = useMemo<AgentCitations>(() => ({ sources: {}, previews, onOpenIssue: openTask }), [previews])
@@ -672,6 +677,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       attachmentScope: { kind: 'thread', id: liveRunId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
       running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands, historyKey: `thread:${runId}` }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
+    plan={plan ?? undefined}
     notices={<>
       {olderState === 'failed' && olderPosition && <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void loadOlder() }} />}
       {quotaPaused && <ThreadQuotaPausedCard paused={quotaPaused} onContinued={() => { void mutate(); refreshLists() }} />}
@@ -681,7 +687,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     </>}
     under={readOnly || !data?.thread.ownedByCurrentUser ? undefined : <ThreadUnderComposer issueId={issueId} runId={runId} status={view?.status ?? data.thread.status} context={data.context ? <ThreadContextUsage usage={data.context} /> : undefined} />}
     questions={[]} onAnswer={async () => ({ status: 'unavailable', error: '' })} running={0} onOpenTask={() => onOpenTask?.()} onOpenInbox={() => navigate({ section: 'suggestions' })} /></div>
-    : <div className="min-h-0 flex-1 overflow-y-auto p-4">{waiting}</div>
+    : error ? <div className="min-h-0 flex-1 overflow-y-auto p-4">{waiting}</div> : waiting
   const views: ThreadViewAction[] = []
   if (hasChanges && !viewingChanges) views.push({ id: 'changes', label: t('changesTab'), onSelect: () => setTab('changes') })
   if (acceptance && !accepting) views.push({ id: 'acceptance', label: t('acceptanceTab'), onSelect: () => setTab('acceptance') })

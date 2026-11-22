@@ -47,3 +47,45 @@ export async function groupParticipantsMany(client: PoolClient, conversationIds:
   }
   return byConversation
 }
+
+/** A Bot member's face for a group's avatar in the chat list: no name, only what the bloub needs. */
+export type GroupBotFace = { id: string; color: string | null; shape: string | null; coordinator?: true }
+
+/**
+ * The Bot members of many groups, each group's in member order (as GET members lists them), at most `limit` each, for
+ * the chat list's group avatar (R-36): the sidebar row draws the same avatar as the group page without a member read
+ * per row. Each group's Bots are its owner's in its workspace, as groupParticipants reads them.
+ */
+export async function groupBotFaces(client: PoolClient, groups: readonly { id: string; createdBy: string; workspaceId: string }[], limit = 3): Promise<Map<string, GroupBotFace[]>> {
+  const faces = new Map<string, GroupBotFace[]>()
+  if (!groups.length) return faces
+  const members = (await client.query<{ conversationId: string; memberId: string }>(`SELECT "conversationId","memberId" FROM conversation_members
+    WHERE "conversationId"=ANY($1::uuid[]) AND "memberType"='bot' AND "leftAt" IS NULL ORDER BY "memberId"`, [groups.map(group => group.id)])).rows
+  if (!members.length) return faces
+  const owners = new Map<string, { ownerId: string; workspaceId: string; bots: Set<string> }>()
+  for (const member of members) {
+    const group = groups.find(item => item.id === member.conversationId)
+    if (!group) continue
+    const key = `${group.createdBy}\u0000${group.workspaceId}`
+    const entry = owners.get(key) ?? { ownerId: group.createdBy, workspaceId: group.workspaceId, bots: new Set<string>() }
+    entry.bots.add(member.memberId)
+    owners.set(key, entry)
+  }
+  const found = new Map<string, GroupBotFace>()
+  for (const { ownerId, workspaceId, bots } of owners.values()) {
+    const rows = (await client.query<{ id: string; color: string | null; shape: string | null; isCoordinator: boolean }>(`SELECT id,color,shape,
+      EXISTS (SELECT 1 FROM coordinator_bots cb WHERE cb."botId"=bots.id AND cb."ownerId"=bots."ownerId") AS "isCoordinator"
+      FROM bots WHERE "ownerId"=$1 AND "workspaceId"=$2 AND id=ANY($3::uuid[])`, [ownerId, workspaceId, [...bots]])).rows
+    for (const { isCoordinator, ...row } of rows) found.set(`${ownerId}\u0000${workspaceId}\u0000${row.id}`, { ...row, ...(isCoordinator ? { coordinator: true as const } : {}) })
+  }
+  for (const member of members) {
+    const group = groups.find(item => item.id === member.conversationId)
+    const bot = group && found.get(`${group.createdBy}\u0000${group.workspaceId}\u0000${member.memberId}`)
+    if (!group || !bot) continue
+    const list = faces.get(group.id) ?? []
+    if (list.length >= limit) continue
+    list.push(bot)
+    faces.set(group.id, list)
+  }
+  return faces
+}

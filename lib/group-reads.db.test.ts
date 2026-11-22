@@ -294,6 +294,14 @@ test('group read routes advance actual group history without opening private DMs
     const membersView = await (await roster.GET(request('GET', `/api/conversations/${source}/members`), context)).json()
     assert.deepEqual(membersView.members.filter((p: { memberType: string }) => p.memberType === 'bot').map((p: { id: string }) => p.id).sort(), [a,b,c].sort())
     assert.ok(membersView.members.every((p: { memberType: string; color: string; shape: string }) => p.memberType !== 'bot' || p.color === 'bleu' && p.shape === 'cercle'))
+    // The chat list carries each group's Bot faces in member order, so its row draws the page's avatar (R-36).
+    await pool.query(`UPDATE bots SET color='rouge',shape='etoile' WHERE id=$1`, [b])
+    const listed = (await (await list.GET(request('GET', `/api/conversations?workspaceId=${w}`))).json()).conversations.find((row: { id: string }) => row.id === source)
+    const pageBots = (await (await roster.GET(request('GET', `/api/conversations/${source}/members`), context)).json()).members.filter((p: { memberType: string }) => p.memberType === 'bot')
+    assert.deepEqual(listed.bots, pageBots.map(({ id, color, shape }: { id: string; color: string; shape: string }) => ({ id, color, shape })))
+    assert.equal(listed.bots.length, 3)
+    assert.ok(listed.bots.every((face: Record<string, unknown>) => !('name' in face)), 'a face carries no name')
+    await pool.query(`UPDATE bots SET color='bleu',shape='cercle' WHERE id=$1`, [b])
     const send = async (text: string, selected: string[], userId = owner) => {
       const response = await handleGroup(pool, directory, { userId, method: 'POST', resource: 'messages', id: source, origin: null, host: '127.0.0.1',
         body: JSON.stringify({ body: text, mentions: selected.map(memberId => ({ memberType: 'bot', memberId })) }) }, true)

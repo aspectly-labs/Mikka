@@ -1,8 +1,8 @@
-import { createContext, type ReactNode, type RefObject, type UIEventHandler } from 'react'
+import { createContext, type ReactNode, type RefObject } from 'react'
 import type { DecisionReceipt } from '@/hooks/use-decision-submission'
 import type { RunSource } from '@/lib/coordinator/citations'
+import type { ThreadPlanItem } from '@/lib/thread-plan'
 import type { ChatComposerProps } from './chat-composer-contract'
-import type { ChatMessageProps } from './chat-message-contract'
 
 /**
  * A conversation as one screen (docs/ui-overlay.md, slot `thread`): a Bot's chat, built by `CoordinatorChat` from the
@@ -110,6 +110,8 @@ export type ThreadScreenProps = {
   panel?: boolean
   /** Who the person talks to: the Bot's id (null: the Coordinator) and its name. */
   botId: string | null
+  /** false: no Bot model picker of the screen's own; the chat passes its own in `composer.leftControls`, or none (a group). */
+  modelPicker?: false
   name: string
   /** The accessible name of the existing transcript viewport. */
   transcriptLabel?: string
@@ -141,6 +143,11 @@ export type ThreadScreenProps = {
   pending: { id: string; name: string; meta?: string; onRemove: () => void }[]
   /** Notices that wait above the composer (quota, sign in again, actions to approve). */
   notices?: ReactNode
+  /**
+   * The live run's newest plan (Claude Code's TodoWrite, Codex's update_plan; lib/thread-plan.ts), in order: pinned
+   * above the composer until the run ends and updated in place with each revision. Absent: no plan to show.
+   */
+  plan?: ThreadPlanItem[]
   /**
    * The row under the composer (Figma `1318:2` section 19, #2926): where the thread runs, its repository and branch,
    * and the context ring on the right. Absent: nothing under the composer.
@@ -174,43 +181,6 @@ export type ThreadScreenProps = {
     tabs: ThreadPanelTab[]; reveal: number; revealId: string | null; beforeClose?: (tabId: string) => Promise<boolean>
     /** Reports the work area's actual active page; null for New or an artifact. */
     onActiveTab?: (tabId: string | null) => void
-  }
-}
-
-/** Message contents remain with their readers; the screen owns every list item and its key. */
-export type ThreadTranscriptMessage = { id: string } & (
-  | { message: ChatMessageProps; content?: never }
-  | { content: ReactNode; message?: never }
-)
-
-export type ThreadGroupRow =
-  /** `quiet`: a Bot's or Agent's reply, its words alone with no mark or visible name (#2922); screen readers still get the name. */
-  /** `before`: what goes above the run in its own item, the centred time over its group (#2922). */
-  | { kind: 'author'; id: string; mine: boolean; quiet?: boolean; name: string; mark?: ReactNode; before?: ReactNode; messages: ThreadTranscriptMessage[] }
-  | { kind: 'pending'; id: string; phase: 'sending' | 'accepted' | 'failed'; message: ChatMessageProps; after?: ReactNode }
-  | { kind: 'notice'; id: string; label: string; content: ReactNode }
-
-type TranscriptScroll = {
-  label: string
-  ref: RefObject<HTMLDivElement | null>
-  onScroll: UIEventHandler<HTMLDivElement>
-}
-
-/** A group chat's transcript shares the screen without changing its DOM or its reader's state. */
-export type ThreadTranscriptScreenProps = {
-  host: ThreadHost
-  /** The same composer slot node; the screen owns its placement, the reader owns its actions. */
-  composer: ReactNode
-  beforeComposer?: ReactNode
-  transcript: {
-    kind: 'group'
-    scroll: TranscriptScroll
-    rows: ThreadGroupRow[]
-    /** A loading, refusal or empty state replaces the list. */
-    placeholder?: ReactNode
-    before?: ReactNode
-    after?: ReactNode
-    end?: ReactNode
   }
 }
 

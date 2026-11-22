@@ -14,6 +14,7 @@ let hasMemberPage = true
 let groupMembers: GroupMember[] = []
 let membersError: Error | undefined
 const exchangeReads: string[] = []
+const lastThreadScreen = () => threadFixture?.lastThreadScreen
 mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en',
   useTranslations: () => (key: string) => key,
   useMessages: () => ({ AgentCopy: {} }),
@@ -69,12 +70,20 @@ const message = (authorType: GroupMessage['authorType'], position: number, body:
   body, mentions: [], replyToId: null, createdAt: '2026-11-04T18:00:00.000Z',
 })
 
+mock.module(new URL('./agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: ({ children }: { children: import('react').ReactNode }) => children } })
+// The official thread screen, as a public fixture that paints its props (tests/support/thread-screen-fixture.tsx).
+let threadFixture: typeof import('../../tests/support/thread-screen-fixture') | undefined
+mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports: {
+  ThreadScreen: (props: import('../slots/thread-contract').ThreadScreenProps) => { const Screen = threadFixture!.FixtureThreadScreen; return <Screen {...props} /> },
+} })
+
 before(async () => {
   Object.defineProperty(globalThis, 'window', { configurable: true, value: browser })
   Object.defineProperty(globalThis, 'document', { configurable: true, value: browser.document })
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: browser.navigator })
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element, Node: browser.Node, IntersectionObserver: browser.IntersectionObserver, requestAnimationFrame: browser.requestAnimationFrame.bind(browser), cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser) })
   ;({ createRoot } = await import('react-dom/client'))
+  threadFixture = await import('../../tests/support/thread-screen-fixture')
   ;({ GroupChatView } = await import('./group-chat-view'))
 })
 beforeEach(() => { container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
@@ -132,10 +141,9 @@ test('anchored exchanges follow their author run once and open the linked transc
   await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
   const list = container.querySelector('ol[aria-label="messages"]')!
   const rows = [...list.children]
-  assert.equal(rows.length, 3, 'the exchange is a separate row after its grouped anchor messages')
-  assert.match(rows[0].textContent ?? '', /Anchor message.*Same author run/)
-  assert.match(rows[2].textContent ?? '', /Later reply/)
-  const marker = rows[1].querySelector('button')!
+  assert.deepEqual(rows.map(row => row.getAttribute('data-entry')), ['message-1', 'message-2', 'exchange:linked-exchange', 'message-3'], 'the exchange is a line of its own after its anchor\'s run of messages')
+  assert.equal(lastThreadScreen()?.entries?.find(entry => entry.id === 'exchange:linked-exchange')?.role === 'bot' && (lastThreadScreen()!.entries!.find(entry => entry.id === 'exchange:linked-exchange') as { event?: true }).event, true, 'a line about the chat, with no author')
+  const marker = rows[2].querySelector('button')!
   assert.ok(marker, 'the exchange marker is available to group members')
   assert.equal(list.querySelector('li li'), null, 'the marker does not nest list items')
   assert.deepEqual(exchangeReads, [], 'closed exchange transcripts are not read')
@@ -151,18 +159,19 @@ test('anchored exchanges follow their author run once and open the linked transc
   } finally { membersError = undefined }
 })
 
-test('another person\'s grouped messages keep plain text and one author line', async () => {
+test('another person\'s messages are the thread\'s messages under their author line, in plain text', async () => {
   await render([1, 2].map(position => ({ ...message('user', position, handoff), authorId: 'peer' })))
+  const entries = lastThreadScreen()!.entries!
+  assert.deepEqual(entries.map(entry => entry.role === 'bot' ? entry.author?.id : null), ['user:peer', 'user:peer'], 'one author, so the thread names them once')
   const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li')]
-  assert.equal(rows.length, 1)
-  assert.equal(rows[0].textContent?.match(/member/g)?.length, 1)
-  const words = [...rows[0].querySelectorAll('[data-slot="user-message-text"]')]
+  assert.equal(container.querySelectorAll('[data-slot="group-author"]').length, 1)
+  const words = [...container.querySelectorAll('[data-slot="user-message-text"]')]
+  assert.equal(rows.length, 2)
   assert.equal(words.length, 2)
   for (const text of words) {
     assert.equal(text.textContent, handoff)
     assert.equal(text.querySelector('a'), null)
   }
-  assert.equal(rows[0].querySelectorAll('[data-slot="bubble"][data-align="start"]').length, 2)
 })
 
 test('the chat reads its newest page and members on the group key, never on a timer (#1212)', async () => {
@@ -266,21 +275,31 @@ test('the named conversation mounts the existing picker for the sole or explicit
   } finally { groupMembers = []; membersError = undefined }
 })
 
-test('a Bot\'s or Agent\'s reply is its words alone, and a centred time opens each group of messages (#2922)', async () => {
-  const at = (minutes: number) => new Date(Date.UTC(2026, 10, 4, 18, minutes)).toISOString()
-  await render([
-    { ...message('user', 1, 'Fix the loading state'), createdAt: at(0) },
-    { ...message('bot', 2, 'On it'), createdAt: at(1) },
-    { ...message('agent', 3, 'Checks are green'), createdAt: at(40) },
-  ])
-  const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li')]
-  assert.equal(rows.length, 3)
-  assert.deepEqual(rows.map(row => row.querySelectorAll('[data-time-stamp] time').length), [1, 0, 1], 'the first message and the one after a quiet gap')
-  assert.equal(rows[2].querySelector('[data-time-stamp] time')!.getAttribute('datetime'), at(40))
-  for (const reply of rows.slice(1)) {
-    assert.ok(reply.querySelector('[data-group-reply]'), 'plain words, no bubble')
-    assert.equal(reply.querySelector('[data-slot="bubble"]'), null)
-    const name = [...reply.querySelectorAll('span')].find(span => span.textContent === 'bot' || span.textContent === 'Agent' || span.textContent === 'agent')
-    if (name) assert.equal(name.className, 'sr-only', 'the name is for screen readers only')
-  }
+test('the group is the Bot chat\'s thread: the person\'s messages are theirs, everyone else\'s carry an author, as LobeHub\'s group chat', async () => {
+  groupMembers = [{ id: 'bot', name: 'Design Bot', memberType: 'bot' }, { id: 'agent', name: 'Build Agent', memberType: 'agent' }]
+  await render([message('user', 1, 'Who checks this?'), message('bot', 2, 'I will'), message('user', 3, 'Thanks'), message('bot', 4, 'Done'), message('agent', 5, 'Checks are green')])
+  const screen = lastThreadScreen()!
+  assert.equal(screen.modelPicker, false, 'a group has no Bot of its own to pick a model for')
+  assert.deepEqual(screen.entries!.map(entry => entry.role === 'person' ? 'person' : `${entry.author?.name}${entry.author?.quiet ? ' (quiet)' : ''}`),
+    ['person', 'Design Bot', 'person', 'Design Bot', 'Build Agent'], 'every reply names its author; none is quiet in a group')
+  const sender = (row: Element) => row.querySelector('[data-slot="group-author"]')?.textContent ?? null
+  assert.deepEqual([...container.querySelectorAll('ol[aria-label="messages"] > li')].map(sender), [null, 'Design Bot', null, 'Design Bot', 'Build Agent'])
+  groupMembers = []
+})
+
+test('every group message\'s line waits for hover and focus, as the Bot chat\'s (decision 2026-11-22-1500)', async () => {
+  const { HOVER_ACTIONS } = await import('@/components/chat/copy-action')
+  await render([message('user', 1, 'Mine'), message('bot', 2, 'Reply')])
+  const lines = [...container.querySelectorAll('ol[aria-label="messages"] > li')].map(row => row.querySelector('[data-slot="message-actions"]')!)
+  assert.equal(lines.length, 2)
+  for (const line of lines) for (const name of HOVER_ACTIONS.split(' ')) assert.ok(line.classList.contains(name), name)
+  assert.equal(lines[1].querySelector('time'), null, 'a reply\'s author line already says when')
+})
+
+test('before its first page the group shows every chat\'s one skeleton, not a list of its own', async () => {
+  pages = undefined as unknown as GroupMessagePage[]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  assert.ok(container.querySelector('[data-loading-placeholder]'), 'ConversationPageLoading')
+  assert.equal(container.querySelector('ol'), null)
+  assert.equal(container.querySelector('textarea'), null, 'the thread screen comes with the first page')
 })

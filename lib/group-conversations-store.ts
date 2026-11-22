@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
 import { enqueueGroupTurn, GROUP_TURN_STOPPED, stopGroupTurns } from './coordinator/group-turns'
-import { groupParticipants, groupParticipantsMany, type GroupParticipant } from './group-participants'
+import { groupBotFaces, groupParticipants, groupParticipantsMany, type GroupParticipant } from './group-participants'
 import { groupListChanged, groupListReadChanged } from './live/lists'
 import { groupChatChanged } from './live/groups'
 
@@ -88,6 +88,9 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
           AND ($2::uuid IS NULL OR c."workspaceId"=$2) ORDER BY c."createdAt" DESC,c.id DESC`, [userId, req.workspaceId ?? null])
       const accessible = []
       for (const row of rows) if (await directory(row.workspaceId, userId, [])) accessible.push(row)
+      // Each group's Bot faces, so the chat list draws the group's avatar as its page does (R-36).
+      const faces = await groupBotFaces(client, accessible)
+      for (const row of accessible) row.bots = faces.get(row.id) ?? []
       result = { conversations: accessible, viewerId: userId, workspaceId: req.workspaceId ?? null }
     } else {
       // A link is a bounded view granted by its source group, never membership
