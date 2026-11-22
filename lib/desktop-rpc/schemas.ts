@@ -24,6 +24,7 @@ import { USER_FACT_KINDS } from '@/lib/profile/kinds'
 import { definitionSchema as scheduleDefinition, webhookBatchListInput, webhookBatchInput } from '@/lib/schedules/contract'
 import { DEVICE_DESCRIPTION_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
+import { updateWorkspaceInput } from '@/lib/workspace-admin/general-input'
 
 const uuid = z.uuid()
 const id = z.string().min(1).max(200)
@@ -417,7 +418,7 @@ export const desktopActionSchemas = {
   'workspace-settings.getWorkspaceDeletionImpact': inWorkspace,
   'workspace-settings.getWorkspaceTransferTargets': inWorkspace,
   'workspace-settings.listArchivedBots': inWorkspace,
-  'workspace-settings.updateWorkspace': tuple(object({ name: text(120).trim().min(1).optional(), slug: slug.optional(), icon: text(400_000).nullish() }), workspace),
+  'workspace-settings.updateWorkspace': tuple(updateWorkspaceInput.extend({ slug: slug.optional() }), workspace),
   'workspace-settings.transferWorkspace': tuple(id, workspace),
   'workspace-settings.deleteWorkspace': tuple(uuid, text(120).min(1)),
   'workspace-settings.takeOverArchivedBot': tuple(uuid, workspace),

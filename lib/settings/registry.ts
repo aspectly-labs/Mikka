@@ -2,6 +2,20 @@ import { z } from 'zod'
 import type { ResolvedSetting, SettingSchemaEntry, SettingScope, SettingValue } from '@mikka/protocol/settings'
 import { archiveIdleDays } from '@/lib/conversation-directory-input'
 import { DEFAULT_TITLE_TRIGGERS, THREAD_TITLE_TRIGGERS, TITLE_INSTRUCTIONS_MAX } from '@/lib/thread-title'
+import {
+  BACKGROUND_EFFECTS,
+  CODE_SIZES,
+  COLOR_SCHEMES,
+  DEFAULT_UI,
+  DIFF_COLORS,
+  DIFF_VIEWS,
+  HEX_COLOR_PATTERN,
+  HIDDEN_FILES,
+  RAIL_PAGE_IDS,
+  RUN_KEY_ACTIONS,
+  SIDEBAR_LAYOUTS,
+  UI_THEME_IDS,
+} from '@/lib/ui-preferences'
 import { settingMetadata } from './metadata'
 
 export interface SettingDefinition extends SettingSchemaEntry {
@@ -13,6 +27,12 @@ export interface SettingDefinition extends SettingSchemaEntry {
 const inherited = {
   scope: ['personal', 'workspace'] as SettingScope[], personalOverride: true,
   writeAccess: { personal: 'owner', workspace: 'admin' } as const,
+}
+
+const personalAccount = {
+  scope: ['personal'] as SettingScope[], personalOverride: true,
+  writeAccess: { personal: 'owner' } as const,
+  personalContext: 'account' as const,
 }
 
 /** Adding a scalar field here gives it validation, typed persistence, reset and schema search. */
@@ -34,6 +54,91 @@ export const SETTINGS_REGISTRY = {
     ...settingMetadata('threadTitleTriggers'),
     type: 'string', guard: z.enum(THREAD_TITLE_TRIGGERS), defaultValue: DEFAULT_TITLE_TRIGGERS, options: [...THREAD_TITLE_TRIGGERS],
     personalContext: 'workspace',
+  },
+  appearanceSync: {
+    ...personalAccount, key: 'appearanceSync', group: 'appearance', page: 'appearance',
+    ...settingMetadata('appearanceSync'),
+    type: 'boolean', guard: z.boolean(), defaultValue: DEFAULT_UI.appearanceSync,
+  },
+  appearanceColorScheme: {
+    ...personalAccount, key: 'appearanceColorScheme', group: 'appearance', page: 'appearance',
+    ...settingMetadata('appearanceColorScheme'),
+    type: 'string', guard: z.enum(COLOR_SCHEMES), defaultValue: DEFAULT_UI.colorScheme, options: [...COLOR_SCHEMES],
+  },
+  appearanceTheme: {
+    ...personalAccount, key: 'appearanceTheme', group: 'appearance', page: 'appearance',
+    ...settingMetadata('appearanceTheme'),
+    type: 'string', guard: z.enum(UI_THEME_IDS), defaultValue: DEFAULT_UI.themeId, options: [...UI_THEME_IDS],
+  },
+  appearanceAccentColor: {
+    ...personalAccount, key: 'appearanceAccentColor', group: 'appearance', page: 'appearance',
+    ...settingMetadata('appearanceAccentColor'),
+    type: 'string', guard: z.string().regex(HEX_COLOR_PATTERN), defaultValue: DEFAULT_UI.accent,
+  },
+  appearanceBackgroundEffect: {
+    ...personalAccount, key: 'appearanceBackgroundEffect', group: 'appearance', page: 'appearance',
+    ...settingMetadata('appearanceBackgroundEffect'),
+    type: 'string', guard: z.enum(BACKGROUND_EFFECTS), defaultValue: DEFAULT_UI.backgroundEffect, options: [...BACKGROUND_EFFECTS],
+  },
+  codeFontSize: {
+    ...personalAccount, key: 'codeFontSize', group: 'appearance', page: 'appearance',
+    ...settingMetadata('codeFontSize'),
+    type: 'string', guard: z.enum(CODE_SIZES), defaultValue: DEFAULT_UI.codeSize, options: [...CODE_SIZES],
+  },
+  diffView: {
+    ...personalAccount, key: 'diffView', group: 'appearance', page: 'appearance',
+    ...settingMetadata('diffView'),
+    type: 'string', guard: z.enum(DIFF_VIEWS), defaultValue: DEFAULT_UI.diffView, options: [...DIFF_VIEWS],
+  },
+  diffColors: {
+    ...personalAccount, key: 'diffColors', group: 'appearance', page: 'appearance',
+    ...settingMetadata('diffColors'),
+    type: 'string', guard: z.enum(DIFF_COLORS), defaultValue: DEFAULT_UI.diffColor, options: [...DIFF_COLORS],
+  },
+  hiddenFiles: {
+    ...personalAccount, key: 'hiddenFiles', group: 'appearance', page: 'appearance',
+    ...settingMetadata('hiddenFiles'),
+    type: 'string', guard: z.enum(HIDDEN_FILES), defaultValue: DEFAULT_UI.hiddenFiles, options: [...HIDDEN_FILES],
+  },
+  sidebarPages: {
+    ...personalAccount, key: 'sidebarPages', group: 'interface', page: 'preferences',
+    ...settingMetadata('sidebarPages'),
+    type: 'string-array', guard: z.array(z.enum(RAIL_PAGE_IDS)).max(RAIL_PAGE_IDS.length), defaultValue: [...RAIL_PAGE_IDS], options: [...RAIL_PAGE_IDS],
+  },
+  sidebarLayout: {
+    ...personalAccount, key: 'sidebarLayout', group: 'interface', page: 'preferences',
+    ...settingMetadata('sidebarLayout'),
+    type: 'string', guard: z.enum(SIDEBAR_LAYOUTS), defaultValue: DEFAULT_UI.sidebarLayout, options: [...SIDEBAR_LAYOUTS],
+  },
+  pinPages: {
+    ...personalAccount, key: 'pinPages', group: 'interface', page: 'preferences',
+    ...settingMetadata('pinPages'),
+    type: 'boolean', guard: z.boolean(), defaultValue: DEFAULT_UI.pinPages,
+  },
+  openInDesktop: {
+    ...personalAccount, key: 'openInDesktop', group: 'interface', page: 'preferences',
+    ...settingMetadata('openInDesktop'),
+    type: 'boolean', guard: z.boolean(), defaultValue: DEFAULT_UI.openInDesktop,
+  },
+  scrollNewToTop: {
+    ...personalAccount, key: 'scrollNewToTop', group: 'interface', page: 'preferences',
+    ...settingMetadata('scrollNewToTop'),
+    type: 'boolean', guard: z.boolean(), defaultValue: DEFAULT_UI.scrollNewToTop,
+  },
+  enterAction: {
+    ...personalAccount, key: 'enterAction', group: 'interface', page: 'preferences',
+    ...settingMetadata('enterAction'),
+    type: 'string', guard: z.enum(RUN_KEY_ACTIONS), defaultValue: DEFAULT_UI.enterAction, options: [...RUN_KEY_ACTIONS],
+  },
+  modEnterAction: {
+    ...personalAccount, key: 'modEnterAction', group: 'interface', page: 'preferences',
+    ...settingMetadata('modEnterAction'),
+    type: 'string', guard: z.enum(RUN_KEY_ACTIONS), defaultValue: DEFAULT_UI.modEnterAction, options: [...RUN_KEY_ACTIONS],
+  },
+  altEnterAction: {
+    ...personalAccount, key: 'altEnterAction', group: 'interface', page: 'preferences',
+    ...settingMetadata('altEnterAction'),
+    type: 'string', guard: z.enum(RUN_KEY_ACTIONS), defaultValue: DEFAULT_UI.altEnterAction, options: [...RUN_KEY_ACTIONS],
   },
   subagentMaxConcurrent: {
     key: 'subagentMaxConcurrent', scope: ['workspace'], group: 'threads', page: 'threads',

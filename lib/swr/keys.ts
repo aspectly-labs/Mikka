@@ -43,20 +43,12 @@ export const botKeys = {
   groups: (ownerId: string, workspaceId: string) => ['bot-list-groups', ownerId, workspaceId] as const,
 }
 
-/**
- * 设置 › 应用与运行权限's own reads. Its page, the page's preload and the section's prefetch all name the
- * same keys, so a read one of them starts is the read the others find.
- */
-export const botPermissionsKeys = {
-  /** The workspace's Bots; a page with no workspace named reads the person's own list. */
-  bots: (workspaceId?: string) => workspaceId ? ['bots', 'workspace', workspaceId] as const : botKeys.all(),
-  agents: () => 'agents' as const,
-}
-
 export const settingsKeys = {
   issuePrefix: () => 'settings:issue-prefix' as const,
   threadTitles: (workspaceId: string | null) => ['settings:thread-titles', workspaceId ?? ''] as const,
   preferences: () => 'preferences' as const,
+  personalRegistry: () => 'settings:personal' as const,
+  workspaceRegistry: (id: string) => ['settings:workspace', id] as const,
   password: () => 'account:password' as const,
   sessions: () => 'account:sessions' as const,
   savedLogins: () => 'account:saved-logins' as const,

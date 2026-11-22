@@ -3,12 +3,41 @@ import test from 'node:test'
 import { ActionFailureError } from './action-error'
 import { instructionsWithMemory, instructionsWithPersonal } from './coordinator/context'
 import { parsePreferencesPatch, PERSONAL_INSTRUCTIONS_MAX } from './preferences'
+import { DEFAULT_UI, normalizeUi, resolveUiPreferencesFromSettings, runKeyAction, splitUiPreferencesPatch } from './ui-preferences'
 import { sendsMessage, type ComposerKey } from './send-key'
 import { isIanaTimeZone } from './suggestions/time-zone'
 
 // Settings backend (docs/settings-backend/prefs.md): the parts that need no database.
 
 const key = (fields: Partial<ComposerKey> = {}): ComposerKey => ({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, isComposing: false, ...fields })
+
+test('legacy wallpaper colors normalize and unsynced appearance stays device-local without writing registry', () => {
+  assert.equal(normalizeUi({ wallpaper: 'color', background: 'none' }).background, 'color')
+  assert.equal(normalizeUi({ wallpaper: 'none', background: 'color' }).background, 'color')
+  assert.equal(Object.hasOwn(normalizeUi({ wallpaper: 'color' }), 'wallpaper'), false)
+  const syncedSplit = splitUiPreferencesPatch({ colorScheme: 'dark', themeId: 'oled', accent: '#7aa2ff', codeSize: 'large' }, true)
+  assert.deepEqual(syncedSplit.registryValues, {
+    appearanceColorScheme: 'dark', appearanceTheme: 'oled', appearanceAccentColor: '#7aa2ff', codeFontSize: 'large',
+  })
+  const localOnlySplit = splitUiPreferencesPatch({ colorScheme: 'light', themeId: 'forest', accent: '#3f8f4e', diffView: 'split' }, false)
+  assert.deepEqual(localOnlySplit.registryValues, { diffView: 'split' }, 'unsynced visual overrides do not write personal_setting_values')
+  assert.equal(localOnlySplit.localChanged, true)
+  assert.equal(localOnlySplit.nextLocal.colorScheme, 'light')
+  assert.equal(localOnlySplit.nextLocal.themeId, 'forest')
+  const resolved = resolveUiPreferencesFromSettings({
+    values: {
+      appearanceSync: { value: false, source: 'personal' },
+      appearanceColorScheme: { value: 'dark', source: 'personal' },
+      appearanceTheme: { value: 'oled', source: 'personal' },
+      diffView: { value: 'split', source: 'personal' },
+    },
+  }, localOnlySplit.nextLocal)
+  assert.equal(resolved.ui.colorScheme, 'light')
+  assert.equal(resolved.ui.themeId, 'forest')
+  assert.equal(resolved.ui.diffView, 'split')
+  assert.equal(resolved.sources.appearanceSync, 'personal')
+  assert.equal(resolved.sources.codeFontSize, 'default')
+})
 
 test('send key: Enter sends by default, Shift+Enter breaks the line', () => {
   assert.equal(sendsMessage(key()), true)
@@ -60,5 +89,11 @@ test('preferences patch: new fields parse, bad input becomes an action error', (
   assert.equal(code({ sendKey: 'space' }), 'validationGeneric')
   assert.equal(code({ dailySuggestions: 'yes' }), 'validationGeneric')
   assert.equal(code({ suggestionSources: {} }), 'validationGeneric', 'sources have their own action')
+  assert.equal(code({ ui: { colorScheme: 'dark' } }), 'validationGeneric', 'appearance moved out of user_preferences into SETTINGS_REGISTRY')
+  assert.deepEqual(normalizeUi({}), DEFAULT_UI)
+  assert.equal(normalizeUi({ pinPages: true }).pinPages, true)
+  assert.equal(runKeyAction({ key: 'Enter', metaKey: false, ctrlKey: false, altKey: true, shiftKey: false, isComposing: false }), 'queue')
+  assert.equal(runKeyAction({ key: 'Enter', metaKey: true, ctrlKey: false, altKey: false, shiftKey: false, isComposing: false }), 'interrupt')
+  assert.equal(runKeyAction({ key: 'Enter', metaKey: false, ctrlKey: false, altKey: false, shiftKey: true, isComposing: false }), null)
   assert.equal(code(null), 'validationGeneric')
 })

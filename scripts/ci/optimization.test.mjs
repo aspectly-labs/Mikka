@@ -96,6 +96,7 @@ test('the protected parent requires Analytics on merge candidates and PRs withou
         'source-checks': { result: 'skipped' }, 'daemon-checks': { result: 'skipped' },
         'workspace-governance-checks': { result: 'skipped' }, 'analytics-checks': { result },
         'candidate-checks': { result: candidate ? 'success' : 'skipped' },
+        'frontend-screenshots': { result: event === 'pull_request' ? 'success' : 'skipped' },
       } }
       const env = { ...Object.fromEntries(Object.entries(gate.env).map(([key, value]) => [key, evaluate(value, context)])), GITHUB_STEP_SUMMARY: '/dev/null' }
       const expected = candidate || base === 'dev' ? 'success' : 'skipped'

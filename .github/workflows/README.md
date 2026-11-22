@@ -11,6 +11,11 @@ affected source, unit and daemon checks. Its unit matrix runs Node 24 for PRs
 targeting main. PRs targeting dev, which has no merge queue, retain the two
 Node versions and selected acceptance in the protected UI check.
 
+A pull request that changes the interface must include a screenshot or
+recording in its description. `UI policy (strict)` requires it, and
+`frontend-screenshots.yml` reruns that check on PR description edits (`edited`)
+without rerunning the suite. Neither job launches a browser.
+
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
 Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate

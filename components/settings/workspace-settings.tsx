@@ -2,6 +2,7 @@
 
 import { useRef, useState, type ChangeEvent } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
+import { Check, Copy, Pencil } from '@/components/icons'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -12,20 +13,21 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { SettingRow, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
 import { useGatedFeature } from '@/hooks/use-feature-availability'
 import { useReplayOnboarding } from '@/hooks/settings/use-preferences-page'
+import { settingItemPending, settingItemShown, withPendingSuffix } from '@/lib/settings-sections'
 import { usePresence, type PresenceProps } from '@/lib/use-presence'
 import { FieldError } from '@/components/ui/field'
 import { WORKSPACE_ICON_TYPES, useDeleteWorkspace, useTransferWorkspace, useWorkspaceGeneral } from '@/hooks/settings/use-workspace-general'
 
 /**
- * V10 常规: icon, name and address; admins edit them and can delete the workspace (S-I).
- * The owner can transfer it (Alex: 常规 fully wired; no frame draws the row, so it sits in 危险操作 like 删除).
- * Members see plain values.
+ * 工作区常规 (frame 1508:22): icon, name, ID, task prefix and address;
+ * admins edit them and can transfer or delete the workspace (S-I).
+ * Members see plain values and the centralized `· 待接入` sharing rows (#2957).
  */
 export function WorkspaceSettings({ workspaceId }: { userKey?: string; workspaceId?: string }) {
   const t = useTranslations('Settings.workspaceForm')
   const commonT = useTranslations('Common')
   const general = useWorkspaceGeneral(workspaceId)
-  const { name, setName, slug, setSlug, saving, failed, save, commit, host } = general
+  const { name, setName, slug, setSlug, prefix, setPrefix, saving, failed, save, commit, host } = general
   const [deleting, setDeleting] = useState(false)
   const [transferring, setTransferring] = useState(false)
   const transferDialog = usePresence(transferring)
@@ -48,50 +50,62 @@ export function WorkspaceSettings({ workspaceId }: { userKey?: string; workspace
 
   const initial = [...current.name.trim()][0]?.toUpperCase() ?? '?'
   const icon = <Avatar className="size-8"><AvatarImage src={current.icon ?? undefined} alt="" /><AvatarFallback>{initial}</AvatarFallback></Avatar>
+  const shareSection = <WorkspaceSharingSection />
 
-  // S-P: members read the same rows as plain values, with no controls.
-  if (!current.canEdit) return <><SettingsSection id="workspace-general">
-    <SettingRow title={t('icon')}>{icon}</SettingRow>
-    <SettingRow title={t('name')}><span>{current.name}</span></SettingRow>
-    {current.slug && <SettingRow title={t('address')}><span className="break-all">{host}{current.slug}</span></SettingRow>}
-  </SettingsSection></>
+  // S-P: members read the same rows as plain values, plus the Sharing section (#2957).
+  if (!current.canEdit) return <>
+    <SettingsSection id="workspace-general" title={t('profile')}>
+      <SettingRow title={t('icon')}>{icon}</SettingRow>
+      <SettingRow title={t('name')}><span>{current.name}</span></SettingRow>
+      <WorkspaceId id={current.id} />
+      <SettingRow title={t('taskPrefix')} description={t('taskPrefixHint')}><span className="font-mono">{current.taskPrefix ?? ''}</span></SettingRow>
+      {current.slug && <SettingRow title={t('address')}><span className="break-all">{host}{current.slug}</span></SettingRow>}
+    </SettingsSection>
+    {shareSection}
+  </>
 
   return <>
-    <SettingsSection id="workspace-general">
+    <SettingsSection id="workspace-general" title={t('profile')}>
       <SettingRow title={t('icon')}>
-        {/* control-size-exempt: the only Input here is the sr-only file picker; no visible field shares the row. */}
         <div className="flex items-center gap-2">
           {icon}
+          <Button type="button" variant="ghost" size="icon" aria-label={t('changeIcon')} disabled={saving !== null} onClick={() => fileRef.current?.click()}>
+            <Pencil data-icon />
+          </Button>
           <Input ref={fileRef} type="file" accept={WORKSPACE_ICON_TYPES.join(',')} className="sr-only" tabIndex={-1} aria-hidden="true" onChange={event => void pickIcon(event)} />
-          {current.icon && <Button type="button" variant="ghost" size="sm" disabled={saving !== null} onClick={() => void save('icon', null)}>{t('removeIcon')}</Button>}
-          <Button type="button" variant="secondary" size="sm" disabled={saving !== null} onClick={() => fileRef.current?.click()}>{saving === 'icon' ? commonT('saving') : t('changeIcon')}</Button>
+          {current.icon ? <Button type="button" variant="ghost" size="default" disabled={saving !== null} onClick={() => void save('icon', null)}>{t('removeIcon')}</Button> : null}
         </div>
       </SettingRow>
       <SettingRow title={t('name')}>
-        <Input aria-label={t('name')} className="w-full sm:w-50" maxLength={120} value={name ?? current.name} disabled={saving === 'name'}
+        <Input aria-label={t('name')} className="w-full min-w-0" maxLength={120} value={name ?? current.name} disabled={saving === 'name'}
           onChange={event => setName(event.target.value)} onBlur={() => commit('name')}
           onKeyDown={event => { if (event.key === 'Enter') commit('name'); if (event.key === 'Escape') setName(null) }} />
       </SettingRow>
+      <WorkspaceId id={current.id} />
+      <SettingRow title={t('taskPrefix')} description={t('taskPrefixHint')}>
+        <Input aria-label={t('taskPrefix')} className="w-24 font-mono uppercase" maxLength={4} value={prefix ?? current.taskPrefix ?? ''} disabled={saving === 'taskPrefix'}
+          onChange={event => setPrefix(event.target.value)} onBlur={() => commit('taskPrefix')}
+          onKeyDown={event => { if (event.key === 'Enter') commit('taskPrefix'); if (event.key === 'Escape') setPrefix(null) }} />
+      </SettingRow>
       <SettingRow title={t('address')}>
-        <InputGroup className="w-full sm:w-72">
+        <InputGroup className="w-full min-w-0">
           <InputGroupAddon><InputGroupText>{host}</InputGroupText></InputGroupAddon>
-          <InputGroupInput aria-label={t('address')} maxLength={64} value={slug ?? current.slug ?? ''} disabled={saving === 'slug'}
+          <InputGroupInput aria-label={t('address')} className="min-w-0" maxLength={64} value={slug ?? current.slug ?? ''} disabled={saving === 'slug'}
             onChange={event => setSlug(event.target.value)} onBlur={() => commit('slug')}
             onKeyDown={event => { if (event.key === 'Enter') commit('slug'); if (event.key === 'Escape') setSlug(null) }} />
         </InputGroup>
       </SettingRow>
     </SettingsSection>
     {failed && <SettingsSaveError message={failed.message} retryLabel={commonT('retry')} onRetry={() => { if (general.failedPick) { fileRef.current?.click(); return } general.retry() }} />}
-
+    {shareSection}
     <SettingsSection id="workspace-danger" title={t('danger')}>
       {current.canTransfer && <SettingRow title={t('transferWorkspace')}>
         <Button type="button" variant="secondary" size="sm" onClick={() => setTransferring(true)}>{t('transfer')}</Button>
       </SettingRow>}
-      <SettingRow title={t('deleteWorkspace')}>
-        {/* Every account keeps its personal workspace (decision 2026-11-02-0203): the row names that state. */}
+      <SettingRow title={t('deleteWorkspace')} description={t('deleteHint')}>
         {current.personal
           ? <span className="text-sm text-muted-foreground">{t('personalUndeletable')}</span>
-          : <Button type="button" variant="destructive" size="sm" onClick={() => setDeleting(true)}>{commonT('delete')}</Button>}
+          : <Button type="button" variant="destructive" size="sm" onClick={() => setDeleting(true)}>{t('deleteWorkspace')}</Button>}
       </SettingRow>
     </SettingsSection>
     {transferredTo && <p role="status" className="text-sm text-muted-foreground">{t('transferred', { name: transferredTo })}</p>}
@@ -101,11 +115,36 @@ export function WorkspaceSettings({ workspaceId }: { userKey?: string; workspace
   </>
 }
 
-/**
- * 重新播放引导 (docs/design/onboarding.md §3): clears this person's completion (`resetOnboarding`)
- * and reloads the app, which shows the first-run guide again. The person's own, so it sits in
- * 偏好设置 and shows in every workspace, a personal one too (decision 2026-11-02-0203).
- */
+function WorkspaceSharingSection() {
+  const t = useTranslations('Settings.workspaceForm')
+  const pendingTag = t('pendingBadge')
+  const newWorkPending = settingItemPending('workspace.newWorkVisibility')
+  const workVisPending = settingItemPending('workspace.workVisibility')
+  const allowPrivatePending = settingItemPending('workspace.allowPrivate')
+  return <SettingsSection id="workspace-share" title={t('share')}>
+    {settingItemShown('workspace.newWorkVisibility') && <SettingRow title={newWorkPending ? withPendingSuffix(t('newWorkVisibility'), pendingTag) : t('newWorkVisibility')} description={t('newWorkHint')}>
+      <span className="text-muted-foreground">{t('visibilityInherit')}</span>
+    </SettingRow>}
+    {settingItemShown('workspace.workVisibility') && <SettingRow title={workVisPending ? withPendingSuffix(t('workspaceWorkVisibility'), pendingTag) : t('workspaceWorkVisibility')} description={t('workspaceWorkHint')}>
+      <span className="text-muted-foreground">{t('visibilityMembers')}</span>
+    </SettingRow>}
+    {settingItemShown('workspace.allowPrivate') && <SettingRow title={allowPrivatePending ? withPendingSuffix(t('allowPrivate'), pendingTag) : t('allowPrivate')} description={t('allowPrivateHint')}>
+      <span className="text-muted-foreground">{pendingTag}</span>
+    </SettingRow>}
+  </SettingsSection>
+}
+
+function WorkspaceId({ id }: { id: string }) {
+  const t = useTranslations('Settings.workspaceForm')
+  const [copied, setCopied] = useState(false)
+  return <SettingRow title={t('id')}>
+    <span className="flex items-center gap-2 font-mono text-xs">
+      {id.slice(0, 4)}…{id.slice(-4)}
+      <Button type="button" size="icon" variant="ghost" aria-label={copied ? t('copied') : t('copyId')} onClick={() => { void navigator.clipboard.writeText(id).then(() => { setCopied(true) }) }}>{copied ? <Check data-icon /> : <Copy data-icon />}</Button>
+    </span>
+  </SettingRow>
+}
+
 export function ReplayOnboarding() {
   const t = useTranslations('Settings.workspaceForm')
   const commonT = useTranslations('Common')
@@ -185,7 +224,6 @@ function DeleteWorkspaceDialog({ workspaceId, name, onClose, open = true, onOpen
           : readError ? <SettingsSaveError message={readError} retryLabel={commonT('retry')} onRetry={() => { void reload() }} /> : <p role="status" className="text-muted-foreground">{t('loading')}</p>}
         <p className="text-muted-foreground">{t('deleteKept')}</p>
         <Label className="flex flex-col items-start gap-1.5 font-normal text-muted-foreground">{t('deleteConfirmLabel', { name })}
-          {/* No placeholder: the name to type is in the label once; a placeholder of it reads as already filled in. */}
           <Input value={typed} autoComplete="off" onChange={event => setTyped(event.target.value)} />
         </Label>
         {error && <FieldError>{error}</FieldError>}
