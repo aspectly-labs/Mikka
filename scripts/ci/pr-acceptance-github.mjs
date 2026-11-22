@@ -30,7 +30,7 @@ export async function checkPullRequest({ repository, number, token, publish = fa
         redirect: 'error', signal: AbortSignal.timeout(20_000) })
     } catch (cause) { fail('prAcceptanceGitHubTransport', cause) }
     if (missing && response.status === 404) return null
-    if (!response.ok) fail(`prAcceptanceGitHubHttp${response.status}`)
+    if (!response.ok) fail(`prAcceptanceGitHubHttp${response.status}(${method} ${path.split('?')[0]})`)
     return response.status === 204 ? null : response.json()
   }
   const detailsUrl = targetUrl ?? `https://github.com/${repository}/pull/${number}`
