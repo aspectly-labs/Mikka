@@ -91,7 +91,7 @@ test('the protected parent requires Analytics on merge candidates and PRs withou
   for (const [event, base] of [['pull_request', 'main'], ['pull_request', 'dev'], ['merge_group', '']]) {
     for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
       const candidate = event === 'merge_group'
-      const context = { github: { event_name: event, base_ref: base }, needs: {
+      const context = { github: { event_name: event, base_ref: base, event: { pull_request: { draft: false } } }, needs: {
         changes: { result: 'success', outputs: { core: 'false', integration: 'false', source: 'false', daemon: 'false', analytics: 'true', db: 'false' } },
         'ui-policy-full': { result: 'skipped' }, 'ui-policy-integrations': { result: 'skipped' },
         'source-checks': { result: 'skipped' }, 'daemon-checks': { result: 'skipped' },
