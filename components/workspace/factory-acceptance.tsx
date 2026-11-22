@@ -18,7 +18,10 @@ import { FactoryAcceptancePane, request, useAcceptance, type ArtifactReviewSlots
 import { FactoryFlowBadge, FactoryFlowCard, isFlowV2, useFactoryTaskDetail } from './factory-flow'
 import { flowKey, readFlow } from '@/lib/factory/flow-client'
 import { InlineLoadError } from '@/components/load-error'
-import { ArtifactReportLead } from './acceptance-report'
+import dynamic from '@/lib/client-runtime/dynamic'
+
+// The report's lead (with its diff viewer, @pierre/diffs) loads when a report is shown, not with every thread.
+const ArtifactReportLead = dynamic(() => import('./acceptance-report').then(module => module.ArtifactReportLead))
 
 export type { FactoryTask } from './factory-acceptance-pane'
 
