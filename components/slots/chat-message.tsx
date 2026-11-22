@@ -8,27 +8,7 @@ import { ReplyWaiting } from '@/components/coordinator/reply-activity'
 import { CircleAlert } from '@/components/icons'
 import { cn } from '@/lib/utils'
 
-export function ChatMessage({ from, compact = false, presentation = 'default', delivery, lead, body, extras, actions, after }: ChatMessageProps) {
-  if (presentation === 'group-received') return <>
-    <Bubble variant="muted" align="start">
-      <BubbleContent size="roomy" className="whitespace-pre-wrap">{body}</BubbleContent>
-    </Bubble>
-    {actions}
-    {after}
-  </>
-  if (presentation === 'group-reply') return <>
-    <div data-group-reply="" className="min-w-0 max-w-full break-words">{body}</div>
-    {actions}
-    {after}
-  </>
-  // The person's own words in a group, as the Bot chat draws them: a grey bubble on the right, at most 80% wide.
-  if (presentation === 'group-sent') return <>
-    <Bubble variant="muted" align="end" data-group-sent="">
-      <BubbleContent size="roomy" className="flex flex-col gap-1.5 whitespace-pre-wrap">{body}</BubbleContent>
-    </Bubble>
-    {actions && <div className="flex justify-end">{actions}</div>}
-    {after}
-  </>
+export function ChatMessage({ from, compact = false, delivery, lead, body, extras, actions, after }: ChatMessageProps) {
   if (delivery) return <Message align="end"><MessageContent>
     <span className="flex w-full min-w-0 items-center justify-end gap-2">
       {delivery.phase === 'failed' && <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive-foreground" />}

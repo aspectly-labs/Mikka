@@ -1,8 +1,7 @@
-import { createContext, type ReactNode, type RefObject, type UIEventHandler } from 'react'
+import { createContext, type ReactNode, type RefObject } from 'react'
 import type { DecisionReceipt } from '@/hooks/use-decision-submission'
 import type { RunSource } from '@/lib/coordinator/citations'
 import type { ChatComposerProps } from './chat-composer-contract'
-import type { ChatMessageProps } from './chat-message-contract'
 
 /**
  * A conversation as one screen (docs/ui-overlay.md, slot `thread`): a Bot's chat, built by `CoordinatorChat` from the
@@ -110,6 +109,8 @@ export type ThreadScreenProps = {
   panel?: boolean
   /** Who the person talks to: the Bot's id (null: the Coordinator) and its name. */
   botId: string | null
+  /** false: no Bot model picker of the screen's own; the chat passes its own in `composer.leftControls`, or none (a group). */
+  models?: false
   name: string
   /** The accessible name of the existing transcript viewport. */
   transcriptLabel?: string
@@ -174,58 +175,6 @@ export type ThreadScreenProps = {
     tabs: ThreadPanelTab[]; reveal: number; revealId: string | null; beforeClose?: (tabId: string) => Promise<boolean>
     /** Reports the work area's actual active page; null for New or an artifact. */
     onActiveTab?: (tabId: string | null) => void
-  }
-}
-
-/** Message contents remain with their readers; the screen owns every list item and its key. */
-export type ThreadTranscriptMessage = { id: string } & (
-  | { message: ChatMessageProps; content?: never }
-  | { content: ReactNode; message?: never }
-)
-
-export type ThreadGroupRow =
-  /** `quiet`: a Bot's or Agent's reply, its words alone with no mark or visible name (#2922); screen readers still get the name. */
-  /** `before`: what goes above the run in its own item, the centred time over its group (#2922). */
-  /** Without `quiet`, a run opens with its sender: mark and name, as LobeHub's group chat (decision 2026-11-22-1500-group-chat-as-bot-chat). */
-  | { kind: 'author'; id: string; mine: boolean; quiet?: boolean; name: string; mark?: ReactNode; before?: ReactNode; messages: ThreadTranscriptMessage[] }
-  | { kind: 'pending'; id: string; phase: 'sending' | 'accepted' | 'failed'; message: ChatMessageProps; after?: ReactNode }
-  | { kind: 'notice'; id: string; label: string; content: ReactNode }
-
-export type TranscriptPin = {
-  /** Counts the person's own sends; only a change pins, never a load, a remount or someone else's message. */
-  sends: number
-  /** The message to stand at the top: the latest send's row, then its stored message once listed. */
-  target: string | null
-  /** A reply is being written: the space does not give way to scrolling while it grows. */
-  busy?: boolean
-}
-
-type TranscriptScroll = {
-  label: string
-  ref: RefObject<HTMLDivElement | null>
-  onScroll: UIEventHandler<HTMLDivElement>
-  /** Changes whenever the newest message or the waiting rows change: a `following` chat goes to its end. */
-  end?: string
-  following?: boolean
-  /** Send-pinning, as the Bot chat's: after the person's own send their message stands at the top of the view. */
-  pin?: TranscriptPin
-}
-
-/** A group chat's transcript shares the screen without changing its DOM or its reader's state. */
-export type ThreadTranscriptScreenProps = {
-  host: ThreadHost
-  /** The same composer slot node; the screen owns its placement, the reader owns its actions. */
-  composer: ReactNode
-  beforeComposer?: ReactNode
-  transcript: {
-    kind: 'group'
-    scroll: TranscriptScroll
-    rows: ThreadGroupRow[]
-    /** A loading, refusal or empty state replaces the list. */
-    placeholder?: ReactNode
-    before?: ReactNode
-    after?: ReactNode
-    end?: ReactNode
   }
 }
 

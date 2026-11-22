@@ -64,11 +64,19 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+mock.module(new URL('./agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: ({ children }: { children: import('react').ReactNode }) => children } })
+// The official thread screen, as a public fixture that paints its props (tests/support/thread-screen-fixture.tsx).
+let threadFixture: typeof import('../../tests/support/thread-screen-fixture') | undefined
+mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports: {
+  ThreadScreen: (props: import('../slots/thread-contract').ThreadScreenProps) => { const Screen = threadFixture!.FixtureThreadScreen; return <Screen {...props} /> },
+} })
+
 before(async () => {
   for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'MutationObserver', 'ResizeObserver'] as const) Object.defineProperty(globalThis, key, { configurable: true, value: key === 'window' ? browser : browser[key] })
   Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: browser.getComputedStyle.bind(browser) })
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   ;({ createRoot } = await import('react-dom/client'))
+  threadFixture = await import('../../tests/support/thread-screen-fixture')
   ;({ GroupChatView } = await import('./group-chat-view'))
 })
 beforeEach(() => {
@@ -225,4 +233,18 @@ test('pending group messages stay isolated by group, authenticated owner and wor
   await render()
   assert.ok(pending()?.textContent?.includes('owner one pending'))
   assert.equal(sent.length, 1)
+})
+
+test('a sent message keeps its row id once stored, so the thread does not remount it', async () => {
+  const response = deferred<GroupMessage>()
+  post = () => response.promise
+  await render(); await draft('keeps its row'); await send()
+  const sending = threadFixture!.lastThreadScreen!.entries!.find(entry => entry.role === 'person' && entry.status === 'sending')
+  assert.ok(sending, 'the send shows at once')
+  const stored = message('keeps its row', 'stored-row', '2')
+  await act(async () => response.resolve(stored))
+  pages = [{ messages: [message(), stored], nextBefore: null }]
+  await render()
+  assert.equal(pending(), null)
+  assert.deepEqual(threadFixture!.lastThreadScreen!.entries!.filter(entry => entry.role === 'person').map(entry => entry.id).at(-1), sending.id)
 })

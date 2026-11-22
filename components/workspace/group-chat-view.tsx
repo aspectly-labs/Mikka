@@ -5,17 +5,15 @@ import useSWRInfinite, { unstable_serialize as infiniteKey } from 'swr/infinite'
 import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { listAgents } from '@/app/actions/agents'
-import { ChatComposer, ChatComposerAttachment } from '@/components/coordinator/chat-composer'
+import { ChatComposerAttachment } from '@/components/coordinator/chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
-import { MessageTimeStamp } from '@/components/chat/message-time-stamp'
-import { stampStarts } from '@/lib/chat-time-stamps'
-import type { ThreadGroupRow, ThreadTranscriptMessage } from '@/components/slots/thread-contract'
+import type { ThreadEntry } from '@/components/slots/thread-contract'
+import { AgentThemeProvider } from '@/components/workspace/agent-theme'
+import { navigate, openTask } from '@/components/workspace/workspace-navigation'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { namedConversationModelBot } from '@/lib/named-conversation-model'
 import { Button } from '@/components/ui/button'
 import { GroupLeaveAction } from './group-leave-action'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
 import { botKeys } from '@/lib/swr/keys'
 import { withBasePath } from '@/lib/base-path'
 import { PersonReferences, ThreadReferencePicker } from './thread-references'
@@ -33,10 +31,10 @@ import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { ReplyActions } from '@/components/chat/reply-actions'
 import { mentionsIn } from '@/lib/group-mentions'
-import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
+import { chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
 import { AgentExchangeMarker } from './agent-exchange'
 import { toast } from 'sonner'
-import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
+import { useViewState } from '@/lib/hooks/view-state'
 import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { checkPageBuildBeforeAction } from '@/lib/app-build'
 import { groupSubmissionMessageId } from '@/lib/group-submission'
@@ -77,6 +75,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const { mutate: refreshCache } = useSWRConfig()
   const namedChat = group.creationPurpose === 'conversation'
   const feedback = useTranslations('Coordinator')
+  const common = useTranslations('Common')
   const { data: agents = [] } = useSWR('agents', listAgents)
   // The pill's avatar is the members' bloubs (R-36); the right column's 详情 reads the same request.
   const { data: memberPage, error: membersError } = useGroupMembers(group.id)
@@ -86,9 +85,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   // Navigation keeps unsent text and the same in-flight promise's result; it never resends.
   const delivery = useChatDelivery<GroupSend>(`group:${userId}:${group.workspaceId}:${group.id}`, feedback('sendUncertain'))
   const submittedDraft = useRef<string | null>(null)
-  // Send-pinning (as the Bot chat's): each own send counts, and its message (then its stored copy) stands at the top.
-  const [pin, setPin] = useState<{ sends: number; submission: string | null; stored: string | null }>({ sends: 0, submission: null, stored: null })
-  const pinStored = useCallback((submission: string, stored: string) => setPin(current => current.submission === submission ? { ...current, stored } : current), [])
+  // A message the person sent keeps its submission id as its row id once stored, so the thread does not remount it.
+  const [sentAs, setSentAs] = useState<Record<string, string>>({})
+  const sentStored = useCallback((submission: string, stored: string) => setSentAs(current => current[stored] === submission ? current : { ...current, [stored]: submission }), [])
   const [messagesRejected, setMessagesRejected] = useState(false)
   const [membersRejected, setMembersRejected] = useState(false)
   const departed = useRef(false)
@@ -164,11 +163,11 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       if (departed.current) { delivery.finish(item.id, {}); return }
       void groupSubmissionMessageId(userId, group.id, item.id).then(storedId => {
         delivery.setRows(current => current.map(row => row.id === item.id && !row.storedId ? { ...row, storedId } : row))
-        pinStored(item.id, storedId)
+        sentStored(item.id, storedId)
       }).catch(() => undefined)
       const sent = await postGroupMessage(group.id, item.text, item.mentions, fetch, { requestId: item.id, expectedOwnerId: userId, expectedWorkspaceId: group.workspaceId })
       delivery.finish(item.id, { storedId: sent.id })
-      pinStored(item.id, sent.id)
+      sentStored(item.id, sent.id)
       if (!departed.current) void mutate().catch(() => undefined)
     } catch (error) {
       const status = error instanceof GroupMessagesRequestError ? error.status : undefined
@@ -184,7 +183,6 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     void deliver({ id, at: Date.now(), text, mentions: mentionsIn(text, members) }, () => {
       submittedDraft.current = draft
       setDraft('')
-      setPin(current => ({ sends: current.sends + 1, submission: id, stored: null }))
     })
   }
   const first = pages?.[0]
@@ -217,93 +215,86 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     await mutate()
   }
   const unsent = delivery.rows.filter(item => !item.storedId || !receivedIds.has(item.storedId))
-  // The newest message, a sent one or a bot answering keeps the chat at its end; loading older ones does not move it.
-  const [following, setFollowing] = useViewState(`group:${group.id}:following`, true)
-  const scroller = useViewScroll<HTMLDivElement>(`group:${group.id}:messages`, !!pages)
-  const end = `${messages.at(-1)?.id}:${unsent.length}:${!!first?.agentStatus}`
-  const pinTarget = pin.stored && receivedIds.has(pin.stored) ? pin.stored : pin.submission
   const authorName = (type: 'user' | 'agent' | 'bot', id: string) => type === 'user'
     ? id === userId ? t('you') : member(type, id)?.name || people.get(id) || t('member')
     : member(type, id)?.name ?? (type === 'agent' ? agents.find(agent => agent.id === id)?.name : undefined) ?? t('bot')
+  const title = group.title || t('untitled')
 
-  // Whom the person's messages go to, for the chat-message slot: the group.
-  const speaker = { id: group.id, name: group.title || t('untitled') }
+  // The group as the Bot chat's thread (AgentThreadScreen, decision 2026-11-22-1500-group-chat-as-bot-chat): the
+  // person's messages are theirs; every other member's, a Bot's or an Agent's is the block's agent message with its own
+  // author line (mark and name, shown where the author changes), as LobeHub's group chat heads each speaker's turn.
+  const entries: ThreadEntry[] = []
+  // A Bot-to-Bot exchange is a line about the chat after its anchor's run of messages, not anyone's words.
+  let waiting: GroupExchange[] = []
+  const flush = (at: number) => {
+    for (const exchange of waiting) entries.push({ id: `exchange:${exchange.linkId}`, role: 'bot', at, event: true,
+      parts: [{ kind: 'text', text: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }), node: <AgentExchangeMarker exchange={exchange} /> }] })
+    waiting = []
+  }
+  messages.forEach((message, index) => {
+    const at = Date.parse(message.createdAt)
+    const mine = message.authorType === 'user' && message.authorId === userId
+    const id = sentAs[message.id] ?? message.id
+    const reply = message.authorType !== 'user'
+    // The line under every message, as the Bot chat's: when it was sent, Copy and its reactions (#2922); a person's
+    // message keeps it to hover and focus.
+    const actions = <ReplyActions hover={!reply} at={at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
+    const words = <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>
+    if (mine) entries.push({ id, role: 'person', at, text: message.body, body: words, actions })
+    else {
+      const name = authorName(message.authorType, message.authorId)
+      const bot = message.authorType === 'bot' ? member('bot', message.authorId) : undefined
+      entries.push({ id, role: 'bot', at, actions,
+        author: { id: `${message.authorType}:${message.authorId}`, name, mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" /> },
+        parts: [{ kind: 'text', text: message.body, node: reply ? <AgentMarkdown text={message.body} /> : words }] })
+    }
+    waiting.push(...exchanges.get(message.position) ?? [])
+    const next = messages[index + 1]
+    if (!next || next.authorType !== message.authorType || next.authorId !== message.authorId) flush(at)
+  })
+  for (const item of unsent) entries.push({ id: item.id, role: 'person', at: item.at, text: item.text,
+    body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage>,
+    status: item.phase === 'failed' ? 'failed' : 'sending', ...(item.phase === 'failed' ? { deliveryMessage: item.error, onRetry: () => { void deliver(item) } } : {}) })
+  const lastAt = entries.at(-1)?.at ?? 0
+  const line = (key: string, text: string) => entries.push({ id: key, role: 'bot', at: lastAt, event: true, parts: [{ kind: 'text', text, node: <p role="status" className="text-center text-xs text-muted-foreground">{text}</p> }] })
+  if (first?.routingError && !first.agentStatus) line('no-taker', t('noTaker'))
+  if (first?.stopped && !first.agentStatus) line('stopped', t('stopped'))
+  // A named chat is read once its newest message has been seen.
+  const lastEntry = entries.at(-1)
+  if (lastEntry && namedChat && readRevision !== undefined && !blockingCode && !accessRejected) lastEntry.actions = <>{lastEntry.actions}<VisibleReadEnd onSeen={acknowledge} /></>
 
-  // The centred time over each group of messages (#2922): the first run, and each run after a quiet gap.
-  const runs = authorRuns(messages)
-  const stamped = stampStarts(runs.map(run => Date.parse(run.messages[0]?.createdAt ?? '')))
-  const rows: ThreadGroupRow[] = runs.flatMap((run, index): ThreadGroupRow[] => {
-    const mine = run.authorType === 'user' && run.authorId === userId
-    const name = authorName(run.authorType, run.authorId)
-    const bot = run.authorType === 'bot' ? member('bot', run.authorId) : undefined
-    // A Bot's or Agent's reply is its words with no bubble (#2922); in a group every run opens with its sender's mark and
-    // name, as LobeHub's group chat, so several Bots stay told apart (decision 2026-11-22-1500-group-chat-as-bot-chat).
-    const reply = run.authorType !== 'user'
-    const at = Date.parse(run.messages[0]?.createdAt ?? '')
-    return [{
-      kind: 'author', id: run.key, mine, name, ...(stamped[index] ? { before: <MessageTimeStamp at={at} /> } : {}),
-      mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
-      messages: run.messages.map((message): ThreadTranscriptMessage => {
-        // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.
-        const line = { actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body }
-        return mine
-        ? { id: message.id, message: { from: 'person', speaker, presentation: 'group-sent',
-          body: <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>,
-          ...line,
-          after: <MessageReactions reactions={reactions[message.id]} align="end" /> } }
-        : { id: message.id, message: { from: 'bot', speaker, presentation: reply ? 'group-reply' : 'group-received',
-          body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} />,
-          ...line,
-          after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }
-      }),
-    }, ...run.messages.flatMap(message => exchanges.get(message.position) ?? []).map((exchange): ThreadGroupRow => ({
-      kind: 'notice', id: `exchange:${exchange.linkId}`,
-      label: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }),
-      content: <AgentExchangeMarker exchange={exchange} />,
-    }))]
-  })
-  for (const item of unsent) rows.push({
-    kind: 'pending', id: item.id, phase: item.phase,
-    message: { from: 'person', speaker, presentation: 'group-sent', body: <CollapsibleMessage><UserMessageText text={item.text} renderText={referenceText} /></CollapsibleMessage> },
-    after: item.phase === 'failed' && <span role="alert" className="flex items-center gap-2 text-xs text-destructive-foreground">{item.error}<Button variant="ghost" size="xs" onClick={() => { void deliver(item) }}>{t('retry')}</Button></span>,
-  })
-  if (first?.agentStatus) rows.push({ kind: 'notice', id: 'answering', label: t('answering'), content: <span className="rounded-2xl bg-muted px-4 py-3"><Spinner aria-hidden="true" /></span> })
-  const placeholder = blockingCode === 'not_found' ? <p role="alert" className="py-6 text-sm">{t('notFound')}</p>
+  const blocked = blockingCode === 'not_found' ? <p role="alert" className="py-6 text-sm">{t('notFound')}</p>
     : blockingCode ? <div role="alert" className="flex items-center gap-3 py-6 text-sm"><span>{blockingCode === 'unauthorized' ? t('authRequired') : t('loadError')}</span>{blockingCode !== 'unauthorized' && <Button variant="outline" size="sm" onClick={() => { void mutate() }}>{t('retry')}</Button>}</div>
-      : !pages ? <div aria-busy="true" className="flex flex-col gap-3 py-4"><Skeleton className="h-9 w-2/3" /><Skeleton className="ml-auto h-9 w-1/2" /><Skeleton className="h-9 w-3/5" /></div>
-        : messages.length === 0 && !unsent.length ? <p className="py-6 text-sm text-muted-foreground">{t('empty')}</p> : null
+      : null
+  const empty = blocked ?? <p className="py-6 text-sm text-muted-foreground">{t('empty')}</p>
 
-  return <section aria-label={group.title || t('untitled')} data-testid="group-chat" className="relative flex min-h-0 w-full flex-1 flex-col">
+  return <AgentThemeProvider><section aria-label={title} data-testid="group-chat" className="mikka-agent relative flex min-h-0 w-full flex-1 flex-col">
     {namedChat
-      ? <ThreadHeader standalone issueId={null} runId={group.id} title={group.title || t('untitled')} headingRef={titleHeading}
+      ? <ThreadHeader standalone issueId={null} runId={group.id} title={title} headingRef={titleHeading}
           onTitleChanged={() => { void refreshCache(botKeys.groups(userId, group.workspaceId)) }}
           onStop={null} place={null} acceptanceBadge={null} identity={null} />
       // A frame with its own head draws no title pill over a chat, as the Bot chat (FRAME_OWNS_HEADER).
-      : !FRAME_OWNS_HEADER && <ConversationPill name={group.title || t('untitled')} avatar={<GroupAvatar title={group.title || t('untitled')} members={members} />} />}
-    {onLeft && !refused && !accessRejected && mayLeaveGroup(members, userId)
-      ? <div className="flex h-14 shrink-0 items-center justify-end px-4">
-          <GroupLeaveAction group={group} userId={userId} onLeft={() => {
-            departed.current = true
-            shown.current = null
-            delivery.setRows([])
-            setDraft('')
-            onLeft(group.id)
-          }} />
-        </div>
-      : namedChat ? null : <div aria-hidden="true" className="hidden h-14 shrink-0 md:block" />}
-    <ThreadScreen host="page" transcript={{
-      kind: 'group', rows, placeholder,
-      scroll: { ref: scroller, label: t('messages'), end, following, pin: { sends: pin.sends, target: pinTarget, busy: replying }, onScroll: event => { const node = event.currentTarget; const next = node.scrollHeight - node.scrollTop - node.clientHeight < 56; if (next !== following) setFollowing(next) } },
-      before: older && <Button variant="ghost" size="sm" className="self-center text-muted-foreground" disabled={loadingOlder} onClick={() => { void setSize(size + 1) }}>{loadingOlder && <Spinner data-icon="inline-start" role="presentation" aria-hidden="true" />}{loadingOlder ? t('loadingOlder') : t('older')}</Button>,
-      after: <>
-        {first?.routingError && !first.agentStatus && <p className="text-center text-xs text-muted-foreground">{t('noTaker')}</p>}
-        {first?.stopped && !first.agentStatus && <p role="status" className="text-center text-xs text-muted-foreground">{t('stopped')}</p>}
-      </>,
-      end: namedChat && readRevision !== undefined && !blockingCode && !accessRejected && <VisibleReadEnd onSeen={acknowledge} />,
-    }}
-      beforeComposer={referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
-      composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={composerInput} value={draft} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
-        leftControls={modelBot && <BotModelPicker key={modelBot} botId={modelBot} running={replying} />}
-        sending={stopping} editableWhileSending={stopping} running={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined} />} />
-  </section>
+      : !FRAME_OWNS_HEADER && <ConversationPill name={title} avatar={<GroupAvatar title={title} members={members} />} />}
+    {onLeft && !refused && !accessRejected && mayLeaveGroup(members, userId) && <div className="absolute end-14 top-2 z-10">
+      <GroupLeaveAction group={group} userId={userId} onLeft={() => {
+        departed.current = true
+        shown.current = null
+        delivery.setRows([])
+        setDraft('')
+        onLeft(group.id)
+      }} />
+    </div>}
+    <ThreadScreen host="page" models={false} botId={null} name={title} mark={<GroupAvatar title={title} members={members} />}
+      entries={blockingCode ? [] : pages ? entries : null} empty={empty} transcriptLabel={t('messages')} loadingLabel={!pages && !blockingCode ? common('loading') : undefined}
+      older={older ? { loading: loadingOlder, onLoad: () => { void setSize(size + 1) } } : undefined}
+      working={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined}
+      composer={{ ref: composerInput, leadingControls: <ChatComposerAttachment />, value: draft, onChange: value => { submittedDraft.current = null; setDraft(value) }, onSubmit: send,
+        label: t('composer', { name: title }), disabled: !!blockingCode, attachmentScope: { kind: 'group', id: group.id },
+        leftControls: modelBot ? <BotModelPicker key={modelBot} botId={modelBot} running={replying} /> : undefined,
+        sending: stopping, editableWhileSending: stopping, running: replying && !stopping }}
+      pending={[]}
+      notices={referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
+      questions={[]} onAnswer={async () => ({ status: 'unavailable', error: actionError() })}
+      running={0} onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />
+  </section></AgentThemeProvider>
 }

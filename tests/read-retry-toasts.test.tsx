@@ -80,13 +80,9 @@ stub('components/nav/bot-avatar.tsx', { BotAvatar: Empty, CoordinatorAvatar: Emp
 // The task page's layer frame (docs/ui-overlay.md task-detail); this test reads through the open-source layout.
 stub('components/workspace/task-detail-frame.tsx', { FramedTask: ({ titleField }: import('../components/workspace/task-detail-frame').FramedTaskProps) => <Input id="task-title" value={titleField.value} readOnly /> })
 stub('components/slots/task-conversation.tsx', { TaskConversation: ({ issueId, runId }: { issueId: string; runId: string }) => <ol data-task-conversation={issueId}><li>{runId}</li></ol> })
-stub('components/slots/thread.tsx', { ThreadScreen: (props: import('../components/slots/thread-contract').ThreadScreenProps | import('../components/slots/thread-contract').ThreadTranscriptScreenProps) => {
-  if ('transcript' in props) return <>
-    {'placeholder' in props.transcript && props.transcript.placeholder != null ? props.transcript.placeholder : <ol>{props.transcript.rows.map(row => <li key={row.id}>{'messages' in row
-      ? row.messages.map(entry => <span key={entry.id}>{entry.message ? entry.message.body : entry.content}</span>)
-      : 'message' in row ? row.message?.body : row.content}</li>)}</ol>}
-    {props.composer}
-  </>
+stub('components/workspace/agent-theme.tsx', { AgentThemeProvider: ({ children }: { children: import('react').ReactNode }) => <>{children}</> })
+stub('components/slots/thread.tsx', { ThreadScreen: (props: import('../components/slots/thread-contract').ThreadScreenProps) => {
+  if (props.entries && !props.entries.length && props.empty) return <>{props.empty}</>
   return <ol>{props.entries?.map(entry => <li key={entry.id}>{entry.role === 'person' ? entry.text : entry.parts.map((part, index) => part.kind === 'text' ? <span key={index}>{part.node}</span> : null)}</li>)}</ol>
 } })
 stub('components/workspace/message-reactions.tsx', { MessageReactions: Empty, useMessageReactions: () => ({}) })
