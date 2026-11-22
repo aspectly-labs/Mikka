@@ -25,7 +25,7 @@ export async function coordinatorEnabled(ownerId?: string, botId: string | null 
 }
 
 /** No answer leaves the event pending; it does not become background, result or a request for human approval. */
-export async function triageInbox(userId: string, botId: string, signal = new AbortController().signal): Promise<void> {
+export async function triageInbox(userId: string, botId: string, signal = new AbortController().signal, wakeDeadline = Infinity): Promise<void> {
   'use step'
   const { hostedBillingScope } = await import('@/lib/abuse/context')
   const { executionWorkspace } = await import('@/lib/execution-settings')
@@ -33,7 +33,7 @@ export async function triageInbox(userId: string, botId: string, signal = new Ab
   // Stop admitting work at the batch deadline; an admitted call owns its full transport timeout.
   const deadline = Date.now() + TRIAGE_BATCH_BUDGET_MS
   const outcome = await runTriageBatch(await untriagedEvents(userId, botId), {
-    canClassify: () => Date.now() < deadline,
+    canClassify: () => Date.now() < deadline && Date.now() + decisionTimeoutMs() <= wakeDeadline,
     claim: event => claimTriageAttempt(event, scope),
     deliverUser: event => setEventTier(event.id, 'attention', scope),
     deliverCompletion: event => deliverRunCompletion(pool, event, scope, workspacePool),
@@ -76,8 +76,8 @@ export async function wakeCoordinator(userId: string, signal?: AbortSignal): Pro
 }
 
 /** Product outbox delivery only. eve owns turn queueing, retry and recovery. */
-async function wakeChat(scope: { userId: string; botId: string }, signal?: AbortSignal) {
-  await triageInbox(scope.userId,scope.botId,signal)
+async function wakeChat(scope: { userId: string; botId: string }, signal?: AbortSignal, deadline = Infinity) {
+  await triageInbox(scope.userId,scope.botId,signal,deadline)
   if (signal?.aborted) return 'deferred' as const
   const { rows: events } = await pool.query<{ id: string; workspaceId: string }>(`
     SELECT e.id, b."workspaceId" FROM coordinator_events e
@@ -108,8 +108,8 @@ export async function retryCoordinatorWakes(deadline = Date.now()+45_000) {
   for (const scope of scopes) {
     if (Date.now()>=deadline || !await coordinatorEnabled(scope.userId,scope.botId)) {counts.deferred++;continue}
     const remaining = deadline - Date.now()
-    if (remaining < TRIAGE_BATCH_BUDGET_MS + decisionTimeoutMs()) {counts.deferred++;continue}
-    try { counts[await wakeChat(scope, AbortSignal.timeout(Math.min(remaining, 2_147_483_647)))]++ } catch {counts.failed++}
+    if (remaining <= 0) {counts.deferred++;continue}
+    try { counts[await wakeChat(scope, AbortSignal.timeout(Math.min(remaining, 2_147_483_647)), deadline)]++ } catch {counts.failed++}
   }
   return counts
 }

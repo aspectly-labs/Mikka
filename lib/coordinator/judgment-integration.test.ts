@@ -117,6 +117,26 @@ test('the bounded sweep defers inference that cannot fit its remaining handler b
   else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
  }
 })
+test('a long decision timeout does not block sweep delivery of already-tiered events', async () => {
+ const timeout = process.env.MIKKA_DECISION_TIMEOUT_MS
+ try {
+  process.env.MIKKA_DECISION_TIMEOUT_MS = '45000'
+  dueScopes = [{ userId: 'synthetic', botId: 'delivery-bot' }]
+  events = [
+   { id: 'tiered', botId: 'delivery-bot', kind: 'run_blocked', payload: {}, tier: 'result' },
+   { id: 'unclassified', botId: 'delivery-bot', kind: 'run_blocked', payload: {}, tier: null },
+  ]
+  const result = await wake.retryCoordinatorWakes()
+  assert.equal(result.started, 1)
+  assert.equal(result.deferred, 0)
+  assert.equal(starts, 1)
+  assert.equal(requests.length, 0)
+  assert.equal(events[1].lastTriageAttemptAt, undefined)
+ } finally {
+  if (timeout === undefined) delete process.env.MIKKA_DECISION_TIMEOUT_MS
+  else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
+ }
+})
 test('the bounded sweep processes multiple distinct fast chats, and handles an empty outbox', async () => {
  const timeout = process.env.MIKKA_DECISION_TIMEOUT_MS
  try {
