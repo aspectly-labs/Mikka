@@ -57,7 +57,7 @@ mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports
   </div><div data-composer="">
     {props.pending.map(chip => <span key={chip.id} data-pending={chip.id}>{chip.name}<Button onClick={chip.onRemove}>{`remove ${chip.id}`}</Button></span>)}
     {props.controls}
-    <Textarea ref={props.composer.ref} value={props.composer.value} onChange={event => props.composer.onChange(event.target.value)} />
+    <Textarea ref={props.composer.ref as import("react").Ref<HTMLTextAreaElement>} value={props.composer.value} onChange={event => props.composer.onChange(event.target.value)} />
     <Button onClick={props.composer.onSubmit}>fixture-send</Button>
   </div></>
   },

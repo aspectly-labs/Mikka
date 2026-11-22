@@ -19,7 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { botKeys } from '@/lib/swr/keys'
 import { withBasePath } from '@/lib/base-path'
-import { PersonReferences, ThreadReferencePicker } from './thread-references'
+import { PersonReferences } from './thread-references'
 import { VisibleReadEnd } from './visible-read-end'
 import { ThreadHeader } from './thread-header'
 import { ConversationPill } from '@/components/nav/conversation-pill'
@@ -185,6 +185,10 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const readRevision = first?.readRevision
   const referenceWorkspace = namedChat && readRevision !== undefined && !blockingCode && !accessRejected && !refused && !departed.current ? group.workspaceId : null
   const modelBot = namedConversationModelBot(referenceWorkspace && !membersError && !error ? referenceWorkspace : null, members, ownedBots, draft)
+  // `@` names the group's members in the composer; a Bot named so answers (lib/group-mentions.ts).
+  const mentionable = useMemo(() => members.filter(item => item.memberType !== 'user' || item.id !== userId)
+    .map(item => ({ id: item.id, name: item.name || (item.memberType === 'user' ? people.get(item.id) ?? '' : ''), kind: item.memberType === 'user' ? 'person' as const : 'bot' as const }))
+    .filter(item => item.name), [members, userId, people])
   const referenceText = referenceWorkspace ? (text: string, index: number) => <PersonReferences key={index} text={text} /> : undefined
   const lastMessageId = messages.at(-1)?.id ?? null
   const sentRead = useRef<string | null>(null)
@@ -293,8 +297,8 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       </>,
       end: namedChat && readRevision !== undefined && !blockingCode && !accessRejected && <VisibleReadEnd onSeen={acknowledge} />,
     }}
-      beforeComposer={referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
-      composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={composerInput} value={draft} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
+      composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={composerInput} value={draft}
+        references={referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined} people={mentionable} historyKey={`group:${group.id}`} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
         leftControls={modelBot && <BotModelPicker key={modelBot} botId={modelBot} running={replying} />}
         sending={stopping} editableWhileSending={stopping} running={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined} />} />
   </section>
