@@ -68,6 +68,7 @@ import type {
   ThreadResumeParams,
   TokenUsageNotification,
   TurnNotification,
+  TurnPlanUpdatedNotification,
   UserInput,
   ChatGPTAuthTokens
 } from "./codex-protocol"
@@ -347,6 +348,20 @@ export function codexItemChunks(
   }
 }
 
+/**
+ * Codex's plan, sent as `turn/plan/updated` rather than as a thread item, as the `update_plan` call it is: its input
+ * in the tool's own shape (`plan: { step, status }[]`, `in_progress`), answered at once with the tool's own reply, so
+ * the thread reads each revision like Claude Code's TodoWrite. `seq` keeps each revision's call id apart.
+ */
+export function codexPlanChunks(update: TurnPlanUpdatedNotification, seq: number): RunChunk[] {
+  const toolCallId = `plan-${update.turnId}-${seq}`
+  const plan = update.plan.map(({ step, status }) => ({ step, status: status === "inProgress" ? "in_progress" : status }))
+  return [
+    { type: "tool-input-available", toolCallId, toolName: "update_plan", input: { ...(update.explanation ? { explanation: update.explanation } : {}), plan } },
+    { type: "tool-output-available", toolCallId, output: "Plan updated" },
+  ]
+}
+
 export class CodexAdapter implements AgentAdapter {
   readonly harness = "codex" as const
   readonly capabilities = { supportsInterject: true, supportsResume: true }
@@ -577,6 +592,7 @@ export class CodexAdapter implements AgentAdapter {
     )
     const queue = new EventQueue()
     const streamed = new Set<string>()
+    let plans = 0
     let activeTurn: string | null = null
     let pendingTurnStart: Promise<void> | null = null
     let ending = false
@@ -754,6 +770,12 @@ export class CodexAdapter implements AgentAdapter {
             ctx.worktree,
           ))
             queue.chunk(chunk)
+          return
+        }
+        case "turn/plan/updated": {
+          const update = params as TurnPlanUpdatedNotification
+          if (update.threadId !== sessionId || !Array.isArray(update.plan)) return
+          for (const chunk of codexPlanChunks(update, ++plans)) queue.chunk(chunk)
           return
         }
         case "turn/started":

@@ -35,6 +35,10 @@ export type ActivityThinkingProps = {
   /** 「思考中」, 「思考了 N 秒」 or 「已思考」. */
   title: string
   seconds?: number
+  /** Before a reply's first token: when the wait began (ms), for a layer that runs its own clock. */
+  startedAt?: number
+  /** Before a reply's first token: the seconds waited so far in words (「3 秒」), once past 2 s, as LobeHub shows them. */
+  elapsed?: string
   /** The readable reasoning; undefined when the model returned none. */
   text?: string
   /** Opened for the first time: a stored reply loads its reasoning then. */

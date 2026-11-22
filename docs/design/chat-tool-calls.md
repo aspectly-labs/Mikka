@@ -18,7 +18,7 @@
 | 没有分组摘要 | 同上 `ReplyActivity` | 连续工具已共用一个 Trace（decision 2105），但每条都平铺，没有一行摘要、没有折叠 |
 | 两个 chip | `agent-citations.tsx` `CitationAnchor` / `CitationSources` | 模型正文里同时写了任务引用和线程引用；任务和线程是 `RunSource.issue` 一对一（R-81），却各画一个 chip，「N 个来源」再列一遍 |
 | 线程卡片反复出现 | `coordinator-chat.tsx` `item.threads.map(ThreadCard)` + `ChatEventLine` | 每条回复都把它提到的线程画成卡片；R-66 说「一个线程在一段 chat 里只一张卡」，但只在单条回复内去重 |
-| 「N 个来源」+ 复制 | `CoordinatorReply` → `CitationSources`；`MessageActions` | 来源行每条回复都常驻；复制在最后一条回复常驻，其余 hover |
+| 「N 个来源」+ 复制 | `CoordinatorReply` → `CitationSources`；`MessageActions` | 操作行（复制、来源）在消息 hover 或聚焦时出现，触屏常驻；静止时不可见但保留位置（decision 2026-11-22-1500） |
 
 ## 1. 工具调用分组（R-83）
 
@@ -77,7 +77,7 @@
 ## 3. 「N 个来源」和复制
 
 - 「N 个来源」只统计**网页**来源（任务/线程已经在正文里，不再重复列）。没有网页来源就不显示。
-- 来源行和复制按钮合成一行操作条，**常驻**在回复下面：`[复制] [N 个来源 ▾]`；静息态低对比，hover/聚焦提高对比，触屏直接可点（来源显示为叠放 favicon + 数字）。不做悬浮工具条（[decision](decisions/2026-11-10-2002-chat-reply-actions-and-waiting.md)）。
+- 来源行和复制按钮合成一行操作条，在回复下面：`[复制] [N 个来源 ▾]`；静止时不可见但保留位置，hover/聚焦时出现，触屏常驻（来源显示为叠放 favicon + 数字）。不做悬浮工具条（[decision](decisions/2026-11-22-1500-chat-reply-actions-on-hover.md)，取代 2026-11-10-2002 A）。
 - 间距：气泡与操作条 `gap-1`，操作条左缘与气泡左缘对齐（去掉 `-ml-1` / `-mt-1.5` 的补偿）。
 
 ## 4. 排版

@@ -55,6 +55,26 @@ export function modelPriceTag(option: Pick<BotModelMenuOption, 'price'>) {
   return `${usd(option.price.input)} / ${usd(option.price.output)}`
 }
 
+/** The route's tooltip (Figma 1318:71): 「通过「Mikka 额度」运行」, 「通过「Claude Max · alex@…」运行」, 「通过「API Key · 我的 Key ····1234」运行」. */
+export function modelRouteTitle(t: ModelPickerT, group: BotModelMenuGroup) {
+  return t('route.via', { label: group.kind === 'hosted' ? t('creditsGroup') : modelGroupHeading(t, group) })
+}
+
+/**
+ * What a row says at its end (Figma 1318:71): why it cannot run now, else its price on Mikka 额度 only (免费 when the
+ * catalogue lists it at no cost). A subscription or key row shows no price.
+ */
+export function modelRowEnd(t: ModelPickerT, option: Pick<BotModelMenuOption, 'price' | 'route' | 'unavailable'>): string | null {
+  const blocked = option.unavailable
+  if (blocked?.reason === 'quota') return blocked.resetsAt
+    ? t('route.usedUntil', { time: new Date(blocked.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) })
+    : t('route.usedUp')
+  if (blocked?.reason === 'points') return t('route.noCredits')
+  if (option.route && option.route.source !== 'credits') return null
+  if (option.price && option.price.input === 0 && option.price.output === 0) return t('route.free')
+  return modelPriceTag(option)
+}
+
 const SERVICE_NAMES: Record<string, string> = { claude: 'Claude', codex: 'ChatGPT' }
 
 /**
@@ -264,6 +284,8 @@ export function useBotModelPicker(botId: string | null, thread?: import('@/compo
     /** Nothing is chosen: the chip asks for a model. */
     unchosen: current?.kind === 'none',
     heading: (group: BotModelMenuGroup) => modelGroupHeading(t, group),
+    routeTitle: (group: BotModelMenuGroup) => modelRouteTitle(t, group),
+    rowEnd: (option: BotModelMenuOption) => modelRowEnd(t, option),
     tag: (group: BotModelMenuGroup) => modelGroupTag(t, group),
   }
 }

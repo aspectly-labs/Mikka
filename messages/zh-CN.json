@@ -1155,6 +1155,7 @@
     "loading": "正在加载设备"
   },
   "Workspace": {
+    "documentTitle": "{name} · Mikka",
     "loadingEditor": "正在加载任务编辑器",
     "loading": "正在加载…",
     "loadingCreate": "正在加载新建任务…",
@@ -1585,6 +1586,7 @@
     "runChainEnded": "这个任务已经停了，没有可停止的运行。",
     "threadDeliveryUnavailable": "当前线程无法按这种方式投递消息。",
     "threadStopping": "线程正在停止",
+    "threadWorking": "线程还在工作，先停下它",
     "secretNotFound": "该密钥或环境变量已不存在。",
     "secretNameReserved": "该名称为运行环境保留（例如 PATH、HOME、代理、TLS、加载器、git、E2B 或 MIKKA 相关变量），请换一个名称。",
     "secretPermissionDenied": "只有工作区管理员可以执行此操作。成员可以添加和编辑仓库级的密钥与环境变量。",
@@ -1608,7 +1610,8 @@
     "scheduleEnvironmentUnavailable": "选择的环境已不可用。",
     "scheduleThreadUnavailable": "它运行的线程已不可用。",
     "scheduleRunAsUnavailable": "它运行时使用的成员已不在这个工作区。",
-    "scheduleRunAsConsentRequired": "只有运行身份本人或所有者、管理员可以这样做。"
+    "scheduleRunAsConsentRequired": "只有运行身份本人或所有者、管理员可以这样做。",
+    "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。"
   },
   "Overview": {
     "sections": {
@@ -4272,7 +4275,7 @@
       "metered": "按量",
       "shared": "团队成员分享的",
       "sharedKey": "{name}的 Key",
-      "manage": "管理模型与订阅",
+      "manage": "管理模型和连接",
       "unavailable": "不可用",
       "notSaved": "未保存",
       "unknownModel": "未知模型",
@@ -4294,6 +4297,14 @@
         "ownProvider": "用这台服务器自带的服务商",
         "usedUntil": "{service} 订阅到 {time} 前用完了",
         "usedUp": "{service} 订阅额度用完了"
+      },
+      "route": {
+        "via": "通过「{label}」运行",
+        "favorites": "常用",
+        "free": "免费",
+        "usedUntil": "额度用完，{time} 恢复",
+        "usedUp": "用量已达上限",
+        "noCredits": "Mikka 额度已用完"
       }
     },
     "empty": "告诉 {name} 你要做什么",
@@ -4356,6 +4367,7 @@
     },
     "activity": {
       "thinking": "思考中",
+      "waited": "{seconds} 秒",
       "running": "正在{tool}",
       "thought": "思考了 {seconds} 秒",
       "thoughtStored": "已思考",
@@ -4501,7 +4513,8 @@
         "raw": "原始数据",
         "dispatched": "已派发"
       }
-    }
+    },
+    "commandNew": "新建线程"
   },
   "AgentCopy": {
     "pleaseSignInFirst": "请先登录。",
@@ -4875,7 +4888,12 @@
     "pr": "拉取请求",
     "searching": "正在搜索…",
     "error": "引用加载失败",
-    "empty": "没有匹配的引用"
+    "empty": "没有匹配的引用",
+    "commands": "命令",
+    "tasks": "任务",
+    "threads": "线程",
+    "pullRequests": "拉取请求",
+    "broken": "已删除或无权查看"
   },
   "IssueThreads": {
     "composerModelUnknown": "模型未上报",
@@ -5174,6 +5192,23 @@
       "todo": "已更新待办",
       "commandFailed": "命令失败 ({command})",
       "commandFailedCode": "命令失败 ({command}) · exit {code}"
+    },
+    "lifecycle": {
+      "fork": "分叉",
+      "forkSummary": "带摘要分叉",
+      "forkInstruction": "分叉后要做什么",
+      "forkFailed": "分叉失败",
+      "tags": "标签",
+      "tagPlaceholder": "添加标签",
+      "removeTag": "移除 {tag}",
+      "tagsFailed": "标签没保存",
+      "automation": "做成自动化",
+      "delete": "删除",
+      "deleteConfirm": "删除这个线程？",
+      "deleted": "线程已删除",
+      "undo": "撤销",
+      "deleteFailed": "线程没删除",
+      "restoreFailed": "线程恢复失败"
     }
   },
   "Computer": {
@@ -7980,6 +8015,7 @@
     "toolsRanTime": "用了 {count} 个工具 · {seconds} 秒",
     "toolsFailed": "用了 {count} 个工具 · {failed} 个失败",
     "toolsStopped": "已停止 · 完成 {ran}/{count}",
+    "newLines": "{count} 行新内容",
     "runningCount": "{count} 个在进行",
     "needsCount": "{count} 个等你",
     "decisionsWaiting": "{count} 个决定在等你",
@@ -8015,6 +8051,7 @@
       "discardRecording": "舍弃录音",
       "useRecording": "使用录音",
       "sent": "已发送。",
+      "stillWriting": "仍在输出",
       "selected": "已选中。"
     },
     "toolKinds": {
@@ -8035,6 +8072,14 @@
       "search": "正在搜索",
       "edit": "正在编辑文件",
       "web": "正在查看网页"
+    },
+    "plan": {
+      "title": "待办",
+      "label": "Agent 的待办清单",
+      "progress": "已完成 {completed}/{total} 项待办",
+      "pending": "待处理",
+      "inProgress": "进行中",
+      "completed": "已完成"
     }
   },
   "HostedOnboarding": {
@@ -9208,5 +9253,96 @@
     "collapse": "收起",
     "card": "{name}，{status}：{brief}",
     "cardNoBrief": "{name}，{status}"
+  },
+  "RightColumn": {
+    "tabs": {
+      "changes": "改动",
+      "files": "文件",
+      "setup": "运行环境"
+    },
+    "changes": {
+      "loadFailed": "读取线程改动失败",
+      "retry": "重试",
+      "none": "这个线程还没有改过文件",
+      "tooLarge": "改动太大，无法显示"
+    },
+    "files": {
+      "search": "搜索文件",
+      "views": "显示的文件",
+      "all": "全部文件",
+      "thread": "本线程",
+      "uploads": "上传",
+      "loadFailed": "读取线程文件失败",
+      "retry": "重试",
+      "noCheckout": "这个线程没有可读取的代码目录",
+      "tooLarge": "改动太大，无法列出",
+      "noChanges": "这个线程还没有改过文件",
+      "noUploads": "这里还没有发送过文件",
+      "botUploads": "你发给这个 Bot 的文件",
+      "machineUnavailable": "机器在休眠或离线，唤醒后才能读取文件。",
+      "checkoutUnavailable": "机器上已没有这个代码目录",
+      "notFound": "无法读取这个代码目录",
+      "readFailed": "读取文件失败（{code}）",
+      "more": "显示更多",
+      "asleep": "机器在休眠，唤醒后才能读取文件。",
+      "noMatches": "无匹配结果",
+      "pathCopied": "路径已复制",
+      "copyFailed": "复制路径失败",
+      "actions": "{name} 的操作",
+      "open": "打开",
+      "viewDiff": "查看本线程的改动",
+      "copyPath": "复制路径",
+      "download": "下载",
+      "status": {
+        "added": "新增",
+        "deleted": "删除",
+        "modified": "修改",
+        "renamed": "重命名"
+      },
+      "format": {
+        "binary": "二进制文件",
+        "too_large": "文件太大，无法显示",
+        "unsupported": "无法显示这个文件"
+      },
+      "truncated": "… 文件其余部分未显示"
+    },
+    "setup": {
+      "loadFailed": "读取线程运行环境失败",
+      "retry": "重试",
+      "noMachine": "还没有机器",
+      "noEnvironment": "没有运行环境",
+      "machine": "机器",
+      "spec": "{cpu} vCPU · {memory} GB",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘",
+      "uptime": "运行时长",
+      "minutes": "{count} 分钟",
+      "hours": "{hours} 小时 {minutes} 分钟",
+      "environment": "环境",
+      "runtime": {
+        "any": "任意机器",
+        "local": "你的电脑",
+        "cloud": "云端"
+      },
+      "scripts": "脚本",
+      "noSetup": "没有准备命令",
+      "install": "准备命令",
+      "unapproved": "未批准",
+      "copyFiles": "复制的文件（{count}）",
+      "edit": "在设置里编辑"
+    },
+    "menu": {
+      "search": "搜索标签页",
+      "common": "打开",
+      "related": "相关",
+      "crew": "Crew",
+      "terminals": "终端",
+      "allThreads": "全部线程",
+      "openPanel": "打开右栏",
+      "expand": "放大右栏",
+      "restore": "恢复右栏宽度",
+      "add": "打开标签页"
+    }
   }
 }

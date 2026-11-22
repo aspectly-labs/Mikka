@@ -292,12 +292,19 @@ test('the group is the Bot chat\'s thread: the person\'s messages are theirs, ev
   groupMembers = []
 })
 
-test('the line under a message is the Bot chat\'s: a person\'s keeps it to hover and focus, a reply\'s stays', async () => {
-  const { HOVER_ACTIONS, REPLY_ACTIONS } = await import('@/components/chat/copy-action')
+test('every group message\'s line waits for hover and focus, as the Bot chat\'s (decision 2026-11-22-1500)', async () => {
+  const { HOVER_ACTIONS } = await import('@/components/chat/copy-action')
   await render([message('user', 1, 'Mine'), message('bot', 2, 'Reply')])
   const lines = [...container.querySelectorAll('ol[aria-label="messages"] > li')].map(row => row.querySelector('[data-slot="message-actions"]')!)
   assert.equal(lines.length, 2)
-  for (const name of HOVER_ACTIONS.split(' ')) assert.ok(lines[0].classList.contains(name), name)
-  for (const name of REPLY_ACTIONS.split(' ')) assert.ok(lines[1].classList.contains(name), name)
-  assert.equal(lines[1].classList.contains('opacity-0'), false)
+  for (const line of lines) for (const name of HOVER_ACTIONS.split(' ')) assert.ok(line.classList.contains(name), name)
+  assert.equal(lines[1].querySelector('time'), null, 'a reply\'s author line already says when')
+})
+
+test('before its first page the group shows every chat\'s one skeleton, not a list of its own', async () => {
+  pages = undefined as unknown as GroupMessagePage[]
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  assert.ok(container.querySelector('[data-loading-placeholder]'), 'ConversationPageLoading')
+  assert.equal(container.querySelector('ol'), null)
+  assert.equal(container.querySelector('textarea'), null, 'the thread screen comes with the first page')
 })

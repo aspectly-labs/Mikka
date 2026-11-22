@@ -1155,6 +1155,7 @@
     "loading": "Loading devices"
   },
   "Workspace": {
+    "documentTitle": "{name} · Mikka",
     "loadingEditor": "Loading task editor",
     "loading": "Loading…",
     "loadingCreate": "Loading new task…",
@@ -1585,6 +1586,7 @@
     "runChainEnded": "This task has already stopped; there is nothing left to stop.",
     "threadDeliveryUnavailable": "This thread cannot use that delivery mode right now.",
     "threadStopping": "The thread is stopping",
+    "threadWorking": "The thread is still working. Stop it first.",
     "secretNotFound": "That secret or variable no longer exists.",
     "secretNameReserved": "This name is reserved by the runtime (for example PATH, HOME, proxy, TLS, loader, git, E2B or MIKKA variables). Choose another name.",
     "secretPermissionDenied": "Only workspace admins can do this. Members can add and edit repository secrets and variables.",
@@ -1608,7 +1610,8 @@
     "scheduleEnvironmentUnavailable": "The selected environment is no longer available.",
     "scheduleThreadUnavailable": "The thread it runs in is no longer available.",
     "scheduleRunAsUnavailable": "The person it runs as is no longer a member of this workspace.",
-    "scheduleRunAsConsentRequired": "Only the person it runs as can do this, or an owner or admin."
+    "scheduleRunAsConsentRequired": "Only the person it runs as can do this, or an owner or admin.",
+    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again."
   },
   "Overview": {
     "sections": {
@@ -4272,7 +4275,7 @@
       "metered": "Pay as you go",
       "shared": "Shared by teammates",
       "sharedKey": "{name}'s key",
-      "manage": "Manage models and subscriptions",
+      "manage": "Manage models and connections",
       "unavailable": "Unavailable",
       "notSaved": "Not saved",
       "unknownModel": "Unknown model",
@@ -4294,6 +4297,14 @@
         "ownProvider": "Runs on this server's own provider",
         "usedUntil": "{service} subscription is used up until {time}",
         "usedUp": "{service} subscription is used up"
+      },
+      "route": {
+        "via": "Runs through {label}",
+        "favorites": "Favorites",
+        "free": "Free",
+        "usedUntil": "Used up until {time}",
+        "usedUp": "Usage limit reached",
+        "noCredits": "No Mikka credits left"
       }
     },
     "empty": "Tell {name} what you need",
@@ -4356,6 +4367,7 @@
     },
     "activity": {
       "thinking": "Thinking",
+      "waited": "{seconds}s",
       "running": "{tool}",
       "thought": "Thought for {seconds, plural, one {# second} other {# seconds}}",
       "thoughtStored": "Thought",
@@ -4501,7 +4513,8 @@
         "raw": "Raw data",
         "dispatched": "Dispatched"
       }
-    }
+    },
+    "commandNew": "Start a new thread"
   },
   "AgentCopy": {
     "pleaseSignInFirst": "Please sign in first.",
@@ -4875,7 +4888,12 @@
     "pr": "Pull request",
     "searching": "Searching…",
     "error": "Couldn’t load references",
-    "empty": "No matching references"
+    "empty": "No matching references",
+    "commands": "Commands",
+    "tasks": "Tasks",
+    "threads": "Threads",
+    "pullRequests": "Pull requests",
+    "broken": "Deleted, or you no longer have access"
   },
   "IssueThreads": {
     "composerModelUnknown": "Model not reported",
@@ -5174,6 +5192,23 @@
       "todo": "Updated todos",
       "commandFailed": "Command failed ({command})",
       "commandFailedCode": "Command failed ({command}) · exit {code}"
+    },
+    "lifecycle": {
+      "fork": "Fork",
+      "forkSummary": "Fork with summary",
+      "forkInstruction": "What should the fork do?",
+      "forkFailed": "Couldn't fork",
+      "tags": "Tags",
+      "tagPlaceholder": "Add a tag",
+      "removeTag": "Remove {tag}",
+      "tagsFailed": "Tags not saved",
+      "automation": "Make this an automation",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this thread?",
+      "deleted": "Thread deleted",
+      "undo": "Undo",
+      "deleteFailed": "Thread not deleted",
+      "restoreFailed": "Couldn't restore the thread"
     }
   },
   "Computer": {
@@ -7980,6 +8015,7 @@
     "toolsRanTime": "{count, plural, one {Ran a tool} other {Ran # tools}} · {seconds}s",
     "toolsFailed": "{count, plural, one {Ran a tool} other {Ran # tools}} · {failed} failed",
     "toolsStopped": "Stopped · {ran} of {count} ran",
+    "newLines": "{count, plural, one {# new line} other {# new lines}}",
     "runningCount": "{count} running",
     "needsCount": "{count, plural, one {# needs you} other {# need you}}",
     "decisionsWaiting": "{count, plural, one {# decision waiting} other {# decisions waiting}}",
@@ -8015,6 +8051,7 @@
       "discardRecording": "Discard recording",
       "useRecording": "Use recording",
       "sent": "Message sent.",
+      "stillWriting": "still writing",
       "selected": "selected."
     },
     "toolKinds": {
@@ -8035,6 +8072,14 @@
       "search": "Searching",
       "edit": "Editing files",
       "web": "Browsing the web"
+    },
+    "plan": {
+      "title": "To-dos",
+      "label": "The Agent's to-do list",
+      "progress": "{completed} of {total} to-dos done",
+      "pending": "Pending",
+      "inProgress": "In progress",
+      "completed": "Done"
     }
   },
   "HostedOnboarding": {
@@ -9208,5 +9253,96 @@
     "collapse": "Hide",
     "card": "{name}, {status}: {brief}",
     "cardNoBrief": "{name}, {status}"
+  },
+  "RightColumn": {
+    "tabs": {
+      "changes": "Changes",
+      "files": "Files",
+      "setup": "Setup"
+    },
+    "changes": {
+      "loadFailed": "Couldn't read this thread's changes",
+      "retry": "Retry",
+      "none": "This thread hasn't changed any files yet",
+      "tooLarge": "The changes are too large to show"
+    },
+    "files": {
+      "search": "Search files",
+      "views": "Files to show",
+      "all": "All files",
+      "thread": "This thread",
+      "uploads": "Uploads",
+      "loadFailed": "Couldn't read this thread's files",
+      "retry": "Retry",
+      "noCheckout": "This thread has no checkout to read",
+      "tooLarge": "The changes are too large to list",
+      "noChanges": "This thread hasn't changed any files yet",
+      "noUploads": "No files sent here yet",
+      "botUploads": "Files you sent to this Bot",
+      "machineUnavailable": "The machine is asleep or offline. Wake it to read its files.",
+      "checkoutUnavailable": "The checkout is no longer on the machine",
+      "notFound": "This checkout can't be read",
+      "readFailed": "Couldn't read the files ({code})",
+      "more": "Show more",
+      "asleep": "The machine is asleep. Its files are read once it wakes.",
+      "noMatches": "No matches",
+      "pathCopied": "Path copied",
+      "copyFailed": "Couldn't copy the path",
+      "actions": "Actions for {name}",
+      "open": "Open",
+      "viewDiff": "View thread diff",
+      "copyPath": "Copy path",
+      "download": "Download",
+      "status": {
+        "added": "Added",
+        "deleted": "Deleted",
+        "modified": "Modified",
+        "renamed": "Renamed"
+      },
+      "format": {
+        "binary": "Binary file",
+        "too_large": "Too large to show",
+        "unsupported": "This file can't be shown"
+      },
+      "truncated": "… the rest of the file is not shown"
+    },
+    "setup": {
+      "loadFailed": "Couldn't read where this thread runs",
+      "retry": "Retry",
+      "noMachine": "No machine yet",
+      "noEnvironment": "No run environment",
+      "machine": "Machine",
+      "spec": "{cpu} vCPU · {memory} GB",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk",
+      "uptime": "Uptime",
+      "minutes": "{count} min",
+      "hours": "{hours} h {minutes} min",
+      "environment": "Environment",
+      "runtime": {
+        "any": "Any machine",
+        "local": "Your computer",
+        "cloud": "Cloud"
+      },
+      "scripts": "Scripts",
+      "noSetup": "No setup command",
+      "install": "Setup command",
+      "unapproved": "Not approved",
+      "copyFiles": "Copied files ({count})",
+      "edit": "Edit in settings"
+    },
+    "menu": {
+      "search": "Search tabs",
+      "common": "Open",
+      "related": "Related",
+      "crew": "Crew",
+      "terminals": "Terminals",
+      "allThreads": "All threads",
+      "openPanel": "Open right column",
+      "expand": "Expand right column",
+      "restore": "Restore right column width",
+      "add": "Open a tab"
+    }
   }
 }

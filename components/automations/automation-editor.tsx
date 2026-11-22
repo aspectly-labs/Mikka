@@ -9,7 +9,7 @@ import { listDevices } from '@/app/actions/agents'
 import { getWorkspaceBotDefaults, listBotsForWorkspace } from '@/app/actions/bots'
 import { listProjectResources } from '@/app/actions/project-resources'
 import { getModelOrder } from '@/app/actions/model-order'
-import { findThreadReferences } from '@/app/actions/task-runs'
+import { findThreadReferences, threadAutomationSeed } from '@/app/actions/task-runs'
 import { automationLinearLabels, automationRunAsChoices, setAutomationRunAs, automationLinearTeams, automationSlackChannels, deleteAutomation, createAutomation, duplicateAutomation, pauseAutomation, resumeAutomation, runAutomationNow, takeOverAutomation, updateAutomation } from '@/app/actions/automations'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
@@ -64,7 +64,9 @@ const runVariant = { pending: 'outline', running: 'secondary', succeeded: 'secon
  * (`id` 'new') is created on 创建 and opens as itself. Saves go through the automation actions and the page reads again
  * only when the live channel says the schedule changed.
  */
-export function AutomationEditor({ workspaceId, userId, id, template, onOpen, onBack }: { workspaceId: string | null; userId: string; id: string | 'new'; template?: AutomationTemplate; onOpen: (id: string) => void; onBack: () => void }) {
+export function AutomationEditor({ workspaceId, userId, id, template, fromThread, onOpen, onBack }: { workspaceId: string | null; userId: string; id: string | 'new'; template?: AutomationTemplate
+  /** A new automation made from a thread's ⋯ (#2936): every run goes to that thread, named and asked as it was. */
+  fromThread?: string; onOpen: (id: string) => void; onBack: () => void }) {
   const t = useTranslations('Automations.editor')
   const locale = useLocale()
   const tAll = useTranslations('Automations')
@@ -79,6 +81,16 @@ export function AutomationEditor({ workspaceId, userId, id, template, onOpen, on
   const tTemplates = useTranslations('Automations.templates')
   const [draft, setDraft] = useState<AutomationDraft | null>(() => !creating ? null
     : template ? templateDraft(template, emptyDraft(localZone()), { title: tTemplates(`${template}.title`), prompt: tTemplates(`${template}.prompt`) }) : emptyDraft(localZone()))
+  // The thread's seed fills the new draft once; a thread that is gone or not the person's leaves the empty one.
+  useEffect(() => {
+    if (!creating || !fromThread) return
+    let live = true
+    void threadAutomationSeed(fromThread).then(seed => {
+      if (!live || seed.error) return
+      setDraft(value => value && { ...value, title: seed.title, prompt: seed.prompt, eachRun: 'existing_thread', singleThreadId: seed.singleThreadId })
+    }, () => {})
+    return () => { live = false }
+  }, [creating, fromThread])
   const [baseline, setBaseline] = useState<{ version: number; draft: AutomationDraft } | null>(null)
   const dirty = Boolean(baseline && draft && JSON.stringify(draft) !== JSON.stringify(baseline.draft))
   // Keep editing the version the person actually opened until they save or choose the latest one.

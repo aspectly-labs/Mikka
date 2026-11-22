@@ -5,6 +5,7 @@ import { AgentCitationsContext, coveredIssues, type AgentCitations } from '@/com
 import { AgentGenerativeUI } from '@/components/workspace/agent-generative-ui'
 import { ReplyBubbles } from '@/components/workspace/agent-text-bubble'
 import { withoutPartialCitation } from '@/lib/coordinator/citations'
+import { useSmoothText } from '@/lib/hooks/use-smooth-text'
 
 const ignoreAction = () => {}
 
@@ -18,12 +19,14 @@ const ignoreAction = () => {}
  * Web pages it cites are listed under it on hover (R-15). A citation it cannot show stays as written.
  * While it streams, a citation still arriving is left out until its chip can show.
  * Memoised: a token for the reply that is streaming does not redraw the replies already finished.
+ * Streaming, its words appear a few characters at a time at the pace they arrive (LobeHub's), all at once when it ends.
  */
 export const CoordinatorReply = memo(function CoordinatorReply({ text, citations, isStreaming = false, carded = '' }: { text: string; citations: AgentCitations; isStreaming?: boolean
   /** Comma-joined ids of the threads whose card sits under this reply; a string, so the memo keeps holding. */
   carded?: string }) {
   const bubbles = use(ReplyBubbles) ?? true
-  const shown = isStreaming ? withoutPartialCitation(text) : text
+  const smooth = useSmoothText(text, isStreaming)
+  const shown = isStreaming ? withoutPartialCitation(smooth) : text
   // Preserve reply metadata for existing callers; the shared citation renderer determines current presentation.
   const value = useMemo(() => ({ ...citations, covered: coveredIssues(shown, citations.sources), carded: new Set(carded ? carded.split(',') : []) }), [citations, shown, carded])
   return <AgentCitationsContext value={value}>

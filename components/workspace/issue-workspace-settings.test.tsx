@@ -332,6 +332,7 @@ test('an explicit Bot mounts only its own composer after its roster resolves', a
   assert.equal(Boolean(container.querySelector('[data-chat]')), false)
   assert.equal(composerMounts, 0)
   assert.ok(container.querySelector('[role="status"]'))
+  assert.equal(browser.document.title, 'Mikka', 'no name before the Bot resolves')
 
   rosterError = new Error('roster unavailable')
   await render()
@@ -344,6 +345,7 @@ test('an explicit Bot mounts only its own composer after its roster resolves', a
   assert.equal(container.querySelector('[data-chat]')?.getAttribute('data-chat'), bot.name)
   assert.equal(composerMounts, 1)
   assert.equal(new URL(browser.location.href).searchParams.get('bot'), bot.id)
+  assert.equal(browser.document.title, 'Workspace.documentTitle', 'the tab names the Bot\'s chat once its roster resolves')
 })
 
 test('a valid browser request reveals the conversation browser tab without changing the selected Bot', async () => {

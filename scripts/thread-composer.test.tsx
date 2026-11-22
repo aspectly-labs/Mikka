@@ -314,7 +314,7 @@ test('a thread the viewer cannot read in full has no composer', () => {
 })
 
 test('every conversation container draws the shared composer, directly or through the thread panel', () => {
-  // A group is the same thread screen as a Bot chat (decision 2026-11-22-1500-group-chat-as-bot-chat).
+  // A group is the same thread screen as a Bot chat (decision 2026-11-22-1510-group-chat-as-bot-chat).
   for (const file of ['components/coordinator/coordinator-chat.tsx', 'components/workspace/issue-thread-panel.tsx', 'components/workspace/group-chat-view.tsx']) {
     assert.match(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), /<ThreadScreen\b/, file)
   }

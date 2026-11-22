@@ -9,6 +9,7 @@ import { ChatComposerAttachment } from '@/components/coordinator/chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
 import type { ThreadEntry } from '@/components/slots/thread-contract'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
+import { ConversationPageLoading } from '@/components/workspace/workspace-loading'
 import { navigate, openTask } from '@/components/workspace/workspace-navigation'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { namedConversationModelBot } from '@/lib/named-conversation-model'
@@ -75,7 +76,6 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const { mutate: refreshCache } = useSWRConfig()
   const namedChat = group.creationPurpose === 'conversation'
   const feedback = useTranslations('Coordinator')
-  const common = useTranslations('Common')
   const { data: agents = [] } = useSWR('agents', listAgents)
   // The pill's avatar is the members' bloubs (R-36); the right column's 详情 reads the same request.
   const { data: memberPage, error: membersError } = useGroupMembers(group.id)
@@ -220,7 +220,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     : member(type, id)?.name ?? (type === 'agent' ? agents.find(agent => agent.id === id)?.name : undefined) ?? t('bot')
   const title = group.title || t('untitled')
 
-  // The group as the Bot chat's thread (AgentThreadScreen, decision 2026-11-22-1500-group-chat-as-bot-chat): the
+  // The group as the Bot chat's thread (AgentThreadScreen, decision 2026-11-22-1510-group-chat-as-bot-chat): the
   // person's messages are theirs; every other member's, a Bot's or an Agent's is the block's agent message with its own
   // author line (mark and name, shown where the author changes), as LobeHub's group chat heads each speaker's turn.
   const entries: ThreadEntry[] = []
@@ -236,9 +236,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     const mine = message.authorType === 'user' && message.authorId === userId
     const id = sentAs[message.id] ?? message.id
     const reply = message.authorType !== 'user'
-    // The line under every message, as the Bot chat's: Copy and its reactions (#2922). A person's message keeps it to
-    // hover and focus, with when it was sent; a reply's author line already says when.
-    const actions = <ReplyActions hover={!reply} at={reply ? undefined : at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
+    // The line under every message, as the Bot chat's (on hover, decision 2026-11-22-1500): Copy and its reactions;
+    // a person's message says when it was sent, a reply's author line already does.
+    const actions = <ReplyActions at={reply ? undefined : at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
     const words = <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>
     if (mine) entries.push({ id, role: 'person', at, text: message.body, body: words, actions })
     else {
@@ -284,8 +284,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
         onLeft(group.id)
       }} />
     </div>}
-    <ThreadScreen host="page" modelPicker={false} botId={null} name={title} mark={<GroupAvatar title={title} members={members} />}
-      entries={blockingCode ? [] : pages ? entries : null} empty={empty} transcriptLabel={t('messages')} loadingLabel={!pages && !blockingCode ? common('loading') : undefined}
+    {/* The chat's one skeleton, as every chat opens (ConversationPageLoading, delayed 200ms). */}
+    {!pages && !blockingCode ? <ConversationPageLoading /> : <ThreadScreen host="page" modelPicker={false} botId={null} name={title} mark={<GroupAvatar title={title} members={members} />}
+      entries={blockingCode ? [] : entries} empty={empty} transcriptLabel={t('messages')}
       older={older ? { loading: loadingOlder, onLoad: () => { void setSize(size + 1) } } : undefined}
       working={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined}
       composer={{ ref: composerInput, leadingControls: <ChatComposerAttachment />, value: draft, onChange: value => { submittedDraft.current = null; setDraft(value) }, onSubmit: send,
@@ -295,6 +296,6 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       pending={[]}
       notices={referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
       questions={[]} onAnswer={async () => ({ status: 'unavailable', error: actionError() })}
-      running={0} onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />
+      running={0} onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />}
   </section></AgentThemeProvider>
 }

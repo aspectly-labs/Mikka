@@ -565,6 +565,13 @@ export const agentRuns = pgTable('agent_runs', {
   conversationPinnedAt: timestamp('conversationPinnedAt', { withTimezone: true }),
   /** On a thread's root run: the root of the thread that replaced it, when the person explicitly asked for a new one. */
   threadReplacedBy: uuid('threadReplacedBy').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  /** On every run of a thread its owner deleted (#2936): hidden from every list, restorable for 30 days (lib/thread-lifecycle.ts). */
+  threadDeletedAt: timestamp('threadDeletedAt', { withTimezone: true }),
+  /** On a thread's root run: its owner's tags (lib/thread-lifecycle.ts normalizeThreadTags). */
+  threadTags: text('threadTags').array().notNull().default(sql`'{}'::text[]`),
+  /** On a fork's root run: the source thread's run it was forked from, and where its context ends (#2936). */
+  forkedFromRunId: uuid('forkedFromRunId').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  forkPoint: jsonb('forkPoint').$type<{ runId: string; itemId: string | null; mode: 'full' | 'summary' } | null>(),
   stopRequestedAt: timestamp('stopRequestedAt', { withTimezone: true }),
   /** Set with an explicit owner-scoped cancel request, never inferred from a policy or lease stop. */
   explicitStopRequested: boolean('explicitStopRequested').notNull().default(false),

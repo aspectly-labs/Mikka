@@ -19,5 +19,5 @@ export function VisibleReadEnd({ onSeen }: { onSeen: () => void }) {
     const unwatch = watchPageVisibility(acknowledge)
     return () => { observer.disconnect(); unwatch() }
   }, [onSeen])
-  return <span ref={ref} aria-hidden="true" className="block h-px" />
+  return <span ref={ref} aria-hidden="true" data-read-end="" className="block h-px" />
 }

@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { navigate } from '@/components/workspace/workspace-navigation'
 import { ChatRowActionError, chatPlace, copyPlaceLink, openPlaceInNewTab, setChatPreference, setChatUnread, setThreadUnread, threadPlace, type ChatNavAction } from './chat-row-actions'
 import { setThreadRead } from '@/lib/thread-read-client'
+import { composerDisplay, pullRequestShortName } from '@/lib/composer-references'
 import { setConversationOrganization } from '@/app/actions/task-runs'
 
 /**
@@ -140,10 +141,13 @@ export function useChatNav({ bots, archivedBots = [], followedBots = [], shareab
       }) ?? [] }
     }
     // A Bot's row: its own chat's unread (the name in bold), latest line and time, a live turn, and how many of its threads wait on the person.
+    // A typed reference reads as its kind in a one-line preview (「对照 任务 和 线程」), never its marker (#2924).
+    const previewText = (text: string | null | undefined) => text ? composerDisplay(text, reference => reference.type === 'pr'
+      ? pullRequestShortName(reference.id) ?? reference.id : i18nText(`ThreadReferences.${reference.type === 'chat' ? 'thread' : reference.type}`)).text : null
     const botRow = (id: string) => {
       const chat = summary(id)
       const waitingCount = sidebar?.[id]?.items.filter(row => row.state === 'waiting').length ?? 0
-      return { unread: unreadCount(id) > 0, preview: chat?.line ?? null, at: chat?.at ?? null, working: Boolean(chat?.working), waitingCount }
+      return { unread: unreadCount(id) > 0, preview: previewText(chat?.line), at: chat?.at ?? null, working: Boolean(chat?.working), waitingCount }
     }
     const chatUnreadActions = (chat: Parameters<typeof setChatUnread>[0], unread: boolean): ChatNavAction[] => [unread
       ? { id: 'markRead', label: i18nText('HostedThread.markRead'), run: () => runChange(setChatUnread(chat, false)) }
@@ -199,7 +203,7 @@ export function useChatNav({ bots, archivedBots = [], followedBots = [], shareab
       if (row.kind === 'group') {
         const target: ChatTarget = { kind: 'group', id: row.group.id, title: row.group.title, workspaceId: row.group.workspaceId }
         const unread = Boolean(Number(row.group.unreadCount) || row.group.markedUnread)
-        return { id: row.group.id, kind: 'group', name: row.group.title || i18nText('Nav.untitledConversation'), unread, preview: row.group.lastMessage?.body ?? null, at: row.group.lastMessage?.createdAt ?? row.group.createdAt, current: activeKind === 'group' && activeId === row.group.id, target, avatar: <CachedGroupAvatar id={row.group.id} title={row.group.title || i18nText('Nav.untitledConversation')} bots={row.group.bots} />, actions: groupActions(row.group, target, unread) }
+        return { id: row.group.id, kind: 'group', name: row.group.title || i18nText('Nav.untitledConversation'), unread, preview: previewText(row.group.lastMessage?.body), at: row.group.lastMessage?.createdAt ?? row.group.createdAt, current: activeKind === 'group' && activeId === row.group.id, target, avatar: <CachedGroupAvatar id={row.group.id} title={row.group.title || i18nText('Nav.untitledConversation')} bots={row.group.bots} />, actions: groupActions(row.group, target, unread) }
       }
       const target: ChatTarget = { kind: 'bot', botId: row.bot.id }
       // 标为已读 reads the Bot's own chat; its threads' unread stay with the threads.

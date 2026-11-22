@@ -120,6 +120,14 @@ export interface TurnNotification {
   turn: Turn
 }
 
+/** `turn/plan/updated`: the whole plan each time the agent writes it (its `update_plan` tool). */
+export interface TurnPlanUpdatedNotification {
+  threadId: string
+  turnId: string
+  explanation: string | null
+  plan: { step: string; status: "pending" | "inProgress" | "completed" }[]
+}
+
 export interface ErrorNotification {
   error: TurnError
   willRetry: boolean

@@ -36,7 +36,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,name text,status text);
       CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,epoch bigint,state text,provider text,"accountLabel" text,quota jsonb,"removedAt" timestamptz,paused boolean NOT NULL DEFAULT false,"modelSettings" jsonb);
       CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,"modelId" text,route text,"createdAt" timestamptz DEFAULT now())`);
-    for (const file of ["20261030193000_device_enrollment_management.sql", "20261030200610_execution_rules.sql", "20261030233002_byos_model_catalog.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101020201_workspace_personal_policies.sql", "20261101020202_bot_archive.sql", "20261101021000_model_api_keys.sql", "20261101021100_bot_api_key_choice.sql", "20261102120000_model_api_key_models_error.sql", "20261102190000_model_api_key_responses_api.sql", "20261115175552_bot_model_choices_credits_model.sql", "20261115204738_model_gateway_tokens.sql", "20261120044916_bot_settings.sql"])
+    for (const file of ["20261030193000_device_enrollment_management.sql", "20261030200610_execution_rules.sql", "20261030233002_byos_model_catalog.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101020201_workspace_personal_policies.sql", "20261101020202_bot_archive.sql", "20261101021000_model_api_keys.sql", "20261101021100_bot_api_key_choice.sql", "20261102120000_model_api_key_models_error.sql", "20261102190000_model_api_key_responses_api.sql", "20261115175552_bot_model_choices_credits_model.sql", "20261115204738_model_gateway_tokens.sql", "20261120044916_bot_settings.sql", "20261108120101_enabled_models.sql"])
       await pool.query(await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8"));
     // Resource policy still runs against real non-Org rows in this isolated schema.
     await pool.query(await readFile(new URL("../drizzle/20261109035020_organization_governance.sql", import.meta.url), "utf8"));
@@ -196,7 +196,13 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     // 3. The Coordinator's picker chooses a model only: no Agent (harness) in its menu.
     assert.ok(!JSON.stringify(coordinator).includes("harness"));
     for (const group of coordinator.groups) for (const option of group.options)
-      assert.deepEqual(Object.keys(option).filter((key) => !(group.kind === "hosted" && ["name", "price", "featured"].includes(key))).sort(), ["id", "modelId", "provider"]);
+      assert.deepEqual(Object.keys(option).filter((key) => !(group.kind === "hosted" && ["name", "price", "featured"].includes(key)) && !["route", "unavailable"].includes(key)).sort(), ["id", "modelId", "provider"]);
+    // Every option names its route (#2938): what pays, which connection, and the connection's own label.
+    assert.deepEqual([...new Set(coordinator.groups.flatMap((group) => group.options.map((option) => `${group.kind}:${option.route?.source}`)))].sort(),
+      ["hosted:credits", "subscription:subscription"]);
+    for (const group of coordinator.groups.filter((item) => item.kind === "subscription"))
+      for (const option of group.options) assert.deepEqual([option.route?.label, option.route?.service, typeof option.route?.connectionId], [group.credentialLabel, group.provider, "string"]);
+    assert.ok(coordinator.groups.filter((group) => group.kind === "hosted").every((group) => group.options.every((option) => option.route?.connectionId === null)), "Mikka 额度 has no connection");
 
     // 4. The next run freezes the pick; a run already frozen keeps its model.
     const dependencies = { service: () => ({ repository: new SubscriptionRepository(pool) }) as never, workspace: async () => {} };
@@ -285,19 +291,31 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const { addApiKey } = await import("./model-api-keys");
     const { apiKeyOptionId } = await import("./bot-model-menu-view");
     const env = { WORKSPACE_SECRETS_KEY: randomBytes(32).toString("hex") };
-    const listing = (async () => new Response(JSON.stringify({ data: [{ id: "deepseek-chat" }] }), { status: 200 })) as unknown as typeof fetch;
+    const listing = (async () => new Response(JSON.stringify({ data: [{ id: "deepseek-v4-pro" }] }), { status: 200 })) as unknown as typeof fetch;
     const key = await addApiKey(pool, "alice", { provider: "deepseek", apiKey: `test-${randomUUID()}` }, { env, fetch: listing });
-    const keyOption = apiKeyOptionId(key.id, "deepseek-chat");
+    const keyOption = apiKeyOptionId(key.id, "deepseek-v4-pro");
     let keyMenu = await botModelMenu(pool, settings, alice, null);
     assert.equal(keyMenu.groups.find((group) => group.kind === "apiKey")?.credentialLabel, `····${key.last4}`);
-    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options, [{ id: keyOption, modelId: "deepseek-chat", provider: "deepseek" }]);
+    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options, [{ id: keyOption, modelId: "deepseek-v4-pro", provider: "deepseek",
+      route: { source: "byok", connectionId: key.id, label: `····${key.last4}` } }]);
+    // 刷新 re-reads the person's own keys' model lists too (the provider's free /models read), then the menu.
+    const { refreshApiKeyModels } = await import("./model-api-keys");
+    const reread: string[] = [];
+    const relisted = await refreshBotModelMenu(pool, discovering, alice, null, 8000, async () => {}, async (owner, keyId) => {
+      reread.push(`${owner}:${keyId}`);
+      await refreshApiKeyModels(pool, owner, keyId, { env, fetch: (async () => Response.json({ data: [{ id: "deepseek-v4-pro" }, { id: "deepseek-r1" }] })) as unknown as typeof fetch });
+    });
+    assert.deepEqual(reread, [`alice:${key.id}`], "only the person's own keys are re-read");
+    // The re-read took: a model new to the key is listed, and off until the person turns it on (enabled_models).
+    assert.deepEqual((await pool.query('SELECT models FROM model_api_keys WHERE id=$1', [key.id])).rows[0].models, ["deepseek-v4-pro", "deepseek-r1"]);
+    assert.deepEqual(relisted.groups.find((group) => group.kind === "apiKey")?.options.map((option) => option.modelId), ["deepseek-v4-pro"]);
     // Picked by its option id, as the web's action and the iOS app's PUT /api/mobile/model both send it.
     const { chooseBotModel } = await import("./bot-model-menu");
     keyMenu = await chooseBotModel(pool, settings, alice, null, keyOption);
     assert.deepEqual([keyMenu.current.id, keyMenu.current.kind, keyMenu.current.chosen, keyMenu.current.available], [keyOption, "apiKey", true, true]);
     assert.deepEqual(await freezeBotModel({ ownerId: "alice", botId: null, workspaceId: workspace }, dependencies), {
-      harness: "ai_sdk", model: "deepseek-chat",
-      modelSelection: { coordinator: true, type: "api_key", keyId: key.id, ownerId: "alice", workspaceId: workspace, modelId: "deepseek-chat" },
+      harness: "ai_sdk", model: "deepseek-v4-pro",
+      modelSelection: { coordinator: true, type: "api_key", keyId: key.id, ownerId: "alice", workspaceId: workspace, modelId: "deepseek-v4-pro" },
     });
     // A Mikka 额度 model picked after a key model: it is what the chip shows and what the next turn runs on, not the key
     // (production, 2026-11-02: the pick saved, but the old key choice won on read and the chip went back to the key).
@@ -311,7 +329,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const noPoints = await botModelMenu(pool, settings, alice, null);
     assert.equal(noPoints.groups.some((group) => group.kind === "hosted"), true);
     assert.deepEqual([noPoints.current.id, noPoints.current.chosen, noPoints.current.available], [hostedChoice, true, false]);
-    pointsChoice = { kind: "api_key", keyId: key.id, model: "deepseek-chat" };
+    pointsChoice = { kind: "api_key", keyId: key.id, model: "deepseek-v4-pro" };
     const pointsMenu = await botModelMenu(pool, settings, alice, null);
     const pointsRun = await freezeBotModel({ ownerId: "alice", botId: null, workspaceId: workspace }, dependencies);
     assert.equal(pointsMenu.current.modelId, pointsRun.model);
@@ -372,7 +390,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     assert.equal((await botModelMenu(pool, settings, { ownerId: "bob", workspaceId: workspace }, bobBot)).groups.some(group => group.kind === "shared"), false);
     // Same model from two keys remains two identifiable credentials.
     const secondKey = await addApiKey(pool, "alice", { provider: "kimi", apiKey: `test-second-${randomUUID()}` }, { env, fetch: listing });
-    const twoKeys = (await botModelMenu(pool, settings, alice, null)).groups.filter(group => group.kind === "apiKey" && group.options.some(option => option.modelId === "deepseek-chat"));
+    const twoKeys = (await botModelMenu(pool, settings, alice, null)).groups.filter(group => group.kind === "apiKey" && group.options.some(option => option.modelId === "deepseek-v4-pro"));
     assert.equal(twoKeys.length, 2);
     assert.deepEqual(new Set(twoKeys.map(group => group.credentialLabel)), new Set([`····${key.last4}`, `····${secondKey.last4}`]));
     // An invalid saved key follows the very same subscription fallback as reservation.
