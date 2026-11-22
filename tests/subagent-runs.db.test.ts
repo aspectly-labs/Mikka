@@ -42,7 +42,7 @@ test('listSubagentRuns returns every card field with the shared mark state', asy
 })
 
 test('listSubagentRuns hides other threads and rejects other owners', async () => {
-  const { user, parent } = await parentWithChildren()
+  const { parent } = await parentWithChildren()
   const outsider = { id: await seedUser(pool, 'subagent-out'), [tokenWorkspace]: '' }
   await assert.rejects(() => listSubagentRuns(outsider as never, parent))
 })

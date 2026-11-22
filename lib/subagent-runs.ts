@@ -1,9 +1,9 @@
 import 'server-only'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { agentRuns } from '@/lib/db/schema'
-import { ActionFailureError } from '@/lib/action-failure'
-import { runOutsideToken } from '@/lib/tokens/scope'
+import { ActionFailureError } from '@/lib/action-error'
+import { runsOutsideToken } from '@/lib/tokens/scope'
 import { profileMarkStateOf, type ProfileMarkState } from '@/lib/factory/agent-profile-mark'
 
 /** A sub-agent card on the parent's thread (F #2939): everything the card shows
@@ -36,7 +36,6 @@ async function ownedRun(user: ScopedUser, runId: string) {
  * parent fan-out); once C's soft delete lands, filter `deletedAt` here too. */
 export async function listSubagentRuns(user: ScopedUser, runId: string): Promise<SubagentRunCard[]> {
   await ownedRun(user, runId)
-  const outside = new Set(await runOutsideToken(user as never, []))
   const rows = await db.select({
     id: agentRuns.id, name: agentRuns.name, profile: agentRuns.profile, brief: agentRuns.brief,
     status: agentRuns.status, outcome: agentRuns.outcome, model: agentRuns.observedModel,
@@ -44,6 +43,7 @@ export async function listSubagentRuns(user: ScopedUser, runId: string): Promise
   }).from(agentRuns)
     .where(and(eq(agentRuns.parentRunId, runId), eq(agentRuns.threadRelation, 'subagent')))
     .orderBy(asc(agentRuns.createdAt))
+  const outside = await runsOutsideToken(user as never, rows.map(row => row.id))
   return rows
     .filter(row => !outside.has(row.id))
     .map(row => ({
