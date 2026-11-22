@@ -3588,9 +3588,10 @@
           "arrow": "箭头"
         },
         "colors": {
-          "ink": "墨黑",
-          "graphite": "石墨",
+          "blue": "蓝",
           "teal": "青绿",
+          "emerald": "翠绿",
+          "violet": "紫",
           "pink": "粉"
         }
       },
@@ -6524,7 +6525,8 @@
       "copy": "复制",
       "copied": "已复制",
       "copyFailed": "复制失败",
-      "quote": "引用"
+      "quote": "引用",
+      "reply": "回复"
     }
   },
   "GroupTask": {

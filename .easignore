@@ -69,6 +69,32 @@ yarn-error.log*
 
 # Private chat-attachment acceptance state and generated screenshots.
 /.cache/attachments/
+/.cache/screenshots/
+/.cache/fixtures/
+
+# hosted UI layer checkout (docs/ui-overlay.md)
+/.hosted-ui/
+
+# Nx Core local graph/task state
+.nx/
+
+# eve compiler, durable local storage and standalone service output.
+/apps/eve/.eve/
+/apps/eve/.output/
+/apps/eve/.vercel/
+
+# Temporary standalone typecheck inputs and compiler artifacts.
+/.cache/typecheck/
+
+# Native Eve session data for the default self-hosted service.
+/.cache/eve-workflow/
+
+# Cloudflare build receipts and release artifacts.
+/.cloudflare-ci/
+/.mikka-cloud/
+/.mikka-web/
+/.cloudflare-marketing/
+/data/
 
 # hosted UI layer checkout (docs/ui-overlay.md)
 /.hosted-ui/

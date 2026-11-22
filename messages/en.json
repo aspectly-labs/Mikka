@@ -3588,9 +3588,10 @@
           "arrow": "Arrow"
         },
         "colors": {
-          "ink": "Ink",
-          "graphite": "Graphite",
+          "blue": "Blue",
           "teal": "Teal",
+          "emerald": "Emerald",
+          "violet": "Violet",
           "pink": "Pink"
         }
       },
@@ -6524,7 +6525,8 @@
       "copy": "Copy",
       "copied": "Copied",
       "copyFailed": "Couldn't copy",
-      "quote": "Quote"
+      "quote": "Quote",
+      "reply": "Reply"
     }
   },
   "GroupTask": {
