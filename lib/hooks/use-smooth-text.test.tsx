@@ -121,3 +121,15 @@ test('reduced motion shows live text as it arrives, with no frame loop', async (
   assert.equal(now(), 'Every chunk at once.')
   assert.equal(frames.size, 0)
 })
+
+test('a reply remounted with text it already showed (its row key changed as it committed) does not animate again', async () => {
+  const reply = 'Every word of this reply was already on screen before its row was remounted.'
+  await render(reply, true)
+  assert.equal(now(), reply, 'live text present at mount shows whole')
+  assert.equal(frames.size, 0)
+  await act(async () => root.unmount())
+  root = createRoot(container)
+  await render(reply, false)
+  assert.equal(now(), reply, 'committed and remounted: whole at once')
+  assert.equal(frames.size, 0)
+})
