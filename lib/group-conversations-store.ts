@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
 import { enqueueGroupTurn, GROUP_TURN_STOPPED, stopGroupTurns } from './coordinator/group-turns'
-import { groupParticipants, type GroupParticipant } from './group-participants'
+import { groupParticipants, groupParticipantsMany, type GroupParticipant } from './group-participants'
 import { groupListChanged, groupListReadChanged } from './live/lists'
 import { groupChatChanged } from './live/groups'
 
@@ -196,20 +196,37 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
         // Read existing links only; this is not the private-exchange producer.
         // Links share their source message's page/cursor. They add no message
         // position or unread event, and never expose the private DM transcript.
-        const links = messages.length ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
-          FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
-          WHERE l."sourceConversationId"=$1 AND l."anchorPosition"=ANY($2::bigint[])
-            AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
-          ORDER BY l."anchorPosition" DESC,l.id`, [group.id, messages.map(m => m.position), group.createdBy, group.workspaceId]) : { rows: [] }
+        // A delta read (after=) emits every link anchored up to the tip: a new
+        // exchange may anchor to a message the reader already has, and the
+        // caller dedupes by linkId, so re-emitting older links stays cheap.
+        const links = after != null && tip != null
+          ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
+            FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
+            WHERE l."sourceConversationId"=$1 AND l."anchorPosition"<=$2::bigint
+              AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
+            ORDER BY l."anchorPosition" DESC,l.id`, [group.id, tip.position, group.createdBy, group.workspaceId])
+          : messages.length ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
+            FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
+            WHERE l."sourceConversationId"=$1 AND l."anchorPosition"=ANY($2::bigint[])
+              AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
+            ORDER BY l."anchorPosition" DESC,l.id`, [group.id, messages.map(m => m.position), group.createdBy, group.workspaceId]) : { rows: [] }
         const exchanges: { type: 'agent_exchange'; linkId: string; anchorPosition: string; count: string; participants: GroupParticipant[] }[] = []
+        const participantsByLink = await groupParticipantsMany(client, links.rows.map(link => link.linkedConversationId), group.createdBy, group.workspaceId)
         for (const link of links.rows) {
-          const participants = await groupParticipants(client, link.linkedConversationId, group.createdBy, group.workspaceId)
+          const participants = participantsByLink.get(link.linkedConversationId) ?? []
           if (participants.length === 2) exchanges.push({ type: 'agent_exchange', linkId: link.linkId, anchorPosition: link.anchorPosition, count: link.count, participants })
         }
         const timeline = messages.flatMap(m => [
           { type: 'message', ...m },
           ...exchanges.filter(link => link.anchorPosition === m.position),
         ])
+        // Exchanges anchored to messages outside this delta still ride the
+        // response — otherwise a new link on an already-loaded message is fetched
+        // but discarded. The reader dedupes by linkId and keys markers by anchor.
+        if (after != null) {
+          const anchored = new Set(messages.map(m => m.position))
+          timeline.push(...exchanges.filter(link => !anchored.has(link.anchorPosition)))
+        }
         const active = queueAgents ? await q(`SELECT "agentId","botId",status,"updatedAt" FROM group_turns WHERE "conversationId"=$1 AND status IN ('queued','running') ORDER BY "createdAt" LIMIT 1`, [req.id]) : { rows: [] }
         const failed = queueAgents ? await q(`SELECT error FROM group_turns WHERE "conversationId"=$1 ORDER BY "createdAt" DESC,"messageId" DESC LIMIT 1`, [req.id]) : { rows: [] }
         result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null,
@@ -262,7 +279,8 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
           WHERE cm."conversationId"=$1 AND cm."memberType"='user' AND cm."leftAt" IS NULL ORDER BY cm."joinedAt",cm."memberId"`, [group.id])).rows
         const visibleUsers = []
         for (const user of users) if (await directory(group.workspaceId, user.id, [])) visibleUsers.push({ ...user, memberType: 'user' })
-        result = { members: [...visibleUsers, ...participants.map(p => ({ ...p, memberType: p.memberType ?? 'agent' }))] }
+        const leadOf = { agent: group.leadAgentId, bot: group.leadBotId }
+        result = { members: [...visibleUsers, ...participants.map(p => ({ ...p, memberType: p.memberType ?? 'agent', ...(p.id === leadOf[p.memberType ?? 'agent'] ? { lead: true } : {}) }))] }
       } else if (req.resource === 'members' && ['POST', 'DELETE'].includes(req.method)) {
         if (req.method === 'POST' && group.role !== 'owner') return fail(403)
         const input = parse(member, req.body)

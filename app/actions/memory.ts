@@ -5,7 +5,7 @@ import { runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
 import { requireUser } from '@/lib/issue-access'
 import { readPreferences, savePreferences } from '@/lib/preferences'
-import { clearFacts, correctFact } from '@/lib/profile/store'
+import { clearFacts, correctFact, memoryAutoApprove } from '@/lib/profile/store'
 import { addMemoryFact, mayCorrectMemoryFact, readMemoryView, removeMemoryFact, reviewMemoryFact, setMemoryFactScope, undoMemoryFact } from '@/lib/profile/memory'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { USER_FACT_KINDS } from '@/lib/profile/kinds'
@@ -19,8 +19,9 @@ import { withTaskWorkspace } from '@/lib/task-workspace'
 /** The switch, the facts shown (at most 500) and how many active facts there are in all. */
 export async function getMemory() {
   const user = await requireUser()
-  const [preferences, context] = await Promise.all([readPreferences(user.id), loadWorkspaceContext(undefined, user)])
-  return { enabled: preferences.memoryEnabled, ...await readMemoryView(user, context.workspace.id, context.choices) }
+  const [preferences, autoApprove, context] = await Promise.all([readPreferences(user.id), memoryAutoApprove(user.id), loadWorkspaceContext(undefined, user)])
+  const optionalAutoApprove: { autoApprove?: boolean } = { autoApprove }
+  return { enabled: preferences.memoryEnabled, ...optionalAutoApprove, ...await readMemoryView(user, context.workspace.id, context.choices) }
 }
 
 export async function setMemory(enabled: boolean) {
