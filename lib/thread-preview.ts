@@ -1,6 +1,7 @@
 import 'server-only'
 import { pool } from './db'
-import { threadPanelAccess } from './thread-panel'
+import type { RequestWorkspaceUser } from './request-workspace'
+import { threadIssueAccess } from './thread-panel'
 
 /**
  * The hover card's light read (#2935): enough to name the task and say where
@@ -19,8 +20,8 @@ export interface ThreadPreview {
   updatedAt: string
 }
 
-export async function readThreadPreview(userId: string, issueId: string): Promise<ThreadPreview | null> {
-  if (!(await threadPanelAccess(userId, issueId))) return null
+export async function readThreadPreview(user: RequestWorkspaceUser, issueId: string): Promise<ThreadPreview | null> {
+  if (!(await threadIssueAccess(user, issueId))) return null
   // The caller's own latest run on the task, exactly canReadThread's rule
   // (owner only) applied to a hover read.
   const { rows: [row] } = await pool.query<{
@@ -30,7 +31,7 @@ export async function readThreadPreview(userId: string, issueId: string): Promis
       r.outcome, r."lastReply", r."lastReplyAt", greatest(i."updatedAt", r."updatedAt") AS "updatedAt"
     FROM issues i JOIN agent_runs r ON r."issueId" = i.id AND r."userId" = $2
     WHERE i.id = $1
-    ORDER BY r."createdAt" DESC LIMIT 1`, [issueId, userId])
+    ORDER BY r."createdAt" DESC LIMIT 1`, [issueId, user.id])
   if (!row) return null
   return {
     issueId, title: row.title, issueStatus: row.issueStatus, runId: row.runId,

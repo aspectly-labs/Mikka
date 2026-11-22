@@ -1333,12 +1333,13 @@ export const pendingActions = pgTable('pending_actions', {
 /** The right column's per-thread layout, kept per viewer (#2935). */
 export const threadPanelStates = pgTable('thread_panel_states', {
   userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  issueId: uuid('issueId').notNull().references(() => issues.id, { onDelete: 'cascade' }),
+  /** The thread's identity: its chain's root run, so two threads on one task keep separate layouts. */
+  runId: uuid('runId').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
   tabs: jsonb('tabs').$type<string[]>().notNull().default([]),
   active: text('active').notNull().default(''),
   open: boolean('open').notNull().default(false),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
-}, table => [primaryKey({ columns: [table.userId, table.issueId] })])
+}, table => [primaryKey({ columns: [table.userId, table.runId] })])
 
 // Factory #192 uses existing issues, Coordinator events and Harness runs.
 export const factoryTasks = pgTable('factory_tasks', {
