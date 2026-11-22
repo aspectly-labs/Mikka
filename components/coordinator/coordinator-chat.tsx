@@ -657,7 +657,10 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     quota: !refusal && !data?.error && Boolean(modelMenu.data?.current.quota),
     unanswered,
   })
-  const notices = <>
+  // The footer's notices wait for the model menu, which says whether anything can answer, so they join together
+  // instead of one by one; a chat's own failure joins with its read (a Bot switch grew the footer as each read landed).
+  const footerReady = Boolean(loadError || !modelMenu.isLoading)
+  const notices = !footerReady ? null : <>
     {notice === 'load' && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
     {notice === 'failure' && failureNotice}
     {paywall.dialog}
@@ -691,7 +694,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
           references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
-        under={!embedded && data?.context ? <div data-slot="thread-under-composer" className="flex min-w-0 items-center justify-end px-1"><CoordinatorContextUsage usage={data.context} /></div> : undefined}
+        // The row keeps its height before the read arrives (the ring's own), so the footer never grows after a switch.
+        under={!embedded ? <div data-slot="thread-under-composer" className="flex min-h-6 min-w-0 items-center justify-end px-1">{data?.context && <CoordinatorContextUsage usage={data.context} />}</div> : undefined}
         pending={[
           ...(embedded?.quote ? [{ id: 'artifact-quote', name: embedded.quote.label ?? embedded.quote.text, meta: tMessage('quote'), onRemove: embedded.clearQuote }] : []),
           ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),
