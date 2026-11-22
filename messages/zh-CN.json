@@ -2291,6 +2291,9 @@
       },
       "issue-states": {
         "title": "任务状态"
+      },
+      "team-skills": {
+        "title": "团队技能"
       }
     },
     "appearance": {
@@ -3763,6 +3766,22 @@
         "purple": "紫色",
         "red": "红色"
       }
+    },
+    "teamSkills": {
+      "title": "团队技能",
+      "empty": "还没有团队技能",
+      "loadError": "无法读取团队技能注册表。",
+      "actError": "未能更改，请重试。",
+      "approve": "批准",
+      "withdraw": "撤回",
+      "status": {
+        "pending": "待审核",
+        "approved": "已批准",
+        "withdrawn": "已撤回"
+      },
+      "withdrawTitle": "撤回 {name}？",
+      "withdrawBody": "撤回不可撤销：选择了这个版本、尚未完成的运行会停止。",
+      "cancel": "取消"
     }
   },
   "TelegramBot": {
