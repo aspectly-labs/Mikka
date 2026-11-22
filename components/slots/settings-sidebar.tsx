@@ -17,7 +17,7 @@ import type { SettingsSidebarProps } from '@/components/slots/settings-sidebar-c
 import { useGatedFeature } from '@/hooks/use-feature-availability'
 
 const icons: Record<SettingsSectionId, IconGlyph> = {
-  account: UserRound, security: Shield, preferences: SlidersHorizontal, notifications: Bell, memory: Brain, connections: Blocks, 'bot-permissions': ShieldCheck,
+  account: UserRound, security: Shield, preferences: SlidersHorizontal, threads: FileText, notifications: Bell, memory: Brain, connections: Blocks, 'bot-permissions': ShieldCheck,
   models: Gauge, logins: KeyRound, privacy: Lock, computers: Monitor, developer: SquareTerminal,
   general: Building2, 'issue-states': CircleDashed, members: Users, teams: SquareUserRound, permissions: CircleCheck, secrets: HardDrive, environments: Container,
   audit: FileText, organization: Landmark, usage: ChartColumn, billing: CreditCard, cloud: Blocks, 'team-skills': Brain,
