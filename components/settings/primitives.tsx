@@ -107,6 +107,9 @@ export function SettingSwitch({ label, checked, disabled, onCheckedChange }: {
   return <Switch aria-label={label} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
 }
 
+/** Clean 1px bordered surface select trigger matching Figma 1508:2 (frames 01/02/18/19/22/29). */
+export const settingsSelectTriggerClass = 'border-border bg-background hover:bg-control'
+
 export function SettingSelect({ label, value, onValueChange, options, disabled, fluid = false }: {
   label: string
   value: string
@@ -118,10 +121,12 @@ export function SettingSelect({ label, value, onValueChange, options, disabled, 
 }) {
   const current = options.find(option => option.value === value)
   return <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-    <SelectTrigger aria-label={label} className={cn(fluid ? 'w-auto max-w-full' : 'w-40')}><span>{current?.label ?? value}</span></SelectTrigger>
+    <SelectTrigger aria-label={label} className={cn(settingsSelectTriggerClass, fluid ? 'w-auto max-w-full' : 'w-40')}><span>{current?.label ?? value}</span></SelectTrigger>
     <SelectContent><SelectGroup>{options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectGroup></SelectContent>
   </Select>
 }
+
+export { SettingSelect as SettingsSelect }
 
 /** Spread on the Button in a section header (添加, 打开设置…): gray-filled secondary, small. */
 export const settingsSectionAction = { variant: 'secondary', size: 'sm' } as const satisfies Pick<ComponentProps<typeof Button>, 'variant' | 'size'>
