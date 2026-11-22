@@ -77,6 +77,21 @@ jobs:
           console.log('Infisical OIDC and issuer credential validation succeeded')
           JS
 
+  acceptance-evidence:
+    name: PR acceptance evidence
+    needs: changes
+    # #2888: deterministic PR-body gate — the template's "How it was checked"
+    # section must carry real evidence before a non-draft PR can merge.
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true && needs.changes.result == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: node scripts/ci/pr-acceptance-evidence.mjs
+
   ui-policy-full:
     name: Core unit checks
     needs: changes
@@ -308,7 +323,7 @@ jobs:
     # The required check name. It reports success when only documentation
     # changed; otherwise it mirrors the full suite's result.
     name: UI policy (strict)
-    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, candidate-checks]
+    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, candidate-checks, acceptance-evidence]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -331,6 +346,8 @@ jobs:
           EXPECT_ANALYTICS: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.analytics == 'true' }}
           EXPECT_GOVERNANCE: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main')) && needs.changes.outputs.db == 'true' }}
           EXPECT_CANDIDATE: ${{ github.event_name == 'merge_group' }}
+          EXPECT_EVIDENCE: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft != true }}
+          EVIDENCE: ${{ needs.acceptance-evidence.result }}
           CANDIDATE: ${{ needs.candidate-checks.result }}
           GOVERNANCE: ${{ needs.workspace-governance-checks.result }}
           ANALYTICS: ${{ needs.analytics-checks.result }}
@@ -340,7 +357,7 @@ jobs:
           DAEMON: ${{ needs.daemon-checks.result }}
         run: |
           test "$CHANGES_RESULT" = success
-          for name in CORE INTEGRATION SOURCE DAEMON ANALYTICS GOVERNANCE CANDIDATE; do
+          for name in CORE INTEGRATION SOURCE DAEMON ANALYTICS GOVERNANCE CANDIDATE EVIDENCE; do
             expected="EXPECT_$name"
             case "${!expected}" in
               true) test "${!name}" = success ;;
