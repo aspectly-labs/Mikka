@@ -70,9 +70,8 @@ import { openArtifact as openArtifactWindow } from '@/components/workspace/works
 import { ArtifactChip } from '@/components/artifacts/artifact-card'
 import { ArtifactReviewCard } from '@/components/workspace/artifact-review'
 import { ArtifactQuoteChip, ArtifactQuoteLine, QuoteChip, QuoteLine } from '@/components/artifacts/artifact-quote'
-import { MessageActions } from '@/components/ai-elements/message'
-import { CopyAction, REPLY_ACTIONS } from '@/components/chat/copy-action'
 import { SelectionQuote } from '@/components/chat/selection-quote'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { replyCopyText } from '@/lib/chat-copy'
 import type { ArtifactChatSlot } from '@/components/artifacts/artifact-viewer'
@@ -607,7 +606,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
         ]
         entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-          actions: item.text ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}><CopyAction text={text} />{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</MessageActions> : undefined })
+          actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
         if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
         continue
       }
@@ -624,11 +623,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
         parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
       entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-        actions: item.text && !streaming ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}>
-          <CopyAction text={replyCopyText(item.text)} />
+        // The reply's author line already shows its time; the line under it does not repeat it.
+        actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
           <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
           {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
-        </MessageActions> : undefined })
+        </ReplyActions> : undefined })
     }
     for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
       status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
@@ -726,10 +725,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
                       return run?.kind === 'run' ? <ThreadCard key={id} run={run} onOpen={showThread} onOpenTask={openTask} /> : null
                     })}</>,
       // Copy and the pages it cites, on one line under the reply, always there and quiet (R-83 revised 2026-11-10).
-      actions: item.text && !(live && live.committedThrough === undefined) && <MessageActions className={cn('-mt-1 items-start', REPLY_ACTIONS)}>
-                      <CopyAction text={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text} />
+      actions: item.text && !(live && live.committedThrough === undefined) && <ReplyActions at={item.createdAt ? Date.parse(item.createdAt) : undefined}
+                      copyText={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text}
+                      onQuote={item.from === 'coordinator' ? quoteReply : undefined}>
                       {item.from === 'coordinator' && <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>}
-                    </MessageActions>,
+                    </ReplyActions>,
       copyText: item.text ? item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text : undefined,
       sources: item.from === 'coordinator' && item.text ? <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext> : undefined,
       after: <>{item.id && <MessageReactions reactions={reactions[item.id]} align={item.from === 'person' ? 'end' : 'start'} />}

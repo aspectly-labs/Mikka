@@ -29,6 +29,7 @@ import { UserMessageText } from '@/components/workspace/user-message-text'
 import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { cn } from '@/lib/utils'
 import { mentionsIn } from '@/lib/group-mentions'
 import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
@@ -227,13 +228,19 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     return [{
       kind: 'author', id: run.key, mine, name,
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
-      messages: run.messages.map((message): ThreadTranscriptMessage => mine
+      messages: run.messages.map((message): ThreadTranscriptMessage => {
+        // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.
+        const line = { actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body }
+        return mine
         ? { id: message.id, message: { from: 'person', speaker,
           body: <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>,
+          ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="end" /> } }
         : { id: message.id, message: { from: 'bot', speaker, presentation: 'group-received',
           body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} />,
-          after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }),
+          ...line,
+          after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }
+      }),
     }, ...run.messages.flatMap(message => exchanges.get(message.position) ?? []).map((exchange): ThreadGroupRow => ({
       kind: 'notice', id: `exchange:${exchange.linkId}`,
       label: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }),
