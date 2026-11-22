@@ -10,8 +10,9 @@ import { CodeBlock, CodeBlockCopyButton, CodeBlockHeader, CodeBlockTitle } from 
 import { IconTile } from '@/components/reui/icon-tile'
 import { daemonCommands } from '@/lib/daemon-commands'
 import { FieldError } from '@/components/ui/field'
+import { usePlatform } from '@/lib/platform/use-platform'
 import { publicServiceAddress } from '@/lib/platform/public-origin'
-import { daemonPackageName } from '@/lib/platform/client-config'
+import { daemonPackageName, desktopReleasesUrl } from '@/lib/platform/client-config'
 
 export function ConnectDeviceDialog({ open: controlledOpen, onOpenChange, hideTrigger = false, reconnect = false }: {
   open?: boolean
@@ -23,6 +24,7 @@ export function ConnectDeviceDialog({ open: controlledOpen, onOpenChange, hideTr
   const t = useTranslations('Devices.connect')
   const commonT = useTranslations('Common')
   const { mutate } = useSWRConfig()
+  const platform = usePlatform()
   const [localOpen, setLocalOpen] = useState(false)
   const open = controlledOpen ?? localOpen
 
@@ -44,7 +46,7 @@ export function ConnectDeviceDialog({ open: controlledOpen, onOpenChange, hideTr
           {reconnect ? t('reconnectTitle') : t('title')}
         </DialogTitle>
       </DialogHeader>
-      <DaemonCommandList open={open} reconnect={reconnect} />
+      <DaemonCommandList open={open} reconnect={reconnect} desktopOffer={!reconnect && platform.runtime === 'web'} />
       <DialogFooter>
         <Button size="sm" onClick={() => changeOpen(false)}>{t('done')}</Button>
       </DialogFooter>
@@ -57,7 +59,11 @@ export function ConnectDeviceDialog({ open: controlledOpen, onOpenChange, hideTr
  * a computer by hand: the web's 添加设备, and the desktop's 手动连接 fallback.
  * A device paired before needs only the start command (review C11).
  */
-export function DaemonCommandList({ open = true, reconnect = false }: { open?: boolean; reconnect?: boolean }) {
+export function DaemonCommandList({ open = true, reconnect = false, desktopOffer = false }: {
+  open?: boolean; reconnect?: boolean
+  /** The browser's add flow offers the app download; the desktop's manual fallback does not. */
+  desktopOffer?: boolean
+}) {
   const t = useTranslations('Devices.connect')
   const [commands, setCommands] = useState<ReturnType<typeof daemonCommands> | null>(null)
   useEffect(() => {
@@ -74,6 +80,7 @@ export function DaemonCommandList({ open = true, reconnect = false }: { open?: b
       </CodeBlockHeader>
     </CodeBlock>)}
     <p className="text-xs text-muted-foreground">{t('requirements')}</p>
+    {desktopOffer && <a className="text-xs font-medium text-muted-foreground underline underline-offset-4" href={desktopReleasesUrl()} target="_blank" rel="noreferrer">{t('desktopLink')}</a>}
   </div> : <FieldError>{t('configurationFailed')}</FieldError>
 }
 
