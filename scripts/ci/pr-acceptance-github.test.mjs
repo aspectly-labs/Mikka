@@ -4,7 +4,7 @@ import test from 'node:test'
 import { checkPullRequest } from './pr-acceptance-github.mjs'
 
 const head = '679022e02d24c445bcf23235e1e68ff757830d84'
-async function github(t, { files = [{ filename: 'docs/guide.md' }], body = '', draft = false, changeOnRead, readStatus = 200 } = {}) {
+async function github(t, { files = [{ filename: 'docs/guide.md' }], body = '', draft = false, changeOnRead, readStatus = 200, rateLimitReads = 0 } = {}) {
   const pr = { state: 'open', head: { sha: head }, base: { sha: 'b'.repeat(40) }, body, draft, changed_files: files.length, labels: [] }
   const writes = [], pages = []
   let reads = 0, labelExists = false
@@ -17,6 +17,7 @@ async function github(t, { files = [{ filename: 'docs/guide.md' }], body = '', d
     if (req.method !== 'GET') writes.push({ path: req.url, method: req.method, data })
     if (req.url === '/repos/example/project/pulls/7') {
       reads++
+      if (reads <= rateLimitReads) { res.setHeader('retry-after', '0'); reply(403, { message: 'rate limited' }); return }
       if (changeOnRead) changeOnRead(pr, reads)
       reply(readStatus, pr)
     } else if (req.url.startsWith('/repos/example/project/pulls/7/files?')) {
@@ -118,4 +119,14 @@ test('a delayed webhook checks and publishes the current head instead of reusing
   assert.deepEqual(fixture.writes.map(item => [item.path.split('/').at(-1), item.data.state]), [
     [head, 'pending'], [fixture.pr.head.sha, 'pending'], [fixture.pr.head.sha, 'success'],
   ])
+})
+
+test('a rate-limited read retries instead of failing with prAcceptanceGitHubHttp403', async t => {
+  const fixture = await github(t, { rateLimitReads: 3, body: '## Acceptance\nNot needed: documentation only.' })
+  assert.equal((await checkPullRequest(fixture.args)).status, 'pass')
+})
+
+test('a persistent rate limit still fails closed after the retry budget', async t => {
+  const fixture = await github(t, { rateLimitReads: 9, body: '## Acceptance\nNot needed: documentation only.' })
+  await assert.rejects(checkPullRequest(fixture.args), { code: 'prAcceptanceGitHubHttp403' })
 })

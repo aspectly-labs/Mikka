@@ -23,15 +23,28 @@ export async function checkPullRequest({ repository, number, token, publish = fa
   const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28',
     'user-agent': 'mikka-pr-acceptance', ...(token ? { authorization: `Bearer ${token}` } : {}) }
   async function request(path, { method = 'GET', body, missing = false } = {}) {
-    let response
-    try {
-      response = await fetch(new URL(path, api), { method, headers,
-        ...(body ? { headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
-        redirect: 'error', signal: AbortSignal.timeout(20_000) })
-    } catch (cause) { fail('prAcceptanceGitHubTransport', cause) }
-    if (missing && response.status === 404) return null
-    if (!response.ok) fail(`prAcceptanceGitHubHttp${response.status}`)
-    return response.status === 204 ? null : response.json()
+    for (let attempt = 0; ; attempt++) {
+      let response
+      try {
+        response = await fetch(new URL(path, api), { method, headers,
+          ...(body ? { headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
+          redirect: 'error', signal: AbortSignal.timeout(20_000) })
+      } catch (cause) { fail('prAcceptanceGitHubTransport', cause) }
+      if (missing && response.status === 404) return null
+      if (response.ok) return response.status === 204 ? null : response.json()
+      const retryAfter = response.headers.get('retry-after')
+      const limited = response.status === 429 ||
+        (response.status === 403 && (retryAfter !== null || response.headers.get('x-ratelimit-remaining') === '0'))
+      if (limited && attempt < 4) {
+        const resetMs = Number(response.headers.get('x-ratelimit-reset')) * 1000 - Date.now()
+        const waitMs = Math.min(retryAfter !== null ? Math.max(Number(retryAfter) * 1000, 0)
+          : Number.isFinite(resetMs) && resetMs > 0 ? resetMs : 2000 * 2 ** attempt, 60_000)
+        await response.arrayBuffer().catch(() => {})
+        await new Promise(resolve => setTimeout(resolve, waitMs))
+        continue
+      }
+      fail(`prAcceptanceGitHubHttp${response.status}`)
+    }
   }
   const detailsUrl = targetUrl ?? `https://github.com/${repository}/pull/${number}`
   const status = (head, state, description) => request(`${root}/statuses/${head}`, { method: 'POST', body: {
