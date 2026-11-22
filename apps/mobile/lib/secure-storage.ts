@@ -9,12 +9,17 @@ import { Platform } from 'react-native'
 
 type JsonMap = Record<string, string>
 
-const file = new File(Paths.document, 'mikka-dev-storage.json')
+// Lazy: Paths.document is undefined on web and the Directory constructor
+// throws before secureStorage's platform guard can run.
+function file() {
+  return new File(Paths.document, 'mikka-dev-storage.json')
+}
 
 function read(): JsonMap {
   try {
-    if (!file.exists) return {}
-    const parsed: unknown = JSON.parse(file.textSync())
+    const target = file()
+    if (!target.exists) return {}
+    const parsed: unknown = JSON.parse(target.textSync())
     return parsed && typeof parsed === 'object' ? parsed as JsonMap : {}
   } catch {
     return {}
@@ -23,8 +28,9 @@ function read(): JsonMap {
 
 function write(map: JsonMap) {
   try {
-    if (!file.exists) file.create({ intermediates: true })
-    file.write(JSON.stringify(map))
+    const target = file()
+    if (!target.exists) target.create({ intermediates: true })
+    target.write(JSON.stringify(map))
   } catch { /* ignore */ }
 }
 
