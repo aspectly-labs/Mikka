@@ -84,6 +84,10 @@ export const pollingAllowlist = {
     "explicit visual probe paces pointer and capture actions; no product state polling",
     3,
   ),
+  "scripts/eve-parent-watch-source.mjs": local(
+    "watches the eve preload's own parent pid for reparenting; the kernel exposes no reparent event to subscribe to",
+    1,
+  ),
   // scripts/: explicit acceptance harnesses keep bounded, task-scoped state checks visible
   // to the scanner without treating them as idle production readers.
   "scripts/acceptance/cloud-lease-probe.py": harness(
@@ -357,7 +361,6 @@ export const pollingAllowlist = {
   // UI timers: read no data.
   "components/motion/loader.tsx": ui("loader animation frames", 3),
   "components/ui/thinking-loader-clean.tsx": ui("thinking loader animation", 1),
-  "components/workspace/agent-demo.tsx": ui("types out the demo code", 1),
   "components/onboarding/onboarding.tsx": ui(
     "onboarding waits up to 5 s for data another hook is already loading; no read of its own",
     2,
@@ -382,7 +385,6 @@ export const pollingAllowlist = {
     "the 1 s elapsed clock of a reply in progress; the chat and its proposals are pushed (lib/live.ts)",
     1,
   ),
-  'components/version-guard.tsx': ui('checks the public build metadata once a minute (decision 2026-11-03-1437); no database read', 1),
 }
 
 const delayCall =
