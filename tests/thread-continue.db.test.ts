@@ -1211,6 +1211,8 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     assert.match(run.prompt, /Agent: The skeleton is three bars\./)
     assert.doesNotMatch(run.prompt, /Rewrote it as the page shape/)
     assert.match(run.prompt, /Try a CSS-only skeleton\./)
+    const { rows: shown } = await pool.query('SELECT text,origin,"deliveredAt" FROM run_messages WHERE "runId"=$1', [fork.runId])
+    assert.deepEqual(shown.map(row => [row.text, row.origin, row.deliveredAt !== null]), [['Try a CSS-only skeleton.', 'owner', true]], 'the instruction shows in the fork, already delivered')
     const { rows: [replaced] } = await pool.query('SELECT "threadReplacedBy" FROM agent_runs WHERE id=$1', [source.runId])
     assert.equal(replaced.threadReplacedBy, fork.runId)
     assert.equal((await readRunChain(pool, owner.id, fork.runId))?.rootRunId, fork.runId)

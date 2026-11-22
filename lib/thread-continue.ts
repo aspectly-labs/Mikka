@@ -338,6 +338,9 @@ export async function forkThread(userId: string, workspaceId: string, input: { r
   if (result.thread !== 'new') throw new ActionFailureError('threadReplaced')
   await pool.query('UPDATE agent_runs SET "forkedFromRunId"=$3,"forkPoint"=$4::jsonb WHERE id=$1 AND "userId"=$2',
     [result.runId, userId, parsed.data.runId, JSON.stringify({ runId: parsed.data.runId, itemId: parsed.data.itemId ?? null, mode: parsed.data.mode })])
+  // The instruction is already in the run's brief; this row shows it in the new thread as the person's message, as a
+  // continuation shows its words, and is never delivered again.
+  await db.insert(runMessages).values({ id: crypto.randomUUID(), runId: result.runId, userId, text: parsed.data.text, origin: 'owner', mailboxWakeDepth: -1, deliveredAt: new Date() })
   await runChanged(db, result.runId)
   await (await import('@/lib/live/lists')).runListChanged(db, result.runId)
   return { runId: result.runId, threadId: result.threadId, replacedThreadId: result.replacedThreadId ?? null }
