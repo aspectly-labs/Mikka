@@ -5,7 +5,8 @@
  *
  * - Bot chat: `eve:<session>:<turn>`, the same id the saved reply carries as `mikkaStreamId` (lib/eve/projection.ts).
  * - Group chat: a reply is `group:<message>:<reply>`, from the published reply's `replyToId` and its own id (chosen
- *   before its generation); routing and corrections the whole turn shares are `group:<message>`. A generation that
+ *   before its generation); routing and corrections the whole turn shares are `group:<message>`. A private exchange
+ *   reply keeps the same form: its id in the linked transcript, under the group message the exchange is anchored to. A generation that
  *   published nothing (silent, stopped) stays on its own reference and is not shown under any reply.
  * - Agent thread: `run:<run>:<turn>` (written by the gateway once the daemon names its turn; #2934 follow-up).
  *

@@ -316,7 +316,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
             if (!sender || !recipient || senderId === recipientId) { await client.query('ROLLBACK'); return false }
             const pair = [`${sender.memberType ?? 'agent'}:${senderId}`, `${recipient.memberType ?? 'agent'}:${recipientId}`].sort().join(':')
             const link = await appendGroupExchange(client, { sourceId: conversationId, anchorId: messageId!, ownerId: root.createdBy, workspaceId: root.workspaceId,
-              senderId, recipientId, senderType: sender.memberType ?? 'agent', recipientType: recipient.memberType ?? 'agent', text: reply.text, title: `${sender.name} ⇄ ${recipient.name}`, linkId: exchangeLinks.get(pair) })
+              senderId, recipientId, senderType: sender.memberType ?? 'agent', recipientType: recipient.memberType ?? 'agent', text: reply.text, messageId: reply.messageId, title: `${sender.name} ⇄ ${recipient.name}`, linkId: exchangeLinks.get(pair) })
             await recordGroupTraceEvent(client, messageId!, { id: randomUUID(), type: 'private_publish', memberId: senderId })
             await groupChatChanged(client, conversationId)
             await client.query('COMMIT')
