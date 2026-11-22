@@ -24,7 +24,7 @@ mock.module(new URL('../eve/server-client.ts', import.meta.url).href, { namedExp
 // The live repository credential is a network read the hosted receiver repeats
 // per delivery; the fixture answers it and can be flipped to a stale grant.
 const credentials: string[] = []
-let credentialReply = { repository: { id: '22', installationId: '11', full_name: 'o/r' }, token: 'fixture-token' }
+let credentialReply = { repository: { id: '22', installationId: '11', fullName: 'o/r', htmlUrl: 'https://github.com/o/r', private: false }, token: 'fixture-token', kind: 'user' as const, githubAccountId: null }
 const readCredential = async (_userId: string, remoteKey: string) => {
   credentials.push(remoteKey)
   return credentialReply
@@ -97,12 +97,12 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     assert.equal(sends.length, sendsBefore + 3)
 
     // A live credential that no longer names this installation drops the receipt.
-    credentialReply = { repository: { id: '22', installationId: '12', full_name: 'o/r' }, token: 'fixture-token' }
+    credentialReply = { repository: { id: '22', installationId: '12', fullName: 'o/r', htmlUrl: 'https://github.com/o/r', private: false }, token: 'fixture-token', kind: 'user' as const, githubAccountId: null }
     await acceptWorkflowResult({ ...result, attempt: 3, deliveryId: 'delivery-5' }, { readCredential })
     assert.equal(sends.length, sendsBefore + 3, 'a stale installation grant suppresses the queued result')
     assert.equal((await eventCount()).n, 2)
   } finally {
-    credentialReply = { repository: { id: '22', installationId: '11', full_name: 'o/r' }, token: 'fixture-token' }
+    credentialReply = { repository: { id: '22', installationId: '11', fullName: 'o/r', htmlUrl: 'https://github.com/o/r', private: false }, token: 'fixture-token', kind: 'user' as const, githubAccountId: null }
     await pool.query(`DELETE FROM coordinator_events WHERE "runId"=$1`, [runId])
     await pool.query(`DELETE FROM run_publications WHERE "runId"=$1`, [runId])
     await pool.query(`DELETE FROM github_repository_installations WHERE "userId"=$1`, [owner])
