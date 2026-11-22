@@ -37,7 +37,7 @@ const clientEnvironmentConfiguration = z.object({
   setup: z.object({
     command: z.string().max(16_384).optional(),
     copyFiles: z.array(z.string().max(512)).max(100),
-    approved: z.boolean().optional(),
+    approved: z.boolean(),
   }).optional(),
   variables: z.record(envVarKeySchema, z.string().max(32_768)),
   secretIds: z.array(z.uuid()).max(100),

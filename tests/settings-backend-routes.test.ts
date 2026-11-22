@@ -74,7 +74,7 @@ before(async () => {
   for (const [module, names] of Object.entries({
     '@/app/actions/preferences': ['getPreferences'],
     '@/app/actions/issue-prefix': ['getIssuePrefixState'],
-    '@/app/actions/settings-activity': ['listSavedLogins'],
+    '@/app/actions/settings-activity': ['listActivity', 'listSavedLogins'],
     '@/app/actions/workspace-settings': ['getWorkspaceDeletionImpact', 'getWorkspaceGeneral', 'getWorkspaceTransferTargets'],
     '@/app/actions/app-policy': ['getAppPolicy'],
     '@/app/actions/personal-policy': ['getSharePolicy'],
