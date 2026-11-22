@@ -21,12 +21,14 @@ test('draining a group looks up its workspace once and bills each message to its
   }, true)
   assert.equal(group.status, 201)
   const { id } = group.body as { id: string }
+  const sent: string[] = []
   for (const sender of [owner, peer]) {
     const message = await handleGroup(pool, async () => true, {
       ...request, userId: sender, resource: 'messages', id,
       body: JSON.stringify({ body: 'Please reply', mentions: [{ memberType: 'agent', memberId: agent }] }),
     }, true)
     assert.equal(message.status, 201)
+    sent.push((message.body as { id: string }).id)
   }
 
   const { groupRuntime } = await import('./group-runtime')
@@ -48,7 +50,12 @@ test('draining a group looks up its workspace once and bills each message to its
   })
   const foreignScope = { workspaceId: randomUUID(), ownerId: 'unrelated', creditShareOwnerId: 'unrelated' }
   await hostedBillingScope.run(foreignScope, () => drainGroupTurns(id, Date.now() + 60_000))
-  assert.deepEqual(payers, [{ workspaceId: workspace.id, ownerId: owner }, { workspaceId: workspace.id, ownerId: peer }])
+  // Each generation names the reply it writes; the UI derives the same reference from the published reply alone.
+  const { groupTurnRef } = await import('../usage-turn-ref')
+  const replies = (await pool.query(`SELECT id,"replyToId" FROM conversation_messages
+    WHERE "conversationId"=$1 AND "replyToId" IS NOT NULL ORDER BY position`, [id])).rows
+  assert.deepEqual(replies.map(row => row.replyToId), sent)
+  assert.deepEqual(payers, [{ workspaceId: workspace.id, ownerId: owner, turnRef: groupTurnRef(sent[0], replies[0].id) }, { workspaceId: workspace.id, ownerId: peer, turnRef: groupTurnRef(sent[1], replies[1].id) }])
   assert.equal(workspaceReads, 1)
   await drainGroupTurns(id, Date.now())
   assert.equal(workspaceReads, 1, 'an expired drain does not start a turn')

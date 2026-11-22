@@ -167,6 +167,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/app-policy/store.ts', file: 'tests/app-policy.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/model-api-keys.ts', file: 'tests/model-api-keys.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/usage/read.ts', file: 'tests/usage.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/turn-usage.ts', file: 'tests/turn-usage.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/run-bot-name.ts', file: 'tests/run-agent-names.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/run-outcome-judge.ts', file: 'tests/run-outcomes.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/billing/service.ts', file: 'tests/billing.db.test.ts', script: 'test:workspace-admin-db' },
