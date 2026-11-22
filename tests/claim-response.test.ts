@@ -1096,3 +1096,31 @@ test('removing a frozen identity cannot release a grant prepared under its works
   assert.deepEqual(probe.membershipReads, [])
   assert.deepEqual(probe.locks, ['workspaces', 'workspace_members', 'issues', 'agent_runs'])
 })
+
+test('claim delivers resolved gitIdentity from cliPolicy and omits it when unset', async () => {
+  const { runAssignmentSchema } = await import('@mikka/protocol/device')
+  const defaultProbe = fixture()
+  defaultProbe.publication.pushBranch = 'mikka/claim-1'
+  const defaultRes = await claim(defaultProbe)
+  assert.equal(defaultRes.status, 200)
+  const defaultBody = await defaultRes.json()
+  assert.equal(defaultBody.gitIdentity, undefined)
+  assert.equal(runAssignmentSchema.parse(defaultBody).gitIdentity, undefined)
+
+  const configuredProbe = fixture()
+  configuredProbe.publication.pushBranch = 'mikka/claim-1'
+  Object.assign(configuredProbe.cliPolicy, {
+    gitIdentity: { name: 'Alice Claim', email: 'alice@claim.example' },
+  })
+  const configuredRes = await claim(configuredProbe)
+  assert.equal(configuredRes.status, 200)
+  const configuredBody = await configuredRes.json()
+  assert.deepEqual(configuredBody.gitIdentity, {
+    name: 'Alice Claim',
+    email: 'alice@claim.example',
+  })
+  assert.deepEqual(runAssignmentSchema.parse(configuredBody).gitIdentity, {
+    name: 'Alice Claim',
+    email: 'alice@claim.example',
+  })
+})
