@@ -6,42 +6,55 @@ import type { SuggestionCard } from '@/lib/suggestions/card'
 
 mock.module('@/lib/intl/i18n-client', { namedExports: {
   useLocale: () => 'en',
-  useTranslations: () => (key: string, values?: { title?: string }) => values?.title ?? key,
+  useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
   useMessages: () => ({}),
   useFormatter: () => ({}),
 } })
 
-let SentSuggestion: typeof import('./mobile-card')['SentSuggestion']
-before(async () => { ({ SentSuggestion } = await import('./mobile-card')) })
+let SuggestionRow: typeof import('./mobile-card')['SuggestionRow']
+before(async () => { ({ SuggestionRow } = await import('./mobile-card')) })
 
-const speaker = { name: 'Fixture Bot' }
 const card: SuggestionCard = { source: 'github', action: 'review', title: 'Original pull request', actionTitle: 'Review this pull request', url: 'https://example.test/pull/1' }
 
-test('a sent suggestion keeps its source words and link below the card without a second message frame', () => {
+function render(row: SuggestionCard, status: string) {
   const browser = new Window()
+  const container = browser.document.createElement('div')
+  container.innerHTML = renderToStaticMarkup(<SuggestionRow card={row} status={status} />)
+  return { container, close: () => browser.close() }
+}
+
+test('a handed-over suggestion is one line: 建议, its sentence linking to the item, then its state, with no card or bubble', () => {
+  const { container, close } = render(card, 'Handed to Coordinator')
   try {
-    const container = browser.document.createElement('div')
-    container.innerHTML = renderToStaticMarkup(<SentSuggestion card={card} compact={false} speaker={speaker} />)
-    assert.equal(container.children.length, 2)
-    assert.equal(container.children[0].getAttribute('data-slot'), 'suggestion-card')
-    assert.equal(container.children[1].getAttribute('data-slot'), 'bubble')
-    const words = container.querySelector('[data-slot="bubble-content"]')!
-    assert.ok(words.textContent.includes('Original pull request'))
+    assert.equal(container.children.length, 1)
+    const row = container.firstElementChild!
+    assert.equal(row.tagName, 'P')
+    assert.equal(row.getAttribute('data-slot'), 'suggestion-row')
+    // The thread screen hides an event line's author line: the row is the chat's record, not a message.
+    assert.equal(row.getAttribute('data-event-line'), 'suggestion')
+    assert.equal(row.firstElementChild!.textContent, 'Nav.suggestions')
+    const words = row.querySelector('[data-slot="suggestion-words"]')!
+    assert.ok(words.className.includes('truncate'), 'the sentence stays on one line')
+    assert.equal(words.getAttribute('title'), 'Original pull request', 'the source\'s own words stay reachable')
     const link = words.querySelector('a')!
     assert.equal(link.getAttribute('href'), card.url)
     assert.equal(link.getAttribute('target'), '_blank')
     assert.equal(link.getAttribute('rel'), 'noopener noreferrer')
-    assert.equal(container.querySelector('[data-slot="message"]'), null)
-  } finally { browser.close() }
+    assert.ok(link.textContent.includes('Review this pull request'))
+    assert.ok(link.textContent.includes('GitHub'), 'the app is named for screen readers beside its mark')
+    assert.equal(row.querySelector('[role="status"]')!.textContent, 'Handed to Coordinator')
+    for (const slot of ['suggestion-card', 'bubble', 'message']) assert.equal(container.querySelector(`[data-slot="${slot}"]`), null, slot)
+  } finally { close() }
 })
 
-test('a sent suggestion with no extra words keeps only its card', () => {
-  const browser = new Window()
+test('a suggestion without a link or action line keeps its title as the sentence and shows its sending state', () => {
+  const { container, close } = render({ ...card, actionTitle: null, url: null }, 'Sending…')
   try {
-    const container = browser.document.createElement('div')
-    container.innerHTML = renderToStaticMarkup(<SentSuggestion card={{ ...card, actionTitle: null, url: null }} compact speaker={speaker} />)
-    assert.equal(container.children.length, 1)
-    assert.equal(container.firstElementChild?.getAttribute('data-slot'), 'suggestion-card')
-    assert.equal(container.querySelector('[data-slot="bubble"]'), null)
-  } finally { browser.close() }
+    const words = container.querySelector('[data-slot="suggestion-words"]')!
+    assert.equal(words.querySelector('a'), null)
+    assert.equal(words.getAttribute('title'), null)
+    assert.ok(words.textContent.includes('Original pull request'))
+    assert.ok(words.textContent.includes('SuggestionsPage.action.review'), 'the item\'s kind leads as its verb')
+    assert.equal(container.querySelector('[role="status"]')!.textContent, 'Sending…')
+  } finally { close() }
 })

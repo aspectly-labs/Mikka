@@ -4120,6 +4120,7 @@
     "waitingQuestions": "{count, plural, other {# 个任务在等你回答}}",
     "stop": "停止",
     "stopped": "已停止",
+    "suggestionHandedTo": "已交给 {name}",
     "label": "Coordinator",
     "conversation": "Coordinator 线程",
     "conversationWith": "{name} 线程",

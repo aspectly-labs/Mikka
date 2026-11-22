@@ -4120,6 +4120,7 @@
     "waitingQuestions": "{count, plural, one {# task is waiting for your answer} other {# tasks are waiting for your answer}}",
     "stop": "Stop",
     "stopped": "Stopped",
+    "suggestionHandedTo": "Handed to {name}",
     "label": "Coordinator",
     "conversation": "Conversation with the Coordinator",
     "conversationWith": "Conversation with {name}",

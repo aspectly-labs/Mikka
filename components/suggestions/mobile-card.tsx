@@ -2,11 +2,8 @@
 
 import { useTranslations } from '@/lib/intl/i18n-client'
 import type { SuggestionSource } from '@/lib/db/schema'
-import { ChatMessage } from '@ui-slot/chat-message'
-import type { ChatSpeaker } from '@/components/slots/chat-message-contract'
 import { GitHubIcon, GmailIcon, LinearIcon, NotionIcon, SlackIcon } from '@/components/icons/brand-icons'
 import { cardExtras, cardParts, SOURCE_NAMES, type SuggestionCard } from '@/lib/suggestions/card'
-import { cn } from '@/lib/utils'
 
 /** The app's own mark, 12px (R-21: the app's icon inline). */
 export function SourceMark({ source }: { source: SuggestionSource }) {
@@ -22,8 +19,8 @@ function SourceMention({ source }: { source: SuggestionSource }) {
 
 /**
  * A 建议 item as a mobile-style card (Figma F8 `420:5831`, R-21): a verb chip,
- * then one sentence with the app named inline. The same card heads the
- * person's message in the Coordinator chat once tapped.
+ * then one sentence with the app named inline. Once tapped, the chat records it as
+ * one line (SuggestionRow).
  */
 export function SuggestionCardBody({ card }: { card: SuggestionCard }) {
   const t = useTranslations('SuggestionsPage')
@@ -38,18 +35,25 @@ export function SuggestionCardBody({ card }: { card: SuggestionCard }) {
 export const CARD_FRAME = 'rounded-[16px] border border-border bg-background px-5 py-4'
 
 /**
- * A card the person tapped, as their message in the Coordinator chat: the
- * same card, then a bubble only for what the card does not already show (the
- * source's own words, the link). With nothing to add, the card stands alone.
+ * A 建议 the person handed over, as its one-line record in the chat (Capy records a request as a row with a status
+ * word, never a card): 建议, the card's sentence with the app named inline, then its state. The sentence opens the
+ * item in its app when it has a link; the source's own words, when the line shows an action instead, are its title.
  */
-export function SentSuggestion({ card, compact, speaker }: { card: SuggestionCard; compact: boolean; speaker: ChatSpeaker }) {
+export function SuggestionRow({ card, status }: { card: SuggestionCard; status: string }) {
   const t = useTranslations('SuggestionsPage')
+  const tNav = useTranslations('Nav')
+  const { verb, parts } = cardParts(card, t(`action.${card.action}`))
   const { original, url } = cardExtras(card)
-  const width = compact ? 'max-w-[90%]' : 'max-w-[min(26rem,80%)]'
-  return <ChatMessage from="person" speaker={speaker} compact={compact} presentation="suggestion"
-    lead={<div data-slot="suggestion-card" className={cn(CARD_FRAME, 'self-end', width)}><SuggestionCardBody card={card} /></div>}
-    body={(original || url) && <>
-      {original && <span>{t('original', { title: original })}</span>}
-      {url && <a href={url} target="_blank" rel="noopener noreferrer" className="break-all underline underline-offset-2">{url}</a>}
-    </>} />
+  const words = <>{verb && <span className="font-medium text-foreground">{verb} </span>}{parts.map((part, index) => part.kind === 'source'
+    ? <span key={index} className="mx-0.5 inline-flex items-center align-[-2px]"><SourceMark source={part.source} /><span className="sr-only">{SOURCE_NAMES[part.source]}</span></span>
+    : <span key={index}>{part.text}</span>)}</>
+  return <p data-event-line="suggestion" data-slot="suggestion-row" className="mx-auto flex min-w-0 max-w-full items-center justify-center gap-1.5 text-xs text-muted-foreground">
+    <span className="shrink-0">{tNav('suggestions')}</span>
+    <span aria-hidden="true">·</span>
+    <span data-slot="suggestion-words" className="min-w-0 truncate" title={original ?? undefined}>
+      {url ? <a href={url} target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline">{words}</a> : words}
+    </span>
+    <span aria-hidden="true">·</span>
+    <span role="status" className="shrink-0">{status}</span>
+  </p>
 }

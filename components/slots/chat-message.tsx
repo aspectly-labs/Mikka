@@ -18,12 +18,6 @@ export function ChatMessage({ from, compact = false, presentation = 'default', d
     </Bubble>
     {after}
   </>
-  if (presentation === 'suggestion') return <>
-    {lead}
-    {body && <Bubble variant="secondary" align="end" className={cn(PERSON_BUBBLE, compact ? 'max-w-[90%]' : 'max-w-[min(26rem,80%)]')}>
-      <BubbleContent size="roomy" className="flex flex-col gap-1.5 break-words">{body}</BubbleContent>
-    </Bubble>}
-  </>
   if (delivery) return <Message align="end"><MessageContent>
     <span className="flex w-full min-w-0 items-center justify-end gap-2">
       {delivery.phase === 'failed' && <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive-foreground" />}

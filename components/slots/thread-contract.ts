@@ -37,8 +37,8 @@ export type ThreadEntryPart =
   | { kind: 'tools'; id: string; tools: ThreadToolRow[] }
   /** A thread it dispatched, as its task: the layer names its state; Open shows the task (or the thread without one). */
   | { kind: 'task'; run: RunSource; onOpen: () => void }
-  /** Artifacts it handed over: a chip opens the artifact. */
-  | { kind: 'artifacts'; items: { id: string; name: string }[]; onOpen: (id: string) => void }
+  /** Artifacts it handed over: a chip opens the artifact; `activeId` is the one the reader beside the chat shows. */
+  | { kind: 'artifacts'; items: { id: string; name: string }[]; onOpen: (id: string) => void; activeId?: string }
   /** Something failed: the words, with what can be done about it (retry, change model, sign in again).
    * Current failures keep their semantic marker on the existing error line; historical actions own their past marker. */
   | { kind: 'error'; text: string; actions?: ReactNode; failure?: 'live' | 'welcome' }
@@ -96,6 +96,12 @@ export type ThreadHost = 'page' | 'embedded' | 'column'
 
 export type ThreadScreenProps = {
   host: ThreadHost
+  /**
+   * A narrow panel beside other content (the board's chat column, the chat in an Artifact's reader), as Capy's
+   * `host.kind` `panel`: no head and the pane's gutters. Messages, tool rows, the composer and the waiting line are
+   * the page's; the panel keeps its work area to itself instead of lifting it into the main frame.
+   */
+  panel?: boolean
   /** Who the person talks to: the Bot's id (null: the Coordinator) and its name. */
   botId: string | null
   name: string
@@ -120,6 +126,8 @@ export type ThreadScreenProps = {
   onMarkRead?: () => void
   /** The composer, as the chat-composer slot gets it: `useChatComposer` (hooks/use-chat-composer.ts) does what it does. */
   composer: Omit<ChatComposerProps, 'quote'>
+  /** More of the composer's controls, after the model picker (the chat's context usage). */
+  controls?: ReactNode
   /** A reader without a reply target does not get a composer. */
   readOnly?: boolean
   scrollRef?: RefObject<HTMLDivElement | null>
@@ -169,54 +177,28 @@ export type ThreadGroupRow =
   | { kind: 'pending'; id: string; phase: 'sending' | 'accepted' | 'failed'; message: ChatMessageProps; after?: ReactNode }
   | { kind: 'notice'; id: string; label: string; content: ReactNode }
 
-export type ThreadScrolledRow = ThreadTranscriptMessage & {
-  messageId: string
-  before?: ReactNode
-  arriving?: boolean
-  attributes?: {
-    'data-coordinator-stream-id'?: string
-    'data-streaming'?: boolean
-    'data-message-position'?: number
-    'data-testid'?: string
-  }
-}
-
 type TranscriptScroll = {
   label: string
   ref: RefObject<HTMLDivElement | null>
   onScroll: UIEventHandler<HTMLDivElement>
 }
 
-/** Existing transcript presentations share one screen without changing their DOM or their readers' state. */
+/** A group chat's transcript shares the screen without changing its DOM or its reader's state. */
 export type ThreadTranscriptScreenProps = {
   host: ThreadHost
   /** The same composer slot node; the screen owns its placement, the reader owns its actions. */
   composer: ReactNode
   beforeComposer?: ReactNode
-  transcript:
-    | {
-      kind: 'group'
-      scroll: TranscriptScroll
-      rows: ThreadGroupRow[]
-      /** A loading, refusal or empty state replaces the list. */
-      placeholder?: ReactNode
-      before?: ReactNode
-      after?: ReactNode
-      end?: ReactNode
-    }
-    | {
-      kind: 'embedded'
-      scroll: TranscriptScroll
-      stateKey: string
-      startAtEnd: boolean
-      sentCount: number | null
-      compact: boolean
-      rows: ThreadScrolledRow[]
-      before?: ReactNode
-      after?: ReactNode
-      overlay?: ReactNode
-      jumpToEnd: boolean
-    }
+  transcript: {
+    kind: 'group'
+    scroll: TranscriptScroll
+    rows: ThreadGroupRow[]
+    /** A loading, refusal or empty state replaces the list. */
+    placeholder?: ReactNode
+    before?: ReactNode
+    after?: ReactNode
+    end?: ReactNode
+  }
 }
 
 /** The hosted shell waits for a task tab's existing save before removing it. */
