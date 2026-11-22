@@ -162,7 +162,7 @@ function SecretSheet({ workspaceId, workspaceName, role, secret, onClose, open =
   const [reveal, setReveal] = useState(false)
   const [note, setNote] = useState(secret?.note ?? '')
   const [masked, setMasked] = useState(secret ? secret.kind === 'secret' : true)
-  const [scope, setScope] = useState<Scope>(secret?.scopeType ?? writableScopes(role)[0])
+  const [scope, setScope] = useState<Scope>(secret && secret.scopeType !== 'thread' ? secret.scopeType : writableScopes(role)[0])
   const [repository, setRepository] = useState(secret?.scopeRef ?? '')
   const editor = useWorkspaceSecretEditor(workspaceId, secret, secretName => t('shortValueNotMasked', { name: secretName }))
   const { pending, error, setError } = editor

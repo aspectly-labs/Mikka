@@ -24,12 +24,12 @@ test('thread references + thread env vars', { skip: !dbUrl }, async t => {
   const workspace = await seedWorkspace(pool, owner, [{ userId: owner, role: 'admin' }])
   const otherWorkspace = await seedWorkspace(pool, other, [{ userId: other, role: 'admin' }])
   const agent = await seedAgent(pool, owner)
-  const issue = await seedIssue(pool, owner, workspace)
-  const foreignIssue = await seedIssue(pool, other, otherWorkspace)
-  const runId = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace, issueId: issue })
-  const bot = await seedBot(pool, workspace, owner)
+  const issue = await seedIssue(pool, owner, workspace.id)
+  const foreignIssue = await seedIssue(pool, other, otherWorkspace.id)
+  const runId = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace.id, issueId: issue })
+  const bot = await seedBot(pool, workspace.id, owner)
 
-  const resolved = await resolveThreadReferences(pool, owner, workspace, [
+  const resolved = await resolveThreadReferences(pool, owner, workspace.id, [
     { type: 'task', id: issue },
     { type: 'task', id: foreignIssue },
     { type: 'task', id: randomUUID() },
@@ -49,19 +49,19 @@ test('thread references + thread env vars', { skip: !dbUrl }, async t => {
 
   // Thread-scoped env var: stored encrypted, metadata returns names only,
   // runtime secrets decrypt for the matching thread scope ref.
-  await setThreadScopeSecret(owner, workspace, runId, { name: 'THREAD_TOKEN', value: 'secret-value-1' })
+  await setThreadScopeSecret(owner, workspace.id, runId, { name: 'THREAD_TOKEN', value: 'secret-value-1' })
   const { rows } = await pool.query(`SELECT name,note,ciphertext FROM workspace_secrets WHERE "scopeType"='thread' AND "scopeRef"=$1`, [runId])
   assert.equal(rows.length, 1)
   assert.equal(rows[0].name, 'THREAD_TOKEN')
   assert.notEqual(rows[0].ciphertext, 'secret-value-1', 'value must be encrypted at rest')
-  const runtime = await loadTaskRuntimeSecrets(workspace, null, process.env, owner, runId)
+  const runtime = await loadTaskRuntimeSecrets(workspace.id, null, process.env, owner, runId)
   const found = runtime.find(r => r.name === 'THREAD_TOKEN')
   assert.equal(found?.value, 'secret-value-1', 'claim-side runtime decrypts the thread var')
   // A different run id must not see the var.
-  const otherRun = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace, issueId: issue })
-  const otherRuntime = await loadTaskRuntimeSecrets(workspace, null, process.env, owner, otherRun)
+  const otherRun = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace.id, issueId: issue })
+  const otherRuntime = await loadTaskRuntimeSecrets(workspace.id, null, process.env, owner, otherRun)
   assert.equal(otherRuntime.find(r => r.name === 'THREAD_TOKEN'), undefined)
-  await deleteThreadScopeSecret(owner, workspace, runId, 'THREAD_TOKEN')
+  await deleteThreadScopeSecret(owner, workspace.id, runId, 'THREAD_TOKEN')
   const { rows: gone } = await pool.query(`SELECT id FROM workspace_secrets WHERE "scopeType"='thread' AND "scopeRef"=$1`, [runId])
   assert.equal(gone.length, 0)
 })

@@ -5,7 +5,7 @@ import type { SecretScopeType } from './format'
 
 export type WorkspaceRole = 'admin' | 'member'
 /** A secret/env row as far as permissions care. */
-export interface SecretTarget { scopeType: SecretScopeType }
+export interface SecretTarget { scopeType: SecretScopeType | 'thread' }
 export type SecretAction =
   | 'secret.list' | 'secret.create' | 'secret.replace' | 'secret.delete'
   | 'e2b.status' | 'e2b.write'

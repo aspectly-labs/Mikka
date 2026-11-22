@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { workspaceSecrets } from '@/lib/db/secrets-schema'
 import { and, eq } from 'drizzle-orm'
-import { seal } from './crypto'
+import { sealSecret, secretAad } from './crypto'
 import { isReservedEnvName } from './format'
 
 /** #2941 item 5: thread-scoped env vars live in workspace_secrets under
@@ -15,7 +15,7 @@ export async function setThreadScopeSecret(userId: string, workspaceId: string, 
   const name = nameSchema.parse(input.name)
   if (isReservedEnvName(name)) throw Object.assign(new Error('secretNameReserved'), { code: 'secretNameReserved' })
   const columns = { workspaceId, kind: 'env' as const, name, scopeType: 'thread' as const, scopeRef: runId }
-  const sealed = seal(input.value, columns)
+  const sealed = sealSecret(input.value, secretAad(columns))
   const [saved] = await db.insert(workspaceSecrets).values({ id: crypto.randomUUID(), ...columns, note: '', delivery: null,
     ...sealed, createdBy: userId, updatedBy: userId })
     .onConflictDoUpdate({ target: [workspaceSecrets.workspaceId, workspaceSecrets.scopeType, workspaceSecrets.scopeRef, workspaceSecrets.name],

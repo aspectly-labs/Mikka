@@ -8,7 +8,7 @@ import type { SecretsTx } from './store'
 
 export type SecretChange = { name: string } & (
   | { ownerId: string }
-  | { id: string; workspaceId: string; scopeType: 'workspace' | 'repository'; scopeRef: string }
+  | { id: string; workspaceId: string; scopeType: 'workspace' | 'repository' | 'thread'; scopeRef: string }
 )
 
 type Candidate = {
