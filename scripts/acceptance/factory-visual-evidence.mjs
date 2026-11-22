@@ -11,6 +11,7 @@
  * program never emits an HTTP body, cookie, prompt, tool output or raw error.
  * Outputs are closed projections plus the fixture's actual downloaded media.
  */
+import { submitEveMessage } from './eve-session.mjs'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -23,6 +24,7 @@ import { CASES, ORIGIN, openLive } from './run-observability.mjs'
 import { assertCurrentMain, waitForWebDeployment } from '../release/web-deploy.mjs'
 import { assertReleaseIdentity, selectRelease, REPOSITORY, RELEASE_NAME } from './thread-lifecycle-ci.mjs'
 import { assertArtifactIdentity, downloadReleaseReport, releasePins } from './task-secrets-ci.mjs'
+import { publicRepositoryId } from '../cloudflare-source.mjs'
 import { isExactNativeCommand } from './thread-lifecycle.mjs'
 
 export const WORKFLOW = '.github/workflows/factory-visual-evidence-acceptance.yml'
@@ -212,9 +214,12 @@ export async function selectAcceptance(env, event, { fetchImpl = fetch, now = Da
   check(Array.isArray(releases.workflow_runs) && releases.total_count === releases.workflow_runs.length && releases.total_count <= 100, 'runtime')
   const upstream = releases.workflow_runs.filter(run => run.head_sha === sourceCommit).sort((a, b) => b.id - a.id)[0]
   if (!upstream || upstream.status !== 'completed') return empty('runtime_not_finished')
-  const expected = { sourceCommit, runId: upstream.id, runAttempt: upstream.run_attempt, workflowId: upstream.workflow_id, event: upstream.event }
+  const expected = { sourceCommit, runId: upstream.id, runAttempt: upstream.run_attempt, workflowId: upstream.workflow_id, event: upstream.event,
+    repositoryFullName: env.GITHUB_REPOSITORY, repositoryId: Number(env.GITHUB_REPOSITORY_ID),
+    repositoryOwnerId: env.GITHUB_REPOSITORY_OWNER_ID }
   const workflow = await read('/actions/workflows/e2b-official-runtime.yml')
   assertReleaseIdentity(expected, workflow, upstream)
+  const artifactExpected = { ...expected, repositoryId: Number(publicRepositoryId), repositoryFullName: REPOSITORY }
   const release = selectRelease(expected, await read(`/actions/runs/${upstream.id}/attempts/${upstream.run_attempt}/jobs?per_page=100`), [])
   check(release.runtime === 'validated_and_published', 'runtime')
   const web = await webProof({ expectedBuild: sourceCommit, token: env.GITHUB_TOKEN, fetchImpl, maxWaitMs: 60_000 })
@@ -222,7 +227,7 @@ export async function selectAcceptance(env, event, { fetchImpl = fetch, now = Da
   check(Array.isArray(artifacts.artifacts) && artifacts.total_count === artifacts.artifacts.length && artifacts.total_count <= 100, 'release_artifact')
   const matches = artifacts.artifacts.filter(value => value.name === `e2b-release-evidence-${upstream.id}-${upstream.run_attempt}`)
   check(matches.length === 1, 'release_artifact')
-  const artifact = assertArtifactIdentity(expected, upstream, matches[0], now())
+  const artifact = assertArtifactIdentity(artifactExpected, upstream, matches[0], now())
   const previous = await priorCases(env, sourceCommit, read)
   const selectedCase = env.FACTORY_VISUAL_MODEL_CASE ?? 'all'
   const cases = Object.fromEntries(CASES.map(item => {
@@ -885,9 +890,10 @@ export async function runProductionCase(proof, item, { env = process.env, fetchI
     live = await openLiveImpl(path => client.json(path), scope.workspaceId, { now })
     const trace = sampledRequestTrace()
     const input = initialRequest(fixtureData, { issueId: record.issueId, botId, profileId: profile.id, item })
-    const queued = await lease.write(() => client.rpc('coordinator.sendCoordinatorMessage', [input, null, botId, randomUUID(), { kind: 'cloud' }, null, [], { $mikka: 'undefined' }, profile.id],
-      { headers: { traceparent: trace.traceparent } }))
-    check(queued.queued === true, 'dispatch'); result.initialRequestSent = true
+    await lease.write(() => submitEveMessage(client, botId, input, randomUUID(),
+      { taskDestination: { kind: 'cloud' }, profileId: profile.id, expectedWorkspaceId: scope.workspaceId, expectedOwnerId: scope.ownerId },
+      { traceparent: trace.traceparent }))
+    result.initialRequestSent = true
     const deadline = now() + timeoutMs
     let positiveState
     if (!fixtureData.repository) {

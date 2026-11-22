@@ -1,9 +1,5 @@
 name: Node.js compatibility
 on:
-  pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
   merge_group:
   workflow_dispatch:
 permissions:
