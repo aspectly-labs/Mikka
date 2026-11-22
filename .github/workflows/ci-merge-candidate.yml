@@ -1,0 +1,229 @@
+name: Merge candidate acceptance
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  paths:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.select.outputs.full }}
+      app-icon: ${{ steps.select.outputs.app-icon }}
+      cloud-computer: ${{ steps.select.outputs.cloud-computer }}
+      coding-workspace-review: ${{ steps.select.outputs.coding-workspace-review }}
+      credential-vault: ${{ steps.select.outputs.credential-vault }}
+      e2b-byos: ${{ steps.select.outputs.e2b-byos }}
+      read-cache: ${{ steps.select.outputs.read-cache }}
+      site-search: ${{ steps.select.outputs.site-search }}
+      ssh-device-backend: ${{ steps.select.outputs.ssh-device-backend }}
+      unattended-sandbox: ${{ steps.select.outputs.unattended-sandbox }}
+      cloudflare-eve-image: ${{ steps.select.outputs.cloudflare-eve-image }}
+      cloudflare-litellm-image: ${{ steps.select.outputs.cloudflare-litellm-image }}
+      cloudflare-task-sandbox: ${{ steps.select.outputs.cloudflare-task-sandbox }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - id: select
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          git cat-file -e "$BASE_SHA^{commit}"
+          policy="$(mktemp -d)"
+          for file in merge-candidate-paths.mjs merge-candidate-paths.json; do
+            if ! git show "$BASE_SHA:scripts/ci/$file" > "$policy/$file"; then
+              echo 'full=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          node "$policy/merge-candidate-paths.mjs"
+          echo 'full=false' >> "$GITHUB_OUTPUT"
+
+  app-icon:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.app-icon == 'true'
+    uses: ./.github/workflows/app-icon.yml
+
+  cloud-computer:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.cloud-computer == 'true'
+    uses: ./.github/workflows/cloud-computer.yml
+
+  coding-workspace-review:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.coding-workspace-review == 'true'
+    uses: ./.github/workflows/coding-workspace-review.yml
+
+  credential-vault:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.credential-vault == 'true'
+    uses: ./.github/workflows/credential-vault.yml
+
+  e2b-byos:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.e2b-byos == 'true'
+    uses: ./.github/workflows/e2b-byos.yml
+
+  read-cache:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.read-cache == 'true'
+    uses: ./.github/workflows/read-cache.yml
+
+  site-search:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.site-search == 'true'
+    uses: ./.github/workflows/site-search.yml
+
+  ssh-device-backend:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.ssh-device-backend == 'true'
+    uses: ./.github/workflows/ssh-device-backend.yml
+
+  unattended-sandbox:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.unattended-sandbox == 'true'
+    uses: ./.github/workflows/unattended-sandbox.yml
+
+  cloudflare-eve-image:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.cloudflare-eve-image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NITRO_PRESET: node-server
+      WORKFLOW_TARGET_WORLD: '@workflow/world-postgres'
+      NODE_OPTIONS: --max-old-space-size=6144
+      MIKKA_BUILD_REVISION: ${{ github.sha }}
+      # Ordinary qualification builds the public server resources.
+      # Manual publication restores resources from the accepted official API image.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pnpm-install
+        with:
+          skip-electron: 'true'
+      - name: Bind the existing release format
+        run: echo "MIKKA_DEPLOYMENT_ID=$(node lib/deployment-id.mjs)" >> "$GITHUB_ENV"
+      - name: Check, build and verify the local Eve image
+        run: pnpm check:eve-image
+      # The business API publisher consumes this existing World artifact.
+      - name: Bundle the private World authority from the locked public source
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -euo pipefail
+          world="$RUNNER_TEMP/eve-world"
+          pnpm exec wrangler deploy --dry-run --config packages/eve-cloudflare-world/wrangler.jsonc --outdir "$world"
+          artifact="$RUNNER_TEMP/eve-world-artifact"
+          mkdir -p "$artifact/modules"
+          cp -a "$world/." "$artifact/modules/"
+          rm -f "$artifact/modules/README.md"
+          cd "$artifact"
+          find modules -type f -print -quit | grep -q .
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > source.txt
+          find modules -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum source.txt >> SHA256SUMS
+          sha256sum --check --status SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: eve-world-authority-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/eve-world-artifact/
+          if-no-files-found: error
+          retention-days: 1
+
+  cloudflare-litellm-image:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.cloudflare-litellm-image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts --prefix cloudflare/litellm
+      - run: node --test cloudflare/litellm/worker.test.mjs
+      - name: Build the LiteLLM image and check its health and master-key guard offline
+        run: |
+          docker build --platform linux/amd64 -t mikka-litellm deploy/litellm
+          bash deploy/litellm/offline-check.sh mikka-litellm
+      - name: Prove both CLI protocols through the built proxy
+        run: |
+          corepack pnpm install --frozen-lockfile --ignore-scripts
+          bash deploy/litellm/conversion-check.sh mikka-litellm
+
+  cloudflare-task-sandbox:
+    needs: paths
+    if: needs.paths.outputs.full == 'true' || needs.paths.outputs.cloudflare-task-sandbox == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts --prefix cloudflare/task-sandbox
+      - run: node --test cloudflare/task-sandbox/*.test.mjs
+      - run: python3 cloudflare/task-sandbox/native-history.test.py
+      - name: Verify the task image and both repository-pinned official CLIs offline
+        run: |
+          docker build --platform linux/amd64 -f cloudflare/task-sandbox/Dockerfile -t mikka-task-sandbox .
+          docker run --rm --network none --cap-drop ALL --security-opt=no-new-privileges \
+            --user 1000:1000 --entrypoint sh mikka-task-sandbox -ec '
+              test -w /workspace
+              test -x /usr/local/bin/sandbox-shim
+              test -x /usr/bin/unshare
+              test -x /usr/bin/setpriv
+              /usr/bin/python3 -I -c "import ast, os, signal, sys; assert os.pidfd_open and signal.pidfd_send_signal; [ast.parse(open(p).read()) for p in sys.argv[1:]]" /opt/mikka/task-sandbox/*.py
+              test -s /opt/mikka/worker/packages/daemon/dist/cloud/cloud-worker.js
+              test -r /opt/mikka/worker/.mikka-original-cli.json
+              node --version
+              git --version
+              claude --version
+              codex --version
+            '
+      - name: Verify the product image isolates every review listener before restoring a task
+        run: |
+          docker run --rm --network none --cap-add NET_ADMIN \
+            --mount "type=bind,source=$PWD/cloudflare/task-sandbox/review-guest-image.test.py,target=/opt/mikka/review-guest-image.test.py,readonly" \
+            --entrypoint sh mikka-task-sandbox -ec '
+            export PYTHONDONTWRITEBYTECODE=1
+            python3 -I /opt/mikka/runtime/ingress-v1/guard.py prepare-cloudflare
+            python3 -I /opt/mikka/task-sandbox/workspace-control-install.py --cloudflare-task
+            test "$(stat -c %u:%g:%a /run/mikka-review-control/machine.lock)" = 0:1000:660
+            python3 -I /opt/mikka/runtime/ingress-v1/guard.py verify
+            python3 -c "import sys;sys.path[:0]=[\"/opt/mikka/preview\",\"/opt/mikka/runtime/preview-python-3.14.0\"];import aiohttp,preview_firewall;assert aiohttp.__version__ == \"3.14.0\""
+            python3 -I /opt/mikka/review-guest-image.test.py
+          '
+
+  verify:
+    needs: [paths, app-icon, cloud-computer, coding-workspace-review, credential-vault, e2b-byos, read-cache, site-search, ssh-device-backend, unattended-sandbox, cloudflare-eve-image, cloudflare-litellm-image, cloudflare-task-sandbox]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Require selected acceptance jobs
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'JS'
+          const { paths, ...jobs } = JSON.parse(process.env.RESULTS)
+          if (paths.result !== 'success') throw new Error('Candidate path selection failed')
+          for (const [name, job] of Object.entries(jobs)) {
+            const selected = paths.outputs.full === 'true' ? 'true' : paths.outputs[name]
+            if (!['true', 'false'].includes(selected) || job.result !== (selected === 'true' ? 'success' : 'skipped')) {
+              throw new Error(`${name}: selection ${selected}, result ${job.result}`)
+            }
+          }
+          JS

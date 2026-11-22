@@ -27,7 +27,7 @@ export async function executeAppToolCall(client: Client, userId: string, call: A
 
 export function appToolDeps(userId: string, botId: string | null, client: Client, signal?:AbortSignal): AppToolDeps {
   return {
-    appAllowed: async toolkit => (await import('@/lib/app-policy/store')).botMayUseApp(botId, toolkit),
+    appAllowed: async toolkit => (await import('@/lib/app-policy/store')).botMayUseApp(botId, toolkit, userId),
     noAuth: toolkit => isNoAuthToolkit(composioToolkitLister(client), toolkit).catch(() => false),
     resolveAccount: (toolkit, selected) => resolveComposioAccount(userId, toolkit, client, kit => chosenComposioDefault(userId, kit), selected),
     listTools: (toolkit, query) => client.tools.getRawComposioTools(query ? { toolkits: [toolkit], search: query, limit: 15 } : { toolkits: [toolkit], limit: 15 }) as Promise<AppTool[]>,
@@ -69,7 +69,7 @@ export async function runAppToolkits(userId: string, botId: string | null): Prom
   const { connectedComposioApps } = await import('@/lib/suggestions/sources')
   const { botMayUseApp } = await import('@/lib/app-policy/store')
   const kits = (await connectedComposioApps(userId)).filter(kit => isToolkitSlug(kit) && !OWN_INTEGRATIONS.has(kit))
-  const allowed = await Promise.all(kits.map(kit => botMayUseApp(botId, kit)))
+  const allowed = await Promise.all(kits.map(kit => botMayUseApp(botId, kit, userId)))
   return kits.filter((_, index) => allowed[index]).sort()
 }
 
