@@ -25,3 +25,37 @@ test('the exact existing file/module count is allowed, while added mocks and bas
   assert.equal(auditExternalClientMocks(found, { ...baseline, 'tests/another.test.ts:e2b': 1 }, baseline).length, 1)
   assert.deepEqual(auditExternalClientMocks([], {}, baseline), [])
 })
+
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { trustedPolicyBase } from './external-client-mock-policy.mjs'
+
+test('the merge-queue checkout resolves the base side, never the candidate itself', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'mock-policy-base-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
+  git('init', '-q', '-b', 'main')
+  git('config', 'user.email', 'policy@test.local')
+  git('config', 'user.name', 'Policy Test')
+  writeFileSync(join(dir, 'base.txt'), 'main')
+  git('add', '.')
+  git('commit', '-qm', 'base')
+  const mainHead = git('rev-parse', 'HEAD')
+  git('checkout', '-qb', 'pr')
+  writeFileSync(join(dir, 'base.txt'), 'pr')
+  git('commit', '-qam', 'pr change')
+  git('checkout', '-q', 'main')
+  git('merge', '--no-ff', '-qm', 'queue candidate', 'pr')
+  // actions/checkout leaves FETCH_HEAD pointing at the ref it fetched: the candidate.
+  writeFileSync(join(dir, '.git', 'FETCH_HEAD'), `${git('rev-parse', 'HEAD')}\t\t\n`)
+  // With no origin/main and no event payload, the merge commit's first parent
+  // (the base side) is the trusted base; the candidate itself must be rejected.
+  assert.equal(trustedPolicyBase(dir), mainHead)
+  // On a plain head the same self-pointing FETCH_HEAD must yield no trusted
+  // base: nothing exists to compare against and fetch has no origin to try.
+  git('checkout', '-q', 'pr')
+  writeFileSync(join(dir, '.git', 'FETCH_HEAD'), `${git('rev-parse', 'HEAD')}\t\t\n`)
+  assert.equal(trustedPolicyBase(dir), '')
+})
