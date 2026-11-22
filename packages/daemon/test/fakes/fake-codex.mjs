@@ -217,6 +217,14 @@ async function runTurn(text) {
     complete()
     return
   }
+  // `PLAN` sends Codex's plan updates (`turn/plan/updated`), first the plan, then a revision.
+  if (text.includes('PLAN')) {
+    notify('turn/plan/updated', { threadId, turnId: open, explanation: 'Small steps', plan: [{ step: 'Read the brief', status: 'inProgress' }, { step: 'Write NOTES.md', status: 'pending' }] })
+    notify('turn/plan/updated', { threadId: 'foreign-thread', turnId: open, explanation: null, plan: [{ step: 'Foreign', status: 'pending' }] })
+    notify('turn/plan/updated', { threadId, turnId: open, explanation: null, plan: [{ step: 'Read the brief', status: 'completed' }, { step: 'Write NOTES.md', status: 'inProgress' }] })
+    complete()
+    return
+  }
   // `MODEL` reports the model the thread was started with, so a test can
   // prove the assignment's model reached the CLI.
   const said = text.includes("MODEL")

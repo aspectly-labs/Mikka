@@ -83,7 +83,7 @@ async function runRows(userId: string, filter: SQL | undefined, limit: number) {
   }).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId))
     .leftJoin(devices, eq(devices.id, agentRuns.deviceId))
     .leftJoin(conversationReads, joinThreadRead(userId))
-    .where(and(eq(agentRuns.userId, userId), filter))
+    .where(and(eq(agentRuns.userId, userId), isNull(agentRuns.threadDeletedAt), filter))
     .orderBy(desc(agentRuns.createdAt)).limit(limit)
   const sources = rows.length ? await citationSources(userId, [], rows.map(row => row.id)) : {}
   // The tasks' state and PRs, for the group; only tasks the person can see (citationSources checked them).

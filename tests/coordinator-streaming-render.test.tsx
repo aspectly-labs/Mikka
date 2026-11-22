@@ -47,6 +47,11 @@ async function mount() {
   return { container, render, unmount: () => act(async () => root.unmount()) }
 }
 
+/** Waits on real animation frames until `done`, checking `each` at every step. */
+async function settle(done: () => boolean, each?: () => void) {
+  for (let tries = 0; tries < 200 && !done(); tries++) { await act(() => new Promise(resolve => setTimeout(resolve, 20))); each?.() }
+}
+
 /** Every prefix of `text` as tokens of the given sizes, cycling. */
 function batches(text: string, sizes: number[]) {
   const out: string[] = []
@@ -72,12 +77,17 @@ test('streamed tokens, in any batches, never show a chip marker or id; each chip
         await view.render(<CoordinatorReply text={text} citations={{ ...base, pending: true }} isStreaming />)
         assert.doesNotMatch(view.container.textContent ?? '', MARKUP, `sizes ${sizes}: ${text}`)
       }
+      // The words appear a few characters at a time (lib/hooks/use-smooth-text.ts): wait for the last of them.
+      const chips = () => view.container.querySelectorAll('[data-slot="inline-citation-trigger"]').length
+      const pending = () => view.container.querySelectorAll('[data-citation-pending]').length
+      await settle(() => chips() === 1 && pending() === 2, () => assert.doesNotMatch(view.container.textContent ?? '', MARKUP))
       // The task already in the chat shows as its chip; the ones not looked up yet hold their place.
       assert.equal(view.container.querySelectorAll('[data-slot="inline-citation-trigger"]').length, 1)
       assert.equal(view.container.querySelectorAll('[data-citation-pending]').length, 2)
       // Looked up: every chip shows, still mid-stream.
       const found = { ...base, pending: true, sources: { ...known, [NEW_TASK]: issue(NEW_TASK, 'Sign-in redirect'), [THREAD]: thread } }
       await view.render(<CoordinatorReply text={reply} citations={found} isStreaming />)
+      await settle(() => chips() === 3)
       assert.equal(view.container.querySelectorAll('[data-slot="inline-citation-trigger"]').length, 3)
       assert.equal(view.container.querySelectorAll('[data-citation-pending]').length, 0)
       assert.doesNotMatch(view.container.textContent ?? '', MARKUP)
@@ -503,4 +513,37 @@ test('a choice card that could not send says the chat\'s real reason; the genera
       assert.doesNotMatch(view.container.textContent ?? '', hidden)
     }
   } finally { await view.unmount() }
+})
+
+test('the wait before the first token counts its seconds once past 2 s, in both languages, from when the message was sent', async () => {
+  const { ReplyWaiting } = await import('../components/coordinator/reply-activity')
+  const zh = (await import('../messages/zh-CN.json')).default
+  mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_000_000 })
+  const container = browser.document.createElement('div') as unknown as HTMLElement
+  document.body.append(container)
+  const { createRoot } = await import('react-dom/client')
+  const root = createRoot(container)
+  const draw = (locale: 'en' | 'zh-CN', since?: number) => act(async () => { root.render(<NextIntlClientProvider locale={locale} timeZone="UTC" messages={locale === 'en' ? messages : zh}><ReplyWaiting key={`${locale}${since}`} since={since} /></NextIntlClientProvider>) })
+  const tick = (ms: number) => act(async () => { mock.timers.tick(ms) })
+  const elapsed = () => container.querySelector('[data-reply-elapsed]')?.textContent ?? null
+  try {
+    await draw('en')
+    assert.equal(container.textContent, 'Thinking', 'no seconds at first')
+    await tick(2000)
+    assert.equal(elapsed(), null, 'still none at 2 s')
+    await tick(1000)
+    assert.equal(elapsed(), '3s')
+    assert.equal(container.querySelector('[data-slot="trace-line"]')?.getAttribute('data-status'), 'running')
+    await draw('zh-CN')
+    assert.equal(elapsed(), null, 'a new wait starts again')
+    await tick(5000)
+    assert.equal(elapsed(), '5 秒')
+    assert.equal(container.textContent, '思考中5 秒')
+    // Counted from when the message was sent, not from when the row was drawn (a reload mid-wait).
+    await draw('zh-CN', Date.now() - 42_500)
+    assert.equal(elapsed(), '42 秒')
+    // A clock ahead of ours never counts below zero.
+    await draw('en', Date.now() + 10_000)
+    assert.equal(elapsed(), null)
+  } finally { await act(async () => root.unmount()); container.remove(); mock.timers.reset() }
 })

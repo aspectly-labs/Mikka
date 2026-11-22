@@ -111,7 +111,7 @@ function sourceQuery(userId: string, workspaceId: string, scope: Scope, type?: s
         false,request.reason IS NOT NULL,NULL::timestamptz,NULL::text,r.id,request.reason,0
       FROM (
         SELECT ${runFacts}, "updatedAt", coalesce(nullif(to_jsonb(agent_runs)->>'title',''),nullif((${titleFact}),''),'') AS title
-        FROM agent_runs WHERE "issueId" IS NULL AND "workspaceId"=$2 AND "userId"=$1 AND "threadReplacedBy" IS NULL
+        FROM agent_runs WHERE "issueId" IS NULL AND "workspaceId"=$2 AND "userId"=$1 AND "threadReplacedBy" IS NULL AND "threadDeletedAt" IS NULL
       ) r CROSS JOIN LATERAL (SELECT ${runAttention} AS reason) request
       UNION ALL
       SELECT s.id,'suggestion',s.source,coalesce(s."actionTitle",s.title),NULL::uuid,s."userId",s."occurredAt",false,

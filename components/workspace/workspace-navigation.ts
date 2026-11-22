@@ -382,6 +382,14 @@ export function navigate(change: Partial<WorkspaceLocation>, mode: 'push' | 'rep
   window.dispatchEvent(new Event(NAVIGATE_EVENT))
 }
 
+/** The workspace opens its 新建线程 window for this (the composer's `/new`). */
+export const NEW_CONVERSATION_EVENT = 'mikka:new-conversation'
+
+/** Opens the workspace's 新建线程 window, as the sidebar's New thread does. */
+export function startNewConversation() {
+  window.dispatchEvent(new Event(NEW_CONVERSATION_EVENT))
+}
+
 /** A section's own page from a menu: its first page, even when the address already names that section and one of its pages (an open automation). */
 export function openSectionPage(section: WorkspaceSection) {
   const url = new URL(workspaceHref(new URL(window.location.href), { section }), window.location.href)

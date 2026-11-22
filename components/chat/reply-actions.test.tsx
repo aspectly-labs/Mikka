@@ -6,7 +6,7 @@ import { Window } from 'happy-dom'
 
 mock.module('@/lib/intl/i18n-client', { namedExports: {
   useLocale: () => 'en',
-  useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
+  useTranslations: (namespace: string) => (key: string, values?: { time?: string }) => values?.time ? `${namespace}.${key} ${values.time}` : `${namespace}.${key}`,
   useFormatter: () => ({ dateTime: (value: Date) => `at:${value.toISOString()}` }),
 } })
 
@@ -32,14 +32,22 @@ after(() => browser.happyDOM.close())
 const reply = () => container.querySelector('button[aria-label="AiElements.message.reply"]') as HTMLButtonElement | null
 
 test('the line shows when the message was sent, then Reply and Copy, then what the caller adds', async () => {
-  const at = Date.UTC(2026, 10, 19, 14, 41)
+  const at = Date.UTC(2025, 10, 19, 14, 41)
   await act(async () => root.render(<ReplyActions at={at} copyText="the reply" onQuote={() => {}}><span data-extra="" /></ReplyActions>))
   const line = container.querySelector('[data-slot="message-actions"]')!
   const time = line.querySelector('time')!
   assert.equal(time.getAttribute('datetime'), new Date(at).toISOString())
-  assert.equal(time.textContent, `at:${new Date(at).toISOString()}`)
+  assert.match(time.textContent!, /Nov 19/)
+  assert.equal(time.getAttribute('title'), `at:${new Date(at).toISOString()}`)
   const order = [...line.children].map(child => child.tagName === 'TIME' ? 'time' : child.getAttribute('aria-label') ?? (child.hasAttribute('data-extra') ? 'extra' : child.tagName))
   assert.deepEqual(order, ['time', 'AiElements.message.reply', 'AiElements.message.copy', 'extra'])
+})
+
+test('a message from today shows today and the clock, not the date (as the centred stamp)', async () => {
+  const at = Date.now()
+  await act(async () => root.render(<ReplyActions at={at} copyText="the reply" />))
+  const clock = new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(at)
+  assert.equal(container.querySelector('time')!.textContent, `ChatTime.today ${clock}`)
 })
 
 test('Reply puts the whole message in the composer as a quote', async () => {
@@ -72,12 +80,10 @@ test('Reply quotes the whole message, cut like a selection so a long reply never
   assert.ok(quoted[1].endsWith('…'))
 })
 
-test('the thread panel keeps the line to hover; elsewhere it stays on screen', async () => {
-  const { HOVER_ACTIONS, REPLY_ACTIONS } = await import('./copy-action')
-  await act(async () => root.render(<ReplyActions copyText="x" hover />))
-  const line = () => container.querySelector('[data-slot="message-actions"]')!.className
-  assert.ok(line().includes(HOVER_ACTIONS.split(' ')[0]))
-  await act(async () => root.render(<ReplyActions copyText="x" />))
-  assert.ok(!line().includes(HOVER_ACTIONS.split(' ')[0]))
-  assert.ok(line().includes(REPLY_ACTIONS.split(' ')[0]))
+test('every line waits for hover or focus, is always there on touch, and keeps its space at rest (decision 2026-11-22-1500)', async () => {
+  await act(async () => root.render(<ReplyActions copyText="x" onQuote={() => {}} />))
+  const classes = container.querySelector('[data-slot="message-actions"]')!.className.split(' ')
+  for (const name of ['opacity-0', 'group-hover/message:opacity-100', 'focus-within:opacity-100', 'pointer-coarse:opacity-100'])
+    assert.ok(classes.includes(name), name)
+  assert.ok(!classes.some(name => /^(hidden|invisible|h-0)$|:hidden$|:invisible$/.test(name)), 'only the opacity changes, so the row keeps its space')
 })

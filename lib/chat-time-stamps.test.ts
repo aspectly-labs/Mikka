@@ -25,7 +25,7 @@ test('the stamp says today or yesterday with the clock, and the date beyond that
   // Within six days the weekday names it, as Capy's message times do.
   const week = chatStampText(new Date(2026, 10, 17, 14, 32).getTime(), now, 'en', english)
   assert.match(week, /^Tue,? 2:32/)
-  assert.match(chatStampText(new Date(2026, 10, 17, 14, 32).getTime(), now, 'zh-CN', words), /周二/)
+  assert.equal(chatStampText(new Date(2026, 10, 17, 14, 32).getTime(), now, 'zh-CN', words), '周二 14:32')
   const earlier = chatStampText(new Date(2026, 10, 3, 14, 32).getTime(), now, 'en', english)
   assert.match(earlier, /Nov 3/)
   assert.match(earlier, /2:32/)

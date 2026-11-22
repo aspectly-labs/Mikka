@@ -1,6 +1,7 @@
 import type { Cache, Key, useSWRConfig } from 'swr'
 import { prefetchScopedRead } from '@/lib/swr/prefetch'
-import { botPermissionsKeys } from '@/lib/swr/keys'
+import { botPermissionsKeys, chatKeys } from '@/lib/swr/keys'
+import type { ChatTarget } from '@/components/nav/bot-list'
 
 const loadTaskDetail = () => import('./task-detail')
 export const loadAutomations = () => import('@/components/automations/automations-section').then(module => module.AutomationsSection)
@@ -24,18 +25,29 @@ export type WorkspacePageReads = { cache: Cache; mutate: ScopedMutate; workspace
  * never run, and a top-level server-action import makes every host of this module carry it — including
  * the tests that mount the workspace with their own action mocks.
  */
-const reads: Partial<Record<WorkspacePage, (scope: WorkspacePageReads) => [Key, () => Promise<unknown>][]>> = {
+const reads: Partial<Record<WorkspacePage, (scope: WorkspacePageReads, target?: ChatTarget) => [Key, () => Promise<unknown>][]>> = {
+  // A Bot's chat (or the Coordinator's), pointed at in the sidebar: its first read, through the reader the chat
+  // itself uses, so opening it finds the transcript in the cache (UX audit 2026-11-22 #3). Nothing reads without a target.
+  coordinator: ({ cache }, target) => {
+    const botId = target?.kind === 'bot' ? target.botId : target?.kind === 'coordinator' ? null : undefined
+    if (botId === undefined) return []
+    return [[chatKeys.detail(botId), () => import('@/lib/coordinator/chat-read-client').then(module => module.readCachedCoordinatorChat(cache, botId))]]
+  },
   settings: ({ workspaceId }) => [
     [botPermissionsKeys.bots(workspaceId), () => import('@/app/actions/bots').then(module => module.listBotsForWorkspace(workspaceId))],
     [botPermissionsKeys.agents(), () => import('@/app/actions/agents').then(module => module.listAgents())],
   ],
 }
 
-/** Start the same module import used by the destination without mounting it, and its first reads beside it. */
-export function preloadWorkspacePage(page: WorkspacePage, scope?: WorkspacePageReads) {
-  void loaders[page]().catch(() => {})
-  if (!scope) return
-  for (const [key, read] of reads[page]?.(scope) ?? []) void prefetchScopedRead(scope.cache, scope.mutate, key, read)
+/**
+ * Start the same module import used by the destination without mounting it, and its first reads beside it.
+ * `target` names the chat a Bot page opens. Settles when the chunk and the reads have (a failed read included:
+ * the page reads again itself and shows why).
+ */
+export function preloadWorkspacePage(page: WorkspacePage, scope?: WorkspacePageReads, target?: ChatTarget): Promise<void> {
+  const chunk = loaders[page]().then(() => {}, () => {})
+  if (!scope) return chunk
+  return Promise.all([chunk, ...(reads[page]?.(scope, target) ?? []).map(([key, read]) => prefetchScopedRead(scope.cache, scope.mutate, key, read))]).then(() => {})
 }
 
-export function preloadTaskDetail() { preloadWorkspacePage('task') }
+export function preloadTaskDetail() { void preloadWorkspacePage('task') }

@@ -27,7 +27,8 @@ export const RAIL_ITEMS: { id: RailDestination; icon: RailIcon; selectedIcon: Ra
 export type RailProps = {
   active: RailDestination | null
   onNavigate: (destination: RailDestination) => void
-  onPageIntent?: (page: WorkspacePage) => void
+  /** The person points at a page (hover or focus): start its chunk and first reads. `target` names a chat row's chat, whose transcript is read too. */
+  onPageIntent?: (page: WorkspacePage, target?: ChatTarget) => void
   user: { name: string; email: string; image?: string | null }
   onSettings: (href?: string) => void
   onSignOut: () => void

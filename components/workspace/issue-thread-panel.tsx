@@ -18,6 +18,7 @@ import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
 import { runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, threadItems } from '@/lib/issue-run-conversation'
+import { runPlan } from '@/lib/thread-plan'
 import { useThreadStepRows } from './thread-step-rows'
 import { ThreadReplyVersions } from './thread-reply-versions'
 import { ThreadExecutionIdentity } from './thread-execution-identity'
@@ -35,7 +36,9 @@ import { ChatFileCards } from '@/components/chat/chat-file-cards'
 import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConversationPageLoading } from './workspace-loading'
 import { AgentMarkdown } from './agent-markdown'
+import { useSmoothText } from '@/lib/hooks/use-smooth-text'
 import { ComputerCard } from '@/components/computer/computer-card'
 import { issueKeys } from '@/lib/swr/keys'
 import type { IssueView } from '@/app/actions/issues'
@@ -54,11 +57,11 @@ import { HarnessMark, harnessName, ProviderMark } from '@/components/labels/enti
 import { PersonAvatar } from '@/components/person-avatar'
 import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { MikkaMark } from '@/components/brand/mikka-mark'
-import { navigate, openTask, openThread } from './workspace-navigation'
+import { navigate, openTask, openThread, startNewConversation } from './workspace-navigation'
 import { ThreadHeader } from './thread-header'
 import { threadCostBreakdownKey, threadCostKey } from './thread-cost-button'
 import { ThreadStatus } from './thread-status-icon'
-import { PersonReferences, ThreadReferencePicker } from './thread-references'
+import { PersonReferences } from './thread-references'
 import { ThreadOutlineIndex } from './thread-outline-index'
 import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCitations } from './agent-citations'
 import { useLiveCitations } from '@/components/coordinator/use-live-citations'
@@ -296,6 +299,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }, [olderPosition, collect])
   const [draft, setDraft] = useViewState(`thread:${runId}:draft`, '')
   const feedback = useTranslations('Coordinator')
+  const composerCommands = useMemo(() => [{ id: 'new', name: '/new', description: feedback('commandNew'), run: startNewConversation }], [feedback])
   const quoteLabel = useTranslations('AiElements.message')('quote')
   const writer = useThreadReplyCommand()
   const [deliveryMode, setDeliveryMode] = useViewState<ThreadDeliveryMode>('thread:delivery-mode', 'queue')
@@ -342,6 +346,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     if (delivery.rows.some(row => confirmedIds.has(row.id))) delivery.setRows(current => current.filter(row => !confirmedIds.has(row.id)))
   }, [confirmedIds, delivery.rows, delivery.setRows])
   const items = useMemo(() => data ? threadItems(data.chunks, data.messages, runId) : [], [data, runId])
+  // The live run's newest plan (its TodoWrite / update_plan), pinned above the composer until the run ends.
+  const plan = useMemo(() => data && active ? runPlan(data, liveRunId) : null, [data, active, liveRunId])
   // The jump index, from the items already built: never a second fold of the stream.
   const outline = threadOutline(items)
   // A failed run says why under the stage that stopped, else at the end of the conversation.
@@ -469,7 +475,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }
   const waiting = !data && (error
     ? <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void mutate() }} />
-    : <div role="status" aria-label={t('loading')} data-thread-loading className="flex flex-col gap-3"><Skeleton className="h-5 w-40" /><Skeleton className="ml-auto h-12 w-3/4" /><Skeleton className="h-12 w-2/3" /></div>)
+    // The chat's one skeleton, as a Bot's chat opens (UX audit 2026-11-22 #3).
+    : <div data-thread-loading="" className="flex min-h-0 flex-1 flex-col"><ConversationPageLoading /></div>)
   const citationTexts = items.flatMap(item => item.kind === 'agent' || item.kind === 'person' ? [item.text] : [])
   const previews = useLinkPreviews(citationTexts)
   const citationBase = useMemo<AgentCitations>(() => ({ sources: {}, previews, onOpenIssue: openTask }), [previews])
@@ -561,7 +568,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
           const files = splitChatFiles(item.text)
           entries.push({ id, role: 'bot', at: at(item.at),
             author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} /> },
-            actions: <ReplyActions hover at={item.at ? at(item.at) : undefined} copyText={files.text} />,
+            actions: <ReplyActions at={item.at ? at(item.at) : undefined} copyText={files.text} />,
             parts: [{ kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}>
               <span data-thread-item={item.id}><PersonReferences text={files.text} /></span>
               <ChatFileCards files={files.files} sent />
@@ -570,14 +577,14 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         continue
       }
       if (item.kind === 'agent') openWords = open ? [...openWords, item.text] : [item.text]
-      const part: ThreadEntryPart = item.kind === 'agent' ? { kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}><div {...{ [QUOTE_SOURCE_ATTR]: '' }}><AgentMarkdown text={item.text} isStreaming={active} /></div></AgentCitationsContext> }
+      const part: ThreadEntryPart = item.kind === 'agent' ? { kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}><div {...{ [QUOTE_SOURCE_ATTR]: '' }}><SmoothAgentMarkdown text={item.text} isStreaming={active} live={active && item === items.at(-1)} /></div></AgentCitationsContext> }
         : item.kind === 'steps' ? { kind: 'tools', id: `${runId}:${item.id}`, tools: stepRows(item.steps, active) }
         : item.kind === 'error' ? { kind: 'error', text: item.text }
         : { kind: 'text', text: '', node: item.kind === 'computer'
           ? <ComputerCard botId={item.botId} runId={item.runId} task={item.task} state={active ? 'working' : (view?.status ?? data.thread.status) === 'succeeded' ? 'done' : 'failed'} />
           : <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground" data-slot="thread-stages">{item.stages.map((stage, index) => <span key={index} className={cn(!stage.ok && 'text-destructive-foreground')}>
             {t(`stages.${stage.stage}`)} {t('stages.duration', { seconds: (stage.ms / 1000).toFixed(1) })} {stage.ok ? '✓' : '✗'}</span>)}</p> }
-      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions hover at={item.at || undefined} copyText={item.text} quoteText={openWords.join('\n\n')}
+      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions at={item.at || undefined} copyText={item.text} quoteText={openWords.join('\n\n')}
           onQuote={replyBlocked || changeRequest ? undefined : text => { setReplyQuote(text); inputRef.current?.focus() }}>{versionControl(item)}<AgentCitationsContext value={citations.settled}><CitationSources text={item.text} /></AgentCitationsContext></ReplyActions> } : {}), ...(active && item === items.at(-1) ? { streaming: true } : {}) })
     }
     if (failure && !providerExplained) bot('failure', [{ kind: 'text', text: failureText.message ?? '', node: <div data-slot="thread-failure" className="flex flex-wrap items-start gap-2">
@@ -617,7 +624,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       <ChatFileCards files={files.files} sent />
     </AgentCitationsContext>
     const previous = entry.actions
-    entry.actions = <ReplyActions hover at={sentAt.get(entry.id)} copyText={files.text}>{previous}</ReplyActions>
+    entry.actions = <ReplyActions at={sentAt.get(entry.id)} copyText={files.text}>{previous}</ReplyActions>
   }
   if (!data && collect) entries.push({ id: `${runId}:loading`, role: 'bot', event: true, at: 0, parts: [{ kind: 'text', text: '', node: waiting }] })
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.
@@ -659,8 +666,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       <ProviderMark provider={modelProvider(currentModel)} /><span className="truncate">{currentModelName}</span>
     </span>)
   const referenceWorkspace = liveRuns.find(run => run.id === liveRunId)?.workspaceId
-  const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? <ThreadReferencePicker draft={draft}
-    workspaceId={referenceWorkspace} input={inputRef} onChange={setDraft} /> : null
+  // `@`, the ＋ menu's Reference rows and the reference chips belong to the composer (#2924).
+  const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? { workspaceId: referenceWorkspace } : undefined
   const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen host={host} botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
     panels={bare || transcriptOnly || collect ? undefined : panels}
     historyPrepend={historyPrepend}
@@ -668,19 +675,19 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     working={working} onStop={working && canStop ? () => { void stop() } : undefined}
     composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, leftControls: modelControl, label: composerUnavailable ? t(data && !isThreadRun(data.thread) ? 'checkEnded' : 'replyUnavailable') : t('composer', { agent: harnessLabel(threadComposerHarness(detail?.harness ?? '', liveRunId, modelFallback)) }), value: draft, onChange: setDraft, onSubmit: () => { void send() },
       attachmentScope: { kind: 'thread', id: liveRunId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
-      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true }}
+      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
+    plan={plan ?? undefined}
     notices={<>
       {olderState === 'failed' && olderPosition && <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void loadOlder() }} />}
       {quotaPaused && <ThreadQuotaPausedCard paused={quotaPaused} onContinued={() => { void mutate(); refreshLists() }} />}
       {queueControls}
-      {references}
       {sendFailed && <FieldError className="px-3 text-xs">{sendFailed}</FieldError>}
       {stopFailed && <div role="alert" className="flex items-center gap-2 px-3 text-xs"><span className="text-destructive-foreground">{t('stopFailed')}</span><Button variant="ghost" size="sm" className="min-w-22 max-sm:h-11" onClick={() => { void stop() }}>{t('retryStop')}</Button></div>}
     </>}
     under={readOnly || !data?.thread.ownedByCurrentUser ? undefined : <ThreadUnderComposer issueId={issueId} runId={runId} status={view?.status ?? data.thread.status} context={data.context ? <ThreadContextUsage usage={data.context} /> : undefined} />}
     questions={[]} onAnswer={async () => ({ status: 'unavailable', error: '' })} running={0} onOpenTask={() => onOpenTask?.()} onOpenInbox={() => navigate({ section: 'suggestions' })} /></div>
-    : <div className="min-h-0 flex-1 overflow-y-auto p-4">{waiting}</div>
+    : error ? <div className="min-h-0 flex-1 overflow-y-auto p-4">{waiting}</div> : waiting
   const views: ThreadViewAction[] = []
   if (hasChanges && !viewingChanges) views.push({ id: 'changes', label: t('changesTab'), onSelect: () => setTab('changes') })
   if (acceptance && !accepting) views.push({ id: 'acceptance', label: t('acceptanceTab'), onSelect: () => setTab('acceptance') })
@@ -707,4 +714,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     : conversation}
     {!readOnly && <SelectionQuote root={rootRef} onQuote={text => { setReplyQuote(text); inputRef.current?.focus() }} />}
   </section>
+}
+
+/** The Agent's words; the newest while the run works appears a few characters at a time (lib/hooks/use-smooth-text.ts). */
+function SmoothAgentMarkdown({ text, isStreaming, live }: { text: string; isStreaming: boolean; live: boolean }) {
+  return <AgentMarkdown text={useSmoothText(text, live)} isStreaming={isStreaming} />
 }

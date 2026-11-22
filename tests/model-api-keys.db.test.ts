@@ -121,6 +121,8 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
     const refetched = await store.refreshApiKeyModels(pool, 'alice', anthropic.id, { env, fetch: fetchWith(() => models(['claude-opus-5-5', 'claude-haiku-5-5'])) })
     assert.deepEqual([calls.at(-1)!.url, calls.at(-1)!.headers['x-api-key']], ['https://api.anthropic.com/v1/models?limit=1000', newKey])
     assert.deepEqual([refetched.models, refetched.modelsError], [['claude-opus-5-5', 'claude-haiku-5-5'], null])
+    // Detection (#2938) reads the provider's model list only: connecting, replacing and re-reading a key never sends a paid request.
+    assert.ok(calls.every(call => /\/models$/.test(new URL(call.url).pathname)), 'only the model list is read')
     // A failed answer keeps the last list and says why, for the key's row; a good one clears the reason.
     const refused = await store.refreshApiKeyModels(pool, 'alice', anthropic.id, { env, fetch: fetchWith(() => new Response('{}', { status: 401 })) })
     assert.deepEqual([refused.models, refused.modelsError], [['claude-opus-5-5', 'claude-haiku-5-5'], 'invalid'])

@@ -112,7 +112,7 @@ mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { named
 mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null } })
 mock.module(new URL('../workspace/agent-interaction.tsx', import.meta.url).href, { namedExports: { AgentInteractionContext: createContext({}) } })
 mock.module(new URL('../workspace/agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: plain } })
-mock.module(new URL('../workspace/agent-citations.tsx', import.meta.url).href, { namedExports: { useLinkPreviews: () => ({}), LinkCitation: nothing, CitationSources: nothing, AgentCitationsContext: createContext(null) } })
+mock.module(new URL('../workspace/agent-citations.tsx', import.meta.url).href, { namedExports: { useLinkPreviews: () => ({}), LinkCitation: nothing, CitationSources: nothing, AgentCitationsContext: createContext(null), IssueCitation: nothing, RunCitation: nothing, WebCitation: nothing, useAgentCitations: () => null } })
 mock.module(new URL('./reply-activity.tsx', import.meta.url).href, { namedExports: { ReplyActivity: nothing, ReplyWaiting: nothing, ActivityExpansionContext: createContext(null), useActivityExpansion: () => null, useThreadToolRows: () => () => [] } })
 mock.module(new URL('../workspace/agent-decision.tsx', import.meta.url).href, { namedExports: { ReplyAnswer: plain } })
 mock.module(new URL('../workspace/message-reactions.tsx', import.meta.url).href, { namedExports: { MessageReactions: nothing, useMessageReactions: () => ({}) } })
@@ -140,7 +140,7 @@ let VersionGuard: typeof import('../version-guard')['VersionGuard']
 before(async () => {
   Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element })
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: browser.navigator })
-  for (const key of ['Node', 'getComputedStyle', 'MutationObserver', 'ResizeObserver'] as const) {
+  for (const key of ['Node', 'getComputedStyle', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver'] as const) {
     const value = (browser as unknown as Record<string, unknown>)[key]
     Object.defineProperty(globalThis, key, { configurable: true, value: typeof value === 'function' && key === 'getComputedStyle' ? (value as (...args: unknown[]) => unknown).bind(browser) : value })
   }
@@ -528,11 +528,25 @@ test('a sent message that quotes a reply shows the quote above its words, and ev
   assert.match(container.textContent ?? '', /截图呢？/)
   assert.doesNotMatch(container.textContent ?? '', /> 首页/)
   assert.equal(container.querySelectorAll('[data-slot="message-actions"] [data-copy-state]').length, 2)
-  // The centred time over the group already shows when it was sent: the person's own line (with its time) waits for
-  // hover, as Capy's; the reply's line stays visible (#2922).
+  // Every line, the person's (with its send time) and the reply's, waits for hover or focus, as Figma 1318:2 section 15
+  // and LobeHub (decision 2026-11-22-1500).
   const lines = [...container.querySelectorAll('[data-slot="message-actions"]')]
-  assert.equal(lines.filter(line => line.className.includes('group-hover/message:opacity-100')).length, 1, 'only the person line is hover-only')
-  assert.ok(lines.find(line => line.querySelector('time'))?.className.includes('group-hover/message:opacity-100'), 'the line with the send time is the hover-only one')
+  assert.equal(lines.length, 2)
+  assert.ok(lines.every(line => line.className.split(' ').includes('opacity-0') && line.className.includes('group-hover/message:opacity-100')), 'every line is hover-only')
+  assert.equal(lines.filter(line => line.querySelector('time')).length, 1, 'only the person line carries its send time')
+})
+
+test('the last unread reply marks its read end inside its action line, not as an empty row under it', async () => {
+  chatItems = [{ id: 'fixture-last-reply', position: 1, from: 'coordinator', text: '首页已改好', tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:00:00Z' }]
+  await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
+  const reply = screen!.entries!.find(entry => entry.id === 'fixture-last-reply' || entry.role === 'bot' && !entry.event)!
+  assert.ok(reply.role === 'bot' && reply.parts.every(part => part.kind !== 'text' || part.text !== ''), 'no empty part for the read end')
+  assert.ok(container.querySelector('[data-slot="message-actions"] > span[aria-hidden="true"].h-px'), 'the read end rides in the line')
+  // A reply with no words has no line: its read end keeps a part of its own.
+  chatItems = [{ id: 'fixture-wordless-reply', position: 1, from: 'coordinator', text: '', tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:00:00Z' }]
+  await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" key="wordless" />))
+  const wordless = screen!.entries!.filter(entry => entry.role === 'bot' && !entry.event).at(-1)!
+  assert.ok(wordless.role === 'bot' && !wordless.actions && wordless.parts.some(part => part.kind === 'text' && part.text === ''))
 })
 
 

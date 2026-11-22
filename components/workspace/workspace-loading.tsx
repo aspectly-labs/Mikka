@@ -1,6 +1,9 @@
 import { useTranslations } from '@/lib/intl/i18n-client'
 import type { ReactNode } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useSyncExternalStore } from 'react'
+import { useDelayedVisible } from '@/lib/hooks/use-delayed-visible'
+import { readLocation } from './workspace-navigation'
 
 /**
  * The frame every page's placeholder wears: the bar across its top, then whatever the page draws
@@ -127,18 +130,24 @@ export function SettingsPageLoading() {
 }
 
 /**
- * A conversation: the bubbles at the end of it, and the composer waiting under them. A bot's chat, a
- * group chat and a thread all open the same way, so one placeholder stands for each of them.
+ * A conversation: the bubbles at the end of it, and the composer waiting under them, in the thread screen's
+ * 680px column. A bot's chat, a group chat and a thread all open the same way, so this one placeholder stands
+ * for each of them from the app's first paint to the chat's first read (UX audit 2026-11-22 #3). It shows only
+ * once the wait passes 200ms, and at once when it takes over from another skeleton (`useDelayedVisible`).
+ * `composer={false}` is the bubbles alone, for a transcript whose composer already stands.
  */
-export function ConversationPageLoading() {
+export function ConversationPageLoading({ composer = true }: { composer?: boolean } = {}) {
   const t = useTranslations('Workspace')
+  const shown = useDelayedVisible()
   return <LoadingPage label={t('loading')} bar={false}>
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-end gap-4 px-5 pb-4">
-      <Skeleton className="h-16 w-3/5 rounded-2xl" />
-      <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
-      <Skeleton className="h-24 w-4/5 rounded-2xl" />
-    </div>
-    <div className="mx-auto w-full max-w-3xl px-5 pb-5"><Skeleton className="h-24 w-full rounded-2xl" /></div>
+    {shown && <div data-chat-skeleton="" className="flex min-h-0 flex-1 flex-col">
+      <div className="mx-auto flex w-full max-w-[728px] flex-1 flex-col justify-end gap-4 px-6 pb-4">
+        <Skeleton className="h-16 w-3/5 rounded-2xl" />
+        <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
+        <Skeleton className="h-24 w-4/5 rounded-2xl" />
+      </div>
+      {composer && <div className="mx-auto w-full max-w-[728px] px-6 pb-5"><Skeleton className="h-24 w-full rounded-2xl" /></div>}
+    </div>}
   </LoadingPage>
 }
 
@@ -157,8 +166,20 @@ export function WorkspaceContentLoading() {
   </LoadingPage>
 }
 
-/** The first paint: the same window frame as the app (window bar, rail, one card) so nothing jumps when it arrives. */
+/** Whether the address opens a chat (a Bot's, a group's or a thread in the centre), so the first paint is that chat's. */
+export function opensChat(location: { pathname: string; search: string }) {
+  if (/\/(settings|devices?|workspaces|w)(\/|$)/.test(location.pathname)) return false
+  const place = readLocation(new URLSearchParams(location.search))
+  return !place.issue && (place.section === 'coordinator' || place.section === 'group')
+}
+const noSubscription = () => () => {}
+
+/**
+ * The first paint: the same window frame as the app (window bar, rail, one card) so nothing jumps when it arrives.
+ * Its content is the page the address opens: a chat's placeholder for a chat, so a cold open shows one skeleton.
+ */
 export function WorkspaceLoading() {
+  const chat = useSyncExternalStore(noSubscription, () => opensChat(window.location), () => false)
   return <div className="flex h-screen flex-col overflow-hidden bg-shell-chrome supports-[height:100dvh]:h-dvh text-foreground in-data-desktop-translucent:bg-transparent">
     {/* bg-muted is the light chrome ground itself: the chrome's placeholders take a step of the text colour instead. */}
     <div aria-hidden="true" className="hidden h-11 shrink-0 grid-cols-[1fr_minmax(0,26rem)_1fr] items-center gap-3 pr-2 pl-3 md:grid"><span /><Skeleton className="h-7 w-full rounded-full bg-foreground/[0.07]" /><span /></div>
@@ -170,7 +191,7 @@ export function WorkspaceLoading() {
           <Skeleton className="h-8 w-24" />
           {Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-12 w-full rounded-xl" />)}
         </aside>
-        <main className="flex min-w-0 flex-1 flex-col bg-background"><WorkspaceContentLoading /></main>
+        <main className="flex min-w-0 flex-1 flex-col bg-background">{chat ? <ConversationPageLoading /> : <WorkspaceContentLoading />}</main>
       </div>
     </div>
   </div>

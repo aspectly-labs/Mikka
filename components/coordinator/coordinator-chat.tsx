@@ -26,7 +26,9 @@ import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCita
 import { AgentInteractionContext } from '@/components/workspace/agent-interaction'
 import { ReplyAnswer } from '@/components/workspace/agent-decision'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
-import { navigate, openTask, openThread } from '@/components/workspace/workspace-navigation'
+import { navigate, openTask, openThread, startNewConversation } from '@/components/workspace/workspace-navigation'
+import { PersonReferences } from '@/components/workspace/thread-references'
+import { messageReferences } from '@/lib/composer-references'
 import { CoordinatorReply } from './coordinator-reply'
 import { botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
@@ -42,7 +44,7 @@ import { heldRevision } from '@/lib/live/revisions'
 import { useLiveCitations } from './use-live-citations'
 import type { CoordinatorLiveReply } from '@/lib/eve/chat-view'
 import { firstThreadCards, staleEventPositions } from '@/lib/coordinator/chat-dedupe'
-import { useThreadToolRows } from './reply-activity'
+import { ReplyWaiting, useThreadToolRows } from './reply-activity'
 import { ChatComposerAttachment } from './chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
 import { MergeWaitingLine, useMergeWaitings } from '@/components/chat/merge-waiting-line'
@@ -432,6 +434,10 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const citations = useMemo<AgentCitations>(() => ({ sources: sources ?? {}, previews, onOpenIssue: openIssue }), [sources, previews, openIssue])
   // A live reply cites tasks and threads the stored chat may not know yet; they are looked up as it streams.
   const liveCitations = useLiveCitations(stream.replies.map(reply => reply.text), citations)
+  // The tasks and threads the person's own messages reference, looked up the same way (#2924).
+  const personTexts = useMemo(() => [...(data?.items ?? []).flatMap(item => item.from === 'person' ? [item.text] : []), ...localMessages.map(row => row.text)], [data?.items, localMessages])
+  const personCitations = useLiveCitations(personTexts, citations).settled
+  const composerCommands = useMemo(() => [{ id: 'new', name: '/new', description: t('commandNew'), run: startNewConversation }], [t])
   // What the person said next after each reply, so a choice card shows its answer after a reload.
   const answers = useMemo(() => {
     const next = new Map<number, string>()
@@ -588,7 +594,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
       ]
       if (!item.suggestion || text || attachments.length) entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-        actions: item.text ? <ReplyActions hover at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
+        ...(messageReferences(text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={text} /></AgentCitationsContext> } : {}),
+        actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
       if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
       continue
     }
@@ -602,25 +609,35 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     const artifacts = item.artifacts.flatMap(id => data?.artifacts[id] ? [{ id, name: data.artifacts[id].title }] : [])
     if (artifacts.length) parts.push({ kind: 'artifacts', items: artifacts, onOpen: openArtifact, ...(embedded ? { activeId: embedded.activeArtifactId } : {}) })
     if (item.failure) parts.push(item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()) }} /> })
-    if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
-      parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
+    // The read end rides at the end of the reply's action line, the reply's last row, so it adds no row of its own (an
+    // empty part cost the thread's 12px gap plus its pixel). The line's opacity does not hide it from IntersectionObserver.
+    // A reply with no line (no words) still marks its end with a part of its own.
+    const readEnd = !live && item.position === unreadItems.findLast(row => row.reportable)?.position ? <VisibleReadEnd onSeen={unread.reportEnd} /> : null
+    const lined = Boolean(item.text && !streaming)
+    if (readEnd && !lined) parts.push({ kind: 'text', text: '', node: readEnd })
     entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
       // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
-      actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
+      actions: lined ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
         <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
         {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
+        {readEnd}
       </ReplyActions> : undefined })
   }
   for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
+    ...(messageReferences(row.text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={splitReplyQuote(row.text).text} /></AgentCitationsContext> } : {}),
     status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
     attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
       ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
     ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
   for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
     parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
-  // Before the reply has anything to show: the Bot's turn, still empty, with its caret, once the turn has taken a moment.
-  if (working && waitedLong && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
-    entries.push({ id: 'waiting', role: 'bot', at: Date.now(), parts: [], streaming: true })
+  // Before the reply has anything to show: the Bot's turn with its Thinking row, counting the seconds since the
+  // person's message once past 2 s (LobeHub's wait for the first token); after a retry, since the row appeared.
+  if (working && waitedLong && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping) {
+    const asked = entries.at(-1)
+    entries.push({ id: 'waiting', role: 'bot', at: Date.now(), streaming: true,
+      parts: [{ kind: 'text', text: '', node: <ReplyWaiting {...(asked?.role === 'person' ? { since: asked.at } : {})} /> }] })
+  }
   if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
   // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.
   const quietAuthor = { id: botId ?? 'coordinator', name, mark: avatar('pill'), quiet: true }
@@ -671,7 +688,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         historyPrepend={historyPrepend} scrollRef={transcript}
         working={working && !stopping} onStop={turnConfirmed && stopShown && !resuming && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
-          attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
+          attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
+          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
         under={!embedded && data?.context ? <div data-slot="thread-under-composer" className="flex min-w-0 items-center justify-end px-1"><CoordinatorContextUsage usage={data.context} /></div> : undefined}
         pending={[

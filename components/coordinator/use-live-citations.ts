@@ -28,6 +28,8 @@ export function useLiveCitations(texts: readonly string[], citations: AgentCitat
   const waiting = !error && ids.some(id => !answered?.includes(id))
   return useMemo(() => {
     const sources = lookedUp ? { ...lookedUp, ...known } : known
-    return { settled: { ...citations, sources, pending: waiting }, streaming: { ...citations, sources, pending: true } }
-  }, [citations, known, lookedUp, waiting])
+    // Known ids came from the chat's own authorized read; looked-up ones from this one.
+    const settledIds = [...Object.keys(known), ...answered ?? []]
+    return { settled: { ...citations, sources, pending: waiting, answered: settledIds }, streaming: { ...citations, sources, pending: true } }
+  }, [citations, known, lookedUp, answered, waiting])
 }

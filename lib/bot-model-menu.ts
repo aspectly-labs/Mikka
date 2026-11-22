@@ -93,12 +93,19 @@ export async function botModelMenu(
       options: [],
     };
     subscriptions.set(key, group);
-    group.options.push({ id: row.bindingId, modelId: row.modelId, provider: row.provider });
+    // The connection's own usage limit for this model: an exhausted one stays listed, dimmed with when it resets.
+    const quota = subscriptionAvailability(row.quota, row.modelId, row.provider === "codex" ? "codex" : "claude", now);
+    group.options.push({
+      id: row.bindingId, modelId: row.modelId, provider: row.provider,
+      route: { source: "subscription", connectionId: key, label: group.credentialLabel ?? "", service: row.provider },
+      ...(quota.status === "exhausted" ? { unavailable: { reason: "quota" as const, resetsAt: quota.resetsAt } } : {}),
+    });
   }
   // API keys and custom providers that reach bot chats (C22): the person's own, then teammates' shared ones.
-  const keyOptions = (key: (typeof keys)[number]) =>
-    key.models.map((model) => ({ id: apiKeyOptionId(key.id, model), modelId: model, provider: key.provider }));
   const keyLabel = (key: (typeof keys)[number]) => [key.name, key.last4 ? `····${key.last4}` : null].filter(Boolean).join(" ") || key.provider;
+  const keyOptions = (key: (typeof keys)[number]): BotModelMenuOption[] =>
+    key.models.map((model) => ({ id: apiKeyOptionId(key.id, model), modelId: model, provider: key.provider,
+      route: { source: "byok", connectionId: key.id, label: keyLabel(key) } }));
   const ownKeys = keys.filter((key) => key.mine);
   // Mikka 额度: every catalogue model, listed whenever the source is on; the balance is checked when a message is sent
   // (decision 2026-11-15-1900). A self-hosted server lists its LiteLLM default alias.
@@ -108,6 +115,8 @@ export async function botModelMenu(
     id: creditsOptionId(model.id), modelId: model.id, provider: "mikka", ...(model.name ? { name: model.name } : {}),
     ...(model.pricing ? { price: { input: model.pricing.input, output: model.pricing.output } } : {}),
     ...(featured ? { featured } : {}), ...(hostedSource ? { hostedSource } : {}),
+    route: { source: "credits", connectionId: null, label: "" },
+    ...(usable ? {} : { unavailable: { reason: "points" as const } }),
   });
   const { FEATURED_MODELS } = await import("./model-catalog");
   const featured = new Set<string>(FEATURED_MODELS);
@@ -132,6 +141,7 @@ export async function botModelMenu(
       id: apiKeyOptionId(choice.key.id, choice.model), modelId: choice.model, provider: choice.key.provider,
       kind: choice.key.mine ? "apiKey" : "shared", ...state, available: true, availability: "available",
       credentialLabel: choice.key.mine ? keyLabel(choice.key) : [ownerNames.get(choice.key.ownerId), keyLabel(choice.key)].filter(Boolean).join(" · "),
+      route: { source: "byok", connectionId: choice.key.id, label: keyLabel(choice.key) },
       ...(choice.quota ? { quota: choice.quota } : {}),
     };
   } else {
@@ -142,6 +152,8 @@ export async function botModelMenu(
       id: option?.bindingId ?? binding.bindingId, modelId: binding.modelId, provider: binding.provider,
       kind: "subscription", ...state, available: availability.status === "available", availability: availability.status,
       credentialLabel: binding.accountLabel?.trim() || `…${String(binding.connectionId).slice(-6)}`,
+      route: { source: "subscription", connectionId: String(binding.connectionId), label: binding.accountLabel?.trim() || `…${String(binding.connectionId).slice(-6)}`, service: binding.provider },
+      ...(availability.status === "exhausted" ? { unavailable: { reason: "quota" as const, resetsAt: availability.resetsAt } } : {}),
       ...(choice.quota ? { quota: choice.quota } : {}),
     };
   }
@@ -172,11 +184,17 @@ export async function refreshBotModelMenu(
   timeoutMs = 8000,
   refreshQuota: (ownerId: string, connectionId: string, signal: AbortSignal) => Promise<unknown> = async (ownerId, connectionId, signal) =>
     (await import("./subscription-runtime")).subscriptionRuntime().usage(ownerId, connectionId, signal),
+  refreshKey: (ownerId: string, keyId: string) => Promise<unknown> = async (ownerId, keyId) =>
+    (await import("./model-api-keys")).refreshApiKeyModels(pool, ownerId, keyId),
 ): Promise<BotModelMenu> {
   // Every connected subscription, not only those already listed: one never asked has no models to list yet.
   const connections = await settings.connectedSubscriptions(scope.ownerId);
-  await Promise.allSettled(
-    connections.map((connectionId) =>
+  // The person's own keys list their models again (the provider's free /models read, #2938); a teammate's shared key is its owner's to refresh.
+  const { rows: ownKeys } = await pool.query<{ id: string }>('SELECT id::text AS id FROM model_api_keys WHERE "ownerId"=$1', [scope.ownerId]);
+  const timed = (work: Promise<unknown>) => Promise.race([work, new Promise((resolve) => setTimeout(resolve, timeoutMs).unref?.())]);
+  await Promise.allSettled([
+    ...ownKeys.map((key) => timed(refreshKey(scope.ownerId, key.id))),
+    ...connections.map((connectionId) =>
       Promise.race([
         // A catalogue read alone cannot confirm a stale allowance. The same
         // refresh checks usage, whose safe snapshot is persisted by the service.
@@ -187,7 +205,7 @@ export async function refreshBotModelMenu(
         new Promise((resolve) => setTimeout(resolve, timeoutMs).unref?.()),
       ]),
     ),
-  );
+  ]);
   return botModelMenu(pool, settings, scope, botId);
 }
 

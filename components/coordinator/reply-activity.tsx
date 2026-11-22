@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, memo, useCallback, useContext, useMemo, useState, type ComponentType } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState, type ComponentType } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import {
@@ -263,10 +263,31 @@ export const ReplyActivity = memo(function ReplyActivity({ tools, thinking, thou
   </ActivityList>
 })
 
-/** Before a reply has anything to show: the same Thinking row, running, as the Trace docs start a turn. */
-export function ReplyWaiting() {
+/** LobeHub shows the seconds waited once the wait passes this (ContentLoading's ELAPSED_TIME_THRESHOLD). */
+export const WAIT_SECONDS_AFTER_MS = 2100
+
+/** Whole seconds since `startedAt`, ticking once a second while mounted: a clock on screen, it reads nothing. */
+function useSecondsSince(startedAt: number) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  return Math.max(0, now - startedAt)
+}
+
+/**
+ * Before a reply has anything to show: the same Thinking row, running, as the Trace docs start a turn, with the
+ * seconds waited once past 2 s, as LobeHub counts the wait for the first token. `since` is when the person's message
+ * was sent; without it the wait counts from when this row appeared.
+ */
+export function ReplyWaiting({ since }: { since?: number }) {
   const t = useTranslations('Coordinator.activity')
-  return <ActivityList data-reply-waiting=""><ActivityThinking running title={t('thinking')} /></ActivityList>
+  const [shownAt] = useState(() => Date.now())
+  const startedAt = since !== undefined && Number.isFinite(since) ? Math.min(since, shownAt) : shownAt
+  const waited = useSecondsSince(startedAt)
+  return <ActivityList data-reply-waiting=""><ActivityThinking running title={t('thinking')} startedAt={startedAt}
+    {...(waited >= WAIT_SECONDS_AFTER_MS ? { elapsed: t('waited', { seconds: Math.floor(waited / 1000) }) } : {})} /></ActivityList>
 }
 
 /**
