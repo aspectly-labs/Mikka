@@ -833,7 +833,8 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
       conversation={activeBot ? { id: activeBot.id, name: activeBot.name, color: activeBot.color, shape: activeBot.shape, kind: 'bot' } : { id: coordinatorBot?.id, name: i18nText('Nav.coordinator'), kind: 'coordinator', updatedAt: botChatSummaries && coordinatorBot ? botChatSummaries.items[coordinatorBot.id]?.at ?? undefined : undefined }} /> },
     browser: { content: <BrowserPane inTab onClose={() => showBrowser('closed')} /> },
   }, showRightColumnTab)
-  const conversationPanels = panelsInFrame ? { ...panelReveal, onActiveTask: onActiveWorkTask, tabs: rightColumnTabs } : undefined
+  const rightColumnKey = rightColumnScope ? JSON.stringify([user.id, listWorkspaceId, rightColumnScope.kind === 'thread' ? rightColumnScope.runId : rightColumnScope.botId ?? 'coordinator']) : undefined
+  const conversationPanels = panelsInFrame ? { ...panelReveal, onActiveTask: onActiveWorkTask, tabs: rightColumnTabs, stateKey: rightColumnKey } : undefined
   // Stable while the live sessions stay put: the dialogs below read this, and a fresh array every render would rebuild them all.
   const conversationSessions = useMemo(() => {
     const saved = new Map((agentHistory?.sessions ?? []).map(session => [session.id, session]))

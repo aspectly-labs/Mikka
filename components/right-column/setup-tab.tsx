@@ -1,11 +1,13 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import useSWR from 'swr'
 import { useFormatter, useNow, useTranslations } from '@/lib/intl/i18n-client'
 import { ExternalLink, Server } from '@/components/icons'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { InlineLoadError } from '@/components/load-error'
+import { listEnvironments } from '@/app/actions/environments'
 import { useThreadMachineMetrics, useThreadWorkspace } from '@/hooks/use-thread-workspace'
 import { withBasePath } from '@/lib/base-path'
 import { MACHINE_SIZES, isMachineSize } from '@/lib/cloud-computer/machine-pricing'
@@ -15,11 +17,11 @@ import type { RightColumnScope } from './scope'
 /**
  * Setup (#2928, Figma 1318:19): where the thread runs and what it was set up with. The machine's kind, state and
  * size, how long it has run and, for a running sandbox, its recorded CPU, memory and disk; the Environment the run was
- * admitted with and its setup command. A Bot's chat has no machine and no Setup tab. Startup commands,
+ * admitted with and its setup command. A Bot's chat shows the Environment its threads start in. Startup commands,
  * snapshots and 「Run setup again」 have no backend yet (#2940) and are left out.
  */
 export function SetupTab({ scope }: { scope: RightColumnScope }) {
-  return scope.kind === 'thread' ? <ThreadSetup runId={scope.runId} /> : null
+  return scope.kind === 'thread' ? <ThreadSetup runId={scope.runId} /> : <BotSetup environmentId={scope.environmentId} />
 }
 
 type Environment = NonNullable<ThreadWorkspace['environment']> & { defaultMachineSize?: string | null }
@@ -35,6 +37,25 @@ function ThreadSetup({ runId }: { runId: string }) {
   return <div data-slot="right-column-setup" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
     {machine ? <Machine machine={machine} metrics={metrics} /> : <p className="text-xs text-muted-foreground">{t('noMachine')}</p>}
     {workspace.data.environment ? <EnvironmentSection environment={workspace.data.environment} /> : <p className="text-xs text-muted-foreground">{t('noEnvironment')}</p>}
+  </div>
+}
+
+function BotSetup({ environmentId }: { environmentId: string | null }) {
+  const t = useTranslations('RightColumn.setup')
+  const { data, error, mutate } = useSWR(environmentId ? ['environments'] : null, () => listEnvironments(), { revalidateOnFocus: false, shouldRetryOnError: false })
+  if (!environmentId) return <p className="p-4 text-xs text-muted-foreground">{t('noEnvironment')}</p>
+  if (error) return <div className="p-4"><InlineLoadError message={t('loadFailed')} retryLabel={t('retry')} onRetry={() => { void mutate() }} /></div>
+  if (!data) return <Loading />
+  const found = data.environments.find(environment => environment.id === environmentId)
+  if (!found) return <p className="p-4 text-xs text-muted-foreground">{t('noEnvironment')}</p>
+  const environment: Environment = {
+    id: found.id, name: found.name, runtime: found.configuration.runtime, repositories: found.configuration.repositoryKeys,
+    setup: found.configuration.setup ? { command: found.configuration.setup.command?.trim() || null, copyFiles: found.configuration.setup.copyFiles, approved: found.configuration.setup.approved } : null,
+    defaultMachineSize: found.defaultMachineSize,
+  }
+  return <div data-slot="right-column-setup" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
+    <p className="text-xs text-muted-foreground">{t('botNote')}</p>
+    <EnvironmentSection environment={environment} />
   </div>
 }
 

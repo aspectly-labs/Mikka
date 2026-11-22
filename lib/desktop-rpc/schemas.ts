@@ -118,6 +118,7 @@ export const desktopActionSchemas = {
   'project-resources.listProjectSetupVersions': tuple(listProjectSetupVersionsInput),
   'project-resources.rollbackProjectSetup': tuple(rollbackProjectSetupInput),
   'project-resources.listProjectResources': tuple(uuid, uuid.optional()),
+  'environments.listEnvironments': z.union([none, tuple(uuid)]),
   'project-resources.setProjectDefaultEnvironment': tuple(projectDefaultEnvironmentInput),
   'project-resources.saveEnvironment': tuple(saveEnvironmentInput),
   'project-resources.searchProjectPullAuthors': tuple(projectPullAuthorInput),

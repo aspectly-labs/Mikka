@@ -170,6 +170,8 @@ export type ThreadScreenProps = {
     tabs: ThreadPanelTab[]; reveal: number; revealId: string | null
     /** The real active work tab's task, or null for another tab. */
     onActiveTask?: (taskId: string | null) => void
+    /** Where this conversation's right-column tabs are kept on this device (#2927): open, order and the one in front. */
+    stateKey?: string
   }
   /**
    * Tabs the chat opens itself in the same work area (FRAME_OWNS_PANEL, decision 2026-11-10): a task's view
