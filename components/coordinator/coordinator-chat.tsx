@@ -673,7 +673,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
           working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
           composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
-            attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
+            attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping, onRunKey }}
           pending={[
             ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),
             ...(browser?.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate'), onRemove: () => browser?.remove(note.n) })),
@@ -832,5 +832,4 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
 export function CoordinatorChat(props: Parameters<typeof CoordinatorChatSession>[0]) {
   const scope = useLiveScope()
   return <CoordinatorChatSession key={`${props.userId ?? scope?.ownerId ?? 'session'}:${scope?.workspaceId ?? ''}:${props.bot?.id ?? 'coordinator'}`} {...props} />
-}
 }
