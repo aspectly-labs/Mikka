@@ -15,7 +15,7 @@ test('thread references + thread env vars', { skip: !dbUrl }, async t => {
   const { Pool } = await import('pg')
   const pool = new Pool({ connectionString: dbUrl })
   t.after(() => pool.end())
-  const { resolveThreadReferences, expandReferences } = await import('../lib/thread-references')
+  const { resolveThreadReferences, expandReferences } = await import('../lib/thread-references-server')
   const { setThreadScopeSecret, deleteThreadScopeSecret } = await import('../lib/secrets/thread-scope')
   const { loadTaskRuntimeSecrets } = await import('../lib/secrets/runtime')
 

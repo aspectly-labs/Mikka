@@ -689,7 +689,7 @@ function safeHttpUrl(value: string) {
 }
 
 /** Something a person says in a running thread; the daemon delivers it to the agent. */
-export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string; references?: import('@/lib/thread-references').ThreadReference[] }): Promise<{ runId: string; continued: boolean }> {
+export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string; references?: import('@/lib/thread-references-server').ThreadReference[] }): Promise<{ runId: string; continued: boolean }> {
   const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
   if (!text.success) throw new ActionFailureError('messageRequired')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
@@ -737,10 +737,10 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
   }
   let body = text.data
   if (input.references?.length) {
-    const refs = z.array((await import('@/lib/thread-references')).threadReference).max(20).safeParse(input.references)
+    const refs = z.array((await import('@/lib/thread-references-server')).threadReference).max(20).safeParse(input.references)
     if (!refs.success) throw new ActionFailureError('validationGeneric')
-    const resolved = await (await import('@/lib/thread-references')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data)
-    body = (await import('@/lib/thread-references')).expandReferences(resolved) + body
+    const resolved = await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data)
+    body = (await import('@/lib/thread-references-server')).expandReferences(resolved) + body
     if (body.length > 10_000) throw new ActionFailureError('messageRequired')
   }
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
@@ -749,11 +749,11 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
 
 /** #2941 item 3: preview cards for the composer's typed references. Same
  * resolution the send runs; never throws per reference. */
-export async function getReferencePreview(input: { issueId: string | null; runId: string; references: import('@/lib/thread-references').ThreadReference[] }) {
+export async function getReferencePreview(input: { issueId: string | null; runId: string; references: import('@/lib/thread-references-server').ThreadReference[] }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
-  const refs = z.array((await import('@/lib/thread-references')).threadReference).max(20).safeParse(input.references)
+  const refs = z.array((await import('@/lib/thread-references-server')).threadReference).max(20).safeParse(input.references)
   if (!refs.success) throw new ActionFailureError('validationGeneric')
-  return { references: await (await import('@/lib/thread-references')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data) }
+  return { references: await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data) }
 }
 
 /** #2941 item 4: a side note stored in the thread that does NOT wake the
