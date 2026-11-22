@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     noParameters: agentCopy.activeAgentsNoParameters,
     groupNotFound: agentCopy.activeAgentsGroupNotFound,
   }, {
-    member: (userId, conversationId) => isConversationUserMember(db, conversationId, userId),
+    member: (userId, conversationId) => isConversationUserMember(db, conversationId, userId, session?.tokenWorkspaceId),
     list: (userId, conversationId) => listActiveAgents(db, userId, undefined, session?.tokenWorkspaceId, conversationId),
   })
 }

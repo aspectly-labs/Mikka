@@ -307,9 +307,13 @@ dbTest('active agents on the database', async t => {
       { messageId: m1, conversationId: group, userId: me, botId: memberBot, status: 'running', updatedAt: now },
       { messageId: m2, conversationId: stray, userId: me, botId: outsideBot, status: 'running', updatedAt: now },
     ])
+    await db.insert(agentRuns).values(run(e.id, 'running', { startedAt: ago(10_000) })) // a departed member with a live run still cannot appear
     const { isConversationUserMember } = await import('./active-agents')
     try {
       assert.equal(await isConversationUserMember(db, group, me), true)
+      assert.equal(await isConversationUserMember(db, group, me, workspaceId), true)
+      assert.equal(await isConversationUserMember(db, group, me, otherWorkspace), false, 'a workspace-scoped token cannot reach another workspace\'s group')
+      assert.equal(await isConversationUserMember(db, group, me, randomUUID()), false)
       assert.equal(await isConversationUserMember(db, group, other), false)
       assert.equal(await isConversationUserMember(db, stray, me), false, 'not a member of the other group')
       const scoped = await listActiveAgents(db, me, now, undefined, group)

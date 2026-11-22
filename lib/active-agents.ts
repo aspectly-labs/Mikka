@@ -67,7 +67,12 @@ async function conversationMemberIds(database: Database, conversationId: string)
 }
 
 /** A signed-in person may scope the strip to a group they are a user member of. */
-export async function isConversationUserMember(database: Database, conversationId: string, userId: string): Promise<boolean> {
+export async function isConversationUserMember(database: Database, conversationId: string, userId: string, workspaceId?: string | null): Promise<boolean> {
+  if (workspaceId) {
+    const scopeRows = await database.select({ workspaceId: conversations.workspaceId }).from(conversations)
+      .where(eq(conversations.id, conversationId)).limit(1)
+    if (scopeRows[0]?.workspaceId !== workspaceId) return false // a workspace-scoped token cannot reach another workspace's group
+  }
   const rows = await database.select({ memberId: conversationMembers.memberId }).from(conversationMembers)
     .where(and(
       eq(conversationMembers.conversationId, conversationId),
