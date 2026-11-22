@@ -163,7 +163,7 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'cloud': return userKey ? <CloudSettings userKey={userKey} workspaceId={workspaceId} /> : null
     case 'security': return <SecurityAndSignIn googleEnabled={googleEnabled} />
 
-    case 'environments': return workspaceId && !preview ? <><EnvironmentsSettings key={workspaceId} workspaceId={workspaceId} /><SecretsPage side="workspace" onSide={() => onSection('logins')} workspaceId={workspaceId} workspaceName={workspaceName} waiting={waiting} /></> : waiting
+    case 'environments': return workspaceId && !preview ? <EnvironmentsSettings key={workspaceId} workspaceId={workspaceId} /> : waiting
     case 'issue-states': return workspaceId && !preview ? <IssueStatesSettings key={workspaceId} workspaceId={workspaceId} /> : waiting
     case 'logins':
     case 'secrets': return <SecretsPage side={section === 'logins' ? 'mine' : 'workspace'} onSide={side => onSection(side === 'mine' ? 'logins' : 'secrets')} workspaceId={workspaceId && !preview ? workspaceId : undefined} workspaceName={workspaceName} waiting={waiting} />
