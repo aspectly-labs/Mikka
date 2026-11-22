@@ -1,23 +1,7 @@
 /**
- * The centred timestamp above a run of chat messages (#2922, Figma 1318:3 「今天 14:32」): it opens the first message
- * and each group that starts after a quiet gap, never the messages written close together.
+ * When a chat message was sent, in words (「今天 14:32」): the time in a message's action bar, shown on hover as
+ * LobeHub's (components/chat/reply-actions.tsx). The chat draws no centred time over its messages (decision 2026-11-22-2000).
  */
-
-/** Messages closer than this read as one group under one timestamp. */
-export const STAMP_GAP_MS = 15 * 60_000
-
-const readable = (at: number) => Number.isFinite(at) && at > 0
-
-/** For each message time, in order, whether a timestamp goes above it. A message with no readable time never starts a group. */
-export function stampStarts(times: readonly number[]): boolean[] {
-  let previous: number | null = null
-  return times.map(at => {
-    if (!readable(at)) return false
-    const starts = previous === null || at - previous >= STAMP_GAP_MS
-    previous = at
-    return starts
-  })
-}
 
 export type StampWords = { today: (time: string) => string; yesterday: (time: string) => string }
 

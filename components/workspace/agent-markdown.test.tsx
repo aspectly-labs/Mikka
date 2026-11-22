@@ -46,10 +46,11 @@ test('paragraphs sit 8px apart, a quote is a start bar in the body colour and li
 })
 
 // lobe-ui style.css :266-306: an outlined, rounded table with a filled header row and roomy cells.
-test('a table is outlined and rounded, with a filled header', () => {
+test('a table is outlined and rounded, with a filled header, as wide as the column', () => {
   const html = renderToStaticMarkup(<AgentMarkdown text={SAMPLE} />)
   const region = /role="region"[^>]*class="([^"]*)"/.exec(html)?.[1].split(' ') ?? []
-  assert.ok(['w-fit', 'max-w-full', 'overflow-hidden', 'rounded-md', 'border', 'border-rule'].every(name => region.includes(name)), region.join(' '))
+  // As wide as the message column (Alex, 2026-11-22: every block spans the words' width); a wider one scrolls inside.
+  assert.ok(['w-full', 'overflow-hidden', 'rounded-md', 'border', 'border-rule'].every(name => region.includes(name)) && !region.includes('w-fit'), region.join(' '))
   assert.ok(classOf(html, 'thead').includes('bg-muted'))
   for (const cell of ['th', 'td']) for (const name of ['px-4', 'py-3', 'min-w-30']) assert.ok(classOf(html, cell).includes(name), cell + ' ' + name)
 })

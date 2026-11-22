@@ -250,9 +250,8 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     const mine = message.authorType === 'user' && message.authorId === userId
     const id = sentAs[message.id] ?? message.id
     const reply = message.authorType !== 'user'
-    // The line under every message, as the Bot chat's (on hover, decision 2026-11-22-1500): Copy and its reactions;
-    // a person's message says when it was sent, a reply's author line already does.
-    const actions = <ReplyActions at={reply ? undefined : at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
+    // The bar under every message, as LobeHub's (on hover, decision 2026-11-22-2000): when it was sent, Copy and its reactions.
+    const actions = <ReplyActions at={at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
     const words = <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>
     if (mine) entries.push({ id, role: 'person', at, text: message.body, body: words, actions })
     else {

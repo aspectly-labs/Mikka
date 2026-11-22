@@ -1,7 +1,7 @@
 # Message actions on hover, and a two-step chat rhythm
 
 - Date: 2026-11-22 15:00 UTC
-- Status: accepted
+- Status: accepted; part 2 (the two-step rhythm) superseded by [2026-11-22-2000-chat-look-as-lobehub](2026-11-22-2000-chat-look-as-lobehub.md)
 - Supersedes in part: [2026-11-10-2002-chat-reply-actions-and-waiting](2026-11-10-2002-chat-reply-actions-and-waiting.md) (A, "reply actions are always there"). Its part B (the waiting sentence) stands.
 
 ## Context

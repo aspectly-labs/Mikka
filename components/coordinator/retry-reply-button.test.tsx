@@ -498,12 +498,12 @@ test('a sent message that quotes a reply shows the quote above its words, and ev
   assert.match(container.textContent ?? '', /截图呢？/)
   assert.doesNotMatch(container.textContent ?? '', /> 首页/)
   assert.equal(container.querySelectorAll('[data-slot="message-actions"] [data-copy-state]').length, 2)
-  // Every line, the person's (with its send time) and the reply's, waits for hover or focus, as Figma 1318:2 section 15
-  // and LobeHub (decision 2026-11-22-1500).
+  // Every bar, the person's and the reply's, waits for hover or focus and says when it was sent, as LobeHub's (decisions
+  // 2026-11-22-1500 and 2026-11-22-2000: no time beside a name or over the messages).
   const lines = [...container.querySelectorAll('[data-slot="message-actions"]')]
   assert.equal(lines.length, 2)
   assert.ok(lines.every(line => line.className.split(' ').includes('opacity-0') && line.className.includes('group-hover/message:opacity-100')), 'every line is hover-only')
-  assert.equal(lines.filter(line => line.querySelector('time')).length, 1, 'only the person line carries its send time')
+  assert.equal(lines.filter(line => line.querySelector('time')).length, 2, 'every bar carries its send time')
 })
 
 test('the last unread reply marks its read end inside its action line, not as an empty row under it', async () => {
