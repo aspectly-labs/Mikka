@@ -53,6 +53,7 @@
       "components/blocks/rich-text-editor-4/components/rich-text-comments.ts",
       "cloudflare/bounded-json.mjs",
       "tests/mvp/transport.mjs",
+      "tests/mvp/fake-litellm.mjs",
       "scripts/dev-local/transport.mjs",
       "scripts/dev-local/services.mjs",
       "scripts/ops/request-outcomes.mjs",
