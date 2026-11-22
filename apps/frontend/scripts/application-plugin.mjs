@@ -23,7 +23,7 @@ const clientRuntime = resolve(repository, 'lib/client-runtime')
 const commonAliases = new Map([
   ['@/i18n/navigation', 'localized-navigation.tsx'],
 ])
-const desktopAliases = new Map([
+export const desktopAliases = new Map([
   ['@/lib/auth-client', 'auth-client.ts'], ['@/components/auth-form', 'auth-form.tsx'],
   ['@/lib/platform/open-settings', 'open-settings.ts'], ['@/lib/platform/client-config', 'client-config.ts'],
   ['@/hooks/use-feature-availability', 'feature-availability.ts'], ['@/lib/live/browser-runtime', 'live-runtime.ts'],
