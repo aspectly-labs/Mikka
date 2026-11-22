@@ -182,12 +182,14 @@ test('group read routes advance actual group history without opening private DMs
         body: JSON.stringify({ body: text, mentions: selected.map(memberId => ({ memberType: 'agent', memberId })) }) }, true)
       assert.equal(response.status, 201)
     }
+    const billed: (string | null)[] = []
     const runtime = {
       async agents(userId: string, ids: string[], client: import('pg').PoolClient) { return (await client.query(`SELECT id,name,description FROM agents WHERE "userId"=$1 AND id=ANY($2::uuid[])`, [userId, ids])).rows },
       async authorized(workspaceId: string, userId: string) { return Boolean((await pool.query(`SELECT 1 FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2 AND status='active'`, [workspaceId, userId])).rowCount) },
       async route(): Promise<never> { throw Error('An explicit mention must not call a decision fixture') },
       async correction(): Promise<never> { throw Error('Explicit mention roots need no correction fixture') },
       async generate(agent: { id: string }, input: { message: { text: string }; earlier: { text: string }[]; privatePeer?: { id: string } }) {
+        billed.push((await import('./abuse/context')).hostedBillingScope.getStore()?.turnRef ?? null)
         if (agent.id === c) { assert.deepEqual(input.earlier, []); return { text: 'public response', mentions: [] } }
         if (!input.privatePeer) return { text: `private question ${input.message.text}`, mentions: [], privateTo: b,
           sourceConversationId: group, linkedConversationId: dm, linkId: exchangeLink, anchorPosition: '4' }
@@ -209,12 +211,21 @@ test('group read routes advance actual group history without opening private DMs
     assert.equal((await (await call('GET', source)).json()).unreadCount, 2)
     const firstView = await (await linked(initial[0].id)).json()
     assert.deepEqual(firstView.messages.map((entry: { body: string }) => entry.body), ['private answer first','private question first'])
+    // Each private reply is stored under the id its usage receipt names: group:<anchored group message>:<reply id>.
+    const privateIds = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1`, [initial[0].linkedConversationId])).rows.map(row => row.id)
+    const anchor = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND position=1`, [source])).rows[0].id
+    for (const id of privateIds) assert.ok(billed.includes(`group:${anchor}:${id}`), `private reply ${id} has its usage reference`)
     assert.equal((await history('', initial[0].linkedConversationId)).status, 404)
     await send('second'); await processGroupTurn(pool, source, runtime)
     const segments = (await pool.query(`SELECT id,"linkedConversationId","firstPosition"::text,"lastPosition"::text,"messageCount"::text FROM conversation_links WHERE "sourceConversationId"=$1 ORDER BY "anchorPosition"`, [source])).rows
     assert.equal(segments.length, 2)
     assert.equal(segments[0].linkedConversationId, segments[1].linkedConversationId)
     assert.deepEqual([segments[1].firstPosition, segments[1].lastPosition, segments[1].messageCount], ['3','4','2'])
+    // The reused transcript's second segment names the second group message, not the first.
+    const secondAnchor = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND body='second'`, [source])).rows[0].id
+    const secondReplies = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND position BETWEEN 3 AND 4`, [segments[1].linkedConversationId])).rows.map(row => row.id)
+    assert.equal(secondReplies.length, 2)
+    for (const id of secondReplies) assert.ok(billed.includes(`group:${secondAnchor}:${id}`), `second-segment reply ${id} is billed under the second group message`)
     assert.equal(JSON.stringify(await (await linked(segments[0].id, '?before=999')).json()).includes('second'), false)
     assert.equal((await (await call('GET', source)).json()).unreadCount, 3, 'private message positions do not add source unread messages')
     // Remove a source peer while its initial model response is in flight.

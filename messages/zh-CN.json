@@ -2291,6 +2291,9 @@
       },
       "issue-states": {
         "title": "任务状态"
+      },
+      "team-skills": {
+        "title": "团队技能"
       }
     },
     "appearance": {
@@ -3763,6 +3766,22 @@
         "purple": "紫色",
         "red": "红色"
       }
+    },
+    "teamSkills": {
+      "title": "团队技能",
+      "empty": "还没有团队技能",
+      "loadError": "无法读取团队技能注册表。",
+      "actError": "未能更改，请重试。",
+      "approve": "批准",
+      "withdraw": "撤回",
+      "status": {
+        "pending": "待审核",
+        "approved": "已批准",
+        "withdrawn": "已撤回"
+      },
+      "withdrawTitle": "撤回 {name}？",
+      "withdrawBody": "撤回不可撤销：选择了这个版本、尚未完成的运行会停止。",
+      "cancel": "取消"
     }
   },
   "TelegramBot": {
@@ -4169,7 +4188,8 @@
       "modelRejected": "模型请求被拒绝",
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
-      "modelNotReported": "云电脑没报告能跑这个模型"
+      "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行"
     },
     "quota": {
       "used": "{name} 额度已用完",
@@ -5458,7 +5478,17 @@
       "open": "打开右栏",
       "filterBot": "按派出者筛选",
       "allBots": "全部派出者",
-      "closeAllThreads": "关闭全部线程"
+      "closeAllThreads": "关闭全部线程",
+      "addMember": "添加成员",
+      "addMembers": "添加成员到 {group}",
+      "noMoreBots": "你的所有 Bot 都已在群里。",
+      "membersWriteError": "无法修改成员。",
+      "cancel": "取消",
+      "add": "添加",
+      "removeMember": "移除 {name}",
+      "memberRemoved": "已移除 {name}",
+      "undo": "撤销",
+      "leadRestoreError": "{name} 已恢复；主持角色可能未恢复。"
     },
     "suggestions": {
       "title": "建议",
@@ -8403,6 +8433,7 @@
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
       "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行",
       "hostedQuotaUsed": "Mikka 额度已用完",
       "hostedPaused": "Mikka 额度暂时不可用",
       "temporarilyUnavailable": "暂时不可用",
@@ -9084,9 +9115,77 @@
       "label": "更新线程标题",
       "keywords": "标题|拉取请求"
     },
+    "gitAuthorName": {
+      "label": "提交作者",
+      "keywords": "提交|作者|姓名|git"
+    },
+    "gitAuthorEmail": {
+      "label": "提交邮箱",
+      "keywords": "提交|作者|邮箱|git"
+    },
     "subagentMaxConcurrent": {
       "label": "并发子 Agent 数量",
       "keywords": "子 Agent|并发|限制"
+    },
+    "memoryAutoApprove": {
+      "label": "自动审批低风险记忆",
+      "keywords": "记忆|自动审批|低风险"
+    },
+    "dndEnabled": {
+      "label": "定时免打扰",
+      "keywords": "免打扰|静音|排程"
+    },
+    "dndStart": {
+      "label": "免打扰开始时间",
+      "keywords": "免打扰|开始|时间"
+    },
+    "dndEnd": {
+      "label": "免打扰结束时间",
+      "keywords": "免打扰|结束|时间"
+    },
+    "dndDays": {
+      "label": "免打扰重复日期",
+      "keywords": "免打扰|日期|星期"
+    },
+    "notifyMobileDecide": {
+      "label": "手机推送：需要你决策",
+      "keywords": "手机|推送|决策"
+    },
+    "notifyMobileReview": {
+      "label": "手机推送：待审阅",
+      "keywords": "手机|推送|审阅"
+    },
+    "notifyMobileFinished": {
+      "label": "手机推送：线程完成",
+      "keywords": "手机|推送|线程完成"
+    },
+    "notifyMobileBriefing": {
+      "label": "手机推送：每日简报",
+      "keywords": "手机|推送|简报"
+    },
+    "notifyDesktopDecide": {
+      "label": "桌面通知：需要你决策",
+      "keywords": "桌面|通知|决策"
+    },
+    "notifyDesktopReview": {
+      "label": "桌面通知：待审阅",
+      "keywords": "桌面|通知|审阅"
+    },
+    "notifyDesktopFinished": {
+      "label": "桌面通知：线程完成",
+      "keywords": "桌面|通知|线程完成"
+    },
+    "notifyDesktopBriefing": {
+      "label": "桌面通知：每日简报",
+      "keywords": "桌面|通知|简报"
+    },
+    "notifyEmailInvitations": {
+      "label": "组织邀请邮件",
+      "keywords": "邮件|邀请|组织"
+    },
+    "notificationSound": {
+      "label": "通知提示音",
+      "keywords": "提示音|声音|静音"
     }
   }
 }

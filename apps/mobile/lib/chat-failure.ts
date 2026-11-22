@@ -9,7 +9,7 @@ const SUBSCRIPTION_LINES = {
   unavailable: F.subUnavailable, reconnect: F.subReconnect, quotaUsed: F.subQuotaUsed, retry: F.subRetry,
   selectionChanged: F.subSelectionChanged, rateLimited: F.subRateLimited, accessDenied: F.subAccessDenied,
   modelRejected: F.modelRejected, quotaChecking: F.quotaChecking, runtimeUnavailable: F.runtimeUnavailable,
-  modelNotReported: F.modelNotReported,
+  modelNotReported: F.modelNotReported, modelRequired: F.modelRequired,
 } satisfies Record<SubscriptionRefusalNotice, string>
 
 interface FailureLine { text: string; retry: boolean; recovery: 'models' | 'model' | 'billing' | 'cloudBilling' | null }
