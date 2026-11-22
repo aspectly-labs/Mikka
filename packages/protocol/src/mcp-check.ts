@@ -19,7 +19,27 @@ export type McpDeviceCheckReceipt = z.infer<typeof mcpDeviceCheckReceiptSchema>
 /** A server may echo its environment credential in a description. Strip it at
  * both the device boundary and the owning storage boundary before sharing. */
 export function scrubMcpCheckTools(tools: { name: string; description?: string }[], server: Extract<TaskMcpServer, { transport: 'stdio' }>) {
-  const needles = Object.values(server.env).filter(Boolean).flatMap(value => [value, encodeURIComponent(value), btoa(Array.from(new TextEncoder().encode(value), byte => String.fromCharCode(byte)).join(''))]).sort((a, b) => b.length - a.length)
+  // A credential reaches the process as an environment value or as a command-line argument,
+  // and a server may echo either one back in a tool's name or description.
+  const secrets = [...Object.values(server.env), ...commandLineSecrets(server.args ?? [])].filter(Boolean)
+  const needles = secrets.flatMap(value => [value, encodeURIComponent(value), btoa(Array.from(new TextEncoder().encode(value), byte => String.fromCharCode(byte)).join(''))]).sort((a, b) => b.length - a.length)
   const scrub = (value: string) => needles.reduce((result, secret) => result.split(secret).join('[redacted]'), value)
   return tools.map(tool => mcpCheckedToolSchema.parse({ name: scrub(tool.name), description: scrub(tool.description ?? '').slice(0, 4000) }))
+}
+
+/**
+ * The parts of a STDIO command line that can carry a credential: a `--flag=value` value, the
+ * value after a credential-named flag, and any long opaque token-looking argument.
+ */
+function commandLineSecrets(args: string[]): string[] {
+  const named = /(token|secret|key|password|passwd|pass|credential|auth|bearer)/i
+  const values: string[] = []
+  args.forEach((argument, index) => {
+    const [flag, ...rest] = argument.split('=')
+    const inline = rest.join('=')
+    if (argument.startsWith('-') && inline && named.test(flag!)) values.push(inline)
+    else if (argument.startsWith('-') && named.test(argument)) { const next = args[index + 1]; if (next && !next.startsWith('-')) values.push(next) }
+    else if (!argument.startsWith('-') && argument.length >= 20 && /^[A-Za-z0-9_\-.:+/=]+$/.test(argument) && /\d/.test(argument) && /[A-Za-z]/.test(argument)) values.push(argument)
+  })
+  return values
 }

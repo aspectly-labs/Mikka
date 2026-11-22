@@ -46,9 +46,24 @@ export class McpConnectionStore {
     const servers = page?.servers ?? await this.personal.listMcp(userId)
     const query = (options.query ?? '').trim().toLowerCase()
     if (query.length > 200) throw new PluginError('invalidPluginInput', 400)
-    const details = await Promise.all(servers.map(async server => ({ ...server, ...await this.detail(userId, server.id, options.workspaceId) })))
-    const matched = details.filter(server => (!options.environmentId || !server.environmentIds.length || server.environmentIds.includes(options.environmentId)) &&
-      (!query || [server.name, server.url ?? '', ...server.tools.map(tool => tool.name)].some(value => value.toLowerCase().includes(query))))
+    // One listing for every candidate, instead of a full detail (and its workspace listing)
+    // per connection, so a search matching one connection reads one page of rows.
+    const ids = servers.map(server => server.id)
+    const { rows: bindings } = await this.personal.pool.query<{ server_id: string; workspace_id: string; environment_id: string }>(
+      'SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [ids])
+    const { rows: toolRows } = await this.personal.pool.query<{ server_id: string; name: string }>(
+      `SELECT server_id,tool_name AS name FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) AND (enabled AND available)`, [ids])
+    const candidates = servers.filter(server => {
+      const scoped = bindings.filter(binding => binding.server_id === server.id)
+      // A connection bound only to other workspaces cannot run here, even though a teammate's
+      // detail hides those bindings and so shows an empty, apparently unrestricted list.
+      if (scoped.length && options.workspaceId && !scoped.some(binding => binding.workspace_id === options.workspaceId)) return false
+      const visible = scoped.filter(binding => !options.workspaceId || binding.workspace_id === options.workspaceId)
+      if (options.environmentId && visible.length && !visible.some(binding => binding.environment_id === options.environmentId)) return false
+      const tools = toolRows.filter(tool => tool.server_id === server.id)
+      return !query || [server.name, server.url ?? '', ...tools.map(tool => tool.name)].some(value => value.toLowerCase().includes(query))
+    })
+    const matched = await Promise.all(candidates.map(async server => ({ ...server, ...await this.detail(userId, server.id, options.workspaceId) })))
     return { ...(page ? { workspaceId: page.workspaceId, workspaceKind: page.workspaceKind, canShare: page.canShare } : {}), servers: matched, count: matched.length }
   }
 

@@ -2,7 +2,7 @@ import { withDeviceRoute } from '@/lib/device-route'
 import { NextResponse } from '@/lib/server-runtime/server'
 import { COMMANDS_DAEMON_LATEST_PARAM, COMMANDS_MAX_SKIP, COMMANDS_MAX_SKIP_DEVICE_COMMANDS, COMMANDS_SKIP_DEVICE_COMMANDS_PARAM, COMMANDS_SKIP_PARAM, ACTIVE_TURN_STEER_HEADER, MAILBOX_NOTICE_HEADER } from '@mikka/protocol/device'
 import { daemonVersions } from '@/lib/daemon-release'
-import { authenticateDevice, deviceMayHaveWork, deviceWork, ownsDevice } from '@/lib/device-link'
+import { authenticateDevice, deviceMayHaveWork, deviceWork, ownsDevice, tokenActsAsDevice } from '@/lib/device-link'
 import { noteLogOutcome, withRequestLog } from '@/lib/request-log'
 import { WORKSPACE_REQUEST_HEADER } from '@mikka/protocol/coding-workspace'
 import { WORKSPACE_DIFF_REQUEST_HEADER } from '@mikka/protocol/coding-workspace-review'
@@ -42,7 +42,9 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
       { diff: request.headers.get(WORKSPACE_DIFF_REQUEST_HEADER) === '1',
         git: request.headers.get(WORKSPACE_GIT_REQUEST_HEADER) === '1' }) : []
   const releases = knownRelease ? await daemonVersions() : undefined
-  const mcpChecks = request.headers.get(MCP_CHECK_HEADER) === '1'
+  // Decrypted MCP configuration goes only to the device it was selected for, never to
+  // another credential on the same account.
+  const mcpChecks = request.headers.get(MCP_CHECK_HEADER) === '1' && await tokenActsAsDevice(caller, deviceId)
     ? await (await import('@/lib/plugins/runtime')).mcpDeviceChecks.pending(caller.userId, deviceId) : []
   noteLogOutcome(commands.length > 0 || queued.length > 0 || workspaceRequests.length > 0 || mcpChecks.length > 0 || check.deviceCommand !== null ? 'work' : 'empty')
   return NextResponse.json({

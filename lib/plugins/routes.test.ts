@@ -213,7 +213,8 @@ test('owner Settings refresh uses the personal discovery grant, accepts only a l
   assert.equal((await POST(request(path, 'POST', { serverId }))).status, 409)
   installedForRefresh = [{ id: serverId, enabled: true, transport: 'http' }]
   calls.length = 0
-  const result = await POST(request(path, 'POST', { serverId, cursor: 'next' }))
+  assert.equal((await POST(request(path, 'POST', { serverId, cursor: 'next' }))).status, 400)
+  const result = await POST(request(path, 'POST', { serverId, cursor: '0' }))
   installedForRefresh = []
   assert.equal(result.status, 200)
   assert.deepEqual(await result.json(), { serverId, tools: [{ name: 'list_issues' }], nextCursor: null })

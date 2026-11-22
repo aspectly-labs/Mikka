@@ -162,6 +162,19 @@ export async function linkDeviceToken(caller: Pick<DeviceCaller, 'userId' | 'tok
 }
 
 /**
+ * Whether this credential is the one that acts as the device, not merely another
+ * credential on the same account. Decrypted configuration a person selected for one
+ * device goes only to that device (`linkDeviceToken` records the pair on register,
+ * heartbeat and report).
+ */
+export async function tokenActsAsDevice(caller: Pick<DeviceCaller, 'userId' | 'tokenId'>, deviceId: string): Promise<boolean> {
+  if (!z.uuid().safeParse(deviceId).success) return false
+  const { rowCount } = await pool.query('SELECT 1 FROM device_token_devices WHERE "tokenId"=$1 AND "deviceId"=$2 AND "userId"=$3',
+    [caller.tokenId, deviceId, caller.userId])
+  return Boolean(rowCount)
+}
+
+/**
  * Whether `deviceWork` could find anything: one statement, one round trip,
  * with the credential check inside it (a revoked or expired credential
  * throws, as any fenced query does). The commands read asks this before the

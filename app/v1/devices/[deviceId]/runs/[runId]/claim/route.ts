@@ -1,4 +1,4 @@
-import { TASK_MCP_HEADER, TASK_MCP_VERSION, type TaskMcpServer } from '@mikka/protocol'
+import { TASK_MCP_HEADER, TASK_MCP_VERSIONS, taskMcpForVersion, type TaskMcpServer } from '@mikka/protocol'
 import { withFactoryQuestionDeliveryContext } from '@/lib/factory/questions/continuation-delivery-context'
 import { deploymentSwitch } from '@/lib/deployment-switches'
 import { CodedError, causeFields, logCodedError } from '@mikka/protocol/coded-error'
@@ -111,7 +111,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'queued'), eq(agentRuns.userId, caller.userId), isNull(agentRuns.stopRequestedAt)))
     .limit(1)
   if (!run) return NextResponse.json({ error: 'Run is not queued for this device.' }, { status: 409 })
-  if (run.agentDefinition?.customMcp?.servers.length && request.headers.get(TASK_MCP_HEADER) !== TASK_MCP_VERSION) {
+  const taskMcpVersion = request.headers.get(TASK_MCP_HEADER)
+  if (run.agentDefinition?.customMcp?.servers.length && !TASK_MCP_VERSIONS.includes(taskMcpVersion as typeof TASK_MCP_VERSIONS[number])) {
     await failRunForDaemonUpgrade(runId,deviceId,caller.userId)
     return NextResponse.json({error:'Upgrade the Mikka daemon before using native MCP servers.',code:'daemonUpgradeRequired',protocolVersion:DAEMON_PROTOCOL_VERSION,minVersion:MIN_DAEMON_VERSION,daemonVersions:await daemonVersions()},{status:409})
   }
@@ -446,7 +447,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         return { url: mcpResourceURL ?? new URL(withBasePath('/api/mcp'), request.url).toString(), token,
           decisionCatalogue: RUN_DECISION_CATALOGUE,
           mailboxCatalogue: { version: 1 as const, transport: 'mikka-stateless-2025-06-18' as const, tools },
-          ...(tools.length ? { mailbox: true as const } : {}), ...(apps.length ? { apps } : {}), ...(servers.length ? { servers } : {}) }
+          ...(tools.length ? { mailbox: true as const } : {}), ...(apps.length ? { apps } : {}),
+          // A version 1 daemon decodes the assignment strictly and knows no disabled tools.
+          ...(servers.length ? { servers: taskMcpForVersion(servers, taskMcpVersion) } : {}) }
       })
       .catch((error: unknown) => { if (servers.length) throw new CodedError('mcpUnavailable',{cause:error}); console.error('Could not issue a run token', { name:error instanceof Error ? error.name : typeof error }); return undefined })
   // A retry after a lost lease works on in the lost attempt's worktree and,

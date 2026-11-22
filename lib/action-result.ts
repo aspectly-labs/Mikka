@@ -260,6 +260,22 @@ export const ACTION_ERROR_CODES = [
   'savedLoginInvalid',
   'savedLoginsUnavailable',
   'deviceHasActiveRuns',
+  'mcpNeedsConnect',
+  'mcpConnectionChanged',
+  'mcpToolDisabled',
+  'mcpCheckRequiresDevice',
+  'mcpCheckNotAvailable',
+  'mcpCheckDeviceNotFound',
+  'mcpCheckReceiptExpired',
+  'invalidMcpCheckReceipt',
+  'mcpOAuthNotSupported',
+  'mcpOAuthOriginUnavailable',
+  'mcpOAuthStateInvalid',
+  'mcpOAuthExchangeFailed',
+  'mcpOAuthUnavailable',
+  'mcpCatalogUnavailable',
+  'mcpCatalogRemoteUnavailable',
+  'mcpCatalogMismatch',
 ] as const
 
 export type ActionErrorCode = (typeof ACTION_ERROR_CODES)[number]

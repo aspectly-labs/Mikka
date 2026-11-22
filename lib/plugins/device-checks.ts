@@ -64,5 +64,9 @@ export class McpDeviceChecks {
       await saveToolSnapshot(client, check.server_id, receipt.status, receipt.status === 'check_failed' ? receipt.failureReason : null, tools)
     })
     await ownerIntegrationSettingsChanged(this.personal.pool, userId)
+    // The daemon reads commands once per wake. Checks still waiting on this device
+    // would otherwise expire on a device with nothing else to do.
+    const { rowCount } = await this.personal.pool.query('SELECT 1 FROM mcp_device_checks WHERE device_id=$1 AND user_id=$2 AND completed_at IS NULL AND expires_at>now() LIMIT 1', [deviceId, userId])
+    if (rowCount) notifyDeviceWork(deviceId)
   }
 }

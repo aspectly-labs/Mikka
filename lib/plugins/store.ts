@@ -5,7 +5,7 @@ import { PluginError, type InstalledSkill, type McpServerView, type PersonalPlug
 import type { z } from 'zod'
 import { taskMcpServerSchema, type TaskMcpServer } from '../../packages/protocol/src/task-mcp'
 import type { McpAuthority } from './contracts'
-import { singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
+import { scopedMcpAuthority, singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
 
 type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
   auth_header: string | null; ciphertext: string | null; iv: string | null; key_version: number | null; created_at: Date; oauth_enabled: boolean;
@@ -99,7 +99,9 @@ export class PersonalPluginStore {
   }
   /** One admission-time export to the authorized task/eve runtime. No secret enters its snapshot. */
   async nativeMcpConnections(userId: string, authority: McpAuthority, environmentId?: string | null): Promise<TaskMcpServer[]> {
-    const authorized = await new WorkspaceMcpStore(this.pool,this.membership).validate(userId,environmentId === undefined ? authority : { ...authority, environmentId })
+    const store = new WorkspaceMcpStore(this.pool,this.membership)
+    const requested = environmentId === undefined ? authority : { ...authority, environmentId }
+    const authorized = await store.validate(userId,await scopedMcpAuthority(this.pool,requested))
     return Promise.all(authorized.servers.map(async grant => {
       const connection = await this.mcpConnection(userId,grant.id,grant.revision,authorized)
       return connection.native ?? taskMcpServerSchema.parse({ name:`mcp_${grant.id.replaceAll('-','')}`, transport:connection.transport,url:connection.url,headers:connection.headers,...(connection.disabledTools.length ? { disabledTools:connection.disabledTools } : {}) })
