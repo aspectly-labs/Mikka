@@ -90,6 +90,7 @@ test('under a cent settled with calls pending is still settling, and a settled c
   await show(<mod.ThreadCostView cost={cost({ microUsd: 4_000, unpricedReceipts: 1 })} />)
   assert.equal(trigger()?.textContent, '结算中')
   assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用还在结算')
+  assert.match(await open(), /经由 Mikka<\$0\.01还有 1 次调用在结算/, 'the panel still shows what has settled')
   await show(<mod.ThreadCostView cost={cost({ microUsd: 4_000, unpricedReceipts: 0 })} />)
   assert.equal(trigger()?.textContent, '<$0.01')
   assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用 <$0.01')

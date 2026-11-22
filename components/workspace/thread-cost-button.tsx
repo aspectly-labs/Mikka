@@ -62,7 +62,8 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
   const amount = pending ? money(floor) : money(credits.microUsd)
   const rows: ThreadCostRow[] = [{
     label: t('credits'),
-    value: settling ? t('settling') : money(credits.microUsd),
+    // The panel shows what has settled, even under a cent; only nothing settled at all reads as settling.
+    value: pending && credits.microUsd === 0 ? t('settling') : money(credits.microUsd),
     note: credits.unpricedReceipts > 0 ? t('unsettled', { count: credits.unpricedReceipts }) : undefined,
   }]
   const usedOwn = included.microUsd > 0 || included.unpricedReceipts > 0
