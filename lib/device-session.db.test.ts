@@ -161,6 +161,37 @@ dbTest('device session reports: the newest socket owns the session, reports are 
         for (const g of others) await g.cleanup()
       }
     })
+
+    await t.test('the backstop closes offline sessions in opening order even when gateway replies arrive out of order', async t => {
+      const older = await deviceFixture(pool, 'session-order-older')
+      const newer = await deviceFixture(pool, 'session-order-newer')
+      const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
+      process.env.DEVICE_GATEWAY_URL = 'http://127.0.0.1:9'
+      process.env.DEVICE_GATEWAY_PUSH_SECRET = 'isolated-session-backstop-secret'
+      t.mock.method(globalThis, 'fetch', async (url: URL) => {
+        if (url.pathname === `/v1/devices/${newer.device}/status`) return Response.json({ online: false })
+        if (url.pathname === `/v1/devices/${older.device}/status`) {
+          await new Promise<void>(resolve => setImmediate(resolve))
+          return Response.json({ online: false })
+        }
+        return Response.json({})
+      })
+      try {
+        const runs = [await older.run('running'), await newer.run('running')]
+        await applyDeviceSessionReport(older.device, { state: 'connected', at: t0.toISOString(), socketId: 'socket-order-older' })
+        await applyDeviceSessionReport(newer.device, { state: 'connected', at: t1.toISOString(), socketId: 'socket-order-newer' })
+
+        assert.equal((await closeLostDeviceSessions()).closed, 2)
+        const { rows } = await pool.query<{ id: string }>(`SELECT id FROM agent_runs
+          WHERE id = ANY($1::uuid[]) ORDER BY "leaseExpiresAt"`, [runs])
+        assert.deepEqual(rows.map(row => row.id), runs, 'the older session ends its run lease first')
+      } finally {
+        if (previous.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previous.url
+        if (previous.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previous.secret
+        await newer.cleanup()
+        await older.cleanup()
+      }
+    })
   })
 })
 
