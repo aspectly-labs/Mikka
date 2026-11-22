@@ -5,7 +5,13 @@ bindings. Current workflow files define the triggers and selected coverage.
 
 ## Pull requests: blocking checks
 
-<<<<<<< HEAD
+Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
+and Cloudflare API source qualification for PRs targeting main. CI runs
+affected source, unit and daemon checks on Node 24 only
+([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
+PRs targeting dev, which has no merge queue, retain selected acceptance in the
+protected UI check.
+
 - `ui-policy.yml` runs for `pull_request` and `merge_group`, not for each
   same-repository branch push. Actions' default PR checkout runs GitHub's
   synthetic merge commit, including the PR together with its target branch at
@@ -27,42 +33,19 @@ bindings. Current workflow files define the triggers and selected coverage.
 - All four existing required names remain intact. Do not silently replace
   them with a new aggregate check until the GitHub branch-protection settings
   have been migrated and verified.
-||||||| 766580364
-Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
-and Cloudflare API source qualification for PRs targeting main. CI runs
-affected source, unit and daemon checks. Its unit matrix runs Node 24 for PRs
-targeting main. PRs targeting dev, which has no merge queue, retain the two
-Node versions and selected acceptance in the protected UI check.
-=======
-Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
-and Cloudflare API source qualification for PRs targeting main. CI runs
-affected source, unit and daemon checks on Node 24 only
-([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
-PRs targeting dev, which has no merge queue, retain selected acceptance in the
-protected UI check.
->>>>>>> origin/main
 
 `local-device-node22.yml` now runs an actual app/Eve build and startup smoke
-on Node 22 and 24, retaining the daemon and installer tests. The core,
-integration and PG17 database jobs above also run the selected suites on both
-majors; the original Node 24 protected-check names stay unchanged.
+on Node 24, retaining the daemon and installer tests. The core,
+integration and PG17 database jobs above also run the selected suites on
+Node 24 only ([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md));
+the original Node 24 protected-check names stay unchanged.
 
-<<<<<<< HEAD
 ## Focused governance acceptance and superseded PR runs
-||||||| 766580364
-On `merge_group`, CI retains the full Node 22 and 24 unit and PG17 shard
-matrices. Selected Analytics, Workspace Governance and specialty acceptance
-must pass before the required checks succeed. The specialty selector reads path
-policy from the candidate's immutable base and selects all checks if that base
-predates the policy. Node.js compatibility continues its separate candidate
-workflow with real App, Eve and local-device builds and startup on both majors.
-=======
 On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path
 policy from the candidate's immutable base and selects all checks if that base
 predates the policy. The Node.js compatibility candidate workflow keeps its real
 App, Eve and local-device build and startup on Node 24.
->>>>>>> origin/main
 
 - `Workspace governance HTTP (Item 11)` now runs as a reusable job of
   `ui-policy.yml` for PRs and merge groups that the trusted Nx selector
