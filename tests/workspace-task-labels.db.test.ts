@@ -188,6 +188,36 @@ test('workspace task label HTTP management and real task writers preserve tenant
     assert.equal((await pool.query('SELECT 1 FROM workspace_issue_labels WHERE id=$1', [foreign.id])).rowCount, 1)
   })
 
+  await t.test('an unrelated metadata action and registry edits leave the migrated private snapshots intact', async () => {
+    const label = await create('Registry bug', 'red')
+    const taskId = await createTask(owner, [label.id], { access: { kind: 'members', memberIds: [] } })
+    const legacy = [{ name: 'Private only', color: 'gray' }, { name: 'PRIVATE ONLY', color: 'green' }]
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('ALTER TABLE issues DISABLE TRIGGER sync_issue_labels')
+      await client.query(`UPDATE issues SET content=jsonb_set(content,'{attrs,mikka}',
+        ((content#>'{attrs,mikka}')-'labelIds') || jsonb_build_object('labels',(content#>'{attrs,mikka,labels}') || $2::jsonb)) WHERE id=$1`,
+      [taskId, JSON.stringify(legacy)])
+      await client.query('ALTER TABLE issues ENABLE TRIGGER sync_issue_labels')
+      await client.query('UPDATE issues SET content=content WHERE id=$1', [taskId])
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally { client.release() }
+    assert.deepEqual(await refs(taskId), [label.id])
+    const before = await taskRow(taskId)
+    const edited = await as(owner, () => actions.updateIssueMetadata({ id: taskId, revision: before.revision, patch: { dueDate: '2026-11-30' } }))
+    assert.ok(!edited.error, JSON.stringify(edited))
+    assert.deepEqual((await taskRow(taskId)).content.attrs.mikka.labels, [{ name: 'Registry bug', color: 'red' }, ...legacy])
+    assert.equal((await as(owner, () => item.PATCH(request('PATCH', { name: 'Registry defect' }), context(label.id)))).status, 200)
+    assert.deepEqual((await taskRow(taskId)).content.attrs.mikka.labels, [{ name: 'Registry defect', color: 'red' }, ...legacy])
+    assert.equal((await as(owner, () => item.DELETE(request('DELETE'), context(label.id)))).status, 200)
+    assert.deepEqual((await taskRow(taskId)).content.attrs.mikka.labels, legacy)
+    assert.deepEqual(await refs(taskId), [])
+  })
+
   await t.test('migration backfills existing free labels deterministically, preserves unscoped history and is repeatable after later deletes', async () => {
     const sql = await readFile(new URL('../drizzle/20261120190715_workspace_task_labels.sql', import.meta.url), 'utf8')
     const client = await pool.connect()
@@ -210,8 +240,10 @@ test('workspace task label HTTP management and real task writers preserve tenant
       for (const [id, tenant, name, color, created] of [[first, workspace.id, 'Bug', 'red', '2026-01-01'], [second, workspace.id, 'BUG', 'blue', '2026-01-02'],
         [historical, null, 'Unscoped', 'green', '2026-01-01'], [foreignTask, other.id, 'Bug', 'violet', '2026-01-01'],
         [privateLegacy, workspace.id, 'Private only', 'gray', '2026-01-01']]) {
+        const content = document(name!, color!)
+        if (id === privateLegacy) content.attrs.mikka.labels.push({ name: 'bug', color: 'green' })
         await client.query('INSERT INTO issues(id,"userId","workspaceId","ownershipState",title,content,status,priority,"createdAt") VALUES($1,$2,$3,CASE WHEN $3::uuid IS NULL THEN \'pending\' ELSE \'bound\' END,\'Task\',$4,\'todo\',\'normal\',$5)',
-          [id, owner, tenant, JSON.stringify(document(name!, color!)), created])
+          [id, owner, tenant, JSON.stringify(content), created])
       }
       const historicalBefore = (await client.query('SELECT * FROM issues WHERE id=$1', [historical])).rows
       await client.query(sql)
@@ -219,9 +251,9 @@ test('workspace task label HTTP management and real task writers preserve tenant
       assert.deepEqual(rows.find(row => row.workspace_id === workspace.id), { workspace_id: workspace.id, name: 'Bug', color: 'red' })
       assert.deepEqual(rows.find(row => row.workspace_id === other.id), { workspace_id: other.id, name: 'Bug', color: 'violet' })
       assert.equal(rows.length, 2)
-      assert.equal((await client.query('SELECT 1 FROM issue_label_refs WHERE issue_id=$1', [privateLegacy])).rowCount, 0)
+      assert.equal((await client.query('SELECT 1 FROM issue_label_refs WHERE issue_id=$1', [privateLegacy])).rowCount, 1)
       assert.deepEqual((await client.query("SELECT content#>'{attrs,mikka,labels}' labels FROM issues WHERE id=$1", [privateLegacy])).rows[0].labels,
-        [{ name: 'Private only', color: 'gray' }])
+        [{ name: 'Bug', color: 'red' }, { name: 'Private only', color: 'gray' }])
       assert.equal((await client.query('SELECT count(DISTINCT label_id)::int n FROM issue_label_refs WHERE issue_id=ANY($1::uuid[])', [[first, second]])).rows[0].n, 1)
       assert.deepEqual((await client.query('SELECT * FROM issues WHERE id=$1', [historical])).rows, historicalBefore)
       const backfilled = (await client.query(`SELECT DISTINCT sync_source FROM issue_writes WHERE id=ANY($1::uuid[])`, [[first, second, foreignTask]])).rows

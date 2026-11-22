@@ -37,9 +37,9 @@ WITH candidates AS (
   SELECT i.id,i."workspaceId" AS workspace_id,i."createdAt",l.value,l.ordinality
   FROM issues i CROSS JOIN LATERAL (SELECT coalesce(i.content->'attrs'->'mikka',i.content->'attrs'->'orvilo')->'labels' AS labels) m
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(m.labels)='array' THEN m.labels ELSE '[]'::jsonb END) WITH ORDINALITY l(value,ordinality)
-  WHERE i."workspaceId" IS NOT NULL AND jsonb_typeof(m.labels)='array' AND jsonb_array_length(m.labels)<=12
+  WHERE i."workspaceId" IS NOT NULL AND CASE WHEN jsonb_typeof(m.labels)='array' THEN jsonb_array_length(m.labels)<=12 ELSE false END
     AND NOT EXISTS (SELECT 1 FROM resource_access_policies p WHERE p.kind='task' AND p.id=i.id AND p.visibility='private')
-    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(m.labels) v WHERE jsonb_typeof(v->'name') IS DISTINCT FROM 'string'
+    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(m.labels)='array' THEN m.labels ELSE '[]'::jsonb END) v WHERE jsonb_typeof(v->'name') IS DISTINCT FROM 'string'
       OR length(btrim(v->>'name')) NOT BETWEEN 1 AND 40 OR (v->>'color') IS NULL OR v->>'color' NOT IN ('violet','blue','green','yellow','red','gray'))
 ), chosen AS (
   SELECT DISTINCT ON (workspace_id,lower(btrim(value->>'name'))) workspace_id,btrim(value->>'name') AS name,value->>'color' AS color
@@ -52,6 +52,7 @@ CREATE OR REPLACE FUNCTION mikka_canonical_issue_labels(target uuid,incoming jso
 DECLARE
   requested jsonb; item jsonb; label workspace_issue_labels%ROWTYPE;
   by_id boolean; ids jsonb := '[]'::jsonb; snapshots jsonb := '[]'::jsonb;
+  legacy jsonb := '[]'::jsonb;
 BEGIN
   IF jsonb_typeof(incoming) IS DISTINCT FROM 'object' THEN RETURN incoming; END IF;
   IF NOT (incoming ? 'labels') AND NOT (incoming ? 'labelIds') THEN RETURN incoming; END IF;
@@ -60,13 +61,21 @@ BEGIN
   requested := CASE WHEN by_id THEN incoming->'labelIds' ELSE incoming->'labels' END;
   -- Corrupt historical documents already read as no metadata. Do not rewrite
   -- them or infer labels from an invalid array while backfilling another field.
-  IF NOT by_id AND (jsonb_typeof(requested) IS DISTINCT FROM 'array' OR jsonb_array_length(requested)>12) THEN RETURN incoming; END IF;
-  IF jsonb_typeof(requested) IS DISTINCT FROM 'array' OR jsonb_array_length(requested)>12 THEN
+  IF (CASE WHEN jsonb_typeof(requested)='array' THEN jsonb_array_length(requested)>12 ELSE true END) THEN
+    IF NOT by_id THEN RETURN incoming; END IF;
     RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Invalid task label references',CONSTRAINT='issue_labels_workspace_reference';
   END IF;
   IF NOT by_id AND EXISTS (SELECT 1 FROM jsonb_array_elements(requested) v WHERE jsonb_typeof(v->'name') IS DISTINCT FROM 'string'
       OR length(btrim(v->>'name')) NOT BETWEEN 1 AND 40 OR (v->>'color') IS NULL OR v->>'color' NOT IN ('violet','blue','green','yellow','red','gray')) THEN RETURN incoming; END IF;
   IF NOT by_id AND jsonb_array_length(requested)=0 AND NOT (incoming ? 'labelIds') THEN RETURN incoming; END IF;
+  -- Linked snapshots come first. An ID-only registry rewrite keeps the
+  -- task-local tail; an explicit task label edit supplies new snapshots.
+  IF by_id AND incoming->'labels' IS NOT DISTINCT FROM previous->'labels'
+    AND jsonb_typeof(previous->'labels')='array' AND jsonb_typeof(previous->'labelIds')='array' THEN
+    SELECT coalesce(jsonb_agg(value ORDER BY ordinality),'[]'::jsonb) INTO legacy
+      FROM jsonb_array_elements(previous->'labels') WITH ORDINALITY
+      WHERE ordinality > jsonb_array_length(previous->'labelIds');
+  END IF;
   FOR item IN SELECT value FROM jsonb_array_elements(requested) LOOP
     IF by_id THEN
       IF jsonb_typeof(item) IS DISTINCT FROM 'string' OR (item#>>'{}') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
@@ -77,9 +86,10 @@ BEGIN
       SELECT * INTO label FROM workspace_issue_labels WHERE workspace_id=target AND lower(name)=lower(btrim(item->>'name')) FOR SHARE NOWAIT;
     END IF;
     IF NOT FOUND THEN
-      IF NOT by_id AND NOT (incoming ? 'labelIds') AND previous IS NOT NULL
+      IF NOT by_id AND previous IS NOT NULL
         AND incoming->'labels' IS NOT DISTINCT FROM previous->'labels' THEN
-        RETURN incoming;
+        legacy := legacy || jsonb_build_array(item);
+        CONTINUE;
       END IF;
       RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Task label must reference an existing workspace label',CONSTRAINT='issue_labels_workspace_reference';
     END IF;
@@ -88,7 +98,10 @@ BEGIN
       snapshots := snapshots || jsonb_build_array(jsonb_build_object('name',label.name,'color',label.color));
     END IF;
   END LOOP;
-  RETURN incoming || jsonb_build_object('labelIds',ids,'labels',snapshots);
+  IF jsonb_array_length(snapshots || legacy)>12 THEN
+    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Invalid task label references',CONSTRAINT='issue_labels_workspace_reference';
+  END IF;
+  RETURN incoming || jsonb_build_object('labelIds',ids,'labels',snapshots || legacy);
 END $$;
 
 CREATE OR REPLACE FUNCTION mikka_sync_issue_labels() RETURNS trigger LANGUAGE plpgsql AS $$

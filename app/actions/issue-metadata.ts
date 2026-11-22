@@ -148,7 +148,6 @@ export async function updateIssueMetadata(input: { id: string; revision: number;
         const next = { ...metadata, ...patch, assignee, delegate, ...(requestedDelegate !== undefined ? { delegateSelection: 'manual' as const } : {}) }
         if (patch.labels !== undefined) Object.assign(next, await resolveTaskLabelNames(tx, latest.workspaceId!, patch.labels.map(label => label.name)))
         if (patch.labelIds !== undefined) Object.assign(next, await resolveTaskLabelIds(tx, latest.workspaceId!, patch.labelIds))
-        next.labels = [...new Map(next.labels.map(label => [label.name.toLowerCase(), label])).values()]
         next.pullRequests = [...new Map(next.pullRequests.map(pr => [pr.url.replace(/\/$/, ''), { ...pr, url: pr.url.replace(/\/$/, '') }])).values()]
         const saved = await persistIssueMetadata(tx, latest, next, activityActor(user.id))
         if (!saved) return { error: 'issueOutdated' }
