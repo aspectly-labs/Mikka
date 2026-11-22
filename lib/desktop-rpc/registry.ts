@@ -179,6 +179,8 @@ const functions = {
   'coordinator.welcomeCoordinator': actions8.welcomeCoordinator,
   'coordinator.stopCoordinatorTurn': actions8.stopCoordinatorTurn,
   'coordinator.retryCoordinatorTurn': actions8.retryCoordinatorTurn,
+  'coordinator.reviseCoordinatorTurn': actions8.reviseCoordinatorTurn,
+  'coordinator.coordinatorTurnVersions': actions8.coordinatorTurnVersions,
   'coordinator.sendSuggestion': actions8.sendSuggestion,
   'coordinator.issueCreationAvailable': actions8.issueCreationAvailable,
   'desktop-notifications.chooseDesktopNotifications': actions9.chooseDesktopNotifications,

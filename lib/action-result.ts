@@ -104,6 +104,8 @@ export const ACTION_ERROR_CODES = [
   'runChainEnded',
   'threadStopping',
   'threadWorking',
+  'chatRevisionUnavailable',
+  'chatRevisionBusy',
   'threadDeliveryUnavailable',
   'apiKeyNotFound',
   'factoryQuestionNeedsAnswerTool',

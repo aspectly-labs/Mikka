@@ -62,6 +62,7 @@ import { useUnreadIndicators } from '@/lib/hooks/use-unread-indicators'
 import { openArtifact as openArtifactWindow } from '@/components/workspace/workspace-navigation'
 import { SelectionQuote } from '@/components/chat/selection-quote'
 import { ReplyActions } from '@/components/chat/reply-actions'
+import { showTurnVersion, useTurnRevision } from './use-turn-revision'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { replyCopyText } from '@/lib/chat-copy'
 import type { ArtifactChatSlot } from '@/components/artifacts/artifact-viewer'
@@ -539,6 +540,9 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
   const rows = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: String(item.pending ? `pending-${item.position}` : item.streamId ?? item.position) })),
     ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))]
+  // Edit and Regenerate on the latest turn, and its earlier versions (decision 2026-11-22-1700).
+  const revision = useTurnRevision({ botId: botId ?? null, items, idle: !working && !resuming && !sending && !localMessages.length && !stream.replies.length, refresh: () => { void mutate() } })
+  const turnOf = new Map<string, string>()
   const entries: ThreadEntry[] = []
   for (const { item, live, key } of rows) {
     const at = item.createdAt ? Date.parse(item.createdAt) : Date.now()
@@ -558,9 +562,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         ...(quote ? [{ id: 'reply-quote', name: quote, meta: tMessage('quote') }] : []),
         ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
       ]
+      const editor = revision.editor(item, text)
+      if (item.submissionId) turnOf.set(key, item.submissionId)
       if (!item.suggestion || text || attachments.length) entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-        ...(messageReferences(text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={text} /></AgentCitationsContext> } : {}),
-        actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
+        ...(editor ? { body: editor } : messageReferences(text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={text} /></AgentCitationsContext> } : {}),
+        actions: item.text && !editor ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text} onEdit={revision.shown(item.submissionId) ? undefined : revision.onEdit(item)} versions={revision.pager(item)}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
       if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
       continue
     }
@@ -582,11 +588,21 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     if (readEnd && !lined) parts.push({ kind: 'text', text: '', node: readEnd })
     entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
       // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
-      actions: lined ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
+      actions: lined ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply} onRegenerate={revision.onRegenerate(item)}>
         <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
         {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
         {readEnd}
       </ReplyActions> : undefined })
+  }
+  // A turn paged back to an earlier version shows that version's words in place of the live turn.
+  for (const [person, submissionId] of turnOf) {
+    const version = revision.shown(submissionId)
+    if (!version) continue
+    const start = entries.findIndex(entry => entry.id === person)
+    const next = entries.findIndex((entry, index) => index > start && entry.role === 'person')
+    const replies = entries.slice(start + 1, next < 0 ? undefined : next).flatMap(entry => entry.role === 'bot' && !entry.event ? [entry.id] : [])
+    entries.splice(0, entries.length, ...showTurnVersion(entries, { person, replies, submissionId }, version, words => [{ kind: 'text', text: words,
+      node: <CoordinatorReply text={words} carded="" citations={citations} isStreaming={false} /> }]))
   }
   for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
     ...(messageReferences(row.text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={splitReplyQuote(row.text).text} /></AgentCitationsContext> } : {}),

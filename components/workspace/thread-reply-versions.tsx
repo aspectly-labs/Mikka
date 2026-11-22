@@ -11,6 +11,8 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { FieldError } from '@/components/ui/field'
 import { AgentMarkdown } from './agent-markdown'
+import { MessageAction } from '@/components/ai-elements/message'
+import { PencilLine, RefreshCw } from '@/components/icons'
 
 export function ThreadReplyVersions({ issueId,runId,anchorRunId,anchorKey,operation,text,canRun,refresh }: {
   issueId:string|null; runId:string; anchorRunId:string; anchorKey:string; operation:'edit'|'rerun'; text:string; canRun:boolean; refresh:()=>void
@@ -52,7 +54,8 @@ export function ThreadReplyVersions({ issueId,runId,anchorRunId,anchorKey,operat
     finally { submitting.current = false; setBusy(false) }
   }
   return <Dialog open={open} onOpenChange={setOpen}>
-    <DialogTrigger render={<Button type="button" size="xs" variant="ghost" />}>{label}</DialogTrigger>
+    {/* An icon on the message's hover line, beside Reply and Copy (decision 2026-11-22-1700); the dialog says what a new version does. */}
+    <DialogTrigger render={<MessageAction tooltip={label} />}>{operation==='edit' ? <PencilLine aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}</DialogTrigger>
     <DialogContent closeLabel={t('versionClose')}>
       <DialogTitle>{label}</DialogTitle>
       <DialogDescription>{t('versionEffects')}</DialogDescription>
