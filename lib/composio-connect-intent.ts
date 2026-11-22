@@ -26,6 +26,7 @@ export type ComposioIntent = {
   replaceAccountId: string | null
   returnTo: string
   returnState: string
+  providerUrl: string | null
 }
 
 /** A desktop app that can take the return on its loopback: where to return and the state its listener expects. */
@@ -56,7 +57,7 @@ export async function createComposioConnectIntent(
 export async function readComposioConnectIntent(query: Query, token: unknown): Promise<ComposioIntent | null> {
   if (!isComposioIntentToken(token)) return null
   const { rows: [row] } = await query.query<ComposioIntent>(
-    'SELECT "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState" FROM composio_connect_intents WHERE "tokenHash"=$1',
+    'SELECT "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState","providerUrl" FROM composio_connect_intents WHERE "tokenHash"=$1',
     [hash(token)],
   )
   return row ?? null
@@ -66,21 +67,36 @@ export async function readComposioConnectIntent(query: Query, token: unknown): P
 export async function claimComposioConnectIntent(query: Query, token: unknown, now = new Date()): Promise<ComposioIntent | null> {
   if (!isComposioIntentToken(token)) return null
   const { rows: [row] } = await query.query<ComposioIntent>(
-    'UPDATE composio_connect_intents SET "usedAt"=$2 WHERE "tokenHash"=$1 AND "usedAt" IS NULL AND "expiresAt" > $2 RETURNING "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState"',
+    'UPDATE composio_connect_intents SET "usedAt"=$2 WHERE "tokenHash"=$1 AND "usedAt" IS NULL AND "expiresAt" > $2 RETURNING "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState","providerUrl"',
     [hash(token), now],
   )
   return row ?? null
 }
 
-/** Composio's connect page gave the link's connected account id; the shared callback looks the intent up by it. */
-export async function linkComposioConnectIntent(query: Query, tokenHash: string, linkId: string): Promise<void> {
-  await query.query('UPDATE composio_connect_intents SET "linkId"=$2 WHERE "tokenHash"=$1', [tokenHash, linkId])
+/** Composio's connect page gave the link's connected account id; the shared callback looks the intent up by it. The provider's
+ * own redirect is kept as well: a duplicated browser navigation to the connect URL (a sign-in round trip travels two ways
+ * at once) re-reads it instead of burning the single-use intent on a spent-token failure. */
+export async function linkComposioConnectIntent(query: Query, tokenHash: string, linkId: string, providerUrl: string): Promise<void> {
+  await query.query('UPDATE composio_connect_intents SET "linkId"=$2,"providerUrl"=$3 WHERE "tokenHash"=$1', [tokenHash, linkId, providerUrl])
+}
+
+/** A request that lost the claim to its own duplicate waits a beat for the winner to record the provider's redirect. */
+export async function linkedComposioConnectIntent(query: Query, tokenHash: string): Promise<ComposioIntent | null> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt) await new Promise(resolve => setTimeout(resolve, 300))
+    const { rows: [row] } = await query.query<ComposioIntent>(
+      'SELECT "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState","providerUrl" FROM composio_connect_intents WHERE "tokenHash"=$1 AND "linkId" IS NOT NULL AND "providerUrl" IS NOT NULL',
+      [tokenHash],
+    )
+    if (row) return row
+  }
+  return null
 }
 
 /** The callback names the connected account it completed: the live intent it belongs to, if any. */
 export async function composioConnectIntentByLink(query: Query, linkId: string, now = new Date()): Promise<ComposioIntent | null> {
   const { rows: [row] } = await query.query<ComposioIntent>(
-    'SELECT "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState" FROM composio_connect_intents WHERE "linkId"=$1 AND "usedAt" IS NOT NULL AND "expiresAt" > $2',
+    'SELECT "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState","providerUrl" FROM composio_connect_intents WHERE "linkId"=$1 AND "usedAt" IS NOT NULL AND "expiresAt" > $2',
     [linkId, now],
   )
   return row ?? null

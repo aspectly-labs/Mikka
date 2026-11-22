@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS composio_connect_intents (
   "returnTo" text NOT NULL,
   "returnState" text NOT NULL,
   "linkId" text,
+  "providerUrl" text,
   "usedAt" timestamptz,
   "expiresAt" timestamptz NOT NULL,
   "createdAt" timestamptz NOT NULL DEFAULT now()

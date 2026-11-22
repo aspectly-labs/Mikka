@@ -5,7 +5,7 @@ import { getComposio } from '@/lib/composio'
 import { isComposioCallbackVerifierConfigured } from '@/lib/composio-config'
 import { composioConnectRedirect } from '@/lib/composio-accounts'
 import { COMPOSIO_FLOW_COOKIE, composioFlowCookieOptions, encodeComposioFlow } from '@/lib/composio-flow'
-import { claimComposioConnectIntent, linkComposioConnectIntent, readComposioConnectIntent } from '@/lib/composio-connect-intent'
+import { claimComposioConnectIntent, linkComposioConnectIntent, linkedComposioConnectIntent, readComposioConnectIntent } from '@/lib/composio-connect-intent'
 import { pool } from '@/lib/db'
 import { withRequestLog } from '@/lib/request-log'
 
@@ -47,7 +47,14 @@ async function handleGET(request: Request) {
     return NextResponse.redirect(new URL(withBasePath(signin), request.url))
   }
   const claimed = await claimComposioConnectIntent(pool, token)
-  if (!claimed) return back()
+  if (!claimed) {
+    // A sign-in round trip navigates here twice at once; the request that
+    // loses the claim re-reads the link its twin just recorded instead of
+    // reporting a spent token.
+    const again = await linkedComposioConnectIntent(pool, intent.tokenHash)
+    if (again?.providerUrl && composioConnectRedirect(again.providerUrl)) return NextResponse.redirect(again.providerUrl)
+    return back()
+  }
   const composio = getComposio()
   if (!composio || !isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)) return loopbackResult(claimed, 'failed')
   try {
@@ -58,7 +65,7 @@ async function handleGET(request: Request) {
     // The link's connected account id lets the callback find this intent even
     // when a browser drops the flow cookie; a forged one can only name a link
     // Composio itself issued for this intent's user.
-    await linkComposioConnectIntent(pool, claimed.tokenHash, connection.id)
+    await linkComposioConnectIntent(pool, claimed.tokenHash, connection.id, redirect.toString())
     const response = NextResponse.redirect(redirect)
     response.cookies.set(COMPOSIO_FLOW_COOKIE, encodeComposioFlow({ link: connection.id }), composioFlowCookieOptions(request.url, 600))
     return response

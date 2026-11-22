@@ -41,7 +41,7 @@ test('a live intent opens the provider straight away and names the connected acc
   const response = await GET(request('coi_' + 't'.repeat(43)))
   assert.equal(response.headers.get('location'), 'https://connect.composio.dev/link/l1')
   assert.deepEqual(authorized, ['app-user', 'gmail'])
-  assert.deepEqual(linked, [['h', 'conn-1']])
+  assert.deepEqual(linked, [['h', 'conn-1', 'https://connect.composio.dev/link/l1']])
   assert.match(response.headers.get('set-cookie') ?? '', /mikka_composio_flow=/)
 })
 
@@ -53,6 +53,14 @@ test('a spent or dead intent answers failed on the loopback it named', async () 
   assert.equal(`${back.origin}${back.pathname}`, 'http://127.0.0.1:43123/return')
   assert.equal(back.searchParams.get('state'), 's'.repeat(43))
   assert.equal(back.searchParams.get('result'), 'failed')
+})
+
+test('a duplicate navigation to the same link follows the provider URL its twin recorded', async () => {
+  setup()
+  readRows = [{ ...intent, linkId: 'conn-1', providerUrl: 'https://connect.composio.dev/link/l1' }]
+  claimRows = []
+  const response = await GET(request('coi_' + 't'.repeat(43)))
+  assert.equal(response.headers.get('location'), 'https://connect.composio.dev/link/l1')
 })
 
 test('an intent the account store refuses goes back to integrations, not a loopback it never gave', async () => {
