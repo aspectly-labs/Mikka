@@ -2743,7 +2743,7 @@
         "PATCH",
         "POST"
       ],
-      "sourceHash": "e060fa64d418c7743b86fa4dfe7abecc50b15064fe4d77007466bb909437a3f6"
+      "sourceHash": "f202e3e4c8b7c28367c31ef77d6b8cb804a8f05027636b244a27d6600d724d9d"
     },
     {
       "path": "/mikka/api/skills/search",
