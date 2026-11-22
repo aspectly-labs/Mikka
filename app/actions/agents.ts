@@ -806,16 +806,22 @@ export async function getThreadReplyVersions(issueId:string|null,runId:string) {
   return (await import('@/lib/thread-reply-versions')).readReplyVersions(pool,user.id,row.id)
 }
 
-export async function changeQueuedThreadReply(input: { issueId: string | null; runId: string; messageId: string; action: 'cancel' | 'sendNow' }) {
+export async function changeQueuedThreadReply(input: { issueId: string | null; runId: string; messageId: string; action: 'cancel' | 'sendNow' | 'edit'; text?: string }) {
   return runAction(async () => {
-    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow'].includes(input.action)) throw new ActionFailureError('validationGeneric')
+    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow','edit'].includes(input.action)
+        || (input.action === 'edit' && !z.string().min(1).max(10_000).safeParse(input.text).success)) throw new ActionFailureError('validationGeneric')
     const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
     const requestHeaders = await headers()
     if (!desktopHumanSessionId() && (requestHeaders.has('authorization') || !requestHeaders.get('cookie'))) throw new ActionFailureError('authRequired')
     const session = await auth.api.getSession({ headers: requestHeaders, query: { disableCookieCache: true } })
     if (!session?.session?.id || session.user.id !== user.id || row.userId !== user.id) throw new ActionFailureError('runNotFound')
-    const { cancelQueuedThreadReply, deliverQueuedThreadReply } = await import('@/lib/thread-delivery-queue')
+    const { cancelQueuedThreadReply, deliverQueuedThreadReply, editQueuedThreadReply } = await import('@/lib/thread-delivery-queue')
     if (input.action === 'cancel') return { status: await cancelQueuedThreadReply(pool, user.id, row.id, input.messageId) }
+    if (input.action === 'edit') {
+      const text = typeof input.text === 'string' ? input.text : ''
+      if (!text.trim() || text.length > 10000) return { status: 'invalid' as const }
+      return { status: await editQueuedThreadReply(pool, user.id, row.id, input.messageId, text) }
+    }
     return { status: await deliverQueuedThreadReply(pool, user.id, row.id, input.messageId) ? 'sent' as const : 'tooLate' as const }
   })
 }
@@ -863,6 +869,17 @@ export async function resumeQuotaPausedRunOnApiKey(runId: string): Promise<{ run
 /** A run paused because its subscription's quota ran out is tried again with its original credential. Owner only; a repeat returns the same run. */
 export async function retryQuotaPausedRun(runId: string): Promise<{ runId: string }> {
   return withOwnWorkspaceRun(runId, async userId => (await import('@/lib/run-quota')).retryQuotaPausedRun(userId, runId))
+}
+
+/** A quota-paused run switches to a Mikka 额度 model (a LiteLLM catalogue id). Owner only. */
+export async function resumeQuotaPausedRunOnCredits(runId: string, model: string): Promise<{ runId: string }> {
+  return withOwnWorkspaceRun(runId, async userId => (await import('@/lib/run-quota')).resumeQuotaPausedRunOnCredits(userId, runId, model))
+}
+
+/** #2938 (5): every quota-paused thread of the person moves to Mikka 额度 at once. */
+export async function resumeAllQuotaPausedOnCredits(model: string): Promise<{ runId: string; continued: string | null }[]> {
+  const userId = await getUserId()
+  return (await import('@/lib/run-quota')).resumeAllQuotaPausedOnCredits(userId, model)
 }
 
 /** Settings #504 queues maintenance through the same owner-scoped backend as HTTP. */
