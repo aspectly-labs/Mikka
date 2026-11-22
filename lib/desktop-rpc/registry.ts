@@ -1,6 +1,7 @@
 import * as settingsActions from '@/app/actions/settings'
 import * as taskDomainActions from '@/app/actions/task-domain'
 import * as projectResourcesActions from '@/app/actions/project-resources'
+import * as environmentActions from '@/app/actions/environments'
 import * as enabledModels from '@/app/actions/enabled-models'
 import 'server-only'
 import { desktopActionSchemas, type DesktopActionName } from './schemas'
@@ -334,6 +335,7 @@ const functions = {
   'project-resources.listProjectSetupVersions': projectResourcesActions.listProjectSetupVersions,
   'project-resources.rollbackProjectSetup': projectResourcesActions.rollbackProjectSetup,
   'project-resources.listProjectResources': projectResourcesActions.listProjectResources,
+  'environments.listEnvironments': environmentActions.listEnvironments,
   'project-resources.setProjectDefaultEnvironment': projectResourcesActions.setProjectDefaultEnvironment,
   'project-resources.saveEnvironment': projectResourcesActions.saveEnvironment,
   'project-resources.searchProjectPullAuthors': projectResourcesActions.searchProjectPullAuthors,

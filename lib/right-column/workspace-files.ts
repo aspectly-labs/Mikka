@@ -54,8 +54,5 @@ export async function searchFiles(scope: FilesScope, query: string, signal?: Abo
   return result.entries
 }
 
-/** M / A / D / R for a changed path, as the tree marks it (Figma 1318:15). */
-export const changeMark = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R' } as const
-
 /** The download link of an upload: the chat attachment endpoint signs it (`?download`), never a raw storage URL. */
 export const uploadDownloadUrl = (id: string) => withBasePath(`/api/chat/attachments/${id}?download`)

@@ -9293,7 +9293,8 @@
         "too_large": "Too large to show",
         "unsupported": "This file can't be shown"
       },
-      "truncated": "… the rest of the file is not shown"
+      "truncated": "… the rest of the file is not shown",
+      "actionsShort": "More actions"
     },
     "setup": {
       "loadFailed": "Couldn't read where this thread runs",
@@ -9319,7 +9320,8 @@
       "install": "Setup command",
       "unapproved": "Not approved",
       "copyFiles": "Copied files ({count})",
-      "edit": "Edit in settings"
+      "edit": "Edit in settings",
+      "botNote": "New threads of this Bot run in this environment."
     },
     "menu": {
       "search": "Search tabs",

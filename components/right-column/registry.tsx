@@ -43,7 +43,7 @@ export const RIGHT_COLUMN_TABS: readonly RightColumnTabDefinition[] = [
   { id: 'changes', group: 'common', shortcut: '⇧⌘G', available: thread, title: t => t('RightColumn.tabs.changes'),
     render: scope => scope.kind === 'thread' ? <ChangesTab key={scope.runId} scope={scope} /> : null },
   { id: 'files', group: 'common', shortcut: '⌘P', title: t => t('RightColumn.tabs.files'), render: scope => <FilesTab key={scopeKey(scope)} scope={scope} /> },
-  { id: 'setup', group: 'common', available: thread, title: t => t('RightColumn.tabs.setup'), render: scope => <SetupTab key={scopeKey(scope)} scope={scope} /> },
+  { id: 'setup', group: 'common', title: t => t('RightColumn.tabs.setup'), render: scope => <SetupTab key={scopeKey(scope)} scope={scope} /> },
   { id: 'browser', group: 'common', shortcut: '⇧⌘B', title: t => t('Browser.label') },
 ]
 

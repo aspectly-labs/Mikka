@@ -9293,7 +9293,8 @@
         "too_large": "文件太大，无法显示",
         "unsupported": "无法显示这个文件"
       },
-      "truncated": "… 文件其余部分未显示"
+      "truncated": "… 文件其余部分未显示",
+      "actionsShort": "更多操作"
     },
     "setup": {
       "loadFailed": "读取线程运行环境失败",
@@ -9319,7 +9320,8 @@
       "install": "准备命令",
       "unapproved": "未批准",
       "copyFiles": "复制的文件（{count}）",
-      "edit": "在设置里编辑"
+      "edit": "在设置里编辑",
+      "botNote": "这个 Bot 的新线程在这个环境里运行。"
     },
     "menu": {
       "search": "搜索标签页",
