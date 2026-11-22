@@ -8071,6 +8071,14 @@
       "search": "正在搜索",
       "edit": "正在编辑文件",
       "web": "正在查看网页"
+    },
+    "plan": {
+      "title": "待办",
+      "label": "Agent 的待办清单",
+      "progress": "已完成 {completed}/{total} 项待办",
+      "pending": "待处理",
+      "inProgress": "进行中",
+      "completed": "已完成"
     }
   },
   "HostedOnboarding": {

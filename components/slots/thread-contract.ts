@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, type RefObject, type UIEventHandler } from 'react'
 import type { DecisionReceipt } from '@/hooks/use-decision-submission'
 import type { RunSource } from '@/lib/coordinator/citations'
+import type { ThreadPlanItem } from '@/lib/thread-plan'
 import type { ChatComposerProps } from './chat-composer-contract'
 import type { ChatMessageProps } from './chat-message-contract'
 
@@ -141,6 +142,11 @@ export type ThreadScreenProps = {
   pending: { id: string; name: string; meta?: string; onRemove: () => void }[]
   /** Notices that wait above the composer (quota, sign in again, actions to approve). */
   notices?: ReactNode
+  /**
+   * The live run's newest plan (Claude Code's TodoWrite, Codex's update_plan; lib/thread-plan.ts), in order: pinned
+   * above the composer until the run ends and updated in place with each revision. Absent: no plan to show.
+   */
+  plan?: ThreadPlanItem[]
   /**
    * The row under the composer (Figma `1318:2` section 19, #2926): where the thread runs, its repository and branch,
    * and the context ring on the right. Absent: nothing under the composer.
