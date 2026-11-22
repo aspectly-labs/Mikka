@@ -236,9 +236,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     const mine = message.authorType === 'user' && message.authorId === userId
     const id = sentAs[message.id] ?? message.id
     const reply = message.authorType !== 'user'
-    // The line under every message, as the Bot chat's: when it was sent, Copy and its reactions (#2922); a person's
-    // message keeps it to hover and focus.
-    const actions = <ReplyActions hover={!reply} at={at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
+    // The line under every message, as the Bot chat's: Copy and its reactions (#2922). A person's message keeps it to
+    // hover and focus, with when it was sent; a reply's author line already says when.
+    const actions = <ReplyActions hover={!reply} at={reply ? undefined : at} copyText={message.body}><MessageReactions reactions={reactions[message.id]} align={mine ? 'end' : 'start'} /></ReplyActions>
     const words = <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>
     if (mine) entries.push({ id, role: 'person', at, text: message.body, body: words, actions })
     else {
@@ -284,7 +284,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
         onLeft(group.id)
       }} />
     </div>}
-    <ThreadScreen host="page" models={false} botId={null} name={title} mark={<GroupAvatar title={title} members={members} />}
+    <ThreadScreen host="page" modelPicker={false} botId={null} name={title} mark={<GroupAvatar title={title} members={members} />}
       entries={blockingCode ? [] : pages ? entries : null} empty={empty} transcriptLabel={t('messages')} loadingLabel={!pages && !blockingCode ? common('loading') : undefined}
       older={older ? { loading: loadingOlder, onLoad: () => { void setSize(size + 1) } } : undefined}
       working={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined}

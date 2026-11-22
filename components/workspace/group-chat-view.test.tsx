@@ -284,7 +284,7 @@ test('the group is the Bot chat\'s thread: the person\'s messages are theirs, ev
   groupMembers = [{ id: 'bot', name: 'Design Bot', memberType: 'bot' }, { id: 'agent', name: 'Build Agent', memberType: 'agent' }]
   await render([message('user', 1, 'Who checks this?'), message('bot', 2, 'I will'), message('user', 3, 'Thanks'), message('bot', 4, 'Done'), message('agent', 5, 'Checks are green')])
   const screen = lastThreadScreen()!
-  assert.equal(screen.models, false, 'a group has no Bot of its own to pick a model for')
+  assert.equal(screen.modelPicker, false, 'a group has no Bot of its own to pick a model for')
   assert.deepEqual(screen.entries!.map(entry => entry.role === 'person' ? 'person' : `${entry.author?.name}${entry.author?.quiet ? ' (quiet)' : ''}`),
     ['person', 'Design Bot', 'person', 'Design Bot', 'Build Agent'], 'every reply names its author; none is quiet in a group')
   const sender = (row: Element) => row.querySelector('[data-slot="group-author"]')?.textContent ?? null

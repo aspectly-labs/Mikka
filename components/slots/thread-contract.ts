@@ -110,7 +110,7 @@ export type ThreadScreenProps = {
   /** Who the person talks to: the Bot's id (null: the Coordinator) and its name. */
   botId: string | null
   /** false: no Bot model picker of the screen's own; the chat passes its own in `composer.leftControls`, or none (a group). */
-  models?: false
+  modelPicker?: false
   name: string
   /** The accessible name of the existing transcript viewport. */
   transcriptLabel?: string
