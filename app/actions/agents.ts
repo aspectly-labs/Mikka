@@ -320,7 +320,7 @@ type ReadableThreadResult<T extends ThreadColumns> = {
 function readableThread(issueId: string | null, runId: string, columns: typeof threadColumns): Promise<ReadableThreadResult<typeof threadColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadCursorColumns): Promise<ReadableThreadResult<typeof threadCursorColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadIdentityColumns): Promise<ReadableThreadResult<typeof threadIdentityColumns>>
-async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<typeof threadColumns> | ReadableThreadResult<typeof threadCursorColumns> | ReadableThreadResult<typeof threadIdentityColumns>> {
+async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<ThreadColumns>> {
   if (issueId !== null) {
     const access = await issueThreadAccess(issueId)
     if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
