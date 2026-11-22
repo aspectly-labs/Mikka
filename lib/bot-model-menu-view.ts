@@ -40,7 +40,27 @@ export interface BotModelMenuOption {
   featured?: boolean
   /** A community default uses cloud credits or the administrator's own provider. */
   hostedSource?: 'cloud' | 'self-hosted'
+  /** What runs it (Figma 1318:71, #2925): Mikka 额度, a subscription or the person's own key, and which connection. */
+  route?: BotModelRoute
+  /** Set when this option cannot run now; the picker dims the row and says why. */
+  unavailable?: BotModelUnavailable
 }
+
+/**
+ * The connection a menu option runs through. `credits` is Mikka 额度 (no connection); `subscription` is a
+ * byos_connections id; `byok` is a model_api_keys id, the person's own or a teammate's shared key.
+ * `label` names the connection as the person knows it (account label, key name and masked suffix); empty for credits.
+ */
+export interface BotModelRoute {
+  source: 'credits' | 'subscription' | 'byok'
+  connectionId: string | null
+  label: string
+  /** The subscription's service (`claude` | `codex`), whose own mark stands for the route. */
+  service?: string
+}
+
+/** Why an option cannot run now: its subscription's usage limit (until `resetsAt`, when known) or no Mikka 额度 left. */
+export type BotModelUnavailable = { reason: 'quota'; resetsAt: string | null } | { reason: 'points' }
 
 export interface BotModelMenuGroup {
   kind: BotModelGroupKind

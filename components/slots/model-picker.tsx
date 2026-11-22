@@ -11,16 +11,18 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ModelSourceBadge, ModelVendorMark } from '@/components/labels/model-vendor-mark'
+import { ModelSourceBadge } from '@/components/labels/model-vendor-mark'
+import { ModelRouteMark } from '@/components/labels/model-route-mark'
 import { modelDisplayName } from '@/lib/model-display-name'
 import { useBotModelPicker, type BotModelPickerState, type ChipModel } from '@/hooks/use-bot-model-picker'
+import type { BotModelMenuOption } from '@/lib/bot-model-menu-view'
 import type { BotModelPickerProps } from '@/components/slots/model-picker-contract'
 import { cn } from '@/lib/utils'
 
-/** A model as the picker names it: its maker's mark, then its name (decision 2026-11-15-1900). */
-function OptionLabel({ option, name }: { option: ChipModel; name: string }) {
+/** A model as the picker names it: its route's mark (Figma 1318:71), then its name (decision 2026-11-15-1900). */
+function OptionLabel({ option, name }: { option: ChipModel & Pick<BotModelMenuOption, 'route'>; name: string }) {
   return <span className="inline-flex min-w-0 items-center gap-1.5">
-    {option.modelId && <ModelVendorMark model={option.modelId} />}
+    {option.modelId && <ModelRouteMark model={option.modelId} route={option.route} />}
     <span className="truncate">{option.name || !option.modelId ? name : modelDisplayName(option.modelId).name}</span>
   </span>
 }
@@ -68,9 +70,9 @@ function PickerView({ running = false, picker }: BotModelPickerProps & { picker:
           <DropdownMenuLabel className="truncate font-normal" title={picker.heading(group)}>{picker.heading(group)}</DropdownMenuLabel>
           {/* Mikka 额度 lists its featured models here; the official picker searches the whole catalogue. */}
           {group.options.filter(option => group.kind !== 'hosted' || option.featured || option.id === current.id).map(option => <DropdownMenuRadioItem key={option.id} value={option.id} closeOnClick
-            title={picker.source(group, option)} onClick={() => picker.chooseItem(option.id)}>
+            title={picker.routeTitle(group)} disabled={Boolean(option.unavailable) && option.id !== current.id} onClick={() => picker.chooseItem(option.id)}>
             <OptionLabel option={option} name={picker.optionName(option)} />
-            {(picker.price(option) ?? picker.tag(group)) && <span className="ml-auto shrink-0 pl-3 text-xs text-muted-foreground">{picker.price(option) ?? picker.tag(group)}</span>}
+            {picker.rowEnd(option) && <span className="ms-auto shrink-0 ps-3 text-xs text-muted-foreground">{picker.rowEnd(option)}</span>}
           </DropdownMenuRadioItem>)}
         </DropdownMenuGroup>)}
       </DropdownMenuRadioGroup>

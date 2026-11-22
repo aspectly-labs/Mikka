@@ -57,3 +57,13 @@ export async function chooseBotModel(chatBot: string | null, id: string): Promis
 export async function refreshBotModels(connectionId: string, workspaceId?: string) {
   return new ExecutionSettings(pool).refreshBotModels(await context(workspaceId), connectionId);
 }
+
+/**
+ * The person's subscriptions that hit their usage limit here and the threads each paused (#2938). Read again when the
+ * live channel reports a thread-list change, which the pause itself pushes; owner only.
+ */
+export async function getUsageLimits(workspaceId?: string) {
+  const { readUsageLimits } = await import("@/lib/usage-limits");
+  const scope = await context(workspaceId);
+  return readUsageLimits(pool, scope.ownerId, scope.workspaceId);
+}

@@ -185,6 +185,7 @@ const functions = {
   'execution-settings.getBotModelMenu': actions10.getBotModelMenu,
   'execution-settings.refreshBotModelMenuAction': actions10.refreshBotModelMenuAction,
   'execution-settings.chooseBotModel': actions10.chooseBotModel,
+  'execution-settings.getUsageLimits': actions10.getUsageLimits,
   'issue-metadata.getIssuePropertyOptions': actions11.getIssuePropertyOptions,
   'issue-metadata.getNewTaskOptions': actions11.getNewTaskOptions,
   'issue-metadata.updateIssueMetadata': actions11.updateIssueMetadata,

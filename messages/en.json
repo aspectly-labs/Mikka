@@ -4274,7 +4274,7 @@
       "metered": "Pay as you go",
       "shared": "Shared by teammates",
       "sharedKey": "{name}'s key",
-      "manage": "Manage models and subscriptions",
+      "manage": "Manage models and connections",
       "unavailable": "Unavailable",
       "notSaved": "Not saved",
       "unknownModel": "Unknown model",
@@ -4296,6 +4296,14 @@
         "ownProvider": "Runs on this server's own provider",
         "usedUntil": "{service} subscription is used up until {time}",
         "usedUp": "{service} subscription is used up"
+      },
+      "route": {
+        "via": "Runs through {label}",
+        "favorites": "Favorites",
+        "free": "Free",
+        "usedUntil": "Used up until {time}",
+        "usedUp": "Usage limit reached",
+        "noCredits": "No Mikka credits left"
       }
     },
     "empty": "Tell {name} what you need",

@@ -46,7 +46,14 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
     assert.equal((await executionModelOptions(pool, scope)).length, 1)
     await pool.query(`UPDATE model_api_keys SET models='["old","new"]' WHERE id=$1`, [key])
     view = await readEnabledModels(pool, scope)
-    assert.deepEqual(view.sources.find(item => item.id === key)?.models, [{ id: 'old', family: null, enabled: true, fresh: false }, { id: 'new', family: null, enabled: false, fresh: true }])
+    assert.deepEqual(view.sources.find(item => item.id === key)?.models, [{ id: 'old', family: null, enabled: true, fresh: false, known: false }, { id: 'new', family: null, enabled: false, fresh: true, known: false }])
+    // Recognition (#2938): a listed model is known when Mikka's LiteLLM catalogue has it; one it lacks is added by its id.
+    const listing = randomUUID()
+    await pool.query(`INSERT INTO model_api_keys (id,"ownerId",models) VALUES ($1,'owner','["claude-opus-5-5","claude-embed-1"]')`, [listing])
+    assert.deepEqual((await readEnabledModels(pool, scope)).sources.find(item => item.id === listing)?.models.map(({ id, known }) => [id, known]),
+      [['claude-opus-5-5', true], ['claude-embed-1', false]])
+    assert.ok((await readEnabledModels(pool, scope)).sources.find(item => item.id === 'hosted')!.models.every(model => model.known), 'Mikka 额度 lists only catalogue models')
+    await pool.query('DELETE FROM model_api_keys WHERE id=$1', [listing])
     const refreshedAt = view.sources.find(item => item.id === key)!.refreshedAt
     assert.ok(refreshedAt && Number.isFinite(Date.parse(refreshedAt)))
     await pool.query(`UPDATE model_api_keys SET models=models,"modelsError"='unavailable',"updatedAt"=now()+interval '1 hour' WHERE id=$1`, [key])
@@ -64,8 +71,8 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
     await writer.query('COMMIT'); writer.release()
     await toggle
     const result = (await readEnabledModels(pool, scope)).sources.find(item => item.id === key)!
-    assert.deepEqual(result.models.find(item => item.id === 'new'), { id: 'new', family: null, enabled: false, fresh: false })
-    assert.deepEqual(result.models.find(item => item.id === 'newer'), { id: 'newer', family: null, enabled: false, fresh: true })
+    assert.deepEqual(result.models.find(item => item.id === 'new'), { id: 'new', family: null, enabled: false, fresh: false, known: false })
+    assert.deepEqual(result.models.find(item => item.id === 'newer'), { id: 'newer', family: null, enabled: false, fresh: true, known: false })
     await pool.query(`ALTER TABLE model_api_keys ADD COLUMN provider text DEFAULT 'deepseek', ADD COLUMN name text,
       ADD COLUMN "baseUrl" text, ADD COLUMN protocol text DEFAULT 'anthropic', ADD COLUMN last4 text DEFAULT 'test',
       ADD COLUMN "responsesApi" boolean DEFAULT true, ADD COLUMN features jsonb;

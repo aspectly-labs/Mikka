@@ -254,6 +254,7 @@ export const desktopActionSchemas = {
   'execution-settings.getBotModelMenu': tuple(bot, workspace),
   'execution-settings.refreshBotModelMenuAction': tuple(bot),
   'execution-settings.chooseBotModel': tuple(bot, text(1000).min(1)),
+  'execution-settings.getUsageLimits': tuple(workspace),
   'issue-metadata.getIssuePropertyOptions': oneId,
   'issue-metadata.getNewTaskOptions': oneId,
   'issue-metadata.updateIssueMetadata': tuple(object({ id: uuid, revision: positive, patch: metadata, inviteEmail: z.email().max(254).optional() })),
