@@ -5,6 +5,7 @@ import { readRunFailure, type RunFailure } from '@mikka/protocol/run-failure'
 import { withDatabaseOperation } from '@/lib/db/egress-sample'
 import { desktopHumanSessionId } from '@/lib/desktop-rpc/session'
 import { deploymentSwitch } from '@/lib/deployment-switches'
+import { withFreshSession } from '@/lib/fresh-session'
 
 import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
@@ -153,7 +154,7 @@ async function readDevices(userId: string) {
 }
 
 /** Mints a device token. The plaintext is returned once and never stored. */
-export async function createDeviceToken(input: { name: string }): Promise<ActionResult<{ token: string }>> {
+async function createDeviceTokenBody(input: { name: string }): Promise<ActionResult<{ token: string }>> {
   return runAction(async () => {
     const userId = await getUserId()
     const parsed = z.object({ name: z.string().trim().max(60) }).safeParse(input)
@@ -162,6 +163,8 @@ export async function createDeviceToken(input: { name: string }): Promise<Action
     return { token }
   })
 }
+
+export async function createDeviceToken(...args: Parameters<typeof createDeviceTokenBody>) { return withFreshSession(() => createDeviceTokenBody(...args)) }
 
 export interface SshHostView {
   alias: string

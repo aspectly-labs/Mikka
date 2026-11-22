@@ -829,7 +829,7 @@ function McpServerDetailSubView({
       const normalized = server.transport === 'stdio' ? keyName : keyName.toLowerCase()
       const valid = server.transport === 'stdio'
         ? /^[A-Za-z_][A-Za-z0-9_]*$/.test(keyName)
-        : /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(keyName)
+        : (/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(keyName) && !/^(?:host|cookie|set-cookie|connection|content-length|transfer-encoding|proxy-.*|x-forwarded-.*)$/i.test(keyName))
       if (!keyName || !row.value || seen.has(normalized) || !valid) {
         setVarError(true)
         return
