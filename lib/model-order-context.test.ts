@@ -54,9 +54,6 @@ function fixture(allowed: boolean, ownerId = 'owner-a') {
       if (sql.startsWith('SELECT subscriptions FROM workspace_personal_policies')) {
         assert.deepEqual(args, [scope.workspaceId]); return { rows: [{ subscriptions: allowed }] }
       }
-      if (sql.startsWith('SELECT "ownerId" FROM workspace_subscription_shares')) {
-        assert.deepEqual(args, [scope.workspaceId, scope.ownerId]); return { rows: [] }
-      }
       if (sql.startsWith('SELECT id::text AS id,"modelCatalog"')) return { rows: [{ id: connectionId, models: ['claude-haiku-5-5'] }] }
       if (sql.includes('FROM model_api_keys WHERE "ownerId"=$1 ORDER BY')) {
         assert.deepEqual(args, [scope.ownerId]); return { rows: [key] }

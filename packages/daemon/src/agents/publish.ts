@@ -20,7 +20,7 @@ import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { assertSafeId } from "../ids"
 
-import type { RunPublish } from "@mikka/protocol"
+import type { RunGitIdentity, RunPublish } from "@mikka/protocol"
 import { execa } from "execa"
 
 import { runBranch } from "../worktrees"
@@ -48,13 +48,24 @@ export interface PublishOptions {
    * `note` says why not otherwise.
    */
   push: { approved: boolean; remote: string; note?: string }
+  /** Resolved personal/workspace Git commit author & committer identity (#3110). */
+  gitIdentity?: RunGitIdentity
   /** The daemon's own env (git credentials, SSH agent). */
   env?: NodeJS.ProcessEnv
   /** Local run cancellation or lease loss, including an in-flight push. */
   signal?: AbortSignal
 }
 
-/** Git config that keeps agent-written files from running code here. */
+/**
+ * Git config that keeps agent-written files from running code here.
+ *
+ * GPG commit signing (`commit.gpgSign=false`) intentionally stays disabled (#3110):
+ * (1) untrusted worktree/config content must never execute an external `gpg.program`
+ *     on the daemon host, (2) sandboxed runs cannot reach host `gpg-agent` / hardware
+ *     signers (`github-runtime.ts:87-88`, `local-github.ts:62-63`), and (3) exporting
+ *     long-lived user GPG private keys into E2B task VMs or daemons violates the
+ *     credential exposure boundary (`2026-11-08-0240-credential-exposure-boundary.md`).
+ */
 const SAFE_GIT = [
   "-c",
   "core.hooksPath=/dev/null",
@@ -66,12 +77,20 @@ const SAFE_GIT = [
   "protocol.ext.allow=never",
 ]
 
+export const DEFAULT_GIT_AUTHOR_NAME = "Mikka Agent"
+export const DEFAULT_GIT_AUTHOR_EMAIL = "agent@mikka.invalid"
+
 const FALLBACK_IDENTITY = [
   "-c",
-  "user.name=Mikka Agent",
+  `user.name=${DEFAULT_GIT_AUTHOR_NAME}`,
   "-c",
-  "user.email=agent@mikka.invalid",
+  `user.email=${DEFAULT_GIT_AUTHOR_EMAIL}`,
 ]
+
+const REPO_ONLY_GIT_CONFIG_ENV = {
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+}
 
 /**
  * The worktree's git dir as the main repo records it: the entry under
@@ -198,14 +217,50 @@ export async function snapshotTree(
   }
 }
 
+async function readRepoGitConfig(git: Git, key: "user.name" | "user.email"): Promise<string> {
+  return git(["config", key], REPO_ONLY_GIT_CONFIG_ENV).then(
+    result => String(result.stdout).trim(),
+    () => "",
+  )
+}
+
+/**
+ * Commit author/committer resolution order (#3110):
+ * (1) repository `git config` (`user.name` / `user.email`)
+ * (2) resolved run setting (`gitAuthorName` / `gitAuthorEmail`)
+ * (3) `FALLBACK_IDENTITY` (`Mikka Agent <agent@mikka.invalid>`)
+ */
+export async function resolvePublishGitIdentity(
+  git: Git,
+  gitIdentity?: RunGitIdentity,
+): Promise<string[]> {
+  const [repoName, repoEmail] = await Promise.all([
+    readRepoGitConfig(git, "user.name"),
+    readRepoGitConfig(git, "user.email"),
+  ])
+  const name = repoName || gitIdentity?.name?.trim() || DEFAULT_GIT_AUTHOR_NAME
+  const email = repoEmail || gitIdentity?.email?.trim() || DEFAULT_GIT_AUTHOR_EMAIL
+  if (name === DEFAULT_GIT_AUTHOR_NAME && email === DEFAULT_GIT_AUTHOR_EMAIL) {
+    return FALLBACK_IDENTITY
+  }
+  return ["-c", `user.name=${name}`, "-c", `user.email=${email}`]
+}
+
 /** Keep actual delivery files in a local snapshot for a fresh independent session. No remote push. */
-export async function retainDeliverable(repoPath: string, worktree: string, runId: string, signal?: AbortSignal): Promise<string> {
+export async function retainDeliverable(
+  repoPath: string,
+  worktree: string,
+  runId: string,
+  signal?: AbortSignal,
+  gitIdentity?: RunGitIdentity,
+): Promise<string> {
   const tree = await snapshotTree(repoPath, worktree, undefined, signal)
   const git = await pinnedGit(repoPath, worktree, undefined, signal)
   const head = String((await git(['rev-parse', 'HEAD'])).stdout).trim()
   const before = String((await git(['rev-parse', 'HEAD^{tree}'])).stdout).trim()
   if (tree === before) return head
-  const commit = String((await git([...FALLBACK_IDENTITY, 'commit-tree', tree, '-p', head, '-m', 'Retain task delivery for independent inspection'])).stdout).trim()
+  const identity = await resolvePublishGitIdentity(git, gitIdentity)
+  const commit = String((await git([...identity, 'commit-tree', tree, '-p', head, '-m', 'Retain task delivery for independent inspection'])).stdout).trim()
   await git(['update-ref', `refs/heads/${runBranch(runId)}`, commit, head])
   await git(['read-tree', commit])
   return commit
@@ -303,10 +358,7 @@ export async function publishRun(options: PublishOptions): Promise<RunPublish> {
 
   let commit: string
   try {
-    const identity = await git(["config", "user.email"]).then(
-      (result) => (String(result.stdout).trim() ? [] : FALLBACK_IDENTITY),
-      () => FALLBACK_IDENTITY
-    )
+    const identity = await resolvePublishGitIdentity(git, options.gitIdentity)
     commit = String(
       (
         await git([
