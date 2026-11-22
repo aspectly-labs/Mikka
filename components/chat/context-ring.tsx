@@ -6,7 +6,7 @@
 export function ContextRing({ share }: { /** 0–100 */ share: number }) {
   const value = Number.isNaN(share) ? 0 : Math.min(100, Math.max(0, share))
   const radius = 5.5, circumference = 2 * Math.PI * radius
-  return <svg viewBox="0 0 14 14" className="size-3.5 -rotate-90" aria-hidden="true" data-slot="context-ring" data-share={Math.round(value)}>
+  return <svg viewBox="0 0 14 14" className="size-3.5 -rotate-90" aria-hidden="true" data-slot="context-ring">
     <circle cx="7" cy="7" r={radius} fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-25" />
     {/* No arc at 0: a round cap would leave a dot that reads as usage. */}
     {value > 0 && <circle cx="7" cy="7" r={radius} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"

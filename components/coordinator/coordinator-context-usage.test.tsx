@@ -35,12 +35,19 @@ after(async () => {
 
 const usage = (used: number): ConversationUsage => ({ estimated: true, used, compactAt: 100_000, share: Math.round(used / 1_000), compactsNextTurn: false, keepRecent: 20_000, hasSummary: false, windowTokens: null })
 
+/** The share the ring draws: its arc's visible part, 0 when it draws no arc. */
+const drawn = (ring: Element | null | undefined) => {
+  const arc = ring?.querySelectorAll('circle')[1]
+  if (!arc) return 0
+  return Math.round(100 * (1 - Number(arc.getAttribute('stroke-dashoffset')) / Number(arc.getAttribute('stroke-dasharray'))))
+}
+
 test('the composer shows a ring of the share; the figures are in its name, its tooltip and the panel', async () => {
   await act(async () => root.render(<CoordinatorContextUsage usage={usage(43_000)} />))
   const trigger = document.querySelector('button')!
   // A ring, not 「上下文 43K/100K」 (#2921, Figma 1318:2 sections 01 and 14).
   assert.equal(trigger.textContent, '')
-  assert.equal(trigger.querySelector('[data-slot="context-ring"]')?.getAttribute('data-share'), '43')
+  assert.equal(drawn(trigger.querySelector('[data-slot="context-ring"]')), 43)
   assert.equal(trigger.getAttribute('aria-label'), trigger.getAttribute('title'))
   assert.match(trigger.getAttribute('aria-label')!, /43K/)
   assert.match(trigger.getAttribute('aria-label')!, /100K/)
@@ -53,6 +60,6 @@ test('the composer shows a ring of the share; the figures are in its name, its t
 test('an empty conversation draws no arc, only the track', async () => {
   await act(async () => root.render(<CoordinatorContextUsage usage={usage(0)} />))
   const ring = document.querySelector('[data-slot="context-ring"]')!
-  assert.equal(ring.getAttribute('data-share'), '0')
+  assert.equal(drawn(ring), 0)
   assert.equal(ring.querySelectorAll('circle').length, 1)
 })

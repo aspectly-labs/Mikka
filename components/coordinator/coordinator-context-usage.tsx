@@ -24,9 +24,10 @@ export function CoordinatorContextUsage({ usage }: { usage: ConversationUsage })
   const t = useTranslations('Coordinator')
   const used = compact.format(usage.used)
   const compactAt = compact.format(usage.compactAt)
+  const name = t('contextUsage', { used, compactAt })
   return <Popover>
     <PopoverTrigger render={<Button variant="ghost" size="icon-xs" data-slot="coordinator-context-usage"
-      aria-label={t('contextUsage', { used, compactAt })} title={t('contextUsage', { used, compactAt })}
+      aria-label={name} title={name}
       className="shrink-0 text-muted-foreground" />}>
       <ContextRing share={usage.share} />
     </PopoverTrigger>

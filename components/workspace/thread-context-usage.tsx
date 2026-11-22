@@ -25,9 +25,10 @@ export function ThreadContextUsage({ usage }: { usage: ContextUsage }) {
   // The brief's share of its own cap is the one ratio this host can state.
   const share = usage.promptBudget > 0 ? Math.min(100, Math.round(usage.promptUsed / usage.promptBudget * 100)) : 0
   const used = compact.format(usage.promptUsed), budget = compact.format(usage.promptBudget)
+  const name = t('contextUsage', { used, budget })
   return <Popover>
     <PopoverTrigger render={<Button variant="ghost" size="icon-xs" data-slot="thread-context-usage"
-      aria-label={t('contextUsage', { used, budget })} title={t('contextUsage', { used, budget })}
+      aria-label={name} title={name}
       className="shrink-0 text-muted-foreground" />}>
       <ContextRing share={share} />
     </PopoverTrigger>
