@@ -29,7 +29,10 @@ import { CloudSettings } from '@/components/settings/cloud-settings'
 import { PrivacySettings } from '@/components/settings/privacy-settings'
 import { SecretsPage } from '@/components/settings/secrets-page'
 import { DevicesSettings } from '@/components/devices/devices-settings'
+import { GitSettings } from '@/components/settings/git-settings'
+import { InstructionsSettings } from '@/components/settings/instructions-settings'
 import { MemorySettings } from '@/components/settings/memory-settings'
+import { ShortcutsSettings } from '@/components/settings/shortcuts-settings'
 import { ThreadSettings } from '@/components/settings/thread-settings'
 import { NotificationSettings } from '@/components/settings/notifications-settings'
 import { AccessTokensSettings } from '@/components/settings/access-tokens-settings'
@@ -165,11 +168,13 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'secrets': return <SecretsPage side={section === 'logins' ? 'mine' : 'workspace'} onSide={side => onSection(side === 'mine' ? 'logins' : 'secrets')} workspaceId={workspaceId && !preview ? workspaceId : undefined} workspaceName={workspaceName} waiting={waiting} />
     case 'preferences': return <><GeneralInterface /><PreferencesSettings />{workspaceId && !preview && !workspaceError && <RestoreSetupChecklist key={workspaceId} workspaceId={workspaceId} />}</>
     case 'appearance': return <AppearanceSettings />
-    case 'instructions':
-    case 'memory': return <MemorySettings />
+    case 'shortcuts': return <ShortcutsSettings workspaceId={!preview ? workspaceId : undefined} />
+    case 'instructions': return <InstructionsSettings workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} personal={personal} admin={admin} />
+    case 'memory': return <MemorySettings workspaceId={!preview ? workspaceId : undefined} />
     case 'threads': return <ThreadSettings workspaceId={workspaceId} personal={personal} admin={admin} />
+    case 'git': return <GitSettings workspaceId={!preview ? workspaceId : undefined} personal={personal} admin={admin} userName={user.name} userEmail={user.email} />
     case 'notifications': return <NotificationSettings />
-    case 'team-skills': return <TeamSkillsSettings admin={admin} workspaceId={workspaceId} />
+    case 'team-skills': return <TeamSkillsSettings admin={admin} workspaceId={workspaceId} personal={personal} />
     case 'mcp': return <PluginsView section="connections" rootLabel={t('sections.mcp.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'connections': return <PluginsView section="connections" rootLabel={t('sections.connections.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'models': return <>{workspaceId && !preview ? <ApiAndSubscriptions key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} team={team} cloudUserKey={community ? userKey : undefined} /> : waiting}</>
