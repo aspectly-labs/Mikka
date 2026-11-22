@@ -146,7 +146,7 @@ test('a recorded model stays available to the composer without a context estimat
   try {
     const html = render({ issueId: null })
     assert.doesNotMatch(html, /data-slot="thread-context-usage"|25K/)
-    assert.match(renderToStaticMarkup(shownThread?.composer.model), /GPT-5\.1/)
+    assert.match(renderToStaticMarkup(shownThread?.composer.leftControls), /GPT-5\.1/)
   } finally {
     runContext = undefined
   }
