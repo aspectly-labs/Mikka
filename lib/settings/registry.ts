@@ -345,11 +345,6 @@ export type SettingValueFor<K extends SettingKey> = z.output<(typeof SETTINGS_RE
 export function personalSettingWorkspace(field: Pick<SettingDefinition, 'personalContext'>, workspaceId: string): string | null {
   return field.personalContext === 'workspace' ? workspaceId : null
 }
-export type SettingValueFor<K extends SettingKey> = z.output<(typeof SETTINGS_REGISTRY)[K]['guard']>
-
-export function personalSettingWorkspace(field: Pick<SettingDefinition, 'personalContext'>, workspaceId: string): string | null {
-  return field.personalContext === 'workspace' ? workspaceId : null
-}
 
 const STORED_COLUMN = { integer: '"integerValue"', boolean: '"booleanValue"', string: '"textValue"' } as const
 type ScalarSettingKey = { [K in SettingKey]: (typeof SETTINGS_REGISTRY)[K]['type'] extends keyof typeof STORED_COLUMN ? K : never }[SettingKey]

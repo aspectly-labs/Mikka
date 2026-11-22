@@ -11,6 +11,7 @@ import type { EnvironmentConfiguration, ProjectSetupHistory } from '@/lib/projec
 import { isReservedEnvName, SECRET_NAME } from '@/lib/secrets/format'
 import type { ActionResult } from '@/lib/action-result'
 import { MACHINE_SIZES, QUOTA_GATED_SIZES, isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
+import { cn } from '@/lib/utils'
 import { settingsRead } from '@/lib/settings-read'
 import { settingsKeys } from '@/lib/swr/keys'
 import { readAccessFailure } from '@/lib/swr/persistent-cache'

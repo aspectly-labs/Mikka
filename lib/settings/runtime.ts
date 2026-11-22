@@ -51,6 +51,6 @@ export async function readRuntimeSetting<K extends SettingKey>(database: Query, 
     UNION ALL SELECT 'workspace' AS scope,"booleanValue","integerValue","textValue","textArrayValue"
     FROM workspace_setting_values WHERE "workspaceId"=$2 AND key=$4`,
   [context.userId, context.workspaceId, personalSettingWorkspace(field, context.workspaceId), key])
-  const value = (scope: SettingScope) => unpack(rows.find(row => row.scope === scope) as StoredSettingValue | undefined)
+  const value = (scope: SettingScope) => unpack(rows.find(row => row.scope === scope) as Row | undefined)
   return resolveSettingValue(key, value('personal'), value('workspace')) as ResolvedSetting<SettingValueFor<K>>
 }
