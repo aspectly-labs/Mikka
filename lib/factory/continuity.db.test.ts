@@ -234,6 +234,22 @@ test('PG: request epochs, stale completion fences and unattended handoff are dur
     await store.apply(owner, factoryBinding(next.task), randomUUID(), { action: 'cancel', reason: 'Fixture complete' });
   });
 
+  await t.test('cancel closes the task and its waiting marker in the same transaction (#1863)', async () => {
+    const original = await fixture()
+    const question = randomUUID()
+    await pool.query(`INSERT INTO factory_questions(id,"userId","issueId","taskId","attemptId",stage,"originRunId","originSessionId","originRevision","waitingBinding",kind,question,request,status,reason,"sourceEventId")
+      VALUES($1,$2,$3,$4,$5,'execute',$6,'fixture-session',1,'{}','decision','Which way?','{}','waiting_user','The work stopped for the owner',$7)`,
+      [question, owner, original.issueId, original.id, original.attemptId, original.runId, original.sourceEventId])
+    await store.apply(owner, factoryBinding(original), randomUUID(), { action: 'cancel', reason: 'Owner stopped it' })
+    const issue = (await pool.query(`SELECT status FROM issues WHERE id=$1`, [original.issueId])).rows[0]
+    assert.equal(issue.status, 'canceled')
+    const questionAfter = (await pool.query(`SELECT status,reason FROM factory_questions WHERE id=$1`, [question])).rows[0]
+    assert.deepEqual(questionAfter, { status: 'cancelled', reason: 'Owner stopped it' })
+    const version = (await pool.query(`SELECT status,actor_type,actor_id FROM issue_versions WHERE "issueId"=$1 ORDER BY revision DESC LIMIT 1`, [original.issueId])).rows[0]
+    assert.equal(version.status, 'canceled')
+    assert.equal(version.actor_type, 'user')
+  });
+
   await t.test('a foreign parent, a replayed older epoch and cancelled authority cannot advance', async () => {
     const original = await fixture()
     const wrong = await fixture()

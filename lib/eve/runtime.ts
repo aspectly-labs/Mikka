@@ -22,8 +22,10 @@ export async function modelForSession(ctx: DynamicModelContext) {
   if (!runtime || runtime.harness !== 'ai_sdk' || !runtime.model) throw new Error('subscription_model_unavailable')
   const { withModelEffort } = await import('../model-effort')
   if (!runtime.modelSelection) {
-    const { HostedWorkflowModel } = await import('../abuse/workflow-model')
-    return withModelEffort(new HostedWorkflowModel(scope.ownerId, scope.botId, runtime.model), runtime.effort)
+    const [{ HostedWorkflowModel }, { eveTurnRef }] = await Promise.all([import('../abuse/workflow-model'), import('../usage-turn-ref')])
+    // The receipt names the turn the saved reply carries as mikkaStreamId (lib/eve/projection.ts).
+    const turnRef = ctx.turn ? eveTurnRef(ctx.session.id, ctx.turn.id) : null
+    return withModelEffort(new HostedWorkflowModel(scope.ownerId, scope.botId, runtime.model, turnRef), runtime.effort)
   }
   const [{ SubscriptionWorkflowModel }, { streamingModel }] = await Promise.all([
     import('../subscription-workflow-model'), import('./streaming-model'),

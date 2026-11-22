@@ -6,9 +6,16 @@ test('streaming buffers possible OpenUI prefixes but releases ordinary Markdown'
   for (const source of ['', 'r', 'root ', 'root = ', 'root = Sta', '\n  root = Stack', 'root = Stack ', 'Stack \n', 'BeQue', 'Stack(', 'Stack( ']) {
     assert.equal(isAgentUISourcePrefix(source), true, source)
   }
-  for (const source of ['Hello', '# Heading', 'Stack is useful', 'root = /var/www', 'root cause', 'BeQuestions are useful', '```js\nroot = Sta']) {
+  for (const source of ['Hello', '# Heading', 'Stack is useful', 'root = /var/www', 'root cause', 'BeQuestions are useful', '```js\nconst x =', '```\nno program', '```\nroot = /var/www']) {
     assert.equal(isAgentUISourcePrefix(source), false, source)
   }
+  // A still-open fence whose body could become a program is held: the fenced
+  // source never flashes as a code block before the card appears.
+  for (const source of ['```', '```text\n', '```js\nroot = Sta', '~~~\nBeQue', '```\nroot = Stack([', '~~~\nroot = BeQuestions("q", [', '```\nStack([']) {
+    assert.equal(isAgentUISourcePrefix(source), true, source)
+  }
+  // Once a closing fence lands the code inside is no longer ambiguous.
+  assert.equal(isAgentUISourcePrefix('```\nroot = Stack([])\n```'), false)
 })
 
 test('plain Markdown stays Markdown, untouched', () => {
@@ -76,8 +83,27 @@ test('root = in code fences or prose is not OpenUI', () => {
     'Here is the fix:\n\n```python\nroot = Path(__file__).parent\n```\n',
     'Try:\n```js\nconst x = 1\nroot = document.getElementById("app")\n```',
     'Set the variable like this:\nroot = /var/www',
-    '~~~\nroot = Stack([])\n~~~',
+    // A whole-fence block of ordinary code stays a code block.
+    '~~~\nroot = Path(__file__).parent\n~~~',
+    '```ts\nroot = document.getElementById("app")\n```',
+    // …and so does a program inside a fence that prose or a second fence wraps.
+    'example:\n```\nroot = Stack([])\n```',
+    '```\nroot = Stack([])\n```\ntrailing words',
+    '```\nroot = Stack([])\n```\n\n```\nroot = BeQuestions([])\n```',
   ]) assert.equal(detectAgentUISource(source).isOpenUI, false, source)
+})
+
+test('a reply that is only a fenced complete program still renders as a card', () => {
+  const fenced = '```text\nroot = Stack([TextContent("选择一项")])\n```'
+  const detected = detectAgentUISource(fenced)
+  assert.equal(detected.isOpenUI, true)
+  assert.equal(detected.source, normalizeAgentUISource('root = Stack([TextContent("选择一项")])'))
+  assert.equal(detectAgentUISource('~~~\nroot = Stack([])\n~~~').isOpenUI, true)
+  // A fence whose whole body is a component call without `root =` gets it back.
+  assert.equal(detectAgentUISource('```\nBeQuestions([{question: "q", options: []}])\n```').isOpenUI, true)
+  assert.equal(detectAgentUISource(' \n```\nroot = Stack([])\n```\n').isOpenUI, true)
+  // An unclosed fence is not a whole-reply fence.
+  assert.equal(detectAgentUISource('```\nroot = Stack([])').isOpenUI, false)
 })
 
 test('root = Component(…) after a fence is still OpenUI', () => {

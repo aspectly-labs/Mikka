@@ -1126,14 +1126,16 @@ test(
             ).rows[0].n,
             0,
           );
-          // #195 never closes or hides the actual issue.
+          // #195 never closes or hides the actual issue; the person's earlier
+          // explicit cancel closed it (#1863) and monitor recovery must not
+          // reopen it.
           assert.equal(
             (
               await pool.query("SELECT status FROM issues WHERE id=$1", [
                 issueId,
               ])
             ).rows[0].status,
-            "todo",
+            "canceled",
           );
         },
       );
