@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { skillMarkdown } from '@mikka/protocol/skill'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
 import { PluginError, type InstalledSkill, type McpServerView, type PersonalPluginSnapshot, type SkillContent, type createMcpSchema, type updateMcpSchema } from './contracts'
 import type { z } from 'zod'
@@ -96,9 +97,9 @@ export class PersonalPluginStore {
   async listSkills(userId: string): Promise<InstalledSkill[]> {
     return (await this.pool.query<InstalledSkill>(`SELECT ${skillColumns} FROM personal_skills WHERE user_id=$1 ORDER BY created_at,id`, [userId])).rows
   }
-  async getSkill(userId: string, id: string): Promise<InstalledSkill> {
-    const { rows: [skill] } = await this.pool.query<InstalledSkill>(
-      `SELECT ${skillColumns} FROM personal_skills WHERE user_id=$1 AND id=$2`, [userId, id],
+  async getSkill(userId: string, id: string): Promise<InstalledSkill & { body: string }> {
+    const { rows: [skill] } = await this.pool.query<InstalledSkill & { body: string }>(
+      `SELECT ${skillColumns},body FROM personal_skills WHERE user_id=$1 AND id=$2`, [userId, id],
     )
     if (!skill) throw new PluginError('skillNotFound', 404)
     return skill
@@ -117,6 +118,40 @@ export class PersonalPluginStore {
     const row = (await this.pool.query<InstalledSkill>(`UPDATE personal_skills SET enabled=$3 WHERE id=$1 AND user_id=$2 RETURNING ${skillColumns}`, [id, userId, enabled])).rows[0]
     if (!row) throw new PluginError('skillNotFound', 404)
     return row
+  }
+  async editSkill(userId: string, id: string, input: { enabled?: boolean; name?: string; instructions?: string }) {
+    return this.write(userId, async client => {
+      const current = (await client.query<InstalledSkill & { body: string }>(
+        `SELECT ${skillColumns},body FROM personal_skills WHERE id=$1 AND user_id=$2 FOR UPDATE`, [id, userId],
+      )).rows[0]
+      if (!current) throw new PluginError('skillNotFound', 404)
+      if ((input.name !== undefined || input.instructions !== undefined) && current.source !== 'local/manual') {
+        throw new PluginError('invalidPluginInput', 400)
+      }
+      const name = input.name ?? current.name
+      const enabled = input.enabled ?? current.enabled
+      let body = current.body
+      let sha256 = current.sha256
+      let sourceRevision = current.sourceRevision
+      if (input.name !== undefined || input.instructions !== undefined) {
+        const frontmatterMatch = /^---\r?\n[\s\S]*?\r?\n---\r?\n*/.exec(current.body)
+        const currentInstructions = frontmatterMatch ? current.body.slice(frontmatterMatch[0].length).trim() : current.body.trim()
+        const instructions = input.instructions ?? currentInstructions
+        body = skillMarkdown({ name, instructions })
+        const otherBytes = (await client.query<{ bytes: number }>(
+          'SELECT COALESCE(sum(octet_length(body)),0)::int AS bytes FROM personal_skills WHERE user_id=$1 AND id<>$2',
+          [userId, id],
+        )).rows[0].bytes
+        if (otherBytes + Buffer.byteLength(body) > 100_000) throw new PluginError('skillLimitReached', 409)
+        sha256 = createHash('sha256').update(body, 'utf8').digest('hex')
+        sourceRevision = sha256
+      }
+      const { rows } = await client.query<InstalledSkill>(
+        `UPDATE personal_skills SET name=$3,enabled=$4,body=$5,sha256=$6,source_revision=$7 WHERE id=$1 AND user_id=$2 RETURNING ${skillColumns}`,
+        [id, userId, name, enabled, body, sha256, sourceRevision],
+      )
+      return rows[0]
+    })
   }
   async deleteSkill(userId: string, id: string) {
     if (!(await this.pool.query('DELETE FROM personal_skills WHERE id=$1 AND user_id=$2', [id, userId])).rowCount) throw new PluginError('skillNotFound', 404)

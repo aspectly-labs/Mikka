@@ -342,6 +342,7 @@ export function InstructionsSettings({ workspaceId, workspaceName, admin = false
                 title={env.name}
                 scopeBadge={canEditEnv ? t('scopeEnvironment') : `${t('scopeEnvironment')} · ${t('readOnlyBadge')}`}
                 summary={summarize(text, t('emptyInstructions'), count => t('charSummary', { count }))}
+                disabled={envInstructionsRead.isLoading && !view}
                 onOpen={() =>
                   openEditor({
                     kind: 'environment',
@@ -368,6 +369,7 @@ export function InstructionsSettings({ workspaceId, workspaceName, admin = false
                 title={bot.name}
                 scopeBadge={t('scopeBot')}
                 summary={summarize(text, t('emptyInstructions'), count => t('charSummary', { count }))}
+                disabled={botInstructionsRead.isLoading && !view}
                 onOpen={() =>
                   openEditor({
                     kind: 'bot',
@@ -510,18 +512,21 @@ function InstructionFileRow({
   title,
   scopeBadge,
   summary,
+  disabled = false,
   onOpen,
 }: {
   icon: ReactNode
   title: string
   scopeBadge: string
   summary: string
+  disabled?: boolean
   onOpen: () => void
 }) {
   return (
     <Button
       type="button"
       variant="ghost"
+      disabled={disabled}
       onClick={onOpen}
       className="flex h-auto w-full items-center justify-between gap-3 rounded-none px-4 py-3 text-left font-normal whitespace-normal"
     >

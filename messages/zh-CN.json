@@ -2568,7 +2568,15 @@
       "remove": "移除技能",
       "removeConfirmTitle": "移除 {name}？",
       "pathLabel": "路径",
-      "hashLabel": "摘要"
+      "hashLabel": "摘要",
+      "modeManual": "手动创建",
+      "modeGithub": "GitHub 仓库",
+      "nameLabel": "技能名称",
+      "namePlaceholder": "发布检查清单",
+      "contentLabel": "技能内容",
+      "contentPlaceholder": "输入 Agent 执行任务时遵循的步骤…",
+      "editSkill": "编辑",
+      "editTitle": "编辑技能"
     },
     "memory": {
       "emptyBody": "Mikka 会从线程和已连接的应用中记下要点，并显示在这里。",
@@ -4575,7 +4583,10 @@
       "valueWithSource": "{value} · {source}",
       "countWithSource": "{count} · {source}",
       "parallelTreeHint": "这个线程树中可同时运行的子代理数量。",
-      "archiveSaveError": "归档设置保存失败"
+      "archiveSaveError": "归档设置保存失败",
+      "resetInherit": "恢复继承",
+      "resetDefaults": "恢复默认",
+      "resetError": "恢复默认设置失败"
     },
     "shortcutsPage": {
       "voiceTitle": "语音输入",
