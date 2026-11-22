@@ -4806,6 +4806,36 @@
     "copied": "ID 已复制",
     "copyFailed": "复制失败"
   },
+  "ThreadUnderComposer": {
+    "cloud": "云电脑",
+    "awake": "运行中",
+    "asleep": "休眠",
+    "machineLabel": "运行在 {name} · {state}",
+    "runsOn": "这个线程运行在",
+    "size": "{vcpu} vCPU · {gib} GiB",
+    "hourly": "醒着时 ${price} / 小时",
+    "current": "当前",
+    "addMachine": "添加机器…",
+    "context": "上下文，约 {used} / {max} token（估算）",
+    "repository": "仓库 {name}",
+    "queued": {
+      "title": "排队 · {count}",
+      "afterTurn": "本轮结束后发送",
+      "whenContinued": "线程继续后发送",
+      "sendNow": "立即发送",
+      "delete": "删除"
+    },
+    "paused": {
+      "label": "因用量上限暂停",
+      "badge": "已暂停",
+      "kind": "用量上限 · {name}",
+      "until": "{name} 用量已达上限，这个线程暂停到 {time}。",
+      "paused": "{name} 用量已达上限，这个线程已暂停。",
+      "reset": "{name} 的用量上限已重置。",
+      "tryNow": "立即重试",
+      "seeUsage": "查看用量"
+    }
+  },
   "ConversationDirectory": {
     "unread": "未读",
     "readAll": "全部标为已读",

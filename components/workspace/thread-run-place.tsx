@@ -13,7 +13,7 @@ import { markOfValue, stateMarkTone } from '@/lib/state-mark'
 import { statusDots } from '@/lib/status-appearance'
 import { cn } from '@/lib/utils'
 
-const KIND_ICONS: Record<ThreadMachineKind, typeof Cloud> = { cloud: Cloud, laptop: Laptop, server: Server }
+export const KIND_ICONS: Record<ThreadMachineKind, typeof Cloud> = { cloud: Cloud, laptop: Laptop, server: Server }
 
 /** A cloud machine is named by its sandbox (「云电脑 i8k2m3」); a computer or server by its device name. */
 export function useMachineName() {

@@ -22,6 +22,9 @@ import { useThreadStepRows } from './thread-step-rows'
 import { ThreadReplyVersions } from './thread-reply-versions'
 import { ThreadExecutionIdentity } from './thread-execution-identity'
 import { ThreadRunPlace } from './thread-run-place'
+import { ThreadUnderComposer } from './thread-under-composer'
+import { ThreadQueuedMessages, type QueuedMessage } from './thread-queued-messages'
+import { ThreadContextUsage } from './thread-context-usage'
 import { acceptedProducerOutcome, isThreadRun, threadQuestionView } from '@/lib/issue-threads'
 import { threadComposerHarness } from '@/lib/run-model-fallback-view'
 import { QUOTE_SOURCE_ATTR, SelectionQuote } from '@/components/chat/selection-quote'
@@ -593,7 +596,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     </>
     if (subagents.length) bot('subagents', subagents.map(child => ({ kind: 'task' as const, run: subagentRunSource(child), onOpen: () => onOpenThread ? onOpenThread(child.id) : openThread(child.id, child.issueId) })))
     if (readEnd || data.thread.quota?.switched.length || modelFallback.length || !active || extraArtifactCount > 0 || data.thread.feedbackEligible) bot('tail', [{ kind: 'text', text: '', node: tail }])
-    if (!active) for (const waiting of mergeWaitings) entries.push({ id: `${runId}:merge-waiting:${waiting.issueId}`, role: 'bot', event: true, at: Date.now(),
+    // While the run waits on its usage limit the pause card says what waits; no waiting line (Figma 1318:2 section 20).
+    if (!active && !data.thread.quota?.paused) for (const waiting of mergeWaitings) entries.push({ id: `${runId}:merge-waiting:${waiting.issueId}`, role: 'bot', event: true, at: Date.now(),
       parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={data.live?.issueWorkspaceId ?? null} /> }] })
     if (active && !items.length) bot('waiting', [], { streaming: true })
   }
@@ -628,20 +632,19 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       await mutate()
     } catch { setSendFailed(feedback('sendUncertain')) }
   }
-  const queueControls = <div className="flex flex-col gap-1 px-3">
-    {modes.length > 0 && <NativeSelect size="sm" aria-label={t('deliveryMode')} value={selectedMode} onChange={event => {
+  const quotaPaused = data?.thread.quota?.paused ?? null
+  // Messages waiting for the thread (Figma 1318:2 section 20): 立即发送 where the run takes one mid-turn, 删除 while it waits.
+  const queued: QueuedMessage[] = (data?.delivery?.queued ?? []).map(row => ({ id: row.id, text: row.text,
+    note: row.status === 'failed' ? row.failureCode ? actionError(row.failureCode) : t('deliveryFailed') : row.status === 'delivering' ? t('deliverySending') : undefined,
+    onSendNow: row.status === 'queued' && modes.includes('steer') ? () => void updateQueue(row.id, 'sendNow') : undefined,
+    onDelete: row.status === 'queued' ? () => void updateQueue(row.id, 'cancel') : undefined }))
+  const queueControls = <>
+    <ThreadQueuedMessages rows={queued} paused={Boolean(quotaPaused)} />
+    {modes.length > 0 && <div className="flex px-3"><NativeSelect size="sm" aria-label={t('deliveryMode')} value={selectedMode} onChange={event => {
       const next = modes.find(mode => mode === event.target.value)
       if (next) setDeliveryMode(next)
-    }}>{modes.map(mode => <NativeSelectOption key={mode} value={mode}>{t(`deliveryModes.${mode}`)}</NativeSelectOption>)}</NativeSelect>}
-    {data?.delivery?.queued.map(row => <div key={row.id} className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-      <span className="min-w-0 flex-1 break-words">{row.text}</span>
-      <span>{row.status === 'failed' ? row.failureCode ? actionError(row.failureCode) : t('deliveryFailed') : row.status === 'delivering' ? t('deliverySending') : t('deliveryQueued')}</span>
-      {row.status === 'queued' && <>
-        {modes.includes('steer') && <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'sendNow')}>{t('deliverySendNow')}</Button>}
-        <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'cancel')}>{t('deliveryCancel')}</Button>
-      </>}
-    </div>)}
-  </div>
+    }}>{modes.map(mode => <NativeSelectOption key={mode} value={mode}>{t(`deliveryModes.${mode}`)}</NativeSelectOption>)}</NativeSelect></div>}
+  </>
   const recorded = data?.composerModel ?? data?.context?.composerModel
   const currentModel = recorded?.served || recorded?.selected
   const pickerEnabled = issueId && data?.live?.viewerId && !active && !question && !replyBlocked && !changeRequest &&
@@ -669,12 +672,13 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
     notices={<>
       {olderState === 'failed' && olderPosition && <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void loadOlder() }} />}
+      {quotaPaused && <ThreadQuotaPausedCard paused={quotaPaused} onContinued={() => { void mutate(); refreshLists() }} />}
       {queueControls}
       {references}
-      {data?.thread.quota?.paused && <ThreadQuotaPausedCard paused={data.thread.quota.paused} onContinued={() => { void mutate(); refreshLists() }} />}
       {sendFailed && <FieldError className="px-3 text-xs">{sendFailed}</FieldError>}
       {stopFailed && <div role="alert" className="flex items-center gap-2 px-3 text-xs"><span className="text-destructive-foreground">{t('stopFailed')}</span><Button variant="ghost" size="sm" className="min-w-22 max-sm:h-11" onClick={() => { void stop() }}>{t('retryStop')}</Button></div>}
     </>}
+    under={readOnly || !data?.thread.ownedByCurrentUser ? undefined : <ThreadUnderComposer issueId={issueId} runId={runId} status={view?.status ?? data.thread.status} context={data.context ? <ThreadContextUsage usage={data.context} /> : undefined} />}
     questions={[]} onAnswer={async () => ({ status: 'unavailable', error: '' })} running={0} onOpenTask={() => onOpenTask?.()} onOpenInbox={() => navigate({ section: 'suggestions' })} /></div>
     : <div className="min-h-0 flex-1 overflow-y-auto p-4">{waiting}</div>
   const views: ThreadViewAction[] = []

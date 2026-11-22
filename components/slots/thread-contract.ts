@@ -141,6 +141,11 @@ export type ThreadScreenProps = {
   pending: { id: string; name: string; meta?: string; onRemove: () => void }[]
   /** Notices that wait above the composer (quota, sign in again, actions to approve). */
   notices?: ReactNode
+  /**
+   * The row under the composer (Figma `1318:2` section 19, #2926): where the thread runs, its repository and branch,
+   * and the context ring on the right. Absent: nothing under the composer.
+   */
+  under?: ReactNode
   /** Questions waiting on the person; `onAnswer` sends the option's title or the person's own words. */
   questions: ThreadQuestion[]
   onAnswer: (id: string, text: string) => Promise<DecisionReceipt>

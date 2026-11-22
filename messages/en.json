@@ -4806,6 +4806,36 @@
     "copied": "ID copied",
     "copyFailed": "Couldn't copy"
   },
+  "ThreadUnderComposer": {
+    "cloud": "Cloud",
+    "awake": "Awake",
+    "asleep": "Asleep",
+    "machineLabel": "Runs on {name} · {state}",
+    "runsOn": "Run this thread on",
+    "size": "{vcpu} vCPU · {gib} GiB",
+    "hourly": "${price} / h while awake",
+    "current": "Current",
+    "addMachine": "Add a machine…",
+    "context": "Context, about {used} of {max} tokens (estimated)",
+    "repository": "Repository {name}",
+    "queued": {
+      "title": "Queued · {count}",
+      "afterTurn": "Sends after this turn",
+      "whenContinued": "Sends when the thread continues",
+      "sendNow": "Send now",
+      "delete": "Delete"
+    },
+    "paused": {
+      "label": "Paused on usage limit",
+      "badge": "Paused",
+      "kind": "Usage limit · {name}",
+      "until": "{name} hit its usage limit. This thread is paused until {time}.",
+      "paused": "{name} hit its usage limit. This thread is paused.",
+      "reset": "{name}'s usage limit has reset.",
+      "tryNow": "Try now",
+      "seeUsage": "See usage"
+    }
+  },
   "ConversationDirectory": {
     "unread": "Unread",
     "readAll": "Mark all as read",

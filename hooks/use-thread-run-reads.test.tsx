@@ -13,6 +13,10 @@ mock.module(new URL('../app/actions/agents.ts', import.meta.url).href, { namedEx
   getThreadMachine: async (issueId: string, runId: string) => { calls.push('machine:' + issueId + ':' + runId); return { name: 'machine-' + epoch } },
 } })
 
+mock.module(new URL('../app/actions/task-runs.ts', import.meta.url).href, { namedExports: {
+  readThreadSummary: async (runId: string) => { calls.push('summary:' + runId); return { error: 'runNotFound' } },
+} })
+
 test('one read per opened resource, with fresh data on run transitions, reopen and account change', async () => {
   const browser = new Window()
   Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true })
