@@ -97,8 +97,6 @@ test(
         other = { ...alice, workspaceId: randomUUID() };
       await pool.query('INSERT INTO mikka_workspaces(id) VALUES ($1),($2)', [alice.workspaceId, other.workspaceId]);
       await pool.query(`INSERT INTO mikka_workspace_members VALUES ($1,'alice','Alice','active'),($1,'bob','Bob','active'),($2,'alice','Alice','active')`, [alice.workspaceId, other.workspaceId]);
-      // As the migration does for existing connections: each person's subscriptions stay shared where they were connected.
-      for (const scope of [alice, bob]) await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)', [scope.ownerId, scope.workspaceId]);
       const own = randomUUID(),
         foreign = randomUUID(),
         bot = randomUUID(),
@@ -329,7 +327,6 @@ test(
       await pool.query('INSERT INTO mikka_workspaces(id) VALUES ($1)', [teamB.workspaceId]);
       await pool.query(`INSERT INTO mikka_workspace_members VALUES ($1,'alice','Alice','active'),($1,'bob','Bob','active')`, [teamB.workspaceId]);
       await pool.query('INSERT INTO bots (id,"ownerId","workspaceId") VALUES ($1,$2,$3),($4,$5,$3)',[teamBot,alice.ownerId,teamB.workspaceId,bobBot,'bob']);
-      assert.equal((await pool.query('SELECT 1 FROM workspace_subscription_shares WHERE "ownerId"=$1 AND "workspaceId"=$2',[alice.ownerId,teamB.workspaceId])).rowCount,0,'nothing shared into team B');
       const inTeam = await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:teamBot},dependencies);
       assert.equal(inTeam.modelSelection?.workspaceId,teamB.workspaceId,'her own bot uses her subscription without sharing; the run and its binding belong to team B');
       assert.equal(inTeam.modelSelection?.consumerId,teamBot);

@@ -53,7 +53,6 @@ test('real DB: additive migration, subagent owner isolation and separate thread 
       CREATE TABLE device_repos(id uuid PRIMARY KEY);
       CREATE TABLE suggestions(id uuid PRIMARY KEY,"botId" uuid);
       CREATE TABLE workspace_computer_policies("workspaceId" uuid PRIMARY KEY,permission text,version integer);
-      CREATE TABLE workspace_subscription_shares("ownerId" text,"workspaceId" uuid,"allowOthers" boolean NOT NULL DEFAULT false,PRIMARY KEY("ownerId","workspaceId"));
       CREATE TABLE workspace_personal_policies("workspaceId" uuid PRIMARY KEY,subscriptions boolean NOT NULL DEFAULT true);
       CREATE TABLE byos_connections(id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,provider text,state text,epoch bigint, paused boolean NOT NULL DEFAULT false);
       CREATE TABLE byos_bindings(id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,route text,"modelId" text,"createdAt" timestamptz DEFAULT now());

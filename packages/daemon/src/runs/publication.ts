@@ -278,7 +278,7 @@ async function collectReport(
   const command = assignment.verifyCommand ?? inferred?.command
   if (stopReason === 'submitted') context.assertLive()
   if (stopReason === 'submitted' && assignment.factoryExecuteKind === 'deliverable') {
-    const deliverableCommit = await retainDeliverable(repo.path, worktree, runId, signal)
+    const deliverableCommit = await retainDeliverable(repo.path, worktree, runId, signal, assignment.gitIdentity)
     context.assertLive()
     deps.journal.update(runId, { deliverableCommit })
   }
