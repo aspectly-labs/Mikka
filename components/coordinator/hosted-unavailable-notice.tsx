@@ -18,6 +18,9 @@ import { botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { COMPOSER_NOTICE } from './composer-notice'
 import { ConnectSubscriptionButton } from '@/components/billing/connect-subscription-dialog'
 
+/** The last model menu any notice read, for a Bot whose menu is not read yet */
+let lastMenu: BotModelMenu | undefined
+
 /**
  * Model readiness above the composer, before sending. If no model can be
  * picked, link to setup. For an unavailable Mikka 额度 choice (decision
@@ -29,9 +32,11 @@ export function HostedUnavailableNotice({ botId }: { botId: string | null }) {
   const t = useTranslations('Coordinator.modelPicker')
   const actionError = useActionError()
   const { mutate } = useSWRConfig()
-  // On a switch to another Bot the notice keeps the last answer until this Bot's is read (readiness is mostly the
-  // workspace's: its credits and connections), so the composer does not grow under the chat a moment after it opens
-  const menu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId), { keepPreviousData: true })
+  // On a switch to another Bot (the chat and this notice mount anew) the notice shows the last answer it had until this
+  // Bot's is read: readiness is mostly the workspace's credits and connections, and the composer does not grow under a
+  // chat already drawn at its end
+  const menu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId), { keepPreviousData: true, fallbackData: lastMenu })
+  if (menu.data) lastMenu = menu.data
   const current = menu.data?.current
   const needsChoice = current?.kind === 'none'
   const unavailable = current?.kind === 'hosted' && !current.available
