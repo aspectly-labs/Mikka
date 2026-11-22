@@ -209,6 +209,7 @@ test('shared run facts correlate to the outer Run in both single-table and joine
     assert.match(text, /where \("agent_runs"\."userId" = \$\d+ and "agent_runs"\."workspaceId" = \$\d+\)/)
     assert.ok(params.includes(OWNER) && params.includes(WORKSPACE), 'actor and Workspace remain parameterized')
     assert.ok(!text.includes(OWNER) && !text.includes(WORKSPACE))
+    assert.match(text, /coalesce\(("agent_runs"\.)?"outcome", case when ("agent_runs"\.)?"status"='succeeded' then 'done' end\)/, 'an unjudged succeeded run reads done (#1863)')
   }
   assert.equal(queries.length, 0, 'query construction does not execute or add a read')
 })
