@@ -1,6 +1,6 @@
-# Git author identity, GPG signing boundary, and workspace review rules
+# Git author identity, GPG signing boundary, and reviewer boundary
 
-This backend slice (#3110 WS-A, Frame 19) extends the [registered settings backend](registry.md) with inheritable Git commit identity fields, documents the GPG commit-signing security boundary, and exposes workspace read/write operations for `reviewRuleSchema` (`@mikka/protocol/orchestrator`).
+This backend slice (#3110 WS-A, Frame 19) extends the [registered settings backend](registry.md) with inheritable Git commit identity fields, documents the GPG commit-signing security boundary, and records the product decision omitting standalone `reviewRuleSchema` CRUD.
 
 ## Git commit author identity
 
@@ -17,7 +17,7 @@ Both keys belong to `group: "git"` and `page: "git"` with `personalContext: "wor
 
 ### Daemon delivery and publish fallback order
 
-`readCliRunPolicy` resolves non-empty `gitAuthorName` and `gitAuthorEmail` inside the held run-policy transaction and attaches `gitIdentity` to the `POST /v1/devices/:deviceId/runs/:runId/claim` assignment (`RunAssignment.gitIdentity`).
+`readCliRunPolicy(pool, runId, userId, undefined, { includeGitIdentity: true })` resolves non-empty `gitAuthorName` and `gitAuthorEmail` inside the held run-policy transaction when claiming a run and attaches `gitIdentity` to the `POST /v1/devices/:deviceId/runs/:runId/claim` assignment (`RunAssignment.gitIdentity`). Other policy consumers (such as subscription context checks and model admission) omit `includeGitIdentity` so their SQL statement budgets are unchanged.
 
 When `@mikka/daemon` creates commits in `publishRun` or `retainDeliverable` (`packages/daemon/src/agents/publish.ts`), each field (`user.name` and `user.email`) resolves independently in strict priority order:
 
@@ -33,53 +33,6 @@ End-to-end GPG commit signing is intentionally not exposed as a setting toggle (
 - Exporting long-lived user GPG private keys and passphrases into E2B VMs or local daemons violates the credential exposure boundary (`docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md`).
 - No GPG key custody, remote signing service, or GitHub `/user/gpg_keys` synchronization exists in the platform.
 
-## Workspace review rules (`reviewRuleSchema`)
+## App Reviewer boundary (`reviewRuleSchema` omitted)
 
-`drizzle/20261122004735_workspace_review_rules.sql` creates `workspace_review_rules` (`PRIMARY KEY ("workspaceId", "repoKey")`) backing `reviewRuleSchema`:
-
-| Method | Path | Access | Body |
-| --- | --- | --- | --- |
-| `GET` | `/api/settings/workspace/<uuid>/review-rules` | Active workspace member | None |
-| `PATCH` | `/api/settings/workspace/<uuid>/review-rules` | Active workspace admin | `{ "repoKey"?: string \| null, "rule": ReviewRuleInput }` |
-| `DELETE` | `/api/settings/workspace/<uuid>/review-rules` | Active workspace admin | `{ "repoKey"?: string \| null }` (or empty body) |
-
-Desktop RPC methods:
-
-- `review-rule-settings.getWorkspaceReviewRules` (`[workspaceId]`)
-- `review-rule-settings.saveWorkspaceReviewRule` (`[workspaceId, { repoKey?, rule }]`)
-- `review-rule-settings.deleteWorkspaceReviewRule` (`[workspaceId, { repoKey? }?]`)
-
-Response shape:
-
-```json
-{
-  "workspaceId": "00000000-0000-4000-8000-000000000001",
-  "rule": {
-    "value": {
-      "requirePullRequest": true,
-      "requireCi": true,
-      "checkHarness": null,
-      "branchTemplate": "mikka/{team}-{number}",
-      "prBodyTemplate": null
-    },
-    "source": "default",
-    "updatedAt": null
-  },
-  "overrides": [
-    {
-      "repoKey": "github.com/acme/app",
-      "rule": {
-        "requirePullRequest": true,
-        "requireCi": true,
-        "checkHarness": "codex",
-        "branchTemplate": "acme/{number}",
-        "prBodyTemplate": null
-      },
-      "source": "repository",
-      "updatedAt": "2026-11-22T00:00:00.000Z"
-    }
-  ]
-}
-```
-
-`rule.source` is `"workspace"` when saved for the workspace (`repoKey = ""`) and `"default"` otherwise; per-repository overrides added via "+" normalize clone URLs or `host/owner/name` via `normalizeRepoKey` and report `source: "repository"`.
+Per product decision (Alex, 2026-11-21), the built-in Software Factory `stage="review"` pipeline is the sole App Reviewer role, and automatic PR review triggers and parameters live in P5 (#2973, `review-repositories` and `codeReview*` registry settings). Standalone `reviewRuleSchema` CRUD endpoints, Desktop RPC methods, and a `workspace_review_rules` table are intentionally omitted.

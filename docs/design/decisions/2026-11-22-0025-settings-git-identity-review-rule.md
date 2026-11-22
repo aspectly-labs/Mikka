@@ -1,4 +1,4 @@
-# Git 提交身份、GPG 签名边界与工作区审阅规则接口
+# Git 提交身份、GPG 签名边界与内置审阅角色边界
 
 来源：#3110 WS-A（帧 19 Git 与发布，对齐 #2957 前端设置页，独立于 P5 #2973 的 PR 默认值与自动审阅仓库开关）。
 
@@ -11,7 +11,7 @@
 
 两者复用 P1 类型化表（`personal_setting_values` / `workspace_setting_values`）与 `resolveSettingValue`，返回 `{ value, source: 'personal' | 'workspace' | 'default' }`。个人 `null` 继承工作区值，再继承默认空串；个人显式写入 `""` 覆盖工作区配置并回落到默认行为。
 
-运行认领链路（`readCliRunPolicy` -> `POST /v1/devices/:deviceId/runs/:runId/claim` -> `@mikka/protocol/device` `RunAssignment.gitIdentity` -> `@mikka/daemon`）在已有工作区成员锁与运行策略事务中解析非空的 `name` / `email` 并下发到 daemon。`packages/daemon/src/agents/publish.ts`（`publishRun` 与 `retainDeliverable`）按字段独立执行三级优先级：
+运行认领链路（`readCliRunPolicy(..., { includeGitIdentity: true })` -> `POST /v1/devices/:deviceId/runs/:runId/claim` -> `@mikka/protocol/device` `RunAssignment.gitIdentity` -> `@mikka/daemon`）在已有工作区成员锁与运行策略事务中按需解析非空的 `name` / `email` 并下发到 daemon（不影响模型准入或订阅上下文读取路径的语句预算）。`packages/daemon/src/agents/publish.ts`（`publishRun` 与 `retainDeliverable`）按字段独立执行三级优先级：
 
 1. 仓库本地 `git config`（`user.name` / `user.email`，隔离宿主全局与系统配置，防止宿主 `~/.gitconfig` 覆盖工作区或个人设置）
 2. 运行下发的已解析设置（`gitAuthorName` / `gitAuthorEmail`）
@@ -28,13 +28,6 @@
 
 该子项标记 `pro:blocked`，后续若产品决定支持签名提交，需单独设计基于 GitHub App GraphQL `createCommitOnBranch` 服务端签名或受控 KMS 签名代理，而非下发私钥。
 
-## 3. 工作区审阅规则（`reviewRuleSchema` 读写与 Desktop RPC）
+## 3. 工作区审阅角色边界（Alex，2026-11-21：剥离 `reviewRuleSchema` 独立 CRUD）
 
-`packages/protocol/src/orchestrator.ts:242` 的 `reviewRuleSchema`（ADR ORV-172：`requirePullRequest`、`requireCi`、`checkHarness`、`branchTemplate`、`prBodyTemplate`）此前无服务端存储与读写入口，且与 P5 #2973 的 `review-repositories` 自动审阅触发列表职责正交。
-
-新增幂等增量迁移 `workspace_review_rules` 表（主键 `("workspaceId", "repoKey")`，`repoKey = ''` 表示工作区默认规则，非空标准化 `host/owner/name` 表示按仓库覆盖条目，对应帧 19「+」添加规则能力），并提供：
-
-- REST：`GET / PATCH / DELETE /api/settings/workspace/[workspaceId]/review-rules`
-- Desktop RPC：`review-rule-settings.getWorkspaceReviewRules`、`review-rule-settings.saveWorkspaceReviewRule`、`review-rule-settings.deleteWorkspaceReviewRule`
-
-权限边界：工作区活跃成员可读（`GET`），仅工作区管理员可写/删（`PATCH` / `DELETE`）；未登录返回 `401`，非成员、停用成员或跨工作区返回 `403`，普通成员写入返回 `403`。返回结构携带明确 `source`（工作区规则为 `'workspace' | 'default'`，仓库覆盖项为 `'repository'`，无个人级伪继承）。
+内置 Software Factory 的 `stage='review'` 是产品唯一的 App Reviewer 审阅角色，自动审阅触发仓库开关与审阅参数由 P5（#2973，`review-repositories` 与 `codeReview*` 注册字段）统一承载。因此不单独新增 `workspace_review_rules` 数据表或 `reviewRuleSchema` 设置页 CRUD / Desktop RPC 接口，避免引入与内置 Factory 审阅流水线平行的冗余规则配置面。

@@ -57,6 +57,9 @@ before(async () => {
 after(async () => {
   if (!available) return
   const workspaceIds = [workspaceId, otherWorkspaceId, ...homes.values()]
+  await pool.query('DELETE FROM agent_runs WHERE "userId"=ANY($1)', [[owner, member, outsider]])
+  await pool.query('DELETE FROM agents WHERE "userId"=ANY($1)', [[owner, member, outsider]])
+  await pool.query('DELETE FROM devices WHERE "ownerId"=ANY($1)', [[owner, member, outsider]])
   await pool.query('DELETE FROM personal_setting_values WHERE "userId"=ANY($1)', [[owner, member, outsider]])
   await pool.query('DELETE FROM workspace_setting_values WHERE "workspaceId"=ANY($1::uuid[])', [workspaceIds])
   await pool.query('DELETE FROM thread_title_settings WHERE "workspaceId"=ANY($1::uuid[])', [workspaceIds])
@@ -209,4 +212,77 @@ dbTest('appearance and interface registry fields persist per account, reject una
   assert.deepEqual(afterReset.values.appearanceTheme, { value: 'mikka', source: 'default' })
   assert.deepEqual(afterReset.values.codeFontSize, { value: 'default', source: 'default' })
   assert.deepEqual(afterReset.values.sidebarLayout, { value: 'columns', source: 'personal' })
+})
+
+dbTest('gitAuthorName and gitAuthorEmail persist, inherit, enforce write auth, and flow through readCliRunPolicy on claim', async () => {
+  const agentId = randomUUID()
+  const deviceId = randomUUID()
+  const runId = randomUUID()
+  await pool.query('INSERT INTO devices (id,"ownerId",name,platform,arch,"daemonVersion",enabled,kind) VALUES ($1,$2,\'Test device\',\'darwin\',\'arm64\',\'0.0.1\',true,\'local\')', [deviceId, member])
+  await pool.query('INSERT INTO agents (id,"userId",name,harness,"deviceId") VALUES ($1,$2,\'Worker\',\'codex\',$3)', [agentId, member, deviceId])
+  await pool.query('INSERT INTO agent_runs (id,"userId","workspaceId","agentId","deviceId",status,kind,prompt) VALUES ($1,$2,$3,$4,$5,\'running\',\'implement\',\'Test\')', [runId, member, workspaceId, agentId, deviceId])
+
+  const { readCliRunPolicy } = await import('@/lib/agent-tool-approval/policy-store')
+  const readClaimPolicy = () => readCliRunPolicy(pool, runId, member, undefined, { includeGitIdentity: true })
+
+  as(member)
+  const initialView = await (await personal.GET(request(`personal?workspaceId=${workspaceId}`))).json()
+  assert.deepEqual(initialView.values.gitAuthorName, { value: '', source: 'default' })
+  assert.deepEqual(initialView.values.gitAuthorEmail, { value: '', source: 'default' })
+  assert.equal((await readClaimPolicy()).gitIdentity, undefined)
+
+  assert.equal((await workspace.PATCH(request(`workspace/${workspaceId}`, 'PATCH', patch({ gitAuthorName: 'Forbidden' })), context())).status, 403)
+  as(outsider)
+  assert.equal((await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', patch({ gitAuthorName: 'Outsider' })))).status, 403)
+  assert.equal((await workspace.PATCH(request(`workspace/${workspaceId}`, 'PATCH', patch({ gitAuthorName: 'Outsider' })), context())).status, 403)
+
+  as(owner)
+  const wsPatch = await workspace.PATCH(request(`workspace/${workspaceId}`, 'PATCH', patch({
+    gitAuthorName: 'Team Publisher',
+    gitAuthorEmail: 'publish@team.example',
+  })), context())
+  assert.equal(wsPatch.status, 200)
+  const wsData = await wsPatch.json()
+  assert.deepEqual(wsData.values.gitAuthorName, { value: 'Team Publisher', source: 'workspace' })
+  assert.deepEqual(wsData.values.gitAuthorEmail, { value: 'publish@team.example', source: 'workspace' })
+
+  as(member)
+  const inheritedView = await (await personal.GET(request(`personal?workspaceId=${workspaceId}`))).json()
+  assert.deepEqual(inheritedView.values.gitAuthorName, { value: 'Team Publisher', source: 'workspace' })
+  assert.deepEqual(inheritedView.values.gitAuthorEmail, { value: 'publish@team.example', source: 'workspace' })
+  assert.equal((await readCliRunPolicy(pool, runId, member)).gitIdentity, undefined)
+  assert.deepEqual((await readClaimPolicy()).gitIdentity, {
+    name: 'Team Publisher',
+    email: 'publish@team.example',
+  })
+
+  const ownPatch = await personal.PATCH(request(`personal?workspaceId=${workspaceId}`, 'PATCH', patch({
+    gitAuthorName: 'Member Personal',
+    gitAuthorEmail: '',
+  })))
+  assert.equal(ownPatch.status, 200)
+  const ownData = await ownPatch.json()
+  assert.deepEqual(ownData.values.gitAuthorName, { value: 'Member Personal', source: 'personal' })
+  assert.deepEqual(ownData.values.gitAuthorEmail, { value: '', source: 'personal' })
+  assert.deepEqual((await readClaimPolicy()).gitIdentity, {
+    name: 'Member Personal',
+  })
+
+  const resetOwn = await personalReset.POST(request(`personal/reset?workspaceId=${workspaceId}`, 'POST', { group: 'git' }))
+  assert.equal(resetOwn.status, 200)
+  assert.deepEqual((await resetOwn.json()).values.gitAuthorEmail, { value: 'publish@team.example', source: 'workspace' })
+  assert.deepEqual((await readClaimPolicy()).gitIdentity, {
+    name: 'Team Publisher',
+    email: 'publish@team.example',
+  })
+
+  as(owner)
+  const resetWs = await workspaceReset.POST(request(`workspace/${workspaceId}/reset`, 'POST', { group: 'git' }), context())
+  assert.equal(resetWs.status, 200)
+  assert.deepEqual((await resetWs.json()).values.gitAuthorName, { value: '', source: 'default' })
+  assert.equal((await readClaimPolicy()).gitIdentity, undefined)
+
+  const schemaJson = await (await schema.GET(request('schema'))).json()
+  assert.ok(schemaJson.settings.some((entry: { key: string; page: string }) => entry.key === 'gitAuthorName' && entry.page === 'git'))
+  assert.ok(schemaJson.settings.some((entry: { key: string; page: string }) => entry.key === 'gitAuthorEmail' && entry.page === 'git'))
 })

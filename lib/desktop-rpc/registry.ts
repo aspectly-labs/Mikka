@@ -52,7 +52,6 @@ import * as issueStateActions from '@/app/actions/issue-states'
 import * as taskListActions from '@/app/actions/task-list'
 import * as automations from '@/app/actions/automations'
 import * as listViews from '@/app/actions/list-views'
-import * as reviewRuleSettingsActions from '@/app/actions/review-rule-settings'
 
 // This literal is the complete callable surface, independent of Next build IDs.
 const functions = {
@@ -386,9 +385,6 @@ const functions = {
   'workspace-settings.transferWorkspace': actions35.transferWorkspace,
   'workspace-settings.deleteWorkspace': actions35.deleteWorkspace,
   'workspace-settings.takeOverArchivedBot': actions35.takeOverArchivedBot,
-  'review-rule-settings.getWorkspaceReviewRules': reviewRuleSettingsActions.getWorkspaceReviewRules,
-  'review-rule-settings.saveWorkspaceReviewRule': reviewRuleSettingsActions.saveWorkspaceReviewRule,
-  'review-rule-settings.deleteWorkspaceReviewRule': reviewRuleSettingsActions.deleteWorkspaceReviewRule,
   'workspace.createWorkspace': actions33.createWorkspace,
   'workspace.switchWorkspace': actions33.switchWorkspace,
   'workspace.createWorkspaceInvitation': actions33.createWorkspaceInvitation,

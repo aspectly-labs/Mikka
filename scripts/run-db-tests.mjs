@@ -194,7 +194,6 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/ops/monitor.ts', file: 'lib/ops/monitor.db.test.ts', script: 'test:ops-db' },
   { marker: 'lib/ops/egress-fallback.ts', file: 'lib/ops/egress-fallback.db.test.ts', script: 'test:ops-db' },
   { marker: 'lib/linear-sync/archive.ts', file: 'tests/linear-archive.db.test.ts', script: 'test:scope-detachment-db' },
-  { marker: 'lib/review-rules/store.ts', file: 'lib/review-rules/settings.db.test.ts', script: 'test:workspace-admin-db' },
 ]
 // Suites that provision their own throwaway database and refuse the shared mikka_e2e service.
 // Each entry names its dedicated runner; the runner must exist and still invoke the file.
