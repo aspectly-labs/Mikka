@@ -1,8 +1,10 @@
+import { submitEveMessage } from '../acceptance/eve-session.mjs'
 // HTTP + real daemon acceptance. Never import Playwright or impersonate CI.
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { access, appendFile, chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
@@ -22,16 +24,20 @@ import { prepareCloudAcceptance } from '../e2b/cloud-acceptance-release.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
 const selectedItems = process.env.LOCAL_LOOP_ITEMS?.split(',') ?? ['1', '2', '3', '4', '5', '6', '7']
+assert.notEqual(process.env.MIKKA_LOCAL_LIVE_MODELS, '1', 'Local acceptance requires scripted LiteLLM; live models are forbidden')
 assert.ok(selectedItems.length && selectedItems.every(item => /^(?:[1-9]|10|11)$/.test(item)) && new Set(selectedItems).size === selectedItems.length, 'LOCAL_LOOP_ITEMS must be unique item numbers 1–11')
 const needsDaemon = selectedItems.some(item => ['1', '2', '3', '7', '9', '10'].includes(item))
 const needsModels = selectedItems.some(item => item !== '11')
 // Keep the daemon Unix socket below Linux's 108-byte pathname limit even in
 // the separate fixed acceptance checkout. Evidence retains the full runId.
 const runId = randomUUID(), directory = resolve(root, '.cache/dev-local', `acceptance-${runId.replaceAll('-', '').slice(0, 16)}`)
+// Unix sockets have a fixed platform path bound independent of checkout depth.
+// This run owns the short private directory; its location remains in runtime evidence.
+const daemonDataRoot = resolve(tmpdir(), `mikka-loop-${runId}`)
 const progressFile = resolve(root, '.cache/dev-local/progress.jsonl')
 const started = Date.now(), children = [], secrets = new Set(), expectedChildExits = new WeakSet()
 const completedItems = []
-const cleanupHooks = [], daemonDirectories = [join(directory, 'daemon')]
+const cleanupHooks = [], daemonDirectories = [join(daemonDataRoot, 'daemon')]
 let cloudRelease, cloudApiKey, pool, accounts, environment, runtime, localStackChild, secondDaemonPromise, activeStep, cleanupPromise, sourceFingerprint, serviceFailure, releaseHold, output = '', daemonCode, interrupted = false
 async function fingerprint() {
   const paths = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'app', 'lib', 'packages', 'scripts', 'agents', 'drizzle', 'package.json', 'pnpm-lock.yaml'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean).sort()
@@ -110,11 +116,6 @@ async function command(args) {
 }
 async function json(account, path, body, method = body ? 'POST' : 'GET') {
   await assertTestModelRequest(new Request(`http://127.0.0.1${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}) }))
-  if (method === 'POST' && ['/api/coordinator/messages', '/api/mobile/chat'].includes(path)) {
-    const modelResponse = await account.request(`/api/mobile/model${body?.botId ? `?bot=${body.botId}` : ''}`)
-    assert.ok(modelResponse.ok, 'Cannot verify the test bot model before submitting a prompt')
-    assertFlashTestModel((await modelResponse.json()).current?.modelId)
-  }
   const response = await account.request(path, { method, ...(body ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}) })
   if (!response.ok) {
     const value = await response.json().catch(() => null)
@@ -126,6 +127,12 @@ async function json(account, path, body, method = body ? 'POST' : 'GET') {
   }
   return response.json()
 }
+async function sendMessage(account, text, submissionId) {
+  const modelResponse = await account.request('/api/mobile/model')
+  assert.ok(modelResponse.ok, 'Cannot verify the test bot model before submitting a prompt')
+  assertFlashTestModel((await modelResponse.json()).current?.modelId)
+  return submitEveMessage(account, null, text, submissionId, { expectedOwnerId: account.userId })
+}
 const query = async (sql, values = []) => (await pool.query(sql, values)).rows
 const run = async id => {
   const current = (await query('SELECT r.*,p.status AS publication,p."pullRequest" FROM agent_runs r LEFT JOIN run_publications p ON p."runId"=r.id WHERE r.id=$1 AND r."userId"=$2', [id, accounts.owner.userId]))[0]
@@ -135,7 +142,7 @@ const run = async id => {
 
 async function dispatch(name, text, signal) {
   const since = new Date()
-  await json(accounts.owner, '/api/coordinator/messages', { text: `${text}\n验收标记：${runId}-${name}`, submissionId: randomUUID() })
+  await sendMessage(accounts.owner, `${text}\n验收标记：${runId}-${name}`, randomUUID())
   const created = await until(signal, async () => (await query('SELECT id FROM agent_runs WHERE "userId"=$1 AND "createdAt">=$2 AND prompt LIKE $3 ORDER BY "createdAt" DESC LIMIT 1', [accounts.owner.userId, since, `%${runId}-${name}%`]))[0])
   await progress(name, 'run-created', created.id)
   return created.id
@@ -154,6 +161,7 @@ async function setup() {
   assert.ok(Number(process.versions.node.split('.')[0]) >= 22, 'Use Node 22 or newer')
   for (const name of ['CI', 'GITHUB_ACTIONS', 'RUNNER_ENVIRONMENT', 'GITHUB_RUN_ID']) assert.ok(!process.env[name], 'Local acceptance must not impersonate CI')
   await privateDirectory(directory)
+  if (needsDaemon) await privateDirectory(daemonDataRoot)
   for (const name of ['BETTER_AUTH_SECRET', 'DEEPSEEK_API_KEY', 'INFISICAL_CLIENT_SECRET']) if (process.env[name]) secrets.add(process.env[name])
   const existing = process.argv.includes('--existing')
   if (selectedItems.includes('8') && !existing) {
@@ -194,7 +202,7 @@ async function setup() {
     process.env.BETTER_AUTH_SECRET ||= randomBytes(32).toString('base64url')
     secrets.add(process.env.BETTER_AUTH_SECRET)
     process.env.MIKKA_DEV_PORT = new URL(origin).port
-    process.env.MIKKA_DEV_DAEMON_DIR = join(directory, 'daemon')
+    process.env.MIKKA_DEV_DAEMON_DIR = join(daemonDataRoot, 'daemon')
     await step('migrate', 180_000, () => command(['--import', 'tsx', 'scripts/setup-e2e-db.mjs']))
   }
   process.env.BETTER_AUTH_URL = origin
@@ -217,7 +225,7 @@ async function setup() {
     await recordAuthenticationSecrets([decodeURIComponent(new URL(process.env.E2E_DATABASE_URL).password)], { environment })
   }
   await new TestAccountPool(pool, environment).prepare({ pairs: 4 })
-  if (!existing) localStackChild = child(process.execPath, ['scripts/dev-local.mjs'], { ...process.env, MIKKA_DEV_SKIP_ENV_FILES: '1', MIKKA_DEV_SKIP_MODEL_SETUP: needsModels ? '0' : '1',
+  if (!existing) localStackChild = child(process.execPath, ['scripts/dev-local.mjs'], { ...process.env, MIKKA_LOCAL_LOOP: '1', MIKKA_DEV_SKIP_ENV_FILES: '1', MIKKA_DEV_SKIP_MODEL_SETUP: needsModels ? '0' : '1',
     ...(selectedItems.some(item => ['9', '10'].includes(item)) ? { MIKKA_DEV_ACCEPTANCE_HANDOFF: '1' } : {}),
     ...(selectedItems.includes('10') ? { MIKKA_DEV_ACCEPTANCE_ONLINE_WATCHDOG: '1' } : {}), ...(!needsDaemon ? { MIKKA_DEV_SKIP_DAEMON: '1' } : {}) }, true)
   await step('server-ready', 180_000, signal => until(signal, async () => {
@@ -251,11 +259,11 @@ async function setup() {
     const refreshed = await fetch('http://127.0.0.1:3191/refresh', { method: 'POST', signal: AbortSignal.timeout(90_000) })
     if (!refreshed.ok) return false
     const keys = await query(`SELECT id FROM model_api_keys WHERE "ownerId"=$1 AND provider='deepseek'`, [accounts.owner.userId])
-    assert.ok(keys.length, 'No real DeepSeek key seeded; refusing scripted/default model acceptance')
+    assert.ok(keys.length, 'The scripted model key must be seeded through normal account setup')
     return true
   }))
   if (!needsDaemon) {
-    await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, items: selectedItems, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, started: new Date(started).toISOString(), externalBoundaries: [needsModels ? 'Real DeepSeek model' : 'No model calls required by selected items', 'No daemon required by selected items', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
+    await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, items: selectedItems, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, started: new Date(started).toISOString(), externalBoundaries: [needsModels ? 'Scripted LiteLLM HTTP boundary; no real model calls' : 'No model calls required by selected items', 'No daemon required by selected items', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
     return null
   }
   const standaloneDaemon = (args, persistent = false) => {
@@ -269,7 +277,7 @@ async function setup() {
     // credential would defeat the account-pool boundary, so log in our own CLI.
     await writeFile(join(directory, 'daemon.gitconfig'), `[url "${pathToFileURL(runtime.scenario.barePath).href}"]\n\tinsteadOf = https://github.com/mikka-e2e/core-loop.git\n[protocol "file"]\n\tallow = always\n`, { mode: 0o600 })
     daemonCode = undefined
-    standaloneDaemon(['daemon', 'login', '--server', runtime.server, '--data-dir', join(directory, 'daemon')])
+    standaloneDaemon(['daemon', 'login', '--server', runtime.server, '--data-dir', join(daemonDataRoot, 'daemon')])
   }
   await step('device-login', 60_000, async signal => {
     const code = await until(signal, () => daemonCode)
@@ -277,15 +285,15 @@ async function setup() {
     await json(accounts.owner, '/api/auth/device/approve', { userCode: code })
   })
   if (existing) {
-    await step('device-credential-ready', 30_000, signal => until(signal, () => access(join(directory, 'daemon/device.json')).then(() => true, () => false)))
-    standaloneDaemon(['daemon', '--no-auto-update', '--server', runtime.server, '--data-dir', join(directory, 'daemon')], true)
+    await step('device-credential-ready', 30_000, signal => until(signal, () => access(join(daemonDataRoot, 'daemon/device.json')).then(() => true, () => false)))
+    standaloneDaemon(['daemon', '--no-auto-update', '--server', runtime.server, '--data-dir', join(daemonDataRoot, 'daemon')], true)
   }
   const devices = await step('daemon-ready', 60_000, signal => until(signal, async () => {
     const result = await json(accounts.owner, '/api/mobile/threads')
     return result.devices?.some(device => device.online) ? result.devices : null
   }))
   const device = devices.find(value => value.online)
-  await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, deviceId: device.id, started: new Date(started).toISOString(), externalBoundaries: ['Real DeepSeek model', 'Synthetic GitHub API and real local bare Git push', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
+  await writeFile(join(directory, 'environment-summary.json'), JSON.stringify({ revision, driverRevision, sourceFingerprint, origin, database: environment.database.name, instanceId: environment.instanceId, leaseId: accounts.lease.id, deviceId: device.id, started: new Date(started).toISOString(), externalBoundaries: ['Scripted LiteLLM HTTP boundary; no real model calls', 'Synthetic GitHub API and real local bare Git push', 'No browser tests', 'No production DB writes'] }, null, 2), { mode: 0o600 })
   return device
 }
 
@@ -321,7 +329,7 @@ async function stopSecondDaemon() {
 }
 
 async function startSecondDaemon(signal) {
-  const dataDir = join(directory, 'daemon-b')
+  const dataDir = join(daemonDataRoot, 'daemon-b')
   if (!daemonDirectories.includes(dataDir)) daemonDirectories.push(dataDir)
   await mkdir(dataDir, { recursive: true, mode: 0o700 })
   const daemonUser = process.getuid?.() === 0 && process.env.MIKKA_DEV_DAEMON_USER
@@ -440,7 +448,7 @@ async function accept(device) {
     let issue = (await query('SELECT id FROM issues WHERE "userId"=$1 ORDER BY "createdAt" DESC LIMIT 1', [accounts.owner.userId]))[0]
     if (!issue) {
       const title = `Inbox ${runId}`
-      await json(accounts.owner, '/api/coordinator/messages', { text: `请只创建一个标题为“${title}”的个人任务，描述为“收件箱验收”。不要派发、不要启动线程、不要调用任何电脑。`, submissionId: randomUUID() })
+      await sendMessage(accounts.owner, `请只创建一个标题为“${title}”的个人任务，描述为“收件箱验收”。不要派发、不要启动线程、不要调用任何电脑。`, randomUUID())
       issue = await until(signal, async () => (await query('SELECT id FROM issues WHERE "userId"=$1 AND title=$2', [accounts.owner.userId, title]))[0])
     }
     // The web inbox is the subscribed task list. Exercise its real preference
