@@ -5,9 +5,10 @@ import { z } from 'zod'
 import { ActionFailureError, runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
 import { auth } from '@/lib/auth'
-import { desktopNotifyQuestions, readDesktopNotify, type DesktopCandidate } from '@/lib/platform/desktop-notifications'
+import { desktopNotifyQuestions, filterDesktopCandidates, readDesktopNotify, type DesktopCandidate } from '@/lib/platform/desktop-notifications'
 import { readPreferences } from '@/lib/preferences'
-import { pushAllowed } from '@/lib/push-allowed'
+import { inDndWindow, pushAllowed } from '@/lib/push-allowed'
+import { readDesktopNotificationRuntime } from '@/lib/settings/notification-preferences'
 import { listTaskRuns } from './task-runs'
 
 const candidatesSchema = z.array(z.object({ id: z.string().max(300), issueId: z.string().max(100), kind: z.enum(['awaiting', 'failed', 'finished']) })).max(20)
@@ -29,13 +30,26 @@ export async function chooseDesktopNotifications(raw: unknown): Promise<ActionRe
       const run = runs.get(item.issueId)
       return run && run.status === STATUS[item.kind] ? [{ id: item.id, kind: item.kind, title: run.issueTitle, agent: run.agentName }] : []
     })
-    // Preferences affect completed-run notifications only. Read them when an
-    // owned completion actually arrives, never during a quiet desktop launch.
-    if (candidates.some(candidate => candidate.kind === 'finished') && !pushAllowed(await readPreferences(session.user.id), ['finished'])) {
-      candidates = candidates.filter(candidate => candidate.kind !== 'finished')
-    }
     if (!candidates.length) return { show: [] }
     const userId = session.user.id
+    const runtime = (process.env.MIKKA_DATABASE_URL || process.env.DATABASE_URL)
+      ? await readDesktopNotificationRuntime(userId)
+      : null
+    if (runtime && inDndWindow(runtime.dnd, runtime.timeZone)) return { show: [] }
+    let finishedAllowed = true
+    // Preferences affect completed-run notifications unless overridden by desktop-specific settings.
+    if (candidates.some(candidate => candidate.kind === 'finished')) {
+      const preferences = await readPreferences(userId)
+      finishedAllowed = pushAllowed(preferences, ['finished'], runtime ? { overrides: runtime.desktop, dnd: runtime.dnd, timeZone: runtime.timeZone } : undefined)
+    }
+    candidates = filterDesktopCandidates(candidates, {
+      dnd: runtime?.dnd,
+      timeZone: runtime?.timeZone,
+      overrides: runtime?.desktop,
+      legacyDecide: runtime?.legacyPushDecide,
+      finishedAllowed,
+    })
+    if (!candidates.length) return { show: [] }
     const [{ decide }, { hostedBillingScope }, { executionWorkspace }] = await Promise.all([import('@/lib/coordinator/decide'), import('@/lib/abuse/context'), import('@/lib/execution-settings')])
     let answers = null
     try { answers = await hostedBillingScope.run({ workspaceId: await executionWorkspace(userId, null), ownerId: userId }, () => decide('desktop-notify', candidates.map(candidate => `${candidate.id}: ${candidate.kind}`).join('\n'), desktopNotifyQuestions(candidates))) } catch { answers = null }

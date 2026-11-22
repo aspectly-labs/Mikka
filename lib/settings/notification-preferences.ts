@@ -57,19 +57,18 @@ function safeParseDays(raw: string[] | null | undefined): readonly DndDay[] {
  * Unset (`null`) channel overrides leave legacy `user_preferences` fallback intact.
  */
 export async function readNotificationRuntimeSettings(userId: string): Promise<NotificationRuntimeSettings> {
-  const [rows, tz] = await Promise.all([
-    db.select({
-      key: personalSettingValues.key,
-      booleanValue: personalSettingValues.booleanValue,
-      textValue: personalSettingValues.textValue,
-      textArrayValue: personalSettingValues.textArrayValue,
-    }).from(personalSettingValues).where(and(
-      eq(personalSettingValues.userId, userId),
-      isNull(personalSettingValues.workspaceId),
-      inArray(personalSettingValues.key, [...NOTIFICATION_SETTING_KEYS]),
-    )),
-    readTimeZoneSetting(userId),
-  ])
+  // Sequential queries keep single-client transaction scopes (`withDatabaseClient`) warning-free under pg.
+  const rows = await db.select({
+    key: personalSettingValues.key,
+    booleanValue: personalSettingValues.booleanValue,
+    textValue: personalSettingValues.textValue,
+    textArrayValue: personalSettingValues.textArrayValue,
+  }).from(personalSettingValues).where(and(
+    eq(personalSettingValues.userId, userId),
+    isNull(personalSettingValues.workspaceId),
+    inArray(personalSettingValues.key, [...NOTIFICATION_SETTING_KEYS]),
+  ))
+  const tz = await readTimeZoneSetting(userId)
   const byKey = new Map(rows.map(row => [row.key, row]))
   const bool = (key: string): boolean | null => byKey.get(key)?.booleanValue ?? null
   return {
@@ -103,9 +102,7 @@ export interface DesktopNotificationRuntime extends NotificationRuntimeSettings 
 
 /** Desktop runtime policy plus legacy `pushDecide` fallback for `awaiting`/`failed` candidates. */
 export async function readDesktopNotificationRuntime(userId: string): Promise<DesktopNotificationRuntime> {
-  const [runtime, [legacy]] = await Promise.all([
-    readNotificationRuntimeSettings(userId),
-    db.select({ pushDecide: userPreferences.pushDecide }).from(userPreferences).where(eq(userPreferences.userId, userId)).limit(1),
-  ])
+  const runtime = await readNotificationRuntimeSettings(userId)
+  const [legacy] = await db.select({ pushDecide: userPreferences.pushDecide }).from(userPreferences).where(eq(userPreferences.userId, userId)).limit(1)
   return { ...runtime, legacyPushDecide: legacy?.pushDecide ?? null }
 }
