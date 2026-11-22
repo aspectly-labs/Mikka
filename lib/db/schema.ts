@@ -21,6 +21,24 @@ export const userOnboarding = pgTable('user_onboarding', {
   completedAt: timestamp('completedAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/** Native WebAuthn passkeys (@better-auth/passkey@1.7.12). */
+export const passkeys = pgTable('passkey', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  publicKey: text('publicKey').notNull(),
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  credentialID: text('credentialID').notNull(),
+  counter: integer('counter').notNull().default(0),
+  deviceType: text('deviceType').notNull(),
+  backedUp: boolean('backedUp').notNull().default(false),
+  transports: text('transports'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
+  aaguid: text('aaguid'),
+}, table => [
+  uniqueIndex('passkey_credential_id_unique').on(table.credentialID),
+  index('passkey_user_id_idx').on(table.userId),
+])
+
 /** An unfinished first-run guide's place: its step and what was done or skipped (decision 2026-11-15-1900). */
 export const userOnboardingProgress = pgTable('user_onboarding_progress', {
   userId: text('userId').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
