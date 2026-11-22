@@ -176,8 +176,8 @@ function SectionBody({ t, section, user, userKey, googleEnabled, workspaceId, wo
     case 'git': return <GitSettings workspaceId={!preview ? workspaceId : undefined} personal={personal} admin={admin} userName={user.name} userEmail={user.email} />
     case 'notifications': return <NotificationSettings />
     case 'team-skills': return <TeamSkillsSettings admin={admin} workspaceId={workspaceId} personal={personal} />
-    case 'mcp': return <PluginsView section="connections" rootLabel={t('sections.mcp.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
-    case 'connections': return <PluginsView section="connections" rootLabel={t('sections.connections.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
+    case 'mcp': return <PluginsView section="connections" mode="mcp" rootLabel={t('sections.mcp.title')} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
+    case 'connections': return <PluginsView section="connections" mode="integrations" rootLabel={t('sections.connections.title')} linearNotice={linearNotice} workspaceId={!preview ? workspaceId : undefined} workspaceName={workspaceName} />
     case 'models': return <>{workspaceId && !preview ? <ApiAndSubscriptions key={workspaceId} workspaceId={workspaceId} workspaceName={workspaceName} team={team} cloudUserKey={community ? userKey : undefined} /> : waiting}</>
     case 'developer': return workspaceId && !preview ? <AccessTokensSettings key={workspaceId} workspaceId={workspaceId} /> : waiting
     // Admins only, as its read: anyone else (a link, a bookmark, a workspace where they are a member) is told so, and nothing is read.
