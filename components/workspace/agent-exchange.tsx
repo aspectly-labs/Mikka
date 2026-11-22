@@ -40,7 +40,7 @@ export function AgentExchangeMarker({ exchange }: { exchange: GroupExchange }) {
   const names = b ? `${a?.name ?? '?'} & ${b.name}` : a?.name ?? '?'
 
   return <>
-    <li className="flex justify-center">
+    <div className="flex w-full justify-center">
       <Button variant="ghost" size="xs" onClick={() => setOpen(true)}
         className="gap-1.5 rounded-full bg-muted/60 px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
         <AvatarGroup className="-space-x-1">
@@ -48,7 +48,7 @@ export function AgentExchangeMarker({ exchange }: { exchange: GroupExchange }) {
         </AvatarGroup>
         {t('marker', { names, count: Number(exchange.count) })}
       </Button>
-    </li>
+    </div>
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent side="right" className="flex w-[380px] flex-col gap-0 p-0">
         <SheetTitle className="px-4 py-3 text-sm font-medium">{t('title', { names })}</SheetTitle>
