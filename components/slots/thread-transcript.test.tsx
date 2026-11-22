@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, mock, test } from 'node:test'
-import { act, useRef } from 'react'
+import { act, useLayoutEffect, useRef } from 'react'
 import type { Root } from 'react-dom/client'
 import { Window } from 'happy-dom'
 import type { ThreadGroupRow, TranscriptPin } from './thread-contract'
@@ -62,6 +62,8 @@ const sent = (id: string): ThreadGroupRow => ({ kind: 'pending', id, phase: 'sen
 
 function Screen({ rows, pin }: { rows: ThreadGroupRow[]; pin: TranscriptPin }) {
   const ref = useRef<HTMLDivElement>(null)
+  // As the group page's useViewScroll: a first visit starts the view at its top, in a layout effect after the screen's.
+  useLayoutEffect(() => { if (ref.current) ref.current.scrollTop = 0 }, [])
   return <ThreadTranscript host="page" composer={null} transcript={{ kind: 'group', rows, scroll: { ref, label: 'messages', onScroll: () => {}, end: rows.at(-1)?.id, following: true, pin } }} />
 }
 const show = (rows: ThreadGroupRow[], pin: TranscriptPin) => act(async () => root.render(<Screen rows={rows} pin={pin} />))
@@ -69,10 +71,11 @@ const host = () => container.querySelector('[data-thread-host]') as HTMLElement
 const history = [others('a'), others('b'), others('c')]
 
 test('a load and someone else\'s message never pin: the chat follows its end with no space under it', async () => {
-  await show(history, { sends: 4, target: 'c' })
+  const long = [...history, others('d'), others('e'), others('f'), others('g'), others('h')]
+  await show(long, { sends: 4, target: 'c' })
   assert.equal(spacerHeight(host()), 0)
-  assert.equal(host().scrollTop, 3 * ROW + FOOT - VIEW < 0 ? 0 : 3 * ROW + FOOT - VIEW)
-  await show([...history, others('d')], { sends: 4, target: 'c' })
+  assert.equal(host().scrollTop, 8 * ROW + FOOT - VIEW, 'at the end, even after the page starts the view at its top')
+  await show([...long, others('i')], { sends: 4, target: 'c' })
   assert.equal(spacerHeight(host()), 0)
 })
 

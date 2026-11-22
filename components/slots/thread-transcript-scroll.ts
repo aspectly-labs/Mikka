@@ -94,8 +94,9 @@ export function useTranscriptScroll({ scroller, column, spacer, end, following, 
   }
 
   // The newest message, a send or a reply starting keeps a following chat at its end; a glide is not cut short.
-  // While a send is pinned, a new reply shrinks the space under it instead.
-  useLayoutEffect(() => {
+  // While a send is pinned, a new reply shrinks the space under it instead. After layout effects, so a restored
+  // scroll position (useViewScroll) does not undo it on load.
+  useEffect(() => {
     const el = scroller.current
     if (held.current) { holdRef.current(); return }
     if (following && el) el.scrollTop = el.scrollHeight
