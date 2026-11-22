@@ -8005,6 +8005,7 @@
     "toolsRanTime": "用了 {count} 个工具 · {seconds} 秒",
     "toolsFailed": "用了 {count} 个工具 · {failed} 个失败",
     "toolsStopped": "已停止 · 完成 {ran}/{count}",
+    "newLines": "{count} 行新内容",
     "runningCount": "{count} 个在进行",
     "needsCount": "{count} 个等你",
     "decisionsWaiting": "{count} 个决定在等你",
@@ -8040,6 +8041,7 @@
       "discardRecording": "舍弃录音",
       "useRecording": "使用录音",
       "sent": "已发送。",
+      "stillWriting": "仍在输出",
       "selected": "已选中。"
     },
     "toolKinds": {

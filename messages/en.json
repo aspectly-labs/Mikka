@@ -8005,6 +8005,7 @@
     "toolsRanTime": "{count, plural, one {Ran a tool} other {Ran # tools}} · {seconds}s",
     "toolsFailed": "{count, plural, one {Ran a tool} other {Ran # tools}} · {failed} failed",
     "toolsStopped": "Stopped · {ran} of {count} ran",
+    "newLines": "{count, plural, one {# new line} other {# new lines}}",
     "runningCount": "{count} running",
     "needsCount": "{count, plural, one {# needs you} other {# need you}}",
     "decisionsWaiting": "{count, plural, one {# decision waiting} other {# decisions waiting}}",
@@ -8040,6 +8041,7 @@
       "discardRecording": "Discard recording",
       "useRecording": "Use recording",
       "sent": "Message sent.",
+      "stillWriting": "still writing",
       "selected": "selected."
     },
     "toolKinds": {
