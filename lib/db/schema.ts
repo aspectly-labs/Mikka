@@ -379,6 +379,8 @@ export const devices = pgTable('devices', {
   computerUse: jsonb('computerUse').$type<{ installed: boolean; version: string | null }>().notNull().default({ installed: false, version: null }),
   /** Off: the device stays registered but the orchestrator gives it no runs. */
   enabled: boolean('enabled').notNull().default(true),
+  /** Off: runs on this device receive no local or cloud desktop computer-use grant (binary allow/deny). */
+  computerUseEnabled: boolean('computerUseEnabled').notNull().default(true),
   /** Retired 「允许自动调度」 (decision 2026-11-02-1400 merged it into enabled, 参与调度); kept for old rows, no longer read. */
   autoSchedule: boolean('autoSchedule'),
   /** The person renamed it; a daemon re-register keeps this name. */
@@ -438,6 +440,7 @@ export const deviceTokenDevices = pgTable('device_token_devices', {
 export const deviceRepos = pgTable('device_repos', {
   id: uuid('id').primaryKey(), deviceId: uuid('deviceId').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   userId: text('userId').notNull(), repoPath: text('repoPath').notNull(), remoteUrl: text('remoteUrl'),
+  localPath: text('localPath'),
   baseBranch: text('baseBranch').default('main'), verifyCommand: text('verifyCommand'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('device_repos_key').on(table.deviceId, table.repoPath)])
