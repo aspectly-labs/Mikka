@@ -4,6 +4,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
+import yaml from 'js-yaml'
 import { select, diffRange, area } from './select.mjs'
 import { buildGraph, dbId, sourceId, strictCommand } from './graph.mjs'
 import { selectScripts, shardScripts } from '../run-db-tests.mjs'
@@ -27,6 +29,20 @@ test('non-documentation plans keep the suite that actually exercises the docs cl
   assert.deepEqual(owners, ['ci-core-7'])
 })
 
+test('approved-write policy, provider and UI regressions have one selected primary owner', async () => {
+  for (const [input, proof] of [
+    ['lib/operations/write-feature.ts', 'lib/operations/write-feature.test.ts'],
+    ['lib/operations/policy-authorization.ts', 'lib/operations/policy-authorization.test.ts'],
+    ['scripts/approved-write-actions.live.test.tsx', 'scripts/approved-write-actions.live.test.tsx'],
+  ]) {
+    const result = await pick(input)
+    const owners = result.units.filter(unit =>
+      plan.graph.dependencies[unit]?.some(edge => edge.target === sourceId(proof)))
+    assert.deepEqual(owners, ['ci-core-30'], input)
+    assert.equal(result.source, true, 'source and security checks remain required')
+  }
+})
+
 test('web component edits select their consumers without server DB or Docker', async () => {
   const result = await pick('components/settings/settings-view.tsx')
   assert.equal(result.full, false)
@@ -48,6 +64,57 @@ test('Factory store selects marker-backed suites and real downstream imports', a
   for (const suite of ['test:factory','test:factory-routing-db']) assert(result.db_suites.includes(suite), suite)
   assert(result.affected.includes(dbId('test:factory')))
   assert(result.db_suites.length < plan.db.scripts.length)
+})
+test('enrolled billing fixture edits retain their real DB consumers without unrelated lanes', async () => {
+  // The seven-file local-fixtures candidate previously selected all 87 DB
+  // suites solely because the four root tests had no path-area classification.
+  const result = await select(plan, [
+    'lib/abuse/card.db.test.ts', 'lib/abuse/card.test.ts', 'lib/abuse/model-postpay.db.test.ts',
+    'tests/billing-history.db.test.ts', 'tests/credit-shares.db.test.ts',
+    'tests/model-order.db.test.ts', 'tests/personal-workspace.db.test.ts',
+  ].map(file => change(file)))
+  assert.equal(result.full, false)
+  // Keep both explicit package owners and the existing source-contract callers.
+  assert.deepEqual(result.db_suites, [
+    'test:abuse-db', 'test:approved-writes-db', 'test:bot-threads-db',
+    'test:coordinator-task-binding-db', 'test:migration-steps-db',
+    'test:onboarding-db', 'test:scope-detachment-db', 'test:workspace-admin-db',
+  ])
+  assert(result.source)
+  for (const flag of ['daemon', 'desktop', 'mobile', 'analytics']) assert.equal(result[flag], false, flag)
+  for (const script of ['test:release-security', 'test:credentials', 'test:test-accounts', 'test:abuse']) {
+    assert(result.unit_tasks.some(task => task.command.includes(`pnpm ${script}`)), script)
+  }
+})
+test('a DB-looking path needs both enrollment and an existing direct suite edge', async () => {
+  const file = 'tests/billing-history.db.test.ts'
+  const withoutEnrollment = { ...plan, db: { ...plan.db, files: plan.db.files.filter(value => value !== file) } }
+  const dependencies = Object.fromEntries(Object.entries(plan.graph.dependencies).map(([id, edges]) => [
+    id, id.startsWith('db-') ? edges.filter(edge => edge.target !== sourceId(file)) : edges,
+  ]))
+  const withoutSuiteEdge = { ...plan, graph: { ...plan.graph, dependencies } }
+  for (const incomplete of [withoutEnrollment, withoutSuiteEdge]) {
+    const result = await select(incomplete, [change(file)])
+    assert(result.full)
+    assert(result.reasons.includes('unmapped file'))
+    assert.deepEqual(result.db_suites, plan.db.scripts)
+  }
+  assert((await pick('tests/not-enrolled.db.test.ts')).full)
+})
+test('enrolled root DB tests still respect full-validation reasons', async () => {
+  const file = 'tests/billing-history.db.test.ts'
+  for (const extra of [{ status: 'D' }, { status: 'R100' }, { mode: '100755' }, { mode: '120000' }, { oldMode: '100755' }]) {
+    assert((await pick(file, extra)).full)
+  }
+  const unresolved = await select({ ...plan, unresolved: [...plan.unresolved, { file, spec: '<computed import>' }] }, [change(file)])
+  assert(unresolved.full)
+  assert(unresolved.reasons.includes('changed source has unresolved/generated imports'))
+  const forced = await select(plan, [change(file)], { force: true })
+  assert(forced.full)
+  assert.deepEqual(forced.db_suites, plan.db.scripts)
+  const mixedUnknown = await select(plan, [change(file), change('unmapped.bin')])
+  assert(mixedUnknown.full)
+  assert(mixedUnknown.reasons.includes('unmapped file'))
 })
 test('Eve model changes select native unit tests and schedule authority selects its database gate', async () => {
   const unit = await pick('lib/eve/streaming-model.ts')
@@ -123,12 +190,17 @@ test('every heavy consumer uses the same trusted triage and required names remai
   assert.equal(area('apps/mobile/lib/theme.ts'),'mobile')
 })
 
-test('the actual required gate scripts reject unselected failures and selected skips', () => {
-  const workflow = readFileSync('.github/workflows/ui-policy.yml','utf8')
-  const uiChecks = ['CORE', 'INTEGRATION', 'SOURCE', 'DAEMON', 'ANALYTICS', 'GOVERNANCE']
+test('the actual required gate scripts reject drafts, unselected failures and selected skips', () => {
+  const workflow = yaml.load(readFileSync('.github/workflows/ui-policy.yml','utf8'))
+  const uiChecks = ['CORE', 'INTEGRATION', 'SOURCE', 'DAEMON', 'ANALYTICS', 'GOVERNANCE', 'CANDIDATE']
   for (const job of ['ui-policy','browser-tests']) {
-    const block = workflow.split(`\n  ${job}:\n`)[1].split(/\n  [a-z][a-z-]*:\n/)[0]
-    const script = block.split('        run: |\n')[1].split('      - uses:')[0].split('\n').map(line => line.slice(10)).join('\n')
+    const steps = workflow.jobs[job].steps
+    const draftGate = steps.find(step => step.name === 'Draft PR is not a validated merge candidate')
+    for (const draft of [true, false]) {
+      assert.equal(runInNewContext(draftGate.if, { github: { event_name: 'pull_request', event: { pull_request: { draft } } } }), draft)
+      if (draft) assert.equal(spawnSync('bash', ['-e', '-c', draftGate.run], { env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: '/dev/null' } }).status, 1)
+    }
+    const script = steps.find(step => step.name?.startsWith('Require every selected ')).run
     const run = overrides => {
       const env = {
         PATH: process.env.PATH,
