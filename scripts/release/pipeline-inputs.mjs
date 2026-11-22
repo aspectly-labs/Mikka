@@ -342,7 +342,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       Object.entries(output).map(([key, value]) => `${key}=${value}\n`).join(''))
     console.log(JSON.stringify({ status: output.status, source: output.source }))
   } catch (error) {
-    console.error(error instanceof Error && /^pipeline_[a-z_]+$/.test(error.message) ? error.message : 'pipeline_selection_failed')
+    // Node's assert surfaces the code alone today, but match a leading code so a
+    // runtime that appends diff details still reports the check, not the mask.
+    const coded = error instanceof Error && error.message.match(/^pipeline_[a-z_]+/)
+    console.error(coded ? coded[0] : 'pipeline_selection_failed')
     process.exitCode = 1
   }
 }
