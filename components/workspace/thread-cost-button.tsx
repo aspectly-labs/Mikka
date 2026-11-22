@@ -37,9 +37,11 @@ const CURRENCY = { style: 'currency', currency: 'USD', currencyDisplay: 'narrowS
 
 /**
  * The words and figures for a thread's cost, shared by every header that draws it:
- * - What Mikka charged in credits is the figure, summed from settled receipts as settlement recorded them.
- * - Receipts not settled yet are never read as zero: with nothing settled the figure is a word (结算中), otherwise
- *   the sum gets a "+" and the panel counts what is still settling.
+ * - The figure is the cost of the thread's calls and machine time billed through Mikka, as settlement recorded each
+ *   receipt, the same cost the billing usage pages sum (lib/billing/management.ts). It is not what a workspace was
+ *   debited: a free turn is the platform's, and receipts do not say which (#2934 follow-up).
+ * - Receipts not settled yet are never read as zero: the sum is cut to whole cents and gets a "+", and with less than
+ *   a cent settled the figure is a word (结算中). The panel counts what is still settling.
  * - A settled charge under a cent reads "<$0.01", never "$0.00".
  * - Usage paid by the person's own subscription or API key is its own row and never added to the charge. A
  *   subscription call has no per-call price (lib/secrets/run-events.ts records it with no cost), so those calls are
@@ -52,11 +54,15 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
     ? t('underCent', { amount: format.number(0.01, CURRENCY) })
     : format.number(microUsd / 1e6, CURRENCY)
   const { credits, included } = cost.totals
-  const settling = credits.microUsd === 0 && credits.unpricedReceipts > 0
-  const amount = money(credits.microUsd)
+  const pending = credits.unpricedReceipts > 0
+  // With calls still settling the figure is a floor, so it is cut to whole cents, never rounded up; under a cent
+  // settled it is no floor at all and reads as settling.
+  const floor = Math.floor(credits.microUsd / 10_000) * 10_000
+  const settling = pending && floor === 0
+  const amount = pending ? money(floor) : money(credits.microUsd)
   const rows: ThreadCostRow[] = [{
     label: t('credits'),
-    value: settling ? t('settling') : amount,
+    value: settling ? t('settling') : money(credits.microUsd),
     note: credits.unpricedReceipts > 0 ? t('unsettled', { count: credits.unpricedReceipts }) : undefined,
   }]
   const usedOwn = included.microUsd > 0 || included.unpricedReceipts > 0
@@ -66,8 +72,8 @@ export function useThreadCostText(cost: ThreadCost): ThreadCostText {
     note: included.microUsd > 0 && included.unpricedReceipts > 0 ? t('unpricedCalls', { count: included.unpricedReceipts }) : undefined,
   })
   return {
-    figure: settling ? t('settling') : amount + (credits.unpricedReceipts > 0 ? '+' : ''),
-    label: settling ? t('labelSettling') : credits.unpricedReceipts > 0 ? t('labelAtLeast', { amount }) : t('label', { amount }),
+    figure: settling ? t('settling') : amount + (pending ? '+' : ''),
+    label: settling ? t('labelSettling') : pending ? t('labelAtLeast', { amount }) : t('label', { amount }),
     title: t('title'),
     rows,
     note: usedOwn ? t('includedNote') : undefined,

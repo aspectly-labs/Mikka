@@ -5083,7 +5083,7 @@
       "labelAtLeast": "This thread cost at least {amount}; some calls are still settling",
       "labelSettling": "This thread's cost is still settling",
       "title": "This thread",
-      "credits": "Mikka credits",
+      "credits": "Through Mikka",
       "settling": "Settling",
       "underCent": "<{amount}",
       "unsettled": "{count, plural, one {# call is} other {# calls are}} still settling",

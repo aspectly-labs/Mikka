@@ -68,7 +68,7 @@ test('the header shows what Mikka charged this thread, from the settled amount',
   assert.equal(trigger()?.textContent, '$1.24')
   assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用 $1.24')
   const panel = await open()
-  assert.match(panel, /Mikka 额度\$1\.24/)
+  assert.match(panel, /经由 Mikka\$1\.24/)
   assert.doesNotMatch(panel, /你的订阅或 API Key/, 'no subscription row when none was used')
 })
 
@@ -79,10 +79,20 @@ test('a cost with nothing settled yet reads as settling, never as a zero amount'
   assert.match(await open(), /还有 2 次调用在结算/)
 })
 
-test('a partly settled cost is a floor, and a charge under a cent is not shown as zero', async () => {
+test('a partly settled cost is a floor cut to whole cents, never rounded up', async () => {
+  // A default machine chunk settles at $0.016667 while a model call is pending: at least $0.01, not $0.02.
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 16_667, unpricedReceipts: 1 })} />)
+  assert.equal(trigger()?.textContent, '$0.01+')
+  assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用至少 $0.01，还有调用在结算')
+})
+
+test('under a cent settled with calls pending is still settling, and a settled charge under a cent is not zero', async () => {
   await show(<mod.ThreadCostView cost={cost({ microUsd: 4_000, unpricedReceipts: 1 })} />)
-  assert.equal(trigger()?.textContent, '<$0.01+')
-  assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用至少 <$0.01，还有调用在结算')
+  assert.equal(trigger()?.textContent, '结算中')
+  assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用还在结算')
+  await show(<mod.ThreadCostView cost={cost({ microUsd: 4_000, unpricedReceipts: 0 })} />)
+  assert.equal(trigger()?.textContent, '<$0.01')
+  assert.equal(trigger()?.getAttribute('aria-label'), '本线程费用 <$0.01')
 })
 
 test('subscription calls are counted apart, never added to the charge or called settling', async () => {

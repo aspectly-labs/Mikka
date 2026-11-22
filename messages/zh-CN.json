@@ -5083,7 +5083,7 @@
       "labelAtLeast": "本线程费用至少 {amount}，还有调用在结算",
       "labelSettling": "本线程费用还在结算",
       "title": "本线程",
-      "credits": "Mikka 额度",
+      "credits": "经由 Mikka",
       "settling": "结算中",
       "underCent": "<{amount}",
       "unsettled": "还有 {count} 次调用在结算",
