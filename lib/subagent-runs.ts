@@ -23,25 +23,25 @@ export function normalizeBrief(text: string | null | undefined): string | null {
 
 /**
  * The card facts of a run, as SQL over alias `r`: the custom Profile's frozen name with its current mark, the observed
- * (else dispatched) model, and the brief. Callers select it only for runs the reader owns.
+ * (else dispatched) model, and the brief, as `[profile, model, brief]` with the profile as `[profileId, name, roles,
+ * description, icon, color]`. Callers select it only for runs the reader owns. Every cited run in a Bot's chat sends
+ * this text, so it stays short: positions instead of keys and one lookup of the Profile's mark (the citation read's
+ * frozen wire budget, tests/read-cache-detail-egress.db.test.ts).
  */
-export const SUBAGENT_FACTS_SQL = (r: string) => `jsonb_build_object(
-  'profile', CASE WHEN ${r}."agentDefinition"->'agentProfile' IS NULL THEN NULL ELSE jsonb_build_object(
-    'profileId', ${r}."agentDefinition"->'agentProfile'->'profileId', 'name', ${r}."agentDefinition"->'agentProfile'->'name',
-    'roles', ${r}."agentDefinition"->'agentProfile'->'definition'->'roles', 'description', ${r}."agentDefinition"->'agentProfile'->'definition'->'description',
-    'icon', (SELECT p.icon FROM factory_agent_profiles p WHERE p.id::text=${r}."agentDefinition"->'agentProfile'->>'profileId' AND p."ownerId"=${r}."userId"),
-    'color', (SELECT p.color FROM factory_agent_profiles p WHERE p.id::text=${r}."agentDefinition"->'agentProfile'->>'profileId' AND p."ownerId"=${r}."userId")) END,
-  'model', coalesce(${r}."observedModel", ${r}."agentDefinition"->>'model'),
-  'brief', ${r}.brief)`
+export const SUBAGENT_FACTS_SQL = (r: string) => `jsonb_build_array((SELECT jsonb_build_array(a->'profileId',a->'name',\
+a#>'{definition,roles}',a#>'{definition,description}',f.icon,f.color) FROM (SELECT ${r}."agentDefinition"->'agentProfile' a) x \
+LEFT JOIN factory_agent_profiles f ON f.id::text=a->>'profileId' AND f."ownerId"=${r}."userId" WHERE a IS NOT NULL),\
+coalesce(${r}."observedModel",${r}."agentDefinition"->>'model'),${r}.brief)`
 
 /** The projected facts as the card reads them: a Default or malformed Profile is none. */
 export function subagentFacts(value: unknown): SubagentFacts {
-  const row = value && typeof value === 'object' ? value as Record<string, unknown> : {}
-  const profile = threadProfile(row.profile)
+  const [stored, model, brief] = Array.isArray(value) ? value as unknown[] : []
+  const [profileId, name, roles, description, icon, color] = Array.isArray(stored) ? stored as unknown[] : []
+  const profile = Array.isArray(stored) ? threadProfile({ profileId, name, roles, description, icon, color }) : null
   return {
     profile: profile ? { name: profile.name, icon: profile.icon, color: profile.color } : null,
-    model: typeof row.model === 'string' && row.model.trim() ? row.model : null,
-    brief: normalizeBrief(typeof row.brief === 'string' ? row.brief : null),
+    model: typeof model === 'string' && model.trim() ? model : null,
+    brief: normalizeBrief(typeof brief === 'string' ? brief : null),
   }
 }
 

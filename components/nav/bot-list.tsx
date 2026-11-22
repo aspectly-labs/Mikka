@@ -20,7 +20,8 @@ import { toast } from 'sonner'
 import { navigate } from '@/components/workspace/workspace-navigation'
 import { ChatRowActionError, chatPlace, copyPlaceLink, openPlaceInNewTab, setChatPreference, setChatUnread, setThreadUnread, threadPlace, type ChatNavAction } from './chat-row-actions'
 import { setThreadRead } from '@/lib/thread-read-client'
-import { composerDisplay, pullRequestShortName } from '@/lib/composer-references'
+import { pullRequestShortName } from '@/lib/composer-references'
+import { chatRowPreview } from '@/lib/agent-history'
 import { setConversationOrganization } from '@/app/actions/task-runs'
 
 /**
@@ -141,9 +142,10 @@ export function useChatNav({ bots, archivedBots = [], followedBots = [], shareab
       }) ?? [] }
     }
     // A Bot's row: its own chat's unread (the name in bold), latest line and time, a live turn, and how many of its threads wait on the person.
-    // A typed reference reads as its kind in a one-line preview (「对照 任务 和 线程」), never its marker (#2924).
-    const previewText = (text: string | null | undefined) => text ? composerDisplay(text, reference => reference.type === 'pr'
-      ? pullRequestShortName(reference.id) ?? reference.id : i18nText(`ThreadReferences.${reference.type === 'chat' ? 'thread' : reference.type}`)).text : null
+    // A typed reference reads as its kind in a one-line preview (「对照 任务 和 线程」), never its marker (#2924);
+    // the rest reads as plain text, as a chat app's list shows the last message: no `##`, `**`, ticks or fences.
+    const previewText = (text: string | null | undefined) => chatRowPreview(text, reference => reference.type === 'pr'
+      ? pullRequestShortName(reference.id) ?? reference.id : i18nText(`ThreadReferences.${reference.type === 'chat' ? 'thread' : reference.type}`), i18nText('Nav.cardPreview'))
     const botRow = (id: string) => {
       const chat = summary(id)
       const waitingCount = sidebar?.[id]?.items.filter(row => row.state === 'waiting').length ?? 0
