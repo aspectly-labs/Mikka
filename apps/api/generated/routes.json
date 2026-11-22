@@ -612,6 +612,15 @@
       "sourceHash": "19fbccb335f36dbd2ddfc93f3879cf35ea99d51fb8f5f0a3b058bbdc593e8731"
     },
     {
+      "path": "/mikka/api/coordinator/overview",
+      "template": "/api/coordinator/overview",
+      "source": "app/api/coordinator/overview/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "b559547e2a777a050c39055d3f59032ffee995aa83473d89fa46e7080bbfd018"
+    },
+    {
       "path": "/mikka/api/coordinator/runtime",
       "template": "/api/coordinator/runtime",
       "source": "app/api/coordinator/runtime/route.ts",
@@ -1938,6 +1947,15 @@
       "sourceHash": "e96f1a4cd6010435320172a12fad3a41a0fc74972f3cba34e6a7f2545c8f1474"
     },
     {
+      "path": "/mikka/api/needs-you",
+      "template": "/api/needs-you",
+      "source": "app/api/needs-you/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "5af1875ac0607e39eb32c99925e02297674bd8425cd9920e7e8b292125d957a3"
+    },
+    {
       "path": "/mikka/api/organization-invitations/accept",
       "template": "/api/organization-invitations/accept",
       "source": "app/api/organization-invitations/accept/route.ts",
@@ -3025,6 +3043,25 @@
       ],
       "maxDuration": 300,
       "sourceHash": "cd49a4d17ff60e20d56e050860e405c62d76d40e6a0dcb8ae0ce7d6d07664e83"
+    },
+    {
+      "path": "/mikka/api/threads/[issueId]/panel",
+      "template": "/api/threads/[issueId]/panel",
+      "source": "app/api/threads/[issueId]/panel/route.ts",
+      "methods": [
+        "GET",
+        "PUT"
+      ],
+      "sourceHash": "3850383a4d3f7b9fe4ba7d5d372e15f3a51cacc252967ae82d1583f7bd702db1"
+    },
+    {
+      "path": "/mikka/api/threads/[issueId]/preview",
+      "template": "/api/threads/[issueId]/preview",
+      "source": "app/api/threads/[issueId]/preview/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "b23dd0a017d3cda8e0106a37aa27cff15cf7bc83c1000c3f594705b1922612cd"
     },
     {
       "path": "/mikka/api/v1/artifacts",
