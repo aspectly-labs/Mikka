@@ -1,6 +1,6 @@
 name: CI
 
-# Pull requests run selected source and unit checks. Merge queue candidates
+# Pull requests to main run selected source and unit checks. Merge queue candidates
 # also run database shards and applicable acceptance on the combined commit.
 # Main retains each distinct postmerge run. Keep the protected check names.
 on:
@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ${{ github.event_name == 'pull_request' && fromJSON('["24"]') || fromJSON('["22","24"]') }}
+        node: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && fromJSON('["24"]') || fromJSON('["22","24"]') }}
     env:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
@@ -125,7 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ${{ github.event_name == 'pull_request' && fromJSON('["24"]') || fromJSON('["22","24"]') }}
+        node: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && fromJSON('["24"]') || fromJSON('["22","24"]') }}
     env:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
@@ -285,7 +285,7 @@ jobs:
   # actual conclusions. Main retains its existing independent release workflows.
   analytics-checks:
     needs: changes
-    if: github.event_name != 'push' && github.event_name != 'pull_request' && needs.changes.outputs.analytics == 'true'
+    if: github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) && needs.changes.outputs.analytics == 'true'
     uses: ./.github/workflows/analytics-ssr.yml
     with:
       selected: true
@@ -296,7 +296,8 @@ jobs:
     # Exact-main acceptance stays in the standalone postmerge push workflow.
     needs: changes
     if: >-
-      github.event_name == 'merge_group' &&
+      (github.event_name == 'merge_group' ||
+       (github.event_name == 'pull_request' && github.base_ref != 'main' && github.event.pull_request.draft != true)) &&
       needs.changes.result == 'success' && needs.changes.outputs.db == 'true'
     uses: ./.github/workflows/workspace-governance-acceptance.yml
 
@@ -328,8 +329,8 @@ jobs:
           EXPECT_INTEGRATION: ${{ needs.changes.outputs.integration }}
           EXPECT_SOURCE: ${{ needs.changes.outputs.source }}
           EXPECT_DAEMON: ${{ needs.changes.outputs.daemon }}
-          EXPECT_ANALYTICS: ${{ github.event_name != 'push' && github.event_name != 'pull_request' && needs.changes.outputs.analytics == 'true' }}
-          EXPECT_GOVERNANCE: ${{ github.event_name == 'merge_group' && needs.changes.outputs.db == 'true' }}
+          EXPECT_ANALYTICS: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.analytics == 'true' }}
+          EXPECT_GOVERNANCE: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main')) && needs.changes.outputs.db == 'true' }}
           EXPECT_CANDIDATE: ${{ github.event_name == 'merge_group' }}
           CANDIDATE: ${{ needs.candidate-checks.result }}
           GOVERNANCE: ${{ needs.workspace-governance-checks.result }}
@@ -363,7 +364,7 @@ jobs:
     # database suites that the required check names cover.
     name: Database checks (${{ matrix.shard }})${{ matrix.node == '22' && ' (Node 22)' || '' }}
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && github.event_name != 'pull_request'
+    if: needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true))
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     strategy:
@@ -503,7 +504,7 @@ jobs:
       - name: Require every selected database shard
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          EXPECT_DB: ${{ github.event_name != 'pull_request' && needs.changes.outputs.db == 'true' }}
+          EXPECT_DB: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.db == 'true' }}
           DB_RESULT: ${{ needs.browser-tests-full.result }}
         run: |
           test "$CHANGES_RESULT" = success

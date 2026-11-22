@@ -7,11 +7,13 @@ bindings. Current workflow files define the triggers and selected coverage.
 
 Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
 and Cloudflare API source qualification for PRs targeting main. CI runs
-affected source, unit and daemon checks. Its PR unit matrix runs Node 24.
+affected source, unit and daemon checks. Its unit matrix runs Node 24 for PRs
+targeting main. PRs targeting dev, which has no merge queue, retain the two
+Node versions and selected acceptance in the protected UI check.
 
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
-Draft PRs fail the first two gates until marked Ready. The PR database gate
+Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
 checks that trusted selection succeeded and the deferred DB jobs skipped.
 
 On `merge_group`, CI retains the full Node 22 and 24 unit and PG17 shard

@@ -85,12 +85,12 @@ test('Analytics reports its real build and browser result without a second queue
   assert.equal(evaluate(job.if, { inputs: { selected: true }, needs: { changes: {} }, cancelled: () => true }), false)
 })
 
-test('the protected parent requires Analytics success only on the merge candidate', () => {
+test('the protected parent requires Analytics on merge candidates and PRs without a queue', () => {
   const gate = workflow('ui-policy').jobs['ui-policy'].steps.find(step => step.name === 'Require every selected CI job')
-  for (const event of ['pull_request', 'merge_group']) {
+  for (const [event, base] of [['pull_request', 'main'], ['pull_request', 'dev'], ['merge_group', '']]) {
     for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
       const candidate = event === 'merge_group'
-      const context = { github: { event_name: event }, needs: {
+      const context = { github: { event_name: event, base_ref: base }, needs: {
         changes: { result: 'success', outputs: { core: 'false', integration: 'false', source: 'false', daemon: 'false', analytics: 'true', db: 'false' } },
         'ui-policy-full': { result: 'skipped' }, 'ui-policy-integrations': { result: 'skipped' },
         'source-checks': { result: 'skipped' }, 'daemon-checks': { result: 'skipped' },
@@ -98,8 +98,8 @@ test('the protected parent requires Analytics success only on the merge candidat
         'candidate-checks': { result: candidate ? 'success' : 'skipped' },
       } }
       const env = { ...Object.fromEntries(Object.entries(gate.env).map(([key, value]) => [key, evaluate(value, context)])), GITHUB_STEP_SUMMARY: '/dev/null' }
-      const expected = candidate ? 'success' : 'skipped'
-      assert.equal(spawnSync('bash', ['-e', '-c', gate.run], { env }).status, result === expected ? 0 : 1, `${event}/${result}`)
+      const expected = candidate || base === 'dev' ? 'success' : 'skipped'
+      assert.equal(spawnSync('bash', ['-e', '-c', gate.run], { env }).status, result === expected ? 0 : 1, `${event}/${base}/${result}`)
     }
   }
 })
