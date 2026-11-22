@@ -303,7 +303,15 @@ export function forgetNotes(memory: string, text: string): { memory: string; rem
  * Composed in lib/coordinator/prompt-parts.ts so it can be read and tested
  * without the conversation model; re-exported here, where callers already look.
  */
-export { cachedContextLines, instructionsWithMemory, promptWithCachedContext } from './prompt-parts'
+export {
+  STANDING_INSTRUCTIONS_MAX,
+  cachedContextLines,
+  instructionsWithBot,
+  instructionsWithEnvironment,
+  instructionsWithMemory,
+  promptWithCachedContext,
+  sanitizeStandingInstructions,
+} from './prompt-parts'
 
 /**
  * The system prompt with the person's own instructions (Settings, 个人指令)

@@ -183,6 +183,8 @@ export const bots = pgTable('bots', {
   name: text('name').notNull(),
   /** Public duties visible to group participants; never populated from private instructions. */
   publicRole: text('publicRole').notNull().default(''),
+  /** Private standing instructions for this Bot (≤2000 chars); never exposed to group participants or mixed with agents.instructions. */
+  instructions: text('instructions').notNull().default(''),
   /** A bloub colour id, see components/nav/bot-avatar.tsx. */
   color: text('color').notNull().default('encre'),
   shape: text('shape').notNull().default('cercle'),
