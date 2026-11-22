@@ -39,8 +39,8 @@ export function useWorkspaceMembers(workspaceId: string | undefined, inviteIniti
     if (!changes?.length || pending || !data) return
     setPending(true); setError(''); setNotice('')
     try {
-      for (const change of changes) {
-        const result = await updateWorkspaceMember({ workspaceId: data.workspace.id, ...change })
+      for (const { name: _name, ...patch } of changes) {
+        const result = await updateWorkspaceMember({ workspaceId: data.workspace.id, ...patch })
         if ('error' in result) { setError(translateError(result.error)); await mutate(); return }
       }
       setChanges(null)
