@@ -254,7 +254,7 @@ test('@ opens straight after Chinese text, never inside an address; Enter waits 
   assert.equal(early.defaultPrevented, true)
   assert.equal(sent.length, 0, 'Enter does not send the half-typed mention while its search runs')
   await settle(250)
-  assert.deepEqual(latest.editor.menu?.sections.map(section => section.title), ['ThreadReferences.tasks'])
+  assert.deepEqual((latest.editor.menu as ReturnType<typeof useChatEditor>["menu"])?.sections.map(section => section.title), ['ThreadReferences.tasks'])
   await key({ key: 'Enter' })
   assert.equal(latest.value, `看一下[[issue:${task}]] `)
 })
