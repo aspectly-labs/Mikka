@@ -51,7 +51,7 @@ const ORGANIZATION_DOMAINS = new RegExp(`^/api/organizations/${UUID}/allowed-dom
 const ORGANIZATION_DOMAIN = new RegExp(`^/api/organizations/${UUID}/allowed-domains/${UUID}$`)
 const ORGANIZATION_JOIN = new RegExp(`^/api/organizations/${UUID}/join-by-domain$`)
 const ORGANIZATION_KEY = new RegExp(`^/api/organizations/${UUID}/api-keys/${UUID}$`)
-const WORKSPACE_GOVERNANCE = new RegExp(`^/api/workspaces/${UUID}/governance$`)
+const WORKSPACE_GOVERNANCE = new RegExp(`^/api/workspaces/${UUID}/governance(?:/usage)?$`)
 const ORGANIZATION_MEMBERS = new RegExp(`^/api/organizations/${UUID}/members$`)
 const ORGANIZATION_INVITATIONS = new RegExp(`^/api/organizations/${UUID}/invitations$`)
 const SERVICE_IDENTITY_DIRECTORY = `/api/workspaces/${UUID}/service-identities`
@@ -76,6 +76,13 @@ const ROUTES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   [/^\/api\/(workspace|workspace\/switcher|search|issues\/search|skills|skills\/search|teams\/directory)$/, ['GET']],
   // Sharing an installed Skill into a workspace is the Skills panel's one write.
   [/^\/api\/skills\/share$/, ['POST']],
+  [/^\/api\/skills$/, ['POST', 'PATCH', 'DELETE']],
+  [/^\/api\/integrations\/slack$/, ['GET']],
+  [/^\/api\/me\/(?:passkeys|security)$/, ['GET']],
+  [new RegExp(`^/api/me/passkeys/${ID}$`), ['PATCH', 'DELETE']],
+  [new RegExp(`^/api/auth/two-factor/${ID}$`), ['POST']],
+  [new RegExp(`^/api/workspaces/${ID}/billing/settings$`), ['PATCH']],
+  [new RegExp(`^/api/workspaces/${ID}/environments/${ID}/instructions$`), ['PATCH']],
   [/^\/api\/settings\/(?:password|sessions|preferences|saved-logins|workspace-general|transfer-targets|deletion-impact|app-policy|share-policy|secrets|e2b-key|usage|billing|credit-billing|card-verification|audit|model-order|bots|workspace-bots|api-keys|environments)$/, ['GET']],
   [/^\/api\/settings\/personal$/, ['GET']],
   [/^\/api\/agent-cli-policy$/, ['GET', 'POST']],
@@ -93,7 +100,7 @@ const ROUTES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
   [/^\/api\/integrations\/composio$/, ['PATCH']],
   [/^\/api\/(subscriptions\/enrollments|subscriptions\/enrollments\/handoff|subscriptions\/enrollments\/bind)$/, ['GET', 'POST']],
   [/^\/api\/(billing\/stripe|account\/deletion)$/, ['GET', 'POST', 'DELETE']],
-  [new RegExp(`^/api/(?:bots/${ID}(?:/(?:app-tools|definition|subagents(?:/${ID}(?:/(?:stop|viewer|credentials(?:/(?:challenge|login))?))?)?|computer(?:/(?:runtimes|subscription|takeover|runs|wake|handback|viewer))?))?|conversations/${ID}(?:/(?:decisions(?:/replay)?|members|stop|read|messages))?|suggestions/${ID}(?:/start)?|threads/${ID}/(?:machine|credentials(?:/(?:challenge|login))?))$`), ['GET', 'POST', 'PATCH', 'DELETE']],
+  [new RegExp(`^/api/(?:bots/${ID}(?:/(?:app-tools|instructions|definition|subagents(?:/${ID}(?:/(?:stop|viewer|credentials(?:/(?:challenge|login))?))?)?|computer(?:/(?:runtimes|subscription|takeover|runs|wake|handback|viewer))?))?|conversations/${ID}(?:/(?:decisions(?:/replay)?|members|stop|read|messages))?|suggestions/${ID}(?:/start)?|threads/${ID}/(?:machine|credentials(?:/(?:challenge|login))?))$`), ['GET', 'POST', 'PATCH', 'DELETE']],
   [new RegExp(`^/api/(?:workspaces/${ID}/(?:audit-log(?:/retention)?|skills|computer-policy|model-admission)|teams/${ID}/members|projects/${ID}/decisions(?:/from-message)?|conversation-links/${ID}/messages|integrations/composio/catalog/${ID}|devices/${ID}/commands|device-tokens/${ID}/revoke|computer/approvals/${ID})$`), ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']],
   [new RegExp(`^/api/(?:captures/${ID}|captures/shared/${ID}|artifacts/${ID}/versions/[0-9]+/(?:download|frame)|artifacts/shared/${ID}/frame|avatars/${ID}/${ID}|account/export/${ID})$`), ['GET']],
   // A chat attachment is read, and removed from the composer, by the same person.
