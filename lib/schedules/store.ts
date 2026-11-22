@@ -62,6 +62,8 @@ export type AutomationSeams = {
   chat?: (ownerId: string, workspaceId: string) => Promise<string | null>
   /** A trigger's one-sentence condition against the event: true, false, or null when no answer could be had. */
   runWhen?: (input: RunWhenInput) => Promise<boolean | null>
+  /** Whether a workspace setting owns this schedule, so only an administrator may change it. */
+  settingsOwned?: (tx: PoolClient, scheduleId: string) => Promise<boolean>
 }
 export type Schedule = { id: string; owner_id: string; run_as_user_id?: string | null; workspace_id: string | null; bot_id: string | null; visibility: 'owner' | 'workspace'; source_event_id: string; definition: Definition; request_definition: Definition; status: string; deleted?: boolean; status_before_delete?: 'active' | 'paused' | 'completed' | null; version: number; next_at: Date | null; disabled_reason?: string | null }
 export type Occurrence = { id: string; schedule_id: string; operation_id: string; event_id: string | null; definition: Definition; version: number; due_at: Date; status: string; attempts: number; lease_token: string | null; lease_until: Date; error: string | null; execution_decision: 'execute' | 'skip'; trigger: OccurrenceTrigger | null; report_next_at: Date; report_attempts: number; started_at: Date | null; created_at: Date }
@@ -370,6 +372,9 @@ export class ScheduleStore {
         return {timezone:zone,maxRunsPerDay:row.definition.maxRunsPerDay??null,days:[...byDay.values()].sort((a,b)=>b.day.localeCompare(a.day)).map(item=>({...item,costMicroUsd:privileged?spent.get(item.day)??0:null}))}
       }
       await this.source(tx,actor,row.workspace_id)
+      // A schedule a workspace setting owns is that setting's: an ordinary member cannot pause,
+      // delete or otherwise change it from 自动化 and so turn an administrator's policy off.
+      if(access.role==='member'&&await this.automation.settingsOwned?.(tx,row.id)) throw new ScheduleError('scheduleAdminRequired',403)
       if(row.version!==cmd.version) throw new ScheduleError('scheduleVersionConflict')
       if(cmd.action==='restore'){
         if(!row.status_before_delete) throw new ScheduleError('scheduleNotDeleted')

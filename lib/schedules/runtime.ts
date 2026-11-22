@@ -85,6 +85,10 @@ export const automationSeams:AutomationSeams={
     })
   },
   async changed(tx,workspaceId){await (await import('@/lib/live/lists')).scheduleListChanged(tx,workspaceId)},
+  /** 代码审查 owns the schedule it created; Settings is the one place it is turned off. */
+  async settingsOwned(tx,scheduleId){
+    return Boolean((await tx.query('SELECT 1 FROM workspace_code_review_repositories WHERE "scheduleId"=$1',[scheduleId])).rowCount)
+  },
   /** Teams of the person's own Linear connection; null without one. Linear unreachable is retryable, not a lost authority. */
   async linearTeams(ownerId){
     const [{linearAccessToken},{linearTeams}]=await Promise.all([import('@/lib/linear-sync/tokens'),import('@/lib/linear-sync/client')])

@@ -1,5 +1,5 @@
 import 'server-only'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { db, pool, withDatabaseClient, withDatabaseTransaction } from '@/lib/db'
 import { connectForCommitEffects } from '@/lib/db/commit-effects'
 import { workspaceDb } from '@/lib/workspace-db'
@@ -15,7 +15,13 @@ import { codeReviewInstructions } from './configuration'
  * dispatch, then freezes it on its ordinary authenticated request event. */
 export async function configuredReviewDispatch<T>(input: DispatchInput, dispatch: (configured: DispatchInput) => Promise<T>): Promise<T> {
   const [repository] = await db.select().from(workspaceCodeReviewRepositories).where(eq(workspaceCodeReviewRepositories.scheduleId, input.scheduleId))
-  if (!repository) return dispatch(input)
+  // A restored schedule whose configuration was deleted is still a review automation; without the
+  // administrator's configuration it would run as an ordinary task, without the review restrictions.
+  if (!repository) {
+    const { rows } = await db.execute<{ one: number }>(sql`SELECT 1 AS one FROM user_schedules WHERE id=${input.scheduleId} AND request_id LIKE 'code-review:%'`)
+    if (rows.length) throw new ScheduleError('scheduleDispatchUnavailable', 403)
+    return dispatch(input)
+  }
   if (!repository.enabled || repository.workspaceId !== input.workspaceId || repository.ownerId !== input.ownerId
     || input.source !== 'github' || !input.event) throw new ScheduleError('scheduleDispatchUnavailable', 403)
   return workspaceDb.transaction(async tx => {
