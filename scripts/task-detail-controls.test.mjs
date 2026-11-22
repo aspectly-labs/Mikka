@@ -28,6 +28,7 @@ mock.module('swr', { defaultExport: key => {
     return issue
   }
   if (Array.isArray(key) && key[0] === 'issue-connections') reads.push('revalidate-connections')
+  if (Array.isArray(key) && key[0] === 'issue-threads') reads.push('issue-threads')
   if (typeof key === 'function') {
     assert.equal(key(['issues', 'another-owner', 'workspace']), false)
     if (key(['issues', 'owner', 'workspace'])) reads.push('viewer-list')
@@ -458,7 +459,7 @@ test('inline and menu subtask creation refresh a stale parent and save once on e
       assert.deepEqual(writes, [startingRevision, startingRevision + 1].map(revision => ({
         id: issue.id, revision, kind: 'child', title, includeSubissues: false,
       })))
-      assert.deepEqual(reads, ['issue-detail', 'revalidate-connections', 'viewer-list'])
+      assert.deepEqual(reads, ['issue-detail', 'revalidate-connections', 'issue-threads', 'issue-detail', 'viewer-list'])
       assert.equal(issue.priority, 'high')
       assert.notEqual(issue.id, child.id)
     } finally { await dispose() }
@@ -484,6 +485,6 @@ test('a failed inline relation read does not block the independent menu form or 
     field.value = 'Valid title'
     await submit()
     assert.deepEqual(createChild.mock.calls.map(call => call.arguments[0].title), ['   ', 'Valid title'])
-    assert.deepEqual(reads, ['revalidate-connections', 'viewer-list'])
+    assert.deepEqual(reads, ['revalidate-connections', 'issue-threads', 'issue-detail', 'viewer-list'])
   } finally { await dispose() }
 })
