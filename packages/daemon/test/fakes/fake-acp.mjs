@@ -77,6 +77,15 @@ new acp.AgentSideConnection(
           )
           return { stopReason: "end_turn" }
         }
+        // `PLAN` sends ACP plan updates, first the plan, then a revision.
+        if (text.includes("PLAN")) {
+          for (const statuses of [["in_progress", "pending"], ["completed", "in_progress"]])
+            await conn.sessionUpdate({ sessionId: params.sessionId, update: { sessionUpdate: "plan", entries: [
+              { content: "Read the brief", priority: "high", status: statuses[0] },
+              { content: "Write NOTES.md", priority: "medium", status: statuses[1] },
+            ] } })
+          return { stopReason: "end_turn" }
+        }
         if (text.includes("HANG")) {
           await new Promise((resolve) => (session.abort = resolve))
           return { stopReason: "cancelled" }

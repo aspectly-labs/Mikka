@@ -1155,6 +1155,7 @@
     "loading": "Loading devices"
   },
   "Workspace": {
+    "documentTitle": "{name} · Mikka",
     "loadingEditor": "Loading task editor",
     "loading": "Loading…",
     "loadingCreate": "Loading new task…",
@@ -8071,6 +8072,14 @@
       "search": "Searching",
       "edit": "Editing files",
       "web": "Browsing the web"
+    },
+    "plan": {
+      "title": "To-dos",
+      "label": "The Agent's to-do list",
+      "progress": "{completed} of {total} to-dos done",
+      "pending": "Pending",
+      "inProgress": "In progress",
+      "completed": "Done"
     }
   },
   "HostedOnboarding": {
