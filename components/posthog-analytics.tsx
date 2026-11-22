@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { usePathname } from '@/lib/client-runtime/navigation'
-import posthog from 'posthog-js'
+import { withPostHog } from '@/lib/analytics/posthog'
 import { authClient } from '@/lib/auth-client'
 import { analyticsPath } from '@/lib/analytics-policy'
 import { isSmokeAccountEmail } from '@/lib/smoke-account'
@@ -16,20 +16,25 @@ export function PostHogAnalytics() {
 
   useEffect(() => {
     if (isPending) return
-    if (previousIdentity.current && previousIdentity.current !== userId) {
-      posthog.reset(true)
-      posthog.register({ app: 'mikka', environment: process.env.NODE_ENV, runtime: window.mikka?.app?.runtime === 'electron' ? 'electron' : 'browser' })
-    }
-    if (userId && posthog.get_distinct_id() !== userId) posthog.identify(userId)
-    // Smoke accounts still load their flags like anyone else; their events are tagged so dashboards can drop them.
-    if (isSmokeAccountEmail(session?.user.email)) posthog.register({ test_account: true })
+    const signedOut = Boolean(previousIdentity.current && previousIdentity.current !== userId)
+    const smoke = isSmokeAccountEmail(session?.user.email)
     previousIdentity.current = userId
-    if (!pathname) return
     const pageKey = `${userId ?? 'anonymous'}:${pathname}`
-    if (previousPage.current === pageKey) return
-    previousPage.current = pageKey
-    posthog.capture('$pageview', { $current_url: `${window.location.origin}${analyticsPath(pathname)}` })
-    posthog.reloadFeatureFlags()
+    const newPage = Boolean(pathname) && previousPage.current !== pageKey
+    if (newPage) previousPage.current = pageKey
+    // PostHog loads after first paint (lib/analytics/posthog.ts); these run in order once it has.
+    withPostHog(posthog => {
+      if (signedOut) {
+        posthog.reset(true)
+        posthog.register({ app: 'mikka', environment: process.env.NODE_ENV, runtime: window.mikka?.app?.runtime === 'electron' ? 'electron' : 'browser' })
+      }
+      if (userId && posthog.get_distinct_id() !== userId) posthog.identify(userId)
+      // Smoke accounts still load their flags like anyone else; their events are tagged so dashboards can drop them.
+      if (smoke) posthog.register({ test_account: true })
+      if (!newPage) return
+      posthog.capture('$pageview', { $current_url: `${window.location.origin}${analyticsPath(pathname!)}` })
+      posthog.reloadFeatureFlags()
+    })
   }, [pathname, userId, isPending])
 
   return null
