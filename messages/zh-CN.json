@@ -1608,7 +1608,8 @@
     "scheduleEnvironmentUnavailable": "选择的环境已不可用。",
     "scheduleThreadUnavailable": "它运行的线程已不可用。",
     "scheduleRunAsUnavailable": "它运行时使用的成员已不在这个工作区。",
-    "scheduleRunAsConsentRequired": "只有运行身份本人或所有者、管理员可以这样做。"
+    "scheduleRunAsConsentRequired": "只有运行身份本人或所有者、管理员可以这样做。",
+    "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。"
   },
   "Overview": {
     "sections": {
@@ -4501,7 +4502,8 @@
         "raw": "原始数据",
         "dispatched": "已派发"
       }
-    }
+    },
+    "commandNew": "新建线程"
   },
   "AgentCopy": {
     "pleaseSignInFirst": "请先登录。",
@@ -4845,7 +4847,12 @@
     "pr": "拉取请求",
     "searching": "正在搜索…",
     "error": "引用加载失败",
-    "empty": "没有匹配的引用"
+    "empty": "没有匹配的引用",
+    "commands": "命令",
+    "tasks": "任务",
+    "threads": "线程",
+    "pullRequests": "拉取请求",
+    "broken": "已删除或无权查看"
   },
   "IssueThreads": {
     "composerModelUnknown": "模型未上报",

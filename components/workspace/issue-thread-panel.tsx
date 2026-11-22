@@ -51,11 +51,11 @@ import { HarnessMark, harnessName, ProviderMark } from '@/components/labels/enti
 import { PersonAvatar } from '@/components/person-avatar'
 import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { MikkaMark } from '@/components/brand/mikka-mark'
-import { navigate, openTask, openThread } from './workspace-navigation'
+import { navigate, openTask, openThread, startNewConversation } from './workspace-navigation'
 import { ThreadHeader } from './thread-header'
 import { threadCostBreakdownKey, threadCostKey } from './thread-cost-button'
 import { ThreadStatus } from './thread-status-icon'
-import { PersonReferences, ThreadReferencePicker } from './thread-references'
+import { PersonReferences } from './thread-references'
 import { ThreadOutlineIndex } from './thread-outline-index'
 import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCitations } from './agent-citations'
 import { useLiveCitations } from '@/components/coordinator/use-live-citations'
@@ -293,6 +293,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   }, [olderPosition, collect])
   const [draft, setDraft] = useViewState(`thread:${runId}:draft`, '')
   const feedback = useTranslations('Coordinator')
+  const composerCommands = useMemo(() => [{ id: 'new', name: '/new', description: feedback('commandNew'), run: startNewConversation }], [feedback])
   const quoteLabel = useTranslations('AiElements.message')('quote')
   const writer = useThreadReplyCommand()
   const [deliveryMode, setDeliveryMode] = useViewState<ThreadDeliveryMode>('thread:delivery-mode', 'queue')
@@ -656,8 +657,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       <ProviderMark provider={modelProvider(currentModel)} /><span className="truncate">{currentModelName}</span>
     </span>)
   const referenceWorkspace = liveRuns.find(run => run.id === liveRunId)?.workspaceId
-  const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? <ThreadReferencePicker draft={draft}
-    workspaceId={referenceWorkspace} input={inputRef} onChange={setDraft} /> : null
+  // `@`, the ＋ menu's Reference rows and the reference chips belong to the composer (#2924).
+  const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? { workspaceId: referenceWorkspace } : undefined
   const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen host={host} botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
     panels={bare || transcriptOnly || collect ? undefined : panels}
     historyPrepend={historyPrepend}
@@ -665,12 +666,11 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     working={working} onStop={working && canStop ? () => { void stop() } : undefined}
     composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, leftControls: modelControl, label: composerUnavailable ? t(data && !isThreadRun(data.thread) ? 'checkEnded' : 'replyUnavailable') : t('composer', { agent: harnessLabel(threadComposerHarness(detail?.harness ?? '', liveRunId, modelFallback)) }), value: draft, onChange: setDraft, onSubmit: () => { void send() },
       attachmentScope: { kind: 'thread', id: liveRunId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
-      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true }}
+      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
     notices={<>
       {olderState === 'failed' && olderPosition && <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void loadOlder() }} />}
       {queueControls}
-      {references}
       {data?.thread.quota?.paused && <ThreadQuotaPausedCard paused={data.thread.quota.paused} onContinued={() => { void mutate(); refreshLists() }} />}
       {sendFailed && <FieldError className="px-3 text-xs">{sendFailed}</FieldError>}
       {stopFailed && <div role="alert" className="flex items-center gap-2 px-3 text-xs"><span className="text-destructive-foreground">{t('stopFailed')}</span><Button variant="ghost" size="sm" className="min-w-22 max-sm:h-11" onClick={() => { void stop() }}>{t('retryStop')}</Button></div>}

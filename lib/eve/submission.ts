@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ActionFailureError } from '../action-error'
 import type { MessageContent } from 'eve/channels'
 import type { Session } from 'eve/sessions'
 import { scopeAuth, assertEveScope, type EveScope } from './scope'
@@ -33,6 +34,9 @@ export async function acceptEveMessage(scope:EveScope,message:MessageContent,con
   const { db, withDatabaseTransaction } = await import('../db')
   const { assertCredentialSafeChat } = await import('../credentials/chat-guard')
   await assertCredentialSafeChat(scope.ownerId,text)
+  // A typed reference the sender cannot read (deleted, another workspace, no access) never reaches the Bot (#2941).
+  if ((await import('../composer-references')).messageReferences(input.text).length
+    && (await (await import('../message-references')).unavailableReferences({ userId:scope.ownerId,workspaceId:scope.workspaceId },input.text)).length) throw new ActionFailureError('referenceBroken')
   if (product.taskCommand && (!input.submissionId || !product.expectedWorkspaceId && !retry
     || !input.text.includes(product.taskCommand.description))) throw new Error('validationGeneric')
   if (product.taskCommand && retry && !isDeepStrictEqual(retry.payload.taskCommand, product.taskCommand)) throw new SubmissionConflictError()

@@ -37,4 +37,14 @@ export type ChatComposerProps = {
   attachmentScope?: ChatFileScope
   /** Keep a saved draft editable while blocking new files. */
   attachmentDisabled?: boolean
+  /**
+   * Typed references (#2924): the workspace whose tasks, threads and pull requests `@`
+   * and the ＋ menu's Reference rows search. A reference shows as one chip in the draft
+   * and is sent as its marker (lib/composer-references.ts). Absent: no references.
+   */
+  references?: { workspaceId: string }
+  /** The `/` commands this chat can run; only commands with a working action are listed. */
+  commands?: ChatComposerCommand[]
 }
+
+export type ChatComposerCommand = { id: string; name: string; description: string; run: () => void }

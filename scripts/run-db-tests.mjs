@@ -161,6 +161,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/model-api-keys.ts', file: 'tests/model-api-keys.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/usage/read.ts', file: 'tests/usage.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/thread-cost.ts', file: 'tests/thread-cost.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/message-references.ts', file: 'tests/message-references.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/thread-summary.ts', file: 'tests/thread-summary.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/subagent-runs.ts', file: 'tests/subagent-runs.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/turn-usage.ts', file: 'tests/turn-usage.db.test.ts', script: 'test:workspace-admin-db' },

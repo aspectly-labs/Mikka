@@ -38,6 +38,8 @@ export interface AgentCitations {
   onOpenIssue: (id: string) => void
   /** A reply still arriving, or its cited issues and runs still being looked up: a chip not known yet holds its place. */
   pending?: boolean
+  /** Ids an authorized lookup has already answered: one of these without a source was deleted or is not readable (#2924). */
+  answered?: readonly string[]
   /**
    * Tasks whose thread the same reply cites. Not read when rendering: the task is always its own compact chip (status
    * icon and code) and the thread its title, so neither repeats the other.

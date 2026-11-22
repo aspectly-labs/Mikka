@@ -215,10 +215,33 @@ export async function deviceWork(deviceId: string, skip: readonly string[], opti
     .orderBy(asc(runMessages.createdAt))
     .limit(500)
   // The runId filter above excludes mailbox messages, whose runId is null.
-  const inputs: RunCommand[] = messages.flatMap(({ id, runId, text, origin, steer }) => runId && (!steer || options.activeTurnSteer) ? [{ kind: steer ? 'steer' as const : 'input' as const, runId, messageId: id, text: runMessagePrompt({ id, runId, origin, text }) }] : [])
+  const references = await deliveredReferences(messages)
+  const inputs: RunCommand[] = messages.flatMap(({ id, runId, text, origin, steer }) => runId && (!steer || options.activeTurnSteer) ? [{ kind: steer ? 'steer' as const : 'input' as const, runId, messageId: id, text: runMessagePrompt({ id, runId, origin, text }, references.get(id)) }] : [])
   const stops: RunCommand[] = live.filter(run => run.stopRequestedAt).map(run => ({ kind: 'stop', runId: run.id }))
   const notices = options.mailboxNotices ? await pendingMailboxNotices(deviceId, live.filter(run => !run.stopRequestedAt).map(run => run.id)) : []
   return { commands: [...stops, ...takenBack, ...notices, ...inputs].slice(0, 500), queuedRuns }
+}
+
+/**
+ * The owner's typed references in each message, resolved as the owner may read them in the run's workspace (#2941),
+ * for the delivery metadata only. A peer's or coordination message is delivered as it is.
+ */
+async function deliveredReferences(messages: { id: string; runId: string | null; text: string; origin: string }[]) {
+  const { messageReferences } = await import('./composer-references')
+  const owned = messages.filter(message => message.runId && message.origin === 'owner' && messageReferences(message.text).length)
+  const resolved = new Map<string, Awaited<ReturnType<typeof import('./message-references').resolveMessageReferences>>>()
+  if (!owned.length) return resolved
+  const { rows } = await pool.query<{ id: string; userId: string; workspaceId: string | null }>(
+    'SELECT m.id, r."userId", r."workspaceId" FROM run_messages m JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."userId" WHERE m.id=ANY($1::uuid[])', [owned.map(message => message.id)])
+  const { resolveMessageReferences } = await import('./message-references')
+  for (const row of rows) {
+    const message = owned.find(item => item.id === row.id)
+    if (!message || !row.workspaceId) continue
+    // A reader that lost the workspace sees nothing: the markers go out as unavailable, and the device's work still goes out.
+    resolved.set(row.id, await resolveMessageReferences({ userId: row.userId, workspaceId: row.workspaceId }, message.text)
+      .catch(() => messageReferences(message.text).map(item => ({ ...item, unavailable: true as const }))))
+  }
+  return resolved
 }
 
 /** Marks messages the agent now holds; called by the daemon's ack. */

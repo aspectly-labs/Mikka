@@ -26,7 +26,9 @@ import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCita
 import { AgentInteractionContext } from '@/components/workspace/agent-interaction'
 import { ReplyAnswer } from '@/components/workspace/agent-decision'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
-import { navigate, openTask, openThread } from '@/components/workspace/workspace-navigation'
+import { navigate, openTask, openThread, startNewConversation } from '@/components/workspace/workspace-navigation'
+import { PersonReferences } from '@/components/workspace/thread-references'
+import { messageReferences } from '@/lib/composer-references'
 import { CoordinatorReply } from './coordinator-reply'
 import { botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
@@ -413,6 +415,10 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const citations = useMemo<AgentCitations>(() => ({ sources: sources ?? {}, previews, onOpenIssue: openIssue }), [sources, previews, openIssue])
   // A live reply cites tasks and threads the stored chat may not know yet; they are looked up as it streams.
   const liveCitations = useLiveCitations(stream.replies.map(reply => reply.text), citations)
+  // The tasks and threads the person's own messages reference, looked up the same way (#2924).
+  const personTexts = useMemo(() => [...(data?.items ?? []).flatMap(item => item.from === 'person' ? [item.text] : []), ...localMessages.map(row => row.text)], [data?.items, localMessages])
+  const personCitations = useLiveCitations(personTexts, citations).settled
+  const composerCommands = useMemo(() => [{ id: 'new', name: '/new', description: t('commandNew'), run: startNewConversation }], [t])
   // What the person said next after each reply, so a choice card shows its answer after a reload.
   const answers = useMemo(() => {
     const next = new Map<number, string>()
@@ -557,6 +563,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
       ]
       if (!item.suggestion || text || attachments.length) entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
+        ...(messageReferences(text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={text} /></AgentCitationsContext> } : {}),
         actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
       if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
       continue
@@ -581,6 +588,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       </ReplyActions> : undefined })
   }
   for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
+    ...(messageReferences(row.text).length ? { body: <AgentCitationsContext value={personCitations}><PersonReferences text={splitReplyQuote(row.text).text} /></AgentCitationsContext> } : {}),
     status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
     attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
       ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
@@ -625,7 +633,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
         working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
-          attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
+          attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
+          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
         pending={[
           ...(embedded?.quote ? [{ id: 'artifact-quote', name: embedded.quote.label ?? embedded.quote.text, meta: tMessage('quote'), onRemove: embedded.clearQuote }] : []),
