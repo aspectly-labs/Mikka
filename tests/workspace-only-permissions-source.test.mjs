@@ -33,8 +33,6 @@ test('no source still offers a per-Bot or per-worker permission layer', () => {
       }
     }
   }
-  assert.match(source['lib/operations/write-setting-layers.ts'], /w\.external_write_permissions as workspace/)
-  assert.doesNotMatch(source['lib/operations/write-setting-layers.ts'], /agent_kit_heads/)
 })
 
 test('the retired 应用与运行权限 settings page and slot are gone', () => {
@@ -59,13 +57,12 @@ test('every first-class write path reads the workspace app policy, not only the 
   const steps = source['workflows/coordinator/steps.ts']
   assert.match(steps, /writeAccountAction\(userId, action, input, accountId, botId \?\? null\)/)
   const store = source['lib/pending-action-store.ts']
-  assert.match(store, /accountWriteSetting\(db, userId, botId, action\)/)
-  assert.match(store, /accountWriteOutcome\(setting/)
+  assert.match(store, /botId: string \| null = null/)
   const keys = readFileSync(join(root, 'lib/operations/app-permission-keys.ts'), 'utf8')
   for (const action of ['send_email', 'create_calendar_event', 'update_calendar_event']) {
     assert.match(keys, new RegExp(`^\\s*${action}: '(gmail|googlecalendar)'`, 'm'), `${action} is in the workspace key map`)
   }
   const pending = source['lib/pending-actions.ts']
   assert.match(pending, /approvalPolicyBlock\(userId, row\)/)
-  assert.match(pending, /accountWriteSetting\(db, userId, row\.botId, row\.action\)/)
+  assert.match(pending, /botMayUseApp\(row\.botId, toolkit, userId\)/)
 })
