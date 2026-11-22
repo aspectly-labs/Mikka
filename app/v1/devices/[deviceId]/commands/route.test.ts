@@ -26,6 +26,7 @@ mock.module(new URL('../../../../../lib/plugins/runtime.ts', import.meta.url).hr
 mock.module(new URL('../../../../../lib/device-management.ts', import.meta.url).href, { namedExports: { pendingDeviceCommands } })
 const authenticateDevice = mock.fn(async () => ({ userId: 'owner', tokenId: 'token' }) as object | null)
 const ownsDevice = mock.fn(async () => ({ id: 'device-1', enabled: true }) as object | null)
+const tokenActsAsDevice = mock.fn(async (_caller: { userId: string; tokenId: string }, _deviceId: string) => true)
 type Work = { commands: unknown[]; queuedRuns: string[] }
 type Check = { work: boolean; deviceCommand: { id: string; kind: 'redetect' | 'restart' | 'update' | 'uninstall' } | null }
 const deviceMayHaveWork = mock.fn(async (_deviceId: string, _skip: readonly string[], _options?: { mailboxNotices?: boolean; queued?: boolean; skipDeviceCommands?: readonly string[] }): Promise<Check> => ({ work: true, deviceCommand: null }))
@@ -52,7 +53,7 @@ before(async () => {
     namedExports: { daemonVersions },
   })
   mock.module(new URL('../../../../../lib/device-link.ts', import.meta.url).href, {
-    namedExports: { authenticateDevice, deviceMayHaveWork, deviceWork, ownsDevice },
+    namedExports: { authenticateDevice, deviceMayHaveWork, deviceWork, ownsDevice, tokenActsAsDevice },
   })
   GET = (await import('./route')).GET
 })
@@ -62,6 +63,8 @@ beforeEach(() => {
   authenticateDevice.mock.mockImplementation(async () => ({ userId: 'owner', tokenId: 'token' }))
   ownsDevice.mock.resetCalls()
   ownsDevice.mock.mockImplementation(async () => ({ id: 'device-1', enabled: true }))
+  tokenActsAsDevice.mock.resetCalls()
+  tokenActsAsDevice.mock.mockImplementation(async () => true)
   deviceMayHaveWork.mock.resetCalls()
   deviceMayHaveWork.mock.mockImplementation(async () => ({ work: true, deviceCommand: null }))
   releases = undefined
@@ -119,6 +122,10 @@ test('STDIO check configuration goes only to an authenticated capable owner devi
   assert.equal((await GET(capable(), params)).status, 404)
   assert.equal(pendingMcpChecks.mock.callCount(), 0)
   ownsDevice.mock.mockImplementation(async () => ({ id: 'device-1', enabled: false }))
+  tokenActsAsDevice.mock.mockImplementationOnce(async () => false)
+  assert.deepEqual(await (await GET(capable(), params)).json(), { commands: [] })
+  assert.equal(pendingMcpChecks.mock.callCount(), 0)
+  assert.deepEqual(tokenActsAsDevice.mock.calls[0].arguments, [{ userId: 'owner', tokenId: 'token' }, 'device-1'])
   assert.deepEqual(await (await GET(capable(), params)).json(), { commands: [], mcpChecks: [command] })
   assert.deepEqual(pendingMcpChecks.mock.calls[0].arguments, ['owner', 'device-1'])
   assert.ok(!JSON.stringify(logs).includes('synthetic-mcp-owner-key'))
