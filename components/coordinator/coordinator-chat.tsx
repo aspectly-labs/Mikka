@@ -629,8 +629,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
         parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
       entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-        // With no author line, the reply's own time sits beside Copy (as Capy's footer); the centred time names its group.
-        actions: item.text && !streaming ? <ReplyActions at={item.createdAt ? at : undefined} copyText={replyCopyText(item.text)} onQuote={quoteReply}>
+        // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
+        actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
           <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
           {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
         </ReplyActions> : undefined })
