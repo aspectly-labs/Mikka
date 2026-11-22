@@ -86,7 +86,8 @@ function anthropicPrompt(body) {
   return { prompt: [...(body.system ? [{ role: 'system', content: typeof body.system === 'string' ? body.system : textOf({ content: body.system }) }] : []), ...prompt], tools: (body.tools ?? []).map(tool => ({ name: tool.name })) }
 }
 function responsesPrompt(body) {
-  const items = body.input ?? []
+  // A Responses request may carry a bare string input instead of item objects.
+  const items = typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : (body.input ?? [])
   const prompt = items.map(item => ({ role: item.role ?? 'user', content: item.content ?? (typeof item === 'string' ? item : '') }))
   return { prompt, tools: (body.tools ?? []).map(tool => ({ name: tool.name })) }
 }
@@ -109,7 +110,9 @@ export function fakeLiteLLMRoutes(scenarios) {
   const state = scenarios ?? createLiteLLMScenarios()
   return async function routes(request, response, url, { readBody, json, log } = {}) {
     const reply = json ?? ((value, status = 200) => { response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); return true })
-    const bearer = (request.headers.authorization ?? '').replace(/^Bearer /, '')
+    // The native model gateway authenticates with x-litellm-api-key (upstream.ts);
+    // the plain Authorization header is the other accepted form.
+    const bearer = (request.headers['x-litellm-api-key'] ?? request.headers.authorization ?? '').replace(/^Bearer /, '')
     if (url.pathname === '/litellm/scenarios') {
       if (request.method !== 'POST') return reply({ error: { message: 'method' } }, 405)
       const input = await readBody(request)
