@@ -74,6 +74,8 @@ test('Agent Kit evaluations run through compiled public Eve sessions with inert 
  // Imports in unused normal branches are resolved at build time, and remain forbidden.
  await mkdir(join(fixture,'lib/coordinator'),{recursive:true})
  await writeFile(join(fixture,'lib/coordinator/instructions.ts'),`export const COORDINATOR_INSTRUCTIONS='Unused private chat instructions'`)
+ await writeFile(join(fixture,'lib/coordinator/context.ts'),`export function instructionsWithWorkspace(){throw Error('Workspace instructions forbidden')}`)
+ await writeFile(join(fixture,'lib/coordinator/workspace-instructions.ts'),`export async function readWorkspaceInstructionsForBot(){throw Error('Workspace instructions forbidden')}`)
  await writeFile(join(fixture,'lib/coordinator/product-instructions.ts'),`export async function composeEveInstructions(){throw Error('Private product instructions forbidden')}`)
  const probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const origin=`http://127.0.0.1:${(probe.address()as{port:number}).port}`;await new Promise<void>(resolve=>probe.close(()=>resolve()))
  const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,NODE_ENV:'production',NITRO_PRESET:'node-server',WORKFLOW_LOCAL_BASE_URL:origin,BETTER_AUTH_SECRET:secret,FIXTURE_BINDINGS:join(fixture,'bindings')}
