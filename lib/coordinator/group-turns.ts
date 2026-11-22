@@ -23,6 +23,8 @@ import { armDueTimerAfterCommit } from '@/lib/due-timer'
 export const GROUP_MAX_ROUNDS = GROUP_MAX_RESPONDERS
 export type GroupAgent = RoutingMember
 export type GroupReply = { text: string; mentions: string[]; privateTo?: string | null;
+  /** Host-only: the id this reply is published under, chosen before its generation so its usage names it (lib/usage-turn-ref.ts). */
+  messageId?: string;
   /** Host-only receipt from Factory, never accepted from chat model output. */
   taskReceipt?: {taskId:string|null;issueId:string;runId:string|null;requestEpoch:string|null;outcome:'succeeded'|'blocked'|'stopped';reportTiming:'now'|'on_completion'} }
 export type GroupRuntime = {
@@ -159,11 +161,11 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
         throw error
       }
     }
-    // A member's generation is recorded under its own reply's reference (group:<message>:<member>); routing and
-    // corrections the whole turn shares under group:<message> (lib/usage-turn-ref.ts).
-    const modelScope = <T>(work: () => Promise<T>, member?: { memberType?: string; id: string }) => {
+    // A generation is recorded under the reply it writes (group:<message>:<reply id>, the id the reply is published
+    // under); routing and corrections the whole turn shares under group:<message> (lib/usage-turn-ref.ts).
+    const modelScope = <T>(work: () => Promise<T>, replyId?: string) => {
       session.assertHeld()
-      const turnRef = groupTurnRef(root.messageId, member && { type: member.memberType ?? 'agent', id: member.id })
+      const turnRef = groupTurnRef(root.messageId, replyId)
       return hostedBillingScope.run({ workspaceId: root.workspaceId, ownerId: root.userId, ...(turnRef ? { turnRef } : {}) }, work)
     }
     messageId = root.messageId
@@ -250,14 +252,15 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
         generate: (agent, input) => untilStopped(stopped, { subscribe: stopPushed, reliable: !!stopPushed }, async signal => {
           session.assertHeld()
           input = { ...input, signal, attachmentContext: { userId: root.userId, conversationId } }
+          const replyId = randomUUID()
           const generate = async (value: typeof input) => {
             const eventId = `generate:${++generationCount}`
             await recordGroupTraceEvent(client, messageId!, { id: eventId, type: 'generate', memberId: agent.id })
             const reply = await trackGroupGeneration(generations, value.signal, () => runtime.generate(agent, value))
             if (addsNothing(reply.text) || !reply.text.trim()) await recordGroupTraceEvent(client, messageId!, { id: `silent:${eventId}`, type: 'silent', memberId: agent.id })
-            return reply
+            return { ...reply, messageId: replyId }
           }
-          if (agent.memberType !== 'bot') return modelScope(() => generate(input), agent)
+          if (agent.memberType !== 'bot') return modelScope(() => generate(input), replyId)
           const { withDatabaseClient } = await import('@/lib/db')
           return withDatabaseClient(client, async () => {
             let selected = selections.get(agent.id) ?? root.modelSelections?.[agent.id]
@@ -268,7 +271,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
               await client.query(`UPDATE group_turns SET "modelSelections"=jsonb_set("modelSelections",ARRAY[$2::text],$3::jsonb,true) WHERE "messageId"=$1`, [messageId, agent.id, JSON.stringify(selected)])
               selections.set(agent.id, selected!)
             }
-            return modelScope(() => generate({ ...input, modelRuntime: selected }), agent)
+            return modelScope(() => generate({ ...input, modelRuntime: selected }), replyId)
           })
         }),
         async status(id, outcome = 'succeeded') {
@@ -333,7 +336,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
             const unknown = reply.mentions.filter(mention => !current.some(a => a.id === mention))
             if (unknown.length) throw new UnknownMentionError(unknown)
             const { rows: positions } = await client.query('UPDATE conversations SET "lastPosition"="lastPosition"+1 WHERE id=$1 RETURNING "lastPosition"::text AS position', [conversationId])
-            await client.query(`INSERT INTO conversation_messages (id,"conversationId",position,"authorType","authorId",body,mentions,"replyToId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [randomUUID(), conversationId, positions[0].position, actor.memberType ?? 'agent', id, reply.text, JSON.stringify(reply.mentions.map(memberId => ({ memberType: current.find(a => a.id === memberId)?.memberType ?? 'agent', memberId }))), messageId])
+            await client.query(`INSERT INTO conversation_messages (id,"conversationId",position,"authorType","authorId",body,mentions,"replyToId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [reply.messageId ?? randomUUID(), conversationId, positions[0].position, actor.memberType ?? 'agent', id, reply.text, JSON.stringify(reply.mentions.map(memberId => ({ memberType: current.find(a => a.id === memberId)?.memberType ?? 'agent', memberId }))), messageId])
             await groupListChanged(client, conversationId)
             await groupChatChanged(client, conversationId)
             await recordGroupTraceEvent(client, messageId!, { id: `publish:${positions[0].position}`, type: 'publish', memberId: id, contentDigest: createHash('sha256').update(reply.text.trim()).digest('hex') })

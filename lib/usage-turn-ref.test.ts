@@ -13,7 +13,7 @@ test('a Bot chat turn reference is the id its saved reply carries', () => {
 test('references are plain ids or nothing', () => {
   assert.equal(groupTurnRef('8d6f6a6e-1b1d-4e8c-9a51-0b0d5f7e2a10'), 'group:8d6f6a6e-1b1d-4e8c-9a51-0b0d5f7e2a10')
   assert.equal(runTurnRef('r1', 't1'), 'run:r1:t1')
-  assert.equal(groupTurnRef('m1', { type: 'bot', id: 'b1' }), 'group:m1:bot-b1', 'a member reply in a group turn')
+  assert.equal(groupTurnRef('m1', 'r1'), 'group:m1:r1', 'a reply in a group turn')
   for (const bad of [eveTurnRef('', 't'), groupTurnRef('a b'), groupTurnRef("x'; drop"), runTurnRef('r', '')]) assert.equal(bad, null)
   assert.equal(isUsageTurnRef('thread:1'), false)
   assert.equal(isUsageTurnRef(`group:${'a'.repeat(401)}`), false)

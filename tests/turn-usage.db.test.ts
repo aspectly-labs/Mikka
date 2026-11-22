@@ -38,7 +38,7 @@ test('turn usage read', { skip: !dbUrl }, async t => {
   await receipt({ ref: bot, actor: owner, workspaceId: other.id, cost: 4_000, source: 'credits', tokens: [4, 4] })
   // Paid from the owner's shared personal credits for a team chat: the owner still sees it in the team.
   const personal = await seedWorkspace(pool, owner, [{ userId: owner, role: 'admin' }])
-  const shared = groupTurnRef(randomUUID(), { type: 'bot', id: randomUUID() })!
+  const shared = groupTurnRef(randomUUID(), randomUUID())!
   await receipt({ ref: shared, actor: owner, payer: personal.id, cost: 250, source: 'credits', tokens: [25, 2] })
   // A call that ran for the owner with no separate actor recorded.
   const ran = eveTurnRef(randomUUID(), 'turn_2')!
