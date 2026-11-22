@@ -105,3 +105,24 @@ test('prefetchSettingsSection gates admin-only reads and avoids eager danger-dia
   assert.equal(adminKeyNames.some(k => k.includes('credit-billing')), true)
   assert.equal(adminKeyNames.some(k => k.includes('settings:audit')), true)
 })
+
+test('profileRequest and shareWorkspaceSkill send WORKSPACE_SELECTION_HEADER matching workspaceId', async () => {
+  const { WORKSPACE_SELECTION_HEADER } = await import('@/lib/workspace-selection')
+  const { profileRequest, shareWorkspaceSkill } = await import('@/components/settings/factory-profiles-data')
+  const seenHeaders: Array<Record<string, string>> = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const raw = (init?.headers ?? {}) as Record<string, string>
+    seenHeaders.push(raw)
+    return new Response(JSON.stringify({ profiles: [], catalog: { models: [], skills: [] }, availability: {} }), { status: 200 })
+  }) as typeof fetch
+  try {
+    await profileRequest(workspaceId, 'GET')
+    await shareWorkspaceSkill(workspaceId, 'skill-1', true)
+    assert.equal(seenHeaders.length, 2)
+    assert.equal(seenHeaders[0][WORKSPACE_SELECTION_HEADER], workspaceId)
+    assert.equal(seenHeaders[1][WORKSPACE_SELECTION_HEADER], workspaceId)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
