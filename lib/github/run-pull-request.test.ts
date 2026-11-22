@@ -189,6 +189,14 @@ test('auto merge reports native refusal, wrong identity and changed head without
     [{ detailOverride: { head: { ...pr.head, sha: 'b'.repeat(40) } } }, 'branch_changed'],
   ] as const) {
     const { fetcher } = stub({ review: true, ...options })
+    if ('autoMerge' in options) {
+      const result = await openRunPullRequest({ ...input, autoMerge: true, verificationStatus: 'passed', fetcher })
+      assert.equal(result.url, pr.html_url)
+      assert.equal(result.state, 'open')
+      assert.equal(result.autoMergeEnabled, undefined)
+      assert.equal(result.autoMergeError, code)
+      continue
+    }
     await assert.rejects(openRunPullRequest({ ...input, autoMerge: true, verificationStatus: 'passed', fetcher }), { code })
   }
 })

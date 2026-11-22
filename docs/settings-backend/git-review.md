@@ -70,10 +70,11 @@ operation with `expectedHeadOid` and merge method `MERGE`. A verified,
 non-draft publication and the person's authorized GitHub credential are
 required. Factory runs must also satisfy the current candidate's existing
 independent-review and handoff evidence. While that review is pending, the
-existing publication workflow waits for its durable event. The server
-rechecks the live effective preference before asking GitHub. A confirmed
-request records `autoMergeRequestedAt`; an open PR remains open until GitHub
-actually merges it. GitHub branch protection still applies.
+existing publication workflow checks the persisted result on its retry schedule.
+The server rechecks the live effective preference before asking GitHub.
+An attempted request records `autoMergeRequestedAt`; a refusal does not
+discard the published PR. An open PR remains open until GitHub actually
+merges it. GitHub branch protection still applies.
 
 Turning `prAutoMerge` off prevents requests that have not yet been accepted
 by GitHub. It does not revoke an already accepted GitHub auto-merge request.

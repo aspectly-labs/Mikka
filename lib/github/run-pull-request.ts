@@ -237,6 +237,7 @@ export async function openRunPullRequest(options: Options & {
       return { url: pr.html_url, ...(pr.title ? { title: pr.title } : {}), state: 'draft', ...lines, ...review, ...(evidenceDigest ? { evidenceDigest } : {}) }
     }
     let autoMergeEnabled = false
+    let autoMergeError: PublicationErrorCode | undefined
     if (options.autoMerge && !pr.draft && pr.state === 'open' && !pr.merged_at) {
       if (!pr.node_id) throw new PublicationError('github_request_failed')
       const nodeId = pr.node_id
@@ -244,16 +245,21 @@ export async function openRunPullRequest(options: Options & {
         const latest = verified(await request(`${path}/pulls/${pr.number}`, writeToken))
         if (latest.node_id !== nodeId || latest.state !== 'open' || latest.draft || latest.merged_at) throw new PublicationError('pull_request_conflict')
         await assertHeadUnchanged(latest)
-        const enabled = parse(z.object({ data: z.object({ enablePullRequestAutoMerge: z.object({ pullRequest: z.object({ id: z.string(), autoMergeRequest: z.object({ enabledAt: z.string() }) }) }) }) }),
-          await request('/graphql', writeToken, { method: 'POST', body: {
-            query: 'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, expectedHeadOid: $head, mergeMethod: MERGE}) { pullRequest { id autoMergeRequest { enabledAt } } } }',
-            variables: { id: nodeId, head: options.commit },
-          } }))
-        if (enabled.data.enablePullRequestAutoMerge.pullRequest.id !== nodeId) throw new PublicationError('github_request_failed')
+        try {
+          const enabled = parse(z.object({ data: z.object({ enablePullRequestAutoMerge: z.object({ pullRequest: z.object({ id: z.string(), autoMergeRequest: z.object({ enabledAt: z.string() }) }) }) }) }),
+            await request('/graphql', writeToken, { method: 'POST', body: {
+              query: 'mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, expectedHeadOid: $head, mergeMethod: MERGE}) { pullRequest { id autoMergeRequest { enabledAt } } } }',
+              variables: { id: nodeId, head: options.commit },
+            } }))
+          if (enabled.data.enablePullRequestAutoMerge.pullRequest.id !== nodeId) throw new PublicationError('github_request_failed')
+          autoMergeEnabled = true
+        } catch (error) {
+          if (!(error instanceof PublicationError)) throw error
+          autoMergeError = error.code
+        }
       })
-      autoMergeEnabled = true
     }
-    return { url: pr.html_url, ...(pr.title ? { title: pr.title } : {}), state: pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open', ...lines, ...review, ...(evidenceDigest ? { evidenceDigest } : {}), ...(autoMergeEnabled ? { autoMergeEnabled } : {}) }
+    return { url: pr.html_url, ...(pr.title ? { title: pr.title } : {}), state: pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open', ...lines, ...review, ...(evidenceDigest ? { evidenceDigest } : {}), ...(autoMergeEnabled ? { autoMergeEnabled } : {}), ...(autoMergeError ? { autoMergeError } : {}) }
   }
   const enriched = async (raw: unknown): Promise<PublishedPullRequest> => {
     // The original POST/list is already a complete authority receipt. Never

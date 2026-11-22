@@ -29,7 +29,7 @@ let computerPermission: 'ask' | 'allow' = 'ask'
 const cloudClaimed=mock.fn(async(_pool:unknown,_owner:unknown,_run:string,_device:string,lease:Date)=>{currentRun.status='preparing';currentRun.leaseExpiresAt=lease;return {botId,ownerId:owner,display:':3',policyVersion:1,permission:computerPermission}})
 const publicationPolicy=defaultRunPolicy()
 publicationPolicy.permissions.git_push='allow'
-const publicationAssignment={pushBranch:'mikka/mik-42',policy:publicationPolicy}
+const publicationAssignment={pushBranch:'mikka/mik-42',policy:publicationPolicy,defaultDraft:false}
 // This suite owns claim routing and snapshot compatibility. Publication's real
 // ownership/approval/transaction behavior is exercised by its CI DB suite.
 const prepared=mock.fn(async(..._args:Parameters<typeof import('../run-publications').prepareRunPublication>)=>structuredClone(publicationAssignment))
@@ -549,7 +549,16 @@ test('a configured prefix preserves old native push delivery and is advertised t
     assert.equal(decoded.github?.branch,undefined)
    }
   }
- } finally {publicationAssignment.pushBranch='mikka/mik-42';overrideDeploymentSwitch('personalMailbox',undefined)}
+  publicationAssignment.defaultDraft=true
+  selectIndex=0
+  const draft=await request({[CUSTOM_TASK_BRANCH_HEADER]:'1'})
+  assert.equal(draft.status,200)
+  const draftBody=await draft.json()
+  assert.equal(draftBody.pushBranch,'team/changes/mik-42')
+  assert.equal(draftBody.github?.repository,'example/repo')
+  assert.equal(draftBody.github?.branch,undefined)
+  assert.equal(draftBody.defaultDraft,undefined)
+ } finally {publicationAssignment.pushBranch='mikka/mik-42';publicationAssignment.defaultDraft=false;overrideDeploymentSwitch('personalMailbox',undefined)}
 })
 
 test('a read-only local run gets no push branch and a read-only policy, but the owner\'s GitHub credential like any run', async () => {

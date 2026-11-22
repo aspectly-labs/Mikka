@@ -146,6 +146,11 @@ test('Factory public capture receipts bind the current producer and the acknowle
       await pool.query(`UPDATE run_publications SET status='published',"pullRequest"=$2 WHERE "runId"=$1`,
         [current.runId,JSON.stringify({url:'https://github.com/owner/repo/pull/77',evidenceDigest:receipt.digest})])
       assert.equal(await factoryPublicationEvidenceReady(pool,await task(current)),true)
+      await pool.query("UPDATE run_publications SET status='processing' WHERE \"runId\"=$1", [current.runId])
+      assert.equal(await factoryPublicationEvidenceReady(pool,await task(current)),false)
+      assert.equal(await factoryPublicationEvidenceReady(pool,await task(current),foreign.runId),false)
+      assert.equal(await factoryPublicationEvidenceReady(pool,await task(current),current.runId),true)
+      await pool.query("UPDATE run_publications SET status='published' WHERE \"runId\"=$1", [current.runId])
       await pool.query('UPDATE run_captures SET "issueId"=$2 WHERE id=$1',[current.captureId,foreign.issueId])
       await assert.rejects(prepare(current),refusal,'a saved receipt does not waive the current capture issue check')
       let written = false

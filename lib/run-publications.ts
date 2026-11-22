@@ -110,7 +110,7 @@ export async function prepareRunPublication(run: Pick<Run, 'id' | 'userId' | 'is
   // A run with a task branch delivers to it; the run uses its owner's own
   // GitHub credential, so nothing is approved here (decision 2026-11-02-1600).
   policy.permissions.git_push = row.branch ? 'allow' : 'deny'
-  return { ...(row.branch ? { pushBranch: row.branch } : {}), policy }
+  return { ...(row.branch ? { pushBranch: row.branch } : {}), policy, defaultDraft: row.defaultDraft }
 }
 
 /** Preserve concurrent task edits; result, history and inbox commit together. */
@@ -328,7 +328,7 @@ async function settlePublication(claim: Publication, result: { pullRequest?: Pub
       result = { ...result, errorCode: 'issue_unavailable' }
     }
     await tx.update(runPublications).set({ status: result.pullRequest ? 'published' : 'blocked', pullRequest: result.pullRequest ?? null, errorCode: result.errorCode ?? null, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date(),
-      ...(result.pullRequest?.autoMergeEnabled ? { autoMergeRequestedAt: new Date() } : {}) }).where(eq(runPublications.runId, claim.runId))
+      ...(result.pullRequest?.autoMergeEnabled || result.pullRequest?.autoMergeError ? { autoMergeRequestedAt: new Date() } : {}) }).where(eq(runPublications.runId, claim.runId))
     return true
   })
   const settled = await withRunWorkspace(claim.userId, stored?.workspaceId ?? null, () => settle(true))
@@ -347,6 +347,7 @@ async function withPublicationAuthority<T>(claim: Publication, work: (value: { p
     const client = await pool.connect()
     try { return await withDatabaseClient(client, () => db.transaction(tx => withDatabaseTransaction(tx, async () => {
     await tx.execute(sql`set local lock_timeout = '8s'`)
+    await lockFactoryCompletionTasks(client, claim.userId, claim.runId)
     const [task] = await tx.select().from(issues).where(eq(issues.id, claim.issueId)).for('update')
     const [run] = await tx.select().from(agentRuns).where(and(eq(agentRuns.id, claim.runId), eq(agentRuns.userId, claim.userId))).for('update')
     const [publication] = await tx.select().from(runPublications).where(and(eq(runPublications.runId, claim.runId), eq(runPublications.leaseToken, claim.leaseToken!))).for('update')
@@ -406,8 +407,8 @@ async function ownerGitHubCredential(userId: string, remoteKey: string, requireU
   }
 }
 
-/** The same durable publication workflow waits for the existing independent
- * check, then reclaims its original publication. No second queue or timer. */
+/** The durable publication workflow rechecks the saved independent review on
+ * its existing retry schedule, then reclaims the original publication. */
 async function automaticPublicationPending(runId: string): Promise<boolean> {
   const [hint] = await db.select({ userId: runPublications.userId, issueId: runPublications.issueId, workspaceId: agentRuns.workspaceId,
     autoMerge: runPublications.autoMerge, requested: runPublications.autoMergeRequestedAt }).from(runPublications)
@@ -417,6 +418,7 @@ async function automaticPublicationPending(runId: string): Promise<boolean> {
     return await withPublicationWorkspace(hint.userId, hint.workspaceId, async () => {
       const client = await pool.connect()
       try { return await withDatabaseClient(client, () => db.transaction(tx => withDatabaseTransaction(tx, async () => {
+        await lockFactoryCompletionTasks(client, hint.userId, runId)
         const [task] = await tx.select().from(issues).where(eq(issues.id, hint.issueId)).for('update')
         const [run] = await tx.select().from(agentRuns).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, hint.userId))).for('update')
         const [publication] = await tx.select().from(runPublications).where(eq(runPublications.runId, runId)).for('update')
@@ -477,7 +479,7 @@ export async function publishRunResult(runId: string, openPullRequest: OwnerPull
         return write()
       }) })
     if (visualEvidence && pullRequest.evidenceDigest !== visualEvidence.digest) throw new PublicationError('factory_public_evidence_required')
-    const done = await settlePublication(claim, { pullRequest })
+    const done = await settlePublication(claim, { pullRequest, errorCode: pullRequest.autoMergeError })
     if (done) await resumePublicationEvidenceHandoff(claim.userId, runId)
     return { done: done && !await automaticPublicationPending(runId) }
   } catch (error) {

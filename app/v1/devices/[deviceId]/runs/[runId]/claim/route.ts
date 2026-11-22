@@ -554,7 +554,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         ...(settings?.setup ? { setup: settings.setup } : {}),
         ...(settings?.networkAllow ? { networkAllow: settings.networkAllow } : {}) }).data : undefined
     return NextResponse.json({
-    ...publication,
+    ...(publication?.pushBranch ? { pushBranch: publication.pushBranch } : {}),
     acceptsModelObservations: true,
     ...(initialRepository ? { repo: initialRepository } : {}),
     // Profile Skills: the frozen pinned bodies for the owner's daemon and the
@@ -577,7 +577,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         // Released daemons only accept mikka/* in this optional field. They
         // still push a configured branch through the unchanged pushBranch
         // assignment and native publishRun, followed by server PR publication.
-        ...(publication?.pushBranch && ['implement', 'fix'].includes(current.kind) && !assignmentPolicy.readOnly &&
+        ...(publication?.pushBranch && !publication.defaultDraft && ['implement', 'fix'].includes(current.kind) && !assignmentPolicy.readOnly &&
           (request.headers.get(CUSTOM_TASK_BRANCH_HEADER) === '1' || /^mikka\/[a-z0-9-]+-[1-9][0-9]*$/.test(publication.pushBranch))
           ? { branch: publication.pushBranch } : {}) } } : {}),
     ...(run.agentDefinition?.model ? {model:run.agentDefinition.model} : {}),

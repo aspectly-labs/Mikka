@@ -31,7 +31,7 @@ export async function automaticMergeReadiness(tx: PoolClient, input: AutoMergeIn
   if (review?.status !== 'passed') return 'ineligible'
   try {
     await approvalEvidence(tx, task)
-    if (await factoryHandoffEvidenceError(tx, task)) return 'ineligible'
+    if (await factoryHandoffEvidenceError(tx, task, undefined, input.runId)) return 'ineligible'
   } catch (error) {
     if (!(error instanceof FactoryError)) throw error
     return 'ineligible'
