@@ -43,23 +43,23 @@ test('runtime version gates accept 22/24 and still reject 20 before any applicat
   }
 })
 
-test('CI installs, builds and starts both real runtimes without a daemon-only duplicate', () => {
+// CI runs Node 24 only (decision 2026-11-22-1430); the checks above still guard 22 in source.
+test('CI installs, builds and starts the real runtime on Node 24 only, without a daemon-only duplicate', () => {
   const compat = load('.github/workflows/local-device-node22.yml')
   assert(Object.hasOwn(compat.on, 'merge_group'))
   assert(!Object.hasOwn(compat.on, 'pull_request'))
   const job = compat.jobs['node22-unit']
-  assert.deepEqual(job.strategy.matrix.node, ['22', '24'])
+  assert.equal(job.strategy, undefined)
   const setup = job.steps.find(step => step.uses === './.github/actions/pnpm-install')
-  assert.equal(setup.with['node-version'], '${{ matrix.node }}')
+  assert.equal(setup.with['node-version'], 24)
   const commands = job.steps.map(step => step.run ?? '').join('\n')
   for (const command of ['pnpm build:app', 'node scripts/runtime-compatibility-smoke.mjs', 'pnpm test:eve', 'pnpm --filter @mikka/daemon test']) assert(commands.includes(command), command)
   const ci = load('.github/workflows/ui-policy.yml')
   for (const key of ['ui-policy-full', 'ui-policy-integrations', 'browser-tests-full']) {
     const job = ci.jobs[key]
-    assert.deepEqual(job.strategy.matrix.node, key === 'browser-tests-full'
-      ? ['22', '24']
-      : `\${{ github.event_name == 'pull_request' && github.base_ref == 'main' && fromJSON('["24"]') || fromJSON('["22","24"]') }}`, key)
-    assert.equal(job.steps.find(step => step.uses === './.github/actions/pnpm-install').with['node-version'], '${{ matrix.node }}')
+    assert.equal(job.strategy?.matrix?.node, undefined, key)
+    assert.doesNotMatch(job.name, /Node 22/, key)
+    assert.equal(job.steps.find(step => step.uses === './.github/actions/pnpm-install').with['node-version'], 24, key)
   }
   assert.equal(ci.jobs['browser-tests-full'].strategy.matrix.shard, '${{ fromJSON(needs.changes.outputs.db_matrix).shard }}')
   const action = load('.github/actions/pnpm-install/action.yml')
