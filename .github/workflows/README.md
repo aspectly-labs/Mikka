@@ -49,7 +49,8 @@ flow. The GitHub App installation token lets queue candidates trigger CI.
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
 Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
-checks that trusted selection succeeded and the deferred DB jobs skipped.
+checks that trusted selection succeeded and the deferred DB jobs skipped, with a visible
+“Database checks deferred to merge queue” summary and check notice when DB suites are selected.
 
 On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path

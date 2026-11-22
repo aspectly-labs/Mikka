@@ -504,6 +504,9 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           EXPECT_DB: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.db == 'true' }}
           DB_RESULT: ${{ needs.browser-tests-full.result }}
+          DB_SELECTED: ${{ needs.changes.outputs.db }}
+          DB_SUITES: ${{ needs.changes.outputs.db_suites }}
+          DB_MATRIX: ${{ needs.changes.outputs.db_matrix }}
         run: |
           test "$CHANGES_RESULT" = success
           case "$EXPECT_DB" in
@@ -511,7 +514,18 @@ jobs:
             false) test "$DB_RESULT" = skipped ;;
             *) exit 1 ;;
           esac
-          echo "Database gate: $DB_RESULT; complete inventory validated in Changed files." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DB_SELECTED" = true ] && [ "$EXPECT_DB" = false ]; then
+            message='Database checks deferred to merge queue'
+            if [ -n "$DB_SUITES" ]; then message="$message; suites: $DB_SUITES"; fi
+            if [ -n "$DB_MATRIX" ]; then
+              shards="$(node -e 'console.log(JSON.parse(process.env.DB_MATRIX).shard.length)')"
+              message="$message; shard count: $shards"
+            fi
+            printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            printf '::notice::%s\n' "$message"
+          else
+            echo "Database gate: $DB_RESULT; complete inventory validated in Changed files." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: always()
       - name: Record actual completed job timings
