@@ -5,8 +5,9 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execa } from 'execa'
 import {
-  CodingWorkspaceError, visibleWorkspacePath, workspaceReadCommand,
-  type WorkspaceReadCommand, type WorkspaceReadReceipt,
+  CodingWorkspaceError, visibleWorkspacePath, workspaceFileWriteResult, workspaceReadCommand,
+  WORKSPACE_MAX_FILE_BYTES,
+  type WorkspaceFileWriteResult, type WorkspaceReadCommand, type WorkspaceReadReceipt,
 } from '@mikka/protocol/coding-workspace'
 import {
   WORKSPACE_GIT_MAX_COMMITS, WORKSPACE_GIT_MAX_STATUS_ENTRIES, WORKSPACE_GIT_MAX_UNDO_BYTES, WORKSPACE_GIT_MAX_UNDO_FILES,
@@ -582,6 +583,109 @@ async function readCheckpointRestore(command: WorkspaceReadCommand, entry: Journ
   } catch (cause) { return failure(command, cause) } finally { await closeRoot(directory) }
 }
 
+function fileResult(identity: WorkspaceReadCommand['identity'], kind: 'file_saved' | 'file_renamed' | 'file_deleted',
+  operationId: string, headSha: string, path: string, newPath: string | null, after: GitWorkingFence, idempotent: boolean): WorkspaceFileWriteResult {
+  return workspaceFileWriteResult.parse({ ok: true, identity, kind, observedAt: new Date().toISOString(), availability: 'online',
+    revision: { source: 'working', headSha, baseSha: null, version: digest(JSON.stringify([headSha, path, newPath, after])) },
+    operationId, appliedAt: new Date().toISOString(), headSha, path, newPath, after, idempotent })
+}
+
+function expectedFenceMatches(observed: ObservedFile, expected: { exists: boolean; contentSha256: string | null
+  mode: '100644' | '100755' | null; workingVersion: string | null }) {
+  if (observed.exists !== expected.exists) return false
+  if (expected.exists && (observed.contentSha256 !== expected.contentSha256 || observed.mode !== expected.mode)) return false
+  if (expected.workingVersion !== null && observed.workingVersion !== expected.workingVersion) return false
+  return true
+}
+
+/** Editor-controlled file writes. The CAS fence is the file's own observed
+ * state: a concurrent Agent/PTY edit changes it and gets a 409, never a
+ * silent last-write-wins overwrite. Every byte crosses through the pinned
+ * parent descriptors — absolute paths never appear. */
+async function readWorkspaceFileWrite(command: WorkspaceReadCommand, entry: JournalEntry | undefined, repoPath: string): Promise<WorkspaceReadReceipt> {
+  let directory: FileHandle | undefined
+  try {
+    const opened = await openPinnedRoot(command, entry); directory = opened.directory
+    const request = opened.parsed.request
+    if (request.kind !== 'file_save' && request.kind !== 'file_rename' && request.kind !== 'file_delete')
+      throw new CodingWorkspaceError('workspace_invalid_request')
+    const signal = AbortSignal.timeout(opened.remaining), git = await guardedGit(repoPath, opened, signal)
+    const head = await headSha(git)
+    const observed = await observePath(opened.root, request.path, WORKSPACE_MAX_FILE_BYTES)
+    if (observed.unsafe) throw new CodingWorkspaceError('workspace_path_unavailable')
+    const expected = request.expected
+    const kind = request.kind === 'file_save' ? 'file_saved' : request.kind === 'file_rename' ? 'file_renamed' : 'file_deleted'
+    const applied: { idempotent: boolean; undo: GitUndoFile[] } = { idempotent: false, undo: [] }
+    if (request.kind === 'file_save') {
+      const bytes = request.encoding === 'utf8' ? Buffer.from(request.content, 'utf8') : Buffer.from(request.content, 'base64')
+      if (request.encoding === 'base64' && bytes.toString('base64') !== request.content)
+        throw new CodingWorkspaceError('workspace_invalid_request')
+      if (bytes.length > WORKSPACE_MAX_FILE_BYTES) throw new CodingWorkspaceError('workspace_unsupported')
+      const afterSha = digest(bytes), afterMode: Mode = observed.exists ? observed.mode! : (request.executable ? '100755' : '100644')
+      // A lost receipt may be retried: reaching the exact intended content is
+      // success, not a second write.
+      if (observed.exists && observed.contentSha256 === afterSha && observed.mode === afterMode) applied.idempotent = true
+      else {
+        if (!expectedFenceMatches(observed, expected)) throw conflict()
+        if (!observed.exists && !(await parentDirectoryExists(opened.root, request.path)))
+          throw new CodingWorkspaceError('workspace_path_unavailable')
+        await writePinnedFile(opened.root, request.path, bytes, afterMode === '100755',
+          observed.exists ? { fence: observed.fence } : { createOnly: true })
+      }
+      const after = await observePath(opened.root, request.path, WORKSPACE_MAX_FILE_BYTES)
+      if (!after.exists || after.contentSha256 !== afterSha || after.mode !== afterMode) throw conflict()
+      applied.undo = [{ path: request.path, existed: observed.exists, mode: observed.mode,
+        base64: observed.bytes?.toString('base64') ?? '', sha256: observed.contentSha256 ?? digest(''),
+        after: { exists: true, contentSha256: afterSha } }]
+      if ((await headSha(git)) !== head) throw conflict()
+      const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, null,
+        fenceOf(request.path, head, after), applied.idempotent)
+      return { result, files: [], ...(observed.exists && !observed.bytes && !applied.idempotent ? {} : { gitUndo: { files: applied.undo } }) }
+    }
+    if (request.kind === 'file_rename') {
+      const target = await observePath(opened.root, request.newPath, WORKSPACE_MAX_FILE_BYTES)
+      if (target.unsafe) throw new CodingWorkspaceError('workspace_path_unavailable')
+      // Replay: source gone, destination holding exactly the moved bytes.
+      if (!observed.exists && target.exists && expected.exists && target.contentSha256 === expected.contentSha256)
+        applied.idempotent = true
+      else {
+        if (!expectedFenceMatches(observed, expected)) throw conflict()
+        if (target.exists || !observed.exists) throw conflict()
+        if (!observed.bytes) throw new CodingWorkspaceError('workspace_unsupported')
+        if (!(await parentDirectoryExists(opened.root, request.newPath))) throw new CodingWorkspaceError('workspace_path_unavailable')
+        await writePinnedFile(opened.root, request.newPath, observed.bytes, observed.mode === '100755', { createOnly: true })
+        await deletePinnedFile(opened.root, request.path, observed.fence)
+      }
+      const after = await observePath(opened.root, request.newPath, WORKSPACE_MAX_FILE_BYTES)
+      if (!after.exists || (expected.exists && after.contentSha256 !== expected.contentSha256)) throw conflict()
+      applied.undo = [
+        { path: request.newPath, existed: false, mode: null, base64: '', sha256: digest(''),
+          after: { exists: true, contentSha256: after.contentSha256 } },
+        { path: request.path, existed: true, mode: observed.mode, base64: observed.bytes?.toString('base64') ?? '',
+          sha256: observed.contentSha256 ?? digest(''), after: { exists: false, contentSha256: null } }]
+      if ((await headSha(git)) !== head) throw conflict()
+      const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, request.newPath,
+        fenceOf(request.newPath, head, after), applied.idempotent)
+      return { result, files: [], ...(observed.bytes || applied.idempotent ? { gitUndo: { files: applied.undo } } : {}) }
+    }
+    // file_delete
+    if (!observed.exists) applied.idempotent = true
+    else {
+      if (!expectedFenceMatches(observed, expected)) throw conflict()
+      await deletePinnedFile(opened.root, request.path, observed.fence)
+    }
+    const after = await observePath(opened.root, request.path, WORKSPACE_MAX_FILE_BYTES)
+    if (after.exists) throw conflict()
+    applied.undo = [{ path: request.path, existed: observed.exists, mode: observed.mode,
+      base64: observed.bytes?.toString('base64') ?? '', sha256: observed.contentSha256 ?? digest(''),
+      after: { exists: false, contentSha256: null } }]
+    if ((await headSha(git)) !== head) throw conflict()
+    const result = fileResult(opened.parsed.identity, kind, request.operationId, head, request.path, null,
+      fenceOf(request.path, head, after), applied.idempotent)
+    return { result, files: [], ...(observed.bytes || applied.idempotent ? { gitUndo: { files: applied.undo } } : {}) }
+  } catch (cause) { return failure(command, cause) } finally { await closeRoot(directory) }
+}
+
 /** One receipt entry point for every Git command on the device. Read kinds
  * prove facts; write kinds re-check HEAD, exact content fences and the
  * confirmed preview before touching a single byte. */
@@ -596,6 +700,7 @@ export async function handleWorkspaceGitRequest(command: WorkspaceReadCommand, e
     case 'git_undo': return readWorkspaceUndo(command, entry, repoPath)
     case 'git_checkpoint_preview': return readCheckpointPreview(command, entry, repoPath)
     case 'git_checkpoint_restore': return readCheckpointRestore(command, entry, repoPath)
+    case 'file_save': case 'file_rename': case 'file_delete': return readWorkspaceFileWrite(command, entry, repoPath)
     default: return { result: { ok: false, code: 'workspace_invalid_request' }, files: [] }
   }
 }

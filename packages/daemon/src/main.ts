@@ -1085,7 +1085,7 @@ export class Daemon {
             if (!entry) return { result: { ok: false as const, code: 'workspace_checkout_unavailable' as const }, files: [] }
             return readWorkspaceDiffReceipt(request, entry, this.repository(entry.assignment).path)
           }
-          if (request.request.kind.startsWith('git_')) {
+          if (request.request.kind.startsWith('git_') || request.request.kind.startsWith('file_')) {
             if (!entry) return { result: { ok: false as const, code: 'workspace_checkout_unavailable' as const }, files: [] }
             return handleWorkspaceGitRequest(request, entry, this.repository(entry.assignment).path)
           }

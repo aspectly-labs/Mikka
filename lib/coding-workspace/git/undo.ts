@@ -41,7 +41,8 @@ async function mark(database: WorkspaceQuery, operationId: string, ownerId: stri
  * Undo unavailable instead of silently restoring masked text. */
 export async function retainGitUndo(database: WorkspaceQuery, request: WorkspaceReadRequest,
   receipt: WorkspaceReadReceipt, mask: Masker, ownerId: string) {
-  if (request.kind !== 'git_revert_apply' && request.kind !== 'git_checkpoint_restore') return
+  if (request.kind !== 'git_revert_apply' && request.kind !== 'git_checkpoint_restore'
+    && request.kind !== 'file_save' && request.kind !== 'file_rename' && request.kind !== 'file_delete') return
   const undo = receipt.gitUndo
   if (!undo) return mark(database, request.operationId, ownerId, 'none')
   if (!mask.sourcePolicy) return mark(database, request.operationId, ownerId, 'none')
