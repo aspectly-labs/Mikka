@@ -11,6 +11,7 @@ import { listComposioPages } from '@/lib/composio-pagination'
 import { assertCatalogToolkit, composioToolkitLister } from '@/lib/plugins/catalog'
 import { PluginError } from '@/lib/plugins/contracts'
 import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { freshSessionRoute } from '@/lib/fresh-session'
 
 /**
  * A Composio link from the desktop app: a one-time token naming the app's own
@@ -58,4 +59,5 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withRequestLog('/api/integrations/composio/connect/intent', handlePOST)
+// A credential flow: the session is read from the database, not the cookie cache.
+export const POST = freshSessionRoute(withRequestLog('/api/integrations/composio/connect/intent', handlePOST))
