@@ -155,7 +155,7 @@ export function createCoordinatorRegistry(userId: string, botId: string, scope?:
       inputSchema: z.object({ name: z.string().min(1).max(128), arguments: z.record(z.string(), z.unknown()) }).strict(),
       execute: input => {
         const request = options.taskEventId ?? options.sourceEventId
-        return steps.githubMcp(userId, input, scope, request ? { botId, sourceEventId: request } : undefined)
+        return request ? steps.githubMcp(userId, input, scope, { botId, sourceEventId: request }) : steps.githubMcp(userId, input, scope)
       },
     }),
     ...(computerEnabled ? {
