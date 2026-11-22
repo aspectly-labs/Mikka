@@ -7,13 +7,15 @@ import { randomUUID } from 'node:crypto'
 import test, { mock } from 'node:test'
 
 test('getDeletedIssue failure outcomes', async () => {
-  let failure: Error = new Error('unassigned')
+  let failure: Error | null = new Error('unassigned')
+  let workspaceFailure: Error | null = null
+  const issue = { id: randomUUID(), title: 'T', userId: 'u1', workspaceId: 'w1', content: { attrs: { mikka: { deletedAt: Date.now() } } } }
   mock.module('@/lib/issue-access', { namedExports: {
-    requireIssueAccess: async () => { throw failure },
-    requireIssueAccessWithoutBody: async () => { throw failure },
+    requireIssueAccess: async () => { if (failure) throw failure; return { issue, user: { id: 'u1' } } },
+    requireIssueAccessWithoutBody: async () => { if (failure) throw failure; return { issue, user: { id: 'u1' } } },
   } })
   mock.module('@/lib/issue-scope-authorization', { namedExports: {
-    requireCurrentIssueWorkspace: async () => {},
+    requireCurrentIssueWorkspace: async () => { if (workspaceFailure) throw workspaceFailure },
     requireLockedIssueScope: async () => { throw new Error('unused in this test') },
     withIssueWorkspace: async () => { throw new Error('unused in this test') },
   } })
@@ -26,6 +28,12 @@ test('getDeletedIssue failure outcomes', async () => {
 
   failure = new WorkspaceError('workspaceAccessDenied')
   assert.equal(await getDeletedIssue(randomUUID()), null, 'workspace denial maps to null')
+
+  // The denial can also come from the workspace recheck after issue access
+  // passed — it must map to null too, not escape as a 403.
+  failure = null
+  workspaceFailure = new WorkspaceError('workspaceAccessDenied')
+  assert.equal(await getDeletedIssue(randomUUID()), null, 'workspace-recheck denial maps to null')
 
   failure = new Error('database gone')
   await assert.rejects(getDeletedIssue(randomUUID()), /database gone/, 'transient failure rejects')
