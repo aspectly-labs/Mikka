@@ -498,6 +498,11 @@ test('a sent message that quotes a reply shows the quote above its words, and ev
   assert.match(container.textContent ?? '', /截图呢？/)
   assert.doesNotMatch(container.textContent ?? '', /> 首页/)
   assert.equal(container.querySelectorAll('[data-slot="message-actions"] [data-copy-state]').length, 2)
+  // The centred time over the group already shows when it was sent: the person's own line (with its time) waits for
+  // hover, as Capy's; the reply's line stays visible (#2922).
+  const lines = [...container.querySelectorAll('[data-slot="message-actions"]')]
+  assert.equal(lines.filter(line => line.className.includes('group-hover/message:opacity-100')).length, 1, 'only the person line is hover-only')
+  assert.ok(lines.find(line => line.querySelector('time'))?.className.includes('group-hover/message:opacity-100'), 'the line with the send time is the hover-only one')
 })
 
 
