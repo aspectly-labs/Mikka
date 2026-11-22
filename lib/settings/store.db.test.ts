@@ -103,6 +103,30 @@ dbTest('other-workspace members cannot read/write/reset; ordinary members cannot
   assert.equal((await schema.GET(request('schema'))).status, 200)
 })
 
+dbTest('personal and workspace routes resolve creation policy from their own defaults', async () => {
+  as(owner)
+  const workspacePath = `workspace/${workspaceId}`
+  const personalPath = `personal?workspaceId=${workspaceId}`
+  assert.equal((await workspace.PATCH(request(workspacePath, 'PATCH', patch({
+    newWorkVisibility: 'shared', allowPrivateNewWork: true,
+  })), context())).status, 200)
+  assert.equal((await personal.PATCH(request(personalPath, 'PATCH', patch({ newWorkVisibility: 'private' })))).status, 200)
+
+  const personalView = await personal.GET(request(personalPath))
+  assert.equal(personalView.status, 200)
+  assert.deepEqual((await personalView.json()).workCreation, {
+    configured: { value: 'private', source: 'personal' },
+    effectiveVisibility: 'private', privateAllowed: true, reason: 'configured',
+  })
+
+  const workspaceView = await workspace.GET(request(workspacePath), context())
+  assert.equal(workspaceView.status, 200)
+  assert.deepEqual((await workspaceView.json()).workCreation, {
+    configured: { value: 'shared', source: 'workspace' },
+    effectiveVisibility: 'shared', privateAllowed: true, reason: 'configured',
+  })
+})
+
 dbTest('typed values persist, inherit, reset, and mirror existing actions without separate field migrations', async () => {
   as(owner)
   const response = await workspace.PATCH(request(`workspace/${workspaceId}`, 'PATCH', patch({ archiveIdleAfterDays: 7, subagentMaxConcurrent: 9, threadTitleInstructions: 'team title' })), context())
