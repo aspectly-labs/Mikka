@@ -8,6 +8,8 @@ export async function appendGroupExchange(client: PoolClient, input: {
   sourceId: string; anchorId: string; ownerId: string; workspaceId: string
   senderId: string; recipientId: string; text: string; title: string; linkId?: string
   senderType?: 'agent' | 'bot'; recipientType?: 'agent' | 'bot'
+  /** The id chosen before the reply's generation, which its usage receipt names (lib/usage-turn-ref.ts). */
+  messageId?: string
 }): Promise<{ linkId: string }> {
   const pair = [{ id: input.senderId, type: input.senderType ?? 'agent' }, { id: input.recipientId, type: input.recipientType ?? 'agent' }]
     .sort((a, b) => `${a.type}:${a.id}`.localeCompare(`${b.type}:${b.id}`))
@@ -35,7 +37,7 @@ export async function appendGroupExchange(client: PoolClient, input: {
   }
   const position = (await client.query(`UPDATE conversations SET "lastPosition"="lastPosition"+1 WHERE id=$1 RETURNING "lastPosition"::text AS position`, [dmId])).rows[0].position
   await client.query(`INSERT INTO conversation_messages(id,"conversationId",position,"authorType","authorId",body) VALUES($1,$2,$3,$4,$5,$6)`,
-  [randomUUID(), dmId, position, input.senderType ?? 'agent', input.senderId, input.text])
+  [input.messageId ?? randomUUID(), dmId, position, input.senderType ?? 'agent', input.senderId, input.text])
   if (input.linkId && previous && BigInt(previous.lastPosition) + BigInt(1) === BigInt(position)) {
     await client.query(`UPDATE conversation_links SET "lastPosition"=$2,"messageCount"="messageCount"+1 WHERE id=$1 AND "anchorPosition"=$3`, [previous.id, position, anchor.position])
     return { linkId: previous.id }

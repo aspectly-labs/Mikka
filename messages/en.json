@@ -4189,7 +4189,8 @@
       "modelRejected": "Model request rejected",
       "quotaChecking": "Subscription usage unconfirmed",
       "runtimeUnavailable": "Subscription unsupported in this runtime",
-      "modelNotReported": "The cloud computer didn't report this model"
+      "modelNotReported": "The cloud computer didn't report this model",
+      "modelRequired": "No model set up — the request did not run"
     },
     "quota": {
       "used": "{name} quota used up",
@@ -8430,6 +8431,7 @@
       "quotaChecking": "Subscription limit being checked",
       "runtimeUnavailable": "This environment does not support that subscription",
       "modelNotReported": "The cloud computer did not report this model",
+      "modelRequired": "No model set up — the request did not run",
       "hostedQuotaUsed": "Mikka limit reached",
       "hostedPaused": "Mikka limit temporarily unavailable",
       "temporarilyUnavailable": "Temporarily unavailable",
@@ -9098,6 +9100,66 @@
     "subagentMaxConcurrent": {
       "label": "Concurrent subagents",
       "keywords": "agent|concurrency|limit"
+    },
+    "memoryAutoApprove": {
+      "label": "Auto-approve low-risk memories",
+      "keywords": "memory|approve|automatic"
+    },
+    "dndEnabled": {
+      "label": "Scheduled Do Not Disturb",
+      "keywords": "dnd|quiet hours|schedule|mute"
+    },
+    "dndStart": {
+      "label": "Do Not Disturb start",
+      "keywords": "dnd|quiet hours|start|time"
+    },
+    "dndEnd": {
+      "label": "Do Not Disturb end",
+      "keywords": "dnd|quiet hours|end|time"
+    },
+    "dndDays": {
+      "label": "Do Not Disturb days",
+      "keywords": "dnd|quiet hours|days|schedule"
+    },
+    "notifyMobileDecide": {
+      "label": "Mobile: Needs your decision",
+      "keywords": "mobile|phone|push|decision"
+    },
+    "notifyMobileReview": {
+      "label": "Mobile: Ready for review",
+      "keywords": "mobile|phone|push|review"
+    },
+    "notifyMobileFinished": {
+      "label": "Mobile: Thread finished",
+      "keywords": "mobile|phone|push|thread|finished"
+    },
+    "notifyMobileBriefing": {
+      "label": "Mobile: Daily briefing",
+      "keywords": "mobile|phone|push|briefing"
+    },
+    "notifyDesktopDecide": {
+      "label": "Desktop: Needs your decision",
+      "keywords": "desktop|notification|decision"
+    },
+    "notifyDesktopReview": {
+      "label": "Desktop: Ready for review",
+      "keywords": "desktop|notification|review"
+    },
+    "notifyDesktopFinished": {
+      "label": "Desktop: Thread finished",
+      "keywords": "desktop|notification|thread|finished"
+    },
+    "notifyDesktopBriefing": {
+      "label": "Desktop: Daily briefing",
+      "keywords": "desktop|notification|briefing"
+    },
+    "notifyEmailInvitations": {
+      "label": "Organization invitation emails",
+      "keywords": "email|invitation|organization"
+    },
+    "notificationSound": {
+      "label": "Notification sound",
+      "keywords": "sound|audio|tone|chime|mute"
     }
   }
 }

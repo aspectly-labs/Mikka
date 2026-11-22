@@ -4189,7 +4189,8 @@
       "modelRejected": "模型请求被拒绝",
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
-      "modelNotReported": "云电脑没报告能跑这个模型"
+      "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行"
     },
     "quota": {
       "used": "{name} 额度已用完",
@@ -8430,6 +8431,7 @@
       "quotaChecking": "订阅额度待确认",
       "runtimeUnavailable": "当前环境不支持此订阅",
       "modelNotReported": "云电脑没报告能跑这个模型",
+      "modelRequired": "尚未设置模型，请求未执行",
       "hostedQuotaUsed": "Mikka 额度已用完",
       "hostedPaused": "Mikka 额度暂时不可用",
       "temporarilyUnavailable": "暂时不可用",
@@ -9098,6 +9100,66 @@
     "subagentMaxConcurrent": {
       "label": "并发子 Agent 数量",
       "keywords": "子 Agent|并发|限制"
+    },
+    "memoryAutoApprove": {
+      "label": "自动审批低风险记忆",
+      "keywords": "记忆|自动审批|低风险"
+    },
+    "dndEnabled": {
+      "label": "定时免打扰",
+      "keywords": "免打扰|静音|排程"
+    },
+    "dndStart": {
+      "label": "免打扰开始时间",
+      "keywords": "免打扰|开始|时间"
+    },
+    "dndEnd": {
+      "label": "免打扰结束时间",
+      "keywords": "免打扰|结束|时间"
+    },
+    "dndDays": {
+      "label": "免打扰重复日期",
+      "keywords": "免打扰|日期|星期"
+    },
+    "notifyMobileDecide": {
+      "label": "手机推送：需要你决策",
+      "keywords": "手机|推送|决策"
+    },
+    "notifyMobileReview": {
+      "label": "手机推送：待审阅",
+      "keywords": "手机|推送|审阅"
+    },
+    "notifyMobileFinished": {
+      "label": "手机推送：线程完成",
+      "keywords": "手机|推送|线程完成"
+    },
+    "notifyMobileBriefing": {
+      "label": "手机推送：每日简报",
+      "keywords": "手机|推送|简报"
+    },
+    "notifyDesktopDecide": {
+      "label": "桌面通知：需要你决策",
+      "keywords": "桌面|通知|决策"
+    },
+    "notifyDesktopReview": {
+      "label": "桌面通知：待审阅",
+      "keywords": "桌面|通知|审阅"
+    },
+    "notifyDesktopFinished": {
+      "label": "桌面通知：线程完成",
+      "keywords": "桌面|通知|线程完成"
+    },
+    "notifyDesktopBriefing": {
+      "label": "桌面通知：每日简报",
+      "keywords": "桌面|通知|简报"
+    },
+    "notifyEmailInvitations": {
+      "label": "组织邀请邮件",
+      "keywords": "邮件|邀请|组织"
+    },
+    "notificationSound": {
+      "label": "通知提示音",
+      "keywords": "提示音|声音|静音"
     }
   }
 }
