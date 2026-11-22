@@ -3,16 +3,12 @@ name: App icon
 # The iOS app and the desktop app share one Icon Composer bundle
 # (apps/mobile/assets/icon.icon, copied to apps/desktop/build/icon.icon).
 # EAS compiles the iOS copy with Xcode's actool; electron-builder compiles the
-# desktop copy. This job compiles both the same way on a pull request, so a
+# desktop copy. This job compiles both the same way on a merge candidate, so a
 # broken bundle fails here, and renders each appearance with Icon Composer's
 # ictool for review (artifact `app-icon-previews`). macos-26: on macos-15,
 # Xcode 26.3's asset agent crashes when it renders a glass layer for macOS.
 on:
-  pull_request:
-    paths:
-      - 'apps/mobile/assets/icon.icon/**'
-      - 'apps/desktop/build/icon.icon/**'
-      - '.github/workflows/app-icon.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
