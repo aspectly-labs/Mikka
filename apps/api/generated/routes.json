@@ -1298,7 +1298,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "45cc6031b143bbe6bb232e9aec548f2b329327975eb678a9500b42d6875d9de0"
+      "sourceHash": "6f174ce90a8802618726381ffed9a568e3ea779c46886f619937bbc17b1378af"
     },
     {
       "path": "/mikka/api/integrations/composio/catalog",
@@ -1317,6 +1317,24 @@
         "GET"
       ],
       "sourceHash": "04fcf901514aec6e1f628cf12de3f60399c8395ca7224bc5369ac097bc1d3e65"
+    },
+    {
+      "path": "/mikka/api/integrations/composio/connect",
+      "template": "/api/integrations/composio/connect",
+      "source": "app/api/integrations/composio/connect/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "d5906384635905b99852b53ea487b09eaee36cab5fae1c0e9d24173cd960accc"
+    },
+    {
+      "path": "/mikka/api/integrations/composio/connect/intent",
+      "template": "/api/integrations/composio/connect/intent",
+      "source": "app/api/integrations/composio/connect/intent/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "24382ad52af3ae48f794a85340539cb415b3a5faf57555cb093dfdbd426db92c"
     },
     {
       "path": "/mikka/api/integrations/composio/credentials",
