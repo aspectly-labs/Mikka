@@ -211,6 +211,7 @@ export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[
   } else if (message.type === "user") {
     const content = message.message.content
     if (!Array.isArray(content)) return chunks
+    const planTask = createdTask(message, content)
     for (const block of content) {
       if (block.type !== "tool_result") continue
       const { text: output, truncated } = toolResultText(block.content)
@@ -226,6 +227,7 @@ export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[
               toolCallId: block.tool_use_id,
               output,
               ...(truncated ? { outputTruncated: true as const } : {}),
+              ...(planTask ? { planTask } : {}),
             },
       )
     }
@@ -307,6 +309,18 @@ function claudeProviderException(error: unknown): ProviderFailure | undefined {
     "PermissionDeniedError", "APIConnectionError", "APIConnectionTimeoutError", "APITimeoutError",
   ].includes(error.name)) return undefined
   return classifyProviderFailure(error)
+}
+
+/**
+ * The id TaskCreate gave its task (`tool_use_result.task.id`, the structured result the CLI keeps beside the text the
+ * model reads): only the id is kept, and only when the message answers one call, so it is that call's.
+ */
+function createdTask(message: { tool_use_result?: unknown }, content: readonly { type: string }[]): { id: string } | undefined {
+  if (content.filter(block => block.type === "tool_result").length !== 1) return undefined
+  const result = message.tool_use_result
+  const task = result && typeof result === "object" ? (result as { task?: unknown }).task : undefined
+  const id = task && typeof task === "object" ? (task as { id?: unknown }).id : undefined
+  return typeof id === "string" && id.length > 0 && id.length <= 64 ? { id } : undefined
 }
 
 function toolResultText(content: unknown): { text: string; truncated: boolean } {

@@ -90,7 +90,7 @@ const STEP_KINDS: Record<Exclude<ThreadStepKind, 'other'>, readonly string[]> = 
   edit: ['edit', 'multiedit', 'write', 'notebookedit', 'apply_patch', 'delete', 'move', 'write_file', 'edit_file', 'str_replace'],
   web: ['webfetch', 'websearch', 'web_search', 'fetch'],
   delegate: ['task', 'agent'],
-  todo: ['todowrite', 'update_plan'],
+  todo: ['todowrite', 'update_plan', 'taskcreate', 'taskupdate'],
 }
 const STEP_KIND_OF = new Map(Object.entries(STEP_KINDS).flatMap(([kind, names]) => names.map(name => [name, kind as ThreadStepKind])))
 
