@@ -638,7 +638,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         const { lockNativeMcpAuthority } = await import('@/lib/plugins/workspace-mcp')
         await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
       } catch (error) {
-        if (!(error instanceof PluginError)) throw new McpValidationError(error)
+        if (!(error instanceof PluginError)) throw new McpValidationError('connection_lock', error)
         if (error.code !== 'mcpUnavailable') return false
         throw error
       }
@@ -659,7 +659,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   }).catch((error: unknown) => {
     if (error instanceof McpValidationError || error instanceof ExecutionMcpAuthorityError || error instanceof PluginError && error.code === 'mcpUnavailable') {
       const failure = new CodedError('mcpUnavailable', { cause: error })
-      logCodedError(failure, { runId })
+      logCodedError(failure, { runId, detail: error instanceof McpValidationError ? error.stage : undefined })
       return failPreparingClaim(failure, 'MCP configuration unavailable.', new CodedError('run_mcp_unavailable'),
         error instanceof McpValidationError ? { stopReason: 'error', error: 'mcpUnavailable' } : undefined)
     }

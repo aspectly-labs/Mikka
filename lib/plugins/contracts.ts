@@ -7,7 +7,9 @@ export class PluginError extends Error {
 }
 
 export class McpValidationError extends Error {
-  constructor(cause: unknown) { super('MCP validation failed', { cause }); this.name = 'McpValidationError' }
+  constructor(readonly stage: 'identity_validation' | 'connection_lock', cause: unknown) {
+    super('MCP validation failed', { cause }); this.name = 'McpValidationError'
+  }
 }
 
 // User-provided MCP servers receive only their explicitly saved credential.

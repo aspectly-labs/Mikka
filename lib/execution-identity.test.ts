@@ -60,7 +60,7 @@ test('an MCP database failure is not converted into an identity denial', async (
   ] }
   const failure = new Error('synthetic MCP database fault')
   f.mcp.queryError = failure
-  await assert.rejects(f.freeze, error => error instanceof McpValidationError && error.cause === failure)
+  await assert.rejects(f.freeze, error => error instanceof McpValidationError && error.stage === 'identity_validation' && error.cause === failure)
 })
 
 test('resource ownership is distinct from the Bot owner and explicit sharing is mandatory', async () => {

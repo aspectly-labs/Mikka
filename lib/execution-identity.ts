@@ -61,7 +61,7 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
   if (definition.customMcp) {
     if (definition.customMcp.workspaceId !== workspaceId) return denied()
     const authority = await (await import('./plugins/workspace-mcp')).validateMcpAuthority(query, run.userId, definition.customMcp, membership).catch(error => {
-      if (!(error instanceof PluginError)) throw new McpValidationError(error)
+      if (!(error instanceof PluginError)) throw new McpValidationError('identity_validation', error)
       if (error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
       throw new ExecutionIdentityError({ cause: error })
     })
