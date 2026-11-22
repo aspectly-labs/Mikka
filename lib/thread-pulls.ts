@@ -115,18 +115,24 @@ export async function drainThreadPullMergeIntents(database: Pick<Pool, 'query'>,
   const deps = pullMergeDependencies(budget)
   const results: ThreadPullMergeResult[] = []
   for (const intent of rows) {
+    // A cancel can land between the SELECT and the merge: atomically confirm
+    // the intent is still armed before calling the provider.
+    const { rows: armed } = await database.query<{ id: string }>(
+      `UPDATE thread_pull_merge_intents SET "updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 AND state='armed' RETURNING id`,
+      [intent.id, ownerId])
+    if (!armed.length) continue
     const outcome = await mergePullRequest(ownerId, {
       repo: intent.repo, number: intent.number,
       expectedHeadSha: intent.headSha, confirmFailedChecks: intent.confirmFailedChecks,
     }, deps)
     if (outcome.kind === 'merged') {
       await database.query(
-        `UPDATE thread_pull_merge_intents SET state='merged',"mergeCommitSha"=$3,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2`,
+        `UPDATE thread_pull_merge_intents SET state='merged',"mergeCommitSha"=$3,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 AND state='armed'`,
         [intent.id, ownerId, outcome.mergeCommitSha])
       results.push({ repo: intent.repo, number: intent.number, outcome: 'merged', code: outcome.mergeCommitSha })
     } else if (outcome.kind === 'refused' && TERMINAL_REFUSALS.has(outcome.code)) {
       await database.query(
-        `UPDATE thread_pull_merge_intents SET state='failed',"failCode"=$3,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2`,
+        `UPDATE thread_pull_merge_intents SET state='failed',"failCode"=$3,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 AND state='armed'`,
         [intent.id, ownerId, outcome.code])
       results.push({ repo: intent.repo, number: intent.number, outcome: 'failed', code: outcome.code })
     } else {
