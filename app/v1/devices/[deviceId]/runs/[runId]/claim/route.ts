@@ -568,6 +568,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     kind: current.kind, leaseExpiresAt, policyRevision: cliPolicy.revision,
     ...(runTestFixture(harness) ? { fixture: runTestFixture(harness) } : {}),
     ...(verifyCommand ? { verifyCommand } : {}),
+    ...(cliPolicy.gitIdentity ? { gitIdentity: cliPolicy.gitIdentity } : {}),
     ...(mcp ? { mcp } : {}),
     // The owner's GitHub credential is ready for git and gh, including
     // read-only runs. The endpoint is retained for natural-expiry refresh.

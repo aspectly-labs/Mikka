@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { gitAuthorEmailSchema, gitAuthorNameSchema } from '@mikka/protocol/device'
 import type { ResolvedSetting, SettingSchemaEntry, SettingScope, SettingValue } from '@mikka/protocol/settings'
 import { archiveIdleDays } from '@/lib/conversation-directory-input'
 import { DEFAULT_TITLE_TRIGGERS, THREAD_TITLE_TRIGGERS, TITLE_INSTRUCTIONS_MAX } from '@/lib/thread-title'
@@ -139,6 +140,18 @@ export const SETTINGS_REGISTRY = {
     ...personalAccount, key: 'altEnterAction', group: 'interface', page: 'preferences',
     ...settingMetadata('altEnterAction'),
     type: 'string', guard: z.enum(RUN_KEY_ACTIONS), defaultValue: DEFAULT_UI.altEnterAction, options: [...RUN_KEY_ACTIONS],
+  },
+  gitAuthorName: {
+    ...inherited, key: 'gitAuthorName', group: 'git', page: 'git',
+    ...settingMetadata('gitAuthorName'),
+    type: 'string', guard: gitAuthorNameSchema, defaultValue: '',
+    personalContext: 'workspace',
+  },
+  gitAuthorEmail: {
+    ...inherited, key: 'gitAuthorEmail', group: 'git', page: 'git',
+    ...settingMetadata('gitAuthorEmail'),
+    type: 'string', guard: gitAuthorEmailSchema, defaultValue: '',
+    personalContext: 'workspace',
   },
   subagentMaxConcurrent: {
     key: 'subagentMaxConcurrent', scope: ['workspace'], group: 'threads', page: 'threads',

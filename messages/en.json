@@ -9229,6 +9229,14 @@
       "label": "Option/Alt + Enter while running",
       "keywords": "shortcut|alt|enter|steer|interrupt|queue"
     },
+    "gitAuthorName": {
+      "label": "Commit author name",
+      "keywords": "git|commit|author|name"
+    },
+    "gitAuthorEmail": {
+      "label": "Commit author email",
+      "keywords": "git|commit|author|email"
+    },
     "subagentMaxConcurrent": {
       "label": "Concurrent subagents",
       "keywords": "agent|concurrency|limit"

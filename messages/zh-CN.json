@@ -9229,6 +9229,14 @@
       "label": "运行中按 ⌥ / Alt + Enter",
       "keywords": "快捷键|Alt|Enter|引导|中断|队列"
     },
+    "gitAuthorName": {
+      "label": "提交作者",
+      "keywords": "提交|作者|姓名|git"
+    },
+    "gitAuthorEmail": {
+      "label": "提交邮箱",
+      "keywords": "提交|作者|邮箱|git"
+    },
     "subagentMaxConcurrent": {
       "label": "并发子 Agent 数量",
       "keywords": "子 Agent|并发|限制"
