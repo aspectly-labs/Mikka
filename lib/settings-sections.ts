@@ -6,7 +6,7 @@
 export type SettingsSectionId =
   | 'account' | 'security' | 'preferences' | 'notifications' | 'memory' | 'connections' | 'bot-permissions' | 'models'
   | 'logins' | 'privacy' | 'computers' | 'developer'
-  | 'general' | 'issue-states' | 'members' | 'teams' | 'permissions' | 'secrets' | 'environments' | 'audit' | 'organization' | 'usage' | 'billing' | 'cloud'
+  | 'general' | 'issue-states' | 'members' | 'teams' | 'permissions' | 'secrets' | 'environments' | 'audit' | 'organization' | 'usage' | 'billing' | 'cloud' | 'team-skills'
 
 export interface SettingsSectionDef {
   id: SettingsSectionId
@@ -37,13 +37,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
   { id: 'logins', group: 'personal', title: 'Secrets and logins' },
   { id: 'privacy', group: 'personal', title: 'Data and privacy' },
   { id: 'computers', group: 'personal', title: 'Devices' },
-  // Hidden until an API accepts the tokens (Alex); the UI and token store are built. Delete `unbuilt` to ship it.
-  { id: 'developer', group: 'personal', title: 'Personal access tokens', unbuilt: true },
+  { id: 'developer', group: 'personal', title: 'Personal access tokens' },
   { id: 'general', group: 'workspace', title: 'General' },
   // Capy's Issue states (decision 2026-11-19-2115): members read them, admins edit them.
   { id: 'issue-states', group: 'workspace', title: 'Issue states' },
   // The workspace's app access and run policy, inherited by every Bot (decisions 2026-10-31, 2026-11-10).
   { id: 'bot-permissions', group: 'workspace', title: 'App & run permissions' },
+  { id: 'team-skills', group: 'workspace', title: 'Team skills' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
   { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true },
@@ -105,6 +105,6 @@ export function settingsHref(id: SettingsSectionId, workspaceId?: string): strin
  */
 export const TEAM_ONLY_SECTIONS: ReadonlySet<SettingsSectionId> = new Set(['members', 'teams', 'permissions', 'audit'])
 
-export function visibleSettingsSections({ admin, personal = false, billing = true, cloudAdmin = false, organization = false }: { admin: boolean; personal?: boolean; billing?: boolean; cloudAdmin?: boolean; /** A UI layer draws 组织. */ organization?: boolean }): SettingsSectionDef[] {
-  return SETTINGS_SECTIONS.filter(s => !s.unbuilt && (admin || !s.adminOnly) && !(personal && TEAM_ONLY_SECTIONS.has(s.id)) && (billing || s.id !== 'billing') && (cloudAdmin || s.id !== 'cloud') && (organization || s.id !== 'organization'))
+export function visibleSettingsSections({ admin, personal = false, billing = true, cloudAdmin = false, organization = false, memory = false }: { admin: boolean; personal?: boolean; billing?: boolean; cloudAdmin?: boolean; /** A UI layer draws 组织. */ organization?: boolean; /** The `memory` PostHog flag (gatedFeatures.memory) is on. */ memory?: boolean }): SettingsSectionDef[] {
+  return SETTINGS_SECTIONS.filter(s => !s.unbuilt && (admin || !s.adminOnly) && !(personal && TEAM_ONLY_SECTIONS.has(s.id)) && (billing || s.id !== 'billing') && (cloudAdmin || s.id !== 'cloud') && (organization || s.id !== 'organization') && (memory || s.id !== 'memory'))
 }

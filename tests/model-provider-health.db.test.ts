@@ -33,7 +33,6 @@ test('provider health persists across dispatches without changing credential own
     await pool.query('DELETE FROM model_api_keys WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId"=ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM agents WHERE "userId"=ANY($1)', [users])
     await pool.query('DELETE FROM devices WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM bots WHERE "ownerId"=ANY($1)', [users])

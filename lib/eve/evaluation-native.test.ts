@@ -68,6 +68,8 @@ test('Agent Kit evaluations run through compiled public Eve sessions with inert 
  if(toolResults.length===0)return{toolCalls:[{name:lastUserMessage==='native-blocked'?'agent':'web_search',input:lastUserMessage==='native-blocked'?{message:'Forbidden dispatch'}:{query:'Acme Example 1.0'}}]};
  return{toolCalls:[{name:'eve__reply',input:{text:messages.some(m=>m.text.includes('Candidate guidance'))?'Candidate: 2026-01-15':'Baseline: 2026-01-15',outcome:lastUserMessage==='native-blocked'?'blocked':'answered'}}]}}})}}`
  await writeFile(join(fixture,'lib/abuse/workflow-model.ts'),modelSource)
+ // The turn reference the Bot model records (lib/usage-turn-ref.ts) is real code, not a boundary.
+ await writeFile(join(fixture,'lib/usage-turn-ref.ts'),await readFile(join(root,'lib/usage-turn-ref.ts')))
  await writeFile(join(fixture,'lib/subscription-workflow-model.ts'),`import{HostedWorkflowModel}from'./abuse/workflow-model';export class SubscriptionWorkflowModel extends HostedWorkflowModel{constructor(frozen){if(frozen.type!=='subscription'||frozen.route!=='codex_cpa'||frozen.connectionRevision!==7)throw Error('Frozen subscription mismatch');super(frozen.ownerId,frozen.consumerId,frozen.modelId)}}`)
  // Imports in unused normal branches are resolved at build time, and remain forbidden.
  await mkdir(join(fixture,'lib/coordinator'),{recursive:true})

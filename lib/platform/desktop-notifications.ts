@@ -1,6 +1,8 @@
 import { workspaceLink } from '@/components/workspace/workspace-navigation'
 import type { TaskRun } from '@/app/actions/task-runs'
 import type { DecisionAnswer, DecisionQuestion } from '@/lib/coordinator/decision'
+import { inDndWindow, type ChannelCategoryOverrides, type DndSchedule } from '@/lib/push-allowed'
+import type { PushReason } from '@/lib/push-reasons'
 
 export type DesktopRun = Pick<TaskRun, 'issueId' | 'runId' | 'issueTitle' | 'agentName' | 'status'>
 export type DesktopNotification = {
@@ -56,6 +58,40 @@ export function desktopRunUpdate(previous: Map<string, DesktopRun['status']> | n
 // switch before asking; no answer shows nothing (the Dock badge still counts 等你).
 
 export interface DesktopCandidate { id: string; kind: DesktopNotification['kind']; title: string; agent: string }
+
+export function desktopCandidateReason(kind: DesktopCandidate['kind']): PushReason {
+  return kind === 'finished' ? 'finished' : 'decide'
+}
+
+export interface DesktopCandidateFilterOptions {
+  dnd?: DndSchedule
+  timeZone?: string | null
+  now?: Date
+  overrides?: ChannelCategoryOverrides
+  legacyDecide?: boolean | null
+  finishedAllowed?: boolean
+}
+
+/**
+ * Filters desktop notification candidates against scheduled DND and per-channel
+ * `notifyDesktop*` overrides (falling back to legacy `user_preferences.push*`).
+ */
+export function filterDesktopCandidates(
+  candidates: readonly DesktopCandidate[],
+  options: DesktopCandidateFilterOptions,
+): DesktopCandidate[] {
+  if (!candidates.length) return []
+  if (options.dnd && inDndWindow(options.dnd, options.timeZone, options.now)) return []
+  const decideAllowed = typeof options.overrides?.decide === 'boolean'
+    ? options.overrides.decide
+    : (options.legacyDecide ?? true)
+  return candidates.filter(candidate => {
+    if (candidate.kind === 'finished') {
+      return options.finishedAllowed ?? true
+    }
+    return decideAllowed
+  })
+}
 
 export function desktopNotifyQuestions(candidates: readonly DesktopCandidate[]): DecisionQuestion[] {
   return candidates.map((candidate, index) => ({

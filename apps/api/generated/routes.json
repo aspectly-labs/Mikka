@@ -2680,7 +2680,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "88a662aff5c2d9a65aca2081852ad3dfc7f4b5ee6adb99bd20ef5acb4fdfe0ee"
+      "sourceHash": "44f83043a23e9ff10f8038ddad31e2b811d972ebda801cfae3c5b829067b338c"
     },
     {
       "path": "/mikka/api/skills",
@@ -3602,7 +3602,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "121fa3cfb05e49fef05589beea162a9dd61603a6b821f1ed187ac693a4c00354"
+      "sourceHash": "6ffe94b724e974e4c32e5646583bae46d1410f7582ebc247255d67b98b3ae371"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
