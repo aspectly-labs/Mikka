@@ -140,3 +140,18 @@ test('the pending Coordinator chip follows the authenticated read cache across a
     await act(async () => root.unmount())
   }
 })
+
+test('a row says why it cannot run, else its price on Mikka 额度 only; its tooltip names the route (Figma 1318:71)', async () => {
+  const { modelRowEnd, modelRouteTitle } = await import('../hooks/use-bot-model-picker')
+  const t = ((key: string, values?: Record<string, string>) => values ? `${key}(${Object.values(values).join(',')})` : key) as never
+  const credits = { source: 'credits' as const, connectionId: null, label: '' }
+  assert.equal(modelRowEnd(t, { route: credits, price: { input: 3, output: 15 } }), '$3 / $15')
+  assert.equal(modelRowEnd(t, { route: credits, price: { input: 0, output: 0 } }), 'route.free')
+  assert.equal(modelRowEnd(t, { route: { source: 'subscription', connectionId: 'c', label: 'Max' }, price: { input: 3, output: 15 } }), null, 'a subscription row has no price')
+  assert.equal(modelRowEnd(t, { route: { source: 'byok', connectionId: 'k', label: '····1234' } }), null, 'a key row has no price')
+  assert.equal(modelRowEnd(t, { route: credits, price: { input: 3, output: 15 }, unavailable: { reason: 'points' } }), 'route.noCredits')
+  assert.equal(modelRowEnd(t, { route: { source: 'subscription', connectionId: 'c', label: 'Max' }, unavailable: { reason: 'quota', resetsAt: null } }), 'route.usedUp')
+  assert.match(modelRowEnd(t, { unavailable: { reason: 'quota', resetsAt: '2099-01-01T15:00:00.000Z' } }) ?? '', /^route\.usedUntil\(/)
+  assert.equal(modelRouteTitle(t, { kind: 'hosted', options: [] }), 'route.via(creditsGroup)')
+  assert.equal(modelRouteTitle(t, { kind: 'apiKey', credentialLabel: 'Mine ····1234', options: [] }), 'route.via(apiKey · Mine ····1234)')
+})

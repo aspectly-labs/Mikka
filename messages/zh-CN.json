@@ -4272,7 +4272,7 @@
       "metered": "按量",
       "shared": "团队成员分享的",
       "sharedKey": "{name}的 Key",
-      "manage": "管理模型与订阅",
+      "manage": "管理模型和连接",
       "unavailable": "不可用",
       "notSaved": "未保存",
       "unknownModel": "未知模型",
@@ -4294,6 +4294,14 @@
         "ownProvider": "用这台服务器自带的服务商",
         "usedUntil": "{service} 订阅到 {time} 前用完了",
         "usedUp": "{service} 订阅额度用完了"
+      },
+      "route": {
+        "via": "通过「{label}」运行",
+        "favorites": "常用",
+        "free": "免费",
+        "usedUntil": "额度用完，{time} 恢复",
+        "usedUp": "用量已达上限",
+        "noCredits": "Mikka 额度已用完"
       }
     },
     "empty": "告诉 {name} 你要做什么",
