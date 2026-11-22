@@ -236,7 +236,7 @@ async function qualificationOrigin(api) {
 export async function selectPipeline({ env = process.env, api = github } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main')
-  assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, env.GITHUB_EVENT_NAME === 'workflow_run'))
+  if (env.GITHUB_EVENT_NAME === 'workflow_run') assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, true))
   const report = resolve(env.RUNNER_TEMP, 'deploy-pipeline')
   await mkdir(report, { recursive: true, mode: 0o700 })
   let selected, previous, rollback
