@@ -30,78 +30,12 @@ on:
         description: SHA256 of the reviewed hosted policy with only the 120-second model call budget change
         type: string
         required: false
-  pull_request:
-    paths:
-      - 'apps/eve/**'
-      - 'lib/eve/**'
-      - 'packages/eve-cloudflare-world/**'
-      - 'cloudflare/eve-runtime/**'
-      - 'scripts/build-eve.mjs'
-      - 'scripts/check-eve-image.sh'
-      - 'scripts/verify-eve-image*.mjs'
-      - 'lib/abuse/model.ts'
-      - 'lib/abuse/model.test.ts'
-      - 'lib/abuse/policy.ts'
-      - 'scripts/package-cf-eve-host.mjs'
-      - 'scripts/build-cloudflare-eve-image.sh'
-      - 'scripts/compile-cloudflare-eve-host.sh'
-      - 'patches/@fantasticfour*'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/cloudflare-eve-image.yml'
 permissions:
   contents: read
 env:
   MIKKA_PRIVATE_GITHUB_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
   MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
 jobs:
-  image:
-    # All PRs retain their existing credential-free qualification. The
-    # protected Registry producer is allowed to run only on real main pushes.
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      NITRO_PRESET: node-server
-      WORKFLOW_TARGET_WORLD: '@workflow/world-postgres'
-      NODE_OPTIONS: --max-old-space-size=6144
-      MIKKA_BUILD_REVISION: ${{ github.sha }}
-      # Ordinary qualification builds the public server resources.
-      # Manual publication restores resources from the accepted official API image.
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/pnpm-install
-        with:
-          skip-electron: 'true'
-      - name: Bind the existing release format
-        run: echo "MIKKA_DEPLOYMENT_ID=$(node lib/deployment-id.mjs)" >> "$GITHUB_ENV"
-      - name: Check, build and verify the local Eve image
-        run: pnpm check:eve-image
-      # The business API publisher consumes this existing World artifact.
-      - name: Bundle the private World authority from the locked public source
-        env:
-          WRANGLER_SEND_METRICS: 'false'
-        run: |
-          set -euo pipefail
-          world="$RUNNER_TEMP/eve-world"
-          pnpm exec wrangler deploy --dry-run --config packages/eve-cloudflare-world/wrangler.jsonc --outdir "$world"
-          artifact="$RUNNER_TEMP/eve-world-artifact"
-          mkdir -p "$artifact/modules"
-          cp -a "$world/." "$artifact/modules/"
-          rm -f "$artifact/modules/README.md"
-          cd "$artifact"
-          find modules -type f -print -quit | grep -q .
-          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > source.txt
-          find modules -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
-          sha256sum source.txt >> SHA256SUMS
-          sha256sum --check --status SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: eve-world-authority-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/eve-world-artifact/
-          if-no-files-found: error
-          retention-days: 1
   publish:
     permissions:
       contents: read

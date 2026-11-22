@@ -190,10 +190,12 @@ test('the unified service producer retains the existing image qualification gate
   const conversion = await readFile(new URL('../deploy/litellm/conversion-check.sh', import.meta.url), 'utf8')
   assert.ok(conversion.includes("grep -qx '# pass 7'"))
   assert.ok(conversion.includes("grep -qx '# skipped 0'"))
+  const candidate = await readFile(new URL('../.github/workflows/ci-merge-candidate.yml', import.meta.url), 'utf8')
   for (const name of ['cloudflare-eve-image.yml', 'cloudflare-task-sandbox.yml', 'cloudflare-litellm-image.yml']) {
     const workflow = await readFile(new URL('../.github/workflows/' + name, import.meta.url), 'utf8')
-    const automatic = workflow.slice(workflow.indexOf('\njobs:'), workflow.indexOf('  publish:'))
-    assert.ok(automatic.includes("if: github.event_name == 'pull_request'"), 'every PR keeps its original qualification: ' + name)
+    const job = name.replace('.yml', '')
+    const automatic = candidate.split(`\n  ${job}:\n`)[1]?.split(/\n  [a-z][a-z-]*:/)[0]
+    assert.ok(automatic?.includes(`needs.paths.outputs.${job} == 'true'`), name + ' must qualify the affected merge candidate')
     for (const authority of ['secrets.', 'id-token: write', 'environment: cloudflare-runtime-release']) assert.ok(!automatic.includes(authority), name + ' must remain credential-free')
     assert.ok(workflow.includes('  workflow_dispatch:'))
     assert.ok(!workflow.slice(0, workflow.indexOf('\npermissions:')).includes('  push:'), 'main builds have one producer: ' + name)
