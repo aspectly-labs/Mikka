@@ -710,10 +710,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
                       return run?.kind === 'run' ? <ThreadCard key={id} run={run} onOpen={showThread} onOpenTask={openTask} /> : null
                     })}</>,
       // Copy and the pages it cites, on one line under the reply, always there and quiet (R-83 revised 2026-11-10).
-      actions: item.text && !(live && live.committedThrough === undefined) && <MessageActions className={cn('-mt-1 items-start', REPLY_ACTIONS)}>
-                      <CopyAction text={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text} />
+      actions: item.text && !(live && live.committedThrough === undefined) && <ReplyActions at={item.createdAt ? Date.parse(item.createdAt) : undefined}
+                      copyText={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text}
+                      onQuote={item.from === 'coordinator' ? quoteReply : undefined}>
                       {item.from === 'coordinator' && <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>}
-                    </MessageActions>,
+                    </ReplyActions>,
       copyText: item.text ? item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text : undefined,
       sources: item.from === 'coordinator' && item.text ? <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext> : undefined,
       after: <>{item.id && <MessageReactions reactions={reactions[item.id]} align={item.from === 'person' ? 'end' : 'start'} />}

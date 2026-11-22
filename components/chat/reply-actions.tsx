@@ -25,8 +25,9 @@ export function ReplyActions({ at, copyText, onQuote, children }: {
   const t = useTranslations('AiElements.message')
   const format = useFormatter()
   return <MessageActions className={cn('items-center', REPLY_ACTIONS)} data-slot="reply-actions">
-    {at !== undefined && Number.isFinite(at) && <time dateTime={new Date(at).toISOString()} className="px-1 text-xs tabular-nums text-muted-foreground">
-      {format.dateTime(new Date(at), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+    {at !== undefined && Number.isFinite(at) && at > 0 && <time dateTime={new Date(at).toISOString()} className="px-1 text-xs tabular-nums text-muted-foreground"
+      title={format.dateTime(new Date(at), { dateStyle: 'full', timeStyle: 'short' })}>
+      {format.dateTime(new Date(at), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
     </time>}
     {onQuote && <MessageAction tooltip={t('reply')} onClick={() => onQuote(copyText)}><Quote aria-hidden="true" /></MessageAction>}
     <CopyAction text={copyText} />

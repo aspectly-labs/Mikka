@@ -462,6 +462,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} />, quiet: true } : undefined
   const at = (value: number | string | Date | undefined) => (value === undefined ? 0 : new Date(value).getTime()) || (data ? new Date(data.thread.createdAt).getTime() : Date.now())
   const entries: ThreadEntry[] = []
+  /** Each message's own send time, when it has one; the line under it shows nothing rather than a fallback. */
+  const sentAt = new Map<string, number>()
   if (data) {
     // The run's own rows read as one message until the person speaks; each person message starts the next.
     let open: Extract<ThreadEntry, { role: 'bot' }> | null = null
@@ -534,6 +536,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       if (item.kind === 'person') {
         open = null
         const id = `${runId}:${item.id}`
+        // The line under the message shows only a time the message really has, not at()'s fallback.
+        if (item.at) sentAt.set(id, at(item.at))
         if (item.mine) entries.push({ id, role: 'person', at: at(item.at), text: item.text, actions: versionControl(item) })
         else {
           const files = splitChatFiles(item.text)
@@ -590,7 +594,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       <ChatFileCards files={files.files} sent />
     </AgentCitationsContext>
     const previous = entry.actions
-    entry.actions = <ReplyActions at={entry.at || undefined} copyText={files.text}>{previous}</ReplyActions>
+    entry.actions = <ReplyActions at={sentAt.get(entry.id)} copyText={files.text}>{previous}</ReplyActions>
   }
   if (!data && collect) entries.push({ id: `${runId}:loading`, role: 'bot', event: true, at: 0, parts: [{ kind: 'text', text: '', node: waiting }] })
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.

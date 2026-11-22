@@ -53,5 +53,9 @@ test('without a way to quote there is no Reply, and an unknown time shows none',
   await act(async () => root.render(<ReplyActions at={Number.NaN} copyText="read only" />))
   assert.equal(reply(), null)
   assert.equal(container.querySelector('time'), null)
+  for (const at of [0, undefined]) {
+    await act(async () => root.render(<ReplyActions at={at} copyText="read only" />))
+    assert.equal(container.querySelector('time'), null, `no time for ${at}`)
+  }
   assert.ok(container.querySelector('button[aria-label="AiElements.message.copy"]'))
 })
