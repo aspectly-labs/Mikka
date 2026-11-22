@@ -44,6 +44,9 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
   await receipt(foreign, 'claude-sonnet', 'settled', 5_000, 'credits')
   // A custom API-key provider may name a model like a machine label; it is still a model call.
   await receipt(next, 'machine/cloudflare-standard-1', 'settled', 300, 'api_key', [5, 5])
+  // A credits receipt under that label but without a chunk id is a model call too: only the id marks a prepayment.
+  await pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","billingSource","usageRunId","inputTokens","outputTokens")
+    VALUES ($1,$2,'machine/cloudflare-standard-1','settled',50,'credits',$3,2,2)`, [randomUUID(), workspace.id, next])
   await pool.query(`INSERT INTO thread_machine_sessions ("runId","ownerId","workspaceId","sandboxId","startedAt","endedAt",reason,source)
     VALUES ($1,$2,$3,'vm-1',now()-interval '600 seconds',now(),'paused','running_since'),
       ($4,$2,$3,'vm-2',now()-interval '120 seconds',NULL,NULL,'running_since'),
@@ -53,7 +56,7 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
     const cost = await readThreadCost(pool, { ownerId: owner, workspaceId: workspace.id, runId: next, groupBy: 'thread' })
     assert.ok(cost)
     assert.equal(cost.threadId, root)
-    assert.deepEqual(cost.totals.credits, { microUsd: 1_200 + 800 + 8_334 + 12_500, unpricedReceipts: 3 })
+    assert.deepEqual(cost.totals.credits, { microUsd: 1_200 + 800 + 50 + 8_334 + 12_500, unpricedReceipts: 3 })
     assert.deepEqual(cost.totals.included, { microUsd: 600, unpricedReceipts: 1,
       bySource: { api_key: { microUsd: 600, unpricedReceipts: 0 }, subscription: { microUsd: 0, unpricedReceipts: 1 } } })
     assert.equal(cost.models, undefined)
@@ -63,7 +66,7 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
   await t.test('grouped by model, machine chunks are not models', async () => {
     const cost = await readThreadCost(pool, { ownerId: owner, workspaceId: workspace.id, runId: root, groupBy: 'model' })
     assert.deepEqual(cost?.models?.map(row => [row.model, row.calls, row.inputTokens, row.outputTokens, row.bySource.credits.microUsd]),
-      [['claude-sonnet', 4, 1500, 300, 2_000], ['claude-opus', 1, 70, 30, 0], ['gpt-5', 1, 40, 10, 0], ['machine/cloudflare-standard-1', 1, 5, 5, 0]])
+      [['claude-sonnet', 4, 1500, 300, 2_000], ['machine/cloudflare-standard-1', 2, 7, 7, 50], ['claude-opus', 1, 70, 30, 0], ['gpt-5', 1, 40, 10, 0]])
     assert.equal(cost?.models?.[0].bySource.credits.unpricedReceipts, 2)
   })
 
