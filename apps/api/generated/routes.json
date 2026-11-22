@@ -680,7 +680,7 @@
         "POST"
       ],
       "maxDuration": 60,
-      "sourceHash": "9aaeda7a6c00abd767ca5ae87198b3e05b216038747a1c366d19e0f4a0513039"
+      "sourceHash": "75bc66d4cafd9fc826638efdba1b4171691b4cd1ae36098fa91cb0059a6d6b6b"
     },
     {
       "path": "/mikka/api/cron/credential-cleanup",
