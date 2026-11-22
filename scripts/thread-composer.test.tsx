@@ -489,7 +489,9 @@ test('the root panel resolves its accepted latest continuation without changing 
   assert.equal(replyCalls, 0)
 })
 
-const retainedPanelStates: { name: string; task?: Partial<FactoryTask>; run?: Record<string, unknown>; group: string; stopping?: boolean }[] = [
+// A working or waiting run is its activity line alone, with no badge beside it (activityLineBadgeShown, one running
+// indicator); `group: null` checks that the accepted candidate does not add one either.
+const retainedPanelStates: { name: string; task?: Partial<FactoryTask>; run?: Record<string, unknown>; group: string | null; stopping?: boolean }[] = [
   { name: 'another issue', task: { issueId: 'other-issue' }, group: 'waiting' },
   { name: 'an earlier candidate producer', task: { candidateRunId: 'older-run' }, group: 'waiting' },
   { name: 'a missing current candidate', task: { candidateId: null }, group: 'waiting' },
@@ -499,10 +501,10 @@ const retainedPanelStates: { name: string; task?: Partial<FactoryTask>; run?: Re
   { name: 'a failed producer', run: { status: 'failed', outcome: 'blocked' }, group: 'blocked' },
   { name: 'a historical failed review', task: { candidateRunId: 'producer-run' }, run: { status: 'failed', outcome: 'blocked' }, group: 'blocked' },
   { name: 'a later successful continuation', run: { latestRunId: 'run-2', continuation: { id: 'run-2', status: 'succeeded', outcome: 'needs_input', stopping: false } }, group: 'waiting' },
-  { name: 'an active run', run: { status: 'running' }, group: 'running' },
-  { name: 'a waiting input run', run: { status: 'waiting_input' }, group: 'waiting' },
-  { name: 'an unanswered question', run: { question: 'waiting' }, group: 'waiting' },
-  { name: 'a resuming question', run: { question: 'resuming', latestRunId: 'run-2', continuation: { id: 'run-2', status: 'queued', stopping: false } }, group: 'running' },
+  { name: 'an active run', run: { status: 'running' }, group: null },
+  { name: 'a waiting input run', run: { status: 'waiting_input' }, group: null },
+  { name: 'an unanswered question', run: { question: 'waiting' }, group: null },
+  { name: 'a resuming question', run: { question: 'resuming', latestRunId: 'run-2', continuation: { id: 'run-2', status: 'queued', stopping: false } }, group: null },
   { name: 'a failed question wake', run: { question: 'resuming', latestRunId: 'run-2', continuation: { id: 'run-2', status: 'queued', stopping: false }, questionWake: { generation: 'wake-1', error: 'Original task machine unavailable' } }, group: 'blocked' },
   { name: 'a quota-paused run', run: { status: 'paused' }, group: 'blocked' },
   { name: 'a requested stop', run: { status: 'running', stopping: true }, group: 'running', stopping: true },
@@ -514,7 +516,8 @@ for (const scenario of retainedPanelStates) {
     const html = render()
     assert.doesNotMatch(html, /data-group="resolved"/)
     if (scenario.stopping) assert.match(html, /Stopping[^<]*<\/span>/)
-    else expectStatusBadge(html, scenario.group, scenario.name)
+    else if (scenario.group) expectStatusBadge(html, scenario.group, scenario.name)
+    else assert.doesNotMatch(html, /<span\b(?=[^>]*data-slot="badge")(?=[^>]*data-group=)/, scenario.name)
     assert.equal(pageChecks, 0)
     assert.equal(replyCalls, 0)
   })
