@@ -1,9 +1,8 @@
 'use client'
 
-import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
+import { useViewState } from '@/lib/hooks/view-state'
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
-import { AnimatePresence } from 'motion/react'
 import { withBasePath } from '@/lib/base-path'
 import { checkPageBuildBeforeAction } from '@/lib/app-build'
 import { useTranslations } from '@/lib/intl/i18n-client'
@@ -19,21 +18,17 @@ import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { cn } from '@/lib/utils'
 import { useActionError } from '@/lib/use-action-error'
 import { Alert, AlertTitle } from '@/components/ui/alert'
-import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { CircleHelp } from '@/components/icons'
 import { toast } from 'sonner'
 import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCitations } from '@/components/workspace/agent-citations'
-import { UserMessageText } from '@/components/workspace/user-message-text'
-import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { AgentInteractionContext } from '@/components/workspace/agent-interaction'
 import { ReplyAnswer } from '@/components/workspace/agent-decision'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
 import { navigate, openTask, openThread } from '@/components/workspace/workspace-navigation'
 import { CoordinatorReply } from './coordinator-reply'
-import { BotModelPicker, botModelMenuKey, openModelPicker } from './bot-model-picker'
+import { botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
 import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { useCoordinatorSubmit, type CoordinatorMessageContext } from './use-coordinator-submit'
@@ -45,39 +40,30 @@ import { ListReadScopeError, listReadDeadline, ownerListWorkspace, UNRESOLVED_LI
 import { heldRevision } from '@/lib/live/revisions'
 import { useLiveCitations } from './use-live-citations'
 import type { CoordinatorLiveReply } from '@/lib/eve/chat-view'
-import { ThreadCard } from './thread-card'
-import { firstThreadCards, staleEventPositions, visibleDivider } from '@/lib/coordinator/chat-dedupe'
-import { ActivityExpansionContext, ReplyActivity, useActivityExpansion, useThreadToolRows } from './reply-activity'
-import { CHAT_SURFACE, ChatWaiting } from '@ui-slot/chat-message'
-import { ChatComposer, ChatComposerAttachment } from './chat-composer'
+import { firstThreadCards, staleEventPositions } from '@/lib/coordinator/chat-dedupe'
+import { useThreadToolRows } from './reply-activity'
+import { ChatComposerAttachment } from './chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
 import { MergeWaitingLine, useMergeWaitings } from '@/components/chat/merge-waiting-line'
 import { useConversationPanels, useWorkTabs } from '@/components/coordinator/conversation-panels'
-import type { ThreadEntry, ThreadEntryPart, ThreadScrolledRow } from '@/components/slots/thread-contract'
+import type { ThreadEntry, ThreadEntryPart } from '@/components/slots/thread-contract'
 import { factoryQuestionUnavailable, useFactoryQuestions } from '@/hooks/use-factory-questions'
 import { noteChipText } from '@/lib/browser/note'
-import type { ChatSpeaker } from '@/components/slots/chat-message-contract'
 import { replySegments, type ReplySegment } from '@/lib/coordinator/reply-segments'
 import { runThreadName, runTitle } from '@/lib/coordinator/citations'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { PendingActions } from './pending-actions'
 import { SubagentLoginNeeds } from './subagent-login-needs'
-import { UnreadDivider } from '@/components/chat/unread-divider'
-import { UnreadPill } from '@/components/chat/unread-pill'
 import { VisibleReadEnd } from '@/components/workspace/visible-read-end'
-import { MESSAGE_POSITION_ATTR, useUnreadIndicators } from '@/lib/hooks/use-unread-indicators'
-import { useArrivals } from '@/lib/hooks/use-arrivals'
+import { useUnreadIndicators } from '@/lib/hooks/use-unread-indicators'
 import { openArtifact as openArtifactWindow } from '@/components/workspace/workspace-navigation'
-import { ArtifactChip } from '@/components/artifacts/artifact-card'
-import { ArtifactReviewCard } from '@/components/workspace/artifact-review'
-import { ArtifactQuoteChip, ArtifactQuoteLine, QuoteChip, QuoteLine } from '@/components/artifacts/artifact-quote'
 import { SelectionQuote } from '@/components/chat/selection-quote'
 import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { replyCopyText } from '@/lib/chat-copy'
 import type { ArtifactChatSlot } from '@/components/artifacts/artifact-viewer'
-import { BrowserNoteChip, BrowserNoteLine, useBrowserNotesComposer } from '@/components/browser/browser-notes'
-import { SentSuggestion } from '@/components/suggestions/mobile-card'
+import { useBrowserNotesComposer } from '@/components/browser/browser-notes'
+import { SuggestionRow } from '@/components/suggestions/mobile-card'
 import { HostedRefusalNotice } from '@/components/billing/hosted-refusal-notice'
 import { usePaywall } from '@/components/billing/paywall'
 import { chatFailure } from '@/lib/chat-failure'
@@ -90,9 +76,6 @@ import { ChatEventLine } from './chat-event-line'
 import { waitingQuestionRuns } from '@/lib/coordinator/waiting-questions'
 import { RetryReplyButton } from './retry-reply-button'
 import { COMPOSER_NOTICE } from './composer-notice'
-
-/** A new message's enter: a short fade (docs/design/decisions/2026-10-31-1814-segmented-control-motion.md). */
-const ENTER = 'animate-in fade-in-0 duration-(--motion-base) motion-reduce:animate-none'
 
 
 /** Text put into the composer from elsewhere; `suggestionId` when it came from a 建议 item. */
@@ -129,20 +112,14 @@ function liveThinking(reply: CoordinatorLiveReply) {
   return reply.thinking && { active: reply.thinking.since !== undefined, ...(reply.thinking.ms ? { seconds: Math.max(1, Math.round(reply.thinking.ms / 1000)) } : {}), ...(reply.thinking.text ? { text: reply.thinking.text } : {}) }
 }
 
-/** A sent message's words, under the reply words it quotes (lib/chat-quote.ts) and anything else it carries. */
-function PersonWords({ text, before }: { text: string; before?: ReactNode }) {
-  const { quote, text: words } = splitReplyQuote(text)
-  return <CollapsibleMessage>{quote && <QuoteLine slot="reply-quote" text={quote} />}{before}<UserMessageText text={words} /></CollapsibleMessage>
-}
-
 
 /**
  * The person's conversation with their Coordinator, which dispatches agents to
  * issues, or with one of their bots: a bot runs on the same harness with its
- * own conversation, memory and name. Artifacts agents hand over show as cards
- * under a reply and open the reader; inside the reader the same chat runs
- * `embedded`, with chips instead of cards and the quote from the artifact in
- * the composer.
+ * own conversation, memory and name. Artifacts agents hand over show as chips
+ * under a reply and open the reader; inside the reader, as in the board's column,
+ * the same screen runs as a narrow panel, the reader's artifact marked and its
+ * quote waiting above the composer.
  */
 /** A thread card or chip opens the thread in the right column; the chat stays (R-66, R-82). */
 const showThread = ({ runId }: { runId: string }) => openThread(runId)
@@ -227,7 +204,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const resuming = stream.status === 'resuming'
   useEffect(() => { reconnectStream.current = stream.reconnect }, [stream.reconnect])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
-  const [localSend, setLocalSend] = useState({ key: stateKey, count: 0 })
   const [draft, setDraft] = useViewState(`${stateKey}:draft`, '')
   const updateDraft = setDraft
   // Carry existing window drafts into the new account/workspace-scoped store once.
@@ -239,16 +215,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       if (legacy) { setDraft(current => current || legacy); window.sessionStorage.removeItem(legacyKey) }
     } catch { /* storage unavailable */ }
   }, [userId, botId, embedded, setDraft])
-  const [following, setFollowing] = useViewState(`${stateKey}:following`, true)
-  // Hydration first exposes server defaults; lock the initial scroll choice only
-  // after the saved session and the transcript have both been read.
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { setMounted(true) }, [])
-  const initialScroll = useRef<{ key: string; following: boolean | null }>({ key: stateKey, following: null })
-  if (initialScroll.current.key !== stateKey) initialScroll.current = { key: stateKey, following: null }
-  if (mounted && data && initialScroll.current.following === null) initialScroll.current.following = following
-  const startAtEnd = initialScroll.current.following ?? following
-  const transcript = useViewScroll<HTMLDivElement>(`${stateKey}:messages`, !!data, !startAtEnd)
   const [sends, setSends] = useState(0)
   const sending = sends > 0
   const [turnPolicy, setTurnPolicy] = useViewState<'queue' | 'steer'>('eve:turn-policy', 'queue')
@@ -319,21 +285,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   useEffect(() => {
     if (delivery.rows.some(row => received.has(row.id))) delivery.setRows(current => current.filter(row => !received.has(row.id)))
   }, [received, delivery.rows, delivery.setRows])
-  // New messages fade in briefly, as in Claude Code; what was there when the chat opened does not (R-37).
-  // A stored reply that replaces a reply already streamed on screen is not new.
-  const streamedThrough = useRef(-1)
-  useEffect(() => { for (const reply of stream.replies) if (reply.committedThrough !== undefined) streamedThrough.current = Math.max(streamedThrough.current, reply.committedThrough) })
-  const arriving = useArrivals(data ? [...items.map(item => `item-${item.position}`), ...stream.replies.map(reply => `stream-${reply.id}`)] : null)
-  // The working line fades in when a turn starts after the chat opened, not when the chat opens mid-run.
-  const loaded = useRef(false)
-  const workingAtOpen = useRef(false)
-  useEffect(() => {
-    if (!data) return
-    if (!loaded.current) { loaded.current = true; workingAtOpen.current = Boolean(working) }
-    else if (!working) workingAtOpen.current = false
-  })
-  const workingEnter = loaded.current && !workingAtOpen.current
-  const entering = (item: (typeof items)[number]) => arriving(`item-${item.position}`) && !(item.from === 'coordinator' && item.position <= streamedThrough.current)
   const liveFailure = data?.error && !working ? chatFailure({ working: false, error: data.error, cause: data.cause }) : null
   // A turn the hosted model (Mikka 默认) refused: verification, allowance or pause (#523, #525, #526).
   const refusal = liveFailure?.kind === 'hosted' ? liveFailure.code : null
@@ -438,16 +389,15 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // Reactions people gave on the phone (decision 2026-11-01-0030-mobile-reactions); a pending row has none yet.
   const reactions = useMessageReactions(items.map(item => item.pending || item.from === 'event' ? null : item.id))
   const unread = useUnreadIndicators({ conversationId: botId ? `bot:${botId}` : 'coordinator', items: unreadItems, rootRef })
-  // The divider stays when the row it marked is a hidden repeat: it moves to the next row shown.
-  const dividerAt = visibleDivider(unread.divider, items, staleEvents)
   const previews = useLinkPreviews(items.filter(item => item.from === 'coordinator').map(item => item.text))
   const sources = data?.sources
   // A layer that draws the conversation as one screen (slot `thread`) gets the same rows as data and nodes.
-  // The board's chat column (compact) is a conversation too; only an artifact's chat (embedded) keeps its chips.
   // The Overview and the browser, when the frame's work area holds them (FRAME_OWNS_PANEL).
   const panels = useConversationPanels()
+  // The board's column and an Artifact's reader hold the chat as a narrow panel beside other content.
+  const panel = compact || Boolean(embedded)
   // Tasks and threads opened from this chat open as tabs of that work area (decision 2026-11-10), named by their code.
-  const work = useWorkTabs(Boolean(!embedded && panels && !compact), {
+  const work = useWorkTabs(Boolean(panels && !panel), {
     task: id => {
       const source = Object.values(sources ?? {}).find(item => item.kind === 'issue' ? item.id === id : item.issue?.id === id)
       const issue = source?.kind === 'issue' ? source : source?.issue
@@ -532,7 +482,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       delivery.finish(command.id, {})
       if (command.context.notes) browser?.removeMany(command.context.notes.map(note => note.n))
       void mutate().catch(() => undefined)
-      setLocalSend(current => ({ key: stateKey, count: current.key === stateKey ? current.count + 1 : 1 }))
       return 'sent'
     } catch { return fail(t('sendUncertain')) } finally {
       waitingAdmissions.current.delete(command.id)
@@ -570,11 +519,6 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     }
   }
 
-  // 全部展开 / 全部收起 for the chat's tool groups (R-83).
-  const expansion = useActivityExpansion()
-
-  const speaker: ChatSpeaker = bot ? { id: bot.id, name: bot.name, color: bot.color, shape: bot.shape } : { name, coordinator: true }
-
   const toolRows = useThreadToolRows()
   const tMessage = useTranslations('AiElements.message')
   const tNavAll = useTranslations()
@@ -585,251 +529,125 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     const run = sources?.[id]
     return run?.kind === 'run' && run.issue ? [{ issueId: run.issue.id, pulls: run.pullRequests ?? [] }] : []
   })))
-  if (!embedded) {
-    // The live failure as the thread's error line: a plain failure says 回复失败 (or why the wake failed) once, on the
-    // line, with 重试 under it; a failure with its own reason (cloud, refusal, subscription, API balance) keeps its notice.
-    const plainFailure = Boolean(data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance)
-    const liveFailurePart: ThreadEntryPart = plainFailure
-      ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : t('failedTitle'), actions: <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
-      : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
-    const rows = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: String(item.pending ? `pending-${item.position}` : item.streamId ?? item.position) })),
-      ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))]
-    const entries: ThreadEntry[] = []
-    for (const { item, live, key } of rows) {
-      const at = item.createdAt ? Date.parse(item.createdAt) : Date.now()
-      const streaming = Boolean(live && live.committedThrough === undefined)
-      if (item.from === 'event') {
-        const node = item.notice ? <QuotaSwitchLine notice={item.notice} botId={botId} /> : item.line ? <ChatEventLine line={item.line} citations={citations} /> : null
-        if (node) entries.push({ id: key, role: 'bot', at, event: true, parts: [{ kind: 'text', text: '', node }] })
-        continue
-      }
-      if (item.from === 'person') {
-        const { quote, text } = splitReplyQuote(item.text)
-        const attachments = [
-          ...(item.suggestion ? [{ id: 'suggestion', name: item.suggestion.actionTitle ?? item.suggestion.title, meta: tNavAll('Nav.suggestions') }] : []),
-          ...(item.quote ? [{ id: 'artifact-quote', name: data?.artifacts[item.quote.artifactId]?.title ?? item.quote.label ?? item.quote.text, meta: tMessage('quote') }] : []),
-          ...(quote ? [{ id: 'reply-quote', name: quote, meta: tMessage('quote') }] : []),
-          ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
-        ]
-        entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-          actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
-        if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
-        continue
-      }
-      const parts: ThreadEntryPart[] = item.welcome ? [] : replyRows(item, live).map((segment, index): ThreadEntryPart => segment.kind === 'tools'
-        ? { kind: 'tools', id: `${key}-tools-${index}`, tools: toolRows(segment.tools, { live: streaming, ...(index === 0 && item.activity ? { thinking: live ? liveThinking(live) : undefined, thought: item.activity.thought } : {}) }) }
-        : { kind: 'text', text: segment.text, node: <ReplyAnswer value={live ? null : answers.get(item.position) ?? null}><CoordinatorReply text={segment.text} carded={cardsOf(item, Boolean(live)).join(',')} citations={live ? streaming ? liveCitations.streaming : liveCitations.settled : citations} isStreaming={streaming} /></ReplyAnswer> })
-      for (const id of cardsOf(item, Boolean(live))) {
-        const run = sources?.[id]
-        if (run?.kind === 'run') parts.push({ kind: 'task', run, onOpen: () => run.issue ? openTask(run.issue.id) : showThread({ runId: run.id }) })
-      }
-      const artifacts = item.artifacts.flatMap(id => data?.artifacts[id] ? [{ id, name: data.artifacts[id].title }] : [])
-      if (artifacts.length) parts.push({ kind: 'artifacts', items: artifacts, onOpen: openArtifact })
-      if (item.failure) parts.push(item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()) }} /> })
-      if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
-        parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
-      entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-        // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
-        actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
-          <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
-          {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
-        </ReplyActions> : undefined })
+  // The live failure as the thread's error line: a plain failure says 回复失败 (or why the wake failed) once, on the
+  // line, with 重试 under it; a failure with its own reason (cloud, refusal, subscription, API balance) keeps its notice.
+  const plainFailure = Boolean(data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance)
+  const liveFailurePart: ThreadEntryPart = plainFailure
+    ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : t('failedTitle'), actions: <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
+    : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
+  const rows = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: String(item.pending ? `pending-${item.position}` : item.streamId ?? item.position) })),
+    ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))]
+  const entries: ThreadEntry[] = []
+  for (const { item, live, key } of rows) {
+    const at = item.createdAt ? Date.parse(item.createdAt) : Date.now()
+    const streaming = Boolean(live && live.committedThrough === undefined)
+    if (item.from === 'event') {
+      const node = item.notice ? <QuotaSwitchLine notice={item.notice} botId={botId} /> : item.line ? <ChatEventLine line={item.line} citations={citations} /> : null
+      if (node) entries.push({ id: key, role: 'bot', at, event: true, parts: [{ kind: 'text', text: '', node }] })
+      continue
     }
-    for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
-      status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
-      attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
-        ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
-      ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
-    for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
-      parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
-    // Before the reply has anything to show: the Bot's turn, still empty, with its caret.
-    if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
-      entries.push({ id: 'waiting', role: 'bot', at: Date.now(), parts: [], streaming: true })
-    if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
-    // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.
-    const quietAuthor = { id: botId ?? 'coordinator', name, mark: avatar('pill'), quiet: true }
-    for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = quietAuthor
-    const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
-      ? <p role="status">{tNav('writingWelcome')}</p>
-      : <p>{t('empty', { name })}</p>) : undefined
-    const notices = <>
-      {(loadError || stream.error) && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
-      {failedAt === null && !welcomeFailed && failureNotice}
-      <EveInteractions agent={stream} />
-      {!data?.error && <HostedUnavailableNotice botId={botId} />}
-      {!refusal && (declined === 'quotaUsed' || !data?.error) && <QuotaNotice botId={botId} stopped={declined === 'quotaUsed'}
-        retry={(label, disabled) => <RetryReplyButton botId={botId} onQueued={mutate} label={label} disabled={disabled} />} />}
-      {unanswered && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48">{t('unavailable', { name })}</AlertTitle></Alert>}
-      {botId && <SubagentLoginNeeds botId={botId} />}
-      {/* One live sentence, not a stored event line; the thread is an inline link inside it (decision 2026-11-10). */}
-      {waitingQuestions.length > 0 && <p data-slot="waiting-questions" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-xs text-muted-foreground">
-        <span role="status" aria-live="polite" aria-atomic="false" className="inline-flex min-w-0 items-center gap-1.5"><CircleHelp aria-hidden="true" className="size-3.5 shrink-0 text-warning" />{t('waitingQuestions', { count: waitingQuestions.length })}</span>
-        {waitingQuestions[0].runId && <Button variant="link" size="xs" className="h-auto min-w-0 max-w-full px-0 font-normal" onClick={() => showThread({ runId: waitingQuestions[0].runId! })}><span className="min-w-0 truncate">{waitingQuestions[0].title}</span></Button>}
-      </p>}
-      <PendingActions />
-    </>
-    return <AgentThemeProvider><AgentInteractionContext value={{ busy: sending || Boolean(working), continueFromAnswer: prompt => post(prompt.trim()), answer: prompt => answer(prompt.trim()) }}>
-      {/* The page's floating title pill sits over the top 56px on wide screens: the screen starts below it. Without one (the
-          hosted shell owns the header and the thread names itself) no band is left. */}
-      <section ref={rootRef} aria-label={name} className={cn('mikka-agent flex min-h-0 min-w-0 flex-1 flex-col', pill && 'md:pt-14')}>
-        <ThreadScreen host={compact ? 'column' : 'page'} botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={compact ? undefined : panels} work={work.work}
-          transcriptLabel={bot ? t('conversationWith', { name: bot.name }) : t('conversation')}
-          loadingLabel={!data && !loadError ? tCommon('loading') : undefined}
-          older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
-          working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
-          composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
-            attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
-          pending={[
-            ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),
-            ...(browser?.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate'), onRemove: () => browser?.remove(note.n) })),
-          ]}
-          notices={<>{notices}{turnOptions}{queuedNotice}{factory.error && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1">{actionError()}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void factory.reload() }}>{tCommon('retry')}</Button></Alert>}</>}
-          questions={factory.questions.map(question => {
-            const reason = factoryQuestionUnavailable(question.status)
-            return { id: question.questionId, revision: question.reference.questionRevision, question: question.question, task: question.task, recordedAnswer: question.recordedAnswer, unavailable: reason ? actionError(reason) : undefined, taskId: question.issueId ?? undefined,
-            kind: question.type === 'permission' ? 'approval' : question.options.length ? 'decision' : 'question', ...(question.options.length ? { options: question.options.map(option => ({ id: option.value, title: option.label })) } : {}) }
-          })}
-          onAnswer={async (id, text) => {
-            const question = factory.questions.find(item => item.questionId === id)
-            if (!question) return { status: 'unavailable', error: actionError('factoryQuestionClosed') }
-            const receipt = await factory.submitAnswer(question, text)
-            return receipt.status === 'accepted' ? receipt : { ...receipt, error: actionError(receipt.error) }
-          }}
-          running={Object.values(sources ?? {}).filter(source => source.kind === 'run' && !source.finishedAt).length}
-          onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />
-        <SelectionQuote root={rootRef} onQuote={quoteReply} />
-      </section>
-    </AgentInteractionContext></AgentThemeProvider>
+    if (item.from === 'person') {
+      const { quote, text } = splitReplyQuote(item.text)
+      // A 建议 handed over is the chat's one-line record with its state, as Capy records a request: no card of its own.
+      if (item.suggestion) entries.push({ id: `${key}-suggestion`, role: 'bot', at, event: true, parts: [{ kind: 'text', text: '',
+        node: <SuggestionRow card={item.suggestion} status={item.pending ? tNavAll('HostedThread.sending') : t('suggestionHandedTo', { name })} /> }] })
+      const attachments = [
+        ...(item.quote ? [{ id: 'artifact-quote', name: data?.artifacts[item.quote.artifactId]?.title ?? item.quote.label ?? item.quote.text, meta: tMessage('quote') }] : []),
+        ...(quote ? [{ id: 'reply-quote', name: quote, meta: tMessage('quote') }] : []),
+        ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
+      ]
+      if (!item.suggestion || text || attachments.length) entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
+        actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
+      if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
+      continue
+    }
+    const parts: ThreadEntryPart[] = item.welcome ? [] : replyRows(item, live).map((segment, index): ThreadEntryPart => segment.kind === 'tools'
+      ? { kind: 'tools', id: `${key}-tools-${index}`, tools: toolRows(segment.tools, { live: streaming, ...(index === 0 && item.activity ? { thinking: live ? liveThinking(live) : undefined, thought: item.activity.thought } : {}) }) }
+      : { kind: 'text', text: segment.text, node: <ReplyAnswer value={live ? null : answers.get(item.position) ?? null}><CoordinatorReply text={segment.text} carded={cardsOf(item, Boolean(live)).join(',')} citations={live ? streaming ? liveCitations.streaming : liveCitations.settled : citations} isStreaming={streaming} /></ReplyAnswer> })
+    for (const id of cardsOf(item, Boolean(live))) {
+      const run = sources?.[id]
+      if (run?.kind === 'run') parts.push({ kind: 'task', run, onOpen: () => run.issue ? openTask(run.issue.id) : showThread({ runId: run.id }) })
+    }
+    const artifacts = item.artifacts.flatMap(id => data?.artifacts[id] ? [{ id, name: data.artifacts[id].title }] : [])
+    if (artifacts.length) parts.push({ kind: 'artifacts', items: artifacts, onOpen: openArtifact, ...(embedded ? { activeId: embedded.activeArtifactId } : {}) })
+    if (item.failure) parts.push(item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()) }} /> })
+    if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
+      parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
+    entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
+      // The centred time over its group shows when it was sent (#2922); the line under it does not repeat it.
+      actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
+        <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
+        {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
+      </ReplyActions> : undefined })
   }
-
-  // Stable keys keep streamed replies mounted when they become stored history. The screen owns the list.
-  const transcriptRows: ThreadScrolledRow[] = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined, key: item.pending ? `pending-${item.position}` : item.streamId ?? item.position })),
-              // After 停止 the reply in flight no longer draws as streaming (no cursor, no running activity) while it is stored.
-              ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))].map(({ item, live, key }): ThreadScrolledRow => ({
-    id: String(key), messageId: live ? live.id : String(item.position),
-    before: !live && dividerAt === item.position && <UnreadDivider />,
-    arriving: live ? arriving(`stream-${live.id}`) : entering(item),
-    attributes: live ? { 'data-coordinator-stream-id': live.id, 'data-streaming': live.committedThrough === undefined } : item.from === 'event' ? {} : { [MESSAGE_POSITION_ATTR]: item.position },
-    ...(item.from === 'event'
-      ? { content: item.notice ? <QuotaSwitchLine notice={item.notice} botId={botId} /> : item.line ? <ChatEventLine line={item.line} citations={citations} /> : null }
-      : { message: {
-      from: item.from === 'person' ? 'person' : 'bot',
-      speaker: speaker,
-      compact: compact,
-      streaming: Boolean(live && live.committedThrough === undefined),
-      // A tapped 建议 card: the same card, then only what it adds (R-21, R-40).
-      lead: item.suggestion && <SentSuggestion card={item.suggestion} compact={compact} speaker={speaker} />,
-      // Top to bottom as it happened: thinking, then the words and each tool after the words said before it.
-                    // The same rows live and stored, so storing keeps them in place.
-      body: item.welcome ? null : item.from === 'coordinator'
-                      ? <ReplyAnswer value={live ? null : answers.get(item.position) ?? null}>{replyRows(item, live).map((segment, index) => segment.kind === 'tools'
-                        ? <AgentCitationsContext key={index} value={citations}><ReplyActivity tools={segment.tools} {...(index === 0 && item.activity ? { thinking: live ? liveThinking(live) : undefined, thought: item.activity.thought, reasoningAt: item.activity.reasoningAt } : {})} botId={botId} live={Boolean(live && live.committedThrough === undefined)} /></AgentCitationsContext>
-                        : <CoordinatorReply key={index} text={segment.text} carded={cardsOf(item, Boolean(live)).join(',')} citations={live ? live.committedThrough === undefined ? liveCitations.streaming : liveCitations.settled : citations} isStreaming={Boolean(live && live.committedThrough === undefined)} />)}</ReplyAnswer>
-                      : item.text && <PersonWords text={item.text} before={<>{item.quote && <ArtifactQuoteLine quote={item.quote} />}{item.notes?.map(note => <BrowserNoteLine key={note.n} note={note} />)}</>} />,
-      extras: <>{item.artifacts.length > 0 && <div className={cn('flex flex-col gap-2', embedded ? 'items-start gap-1.5' : 'w-full')}>
-                      {item.artifacts.flatMap(id => { const artifact = data?.artifacts[id]; return artifact ? [embedded
-                        ? <ArtifactChip key={id} artifact={artifact} active={id === embedded.activeArtifactId} onOpen={openArtifact} />
-                        : <ArtifactReviewCard key={id} artifact={artifact} onOpen={openArtifact} />] : [] })}
-                    </div>}
-                    {cardsOf(item, Boolean(live)).map(id => {
-                      const run = sources?.[id]
-                      return run?.kind === 'run' ? <ThreadCard key={id} run={run} onOpen={showThread} onOpenTask={openTask} /> : null
-                    })}</>,
-      // Copy and the pages it cites, on one line under the reply, always there and quiet (R-83 revised 2026-11-10).
-      actions: item.text && !(live && live.committedThrough === undefined) && <ReplyActions at={item.createdAt ? Date.parse(item.createdAt) : undefined}
-                      copyText={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text}
-                      onQuote={item.from === 'coordinator' ? quoteReply : undefined}>
-                      {item.from === 'coordinator' && <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>}
-                    </ReplyActions>,
-      copyText: item.text ? item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text : undefined,
-      sources: item.from === 'coordinator' && item.text ? <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext> : undefined,
-      after: <>{item.id && <MessageReactions reactions={reactions[item.id]} align={item.from === 'person' ? 'end' : 'start'} />}
-                    {item.stopped && <MessageFooter><p role="status">{t('stopped')}</p></MessageFooter>}
-                    {item.failure && (item.position === failedAt
-                      ? <div data-message-failure={item.welcome ? 'welcome' : 'live'} className={cn('flex w-full max-w-md flex-col gap-2', item.welcome ? 'self-start' : 'self-end')}>{failureNotice}</div>
-                      : <MessageFooter className={cn(item.welcome ? 'self-start' : 'self-end')}><FailureReason retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /></MessageFooter>)}</>,
-    } }),
-  }))
-  for (const row of localMessages) transcriptRows.push({ id: row.id, messageId: row.id,
-    attributes: { 'data-testid': row.phase === 'failed' ? 'failed-message' : 'local-message' },
-    message: { from: 'person', speaker, compact,
-      body: <><PersonWords text={row.text} />{row.context.quote && <span>{row.context.quote.label ?? row.context.quote.text}</span>}</>,
-      delivery: { phase: row.phase, label: row.phase === 'sending' ? tNavAll('HostedThread.sending') : row.error,
-        retry: row.phase === 'failed' && <Button variant="ghost" size="xs" className="text-foreground" disabled={sending} onClick={() => { void deliver(row.text, false, undefined, row) }}>{tCommon('retry')}</Button> } },
-  })
-
+  for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
+    status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
+    attachments: [...(row.context.quote ? [{ id: 'artifact-quote', name: row.context.quote.label ?? row.context.quote.text, meta: tMessage('quote') }] : []),
+      ...(row.context.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') }))],
+    ...(row.phase === 'failed' ? { onRetry: () => { void deliver(row.text, false, undefined, row) } } : {}) })
+  for (const waiting of mergeWaitings) entries.push({ id: `merge-waiting:${waiting.issueId}`, role: 'bot', at: Date.now(), event: true,
+    parts: [{ kind: 'text', text: '', node: <MergeWaitingLine waiting={waiting} workspaceId={selectedWorkspaceId ?? null} /> }] })
+  // Before the reply has anything to show: the Bot's turn, still empty, with its caret.
+  if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
+    entries.push({ id: 'waiting', role: 'bot', at: Date.now(), parts: [], streaming: true })
+  if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
+  // As Capy, the Bot's reply is its words alone (#2922, Figma 1318:3): no mark or name over it; screen readers still get the name.
+  const quietAuthor = { id: botId ?? 'coordinator', name, mark: avatar('pill'), quiet: true }
+  for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = quietAuthor
+  const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
+    ? <p role="status">{tNav('writingWelcome')}</p>
+    : <p>{t('empty', { name })}</p>) : undefined
+  const notices = <>
+    {(loadError || stream.error) && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
+    {failedAt === null && !welcomeFailed && failureNotice}
+    <EveInteractions agent={stream} />
+    {!data?.error && <HostedUnavailableNotice botId={botId} />}
+    {!refusal && (declined === 'quotaUsed' || !data?.error) && <QuotaNotice botId={botId} stopped={declined === 'quotaUsed'}
+      retry={(label, disabled) => <RetryReplyButton botId={botId} onQueued={mutate} label={label} disabled={disabled} />} />}
+    {unanswered && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48">{t('unavailable', { name })}</AlertTitle></Alert>}
+    {botId && <SubagentLoginNeeds botId={botId} />}
+    {/* One live sentence, not a stored event line; the thread is an inline link inside it (decision 2026-11-10). */}
+    {waitingQuestions.length > 0 && <p data-slot="waiting-questions" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-xs text-muted-foreground">
+      <span role="status" aria-live="polite" aria-atomic="false" className="inline-flex min-w-0 items-center gap-1.5"><CircleHelp aria-hidden="true" className="size-3.5 shrink-0 text-warning" />{t('waitingQuestions', { count: waitingQuestions.length })}</span>
+      {waitingQuestions[0].runId && <Button variant="link" size="xs" className="h-auto min-w-0 max-w-full px-0 font-normal" onClick={() => showThread({ runId: waitingQuestions[0].runId! })}><span className="min-w-0 truncate">{waitingQuestions[0].title}</span></Button>}
+    </p>}
+    <PendingActions />
+  </>
   return <AgentThemeProvider><AgentInteractionContext value={{ busy: sending || Boolean(working), continueFromAnswer: prompt => post(prompt.trim()), answer: prompt => answer(prompt.trim()) }}>
-  {/* The chat never widens what holds it: whatever a message carries scrolls or wraps inside its own box, and anything that still
-      reaches past the column is clipped here instead of scrolling the whole page sideways. */}
-  <section ref={rootRef} aria-label={name} className={cn('mikka-agent flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip', CHAT_SURFACE)}>
-    {/* Follow the end while the person is there, never anchor rows to the top: the scroller re-anchors any person row
-        whose element it has not seen, and a stored message remounts its pending row, so the chat jumped up the history.
-        Rows render at their real height: an estimated height on a new row shifts the end by the difference. */}
-    <ActivityExpansionContext value={expansion}>
-      <ThreadScreen host="embedded"
-        transcript={{ kind: 'embedded', rows: transcriptRows, stateKey, startAtEnd, compact,
-          sentCount: data ? localSend.key === stateKey ? localSend.count : 0 : null,
-          scroll: { ref: transcript, label: bot ? t('conversationWith', { name: bot.name }) : t('conversation'),
-            onScroll: event => { const node = event.currentTarget; const next = node.scrollHeight - node.scrollTop - node.clientHeight < 56; if (next !== following) setFollowing(next) } },
-          before: <>{data?.historyBefore && <Button variant="ghost" size="sm" disabled={loadingHistory} onClick={() => void loadHistory()}>{tCommon('loadMore')}</Button>}
-            {/* A slow first load shows the shape of a conversation, not an empty page (state completeness). */}
-            {!data && !loadError && <div role="status" aria-label={tCommon('loading')} className="flex flex-col gap-5">
-              <Skeleton className="h-16 w-3/5 rounded-2xl" />
-              <Skeleton className="h-11 w-2/5 self-end rounded-2xl" />
-              <Skeleton className="h-24 w-2/3 rounded-2xl" />
-            </div>}
-            {/* The header pill and the 概览 panel already name the bot: an empty chat says one line, no third avatar (R-41). */}
-            {welcomeFailed && !items.length && <div data-message-failure="welcome" className="flex w-full max-w-md flex-col gap-2 self-start">{failureNotice}</div>}
-            {data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed && (data.enabled
-              ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">{avatar('pill', 'thinking')}{tNav('writingWelcome')}</p>
-              : <div className="m-auto flex flex-col items-center gap-3">
-                <p className="text-sm text-muted-foreground">{t('empty', { name })}</p>
-              </div>)}</>,
-          after: <>{/* Before the reply has anything to show: the Trace's Thinking row. Once the reply streams, its own Trace takes
-                over. It fades in (R-37: opacity on a duration) and leaves at once: an exit would keep its height after the
-                reply lands and pull the scroll position back (coordinator-scroll.spec). */}
-            {working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && (stopping
-              ? <Message align="start"><MessageContent><MessageFooter><p role="status">{t('stopped')}</p></MessageFooter></MessageContent></Message>
-              : <div className={cn('flex', workingEnter && ENTER)}><ChatWaiting speaker={speaker} /></div>)}</>,
-          overlay: <AnimatePresence initial={false}>
-          {unread.showTop && <UnreadPill key="up" direction="up" count={unread.topCount} onJump={unread.jumpToDivider} onDismiss={unread.dismissTop} />}
-          {unread.showBottom && <UnreadPill key="down" direction="down" count={unread.bottomCount} onJump={unread.jumpToLatest} onDismiss={unread.dismissBottom} />}
-        </AnimatePresence>,
-          jumpToEnd: !unread.showBottom,
+    {/* The page's floating title pill sits over the top 56px on wide screens: the screen starts below it. Without one (the
+        hosted shell owns the header and the thread names itself) no band is left. A narrow panel's holder places its own
+        pill (the board's column) or has none (an Artifact's reader). */}
+    <section ref={rootRef} aria-label={name} className={cn('mikka-agent flex min-h-0 min-w-0 flex-1 flex-col', pill && !panel && 'md:pt-14')}>
+      {/* The board's column and an Artifact's reader are the same screen as the page, as a narrow panel (Capy's panel host). */}
+      <ThreadScreen host={embedded ? 'embedded' : compact ? 'column' : 'page'} panel={panel} botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={panel ? undefined : panels} work={work.work}
+        transcriptLabel={bot ? t('conversationWith', { name: bot.name }) : t('conversation')}
+        loadingLabel={!data && !loadError ? tCommon('loading') : undefined}
+        older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
+        working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
+        composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
+          attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
+        controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
+        pending={[
+          ...(embedded?.quote ? [{ id: 'artifact-quote', name: embedded.quote.label ?? embedded.quote.text, meta: tMessage('quote'), onRemove: embedded.clearQuote }] : []),
+          ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),
+          ...(browser?.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate'), onRemove: () => browser?.remove(note.n) })),
+        ]}
+        notices={<>{notices}{turnOptions}{queuedNotice}{factory.error && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1">{actionError()}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void factory.reload() }}>{tCommon('retry')}</Button></Alert>}</>}
+        questions={factory.questions.map(question => {
+          const reason = factoryQuestionUnavailable(question.status)
+          return { id: question.questionId, revision: question.reference.questionRevision, question: question.question, task: question.task, recordedAnswer: question.recordedAnswer, unavailable: reason ? actionError(reason) : undefined, taskId: question.issueId ?? undefined,
+          kind: question.type === 'permission' ? 'approval' : question.options.length ? 'decision' : 'question', ...(question.options.length ? { options: question.options.map(option => ({ id: option.value, title: option.label })) } : {}) }
+        })}
+        onAnswer={async (id, text) => {
+          const question = factory.questions.find(item => item.questionId === id)
+          if (!question) return { status: 'unavailable', error: actionError('factoryQuestionClosed') }
+          const receipt = await factory.submitAnswer(question, text)
+          return receipt.status === 'accepted' ? receipt : { ...receipt, error: actionError(receipt.error) }
         }}
-        beforeComposer={<>{(loadError || stream.error) && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
-      {failedAt === null && !welcomeFailed && failureNotice}
-      <EveInteractions agent={stream} />
-      {/* Out of quota: after a turn stopped on it, or before the next message is sent. */}
-      {/* On Mikka 默认 with no points here: said before sending (decision 2026-11-02-1450). */}
-      {!data?.error && <HostedUnavailableNotice botId={botId} />}
-      {!refusal && (declined === 'quotaUsed' || !data?.error) && <QuotaNotice botId={botId} stopped={declined === 'quotaUsed'}
-        retry={(label, disabled) => <RetryReplyButton botId={botId} onQueued={mutate} label={label} disabled={disabled} />} />}
-      {unanswered && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48">{t('unavailable', { name })}</AlertTitle></Alert>}
-      {botId && <SubagentLoginNeeds botId={botId} />}
-      {/* One live sentence, not a stored event line; the thread is an inline link inside it (decision 2026-11-10). */}
-      {waitingQuestions.length > 0 && <p data-slot="waiting-questions" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-xs text-muted-foreground">
-        <span role="status" aria-live="polite" aria-atomic="false" className="inline-flex min-w-0 items-center gap-1.5"><CircleHelp aria-hidden="true" className="size-3.5 shrink-0 text-warning" />{t('waitingQuestions', { count: waitingQuestions.length })}</span>
-        {waitingQuestions[0].runId && <Button variant="link" size="xs" className="h-auto min-w-0 max-w-full px-0 font-normal" onClick={() => showThread({ runId: waitingQuestions[0].runId! })}><span className="min-w-0 truncate">{waitingQuestions[0].title}</span></Button>}
-      </p>}
-      <PendingActions />
-      {turnOptions}{queuedNotice}</>}
-        composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={inputRef} label={bot ? t('inputTo', { name: bot.name }) : t('input')} placeholder={placeholder} value={draft} onChange={updateDraft} sending={resuming} editableWhileSending={resuming} onSubmit={() => { void send() }} attachmentScope={data?.botId ? { kind: 'bot', id: data.botId } : undefined}
-        running={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
-        leftControls={<div className="flex min-w-0 items-center gap-1">
-          <BotModelPicker botId={botId ?? null} running={working || sending} />
-          {/* How near the next fold is (lib/coordinator/context-usage.ts). Beside the model chip,
-              because both describe the next turn rather than anything already in the list. */}
-          {data?.context && <CoordinatorContextUsage usage={data.context} />}
-        </div>}
-        quote={embedded?.quote || replyQuote || noteCount ? <div className="flex w-full min-w-0 flex-col items-start gap-0.5">
-          {embedded?.quote && <ArtifactQuoteChip quote={embedded.quote} onRemove={embedded.clearQuote} />}
-          {replyQuote && <QuoteChip slot="reply-quote-chip" text={replyQuote} onRemove={() => { setReplyQuote(null); inputRef.current?.focus() }} />}
-          {browser?.notes.map(note => <BrowserNoteChip key={note.n} note={note} onRemove={() => browser.remove(note.n)} />)}
-        </div> : undefined} />} />
-    </ActivityExpansionContext>
-    <SelectionQuote root={rootRef} onQuote={quoteReply} />
-  </section>
+        running={Object.values(sources ?? {}).filter(source => source.kind === 'run' && !source.finishedAt).length}
+        onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />
+      <SelectionQuote root={rootRef} onQuote={quoteReply} />
+    </section>
   </AgentInteractionContext></AgentThemeProvider>
 }
 

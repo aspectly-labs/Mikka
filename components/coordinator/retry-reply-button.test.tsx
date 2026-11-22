@@ -12,7 +12,7 @@ let reply: unknown = { queued: true }
 let calls = 0
 let currentBuild = true
 let buildCheck = async () => currentBuild
-let submissions = 0, removedNotes = 0, scrollRequests = 0
+let submissions = 0, removedNotes = 0
 const submitted: { text: string; context: { retryOf?: number } | undefined }[] = []
 let chatItems: import('@/lib/coordinator/context').ChatItem[] = []
 let chatError: string | null = null
@@ -32,7 +32,7 @@ let pathname = '/mikka/en', search = ''
 let serverVersion: { build: string } = { build: 'fixture-current' }
 const notices: unknown[] = []
 const notes = [{ n: 1, kind: 'region' as const, url: 'https://example.com', label: 'fixture', note: 'keep this note', rect: { x: 0, y: 0, width: 1, height: 1, viewportWidth: 1, viewportHeight: 1 } }]
-let ThreadTranscript: typeof import('../slots/thread-transcript')['ThreadTranscript']
+let screen: import('../slots/thread-contract').ThreadScreenProps | undefined
 let composer: { sending?: boolean; editableWhileSending?: boolean; value: string; onChange: (value: string) => void; onSubmit: () => void }
 const plain = ({ children }: { children?: ReactNode }) => <div>{children}</div>
 const nothing = () => null
@@ -42,17 +42,24 @@ mock.module(new URL('../../hooks/use-factory-questions.ts', import.meta.url).hre
   useFactoryQuestions: () => ({ questions: [], error: null, reload: nothing }),
 } })
 mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports: {
-  ThreadScreen: (props: import('../slots/thread-contract').ThreadScreenProps | import('../slots/thread-contract').ThreadTranscriptScreenProps) => {
-    if ('transcript' in props) return <ThreadTranscript {...props} />
+  ThreadScreen: (props: import('../slots/thread-contract').ThreadScreenProps) => {
     composer = props.composer
+    screen = props
     const { entries } = props
-    return <div data-official-thread="">
+    return <><div data-official-thread="" data-thread-host={props.host} data-panel={props.panel ? '' : undefined}>
     {props.notices}{entries?.map(entry => entry.role === 'person' ? <div key={entry.id} data-testid={entry.status === 'failed' ? 'failed-message' : 'local-message'}>
-      {entry.text}{entry.attachments?.map(item => <span key={item.id}>{item.name}</span>)}{entry.deliveryMessage}
-      {entry.onRetry && <Button onClick={entry.onRetry}>Retry</Button>}
-    </div> : <div key={entry.id}>{entry.parts.map((part, i) =>
-      part.kind === 'error' ? <span key={i} data-message-failure={part.failure}>{part.text}{part.actions}</span> : null)}</div>)}
-  </div>
+      {entry.text}{entry.attachments?.map(item => <span key={item.id} data-attachment={item.id}>{item.name}</span>)}{entry.deliveryMessage}
+      {entry.onRetry && <Button onClick={entry.onRetry}>Retry</Button>}{entry.actions}
+    </div> : <div key={entry.id} data-event={entry.event ? '' : undefined}>{entry.parts.map((part, i) =>
+      part.kind === 'error' ? <span key={i} data-message-failure={part.failure}>{part.text}{part.actions}</span>
+      : part.kind === 'text' && entry.event ? <span key={i}>{part.node}</span>
+      : part.kind === 'artifacts' ? <span key={i} data-artifacts={part.activeId ?? ''}>{part.items.map(item => item.name).join(',')}</span> : null)}{entry.actions}</div>)}
+  </div><div data-composer="">
+    {props.pending.map(chip => <span key={chip.id} data-pending={chip.id}>{chip.name}<Button onClick={chip.onRemove}>{`remove ${chip.id}`}</Button></span>)}
+    {props.controls}
+    <Textarea ref={props.composer.ref} value={props.composer.value} onChange={event => props.composer.onChange(event.target.value)} />
+    <Button onClick={props.composer.onSubmit}>fixture-send</Button>
+  </div></>
   },
 } })
 // Portal primitives cache DOM availability on import; this fixture imports the
@@ -88,15 +95,7 @@ mock.module('sonner', { namedExports: { toast: Object.assign((...args: unknown[]
 mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
 mock.module(new URL('./use-coordinator-submit.ts', import.meta.url).href, { namedExports: { useCoordinatorSubmit: () => ({ submit: async (text: string, context?: { retryOf?: number }) => { submissions++; submitted.push({ text, context }); return { kind: 'accepted' } }, failureMessage: () => 'fixture failed' }) } })
 mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: [], error: streamError, reconnect: nothing, status: streamStatus, view: emptySessionView(), session: { sessionId: 'wrun_fixture' } }) } })
-mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null, ChatComposer: (props: { value: string; onChange: (value: string) => void; onSubmit: () => void; ref: Ref<HTMLTextAreaElement>; quote?: ReactNode }) => {
-  composer = props
-  return <div>{props.quote}<Textarea ref={props.ref} value={props.value} onChange={event => props.onChange(event.target.value)} /><Button onClick={props.onSubmit}>fixture-send</Button></div>
-} } })
-mock.module(new URL('../ui/message-scroller.tsx', import.meta.url).href, { namedExports: Object.fromEntries([
-  ...['MessageScroller', 'MessageScrollerContent', 'MessageScrollerItem', 'MessageScrollerProvider', 'MessageScrollerViewport'].map(name => [name, plain]),
-  ['MessageScrollerItem', ({ children, 'data-testid': testId }: { children?: ReactNode; 'data-testid'?: string }) => <div data-testid={testId}>{children}</div>],
-  ['MessageScrollerButton', nothing], ['useMessageScroller', () => ({ scrollToEnd: () => { scrollRequests++ } })],
-]) })
+mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null } })
 mock.module(new URL('../workspace/agent-interaction.tsx', import.meta.url).href, { namedExports: { AgentInteractionContext: createContext({}) } })
 mock.module(new URL('../workspace/agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: plain } })
 mock.module(new URL('../workspace/agent-citations.tsx', import.meta.url).href, { namedExports: { useLinkPreviews: () => ({}), LinkCitation: nothing, CitationSources: nothing, AgentCitationsContext: createContext(null) } })
@@ -110,17 +109,12 @@ for (const [file, names] of [
   ['./pending-actions.tsx', ['PendingActions']], ['./subagent-login-needs.tsx', ['SubagentLoginNeeds']],
   ['./hosted-unavailable-notice.tsx', ['HostedUnavailableNotice']], ['./quota-notice.tsx', ['QuotaNotice', 'QuotaSwitchLine']],
   ['../billing/hosted-refusal-notice.tsx', ['HostedRefusalNotice']], ['../nav/bot-avatar.tsx', ['BotAvatar', 'COORDINATOR_AVATAR']],
-  ['../suggestions/mobile-card.tsx', ['SentSuggestion']], ['../artifacts/artifact-card.tsx', ['ArtifactCard', 'ArtifactChip']], ['../workspace/artifact-review.tsx', ['ArtifactReviewCard']],
+  ['../artifacts/artifact-card.tsx', ['ArtifactCard', 'ArtifactChip']], ['../workspace/artifact-review.tsx', ['ArtifactReviewCard']],
 ] as const) mock.module(new URL(file, import.meta.url).href, { namedExports: Object.fromEntries(names.map(name => [name, nothing])) })
+mock.module(new URL('./coordinator-context-usage.tsx', import.meta.url).href, { namedExports: { CoordinatorContextUsage: () => <span data-context-usage="" /> } })
 mock.module(new URL('./bot-model-picker.tsx', import.meta.url).href, { namedExports: { BotModelPicker: nothing, openModelPicker: (botId: string | null) => { modelPicks.push(botId) }, botModelMenuKey: (botId: string | null) => ['bot-model-menu', botId ?? 'coordinator'] } })
 let quoteReply: (text: string) => void = nothing
-let quoteRemovals = 0
 mock.module(new URL('../chat/selection-quote.tsx', import.meta.url).href, { namedExports: { QUOTE_SOURCE_ATTR: 'data-quote-source', SelectionQuote: ({ onQuote }: { onQuote: (text: string) => void }) => { quoteReply = onQuote; return null } } })
-mock.module(new URL('../artifacts/artifact-quote.tsx', import.meta.url).href, { namedExports: {
-  ArtifactQuoteChip: nothing, ArtifactQuoteLine: nothing,
-  QuoteLine: ({ text }: { text: string }) => <span data-slot="reply-quote">{text}</span>,
-  QuoteChip: ({ text, onRemove }: { text: string; onRemove: () => void }) => <span data-slot="reply-quote-chip">{text}<Button onClick={() => { quoteRemovals++; onRemove() }}>fixture-remove-quote</Button></span>,
-} })
 const browser = new Window({ url: 'https://fixture.example/mikka' })
 let container: HTMLDivElement, root: Root
 let createRoot: typeof import('react-dom/client')['createRoot']
@@ -136,12 +130,11 @@ before(async () => {
   }
   ;({ createRoot } = await import('react-dom/client'))
   ;({ RetryReplyButton } = await import('./retry-reply-button'))
-  ;({ ThreadTranscript } = await import('../slots/thread-transcript'))
   ;({ CoordinatorChat } = await import('./coordinator-chat'))
   ;({ VersionGuard } = await import('../version-guard'))
   Object.defineProperty(browser.document, 'visibilityState', { configurable: true, get: () => visibility })
 })
-beforeEach(() => { streamStatus = 'idle'; streamError = false; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; scrollRequests = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
+beforeEach(() => { streamStatus = 'idle'; streamError = false; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
 afterEach(async () => { await act(async () => root.unmount()); container.remove() })
 after(() => browser.happyDOM.close())
 const render = async (onQueued = async () => {}) => { await act(async () => root.render(<RetryReplyButton botId={null} onQueued={onQueued} />)) }
@@ -153,7 +146,9 @@ for (const full of [true, false]) for (const live of [true, false]) test(`a ${li
   chatItems = [{ id: 'fixture-balance-message', position: 84, from: 'person', text: 'fixture API balance check', tools: [], threads: [], artifacts: [], createdAt: '2026-11-05T03:07:28Z', failure: { kind: 'failed', reason: 'balance' } }]
   const bot = { id: 'fixture-bot', name: 'fixture-bot' } as NonNullable<Parameters<typeof CoordinatorChat>[0]['bot']>
   await act(async () => root.render(<CoordinatorChat embedded={full ? undefined : artifactChat} bot={bot} onOpenIssue={nothing} userId="fixture-owner" />))
-  const notice = container.querySelector(full ? '[data-official-thread]' : `[data-message-failure="${live ? 'live' : 'past'}"]`)!
+  const notice = container.querySelector(`[data-message-failure="${live ? 'live' : 'past'}"]`)!
+  // The Artifact's chat is the same screen as the page, as a narrow panel.
+  assert.equal(container.querySelector('[data-official-thread]')?.getAttribute('data-panel'), full ? null : '')
   assert.ok(notice)
   assert.match(notice.textContent ?? '', /Coordinator.apiBalance/)
   assert.doesNotMatch(notice.textContent ?? '', /Common.retry|Coordinator.resend|request_id|doStreamStep|11111111|Billing/)
@@ -170,7 +165,7 @@ for (const full of [true, false]) for (const live of [true, false]) test(`a ${li
   chatError = live ? 'executionModelUnknown' : null
   chatItems = [{ id: 'fixture-no-model', position: 86, from: 'person', text: 'Start a cloud machine and print the Node.js version.', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z', failure: { kind: 'failed', reason: 'modelRequired' } }]
   await act(async () => root.render(<CoordinatorChat embedded={full ? undefined : artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
-  const notice = container.querySelector(full ? '[data-official-thread]' : `[data-message-failure="${live ? 'live' : 'past'}"]`)!
+  const notice = container.querySelector('[data-official-thread]')!
   assert.ok(notice)
   assert.match(notice.textContent ?? '', /Coordinator.modelRequired/)
   assert.equal((notice.textContent?.match(/Coordinator\.modelRequired/g) ?? []).length, 1)
@@ -222,7 +217,8 @@ for (const live of [true, false]) test(`a ${live ? 'current' : 'historical'} clo
   const notice = container.querySelector(`[data-message-failure="${live ? 'live' : 'past'}"]`)!
   assert.ok(notice)
   assert.match(notice.textContent ?? '', /RunErrors.cloud_quota_exhausted.default/)
-  assert.doesNotMatch(notice.textContent ?? '', /Coordinator.failedTitle|Common.retry|Coordinator.resend|doStreamStep/)
+  // The thread screen's error line names the failure once; its action is the cloud top-up, never a resend.
+  assert.doesNotMatch(notice.textContent ?? '', /Common.retry|Coordinator.resend|doStreamStep/)
   const link = notice.querySelector<HTMLAnchorElement>('a')!
   assert.equal(link.textContent, 'Settings.cloud.topUp')
   assert.equal(link.getAttribute('href'), '/api/cloud/models/billing?redirect=1')
@@ -283,24 +279,12 @@ test('background chat catch-up preserves the reading position and an in-progress
   const editor = container.querySelector('textarea')!
   editor.focus()
   editor.setSelectionRange(5, 12)
-  assert.equal(scrollRequests, 0)
   // A live push or reconnect can reveal messages sent from another window.
   chatItems = [...chatItems, message(3), message(5)]
   await act(async () => renderChat())
-  assert.equal(scrollRequests, 0, 'background data must not request a jump to the end')
   assert.equal(composer.value, 'keep reading and editing')
   assert.equal(document.activeElement, editor, 'background data keeps the focused composer mounted')
   assert.deepEqual([editor.selectionStart, editor.selectionEnd], [5, 12])
-})
-
-test('an accepted send in this composer scrolls once; unrelated reads do not scroll again', async () => {
-  await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
-  await act(async () => composer.onChange('a deliberate local send'))
-  await act(async () => composer.onSubmit())
-  assert.equal(submissions, 1)
-  assert.equal(scrollRequests, 1)
-  await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
-  assert.equal(scrollRequests, 1)
 })
 
 test('existing window drafts migrate once and survive a chat remount in the scoped store', async () => {
@@ -487,19 +471,18 @@ test('a confirmed enqueue survives a refresh error and cannot be submitted twice
 test('words quoted from a reply wait above the draft, head the sent message as quote lines and then leave', async () => {
   await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
   await act(async () => quoteReply('先把首页截图放大\n再换成深色'))
-  assert.equal(container.querySelector('[data-slot="reply-quote-chip"]')?.textContent?.startsWith('先把首页截图放大'), true)
+  assert.equal(container.querySelector('[data-pending="reply-quote"]')?.textContent?.startsWith('先把首页截图放大'), true)
   await act(async () => composer.onChange('要整宽还是半宽？'))
   await act(async () => composer.onSubmit())
   assert.equal(submitted[0].text, '> 先把首页截图放大\n> 再换成深色\n\n要整宽还是半宽？')
-  assert.equal(container.querySelector('[data-slot="reply-quote-chip"]'), null)
+  assert.equal(container.querySelector('[data-pending="reply-quote"]'), null)
 })
 
 test('a removed quote is not sent', async () => {
-  quoteRemovals = 0
   await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
   await act(async () => quoteReply('不要这段'))
-  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'fixture-remove-quote')!.click())
-  assert.equal(quoteRemovals, 1)
+  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'remove reply-quote')!.click())
+  assert.equal(container.querySelector('[data-pending="reply-quote"]'), null)
   await act(async () => composer.onChange('只发这句'))
   await act(async () => composer.onSubmit())
   assert.equal(submitted[0].text, '只发这句')
@@ -511,7 +494,7 @@ test('a sent message that quotes a reply shows the quote above its words, and ev
     { id: 'fixture-person', position: 2, from: 'person', text: '> 首页已改好\n\n截图呢？', tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:01:00Z' },
   ]
   await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
-  assert.equal(container.querySelector('[data-slot="reply-quote"]')?.textContent, '首页已改好')
+  assert.equal(container.querySelector('[data-attachment="reply-quote"]')?.textContent, '首页已改好')
   assert.match(container.textContent ?? '', /截图呢？/)
   assert.doesNotMatch(container.textContent ?? '', /> 首页/)
   assert.equal(container.querySelectorAll('[data-slot="message-actions"] [data-copy-state]').length, 2)
@@ -683,4 +666,44 @@ test('a reconnect keeps the first draft editable without sending or stopping the
   await act(async () => composer.onSubmit())
   assert.equal(submissions, 1)
   assert.equal(submitted[0].text, 'first reconnect draft')
+})
+
+test('the Artifact\'s chat is the page\'s screen as a panel: the reader\'s quote waits as a chip, its artifact is marked, context usage follows the model', async () => {
+  let cleared = 0
+  chatData = { items: [{ id: 'fixture-reply', position: 1, from: 'coordinator', text: 'Here', tools: [], threads: [], artifacts: ['fixture-artifact', 'fixture-other'], createdAt: '2026-11-03T04:00:00Z' }],
+    enabled: true, working: false, error: null, artifacts: { 'fixture-artifact': { title: 'Plan' }, 'fixture-other': { title: 'Notes' } },
+    context: { used: 1, max: 2 } }
+  const embedded = { ...artifactChat, quote: { artifactId: 'fixture-artifact', version: 1, kind: 'text' as const, text: 'the quoted words', label: 'fixture label' }, clearQuote: () => { cleared++ } }
+  await act(async () => root.render(<CoordinatorChat embedded={embedded} onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(screen?.host, 'embedded')
+  assert.equal(screen?.panel, true)
+  assert.equal(screen?.panels, undefined, 'a panel opens no work area tabs')
+  assert.equal(container.querySelector('[data-artifacts]')?.getAttribute('data-artifacts'), 'fixture-artifact')
+  assert.ok(container.querySelector('[data-composer] [data-context-usage]'))
+  assert.equal(container.querySelector('[data-pending="artifact-quote"]')?.textContent?.startsWith('fixture label'), true)
+  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'remove artifact-quote')!.click())
+  assert.equal(cleared, 1)
+})
+
+test('the board\'s column is a panel too, without the Artifact\'s extras; the page is not a panel', async () => {
+  await act(async () => root.render(<CoordinatorChat compact onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(screen?.host, 'column')
+  assert.equal(screen?.panel, true)
+  assert.equal(screen?.controls, undefined)
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(screen?.host, 'page')
+  assert.equal(screen?.panel, false)
+})
+
+for (const pending of [false, true]) test(`a ${pending ? 'sending' : 'handed-over'} 建议 is one transcript row with its state, not a card or bubble`, async () => {
+  const card = { source: 'github' as const, action: 'review' as const, title: 'Original pull request', actionTitle: 'Review this pull request', actor: null, url: 'https://example.test/pull/1' }
+  chatItems = [{ id: 'fixture-suggestion', position: 3, from: 'person', text: '', suggestion: card, tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:00:00Z', ...(pending ? { pending: true } : {}) }]
+  await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
+  const row = container.querySelector('[data-event] [data-slot="suggestion-row"]')!
+  assert.ok(row, 'an event row: the screen draws no author line for it')
+  assert.ok(row.textContent?.includes('Review this pull request'))
+  assert.match(row.querySelector('[role="status"]')?.textContent ?? '', pending ? /HostedThread\.sending$/ : /^Coordinator\.suggestionHandedTo$/)
+  assert.equal(container.querySelector('[data-testid="local-message"]'), null, 'no person bubble repeats the card')
+  assert.equal(container.querySelector('[data-attachment="suggestion"]'), null)
+  assert.equal(container.querySelector('[data-slot="suggestion-card"]'), null)
 })
