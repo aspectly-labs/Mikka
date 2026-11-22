@@ -82,7 +82,6 @@ function useFailureReason() {
  */
 /** A tool call as the reply-activity slot draws it: label, target, reason and details worked out here. */
 function useToolView() {
-  const t = useTranslations('Coordinator.activity')
   const toolLabel = useToolLabel()
   const reasonText = useFailureReason()
   const sources = useAgentCitations()?.sources
