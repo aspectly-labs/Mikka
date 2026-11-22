@@ -11,7 +11,7 @@ import { splitBrowserNotes, type BrowserNote } from '@/lib/browser/note'
 import { splitSuggestion, type SuggestionCard } from '@/lib/suggestions/card'
 import { chatFailure, type ChatFailure } from '@/lib/chat-failure'
 import { eventLine, type EventLine } from './event-line'
-import { projectedToolResult, toolCallMetadata, toolResultMetadata, type ProjectedToolMetadata } from './tool-metadata'
+import { projectedToolResult, TOOL_PREVIEW_CHARS, toolCallMetadata, toolResultMetadata, type ProjectedToolMetadata } from './tool-metadata'
 import { quotePreview, toolQuote } from './tool-quote'
 import { invalidToolParts } from './invalid-tool-call'
 import { scheduleChatResultSchema } from '@/lib/schedules/chat-result'
@@ -336,7 +336,7 @@ function withQuote(quote: string | undefined): { quote?: string } {
 function toolPreview(compact: unknown, value: unknown): string | undefined {
   if (typeof compact === 'string') return compact || undefined
   if (value === undefined || value === null) return undefined
-  return (typeof value === 'string' ? value : jsonbText(value)).slice(0, 200) || undefined
+  return (typeof value === 'string' ? value : jsonbText(value)).slice(0, TOOL_PREVIEW_CHARS) || undefined
 }
 
 const utf8 = new TextEncoder()

@@ -174,7 +174,7 @@ test('a reply draws its thinking and its tools as shadcn Trace rows: several cal
     assert.match(text(), /Check the login/, 'the running row is open, so its words show as they stream')
     assert.equal(group()?.getAttribute('data-activity-group'), 'running')
     await settle(() => rows().length === 3)
-    assert.deepEqual(rows(), [['done', 'Create taskFix login', null], ['running', 'Start task', 'running'], ['error', 'Dispatch Factory task· Factory task not found', 'error']],
+    assert.deepEqual(rows(), [['done', 'Create issueFix login', null], ['running', 'Dispatch run', 'running'], ['error', 'Dispatch factory task· Factory task not found', 'error']],
       'verb and object; an answered error is a failure with its reason')
     assert.doesNotMatch(text(), /dispatch_factory_task|i1|factoryNotFound/, 'raw input and output start closed')
     // Opened, a call says what it did in words first; its raw data is one more click away, under 「Raw data」.
@@ -193,7 +193,7 @@ test('a reply draws its thinking and its tools as shadcn Trace rows: several cal
 
     // Stored: one summary line, closed, side effects first, with how many failed; a call that never returned failed too.
     await view.render(<ReplyActivity tools={[tools[2], { ...tools[2], call: 'c9' }]} />)
-    assert.equal(group()?.querySelector('[data-slot="trace-title"]')?.textContent, 'Dispatch Factory task', 'nothing succeeded: the line names the failed call')
+    assert.equal(group()?.querySelector('[data-slot="trace-title"]')?.textContent, 'Dispatch factory task', 'nothing succeeded: the line names the failed call')
     await view.render(<ReplyActivity tools={[...tools, { call: 'c5', name: 'get_issue', state: 'done' as const }]} />)
     assert.equal(group()?.getAttribute('data-activity-group'), 'error')
     assert.ok(group()?.querySelector('[data-slot="trace-icon"] svg.text-destructive-foreground'), 'a failure is an icon, a colour and a word together (R-87)')
@@ -203,7 +203,7 @@ test('a reply draws its thinking and its tools as shadcn Trace rows: several cal
     assert.equal(group()?.querySelector('[data-activity-failed]')?.textContent, '2 failed', 'the failure count sits outside the summary, so it never truncates')
     // Stored, a tool that never returned failed: the docs' row for a call that is not streaming.
     await view.render(<ReplyActivity tools={[tools[1]]} />)
-    assert.deepEqual(rows(), [['error', 'Start task', 'error']])
+    assert.deepEqual(rows(), [['error', 'Dispatch run', 'error']])
     // A tool with nothing to show is a line that does not open.
     await view.render(<ReplyActivity tools={[{ call: 'c4', name: 'create_issue', state: 'done' }]} />)
     assert.equal(view.container.querySelector('[data-activity-tool] button'), null)

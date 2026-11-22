@@ -13,7 +13,7 @@ import type { ChatComposerProps } from './chat-composer-contract'
 /** A tool the reply used, or the thinking before it, as one row. */
 export type ThreadToolRow = {
   id: string
-  /** What it did, in the person's words. */
+  /** The tool's English title (lib/tool-title.ts), whatever the UI language: 「Read file」, 「Run command」. */
   label: string
   status: 'running' | 'done' | 'failed' | 'stopped'
   /** How long it took, once done; a running tool counts up from `startedAt`. */
@@ -23,6 +23,8 @@ export type ThreadToolRow = {
   error?: string
   /** A short note after the label (its target, a count). */
   note?: string
+  /** The path, query, URL or command it acted on, for its opened details (a read file's language, a search's query). */
+  target?: string
   /** Recorded input, output or reasoning for the expanded row. */
   input?: string
   detail?: string

@@ -18,8 +18,11 @@ import { CitationChip, useAgentCitations } from '@/components/workspace/agent-ci
 import { threadGroupOfRun } from '@/components/workspace/thread-status-icon'
 import { HarnessLabel } from '@/components/labels/entity-labels'
 import { toolDetail, type ToolDetailLine } from '@/lib/coordinator/tool-detail'
+import { toolTitle } from '@/lib/tool-title'
+import { threadStepKind } from '@/lib/issue-run-conversation'
 import { runThreadName } from '@/lib/coordinator/citations'
 import type { ChatTool } from '@/lib/coordinator/context'
+import { TOOL_PREVIEW_CHARS } from '@/lib/coordinator/tool-metadata'
 import { ActivityGroup, ActivityList, ActivityThinking, ActivityTool } from '@ui-slot/reply-activity'
 import type { ActivityToolView } from '@/components/slots/reply-activity-contract'
 import type { ThreadToolRow } from '@/components/slots/thread-contract'
@@ -56,13 +59,12 @@ const ACTION_ICONS: Record<ToolAction, ComponentType<{ className?: string }>> = 
 }
 
 /**
- * A tool's name as the person reads it: its label, or its own name spelled out; never 「使用工具」 (R-83). A tool the
- * bot does not have reads 「未知步骤」, not the name the model made up.
+ * A tool's name as every row shows it: its English title, whatever the UI language (Alex, 2026-11-22; lib/tool-title.ts),
+ * never its raw identifier. A tool the bot does not have reads 「未知步骤」, not the name the model made up.
  */
 function useToolLabel() {
   const t = useTranslations('Coordinator.activity')
-  return (name: string, unknown = false) => unknown ? t('unknownStep')
-    : t.has(`tools.${name}` as never) ? t(`tools.${name}` as never) : name.replace(/^mcp__/, '').replace(/__|_/g, ' ')
+  return (name: string, unknown = false, declared?: string) => unknown ? t('unknownStep') : toolTitle(name, declared)
 }
 
 /**
@@ -75,7 +77,7 @@ function useFailureReason() {
 }
 
 /**
- * One tool call (R-83): its kind's icon, then what it did to what (「查看任务 ALEX-45」). Running, it spins; failed, it is
+ * One tool call (R-83): its kind's icon, then what it did to what (「Get issue · ALEX-45」). Running, it spins; failed, it is
  * red and says why (「派发 Factory 任务 · 没有找到 Factory 任务」), also when the tool answered an error instead of
  * throwing. Its raw input and output open only from this row.
  */
@@ -86,7 +88,7 @@ function useToolView() {
   const reasonText = useFailureReason()
   const sources = useAgentCitations()?.sources
   return (tool: ChatTool, live: boolean): ActivityToolView => {
-    const label = toolLabel(tool.name, toolUnknown(tool))
+    const label = toolLabel(tool.name, toolUnknown(tool), tool.displayName)
     // A task or thread named by id reads as its number or name, as the chips in the words do.
     const object = sources?.[toolObjectId(tool) ?? '']
     const target = object ? object.kind === 'run' ? runThreadName(object) : object.identifier ?? object.title : toolTarget(tool)
@@ -100,7 +102,7 @@ function useToolView() {
     const card = dispatched && sources?.[dispatched]?.kind === 'run' ? dispatched : null
     return {
       key: tool.call, state: running ? 'running' : failed ? 'error' : 'done', icon: <Icon />,
-      title: running ? t('running', { tool: label }) : label, ...(target ? { target } : {}), ...(why ? { why } : {}),
+      title: label, ...(target ? { target } : {}), ...(why ? { why } : {}),
       details: <ToolDetail tool={tool} failed={failed} />, raw: <RawData tool={tool} failed={failed} />,
       ...(tool.input ? { input: tool.input } : {}), ...(tool.output ? { output: tool.output } : {}),
       openable: Boolean(tool.input || tool.output) && !running, ...(card ? { card } : {}),
@@ -297,6 +299,7 @@ export function ReplyWaiting({ since }: { since?: number }) {
 export function useThreadToolRows() {
   const t = useTranslations('Coordinator.activity')
   const view = useToolView()
+  const toolLabel = useToolLabel()
   return (tools: readonly ChatTool[], { live, thinking, thought }: { live: boolean; thinking?: { active: boolean; seconds?: number; text?: string } | false; thought?: boolean }): ThreadToolRow[] => [
     ...(thinking || thought ? [{
       id: 'thinking', label: thinking && thinking.active ? t('thinking') : thinking && thinking.seconds ? t('thought', { seconds: thinking.seconds }) : t('thoughtStored'),
@@ -306,10 +309,14 @@ export function useThreadToolRows() {
     ...tools.map(tool => {
       const row = view(tool, live)
       const action = toolAction(tool.name)
-      // What it did, for the group's words (#2923): the Coordinator's own tools are web reads, dispatches or other tools.
-      const kind = action === 'searchWeb' || action === 'readWeb' ? 'web' as const : action === 'dispatch' || action === 'dispatchFactory' ? 'delegate' as const : 'other' as const
-      return { id: row.key, label: row.title, kind, status: row.state === 'running' ? 'running' as const : row.state === 'error' ? 'failed' as const : 'done' as const,
-        ...(row.why ? { error: row.why } : {}), ...(row.target ? { note: row.target } : {}), input: row.input, detail: row.output }
+      // What it did, for the group's words, the row's icon and its opened details (#2923): the Coordinator's own web
+      // reads and dispatches, else what a coding tool of that name does (a read file, a search), else another tool.
+      const kind = action === 'searchWeb' || action === 'readWeb' ? 'web' as const : action === 'dispatch' || action === 'dispatchFactory' ? 'delegate' as const : threadStepKind(tool.name)
+      // The row names the tool; running, its spinner says so (the template's), not words in front of an English title.
+      return { id: row.key, label: toolLabel(tool.name, toolUnknown(tool), tool.displayName), kind, status: row.state === 'running' ? 'running' as const : row.state === 'error' ? 'failed' as const : 'done' as const,
+        ...(row.why ? { error: row.why } : {}), ...(row.target ? { note: row.target, target: row.target } : {}), input: row.input, detail: row.output,
+        // The chat keeps a short preview of each output: one as long as that may be only its start, and says so.
+        ...((row.output?.length ?? 0) >= TOOL_PREVIEW_CHARS ? { outputTruncated: true } : {}) }
     }),
   ]
 }

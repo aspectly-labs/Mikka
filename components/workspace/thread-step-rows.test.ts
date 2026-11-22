@@ -31,23 +31,27 @@ test('a run\'s tool calls are named by what they did, from the structured fields
     { type: 'tool-output-available', toolCallId: 'bad', output: { exitCode: 1, output: '1 problem' }, outputTruncated: true },
     { type: 'tool-input-available', toolCallId: 'mcp', toolName: 'mcp__github__pull_request_read', input: { title: 'Mikka#2837' } },
   ]), true)
-  assert.deepEqual(rows.map(row => [row.label, row.kind, row.status]), [
-    ['已读取 task-detail-skeleton.tsx', 'read', 'done'],
-    ['已在 components/workspace 中搜索“TaskDetailLoading”', 'search', 'done'],
-    ['pnpm test --filter task-detail -u', 'shell', 'done'],
-    ['命令失败 (pnpm lint:ui) · exit 1', 'shell', 'failed'],
-    ['mcp__github__pull_request_read', 'other', 'running'],
+  // Alex, 2026-11-22: the tool's English title, then what it acted on, also in a Chinese UI.
+  assert.deepEqual(rows.map(row => [row.label, row.note, row.kind, row.status]), [
+    ['Read file', 'task-detail-skeleton.tsx', 'read', 'done'],
+    ['Search', 'TaskDetailLoading', 'search', 'done'],
+    ['Run command', 'pnpm test --filter task-detail -u', 'shell', 'done'],
+    ['Run command', 'pnpm lint:ui', 'shell', 'failed'],
+    ['Pull request read', 'Mikka#2837', 'other', 'running'],
   ])
+  for (const row of rows) assert.doesNotMatch(row.label, /_|\p{Script=Han}/u, row.label)
+  assert.equal(rows[3].error, '退出码 1', 'a failed command says how it ended')
+  assert.equal(rows[1].target, 'TaskDetailLoading')
+  assert.equal(rows[0].input, JSON.stringify({ file_path: 'task-detail-skeleton.tsx' }), 'the call\'s input opens with the row')
   assert.equal(rows[2].detail, 'Tests 20 passed (20)\n', 'the Shell box shows the output, not its JSON envelope')
   assert.equal(rows[2].exitCode, 0)
   assert.equal(rows[2].ms, 4100)
   assert.equal(rows[3].outputTruncated, true)
-  assert.equal(rows[4].note, 'Mikka#2837', 'a tool with no kind keeps the input that says what it did')
-  assert.ok(!('note' in rows[0]), 'a named row does not repeat its target')
 })
 
 test('a call its ended run left running reads as stopped', async () => {
   const [row] = useThreadStepRows()(await steps([{ type: 'tool-input-available', toolCallId: 'b', toolName: 'Bash', input: { command: 'pnpm build' } }]), false)
   assert.equal(row.status, 'stopped')
-  assert.equal(row.label, 'pnpm build')
+  assert.equal(row.label, 'Run command')
+  assert.equal(row.note, 'pnpm build')
 })

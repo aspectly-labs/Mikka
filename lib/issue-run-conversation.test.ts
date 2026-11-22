@@ -153,8 +153,9 @@ test('a folded steps line keeps each tool call so it can open: name, what it ran
   assert.equal(steps.count, 4)
   assert.deepEqual(steps.steps.slice(0, 2), [
     { id: '1', name: 'Bash', detail: 'pnpm test --watch=false', command: 'pnpm   test\n --watch=false', failed: true, kind: 'shell', status: 'failed' },
-    { id: '2', name: 'apply_patch', detail: 'a.ts, b.ts', failed: false, kind: 'edit', status: 'running', target: 'a.ts, b.ts' },
+    { id: '2', name: 'apply_patch', detail: 'a.ts, b.ts', failed: false, kind: 'edit', status: 'running', target: 'a.ts, b.ts', input: '{"files":["a.ts","b.ts"]}' },
   ])
+  assert.ok(!('input' in steps.steps[0]), 'a command\'s input is its command, kept once')
   assert.equal(steps.steps[2].detail?.length, 200)
   assert.ok(steps.steps[2].detail?.endsWith('…'))
   assert.equal(steps.steps[2].target?.length, 200, 'a target is one line too')
