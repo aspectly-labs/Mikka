@@ -129,3 +129,4 @@ test('a personal workspace has every setting of the workspace itself; only what 
   assert.equal(team.includes('permissions'), false)
   assert.equal(team.includes('secrets'), false)
 })
+
