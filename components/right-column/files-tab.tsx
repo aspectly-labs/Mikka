@@ -132,21 +132,21 @@ function Tree({ scope, changed, query, machineState }: { scope: FilesScope; chan
     else { next.add(path); if (!pages[path]) void load(path) }
     return next
   })
-  const row = (entry: WorkspaceEntry, depth: number): ReactNode => entry.kind === 'directory'
+  const row = (entry: WorkspaceEntry): ReactNode => entry.kind === 'directory'
     ? <div key={entry.path}>
       <Button variant="ghost" size="sm" aria-expanded={open.has(entry.path)} onClick={() => toggle(entry.path)} className="w-full justify-start gap-1.5 font-normal">
         {open.has(entry.path) ? <FolderOpen data-icon="inline-start" className="text-muted-foreground" /> : <Folder data-icon="inline-start" className="text-muted-foreground" />}
         <span className="truncate">{entry.name}</span>
       </Button>
-      {open.has(entry.path) && <div role="group" className="ps-3">{children(entry.path, depth + 1)}</div>}
+      {open.has(entry.path) && <div role="group" className="ps-3">{children(entry.path)}</div>}
     </div>
-    : <FileRow key={entry.path} path={entry.path} name={entry.name} depth={depth} change={marks.get(entry.path)} selected={selected === entry.path} onOpen={() => setSelected(selected === entry.path ? null : entry.path)} />
-  const children = (path: string, depth: number): ReactNode => {
+    : <FileRow key={entry.path} path={entry.path} name={entry.name} change={marks.get(entry.path)} selected={selected === entry.path} onOpen={() => setSelected(selected === entry.path ? null : entry.path)} />
+  const children = (path: string): ReactNode => {
     const page = pages[path]
     if (failed[path]) return <div className="py-1"><InlineLoadError message={failure(failed[path])} retryLabel={t('retry')} onRetry={() => void load(path)} /></div>
     if (!page) return <div className="py-1"><Skeleton className="h-5 w-1/2" /></div>
     return <>
-      {page.entries.map(entry => row(entry, depth))}
+      {page.entries.map(entry => row(entry))}
       {page.nextCursor && <Button variant="ghost" size="sm" onClick={() => void load(path, page.nextCursor!)}>{t('more')}</Button>}
     </>
   }
@@ -154,13 +154,13 @@ function Tree({ scope, changed, query, machineState }: { scope: FilesScope; chan
     {machineState && machineState !== 'running' && machineState !== 'online' && <p className="px-2 pb-2 text-xs text-muted-foreground">{t('asleep')}</p>}
     {search ? found.error ? <InlineLoadError message={failure(found.error)} retryLabel={t('retry')} onRetry={() => { void found.mutate() }} />
       : !found.data ? <Skeleton className="h-5 w-1/2" />
-        : found.data.length ? found.data.map(entry => row(entry, 0)) : <Note>{t('noMatches')}</Note>
-      : children('', 0)}
+        : found.data.length ? found.data.map(entry => row(entry)) : <Note>{t('noMatches')}</Note>
+      : children('')}
     {selected && <Preview scope={scope} path={selected} />}
   </div>
 }
 
-function FileRow({ path, name, depth, change, selected, onOpen, extra }: { path: string; name: string; depth: number; change?: ChangedFile; selected?: boolean; onOpen?: () => void; extra?: ReactNode }) {
+function FileRow({ path, name, change, selected, onOpen, extra }: { path: string; name: string; change?: ChangedFile; selected?: boolean; onOpen?: () => void; extra?: ReactNode }) {
   const t = useTranslations('RightColumn.files')
   const navigation = useRightColumnNavigation()
   async function copyPath() {
@@ -203,7 +203,7 @@ function ChangedList({ files, query, empty }: { files: ChangedFile[]; query: str
   const shown = files.filter(file => matches(query, file.path))
   if (!files.length) return <Note>{empty}</Note>
   return <div role="tree" className="flex flex-col">
-    {shown.map(file => <FileRow key={file.path} path={file.path} name={file.path} depth={0} change={file} />)}
+    {shown.map(file => <FileRow key={file.path} path={file.path} name={file.path} change={file} />)}
   </div>
 }
 
@@ -214,7 +214,7 @@ function UploadList({ uploads, query }: { uploads: Upload[]; query: string }) {
   if (!uploads.length) return <Note>{t('noUploads')}</Note>
   return <div role="tree" className="flex flex-col">
     {shown.map(upload => <div key={upload.id} className="flex items-center gap-2">
-      <div className="min-w-0 flex-1"><FileRow path={upload.name} name={upload.name} depth={0}
+      <div className="min-w-0 flex-1"><FileRow path={upload.name} name={upload.name}
         extra={<DropdownMenuGroup><DropdownMenuItem render={<a href={uploadDownloadUrl(upload.id)} download={upload.name} />}><Download />{t('download')}</DropdownMenuItem></DropdownMenuGroup>} /></div>
       <span className="shrink-0 text-xs text-muted-foreground">{format.number(upload.size / 1024, { maximumFractionDigits: 0 })} KB</span>
     </div>)}
