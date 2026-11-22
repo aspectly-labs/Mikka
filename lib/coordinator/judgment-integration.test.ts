@@ -6,7 +6,7 @@ import { DECISION_MODEL, decisionRequestInput, validatedAnswers } from './decisi
 const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg=='
 const priorUrl=process.env.MIKKA_LITELLM_URL
 const priorKey=process.env.MIKKA_LITELLM_MASTER_KEY, priorFetch=globalThis.fetch, priorConsole=console.error
-let events: Array<{id:string;kind:'run_finished'|'run_question'|'run_blocked'|'issue_done'|'user_message';payload:Record<string,unknown>;tier:string|null;lastTriageAttemptAt?:Date|null}>=[]
+let events: Array<{id:string;botId?:string;kind:'run_finished'|'run_question'|'run_blocked'|'issue_done'|'user_message';payload:Record<string,unknown>;tier:string|null;lastTriageAttemptAt?:Date|null}>=[]
 let starts=0
 let dueScopes: Array<{ userId: string; botId: string }> = []
 const requests: Array<Record<string,unknown>>=[]
@@ -22,9 +22,9 @@ stub('../abuse/context.ts',{hostedBillingScope:{
  run:(scope:unknown,work:()=>unknown)=>{assert.deepEqual(scope,{workspaceId:'fixture-workspace',ownerId:'synthetic'});return work()},
 }})
 stub('./store.ts',{
- untriagedEvents:async()=>events.filter(e=>e.tier===null),
- claimTriageAttempt:async(event:typeof events[number],scope:unknown)=>{assert.deepEqual(scope,{userId:'synthetic',botId:null});event.lastTriageAttemptAt=new Date();return event.lastTriageAttemptAt},
- completeTriageAttempt:async(event:typeof events[number],scope:unknown,attemptedAt:Date,judgment:{tier:string;execution:unknown})=>{assert.deepEqual(scope,{userId:'synthetic',botId:null});assert.equal(event.lastTriageAttemptAt,attemptedAt);assert.ok(judgment.execution);event.tier=judgment.tier;return true},
+ untriagedEvents:async(_userId:string,botId:string|null)=>events.filter(e=>e.tier===null&&(e.botId??null)===botId),
+ claimTriageAttempt:async(event:typeof events[number],scope:unknown)=>{assert.deepEqual(scope,{userId:'synthetic',botId:event.botId??null});event.lastTriageAttemptAt=new Date();return event.lastTriageAttemptAt},
+ completeTriageAttempt:async(event:typeof events[number],scope:unknown,attemptedAt:Date,judgment:{tier:string;execution:unknown})=>{assert.deepEqual(scope,{userId:'synthetic',botId:event.botId??null});assert.equal(event.lastTriageAttemptAt,attemptedAt);assert.ok(judgment.execution);event.tier=judgment.tier;return true},
  setEventTier:async(id:string,tier:string,scope:unknown)=>{assert.deepEqual(scope,{userId:'synthetic',botId:null});events.find(e=>e.id===id)!.tier=tier;return true},
  wakingChats:async()=>[null],hasWakingEvents:async()=>events.some(e=>e.tier!==null&&e.tier!=='background'),
 })
@@ -33,14 +33,16 @@ stub('../attention/store.ts',{releaseAttention:async()=>{}})
 // are synthetic. No old Workflow loop or lease engine participates.
 stub('../default-model.ts',{defaultModelAvailable:async()=>true})
 stub('./coordinator-bot.ts',{coordinatorBot:async()=>({botId:'fixture-bot',workspaceId:'fixture-workspace'})})
-stub('../db/index.ts',{pool:{query:async(sql:string)=>{
+stub('../db/index.ts',{pool:{query:async(sql:string,parameters?:unknown[])=>{
  if(sql.includes('SELECT DISTINCT "userId","botId" FROM coordinator_events'))return {rows:dueScopes}
- if(sql.includes('SELECT e.id, b."workspaceId" FROM coordinator_events e'))return {rows:events.filter(e=>e.tier!==null&&e.tier!=='background').map(e=>({id:e.id,workspaceId:'fixture-workspace'}))}
+ if(sql.includes('SELECT e.id, b."workspaceId" FROM coordinator_events e'))return {rows:events.filter(e=>e.tier!==null&&e.tier!=='background'&&(e.botId??null)===parameters?.[1]).map(e=>({id:e.id,workspaceId:'fixture-workspace'}))}
  throw new Error('Unexpected SQL in decision boundary fixture')
 }}})
 stub('../eve/server-client.ts',{sendEveEvent:async(scope:unknown,id:string)=>{
- assert.deepEqual(scope,{ownerId:'synthetic',botId:null,workspaceId:'fixture-workspace',surface:'web'})
- assert.ok(events.some(event=>event.id===id));starts++
+ const event=events.find(event=>event.id===id)
+ assert.ok(event)
+ assert.deepEqual(scope,{ownerId:'synthetic',botId:event.botId??null,workspaceId:'fixture-workspace',surface:'web'})
+ starts++
 }})
 let wake:typeof import('./wake'),group:typeof import('./route-group'),transport:typeof import('./decide')
 before(async()=>{
@@ -115,16 +117,21 @@ test('the bounded sweep defers inference that cannot fit its remaining handler b
   else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
  }
 })
-test('the bounded sweep classifies when a full decision window fits, and handles an empty outbox', async () => {
+test('the bounded sweep processes multiple distinct fast chats, and handles an empty outbox', async () => {
  const timeout = process.env.MIKKA_DECISION_TIMEOUT_MS
  try {
   process.env.MIKKA_DECISION_TIMEOUT_MS = '30000'
   assert.equal((await wake.retryCoordinatorWakes()).due, 0)
-  dueScopes = [{ userId: 'synthetic', botId: null! }]
-  events = [{ id: 'sweep', kind: 'run_blocked', payload: {}, tier: null }]
-  assert.equal((await wake.retryCoordinatorWakes()).started, 1)
-  assert.equal(events[0].tier, 'result')
-  assert.equal(starts, 1)
+  dueScopes = ['bot-one', 'bot-two', 'bot-three'].map(botId => ({ userId: 'synthetic', botId }))
+  events = dueScopes.map(({ botId }) => ({ id: `sweep-${botId}`, botId, kind: 'run_blocked', payload: {}, tier: null }))
+  const result = await wake.retryCoordinatorWakes()
+  assert.equal(result.due, 3)
+  assert.equal(result.started, 3)
+  assert.equal(result.deferred, 0)
+  assert.equal(result.failed, 0)
+  assert.ok(events.every(event => event.tier === 'result'))
+  assert.equal(requests.length, 3)
+  assert.equal(starts, 3)
  } finally {
   if (timeout === undefined) delete process.env.MIKKA_DECISION_TIMEOUT_MS
   else process.env.MIKKA_DECISION_TIMEOUT_MS = timeout
