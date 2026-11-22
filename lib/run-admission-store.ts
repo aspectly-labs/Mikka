@@ -167,9 +167,9 @@ export async function acceptLocalRun(input: {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${JSON.stringify(['dispatch-issue', input.userId, task.id])}, 0))`)
     const actives = await tx.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.issueId, task.id), inArray(agentRuns.status, [...UNFINISHED_RUN_STATUSES])))
     // Delegation admits only while the declared parent is this task's one live
-    // run (docs/factory/3089-run-delegation.md): a live sibling is the ordinary conflict.
-    const conflict = input.delegation ? actives.find(run => run.id !== input.delegation!.parentRunId) : actives[0]
-    if (conflict) throw new ActionFailureError('runAlreadyActive', { runId: conflict.id })
+    // run (docs/factory/3089-run-delegation.md). Validate the caller's declared
+    // parent first: a parent on another task, an ended run or a delegated child
+    // is delegationUnavailable, not the ordinary sibling conflict.
     if (input.delegation) {
       if (!actives.some(run => run.id === input.delegation!.parentRunId)) throw invalid('delegationUnavailable')
       const [parent] = await tx.select({ workspaceId: agentRuns.workspaceId, deviceId: agentRuns.deviceId, agentId: agentRuns.agentId,
@@ -185,6 +185,9 @@ export async function acceptLocalRun(input: {
         .where(and(eq(agentRuns.userId, input.userId), sql`${agentRuns.agentDefinition}->'delegation'->>'parentRunId' = ${input.delegation.parentRunId}`))
       if (children.count >= 8) throw invalid('delegationLimit')
     }
+    // Once the declared parent is proven valid, a live sibling is the ordinary conflict.
+    const conflict = input.delegation ? actives.find(run => run.id !== input.delegation!.parentRunId) : actives[0]
+    if (conflict) throw new ActionFailureError('runAlreadyActive', { runId: conflict.id })
     if (readOnly) {
       // The conversation is named once this commits (decision 2026-11-13-1405); a run that continues one takes its title.
       scheduleThreadTitle(tx, input.id, input.userId, 'created')
