@@ -1,5 +1,6 @@
 import * as settingsActions from '@/app/actions/settings'
 import * as instructionActions from '@/app/actions/instructions'
+import * as reviewSettingsActions from '@/app/actions/review-settings'
 import * as taskDomainActions from '@/app/actions/task-domain'
 import * as projectResourcesActions from '@/app/actions/project-resources'
 import * as enabledModels from '@/app/actions/enabled-models'
@@ -67,6 +68,9 @@ const functions = {
   'project-resources.saveEnvironmentInstructions': instructionActions.updateEnvironmentInstructions,
   'bots.getBotInstructions': instructionActions.getBotInstructions,
   'bots.saveBotInstructions': instructionActions.updateBotInstructions,
+  'review-settings.getCodeReviewRepositories': reviewSettingsActions.getCodeReviewRepositories,
+  'review-settings.saveCodeReviewRepository': reviewSettingsActions.saveCodeReviewRepository,
+  'review-settings.deleteCodeReviewRepository': reviewSettingsActions.deleteCodeReviewRepository,
   'desktop.readBatch': createReadBatch(() => desktopActions),
   'desktop.bootstrap': desktopBootstrap,
   'desktop.session': desktopSession,

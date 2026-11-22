@@ -3,6 +3,8 @@ import type { Pool, PoolClient } from 'pg';
 import { freezeWorkerDefinition, retryWorkerDefinition } from '../agent-kit/worker';
 import { configureFactoryCheck, factoryRepairBrief } from './checks';
 import { factoryHandoffPrompt, persistFactoryHandoff } from './handoff';
+import { factoryReviewPreferences } from '../code-review/configuration';
+import type { CodeReviewConfiguration } from '../code-review/settings-contract';
 import type { DispatchInput, DispatchResult } from '../run-dispatch';
 import { FactoryError, type FactoryBinding, type FactoryStage } from './contract';
 import { factoryEventId } from './event-id';
@@ -17,7 +19,7 @@ export type FactoryQueue = (tx: PoolClient, userId: string, input: {
 /** Installed by the owning consumer; no model may select a callback or gate. */
 export interface FactoryDispatchAdapters {
   lockAdmission?: (tx: PoolClient, userId: string, input: FactoryDispatchInput) => Promise<void>;
-  configure: Partial<Record<FactoryStage, (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void | { preservePrompt: true }>>>;
+  configure: Partial<Record<FactoryStage, (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void | { preservePrompt?: true; reviewConfig?: CodeReviewConfiguration }>>>;
   replay?: Partial<Record<FactoryStage, (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void>>>;
   freeze: (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void>;
 }
@@ -100,6 +102,11 @@ export function createFactoryDispatch(pool: Pool, store: ReturnType<typeof creat
         await tx.query('UPDATE agent_runs SET prompt=prompt || $2 WHERE id=$1', [queued.runId, handoffText]);
       } else {
         await tx.query('UPDATE agent_runs SET prompt=left(prompt,$2) || $3,"promptTaskStart"=CASE WHEN "promptTaskStart" IS NOT NULL AND "promptTaskLength" IS NOT NULL THEN LEAST("promptTaskStart",$2) END,"promptTaskLength"=CASE WHEN "promptTaskStart" IS NOT NULL AND "promptTaskLength" IS NOT NULL THEN LEAST("promptTaskLength",GREATEST(0,$2-"promptTaskStart")) END WHERE id=$1', [queued.runId, 100000 - handoffText.length, handoffText]);
+      }
+      if (configured?.reviewConfig) {
+        const { rows: [row] } = await tx.query<{ prompt: string }>('SELECT prompt FROM agent_runs WHERE id=$1', [queued.runId]);
+        const preferences = factoryReviewPreferences(configured.reviewConfig, row.prompt);
+        if (preferences) await tx.query('UPDATE agent_runs SET prompt=prompt || $2 WHERE id=$1', [queued.runId, preferences]);
       }
       await tx.query('UPDATE factory_attempts SET output=output || $2::jsonb WHERE id=$1', [task.attemptId, JSON.stringify({ handoff: { eventId: handoff.eventId, digest: handoff.digest, requestEpoch: task.sourceEventId } })]);
       const { rows: [review] } = await tx.query('SELECT output->\'workspaceReview\' AS reference FROM factory_attempts WHERE id=$1 AND "taskId"=$2', [task.attemptId, task.id]);

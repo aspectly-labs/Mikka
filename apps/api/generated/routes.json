@@ -2788,6 +2788,17 @@
       "sourceHash": "76bad8b2312de03143654341a13956f5d2a4348abf389b0fbab9fb3c42c7e30e"
     },
     {
+      "path": "/mikka/api/settings/workspace/[workspaceId]/review-repositories",
+      "template": "/api/settings/workspace/[workspaceId]/review-repositories",
+      "source": "app/api/settings/workspace/[workspaceId]/review-repositories/route.ts",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH"
+      ],
+      "sourceHash": "9cdbe4189f11e643cd3220b4344704fcf096a3d2c53616f282786bad629f33bb"
+    },
+    {
       "path": "/mikka/api/settings/[read]",
       "template": "/api/settings/[read]",
       "source": "app/api/settings/[read]/route.ts",
@@ -3887,7 +3898,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "cb71992ad7f154e1855fa5929299770ff128bea99286e96526759440651cd9f9"
+      "sourceHash": "437c846e1fdb8cfaaf64bd2e2f426b2345cf31ba79f67bdf7c129d0b1478caf9"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

@@ -148,6 +148,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/secrets/store.ts', file: 'tests/workspace-secrets.db.test.ts', script: 'test:secrets-db' },
   { marker: 'lib/session-mailbox.ts', file: 'tests/session-mailbox.db.test.ts', script: 'test:session-mailbox-db' },
   { marker: 'lib/suggestions/time-zone.ts', file: 'tests/settings-preferences.db.test.ts', script: 'test:settings-prefs-db' },
+  { marker: 'lib/code-review/repositories.ts', file: 'lib/code-review/settings.db.test.ts', script: 'test:settings-prefs-db' },
   { marker: 'lib/settings/notification-preferences.ts', file: 'tests/settings-memory-notify.db.test.ts', script: 'test:settings-prefs-db' },
   { marker: 'lib/tokens/store.ts', file: 'tests/personal-access-tokens.db.test.ts', script: 'test:pat-db' },
   { marker: 'lib/api-auth.ts', file: 'tests/personal-access-token-api.db.test.ts', script: 'test:pat-api-db' },

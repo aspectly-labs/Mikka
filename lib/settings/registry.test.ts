@@ -101,6 +101,20 @@ test('shortcut schema rows carry stable action IDs, bilingual search, context an
   assert.deepEqual(resolveSettingValue(row.key, '', null), { value: '', source: 'personal' })
 })
 
+test('Git defaults retain explicit false and empty prefixes; review fields are administrator-only', () => {
+  assert.deepEqual(resolveSettingValue('prAutoMerge', false, true), { value: false, source: 'personal' })
+  assert.deepEqual(resolveSettingValue('prTitlePrefix', '', '[Team]'), { value: '', source: 'personal' })
+  assert.deepEqual(resolveSettingValue('prBranchPrefix', null, 'team/fix'), { value: 'team/fix', source: 'workspace' })
+  assert.deepEqual(resolveSettingValue('prBranchPrefix', null, null), { value: 'mikka', source: 'default' })
+  for (const values of [{ prBranchPrefix: 'refs/../main' }, { prAutoMerge: 'true' }, { prTitlePrefix: 'text\u0000more' },
+    { codeReviewModel: 'model with spaces' }, { codeReviewSeverity: 'all' }, { codeReviewIgnoredPaths: ['../secret'] }, { codeReviewOutput: 'approve' }]) {
+    assert.throws(() => parseSettingsPatch('workspace', { values }))
+  }
+  for (const key of ['codeReviewModel', 'codeReviewSeverity', 'codeReviewIgnoredPaths', 'codeReviewOutput']) assert.throws(() => parseSettingsPatch('personal', { values: { [key]: null } }))
+  assert.deepEqual(parseSettingsPatch('workspace', { values: { prBranchPrefix: 'team/fix/', codeReviewIgnoredPaths: ['vendor/**', 'vendor/**'] } }),
+    { prBranchPrefix: 'team/fix', codeReviewIgnoredPaths: ['vendor/**'] })
+})
+
 test('gitAuthorName and gitAuthorEmail inherit across personal, workspace and default with strict guards', () => {
   assert.deepEqual(resolveSettingValue('gitAuthorName', null, null), { value: '', source: 'default' })
   assert.deepEqual(resolveSettingValue('gitAuthorName', null, 'Team Bot'), { value: 'Team Bot', source: 'workspace' })

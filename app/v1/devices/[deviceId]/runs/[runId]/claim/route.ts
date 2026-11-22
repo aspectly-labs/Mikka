@@ -15,7 +15,7 @@ import { readRepositorySettings } from '@/lib/device-repositories'
 import { daemonTestMode, repositoryBindingMatches } from '@mikka/protocol/repository'
 import { localExecutionHarnesses } from '@/lib/device-agents'
 import { runTestFixture } from '@/lib/run-test-fixture'
-import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
+import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
 import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeLease } from '@mikka/protocol/subscription'
 import { POLICY_SNAPSHOT_HEADER, POLICY_SNAPSHOT_VERSION } from '@mikka/protocol/policy-snapshot'
 import { issuePolicySnapshot, policyDistributionContext } from '@/lib/agent-tool-approval/policy-distribution'
@@ -556,7 +556,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         ...(settings?.setup ? { setup: settings.setup } : {}),
         ...(settings?.networkAllow ? { networkAllow: settings.networkAllow } : {}) }).data : undefined
     return NextResponse.json({
-    ...publication,
+    ...(publication?.pushBranch ? { pushBranch: publication.pushBranch } : {}),
     acceptsModelObservations: true,
     ...(initialRepository ? { repo: initialRepository } : {}),
     // Profile Skills: the frozen pinned bodies for the owner's daemon and the
@@ -577,7 +577,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...((mcp || githubCredential) && githubConnected && githubRepository
       ? { github: { endpoint: (mcp?.url ?? new URL(withBasePath('/api/mcp'), request.url).toString()).replace(/\/api\/mcp\/?$/, '/api/runs/github-token'), repository: repo.repoPath.slice('v2/github.com/'.length),
         ...githubCredential,
-        ...(publication?.pushBranch && ['implement', 'fix'].includes(current.kind) && !assignmentPolicy.readOnly ? { branch: publication.pushBranch } : {}) } } : {}),
+        // Released daemons only accept mikka/* in this optional field. They
+        // still push a configured branch through the unchanged pushBranch
+        // assignment and native publishRun, followed by server PR publication.
+        ...(publication?.pushBranch && !publication.defaultDraft && ['implement', 'fix'].includes(current.kind) && !assignmentPolicy.readOnly &&
+          (request.headers.get(CUSTOM_TASK_BRANCH_HEADER) === '1' || /^mikka\/[a-z0-9-]+-[1-9][0-9]*$/.test(publication.pushBranch))
+          ? { branch: publication.pushBranch } : {}) } } : {}),
     ...(run.agentDefinition?.model ? {model:run.agentDefinition.model} : {}),
     ...((run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort)
       ? { effort: run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort } : {}),

@@ -29,7 +29,7 @@ export type IssueReader = (tx: PoolClient, ownerId: string, issueId: string) => 
 export type DispatchResult = { id: string; title: string; status: string; identifier: string | null; eventId?: string; requestedBy?: string; runId?: string; continued?: true }
 /** How each run is set up beyond the request: the Environment, model and effort, machine size and the thread's organize. */
 export type DispatchRun = Pick<Definition, 'environmentId' | 'model' | 'machineSize' | 'runs'>
-export type DispatchInput = { ownerId: string; workspaceId: string; scheduleId: string; occurrenceId: string; task: DispatchTask; event?: string; source?: 'github' | 'linear' | 'slack' | 'webhook'; single?: true; thread?: string; run?: DispatchRun }
+export type DispatchInput = { ownerId: string; workspaceId: string; scheduleId: string; occurrenceId: string; task: DispatchTask; event?: string; source?: 'github' | 'linear' | 'slack' | 'webhook'; single?: true; thread?: string; run?: DispatchRun; /** Host-derived, never a schedule form field. */ codeReview?: true }
 /** What started a run: a GitHub event and the indexes of the triggers that took it, or the webhook requests it batched. */
 export type OccurrenceTrigger = { event: GitHubAutomationEvent | LinearAutomationEvent | SlackAutomationEvent; triggers: number[] } | { webhook: { requests: WebhookRequest[] } }
 /** One finished run to post: the automation, how it ended, and the task it made or added to. */
@@ -62,6 +62,8 @@ export type AutomationSeams = {
   chat?: (ownerId: string, workspaceId: string) => Promise<string | null>
   /** A trigger's one-sentence condition against the event: true, false, or null when no answer could be had. */
   runWhen?: (input: RunWhenInput) => Promise<boolean | null>
+  /** Whether a workspace setting owns this schedule, so only an administrator may change it. */
+  settingsOwned?: (tx: PoolClient, scheduleId: string) => Promise<boolean>
 }
 export type Schedule = { id: string; owner_id: string; run_as_user_id?: string | null; workspace_id: string | null; bot_id: string | null; visibility: 'owner' | 'workspace'; source_event_id: string; definition: Definition; request_definition: Definition; status: string; deleted?: boolean; status_before_delete?: 'active' | 'paused' | 'completed' | null; version: number; next_at: Date | null; disabled_reason?: string | null }
 export type Occurrence = { id: string; schedule_id: string; operation_id: string; event_id: string | null; definition: Definition; version: number; due_at: Date; status: string; attempts: number; lease_token: string | null; lease_until: Date; error: string | null; execution_decision: 'execute' | 'skip'; trigger: OccurrenceTrigger | null; report_next_at: Date; report_attempts: number; started_at: Date | null; created_at: Date }
@@ -134,7 +136,8 @@ export function scheduledInbox(row: Occurrence | undefined, now: Date): { eventI
 export class ScheduleStore {
   constructor(private pool: Pool, private workspace: WorkspaceGuard, private issue: IssueReader, private safeMessage: MessageGuard, private agentAvailable: (ownerId: string, botId: string | null) => boolean | Promise<boolean>, private clock: () => Date = () => new Date(), private automation: AutomationSeams = {}) {}
   private async listChanged(tx: PoolClient, workspaceId: string | null) { if (workspaceId) await this.automation.changed?.(tx, workspaceId) }
-  private async transaction<T>(work: (tx: PoolClient) => Promise<T>): Promise<T> {
+  private async transaction<T>(work: (tx: PoolClient) => Promise<T>, existing?: PoolClient): Promise<T> {
+    if (existing) return work(existing)
     observePoolCommits(this.pool)
     const tx = await this.pool.connect()
     try { await tx.query('BEGIN'); await tx.query("SET LOCAL lock_timeout='5s'"); const value = await work(tx); await tx.query('COMMIT'); return value }
@@ -203,7 +206,7 @@ export class ScheduleStore {
     if (!issue) throw new ScheduleError('scheduleTaskAccessDenied',403)
     return issue
   }
-  async command(actor: Actor, raw: unknown) {
+  async command(actor: Actor, raw: unknown, existing?: PoolClient) {
     const parsed = commandSchema.safeParse(raw)
     if (!parsed.success) throw new ScheduleError('invalidScheduleCommand',400)
     const cmd = parsed.data
@@ -369,6 +372,9 @@ export class ScheduleStore {
         return {timezone:zone,maxRunsPerDay:row.definition.maxRunsPerDay??null,days:[...byDay.values()].sort((a,b)=>b.day.localeCompare(a.day)).map(item=>({...item,costMicroUsd:privileged?spent.get(item.day)??0:null}))}
       }
       await this.source(tx,actor,row.workspace_id)
+      // A schedule a workspace setting owns is that setting's: an ordinary member cannot pause,
+      // delete or otherwise change it from 自动化 and so turn an administrator's policy off.
+      if(access.role==='member'&&await this.automation.settingsOwned?.(tx,row.id)) throw new ScheduleError('scheduleAdminRequired',403)
       if(row.version!==cmd.version) throw new ScheduleError('scheduleVersionConflict')
       if(cmd.action==='restore'){
         if(!row.status_before_delete) throw new ScheduleError('scheduleNotDeleted')
@@ -432,7 +438,7 @@ export class ScheduleStore {
         webhook_key_hash=CASE WHEN run_as_user_id IS DISTINCT FROM $7 THEN NULL ELSE webhook_key_hash END WHERE id=$1 RETURNING ${SCHEDULE_COLUMNS}`,[row.id,def,status,next,this.clock(),cmd.action==='delete',runAs])).rows[0]
       await this.listChanged(tx,row.workspace_id)
       return {schedule:updated}
-    }))
+    }, existing))
   }
   /** Close only a collecting window under the same schedule lock used by ingress. The normal worker owns dispatch. */
   private async closeWebhookBatch(tx: PoolClient, row: Schedule, batchId: string, action: 'flush_batch' | 'cancel_batch', access: WorkspaceAccess) {
