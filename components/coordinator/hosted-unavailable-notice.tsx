@@ -29,7 +29,9 @@ export function HostedUnavailableNotice({ botId }: { botId: string | null }) {
   const t = useTranslations('Coordinator.modelPicker')
   const actionError = useActionError()
   const { mutate } = useSWRConfig()
-  const menu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId))
+  // On a switch to another Bot the notice keeps the last answer until this Bot's is read (readiness is mostly the
+  // workspace's: its credits and connections), so the composer does not grow under the chat a moment after it opens
+  const menu = useSWR<BotModelMenu>(botModelMenuKey(botId), () => getBotModelMenu(botId), { keepPreviousData: true })
   const current = menu.data?.current
   const needsChoice = current?.kind === 'none'
   const unavailable = current?.kind === 'hosted' && !current.available
