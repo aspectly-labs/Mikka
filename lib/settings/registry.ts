@@ -60,6 +60,21 @@ export function personalSettingWorkspace(field: Pick<SettingDefinition, 'persona
   return field.personalContext === 'workspace' ? workspaceId : null
 }
 
+const STORED_COLUMN = { integer: '"integerValue"', boolean: '"booleanValue"', string: '"textValue"', 'string[]': '"textArrayValue"' } as const
+
+/** One resolution rule for a query: the member's own value, then the workspace's, then the
+ * registry default. `owner` and `workspace` are the caller's own placeholders. */
+export function resolvedSettingSql(key: SettingKey, owner: string, workspace: string): string {
+  const field = SETTINGS_REGISTRY[key]
+  const column = STORED_COLUMN[field.type as keyof typeof STORED_COLUMN]
+  const scope = personalSettingWorkspace(field, workspace) ?? 'NULL'
+  const fallback = typeof field.defaultValue === 'string' ? `'${field.defaultValue.replaceAll("'", "''")}'` : String(field.defaultValue)
+  return `coalesce((SELECT ${column} FROM personal_setting_values
+      WHERE "userId"=${owner} AND "workspaceId" IS NOT DISTINCT FROM ${scope}::uuid AND key='${key}'),
+    (SELECT ${column} FROM workspace_setting_values WHERE "workspaceId"=${workspace} AND key='${key}'),
+    ${fallback})`
+}
+
 export function settingDefinition(key: string): SettingDefinition {
   if (!Object.hasOwn(SETTINGS_REGISTRY, key)) throw new z.ZodError([{ code: 'custom', path: [key], message: 'Unknown setting' }])
   return SETTINGS_REGISTRY[key as SettingKey]

@@ -49,6 +49,8 @@ export async function nameThread(database: Query, runId: string, ownerId: string
     if (!titleTriggerAllows(trigger, settings.triggers)) return null
     const runIds = await chainOf(database, ownerId, runId)
     const chain = ((await database.query(READ_CHAIN_TITLE, [runIds, ownerId])).rows[0] ?? { title: null, titleSource: null }) as { title: string | null; titleSource: ThreadTitleSource | null }
+    // Protection as it stands before the model runs; the write re-reads it and both must allow
+    // the replacement, so a change either way during generation keeps a manual title.
     const protection = await readRuntimeSetting(database, 'protectManualThreadTitles', { userId: ownerId, workspaceId: tenant })
     const plan = threadTitlePlan(trigger, run, chain, runIds.length, protection.value)
     if (plan.do === 'keep') return null

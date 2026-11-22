@@ -12,12 +12,20 @@ let canSave = true
 const writes: number[] = []
 let reads = 0
 let pendingRead: Promise<{ archiveIdleAfterDays: number }> | null = null
+/** The workspace's interval when the member set none of their own. */
+let inherited: number | null = null
 const subscriptions = new Map<string, () => Promise<unknown>>()
 
 mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: () => (key: string) => key, useFormatter: () => ({ dateTime: () => '' }) } })
 const stub = (file: string, namedExports: Record<string, unknown>) => mock.module(new URL(file, import.meta.url).href, { namedExports })
 function readPreferences() { reads++; return pendingRead ?? { archiveIdleAfterDays: days } }
-stub('../../lib/settings-read.ts', { settingsRead: readPreferences })
+const view = (value: number) => ({ workspaceId: 'workspace', values: { archiveIdleAfterDays: { value, source: inherited === null ? 'personal' : 'workspace' } } })
+function read(name: string) {
+  if (name !== 'personal') return readPreferences()
+  reads++
+  return pendingRead ? pendingRead.then(settings => view(settings.archiveIdleAfterDays)) : view(inherited ?? days)
+}
+stub('../../lib/settings-read.ts', { settingsRead: read })
 stub('../../app/actions/preferences.ts', { getPreferences: readPreferences, updatePreferences: async ({ archiveIdleAfterDays }: { archiveIdleAfterDays: number }) => {
   writes.push(archiveIdleAfterDays)
   if (!canSave) return { error: 'unknown' }
@@ -87,6 +95,15 @@ test('the existing scoped live invalidation refreshes the displayed personal int
     assert.equal(select.value, '90')
     assert.ok(reads > before)
   } finally { await act(async () => root.unmount()); await browser.happyDOM.abort() }
+})
+
+test('with no personal override the picker shows the inherited workspace interval', async () => {
+  days = 30
+  inherited = 7
+  const { root, select } = await mount()
+  try {
+    assert.equal(select.value, '7')
+  } finally { inherited = null; await act(async () => root.unmount()); await browser.happyDOM.abort() }
 })
 
 test('switching signed-in accounts removes the previous archive choice and its retry intent while the next read is pending', async () => {

@@ -6,6 +6,9 @@ import { setThreadRead } from '@/lib/thread-read-client'
 import { settingsKeys, threadKeys } from '@/lib/swr/keys'
 import useSWRInfinite from 'swr/infinite'
 import { useSWRConfig } from 'swr'
+import useSWR from 'swr'
+import type { SettingsView } from '@mikka/protocol/settings'
+import { settingsRead } from '@/lib/settings-read'
 import { usePreferences } from '@/components/settings/use-preferences'
 import { unstable_serialize } from 'swr/infinite'
 import { useFormatter, useTranslations } from '@/lib/intl/i18n-client'
@@ -60,6 +63,12 @@ export function ConversationDirectory({ ownerId, workspaceId, botId, automationI
   const [writing, setWriting] = useState(false)
   const [writeError, setWriteError] = useState(false)
   const prefs = usePreferences()
+  // The picker shows what the thread archiver will use: the member's own interval when they set
+  // one, otherwise the workspace's inherited interval, never the account default on top of it.
+  const resolvedKey = workspaceId ? settingsKeys.personalSettings(workspaceId) : null
+  const resolved = useSWR(resolvedKey, () => settingsRead<SettingsView>('personal', { workspace: workspaceId }))
+  const resolvedDays = resolved.data?.values.archiveIdleAfterDays?.value
+  const archiveDays = typeof resolvedDays === 'number' ? resolvedDays : prefs.data?.archiveIdleAfterDays
   const [saving,setSaving] = useState(false)
   const [search, setSearch] = useState('')
   const [state, setState] = useState<DirectoryState | 'all'>('all')
@@ -71,7 +80,7 @@ export function ConversationDirectory({ ownerId, workspaceId, botId, automationI
     ([, , , selectedBot, text, selected, showArchive, cursor, , selectedPr, automation]) => listConversations({ pullState: selectedPr, botId:selectedBot ?? undefined, automationId: automation ?? undefined, search: text, state: selected, archived: showArchive, cursor: cursor ?? undefined }),
     { revalidateOnFocus: false, shouldRetryOnError: false })
   useLiveKey('thread_list', workspaceId, workspaceId ? [unstable_serialize(getKey)] : [], workspaceId)
-  useLiveKey('group_list', workspaceId, workspaceId ? [unstable_serialize(getKey), settingsKeys.preferences()] : [], workspaceId)
+  useLiveKey('group_list', workspaceId, workspaceId ? [unstable_serialize(getKey), settingsKeys.preferences(), settingsKeys.personalSettings(workspaceId)] : [], workspaceId)
   const rows = [...new Map(data?.flatMap(page => page.items).map(item => [directoryConversationKey(item), item])).values()]
   const more = Boolean(data?.at(-1)?.cursor)
   async function mark(change: ThreadReadChange) {
@@ -89,7 +98,7 @@ export function ConversationDirectory({ ownerId, workspaceId, botId, automationI
     setSaving(true)
     try {
       if (await prefs.save({ archiveIdleAfterDays: days })) {
-        await Promise.all([mutate(), refresh(['conversation-sidebar', ownerId, workspaceId])])
+        await Promise.all([mutate(), resolved.mutate(), refresh(['conversation-sidebar', ownerId, workspaceId])])
       }
     } finally { setSaving(false) }
   }
@@ -98,7 +107,7 @@ export function ConversationDirectory({ ownerId, workspaceId, botId, automationI
     {/* R-100: the directory is a page, not a conversation, so it names itself at the size 设置 and the other rail pages use. */}
     <h1 className="text-xl font-semibold text-foreground">{pullsOnly ? categories('pullRequests') : t('title')}</h1>
     <Label className="flex items-center gap-2 text-sm">{t('archiveIdle')}
-      <NativeSelect value={prefs.data?.archiveIdleAfterDays ?? 30} disabled={!prefs.data || saving}
+      <NativeSelect value={archiveDays ?? 30} disabled={!prefs.data || saving}
         onChange={event=>void changeDays(Number(event.target.value))}>
         {archiveIdleDays.map(days=><NativeSelectOption key={days} value={days}>{days ? t('archiveDays',{days}) : t('archiveOff')}</NativeSelectOption>)}
       </NativeSelect>

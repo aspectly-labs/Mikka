@@ -13,7 +13,7 @@ import { UNFINISHED_RUN_STATUSES } from './agent-run-statuses'
 import { threadName } from './issue-threads'
 import { directoryPullSchema, type DirectoryPull } from './conversation-directory-input'
 import { threadTitle } from './short-title'
-import { personalSettingWorkspace, SETTINGS_REGISTRY } from './settings/registry'
+import { resolvedSettingSql } from './settings/registry'
 
 type Row = {
   kind: 'run' | 'chat'; pulls: unknown[]
@@ -33,14 +33,10 @@ function conversationQuery() {
   const owner = '$' + (facts.params.length + 1), workspace = '$' + (facts.params.length + 2)
   const depth = '$' + (facts.params.length + 3)
   const scope = `r."userId"=${owner} AND r."workspaceId"=${workspace}`
+  // The resolution rule itself comes from the registry, so this reader cannot drift from readSettings.
   return `WITH RECURSIVE thread_settings AS (
-    SELECT coalesce(p."integerValue",w."integerValue",${SETTINGS_REGISTRY.archiveIdleAfterDays.defaultValue}) AS days,
-      coalesce(pin."booleanValue",wpin."booleanValue",${SETTINGS_REGISTRY.keepPinnedThreadsActive.defaultValue}) AS "keepPins"
-    FROM (SELECT 1) seed
-    LEFT JOIN personal_setting_values p ON p."userId"=${owner} AND p."workspaceId" IS NOT DISTINCT FROM ${personalSettingWorkspace(SETTINGS_REGISTRY.archiveIdleAfterDays, workspace) ?? 'NULL'}::uuid AND p.key='archiveIdleAfterDays'
-    LEFT JOIN workspace_setting_values w ON w."workspaceId"=${workspace} AND w.key='archiveIdleAfterDays'
-    LEFT JOIN personal_setting_values pin ON pin."userId"=${owner} AND pin."workspaceId" IS NOT DISTINCT FROM ${personalSettingWorkspace(SETTINGS_REGISTRY.keepPinnedThreadsActive, workspace) ?? 'NULL'}::uuid AND pin.key='keepPinnedThreadsActive'
-    LEFT JOIN workspace_setting_values wpin ON wpin."workspaceId"=${workspace} AND wpin.key='keepPinnedThreadsActive'
+    SELECT ${resolvedSettingSql('archiveIdleAfterDays', owner, workspace)} AS days,
+      ${resolvedSettingSql('keepPinnedThreadsActive', owner, workspace)} AS "keepPins"
   ), ${runChainSql(scope,depth)}, latest AS (
     SELECT DISTINCT ON (a.root) a.root,r.id,
       max(greatest(r."lastReplyAt",r."updatedAt",r."createdAt")) OVER (PARTITION BY a.root) AS touched

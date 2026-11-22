@@ -55,6 +55,12 @@ dbTest('one read of a device\'s runs finds its stops, messages and queued runs',
       { kind: 'input', runId: ids.running, messageId: message, text: runMessagePrompt({ id: message, runId: ids.running, origin: 'owner', text: 'please also add a test' }) },
     ])
     assert.deepEqual((await deviceWork(device, [], { queued: false })).queuedRuns, [], 'a device with scheduling off is offered no runs')
+    // The saved concurrency limit: two runs are already working on this device.
+    await pool.query('update devices set "maxConcurrentRuns"=2 where id=$1', [device])
+    assert.deepEqual((await deviceWork(device, [ids.skippedQueued], { queued: true })).queuedRuns, [], 'a device at its limit is offered nothing')
+    await pool.query('update devices set "maxConcurrentRuns"=4 where id=$1', [device])
+    assert.deepEqual((await deviceWork(device, [], { queued: true })).queuedRuns.sort(), [ids.queued, ids.skippedQueued].sort(), 'raising the limit offers the waiting runs again')
+    await pool.query('update devices set "maxConcurrentRuns"=3 where id=$1', [device])
     assert.deepEqual(await deviceWork(other, [ids.elsewhere], { queued: true }), { commands: [], queuedRuns: [] })
 
     // Taken back by the server (decision 2026-11-17-2215): a session close ended the lease,
