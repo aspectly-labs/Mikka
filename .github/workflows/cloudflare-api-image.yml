@@ -1,7 +1,5 @@
 name: Cloudflare API image
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -17,7 +15,7 @@ env:
   MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
 jobs:
   source:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

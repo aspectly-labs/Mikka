@@ -1,12 +1,6 @@
 name: Read cache production acceptance
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/read-cache-production.yml'
-      - 'scripts/acceptance/read-cache*.mjs'
-      - 'scripts/acceptance/production-readiness.mjs'
-      - 'scripts/acceptance/workflow-migration-production*.mjs'
   workflow_dispatch:
     inputs:
       application_sha:
@@ -18,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('read-cache-production-guards-{0}', github.event.pull_request.number) || 'production-smoke-owner-acceptance' }}
+  group: production-smoke-owner-acceptance
   cancel-in-progress: false
   queue: max
 

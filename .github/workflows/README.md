@@ -42,9 +42,19 @@ majors; the original Node 24 protected-check names stay unchanged.
   conclusion, and requires an intentional skip when unselected. Unrelated
   UI PRs do not allocate an extra PostgreSQL-backed governance workflow.
   On every `main` push, independent postmerge governance acceptance remains.
-- Browser compatibility, E2B PR runtime, E2B BYOS and SSH device workflows
-  cancel obsolete **same-PR** attempts. They never cancel main or manually
-  dispatched production publication or recovery.
+- Browser compatibility, E2B BYOS and SSH device workflows cancel obsolete
+  **same-PR** attempts where they still run on PRs. On merge groups their
+  concurrency keys fall through to unique refs and never cancel main or
+  manually dispatched production publication or recovery.
+- CI runs in two tiers (#3114): fast checks stay on `pull_request`
+  (`ui-policy.yml`, `browser-gate.yml`, `local-device-node22.yml`, plus the
+  path-filtered app-icon and Cloudflare image qualifications and the mobile
+  OTA preview); heavy acceptance, E2B, device, read-cache and governance
+  suites moved to `merge_group` (`site-search`, `read-cache`,
+  `cloud-computer`, `ssh-device-backend`, `unattended-sandbox`, `e2b-byos`,
+  `coding-workspace-review`, `credential-vault`, `device-gateway`,
+  `task-attachment-production` guards). Image/production builds that
+  already verify `main` on push lost their `pull_request` trigger.
 - All protected check names remain stable. In particular,
   `Browser tests (before merge)` must remain until GitHub branch protection
   is read and migrated; a read-only connector's 403 is not authorization
@@ -67,15 +77,12 @@ There are two intentionally different classes of PR checks:
   external GitGuardian retain their original workflows. A skipped required
   job can be reported successful by GitHub; these named aggregators must never
   skip or accept the draft as complete.
-- **Non-required specialized acceptances** (`E2B additive runtime release`
-  offline PR test, E2B subscription custody, Read cache API acceptance,
-  SSH device backend, Site search read contract and Unattended sandbox
-  acceptance) skip their runner jobs while the PR is a draft. Each workflow
-  explicitly handles `ready_for_review` to execute its real proof on the
-  same code even without an extra commit. On `converted_to_draft`, the
-  six jobs skip. The E2B offline job cancels an older eligible check when its
-  replacement enters the same PR group. An already running E2B check may
-  finish after conversion to draft.
+- **Non-required specialized acceptances** moved to `merge_group`
+  (#3114): E2B subscription custody, Read cache API acceptance, SSH device
+  backend, Site search read contract, Unattended sandbox acceptance, cloud
+  computer, coding-workspace review, credential vault, device gateway and
+  the task-attachment guards now run on the merge candidate, not on PR
+  pushes, so draft gating no longer applies to them.
 - Mobile OTA preview publication remains available on drafts for UI evidence
   and TestFlight-oriented review. Other specialized evidence may have its
   own intentional manual or source-version trigger.
@@ -91,10 +98,12 @@ product regression. Main pushes and merge groups continue normal full coverage.
   and desktop releases wait for that exact commit
   (`scripts/release/ci-gate.mjs`). Production acceptance workflows have their
   own successful-Web triggers and account queues.
-- The special suites (`analytics-ssr`, `cloud-computer`, `desktop`,
-  `e2b-byos`, `site-search`, `ssh-device-backend`, `unattended-sandbox`) run on
-  pull requests only, selected by trusted dependencies or their existing path filters; each can still be run
-  by hand (`workflow_dispatch`). Production Web is promoted through the
+- The special suites (`cloud-computer`, `e2b-byos`, `site-search`,
+  `ssh-device-backend`, `unattended-sandbox`, `read-cache`,
+  `coding-workspace-review`, `credential-vault`, `device-gateway`) run on
+  merge candidates (`merge_group`) and can still be run by hand
+  (`workflow_dispatch`); `merge_group` has no path filter, so they verify
+  every merge candidate. Production Web is promoted through the
   Cloudflare deployment workflow; Vercel publication was removed on 2026-11-17.
 - `publish-daemon.yml` uses daemon/package-input path filters.
   `desktop-release.yml` also watches the shared frontend, UI and API inputs.

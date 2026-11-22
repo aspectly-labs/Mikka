@@ -3,14 +3,11 @@ name: Site search read contract
 # none): tests/e2e/site-search.spec.ts uses Playwright's request client only,
 # against the compiled API, Better Auth and two PostgreSQL services. No
 # browser is installed or launched.
-# Runs only when search changes: on every pull request (this repository's and
-# forks') and on pushes to main that touch these paths.
-# Pull requests only: the same suite already passed on the PR, and main's
+# Merge candidates only (#3114 two-tier CI): the suite runs on every
+# merge-group entry; main pushes stay covered by ui-policy.yml's checks.
 # CI workflow (ui-policy.yml) still verifies every merged commit.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-    paths: ['apps/api/**', 'apps/frontend/**', 'lib/browser-rpc/**', 'scripts/start-app*', 'lib/search/**', 'lib/federated-search/**', 'app/api/search/**', 'tests/e2e/site-search.spec.ts', '.github/workflows/site-search.yml']
+  merge_group:
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,7 +23,6 @@ env:
 jobs:
   site-search:
     # No Runner allocation until a draft becomes review-ready.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:

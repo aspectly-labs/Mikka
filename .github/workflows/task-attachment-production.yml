@@ -1,10 +1,7 @@
 name: Task attachment production acceptance
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/task-attachment-production.yml'
-      - 'scripts/acceptance/task-attachment-*.mjs'
+  merge_group:
   # Per-service releases publish no Web run to follow: dispatch on main after a release.
   workflow_dispatch:
 
@@ -13,7 +10,7 @@ permissions:
 
 jobs:
   guards:
-    if: github.event_name == 'pull_request'
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

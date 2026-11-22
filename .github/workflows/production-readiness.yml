@@ -2,12 +2,6 @@ name: Production owner readiness
 # This workflow cannot dispatch a task. The historical paid comparison file
 # must not be present when publishing the acceptance branch from reviewed main.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/production-readiness.yml'
-      - '.github/workflows/model-provider-fallback-acceptance.yml'
-      - '.github/workflows/project-decisions-acceptance.yml'
-      - 'scripts/acceptance/production-readiness*'
   push:
     branches: [acceptance/proactive-1157-1163]
     paths:
@@ -22,7 +16,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('production-readiness-guards-{0}', github.event.pull_request.number) || 'production-smoke-owner-acceptance' }}
+  group: production-smoke-owner-acceptance
   cancel-in-progress: false
   queue: max
 jobs:

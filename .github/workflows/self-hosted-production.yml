@@ -1,13 +1,6 @@
 name: Mikka cloud core compatibility
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/self-hosted-production.yml'
-      - 'scripts/acceptance/self-hosted-production*.mjs'
-      - 'scripts/acceptance/inbox-production*.mjs'
-      - 'scripts/ops/production-mobile-daemon*.mjs'
-      - 'scripts/acceptance/memory-production*.mjs'
   # Per-service releases publish no Web run to follow: dispatch on main after a release.
   workflow_dispatch:
 
@@ -15,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('self-hosted-production-guards-{0}', github.event.pull_request.number) || 'production-smoke-owner-acceptance' }}
+  group: production-smoke-owner-acceptance
   cancel-in-progress: false
   queue: max
 
