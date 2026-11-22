@@ -24,6 +24,7 @@ import { USER_FACT_KINDS } from '@/lib/profile/kinds'
 import { definitionSchema as scheduleDefinition, webhookBatchListInput, webhookBatchInput } from '@/lib/schedules/contract'
 import { DEVICE_DESCRIPTION_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
+import { THREAD_COST_GROUPINGS } from '@/lib/thread-cost-grouping'
 
 const uuid = z.uuid()
 const id = z.string().min(1).max(200)
@@ -378,6 +379,7 @@ export const desktopActionSchemas = {
   'list-views.deleteSavedView': tuple(uuid, uuid),
   'task-runs.listConversationSidebar': none,
   'task-runs.readConversationOrganization': tuple(conversationTargetInput),
+  'task-runs.readThreadCost': z.union([tuple(uuid), tuple(uuid, z.enum(THREAD_COST_GROUPINGS))]),
   'task-runs.setConversationOrganization': tuple(conversationTargetInput, object({ field: z.enum(['archived', 'pinned']), value: bool })),
   'task-runs.renameConversation': tuple(conversationTargetInput, text(400)),
   'task-runs.regenerateConversationTitle': tuple(conversationTargetInput),
