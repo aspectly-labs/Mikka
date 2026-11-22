@@ -89,6 +89,8 @@ type PersonalChatSend = ChatSubmission & { context: CoordinatorMessageContext; t
 type ChatRead = Chat & { requestedAt?: number }
 /** Pushes closer together than this share one read; the stream shows a turn's words meanwhile. */
 const CHAT_MERGE_MS = 2_000
+/** How long the server's turn runs before Stop shows (UX audit 2026-11-22: a quick failure flashed it). */
+const STOP_DELAY_MS = 400
 
 /** The SWR key of a chat: the Coordinator's, or one bot's. */
 /** A passing usage limit (another turn running, a cost read): the next send works without anything changing. */
@@ -210,6 +212,13 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // The server has the turn running (or waiting on the person): only then do Stop and the queue choice show, so a send
   // the server refuses never flashes them (UX audit 2026-11-22, issue 1).
   const turnConfirmed = activeTurn(stream.view) !== undefined
+  // Stop joins the footer once the turn has run a moment, so a turn that fails at once never moves the footer twice.
+  const [stopShown, setStopShown] = useState(false)
+  useEffect(() => {
+    if (!turnConfirmed) { setStopShown(false); return }
+    const timer = setTimeout(() => setStopShown(true), STOP_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [turnConfirmed])
   useEffect(() => { reconnectStream.current = stream.reconnect }, [stream.reconnect])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
   // Each chat keeps where the person was reading, as a group chat does; one read to its end follows the latest.
@@ -228,7 +237,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const [sends, setSends] = useState(0)
   const sending = sends > 0
   const [turnPolicy, setTurnPolicy] = useViewState<'queue' | 'steer'>('eve:turn-policy', 'queue')
-  const turnOptions = working && turnConfirmed && !resuming ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
+  // The queue choice is about the next message: it shows while a turn runs and a draft waits to go.
+  const turnOptions = working && turnConfirmed && !resuming && draft.trim() ? <NativeSelect size="sm" aria-label={threadCopy('deliveryMode')} value={turnPolicy}
     onChange={event => setTurnPolicy(event.target.value === 'steer' ? 'steer' : 'queue')}>
     <NativeSelectOption value="queue">{threadCopy('deliveryModes.queue')}</NativeSelectOption>
     <NativeSelectOption value="steer">{threadCopy('deliveryModes.steer')}</NativeSelectOption>
@@ -645,7 +655,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         // Scrolling near the top loads the page before, as LobeHub's useEarlierHistoryTrigger does.
         older={data?.historyBefore ? { loading: loadingHistory, auto: true, onLoad: () => void loadHistory() } : undefined}
         historyPrepend={historyPrepend} scrollRef={transcript}
-        working={working && !stopping} onStop={turnConfirmed && !resuming && !stopping ? () => { void stop() } : undefined}
+        working={working && !stopping} onStop={turnConfirmed && stopShown && !resuming && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}

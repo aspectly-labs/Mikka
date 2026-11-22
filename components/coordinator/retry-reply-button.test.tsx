@@ -754,17 +754,23 @@ test('with no model to answer, Send waits and the one notice says why; a Bot tha
   assert.equal(screen?.composer.submitDisabled, false)
 })
 
-test('Stop and the queue choice wait for the server to confirm the turn', async () => {
+test('Stop waits for the server to run the turn a moment; the queue choice shows only with a draft to queue', async () => {
   chatEnabled = true
   chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
   streamStatus = 'busy'
-  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
   assert.equal(screen?.onStop, undefined, 'a send still on its way has no Stop')
+  await act(async () => composer.onChange('next message'))
   assert.equal(container.querySelector('select'), null)
   streamView = runningTurn()
-  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  await show()
+  assert.equal(screen?.onStop, undefined, 'a turn that fails at once never flashes Stop')
+  assert.ok(container.querySelector('select'), 'a draft can wait for the next turn or join this one')
+  await act(async () => new Promise(resolve => setTimeout(resolve, 450)))
   assert.equal(typeof screen?.onStop, 'function')
-  assert.ok(container.querySelector('select'))
+  await act(async () => composer.onChange(''))
+  assert.equal(container.querySelector('select'), null, 'nothing to queue: no choice in the footer')
 })
 
 test('scrolling near the top loads older messages, and each page added above counts for the thread', async () => {
