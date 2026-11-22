@@ -4,6 +4,9 @@ name: Cloud computer backend
 # ui-policy.yml's checks.
 on:
   merge_group:
+  # Post-merge re-verification covers merges that bypass the queue (#3114).
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read

@@ -23,7 +23,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.event_name == 'push' && 'device-gateway-production' || format('device-gateway-{0}', github.ref) }}
+  group: ${{ github.ref == 'refs/heads/main' && 'device-gateway-production' || format('device-gateway-{0}', github.ref) }}
   # A newer main release must never finish before an older release writes.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:

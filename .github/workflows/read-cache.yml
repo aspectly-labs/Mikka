@@ -2,6 +2,9 @@ name: Read cache API acceptance
 
 on:
   merge_group:
+  # Post-merge re-verification covers merges that bypass the queue (#3114).
+  push:
+    branches: [main]
 
 permissions:
   contents: read

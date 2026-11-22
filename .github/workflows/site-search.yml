@@ -8,6 +8,9 @@ name: Site search read contract
 # CI workflow (ui-policy.yml) still verifies every merged commit.
 on:
   merge_group:
+  # Post-merge re-verification covers merges that bypass the queue (#3114).
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
