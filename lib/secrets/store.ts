@@ -43,7 +43,7 @@ export interface WorkspaceSecretView {
   id: string
   name: string
   kind: 'secret' | 'env'
-  scopeType: 'workspace' | 'repository'
+  scopeType: 'workspace' | 'repository' | 'thread'
   /** '' for workspace scope, owner/repo (lowercase) for repository scope. */
   scopeRef: string
   note: string

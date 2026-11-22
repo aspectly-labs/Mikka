@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { workspaceSecrets } from '@/lib/db/schema'
+import { workspaceSecrets } from '@/lib/db/secrets-schema'
 import { and, eq } from 'drizzle-orm'
 import { seal } from './crypto'
 import { isReservedEnvName } from './format'
