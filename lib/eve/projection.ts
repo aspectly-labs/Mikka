@@ -13,10 +13,11 @@ export function projectEveTurn(view:SessionView,sessionId:string,turnId:string,o
   const content = parts(view,{turnId}).flatMap(part => (part.kind === 'text' || part.kind === 'reasoning') && typeof part.value === 'string' ? [{type:part.kind,text:part.value}] : [])
   const tools = calls(view,{turnId,kind:'tool'})
   // Only the closed preparation refusal, before any tool ran, establishes that no task started.
-  const modelRequired=code==='HOOK_FAILED' && !tools.length && typeof error?.message==='string' && /^Hook "[^"\r\n]{1,128}" failed: executionModelUnknown$/.test(error.message)
+  // Both missing-model codes share the modelRequired refusal (#3028).
+  const modelRequired=code==='HOOK_FAILED' && !tools.length && typeof error?.message==='string' ? /^Hook "[^"\r\n]{1,128}" failed: (executionModelUnknown|subscription_model_unavailable)$/.exec(error.message)?.[1] : undefined
   // Eve's committed facts map its internal details.errorId to ErrorInfo.id.
   const reference=error?.id
-  const failure=modelRequired ? 'executionModelUnknown' : code+(typeof reference==='string' && reference===reference.trim() && /^[A-Za-z0-9_-]{1,128}$/.test(reference) ? ` · ref ${reference}` : '')
+  const failure=typeof modelRequired==='string' ? modelRequired : code+(typeof reference==='string' && reference===reference.trim() && /^[A-Za-z0-9_-]{1,128}$/.test(reference) ? ` · ref ${reference}` : '')
   const toolCalls = tools.map(call => ({ type:'tool-call',toolCallId:call.callId,toolName:call.name,input:call.input ?? {} }))
   const stopped = outcome === 'cancelled' ? { mikkaStopped:true, ...(stoppedText ? {mikkaDisplay:{version:1, kind:'reply', text:stoppedText}} : {}) } : {}
   const output = tools.filter(call => ['completed','failed','cancelled','rejected'].includes(call.state)).map(call => ({type:'tool-result',toolCallId:call.callId,toolName:call.name,output:{type:'json',value:call.output ?? {error:call.error?.code ?? call.state}}}))
