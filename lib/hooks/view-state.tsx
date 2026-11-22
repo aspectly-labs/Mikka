@@ -104,18 +104,26 @@ export function useViewState<T,>(key: string, initial: T): [T, Dispatch<SetState
   return [value, setValue]
 }
 
-type Position = { top: number; left: number }
+type Position = { top: number; left: number; end?: boolean }
 
-/** Restores after asynchronous rows/expanded groups arrive, without fighting user scrolling. */
-export function useViewScroll<T extends HTMLElement>(key: string, ready = true, restoreSaved = true) {
+/** How near the end a list counts as read to its end, as the thread's following does (agent-thread.tsx). */
+const AT_END_PX = 40
+
+/**
+ * Restores after asynchronous rows/expanded groups arrive, without fighting user scrolling.
+ * `anchor: 'end'` is a chat's: left at its end (or never left), it is not restored, so its owner keeps it at the
+ * latest message, new ones included; scrolled up, it comes back where it was.
+ */
+export function useViewScroll<T extends HTMLElement>(key: string, ready = true, restoreSaved = true, anchor: 'start' | 'end' = 'start') {
   const store = useViewStore()
   const ref = useRef<T>(null)
   useLayoutEffect(() => {
     const node = ref.current
     if (!node || !ready) return
     const cell = `scroll:${key}`
-    const saved = restoreSaved ? store.get<Position | null>(cell, null) : null
-    if (!saved && restoreSaved) { node.scrollTop = 0; node.scrollLeft = 0 }
+    const stored = restoreSaved ? store.get<Position | null>(cell, null) : null
+    const saved = anchor === 'end' && stored?.end ? null : stored
+    if (!saved && restoreSaved && anchor === 'start') { node.scrollTop = 0; node.scrollLeft = 0 }
     let restoring = !!saved
     const restore = () => {
       if (!restoring || !saved) return
@@ -124,7 +132,8 @@ export function useViewScroll<T extends HTMLElement>(key: string, ready = true, 
       if (Math.abs(node.scrollTop - saved.top) < 1 && Math.abs(node.scrollLeft - saved.left) < 1) restoring = false
     }
     const save = () => {
-      if (!restoring) store.set(cell, { top: node.scrollTop, left: node.scrollLeft })
+      if (!restoring) store.set(cell, { top: node.scrollTop, left: node.scrollLeft,
+        ...(anchor === 'end' ? { end: node.scrollHeight - node.scrollTop - node.clientHeight < AT_END_PX } : {}) })
     }
     const interact = () => { restoring = false }
     restore()
@@ -149,6 +158,6 @@ export function useViewScroll<T extends HTMLElement>(key: string, ready = true, 
       node.removeEventListener('keydown', interact)
       window.removeEventListener('pagehide', save)
     }
-  }, [store, key, ready, restoreSaved])
+  }, [store, key, ready, restoreSaved, anchor])
   return ref
 }
