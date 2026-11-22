@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 
 export function ChatMessage({ from, compact = false, presentation = 'default', delivery, lead, body, extras, actions, after }: ChatMessageProps) {
   if (presentation === 'group-received') return <>
-    <Bubble variant="muted" align="start" className="max-w-full">
+    <Bubble variant="muted" align="start">
       <BubbleContent size="roomy" className="whitespace-pre-wrap">{body}</BubbleContent>
     </Bubble>
     {actions}

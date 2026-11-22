@@ -33,7 +33,7 @@ import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
 import { ReplyActions } from '@/components/chat/reply-actions'
 import { mentionsIn } from '@/lib/group-mentions'
-import { authorRuns, replyBylines, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
+import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
 import { AgentExchangeMarker } from './agent-exchange'
 import { toast } from 'sonner'
 import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
@@ -231,18 +231,17 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
 
   // The centred time over each group of messages (#2922): the first run, and each run after a quiet gap.
   const runs = authorRuns(messages)
-  // A reply is quiet; where the replying speaker changes it carries a small name, so several Bots stay told apart.
-  const bylines = replyBylines(runs)
   const stamped = stampStarts(runs.map(run => Date.parse(run.messages[0]?.createdAt ?? '')))
   const rows: ThreadGroupRow[] = runs.flatMap((run, index): ThreadGroupRow[] => {
     const mine = run.authorType === 'user' && run.authorId === userId
     const name = authorName(run.authorType, run.authorId)
     const bot = run.authorType === 'bot' ? member('bot', run.authorId) : undefined
-    // A Bot's or Agent's reply is its words alone, as in a thread (#2922); another person keeps their mark and name.
+    // A Bot's or Agent's reply is its words with no bubble (#2922); in a group every run opens with its sender's mark and
+    // name, as LobeHub's group chat, so several Bots stay told apart (decision 2026-11-22-1500-group-chat-as-bot-chat).
     const reply = run.authorType !== 'user'
     const at = Date.parse(run.messages[0]?.createdAt ?? '')
     return [{
-      kind: 'author', id: run.key, mine, name, ...(reply ? { quiet: true, byline: bylines.has(run.key) } : {}), ...(stamped[index] ? { before: <MessageTimeStamp at={at} /> } : {}),
+      kind: 'author', id: run.key, mine, name, ...(stamped[index] ? { before: <MessageTimeStamp at={at} /> } : {}),
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
       messages: run.messages.map((message): ThreadTranscriptMessage => {
         // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.

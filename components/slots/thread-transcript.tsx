@@ -31,13 +31,12 @@ export function ThreadTranscript({ host, transcript, composer, beforeComposer }:
             {transcript.rows.map(row => row.kind === 'author'
               ? <li key={row.id} className="flex flex-col gap-4">
                 {row.before}
-                <div className={cn('flex', row.mine ? 'flex-col items-end gap-1' : 'items-end gap-2')}>
-                  {!row.mine && !row.quiet && row.mark}
-                  {/* The person's column takes the row's width, so a short message keeps one line (the bubble sets its own width). */}
-                  <div className={cn('flex min-w-0 flex-col gap-1', row.mine ? 'w-full items-end' : row.quiet ? 'w-full' : 'max-w-[min(35rem,85%)]')}>
-                    {row.mine || (row.quiet && !row.byline) ? <span className="sr-only">{row.name}</span> : <span data-slot="group-author" className="text-xs font-medium text-muted-foreground">{row.name}</span>}
-                    {row.messages.map(entry => <TranscriptMessage key={entry.id} entry={entry} mine={row.mine} />)}
-                  </div>
+                {/* The person's column takes the row's width, so a short message keeps one line (the bubble sets its own width).
+                  * Everyone else's run opens with its sender, as LobeHub's group chat (ChatItem header): their mark and name. */}
+                <div className={cn('flex w-full min-w-0 flex-col', row.mine ? 'items-end gap-1' : 'gap-2')}>
+                  {row.mine || row.quiet ? <span className="sr-only">{row.name}</span>
+                    : <span data-slot="group-author" className="flex min-w-0 items-center gap-2">{row.mark}<span className="truncate text-sm font-medium text-foreground">{row.name}</span></span>}
+                  {row.messages.map(entry => <TranscriptMessage key={entry.id} entry={entry} mine={row.mine} />)}
                 </div>
               </li>
               : row.kind === 'pending'

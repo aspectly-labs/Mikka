@@ -288,13 +288,13 @@ test('a Bot\'s or Agent\'s reply is its words alone, and a centred time opens ea
   }
 })
 
-test('in a group a reply names its speaker in a small line where the replying speaker changes, never with a mark', async () => {
+test('in a group every run opens with its sender\'s mark and name, as LobeHub\'s group chat; the person\'s own do not', async () => {
   groupMembers = [{ id: 'bot', name: 'Design Bot', memberType: 'bot' }, { id: 'agent', name: 'Build Agent', memberType: 'agent' }]
   await render([message('user', 1, 'Who checks this?'), message('bot', 2, 'I will'), message('user', 3, 'Thanks'), message('bot', 4, 'Done'), message('agent', 5, 'Checks are green')])
   const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li')]
-  const byline = (row: Element) => row.querySelector('[data-slot="group-author"]')?.textContent ?? null
-  assert.deepEqual(rows.map(byline), [null, 'Design Bot', null, null, 'Build Agent'])
-  assert.equal(rows[3].querySelector('.sr-only')?.textContent, 'Design Bot', 'the same speaker again is named for screen readers only')
+  const sender = (row: Element) => row.querySelector('[data-slot="group-author"]')?.textContent ?? null
+  assert.deepEqual(rows.map(sender), [null, 'Design Bot', null, 'Design Bot', 'Build Agent'])
+  assert.equal(rows[0].querySelector('.sr-only')?.textContent, 'you', 'the person\'s own name is for screen readers only')
   groupMembers = []
 })
 

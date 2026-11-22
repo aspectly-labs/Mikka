@@ -122,23 +122,6 @@ export function authorRuns(messages: GroupMessage[]) {
   return runs
 }
 
-/**
- * The reply runs that carry a small author line in a group chat: a Bot's or Agent's reply is quiet (#2922) except where
- * the replying speaker changes, so a group with several Bots says who answered (decision 2026-11-22-1500-group-chat-as-bot-chat).
- * The first reply in view names its speaker; a person's message between two replies by the same Bot does not repeat it.
- */
-export function replyBylines(runs: readonly { key: string; authorType: GroupMessage['authorType']; authorId: string }[]): Set<string> {
-  const named = new Set<string>()
-  let previous: string | null = null
-  for (const run of runs) {
-    if (run.authorType === 'user') continue
-    const speaker = `${run.authorType}:${run.authorId}`
-    if (speaker !== previous) named.add(run.key)
-    previous = speaker
-  }
-  return named
-}
-
 /** GET a group API path; failures map to the same codes as the message pages. */
 async function readGroupApi<T>(path: string, pick: (body: unknown) => T | undefined, fetcher: typeof fetch): Promise<T> {
   let response: Response

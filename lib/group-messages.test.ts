@@ -66,13 +66,6 @@ test('consecutive messages from one author form one run', () => {
   assert.deepEqual(runs.map(run => [run.authorType, run.authorId, run.messages.length]), [['user', 'u1', 2], ['agent', 'a1', 1], ['user', 'u1', 1]])
 })
 
-test('a group reply names its speaker only where the replying speaker changes', () => {
-  const bot = (position: string, id: string) => ({ ...message(position, id), authorType: 'bot' as const })
-  const runs = group.authorRuns([message('1', 'u1'), bot('2', 'b1'), message('3', 'u1'), bot('4', 'b1'), bot('5', 'b2'), message('6', 'u2'), bot('7', 'b2'), message('8', 'a1', 'agent'), bot('9', 'b1')])
-  assert.deepEqual([...group.replyBylines(runs)], ['m2', 'm5', 'm8', 'm9'])
-  assert.deepEqual([...group.replyBylines(group.authorRuns([message('1', 'u1'), message('2', 'u2')]))], [])
-})
-
 test('(mock fetch) the bot list reads group chats and a chat reads its members through the basePath API', async () => {
   const urls: string[] = []
   const reply = (body: unknown, status = 200) => (async (input: Parameters<typeof fetch>[0]) => { urls.push(String(input)); return Response.json(body, { status }) }) as typeof fetch

@@ -186,9 +186,8 @@ export type ThreadTranscriptMessage = { id: string } & (
 export type ThreadGroupRow =
   /** `quiet`: a Bot's or Agent's reply, its words alone with no mark or visible name (#2922); screen readers still get the name. */
   /** `before`: what goes above the run in its own item, the centred time over its group (#2922). */
-  /** `byline`: a quiet reply's name as a small line, with no mark, where the replying speaker changes in a group
-   * (decision 2026-11-22-1500-group-chat-as-bot-chat). */
-  | { kind: 'author'; id: string; mine: boolean; quiet?: boolean; byline?: boolean; name: string; mark?: ReactNode; before?: ReactNode; messages: ThreadTranscriptMessage[] }
+  /** Without `quiet`, a run opens with its sender: mark and name, as LobeHub's group chat (decision 2026-11-22-1500-group-chat-as-bot-chat). */
+  | { kind: 'author'; id: string; mine: boolean; quiet?: boolean; name: string; mark?: ReactNode; before?: ReactNode; messages: ThreadTranscriptMessage[] }
   | { kind: 'pending'; id: string; phase: 'sending' | 'accepted' | 'failed'; message: ChatMessageProps; after?: ReactNode }
   | { kind: 'notice'; id: string; label: string; content: ReactNode }
 
