@@ -43,12 +43,13 @@ const browser = new Window({ url: 'https://fixture.example/mikka' })
 let container: HTMLDivElement, root: Root
 let createRoot: typeof import('react-dom/client')['createRoot']
 let SWRConfig: typeof import('swr')['SWRConfig']
+let useSWRConfig: typeof import('swr')['useSWRConfig']
 let NewBotDialog: typeof import('./new-bot-dialog')['NewBotDialog']
 before(async () => {
   Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element })
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: browser.navigator })
   ;({ createRoot } = await import('react-dom/client'))
-  ;({ SWRConfig } = await import('swr'))
+  ;({ SWRConfig, useSWRConfig } = await import('swr'))
   ;({ NewBotDialog } = await import('./new-bot-dialog'))
 })
 beforeEach(() => {
@@ -152,6 +153,46 @@ test('reopening New Bot waits for fresh access policy in the same settings cache
   assert.equal(props!.access?.value, 'shared')
   await act(async () => props!.onSubmit())
   assert.equal(Object.hasOwn(created[0], 'visibility'), false)
+})
+
+test('a legacy settings response leaves Access unavailable but allows creation with the server default', async t => {
+  shareable = true
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ workspaceId: 'shown-team', values: {} }))
+  await render(dialog(true, undefined, 'shown-team'))
+  await settle()
+  assert.equal(props!.access?.label, 'Coordinator.modelPicker.unavailable')
+  assert.equal(props!.access?.disabled, true)
+  await act(async () => props!.onName('Builder'))
+  await act(async () => props!.onSubmit())
+  assert.equal(created.length, 1)
+  assert.equal(Object.hasOwn(created[0], 'visibility'), false)
+})
+
+test('a policy refresh never submits an explicit Private selection as Shared', async t => {
+  shareable = true
+  let privateAllowed = true
+  t.mock.method(globalThis, 'fetch', async () => Response.json({
+    workspaceId: 'shown-team', workCreation: { effectiveVisibility: 'shared', privateAllowed },
+  }))
+  let refresh: () => Promise<unknown>
+  function CacheControl() {
+    const { mutate } = useSWRConfig()
+    refresh = () => mutate('/api/settings/personal?workspaceId=shown-team')
+    return null
+  }
+  await render(<>{dialog(true, undefined, 'shown-team')}<CacheControl /></>)
+  await settle()
+  await act(async () => { props!.onName('Builder'); props!.access?.onChange('private') })
+  assert.equal(props!.access?.value, 'private')
+  privateAllowed = false
+  await act(async () => { await refresh() })
+  assert.equal(props!.access?.value, null)
+  assert.equal(props!.access?.disabled, false)
+  await act(async () => props!.onSubmit())
+  assert.equal(created.length, 0)
+  await act(async () => props!.access?.onChange('shared'))
+  await act(async () => props!.onSubmit())
+  assert.equal(created[0].visibility, 'shared')
 })
 
 test('without a pick, only a model the Coordinator chose is pinned; an unchosen default is left to the resolver', async () => {

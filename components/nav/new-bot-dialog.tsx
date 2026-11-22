@@ -122,20 +122,21 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
     onChange: setEffort, disabled: saving,
   }
   const workCreation = policy.isValidating || policy.error ? undefined : policy.data?.workCreation
-  const awaitingPolicy = !environments.data && !environments.error || !!policyKey && !workCreation && !policy.error
-  const explicitAccess = access && access.workspaceId === workspaceId && (access.value === 'shared' || workCreation?.privateAllowed) ? access.value : undefined
-  const accessValue = explicitAccess ?? workCreation?.effectiveVisibility ?? null
+  const awaitingPolicy = (!environments.data && !environments.error) || (!!policyKey && !policy.error && (policy.isValidating || policy.data === undefined))
+  const explicitAccess = access?.workspaceId === workspaceId ? access?.value : undefined
+  const privateUnavailable = explicitAccess === 'private' && !workCreation?.privateAllowed
+  const accessValue = privateUnavailable ? null : explicitAccess ?? workCreation?.effectiveVisibility ?? null
   const accessChoices: NewBotChoice[] = [
     ...(workCreation?.privateAllowed ? [{ value: 'private', label: t('accessPrivate') }] : []),
     { value: 'shared', label: t('accessShared') },
   ]
   const accessDetail: NewBotDetail = {
     choices: accessChoices, value: accessValue,
-    label: accessChoices.find(choice => choice.value === accessValue)?.label ?? (policy.error ? tModel('unavailable') : t('loading')),
+    label: accessChoices.find(choice => choice.value === accessValue)?.label ?? (awaitingPolicy ? t('loading') : tModel('unavailable')),
     onChange: value => {
       if (workCreation && (value === 'shared' || (value === 'private' && workCreation.privateAllowed))) setAccess({ workspaceId, value })
     },
-    disabled: saving || !workCreation || accessChoices.length === 1,
+    disabled: saving || !workCreation || (accessChoices.length === 1 && !privateUnavailable),
   }
   const crewTarget: TaskDestination | undefined = machine === undefined ? undefined
     : machine === 'cloud' ? { kind: 'cloud' } : machine === 'cloudflare' ? { kind: 'cloud', provider: 'cloudflare' } : { kind: 'device', deviceId: machine }
@@ -143,6 +144,10 @@ export function NewBotDialog({ open, onOpenChange, onCreated, workspaceId }: { o
   async function submit() {
     const trimmed = name.trim()
     if (!trimmed || saving || awaitingPolicy) return
+    if (privateUnavailable) {
+      toast.error(workCreation ? actionError('privateWorkNotAllowed') : tModel('unavailable'))
+      return
+    }
     setSaving(true)
     try {
       const bot = await createBot({ name: trimmed, color, shape, ...(repository === undefined ? {} : { repository: repository === NO_REPOSITORY ? null : repository }),
