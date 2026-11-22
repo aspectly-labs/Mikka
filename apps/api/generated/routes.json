@@ -94,7 +94,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "66f8f6e5665a0367cb6238ed92333505998927de8953d18d9fc2e768a854dddb"
+      "sourceHash": "31fb25babd3acf0cb828b23947515068951b1701bd5d25bd080d02c808a61b9a"
     },
     {
       "path": "/mikka/api/agents/[...path]",
