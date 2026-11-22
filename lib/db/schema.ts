@@ -244,6 +244,8 @@ export const slackThreadBots = pgTable('slack_thread_bots', {
   threadTs: text('threadTs').notNull(),
   ownerId: text('ownerId').notNull().references(() => users.id, { onDelete: 'cascade' }),
   botId: uuid('botId').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+  /** The Mikka thread (root run) this Slack thread is bound to (#2936); null keeps the old bot routing. */
+  boundRunId: uuid('boundRunId').references(() => agentRuns.id, { onDelete: 'set null' }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [primaryKey({ columns: [table.linkId, table.channelId, table.threadTs] }), index('slack_thread_bots_bot_idx').on(table.botId)])
 
@@ -561,6 +563,15 @@ export const agentRuns = pgTable('agent_runs', {
   conversationPinnedAt: timestamp('conversationPinnedAt', { withTimezone: true }),
   /** On a thread's root run: the root of the thread that replaced it, when the person explicitly asked for a new one. */
   threadReplacedBy: uuid('threadReplacedBy').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  /** The thread this one descends from (#2936); `threadRelation` names the link: fork, side or subagent. Shared with F. */
+  parentRunId: uuid('parentRunId').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  threadRelation: text('threadRelation').$type<'fork' | 'side' | 'subagent' | null>(),
+  /** The message a fork or side thread starts from; FK lives in the migration (forward reference). */
+  sourceMessageId: uuid('sourceMessageId'),
+  /** The thread's own labels, kept on the chain's root run (#2936). */
+  tags: jsonb('tags').$type<string[] | null>(),
+  /** Soft delete: hidden from every list for 30 days, restorable inside them (#2936). */
+  deletedAt: timestamp('deletedAt', { withTimezone: true }), deletedBy: text('deletedBy'),
   stopRequestedAt: timestamp('stopRequestedAt', { withTimezone: true }),
   /** Set with an explicit owner-scoped cancel request, never inferred from a policy or lease stop. */
   explicitStopRequested: boolean('explicitStopRequested').notNull().default(false),
@@ -1296,6 +1307,16 @@ export const runCaptureSteps = pgTable('run_capture_steps', {
   source: text('source').$type<'action' | 'mark'>().notNull(),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('run_capture_steps_capture_idx').on(table.captureId, table.atMs)])
+
+/** A read-only link anyone can open to a thread's transcript, as `run_capture_shares`:
+ * only the token's hash is stored; revoking ends it (#2936). */
+export const runThreadShares = pgTable('run_thread_shares', {
+  id: uuid('id').primaryKey(),
+  runId: uuid('runId').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
+  tokenHash: text('tokenHash').notNull(), createdBy: text('createdBy').notNull(),
+  revokedAt: timestamp('revokedAt', { withTimezone: true }),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [uniqueIndex('run_thread_shares_token_key').on(table.tokenHash), index('run_thread_shares_run_idx').on(table.runId)])
 
 /** A link anyone can open, as `artifact_shares`: only the token's hash is stored; revoking ends it. */
 export const runCaptureShares = pgTable('run_capture_shares', {
