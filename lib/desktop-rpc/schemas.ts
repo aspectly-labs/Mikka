@@ -24,6 +24,7 @@ import { USER_FACT_KINDS } from '@/lib/profile/kinds'
 import { definitionSchema as scheduleDefinition, webhookBatchListInput, webhookBatchInput } from '@/lib/schedules/contract'
 import { DEVICE_DESCRIPTION_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
+import { deleteWorkspaceReviewRuleInput, saveWorkspaceReviewRuleInput } from '@/lib/review-rules/contract'
 
 const uuid = z.uuid()
 const id = z.string().min(1).max(200)
@@ -421,6 +422,9 @@ export const desktopActionSchemas = {
   'workspace-settings.transferWorkspace': tuple(id, workspace),
   'workspace-settings.deleteWorkspace': tuple(uuid, text(120).min(1)),
   'workspace-settings.takeOverArchivedBot': tuple(uuid, workspace),
+  'review-rule-settings.getWorkspaceReviewRules': oneId,
+  'review-rule-settings.saveWorkspaceReviewRule': tuple(uuid, saveWorkspaceReviewRuleInput),
+  'review-rule-settings.deleteWorkspaceReviewRule': tuple(uuid, deleteWorkspaceReviewRuleInput.optional()),
   'workspace.createWorkspace': tuple(z.union([text(120).trim().min(1), object({ name: text(120).trim().min(1), slug })])),
   'workspace.switchWorkspace': tuple(z.union([uuid, object({ workspaceId: workspace, accountId: id.optional() })])),
   'workspace.createWorkspaceInvitation': tuple(object({ workspaceId: uuid, emails: z.array(z.email().max(254)).min(1).max(20), role: z.enum(['admin', 'member']) })),
