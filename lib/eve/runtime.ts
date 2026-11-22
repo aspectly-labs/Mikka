@@ -42,11 +42,15 @@ export async function instructionsForSession(ctx: DynamicModelContext) {
   const { scheduledRead } = turnRequest.get()
   if (scheduledRead) return `This is an authorized scheduled read-only task. Use only the provided read tools. Do not request approval, create schedules or perform writes. Return the result for the original chat.\n${scheduledRead.prompt}`
   // Slack gets product policy but never private web history, memory or profile.
+  const { asProductPrincipal } = await import('./product-definitions')
   if (scope.surface === 'slack') {
     const { COORDINATOR_INSTRUCTIONS } = await import('../coordinator/instructions')
-    return COORDINATOR_INSTRUCTIONS + '\nUse only this Slack conversation. Do not access private web chat history or memories. Reply in the same thread; call no_reply when no useful response is needed.'
+    const { instructionsWithWorkspace } = await import('../coordinator/context')
+    const { readWorkspaceInstructionsForBot } = await import('../coordinator/workspace-instructions')
+    return asProductPrincipal(scope, async () => instructionsWithWorkspace(
+      COORDINATOR_INSTRUCTIONS + '\nUse only this Slack conversation. Do not access private web chat history or memories. Reply in the same thread; call no_reply when no useful response is needed.',
+      await readWorkspaceInstructionsForBot(scope.ownerId, scope.botId)))
   }
-  const { asProductPrincipal } = await import('./product-definitions')
   return asProductPrincipal(scope, async () => {
     const { composeEveInstructions } = await import('../coordinator/product-instructions')
     return composeEveInstructions(scope.ownerId, scope.botId, undefined, { sessionId: ctx.session.id, turnId: ctx.turn!.id }, turnPolicy.get() ?? undefined)

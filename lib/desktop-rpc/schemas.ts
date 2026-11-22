@@ -1,5 +1,6 @@
 import { settingsPatchInput, settingsResetInput } from '@/lib/settings/registry'
 import { reviewRepositoryInput, reviewRepositoryKey } from '@/lib/code-review/settings-contract'
+import { artifactShareInput } from '@/lib/artifacts/share-input'
 import { AVATAR_MAX_BYTES, isAvatarContentType } from '../account/avatar-file'
 import { deletePasskeyInputSchema, renamePasskeyInputSchema } from '@/lib/account/passkeys-contract'
 import { threadModelChoice } from '@/lib/thread-model-choice'
@@ -210,7 +211,7 @@ export const desktopActionSchemas = {
   'artifacts.listTaskArtifacts': oneId,
   'artifacts.getArtifact': oneId,
   'artifacts.getArtifactText': tuple(uuid, positive),
-  'artifacts.shareArtifact': oneId,
+  'artifacts.shareArtifact': artifactShareInput,
   'artifacts.stopSharingArtifact': oneId,
   'audit-log.listAuditLog': tuple(object({ filter: z.enum(['all', 'security']).optional(), cursor: text(200).nullish() }).optional(), workspace),
   'billing.getBilling': inWorkspace,

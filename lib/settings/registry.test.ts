@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseSettingsPatch, resolveSettingValue, settingsSchema } from './registry'
 import { keyboardShortcutConflicts, normalizeKeyboardShortcut } from '@mikka/protocol/keyboard-shortcuts'
+import { workCreationView } from './work-creation-policy'
 
 test('inheritance retains explicit zero/empty overrides and falls through null to workspace or default', () => {
   assert.deepEqual(resolveSettingValue('archiveIdleAfterDays', 0, 7), { value: 0, source: 'personal' })
@@ -113,6 +114,27 @@ test('Git defaults retain explicit false and empty prefixes; review fields are a
   for (const key of ['codeReviewModel', 'codeReviewSeverity', 'codeReviewIgnoredPaths', 'codeReviewOutput']) assert.throws(() => parseSettingsPatch('personal', { values: { [key]: null } }))
   assert.deepEqual(parseSettingsPatch('workspace', { values: { prBranchPrefix: 'team/fix/', codeReviewIgnoredPaths: ['vendor/**', 'vendor/**'] } }),
     { prBranchPrefix: 'team/fix', codeReviewIgnoredPaths: ['vendor/**'] })
+})
+
+test('new-work preferences inherit independently of the workspace creation policy', () => {
+  assert.deepEqual(resolveSettingValue('newWorkVisibility', null, null), { value: 'private', source: 'default' })
+  assert.deepEqual(resolveSettingValue('newWorkVisibility', null, 'shared'), { value: 'shared', source: 'workspace' })
+  assert.deepEqual(resolveSettingValue('newWorkVisibility', 'private', 'shared'), { value: 'private', source: 'personal' })
+  assert.deepEqual(resolveSettingValue('allowPrivateNewWork', true, false), { value: false, source: 'workspace' })
+  const configured = { value: 'private' as const, source: 'personal' as const }
+  assert.deepEqual(workCreationView('team', configured, false), {
+    configured, effectiveVisibility: 'shared', privateAllowed: false, reason: 'workspace_policy',
+  })
+  assert.deepEqual(workCreationView('team', configured, true), {
+    configured, effectiveVisibility: 'private', privateAllowed: true, reason: 'configured',
+  })
+  const shared = { value: 'shared' as const, source: 'workspace' as const }
+  assert.deepEqual(workCreationView('personal', shared, false), {
+    configured: shared, effectiveVisibility: 'private', privateAllowed: true, reason: 'personal_workspace',
+  })
+  for (const value of ['workspace', 'link', true, 1]) assert.throws(() => parseSettingsPatch('personal', { values: { newWorkVisibility: value } }))
+  assert.throws(() => parseSettingsPatch('personal', { values: { allowPrivateNewWork: false } }))
+  assert.deepEqual(parseSettingsPatch('personal', { values: { newWorkVisibility: null } }), { newWorkVisibility: null })
 })
 
 test('gitAuthorName and gitAuthorEmail inherit across personal, workspace and default with strict guards', () => {
