@@ -14,6 +14,7 @@ import { issueForUser } from '@/lib/issue-access'
 import { readPreferences } from '@/lib/preferences'
 import { pushAllowed } from '@/lib/push-allowed'
 import type { PushReason } from '@/lib/push-reasons'
+import { readNotificationRuntimeSettings } from '@/lib/settings/notification-preferences'
 import { chatMuted } from '@/lib/chat-preferences'
 import { openUIText, parseOpenUI } from '@/lib/openui-lang'
 import type { ActionLocale } from '@/lib/suggestions/action-title'
@@ -100,7 +101,9 @@ export async function pushReply(userId: string, botId: string, text: string | nu
                 // The Workspace transaction still holds its attachment lock. Recheck the live policy under the APP barrier.
                 const allowed = await filterEnterpriseWorkspaceLinks(reader, [{ id: origin.workspaceId, organizationId }], client)
                 if (!allowed.length) return
-                if (!pushAllowed(await readPreferences(userId), reasons)) return
+                const preferences = await readPreferences(userId)
+                const runtime = await readNotificationRuntimeSettings(userId)
+                if (!pushAllowed(preferences, reasons, { overrides: runtime.mobile, dnd: runtime.dnd, timeZone: runtime.timeZone })) return
                 if (await chatMuted(userId, botId)) return
                 const [bot] = await db.select({ name: bots.name, coordinator: sql<boolean>`exists (select 1 from coordinator_bots cb where cb."botId" = ${bots.id})` }).from(bots)
                   .where(and(eq(bots.id, botId), eq(bots.ownerId, userId), eq(bots.workspaceId, origin.workspaceId), isNull(bots.archivedAt))).limit(1).for('share')
@@ -130,7 +133,8 @@ export async function pushReply(userId: string, botId: string, text: string | nu
                 try {
                   await deliverPhonePush(userId, { to: destinations.rows.map(row => row.token), title: bot.coordinator ? 'Coordinator' : bot.name, body,
                     data: { botId, serverUrl: appOrigin + BASE_PATH, userId,
-                      ...(task ? { workspaceId: origin.workspaceId, issueId: task.issueId, ...(task.runId ? { runId: task.runId } : {}) } : {}) }, collapseId: botId }, locale)
+                      ...(task ? { workspaceId: origin.workspaceId, issueId: task.issueId, ...(task.runId ? { runId: task.runId } : {}) } : {}) }, collapseId: botId,
+                    ...(runtime.sound === 'none' ? { silent: true } : {}) }, locale)
                 } catch (error) {
                   if (!(error instanceof CloudServiceError)) throw error
                   // Accepted receipts must commit even if another destination

@@ -1,6 +1,6 @@
 import { createAuthClient } from 'better-auth/react'
 import { expoClient } from '@better-auth/expo/client'
-import * as SecureStore from 'expo-secure-store'
+import { secureStorage as SecureStore } from './secure-storage'
 import { currentAccount, onServerChange } from '@/lib/config'
 import { accountStorageKey } from './server-store'
 import { mobileFetchFor } from './tracing'

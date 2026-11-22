@@ -3,6 +3,8 @@ import type { Pool, PoolClient } from 'pg'
 import type { JSONContent } from '@tiptap/core'
 import { z } from 'zod'
 import { applyApprovalMode, approvalModeSchema, intersectNetworkDomains, CONFIGURABLE_ACTIONS, networkAllowSchema, runPolicySchema, storedPermissionsSchema, type ConfigurableAction, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
+import { runGitIdentitySchema, type RunGitIdentity } from '@mikka/protocol/device'
+import { resolveSettingValue } from '@/lib/settings/registry'
 import { resolveTrustedRunPolicy } from './policy-snapshot'
 import { intersectRunPolicy } from '../run-assignment-policy'
 import type { MailboxTransactionLease, MailboxTransactionGuard } from '@/lib/mailbox-transaction-guard'
@@ -198,8 +200,40 @@ export async function lockCliAgentPolicy(tx: PoolClient, userId: string, agentId
   return { policy, revision, workspaceId: primaryWorkspaceId, workspaceIds, hierarchy, defaults, defaultSources, policySnapshotRequired: [...workspaceLayers, ...scopedLayers].some(layer => Object.keys(layer).length > 0), layers: { workspace, ...scopeLayers } }
 }
 
+/** Resolve personal/workspace Git identity under the held APP transaction when typed settings exist. */
+async function readRunGitIdentity(tx: PoolClient, userId: string, workspaceId: string): Promise<RunGitIdentity | undefined> {
+  const { rows: [present] } = await tx.query<{ ok: boolean }>(
+    `SELECT to_regclass('public.personal_setting_values') IS NOT NULL AND to_regclass('public.workspace_setting_values') IS NOT NULL AS ok`,
+  )
+  if (!present?.ok) return undefined
+  const { rows } = await tx.query<{ scope: 'personal' | 'workspace'; key: string; textValue: string | null }>(
+    `SELECT 'personal'::text AS scope, key, "textValue" FROM personal_setting_values
+       WHERE "userId" = $1 AND "workspaceId" = $2 AND key IN ('gitAuthorName', 'gitAuthorEmail')
+     UNION ALL
+     SELECT 'workspace'::text AS scope, key, "textValue" FROM workspace_setting_values
+       WHERE "workspaceId" = $2 AND key IN ('gitAuthorName', 'gitAuthorEmail')`,
+    [userId, workspaceId],
+  )
+  const personalName = rows.find(row => row.scope === 'personal' && row.key === 'gitAuthorName')?.textValue
+  const workspaceName = rows.find(row => row.scope === 'workspace' && row.key === 'gitAuthorName')?.textValue
+  const personalEmail = rows.find(row => row.scope === 'personal' && row.key === 'gitAuthorEmail')?.textValue
+  const workspaceEmail = rows.find(row => row.scope === 'workspace' && row.key === 'gitAuthorEmail')?.textValue
+  const name = resolveSettingValue('gitAuthorName', personalName, workspaceName).value as string
+  const email = resolveSettingValue('gitAuthorEmail', personalEmail, workspaceEmail).value as string
+  if (!name && !email) return undefined
+  return runGitIdentitySchema.parse({
+    ...(name ? { name } : {}),
+    ...(email ? { email } : {}),
+  })
+}
+
 /** Resolve a run's exact owner, Bot and worker; then read the workspace policy. */
-export async function lockCliRunPolicy(tx: PoolClient, runId: string, userId: string, options: { freezeHierarchy?: boolean } = {}) {
+export async function lockCliRunPolicy(
+  tx: PoolClient,
+  runId: string,
+  userId: string,
+  options: { freezeHierarchy?: boolean; includeGitIdentity?: boolean } = {},
+) {
   // Policy must precede Factory/task/run locks. Read the task with the run,
   // then freeze any new hierarchy only after acquiring the policy locks.
   const result = await tx.query<CliTaskRow & { botId: string | null; agentId: string; issueId: string | null; runWorkspaceId: string | null; policyCeiling: unknown; hierarchy: unknown }>(`SELECT "botId","agentId","issueId",r."agentDefinition"->'policyCeiling' AS "policyCeiling",
@@ -221,10 +255,12 @@ export async function lockCliRunPolicy(tx: PoolClient, runId: string, userId: st
       AND (cli_policy_hierarchy IS NULL OR cli_policy_hierarchy=$3::jsonb) RETURNING id`, [runId,userId,task.hierarchy])
     if (!frozen.rowCount) throw new Error('agentPolicyChanged')
   }
-  if (run.policyCeiling == null) return current
+  const gitIdentity = options.includeGitIdentity ? await readRunGitIdentity(tx, userId, run.runWorkspaceId) : undefined
+  const resolved: typeof current & { gitIdentity?: RunGitIdentity } = gitIdentity ? { ...current, gitIdentity } : current
+  if (run.policyCeiling == null) return resolved
   const ceiling = runPolicySchema.safeParse(run.policyCeiling)
   if (!ceiling.success) throw new Error('agentPolicyUnavailable')
-  return { ...current, policy: intersectRunPolicy(current.policy, ceiling.data),
+  return { ...resolved, policy: intersectRunPolicy(current.policy, ceiling.data),
     revision: createHash('sha256').update(JSON.stringify(['provider-policy-ceiling-v1', current.revision, ceiling.data])).digest('hex') }
 }
 
@@ -293,12 +329,18 @@ export function cliPolicyGuard(runId: string, userId: string, membership: CliMem
 }
 
 /** Read an authenticated run's policy under the same locks used by decisions. */
-export async function readCliRunPolicy(pool: Pick<Pool, 'connect'>, runId: string, userId: string, guard: CliMembershipGuard = realCliMembershipGuard) {
+export async function readCliRunPolicy(
+  pool: Pick<Pool, 'connect'>,
+  runId: string,
+  userId: string,
+  guard: CliMembershipGuard = realCliMembershipGuard,
+  options?: { includeGitIdentity?: boolean },
+) {
   // The work resolved the policy in this transaction and still holds its locks
   // (advisory, FOR SHARE) through COMMIT, so the membership lease is taken for
   // that same result instead of resolving it a second time (12 statements).
   let current: Awaited<ReturnType<typeof lockCliRunPolicy>> | undefined
-  return writeTransaction(pool, async tx => (current = await lockCliRunPolicy(tx, runId, userId)), {
+  return writeTransaction(pool, async tx => (current = await lockCliRunPolicy(tx, runId, userId, options)), {
     guard: (_tx, signal) => policyMemberships(current!, userId, signal, guard),
   })
 }
