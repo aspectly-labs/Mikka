@@ -16,6 +16,7 @@ import {
 } from "./device"
 import { TASK_SECRET_MAX_CAPABILITIES, TASK_SECRET_MAX_TOKEN_BYTES } from './task-secrets'
 import { TASK_MCP_VERSION, taskMcpForDaemon, type TaskMcpServer } from './task-mcp'
+import { scrubMcpCheckTools } from './mcp-check'
 
 it('keeps v1 negotiation and withholds restricted MCP credentials from daemons without tool filtering', () => {
   const open: TaskMcpServer = { name: 'mcp_open', transport: 'http', url: 'https://example.invalid/mcp', headers: {} }
@@ -23,6 +24,13 @@ it('keeps v1 negotiation and withholds restricted MCP credentials from daemons w
   expect(TASK_MCP_VERSION).toBe('1')
   expect(taskMcpForDaemon([{ ...open, disabledTools: [] }, restricted], false)).toEqual([open])
   expect(taskMcpForDaemon([open, restricted], true)).toEqual([open, restricted])
+})
+
+it('drops tool names that contain command-line credentials without dropping the whole catalogue', () => {
+  expect(scrubMcpCheckTools([
+    { name: 'tool_fixture_secret' }, { name: 'safe_tool', description: 'echoed fixture_secret' },
+  ], { name: 'mcp_local', transport: 'stdio', command: 'fixture', args: ['--token=fixture_secret'], env: {} }))
+    .toEqual([{ name: 'safe_tool', description: 'echoed [redacted]' }])
 })
 
 describe("device online state", () => {

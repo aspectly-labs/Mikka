@@ -141,9 +141,25 @@ export class McpOAuthStore {
       if (data.tokens?.access_token && (data.expiresAt === undefined || data.expiresAt > Date.now() + 30_000)) return data.tokens.access_token
       if (!data.tokens?.refresh_token) return reconnect()
       const transport = this.transport()
-      try { await auth(this.provider(data), { serverUrl: url, fetchFn: transport.fetch }) }
-      catch { return reconnect() }
-      finally { await transport.close() }
+      let transientFailure = false
+      let status: Awaited<ReturnType<typeof auth>>
+      try {
+        status = await auth(this.provider(data), { serverUrl: url, fetchFn: async (input, init) => {
+          try {
+            const response = await transport.fetch(input, init)
+            if (response.status === 429 || response.status >= 500) transientFailure = true
+            return response
+          } catch (error) {
+            transientFailure = true
+            throw error
+          }
+        } })
+      } catch {
+        // error-cause: OAuth SDK errors can contain token endpoint bodies.
+        if (transientFailure) throw new PluginError('mcpOAuthUnavailable', 503)
+        return reconnect()
+      } finally { await transport.close() }
+      if (status !== 'AUTHORIZED' && transientFailure) throw new PluginError('mcpOAuthUnavailable', 503)
       await this.save(client, userId, serverId, data, data.authorizationUrl ? new Date(Date.now() + 600_000) : null)
       if (data.authorizationUrl || !data.tokens?.access_token) return reconnect()
       return data.tokens.access_token

@@ -1523,7 +1523,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "58a92a2aecc17e13a40cc5dd0e1cf15eec90790905d1f00e2a2c492eedd36586"
+      "sourceHash": "17da2254a0f0bd4bc2a5b5f7a59bec6e558cbbf0510df77199a677fc5fe64e14"
     },
     {
       "path": "/mikka/api/integrations/mcp/search",

@@ -25,7 +25,11 @@ export class McpConnectionStore {
     const candidates = workspaceId ? (await new WorkspaceMcpStore(this.personal.pool, this.personal.membership).list(userId, workspaceId)).servers : await this.personal.listMcp(userId)
     const server = candidates.find(row => row.id === serverId)
     if (!server) throw new PluginError('mcpNotFound', 404)
-    const mine = !('mine' in server) || server.mine
+    return this.readDetail(userId, server, workspaceId)
+  }
+
+  private async readDetail(userId: string, server: { id: string; enabled: boolean; mine?: boolean }, workspaceId?: string): Promise<McpConnectionDetails> {
+    const { id: serverId, mine = true } = server
     const { rows: [state] } = await this.personal.pool.query<{ connection_status: McpConnectionStatus; last_checked_at: Date | null; check_failure: string | null }>(
       'SELECT connection_status,last_checked_at,check_failure FROM personal_mcp_servers WHERE id=$1', [serverId])
     if (!state) throw new PluginError('mcpNotFound', 404)
@@ -51,8 +55,10 @@ export class McpConnectionStore {
     const ids = servers.map(server => server.id)
     const { rows: bindings } = await this.personal.pool.query<{ server_id: string; workspace_id: string; environment_id: string }>(
       'SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [ids])
+    const ownedIds = servers.filter(server => !('mine' in server) || server.mine).map(server => server.id)
     const { rows: toolRows } = await this.personal.pool.query<{ server_id: string; name: string }>(
-      `SELECT server_id,tool_name AS name FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) AND (enabled AND available)`, [ids])
+      `SELECT server_id,tool_name AS name FROM mcp_server_tools
+      WHERE server_id=ANY($1::uuid[]) AND (server_id=ANY($2::uuid[]) OR (enabled AND available))`, [ids, ownedIds])
     const candidates = servers.filter(server => {
       const scoped = bindings.filter(binding => binding.server_id === server.id)
       // A connection bound only to other workspaces cannot run here, even though a teammate's
@@ -63,7 +69,7 @@ export class McpConnectionStore {
       const tools = toolRows.filter(tool => tool.server_id === server.id)
       return !query || [server.name, server.url ?? '', ...tools.map(tool => tool.name)].some(value => value.toLowerCase().includes(query))
     })
-    const matched = await Promise.all(candidates.map(async server => ({ ...server, ...await this.detail(userId, server.id, options.workspaceId) })))
+    const matched = await Promise.all(candidates.map(async server => ({ ...server, ...await this.readDetail(userId, server, options.workspaceId) })))
     return { ...(page ? { workspaceId: page.workspaceId, workspaceKind: page.workspaceKind, canShare: page.canShare } : {}), servers: matched, count: matched.length }
   }
 

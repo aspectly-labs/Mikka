@@ -24,7 +24,8 @@ export function scrubMcpCheckTools(tools: { name: string; description?: string }
   const secrets = [...Object.values(server.env), ...commandLineSecrets(server.args ?? [])].filter(Boolean)
   const needles = secrets.flatMap(value => [value, encodeURIComponent(value), btoa(Array.from(new TextEncoder().encode(value), byte => String.fromCharCode(byte)).join(''))]).sort((a, b) => b.length - a.length)
   const scrub = (value: string) => needles.reduce((result, secret) => result.split(secret).join('[redacted]'), value)
-  return tools.map(tool => mcpCheckedToolSchema.parse({ name: scrub(tool.name), description: scrub(tool.description ?? '').slice(0, 4000) }))
+  return tools.flatMap(tool => scrub(tool.name) !== tool.name ? [] :
+    [mcpCheckedToolSchema.parse({ name: tool.name, description: scrub(tool.description ?? '').slice(0, 4000) })])
 }
 
 /**

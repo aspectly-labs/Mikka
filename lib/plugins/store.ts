@@ -5,6 +5,7 @@ import { PluginError, type InstalledSkill, type McpServerView, type PersonalPlug
 import type { z } from 'zod'
 import { taskMcpServerSchema, type TaskMcpServer } from '../../packages/protocol/src/task-mcp'
 import type { McpAuthority } from './contracts'
+import type { McpOAuthStore } from './mcp-oauth'
 import { scopedMcpAuthority, singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
 
 type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
@@ -17,7 +18,8 @@ const aad = (userId: string, id: string, url: string, header: string) => JSON.st
 const stdioConfiguration = (row: McpRow, value: string) => taskMcpServerSchema.options[1].parse({ name: `mcp_${row.id.replaceAll('-', '')}`, transport: 'stdio', ...JSON.parse(value) })
 
 export class PersonalPluginStore {
-  constructor(readonly pool: Pool, readonly env: Record<string, string | undefined> = process.env, readonly membership?: Pick<Pool | PoolClient, 'query'>) {}
+  constructor(readonly pool: Pool, readonly env: Record<string, string | undefined> = process.env, readonly membership?: Pick<Pool | PoolClient, 'query'>,
+    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>) {}
   private async write<T>(userId: string, work: (client: PoolClient) => Promise<T>) {
     const client = await this.pool.connect()
     try {
@@ -91,7 +93,8 @@ export class PersonalPluginStore {
     const headers: Record<string,string> = row.auth_header === '__headers__' ? JSON.parse(value!) : row.auth_header && row.transport !== 'stdio' ? { [row.auth_header]:value! } : {}
     if (row.oauth_enabled) {
       for (const name of Object.keys(headers)) if (name.toLowerCase() === 'authorization') delete headers[name]
-      headers.Authorization = `Bearer ${await new (await import('./mcp-oauth')).McpOAuthStore(this.pool, this.env).accessToken(ownerId, id)}`
+      const oauth = this.oauth ?? new (await import('./mcp-oauth')).McpOAuthStore(this.pool, this.env)
+      headers.Authorization = `Bearer ${await oauth.accessToken(ownerId, id)}`
     }
     const { rows: disabled } = await this.pool.query<{ name: string }>('SELECT tool_name AS name FROM mcp_server_tools WHERE server_id=$1 AND NOT enabled ORDER BY tool_name', [id])
     const disabledTools = disabled.map(tool => tool.name)

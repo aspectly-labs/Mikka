@@ -33,7 +33,7 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
   const workspace = randomUUID(), elsewhere = randomUUID(), environment = randomUUID(), wrongEnvironment = randomUUID()
   const fixtureToken = `synthetic-mcp-${randomUUID()}`
   let requireAuth = false, failCheck = false, toolCalls = 0, exchanges = 0, refreshes = 0, challenge = ''
-  let mismatchedCatalogue = false
+  let mismatchedCatalogue = false, failRefresh = false
   const server = createServer(async (request, response) => {
     const path = new URL(request.url!, 'http://localhost').pathname
     const send = (body: unknown, status = 200) => { response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(body)) }
@@ -56,7 +56,11 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
         exchanges++
         assert.equal(params.get('code'), 'fixture-code')
         assert.equal(createHash('sha256').update(params.get('code_verifier')!).digest('base64url'), challenge)
-      } else { refreshes++; assert.equal(params.get('refresh_token'), 'fixture-refresh') }
+      } else {
+        assert.equal(params.get('refresh_token'), 'fixture-refresh')
+        if (failRefresh) return send({ error: 'temporarily_unavailable' }, 503)
+        refreshes++
+      }
       return send({ access_token: fixtureToken, token_type: 'Bearer', refresh_token: 'fixture-refresh', expires_in: refreshes ? 3600 : 1 })
     }
     if (request.method === 'GET') return send({}, 405)
@@ -89,8 +93,8 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       for (const user of users) await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,$4,\'active\')', [id, user, `${user}@example.invalid`, user === users[0] ? 'admin' : 'member'])
     }
     for (const [id, ws, user] of [[environment, workspace, owner], [wrongEnvironment, elsewhere, outsider]]) await pool.query('INSERT INTO workspace_environments(id,"workspaceId",name,configuration,"createdBy","updatedBy") VALUES($1,$2,\'Fixture\',\'{}\',$3,$3)', [id, ws, user])
-    const personal = new PersonalPluginStore(pool, env, pool), shares = new WorkspaceMcpStore(pool, pool)
     const oauth = new McpOAuthStore(pool, env, transport)
+    const personal = new PersonalPluginStore(pool, env, pool, oauth), shares = new WorkspaceMcpStore(pool, pool)
     const connections = new McpConnectionStore(personal, { transport }, oauth)
     const deviceChecks = new McpDeviceChecks(personal)
     const installed = await personal.createMcp(owner, createMcpSchema.parse({ name: 'Docs', url: 'https://mcp.example.com/mcp', headers: { 'X-Account': 'fixture-account' } }))
@@ -115,6 +119,7 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       const shared = await connections.detail(member, installed.id, workspace)
       assert.deepEqual(shared.tools.map(tool => tool.name), ['read_docs']); assert.equal(shared.authorizationUrl, null)
       assert.equal((await connections.search(member, { workspaceId: workspace, query: 'write_docs' })).count, 0)
+      assert.equal((await connections.search(owner, { workspaceId: workspace, query: 'write_docs' })).count, 1)
       await assert.rejects(connections.detail(outsider, installed.id, elsewhere), /mcpNotFound/)
       await assert.rejects(connections.search(outsider, { workspaceId: workspace }), /workspaceAccessDenied/)
       await assert.rejects(connections.check(member, installed.id), /mcpNotFound/)
@@ -151,8 +156,8 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       assert.equal((await personal.snapshotForBot(member, scopedBot, workspace, pool)).servers.length, 0)
       await assert.rejects(shares.validate(member, { ...scoped.mcpAuthority!, environmentId: wrongEnvironment }), /mcpUnavailable/)
       assert.equal((await personal.nativeMcpConnections(member, scoped.mcpAuthority!, environment)).length, 1)
-      await assert.rejects(personal.nativeMcpConnections(member, scoped.mcpAuthority!, wrongEnvironment), /mcpUnavailable/)
-      await assert.rejects(personal.nativeMcpConnections(member, scoped.mcpAuthority!, null), /mcpUnavailable/)
+      assert.deepEqual(await personal.nativeMcpConnections(member, scoped.mcpAuthority!, wrongEnvironment), [])
+      assert.deepEqual(await personal.nativeMcpConnections(member, scoped.mcpAuthority!, null), [])
       await connections.setEnvironments(owner, installed.id, { workspaceId: workspace, environmentIds: [] })
       assert.equal((await personal.snapshot(member, pool, workspace)).servers.length, 1)
     })
@@ -176,6 +181,16 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       assert.equal(exchanges, 1)
       const stored = JSON.stringify((await pool.query('SELECT * FROM personal_mcp_oauth WHERE server_id=$1', [installed.id])).rows)
       assert.ok(!stored.includes(fixtureToken) && !stored.includes('fixture-refresh') && !stored.includes(state))
+      failRefresh = true
+      try {
+        await assert.rejects(oauth.accessToken(owner, installed.id), /mcpOAuthUnavailable/)
+        assert.equal((await connections.detail(owner, installed.id)).status, 'connected')
+      } finally { failRefresh = false }
+      const { mcpAuthority } = await personal.snapshot(member, pool, workspace)
+      assert.ok(mcpAuthority)
+      const [native] = await personal.nativeMcpConnections(member, mcpAuthority)
+      assert.ok(native && native.transport !== 'stdio')
+      assert.equal(native.headers.Authorization, `Bearer ${fixtureToken}`)
       assert.deepEqual(await Promise.all([oauth.accessToken(owner, installed.id), oauth.accessToken(owner, installed.id)]), [fixtureToken, fixtureToken])
       assert.equal(refreshes, 1)
       assert.deepEqual((await personal.mcpConnection(owner, installed.id)).headers, { 'X-Account': 'fixture-account', Authorization: `Bearer ${fixtureToken}` })
