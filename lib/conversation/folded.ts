@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { createChunkFolder, type ChunkRow } from './fold'
 import type { ConversationMessage } from './model'
 
@@ -28,14 +29,16 @@ export async function primeFold(key: string, chunks: readonly ChunkRow[]) {
   return messages
 }
 
-/** The folded runs of `chunks`: at once when a read primed them, else a microtask later (a cache restored from disk). */
+/** The folded runs of `chunks`: at once when a read primed them, else before the next paint. */
 export function useFoldedChunks(key: string, chunks: readonly ChunkRow[] | undefined): ConversationMessage[] {
   const ready = chunks ? folded.get(chunks) : undefined
   const [late, setLate] = useState<{ chunks: readonly ChunkRow[]; messages: ConversationMessage[] } | null>(null)
-  useEffect(() => {
+  // A read that bypassed the fetcher (a cache restored from disk, a page put above) folds as it commits: the fold runs in
+  // microtasks, and its result is committed before the browser paints, so the transcript never shows a frame without it.
+  useLayoutEffect(() => {
     if (!chunks || ready) return
     let current = true
-    void primeFold(key, chunks).then(messages => { if (current) setLate({ chunks, messages }) })
+    void primeFold(key, chunks).then(messages => { if (current) flushSync(() => setLate({ chunks, messages })) })
     return () => { current = false }
   }, [key, chunks, ready])
   // While a new fold runs, the previous one stays on screen: the transcript never blanks.
