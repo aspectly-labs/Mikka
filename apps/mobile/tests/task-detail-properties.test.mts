@@ -58,7 +58,7 @@ const data = {
     evidenceKind: 'acceptance', title: 'Acceptance report', attemptId: null, runId: 'thread', candidateId: null, artifactId: null, version: 1 }],
   timeline: [
     history('created', at, { kind: 'created', actor: { type: 'user', id: 'u', name: 'Alex' } }),
-    history('moved', '2026-11-15T06:30:00Z', { kind: 'status', status: 'doing', actor: { type: 'agent', id: agent, name: 'Codex' } }),
+    history('moved', '2026-11-15T06:30:00Z', { kind: 'status', status: 'doing', source: { kind: 'revision', id: 'moved', revision: 2, runId: 'thread' }, actor: { type: 'agent', id: agent, name: 'Codex' } }),
     history('renamed', '2026-11-15T06:40:00Z', { kind: 'priority', priority: 'high', actor: { type: 'agent', id: 'another-agent', name: 'Claude Code' } }),
     history('system', '2026-11-15T06:50:00Z', { kind: 'description', actor: null }),
     comment, { ...comment, actor: undefined, kind: 'reply', id: 'h', messageId: 'h', body: 'Human reply' }],
