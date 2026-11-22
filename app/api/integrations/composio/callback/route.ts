@@ -80,7 +80,9 @@ async function handleGET(request: NextRequest) {
     const completed = await composio.connectedAccounts.completeAuth({ userId: intent?.userId ?? session!.user.id, sessionUri })
     const userId = intent?.userId ?? session!.user.id
     // The flow cookie can drop; the connected account id Composio returned names the intent just as well.
-    const attempt = intent ?? await composioConnectIntentByLink(pool, completed.connectedAccountId)
+    // Two same-toolkit links can overlap: the one that actually completed
+    // names its own intent, not the cookie's latest link.
+    const attempt = await composioConnectIntentByLink(pool, completed.connectedAccountId) ?? intent
     const replaceId = attempt ? attempt.replaceAccountId ?? undefined : flow?.link === completed.connectedAccountId ? flow.replace : undefined
     let reconnectComplete = false
     try {
