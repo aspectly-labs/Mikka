@@ -165,6 +165,31 @@ test('real git diffs retain all fixtures while testing rename, deletion and even
     assert.match(output, new RegExp(`docs_only=${expected}`), name)
     if (name === 'add-docs') docsHead = head
   }
+  // Exercise the candidate selector against a real tree, including a hidden file
+  // and a deletion. Ignore the PR head and inspect the combined candidate commit.
+  const candidate = resolve('scripts/ci/merge-candidate-paths.mjs')
+  const hidden = tree([['100644', 'blob', code, '.fixture']])
+  const daemon = tree([['040000', 'tree', hidden, 'daemon']])
+  const packages = ['040000', 'tree', daemon, 'packages']
+  const before = git(['commit-tree', root([oldDocs], true, [packages]), '-p', base, '-m', 'daemon fixture'])
+  const after = git(['commit-tree', root([oldDocs]), '-p', before, '-m', 'remove hidden daemon fixture'])
+  const ciPolicy = tree([['100644', 'blob', code, 'merge-candidate-paths.json']])
+  const scripts = tree([['040000', 'tree', ciPolicy, 'ci']])
+  const policyHead = git(['commit-tree', root([oldDocs], true, [['040000', 'tree', scripts, 'scripts']]), '-p', base, '-m', 'change the selection policy'])
+  for (const [name, candidateBase, head, selected, full] of [
+    ['candidate-daemon-deletion', before, after, true, false],
+    ['candidate-docs-only', base, docsHead, false, false],
+    ['candidate-policy-change', base, policyHead, true, true],
+  ]) {
+    const eventFile = join(dir, `${name}.json`)
+    const outputFile = join(dir, `${name}.outputs`)
+    record(`${name}.json`, { merge_group: { base_sha: candidateBase, head_sha: head } })
+    execFileSync(process.execPath, [candidate], { cwd: dir, env: { ...env, GITHUB_EVENT_PATH: eventFile, GITHUB_OUTPUT: outputFile } })
+    const output = readFileSync(outputFile, 'utf8').split('\n')
+    assert(output.includes(`e2b-byos=${selected}`), name)
+    assert(output.includes(`ssh-device-backend=${selected}`), name)
+    assert(output.includes(`app-icon=${full}`), name)
+  }
   const unavailable = classify('missing', docsHead)
   record('missing-base.json', { output: unavailable })
   assert.match(unavailable, /docs_only=false/)
@@ -245,9 +270,15 @@ test('CI partitions DB suites across isolated jobs and requires source and daemo
   const database = job('browser-tests-full')
   assert.match(database, /fail-fast: false/)
   assert(database.includes('shard: ${{ fromJSON(needs.changes.outputs.db_matrix).shard }}'))
-  assert(database.includes("node: ['22', '24']"))
-  assert(database.includes('node-version: ${{ matrix.node }}'))
-  assert(database.includes("name: Database checks (${{ matrix.shard }})${{ matrix.node == '22' && ' (Node 22)' || '' }}"))
+  assert(!database.includes("'22'"))
+  assert(database.includes("github.base_ref != 'main' && github.event.pull_request.draft != true"))
+  assert(job('browser-tests').includes("EXPECT_DB: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.db == 'true' }}"))
+  assert(job('workspace-governance-checks').includes("github.event_name == 'merge_group'"))
+  assert(job('analytics-checks').includes("github.event_name != 'pull_request'"))
+  assert(job('candidate-checks').includes("github.event_name == 'merge_group'"))
+  assert(job('ui-policy').includes('needs.candidate-checks.result'))
+  assert(database.includes('node-version: 24'))
+  assert(database.includes('name: Database checks (${{ matrix.shard }})\n'))
   assert(database.includes('DB_TEST_SHARD: ${{ matrix.shard }}'))
   assert(database.includes('DB_TEST_SELECTED: ${{ needs.changes.outputs.db_suites }}'))
   assert.match(database, /services:\n      postgres:\n        image: postgres:17/)
@@ -270,4 +301,16 @@ test('CI partitions DB suites across isolated jobs and requires source and daemo
 test('integration branches take the full tier under both the integration/ and the older integrate/ prefix', () => {
   const subagents = readFileSync('.github/workflows/subagents.yml', 'utf8')
   assert.match(subagents, /branches: \[[^\]]*'integration\/\*\*'[^\]]*'integrate\/\*\*'\]/)
+})
+
+test('pull request updates fit the workflow run budget', () => {
+  const runs = execFileSync('git', ['ls-files', '--', '.github/workflows/*.yml', '.github/workflows/*.yaml'], { encoding: 'utf8' })
+    .trim().split('\n').filter(file => {
+      const source = readFileSync(file, 'utf8')
+      const trigger = source.match(/^  pull_request:\s*\n((?:^    [^\n]*\n)*)/m)
+      if (!trigger) return false
+      const types = trigger[1].match(/types: \[(.*?)\]/)?.[1]
+      return !types || types.split(',').some(type => type.trim() === 'synchronize')
+    })
+  assert(runs.length <= 5, runs.join(', '))
 })
