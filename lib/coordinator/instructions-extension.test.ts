@@ -46,6 +46,14 @@ stub('./environment-instructions.ts', {
     return { environmentId: envText ? 'env-1' : null, environmentInstructions: envText, botInstructions: botText }
   },
 })
+stub('./workspace-instructions.ts', {
+  readWorkspaceInstructionsForBot: async (who: string, id: string) => {
+    assert.equal(who, owner)
+    assert.equal(id, botId)
+    if (scopedError) throw scopedError
+    return ''
+  },
+})
 stub('./bot-instructions.ts', { botInstructions: forbidden, instructionsWithBot })
 stub('./personal-instructions.ts', {
   withPersonalInstructionText: async (_who: string, base: string, text: string) => instructionsWithPersonal(base, text),

@@ -325,9 +325,20 @@ export async function runProductionReadCache({ env = process.env, event, attesta
       check(detail.viewerId === ownerId, 'scope_changed'); check(version(detail.version), 'response_invalid'); measureResult(detail)
       if (detail.unchanged === true) check(held.detail?.readVersion === detail.version, 'list_merge_invalid')
       else { check(detail.issue?.id === issueId && detail.issue.content && typeof detail.issue.content === 'object', 'response_invalid'); held.detail = { ...detail.issue, readVersion: detail.version } }
-      const activity = await action('pollIssueVersionSummaries', [issueId, ...listArguments(held.activity)], 'task-activity', scenario)
+      const activity = await action('pollIssueActivityPage', [issueId, held.activity?.readVersion], 'task-activity', scenario)
       check(activity.viewerId === ownerId, 'scope_changed'); measureResult(activity.snapshot)
-      held.activity = mergeReadList(held.activity, activity.snapshot, 50)
+      if (activity.snapshot?.unchanged === true) check(held.activity?.readVersion === activity.snapshot.version, 'list_merge_invalid')
+      else {
+        check(activity.snapshot && version(activity.snapshot.version) && Array.isArray(activity.snapshot.items), 'response_invalid')
+        held.activity = { ...activity.snapshot, readVersion: activity.snapshot.version }
+        if (scenario === 'cold') {
+          const earliest = activity.snapshot.items.at(-1)
+          check(earliest && Number.isInteger(earliest.revision) && typeof earliest.id === 'string', 'response_invalid')
+          const earlier = (await action('loadEarlierIssueActivity', [issueId, earliest.revision, earliest.id], 'task-activity', scenario)).page
+          check(earlier && Array.isArray(earlier.items) && earlier.hasMore === false && earlier.cursor === null, 'response_invalid')
+          measureResult(earlier)
+        }
+      }
       const prefix = await client.json('/mikka/api/settings/issue-prefix', 'settings', scenario)
       check(typeof prefix?.suggested === 'string' && Array.isArray(prefix.teamKeys)
         && prefix.teamKeys.every(key => typeof key === 'string'), 'response_invalid')
