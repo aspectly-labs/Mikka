@@ -3,6 +3,7 @@
 // The default chat-composer slot (docs/ui-overlay.md): the Grok-style composer every chat uses.
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { ArrowUp, Plus, Square } from '@/components/icons'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group'
@@ -55,10 +56,29 @@ export function ChatComposer(props: ChatComposerProps) {
           : <InputGroupButton type="submit" variant="default" size="icon-sm" className={cn('rounded-full pointer-coarse:size-11', SEND_DISABLED)} aria-label={t('send')} disabled={!composer.canSend}>{sending ? <Spinner /> : <ArrowUp />}</InputGroupButton>}
       </InputGroupAddon>
     </InputGroup>
+    {composer.suggestions && <ComposerSuggestionList suggestions={composer.suggestions} />}
     {footer}
     {/* The limit is shown only when it is close enough to matter. */}
     {composer.length && <p role="status" aria-live="polite" className="px-3 pb-1 text-right text-xs text-muted-foreground">{t('lengthCount', composer.length)}</p>}
   </form></ChatComposerStateContext>
+}
+
+/** The `/` command or reference menu under the field; the field keeps focus and its arrows move through the rows. */
+function ComposerSuggestionList({ suggestions }: { suggestions: NonNullable<ReturnType<typeof useChatComposer>['suggestions']> }) {
+  let index = -1
+  return <div role="listbox" aria-label={suggestions.label} className="mt-1 flex max-h-48 flex-col gap-1 overflow-auto rounded-md border bg-background p-2 text-sm">
+    {suggestions.status && <span role="status" className="text-muted-foreground">{suggestions.status}</span>}
+    {suggestions.sections.map(section => <div key={section.title} role="group" aria-label={section.title} className="flex flex-col">
+      <span className="px-2 text-xs text-muted-foreground">{section.title}</span>
+      {section.rows.map(row => {
+        index++
+        return <Button key={row.id} type="button" variant="ghost" size="sm" role="option" aria-selected={index === suggestions.active} className="w-full min-w-0 justify-start aria-selected:bg-muted"
+          onMouseDown={event => event.preventDefault()} onClick={() => suggestions.pick(row.id)}>
+          <span className="truncate">{row.label}</span>{row.description && <span className="truncate text-muted-foreground">{row.description}</span>}
+        </Button>
+      })}
+    </div>)}
+  </div>
 }
 
 /** The caller chooses whether to offer attachments; the composer owns their state. */

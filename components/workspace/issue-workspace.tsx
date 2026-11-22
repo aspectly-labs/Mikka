@@ -90,7 +90,7 @@ import { forgetGroupReads, useGroupMembershipLoss } from './group-membership-cac
 import { AutomationsPageLoading, BoardPageLoading, ConversationPageLoading, ProjectsPageLoading, SettingsPageLoading, TaskPageLoading, WorkspaceLoading } from './workspace-loading'
 import { InlineLoadError } from '@/components/load-error'
 import { SuggestionsRefresh } from '@/components/suggestions/suggestion-feed'
-import { backToTaskOrigin, closeTask, dropQueryKeys, goTo, LEGACY_TASKS_SECTION, navigate as navigateWorkspace, NAVIGATE_EVENT, openedFromList, openTask, openThread, queryMoved, readLocation, sameLocation, sectionFor, taskOrigin, tidyAddress, toggleAllThreads, type WorkspaceLocation, type WorkspaceSection } from './workspace-navigation'
+import { backToTaskOrigin, closeTask, dropQueryKeys, goTo, LEGACY_TASKS_SECTION, navigate as navigateWorkspace, NAVIGATE_EVENT, NEW_CONVERSATION_EVENT, openedFromList, openTask, openThread, queryMoved, readLocation, sameLocation, sectionFor, taskOrigin, tidyAddress, toggleAllThreads, type WorkspaceLocation, type WorkspaceSection } from './workspace-navigation'
 import { pushSettingsHistory, requestShellSearch, takeShellSearchRequest, appHrefBeforeSettings, rememberAppHref } from '@/lib/settings-navigation'
 import { resolveSettingsSection, type SettingsSectionId } from '@/lib/settings-sections'
 import { bufferTypeAhead, typingOrDialog } from '@/lib/shortcut-guard'
@@ -272,6 +272,12 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
   const [creatingBot, setCreatingBot] = useState(false)
   const [creation, setCreation] = useState<'group' | 'conversation' | null>(null)
   const closeComposer = () => setCreation(null)
+  // A chat composer's `/new` opens the same 新建线程 window as the sidebar.
+  useEffect(() => {
+    const open = () => setCreation('conversation')
+    window.addEventListener(NEW_CONVERSATION_EVENT, open)
+    return () => window.removeEventListener(NEW_CONVERSATION_EVENT, open)
+  }, [])
   const [directoryRevision, setDirectoryRevision] = useState(0)
   const [createdBot, setCreatedBot] = useState<BotView>()
   // The Coordinator's last line and time come from the bot chat summaries, never its whole chat.

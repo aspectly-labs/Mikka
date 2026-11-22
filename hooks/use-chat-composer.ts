@@ -9,6 +9,7 @@ import { sendsMessage } from '@/lib/send-key'
 import { CHAT_FILE_ACCEPT } from '@mikka/protocol/chat-attachments'
 import { useChatFiles } from '@/components/chat/use-chat-files'
 import type { ChatComposerProps } from '@/components/slots/chat-composer-contract'
+import { useComposerReferences } from '@/hooks/use-composer-references'
 
 /**
  * Everything a chat composer does, for the chat-composer slot to draw
@@ -16,7 +17,7 @@ import type { ChatComposerProps } from '@/components/slots/chat-composer-contrac
  * drop and paste, the length limit. The default slot and the hosted layer both
  * call it, so the two composers cannot behave differently.
  */
-export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false }: ChatComposerProps) {
+export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands }: ChatComposerProps) {
   const tShell = useTranslations('Shell')
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -25,6 +26,8 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
   const files = useChatFiles(value, onChange, attachmentScope, attachDisabled, tShell)
   const stoppable = !!onStop && (sending || (running && !value.trim()))
   const canSend = !sending && !submitDisabled && !disabled && !files.locked && !!value.trim()
+  const references = useComposerReferences({ stored: files.text, setStored: files.edit, input: () => inputRef.current,
+    workspaceId: referenceScope?.workspaceId, commands, disabled: disabled || (sending && !editableWhileSending && !onStop) })
 
   const setInput = (node: HTMLTextAreaElement | null) => {
     inputRef.current = node
@@ -68,11 +71,17 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
   function submit() { if (canSend) onSubmit() }
 
   return {
-    /** The draft as the textarea shows it: attached files' markers are kept out of it. */
-    text: files.text,
-    edit: files.edit,
-    /** The textarea's maxLength, so the whole message, file markers included, stays within the limit. */
-    maxLength: MESSAGE_MAX - (value.length - files.text.length),
+    /** The draft as the textarea shows it: attached files' markers are kept out of it, and each reference shows as its name. */
+    text: references.text,
+    edit: references.edit,
+    /** Each reference's place in `text`, for the field to draw as a chip. */
+    referenceTokens: references.tokens,
+    /** The `/` command or reference menu while one is open. */
+    suggestions: references.suggestions,
+    /** The ＋ menu's Reference rows: start a search of one kind at the caret. */
+    startReference: referenceScope ? references.startReference : undefined,
+    /** The textarea's maxLength, so the whole message, file and reference markers included, stays within the limit. */
+    maxLength: MESSAGE_MAX - (value.length - references.text.length),
     /** Show `count / max` only when it is close enough to matter. */
     length: value.length > MESSAGE_MAX - 500 ? { count: value.length, max: MESSAGE_MAX } : null,
     files: files.files,
@@ -94,6 +103,7 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
     onSubmit: (event: FormEvent) => { event.preventDefault(); submit() },
     onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
       const { key, shiftKey, metaKey, ctrlKey } = event
+      if (references.onKeyDown(event)) return
       // In a bot chat Esc stops the reply, as the stop button does.
       if (key === 'Escape' && stoppable && !thread && !event.nativeEvent.isComposing) { event.preventDefault(); onStop?.(); return }
       if (!sendsMessage({ key, shiftKey, metaKey, ctrlKey, isComposing: event.nativeEvent.isComposing }, sendKey)) return

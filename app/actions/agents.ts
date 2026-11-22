@@ -713,8 +713,19 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
       }
     }
   }
+  await refuseUnavailableReferences(user.id,row.id,text.data)
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
   return sendThreadMessage(user.id,row.id,text.data,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
+}
+
+/** A typed reference the sender cannot read (deleted, another workspace, no access) is refused before it reaches the thread (#2941). */
+async function refuseUnavailableReferences(userId: string, runId: string, text: string) {
+  const { messageReferences } = await import('@/lib/composer-references')
+  if (!messageReferences(text).length) return
+  const { rows: [run] } = await pool.query<{ workspaceId: string | null }>('SELECT "workspaceId" FROM agent_runs WHERE id=$1 AND "userId"=$2', [runId, userId])
+  if (!run?.workspaceId) throw new ActionFailureError('runNotFound')
+  const { unavailableReferences } = await import('@/lib/message-references')
+  if ((await unavailableReferences({ userId, workspaceId: run.workspaceId }, text)).length) throw new ActionFailureError('referenceBroken')
 }
 
 /**

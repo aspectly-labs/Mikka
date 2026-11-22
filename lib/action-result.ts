@@ -98,6 +98,7 @@ export const ACTION_ERROR_CODES = [
   'runNotFound',
   'runNotActive',
   'threadReplaced',
+  'referenceBroken',
   'threadCannotContinue',
   'threadRecoveryUnavailable',
   'runChainEnded',

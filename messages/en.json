@@ -1608,7 +1608,8 @@
     "scheduleEnvironmentUnavailable": "The selected environment is no longer available.",
     "scheduleThreadUnavailable": "The thread it runs in is no longer available.",
     "scheduleRunAsUnavailable": "The person it runs as is no longer a member of this workspace.",
-    "scheduleRunAsConsentRequired": "Only the person it runs as can do this, or an owner or admin."
+    "scheduleRunAsConsentRequired": "Only the person it runs as can do this, or an owner or admin.",
+    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again."
   },
   "Overview": {
     "sections": {
@@ -4501,7 +4502,8 @@
         "raw": "Raw data",
         "dispatched": "Dispatched"
       }
-    }
+    },
+    "commandNew": "Start a new thread"
   },
   "AgentCopy": {
     "pleaseSignInFirst": "Please sign in first.",
@@ -4875,7 +4877,12 @@
     "pr": "Pull request",
     "searching": "Searching…",
     "error": "Couldn’t load references",
-    "empty": "No matching references"
+    "empty": "No matching references",
+    "commands": "Commands",
+    "tasks": "Tasks",
+    "threads": "Threads",
+    "pullRequests": "Pull requests",
+    "broken": "Deleted, or you no longer have access"
   },
   "IssueThreads": {
     "composerModelUnknown": "Model not reported",
