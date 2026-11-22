@@ -1,5 +1,6 @@
 import { settingsPatchInput, settingsResetInput } from '@/lib/settings/registry'
 import { AVATAR_MAX_BYTES, isAvatarContentType } from '../account/avatar-file'
+import { deletePasskeyInputSchema, renamePasskeyInputSchema } from '@/lib/account/passkeys-contract'
 import { threadModelChoice } from '@/lib/thread-model-choice'
 import { archiveIdleDays, conversationTargetInput, directoryInput } from '@/lib/conversation-directory-input'
 import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
@@ -139,6 +140,9 @@ export const desktopActionSchemas = {
   'account.revokeOtherSessions': none,
   'account.requestDataExport': none,
   'account.deleteAccount': tuple(object({ email: z.email().max(254) })),
+  'passkeys.listPasskeys': none,
+  'passkeys.renamePasskey': tuple(renamePasskeyInputSchema),
+  'passkeys.deletePasskey': tuple(deletePasskeyInputSchema),
   'agents.listDevices': none,
   'agents.pollDevices': none,
   'agents.setDeviceEnabled': tuple(object({ deviceId: uuid, enabled: bool })),
