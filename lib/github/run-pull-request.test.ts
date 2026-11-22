@@ -74,7 +74,7 @@ function stub(options: { branch?: string; autoMerge?: 'enabled' | 'denied' | 'wr
     }
     if (path === '/graphql' && String(body?.query).includes('enablePullRequestAutoMerge')) {
       if (options.autoMerge === 'denied') return Response.json({}, { status: 403 })
-      if (options.autoMerge === 'rate-limited') return Response.json({}, { status: 429 })
+      if (options.autoMerge === 'rate-limited') return Response.json({}, { status: 429, headers: { 'retry-after': '1200' } })
       return Response.json({ data: { enablePullRequestAutoMerge: { pullRequest: { id: options.autoMerge === 'wrong-id' ? 'different-pr' : pr.node_id, autoMergeRequest: { enabledAt: '2026-11-20T19:00:00Z' } } } } })
     }
     if (path === '/graphql') return Response.json({ data: { convertPullRequestToDraft: { pullRequest: { id: pr.node_id, isDraft: true } } } })
@@ -204,11 +204,13 @@ test('auto merge reports native refusal, wrong identity and changed head without
 
 test('a GitHub rate limit preserves the published PR and marks auto-merge retryable', async () => {
   const { fetcher } = stub({ review: true, autoMerge: 'rate-limited' })
+  const before = Date.now()
   const result = await openRunPullRequest({ ...input, autoMerge: true, verificationStatus: 'passed', fetcher })
   assert.equal(result.url, pr.html_url)
   assert.equal(result.autoMergeEnabled, undefined)
   assert.equal(result.autoMergeError, 'github_unavailable')
   assert.equal(result.autoMergeRetryable, true)
+  assert.ok(result.autoMergeRetryAt! >= before + 1_200_000)
 })
 
 test('opens one issue-marked PR on the default branch with the person\'s own token, after checking it is theirs', async () => {

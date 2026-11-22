@@ -1,6 +1,5 @@
 import { factoryReviewCriteriaComplete, factoryReviewVerdict } from './validation';
 import { codeReviewConfiguration } from '../code-review/settings-storage';
-import { codeReviewInstructions } from '../code-review/configuration';
 import { factoryRunBotMatches } from './run-scope'
 import { cloudTaskTarget, ownedCloudTaskTarget } from '../computer/cloud-task-target'
 import type { PoolClient } from "pg";
@@ -397,7 +396,6 @@ export async function configureFactoryCheck(
   const prompt = [
     ...(currentRequest ? [currentRequest] : []),
     `Factory stage: ${task.stage}. Independent read-only check of candidate ${row.id}, fixed worktree ${row.executionSha}.`,
-    ...(reviewConfig ? [codeReviewInstructions(reviewConfig, 'factory')] : []),
     'Keep each original acceptance criterion distinct in your report, with its actual evidence or specific missing observation. Do not replace, merge away or omit the original criteria, and do not add requirements the request did not make.',
     ...(task.stage === 'review' && factoryFlowVersion(task) === 1 ? [
       'For an original criterion explicitly spanning review and verify, assess the review portion here and clearly record that the future verify portion remains pending. Do not claim a future check ran. The subsequent verify must assess the completed review observations and perform its own new independent checks.',
@@ -451,6 +449,7 @@ export async function configureFactoryCheck(
     `UPDATE factory_attempts SET output=output || $2::jsonb WHERE id=$1`,
     [task.attemptId, JSON.stringify({ check })],
   );
+  return reviewConfig ? { reviewConfig } : undefined;
 }
 
 /** Frozen assignment for a bound check. Called before claiming; fails closed after a stop/repair. */

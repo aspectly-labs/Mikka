@@ -158,10 +158,11 @@ test('run result publication commits one owner-scoped result through retries and
       await writeSettings({ userId: f.userId, workspaceId: f.workspaceId }, 'workspace', { values: { prAutoMerge: true } })
       await prepareRunPublication(assignment(f), f.remoteUrl)
       await persistRunCompletion(f.userId, f.runId, completion(f))
+      const retryAt = Date.now() + 20 * 60_000
       assert.deepEqual(await publishRunResult(f.runId, async input => {
         assert.equal(input.autoMerge, true)
-        return { ...prFor(f), autoMergeError: 'github_unavailable', autoMergeRetryable: true }
-      }), { done: false })
+        return { ...prFor(f), autoMergeError: 'github_unavailable', autoMergeRetryable: true, autoMergeRetryAt: retryAt }
+      }), { done: false, retryAt })
       const pending = await receipt(f)
       assert.equal(pending.pullRequest.url, prFor(f).url)
       assert.equal(pending.autoMergeRequestedAt, null)
@@ -171,6 +172,20 @@ test('run result publication commits one owner-scoped result through retries and
         return { ...prFor(f), autoMergeEnabled: true }
       }), { done: true })
       assert.equal((await receipt(f)).pullRequest.autoMergeEnabled, true)
+    })
+
+    await t.test('a failed retry keeps the PR state written after it claimed the publication', async () => {
+      const f = await fixture()
+      await prepareRunPublication(assignment(f), f.remoteUrl)
+      await persistRunCompletion(f.userId, f.runId, completion(f))
+      assert.deepEqual(await publishRunResult(f.runId, async () =>
+        ({ ...prFor(f), autoMergeError: 'github_unavailable', autoMergeRetryable: true })), { done: false })
+      assert.deepEqual(await publishRunResult(f.runId, async () => {
+        await pool.query(`UPDATE run_publications SET "pullRequest"="pullRequest" || '{"state":"closed"}'::jsonb WHERE "runId"=$1`, [f.runId])
+        throw new PublicationError('branch_not_pushed')
+      }), { done: true })
+      assert.equal((await receipt(f)).pullRequest.state, 'closed')
+      assert.equal(readIssueMetadata((await task(f)).content).pullRequests[0].state, 'closed')
     })
 
     await t.test('auto merge reads its held SQL transaction and cannot override withdrawal, drafts, failed verification or Factory review evidence', async () => {

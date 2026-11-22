@@ -312,6 +312,7 @@ async function settlePublication(claim: Publication, result: { pullRequest?: Pub
     if (!run || run.issueId !== claim.issueId) return false
     const [current] = await tx.select().from(runPublications).where(and(eq(runPublications.runId, claim.runId), eq(runPublications.leaseToken, claim.leaseToken!))).for('update')
     if (!current) return false
+    if (!result.pullRequest && current.pullRequest) result = { ...result, pullRequest: current.pullRequest }
     if (membershipHeld && run.workspaceId === stored?.workspaceId && task?.ownershipState === 'bound' && task.workspaceId === run.workspaceId) {
       try {
         await finishResult(tx, run, { ...result, branch: claim.branch }, true, claim.scopeVersion)
@@ -441,7 +442,7 @@ async function automaticPublicationPending(runId: string): Promise<boolean> {
 }
 
 /** A Workflow step calls this; the DB lease also protects duplicate workflows. */
-export async function publishRunResult(runId: string, openPullRequest: OwnerPullRequestOpener = openOwnerPullRequest): Promise<{ done: boolean }> {
+export async function publishRunResult(runId: string, openPullRequest: OwnerPullRequestOpener = openOwnerPullRequest): Promise<{ done: boolean; retryAt?: number }> {
   const claim = await claimPublication(runId)
   if (!claim) {
     const [row] = await db.select({ status: runPublications.status, userId: runPublications.userId }).from(runPublications).where(eq(runPublications.runId, runId))
@@ -479,21 +480,22 @@ export async function publishRunResult(runId: string, openPullRequest: OwnerPull
         return write()
       }) })
     if (visualEvidence && pullRequest.evidenceDigest !== visualEvidence.digest) throw new PublicationError('factory_public_evidence_required')
-    if (pullRequest.autoMergeRetryable && claim.attempts < MAX_ATTEMPTS) {
-      await db.update(runPublications).set({ status: 'pending', pullRequest, errorCode: pullRequest.autoMergeError, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
+    const { autoMergeRetryAt, ...receipt } = pullRequest
+    if (receipt.autoMergeRetryable && claim.attempts < MAX_ATTEMPTS) {
+      await db.update(runPublications).set({ status: 'pending', pullRequest: receipt, errorCode: receipt.autoMergeError, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
         .where(and(eq(runPublications.runId, runId), eq(runPublications.leaseToken, claim.leaseToken!)))
-      return { done: false }
+      return { done: false, ...(autoMergeRetryAt ? { retryAt: autoMergeRetryAt } : {}) }
     }
-    const done = await settlePublication(claim, { pullRequest, errorCode: pullRequest.autoMergeError })
+    const done = await settlePublication(claim, { pullRequest: receipt, errorCode: receipt.autoMergeError })
     if (done) await resumePublicationEvidenceHandoff(claim.userId, runId)
     return { done: done && !await automaticPublicationPending(runId) }
   } catch (error) {
     if (!(error instanceof PublicationError)) throw error
     if (error.retryable && claim.attempts < MAX_ATTEMPTS) {
       await db.update(runPublications).set({ status: 'pending', errorCode: error.code, leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() }).where(and(eq(runPublications.runId, runId), eq(runPublications.leaseToken, claim.leaseToken!)))
-      return { done: false }
+      return { done: false, ...(error.retryAt ? { retryAt: error.retryAt } : {}) }
     }
-    return { done: await settlePublication(claim, { pullRequest: claim.pullRequest ?? undefined, errorCode: error.code }) }
+    return { done: await settlePublication(claim, { errorCode: error.code }) }
   }
 }
 
@@ -509,7 +511,7 @@ async function resumePublicationEvidenceHandoff(userId: string, runId: string) {
 /** The durable workflow's exhausted-error path still produces a chat result. */
 export async function failRunPublication(runId: string): Promise<{ done: boolean }> {
   const claim = await claimPublication(runId)
-  if (claim) return { done: await settlePublication(claim, { pullRequest: claim.pullRequest ?? undefined, errorCode: 'github_unavailable' }) }
+  if (claim) return { done: await settlePublication(claim, { errorCode: 'github_unavailable' }) }
   const row = await publicationDelivery(runId)
   return { done: !row || WORKFLOW_DONE.includes(row.status) }
 }

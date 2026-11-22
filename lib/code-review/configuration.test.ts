@@ -22,3 +22,13 @@ test('a Factory review includes the whole saved ignore list', () => {
   assert.ok(instructions.includes(JSON.stringify(paths)))
   assert.doesNotMatch(instructions, /further saved globs/)
 })
+
+test('Factory preferences fit in the budget remaining after the original brief and handoff', () => {
+  const ignoredPaths = Array.from({ length: 100 }, (_, index) => `${'directory'.repeat(25)}/${index}/**`)
+  const config = { model: '', severity: 'medium', ignoredPaths, output: 'comments' } as const
+  const instructions = codeReviewInstructions(config, 'factory', 1200)
+  assert.ok(instructions.length <= 1200)
+  assert.match(instructions, /further saved globs not listed here/)
+  assert.match(instructions, /required acceptance criterion/)
+  assert.equal(codeReviewInstructions(config, 'factory', 10), '')
+})

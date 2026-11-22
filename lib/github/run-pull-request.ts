@@ -76,7 +76,12 @@ function api(fetcher: typeof fetch) {
     } catch { throw new PublicationError('github_unavailable', true) }
     if (response.status === 429 || response.status >= 500 || (response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after')))) {
       // GitHub's status, for server logs: 429 and a limited 403 are rate limits, 5xx is GitHub itself.
-      throw new PublicationError('github_unavailable', true, response.status)
+      const now = Date.now()
+      const retryAfter = response.headers.get('retry-after')
+      const after = retryAfter && (/^\d+$/.test(retryAfter) ? now + Number(retryAfter) * 1000 : Date.parse(retryAfter))
+      const reset = response.headers.get('x-ratelimit-remaining') === '0' ? Number(response.headers.get('x-ratelimit-reset')) * 1000 : 0
+      const retryAt = Math.max(typeof after === 'number' && Number.isFinite(after) ? after : 0, Number.isFinite(reset) ? reset : 0)
+      throw new PublicationError('github_unavailable', true, response.status, retryAt > now ? retryAt : undefined)
     }
     if (response.status === 404 && init.missing) throw new PublicationError(init.missing, init.missing === 'branch_not_pushed', 404)
     // GitHub rejected the person's token: they reconnect GitHub in Mikka.
@@ -239,6 +244,7 @@ export async function openRunPullRequest(options: Options & {
     let autoMergeEnabled = false
     let autoMergeError: PublicationErrorCode | undefined
     let autoMergeRetryable = false
+    let autoMergeRetryAt: number | undefined
     if (options.autoMerge && !pr.draft && pr.state === 'open' && !pr.merged_at) {
       if (!pr.node_id) throw new PublicationError('github_request_failed')
       const nodeId = pr.node_id
@@ -258,10 +264,11 @@ export async function openRunPullRequest(options: Options & {
           if (!(error instanceof PublicationError)) throw error
           autoMergeError = error.code
           autoMergeRetryable = error.retryable
+          autoMergeRetryAt = error.retryAt
         }
       })
     }
-    return { url: pr.html_url, ...(pr.title ? { title: pr.title } : {}), state: pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open', ...lines, ...review, ...(evidenceDigest ? { evidenceDigest } : {}), ...(autoMergeEnabled ? { autoMergeEnabled } : {}), ...(autoMergeError ? { autoMergeError } : {}), ...(autoMergeRetryable ? { autoMergeRetryable: true } : {}) }
+    return { url: pr.html_url, ...(pr.title ? { title: pr.title } : {}), state: pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open', ...lines, ...review, ...(evidenceDigest ? { evidenceDigest } : {}), ...(autoMergeEnabled ? { autoMergeEnabled } : {}), ...(autoMergeError ? { autoMergeError } : {}), ...(autoMergeRetryable ? { autoMergeRetryable: true } : {}), ...(autoMergeRetryAt ? { autoMergeRetryAt } : {}) }
   }
   const enriched = async (raw: unknown): Promise<PublishedPullRequest> => {
     // The original POST/list is already a complete authority receipt. Never
