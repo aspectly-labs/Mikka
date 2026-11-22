@@ -77,7 +77,7 @@ before(async () => {
     '@/app/actions/settings-activity': ['listSavedLogins'],
     '@/app/actions/workspace-settings': ['getWorkspaceDeletionImpact', 'getWorkspaceGeneral', 'getWorkspaceTransferTargets'],
     '@/app/actions/app-policy': ['getAppPolicy'],
-    '@/app/actions/personal-policy': ['getSharePolicy'],
+    '@/app/actions/personal-policy': ['getSharePolicy', 'getCreditShare', 'getPaymentDesignation'],
     '@/app/actions/workspace-secrets': ['getE2BKeyCapability', 'listSecrets'],
     '@/app/actions/usage': ['getUsage'],
     '@/app/actions/billing': ['cardVerificationStatus', 'getBilling', 'getCreditBilling'],

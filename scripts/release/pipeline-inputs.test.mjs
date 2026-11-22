@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { artifactFor, baselineOrigin, checkedRun, github, priorDeployment, readArtifactMembers, selectAutomaticCandidate, selectPipeline, selectPromotion } from './pipeline-inputs.mjs'
+import { artifactFor, baselineOrigin, checkedRun, github, priorDeployment, readArtifactMembers, selectAutomaticCandidate, selectPipeline, selectPromotion, selectionError } from './pipeline-inputs.mjs'
 import { migrationRoots, migrationToolchain } from './migration-inputs.mjs'
 import { serviceDigest, serviceNames } from './service-builds.mjs'
 
@@ -319,4 +319,12 @@ test('canonical GitHub reads keep the Actions and private operations token scope
     ['https://api.github.com/repositories/1427517699/actions/runs/1', 'Bearer public-fixture'],
     ['https://api.github.com/repositories/1448851980/git/ref/heads/main', 'Bearer private-fixture'],
   ])
+})
+
+test('selection failures report their pipeline code even when assert appends a diff', () => {
+  const failure = (() => { try { baselineOrigin({ version: 1, target: 'staging', status: 'failed' }) } catch (error) { return error } })()
+  assert.equal(selectionError(failure), 'pipeline_previous_release_requires_recovery')
+  assert.equal(selectionError(new Error('pipeline_github_request_failed')), 'pipeline_github_request_failed')
+  assert.equal(selectionError(new Error('The expression evaluated to a falsy value')), 'pipeline_selection_failed')
+  assert.equal(selectionError('pipeline_not_an_error'), 'pipeline_selection_failed')
 })
