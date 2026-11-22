@@ -623,6 +623,7 @@ export class Daemon {
             issueId: assignment.issueId,
             summary: report.summary,
             signal,
+            gitIdentity: assignment.gitIdentity,
             pushBranch: assignment.pushBranch,
             baseBranch: assignment.remoteUrl ? await this.repositories.baseRef(assignment.remoteUrl, assignment.baseBranch) : assignment.baseBranch,
             push: (() => {

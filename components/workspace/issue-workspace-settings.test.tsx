@@ -58,6 +58,7 @@ mock.module('@/lib/client-runtime/navigation', { namedExports: { useSearchParams
 mock.module('@/i18n/navigation', { namedExports: { getPathname: ({ href }: { href: string }) => href, usePathname: () => browser.location.pathname, useRouter: () => router } })
 mock.module('../settings/settings-link.tsx', { namedExports: { SettingsLink: ({ href, children }: { href: string; children?: ReactNode }) => <a href={href}>{children}</a> } })
 mock.module('sonner', { namedExports: { toast: { error: nothing, dismiss: nothing } } })
+mock.module('posthog-js', { defaultExport: { onFeatureFlags: () => () => {}, getFeatureFlag: () => undefined } })
 mock.module('swr', { defaultExport: (key: unknown, _read?: unknown, options?: { isPaused?: () => boolean }) => ({
   data: key === '/api/workspace/switcher' ? (switcherReady ? { ...workspace(), live: { ownerId: user.id } } : undefined)
     : key === 'teams' && scopedTeamFixture ? [{ id: teamIssuesId, name: 'Scoped Team' }]

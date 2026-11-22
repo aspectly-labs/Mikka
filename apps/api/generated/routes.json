@@ -1523,7 +1523,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "7324f1dde31a603e033707ee19014eb209b854cd3e97cebdbf55194b0f730a41"
+      "sourceHash": "58a92a2aecc17e13a40cc5dd0e1cf15eec90790905d1f00e2a2c492eedd36586"
     },
     {
       "path": "/mikka/api/integrations/mcp/search",
@@ -3558,7 +3558,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "872c6e7f5027b70495ad735282736e6afe31586b483f82f28f02841824bd3eb4"
+      "sourceHash": "f666e75f7fe93a8d80ed81f1e0841de3731210db29ad2c10e30441feff980608"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/commands/ack",
@@ -3666,7 +3666,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "56e6e0e6d21fedd8ebf60bde481b0c5927d733ec378b6de96950ed396161c8b0"
+      "sourceHash": "9ed324b0d62522b361db722407f8849976cc089b86a38edd5e451fca5c7cf386"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
