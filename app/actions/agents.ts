@@ -227,7 +227,7 @@ async function issueThreadAccess(issueId: string) {
 }
 
 const threadColumns = {
-  id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
+  id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
   // Only the report's summary: runSummaryText reads nothing else of it.
   sessionId: agentRuns.sessionId, deviceRepoId: agentRuns.deviceRepoId, failureDetails: agentRuns.failureDetails, report: sql<Record<string, unknown> | null>`case when jsonb_typeof(${agentRuns.report}) = 'object' then jsonb_build_object('summary', ${agentRuns.report}->'summary') end`, error: agentRuns.error, createdAt: agentRuns.createdAt, finishedAt: agentRuns.finishedAt,
   agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind,
@@ -762,14 +762,14 @@ export async function btwIssueThreadMessage(input: { issueId: string | null; run
   if (!text.success) throw new ActionFailureError('messageRequired')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
-  const { pool } = await import('@/lib/db')
+  const { db } = await import('@/lib/db')
   const { runMessages } = await import('@/lib/db/schema')
   const { MAILBOX_NOTIFICATION_LIMIT } = await import('@/lib/mailbox-notification-budget')
   const { personalRunMessageText } = await import('@/lib/personal-run-message')
   const id = crypto.randomUUID()
-  await pool.transaction(async tx => {
+  await db.transaction(async tx => {
     await tx.insert(runMessages).values({ id, runId: row.id, userId: user.id,
-      text: personalRunMessageText(id, `/btw ${text.data}`, 'user'), origin: 'owner',
+      text: personalRunMessageText(id, `/btw ${text.data}`, 'user'), origin: 'peer',
       mailboxWakeDepth: MAILBOX_NOTIFICATION_LIMIT })
   })
   return { stored: true }
@@ -790,6 +790,7 @@ export async function getThreadContextStats(input: { issueId: string | null; run
 export async function compactThread(input: { issueId: string | null; runId: string }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { addRunMessage } = await import('@/lib/agent-runs')
   await addRunMessage(user.id, { runId: row.id, text: '/compact — fold the working context now.' }, 'peer')
   return { requested: true }
 }
