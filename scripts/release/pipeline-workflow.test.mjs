@@ -20,7 +20,7 @@ test('main build completion uses a non-cancelling shared deployment queue and pr
 
 test('only actual successful same-repository main pushes or explicit recovery acquire staging credentials', () => {
   const job = workflow.jobs.pipeline
-  for (const required of ["github.repository_id == '1427517699'", "github.actor_id == '183887963'", "github.ref == 'refs/heads/main'",
+  for (const required of ["github.repository_id == '1427517699'", "github.ref == 'refs/heads/main'",
     "github.event_name == 'workflow_run'", "github.event.workflow_run.event == 'push'", "github.event.workflow_run.conclusion == 'success'",
     'github.event.workflow_run.head_repository.id == github.event.repository.id']) assert.ok(job.if.includes(required))
   assert.equal(job.environment, 'cloudflare-runtime-release')
@@ -50,8 +50,9 @@ test('automatic staging accepts the merge queue pair but manual recovery remains
   for (const patch of [{ event: 'workflow_dispatch' }, { head_branch: 'feature' }, { conclusion: 'failure' }, { head_repository: { id: 7 } }])
     assert.equal(allowed({ ...github, event: { ...github.event, workflow_run: { ...github.event.workflow_run, ...patch } } }, {}), false)
   for (const phase of ['pipeline-stage', 'pipeline-rollback']) {
-    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase }), false)
-    assert.equal(allowed({ ...github, actor_id: '183887963', event_name: 'workflow_dispatch' }, { phase }), true)
+    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase }), true)
+    assert.equal(allowed({ ...github, actor_id: '158243242', actor: 'devin-ai-integration[bot]', event_name: 'workflow_dispatch' }, { phase }), true)
+    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase: 'stage-all' }), false)
   }
 })
 

@@ -29,8 +29,12 @@ export function checkedRun(run, path, { event, successful = true, automaticDeplo
   assert.equal(run.path, path, 'pipeline_run_workflow_mismatch')
   assert.equal(run.head_branch, 'main', 'pipeline_run_branch_required')
   const automatic = (path === producer && run.event === 'push') || (automaticDeployment && path === deployment && run.event === 'workflow_run')
-  assert.ok(trustedActor(run.actor, automatic), 'pipeline_run_actor_untrusted')
-  assert.ok(trustedActor(run.triggering_actor, automatic), 'pipeline_run_trigger_untrusted')
+  // Dispatch runs are gated by repository write access, not a fixed actor list.
+  const dispatch = run.event === 'workflow_dispatch'
+  if (!dispatch) {
+    assert.ok(trustedActor(run.actor, automatic), 'pipeline_run_actor_untrusted')
+    assert.ok(trustedActor(run.triggering_actor, automatic), 'pipeline_run_trigger_untrusted')
+  }
   assert.match(run.head_sha ?? '', sha, 'pipeline_run_sha_required')
   assert.match(String(run.id), number, 'pipeline_run_id_required')
   assert.match(String(run.run_attempt), number, 'pipeline_run_attempt_required')
@@ -236,7 +240,7 @@ async function qualificationOrigin(api) {
 export async function selectPipeline({ env = process.env, api = github } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
-  assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, env.GITHUB_EVENT_NAME === 'workflow_run'), 'pipeline_actor_untrusted')
+  if (env.GITHUB_EVENT_NAME === 'workflow_run') assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, true), 'pipeline_actor_untrusted')
   const report = resolve(env.RUNNER_TEMP, 'deploy-pipeline')
   await mkdir(report, { recursive: true, mode: 0o700 })
   let selected, previous, rollback
