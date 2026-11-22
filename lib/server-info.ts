@@ -5,7 +5,7 @@ import { getEdition } from './edition'
 import { isLoopbackHost } from './loopback'
 import { mailConfigured } from './mail-delivery'
 import { webConnectionEnabled, webConnectionURL } from './web-connection/policy'
-import { DESKTOP_DOWNLOAD_URL } from './platform/client-config'
+import { desktopReleasesUrl } from './platform/client-config'
 
 type Environment = Record<string, string | undefined>
 type Query = (sql: string) => Promise<{ rows: Array<{ hasUsers?: unknown }> }>
@@ -64,7 +64,7 @@ export async function readServerInfo(options: { env?: Environment; query?: Query
     communityUI: { enabled: false, frozen: true },
     clients: {
       web: { url: webConnectionURL(env), enabled: webConnectionEnabled(env), requiresHttps: true, serverAddressSupported: Boolean(origin?.startsWith('https://')) },
-      desktop: { url: DESKTOP_DOWNLOAD_URL },
+      desktop: { url: desktopReleasesUrl() },
       // No verified App Store/TestFlight link is present in this release's
       // official metadata. Do not invent a download destination.
       ios: { url: null, availability: 'link_unavailable', serverReady: mobileReady },
