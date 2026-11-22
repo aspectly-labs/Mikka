@@ -99,7 +99,7 @@ export function reviewTerminalHandlers(deps: Dependencies = runtime) {
       if (initial.machineKind !== 'cloud') throw new TerminalError('terminal_unsupported', { detail: 'local_device' })
       if (!initial.nativeExitedProof) throw new TerminalError('terminal_already_controlled')
       opened = await deps.authorized(request, taskId, async (scope, client) => ({ scope,
-        lease: await deps.begin(scope, { kind: 'terminal' }, client) }), expected(initial))
+        lease: await deps.begin(scope, { kind: 'terminal', name: new URL(request.url).searchParams.get('name') ?? '' }, client) }), expected(initial))
       await deps.resume(opened.scope, opened.lease, request.signal)
       const resumed = await deps.authority(request, taskId, expected(initial))
       const prepared = await deps.prepare(resumed, request.signal, opened.lease)
@@ -111,7 +111,7 @@ export function reviewTerminalHandlers(deps: Dependencies = runtime) {
       const abort = new AbortController()
       const signal = AbortSignal.any([request.signal, abort.signal])
       const upstream = await deps.request(prepared, 'stream', admitted.ticket, '', signal)
-      const stream = relayTerminal(upstream, () => deps.close(admitted.scope, { kind: 'terminal', id: admitted.lease.id }), abort)
+      const stream = relayTerminal(upstream, () => deps.close(admitted.scope, { kind: 'terminal', id: admitted.lease.id, name: new URL(request.url).searchParams.get('name') ?? '' }), abort)
       return new Response(stream, { headers: { ...HEADERS, 'Content-Type': 'text/event-stream; charset=utf-8',
         'X-Accel-Buffering': 'no', 'X-Terminal-Session-Id': admitted.lease.id } })
     } catch (error) {
@@ -162,7 +162,7 @@ export function reviewTerminalHandlers(deps: Dependencies = runtime) {
     try {
       origin(request)
       const current = await deps.authorized(request, taskId, async (scope, client) => ({ scope,
-        lease: await deps.read(scope, { kind: 'terminal' }, client) }))
+        lease: await deps.read(scope, { kind: 'terminal', name: new URL(request.url).searchParams.get('name') ?? '' }, client) }))
       if (current.lease) {
         const result = await deps.revoke(current.scope, { kind: 'terminal', id: current.lease.id })
         if (result.pending) throw new TerminalError('terminal_unavailable', { detail: 'runtime' })

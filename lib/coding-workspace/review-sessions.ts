@@ -28,7 +28,8 @@ const leaseView = (row: StoredLease): ReviewSessionLease => ({ id: row.id, expir
  * credential, Workspace/member, Task, Run and machine locks still held. A
  * reconnect reuses the original absolute expiry; it never renews the lease. */
 export async function beginReviewSession(authority: TaskReviewAuthority,
-  options: { kind: ReviewSessionKind; expiresAt?: string }, client: PoolClient): Promise<ReviewSessionLease> {
+  options: { kind: ReviewSessionKind; name?: string; expiresAt?: string }, client: PoolClient): Promise<ReviewSessionLease> {
+  const sessionName = options.name ?? ''
   if (authority.machineKind !== 'cloud' || !authority.sandboxId || authority.machineEpoch === null || !authority.machineOperationId)
     throw new ReviewAuthorityError('review_machine_gone')
   const { rows: [clock] } = await client.query<{ now: Date; state: string; runningSince: Date | null; computeSeconds: number | string }>(
@@ -48,7 +49,7 @@ export async function beginReviewSession(authority: TaskReviewAuthority,
   if (rows.some(row => row.provider !== (placement ? 'cloudflare' : 'e2b') ||
       (placement && (row.repositoryKey !== placement.repositoryKey || !row.reviewOperationId))))
     throw new ReviewAuthorityError('review_binding_changed')
-  const current = rows.find(row => row.kind === options.kind)
+  const current = rows.find(row => row.kind === options.kind && (row.name ?? '') === sessionName)
   if (current) {
     if (current.bindingId !== authority.bindingId || current.credentialKind !== authority.credential.kind
       || current.credentialId !== authority.credential.id || current.ownerId !== authority.ownerId
@@ -62,10 +63,10 @@ export async function beginReviewSession(authority: TaskReviewAuthority,
   }
   const reviewOperationId = placement ? (rows[0]?.reviewOperationId ?? randomUUID()) : null
   const { rows: [created] } = await client.query<StoredLease>(`INSERT INTO coding_review_sessions
-    (id,kind,"taskId","runId","ownerId","workspaceId","deviceId","repoId","deviceTokenId","bindingId","sandboxId",
+    (id,kind,name,"taskId","runId","ownerId","workspaceId","deviceId","repoId","deviceTokenId","bindingId","sandboxId",
       "machineEpoch","machineOperationId","credentialKind","credentialId","createdAt","expiresAt",provider,"repositoryKey","reviewOperationId")
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
-  [randomUUID(), options.kind, authority.taskId, authority.runId, authority.ownerId, authority.workspaceId, authority.deviceId,
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
+  [randomUUID(), options.kind, sessionName, authority.taskId, authority.runId, authority.ownerId, authority.workspaceId, authority.deviceId,
     authority.repoId, authority.deviceTokenId, authority.bindingId, authority.sandboxId, authority.machineEpoch,
     authority.machineOperationId, authority.credential.kind, authority.credential.id, clock.now, new Date(deadline),
     placement ? 'cloudflare' : 'e2b', placement?.repositoryKey ?? null, reviewOperationId])
@@ -78,24 +79,24 @@ export async function beginReviewSession(authority: TaskReviewAuthority,
 
 /** Read only an already opened capability; input cannot create a PTY. The
  * caller performs fresh task authority once per input/open, never per chunk. */
-export async function readReviewSession(authority: TaskReviewAuthority, options: { kind: ReviewSessionKind; id?: string },
+export async function readReviewSession(authority: TaskReviewAuthority, options: { kind: ReviewSessionKind; id?: string; name?: string },
   database?: Database): Promise<ReviewSessionLease | null> {
   const db = database ?? (await import('../db')).pool
   const { rows: [row] } = await db.query<StoredLease>(`SELECT * FROM coding_review_sessions
     WHERE "runId"=$1 AND kind=$2 AND "ownerId"=$3 AND "workspaceId"=$4 AND "bindingId"=$5
       AND "credentialKind"=$6 AND "credentialId"=$7 AND ($8::uuid IS NULL OR id=$8)
-      AND "revokedAt" IS NULL AND "expiresAt">clock_timestamp()`,
+      AND name=$9 AND "revokedAt" IS NULL AND "expiresAt">clock_timestamp()`,
   [authority.runId, options.kind, authority.ownerId, authority.workspaceId, authority.bindingId,
-    authority.credential.kind, authority.credential.id, options.id ?? null])
+    authority.credential.kind, authority.credential.id, options.id ?? null, options.name ?? ''])
   return row ? leaseView(row) : null
 }
 
 /** Call only after the matching gateway's close ACK, or before any capability
  * was issued. Network detach is not a close: the gateway owns its grace time. */
-export async function closeReviewSession(authority: TaskReviewAuthority, options: { kind: ReviewSessionKind; id?: string }, database?: Database) {
+export async function closeReviewSession(authority: TaskReviewAuthority, options: { kind: ReviewSessionKind; id?: string; name?: string }, database?: Database) {
   const db = database ?? (await import('../db')).pool
   if (authority.sponsoredPlacement) {
-    const id = options.id ?? (await readReviewSession(authority, {kind:options.kind}, db))?.id
+    const id = options.id ?? (await readReviewSession(authority, {kind:options.kind, name:options.name}, db))?.id
     if (!id) return
     const result = await revokeReviewSession(authority, {kind:options.kind,id}, db)
     if (result.pending) throw Error('Task review close unconfirmed')
@@ -103,9 +104,9 @@ export async function closeReviewSession(authority: TaskReviewAuthority, options
   }
   const { rows } = await db.query<{ id: string }>(`DELETE FROM coding_review_sessions
     WHERE "runId"=$1 AND kind=$2 AND "ownerId"=$3 AND "workspaceId"=$4 AND "bindingId"=$5
-      AND "credentialKind"=$6 AND "credentialId"=$7 AND ($8::uuid IS NULL OR id=$8) RETURNING id`,
+      AND "credentialKind"=$6 AND "credentialId"=$7 AND ($8::uuid IS NULL OR id=$8) AND name=$9 RETURNING id`,
   [authority.runId, options.kind, authority.ownerId, authority.workspaceId, authority.bindingId,
-    authority.credential.kind, authority.credential.id, options.id ?? null])
+    authority.credential.kind, authority.credential.id, options.id ?? null, options.name ?? ''])
   if (rows.length) {
     await db.query('UPDATE thread_machines SET "lifecycleAt"=clock_timestamp(),lifecycle=lifecycle-\'reconcileId\'-\'reconcileUntil\' WHERE "runId"=$1 AND epoch=$2 AND "sandboxId"=$3',
       [authority.runId, authority.machineEpoch, authority.sandboxId])

@@ -806,6 +806,114 @@ export async function getThreadName(runId: string): Promise<string | null> {
 
 
 
+
+/** #2940 items 1/4: review sessions minted on the thread's own machine —
+ * terminal (item 1, several per machine via the named-session key) and the
+ * user-facing preview browser (item 4, short-lived ticket through the same
+ * gateway). Task-scoped authority: only a thread bound to a task exposes a
+ * machine review capability at all. */
+async function threadSessionAuthority(issueId: string | null, runId: string) {
+  const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+  if (row.userId !== user.id || !issueId) return null
+  const [{ getApiSession }, { workspacePool }, { resolveTaskReviewAuthority }] = await Promise.all([
+    import('@/lib/api-auth'), import('@/lib/workspace-db'), import('@/lib/coding-workspace/review-authority')])
+  const session = await getApiSession({ headers: await headers(), query: { disableCookieCache: true, disableRefresh: true } })
+  if (!session) throw new ActionFailureError('authRequired')
+  return { session, workspacePool, resolve: resolveTaskReviewAuthority }
+}
+
+export async function listThreadReviewSessions(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/review-sessions', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, {}, async (authority, client) => {
+      const { rows } = await client.query<{ id: string; kind: string; name: string; expiresAt: Date; createdAt: Date }>(
+        `SELECT id,kind,name,"expiresAt","createdAt" FROM coding_review_sessions
+          WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND "revokedAt" IS NULL AND "expiresAt">clock_timestamp()
+          ORDER BY kind,name`, [authority.runId, authority.ownerId, authority.workspaceId])
+      return rows.map(r => ({ id: r.id, kind: r.kind, name: r.name, expiresAt: r.expiresAt.toISOString(), createdAt: r.createdAt.toISOString() }))
+    })
+  })
+}
+
+export async function openThreadTerminal(issueId: string | null, runId: string, input?: { name?: string }) {
+  return withDatabaseOperation('/actions/threads/terminal/open', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, {}, async (authority, client) => {
+      if (authority.machineKind !== 'cloud') throw new ActionFailureError('runNotFound')
+      const { beginReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+      const lease = await beginReviewSession(authority, { kind: 'terminal', name: input?.name ?? '' }, client)
+      return { id: lease.id, name: input?.name ?? '', expiresAt: lease.expiresAt }
+    })
+  })
+}
+
+export async function closeThreadTerminal(issueId: string | null, runId: string, input: { id: string; name?: string }) {
+  return withDatabaseOperation('/actions/threads/terminal/close', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, {}, async (authority, client) => {
+      const { closeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+      await closeReviewSession(authority, { kind: 'terminal', id: input.id, name: input.name ?? '' }, client)
+      return { closed: true }
+    })
+  })
+}
+
+export async function openThreadBrowser(issueId: string | null, runId: string, input?: { port?: number }) {
+  return withDatabaseOperation('/actions/threads/browser/open', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    const session = ctx.session
+    const { resolveTaskReviewAuthority } = await import('@/lib/coding-workspace/review-authority')
+    const { beginReviewSession, readReviewSession, revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const { resumeReviewMachine } = await import('@/lib/coding-workspace/review-machine')
+    const { prepareRunPreview, issueRunPreview } = await import('@/lib/coding-workspace/preview/runtime')
+    const { isPreviewPort } = await import('@/lib/coding-workspace/preview/port')
+    const port = input?.port
+    if (port !== undefined && !isPreviewPort(port)) throw new ActionFailureError('runNotFound')
+    const parentOrigin = `https://${(await headers()).get('host')}`
+    const signal = AbortSignal.timeout(50_000)
+    let authority = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!)
+    const fence = () => ({ runId: authority.runId, bindingId: authority.bindingId })
+    const lease = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+      async (current, client) => { authority = current; return beginReviewSession(current, { kind: 'preview' }, client) })
+    try {
+      await resumeReviewMachine(authority, lease, signal)
+      const result = await prepareRunPreview(authority, { ...(port !== undefined ? { port } : {}), expiresAt: lease.expiresAt, ...(authority.sponsoredPlacement ? { lease } : {}) })
+      if (!result.running) {
+        await revokeReviewSession(authority, { kind: 'preview', id: lease.id })
+        return { running: false as const }
+      }
+      const confirmed = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+        async (current, client) => { authority = current; return readReviewSession(current, { kind: 'preview', id: lease.id }, client) })
+      if (!confirmed || confirmed.id !== lease.id) throw new ActionFailureError('runNotFound')
+      const preview = await issueRunPreview(result, parentOrigin, { id: confirmed.id,
+        expiresAt: new Date(Math.min(Date.parse(confirmed.expiresAt), Date.parse(result.expiresAt))).toISOString() })
+      const still = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+        async (current, client) => readReviewSession(current, { kind: 'preview', id: lease.id }, client))
+      if (!still) throw new ActionFailureError('runNotFound')
+      return { id: lease.id, url: preview.url, expiresAt: lease.expiresAt }
+    } catch (cause) {
+      try { await revokeReviewSession(authority, { kind: 'preview', id: lease.id }) } catch { /* best effort */ }
+      throw cause
+    }
+  })
+}
+
+export async function closeThreadBrowser(issueId: string | null, runId: string, input: { id: string }) {
+  return withDatabaseOperation('/actions/threads/browser/close', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, {}, async (authority, client) => {
+      const { closeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+      await closeReviewSession(authority, { kind: 'preview', id: input.id, name: '' }, client)
+      return { closed: true }
+    })
+  })
+}
+
 /** #2940 item 2: uploads on the thread's chain, owner only. */
 export async function listThreadUploads(issueId: string | null, runId: string) {
   return withDatabaseOperation('/actions/threads/uploads', async () => {
