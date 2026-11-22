@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { Pool } from 'pg'
 import { freezeWorkerDefinition, retryWorkerDefinition } from './agent-kit/worker'
 import { freezeExecutionIdentity, revalidateExecutionIdentity, rebindExecutionDevice, ExecutionIdentityError } from './execution-identity'
+import { McpValidationError } from './plugins/contracts'
 
 const resourcePolicySql = "select w.kind,l.\"organizationId\",p.\"modelCredentialSharing\",p.\"mcpSharing\",p.\"allowedModelProviders\" from mikka_workspaces w left join mikka_organization_workspaces l on l.\"workspaceId\"=w.id left join mikka_organization_resource_policies p on p.\"organizationId\"=l.\"organizationId\" where w.id=$1"
 const id = (last: number) => `10000000-0000-4000-8000-${String(last).padStart(12, '0')}`
@@ -59,7 +60,7 @@ test('an MCP database failure is not converted into an identity denial', async (
   ] }
   const failure = new Error('synthetic MCP database fault')
   f.mcp.queryError = failure
-  await assert.rejects(f.freeze, error => error === failure)
+  await assert.rejects(f.freeze, error => error instanceof McpValidationError && error.cause === failure)
 })
 
 test('resource ownership is distinct from the Bot owner and explicit sharing is mandatory', async () => {

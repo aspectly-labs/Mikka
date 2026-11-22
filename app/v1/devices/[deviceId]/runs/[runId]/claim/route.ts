@@ -26,7 +26,7 @@ import { ModelAdmissionError } from '@/lib/model-admission/contract'
 import { liteLLMBaseUrl } from '@/lib/model-gateway/litellm-client'
 import { db, pool } from '@/lib/db'
 import { captureDatabaseQuery } from '@/lib/db/commit-effects'
-import { PluginError, type McpAuthority } from '@/lib/plugins/contracts'
+import { McpValidationError, PluginError, type McpAuthority } from '@/lib/plugins/contracts'
 import { runChanged } from '@/lib/live/panels'
 import { agentRuns, agents, deviceRepos } from '@/lib/db/schema'
 import { authenticateDevice, ownedDeviceWithReport } from '@/lib/device-link'
@@ -529,9 +529,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     await persistRunCompletion(caller.userId, runId, { stopReason: 'error', report: { summary: 'Frozen execution policy no longer fits the current owner policy.', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
     return NextResponse.json({ error: 'Frozen execution policy is no longer permitted.' }, { status: 409 })
   }
-  const failPreparingClaim = async (failure: CodedError, message: string, diagnostic = failure) => {
+  const failPreparingClaim = async (failure: CodedError, message: string, diagnostic = failure,
+    terminal: { stopReason: 'blocked' | 'error'; error: string } = { stopReason: 'blocked', error: message }) => {
     const now = new Date()
-    const failed = await db.update(agentRuns).set({ status: 'failed', stopReason: 'blocked', failureDetails: serverRunFailure(runId, now, diagnostic), error: message, finishedAt: now, updatedAt: now })
+    const failed = await db.update(agentRuns).set({ status: 'failed', ...terminal, failureDetails: serverRunFailure(runId, now, diagnostic), finishedAt: now, updatedAt: now })
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, caller.userId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'preparing'), eq(agentRuns.leaseExpiresAt, new Date(leaseExpiresAt)), isNull(agentRuns.stopRequestedAt))).returning({ id: agentRuns.id })
     if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId); await afterRunEnded(caller.userId, runId) }
     return NextResponse.json({ error: message, code: failure.code, ...(failure.detail ? { detail: failure.detail } : {}) }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
@@ -637,7 +638,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         const { lockNativeMcpAuthority } = await import('@/lib/plugins/workspace-mcp')
         await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
       } catch (error) {
-        if (error instanceof PluginError && error.code !== 'mcpUnavailable') return false
+        if (!(error instanceof PluginError)) throw new McpValidationError(error)
+        if (error.code !== 'mcpUnavailable') return false
         throw error
       }
     }
@@ -655,10 +657,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       throw error
     }
   }).catch((error: unknown) => {
-    if (error instanceof ExecutionMcpAuthorityError || error instanceof PluginError && error.code === 'mcpUnavailable') {
+    if (error instanceof McpValidationError || error instanceof ExecutionMcpAuthorityError || error instanceof PluginError && error.code === 'mcpUnavailable') {
       const failure = new CodedError('mcpUnavailable', { cause: error })
       logCodedError(failure, { runId })
-      return failPreparingClaim(failure, 'MCP configuration unavailable.', new CodedError('run_mcp_unavailable'))
+      return failPreparingClaim(failure, 'MCP configuration unavailable.', new CodedError('run_mcp_unavailable'),
+        error instanceof McpValidationError ? { stopReason: 'error', error: 'mcpUnavailable' } : undefined)
     }
     throw error
   })

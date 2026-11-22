@@ -6,6 +6,10 @@ export class PluginError extends Error {
   constructor(readonly code: string, readonly status = 503) { super(code) }
 }
 
+export class McpValidationError extends Error {
+  constructor(cause: unknown) { super('MCP validation failed', { cause }); this.name = 'McpValidationError' }
+}
+
 // User-provided MCP servers receive only their explicitly saved credential.
 // Never accept transport, forwarding, cookie or hop-by-hop headers as auth.
 export const mcpAuthSchema = z.object({

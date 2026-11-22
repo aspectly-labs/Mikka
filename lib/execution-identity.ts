@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
 import { organizationResourceAllowed, assertOrganizationModelProvider } from './governance/resource-access'
-import { PluginError } from './plugins/contracts'
+import { McpValidationError, PluginError } from './plugins/contracts'
 
 /** Authority is host data, never a Decision/model argument. References only: no credentials. */
 const resource = z.object({
@@ -61,7 +61,7 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
   if (definition.customMcp) {
     if (definition.customMcp.workspaceId !== workspaceId) return denied()
     const authority = await (await import('./plugins/workspace-mcp')).validateMcpAuthority(query, run.userId, definition.customMcp, membership).catch(error => {
-      if (!(error instanceof PluginError)) throw error
+      if (!(error instanceof PluginError)) throw new McpValidationError(error)
       if (error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
       throw new ExecutionIdentityError({ cause: error })
     })

@@ -60,6 +60,7 @@ function fixture() {
     taskMcpToolFilter: false,
     mcpRevoked: false,
     mcpAssignmentError: undefined as Error | undefined,
+    mcpErrors: { identity: [] as Error[], fence: [] as Error[] },
     mcpChecks: [] as string[],
     secretInjection: undefined as Partial<TaskSecretInjection> | undefined,
     secretSnapshot: undefined as string | undefined,
@@ -349,6 +350,34 @@ test('a frozen MCP execution identity refuses revoked authority before the final
     } else assert.deepEqual((await response.json()).mcp.servers, probe.nativeMcpServers)
   }
 })
+test('a final MCP database failure ends the preparing claim with the native assignment diagnostic', async t => {
+  for (const stage of ['identity', 'fence'] as const) await t.test(stage, async () => {
+    const probe = fixture()
+    const server = { id: 'fixture-mcp', ownerId: 'member', revision: 7, grantId: null }
+    const executionIdentity = localExecutionIdentity(workspaceId)
+    executionIdentity.resourceBindings.push({ kind: 'mcp', id: server.id, ownerId: server.ownerId, access: 'owner', revision: '7', workspaceId })
+    Object.assign(probe.run, { agentDefinition: { harness: 'codex', executionIdentity, customMcp: { workspaceId, servers: [server] } } })
+    probe.taskMcpToolFilter = true
+    probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: [] }]
+    probe.mcpErrors[stage].push(
+      Object.assign(new Error('synthetic MCP deadlock'), { code: '40P01' }),
+      Object.assign(new Error('synthetic MCP DB failure'), { code: '42P01' }),
+    )
+    const response = await claim(probe)
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+    const checks = stage === 'identity' ? ['identity'] : ['identity', 'fence']
+    assert.deepEqual(probe.mcpChecks, [...checks, ...checks])
+    assert.equal(probe.transactions, 2)
+    assert.equal(probe.run.status, 'failed')
+    assert.equal(probe.run.stopReason, 'error')
+    const run = probe.run as typeof probe.run & { error?: string; failureDetails?: { code: string } }
+    assert.equal(run.error, 'mcpUnavailable')
+    assert.equal(run.failureDetails?.code, 'run_mcp_unavailable')
+    assert.deepEqual((probe as typeof probe & { endedRuns?: unknown[] }).endedRuns, [{ ownerId: 'member', runId: 'run' }])
+  })
+})
+
 function validCheckpoint(): RunCheckpoint {
   return {baseCommit:'a'.repeat(40),patch:gzipSync(Buffer.alloc(0)).toString('base64'),files:0,takenAt:new Date().toISOString()}
 }
