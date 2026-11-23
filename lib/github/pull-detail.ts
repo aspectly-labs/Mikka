@@ -102,9 +102,9 @@ const pull = z.object({
             commit: z.object({
               oid: z.string(),
               abbreviatedOid: z.string().max(40).optional(),
-              messageHeadline: z.string().max(1000),
+              messageHeadline: z.string(),
               committedDate: date.nullable().optional(),
-              url: link.optional(),
+              url: link.optional().catch(undefined),
               author: z
                 .object({
                   name: z.string().nullable().optional(),
@@ -117,14 +117,15 @@ const pull = z.object({
         )
         .max(25),
     })
-    .optional(),
+    .optional()
+    .catch(undefined),
   reviews: z.object({
     nodes: z
       .array(
         z.object({
           author: z.object({ login: z.string() }).nullable(),
           state: reviewState,
-          bodyText: z.string().max(200000).optional(),
+          bodyText: z.string().optional().catch(undefined),
           submittedAt: date.nullable(),
         }),
       )
@@ -136,14 +137,14 @@ const pull = z.object({
         .array(
           z.object({
             isResolved: z.boolean(),
-            path: z.string().max(1000).nullable().optional(),
+            path: z.string().max(4096).nullable().optional(),
             line: z.number().int().nullable().optional(),
             comments: z.object({
               nodes: z
                 .array(
                   z.object({
-                    id: z.string().max(200),
-                    bodyText: z.string().max(200000),
+                    id: z.string().max(256),
+                    bodyText: z.string(),
                     createdAt: date.nullable().optional(),
                     author: z.object({ login: z.string() }).nullable(),
                   }),
@@ -154,7 +155,8 @@ const pull = z.object({
         )
         .max(30),
     })
-    .optional(),
+    .optional()
+    .catch(undefined),
 });
 const result = z.object({
   data: z.object({
@@ -239,13 +241,13 @@ export async function readPullDetail(
     author: review.author?.login ?? null,
     state: review.state,
     submittedAt: review.submittedAt,
-    ...(review.bodyText?.trim() ? { body: review.bodyText.trim() } : {}),
+    ...(review.bodyText?.trim() ? { body: review.bodyText.trim().slice(0, 10000) } : {}),
   }));
   const commits: PullCommit[] | undefined = row.commitList
     ? row.commitList.nodes.map(({ commit: item }) => ({
         oid: item.oid,
         shortOid: item.abbreviatedOid || item.oid.slice(0, 7),
-        message: item.messageHeadline,
+        message: item.messageHeadline.slice(0, 500),
         author: item.author?.user?.login ?? item.author?.name ?? null,
         committedAt: item.committedDate ?? null,
         url: item.url ?? null,
@@ -259,7 +261,7 @@ export async function readPullDetail(
           {
             id: first.id,
             author: first.author?.login ?? null,
-            body: first.bodyText.trim(),
+            body: first.bodyText.trim().slice(0, 10000),
             path: thread.path ?? null,
             line: thread.line ?? null,
             resolved: thread.isResolved,
