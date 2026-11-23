@@ -6,7 +6,13 @@ import {
 } from "./user-access";
 import { githubGraphql } from "./pull-directory";
 import type { RequestBudget } from "../request-budget";
-import type { PullCheck, PullDetail, PullReview } from "../pull-directory";
+import type {
+  PullCheck,
+  PullCommit,
+  PullDetail,
+  PullReview,
+  PullReviewComment,
+} from "../pull-directory";
 
 const query = `query PullDetail($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { databaseId nameWithOwner pullRequest(number: $number) {
@@ -15,7 +21,9 @@ const query = `query PullDetail($owner: String!, $name: String!, $number: Int!) 
     commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { pageInfo { hasNextPage } nodes {
       __typename ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl }
     } } } } } }
-    reviews(last: 50) { nodes { author { login } state submittedAt } }
+    commitList: commits(last: 25) { totalCount nodes { commit { oid abbreviatedOid messageHeadline committedDate url author { name user { login } } } } }
+    reviews(last: 50) { nodes { author { login } state bodyText submittedAt } }
+    reviewThreads(first: 30) { nodes { isResolved path line comments(first: 1) { nodes { id bodyText createdAt author { login } } } } }
   } }
 }`;
 const date = z.string().datetime({ offset: true });
@@ -85,17 +93,70 @@ const pull = z.object({
       )
       .max(1),
   }),
+  commitList: z
+    .object({
+      totalCount: z.number().int().nonnegative(),
+      nodes: z
+        .array(
+          z.object({
+            commit: z.object({
+              oid: z.string(),
+              abbreviatedOid: z.string().max(40).optional(),
+              messageHeadline: z.string(),
+              committedDate: date.nullable().optional(),
+              url: link.optional().catch(undefined),
+              author: z
+                .object({
+                  name: z.string().nullable().optional(),
+                  user: z.object({ login: z.string() }).nullable().optional(),
+                })
+                .nullable()
+                .optional(),
+            }),
+          }),
+        )
+        .max(25),
+    })
+    .optional()
+    .catch(undefined),
   reviews: z.object({
     nodes: z
       .array(
         z.object({
           author: z.object({ login: z.string() }).nullable(),
           state: reviewState,
+          bodyText: z.string().optional().catch(undefined),
           submittedAt: date.nullable(),
         }),
       )
       .max(50),
   }),
+  reviewThreads: z
+    .object({
+      nodes: z
+        .array(
+          z.object({
+            isResolved: z.boolean(),
+            path: z.string().max(4096).nullable().optional(),
+            line: z.number().int().nullable().optional(),
+            comments: z.object({
+              nodes: z
+                .array(
+                  z.object({
+                    id: z.string().max(256),
+                    bodyText: z.string(),
+                    createdAt: date.nullable().optional(),
+                    author: z.object({ login: z.string() }).nullable(),
+                  }),
+                )
+                .max(10),
+            }),
+          }),
+        )
+        .max(30),
+    })
+    .optional()
+    .catch(undefined),
 });
 const result = z.object({
   data: z.object({
@@ -180,7 +241,36 @@ export async function readPullDetail(
     author: review.author?.login ?? null,
     state: review.state,
     submittedAt: review.submittedAt,
+    ...(review.bodyText?.trim() ? { body: review.bodyText.trim().slice(0, 10000) } : {}),
   }));
+  const commits: PullCommit[] | undefined = row.commitList
+    ? row.commitList.nodes.map(({ commit: item }) => ({
+        oid: item.oid,
+        shortOid: item.abbreviatedOid || item.oid.slice(0, 7),
+        message: item.messageHeadline.slice(0, 500),
+        author: item.author?.user?.login ?? item.author?.name ?? null,
+        committedAt: item.committedDate ?? null,
+        url: item.url ?? null,
+      }))
+    : undefined;
+  const comments: PullReviewComment[] | undefined = row.reviewThreads
+    ? row.reviewThreads.nodes.flatMap((thread): PullReviewComment[] => {
+        const first = thread.comments.nodes[0];
+        if (!first?.bodyText.trim()) return [];
+        return [
+          {
+            id: first.id,
+            author: first.author?.login ?? null,
+            body: first.bodyText.trim().slice(0, 10000),
+            path: thread.path ?? null,
+            line: thread.line ?? null,
+            resolved: thread.isResolved,
+            createdAt: first.createdAt ?? null,
+            state: thread.isResolved ? "RESOLVED" : "OPEN",
+          },
+        ];
+      })
+    : undefined;
   return {
     url: `https://github.com/${repository.nameWithOwner}/pull/${row.number}`,
     repo: repository.nameWithOwner,
@@ -216,5 +306,7 @@ export async function readPullDetail(
     moreChecks:
       current?.statusCheckRollup?.contexts.pageInfo.hasNextPage ?? false,
     reviews,
+    ...(commits ? { commits, commitCount: row.commitList?.totalCount ?? commits.length } : {}),
+    ...(comments ? { comments } : {}),
   };
 }
