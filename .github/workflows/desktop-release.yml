@@ -214,6 +214,11 @@ jobs:
       # The installed renderer uses the shared Vite and application dependency
       # graph, including apps/frontend and root UI/CSS build dependencies.
       - run: pnpm install --frozen-lockfile
+      - name: Check that the private UI records every restyle of a paid block
+        # 「原样使用，只换数据」: the overlay's own guard (scripts/paid-overrides.mjs) runs before it is built in; an
+        # overlay revision older than the guard has nothing to run.
+        run: |
+          if [ -f .hosted-ui/scripts/paid-overrides.mjs ]; then node .hosted-ui/scripts/paid-overrides.mjs; fi
       - name: Install private UI runtime dependencies without license scripts
         run: |
           if ! pnpm --dir .hosted-ui install --ignore-workspace --prod --ignore-scripts --frozen-lockfile > "$RUNNER_TEMP/private-ui-install.log" 2>&1; then
