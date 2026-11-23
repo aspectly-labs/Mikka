@@ -9,9 +9,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ThreadStatus } from '@/components/workspace/thread-status-icon'
 import { cn } from '@/lib/utils'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { ThreadCostButton } from '@/components/workspace/thread-cost-button'
 import type { ThreadHeaderProps, ThreadStatusLineProps } from './thread-header-contract'
 
-export function ThreadHeader({ title, viewTitle, headingRef, onBack, onClose, onStop, onOpenTask, place, acceptanceBadge, identity, views = [] }: ThreadHeaderProps) {
+export function ThreadHeader({ runId, title, viewTitle, headingRef, onBack, onClose, onStop, onOpenTask, place, acceptanceBadge, identity, showCost = false, views = [] }: ThreadHeaderProps) {
   const t = useTranslations('IssueThreads')
   const nav = useTranslations('Nav')
   return <header className={cn('flex h-12 shrink-0 items-center gap-2 border-b border-rule px-4', onBack && 'pl-2')}>
@@ -25,6 +26,8 @@ export function ThreadHeader({ title, viewTitle, headingRef, onBack, onClose, on
     {/* Stop lives here for every live run, also one waiting for an answer, whose composer button sends. */}
     {onStop && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground" aria-label={t('stop')} data-slot="thread-stop" onClick={onStop} />}><Square data-icon="inline-start" className="fill-current" /></TooltipTrigger><TooltipContent side="bottom">{t('stop')}</TooltipContent></Tooltip>}
     {onOpenTask && <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground" aria-label={t('openTask')} onClick={onOpenTask} />}><SquareKanban data-icon="inline-start" /></TooltipTrigger><TooltipContent side="bottom">{t('openTask')}</TooltipContent></Tooltip>}
+    {/* What the thread has cost, just before ⋯ as in Figma 1318:2 section 01 (#2922). */}
+    {showCost && <ThreadCostButton runId={runId} />}
     {views.length > 0 && <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={nav('more')} />}><Ellipsis /></DropdownMenuTrigger>
       <DropdownMenuContent align="end">

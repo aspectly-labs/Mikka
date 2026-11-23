@@ -126,6 +126,16 @@ async function pick(label: string) {
 const chip = (field: string) => container.querySelector(`[role="group"][aria-label="filterField.${field}"]`)
 const shown = () => [...container.querySelectorAll('[data-shown-issue]')].map(node => node.textContent)
 
+test('a case-only label rename leaves the saved filter visible and removable', async () => {
+  browser.sessionStorage.setItem('mikka:view:v1:owner-one:workspace-one:board:filters', JSON.stringify({ labels: ['WORKSPACE-ONE PRIVATE LABEL ONE'] }))
+  await render()
+  assert.equal(chip('labels')?.textContent, 'workspace-one private label one')
+  assert.deepEqual(shown(), ['workspace-one task one'])
+  await pick('workspace-one private label one')
+  assert.equal(chip('labels'), null)
+  assert.deepEqual(shown(), ['workspace-one task one', 'workspace-one task two'])
+})
+
 for (const change of [{ owner: 'owner-one', workspace: 'workspace-two' }, { owner: 'owner-two', workspace: 'workspace-one' }]) test(`board filters stay inside ${change.owner === 'owner-one' ? 'their workspace' : 'their account'} while the original view remains recoverable`, async () => {
   await render()
   await pick('workspace-one private project one'); await pick('workspace-one private label one')

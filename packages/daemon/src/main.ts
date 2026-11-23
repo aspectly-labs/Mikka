@@ -1,5 +1,6 @@
 import type { AnonymousCodexCandidate } from './anonymous-codex-spare'
 import type { AnonymousClaudeCandidate } from './anonymous-claude-spare'
+import type { McpDeviceCheckCommand } from '@mikka/protocol/mcp-check'
 import { captureRunFailure } from "@mikka/protocol/run-failure"
 // Daemon boot, shared by every mode (ADR 0004): started by the desktop app,
 // headless `mikka daemon`, and `tsx watch` in dev.
@@ -145,8 +146,6 @@ export interface DaemonOptions {
    * Subscription-quota reader. Omitted or `null`: no polling.
    */
   quotaSource?: QuotaSource | null
-  /** Ignored when it is below the poller's minimum interval. */
-  quotaPollMs?: number
   /**
    * How real agent CLIs start; they run directly by default (decision
    * 2026-11-01-2335). `null` offers only the mock harness.
@@ -305,6 +304,8 @@ export class Daemon {
   private reportOnOpen = false
   /** A device command waiting to run (until idle, or until its runs end). */
   private heldDeviceCommand: DeviceManagementCommand | undefined
+  private mcpChecks = new Map<string, Promise<void>>()
+  private completedMcpChecks = new Set<string>()
   private heldCommandPass: Promise<void> | null = null
   /** The cloud worker's token expires within the hour: the next report asks for its successor. */
   private rotationDue = false
@@ -672,14 +673,10 @@ export class Daemon {
     sweepModelProbeHomes(paths.dataDir)
     // Runs survive restarts: pick up what the journal says was active.
     await this.supervisor.resumeAll()
-    // The person's own logins are never read (devices are runners), so only
-    // an injected source polls.
+    // The person's own logins are never read at startup. Provider quota is
+    // fetched only when the desktop explicitly requests a snapshot.
     if (!hosted && this.options.quotaSource) {
-      this.quota = new QuotaPoller(
-        this.options.quotaSource,
-        { log: this.log, intervalMs: this.options.quotaPollMs }
-      )
-      this.quota.start()
+      this.quota = new QuotaPoller(this.options.quotaSource, { log: this.log })
     }
     this.log.info(
       {
@@ -1007,7 +1004,27 @@ export class Daemon {
     return false
   }
 
-  /** One read after a push, or right after the socket opens. Wait is zero: the signal already arrived. */
+  /** Discovery stays on the selected device and sends one bounded receipt. */
+  private answerMcpChecks(deviceId: string, commands: readonly McpDeviceCheckCommand[]) {
+    for (const command of commands) {
+      if (this.stopped || this.mcpChecks.has(command.id) || this.completedMcpChecks.has(command.id)) continue
+      const work = (async () => {
+        const { checkStdioMcp } = await import('./mcp-check')
+        const receipt = await checkStdioMcp(command, this.lifetime.signal)
+        if (this.stopped) return
+        const result = await this.options.link.report(deviceId, { mcpChecks: [receipt] })
+        this.holdDeviceCommands(result.deviceCommands ?? [])
+        this.completedMcpChecks.add(command.id)
+        if (this.completedMcpChecks.size > 64) this.completedMcpChecks.delete(this.completedMcpChecks.values().next().value!)
+      })().catch(() => {
+        // Neither SDK errors nor command output/credentials enter daemon logs.
+        this.log.warn({ check_id: command.id }, 'MCP check receipt unavailable; next work push may retry')
+      }).finally(() => { this.mcpChecks.delete(command.id) })
+      this.mcpChecks.set(command.id, work)
+    }
+  }
+
+  /** One read after a push, or right after the socket opens. */
   private async pullSignaledWork(deviceId: string, signal: AbortSignal) {
     const failedClaims = [...this.queuedClaims].flatMap(([id, state]) => state === "failed" ? [id] : [])
     const pendingAtRead = this.pendingQueueClaims()
@@ -1017,6 +1034,7 @@ export class Daemon {
       signal,
       workspaceSkip: [...this.workspaceReads],
       onWorkspaceRequests: requests => this.answerWorkspaceRequests(deviceId, requests),
+      onMcpChecks: commands => this.answerMcpChecks(deviceId, commands),
       skipRuns,
       onQueuedRuns: (runIds) => { queued = runIds },
       updates: { daemonLatest: this.knownLatest ?? DAEMON_VERSION },
@@ -1105,7 +1123,7 @@ export class Daemon {
             if (!entry) return { result: { ok: false as const, code: 'workspace_checkout_unavailable' as const }, files: [] }
             return readWorkspaceDiffReceipt(request, entry, this.repository(entry.assignment).path)
           }
-          if (request.request.kind.startsWith('git_')) {
+          if (request.request.kind.startsWith('git_') || request.request.kind.startsWith('file_')) {
             if (!entry) return { result: { ok: false as const, code: 'workspace_checkout_unavailable' as const }, files: [] }
             return handleWorkspaceGitRequest(request, entry, this.repository(entry.assignment).path)
           }
@@ -1883,7 +1901,11 @@ export class Daemon {
   private handlers(): RpcHandlers {
     return {
       "daemon.status": () => this.status(),
-      "quota.snapshot": () => this.quota?.snapshot() ?? unknownQuotaReport(),
+      "quota.snapshot": async () => {
+        if (!this.quota) return unknownQuotaReport()
+        await this.quota.refresh()
+        return this.quota.snapshot()
+      },
       "daemon.drain": () => {
         this.draining = true
         // Give the response time to reach the caller before sockets close.
@@ -2047,6 +2069,7 @@ export class Daemon {
     if (this.rotationTimer) clearTimeout(this.rotationTimer)
     await this.quota?.stop()
     this.lifetime.abort()
+    await Promise.allSettled(this.mcpChecks.values())
     for (const arrived of [...this.credentialArrived]) arrived()
     await this.session?.stop()
     await this.syncing

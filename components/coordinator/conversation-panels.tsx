@@ -118,8 +118,11 @@ export type WorkTabNames = { task: (issueId: string) => string; thread: (runId: 
  * `?thread=`) opens its tab instead of a column beside the chat.
  */
 export function useWorkTabs(on: boolean, names: WorkTabNames, origin: string, scope: string | null) {
-  const onActiveTask = useConversationPanels()?.onActiveTask
-  const [activeTab, onActiveTab] = useState<string | null>(null)
+  const panelsContext = useConversationPanels()
+  const onActiveTask = panelsContext?.onActiveTask
+  const onPanelsTab = panelsContext?.onActiveTab
+  const [activeTab, setActiveTab] = useState<string | null>(null)
+  const onActiveTab = useCallback((tabId: string | null) => { setActiveTab(tabId); onPanelsTab?.(tabId) }, [onPanelsTab])
   const previousActive = useRef<string | null>(null)
   useEffect(() => {
     if (!on || !scope || previousActive.current === activeTab) return

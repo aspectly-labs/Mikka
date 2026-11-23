@@ -121,8 +121,9 @@ export type NewTaskProps = {
   assignee?: { choices: NewTaskAssignee[]; value: string | null; onChange: (value: string | null) => void; disabled: boolean }
   /** Due date as YYYY-MM-DD; `presets` are Today, Tomorrow, End of this week and In one week, by date. */
   dueDate?: { value: string | null; presets: { value: string; label: string }[]; onChange: (value: string | null) => void; disabled: boolean }
-  /** Labels: the workspace's labels to pick from, the picked names, and creating one from what was typed. */
-  labels?: { choices: NewTaskLabel[]; value: string[]; onToggle: (name: string) => void; onCreate: (name: string) => void; disabled: boolean }
+  /** Labels: the workspace's registered labels to pick from and the picked names. A task form never registers a
+   * new label; `onCreate` is absent where only the registry's own settings page may add one. */
+  labels?: { choices: NewTaskLabel[]; value: string[]; onToggle: (name: string) => void; onCreate?: (name: string) => void; disabled: boolean }
   /**
    * Access: everyone in the workspace (`workspaceLabel`), or only the creator and the picked members. Absent in a
    * personal space, where there is no one else to name.

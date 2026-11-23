@@ -17,13 +17,19 @@ export interface CoordinatorOverview {
 
 interface OverviewUser { id: string }
 
-export async function readCoordinatorOverview(user: OverviewUser): Promise<CoordinatorOverview> {
+export async function readCoordinatorOverview(user: OverviewUser, workspaceId?: string): Promise<CoordinatorOverview> {
   // The token's workspace filters inside the queries, before the row cap:
   // twenty newer foreign rows must not starve a scoped caller's own work.
+  // A caller naming a workspace narrows further — it can never widen the token.
   const [runScope, publicationScope] = await Promise.all([
     tokenScopeFilter(user, 'r."workspaceId"', 2),
     tokenScopeFilter(user, 'i."workspaceId"', 2),
   ])
+  // The named workspace narrows the section that asked (the Crew pane's pulls);
+  // needs-you and running keep the token's scope. The placeholder follows the
+  // scope clause's own params — a browser session adds none, so $2 it is.
+  const named = workspaceId ? ` AND i."workspaceId" = $${2 + publicationScope.params.length}` : ''
+  const namedParams = workspaceId ? [workspaceId] : []
   const [needsYou, running, pullRequests] = await Promise.all([
     listNeedsYou(user),
     pool.query<{ runId: string; issueId: string | null; title: string | null; status: string; updatedAt: Date }>(
@@ -34,8 +40,8 @@ export async function readCoordinatorOverview(user: OverviewUser): Promise<Coord
     pool.query<{ issueId: string; branch: string | null; pullRequest: { url?: string; state?: string } | null; status: string; updatedAt: Date }>(
       `SELECT p."issueId", p.branch, p."pullRequest", p.status, p."updatedAt"
        FROM run_publications p LEFT JOIN issues i ON i.id = p."issueId"
-       WHERE p."userId" = $1 AND p."pullRequest" IS NOT NULL AND p.status <> 'skipped'${publicationScope.sql}
-       ORDER BY p."updatedAt" DESC LIMIT 20`, [user.id, ...publicationScope.params]),
+       WHERE p."userId" = $1 AND p."pullRequest" IS NOT NULL AND p.status <> 'skipped'${publicationScope.sql}${named}
+       ORDER BY p."updatedAt" DESC LIMIT 20`, [user.id, ...publicationScope.params, ...namedParams]),
   ])
   return {
     needsYou,

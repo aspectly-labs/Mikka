@@ -230,7 +230,7 @@ async function issueThreadAccess(issueId: string) {
 }
 
 const threadColumns = {
-  id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
+  id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
   // Only the report's summary: runSummaryText reads nothing else of it.
   sessionId: agentRuns.sessionId, deviceRepoId: agentRuns.deviceRepoId, failureDetails: agentRuns.failureDetails, report: sql<Record<string, unknown> | null>`case when jsonb_typeof(${agentRuns.report}) = 'object' then jsonb_build_object('summary', ${agentRuns.report}->'summary') end`, error: agentRuns.error, createdAt: agentRuns.createdAt, finishedAt: agentRuns.finishedAt,
   agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind,
@@ -322,20 +322,36 @@ type ReadableThreadResult<T extends ThreadColumns> = {
   user: { id: string }
 }
 
+async function readableThreadSelect(issueId: string, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<ThreadColumns>> {
+  const access = await issueThreadAccess(issueId)
+  if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
+  const [row] = await db.select(columns).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.issueId, access.issue.id), eq(agentRuns.workspaceId, access.issue.workspaceId!))).limit(1)
+  if (!row || !canReadThread(row.userId, access.user.id, access.memberIds)) throw new ActionFailureError('runNotFound')
+  return { row, user: access.user }
+}
+
 function readableThread(issueId: string | null, runId: string, columns: typeof threadColumns): Promise<ReadableThreadResult<typeof threadColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadCursorColumns): Promise<ReadableThreadResult<typeof threadCursorColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadIdentityColumns): Promise<ReadableThreadResult<typeof threadIdentityColumns>>
 async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<ThreadColumns>> {
-  if (issueId !== null) {
-    const access = await issueThreadAccess(issueId)
-    if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
-    const [row] = await db.select(columns).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
-      .where(and(eq(agentRuns.id, runId), eq(agentRuns.issueId, access.issue.id), eq(agentRuns.workspaceId, access.issue.workspaceId!))).limit(1)
-    if (!row || !canReadThread(row.userId, access.user.id, access.memberIds)) throw new ActionFailureError('runNotFound')
-    return { row, user: access.user }
-  }
+  if (issueId !== null) return readableThreadSelect(issueId, runId, columns)
   const user = await getWorkspaceReader()
   if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
+  // A caller that doesn't know the task (a thread opened by run id alone) still
+  // reaches an attached run: the run's own binding names the issue whose access
+  // check decides. Unattached runs keep the owner-only rule below.
+  const [binding] = await db.select({ issueId: agentRuns.issueId }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1)
+  if (binding?.issueId) {
+    // A denied task read must not reveal the run exists: collapse the task's
+    // refusal into the same runNotFound a missing run returns.
+    try {
+      return await readableThreadSelect(binding.issueId, runId, columns)
+    } catch (error) {
+      if (error instanceof ActionFailureError && error.code === 'issueNotFound') throw new ActionFailureError('runNotFound', undefined, undefined, { cause: error })
+      throw error
+    }
+  }
   const [row] = await db.select(columns)
     .from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, user.id), eq(agentRuns.workspaceId, user[tokenWorkspace]), isNull(agentRuns.issueId))).limit(1)
@@ -729,7 +745,7 @@ function safeHttpUrl(value: string) {
 }
 
 /** Something a person says in a running thread; the daemon delivers it to the agent. */
-export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string }): Promise<{ runId: string; continued: boolean }> {
+export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string; references?: import('@/lib/thread-references-server').ThreadReference[] }): Promise<{ runId: string; continued: boolean }> {
   const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
   if (!text.success) throw new ActionFailureError('messageRequired')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
@@ -775,8 +791,123 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
       }
     }
   }
+  let body = text.data
+  if (input.references?.length) {
+    const refs = z.array((await import('@/lib/thread-references-server')).threadReference).max(20).safeParse(input.references)
+    if (!refs.success) throw new ActionFailureError('validationGeneric')
+    const resolved = await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data)
+    body = (await import('@/lib/thread-references-server')).expandReferences(resolved) + body
+    if (body.length > 10_000) throw new ActionFailureError('messageRequired')
+  }
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
-  return sendThreadMessage(user.id,row.id,text.data,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
+  return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
+}
+
+/** #2941 item 3: preview cards for the composer's typed references. Same
+ * resolution the send runs; never throws per reference. */
+export async function getReferencePreview(input: { issueId: string | null; runId: string; references: import('@/lib/thread-references-server').ThreadReference[] }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  const refs = z.array((await import('@/lib/thread-references-server')).threadReference).max(20).safeParse(input.references)
+  if (!refs.success) throw new ActionFailureError('validationGeneric')
+  return { references: await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data) }
+}
+
+/** #2941 item 4: a side note stored in the thread that does NOT wake the
+ * agent — the daemon reads it as context on the next ordinary turn. */
+export async function btwIssueThreadMessage(input: { issueId: string | null; runId: string; text: string }) {
+  const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
+  if (!text.success) throw new ActionFailureError('messageRequired')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { db } = await import('@/lib/db')
+  const { runMessages } = await import('@/lib/db/schema')
+  const { MAILBOX_NOTIFICATION_LIMIT } = await import('@/lib/mailbox-notification-budget')
+  const { personalRunMessageText } = await import('@/lib/personal-run-message')
+  const id = crypto.randomUUID()
+  await db.transaction(async tx => {
+    await tx.insert(runMessages).values({ id, runId: row.id, userId: user.id,
+      text: personalRunMessageText(id, `/btw ${text.data}`, 'user'), origin: 'peer',
+      mailboxWakeDepth: MAILBOX_NOTIFICATION_LIMIT })
+  })
+  return { stored: true }
+}
+
+/** #2941 item 4: context stats consistent with the summary read (same
+ * conversationUsage module). `compact` asks the agent to fold now via a
+ * waking peer directive. */
+export async function getThreadContextStats(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const chain = await readRunChain(pool, user.id, row.id)
+  return { usage: await readContextUsage(chain?.attempts.map(a => a.runId) ?? [row.id], chain?.rootRunId ?? row.id, chain?.latestRunId ?? row.id) }
+}
+export async function compactThread(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { addRunMessage } = await import('@/lib/agent-runs')
+  await addRunMessage(user.id, { runId: row.id, text: '/compact — fold the working context now.' }, 'peer')
+  return { requested: true }
+}
+
+/** #2941 item 5: thread-scoped env vars — names only, values never read back. */
+export async function listThreadEnvVars(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
+  const { rows } = await pool.query<{ id: string; name: string; note: string; updatedAt: Date }>(
+    `SELECT id,name,note,"updatedAt" FROM workspace_secrets WHERE "workspaceId"=$1 AND "scopeType"='thread' AND "scopeRef"=$2 ORDER BY name`,
+    [row.workspaceId, scopeRef])
+  return { env: rows.map(r => ({ id: r.id, name: r.name, note: r.note, updatedAt: r.updatedAt })) }
+}
+export async function setThreadEnvVar(input: { issueId: string | null; runId: string; name: string; value: string }) {
+  const name = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).max(256).safeParse(input.name)
+  const value = z.string().min(1).max(8192).safeParse(input.value)
+  if (!name.success || !value.success) throw new ActionFailureError('validationGeneric')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
+  const { setThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
+  return { env: await setThreadScopeSecret(user.id, row.workspaceId, scopeRef, { name: name.data, value: value.data }) }
+}
+export async function deleteThreadEnvVar(input: { issueId: string | null; runId: string; name: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
+  const { deleteThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
+  await deleteThreadScopeSecret(user.id, row.workspaceId, scopeRef, input.name)
+  return { deleted: true }
+}
+
+/** #2941 item 6: @-mentioning a bot in a thread dispatches the note to that
+ * bot's own thread — a coordinator event in its inbox (same shape sendToBot
+ * uses for interop peers) plus the wake that starts its turn. */
+export async function mentionThreadBot(input: { issueId: string | null; runId: string; botId: string; text: string }) {
+  const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
+  const botId = z.uuid().safeParse(input.botId)
+  if (!text.success || !botId.success) throw new ActionFailureError('validationGeneric')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { rows: [bot] } = await pool.query<{ id: string; ownerId: string }>(
+    `SELECT id,"ownerId" FROM bots WHERE id=$1 AND "workspaceId"=$2`, [botId.data, row.workspaceId])
+  if (!bot) throw new ActionFailureError('botNotFound')
+  // A mention starts the bot's turn; require canSteer on the bot, as sendToBot does.
+  const { resourceActionAllowed } = await import('@/lib/resource-access/store')
+  if (!await resourceActionAllowed(db, user.id, { kind: 'bot', id: bot.id, workspaceId: row.workspaceId }, 'canSteer'))
+    throw new ActionFailureError('botNotFound')
+  const { rows: [inserted] } = await pool.query<{ id: string }>(
+    `INSERT INTO coordinator_events (id,"userId","botId",kind,"dedupeKey",payload,tier)
+     VALUES ($1,$2,$3,'run_report',$4,$5,'result') ON CONFLICT ("dedupeKey") DO NOTHING RETURNING id`,
+    [crypto.randomUUID(), bot.ownerId, bot.id, `mention:${user.id}:${bot.id}:${row.id}:${crypto.randomUUID()}`,
+     JSON.stringify({ text: text.data, source: 'peer', from: { kind: 'user', id: user.id }, threadRunId: row.id })])
+  if (inserted) {
+    const { wakeCoordinator } = await import('@/lib/coordinator/wake')
+    await wakeCoordinator(bot.ownerId)
+  }
+  return { dispatched: true, eventId: inserted?.id ?? null }
 }
 
 /**

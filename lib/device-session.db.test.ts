@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { mock, test } from 'node:test'
+import { mock, test, type TestContext } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { isE2eTarget } from '../tests/helpers/e2e-target.mjs'
 import { seedFixtureWorkspace } from '../tests/helpers/task-workspace'
 import { measured } from '../tests/helpers/read-metrics'
@@ -17,6 +18,18 @@ if (!databaseUrl && process.env.REQUIRE_DB === '1') throw new Error('REQUIRE_DB=
 const dbTest = databaseUrl ? test : test.skip
 
 const SESSION = { 'x-mikka-device-session': '1' }
+const MOCK_GATEWAY_URL = 'http://127.0.0.1:9'
+
+function configureTestGateway(t: TestContext, url: string, secret = 'isolated-session-backstop-secret') {
+  const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
+  process.env.DEVICE_GATEWAY_URL = url
+  process.env.DEVICE_GATEWAY_PUSH_SECRET = secret
+  t.after(() => {
+    if (previous.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previous.url
+    if (previous.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previous.secret
+  })
+}
+
 let nextMocked = false
 async function mockNextServer() {
   if (nextMocked) return
@@ -105,9 +118,8 @@ dbTest('device session reports: the newest socket owns the session, reports are 
       assert.ok((await lease(live))!.getTime() <= Date.now(), 'an ended lease stays ended; run recovery owns it')
     })
 
-    await t.test('the run-recovery backstop closes a session the gateway no longer has', async () => {
+    await t.test('the run-recovery backstop closes a session the gateway no longer has', async t => {
       const held = await f.run('running')
-      const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
       const { createServer } = await import('node:http')
       const { once } = await import('node:events')
       let online = true
@@ -115,8 +127,7 @@ dbTest('device session reports: the newest socket owns the session, reports are 
       const server = createServer((request, response) => { asked.push(request.url ?? ''); response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ online })) })
       server.listen(0, '127.0.0.1'); await once(server, 'listening')
       const address = server.address() as import('node:net').AddressInfo
-      process.env.DEVICE_GATEWAY_URL = `http://127.0.0.1:${address.port}`
-      process.env.DEVICE_GATEWAY_PUSH_SECRET = 'isolated-session-backstop-secret'
+      configureTestGateway(t, `http://127.0.0.1:${address.port}`)
       try {
         const first = await closeLostDeviceSessions()
         assert.ok(asked.includes(`/v1/devices/${f.device}/status`), 'a device with a leased run and an open session is asked about')
@@ -130,32 +141,24 @@ dbTest('device session reports: the newest socket owns the session, reports are 
         await closeLostDeviceSessions()
         assert.ok(!asked.includes(`/v1/devices/${f.device}/status`), 'a closed session is not asked about again')
       } finally {
-        if (previous.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previous.url
-        if (previous.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previous.secret
         server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))
       }
     })
 
     await t.test('the backstop checks up to 20 devices at a time', async t => {
       const others = await Promise.all(Array.from({ length: 21 }, async (_, n) => { const g = await deviceFixture(pool, `session-concurrent-${n}`); await g.run('running'); return g }))
-      const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
-      const { createServer } = await import('node:http')
-      const { once } = await import('node:events')
-      const server = createServer((_request, response) => {
-        response.setHeader('content-type', 'application/json')
-        response.end(JSON.stringify({ online: true }))
-      })
-      server.listen(0, '127.0.0.1'); await once(server, 'listening')
-      process.env.DEVICE_GATEWAY_URL = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`
-      process.env.DEVICE_GATEWAY_PUSH_SECRET = 'isolated-session-backstop-secret'
+      configureTestGateway(t, MOCK_GATEWAY_URL)
       const fetch = globalThis.fetch
       let inFlight = 0, peak = 0
       const asked = new Set<string>()
       t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
-        if (!(url instanceof URL) || url.origin !== process.env.DEVICE_GATEWAY_URL) return fetch(url, options)
-        asked.add(url.pathname)
+        if (!(url instanceof URL) || url.origin !== MOCK_GATEWAY_URL) return fetch(url, options)
         peak = Math.max(peak, ++inFlight)
-        try { return await fetch(url, options) } finally { inFlight-- }
+        try {
+          await setImmediate()
+          asked.add(url.pathname)
+          return Response.json({ online: true })
+        } finally { inFlight-- }
       })
       try {
         for (const [n, g] of others.entries()) await applyDeviceSessionReport(g.device, { state: 'connected', at: new Date().toISOString(), socketId: `socket-concur0${n}` })
@@ -164,9 +167,6 @@ dbTest('device session reports: the newest socket owns the session, reports are 
         assert.equal(peak, 20, 'status calls overlap without exceeding the concurrency limit')
         assert.ok(others.every(g => asked.has(`/v1/devices/${g.device}/status`)), 'all devices were checked')
       } finally {
-        if (previous.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previous.url
-        if (previous.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previous.secret
-        server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))
         for (const g of others) await g.cleanup()
       }
     })
@@ -174,13 +174,11 @@ dbTest('device session reports: the newest socket owns the session, reports are 
     await t.test('the backstop closes offline sessions in opening order even when gateway replies arrive out of order', async t => {
       const older = await deviceFixture(pool, 'session-order-older')
       const newer = await deviceFixture(pool, 'session-order-newer')
-      const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
-      process.env.DEVICE_GATEWAY_URL = 'http://127.0.0.1:9'
-      process.env.DEVICE_GATEWAY_PUSH_SECRET = 'isolated-session-backstop-secret'
+      configureTestGateway(t, MOCK_GATEWAY_URL)
       t.mock.method(globalThis, 'fetch', async (url: URL) => {
         if (url.pathname === `/v1/devices/${newer.device}/status`) return Response.json({ online: false })
         if (url.pathname === `/v1/devices/${older.device}/status`) {
-          await new Promise<void>(resolve => setImmediate(resolve))
+          await setImmediate()
           return Response.json({ online: false })
         }
         return Response.json({})
@@ -195,8 +193,6 @@ dbTest('device session reports: the newest socket owns the session, reports are 
           WHERE id = ANY($1::uuid[]) ORDER BY "leaseExpiresAt"`, [runs])
         assert.deepEqual(rows.map(row => row.id), runs, 'the older session ends its run lease first')
       } finally {
-        if (previous.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previous.url
-        if (previous.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previous.secret
         await newer.cleanup()
         await older.cleanup()
       }
@@ -205,13 +201,7 @@ dbTest('device session reports: the newest socket owns the session, reports are 
 })
 
 dbTest('the gateway reports sessions through the internal route with the push secret', async t => {
-  const previous = { url: process.env.DEVICE_GATEWAY_URL, secret: process.env.DEVICE_GATEWAY_PUSH_SECRET }
-  process.env.DEVICE_GATEWAY_URL = 'http://127.0.0.1:9'
-  process.env.DEVICE_GATEWAY_PUSH_SECRET = 'isolated-session-route-secret'
-  t.after(() => {
-    if (previous.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previous.url
-    if (previous.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previous.secret
-  })
+  configureTestGateway(t, MOCK_GATEWAY_URL, 'isolated-session-route-secret')
   const [{ createRequestDatabaseScope, pool }, { POST }] = await Promise.all([import('./db'), import('../app/v1/internal/device-sessions/[deviceId]/route')])
   const scope = createRequestDatabaseScope(databaseUrl!)
   let cleanup: (() => Promise<void>) | undefined

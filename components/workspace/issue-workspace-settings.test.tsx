@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type { ComputerThread } from '@/components/computer/computer-agents'
 import type { SettingsFrameProps } from '@/components/slots/settings-frame-contract'
 import { browserAddressRequest, consumeBrowserAddress, openBrowserAddress } from '@/lib/browser/navigation'
-import { useConversationPanels as useThreadPanelContext } from '@/components/coordinator/conversation-panels-context'
+import { useConversationPanels as useThreadPanelContext, useConversationTools } from '@/components/coordinator/conversation-panels-context'
 
 const nothing = () => {}
 const empty = () => null
@@ -100,7 +100,7 @@ mock.module('@/hooks/use-live-lists', { namedExports: {
 for (const [file, names] of [
   ['../../app/actions/projects.ts', ['listProjects', 'listWorkspaceProjects']], ['../../app/actions/teams.ts', ['listTeams']],
   ['../../app/actions/team-relations.ts', ['listProjectTeams']], ['../../app/actions/workspace-secrets.ts', ['saveE2BKey']],
-  ['../../app/actions/bots.ts', ['listBots', 'listBotsForWorkspace', 'archiveBot', 'deleteBot', 'listArchivedOwnBots']], ['../../app/actions/agents.ts', ['listAgents', 'getThreadName', 'findThreadIssue']],
+  ['../../app/actions/bots.ts', ['listBots', 'listBotsForWorkspace', 'archiveBot', 'deleteBot', 'listArchivedOwnBots']], ['../../app/actions/agents.ts', ['listAgents', 'getThreadName', 'findThreadIssue', 'getThreadChanges', 'getThreadMachine']],
 ] as const) mock.module(new URL(file, import.meta.url).href, { namedExports: Object.fromEntries(names.map(name => [name, async () => []])) })
 
 // Exercise the production lazy/Suspense boundary, with its chunk deliberately
@@ -120,6 +120,7 @@ for (const [file, names] of [
   ['./task-column.tsx', ['TaskColumn']],
   ['../plugins/plugins-view.tsx', ['PluginsPage']], ['../suggestions/suggestion-feed.tsx', ['SuggestionFeed', 'SuggestionsRefresh', 'useSuggestionCount']],
   ['../artifacts/artifact-library.tsx', ['ArtifactLibrary']], ['./legacy-chat-archive.tsx', ['LegacyChatArchive']],
+  ['./thread-changes.tsx', ['RailThreadChanges']],
 ] as const) mock.module(new URL(file, import.meta.url).href, { namedExports: Object.fromEntries(names.map(name => [name, name === 'useSuggestionCount' ? () => 0 : empty])) })
 // 概览 is the right column this page owns; it renders a marker so a test can see the column is there at all,
 // which is what #2835 broke by gating it on `isConversation`.
@@ -130,9 +131,11 @@ mock.module(new URL('../nav/context-panel.tsx', import.meta.url).href, { namedEx
 // work area up when the frame owns the panel. The hook is read from its own leaf module, so this stub does not
 // depend on the dynamically imported conversation-panels.tsx below.
 let reportedPanels: import('@/components/slots/thread-contract').ThreadScreenProps['panels']
+let reportedTools: NonNullable<import('@/components/slots/thread-contract').ThreadScreenProps['work']>['tabs'] | undefined
 mock.module(new URL('./thread-column.tsx', import.meta.url).href, { namedExports: {
   ThreadColumn: ({ main }: { main?: boolean }) => {
     reportedPanels = useThreadPanelContext()
+    reportedTools = useConversationTools()
     return <section data-main-thread={main ? '' : undefined} />
   },
 } })
@@ -156,7 +159,7 @@ mock.module('@/components/nav/new-group-dialog', { namedExports: {
   NewGroupDialog: ({ open, workspaceId }: { open: boolean; workspaceId: string }) => open ? <div data-create-group={workspaceId} /> : null,
 } })
 mock.module('@/components/nav/bot-list', { namedExports: { BotList: () => <div data-retired-bot-list="" />, useChatNav: () => ({ entries: [], referenceGroups: [], reloadGroups: async () => {} }) } })
-mock.module('@/components/nav/thread-list', { namedExports: { threadName: () => '' } })
+mock.module('@/components/nav/thread-list', { namedExports: { threadName: () => '', ThreadList: empty } })
 mock.module('@/components/nav/bot-avatar', { namedExports: { BotAvatar: empty, COORDINATOR_AVATAR: {} } })
 mock.module('@/components/nav/all-threads', { namedExports: { AllThreadsColumn: empty, AllThreadsToggle: empty } })
 let browserFits = true
@@ -223,7 +226,7 @@ let closeReview: typeof import('@/hooks/code-review/use-review-page')['closeRevi
 mock.module(new URL('../slots/review-summary.tsx', import.meta.url).href, { namedExports: { REVIEW_ENABLED: true, ReviewSummaryLine: empty } })
 mock.module(new URL('../slots/review-page.tsx', import.meta.url).href, { namedExports: { ReviewPage: ({ taskId }: { taskId: string }) => <p data-review-task={taskId}>Review</p> } })
 before(async () => {
-  for (const key of ['window', 'document', 'HTMLElement', 'Element', 'Node', 'MutationObserver', 'ResizeObserver', 'navigator'] as const) Object.defineProperty(globalThis, key, { configurable: true, value: key === 'window' ? browser : browser[key] })
+  for (const key of ['window', 'document', 'HTMLElement', 'Element', 'Node', 'MutationObserver', 'ResizeObserver', 'navigator', 'customElements'] as const) Object.defineProperty(globalThis, key, { configurable: true, value: key === 'window' ? browser : browser[key] })
   Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: browser.getComputedStyle.bind(browser) })
   // The desktop tsconfig leaves JSX to its bundler; tsx uses classic JSX for
   // that one imported adapter while the root components use the JSX runtime.
@@ -323,6 +326,9 @@ test('a thread opened in the centre hands its work area to a frame that owns the
   assert.ok(container.querySelector('[data-main-thread]'), 'the thread is the centre page')
   assert.ok(reportedPanels, 'and the frame was handed the Overview tab')
   assert.deepEqual(reportedPanels?.tabs.map(tab => tab.id), ['overview', 'browser'])
+  // The page's static tools ride the work channel instead: delivered for the ＋ menu, closed until picked.
+  assert.ok(reportedTools?.some(tab => tab.id === 'changes'), 'the Changes tool reaches the frame through work tabs')
+  assert.equal(reportedTools?.every(tab => tab.id !== 'overview' && tab.id !== 'browser'), true)
 })
 
 test('an explicit Bot mounts only its own composer after its roster resolves', async () => {

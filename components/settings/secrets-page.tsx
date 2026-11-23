@@ -585,7 +585,7 @@ function WorkspaceSecretDialog({ workspaceId, workspaceName, role, secret, onClo
   const [value, setValue] = useState('')
   const [reveal, setReveal] = useState(false)
   const [note, setNote] = useState(secret?.note ?? '')
-  const [scope, setScope] = useState<SecretScope>(secret?.scopeType ?? writableScopes(role)[0])
+  const [scope, setScope] = useState<SecretScope>(secret && secret.scopeType !== 'thread' ? secret.scopeType : writableScopes(role)[0])
   const [repository, setRepository] = useState(secret?.scopeRef ?? '')
   const [confirmWorkspace, setConfirmWorkspace] = useState(false)
   const editor = useWorkspaceSecretEditor(workspaceId, secret, secretName => t('shortValueNotMasked', { name: secretName }))

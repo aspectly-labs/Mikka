@@ -2,17 +2,18 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { Linking, Pressable, StyleSheet, View } from 'react-native'
 import * as Application from 'expo-application'
 import * as Updates from 'expo-updates'
+import { HOSTED_API_VERSION } from '@mikka/protocol/version'
 import { Spinner } from '@/components/icons'
 import { Text } from '@/components/Text'
 import { API_URL } from '@/lib/config'
 import { mobileTraceHeaders } from '@/lib/tracing'
-import { buildTooOld, CHECK_MS, DOWNLOAD_MS, within } from '@/lib/startup'
+import { buildTooOld, CHECK_MS, DOWNLOAD_MS, onMobileUpdateRequired, within } from '@/lib/startup'
 import { colors } from '@/lib/theme'
 
 type Launch = { kind: 'checking' | 'updating' | 'ready' } | { kind: 'tooOld'; url: string }
 
 /** `GET /api/version`: the oldest native build Mikka accepts, and where a newer one is. */
-async function versionInfo(): Promise<{ minMobileBuild?: unknown; mobileUpdateUrl?: unknown } | null> {
+async function versionInfo(): Promise<{ minMobileBuild?: unknown; mobileUpdateUrl?: unknown; minApiVersion?: unknown } | null> {
   const response = await fetch(`${API_URL}/api/version`, { headers: { accept: 'application/json', ...mobileTraceHeaders() } })
   return response.ok ? response.json() : null
 }
@@ -31,15 +32,24 @@ export function StartupGate({ children }: { children: ReactNode }) {
   const [openFailed, setOpenFailed] = useState(false)
   useEffect(() => {
     let live = true
-    const set = (next: Launch) => { if (live) setLaunch(next) }
+    let required = false, updateUrl = 'itms-beta://'
+    const set = (next: Launch) => { if (live && (!required || next.kind === 'tooOld')) setLaunch(next) }
+    const unsubscribe = onMobileUpdateRequired(server => {
+      if (server !== API_URL) return
+      required = true
+      set({ kind: 'tooOld', url: updateUrl })
+    })
     void (async () => {
       const ota = Updates.isEnabled && !__DEV__
         ? within(Updates.checkForUpdateAsync().then(result => result.isAvailable), CHECK_MS, false)
         : Promise.resolve(false)
       const version = await within(versionInfo(), CHECK_MS, null)
-      if (buildTooOld(Application.nativeBuildVersion, version?.minMobileBuild)) {
-        return set({ kind: 'tooOld', url: typeof version?.mobileUpdateUrl === 'string' ? version.mobileUpdateUrl : 'itms-beta://' })
+      if (typeof version?.mobileUpdateUrl === 'string') updateUrl = version.mobileUpdateUrl
+      if (required || buildTooOld(Application.nativeBuildVersion, version?.minMobileBuild)) {
+        required = true
+        return set({ kind: 'tooOld', url: updateUrl })
       }
+      const floorRequired = typeof version?.minApiVersion === 'number' && version.minApiVersion > HOSTED_API_VERSION
       if (await ota) {
         set({ kind: 'updating' })
         // The launch's own background check may have fetched it first (isNew is then false); either way the newest download opens.
@@ -47,9 +57,13 @@ export function StartupGate({ children }: { children: ReactNode }) {
           try { await Updates.reloadAsync(); return } catch { /* opens on the running version */ }
         }
       }
+      if (floorRequired) {
+        required = true
+        return set({ kind: 'tooOld', url: updateUrl })
+      }
       set({ kind: 'ready' })
     })()
-    return () => { live = false }
+    return () => { live = false; unsubscribe() }
   }, [])
 
   if (launch.kind === 'ready') return children
