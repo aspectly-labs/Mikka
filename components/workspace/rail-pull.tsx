@@ -95,10 +95,11 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
     if (!headSha) return
     setArming(true)
     try {
-      const result = await setThreadPullMergeWhenReady(issueId, runId, { repo: pull.repo, number: pull.number, headSha, enabled })
-      if (result.outcome === 'armed') { toast.success(enabled ? t('mergeArmed') : t('mergeDisarmed')); onChanged(); return }
-      if (result.outcome === 'merged') { toast.success(t('states.merged')); void detail.mutate(); onChanged(); return }
-      toast.error(result.code && refusal.has(result.code as never) ? refusal(result.code as never) : t('mergeFailed'))
+      // The publishing run carries the intent — a continuation's pull does not
+      // answer to the run the reader happens to have open (its own receipt row).
+      const result = await setThreadPullMergeWhenReady(pull.issueId, pull.runId, { repo: pull.repo, number: pull.number, headSha, enabled })
+      if (result?.state === 'armed' || result?.state === 'cancelled') { toast.success(result.state === 'armed' ? t('mergeArmed') : t('mergeDisarmed')); onChanged(); return }
+      toast.error(t('mergeFailed'))
     } catch {
       toast.error(t('mergeFailed'))
     } finally {
@@ -175,7 +176,7 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
         <PullDiff repo={pull.repo} number={pull.number} />
       </TabsContent>
       <TabsContent value="checks" className="flex min-h-0 flex-col gap-1 overflow-auto px-4 pb-6 pt-3">
-        {!detail.data && <p className="text-xs text-muted-foreground">{common('loading')}</p>}
+        {!detail.data && <p className="text-xs text-muted-foreground">{detail.error ? t('detailFailed') : common('loading')}</p>}
         {detail.data && checks.length === 0 && <p className="text-xs text-muted-foreground">{t('noChecks')}</p>}
         {checks.map((check, index) => <div key={`${check.name}-${index}`} className="flex items-center gap-2 py-0.5 text-xs">
           <span className={check.state === 'failure' ? 'text-destructive-foreground' : check.state === 'success' ? 'text-github-pr-open' : 'text-muted-foreground'}>
@@ -196,7 +197,7 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
         <DialogFooter>
           <Button size="sm" variant="ghost" onClick={() => setReviewing(false)}>{common('cancel')}</Button>
           <Button size="sm" disabled={reviewBusy || !reviewBody.trim()} onClick={() => void requestChanges()}>
-            {reviewBusy ? common('sending') : t('requestChanges')}
+            {reviewBusy ? common('saving') : t('requestChanges')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -215,5 +216,12 @@ function PullDiff({ repo, number }: { repo: string; number: number }) {
   }, { revalidateOnFocus: false, shouldRetryOnError: false })
   if (files.error) return <p className="p-4 text-xs text-muted-foreground">{t('detailFailed')}</p>
   if (!files.data) return <p className="p-4 text-xs text-muted-foreground">{common('loading')}</p>
-  return <ThreadChangesPane stateKey={`pull:${repo}:${number}`} changes={files.data.changes} />
+  return <>
+    {(files.data.moreFiles || files.data.patchUnavailable > 0) && (
+      <p className="px-4 pt-3 text-xs text-muted-foreground">
+        {files.data.moreFiles ? t('diffPartial') : t('diffPatchUnavailable', { count: files.data.patchUnavailable })}
+      </p>
+    )}
+    <ThreadChangesPane stateKey={`pull:${repo}:${number}`} changes={files.data.changes} />
+  </>
 }
