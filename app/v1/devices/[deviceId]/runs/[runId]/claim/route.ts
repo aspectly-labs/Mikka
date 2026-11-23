@@ -25,6 +25,7 @@ import { assertLiteLLMModelTransport, assertUnmanagedModelTransport, assertSubsc
 import { ModelAdmissionError } from '@/lib/model-admission/contract'
 import { liteLLMBaseUrl } from '@/lib/model-gateway/litellm-client'
 import { db, pool } from '@/lib/db'
+import { readRunChain } from '@/lib/run-chain'
 import { runChanged } from '@/lib/live/panels'
 import { agentRuns, agents, deviceRepos } from '@/lib/db/schema'
 import { authenticateDevice, ownedDeviceWithReport } from '@/lib/device-link'
@@ -317,10 +318,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     || !(subscription ? subscription.workspaceId === caller.scopeWorkspaceId : frozenKey || frozenCredits) || !cloudDesktop && !repo.remoteUrl
     || taskWorkspaceId && taskWorkspaceId !== caller.scopeWorkspaceId)) return NextResponse.json({ error: 'Cloud computer worker unavailable.' }, { status: 409 })
   let taskInjection: TaskSecretInjection
+  const threadScopeRunId = (await readRunChain(pool, run.userId, run.id))?.rootRunId ?? run.id
   try {
     taskInjection = projectEnvironment
-      ? await environmentSecretInjection(taskWorkspaceId!, taskRepository, projectEnvironment, process.env, run.userId)
-      : await taskSecretInjection(taskWorkspaceId, taskRepository, process.env, undefined, run.userId)
+      ? await environmentSecretInjection(taskWorkspaceId!, taskRepository, projectEnvironment, process.env, run.userId, threadScopeRunId)
+      : await taskSecretInjection(taskWorkspaceId, taskRepository, process.env, undefined, run.userId, threadScopeRunId)
     taskEnv = taskInjection.env
     taskSecretNames = taskInjection.secretNames
   } catch { return NextResponse.json({ code: 'task_secret_unavailable', detail: 'configuration' }, { status: 409 }) }
@@ -624,8 +626,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (!currentRepo || remoteRepositoryRef(currentRepo.remoteUrl) !== taskRepository) return false
     try {
       const snapshot = currentEnvironment && workspaceId
-        ? await environmentSecretSnapshot(workspaceId, taskRepository, currentEnvironment, current.userId, tx)
-        : await taskSecretSnapshot(workspaceId, taskRepository, current.userId, tx)
+        ? await environmentSecretSnapshot(workspaceId, taskRepository, currentEnvironment, current.userId, tx, threadScopeRunId)
+        : await taskSecretSnapshot(workspaceId, taskRepository, current.userId, tx, undefined, undefined, threadScopeRunId)
       return snapshot === taskInjection.snapshot
     } catch (error) {
       if (error instanceof CodedError && error.code === 'task_secret_unavailable') return false

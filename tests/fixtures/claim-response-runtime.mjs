@@ -136,10 +136,11 @@ import {normalizeRepository} from ${JSON.stringify(repositoryContract)}
 export function remoteRepositoryRef(url){if(!url)return null;const repo=normalizeRepository(url);const prefix="v2/github.com/";return repo.key.startsWith(prefix)?repo.key.slice(prefix.length):null}
 export async function taskSecretInjection(...args){
   const p=globalThis.claimResponseProbe
-  assert.equal(args.length,5)
+  assert.equal(args.length,6)
   assert.equal(args[0],p.run.workspaceId);assert.equal(args[1],remoteRepositoryRef(p.repo.remoteUrl))
   assert.ok(args[2]===process.env,'ordinary task secrets use the process environment')
   assert.equal(args[3],undefined);assert.equal(args[4],p.run.userId)
+  assert.equal(args[5],(p.runChain?.rootRunId)??p.run.id,'thread env scope follows the run chain root')
   assert.equal(p.projectAdmission.active,true,'secret preparation requires the live resource lease')
   assert.equal(p.run.agentDefinition?.projectExecution?.environment??null,null,'selected environments cannot fall back to all workspace secrets')
   p.preparation.push('secrets');(p.secretReads??=[]).push(args)
@@ -148,6 +149,7 @@ export async function taskSecretInjection(...args){
 export async function taskSecretSnapshot(...args){
   const p=globalThis.claimResponseProbe
   assert.equal(args[2],p.run.userId);assert.equal(typeof args[3].select,'function')
+  assert.equal(args.length,7);assert.equal(args[6],(p.runChain?.rootRunId)??p.run.id)
   assert.equal(p.appActive,1,'snapshot shares the final APP transaction')
   p.preparation.push('secret-snapshot');p.secretSnapshotReads.push(args)
   return p.secretSnapshot??p.secretInjection?.snapshot
@@ -155,11 +157,12 @@ export async function taskSecretSnapshot(...args){
 export async function environmentSecretInjection(...args){
   const p=globalThis.claimResponseProbe,configuration=p.run.agentDefinition?.projectExecution?.environment
   assert.ok(configuration,'environment injection requires a frozen selection')
-  assert.equal(args.length,5)
+  assert.equal(args.length,6)
   assert.equal(args[0],p.run.workspaceId);assert.equal(args[1],remoteRepositoryRef(p.repo.remoteUrl))
   assert.deepEqual(args[2],configuration)
   assert.ok(args[3]===process.env,'environment secrets use the process environment')
   assert.equal(args[4],p.run.userId)
+  assert.equal(args[5],(p.runChain?.rootRunId)??p.run.id,'thread env scope follows the run chain root')
   assert.equal(p.projectAdmission.active,true,'environment preparation requires the live resource lease')
   assert.ok(p.environmentInjection,'environment secret outcome must be explicitly configured')
   p.preparation.push('environment-secrets')
@@ -168,10 +171,11 @@ export async function environmentSecretInjection(...args){
 }
 export async function environmentSecretSnapshot(...args){
   const p=globalThis.claimResponseProbe
-  assert.equal(args.length,5)
+  assert.equal(args.length,6)
   assert.equal(args[0],p.run.workspaceId);assert.equal(args[1],remoteRepositoryRef(p.repo.remoteUrl))
   assert.deepEqual(args[2],p.run.agentDefinition.projectExecution.environment)
   assert.equal(args[3],p.run.userId);assert.equal(typeof args[4].select,'function')
+  assert.equal(args[5],(p.runChain?.rootRunId)??p.run.id,'thread env scope follows the run chain root')
   assert.equal(p.appActive,1);assert.equal(p.projectAdmission.active,true)
   p.preparation.push('environment-snapshot');p.environmentSnapshotReads.push(args)
   if(p.environmentSnapshotError)throw p.environmentSnapshotError
@@ -322,6 +326,7 @@ const sources = new Map([
         return bindingId&&bindingId!==binding.id?null:structuredClone(binding)
       }
     }`],
+  ['/lib/run-chain.ts', 'export async function readRunChain(){const p=globalThis.claimResponseProbe;return p.runChain??null}'],
   ['/lib/secrets/runtime.ts', secretSource],
   ['/lib/run-completion-effects.ts', 'export async function afterRunEnded(ownerId,runId){const p=globalThis.claimResponseProbe;(p.endedRuns??=[]).push({ownerId,runId})}'],
   ['/lib/run-leases.ts', 'export async function latestCheckpoint(){const p=globalThis.claimResponseProbe;p.preparation.push("checkpoint");return structuredClone(p.checkpoint)};export async function failRunForDaemonUpgrade(...args){const p=globalThis.claimResponseProbe;p.preparation.push("daemon-upgrade");(p.upgradeRefusals??=[]).push(args);p.run.status="failed";p.run.stopReason="error";return true};export async function failQueuedSubscriptionRuntime(...args){const p=globalThis.claimResponseProbe;p.preparation.push("subscription-preflight");p.runtimeRefusal=args;p.run.status="failed";return true}'],
