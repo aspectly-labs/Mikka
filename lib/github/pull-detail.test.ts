@@ -16,10 +16,12 @@ mock.module(new URL("./user-access.ts", import.meta.url).href, {
 const sha = "a".repeat(40);
 let body: () => unknown;
 let variables: Record<string, unknown> = {};
+let lastQuery = "";
 mock.method(globalThis, "fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
   const sent = JSON.parse(String(init?.body));
   assert.ok(sent.query.startsWith("query PullDetail("));
   assert.ok(!sent.query.includes("mutation"));
+  lastQuery = sent.query;
   variables = sent.variables;
   return Response.json(body());
 });
@@ -73,4 +75,87 @@ test("another repository's identity or a missing PR is refused, never read", asy
   await assert.rejects(read(), { message: "githubPullRequestInvalid" });
   body = () => ({ ...response(pull()), errors: [{ message: "private" }] });
   await assert.rejects(read(), { message: "githubUnavailable" });
+});
+
+test("commits and review threads are included when GitHub reports them", async () => {
+  body = () =>
+    response({
+      ...pull(),
+      commitList: {
+        totalCount: 3,
+        nodes: [
+          {
+            commit: {
+              oid: sha,
+              abbreviatedOid: "aaaaaaa",
+              messageHeadline: "feat: align PR sidebar",
+              committedDate: "2026-11-18T00:00:00Z",
+              url: "https://github.com/Owner/Repo/commit/" + sha,
+              author: { name: "Alex", user: { login: "alexj11324" } },
+            },
+          },
+        ],
+      },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            path: "web/components/workspace/pull-preview.tsx",
+            line: 42,
+            comments: {
+              nodes: [
+                {
+                  id: "c1",
+                  bodyText: "Please keep the commit selector visible.",
+                  createdAt: "2026-11-18T01:00:00Z",
+                  author: { login: "reviewer" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+  const detail = await read();
+  assert.ok(lastQuery.includes("commitList: commits(last: 25)"));
+  assert.ok(lastQuery.includes("reviewThreads(first: 30)"));
+  assert.equal(detail.commitCount, 3);
+  assert.equal(detail.commits?.[0]?.shortOid, "aaaaaaa");
+  assert.equal(detail.commits?.[0]?.author, "alexj11324");
+  assert.equal(detail.comments?.length, 1);
+  assert.equal(detail.comments?.[0]?.path, "web/components/workspace/pull-preview.tsx");
+  assert.equal(detail.comments?.[0]?.resolved, false);
+});
+
+test("long review paths and malformed supplemental commit data never break PR reads", async () => {
+  const longPath = "nested/".repeat(144) + "file.ts";
+  assert.ok(longPath.length > 1000 && longPath.length <= 1024);
+  body = () =>
+    response({
+      ...pull(),
+      commitList: { totalCount: "bad" },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            path: longPath,
+            line: 10,
+            comments: {
+              nodes: [
+                {
+                  id: "c-long",
+                  bodyText: "Looks good",
+                  createdAt: "2026-11-18T01:00:00Z",
+                  author: { login: "reviewer" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+  const detail = await read();
+  assert.equal(detail.headSha, sha);
+  assert.equal(detail.commits, undefined);
+  assert.equal(detail.comments?.[0]?.path, longPath);
 });
