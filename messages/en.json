@@ -10567,7 +10567,20 @@
     "workspacePicker": "Open in workspace",
     "relatedThreads": "Related threads",
     "closeOtherTabs": "Close other tabs",
-    "sidebarNavigation": "Sidebar navigation"
+    "sidebarNavigation": "Sidebar navigation",
+    "searchTabs": "Search tabs",
+    "noTabsFound": "No tabs found.",
+    "nothingHere": "Nothing here yet",
+    "search": "Search",
+    "searchShortcut": "Search ⌘K",
+    "closeSidebar": "Close sidebar",
+    "expandSidebar": "Expand sidebar",
+    "collapseSidebar": "Collapse sidebar",
+    "openSidebar": "Open sidebar",
+    "mainMenu": "Main menu",
+    "dismiss": "Dismiss",
+    "resizeSidebar": "Resize sidebar",
+    "resizeWorkArea": "Resize the right column"
   },
   "DeviceSetup": {
     "path": "Local repository path",
@@ -10866,6 +10879,36 @@
       "expand": "Expand right column",
       "restore": "Restore right column width",
       "add": "Open a tab"
+    },
+    "kinds": {
+      "changes": {
+        "title": "Changes",
+        "description": "Review this thread's file changes"
+      },
+      "pullRequests": {
+        "title": "Pull requests",
+        "description": "Pull requests opened from this chat"
+      },
+      "tasks": {
+        "title": "Tasks",
+        "description": "Tasks and the threads this Bot dispatched"
+      },
+      "computer": {
+        "title": "Computer",
+        "description": "Watch and control the Bot's computer"
+      },
+      "files": {
+        "title": "Files",
+        "description": "Browse the workspace's files"
+      },
+      "setup": {
+        "title": "Setup",
+        "description": "The machine and environment this runs on"
+      },
+      "browser": {
+        "title": "Browser",
+        "description": "Open a web page beside the chat"
+      }
     }
   },
   "AgentMessageRow": {

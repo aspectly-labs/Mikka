@@ -10567,7 +10567,20 @@
     "workspacePicker": "在工作区打开",
     "relatedThreads": "相关线程",
     "closeOtherTabs": "关闭其他标签页",
-    "sidebarNavigation": "侧栏导航"
+    "sidebarNavigation": "侧栏导航",
+    "searchTabs": "搜索标签",
+    "noTabsFound": "没有找到标签。",
+    "nothingHere": "这里还没有内容",
+    "search": "搜索",
+    "searchShortcut": "搜索 ⌘K",
+    "closeSidebar": "关闭侧栏",
+    "expandSidebar": "展开侧栏",
+    "collapseSidebar": "收起侧栏",
+    "openSidebar": "打开侧栏",
+    "mainMenu": "主菜单",
+    "dismiss": "关闭",
+    "resizeSidebar": "调整侧栏宽度",
+    "resizeWorkArea": "调整右栏宽度"
   },
   "DeviceSetup": {
     "path": "本地仓库路径",
@@ -10866,6 +10879,36 @@
       "expand": "放大右栏",
       "restore": "恢复右栏宽度",
       "add": "打开标签页"
+    },
+    "kinds": {
+      "changes": {
+        "title": "改动",
+        "description": "查看这个线程改了哪些文件"
+      },
+      "pullRequests": {
+        "title": "拉取请求",
+        "description": "这个线程开出的拉取请求"
+      },
+      "tasks": {
+        "title": "任务",
+        "description": "这个 Bot 派出的任务和线程"
+      },
+      "computer": {
+        "title": "电脑",
+        "description": "查看并操作 Bot 的电脑"
+      },
+      "files": {
+        "title": "文件",
+        "description": "浏览工作区里的文件"
+      },
+      "setup": {
+        "title": "运行环境",
+        "description": "它运行在哪台机器、哪个环境"
+      },
+      "browser": {
+        "title": "浏览器",
+        "description": "在线程旁打开网页"
+      }
     }
   },
   "AgentMessageRow": {
