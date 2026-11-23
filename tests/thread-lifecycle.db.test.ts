@@ -159,10 +159,12 @@ test('move retargets a queued run device↔device and a settled thread to cloud,
   assert.equal((moved.identity as { resourceBindings: { id: string }[] }).resourceBindings[0].id, deviceId)
 
   // Once the chain settles the thread may move to cloud; the newest run gains
-  // the binding that steers the next continuation onto the cloud path. The
-  // fixture has no E2B key, so the frozen identity is lifted first — freezing
-  // it onto a cloud device would be refused, as it is for a key-less owner.
-  await pool.query(`UPDATE agent_runs SET status='succeeded', "agentDefinition"='{}' WHERE id=$1`, [queuedId])
+  // the binding that steers the next continuation onto the cloud path. A frozen
+  // identity that cannot travel — this owner has no E2B key — refuses the move
+  // outright, before the identity is lifted for the happy path.
+  await pool.query(`UPDATE agent_runs SET status='succeeded' WHERE id=$1`, [queuedId])
+  assert.equal(await moveThread(owner, rootId, { deviceId: 'cloud' }), null)
+  await pool.query(`UPDATE agent_runs SET "agentDefinition"='{}' WHERE id=$1`, [queuedId])
   assert.equal(await moveThread(owner, rootId, { deviceId: 'cloud' }), true)
   const { rows: [back] } = await pool.query(
     `SELECT r."deviceId", r."agentId", r."machineAuthority", repo."deviceId" AS "repoDevice" FROM agent_runs r JOIN device_repos repo ON repo.id=r."deviceRepoId" WHERE r.id=$1`, [queuedId])
