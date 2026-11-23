@@ -740,6 +740,29 @@ async function readThreadChanges(issueId: string | null, runId: string): Promise
 
 const THREAD_CHANGES_MAX_TEXT = 8 * 1024 * 1024
 
+/** #2929: one turn's changes — the same gzip patch path as getThreadChanges but
+ * scoped to a single attempt of the chain, so the Changes view can page turns. */
+export async function getThreadTurnChanges(issueId: string | null, runId: string, turnRunId: string): Promise<ThreadChangesResult> {
+  return withDatabaseOperation('/actions/threads/turn-changes', async () => {
+    const { row } = await readableThread(issueId, runId, threadIdentityColumns)
+    const chain = await readRunChain(pool, row.userId, row.id)
+    if (chain && !chain.attempts.some(attempt => attempt.runId === turnRunId)) return { state: 'none' }
+    const { rows: [checkpoint] } = await pool.query<{ patch: Buffer | null; unavailableReason: string | null }>(
+      'SELECT patch,"unavailableReason" FROM run_checkpoints WHERE "runId"=$1 AND "userId"=$2', [turnRunId, row.userId])
+    if (!checkpoint?.patch) return { state: 'none' }
+    if (checkpoint.unavailableReason) return { state: 'tooLarge' }
+    let text: string
+    try { text = gunzipSync(checkpoint.patch, { maxOutputLength: THREAD_CHANGES_MAX_TEXT }).toString('utf8') } catch { return { state: 'tooLarge' } }
+    const changes = parseUnifiedDiff(text)
+    if (!changes.files.length) return { state: 'none' }
+    const { rows: [published] } = await pool.query<{ url: string }>(
+      `SELECT "pullRequest"->>'url' AS url FROM run_publications WHERE "runId"=$1 AND "pullRequest"->>'url' IS NOT NULL ORDER BY "updatedAt" DESC LIMIT 1`, [turnRunId])
+    const prUrl = published && safeHttpUrl(published.url)
+    if (prUrl) for (const file of changes.files) file.url = `${prUrl.replace(/\/+$/, '')}/files#diff-${createHash('sha256').update(file.path).digest('hex')}`
+    return { state: 'ready', changes }
+  })
+}
+
 function safeHttpUrl(value: string) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.toString() : null } catch { return null }
 }
@@ -1305,6 +1328,37 @@ export async function getThreadGitHistory(issueId: string | null, runId: string,
     const { workspacePool } = await import('@/lib/workspace-db')
     return (await listRunGitHistory({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId,
       { ...(input?.cursor ? { cursor: input.cursor } : {}), limit: input?.limit ?? 20 })).value
+  })
+}
+
+/** #2929: the thread's turns as diff boundaries — one entry per run-chain
+ * attempt, each carrying the base/head its checkpoint review retained. */
+export async function getThreadGitTurns(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-turns', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunGitTurns } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunGitTurns({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId))
+  })
+}
+
+/** #2929: one turn's diff — a finished attempt reads its own retained
+ * checkpoint snapshot (`source: 'checkpoint'`, which carries the captured tree
+ * including uncommitted edits and works frozen); the still-running attempt
+ * reads `working`. `turnRunId` must be an attempt of the thread's chain. */
+export async function getThreadGitTurnDiff(issueId: string | null, runId: string, input: { turnRunId?: string; live?: boolean; cursor?: string; limit?: number }) {
+  return withDatabaseOperation('/actions/threads/git-turn-diff', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { diffPage } = await import('@/lib/coding-workspace/diff/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    const deps = { database: pool, membership: workspacePool }
+    if (input.live || !input.turnRunId || input.turnRunId === scope.runId)
+      return diffPage(deps, scope.actor, scope.runId, scope.repoId,
+        { selection: { source: 'working' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
+    return diffPage(deps, scope.actor, input.turnRunId, scope.repoId,
+      { selection: { source: 'checkpoint' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
   })
 }
 
