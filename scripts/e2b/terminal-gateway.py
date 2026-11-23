@@ -759,8 +759,27 @@ async def main(*, cloudflare=False):
     listener.listen(128)
     server = await asyncio.start_server(gateway.serve, sock=listener, limit=16_384)
     print('terminal-ready', flush=True)
+    stopping = asyncio.Event()
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopping.set)
     async with server:
-        await server.serve_forever()
+        serving = asyncio.create_task(server.serve_forever())
+        await stopping.wait()
+        serving.cancel()
+    # SIGTERM means an upgrade is replacing this gateway (prepareTerminal's
+    # pkill). This process is the shells' subreaper: drain every session through
+    # finish() so reap_shells SIGKILLs and reaps the PTYs' children instead of
+    # orphaning writers that could still touch the worktree mid-run.
+    for _ in range(2):
+        live = [session for session in list(gateway.sessions.values()) if not session.ended]
+        if not live:
+            break
+        for session in live:
+            try:
+                closing = session.stop('gateway_upgrade')
+                if closing:
+                    await asyncio.wait_for(asyncio.shield(closing), 6)
+            except (OSError, RuntimeError, asyncio.TimeoutError):
+                pass
 
 
 if __name__ == '__main__':
