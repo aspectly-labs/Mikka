@@ -27,16 +27,20 @@ async function pullRequests(reader: IssueReader, workspaceId: string, query: str
 export async function searchThreadReferences(reader: IssueReader, workspaceId: string, query: string, kind?: ThreadReference['kind']) {
   const userId = typeof reader === 'string' ? reader : reader.id
   return withTaskWorkspace(reader, workspaceId, async () => {
-    const [tasks, threads, prs] = await Promise.all([
+    const [tasks, threads, prs, botRows] = await Promise.all([
       kind && kind !== 'task' ? null : searchIssues(db, { userId, workspaceId, params: parseSearchParams(new URLSearchParams({ q: query, limit: '8', workspaceId })) }),
       kind && kind !== 'thread' ? null : conversationDirectory(pool, reader, workspaceId, { search: query }),
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
+      kind && kind !== 'bot' ? null : (await import('@/lib/workspace-admin/bots')).workspaceBots(workspaceId),
     ])
+    const needle = query.toLowerCase()
     return [
       ...tasks?.items.map(item => ({ kind: 'task' as const, id: item.id, title: [item.identifier, item.title].filter(Boolean).join(' ') })) ?? [],
       ...threads?.items.slice(0, 8).map(item => ({ kind: 'thread' as const, id: item.id, title: item.title,
         ...(item.kind === 'chat' ? { conversationKind: 'chat' as const } : {}) })) ?? [],
       ...prs,
+      ...botRows?.filter(bot => !needle || bot.name.toLowerCase().includes(needle)).slice(0, 8)
+        .map(bot => ({ kind: 'bot' as const, id: bot.id, title: bot.name })) ?? [],
     ]
   })
 }

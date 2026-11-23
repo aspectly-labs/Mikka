@@ -361,10 +361,10 @@ export async function listConversationSidebar() {
 }
 
 /** A workspace switch between composing and searching invalidates the old picker. */
-export async function findThreadReferences(expectedWorkspaceId: string, query: string, kind?: 'task' | 'thread' | 'pr') {
+export async function findThreadReferences(expectedWorkspaceId: string, query: string, kind?: 'task' | 'thread' | 'pr' | 'bot') {
   const { reader, workspaceId } = await conversationActor()
   if (expectedWorkspaceId !== workspaceId || typeof query !== 'string' || query.length > 120 ||
-    (kind !== undefined && !['task', 'thread', 'pr'].includes(kind))) throw new ActionFailureError('validationGeneric')
+    (kind !== undefined && !['task', 'thread', 'pr', 'bot'].includes(kind))) throw new ActionFailureError('validationGeneric')
   const { searchThreadReferences } = await import('@/lib/thread-reference-search')
   return searchThreadReferences(reader, workspaceId, query.trim(), kind)
 }

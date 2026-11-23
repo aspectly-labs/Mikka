@@ -3424,6 +3424,35 @@
       "calls": "{count, plural, one {# call} other {# calls}}",
       "unpricedCalls": "Plus {count, plural, one {# call} other {# calls}} with no per-call price",
       "includedNote": "Not charged to Mikka credits. A subscription has no per-call price."
+    },
+    "actionFailed": "The action failed. Try again.",
+    "composerMenu": {
+      "title": "Add to this thread",
+      "newSideThread": "New side thread",
+      "envVars": "Environment variables",
+      "references": "Reference",
+      "refTask": "Mention a task",
+      "refThread": "Mention a thread",
+      "refPr": "Mention a pull request",
+      "refBot": "Mention a bot"
+    },
+    "commands": {
+      "title": "Commands",
+      "fork": "Fork this thread with its full context",
+      "forkSummary": "Fork this thread with a summary",
+      "new": "Start a side thread",
+      "compact": "Compact this thread’s context",
+      "btw": "Leave a note without interrupting"
+    },
+    "envVars": {
+      "title": "Environment variables",
+      "close": "Done",
+      "empty": "No variables on this thread yet.",
+      "name": "Name",
+      "value": "Value",
+      "add": "Add",
+      "remove": "Remove",
+      "failed": "Couldn’t update the variables. Try again."
     }
   },
   "FactoryFlow": {
@@ -4551,10 +4580,22 @@
         "inProgress": "In progress",
         "untitled": "Untitled thread",
         "loadError": "The overview could not be read",
-        "kinds": { "approval": "Approval requested", "question": "Question waiting", "limit": "Usage limit reached" },
-        "status": { "queued": "Queued", "running": "Running" }
+        "kinds": {
+          "approval": "Approval requested",
+          "question": "Question waiting",
+          "limit": "Usage limit reached"
+        },
+        "status": {
+          "queued": "Queued",
+          "running": "Running"
+        }
       },
-      "preview": { "untitled": "Untitled task", "agent": "Agent {name}", "pullRequest": "Pull request", "unavailable": "Preview unavailable" },
+      "preview": {
+        "untitled": "Untitled task",
+        "agent": "Agent {name}",
+        "pullRequest": "Pull request",
+        "unavailable": "Preview unavailable"
+      },
       "prs": "PRs",
       "narrow": "Restore panel width",
       "noTasks": "No tasks yet",
@@ -10338,7 +10379,8 @@
     "error": "Couldn’t load references",
     "searching": "Searching…",
     "thread": "Thread",
-    "sourceUnavailable": "Source file and folder references are unavailable for this thread."
+    "sourceUnavailable": "Source file and folder references are unavailable for this thread.",
+    "bot": "Bot"
   },
   "HostedPlugins": {
     "moreTwo": "{first} and {second}",
