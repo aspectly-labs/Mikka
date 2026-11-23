@@ -87,7 +87,7 @@ export type ThreadEntry =
     streaming?: boolean
     stopped?: boolean
     /** Who wrote it, where the conversation has more than one Agent (a task's attempts): shown where it changes. */
-    author?: { id: string; name: string; mark: ReactNode; /** An Agent's reply, as Capy's: its words with no author line (Alex, 2026-11-15). The hosted thread now heads every reply as LobeHub's and ignores it (decision 2026-11-22-2000). */ quiet?: boolean; /** Its name opens where the message came from: a child thread's first message, its parent thread. */ onOpen?: () => void; /** A header as LobeHub's chat: the mark at 28px and the name, the words under them (Alex, 2026-11-22; decision 2026-11-22-2000). */ header?: boolean }
+    author?: { id: string; name: string; mark: ReactNode; /** A single chat's reply (a Bot chat, the Coordinator, an Agent thread), as Capy's: its words with no author line (Alex, 2026-11-15; author headers in group chat only, Alex, 2026-11-23). */ quiet?: boolean; /** Its name opens where the message came from: a child thread's first message, its parent thread. */ onOpen?: () => void; /** A group chat's speaker, headed as LobeHub's chat: the mark at 28px and the name, the words under them (decision 2026-11-22-2000; group chat only, Alex, 2026-11-23). */ header?: boolean }
     /** A line about the chat (an event, a quota switch), not the Bot's words: it has no author line, and the reply after it shows its own. */
     event?: true
     /** Copy, the pages it cites, reactions. */

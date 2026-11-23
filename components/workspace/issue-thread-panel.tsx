@@ -17,7 +17,7 @@ import { sendReviewChange, type ReviewChangeTarget } from '@/lib/factory/review-
 import { RequestError } from '@/lib/factory/browser-request'
 import { useChatDelivery, useThreadReplyCommand, type ChatSubmission } from '@/lib/hooks/chat-delivery'
 import { prepareThreadReply, type ThreadReplySubmission } from '@/lib/thread-submission-input'
-import { activityLineBadgeShown, conversationItems, headerStopShown, runFailureText, turnChoiceShown, runIsActive, runIsWorking, runStopTimeoutRemaining, threadPeople } from '@/lib/issue-run-conversation'
+import { activityDurationSeconds, conversationItems, headerStatusBadgeShown, headerStopShown, runFailureText, turnChoiceShown, runIsActive, runIsWorking, runStopTimeoutRemaining, threadPeople } from '@/lib/issue-run-conversation'
 import { useFoldedChunks } from '@/lib/conversation/folded'
 import { interleave } from '@/lib/conversation/interleave'
 import { splitRunScoped } from '@/lib/conversation/ids'
@@ -61,6 +61,7 @@ import { MikkaMark } from '@/components/brand/mikka-mark'
 import { navigate, openTask, openThread, startNewConversation } from './workspace-navigation'
 import { ThreadHeader } from './thread-header'
 import { threadCostBreakdownKey, threadCostKey } from './thread-cost-button'
+import { AgentMessageRow, useAgentMessageWords } from '@/components/chat/agent-message-row'
 import { ThreadStatus } from './thread-status-icon'
 import { PersonReferences } from './thread-references'
 import { ThreadOutlineIndex } from './thread-outline-index'
@@ -161,6 +162,7 @@ export function IssueThreadPanel(props: IssueThreadPanelProps) {
 function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare = false, initialTab = 'chat', onOpenThread, onOpenTask, name: listedName, changeRequest, focusRunId, transcriptOnly = false, attempt, collect, beforeEntries, afterEntries, childEntries, openSender }: IssueThreadPanelProps) {
   const t = useTranslations('IssueThreads')
   const tArtifact = useTranslations('ArtifactsPage')
+  const agentWords = useAgentMessageWords()
   const messages = useMessages()
   const runErrorText = useRunErrorText()
   const refusalText = useTranslations('Billing.refusal')
@@ -496,8 +498,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const draftCitations = useLiveCitations([draft], citations.settled)
   // A layer's thread screen (slot `thread`) draws the conversation from these rows: each part as Mikka renders it, the
   // run's Agent as the author line, its steps as tool rows.
-  // As LobeHub's chat, an Agent's reply opens with its mark and name (Alex, 2026-11-22: chat look as LobeHub, except avatars).
-  const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} size="message" />, header: true } : undefined
+  // Author headers in group chat only (Alex, 2026-11-23): as Capy, an Agent's reply is its words alone (decision
+  // 2026-11-15); the author stays for screen readers and the switch of Agent, unseen.
+  const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} size="message" />, quiet: true } : undefined
   const at = (value: number | string | Date | undefined) => (value === undefined ? 0 : new Date(value).getTime()) || (data ? new Date(data.thread.createdAt).getTime() : Date.now())
   const entries: ThreadEntry[] = []
   /** Each message's own send time, when it has one; the line under it shows nothing rather than a fallback. */
@@ -522,38 +525,39 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         <p role="separator" aria-label={stage} data-event-line="" data-factory-stage={attempt.stage} className="text-center text-xs text-muted-foreground">{stage}</p> }] })
     }
     // Who sent the run off: its Bot, or Mikka when no Bot did (a Factory review or verify; the read then falls back to the
-    // Agent's own name). What it was asked is that sender's first message, as a chat shows it, not a muted line.
-    const sender = detail?.agentName && detail.agentName !== harnessName(detail.harness) && detail.agentName !== detail.harness
-      ? { id: `bot:${detail.agentName}`, name: detail.agentName, mark: <BotAvatar {...(detail.bot ?? COORDINATOR_AVATAR)} size="message" still /> }
-      : { id: 'mikka', name: 'Mikka', mark: <MikkaMark />, ...(openSender ? { onOpen: openSender } : {}) }
+    // Agent's own name). What it was asked is one collapsed row where the thread starts, as Claude Code shows a message
+    // to a sub-agent (Alex, 2026-11-23): 「Coordinator 派发了任务 · 校验聊天结构 ›」, never a second speaker.
+    const fromBot = Boolean(detail?.agentName && detail.agentName !== harnessName(detail.harness) && detail.agentName !== detail.harness)
+    const senderName = fromBot ? detail!.agentName : 'Mikka'
+    const botId = detail?.botId
+    const openSource = fromBot ? botId ? () => navigate({ section: 'coordinator', bot: botId, issue: null }) : undefined : openSender
+    const sourceLink = openSource ? { label: agentWords.openChat(senderName), onOpen: openSource } : undefined
     const asked = data.thread.prompt.trim()
     // Mikka's ask to a review or verify comes first too, before the run's own status line.
     const independentCheck = !isThreadRun(data.thread)
-    if ((attempt?.first || (!attempt && independentCheck)) && asked) entries.push({ id: `${runId}:dispatch`, role: 'bot', at: at(data.thread.createdAt), author: sender,
-      parts: [{ kind: 'text', text: asked, node: <p className="whitespace-pre-wrap wrap-anywhere">{asked}</p> }] })
+    if ((attempt?.first || (!attempt && independentCheck)) && asked) entries.push({ id: `${runId}:dispatch`, role: 'bot', at: at(data.thread.createdAt), event: true,
+      parts: [{ kind: 'text', text: asked, node: <AgentMessageRow title={agentWords.dispatched(senderName)} subject={attempt?.taskTitle ?? detail?.name} open={sourceLink}>
+        <p className="whitespace-pre-wrap wrap-anywhere">{asked}</p>
+      </AgentMessageRow> }] })
     // As Capy, how the run went is one quiet centred line between rules where its work starts: 「工作了 2 分 3 秒」,
     // 「正在工作 · 12 秒」, 「在等你回复」; it replaces the old 「完成 · 开始于 … · Agent」 status line (Alex, 2026-11-15).
     {
       const status = view?.status ?? data.thread.status
-      const outcome = acceptedProducerOutcome(data.thread, issueId, allTasks)
       const waitingForReply = question === 'waiting' || status === 'waiting_input'
-      // The list's fallback group for an unjudged run is not a request for input. The line already says it works or waits,
-      // so the badge only adds what it does not (one running indicator, as Claude, ChatGPT and LobeHub).
-      const showBadge = activityLineBadgeShown(status, { waiting: waitingForReply, stopping: stopRequested, outcome })
-      const started = new Date(data.thread.createdAt).getTime()
-      const ended = data.thread.finishedAt ? new Date(data.thread.finishedAt).getTime() : Date.now()
-      const seconds = Math.max(0, Math.round((ended - started) / 1000))
-      const duration = seconds < 60 ? t('activityLine.seconds', { s: seconds })
+      // The line is words alone (Alex, 2026-11-23): no status or outcome badge beside it, whatever the state; the thread's
+      // header carries its status. A run with no real duration says no time rather than 「0 秒」.
+      const seconds = activityDurationSeconds({ active, createdAt: data.thread.createdAt, startedAt: data.thread.startedAt, finishedAt: data.thread.finishedAt })
+      const duration = seconds === null ? null : seconds < 60 ? t('activityLine.seconds', { s: seconds })
         : seconds < 3600 ? (seconds % 60 ? t('activityLine.minutes', { m: Math.floor(seconds / 60), s: seconds % 60 }) : t('activityLine.minutesOnly', { m: seconds / 60 }))
         : t('activityLine.hours', { h: Math.floor(seconds / 3600), m: Math.floor(seconds / 60) % 60 })
+      const ended = status === 'failed' ? [t('activityLine.failed')] : status === 'stopped' || status === 'cancelled' ? [t('activityLine.stopped')] : status === 'paused' ? [t('activityLine.paused')] : []
       const line = stopRequested ? t('stopping') : waitingForReply ? t('activityLine.waiting')
-        : active ? t('activityLine.working', { duration })
-        : [t('activityLine.worked', { duration }), ...status === 'failed' ? [t('activityLine.failed')] : status === 'stopped' || status === 'cancelled' ? [t('activityLine.stopped')] : []].join(' · ')
+        : active ? duration ? t('activityLine.working', { duration }) : t('activityLine.workingNow')
+        : [...duration ? [t('activityLine.worked', { duration })] : [], ...ended].join(' · ')
       // A finished run's tool groups stay in place, folded, as Codex shows them (#2923, Figma 1318:63).
       entries.push({ id: `${runId}:activity`, role: 'bot', at: at(data.thread.createdAt), event: true, parts: [{ kind: 'text', text: line, node:
         <div data-attempt-section={runId} data-event-line="" data-activity-line="" className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-          <span role="status">{line}</span>
-          {showBadge && <ThreadStatus status={status} outcome={outcome} waiting={waitingForReply} icon={false} />}
+          {line && <span role="status">{line}</span>}
           <ThreadOutlineIndex entries={outline} onReveal={id => revealRow.current?.(`${runId}:${id}`) ?? false} />
         </div> }] })
     }
@@ -581,7 +585,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         else {
           const files = splitChatFiles(item.text)
           entries.push({ id, role: 'bot', at: at(item.at),
-            author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} size="message" /> },
+            // Another person in the thread is named over their words (a person, not a second Bot or Agent).
+            author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} size="message" />, header: true },
             actions: <ReplyActions at={item.at ? at(item.at) : undefined} copyText={files.text} />,
             parts: [{ kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}>
               <span data-thread-item={item.id}><PersonReferences text={files.text} /></span>
@@ -708,6 +713,13 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const views: ThreadViewAction[] = []
   if (hasChanges && !viewingChanges) views.push({ id: 'changes', label: t('changesTab'), onSelect: () => setTab('changes') })
   if (acceptance && !accepting) views.push({ id: 'acceptance', label: t('acceptanceTab'), onSelect: () => setTab('acceptance') })
+  // The thread's status and outcome stand in its header, not beside the activity line (Alex, 2026-11-23): only what the
+  // line does not say (blocked, paused, an outcome to judge), never a second running indicator.
+  const headerStatus = view?.status ?? data?.thread.status ?? ''
+  const headerOutcome = data ? acceptedProducerOutcome(data.thread, issueId, allTasks) : null
+  const headerWaiting = question === 'waiting' || headerStatus === 'waiting_input'
+  const statusBadge = data && headerStatusBadgeShown(headerStatus, { waiting: headerWaiting, stopping: stopRequested, outcome: headerOutcome })
+    ? <ThreadStatus status={headerStatus} outcome={headerOutcome} waiting={headerWaiting} icon={false} /> : null
   const viewTitle = viewingChanges ? t('changesTab') : accepting ? t('acceptanceTab') : viewingArtifacts ? t('artifactsTab') : undefined
   const back = viewTitle ? () => setTab('chat') : onBack
   // Esc inside the thread is ←; in its composer or another field it only leaves the field (decision 0301). A window opened from it keeps its own Esc.
@@ -719,7 +731,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         ? () => { void stop() } : null} onOpenTask={onOpenTask} views={views}
       widen={widen ?? undefined} liveRunId={liveRunId}
       place={detail ? <ThreadRunPlace issueId={issueId} runId={runId} status={view?.status ?? data?.thread.status ?? ''} harness={detail.harness} botName={detail.agentName} /> : null}
-      acceptanceBadge={acceptance ? <AcceptanceStateBadge task={acceptance} /> : null}
+      acceptanceBadge={statusBadge || acceptance ? <>{statusBadge}{acceptance && <AcceptanceStateBadge task={acceptance} />}</> : null}
       identity={data?.thread.ownedByCurrentUser ? <ThreadExecutionIdentity runId={liveRunId} /> : null}
       showCost={data?.thread.ownedByCurrentUser ?? false} />}
     {tabbed && data && !readRejected && <ThreadArtifactsReader issueId={issueId} runId={runId} runIds={[runId, ...(data.thread.attempts ?? []).map(attempt => attempt.runId)]}

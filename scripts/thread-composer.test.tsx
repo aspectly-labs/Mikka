@@ -444,13 +444,38 @@ test('finished work without a request for input shows its duration without a wai
   }
 })
 
+test('the activity line is words alone: no status badge beside it in any state, and no time without a real duration (Alex, 2026-11-23)', () => {
+  for (const run of [{ status: 'failed', outcome: 'blocked' }, { status: 'paused' }, { status: 'succeeded', outcome: 'merged' }, { status: 'succeeded', outcome: 'needs_input' }]) {
+    thread = { ...base, ...run, finishedAt: new Date(12_000) }
+    const line = /<div[^>]*data-activity-line=""[^>]*>([\s\S]*?)<\/div>/.exec(render())?.[1] ?? ''
+    assert.doesNotMatch(line, /data-slot="badge"/, JSON.stringify(run))
+  }
+  thread = { ...base, status: 'succeeded', finishedAt: null }
+  assert.doesNotMatch(render(), /Worked for 0s|Worked for/)
+  thread = { ...base, status: 'succeeded', finishedAt: new Date(base.createdAt) }
+  assert.doesNotMatch(render(), /0s/)
+})
+
+test('a dispatched thread opens with one collapsed row for its brief, not a second speaker, and its Agent replies are quiet (Alex, 2026-11-23)', () => {
+  thread = { ...base, prompt: 'Check the chat structure', detail: { ...base.detail, agentName: 'Coordinator', harness: 'codex', botId: 'bot-1' } }
+  const html = render({ attempt: { n: 1, first: true } })
+  assert.match(html, /data-agent-message-row=""/)
+  assert.match(html, /Coordinator dispatched the task · ZHIX-2 Fix it/)
+  assert.match(html, /Check the chat structure/)
+  assert.match(html, /Open Coordinator&#x27;s chat/)
+  const dispatch = shownThread?.entries?.find(entry => entry.id === 'run-1:dispatch')
+  assert.ok(dispatch && dispatch.role === 'bot' && dispatch.event, 'an event row, not a message')
+  assert.equal(dispatch && 'author' in dispatch ? dispatch.author : undefined, undefined, 'no author for the brief')
+  for (const entry of shownThread?.entries ?? []) if (entry.role === 'bot' && entry.author) assert.equal(entry.author.quiet, true, `${entry.id} is quiet`)
+})
+
 test('acceptance resolves the current producer badge without rewriting its outcome or disabling its ordinary composer', () => {
   draftText = 'Keep this producer follow-up draft'
   thread = { ...base, outcome: 'needs_input' }
   acceptance = acceptedTask({ status: 'pending' })
-  expectStatusBadge(render(), 'waiting')
+  expectStatusBadge(render({ bare: false }), 'waiting')
   acceptance = acceptedTask()
-  const html = render()
+  const html = render({ bare: false })
   expectStatusBadge(html, 'resolved')
   assert.match(html, /Resolved<\/span>/)
   assert.equal(thread.outcome, 'needs_input', 'acceptance is a display fact, not a rewrite of the stored run outcome')
@@ -465,7 +490,7 @@ test('an acceptance display cannot grant Send when the server has withheld ordin
   draftText = 'Preserve a guarded draft'
   thread = { ...base, outcome: 'needs_input', replyAvailable: false, retryAvailable: false }
   acceptance = acceptedTask()
-  const html = render()
+  const html = render({ bare: false })
   expectStatusBadge(html, 'resolved')
   assert.equal(composer?.submitDisabled, true)
   assert.equal(composer?.value, draftText)
@@ -481,7 +506,7 @@ test('the root panel resolves its accepted latest continuation without changing 
   acceptance = acceptedTask({ candidateRunId: 'run-2' })
   // Opening a list row still addresses run-1. Its acceptance tab must not be
   // silently redirected to run-2 just to obtain the current status badge.
-  const html = render({ initialTab: 'acceptance' })
+  const html = render({ bare: false, initialTab: 'acceptance' })
   expectStatusBadge(html, 'resolved')
   assert.equal(composer?.value, draftText, 'the existing root conversation remains mounted')
   assert.equal(composer?.submitDisabled, false, 'display acceptance preserves the host Send permission')
@@ -490,8 +515,8 @@ test('the root panel resolves its accepted latest continuation without changing 
   assert.equal(replyCalls, 0)
 })
 
-// A working or waiting run is its activity line alone, with no badge beside it (activityLineBadgeShown, one running
-// indicator); `group: null` checks that the accepted candidate does not add one either.
+// The thread's status badge stands in its header, never beside the activity line (Alex, 2026-11-23); a working or waiting
+// run has none (headerStatusBadgeShown, one running indicator); `group: null` checks the accepted candidate adds none.
 const retainedPanelStates: { name: string; task?: Partial<FactoryTask>; run?: Record<string, unknown>; group: string | null; stopping?: boolean }[] = [
   { name: 'another issue', task: { issueId: 'other-issue' }, group: 'waiting' },
   { name: 'an earlier candidate producer', task: { candidateRunId: 'older-run' }, group: 'waiting' },
@@ -514,7 +539,7 @@ for (const scenario of retainedPanelStates) {
   test(`accepted candidate metadata does not replace the panel state of ${scenario.name}`, () => {
     thread = { ...base, outcome: 'needs_input', ...scenario.run }
     acceptance = acceptedTask(scenario.task)
-    const html = render()
+    const html = render({ bare: false })
     assert.doesNotMatch(html, /data-group="resolved"/)
     if (scenario.stopping) assert.match(html, /Stopping[^<]*<\/span>/)
     else if (scenario.group) expectStatusBadge(html, scenario.group, scenario.name)

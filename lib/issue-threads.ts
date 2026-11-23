@@ -22,12 +22,14 @@ export interface IssueThread {
   /** agent_runs.kind when the read carries it (IssueThreadRow.kind). */
   kind?: string
   createdAt: Date
+  /** When it started working, for its activity line's duration; absent on reads that do not carry it. */
+  startedAt?: Date | null
   finishedAt: Date | null
   ownedByCurrentUser: boolean
   /** Whose thread it is, shown on a teammate's thread instead of its content. */
   ownerName: string | null
   /** `bot`: the dispatching Bot's own bloub look, so every copy of it matches the bot list (R-36); null for the Coordinator's own runs. */
-  detail: { name: string; agentName: string; harness: string; agentId?: string; observedModel?: string | null; summary: string | null; /** Only full owner reads carry the summary's persisted source. */ summarySource?: 'report' | 'error' | null; bot?: { color: string; shape: string } | null; /** A custom Agent Profile that did the run; absent for Default and runs before Profiles. */ profile?: ThreadProfile | null } | null
+  detail: { name: string; agentName: string; harness: string; agentId?: string; observedModel?: string | null; summary: string | null; /** Only full owner reads carry the summary's persisted source. */ summarySource?: 'report' | 'error' | null; bot?: { color: string; shape: string } | null; /** The Bot that dispatched it (the Coordinator too), whose chat its dispatch row opens. */ botId?: string | null; /** A custom Agent Profile that did the run; absent for Default and runs before Profiles. */ profile?: ThreadProfile | null } | null
   /**
    * BE-18 run chain (GitHub Actions run_id + run_attempt): a question continuation is a new
    * run in the same thread. `id` is the root run (attempt 1); stop, status and send act on
@@ -137,7 +139,8 @@ export interface IssueThreadRow {
   outcome?: string | null
   /** agent_runs.kind: `implement` and `plan` are the conversation; `acceptance` is a Factory check. */
   kind?: string | null
-  botColor?: string | null; botShape?: string | null
+  botColor?: string | null; botShape?: string | null; botId?: string | null
+  startedAt?: Date | null
   /** The run's frozen Agent Profile summary with its current mark (app/actions/agents.ts); read by threadProfile. */
   profile?: unknown
 }
@@ -186,11 +189,11 @@ export function projectIssueThreads(rows: readonly (IssueThreadRow | IssueThread
     .slice(0, ISSUE_THREAD_LIMIT)
     .map(row => ({
       failureDetails: readCompactRunFailure(row.failureDetails),
-      ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), id: row.id, status: row.status, outcome: row.outcome ?? null, ...(row.kind ? { kind: row.kind } : {}), createdAt: row.createdAt, finishedAt: row.finishedAt, ownedByCurrentUser: row.userId === viewerId,
+      ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), id: row.id, status: row.status, outcome: row.outcome ?? null, ...(row.kind ? { kind: row.kind } : {}), createdAt: row.createdAt, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}), finishedAt: row.finishedAt, ownedByCurrentUser: row.userId === viewerId,
       stopping: runIsActive(row.status) && !!row.stopRequestedAt,
       ownerName: row.userId === viewerId ? null : row.ownerName ?? null,
       detail: canReadThread(row.userId, viewerId, memberIds)
-        ? { name: 'prompt' in row ? row.title || threadName(row.prompt, row.agentName) : threadTitle({ name: row.name }) || row.agentName, agentName: row.agentName, harness: row.harness, ...(row.agentId ? { agentId: row.agentId } : {}), ...('report' in row ? runSummaryView({ report: row.report, error: row.error }) : { summary: row.summary, ...('observedModel' in row ? { observedModel: row.observedModel } : {}) }), bot: row.botColor && row.botShape ? { color: row.botColor, shape: row.botShape } : null, ...(row.profile !== undefined ? { profile: threadProfile(row.profile) } : {}) }
+        ? { name: 'prompt' in row ? row.title || threadName(row.prompt, row.agentName) : threadTitle({ name: row.name }) || row.agentName, agentName: row.agentName, harness: row.harness, ...(row.agentId ? { agentId: row.agentId } : {}), ...('report' in row ? runSummaryView({ report: row.report, error: row.error }) : { summary: row.summary, ...('observedModel' in row ? { observedModel: row.observedModel } : {}) }), bot: row.botColor && row.botShape ? { color: row.botColor, shape: row.botShape } : null, ...(row.botId !== undefined ? { botId: row.botId } : {}), ...(row.profile !== undefined ? { profile: threadProfile(row.profile) } : {}) }
         : null,
       rootRunId: row.id, latestRunId: row.id,
       attempts: [{ ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), runId: row.id, attempt: 1, status: row.status, outcome: row.outcome ?? null, stopping: runIsActive(row.status) && !!row.stopRequestedAt, createdAt: row.createdAt, finishedAt: row.finishedAt }],

@@ -562,6 +562,17 @@ test('the last unread reply marks its read end inside its action line, not as an
 })
 
 
+test('a Bot chat reply has no author header: quiet, with no mark or name over it (author headers in group chat only, Alex, 2026-11-23)', async () => {
+  chatItems = [{ id: 'fixture-quiet-reply', position: 1, from: 'coordinator', text: '好的', tools: [], threads: [], artifacts: [], createdAt: '2026-11-03T04:00:00Z' }]
+  await act(async () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" key="quiet" />))
+  const replies = screen!.entries!.filter(entry => entry.role === 'bot' && !entry.event)
+  assert.ok(replies.length > 0)
+  for (const reply of replies) {
+    assert.ok(reply.role === 'bot' && reply.author?.quiet, `${reply.id} is quiet`)
+    assert.ok(reply.role === 'bot' && !reply.author?.header, `${reply.id} has no header`)
+  }
+})
+
 test('an idle page detects the new build on its minute probe and keeps the draft mounted', async t => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const page = () => <><VersionGuard /><Textarea defaultValue="keep this draft" /></>

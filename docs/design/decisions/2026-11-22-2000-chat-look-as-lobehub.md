@@ -3,8 +3,8 @@
 - Date: 2026-11-22 20:00 UTC
 - Status: accepted (Alex, 2026-11-22: an explicit approval for the paid-block changes it needs)
 - Supersedes: [2026-11-22-1500-chat-reply-actions-on-hover](2026-11-22-1500-chat-reply-actions-on-hover.md), part 2 (the two-step rhythm). Its parts 1 (every action line waits for hover, keeping its space) and 3 (the read end adds no row) stand.
-- Amends: [2026-11-22-1510-group-chat-as-bot-chat](2026-11-22-1510-group-chat-as-bot-chat.md), part 2: every chat's replies now have a header, not only a group's; the 680px reading column and the time dividers of part 1 are gone.
-- Amends: 2026-11-15 (Capy's thread, hosted `agent-thread.reply-like-capy.patch`): a reply is no longer quiet in the Bot chat or an Agent thread.
+- Amends: [2026-11-22-1510-group-chat-as-bot-chat](2026-11-22-1510-group-chat-as-bot-chat.md), part 1: the 680px reading column and the time dividers are gone. Its part 2 stands: only a group's replies have a header.
+- Amended 2026-11-23 (Alex; [2026-11-23-0300-agent-messages-as-rows](2026-11-23-0300-agent-messages-as-rows.md)): **author headers in group chat only.** A single chat (a Bot chat, the Coordinator chat, an Agent thread) keeps the quiet reply of 2026-11-15 (Capy's thread, hosted `agent-thread.reply-like-capy.patch`, `author.quiet`): no Bot or Agent mark and no name line over a reply. Everything else here applies to every chat.
 
 ## Context
 
@@ -16,7 +16,7 @@ Every chat drawn by `ThreadScreen` (hosted affectUI Agent / Thread, `mikka.look:
 
 1. **Column.** It fills the conversation pane up to 960px with 16px gutters: 928px of reading width at 1440 with no side panel, the pane less 32px on a phone. The composer takes the same width.
 2. **Rows.** Messages touch; each has 8px above and below and keeps its action bar's row (8px plus 28px) whether the bar shows or not, so messages stand about 60px ink to ink.
-3. **Header.** A reply opens with the author's mark at 28px and the name at 14px/500 (LobeHub `Title.tsx`), 8px over the words; the words start at the mark's left edge. No time beside the name.
+3. **Header, group chat only** (Alex, 2026-11-23). In a group, a reply opens with the author's mark at 28px and the name at 14px/500 (LobeHub `Title.tsx`), 8px over the words; the words start at the mark's left edge. No time beside the name. A single chat's reply has no header: its words alone, as Capy's (decision 2026-11-15); an event line has none either.
 4. **No centred time.** LobeHub's conversation has no time or day divider (only its separate Channels view has a day divider), so Mikka draws none. The time is in each message's action bar, on hover.
 5. **Action bar.** LobeHub's pill: 8px under the message, radius 8, 24px buttons, 2px inside, the faint fill (`--color-background-secondary-default`); on the left under a reply and on the right under the person's bubble (no fill there, as LobeHub). Mikka's own actions only: the time, Reply, Copy, the cited pages, reactions, and Edit and Regenerate where a thread has them. No More menu.
 6. **The person's bubble.** 8px 12px plus LobeHub's 4px Markdown line inset (12px all round), radius 12, the faint fill; one line is 46px tall.
@@ -25,14 +25,14 @@ Every chat drawn by `ThreadScreen` (hosted affectUI Agent / Thread, `mikka.look:
 
 Exceptions, kept as Mikka's:
 
-- **Avatars**: Mikka's marks (BotAvatar, LetterAvatar, HarnessMark), drawn at LobeHub's 28px.
+- **Avatars**: Mikka's marks (BotAvatar, LetterAvatar), drawn at LobeHub's 28px, and only in group chat (Alex, 2026-11-23).
 - **Composer tools**: Mikka's + and Send; LobeHub's row of six tool icons and its second row are not added.
-- **Same-author runs merge as Slack's** (2026-11-22-1510): one header, the run's messages 4px apart, the earlier messages' bars float at the row's end on hover; only the run's last keeps its bar's row.
+- **Same-author runs merge as Slack's** (2026-11-22-1510): in a group one header, the run's messages 4px apart, the earlier messages' bars float at the row's end on hover; only the run's last keeps its bar's row.
 
 ## Consequences
 
 - `MessageTimeStamp` and the 15-minute grouping (`stampStarts`) are removed; `lib/chat-time-stamps.ts` keeps the words for the bar's time.
-- `coordinator-chat.tsx` and `issue-thread-panel.tsx` give their replies a header author; the hosted slot heads every reply and no longer passes `quiet`.
+- `coordinator-chat.tsx` and `issue-thread-panel.tsx` give their replies a quiet author (author headers in group chat only, Alex, 2026-11-23); `group-chat-view.tsx` gives each speaker a header author. The hosted slot heads a reply only for a header author and keeps every other reply quiet.
 - The template's `mikka.before` slot stays, unused.
 - The code block (beUI's, `components/agents/code-block.tsx`, used as shipped elsewhere) takes LobeHub's 8px corners and 32px header in the chat, by the hosted thread's CSS; its copy button and line numbers stay.
 - Remaining differences from LobeHub besides the exceptions: LobeHub reserves a 19px row above the person's bubble for the time on hover (Mikka keeps the time in the bar); Mikka's folding of tools stays its own; the code block keeps its 420px max height, line numbers and copy button.

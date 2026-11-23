@@ -696,8 +696,9 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   if (failedAt === null && !welcomeFailed && !quotaStopped && (modelRequired || welcomeRequestFailed || (data?.error && !working)))
     entries.push({ id: `failure:${lastSaid?.position ?? 'chat'}`, role: 'bot', at: Date.now(), parts: [plainFailure ? liveFailurePart
       : { kind: 'error', failure: 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: failureNotice }] })
-  // As LobeHub's chat, the Bot's reply opens with its mark and name (Alex, 2026-11-22: chat look as LobeHub, except avatars).
-  const botAuthor = { id: botId ?? 'coordinator', name, mark: avatar('message'), header: true }
+  // Author headers in group chat only (Alex, 2026-11-23): as Capy, the Bot's reply is its words alone (decision
+  // 2026-11-15), no mark or name over it; screen readers still get the name.
+  const botAuthor = { id: botId ?? 'coordinator', name, mark: avatar('message'), quiet: true }
   for (const entry of entries) if (entry.role === 'bot' && !entry.event && !entry.author) entry.author = botAuthor
   const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
     ? <p role="status">{tNav('writingWelcome')}</p>

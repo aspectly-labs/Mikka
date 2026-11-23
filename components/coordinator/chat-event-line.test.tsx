@@ -53,3 +53,31 @@ test('an event line reads as its thread title or its task code, then what happen
     container.remove()
   }
 })
+
+test("an Agent's message back is one collapsed row in the tool rows' look, not another speaker (Alex, 2026-11-23)", async () => {
+  const container = browser.document.createElement('div') as unknown as HTMLElement
+  document.body.append(container)
+  const root = createRoot(container)
+  const withSummary: AgentCitations = { ...citations, sources: { ...sources, [RUN]: { ...sources[RUN] as Extract<CitationSource, { kind: 'run' }>, summary: 'Three checks pass.' } } }
+  const render = (line: Parameters<typeof ChatEventLine>[0]['line'], cites = citations) => act(async () => {
+    root.render(<NextIntlClientProvider locale="en" timeZone="UTC" messages={messages}><ChatEventLine line={line} citations={cites} /></NextIntlClientProvider>)
+  })
+  try {
+    await render({ kind: 'runFinished', runId: RUN, issueId: null, status: 'succeeded', title: null }, withSummary)
+    const row = container.querySelector('[data-agent-message-row]')
+    assert.ok(row, 'a collapsed row')
+    assert.equal(row?.querySelector('button')?.getAttribute('aria-expanded'), 'false', 'collapsed by default')
+    assert.equal(row?.querySelector('button')?.textContent, 'Reply from Codex · ALEX-45 Create the handoff')
+    assert.match(row?.querySelector('[data-agent-message-body]')?.textContent ?? '', /Three checks pass\.[\s\S]*Open thread/)
+    assert.equal(row?.querySelector('button [data-slot="badge"], button [data-status-icon]'), null, 'no status glyph')
+    await render({ kind: 'runReport', runId: RUN, issueId: null, status: null, title: null, message: 'Half way there' })
+    assert.equal(container.querySelector('[data-agent-message-row] button')?.textContent, 'Message from Codex · ALEX-45 Create the handoff')
+    // Nothing of its own to say: the line stays as it was.
+    await render({ kind: 'runFinished', runId: RUN, issueId: null, status: 'succeeded', title: null })
+    assert.equal(container.querySelector('[data-agent-message-row]'), null)
+    assert.ok(container.querySelector('[data-event-line]'))
+  } finally {
+    await act(async () => { root.unmount() })
+    container.remove()
+  }
+})

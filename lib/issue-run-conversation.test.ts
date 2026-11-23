@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { turnChoiceShown, activityLineBadgeShown, chainChunks, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, runSummaryText, runSummaryView, threadItems, threadStepOutput } from './issue-run-conversation'
+import { turnChoiceShown, activityDurationSeconds, headerStatusBadgeShown, chainChunks, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, runSummaryText, runSummaryView, threadItems, threadStepOutput } from './issue-run-conversation'
 import { createSecretMasker, withCredentialMasking } from './secrets/mask'
 import { maskStreamedChunks } from './secrets/stream-mask'
 
@@ -260,16 +260,30 @@ test('tool calls carry kind, status, target and the daemon\'s truncation mark (#
   assert.equal(threadStepStatus((await steps(codex))[0], false), 'failed')
 })
 
-test('the activity line is the one running indicator: no status badge beside a working, waiting or stopping run', () => {
+test('the activity line counts from the run\'s start to its end, and a run with no real duration shows none (never 「0 秒」)', () => {
+  const at = (t: string) => new Date(`2026-11-20T${t}Z`)
+  const now = at('16:00:00')
+  // A finished run: startedAt to finishedAt, not the queue time before it started.
+  assert.equal(activityDurationSeconds({ active: false, createdAt: at('15:40:00'), startedAt: at('15:42:00'), finishedAt: at('15:44:03') }, now), 123)
+  // No startedAt (an older run): from when it was made.
+  assert.equal(activityDurationSeconds({ active: false, createdAt: at('15:42:00'), finishedAt: at('15:42:30') }, now), 30)
+  // A working run counts to now.
+  assert.equal(activityDurationSeconds({ active: true, createdAt: at('15:58:00'), startedAt: at('15:59:00'), finishedAt: null }, now), 60)
+  // No real duration: an ended run with no finish time, a finish before its start, or under a second.
+  assert.equal(activityDurationSeconds({ active: false, createdAt: at('15:42:00'), startedAt: at('15:42:00'), finishedAt: null }, now), null)
+  assert.equal(activityDurationSeconds({ active: false, createdAt: at('15:43:00'), startedAt: at('15:43:00'), finishedAt: at('15:42:00') }, now), null)
+  assert.equal(activityDurationSeconds({ active: false, createdAt: at('15:43:00'), finishedAt: new Date(at('15:43:00').getTime() + 400) }, now), null)
+})
+
+test('the header carries the status badge only for what the activity line does not say', () => {
   const none = { waiting: false, stopping: false, outcome: null }
-  for (const status of ['queued', 'preparing', 'running', 'finishing', 'waiting_input']) assert.equal(activityLineBadgeShown(status, none), false, status)
-  assert.equal(activityLineBadgeShown('succeeded', { ...none, waiting: true }), false)
-  assert.equal(activityLineBadgeShown('failed', { ...none, stopping: true }), false)
-  // What the line does not say stays: a run that ended blocked, paused, or with an outcome to judge.
-  assert.equal(activityLineBadgeShown('failed', none), true)
-  assert.equal(activityLineBadgeShown('paused', none), true)
-  assert.equal(activityLineBadgeShown('succeeded', { ...none, outcome: 'merged' }), true)
-  assert.equal(activityLineBadgeShown('succeeded', none), false)
+  for (const status of ['queued', 'preparing', 'running', 'finishing', 'waiting_input']) assert.equal(headerStatusBadgeShown(status, none), false, status)
+  assert.equal(headerStatusBadgeShown('succeeded', { ...none, waiting: true }), false)
+  assert.equal(headerStatusBadgeShown('failed', { ...none, stopping: true }), false)
+  assert.equal(headerStatusBadgeShown('failed', none), true)
+  assert.equal(headerStatusBadgeShown('paused', none), true)
+  assert.equal(headerStatusBadgeShown('succeeded', { ...none, outcome: 'merged' }), true)
+  assert.equal(headerStatusBadgeShown('succeeded', none), false)
 })
 
 test('a run has one Stop: the composer while it works there, the header only where the composer cannot', () => {

@@ -19,10 +19,24 @@ export function runIsWorking(status: string) {
 }
 
 /**
- * The status badge beside a run's activity line (「正在工作 · 18 分」, 「在等你回复」) only adds what the line does not
- * say: a working, waiting or stopping run is the line alone, as one running indicator in Claude, ChatGPT and LobeHub.
+ * How long a run worked, for its activity line (「工作了 2 分 3 秒」): from its start (when it was made, for a run with no
+ * start recorded) to its end, or to now while it works. A run with no real duration (an ended run with no finish time,
+ * a finish before its start, under a second) has none, and the line says no time rather than 「0 秒」. The line carries
+ * no status badge (Alex, 2026-11-23): the outcome is the thread header's.
  */
-export function activityLineBadgeShown(status: string, { waiting, stopping, outcome }: { waiting: boolean; stopping: boolean; outcome: unknown }) {
+export function activityDurationSeconds(run: { active: boolean; createdAt: Date | string; startedAt?: Date | string | null; finishedAt: Date | string | null }, now = new Date()): number | null {
+  const start = new Date(run.startedAt ?? run.createdAt).getTime()
+  const end = run.active ? now.getTime() : run.finishedAt ? new Date(run.finishedAt).getTime() : NaN
+  const seconds = Math.round((end - start) / 1000)
+  return Number.isFinite(seconds) && seconds >= 1 ? seconds : null
+}
+
+/**
+ * The status badge the thread's header carries (Alex, 2026-11-23: never beside the activity line) only adds what the
+ * activity line does not say: a working, waiting or stopping run has none; a run that ended blocked, paused, or with an
+ * outcome to judge has one.
+ */
+export function headerStatusBadgeShown(status: string, { waiting, stopping, outcome }: { waiting: boolean; stopping: boolean; outcome: unknown }) {
   if (stopping || waiting || runIsActive(status)) return false
   return status === 'failed' || status === 'paused' || outcome != null
 }

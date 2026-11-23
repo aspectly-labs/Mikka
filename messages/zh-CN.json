@@ -5118,7 +5118,9 @@
       "seconds": "{s} 秒",
       "minutes": "{m} 分 {s} 秒",
       "minutesOnly": "{m} 分",
-      "hours": "{h} 小时 {m} 分"
+      "hours": "{h} 小时 {m} 分",
+      "paused": "已暂停",
+      "workingNow": "正在工作"
     },
     "cost": {
       "label": "本线程费用 {amount}",
@@ -9312,5 +9314,14 @@
       "restore": "恢复右栏宽度",
       "add": "打开标签页"
     }
+  },
+  "AgentMessageRow": {
+    "dispatched": "{name} 派发了任务",
+    "sent": "{name} 发来消息",
+    "reply": "收到 {name} 的回复",
+    "message": "收到 {name} 的消息",
+    "question": "{name} 提了问题",
+    "openChat": "打开 {name} 的聊天",
+    "openThread": "打开线程"
   }
 }

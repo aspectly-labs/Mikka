@@ -5118,7 +5118,9 @@
       "seconds": "{s}s",
       "minutes": "{m}m {s}s",
       "minutesOnly": "{m}m",
-      "hours": "{h}h {m}m"
+      "hours": "{h}h {m}m",
+      "paused": "paused",
+      "workingNow": "Working"
     },
     "cost": {
       "label": "This thread cost {amount}",
@@ -9312,5 +9314,14 @@
       "restore": "Restore right column width",
       "add": "Open a tab"
     }
+  },
+  "AgentMessageRow": {
+    "dispatched": "{name} dispatched the task",
+    "sent": "Message from {name}",
+    "reply": "Reply from {name}",
+    "message": "Message from {name}",
+    "question": "Question from {name}",
+    "openChat": "Open {name}'s chat",
+    "openThread": "Open thread"
   }
 }

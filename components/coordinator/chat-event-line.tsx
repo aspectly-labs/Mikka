@@ -3,6 +3,10 @@
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { AgentCitationsContext, CitationChip, type AgentCitations } from '@/components/workspace/agent-citations'
 import type { EventLine } from '@/lib/coordinator/event-line'
+import { AgentMessageRow, useAgentMessageWords } from '@/components/chat/agent-message-row'
+import { harnessName } from '@/components/labels/entity-labels'
+import { AgentMarkdown } from '@/components/workspace/agent-markdown'
+import { openThread } from '@/components/workspace/workspace-navigation'
 
 const RUN_ENDED = new Set(['succeeded', 'failed', 'stopped', 'cancelled'])
 const ACTIONS = new Set(['done', 'failed', 'declined'])
@@ -13,6 +17,28 @@ const SCHEDULE_ENDED = new Set(['succeeded', 'failed', 'skipped', 'cancelled'])
  * (R-15), then what happened. The text the model got (English, ids, instructions) is never shown.
  */
 export function ChatEventLine({ line, citations }: { line: EventLine; citations: AgentCitations }) {
+  const words = useAgentMessageWords()
+  const tEvents = useTranslations('Coordinator.events')
+  const source = line.runId ? citations.sources[line.runId] : undefined
+  const runSource = source?.kind === 'run' ? source : undefined
+  // An Agent's message back (its report, its question, a finished run's summary) is one collapsed row, as Claude Code shows
+  // a sub-agent's reply (Alex, 2026-11-23): never another speaker in the chat; it opens to the whole message.
+  const said = line.message ?? (line.kind === 'runFinished' ? runSource?.summary ?? undefined : undefined)
+  if (said && (line.kind === 'runFinished' || line.kind === 'runReport' || line.kind === 'runQuestion')) {
+    const who = (runSource ? harnessName(runSource.harness) || runSource.agentName : null) || tEvents('anAgent')
+    const issue = runSource?.issue
+    const subject = issue ? [issue.identifier, issue.title].filter(Boolean).join(' ') : runSource ? runSource.title ?? runSource.name : null
+    const title = line.kind === 'runQuestion' ? words.question(who) : line.kind === 'runReport' ? words.message(who) : words.reply(who)
+    return <AgentCitationsContext value={citations}>
+      <AgentMessageRow title={title} subject={subject} open={line.runId ? { label: words.openThread, onOpen: () => openThread(line.runId!, issue?.id ?? line.issueId) } : undefined}>
+        <AgentMarkdown text={said} />
+      </AgentMessageRow>
+    </AgentCitationsContext>
+  }
+  return <ChatEventText line={line} citations={citations} />
+}
+
+function ChatEventText({ line, citations }: { line: EventLine; citations: AgentCitations }) {
   const t = useTranslations('Coordinator.events')
   const tIssue = useTranslations('Issue')
   const run = line.runId && citations.sources[line.runId]?.kind === 'run' ? line.runId : null

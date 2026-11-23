@@ -3,10 +3,10 @@ import type { Locator, Page } from '@playwright/test'
 import { Pool } from 'pg'
 import { test, expect, app, browserClientHeaders, register, seedTask } from './fixtures'
 
-// Alex, 2026-11-22 (chat look as LobeHub): a reply opens with its author's mark and name, and every mark fills the same
-// 28px box: a Bot, a coding agent (Codex, Claude Code), Mikka and a person. The hosted thread draws the box
-// (slots/thread.tsx); the marks come from this app. This checks what is drawn, not only the box: a 14px Codex glyph in a
-// 28px box once read as a much smaller avatar than the Coordinator's beside it.
+// Alex, 2026-11-22 (chat look as LobeHub): in a group chat a reply opens with its author's mark and name, and every mark
+// fills the same 28px box: a Bot and a person. The hosted thread draws the box (slots/thread.tsx); the marks come from this
+// app. This checks what is drawn, not only the box. Author headers are for group chat only (Alex, 2026-11-23): a Bot chat,
+// the Coordinator and an Agent thread show no Bot or Agent mark or name over a reply (the quiet reply, decision 2026-11-15).
 
 const MARK = 28
 
@@ -50,7 +50,7 @@ const header = (scope: Page | Locator, name: string) => scope.locator('.ui-th-wh
 
 test.beforeEach(async ({ page }) => { await page.setViewportSize({ width: 1440, height: 1000 }) })
 
-test('the Coordinator, Codex and Claude Code marks each fill the 28px header box', async ({ page }) => {
+test('a Coordinator reply and a Codex or Claude Code thread reply have no author mark or name (group chat only)', async ({ page }) => {
   const { email } = await register(page)
   // The personal Coordinator exists once its chat has opened.
   await expect(page.getByRole('textbox', { name: '给 Coordinator 发消息', exact: true })).toBeVisible()
@@ -76,18 +76,19 @@ test('the Coordinator, Codex and Claude Code marks each fill the 28px header box
   } finally { await pool.end() }
 
   await page.reload()
-  await expectFullMark(header(page, 'Coordinator'), 'The Coordinator')
+  const chat = page.locator('.ui-th-agent').filter({ hasText: '收到，我来安排。' }).first()
+  await expect(chat).toBeVisible()
+  await expect(chat.locator('.ui-th-who')).toHaveCount(0)
+  await expect(chat).not.toHaveAttribute('data-author-header', /.*/)
 
   for (const [index, [name, prompt]] of [['Codex', '整理登录重定向'], ['Claude Code', '补一条回归测试']].entries()) {
     // A thread link opens the run's conversation beside the chat.
     await page.goto(app(`/?thread=${runs[index]}`))
     const reply = page.locator('.ui-th-agent').filter({ hasText: `${prompt}：已开始。` }).first()
     await expect(reply).toBeVisible()
-    await expectFullMark(reply.locator('.ui-th-who'), name)
+    await expect(reply.locator('.ui-th-who'), `${name}'s reply has no header`).toHaveCount(0)
+    await expect(page.locator('.ui-th-who:visible'), 'no author line anywhere in a single thread').toHaveCount(0)
   }
-  // No other line in the thread heads itself with a smaller mark: an Agent switch between the runs is a line, not an author.
-  const headers = page.locator('.ui-th-who:visible')
-  for (let index = 0; index < await headers.count(); index++) await expectFullMark(headers.nth(index), `Header ${index + 1}`)
 })
 
 test('a Bot and a person each fill the 28px header box in a group', async ({ page, playwright, baseURL }) => {

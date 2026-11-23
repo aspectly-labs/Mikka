@@ -17,6 +17,28 @@ export interface EventLine {
   status: string | null
   /** A task's, an artifact's or a schedule's title. */
   title: string | null
+  /** An Agent's own words to the chat (a report, a question), for its collapsed row (Alex, 2026-11-23); never the model's wrapper. */
+  message?: string
+}
+
+/** The Agent's words in a report or question event (eventPrompt), without the lines written for the model. */
+function agentWords(kind: EventLineKind, text: string): string | undefined {
+  const lines = text.split('\n')
+  if (kind === 'runReport') {
+    const at = /^\[Event\] (?:The agent in run \S+ reports progress|An Agent reports coordination data): /.exec(lines[0] ?? '')
+    if (!at) return undefined
+    const rest = [lines[0]!.slice(at[0].length), ...lines.slice(1)]
+    while (rest.length > 1 && /^(Issue: \S+\.|Triage: .*)$/.test(rest.at(-1)!)) rest.pop()
+    const words = rest.join('\n').trim()
+    return words && words !== 'undefined' ? words : undefined
+  }
+  if (kind === 'runQuestion') {
+    const at = /^\[Event\] The agent in run \S+ asks the person: (.*)$/.exec(lines[0] ?? '')
+    if (!at?.[1]) return undefined
+    const options = lines.find(line => line.startsWith('Options: '))?.slice('Options: '.length)
+    return options ? `${at[1]}\n\n${options}` : at[1]
+  }
+  return undefined
 }
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -63,6 +85,8 @@ export function eventLine(eventKind: string | null | undefined, text: string, ob
     if (schedule) return { kind: schedule[3] ? 'scheduleDue' : 'scheduleRan', runId: null, issueId: null, status: schedule[2] ?? null, title: schedule[1] ?? null }
     if (first === LEGACY_SCHEDULE_RESULT) return { kind: 'scheduleRan', runId: null, issueId: null, status: null, title: null }
   }
+  const message = agentWords(kind, text)
+  if (message) return { kind, runId, issueId, status, title, message }
   if (kind === 'action' && !status) status = /approved .* and it is done/.test(first) ? 'done' : / but it failed/.test(first) ? 'failed' : /declined/.test(first) ? 'declined' : null
   return { kind, runId, issueId, status, title }
 }
