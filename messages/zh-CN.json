@@ -1973,8 +1973,8 @@
       "expiry": {
         "30": "30 天",
         "90": "90 天",
-        "never": "永不过期",
-        "365": "1 年"
+        "365": "1 年",
+        "never": "永不过期"
       },
       "copyFailed": "复制失败。请手动选中并复制",
       "shownOnce": "只显示这一次。",
@@ -10162,7 +10162,13 @@
     "retry": "立即重试",
     "updateTitle": "更新 Mikka 后继续",
     "browserTitle": "在浏览器中继续",
-    "offlineHint": "等待连接恢复。"
+    "offlineHint": "等待连接恢复。",
+    "forward": "前进",
+    "tabsLabel": "已保存的标签页",
+    "newTab": "新建标签页",
+    "closeTab": "关闭{title}",
+    "tabHome": "首页",
+    "tabSettings": "设置"
   },
   "ConversationDirectory": {
     "loading": "正在加载线程…",
