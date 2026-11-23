@@ -44,12 +44,19 @@ export async function listNeedsYou(user: NeedsYouUser): Promise<NeedsYouItem[]> 
   }
   // Limits: threads paused on an exhausted subscription quota (lib/run-quota.ts)
   // wait on the person — retry once the window resets or they switch to credits.
-  const paused = await pool.query<{ id: string; issueId: string | null; workspaceId: string | null; updatedAt: Date }>(
-    `SELECT id, "issueId", "workspaceId", "updatedAt" FROM agent_runs
-      WHERE "userId" = $1 AND status = 'paused' AND "pauseReason" = 'quota_exhausted'`, [user.id])
+  // A thread is named by its chain's root run, the same id the quota cards use.
+  const paused = await pool.query<{ id: string; workspaceId: string | null; updatedAt: Date }>(
+    `SELECT DISTINCT root.id::text AS id, p."workspaceId", p."updatedAt" FROM agent_runs p
+    JOIN LATERAL (
+      WITH RECURSIVE up AS (
+        SELECT id,"retryOf","continuesRunId" FROM agent_runs WHERE id=p.id
+        UNION ALL
+        SELECT r.id,r."retryOf",r."continuesRunId" FROM agent_runs r JOIN up ON up."retryOf"=r.id OR up."continuesRunId"=r.id)
+      SELECT id FROM up WHERE "retryOf" IS NULL AND "continuesRunId" IS NULL LIMIT 1) root ON true
+    WHERE p."userId" = $1 AND p.status = 'paused' AND p."pauseReason" = 'quota_exhausted'`, [user.id])
   for (const run of paused.rows) {
     if (await namedOutsideToken(user, [run.workspaceId])) continue
-    items.push({ kind: 'limit', threadId: run.issueId ?? run.id, createdAt: run.updatedAt.toISOString(), detail: 'quota_exhausted' })
+    items.push({ kind: 'limit', threadId: run.id, createdAt: run.updatedAt.toISOString(), detail: 'quota_exhausted' })
   }
   return items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }
