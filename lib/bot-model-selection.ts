@@ -1,4 +1,5 @@
 import "server-only";
+import { z } from "zod";
 import { pool } from "./db";
 import { ActionFailureError } from "./action-error";
 import { botModelEffort } from "./bot-model-effort";
@@ -46,7 +47,8 @@ async function freezeBotModelChoice(
   // (borrowed before owner-only, decision 2026-11-17): refuse the run as
   // theirs-not-yours, not an unselected model — menus keep their fallback
   // (issue #3057).
-  if (selected && !(await settings.chatBinding(settingsScope, selected))
+  if (selected && z.uuid().safeParse(selected).success
+    && !(await settings.chatBinding(settingsScope, selected))
     && await settings.bindingHeldElsewhere(settingsScope, selected)) {
     const { SubscriptionRefusal } = await import("@mikka/protocol/subscription");
     throw new SubscriptionRefusal("account_unavailable");
