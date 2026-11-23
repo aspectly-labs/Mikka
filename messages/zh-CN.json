@@ -3427,7 +3427,48 @@
       "included": "你的订阅或 API Key",
       "calls": "{count} 次调用",
       "unpricedCalls": "另有 {count} 次调用没有单次价格",
-      "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
+      "includedNote": "不扣 Mikka 额度；订阅不按次计价。",
+      "groupBy": "费用按…分",
+      "byThread": "按线程",
+      "byModel": "按模型",
+      "byMachine": "按机器",
+      "minutes": "{count} 分钟",
+      "tokens": "{input} 入 · {output} 出",
+      "unbilled": "未计费",
+      "unknownSize": "未知规格"
+    },
+    "threadMenu": {
+      "copyLink": "复制链接",
+      "copied": "已复制",
+      "copyFailed": "复制失败",
+      "share": "分享…",
+      "shareTitle": "分享这条线程",
+      "shareFailed": "无法分享",
+      "copy": "复制",
+      "done": "完成",
+      "revoke": "撤销分享",
+      "revoked": "已撤销分享",
+      "forkFull": "分叉 · 完整线程",
+      "forkSummary": "分叉 · 摘要",
+      "forkFailed": "无法分叉线程",
+      "moveToTask": "移动到任务…",
+      "moveTitle": "移动到任务",
+      "moveSearch": "搜索任务",
+      "moveClear": "无任务",
+      "moveEmpty": "没有匹配的任务",
+      "moved": "已移动",
+      "moveFailed": "无法移动线程",
+      "tags": "标签…",
+      "tagsTitle": "线程标签",
+      "tagsLabel": "标签",
+      "tagsPlaceholder": "标签，标签…",
+      "tagsSaved": "标签已保存",
+      "tagsFailed": "无法保存标签",
+      "delete": "删除线程…",
+      "deleteTitle": "删除这条线程？",
+      "deleteBody": "线程会立即从列表消失，30 天内可恢复。",
+      "deleted": "线程已删除",
+      "deleteFailed": "无法删除线程"
     }
   },
   "FactoryFlow": {
@@ -4555,10 +4596,22 @@
         "inProgress": "进行中",
         "untitled": "未命名线程",
         "loadError": "概览读取失败",
-        "kinds": { "approval": "等待审批", "question": "等待回答", "limit": "已达用量上限" },
-        "status": { "queued": "排队中", "running": "运行中" }
+        "kinds": {
+          "approval": "等待审批",
+          "question": "等待回答",
+          "limit": "已达用量上限"
+        },
+        "status": {
+          "queued": "排队中",
+          "running": "运行中"
+        }
       },
-      "preview": { "untitled": "未命名任务", "agent": "{name} 负责", "pullRequest": "Pull request", "unavailable": "预览不可用" },
+      "preview": {
+        "untitled": "未命名任务",
+        "agent": "{name} 负责",
+        "pullRequest": "Pull request",
+        "unavailable": "预览不可用"
+      },
       "prs": "PR",
       "narrow": "恢复右栏宽度",
       "noTasks": "还没有任务",

@@ -3427,7 +3427,48 @@
       "included": "Your subscription or API key",
       "calls": "{count, plural, one {# call} other {# calls}}",
       "unpricedCalls": "Plus {count, plural, one {# call} other {# calls}} with no per-call price",
-      "includedNote": "Not charged to Mikka credits. A subscription has no per-call price."
+      "includedNote": "Not charged to Mikka credits. A subscription has no per-call price.",
+      "groupBy": "Split cost by",
+      "byThread": "By thread",
+      "byModel": "By model",
+      "byMachine": "By machine",
+      "minutes": "{count} min",
+      "tokens": "{input} in · {output} out",
+      "unbilled": "Unbilled",
+      "unknownSize": "Unknown size"
+    },
+    "threadMenu": {
+      "copyLink": "Copy link",
+      "copied": "Copied",
+      "copyFailed": "Could not copy",
+      "share": "Share…",
+      "shareTitle": "Share this thread",
+      "shareFailed": "Sharing unavailable",
+      "copy": "Copy",
+      "done": "Done",
+      "revoke": "Stop sharing",
+      "revoked": "Link revoked",
+      "forkFull": "Fork · full thread",
+      "forkSummary": "Fork · summary",
+      "forkFailed": "Could not fork the thread",
+      "moveToTask": "Move to task…",
+      "moveTitle": "Move to task",
+      "moveSearch": "Search tasks",
+      "moveClear": "No task",
+      "moveEmpty": "No tasks match",
+      "moved": "Thread moved",
+      "moveFailed": "Could not move the thread",
+      "tags": "Tags…",
+      "tagsTitle": "Thread tags",
+      "tagsLabel": "Tags",
+      "tagsPlaceholder": "tag, tag…",
+      "tagsSaved": "Tags saved",
+      "tagsFailed": "Could not save tags",
+      "delete": "Delete thread…",
+      "deleteTitle": "Delete this thread?",
+      "deleteBody": "The thread disappears from your lists now and can be restored for 30 days.",
+      "deleted": "Thread deleted",
+      "deleteFailed": "Could not delete the thread"
     }
   },
   "FactoryFlow": {
@@ -4555,10 +4596,22 @@
         "inProgress": "In progress",
         "untitled": "Untitled thread",
         "loadError": "The overview could not be read",
-        "kinds": { "approval": "Approval requested", "question": "Question waiting", "limit": "Usage limit reached" },
-        "status": { "queued": "Queued", "running": "Running" }
+        "kinds": {
+          "approval": "Approval requested",
+          "question": "Question waiting",
+          "limit": "Usage limit reached"
+        },
+        "status": {
+          "queued": "Queued",
+          "running": "Running"
+        }
       },
-      "preview": { "untitled": "Untitled task", "agent": "Agent {name}", "pullRequest": "Pull request", "unavailable": "Preview unavailable" },
+      "preview": {
+        "untitled": "Untitled task",
+        "agent": "Agent {name}",
+        "pullRequest": "Pull request",
+        "unavailable": "Preview unavailable"
+      },
       "prs": "PRs",
       "narrow": "Restore panel width",
       "noTasks": "No tasks yet",
