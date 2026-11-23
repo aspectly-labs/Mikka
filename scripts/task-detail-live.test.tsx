@@ -73,7 +73,7 @@ async function readFixtureIssue(id: string, known?: string, cursor?: object) {
     joinedReads++
     return { ...document, taskWork: { live: { workspaceId }, viewerId: readViewerId, work: null, connections: [], threads: [], activity: { version, items: structuredClone(versions), hasMore: false, predecessor: null } } }
   }
-mock.module(at('app/actions/agents.ts'), { namedExports: { pollTaskDetail: readFixtureIssue } })
+mock.module(at('app/actions/agents.ts'), { namedExports: { pollTaskDetail: readFixtureIssue, getThreadChanges: async () => ({ state: 'none' }) } })
 mock.module(at('app/actions/issues.ts'), { namedExports: {
   pollIssue: readFixtureIssue,
   pollIssueVersionSummaries: async (id: string) => {
