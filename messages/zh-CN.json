@@ -4492,7 +4492,7 @@
         "kinds": { "approval": "等待审批", "question": "等待回答", "limit": "已达用量上限" },
         "status": { "queued": "排队中", "running": "运行中" }
       },
-      "preview": { "untitled": "未命名任务", "agent": "{name} 负责", "pullRequest": "Pull request" },
+      "preview": { "untitled": "未命名任务", "agent": "{name} 负责", "pullRequest": "Pull request", "unavailable": "预览不可用" },
       "prs": "PR",
       "narrow": "恢复右栏宽度",
       "noTasks": "还没有任务",

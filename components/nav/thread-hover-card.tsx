@@ -7,25 +7,31 @@
 import { useState, type ReactElement } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import { fetchSettingsData } from '@/lib/settings-data'
+import { withBasePath } from '@/lib/base-path'
 import { TaskStatusIcon } from '@/components/workspace/task-state-icon'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import type { ThreadPreview } from '@/lib/thread-preview'
 
 export function useThreadPreview(issueId: string | null, enabled: boolean) {
+  // A plain fetch honours the route's 30-second private cache (settings fetches
+  // send no-store); SWR still dedupes per issue while the card stays open.
   return useSWR<ThreadPreview | null>(issueId && enabled ? ['thread-preview', issueId] : null,
-    ([, id]) => fetchSettingsData<ThreadPreview>(`/api/threads/${id}/preview`).catch(() => null))
+    async ([, id]) => {
+      const response = await fetch(withBasePath(`/api/threads/${id}/preview`))
+      if (!response.ok) throw new Error(`preview ${response.status}`)
+      return response.json() as Promise<ThreadPreview>
+    })
 }
 
 export function ThreadHoverCard({ issueId, children }: { issueId: string | null; children: ReactElement }) {
   const t = useTranslations('Shell.panel.preview')
   const common = useTranslations('Common')
   const [open, setOpen] = useState(false)
-  const { data } = useThreadPreview(issueId, open)
-  return <HoverCard openDelay={400} closeDelay={100} onOpenChange={setOpen}>
-    <HoverCardTrigger render={children} />
+  const { data, error } = useThreadPreview(issueId, open)
+  return <HoverCard closeDelay={100} onOpenChange={setOpen}>
+    <HoverCardTrigger delay={400} render={children} />
     <HoverCardContent side="right" align="start" className="flex flex-col gap-1.5">
-      {!data && <p className="text-xs text-muted-foreground">{common('loading')}</p>}
+      {!data && <p className="text-xs text-muted-foreground">{error ? t('unavailable') : common('loading')}</p>}
       {data && <>
         <div className="flex items-center gap-2">
           <TaskStatusIcon status={data.issueStatus ?? data.runStatus} size="sm" />

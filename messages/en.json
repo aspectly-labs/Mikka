@@ -4492,7 +4492,7 @@
         "kinds": { "approval": "Approval requested", "question": "Question waiting", "limit": "Usage limit reached" },
         "status": { "queued": "Queued", "running": "Running" }
       },
-      "preview": { "untitled": "Untitled task", "agent": "Agent {name}", "pullRequest": "Pull request" },
+      "preview": { "untitled": "Untitled task", "agent": "Agent {name}", "pullRequest": "Pull request", "unavailable": "Preview unavailable" },
       "prs": "PRs",
       "narrow": "Restore panel width",
       "noTasks": "No tasks yet",
