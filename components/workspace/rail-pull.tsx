@@ -46,7 +46,10 @@ export function RailThreadPull({ issueId, runId, status }: { issueId: string | n
   const t = useTranslations('PullDirectory')
   const pulls = useThreadPulls(issueId, runId, status)
   const pull = pulls.data?.find(item => item.state === 'open' || item.state === 'draft') ?? pulls.data?.[0]
-  if (!pull) return <p className="px-4 pt-3 text-xs text-muted-foreground">{pulls.data ? t('empty') : t('loading')}</p>
+  if (!pull) {
+    const text = pulls.error && !pulls.data ? t('loadError') : pulls.data ? t('empty') : t('loading')
+    return <p className="px-4 pt-3 text-xs text-muted-foreground">{text}</p>
+  }
   return <ThreadPullPane issueId={issueId} runId={runId} pull={pull} onChanged={() => void pulls.mutate()} />
 }
 
