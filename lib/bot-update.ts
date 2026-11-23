@@ -6,7 +6,8 @@ import type { BotSettingsInput } from '@/lib/bot-settings'
 import { aliasConflict, assertBotSettings, botSettingsColumns, parseBotSettings } from '@/lib/bot-settings-store'
 import { db, pool } from '@/lib/db'
 import { bots } from '@/lib/db/schema'
-import { botListChanged } from './live/lists'
+import { botGroupsChanged, botListChanged } from './live/lists'
+import { botGroupChatsChanged } from './live/groups'
 
 const patchSchema = z.object({
   botId: z.uuid(),
@@ -58,5 +59,10 @@ export async function updateOwnedBot(owner: { ownerId: string; workspaceId: stri
   }
   if (!row) throw new ActionFailureError('botNotFound')
   await botListChanged(db, botId)
+  // Its name and look also stand in the groups it is in: their list rows (the group's avatar) and member lists.
+  if (Object.keys(patch).some(key => key === 'name' || key === 'color' || key === 'shape')) {
+    await botGroupsChanged(db, botId)
+    await botGroupChatsChanged(db, botId)
+  }
   return row
 }

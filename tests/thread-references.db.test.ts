@@ -91,3 +91,31 @@ test('reference search scopes tasks, conversation roots, and PRs to the active v
     await pool.query('DELETE FROM "user" WHERE id=ANY($1)', [[owner, other]])
   }
 })
+
+test('a task is found by its code as typed: the whole identifier or its start, any case', { skip: !disposableDatabase(), timeout: 120_000 }, async () => {
+  const { pool } = await import('../lib/db')
+  const { searchThreadReferences } = await import('../lib/thread-reference-search')
+  const owner = 'mention-' + randomUUID(), other = 'mention-' + randomUUID()
+  const task = randomUUID(), gone = randomUUID(), foreignTask = randomUUID()
+  try {
+    for (const user of [owner, other]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES ($1,$1,$2,true,now(),now())', [user, user + '@example.invalid'])
+    const workspace = await seedFixtureWorkspace(pool, owner)
+    const foreign = await seedFixtureWorkspace(pool, other)
+    const insert = (id: string, user: string, w: string, code: string, title: string, deleted = false) => pool.query(`INSERT INTO issues(id,"userId",title,content,status,priority,"workspaceId","ownershipState","issuedIdentifier")
+      VALUES ($1,$2,$3,$4,'todo','normal',$5,'bound',$6)`, [id, user, title, JSON.stringify({ type: 'doc', attrs: { mikka: deleted ? { deletedAt: new Date().toISOString() } : {} } }), w, code])
+    await insert(task, owner, workspace, 'CHAT-1', '校验聊天结构')
+    await insert(gone, owner, workspace, 'CHAT-2', '已删除', true)
+    await insert(foreignTask, other, foreign, 'CHAT-3', '别处的任务')
+    for (const query of ['CHAT', 'chat', 'CHAT-1', 'chat-1', 'CHAT-']) {
+      assert.deepEqual((await searchThreadReferences(owner, workspace, query)).filter(item => item.kind === 'task').map(item => [item.id, item.title]),
+        [[task, 'CHAT-1 校验聊天结构']], query)
+    }
+    assert.deepEqual(await searchThreadReferences(owner, workspace, 'CHAT_', 'task'), [], 'an underscore is a letter, not a wildcard')
+    assert.deepEqual((await searchThreadReferences(owner, workspace, '校验', 'task')).map(item => item.id), [task], 'a title still finds it')
+  } finally {
+    await pool.query('DELETE FROM issues WHERE id=ANY($1)', [[task, gone, foreignTask]])
+    await pool.query('DELETE FROM mikka_workspace_members WHERE "userId"=ANY($1)', [[owner, other]])
+    await pool.query('DELETE FROM mikka_workspaces WHERE "userId"=ANY($1)', [[owner, other]])
+    await pool.query('DELETE FROM "user" WHERE id=ANY($1)', [[owner, other]])
+  }
+})

@@ -33,6 +33,7 @@ export async function githubFixture({ conflict = false, githubAccountId = 456 } 
   }
   const pulls = [{ number: 41, node_id: 'MVP_PR_41', title: 'HTTP fake acceptance', html_url: 'https://github.com/mikka-e2e/core-loop/pull/41',
     state: 'open', draft: false, merged: false, head: { ref: 'mikka/http-1', repo: { id: 789 } }, base: { ref: 'trunk', repo: { id: 789 } } }]
+  /** @type {{ barePath: string, githubAccountId: number, harness: string, installationSuspendedAt?: string | null }} */
   const scenario = { barePath: bare, githubAccountId, harness: 'synthetic-codex' }, observations = []
   const github = createGitHubRoutes({ getScenario: () => scenario, getPullRequests: () => pulls, git, observe: item => observations.push(item), origin: 'http://127.0.0.1' })
   const server = createServer(async (request, response) => {
@@ -42,7 +43,7 @@ export async function githubFixture({ conflict = false, githubAccountId = 456 } 
   })
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
   const origin = `http://127.0.0.1:${server.address().port}`
-  return { origin, head, github, pulls, observations, fetch: externalServiceFetch(origin),
+  return { origin, head, github, pulls, observations, scenario, fetch: externalServiceFetch(origin),
     currentBase: () => git(bare, ['rev-parse', 'refs/heads/trunk']),
     parents: sha => git(bare, ['show', '-s', '--format=%P', sha]),
     async close() { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }) } }

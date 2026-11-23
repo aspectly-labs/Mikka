@@ -169,6 +169,27 @@ describe.each(["claude_code", "codex", "cursor"] as const)(
       ).toBe(false)
     })
 
+    // The live plan (Claude Code's TodoWrite, Codex's turn/plan/updated, ACP's plan update) reaches the thread as a
+    // plan call whose input is the whole list, each revision a call of its own, so the thread can show the newest.
+    it("streams each revision of the agent's plan as a plan call with the whole list", async () => {
+      const { server, daemon } = await setup()
+      const runId = queue(server, harness, "PLAN")
+      await started(daemon, runId)
+      await ended(daemon, runId)
+      const chunks = server.chunksFor(runId)
+      const calls = chunks.flatMap(c => c.type === "tool-input-available" && ["todowrite", "update_plan"].includes(c.toolName.toLowerCase()) ? [c] : [])
+      const lists = calls.map(c => {
+        const input = c.input as { todos?: { content: string; status: string }[]; plan?: { step: string; status: string }[] }
+        return (input.todos ?? input.plan ?? []).map(item => ["content" in item ? item.content : item.step, item.status])
+      })
+      expect(lists).toEqual([
+        [["Read the brief", "in_progress"], ["Write NOTES.md", "pending"]],
+        [["Read the brief", "completed"], ["Write NOTES.md", "in_progress"]],
+      ])
+      // Each call is answered, so it does not read as still running.
+      for (const call of calls) expect(chunks.some(c => c.type === "tool-output-available" && c.toolCallId === call.toolCallId)).toBe(true)
+    })
+
     // A person's model per harness (ADR 0060) reaches the CLI the run is on:
     // `--model` for Claude Code and Cursor, the `thread/start` param for
     // Codex. The fake CLIs report back what they were started with, so this
@@ -197,6 +218,23 @@ describe.each(["claude_code", "codex", "cursor"] as const)(
     })
   },
 )
+
+// Claude Code's newer task tools build the plan one call at a time: TaskCreate's result names the task, which
+// TaskUpdate then addresses. The id comes from the CLI's structured result and rides on the call's output chunk.
+it("claude: keeps the id TaskCreate gave each task, so its later updates find it", async () => {
+  const { server, daemon } = await setup()
+  const runId = queue(server, "claude_code", "TASKS")
+  await started(daemon, runId)
+  await ended(daemon, runId)
+  const chunks = server.chunksFor(runId)
+  const outputs = chunks.flatMap(c => c.type === "tool-output-available" ? [[c.toolCallId, c.planTask?.id ?? null]] : [])
+  expect(outputs).toEqual([["toolu_task_1", "1"], ["toolu_task_2", "2"], ["toolu_task_3", null], ["toolu_task_4", null]])
+  const inputs = chunks.flatMap(c => c.type === "tool-input-available" ? [[c.toolName, c.input]] : [])
+  expect(inputs).toEqual([
+    ["TaskCreate", { subject: "Read the brief", description: "Read it" }], ["TaskCreate", { subject: "Write NOTES.md", description: "Write it" }],
+    ["TaskUpdate", { taskId: "1", status: "completed" }], ["TaskUpdate", { taskId: "2", status: "in_progress" }],
+  ])
+})
 
 describe("the issue branch", () => {
   const PERSON = {

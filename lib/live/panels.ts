@@ -90,8 +90,8 @@ export async function documentLiveWorkspace(database: Database, workspaceDatabas
 }
 
 export async function runLiveTargets(database: Database, workspaceDatabase: Database, runId: string, kind: 'run' | 'thread') {
-  const { rows: [run] } = await database.query<{ userId: string; issueId: string | null; retryOf: string | null; continuesRunId: string | null; parentRunId: string | null; origin: string | null }>(
-    `SELECT "userId","issueId","retryOf","continuesRunId","parentRunId","questionContinuation"->>'originRunId' AS origin FROM agent_runs WHERE id=$1`, [runId],
+  const { rows: [run] } = await database.query<{ userId: string; workspaceId: string | null; issueId: string | null; retryOf: string | null; continuesRunId: string | null; origin: string | null; parentRunId: string | null }>(
+    `SELECT "userId","workspaceId","issueId","retryOf","continuesRunId","questionContinuation"->>'originRunId' AS origin,"parentRunId" FROM agent_runs WHERE id=$1`, [runId],
   )
   if (!run) return []
   const ids = [runId]
@@ -103,6 +103,18 @@ export async function runLiveTargets(database: Database, workspaceDatabase: Data
       const { rows } = await database.query<{ id: string }>(
         'SELECT id FROM agent_runs WHERE id=ANY($1::uuid[]) AND "userId"=$2 AND ("issueId" IS NOT DISTINCT FROM $3::uuid OR id=$4::uuid)',
         [parents, run.userId, run.issueId, run.parentRunId ?? '00000000-0000-0000-0000-000000000000'])
+      ids.push(...rows.map(row => row.id))
+    }
+    // A sub-agent's change also wakes the thread that dispatched it (#2939): its card there shows the new state. The
+    // parent may belong to another task; the edge itself is fenced to one owner and Workspace.
+    // A continuation of the sub-agent's thread finds the parent through the run it goes on from.
+    if (run.workspaceId && (run.parentRunId || run.retryOf || run.continuesRunId)) {
+      const { rows } = await database.query<{ id: string }>(`WITH RECURSIVE up AS (
+          SELECT id,"parentRunId","retryOf","continuesRunId",0 AS depth FROM agent_runs WHERE id=$1
+          UNION ALL SELECT r.id,r."parentRunId",r."retryOf",r."continuesRunId",up.depth+1 FROM up JOIN agent_runs r
+            ON r.id=coalesce(up."continuesRunId",up."retryOf") AND r."userId"=$2 AND r."workspaceId"=$3
+            WHERE up."parentRunId" IS NULL AND up.depth<64)
+        SELECT p.id FROM up JOIN agent_runs p ON p.id=up."parentRunId" AND p."userId"=$2 AND p."workspaceId"=$3 LIMIT 1`, [runId, run.userId, run.workspaceId])
       ids.push(...rows.map(row => row.id))
     }
   }

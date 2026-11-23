@@ -327,10 +327,21 @@ function namedThreadProfile(previous: import('@/lib/computer/run-model').RunMode
   return builtinAgentProfileSelection(scope, entry)
 }
 
-export async function dispatchRun(userId: string, input: { issueId: string; profileId?: string; agentId?: string; repo?: string; note?: string; requestKey?:string; readOnly?: boolean; needsSpec?: boolean; newThread?: boolean; sourceEventId?: string; origin?: RunOrigin; originRef?: RunOriginRef | null; target?: import('@/lib/dispatch-target').DispatchTarget; model?: { harness: 'claude_code' | 'codex'; model?: string } }, scope: NativeToolScope | undefined, botId: string, execution?: AgentExecution, requestEventId?: string) {
+export async function dispatchRun(userId: string, input: { brief?: string; issueId: string; profileId?: string; agentId?: string; repo?: string; note?: string; requestKey?:string; readOnly?: boolean; needsSpec?: boolean; newThread?: boolean; sourceEventId?: string; origin?: RunOrigin; originRef?: RunOriginRef | null; target?: import('@/lib/dispatch-target').DispatchTarget; model?: { harness: 'claude_code' | 'codex'; model?: string } }, scope: NativeToolScope | undefined, botId: string, execution?: AgentExecution, requestEventId?: string) {
   'use step'
   // The performance boundary includes initial scope and Profile admission.
-  return withDispatchTiming(() => dispatchRunBody(userId, input, scope, botId, execution, requestEventId))
+  const { brief, ...request } = input
+  return withDispatchBrief(userId, brief, await withDispatchTiming(() => dispatchRunBody(userId, request, scope, botId, execution, requestEventId)))
+}
+
+/**
+ * The one line the Bot wrote about the work it handed over (#2939), kept on the run its dispatch returned when that run
+ * has none yet: the sub-agent card's second line. A failed dispatch, or one with no run, is returned unchanged.
+ */
+async function withDispatchBrief<T>(userId: string, brief: string | undefined, result: T): Promise<T> {
+  if (!brief || !result || typeof result !== 'object' || !('runId' in result) || typeof result.runId !== 'string' || 'error' in result) return result
+  await (await import('@/lib/subagent-run-read')).recordDispatchBrief(pool, userId, result.runId, brief)
+  return result
 }
 
 async function dispatchRunBody(userId: string, input: { issueId: string; profileId?: string; agentId?: string; repo?: string; note?: string; requestKey?:string; readOnly?: boolean; needsSpec?: boolean; newThread?: boolean; sourceEventId?: string; origin?: RunOrigin; originRef?: RunOriginRef | null; target?: import('@/lib/dispatch-target').DispatchTarget; model?: { harness: 'claude_code' | 'codex'; model?: string } }, scope: NativeToolScope | undefined, botId: string, execution?: AgentExecution, requestEventId?: string) {
@@ -633,12 +644,12 @@ export async function listComputerBots(userId: string, scope?: NativeToolScope) 
 }
 
 /** `dispatch_bot_computer`: on a task that has a thread, that thread's next work (lib/thread-dispatch.ts), on this Bot's computer. */
-export async function dispatchComputerThread(userId: string, input: { botId: string; issueId: string; profileId?: string; harness?: 'codex' | 'claude_code'; model?: string; note?: string; suggestionId?: string; readOnly?: boolean; needsSpec?: boolean; newThread?: boolean; sourceEventId?: string; origin?: RunOrigin; originRef?: RunOriginRef | null }, toolCallId: string, scope?: NativeToolScope, execution?: AgentExecution, chatBotId?: string) {
+export async function dispatchComputerThread(userId: string, input: { brief?: string; botId: string; issueId: string; profileId?: string; harness?: 'codex' | 'claude_code'; model?: string; note?: string; suggestionId?: string; readOnly?: boolean; needsSpec?: boolean; newThread?: boolean; sourceEventId?: string; origin?: RunOrigin; originRef?: RunOriginRef | null }, toolCallId: string, scope?: NativeToolScope, execution?: AgentExecution, chatBotId?: string) {
   'use step'
   await assertNativeToolScope(userId, scope)
   if (!(await import('@/lib/factory/runtime')).factoryLifecycleEnabled()) return { error: 'factoryLifecycleUnavailable' as const }
   if (!cloudComputerRunsEnabled() || !toolCallId || toolCallId.length > 200) return { error: 'cloudComputerUnavailable' as const }
-  const { newThread, sourceEventId, model: asked, ...request } = input
+  const { newThread, sourceEventId, model: asked, brief, ...request } = input
   // Access precedes model catalogue/credential selection as well as the later
   // provider preparation. dispatchComputerTask rechecks it before waking.
   const bot = (await pool.query<{ workspaceId: string }>('SELECT "workspaceId" FROM bots WHERE id=$1 AND "ownerId"=$2 AND "archivedAt" IS NULL', [request.botId, userId])).rows[0]
@@ -654,7 +665,7 @@ export async function dispatchComputerThread(userId: string, input: { botId: str
     if (refused) return { ...refused, issueId: request.issueId }
   }
   const { dispatchToTask, explicitNewThread } = await import('@/lib/thread-dispatch')
-  return asToolResult(() => dispatchToTask(userId, request.issueId, {
+  return withDispatchBrief(userId, brief, await asToolResult(() => dispatchToTask(userId, request.issueId, {
     note: request.note, newThread, sourceEventId,
     explicit: () => explicitNewThread(userId, chatBotId ?? request.botId, sourceEventId),
     // Read-only sticks across the thread's runs, as on a computer.
@@ -703,7 +714,7 @@ export async function dispatchComputerThread(userId: string, input: { botId: str
       // next turn arrives through the computer tool instead of dispatch_run.
       return dispatchComputerTask(userId, { ...request, harness, factoryBotId: chatBotId ?? request.botId, sourceEventId, note, ...runModel, ...(previous ? { threadRunId: previous.id } : {}), ...(previous?.remoteUrl ? { repo: previous.remoteUrl } : {}), ...(request.readOnly || previous?.readOnly ? { readOnly: true } : {}) }, previous ? `thread:${previous.id}:${toolCallId}` : toolCallId, scope, execution)
     },
-  }))
+  })))
 }
 
 /** Queue and bind atomically, with a stable tool-call id for workflow retries. */
@@ -988,3 +999,4 @@ export async function scheduleCommand(userId:string,botId:string|null,sourceEven
   const {executeScheduleCommand}=await import('@/lib/schedules/runtime')
   return executeScheduleCommand(userId,botId,sourceEventId,input)
 }
+

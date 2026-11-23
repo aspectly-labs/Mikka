@@ -3,6 +3,7 @@
 - Date: 2026-11-10 20:02 UTC
 - Status: accepted
 - Supersedes in part: [2026-11-03-0455-chat-quote-and-copy](2026-11-03-0455-chat-quote-and-copy.md) (reply action visibility)
+- Superseded in part by: [2026-11-22-1500-chat-reply-actions-on-hover](2026-11-22-1500-chat-reply-actions-on-hover.md) (A: every message's action line now waits for hover or focus, always shown on touch; B stands)
 
 ## Context
 
@@ -13,7 +14,7 @@ Two chat-chrome problems were reported on 2026-11-10:
 
 ## Decision
 
-**A. Reply actions are always there.** 复制 and 「N 个来源」 sit in one row under every stored reply; reactions follow right after them. The icons stay muted; hover raises contrast and focus shows the ring. No container, border, shadow or floating toolbar is added, and nothing appears or disappears as the pointer moves. The issue-thread panel keeps `HOVER_ACTIONS` for its messages, the person's and the Agent's; a reply in the Coordinator chat uses the persistent row.
+**A. Reply actions are always there.** *(Superseded by [2026-11-22-1500](2026-11-22-1500-chat-reply-actions-on-hover.md).)* 复制 and 「N 个来源」 sit in one row under every stored reply; reactions follow right after them. The icons stay muted; hover raises contrast and focus shows the ring. No container, border, shadow or floating toolbar is added, and nothing appears or disappears as the pointer moves. The issue-thread panel keeps `HOVER_ACTIONS` for its messages, the person's and the Agent's; a reply in the Coordinator chat uses the persistent row.
 
 **B. A question is a live state, not a message.** `runQuestion` is no longer drawn as a transcript event line. While a task still waits on the person, the composer column shows one sentence above the input: a question icon in the warning colour, an ICU-plural count, and the thread that has waited longest as an inline link inside the sentence (its task's title when it has one). The thread is never a row of its own, and two threads of one task count once.
 

@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
 import { enqueueGroupTurn, GROUP_TURN_STOPPED, stopGroupTurns } from './coordinator/group-turns'
-import { groupParticipants, groupParticipantsMany, type GroupParticipant } from './group-participants'
+import { groupBotFaces, groupParticipants, groupParticipantsMany, type GroupParticipant } from './group-participants'
 import { groupListChanged, groupListReadChanged } from './live/lists'
 import { groupChatChanged } from './live/groups'
 
@@ -88,6 +88,9 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
           AND ($2::uuid IS NULL OR c."workspaceId"=$2) ORDER BY c."createdAt" DESC,c.id DESC`, [userId, req.workspaceId ?? null])
       const accessible = []
       for (const row of rows) if (await directory(row.workspaceId, userId, [])) accessible.push(row)
+      // Each group's Bot faces, so the chat list draws the group's avatar as its page does (R-36).
+      const faces = await groupBotFaces(client, accessible)
+      for (const row of accessible) row.bots = faces.get(row.id) ?? []
       result = { conversations: accessible, viewerId: userId, workspaceId: req.workspaceId ?? null }
     } else {
       // A link is a bounded view granted by its source group, never membership
@@ -228,8 +231,13 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
           timeline.push(...exchanges.filter(link => !anchored.has(link.anchorPosition)))
         }
         const active = queueAgents ? await q(`SELECT "agentId","botId",status,"updatedAt" FROM group_turns WHERE "conversationId"=$1 AND status IN ('queued','running') ORDER BY "createdAt" LIMIT 1`, [req.id]) : { rows: [] }
+        // Who is writing a reply now, each once, in the order they started (a chat's "X is typing").
+        const answering = queueAgents ? (await q(`SELECT "memberType",id FROM (SELECT DISTINCT ON (coalesce("botId","agentId"))
+            CASE WHEN "botId" IS NOT NULL THEN 'bot' ELSE 'agent' END AS "memberType", coalesce("botId","agentId")::text AS id, "createdAt"
+            FROM group_turns WHERE "conversationId"=$1 AND status='running' AND coalesce("botId","agentId") IS NOT NULL
+            ORDER BY coalesce("botId","agentId"), "createdAt") turns ORDER BY "createdAt", id`, [req.id])).rows : []
         const failed = queueAgents ? await q(`SELECT error FROM group_turns WHERE "conversationId"=$1 ORDER BY "createdAt" DESC,"messageId" DESC LIMIT 1`, [req.id]) : { rows: [] }
-        result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null,
+        result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null, answering,
           ...(readRevision !== undefined ? { readRevision } : {}),
           ...(idle ? { unchanged: true } : {}),
           ...(appended ? { appended: true } : {}),
@@ -275,7 +283,8 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
         result = rows[0]; status = 201
       } else if (req.resource === 'members' && req.method === 'GET') {
         const participants = await groupParticipants(client, group.id, group.createdBy, group.workspaceId)
-        const users = (await q(`SELECT cm."memberId" AS id,u.name,u.image AS "avatarUrl",cm.role FROM conversation_members cm JOIN "user" u ON u.id=cm."memberId"
+        // A person with no name is named by what stands before @ in their address (never the address itself).
+        const users = (await q(`SELECT cm."memberId" AS id,COALESCE(NULLIF(btrim(u.name),''),split_part(u.email,'@',1)) AS name,u.image AS "avatarUrl",cm.role FROM conversation_members cm JOIN "user" u ON u.id=cm."memberId"
           WHERE cm."conversationId"=$1 AND cm."memberType"='user' AND cm."leftAt" IS NULL ORDER BY cm."joinedAt",cm."memberId"`, [group.id])).rows
         const visibleUsers = []
         for (const user of users) if (await directory(group.workspaceId, user.id, [])) visibleUsers.push({ ...user, memberType: 'user' })

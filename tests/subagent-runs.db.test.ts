@@ -37,7 +37,8 @@ test('listSubagentRuns returns every card field with the shared mark state', asy
   assert.deepEqual(first.profile, { icon: 'lens', color: 'teal' })
   assert.equal(first.brief, '把线索找出来')
   assert.equal(first.mark, 'working')
-  assert.equal(second.mark, 'failed')
+  // A paused run waits on its owner (Figma 1356:5208, lib/factory/agent-profile-mark.ts runMarkStatusOf).
+  assert.equal(second.mark, 'needs-you')
   assert.equal(third.mark, 'idle')
 })
 

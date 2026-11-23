@@ -118,7 +118,8 @@ test('task runs fetch owner bot looks with the bounded latest issue rows in one 
   assert.match(text, /"issues"\."workspaceId" in \(\$\d+\)/)
   assert.ok(params.includes('bound'))
   assert.equal(params.filter(value => value === WORKSPACE).length, 3, 'run, task and bot all use the selected tenant')
-  assert.match(text, /and "agent_runs"\."issueId" is not null and "agent_runs"\."createdAt" > now\(\) - interval '720 hours'\)/)
+  // A soft-deleted thread leaves the list (#2936).
+  assert.match(text, /and "agent_runs"\."issueId" is not null and "agent_runs"\."deletedAt" is null and "agent_runs"\."createdAt" > now\(\) - interval '720 hours'\)/)
   assert.deepEqual(workspaceReads, [OWNER])
   const binding = text.indexOf('from computer_run_bindings crb'), direct = text.indexOf('from bots b where b.id="agent_runs"."botId"')
   const runtime = text.indexOf('from bot_cloud_runtimes bcr')

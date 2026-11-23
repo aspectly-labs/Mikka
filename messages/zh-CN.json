@@ -3255,7 +3255,9 @@
       "hours": "{h} 小时 {m} 分",
       "seconds": "{s} 秒",
       "minutes": "{m} 分 {s} 秒",
-      "failed": "失败"
+      "failed": "失败",
+      "paused": "已暂停",
+      "workingNow": "正在工作"
     },
     "changesOpenFile": "在新标签打开",
     "runInfo": {
@@ -3432,10 +3434,21 @@
       "byThread": "按线程",
       "byModel": "按模型",
       "byMachine": "按机器",
-      "minutes": "{count} 分钟",
+      "minutes": "{minutes} 分钟",
       "tokens": "{input} 入 · {output} 出",
       "unbilled": "未计费",
-      "unknownSize": "未知规格"
+      "unknownSize": "未知规格",
+      "breakdown": "模型与机器",
+      "machine": "云机器",
+      "machineSized": "云机器 · {vcpu} vCPU · {gib} GiB",
+      "underMinute": "不到 1 分钟",
+      "hours": "{hours} 小时 {minutes} 分钟",
+      "breakdownFailed": "读不到明细。",
+      "includedHeading": "你的订阅或 API Key（不扣 Mikka 额度）",
+      "viaSubscription": "订阅",
+      "viaApiKey": "API Key",
+      "covered": "平台承担（不计费）",
+      "coveredLine": "{zero}（原价 {amount}）"
     },
     "actionFailed": "操作失败。",
     "composerMenu": {
@@ -3499,6 +3512,28 @@
       "deleteBody": "30 天内可恢复。",
       "deleted": "线程已删除",
       "deleteFailed": "无法删除线程"
+    },
+    "tool": {
+      "exitCode": "退出码 {code}",
+      "search": "\"{target}\"",
+      "searchIn": "\"{target}\" in {scope}"
+    },
+    "lifecycle": {
+      "fork": "分叉",
+      "forkSummary": "带摘要分叉",
+      "forkInstruction": "分叉后要做什么",
+      "forkFailed": "分叉失败",
+      "tags": "标签",
+      "tagPlaceholder": "添加标签",
+      "removeTag": "移除 {tag}",
+      "tagsFailed": "标签没保存",
+      "automation": "做成自动化",
+      "delete": "删除",
+      "deleteConfirm": "删除这个线程？",
+      "deleted": "线程已删除",
+      "undo": "撤销",
+      "deleteFailed": "线程没删除",
+      "restoreFailed": "线程恢复失败"
     }
   },
   "FactoryFlow": {
@@ -3841,7 +3876,7 @@
       "noMatch": "没有匹配的模型",
       "cloudCredits": "Mikka Cloud 额度",
       "sharedKey": "{name}的 Key",
-      "manage": "管理模型与订阅",
+      "manage": "管理模型和连接",
       "retryLoad": "模型加载失败，重试",
       "notSaved": "未保存",
       "ownProvider": "自带服务商",
@@ -3850,62 +3885,17 @@
       "checking": "待检查",
       "changeModel": "换模型",
       "label": "模型：{name}",
-      "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接"
+      "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
+      "route": {
+        "via": "通过「{label}」运行",
+        "favorites": "常用",
+        "free": "免费",
+        "usedUntil": "额度用完，{time} 恢复",
+        "usedUp": "用量已达上限",
+        "noCredits": "Mikka 额度已用完"
+      }
     },
     "activity": {
-      "tools": {
-        "create_issue_from_request": "建任务",
-        "send_slack_message": "发 Slack 消息",
-        "update_issue": "改任务",
-        "read_slack_thread": "查看 Slack",
-        "update_calendar_event": "改日程",
-        "list_calendar_events": "查看日历",
-        "list_issues": "查看任务",
-        "read_webpage": "打开网页",
-        "get_issue": "查看任务",
-        "schedule_list": "查看定时任务",
-        "schedule_create": "建定时任务",
-        "cancel_calendar_event": "取消日程",
-        "stop_run": "停止线程",
-        "dispatch_bot_computer": "派到电脑",
-        "get_factory_question": "查看 Factory 提问",
-        "list_agents": "查看智能体",
-        "wake_bot_computer": "唤醒电脑",
-        "read_gmail_message": "查看邮件",
-        "search_gmail": "查看邮件",
-        "start_web_subagent": "打开浏览器",
-        "load_skill": "加载技能",
-        "resolve_factory_task": "处理 Factory 任务",
-        "list_factory_questions": "查看 Factory 提问",
-        "mailbox_inbox": "查看邮件",
-        "get_calendar_event": "查看日历",
-        "list_runs": "查看线程",
-        "list_factory_requests": "查看 Factory 请求",
-        "list_drive_files": "查看 Drive",
-        "github_call": "使用 GitHub",
-        "dispatch_factory_task": "派发 Factory 任务",
-        "github_tools": "查看 GitHub",
-        "web_search": "搜索网页",
-        "get_factory_task": "查看 Factory 任务",
-        "forget": "忘掉",
-        "intake_factory_request": "建任务",
-        "search_notion_pages": "查看 Notion",
-        "send_email": "发邮件",
-        "create_calendar_event": "建日程",
-        "create_issue": "建任务",
-        "remember": "记住",
-        "append_notion_paragraph": "写 Notion",
-        "send_to_run": "给线程发消息",
-        "dispatch_run": "派发任务",
-        "find_repository": "找仓库",
-        "search_slack_messages": "查看 Slack",
-        "get_run": "查看线程",
-        "mailbox_send": "发邮件",
-        "dispatch_factory_run": "派发任务",
-        "schedule_update": "改定时任务",
-        "read_notion_page_blocks": "查看 Notion",
-        "stop_factory_task": "停止 Factory 任务"
-      },
       "summary": {
         "remember": "{count, plural, other {记住了 # 件事}}",
         "messageThread": "{count, plural, =1 {给线程发了消息} other {给线程发了 # 条消息}}",
@@ -3937,25 +3927,29 @@
         "forget": "{count, plural, other {忘掉了 # 件事}}"
       },
       "card": {
-        "args": "参数",
+        "args": "输入",
         "waiting": "等待结果…",
         "failed": "失败",
         "usingTools": "正在使用工具…",
         "showAll": "展开全部",
         "exitCode": "退出码 {code}",
         "finished": "{tool}完成",
-        "result": "结果",
+        "result": "输出",
         "showLess": "收起",
-        "empty": "没有参数或结果",
+        "empty": "没有输入或输出",
         "usedTools": "用了 {count} 个工具",
         "command": "命令",
         "thinkingDone": "思考完毕",
         "shell": "Shell",
-        "succeeded": "✓ 成功",
+        "succeeded": "成功",
         "running": "运行中",
         "stopped": "已停止",
         "fullOutput": "查看完整输出",
-        "loadingOutput": "正在加载输出…"
+        "loadingOutput": "正在加载输出…",
+        "seconds": "{seconds} 秒",
+        "truncated": "输出过长，只保留了一部分",
+        "noMatches": "没有匹配",
+        "error": "错误"
       },
       "detail": {
         "page": "网页",
@@ -3966,7 +3960,6 @@
         "countValue": "{count, plural, other {# 条}}",
         "status": "状态",
         "query": "查询",
-        "raw": "原始数据",
         "repository": "仓库",
         "handedTo": "交给",
         "count": "结果"
@@ -3998,7 +3991,8 @@
       "thoughtStored": "已思考",
       "expandAll": "全部展开",
       "skipped": "没执行成功，已跳过",
-      "running": "正在{tool}"
+      "running": "正在使用 {tool}",
+      "waited": "{seconds} 秒"
     },
     "pendingActions": {
       "approveClear": "清空登录字段",
@@ -4201,7 +4195,9 @@
     "contextEstimated": "按存储文本估算，非模型实际 token 计数",
     "inputTo": "给 {name} 发消息",
     "input": "给 Coordinator 发消息",
-    "sendOffline": "没有网络，未发送"
+    "sendOffline": "没有网络，未发送",
+    "suggestionHandedTo": "已交给 {name}",
+    "commandNew": "新建线程"
   },
   "Errors": {
     "issueScopeInLinear": "请先确认如何处理 Linear 中的任务，再转为个人任务。",
@@ -4517,7 +4513,11 @@
     "mcpCatalogUnavailable": "MCP 目录不可用。",
     "mcpCatalogRemoteUnavailable": "无法访问 MCP 目录源。",
     "mcpCatalogMismatch": "该目录条目与服务器已不匹配。",
-    "restoreExpired": "已超过可恢复期限。"
+    "restoreExpired": "已超过可恢复期限。",
+    "chatRevisionUnavailable": "这条消息已不能编辑或重新生成。",
+    "chatRevisionBusy": "等回复结束后再试。",
+    "threadWorking": "线程还在工作，先停下它",
+    "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
@@ -7626,7 +7626,15 @@
       "fork": "分叉",
       "forkSummary": "带摘要分叉",
       "sideChat": "旁支线程",
-      "actionFailed": "无法启动新线程"
+      "actionFailed": "无法启动新线程",
+      "edit": "编辑",
+      "regenerate": "重新生成",
+      "editCancel": "取消",
+      "editSend": "发送",
+      "editLabel": "编辑消息",
+      "previousVersion": "上一个版本",
+      "nextVersion": "下一个版本",
+      "versionPosition": "{current} / {total}"
     },
     "tool": {
       "pending": "等待中",
@@ -8571,11 +8579,11 @@
       "failed": "{failed} 个失败",
       "separator": "，",
       "search": "搜索了 {count} 次",
-      "command": "跑了 {count} 条命令",
-      "read": "读了 {count} 个文件",
+      "command": "运行了 {count} 条命令",
+      "read": "已读取 {count} 个文件",
       "delegate": "派出了 {count} 个子线程",
       "other": "用了 {count} 个工具",
-      "edit": "改了 {count} 个文件",
+      "edit": "编辑了 {count} 个文件",
       "todo": "更新了待办",
       "web": "查了 {count} 次网页"
     },
@@ -8610,7 +8618,8 @@
       "openInbox": "打开收件箱",
       "done": "，已完成",
       "youSaid": "你说：",
-      "useRecording": "使用录音"
+      "useRecording": "使用录音",
+      "stillWriting": "仍在输出"
     },
     "waiting": "等你回答",
     "approve": "同意",
@@ -8653,6 +8662,22 @@
       "read": "已读取 {target}",
       "search": "已搜索“{target}”",
       "edit": "已编辑 {target}"
+    },
+    "newLines": "{count} 行新内容",
+    "toolsRunningKind": {
+      "shell": "正在运行命令",
+      "read": "正在读取文件",
+      "search": "正在搜索",
+      "edit": "正在编辑文件",
+      "web": "正在查看网页"
+    },
+    "plan": {
+      "title": "待办",
+      "label": "Agent 的待办清单",
+      "progress": "已完成 {completed}/{total} 项待办",
+      "pending": "待处理",
+      "inProgress": "进行中",
+      "completed": "已完成"
     }
   },
   "Board": {
@@ -8856,7 +8881,8 @@
     "favorites": "收藏的任务",
     "breadcrumb": "当前位置",
     "loadingCreate": "正在加载新建任务…",
-    "signOutFailed": "退出失败，请稍后重试。"
+    "signOutFailed": "退出失败，请稍后重试。",
+    "documentTitle": "{name} · Mikka"
   },
   "MobileTaskSchedule": {
     "interval": "每 {minutes} 分钟",
@@ -10435,7 +10461,12 @@
     "searching": "正在搜索…",
     "thread": "线程",
     "sourceUnavailable": "此线程暂时无法引用源码文件或目录。",
-    "bot": "Bot"
+    "bot": "Bot",
+    "commands": "命令",
+    "tasks": "任务",
+    "threads": "线程",
+    "pullRequests": "拉取请求",
+    "broken": "已删除或无权查看"
   },
   "HostedPlugins": {
     "moreTwo": "{first} 和 {second}",
@@ -10674,5 +10705,176 @@
   },
   "PullRequestsBadge": {
     "label": "{count} 个 PR"
+  },
+  "ThreadUnderComposer": {
+    "cloud": "云电脑",
+    "awake": "运行中",
+    "asleep": "休眠",
+    "machineLabel": "运行在 {name} · {state}",
+    "runsOn": "这个线程运行在",
+    "size": "{vcpu} vCPU · {gib} GiB",
+    "hourly": "醒着时 ${price} / 小时",
+    "current": "当前",
+    "addMachine": "添加机器…",
+    "context": "上下文，约 {used} / {max} token（估算）",
+    "repository": "仓库 {name}",
+    "queued": {
+      "title": "排队 · {count}",
+      "afterTurn": "本轮结束后发送",
+      "whenContinued": "线程继续后发送",
+      "sendNow": "立即发送",
+      "delete": "删除"
+    },
+    "paused": {
+      "label": "因用量上限暂停",
+      "badge": "已暂停",
+      "kind": "用量上限 · {name}",
+      "until": "{name} 用量已达上限，这个线程暂停到 {time}。",
+      "paused": "{name} 用量已达上限，这个线程已暂停。",
+      "reset": "{name} 的用量上限已重置。",
+      "tryNow": "立即重试",
+      "seeUsage": "查看用量"
+    }
+  },
+  "ChatEditor": {
+    "people": "成员",
+    "bots": "Bot",
+    "files": "文件和文件夹",
+    "skills": "技能",
+    "pasted": "粘贴的文本 · {lines, plural, other {# 行}}",
+    "pastedFile": "粘贴的文本",
+    "expand": "展开粘贴的文本",
+    "removePasted": "移除粘贴的文本",
+    "remove": "移除 {name}",
+    "image": "图片",
+    "uploading": "{percent}%",
+    "uploadFailed": "上传失败"
+  },
+  "ChatTime": {
+    "today": "今天 {time}",
+    "yesterday": "昨天 {time}"
+  },
+  "MergeWaiting": {
+    "line": "等你合并 <pr></pr>",
+    "dismiss": "忽略",
+    "dismissFailed": "忽略失败"
+  },
+  "Subagents": {
+    "title": "子 Agent",
+    "status": {
+      "working": "运行中",
+      "needs-you": "等你",
+      "done": "完成",
+      "failed": "失败",
+      "queued": "排队"
+    },
+    "count": "{count} 个",
+    "more": "还有 {count} 个子 Agent：{summary}",
+    "expand": "展开",
+    "collapse": "收起",
+    "card": "{name}，{status}：{brief}",
+    "cardNoBrief": "{name}，{status}"
+  },
+  "RightColumn": {
+    "tabs": {
+      "changes": "改动",
+      "files": "文件",
+      "setup": "运行环境"
+    },
+    "changes": {
+      "loadFailed": "读取线程改动失败",
+      "retry": "重试",
+      "none": "这个线程还没有改过文件",
+      "tooLarge": "改动太大，无法显示"
+    },
+    "files": {
+      "search": "搜索文件",
+      "views": "显示的文件",
+      "all": "全部文件",
+      "thread": "本线程",
+      "uploads": "上传",
+      "loadFailed": "读取线程文件失败",
+      "retry": "重试",
+      "noCheckout": "这个线程没有可读取的代码目录",
+      "tooLarge": "改动太大，无法列出",
+      "noChanges": "这个线程还没有改过文件",
+      "noUploads": "这里还没有发送过文件",
+      "botUploads": "你发给这个 Bot 的文件",
+      "machineUnavailable": "机器在休眠或离线，唤醒后才能读取文件。",
+      "checkoutUnavailable": "机器上已没有这个代码目录",
+      "notFound": "无法读取这个代码目录",
+      "readFailed": "读取文件失败（{code}）",
+      "more": "显示更多",
+      "asleep": "机器在休眠，唤醒后才能读取文件。",
+      "noMatches": "无匹配结果",
+      "pathCopied": "路径已复制",
+      "copyFailed": "复制路径失败",
+      "actions": "{name} 的操作",
+      "open": "打开",
+      "viewDiff": "查看本线程的改动",
+      "copyPath": "复制路径",
+      "download": "下载",
+      "status": {
+        "added": "新增",
+        "deleted": "删除",
+        "modified": "修改",
+        "renamed": "重命名"
+      },
+      "format": {
+        "binary": "二进制文件",
+        "too_large": "文件太大，无法显示",
+        "unsupported": "无法显示这个文件"
+      },
+      "truncated": "… 文件其余部分未显示",
+      "actionsShort": "更多操作"
+    },
+    "setup": {
+      "loadFailed": "读取线程运行环境失败",
+      "retry": "重试",
+      "noMachine": "还没有机器",
+      "noEnvironment": "没有运行环境",
+      "machine": "机器",
+      "spec": "{cpu} vCPU · {memory} GB",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘",
+      "uptime": "运行时长",
+      "minutes": "{count} 分钟",
+      "hours": "{hours} 小时 {minutes} 分钟",
+      "environment": "环境",
+      "runtime": {
+        "any": "任意机器",
+        "local": "你的电脑",
+        "cloud": "云端"
+      },
+      "scripts": "脚本",
+      "noSetup": "没有准备命令",
+      "install": "准备命令",
+      "unapproved": "未批准",
+      "copyFiles": "复制的文件（{count}）",
+      "edit": "在设置里编辑",
+      "botNote": "这个 Bot 的新线程在这个环境里运行。"
+    },
+    "menu": {
+      "search": "搜索标签页",
+      "common": "打开",
+      "related": "相关",
+      "crew": "Crew",
+      "terminals": "终端",
+      "allThreads": "全部线程",
+      "openPanel": "打开右栏",
+      "expand": "放大右栏",
+      "restore": "恢复右栏宽度",
+      "add": "打开标签页"
+    }
+  },
+  "AgentMessageRow": {
+    "dispatched": "{name} 派发了任务",
+    "sent": "{name} 发来消息",
+    "reply": "收到 {name} 的回复",
+    "message": "收到 {name} 的消息",
+    "question": "{name} 提了问题",
+    "openChat": "打开 {name} 的聊天",
+    "openThread": "打开线程"
   }
 }
