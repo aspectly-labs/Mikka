@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -180,8 +180,13 @@ test('gated features are on only when the remote flag is exactly true', () => {
 test('the 电脑 tab has its own kill switch, apart from the cloud computer rollout flag', () => {
   assert.equal(killSwitches.computerTab, 'mikka-computer-tab-off')
   assert.notEqual(killSwitches.computerTab, gatedFeatures.cloudComputer)
-  const hook = readFileSync(new URL('../hooks/use-feature-availability.ts', import.meta.url), 'utf8')
-  assert.match(hook, /export function useComputerTab\(\)[\s\S]*?killSwitches\.computerTab[\s\S]*?!== true/)
+  const desktopHook = readFileSync(new URL('../apps/desktop/src/renderer/feature-availability.ts', import.meta.url), 'utf8')
+  assert.match(desktopHook, /export function useComputerTab\(\)[\s\S]*?killSwitches\.computerTab[\s\S]*?!== true/)
+  const webHookPath = new URL('../.hosted-ui/web/hooks/use-feature-availability.ts', import.meta.url)
+  if (existsSync(webHookPath)) {
+    const webHook = readFileSync(webHookPath, 'utf8')
+    assert.match(webHook, /export function useComputerTab\(\)[\s\S]*?killSwitches\.computerTab[\s\S]*?!== true/)
+  }
 })
 
 test('the active Vite web entry initializes PostHog and the shared application mounts its pageview tracker', async () => {

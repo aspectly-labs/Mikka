@@ -33,7 +33,7 @@ for (const [file, primary] of [
   ['lib/agent-kit/registry-compat.test.ts', 'ci-core-29'],
   ['lib/agent-kit/tool-defaults-compat.test.ts', 'ci-core-29'],
   ['lib/coordinator/issue-tools.test.ts', 'ci-core-43'],
-  ['components/workspace/issue-workspace-settings.test.tsx', 'ci-core-57'],
+  ['components/workspace/workspace-navigation.test.ts', 'ci-integration-26'],
   ['lib/search/search.test.ts', 'ci-integration-9'],
 ]) test(`same-environment shared regression has one selected owner: ${file}`, async () => {
   const result = await pick(file)
@@ -53,7 +53,7 @@ test('approved-write policy, provider and UI regressions have one selected prima
   for (const [input, proof] of [
     ['lib/operations/write-feature.ts', 'lib/operations/write-feature.test.ts'],
     ['lib/operations/policy-authorization.ts', 'lib/operations/policy-authorization.test.ts'],
-    ['scripts/approved-write-actions.live.test.tsx', 'scripts/approved-write-actions.live.test.tsx'],
+    ['lib/operations/write-client.ts', 'lib/operations/write-client.test.ts'],
   ]) {
     const result = await pick(input)
     const owners = result.units.filter(unit =>
@@ -64,7 +64,7 @@ test('approved-write policy, provider and UI regressions have one selected prima
 })
 
 test('web component edits select their consumers without server DB or Docker', async () => {
-  const result = await pick('components/settings/settings-view.tsx')
+  const result = await pick('components/plugins/github-settings.tsx')
   assert.equal(result.full, false)
   assert.equal(result.daemon, false)
   assert.deepEqual(result.db_suites, [])
@@ -176,7 +176,7 @@ test('deletes, renames, executable modes, symlinks and empty diffs run all', asy
 test('unknown graph and unresolved sources cannot skip jobs', async () => {
   const missing = await select({...plan, graph:{nodes:{},dependencies:{}}}, [change('lib/factory/store.ts')])
   assert(missing.full)
-  const unresolved = await select({...plan, unresolved:[{file:'components/settings/settings-view.tsx'}]}, [change('components/settings/settings-view.tsx')])
+  const unresolved = await select({...plan, unresolved:[{file:'components/plugins/github-settings.tsx'}]}, [change('components/plugins/github-settings.tsx')])
   assert(unresolved.full)
 })
 test('docs retain the fast tier but inventory is built before that decision', async () => {

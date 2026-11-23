@@ -49,8 +49,6 @@
       "scripts/ops/egress-monitor.mjs",
       "tests/fixtures/group-decision-cases.json",
       "components/workspace/workspace-navigation.ts",
-      "components/blocks/rich-text-editor-4/components/comment-mark.ts",
-      "components/blocks/rich-text-editor-4/components/rich-text-comments.ts",
       "cloudflare/bounded-json.mjs",
       "tests/mvp/transport.mjs",
       "scripts/dev-local/transport.mjs",
@@ -65,8 +63,7 @@
       "tests/mvp/decisions.mjs",
       "scripts/ops/request-outcomes.mjs",
       "scripts/ops/deployment-regression.mjs",
-      "scripts/ops/cloudflare-container-logs.mjs",
-      "components/blocks/rich-text-editor-4/components/rich-text-state.ts"
+      "scripts/ops/cloudflare-container-logs.mjs"
     ],
     "frontend": [
       "app/**",

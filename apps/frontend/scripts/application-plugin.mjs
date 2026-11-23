@@ -26,8 +26,8 @@ const commonAliases = new Map([
 const desktopAliases = new Map([
   ['@/lib/auth-client', 'auth-client.ts'], ['@/components/auth-form', 'auth-form.tsx'],
   ['@/lib/platform/open-settings', 'open-settings.ts'], ['@/lib/platform/client-config', 'client-config.ts'],
-  ['@/hooks/use-feature-availability', 'feature-availability.ts'], ['@/lib/live/browser-runtime', 'live-runtime.ts'],
-  ['@/lib/computer/request', 'computer-request.ts'], ['@novnc/novnc/lib/rfb.js', 'novnc.ts'],
+  ['@/hooks/use-feature-availability', 'feature-availability.ts'], ['@hosted/web/hooks/use-feature-availability', 'feature-availability.ts'],
+  ['@/lib/live/browser-runtime', 'live-runtime.ts'], ['@/lib/computer/request', 'computer-request.ts'], ['@novnc/novnc/lib/rfb.js', 'novnc.ts'],
 ])
 
 export function serverSpecifier(source) {
@@ -88,7 +88,8 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
   const webRpc = resolve(frontend, 'src/web/rpc.ts')
   // UI slots and the hosted layer's `@hosted/` imports, resolved exactly as the
   // desktop renderer's build resolves them (docs/ui-overlay.md).
-  const uiSlots = overlayAliases(repository)
+  // Pure headless `--server-pages` builds ignore overlay environment variables.
+  const uiSlots = serverPages ? overlayAliases(repository, {}) : overlayAliases(repository)
   let development = false
   let inventory
   return {
@@ -125,6 +126,9 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
         if (!Object.hasOwn(UI_SLOT_EXPORTS, name)) throw new Error(`UI_SLOT_UNKNOWN: ${source}`)
         return officialSlot + name
       }
+      if (publicTestFixture && !uiSlots.dir && source === `${SLOT_PREFIX}workspace-entry`) {
+        return bundlerResolved(resolve(frontend, 'src/public-test-fixture-workspace.tsx'))
+      }
       const candidate = resolveOverlaySpecifier(source, uiSlots) ?? (source.startsWith('@/') ? resolve(repository, source.slice(2)) : source)
       // Keep require-call/import semantics when resolving conditional package
       // exports; a CommonJS helper must not become an ESM namespace object.
@@ -135,6 +139,10 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
       // and the installed workspace. Resolve its imports before bundling so
       // the self-hosted distribution never ships a dormant workspace chunk.
       if (serverPages && id === resolve(renderer, 'workspace-loader.ts')) return resolve(frontend, 'src/web/server-workspace-loader.ts')
+      if (target === 'desktop' && uiSlots.dir && id === resolve(uiSlots.dir, 'web/hooks/use-feature-availability.ts')
+          && importer?.split('?')[0] !== resolve(renderer, 'feature-availability.ts')) {
+        return bundlerResolved(resolve(renderer, 'feature-availability.ts'))
+      }
       if (serverFile(id)) throw new Error(`FRONTEND_SERVER_MODULE: ${slash(relative(repository, id))}`)
       if (target === 'web' && id === resolve(renderer, 'rpc.ts') && importer?.split('?')[0] !== webRpc) return webRpc
       if (isAbsolute(id) && dirname(id) === actionDirectory && id.endsWith('.ts')) return `${virtualAction}${id.slice(actionDirectory.length + 1, -3)}`

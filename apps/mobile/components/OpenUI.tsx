@@ -1,4 +1,4 @@
-import { createDecisionSubmission } from '../../../hooks/decision-submission'
+import { createDecisionSubmission } from '../../../lib/decision-submission'
 import { createContext, Fragment, useContext, useReducer, useState } from 'react'
 import { Image, Linking, Pressable, StyleSheet, TextInput, View } from 'react-native'
 import { ArrowUpRight, Check } from 'lucide-react-native'

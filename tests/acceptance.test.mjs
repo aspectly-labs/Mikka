@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { getCookies } from 'better-auth/cookies'
@@ -20,8 +21,10 @@ test('预览分区 Cookie 保持 HttpOnly、Secure 和 SameSite=None', async () 
   assert.equal(getCookies({ baseURL: 'https://app.example.com' }).sessionToken.attributes.partitioned, undefined)
 })
 
-test('验收恢复需要用户授权，且不改用不安全的客户端会话', async () => {
-  const source = await readFile(new URL('../components/acceptance-entry.tsx', import.meta.url), 'utf8')
+test('验收恢复需要用户授权，且不改用不安全的客户端会话', async t => {
+  const path = new URL('../.hosted-ui/web/components/acceptance-entry.tsx', import.meta.url)
+  if (!existsSync(path)) { t.skip('.hosted-ui not checked out'); return }
+  const source = await readFile(path, 'utf8')
   assert.match(source, /onClick=\{recoverSession\}/)
   assert.match(source, /\(\) => document\.requestStorageAccess\(\)/)
   assert.match(source, /target="_blank" rel="noopener noreferrer"/)

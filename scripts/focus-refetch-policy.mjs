@@ -10,17 +10,12 @@ import { existsSync, readFileSync } from 'node:fs'
 
 /** Files allowed to listen for focus, visibility or app state, and why. */
 export const focusListenerAllowlist = {
-  'components/agents/voice-orb/renderer.ts': 'pauses and resumes the orb animation; reads no data',
-  'components/labels/profile-mark.tsx': 'pauses and resumes ProfileMark Web Animations when the page hides; reads no data',
-  'components/slots/bot-avatar.tsx': 'resyncs avatar animation clocks; reads no data',
-  'lib/hooks/use-unread-indicators.ts': 'flushes read receipts when the page hides; nothing runs on show',
   'lib/hooks/use-check-on-return.ts': 'checks armed only by a hand-off to the browser or Telegram (one, or each return until the link is done), never by plain focus',
   'lib/live/browser-runtime.ts': 'the shared live transport visibility subscription, extracted from use-live-key: closes scoped channels while hidden; on show reconnects and catches up missed revisions (#1212), with no plain focus listener or additional reads',
   'apps/desktop/src/renderer/live-runtime.ts': 'the bundled transport equivalent of lib/live/browser-runtime: pauses the same scoped channels while hidden and resumes revision catch-up; the shared LiveChannel owns the unchanged read budget',
   'apps/mobile/lib/push.ts': 'refreshes the push token registration; the screen is not re-read',
   'apps/mobile/lib/apple-auth.ts': 'checks the Apple credential state with iOS after foregrounding and clears a revoked session; reads no application or third-party connection data',
   'apps/mobile/lib/updates.ts': 'prefetches an OTA bundle in the background; the screen is not re-read',
-  'hooks/use-subagent-updates.ts': 'cancels the scoped event read while hidden; on show it catches up after the last cursor (#1212), never re-reading prior events or listening to plain focus',
   'apps/mobile/lib/useApi.ts': 'pauses polling in the background; on return one silent read only past FRESH_FOR_MS',
 }
 
@@ -28,7 +23,6 @@ export const focusListenerAllowlist = {
 export const thirdPartyStatusFiles = [
   'components/plugins/github-settings.tsx',
   'components/plugins/connected-apps.tsx',
-  'components/workspace/issue-pull-request-link.tsx',
 ]
 
 /** The one place focus revalidation is configured, behind its freshness gate. */

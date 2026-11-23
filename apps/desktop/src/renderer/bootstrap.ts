@@ -1,4 +1,4 @@
-import type { OnboardingComputer } from '@/components/onboarding/onboarding'
+import type { OnboardingComputer } from '@/lib/onboarding-steps'
 import { withBasePath } from '@/lib/base-path'
 import type { DesktopBootstrap as WireBootstrap } from '@/lib/desktop-rpc/wire'
 import type { DesktopSession } from './host'

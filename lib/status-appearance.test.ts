@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { statusTone, statusTones, statusDots } from './status-appearance'
-import { ISSUE_STATUSES, ISSUE_PRIORITIES } from '../components/workspace/issue-properties'
+import { ISSUE_STATUSES, ISSUE_PRIORITIES } from './issue-properties'
 
 test('任务和项目共用状态语义色', () => {
   for (const [issue, project] of [['doing', 'started'], ['done', 'completed'], ['canceled', 'offTrack']]) {
