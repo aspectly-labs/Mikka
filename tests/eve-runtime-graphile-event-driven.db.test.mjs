@@ -112,11 +112,14 @@ test('Postgres World wrapper defaults to zero idle claim polling', {
   let claims = 0
   let queue
   const connect = pgPool.connect.bind(pgPool)
+  const instrumented = new WeakSet()
   const instrument = client => {
+    if (instrumented.has(client)) return client
+    instrumented.add(client)
     const query = client.query.bind(client)
     client.query = (...queryArgs) => {
       const statement = typeof queryArgs[0] === 'string' ? queryArgs[0] : queryArgs[0]?.text
-      if (statement?.includes('with j as (') && statement.includes('_private_jobs')) claims++
+      if (statement?.includes('with j as (') && statement.includes('_private_jobs') && statement.includes('attempts = jobs.attempts + 1')) claims++
       return query(...queryArgs)
     }
     return client
