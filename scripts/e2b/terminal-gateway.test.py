@@ -145,6 +145,20 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         await self.until(reader, '\r\n__READY__\r\n')
         return reader, writer
 
+    async def test_gateway_upgrade_drains_live_sessions(self):
+        # prepareTerminal kills an outdated gateway with SIGTERM; the drain must
+        # end every live session and reap its shell before the process exits.
+        reader, writer = await self.ready()
+        session = self.session
+        self.assertIsNotNone(session)
+        await gateway.drain_sessions(self.gateway)
+        self.assertTrue(session.ended)
+        self.assertFalse(session.pid and os.path.exists(f'/proc/{session.pid}'), 'the PTY leader was reaped, not orphaned')
+        with self.assertRaises(asyncio.IncompleteReadError):
+            await asyncio.wait_for(reader.readuntil(b'\n\n'), 3)
+        writer.close()
+        await writer.wait_closed()
+
     async def test_real_pwd_git_test_resize_ctrl_c_exit_and_reconnect(self):
         reader, writer = await self.ready()
         if self.cloudflare:

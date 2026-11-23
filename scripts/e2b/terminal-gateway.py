@@ -765,11 +765,21 @@ async def main(*, cloudflare=False):
         serving = asyncio.create_task(server.serve_forever())
         await stopping.wait()
         serving.cancel()
+        # SIGTERM means an upgrade is replacing this gateway (prepareTerminal's
+        # pkill). Drain before leaving the context: on Python 3.12+ its
+        # wait_closed blocks on live streams, and the process is the shells'
+        # subreaper — ending each session runs reap_shells, which SIGKILLs and
+        # reaps the PTYs' children instead of orphaning writers that could still
+        # touch the worktree mid-run.
+        await drain_sessions(gateway)
+
+
+async def drain_sessions(gateway, attempts=2):
     # SIGTERM means an upgrade is replacing this gateway (prepareTerminal's
-    # pkill). This process is the shells' subreaper: drain every session through
-    # finish() so reap_shells SIGKILLs and reaps the PTYs' children instead of
+    # pkill). The process is the shells' subreaper: ending each session runs
+    # reap_shells, which SIGKILLs and reaps the PTYs' children instead of
     # orphaning writers that could still touch the worktree mid-run.
-    for _ in range(2):
+    for _ in range(attempts):
         live = [session for session in list(gateway.sessions.values()) if not session.ended]
         if not live:
             break
