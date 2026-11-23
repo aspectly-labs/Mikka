@@ -49,10 +49,18 @@ export async function listNeedsYou(user: NeedsYouUser): Promise<NeedsYouItem[]> 
     `SELECT DISTINCT root.id::text AS id, p."workspaceId", p."updatedAt" FROM agent_runs p
     JOIN LATERAL (
       WITH RECURSIVE up AS (
-        SELECT id,"retryOf","continuesRunId" FROM agent_runs WHERE id=p.id
+        SELECT * FROM (SELECT r.id,r."retryOf",r."continuesRunId",r."issueId",r."workspaceId",r."userId",
+          CASE WHEN r."questionContinuation"->>'originRunId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            THEN (r."questionContinuation"->>'originRunId')::uuid END AS origin
+          FROM agent_runs r WHERE r.id=p.id) seed
         UNION ALL
-        SELECT r.id,r."retryOf",r."continuesRunId" FROM agent_runs r JOIN up ON up."retryOf"=r.id OR up."continuesRunId"=r.id)
-      SELECT id FROM up WHERE "retryOf" IS NULL AND "continuesRunId" IS NULL LIMIT 1) root ON true
+        SELECT r.id,r."retryOf",r."continuesRunId",r."issueId",r."workspaceId",r."userId",
+          CASE WHEN r."questionContinuation"->>'originRunId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            THEN (r."questionContinuation"->>'originRunId')::uuid END
+          FROM agent_runs r JOIN up ON up."retryOf"=r.id OR up."continuesRunId"=r.id OR up.origin=r.id)
+      SELECT id FROM up WHERE NOT EXISTS (SELECT 1 FROM agent_runs parent
+        WHERE parent.id IN (up.origin,up."retryOf",up."continuesRunId") AND parent."userId"=up."userId"
+          AND parent."issueId" IS NOT DISTINCT FROM up."issueId" AND parent."workspaceId"=up."workspaceId") LIMIT 1) root ON true
     WHERE p."userId" = $1 AND p.status = 'paused' AND p."pauseReason" = 'quota_exhausted'`, [user.id])
   for (const run of paused.rows) {
     if (await namedOutsideToken(user, [run.workspaceId])) continue
