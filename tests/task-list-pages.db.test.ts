@@ -77,7 +77,7 @@ test('authorized Task collection traverses every threadless issue, including mic
     assert.deepEqual(index.items[undispatched].botDispatches, [])
     assert.equal(index.items[anchor], undefined, 'a foreign private Task and its dispatches are omitted')
     assert.equal((await readTaskPresentations({ id: user }, { workspaceId, issueIds: [shared] })).items[shared].botDispatches, undefined)
-    const { botWorkTree } = await import('../components/nav/bot-work-tree')
+    const { botWorkTree } = await import('../lib/bot-work-tree')
     const previousBot = botWorkTree(workspaceId, [firstBot], [], last.items, index.items).get(firstBot)?.[0]
     assert.equal(previousBot?.issueId, shared)
     assert.equal(previousBot?.state, index.items[shared].state)

@@ -38,9 +38,9 @@ async function runtimeFixture(t, { url = 'mikka://app/mikka/en', identity } = {}
           globalThis.__earlyAppStarts++;
           await globalThis.__earlyAppGate;`, resolveDir: repository, loader: 'js',
       }))
-      builder.onResolve({ filter: /^\.\/workspace$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-workspace' } : undefined)
+      builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-workspace' } : undefined)
       builder.onLoad({ filter: /.*/, namespace: 'startup-workspace' }, () => ({
-        contents: 'globalThis.__earlyWorkspaceImports++; export default function Workspace() { globalThis.__earlyWorkspaceRenders++; return null }', loader: 'js',
+        contents: 'globalThis.__earlyWorkspaceImports++; export function Workspace() { globalThis.__earlyWorkspaceRenders++; return null }', loader: 'js',
       }))
     } }],
   })

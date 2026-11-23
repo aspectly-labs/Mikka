@@ -46,7 +46,7 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
     if (!config?.webhookSecret || !origin) throw new WorkspaceError('billingNotConfigured')
     const [trustedOrigin] = authTrustedOrigins({ BETTER_AUTH_URL: origin, NODE_ENV: env.NODE_ENV, CI: env.CI })
     const chat = from.chat ? { botId: from.chat.botId === null ? null : z.uuid().parse(from.chat.botId) } : null
-    const { workspaceLink } = await import('@/components/workspace/workspace-navigation')
+    const { workspaceLink } = await import('@/lib/workspace-navigation')
     const back = new URL(withBasePath(`${locale === 'en' ? '/en' : ''}${chat ? workspaceLink(chat.botId ? { bot: chat.botId } : {}) : '/settings'}`), trustedOrigin)
     if (!chat) back.searchParams.set('section', 'billing')
     back.searchParams.set('workspace', workspaceId)

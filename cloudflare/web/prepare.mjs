@@ -23,7 +23,7 @@ export async function prepareRelease({ id, assets, api, cloud, sourceSha, overla
   const directory = resolve(assets)
   await assertNoSourceMaps(directory)
   const inventory = JSON.parse(await readFile(resolve(directory, 'renderer-manifest.json'), 'utf8'))
-  if (inventory.target !== 'web' || !inventory.inputs?.some(path => path.startsWith('.hosted-ui/slots/'))
+  if (inventory.target !== 'web' || !inventory.inputs?.includes('.hosted-ui/slots/workspace-entry.tsx')
       || !Array.isArray(inventory.serverModules) || inventory.serverModules.length) {
     throw new Error('WEB_RELEASE_OFFICIAL_UI_REQUIRED')
   }

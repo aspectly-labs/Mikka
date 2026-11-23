@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
@@ -112,7 +112,10 @@ function sources(directory: string, found: string[] = []): string[] {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (SKIP.has(entry.name)) continue
     const path = join(directory, entry.name)
-    if (entry.isDirectory()) sources(path, found)
+    if (entry.isDirectory()) {
+      if (entry.name === 'tests' && directory.endsWith(`${sep}.hosted-ui${sep}web`)) continue
+      sources(path, found)
+    }
     else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && !entry.name.endsWith('.d.ts')) found.push(path)
   }
   return found
@@ -123,8 +126,13 @@ function sources(directory: string, found: string[] = []): string[] {
  * then whatever `lib/` modules they import — the rest of `lib/` is server code.
  */
 function rendererSources(): string[] {
-  const roots = ['components', 'hooks', 'apps/desktop/src/renderer'].map(root => join(repository, root))
-  const included = new Set(roots.flatMap(root => sources(root)).map(file => relative(repository, file).split(sep).join('/')))
+  const roots = ['components', 'hooks', 'apps/desktop/src/renderer', '.hosted-ui/web']
+    .map(root => join(repository, root))
+    .filter(root => existsSync(root))
+  const slotEntries = ['.hosted-ui/slots/auth-sso.tsx', '.hosted-ui/slots/workspace-entry.tsx']
+    .map(file => join(repository, file))
+    .filter(file => existsSync(file))
+  const included = new Set([...roots.flatMap(root => sources(root)), ...slotEntries].map(file => relative(repository, file).split(sep).join('/')))
   const library = new Map(sources(join(repository, 'lib')).map(file => [relative(repository, file).split(sep).join('/'), file]))
   const specifier = /(?:from|import)\s*\(?\s*['"]@\/((?:lib|components|hooks)\/[^'"]+)['"]/g
   const pending = [...included]
@@ -281,13 +289,19 @@ test('every API route the renderer requests is on the desktop allowlist', () => 
   assert.deepEqual(denied, [], 'bundled-policy.ts denies these renderer routes: add them, or record in NOT_SERVED why the desktop build does not serve them')
 })
 
+const hasHostedUi = existsSync(join(repository, '.hosted-ui/web'))
+const HOSTED_UI_ONLY_NOT_SERVED = new Set(['/api/cloud/*', '/api/integrations/google/callback'])
+
 test('the recorded exceptions still describe a route the renderer asks for', () => {
-  assert.deepEqual(Object.keys(NOT_SERVED).filter(path => !asked.has(path)), [], 'stale NOT_SERVED entries: the renderer no longer asks for these')
+  const stale = Object.keys(NOT_SERVED).filter(path => !asked.has(path) && (hasHostedUi || !HOSTED_UI_ONLY_NOT_SERVED.has(path)))
+  assert.deepEqual(stale, [], 'stale NOT_SERVED entries: the renderer no longer asks for these')
 })
 
 test('the scan sees the panels whose routes drifted before', () => {
   // Guards the scan itself: a broken walk would make the rule above pass for the wrong reason.
-  for (const path of ['/api/integrations/github/repositories/pulls', '/api/integrations/github/tools', '/api/devices']) {
+  const expected = ['/api/integrations/github/tools', '/api/organizations', '/api/artifacts/shared/*']
+  if (hasHostedUi) expected.push('/api/devices', '/api/integrations/github/repositories/pulls')
+  for (const path of expected) {
     assert.ok(asked.has(path), `${path} missing from the scan`)
   }
 })

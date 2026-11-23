@@ -7,7 +7,7 @@ import { Pool } from 'pg'
 import { disposableDatabase } from '../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-test-database'
 import { withBasePath } from '../base-path'
-import { workspaceLink } from '../../components/workspace/workspace-navigation'
+import { workspaceLink } from '../workspace-navigation'
 
 const base = process.env.E2E_DATABASE_URL
 if (base) assert.ok(disposableDatabase(), 'memory authority regression only uses loopback *_e2e databases')
