@@ -27,3 +27,15 @@ for (const preset of ['node-server']) test(`eve ${preset} build selects the upst
 test('retired preset is rejected before build execution', async () => {
   await assert.rejects(buildEve({env:{NITRO_PRESET:'vercel',MIKKA_BUILD_REVISION:'a'.repeat(40)}}), /EVE_BUILD_PRESET_INVALID/)
 })
+
+for (const [target,worldMeta] of [['@workflow/world-postgres',{world:'@workflow/world-postgres',worldVersion:'5.4.1'}],['@mikka/eve-cloudflare-world',{world:'@mikka/eve-cloudflare-world'}]]) test(`eve node-server build records the ${target} World`,async t=>{
+  const root=await mkdtemp(join(tmpdir(),'mikka-build-eve-world-'))
+  t.after(()=>rm(root,{recursive:true,force:true}))
+  await mkdir(join(root,'node_modules/eve'),{recursive:true})
+  const output=join(root,'apps/eve','.output')
+  await mkdir(output,{recursive:true})
+  await writeFile(join(root,'node_modules/eve/package.json'),JSON.stringify({version:'1.3.0'}))
+  const revision='b'.repeat(40)
+  await buildEve({root,env:{NITRO_PRESET:'node-server',MIKKA_BUILD_REVISION:revision,WORKFLOW_TARGET_WORLD:target},execute(){}})
+  assert.deepEqual(JSON.parse(await readFile(join(output,'mikka-eve-build.json'),'utf8')),{version:1,eve:'1.3.0',revision,preset:'node-server',...worldMeta})
+})

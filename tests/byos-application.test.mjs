@@ -365,11 +365,18 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
     const gone = await pool.query('select state,"removedAt" from byos_connections where id=$1', [abandoned.body.connectionId])
     assert.equal(gone.rows[0].state, 'disconnected'); assert.ok(gone.rows[0].removedAt)
     if (process.env.MIKKA_BYOS_BACKEND_ONLY === '1') { console.log('Backend-only acceptance complete; browser acceptance intentionally not run'); return }
+    const hostedUiConfig = resolve(root, '.hosted-ui/tsconfig.json')
     // Actual Settings component in Chromium, synthetic session/provider only.
     const require = createRequire(import.meta.url)
     const esbuild = require(require.resolve('esbuild', { paths: [require.resolve('tsx')] }))
     const bundle = join(directory, 'browser.js')
-    await esbuild.build({ stdin: { contents: `import React from 'react';import{createRoot}from'react-dom/client';import{NextIntlClientProvider}from'@/lib/intl/i18n-client';import{SubscriptionSettings}from'./components/settings/subscription-settings';import messages from './messages/en.json';createRoot(document.getElementById('root')).render(<NextIntlClientProvider locale="en" messages={messages}><SubscriptionSettings userKey="browser-owner" workspaceId="${workspaceId}"/></NextIntlClientProvider>);`, resolveDir: root, loader: 'tsx' }, outfile: bundle, bundle: true, platform: 'browser', format: 'iife', tsconfig: resolve(root, 'tsconfig.json'), define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '""' }, logLevel: 'silent' })
+    await esbuild.build({ stdin: { contents: `import React from 'react';import{createRoot}from'react-dom/client';import{NextIntlClientProvider}from'@/lib/intl/i18n-client';import{SubscriptionSettings}from'@hosted/web/components/settings/subscription-settings';import messages from '@/messages/en.json';createRoot(document.getElementById('root')).render(<NextIntlClientProvider locale="en" messages={messages}><SubscriptionSettings userKey="browser-owner" workspaceId="${workspaceId}"/></NextIntlClientProvider>);`, resolveDir: root, loader: 'tsx' }, outfile: bundle, bundle: true, platform: 'browser', format: 'iife', tsconfig: hostedUiConfig, define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '""' }, plugins: [{
+      name: 'stub-model-order-server-action',
+      setup(build) {
+        build.onResolve({ filter: /^@\/app\/actions\/model-order$/ }, () => ({ path: 'model-order-action', namespace: 'fixture' }))
+        build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export async function refreshSubscriptionModels() { return { error: "fixture-only" } }', loader: 'js' }))
+      }
+    }], logLevel: 'silent' })
     browserServer = createServer(async (incoming, outgoing) => {
       try {
         const url = `http://127.0.0.1:${browserServer.address().port}${incoming.url}`

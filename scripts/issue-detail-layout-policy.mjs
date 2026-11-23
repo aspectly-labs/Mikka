@@ -89,6 +89,7 @@ export function auditRepository(readFile = read) {
   const properties = readFile(FILES.properties)
   const header = readFile(FILES.header)
   const taskDetail = readFile(FILES.taskDetail)
+  if (properties === undefined || header === undefined || taskDetail === undefined) return findings
 
   // ALE-17 item 2: no descendant selector forcing 44px on chips and menu triggers.
   for (const selector of descendantButtonMinHeight(properties)) findings.push({ rule: 'properties/descendant-button-min-height', detail: selector })

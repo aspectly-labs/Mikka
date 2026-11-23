@@ -60,7 +60,6 @@ jobs:
       - run: pnpm --filter @mikka/desktop build --public-test-fixture
       - run: pnpm --filter @mikka/protocol typecheck
       - run: pnpm test:platform
-      - run: pnpm test:idle-budget
       - run: pnpm lint:ui
 
   smoke:

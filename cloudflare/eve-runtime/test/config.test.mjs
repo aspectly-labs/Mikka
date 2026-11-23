@@ -38,10 +38,10 @@ test('host residency defaults to resident and on-demand requires a queue-driven 
   assert.equal(onDemandHost({ ...env, MIKKA_EVE_HOST_RESIDENCY: 'on-demand' }, queued), true)
 })
 
-test('idle queue polling stays slow unless the deployment sets its own interval', () => {
-  assert.equal(hostConfiguration(environment()).runtimeEnv.WORKFLOW_POSTGRES_POLL_INTERVAL_MS, '5000')
-  const tuned = hostConfiguration({ ...environment(), EVE_ENV_WORKFLOW_POSTGRES_POLL_INTERVAL_MS: '2000' })
-  assert.equal(tuned.runtimeEnv.WORKFLOW_POSTGRES_POLL_INTERVAL_MS, '2000')
+test('the event-driven Postgres queue does not inherit legacy polling overrides', () => {
+  assert.equal(hostConfiguration(environment()).runtimeEnv.WORKFLOW_POSTGRES_POLL_INTERVAL_MS, undefined)
+  const legacy = hostConfiguration({ ...environment(), EVE_ENV_WORKFLOW_POSTGRES_POLL_INTERVAL_MS: '2000' })
+  assert.equal(legacy.runtimeEnv.WORKFLOW_POSTGRES_POLL_INTERVAL_MS, undefined)
 })
 
 test('native routing preserves protocol, cookies, body and origin while replacing forged forwarding fields', async () => {

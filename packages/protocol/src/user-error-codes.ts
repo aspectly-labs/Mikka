@@ -55,6 +55,7 @@ export const USER_ERROR_CODES = {
   run_timeout: [],
   run_network_error: [],
   run_provider_error: [],
+  run_mcp_unavailable: [],
   run_failed: [],
   run_credentials_unavailable: ['device_unavailable', 'native_credentials', 'credential_missing', 'credential_expired', 'quota_exhausted', 'github_credentials'],
   task_secret_unavailable: ['invalid_capability', 'expired_capability', 'binding_mismatch', 'invalid_request', 'destination_denied', 'upstream_unavailable', 'response_blocked', 'limit_exceeded', 'configuration'],

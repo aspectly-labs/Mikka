@@ -1,8 +1,9 @@
 import 'server-only'
 import { and, eq } from 'drizzle-orm'
 import { db, pool, withDatabaseClient } from '@/lib/db'
-import { revalidateExecutionIdentity, ExecutionIdentityError } from '@/lib/execution-identity'
+import { revalidateExecutionIdentity, ExecutionIdentityError, ExecutionMcpAuthorityError } from '@/lib/execution-identity'
 import { agentRuns, devices, issues } from '@/lib/db/schema'
+import { McpValidationError } from '@/lib/plugins/contracts'
 import { mayCompleteIssue, withRunWorkspace } from '@/lib/run-completion'
 
 type Run = typeof agentRuns.$inferSelect
@@ -23,7 +24,8 @@ export async function authorizedClaimResponse(userId: string, hint: Pick<Run, 'i
       return await withRunWorkspace(userId, stored.workspaceId, () => claimResponseTransaction(userId, hint, leaseExpiresAt, respond, stored.workspaceId!, authorizeResources))
     }
     catch (error) {
-      const cause = error instanceof Error && error.cause ? error.cause : error
+      const failure = error instanceof McpValidationError ? error.cause : error
+      const cause = failure instanceof Error && failure.cause ? failure.cause : failure
       const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : null
       // A heartbeat may already hold the run before its issue-scope trigger.
       // Retry only a rolled-back local transaction, never claim/provider IO.
@@ -50,7 +52,10 @@ async function claimResponseTransaction(userId: string, hint: Pick<Run, 'id' | '
         const identity = await revalidateExecutionIdentity(pool, run)
         if (identity && identity.workspaceId !== workspaceId) return null
       }
-      catch (error) { if (error instanceof ExecutionIdentityError) return null; throw error }
+      catch (error) {
+        if (error instanceof ExecutionIdentityError && !(error instanceof ExecutionMcpAuthorityError)) return null
+        throw error
+      }
       if (authorizeResources && !await authorizeResources(run, tx)) return null
       return respond(run)
     }))

@@ -372,6 +372,17 @@ export function openAppLink(href: string): boolean {
 export const NAVIGATE_EVENT = 'mikka:navigate'
 
 /**
+ * The right rail's panel, asked to open from a thread (the 打开任务 button,
+ * #2930): the workspace opens it; the caller sets the panel's tab itself —
+ * the request carries no tab.
+ */
+export const OPEN_CONTEXT_PANEL_EVENT = 'mikka:open-context-panel'
+
+export function openContextPanel() {
+  window.dispatchEvent(new Event(OPEN_CONTEXT_PANEL_EVENT))
+}
+
+/**
  * A move made from inside a component (a thread card, a chip, a row in the
  * right column): writes the address, then the workspace shows it, with the same
  * unsaved-changes check as back and forward.

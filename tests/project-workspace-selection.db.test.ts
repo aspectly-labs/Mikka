@@ -9,7 +9,7 @@ import { OFFICIAL_WEB_URL } from '../lib/web-connection/policy'
 import { WORKSPACE_SELECTION_HEADER } from '../lib/workspace-selection'
 import { withBasePath } from '../lib/base-path'
 import { decode, encode } from '../lib/desktop-rpc/wire'
-import { WORKSPACE_NAME } from '../components/workspace/issue-properties'
+import { WORKSPACE_NAME } from '../lib/workspace-defaults'
 import { disposableDatabase } from './helpers/e2e-target.mjs'
 import { seedFixtureWorkspace } from './helpers/task-workspace'
 

@@ -132,10 +132,8 @@
       "duplicate": "Duplicate profile",
       "mark": {
         "colors": {
-          "graphite": "Graphite",
           "pink": "Pink",
           "teal": "Teal",
-          "ink": "Ink",
           "blue": "Blue",
           "violet": "Violet",
           "emerald": "Emerald"
@@ -1975,8 +1973,8 @@
       "expiry": {
         "30": "30 days",
         "90": "90 days",
-        "never": "Never",
-        "365": "1 year"
+        "365": "1 year",
+        "never": "Never"
       },
       "copyFailed": "Could not copy. Select the token and copy it by hand",
       "shownOnce": "Shown this once only.",
@@ -3309,6 +3307,15 @@
     "acceptanceTab": "Acceptance",
     "composer": "Tell {agent} what to do next…",
     "changesTab": "Changes",
+    "pullTab": "Pull request",
+    "crewThreads": "All threads",
+    "crewPulls": "Pull requests",
+    "crewSide": "Side threads",
+    "crewPullsEmpty": "No pull requests yet",
+    "crewPullsError": "Pull requests unavailable",
+    "crewSideEmpty": "No side threads yet",
+    "crewSideError": "Side threads unavailable",
+    "untitledThread": "Untitled thread",
     "deliveryQueued": "Queued",
     "fullInstructions": "View full instructions",
     "loading": "Opening thread",
@@ -3346,7 +3353,21 @@
     "changesBinary": "Binary file",
     "hideInstructions": "Hide full instructions",
     "composerModelRequested": "Requested {model}",
-    "loadFailed": "Thread failed to load"
+    "loadFailed": "Thread failed to load",
+    "cost": {
+      "label": "This thread cost {amount}",
+      "labelAtLeast": "This thread cost at least {amount}; some calls are still settling",
+      "labelSettling": "This thread's cost is still settling",
+      "title": "This thread",
+      "credits": "Through Mikka",
+      "settling": "Settling",
+      "underCent": "<{amount}",
+      "unsettled": "{count, plural, one {# call is} other {# calls are}} still settling",
+      "included": "Your subscription or API key",
+      "calls": "{count, plural, one {# call} other {# calls}}",
+      "unpricedCalls": "Plus {count, plural, one {# call} other {# calls}} with no per-call price",
+      "includedNote": "Not charged to Mikka credits. A subscription has no per-call price."
+    }
   },
   "FactoryFlow": {
     "card": {
@@ -3796,7 +3817,13 @@
         "empty": "No arguments or result",
         "usedTools": "Used {count, plural, one {# tool} other {# tools}}",
         "command": "Command",
-        "thinkingDone": "Done thinking"
+        "thinkingDone": "Done thinking",
+        "shell": "Shell",
+        "succeeded": "✓ Succeeded",
+        "running": "Running",
+        "stopped": "Stopped",
+        "fullOutput": "Show full output",
+        "loadingOutput": "Loading output…"
       },
       "detail": {
         "page": "Page",
@@ -4334,7 +4361,26 @@
     "projectDependencyNotFound": "A dependency project does not exist or you do not have access.",
     "agentSaveFailed": "Could not save this item.",
     "secretNameReserved": "This name is reserved by the runtime (for example PATH, HOME, proxy, TLS, loader, git, E2B or MIKKA variables). Choose another name.",
-    "issueStateNotFound": "This status no longer exists. Reload the list."
+    "issueStateNotFound": "This status no longer exists. Reload the list.",
+    "workspaceTaskPrefixClashesWithTeam": "A team in this workspace already uses this key. Choose another prefix, or change that team's identifier.",
+    "teamIdentifierClashesWithWorkspacePrefix": "This key is the workspace task prefix. Choose another key, or change the prefix in workspace settings.",
+    "teamIdentifierNamespaceInUse": "This key once issued task identifiers here and can never be reused. Choose another key.",
+    "mcpNeedsConnect": "Connect this MCP server before using it.",
+    "mcpConnectionChanged": "The MCP connection changed. Please reload and try again.",
+    "mcpToolDisabled": "This MCP tool is turned off for the connection.",
+    "mcpCheckRequiresDevice": "Choose the device that runs this command before checking it.",
+    "mcpCheckNotAvailable": "This connection cannot be checked on a device.",
+    "mcpCheckDeviceNotFound": "The device doesn't exist or was removed.",
+    "mcpCheckReceiptExpired": "The check took too long. Please check again.",
+    "invalidMcpCheckReceipt": "The device's check result is invalid.",
+    "mcpOAuthNotSupported": "This MCP server doesn't offer OAuth sign-in.",
+    "mcpOAuthOriginUnavailable": "Sign-in can only start from this site.",
+    "mcpOAuthStateInvalid": "The sign-in link is invalid or expired. Please start again.",
+    "mcpOAuthExchangeFailed": "The MCP server refused the sign-in. Please start again.",
+    "mcpOAuthUnavailable": "The MCP server could not be reached for sign-in.",
+    "mcpCatalogUnavailable": "The MCP catalog is unavailable.",
+    "mcpCatalogRemoteUnavailable": "The MCP catalog source could not be reached.",
+    "mcpCatalogMismatch": "This catalog entry no longer matches the server."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",
@@ -4439,6 +4485,15 @@
         "running": "{count} in progress",
         "prNone": "No open PRs"
       },
+      "coordinator": {
+        "needsYou": "Needs you",
+        "inProgress": "In progress",
+        "untitled": "Untitled thread",
+        "loadError": "The overview could not be read",
+        "kinds": { "approval": "Approval requested", "question": "Question waiting", "limit": "Usage limit reached" },
+        "status": { "queued": "Queued", "running": "Running" }
+      },
+      "preview": { "untitled": "Untitled task", "agent": "Agent {name}", "pullRequest": "Pull request", "unavailable": "Preview unavailable" },
       "prs": "PRs",
       "narrow": "Restore panel width",
       "noTasks": "No tasks yet",
@@ -5359,7 +5414,8 @@
     "noDisplayableContent": "No displayable content",
     "compareImplementationApproachesByCostComplexityAnd": "Compare implementation approaches by cost, complexity, and maintainability.",
     "unableToDisplayResponse": "Unable to display response",
-    "thisMessageWasAlreadySubmittedPleaseAsk": "This message was already submitted. Please ask a new question."
+    "thisMessageWasAlreadySubmittedPleaseAsk": "This message was already submitted. Please ask a new question.",
+    "activeAgentsGroupNotFound": "Group not found or you are not a member."
   },
   "RunErrors": {
     "run_subscription_expired": {
@@ -5848,6 +5904,9 @@
     },
     "workspace_review_conflict": {
       "default": "The review changed. Refresh it before applying this update."
+    },
+    "run_mcp_unavailable": {
+      "default": "An MCP connection used by this task changed or is unavailable."
     }
   },
   "Automations": {
@@ -7598,6 +7657,24 @@
     "notReported": "Not reported",
     "merge": "Merge",
     "mergeFailed": "Could not merge.",
+    "mergeWhenReady": "Merge when ready",
+    "mergeArmed": "Merge armed",
+    "mergeDisarm": "Armed — disarm merge",
+    "mergeDisarmed": "Merge intent disarmed",
+    "mergeable": "Mergeable",
+    "mergeableState": {
+      "MERGEABLE": "Mergeable",
+      "CONFLICTING": "Conflicts",
+      "UNKNOWN": "Unknown"
+    },
+    "detailFailed": "Pull request details unavailable",
+    "requestChanges": "Request changes",
+    "requestChangesTitle": "Request changes on {repo} #{number}",
+    "requestChangesBody": "What needs to change…",
+    "reviewSubmitted": "Changes requested",
+    "reviewFailed": "Could not submit the review",
+    "noChecks": "No checks reported",
+    "moreChecks": "GitHub stopped listing at the read's cap",
     "anyAuthor": "Anyone",
     "list": "Pull request list",
     "copyLinks": "Copy links",
@@ -7610,7 +7687,10 @@
     "description": "Description",
     "anyLabel": "Any label",
     "done": "Done",
-    "deselect": "Deselect"
+    "deselect": "Deselect",
+    "diffPartial": "More files changed than this read reached",
+    "diffPatchUnavailable": "{count} file(s) have no patch (binary or truncated)",
+    "reviewSelf": "You cannot request changes on your own pull request"
   },
   "HostedConnections": {
     "state": {
@@ -8324,6 +8404,12 @@
   },
   "HostedThread": {
     "needsCount": "{count, plural, one {# needs you} other {# need you}}",
+    "toolsGroups": {
+      "common": "Common",
+      "related": "Related",
+      "terminals": "Terminals",
+      "crew": "Crew"
+    },
     "toolKinds": {
       "failed": "{failed} failed",
       "separator": ", ",
@@ -8383,7 +8469,7 @@
     "decline": "Decline",
     "uploadFailed": "Upload failed",
     "away": "While you were away",
-    "toolsRunning": "{count, plural, one {Running a tool} other {Running # tools in parallel}}",
+    "toolsRunning": "{count, plural, one {Running a command} other {Running # tools}}",
     "offline": "Connection lost – reconnecting…",
     "runningCount": "{count} running",
     "sending": "Sending…",
@@ -8405,7 +8491,12 @@
     "openTasks": "Open Tasks",
     "toolsRanTime": "{count, plural, one {Ran a tool} other {Ran # tools}} · {seconds}s",
     "waitingToSend": "Waiting to send",
-    "backOnline": "Back online"
+    "backOnline": "Back online",
+    "steps": {
+      "read": "Read {target}",
+      "search": "Searched “{target}”",
+      "edit": "Edited {target}"
+    }
   },
   "Board": {
     "scrollRight": "Scroll board right",
@@ -10139,7 +10230,13 @@
     "retry": "Retry now",
     "updateTitle": "Update Mikka to continue",
     "browserTitle": "Continue in your browser",
-    "offlineHint": "Waiting for the connection to recover."
+    "offlineHint": "Waiting for the connection to recover.",
+    "forward": "Forward",
+    "tabsLabel": "Saved tabs",
+    "newTab": "New tab",
+    "closeTab": "Close {title}",
+    "tabHome": "Home",
+    "tabSettings": "Settings"
   },
   "ConversationDirectory": {
     "loading": "Loading conversations…",

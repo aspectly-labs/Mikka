@@ -200,6 +200,7 @@ test('the create window properties land in one create: assignee, due date, label
   const owner = await seedUser(pool, 'Create-props owner'), teammate = await seedUser(pool, 'Create-props teammate'), outsider = await seedUser(pool, 'Create-props outsider')
   try {
     const workspace = await seedWorkspace(pool, owner, [{ userId: owner, role: 'admin' }, { userId: teammate, role: 'member' }])
+    await pool.query('INSERT INTO workspace_issue_labels(workspace_id,name,color) VALUES($1,\'bug\',\'red\')', [workspace.id])
     const bot = await seedBot(pool, workspace.id, owner, 'Captain'), otherBot = await seedBot(pool, workspace.id, owner, 'Second')
     const teammateBot = await seedBot(pool, workspace.id, teammate, 'Not yours')
     const base: CreateOnlyCommand = { version: 1, intent: 'create_only', workspaceId: workspace.id, requestId: randomUUID(), title: 'Ship the new dialog',
@@ -252,6 +253,7 @@ test('the create window properties land in one create: assignee, due date, label
     assert.deepEqual((await wakes(first.taskId)).map(event => event.botId), [bot, otherBot])
   } finally {
     await pool.query('delete from issues where "userId"=any($1::text[])', [[owner, teammate, outsider]])
+    await pool.query('DELETE FROM workspace_issue_labels l USING mikka_workspaces w WHERE l.workspace_id=w.id AND w."userId"=ANY($1::text[])', [[owner, teammate, outsider]])
     await pool.query('delete from "user" where id=any($1::text[])', [[owner, teammate, outsider]])
   }
 })
@@ -261,8 +263,9 @@ test('a comment on a task wakes its assigned Bot, an @-mention wakes the writerâ
   const { pool } = await import('../lib/db')
   const { createTaskOnly } = await import('../app/actions/issues')
   const { exchangeDocument } = await import('../app/actions/collaboration')
-  const { createDocumentSeed } = await import('../components/workspace/issue-editor-schema')
-  const { addThread } = await import('../components/blocks/rich-text-editor-4/components/rich-text-comments')
+  const { issueDocumentSeed } = await import('../lib/issue-document-seed')
+  const { serverIssueSchema } = await import('../lib/issue-editor-schema-snapshot')
+  const { addThread } = await import('../lib/rich-text/comments-model')
   const { seedUser, seedWorkspace, seedBot } = await import('./support/workspace-admin-db')
   const encode = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64')
   const owner = await seedUser(pool, 'Comment-wake owner')
@@ -275,7 +278,7 @@ test('a comment on a task wakes its assigned Bot, an @-mention wakes the writerâ
       content, status: 'todo', priority: 'normal', assignee: { kind: 'bot', id: captain } }))
     assert.ok('taskId' in created && created.taskId, JSON.stringify(created))
     const id = created.taskId
-    const seed = createDocumentSeed(content, id)
+    const seed = issueDocumentSeed(serverIssueSchema(), content, id)
     assert.ok(seed)
     const client = new Y.Doc()
     const first = await as(() => exchangeDocument({ id, seed: encode(seed), vector: encode(Y.encodeStateVector(client)) }))

@@ -8,6 +8,7 @@ import { defaultRunPolicy } from "@mikka/protocol/agent-policy"
 import { TEAM_SKILL_HEADER } from '@mikka/protocol/skill'
 import { RECOVERY_WORKTREE_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, CUSTOM_TASK_BRANCH_HEADER } from "@mikka/protocol/device"
 import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-secrets'
+import { MCP_CHECK_HEADER, type McpDeviceCheckCommand } from '@mikka/protocol/mcp-check'
 
 import {
   DaemonError,
@@ -155,6 +156,8 @@ describe("HttpServerLink", () => {
 
   it('advertises strict local-worktree continuation and preserves the required assignment', async () => {
     const fetcher = (async (_url, init) => {
+      expect(new Headers(init?.headers).get('x-mikka-task-mcp')).toBe('1')
+      expect(new Headers(init?.headers).get('x-mikka-task-mcp-tool-filter')).toBe('1')
       expect(new Headers(init?.headers).get(RECOVERY_WORKTREE_HEADER)).toBe('1')
       expect(new Headers(init?.headers).get(RUN_CREDENTIALS_HEADER)).toBe('1')
       expect(new Headers(init?.headers).get(SUBSCRIPTION_MODEL_CATALOGUE_HEADER)).toBe('1')
@@ -337,6 +340,39 @@ describe("HttpServerLink", () => {
     const error = await new HttpServerLink("http://server.test", fetch).claimRun("d", "r").catch((e: unknown) => e)
     expect(error).toBeInstanceOf(DaemonUpgradeRequiredError)
     expect((error as DaemonUpgradeRequiredError).latest).toBe("0.0.401")
+  })
+
+  it('sends its hosted reader version and preserves upgrade causes on JSON and binary requests', async () => {
+    const cause = { code: 'api_version_below_floor', version: 1, minimum: 2 }
+    const fetcher: typeof fetch = async (_url, init) => {
+      expect(new Headers(init?.headers).get('x-mikka-api-version')).toBe('1')
+      return json({ error: 'update_required', minVersion: '2', minApiVersion: 2, message: 'Update Mikka before continuing.', cause }, 426)
+    }
+    const link = new HttpServerLink('http://server.test', fetcher)
+    for (const operation of [() => link.claimRun('d', 'r'), () => link.sendCapture('r', 'capture', { target: 'server' }, Uint8Array.of(1), 'image/png')]) {
+      const error = await operation().catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(DaemonUpgradeRequiredError)
+      expect(error).toMatchObject({ cause, message: 'This daemon is too old for the server; update it.' })
+    }
+  })
+
+  it('decodes owner-requested STDIO checks only through the versioned device transport and accepts older servers', async () => {
+    const command: McpDeviceCheckCommand = { id: '6f1c2b8e-2a8e-4c39-9d1a-3b5d7c9e1f20', expiresAt: SOON(),
+      server: { name: 'mcp_fixture', transport: 'stdio', command: 'node', args: [], env: {} } }
+    let response: unknown = { commands: [], mcpChecks: [command] }
+    const link = new HttpServerLink('http://server.test', (async (_url, init) => {
+      expect(new Headers(init?.headers).get(MCP_CHECK_HEADER)).toBe('1')
+      return json(response)
+    }) as typeof fetch)
+    const checks = vi.fn()
+    expect(await link.fetchCommands('device', 0, { onMcpChecks: checks })).toEqual([])
+    expect(checks).toHaveBeenCalledExactlyOnceWith([command])
+    response = { commands: [] }
+    expect(await link.fetchCommands('device', 0, { onMcpChecks: checks })).toEqual([])
+    expect(checks).toHaveBeenCalledOnce()
+    response = { commands: [], mcpChecks: [{ ...command, server: { ...command.server, command: 'bad\u0000command' } }] }
+    await expect(link.fetchCommands('device', 0, { onMcpChecks: checks })).rejects.toThrow()
+    expect(checks).toHaveBeenCalledOnce()
   })
 
   it("409 on a claim: no open session means redial; anything else is another device's run", async () => {
@@ -547,6 +583,20 @@ describe("mikka daemon login (device authorization)", () => {
       ? json(grant) : json({ access_token: 'browser-session-token' }))
     await expect(deviceLogin({ serverUrl: 'https://server.test/mikka', fetchImpl: fetch, prompt: () => undefined, sleep: async () => undefined }))
       .rejects.toThrow('Device login failed')
+  })
+
+  it('CLI login sends its reader version and shows the update command with the server cause', async () => {
+    const cause = { code: 'api_version_below_floor', version: 1, minimum: 2 }
+    const prompt = vi.fn()
+    const sleep = vi.fn()
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      expect(new Headers(init?.headers).get('x-mikka-api-version')).toBe('1')
+      return json({ error: 'update_required', minVersion: '2', minApiVersion: 2, message: 'Update Mikka before continuing.', cause }, 426)
+    }
+    await expect(deviceLogin({ serverUrl: 'https://server.test', fetchImpl, prompt, sleep }))
+      .rejects.toMatchObject({ cause, message: 'This daemon is too old for the server. Update it first: npm install -g @aspectlylabs/mikka@latest' })
+    expect(prompt).not.toHaveBeenCalled()
+    expect(sleep).not.toHaveBeenCalled()
   })
 })
 

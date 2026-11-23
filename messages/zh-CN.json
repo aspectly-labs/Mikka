@@ -132,10 +132,8 @@
       "duplicate": "复制为新的 Agent 配置",
       "mark": {
         "colors": {
-          "graphite": "石墨",
           "pink": "粉",
           "teal": "青绿",
-          "ink": "墨黑",
           "blue": "蓝",
           "violet": "紫",
           "emerald": "翠绿"
@@ -1975,8 +1973,8 @@
       "expiry": {
         "30": "30 天",
         "90": "90 天",
-        "never": "永不过期",
-        "365": "1 年"
+        "365": "1 年",
+        "never": "永不过期"
       },
       "copyFailed": "复制失败。请手动选中并复制",
       "shownOnce": "只显示这一次。",
@@ -3309,6 +3307,15 @@
     "acceptanceTab": "验收",
     "composer": "告诉 {agent} 下一步做什么…",
     "changesTab": "改动",
+    "pullTab": "Pull request",
+    "crewThreads": "全部线程",
+    "crewPulls": "Pull requests",
+    "crewSide": "旁支线程",
+    "crewPullsEmpty": "还没有 pull request",
+    "crewPullsError": "Pull requests 读不出来",
+    "crewSideEmpty": "还没有旁支线程",
+    "crewSideError": "旁支线程读不出来",
+    "untitledThread": "未命名线程",
     "deliveryQueued": "排队中",
     "fullInstructions": "查看完整指令",
     "loading": "正在打开线程",
@@ -3346,7 +3353,21 @@
     "changesBinary": "二进制文件",
     "hideInstructions": "隐藏完整指令",
     "composerModelRequested": "所选模型：{model}",
-    "loadFailed": "线程加载失败"
+    "loadFailed": "线程加载失败",
+    "cost": {
+      "label": "本线程费用 {amount}",
+      "labelAtLeast": "本线程费用至少 {amount}，还有调用在结算",
+      "labelSettling": "本线程费用还在结算",
+      "title": "本线程",
+      "credits": "经由 Mikka",
+      "settling": "结算中",
+      "underCent": "<{amount}",
+      "unsettled": "还有 {count} 次调用在结算",
+      "included": "你的订阅或 API Key",
+      "calls": "{count} 次调用",
+      "unpricedCalls": "另有 {count} 次调用没有单次价格",
+      "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
+    }
   },
   "FactoryFlow": {
     "card": {
@@ -3796,7 +3817,13 @@
         "empty": "没有参数或结果",
         "usedTools": "用了 {count} 个工具",
         "command": "命令",
-        "thinkingDone": "思考完毕"
+        "thinkingDone": "思考完毕",
+        "shell": "Shell",
+        "succeeded": "✓ 成功",
+        "running": "运行中",
+        "stopped": "已停止",
+        "fullOutput": "查看完整输出",
+        "loadingOutput": "正在加载输出…"
       },
       "detail": {
         "page": "网页",
@@ -4334,7 +4361,26 @@
     "projectDependencyNotFound": "依赖项目不存在或无访问权限。",
     "agentSaveFailed": "保存失败，请重试。",
     "secretNameReserved": "该名称为运行环境保留（例如 PATH、HOME、代理、TLS、加载器、git、E2B 或 MIKKA 相关变量），请换一个名称。",
-    "issueStateNotFound": "这个状态已不存在，请刷新列表。"
+    "issueStateNotFound": "这个状态已不存在，请刷新列表。",
+    "workspaceTaskPrefixClashesWithTeam": "工作区中已有团队使用该标识符。请更换前缀，或修改该团队的标识符。",
+    "teamIdentifierClashesWithWorkspacePrefix": "该缩写已被用作工作区任务前缀。请更换缩写，或在工作区设置中修改前缀。",
+    "teamIdentifierNamespaceInUse": "该缩写曾在此签发任务编号，不能再次使用。请更换缩写。",
+    "mcpNeedsConnect": "请先连接此 MCP 服务器再使用。",
+    "mcpConnectionChanged": "MCP 连接已变更，请重新加载后再试。",
+    "mcpToolDisabled": "此连接已关闭该 MCP 工具。",
+    "mcpCheckRequiresDevice": "请先选择运行该命令的设备，再进行检查。",
+    "mcpCheckNotAvailable": "此连接无法在设备上检查。",
+    "mcpCheckDeviceNotFound": "设备不存在或已移除。",
+    "mcpCheckReceiptExpired": "检查超时，请重新检查。",
+    "invalidMcpCheckReceipt": "设备返回的检查结果无效。",
+    "mcpOAuthNotSupported": "此 MCP 服务器不支持 OAuth 登录。",
+    "mcpOAuthOriginUnavailable": "只能从本站开始登录。",
+    "mcpOAuthStateInvalid": "登录链接无效或已过期，请重新开始。",
+    "mcpOAuthExchangeFailed": "MCP 服务器拒绝了此次登录，请重新开始。",
+    "mcpOAuthUnavailable": "无法连接 MCP 服务器完成登录。",
+    "mcpCatalogUnavailable": "MCP 目录不可用。",
+    "mcpCatalogRemoteUnavailable": "无法访问 MCP 目录源。",
+    "mcpCatalogMismatch": "该目录条目与服务器已不匹配。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
@@ -4439,6 +4485,15 @@
         "running": "{count} 个进行中",
         "prNone": "没有打开的 PR"
       },
+      "coordinator": {
+        "needsYou": "需要你",
+        "inProgress": "进行中",
+        "untitled": "未命名线程",
+        "loadError": "概览读取失败",
+        "kinds": { "approval": "等待审批", "question": "等待回答", "limit": "已达用量上限" },
+        "status": { "queued": "排队中", "running": "运行中" }
+      },
+      "preview": { "untitled": "未命名任务", "agent": "{name} 负责", "pullRequest": "Pull request", "unavailable": "预览不可用" },
       "prs": "PR",
       "narrow": "恢复右栏宽度",
       "noTasks": "还没有任务",
@@ -5359,7 +5414,8 @@
     "noDisplayableContent": "回复没有可显示的内容",
     "compareImplementationApproachesByCostComplexityAnd": "帮我从成本、复杂度和可维护性三个方面比较实施方案。",
     "unableToDisplayResponse": "回复显示出错",
-    "thisMessageWasAlreadySubmittedPleaseAsk": "此轮消息不能重复提交，请新建一轮提问。"
+    "thisMessageWasAlreadySubmittedPleaseAsk": "此轮消息不能重复提交，请新建一轮提问。",
+    "activeAgentsGroupNotFound": "群不存在或你不是成员。"
   },
   "RunErrors": {
     "run_subscription_expired": {
@@ -5848,6 +5904,9 @@
     },
     "workspace_review_conflict": {
       "default": "审阅记录已变化，请刷新后再修改。"
+    },
+    "run_mcp_unavailable": {
+      "default": "此任务使用的 MCP 连接已更改或暂不可用。"
     }
   },
   "Automations": {
@@ -7598,6 +7657,24 @@
     "notReported": "未报告",
     "merge": "合并",
     "mergeFailed": "合并没有完成。",
+    "mergeWhenReady": "就绪后合并",
+    "mergeArmed": "已就绪合并",
+    "mergeDisarm": "已就绪——取消合并",
+    "mergeDisarmed": "已取消就绪合并",
+    "mergeable": "可合并",
+    "mergeableState": {
+      "MERGEABLE": "可合并",
+      "CONFLICTING": "有冲突",
+      "UNKNOWN": "未知"
+    },
+    "detailFailed": "Pull request 详情不可用",
+    "requestChanges": "请求修改",
+    "requestChangesTitle": "对 {repo} #{number} 请求修改",
+    "requestChangesBody": "需要改什么…",
+    "reviewSubmitted": "已请求修改",
+    "reviewFailed": "评审没有提交成功",
+    "noChecks": "还没有检查报告",
+    "moreChecks": "检查太多，GitHub 只列到上限",
     "anyAuthor": "全部作者",
     "list": "PR 列表",
     "copyLinks": "复制链接",
@@ -7610,7 +7687,10 @@
     "description": "描述",
     "anyLabel": "全部标签",
     "done": "完成",
-    "deselect": "取消选择"
+    "deselect": "取消选择",
+    "diffPartial": "改动文件数超过本次读取的上限",
+    "diffPatchUnavailable": "{count} 个文件没有补丁（二进制或被截断）",
+    "reviewSelf": "不能在自己的 PR 上请求修改"
   },
   "HostedConnections": {
     "state": {
@@ -8324,6 +8404,12 @@
   },
   "HostedThread": {
     "needsCount": "{count} 个等你",
+    "toolsGroups": {
+      "common": "常用",
+      "related": "相关",
+      "terminals": "终端",
+      "crew": "Crew"
+    },
     "toolKinds": {
       "failed": "{failed} 个失败",
       "separator": "，",
@@ -8383,7 +8469,7 @@
     "decline": "不同意",
     "uploadFailed": "上传失败",
     "away": "你不在时",
-    "toolsRunning": "正在用 {count} 个工具",
+    "toolsRunning": "{count, plural, one {正在运行命令} other {正在运行 # 个工具}}",
     "offline": "连接断了，正在重连…",
     "runningCount": "{count} 个在进行",
     "sending": "发送中…",
@@ -8405,7 +8491,12 @@
     "openTasks": "打开任务",
     "toolsRanTime": "用了 {count} 个工具 · {seconds} 秒",
     "waitingToSend": "等待发送",
-    "backOnline": "已重新连上"
+    "backOnline": "已重新连上",
+    "steps": {
+      "read": "已读取 {target}",
+      "search": "已搜索“{target}”",
+      "edit": "已编辑 {target}"
+    }
   },
   "Board": {
     "scrollRight": "向右滚动看板",
@@ -10139,7 +10230,13 @@
     "retry": "立即重试",
     "updateTitle": "更新 Mikka 后继续",
     "browserTitle": "在浏览器中继续",
-    "offlineHint": "等待连接恢复。"
+    "offlineHint": "等待连接恢复。",
+    "forward": "前进",
+    "tabsLabel": "已保存的标签页",
+    "newTab": "新建标签页",
+    "closeTab": "关闭{title}",
+    "tabHome": "首页",
+    "tabSettings": "设置"
   },
   "ConversationDirectory": {
     "loading": "正在加载线程…",

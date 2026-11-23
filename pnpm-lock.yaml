@@ -17,7 +17,7 @@ patchedDependencies:
     hash: 4c366142582a7e49bf37b4e30502f6cc47d708fe1d91b0627c029c3872963573
     path: patches/@novnc__novnc@1.6.0.patch
   '@workflow/world-postgres@5.4.1':
-    hash: 42f48feebe96d9c0980afda1697139e3510c0748ae059a9e70c25ab28c057151
+    hash: bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56
     path: patches/@workflow__world-postgres@5.4.1.patch
   eve@1.3.0:
     hash: 566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed
@@ -25,6 +25,9 @@ patchedDependencies:
   ffmpeg-static@5.3.0:
     hash: 7c49ecd9c22f1a10a87314ce3d1ab332d9c099736c6b8bd5bb86d4d50238776b
     path: patches/ffmpeg-static@5.3.0.patch
+  graphile-worker@0.16.6:
+    hash: 6b2f970fcd12f8f9329bbf1eb2b3d38abe51b946998cea3c585bef27699ed2ef
+    path: patches/graphile-worker@0.16.6.patch
 
 importers:
 
@@ -549,7 +552,7 @@ importers:
         version: link:../../packages/eve-cloudflare-world
       '@workflow/world-postgres':
         specifier: 5.4.1
-        version: 5.4.1(patch_hash=42f48feebe96d9c0980afda1697139e3510c0748ae059a9e70c25ab28c057151)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)
+        version: 5.4.1(patch_hash=bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)
       eve:
         specifier: 1.3.0
         version: 1.3.0(patch_hash=566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed)(b99b53494634a2b2300a4f3b0e6df2e7)
@@ -761,6 +764,9 @@ importers:
       '@mikka/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.1
+        version: 1.32.1(@cfworker/json-schema@4.1.1)(zod@4.6.7)
       '@opentelemetry/api':
         specifier: 1.9.0
         version: 1.9.0
@@ -18525,7 +18531,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.10.0
 
-  '@workflow/world-postgres@5.4.1(patch_hash=42f48feebe96d9c0980afda1697139e3510c0748ae059a9e70c25ab28c057151)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)':
+  '@workflow/world-postgres@5.4.1(patch_hash=bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)':
     dependencies:
       '@workflow/errors': 5.1.5
       '@workflow/utils': 5.1.1
@@ -18534,7 +18540,7 @@ snapshots:
       cbor-x: 1.6.9
       dotenv: 17.4.2
       drizzle-orm: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(pg@8.23.1)(sql.js@1.16.0)
-      graphile-worker: 0.16.6(typescript@6.0.3)
+      graphile-worker: 0.16.6(patch_hash=6b2f970fcd12f8f9329bbf1eb2b3d38abe51b946998cea3c585bef27699ed2ef)(typescript@6.0.3)
       pg: 8.23.1
       ulid: 3.0.2
       zod: 4.6.7
@@ -21582,7 +21588,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  graphile-worker@0.16.6(typescript@6.0.3):
+  graphile-worker@0.16.6(patch_hash=6b2f970fcd12f8f9329bbf1eb2b3d38abe51b946998cea3c585bef27699ed2ef)(typescript@6.0.3):
     dependencies:
       '@graphile/logger': 0.2.0
       '@types/debug': 4.1.13

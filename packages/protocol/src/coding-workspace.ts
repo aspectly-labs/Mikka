@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_RESPONSE_BYTES, visibleWorkspacePath, workspacePath, runWorktreeIdentity, sourceRevision, type RunWorktreeIdentity } from './coding-workspace-common'
 import { workspaceDiffReadRequest, workspaceDiffReadResult, workspaceDiffBlobProof } from './coding-workspace-review'
@@ -29,9 +30,26 @@ export const workspaceFileReadRequest = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('search'), query: z.string().min(1).max(200), limit: z.number().int().min(1).max(100).default(30) }),
   z.strictObject({ kind: z.literal('context'), selection: workspaceContextSelection }),
 ])
+/** The fence a client observed before deciding to write. `workingVersion` is
+ * the stat fence only git_status-style observations expose; when present the
+ * device must match it exactly so an Editor/PTY race can never write over a
+ * newer file. */
+const fileWriteFence = z.strictObject({ exists: z.boolean(), contentSha256: digest.nullable(),
+  mode: z.enum(['100644', '100755']).nullable(), workingVersion: z.string().min(1).max(80).nullable().default(null) })
+export type WorkspaceFileFence = z.infer<typeof fileWriteFence>
+export const WORKSPACE_FILE_SAVE_BASE64_CHARS = Math.ceil(WORKSPACE_MAX_FILE_BYTES / 3) * 4
+export const workspaceFileSaveRequest = z.strictObject({ kind: z.literal('file_save'), operationId: z.uuid(),
+  path: workspacePath.refine(Boolean), expected: fileWriteFence,
+  encoding: z.enum(['utf8', 'base64']), content: z.string().max(WORKSPACE_FILE_SAVE_BASE64_CHARS), executable: z.boolean().default(false) })
+export const workspaceFileRenameRequest = z.strictObject({ kind: z.literal('file_rename'), operationId: z.uuid(),
+  path: workspacePath.refine(Boolean), newPath: workspacePath.refine(Boolean), expected: fileWriteFence })
+export const workspaceFileDeleteRequest = z.strictObject({ kind: z.literal('file_delete'), operationId: z.uuid(),
+  path: workspacePath.refine(Boolean), expected: fileWriteFence })
+export const workspaceFileWriteRequest = z.discriminatedUnion('kind', [workspaceFileSaveRequest, workspaceFileRenameRequest, workspaceFileDeleteRequest])
+
 export const workspaceReadRequest = z.union([workspaceFileReadRequest, workspaceDiffReadRequest, workspaceGitReadRequest,
   workspaceGitRevertPreviewRequest, workspaceGitRevertApplyRequest, workspaceGitUndoRequest,
-  workspaceGitCheckpointPreviewRequest, workspaceGitCheckpointRestoreRequest])
+  workspaceGitCheckpointPreviewRequest, workspaceGitCheckpointRestoreRequest, workspaceFileWriteRequest])
 export type WorkspaceReadRequest = z.infer<typeof workspaceReadRequest>
 
 export function workspaceRequestPathsAllowed(request: WorkspaceReadRequest): boolean {
@@ -41,6 +59,8 @@ export function workspaceRequestPathsAllowed(request: WorkspaceReadRequest): boo
   if (request.kind === 'git_revert_preview' || request.kind === 'git_revert_apply') return visibleWorkspacePath(request.file.path)
   if (request.kind === 'git_undo') return request.files.files.every(file => visibleWorkspacePath(file.path))
   if (request.kind === 'git_checkpoint_restore') return true
+  if (request.kind === 'file_save' || request.kind === 'file_delete') return visibleWorkspacePath(request.path)
+  if (request.kind === 'file_rename') return visibleWorkspacePath(request.path) && visibleWorkspacePath(request.newPath)
   if (request.kind === 'search') return true
   if (request.kind !== 'context') return visibleWorkspacePath(request.path)
   return request.selection.kind === 'resolved' ? request.selection.files.every(file => visibleWorkspacePath(file.path))
@@ -73,7 +93,15 @@ export const workspaceFileResult = z.strictObject({ ...observation, kind: z.lite
     startLine: z.number().int().positive(), endLine: z.number().int().nonnegative(), totalLines: z.number().int().nonnegative().nullable(),
     truncated: z.boolean(), editable: z.literal(false),
   })
-export const workspaceReadResult = z.union([
+export const workspaceFileWriteAfter = z.strictObject({ exists: z.boolean(), mode: z.enum(['100644', '100755']).nullable(),
+  size: z.number().int().nonnegative().nullable(), contentSha256: digest.nullable(), workingVersion: z.string().min(1).max(80) })
+export const workspaceFileWriteResult = z.strictObject({ ...observation,
+  kind: z.enum(['file_saved', 'file_renamed', 'file_deleted']), operationId: z.uuid(), appliedAt: z.iso.datetime(), headSha: sha,
+  path: workspacePath.refine(Boolean), newPath: workspacePath.refine(Boolean).nullable().default(null), after: workspaceFileWriteAfter,
+  idempotent: z.boolean() })
+export type WorkspaceFileWriteResult = z.infer<typeof workspaceFileWriteResult>
+
+export const workspaceReadResult = z.union([workspaceFileWriteResult,
   workspaceFailure,
   workspaceDiffReadResult,
   workspaceGitReadResult,
@@ -144,6 +172,17 @@ export function matchesWorkspaceResponse(request: WorkspaceReadRequest, identity
       result.operationId === request.operationId && result.previewVersion === request.previewVersion &&
       result.checkpointId === request.checkpointId && result.headSha === request.expected.headSha
     return false
+  }
+  if (request.kind === 'file_save' || request.kind === 'file_rename' || request.kind === 'file_delete') {
+    const expectedKind = request.kind === 'file_save' ? 'file_saved' : request.kind === 'file_rename' ? 'file_renamed' : 'file_deleted'
+    if (result.kind !== expectedKind || result.operationId !== request.operationId || result.path !== request.path) return false
+    if (request.kind === 'file_rename' && result.newPath !== request.newPath) return false
+    if (request.kind === 'file_save') {
+      const bytes = request.encoding === 'utf8' ? new TextEncoder().encode(request.content) : Buffer.from(request.content, 'base64')
+      if (createHash('sha256').update(bytes).digest('hex') !== result.after.contentSha256) return false
+    }
+    if (request.kind === 'file_delete' && result.after.exists) return false
+    return true
   }
   const value = result as Extract<WorkspaceReadResult, { kind: 'file' | 'tree' | 'search' | 'context' | 'diff_snapshot' | 'diff_file' }>
   if (value.kind !== request.kind) return false
