@@ -1027,6 +1027,9 @@ export const attentionLog = pgTable('attention_log', {
 export const suggestionTriggerChecks = pgTable('suggestion_trigger_checks', {
   userId: text('userId').primaryKey(),
   checkedAt: timestamp('checkedAt', { withTimezone: true }).notNull(),
+  // Last suggestions-reconcile pass on this person; checkedAt tracks the real-time
+  // trigger check instead, so the hourly sweep can walk each person on their own due.
+  reconciledAt: timestamp('reconciledAt', { withTimezone: true }),
 })
 
 /**
