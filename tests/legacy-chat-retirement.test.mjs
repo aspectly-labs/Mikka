@@ -1,27 +1,29 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { sessionPreview } from '../lib/agent-history.ts'
 import { webUrlSchema } from '../lib/search/url-schema.ts'
 const source = path => readFile(new URL('../' + path, import.meta.url), 'utf8')
 
-test('Retired chat route exposes only the shared image GET, with no generation or credential/model imports', async () => {
+test('Retired chat route exposes only the shared image GET, with no generation or credential/model imports', async t => {
   const route = await source('app/api/agent/route.ts')
   assert.match(route, /export \{ GET \} from '\.\/images\/route'/)
   assert.doesNotMatch(route, /POST|HEAD|streamText|OPENCODE|createAgentWebTools|beginAgentTurn/)
-  const archive = await source('components/workspace/legacy-chat-archive.tsx')
+  if (!existsSync(new URL('../.hosted-ui/web', import.meta.url))) { t.skip('.hosted-ui not checked out'); return }
+  const archive = await source('.hosted-ui/web/components/workspace/legacy-chat-archive.tsx')
   assert.doesNotMatch(archive, /useCompletion|complete\(|AgentComposer|onSubmit|method:\s*'POST'/)
   assert.match(archive, /continueFromAnswer: async \(\) => false/)
   assert.doesNotMatch(archive, /<div inert>|AgentGenerativeUI/)
   assert.match(archive, /<LegacyReplyContent/)
   assert.match(archive, /fetchAgentHistory/)
   // The left column lists bots only; an older chat opens from ⌘K, read-only.
-  const nav = await source('components/nav/bot-list.tsx')
+  const nav = await source('.hosted-ui/web/components/nav/bot-list.tsx')
   assert.match(nav, /export function useChatNav/)
   assert.doesNotMatch(nav, /choose\(\{ kind: 'agent'/)
   assert.doesNotMatch(nav, /sessions.map|recent.map/)
-  assert.match(await source('components/nav/global-search.tsx'), /Nav\.openBotChat|tNav\('openBotChat'\)/)
-  assert.match(await source('components/nav/global-search.tsx'), /archivedConversation/)
+  assert.match(await source('.hosted-ui/web/components/nav/global-search.tsx'), /Nav\.openBotChat|tNav\('openBotChat'\)/)
+  assert.match(await source('.hosted-ui/web/components/nav/global-search.tsx'), /archivedConversation/)
 })
 
 test('Owner-scoped history stays readable; generation write helpers are retired and schema retained', async () => {

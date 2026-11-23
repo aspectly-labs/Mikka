@@ -258,14 +258,16 @@ test('release config requires the official compiled shell, matching pins and pri
   t.after(() => rm(assets, { recursive: true, force: true }))
   const input = { sourceSha: 'abcdef0' + '0'.repeat(33), overlaySha: 'b'.repeat(40), id: 'abcdef0-1-1', assets, api: 'mikka-api-fixture', cloud: 'mikka-cloud-fixture' }
   const inventory = { version: 1, rendererBuild: 'a'.repeat(64), usedActions: ['issues.pollIssue'],
-    modules: { issues: ['pollIssue', 'unusedAction'], internal: ['privateExport'] }, target: 'web', serverModules: [], inputs: ['components/slots/navigation.tsx'] }
+    modules: { issues: ['pollIssue', 'unusedAction'], internal: ['privateExport'] }, target: 'web', serverModules: [], inputs: ['components/slots/workspace-entry.tsx'] }
   const put = data => writeFile(join(assets, 'renderer-manifest.json'), JSON.stringify(data))
   const parent = await mkdtemp(join(tmpdir(), 'cf-web-publish-'))
   t.after(() => rm(parent, { recursive: true, force: true }))
   await put(inventory)
   await writeFile(join(assets, 'index.html'), '<script src="/mikka/assets/main.js?dpl=abcdef0-1-1"></script>')
   await assert.rejects(prepareRelease(input, parent), /OFFICIAL_UI_REQUIRED/)
-  await put({ ...inventory, inputs: ['.hosted-ui/slots/navigation.tsx'] })
+  await put({ ...inventory, inputs: ['.hosted-ui/slots/auth-sso.tsx'] })
+  await assert.rejects(prepareRelease(input, parent), /OFFICIAL_UI_REQUIRED/)
+  await put({ ...inventory, inputs: ['.hosted-ui/slots/workspace-entry.tsx'] })
   await assert.rejects(prepareRelease({ ...input, id: 'abcdef0-2-1' }, parent), /PIN_MISMATCH/)
   await mkdir(join(assets, '.vite'))
   await writeFile(join(assets, '.vite', 'manifest.json'), '{}')

@@ -5,7 +5,7 @@ import type { PoolClient } from 'pg';
 import { loadIssueDocument, encodedIssueDocument, upsertLinearComment } from '../linear-sync/document';
 import { documentChanged } from '../live/panels';
 import { withBasePath } from '../base-path';
-import { workspaceLink } from '@/components/workspace/workspace-navigation';
+import { workspaceLink } from '@/lib/workspace-navigation';
 import { factoryEventId } from './event-id';
 import { readFactoryFlow } from './public-flow';
 import { factoryFlowVersion } from './contract';

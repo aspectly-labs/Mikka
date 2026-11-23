@@ -250,10 +250,6 @@ export const pollingAllowlist = {
       "relay WebSocket ping and bounded-backoff reconnect; no business state polling",
     hits: 2,
   },
-  "hooks/use-list-expiry.ts": ui(
-    "one-shot deadlines repaint local age filters; no server request",
-    1,
-  ),
   "lib/builtin-gateway/session-reports.ts": retry(
     "exponential backoff retries only a device-session report after an observed delivery failure; no timer while delivery succeeds",
     1,
@@ -311,7 +307,6 @@ export const pollingAllowlist = {
     1,
   ),
   // Web: SWR polling that reads our database.
-  "components/workspace/working-status.tsx": db(web, "the activity strip reads /api/agent/sessions/active every 10 s only while entries are active; the interval is 0 when the feed is empty", 1),
   "lib/working-status.ts": db(web, "WORKING_POLL_MS backs the strip above: the account-wide activity feed cannot be driven by this group's live channel alone, so it polls only while someone works (0 when the feed is empty)", 1),
   // Server: loops that re-query our database.
   "lib/coordinator/group-turns.ts": db(
@@ -366,12 +361,6 @@ export const pollingAllowlist = {
     hits: 1,
   },
   // UI timers: read no data.
-  "components/motion/loader.tsx": ui("loader animation frames", 3),
-  "components/ui/thinking-loader-clean.tsx": ui("thinking loader animation", 1),
-  "components/onboarding/onboarding.tsx": ui(
-    "onboarding waits up to 5 s for data another hook is already loading; no read of its own",
-    2,
-  ),
   "apps/mobile/components/beui/components/loader/loader.tsx": ui(
     "loader animation frames",
     3,
@@ -383,10 +372,6 @@ export const pollingAllowlist = {
   "apps/mobile/components/beui/components/tool-result/tool-result.tsx": ui(
     "elapsed-time clock",
     1,
-  ),
-  "hooks/settings/use-subscriptions.ts": external(
-    'RFC 8628 device authorization uses the provider interval until expiry; the 30 s setInterval only ages the meters\' "updated" label; the meters themselves read on the model_settings push and on focus once older than 5 min',
-    2,
   ),
   "apps/mobile/features/chat/screens/chat-screen.tsx": ui(
     "the 1 s elapsed clock of a reply in progress; the chat and its proposals are pushed (lib/live.ts)",

@@ -1,4 +1,4 @@
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 import type { TaskRun } from '@/app/actions/task-runs'
 import type { DecisionAnswer, DecisionQuestion } from '@/lib/coordinator/decision'
 import { inDndWindow, type ChannelCategoryOverrides, type DndSchedule } from '@/lib/push-allowed'

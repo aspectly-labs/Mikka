@@ -1,4 +1,4 @@
-import { copyFileSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, unlinkSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, unlinkSync } from 'node:fs'
 import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { auditSource, auditCss, isComponentLibrarySource, exemptAsShipped, splitUtilities, utilityBase } from './ui-policy.mjs'
-import { entityContracts } from './entity-ui-policy.mjs'
+import { entityContracts, isMovedWebFile } from './entity-ui-policy.mjs'
 
 const policy = JSON.parse(readFileSync(new URL('../ui-policy.json', import.meta.url), 'utf8'))
 const prefix = `import { cn } from '@/lib/utils'; import { Button } from '@/components/ui/button';`
@@ -294,7 +294,9 @@ test('lint permits imported components but fails handwritten business UI without
     writeFileSync(path.join(cwd, '.git/info/exclude'), ignoredPaths.join('\n') + '\n')
     for (const file of contractFiles) {
       mkdirSync(path.join(cwd, path.dirname(file)), { recursive: true })
-      copyFileSync(new URL('../' + file, import.meta.url), path.join(cwd, file))
+      const sourceUrl = [new URL('../' + file, import.meta.url), new URL('../.hosted-ui/web/' + file, import.meta.url)]
+        .find(candidate => existsSync(candidate))
+      if (sourceUrl) copyFileSync(sourceUrl, path.join(cwd, file))
     }
     const composed = await execute()
     assert.equal(composed.status, 0, JSON.stringify(composed.report.diagnostics))
@@ -334,7 +336,8 @@ test('lint permits imported components but fails handwritten business UI without
     const missingFiles = missingContracts.report.diagnostics
       .filter(d => d.rule === 'entity/contract-export' || d.rule === 'entity/native-detail-route')
       .map(d => d.file)
-    assert.deepEqual(new Set(missingFiles), contractFiles)
+    const expectedMissing = new Set([...contractFiles].filter(file => !isMovedWebFile(file)))
+    assert.deepEqual(new Set(missingFiles), expectedMissing)
   } finally {
     console.error(`Retained UI policy fixture directory: ${cwd}`)
   }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
 import { escapeMarkdown } from './markdown'
 

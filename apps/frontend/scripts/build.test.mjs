@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { buildFrontend } from './build.mjs'
 import { frontendConfig } from '../vite.config.mjs'
+import { rendererActionContract } from '../../../lib/renderer-actions.mjs'
+import { publishedReadActions } from '../../../scripts/acceptance/read-action-transport.mjs'
 
 /** Every asset under `assets/`, keyed by its path relative to the outdir and hashed by content. */
 async function emittedAssets(directory) {
@@ -42,6 +44,12 @@ test('real frontend builds retain incremental files without fingerprinting them 
     const clean = await buildFrontend({ target: 'web', outdir: directory, publicTestFixture: true })
     await assert.rejects(readFile(stale), { code: 'ENOENT' })
     assert.equal(clean.publicTestFixture, true)
+    assert.ok(clean.inputs.includes('apps/frontend/src/public-test-fixture-workspace.tsx'))
+    const reads = publishedReadActions(clean)
+    const contract = rendererActionContract(clean)
+    for (const action of Object.values(reads)) {
+      assert.ok(contract.usedActions.includes(action), `contract exposes ${action}`)
+    }
     // The revision is injected into every module that reads it, so two builds of
     // one process must inject the same one. If the identities below ever drift
     // again, this separates "the injected revision moved" from "the bundler split
@@ -83,8 +91,9 @@ test('the public server ships its real handoff pages without the workspace or pr
       'components/oauth-consent.tsx', 'components/plugins/github-settings.tsx', 'apps/desktop/src/renderer/deep-link-routes.tsx']) {
       assert.ok(manifest.inputs.includes(required), required)
     }
-    const forbidden = /(?:^|\/)(?:\.hosted-ui\/|apps\/desktop\/src\/renderer\/workspace(?:-loader)?\.tsx?$|components\/(?:workspace\/issue-workspace|slots\/(?:app-frame|tasks|task-detail|inbox|board))\.tsx?$)/
+    const forbidden = /(?:^|\/)(?:\.hosted-ui\/|apps\/desktop\/src\/renderer\/workspace(?:-loader)?\.tsx?$|apps\/frontend\/src\/public-test-fixture-workspace\.tsx$|components\/(?:workspace\/issue-workspace|slots\/(?:workspace-entry|app-frame|tasks|task-detail|inbox|board))\.tsx?$)/
     assert.deepEqual(manifest.inputs.filter(path => forbidden.test(path)), [])
+    assert.ok(!manifest.inputs.includes('apps/frontend/src/public-test-fixture-workspace.tsx'))
     assert.ok(manifest.inputs.includes('apps/frontend/src/web/server-workspace-loader.ts'))
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

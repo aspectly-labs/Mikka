@@ -29,11 +29,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-8": {
-    "command": "pnpm test:idle-budget",
-    "kind": "core",
-    "env": {}
-  },
   "core-9": {
     "command": "pnpm test:motion",
     "kind": "core",
@@ -234,11 +229,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-49": {
-    "command": "pnpm test:user-message-text",
-    "kind": "core",
-    "env": {}
-  },
   "core-50": {
     "command": "pnpm test:run-info",
     "kind": "core",
@@ -271,11 +261,6 @@
   },
   "core-56": {
     "command": "pnpm test:unread",
-    "kind": "core",
-    "env": {}
-  },
-  "core-57": {
-    "command": "pnpm test:issue-readonly-dom",
     "kind": "core",
     "env": {}
   },
@@ -423,11 +408,6 @@
   },
   "core-triage": {
     "command": "node --test scripts/ci/*.test.mjs",
-    "kind": "core",
-    "env": {}
-  },
-  "core-view-state": {
-    "command": "pnpm test:view-state",
     "kind": "core",
     "env": {}
   },

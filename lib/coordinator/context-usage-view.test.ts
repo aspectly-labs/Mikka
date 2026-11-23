@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { conversationUsage } from './context-usage'
@@ -40,8 +40,11 @@ test('the panel never presents the figure as a measurement or a window share', (
   }
 })
 
-test('the component reads its figures from the usage, never recomputes them', () => {
-  const source = readFileSync(new URL('../../components/coordinator/coordinator-context-usage.tsx', import.meta.url), 'utf8')
+const componentPath = new URL('../../.hosted-ui/web/components/coordinator/coordinator-context-usage.tsx', import.meta.url)
+
+test('the component reads its figures from the usage, never recomputes them', t => {
+  if (!existsSync(componentPath)) { t.skip('.hosted-ui not checked out'); return }
+  const source = readFileSync(componentPath, 'utf8')
   // The constants live in one place (lib/coordinator/context.ts via context-usage.ts);
   // a second copy in the view is how the two drift apart.
   assert.doesNotMatch(source, /100_000|100000/, 'the threshold must not be literalled in the view')
@@ -53,8 +56,9 @@ test('the component reads its figures from the usage, never recomputes them', ()
   assert.match(source, /usage\.compactsNextTurn/)
 })
 
-test('the view uses semantic tokens, never a raw palette class', () => {
-  const source = readFileSync(new URL('../../components/coordinator/coordinator-context-usage.tsx', import.meta.url), 'utf8')
+test('the view uses semantic tokens, never a raw palette class', t => {
+  if (!existsSync(componentPath)) { t.skip('.hosted-ui not checked out'); return }
+  const source = readFileSync(componentPath, 'utf8')
   // BoardUI rule: every colour rides a token, which is also what makes dark mode work.
   assert.doesNotMatch(source, /\b(?:text|bg|border)-(?:gray|neutral|slate|zinc|white|black)-\d+/, 'raw palette class')
   assert.doesNotMatch(source, /#[0-9a-fA-F]{3,8}\b/, 'hex literal')
