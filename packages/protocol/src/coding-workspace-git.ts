@@ -240,7 +240,7 @@ export const gitTurn = z.strictObject({
 })
 export type GitTurn = z.infer<typeof gitTurn>
 export const gitTurnList = z.strictObject({
-  ok: z.literal(true), identity: runRepositoryIdentity, turns: z.array(gitTurn).max(64),
+  ok: z.literal(true), identity: runRepositoryIdentity, turns: z.array(gitTurn).max(256),
 })
 export type GitTurnList = z.infer<typeof gitTurnList>
 

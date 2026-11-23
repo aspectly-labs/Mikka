@@ -142,11 +142,13 @@ export async function listRunGitTurns(dependencies: GitDependencies, actor: Revi
     const chain = await readRunChain(client, scope.identity.ownerId, runId)
     const attempts: { runId: string; attempt: number; status: string; finishedAt: Date | null }[] = chain?.attempts
       ?? [{ runId, attempt: 1, status: 'running', finishedAt: null }]
-    const { rows } = await client.query<{ runId: string; baseSha: string | null; headSha: string | null }>(
-      `SELECT "runId","baseSha","headSha" FROM coding_workspace_checkpoint_reviews
-        WHERE "runId" = ANY($1::uuid[]) AND "repoId"=$2 AND "workspaceId"=$3`,
-      [attempts.map(attempt => attempt.runId), repoId, scope.identity.workspaceId])
-    const byRun = new Map(rows.map(row => [row.runId, row]))
+    // Not filtered by workspaceId: a device move re-keys the review row, and the
+    // earlier workspace's row is still the attempt's retained boundary. Latest wins.
+    const { rows } = await client.query<{ runId: string; baseSha: string | null; headSha: string | null; capturedAt: Date }>(
+      `SELECT "runId","baseSha","headSha","capturedAt" FROM coding_workspace_checkpoint_reviews
+        WHERE "runId" = ANY($1::uuid[]) AND "repoId"=$2 ORDER BY "capturedAt" DESC`,
+      [attempts.map(attempt => attempt.runId), repoId])
+    const byRun = new Map(rows.map(row => [row.runId, row]).reverse())
     const turns = attempts.map(attempt => ({
       runId: attempt.runId, attempt: attempt.attempt, status: attempt.status,
       baseSha: byRun.get(attempt.runId)?.baseSha ?? null, headSha: byRun.get(attempt.runId)?.headSha ?? null,

@@ -1320,17 +1320,22 @@ export async function getThreadGitTurns(issueId: string | null, runId: string) {
   })
 }
 
-/** #2929: one turn's diff — the pair (previous turn's head, this turn's head)
- * read through the ordinary `commit` diff selection. */
-export async function getThreadGitTurnDiff(issueId: string | null, runId: string, input: { baseSha: string; headSha: string; cursor?: string; limit?: number }) {
+/** #2929: one turn's diff — a finished attempt reads its own retained
+ * checkpoint snapshot (`source: 'checkpoint'`, which carries the captured tree
+ * including uncommitted edits and works frozen); the still-running attempt
+ * reads `working`. `turnRunId` must be an attempt of the thread's chain. */
+export async function getThreadGitTurnDiff(issueId: string | null, runId: string, input: { turnRunId?: string; live?: boolean; cursor?: string; limit?: number }) {
   return withDatabaseOperation('/actions/threads/git-turn-diff', async () => {
     const scope = await threadGitScope(issueId, runId)
     if (!scope) return null
     const { diffPage } = await import('@/lib/coding-workspace/diff/service')
     const { workspacePool } = await import('@/lib/workspace-db')
-    return diffPage({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId,
-      { selection: { source: 'commit', baseSha: input.baseSha, headSha: input.headSha },
-        ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
+    const deps = { database: pool, membership: workspacePool }
+    if (input.live || !input.turnRunId || input.turnRunId === scope.runId)
+      return diffPage(deps, scope.actor, scope.runId, scope.repoId,
+        { selection: { source: 'working' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
+    return diffPage(deps, scope.actor, input.turnRunId, scope.repoId,
+      { selection: { source: 'checkpoint' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
   })
 }
 
