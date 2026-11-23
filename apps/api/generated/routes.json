@@ -3171,6 +3171,15 @@
       "sourceHash": "dc3e24ae80f72ad32397e5f557238b12c2dec8ecf69205bcc307d81df0725413"
     },
     {
+      "path": "/mikka/api/threads/[runId]/browser",
+      "template": "/api/threads/[runId]/browser",
+      "source": "app/api/threads/[runId]/browser/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "1510a8f7a05fb8e869419e6ee5364995433aa30c7f2b0b92cb5a703a841c843c"
+    },
+    {
       "path": "/mikka/api/threads/[runId]/children",
       "template": "/api/threads/[runId]/children",
       "source": "app/api/threads/[runId]/children/route.ts",

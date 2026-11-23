@@ -1,7 +1,7 @@
 import 'server-only'
 import { pool } from '@/lib/db'
 import { connectComputer } from '@/lib/computer/e2b-provider'
-import { grant, runtimeRequest } from './runtime'
+import { endpointPath, grant, runtimeRequest, type BrowserBinding } from './runtime'
 import { z } from 'zod'
 const observationSchema = z.object({ targetId: z.string().min(1), origin: z.string().url(), loaderId: z.string().min(1), inputs: z.array(z.object({ backendNodeId: z.number().int().positive(), credentialRole: z.enum(['username', 'password']) }).strict()).min(1).max(2) }).strict()
 
@@ -27,16 +27,32 @@ export async function resolveSubagentBrowserTarget(input: { userId: string; work
   return { targetId: row.targetId as string, origin: parsed.origin, observedInputs, ...capability }
 }
 
-export async function resolveThreadBrowserTarget(input: { userId: string; workspaceId: string; runId: string }) {
+async function resolveThreadMachineBinding(input: { userId: string; workspaceId: string; runId: string }) {
   const row = (await pool.query(`SELECT m.*,r."botId" FROM thread_machines m
     JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."ownerId"
     WHERE m."runId"=$1 AND m."ownerId"=$2 AND m."workspaceId"=$3 AND m.state='running'
       AND r.status IN ('running','waiting_input','preparing') AND r."stopRequestedAt" IS NULL`, [input.runId, input.userId, input.workspaceId])).rows[0]
-  if (!row?.targetId || !row.sandboxId) throw new Error('Thread browser unavailable')
-  const binding = { id: input.runId, ownerId: input.userId, workspaceId: input.workspaceId, botId: row.botId, epoch: row.epoch, display: 1 }
+  if (!row?.sandboxId) throw new Error('Thread browser unavailable')
+  const binding: BrowserBinding = { id: input.runId, ownerId: input.userId, workspaceId: input.workspaceId, botId: row.botId, epoch: row.epoch, display: 1 }
+  return { row, binding }
+}
+
+export async function resolveThreadBrowserTarget(input: { userId: string; workspaceId: string; runId: string }) {
+  const { row, binding } = await resolveThreadMachineBinding(input)
+  if (!row.targetId) throw new Error('Thread browser unavailable')
   const state = await runtimeRequest(row.sandboxId, binding, '/state')
   if (state.guarded || state.targetId !== row.targetId || typeof state.url !== 'string') throw new Error('Thread browser unavailable')
   const url = new URL(state.url)
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Thread browser unavailable')
   return { targetId: row.targetId as string, origin: url.origin, ...await grant(await connectComputer(input.workspaceId, row.sandboxId), binding, 'broker') }
+}
+
+/** The thread's cloud browser shown to its owner: a view-only capability on the
+ * managed Chromium's screencast, minted per request. The gateway itself stops
+ * frames while a credential guard holds, so viewing needs no state probe
+ * (#2940). */
+export async function resolveThreadBrowserViewer(input: { userId: string; workspaceId: string; runId: string }) {
+  const { row, binding } = await resolveThreadMachineBinding(input)
+  const capability = await grant(await connectComputer(input.workspaceId, row.sandboxId), binding, 'view')
+  return { url: endpointPath(capability.endpoint, '/viewer').replace('https:', 'wss:'), expiresAt: new Date(capability.expiresAt).toISOString() }
 }
