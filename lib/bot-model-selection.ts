@@ -48,7 +48,6 @@ async function freezeBotModelChoice(
   // theirs-not-yours, not an unselected model — menus keep their fallback
   // (issue #3057).
   if (selected && z.uuid().safeParse(selected).success
-    && !(await settings.chatBinding(settingsScope, selected))
     && await settings.bindingHeldElsewhere(settingsScope, selected)) {
     const { SubscriptionRefusal } = await import("@mikka/protocol/subscription");
     throw new SubscriptionRefusal("account_unavailable");
