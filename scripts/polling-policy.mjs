@@ -33,7 +33,6 @@ const db = (replaceWith, reason, hits) => ({
   reason,
   hits,
 });
-const ui = (reason, hits) => ({ kind: "ui-timer", reason, hits });
 const external = (reason, hits) => ({ kind: "external", reason, hits });
 const local = (reason, hits) => ({ kind: "local", reason, hits });
 const harness = (reason, hits) => ({ kind: "harness", reason, hits });
