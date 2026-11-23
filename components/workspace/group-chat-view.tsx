@@ -287,7 +287,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       end: namedChat && readRevision !== undefined && !blockingCode && !accessRejected && <VisibleReadEnd onSeen={acknowledge} />,
     }}
       beforeComposer={<>
-        <WorkingStatus revision={pages?.[0]?.revision} />
+        <WorkingStatus revision={pages?.[0]?.revision} conversationId={group.id} />
         {referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
       </>}
       composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={composerInput} value={draft} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}

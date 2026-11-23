@@ -397,7 +397,7 @@ test('PG17: API atomic queue, migration repeat/concurrency, group lock, FIFO, ro
     const [{ drizzle }, schema, { listActiveAgents, activeAgentsResponse }] = await Promise.all([import('drizzle-orm/node-postgres'), import('../db/schema'), import('../active-agents')])
     const db = drizzle(scoped, { schema })
     const request = new Request('http://local/api/agent/sessions/active')
-    const copy = { pleaseSignIn: 'sign in', unavailable: 'unavailable', noParameters: 'no params' }
+    const copy = { pleaseSignIn: 'sign in', unavailable: 'unavailable', noParameters: 'no params', groupNotFound: 'group 404' }
     const response = await activeAgentsResponse(request, 'owner', user => listActiveAgents(db, user), copy)
     assert.equal(response.status, 200)
     const body = await response.json() as { agents: { id: string; runId: string }[] }
