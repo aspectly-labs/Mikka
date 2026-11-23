@@ -7,6 +7,7 @@ const approvedWorkflows = Object.freeze({
   '.github/workflows/capture-retention.yml': 'ebab36f3a8acac6b818adfd60e85db6d5ec8e26ba14f1fa7ac0671d5445fe702',
   '.github/workflows/cloudflare-billing-evidence.yml': '3fa6d917bb35db6175c3df93a32c95bed05bde1bc334e7df28c960a7c45edb33',
   '.github/workflows/container-identity-metadata.yml': '93564de784df5660a743b75f075e77bc93b5b62aea614c048689603ccd122b1f',
+  '.github/workflows/eve-lifecycle-tests.yml': 'c99bb72df783dae6d05245fc38c531cba0ca838c5648855e31f6dde9836b10dc',
   '.github/workflows/eve-world-resources.yml': '912351b1cf33e4c1ccee722dddb1b818a6078072235389c8df412c4d9f7384bb',
   '.github/workflows/github-webhook-prepare.yml': '13a8fdc3d450e80d1e91932af28b81faac7263ced5935b243a62cb5f420d2d32',
   '.github/workflows/marketing-cloudflare-release.yml': '8e734ae3a6f8cb2687c5d1b3bd6d5d076e882f4057cffd3322962f283306848b',
