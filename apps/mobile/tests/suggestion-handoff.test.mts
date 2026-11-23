@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createDecisionSubmission } from '../../../hooks/decision-submission'
+import { createDecisionSubmission } from '../../../lib/decision-submission'
 import { handoffSuggestion } from '../lib/suggestion-handoff'
 
 test('native suggestion taps wait for one canonical receipt and retry a lost ACK with the same ID', async () => {

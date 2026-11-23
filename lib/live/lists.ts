@@ -9,7 +9,7 @@ import { ownerLiveScope } from './owner-scope'
 type Database = Pick<PoolClient, 'query'>
 export type OwnerListKind = 'thread_list' | 'task_run_list' | 'bot_chat_list' | 'device_list'
 export type WorkspaceListKind = 'issue_list' | 'bot_list' | 'group_list' | 'workspace_settings' | 'schedule_list'
-type ListKind = OwnerListKind | WorkspaceListKind | 'model_settings'
+type ListKind = OwnerListKind | WorkspaceListKind | 'model_settings' | 'integration_settings'
 type Target = { scope: LiveScope; events: LiveInvalidation[] }
 
 const target = (scope: LiveScope, kinds: readonly ListKind[]): Target => ({
@@ -197,13 +197,18 @@ export const ownerProfileListsChanged = (executor: object, ownerId: string) => c
  * The account itself re-reads in every workspace it is an active member of (its subscriptions are its own there).
  * Subscriptions serve their owner only (decision 2026-11-17), so no teammate re-reads. No connection, model or quota crosses.
  */
-export async function ownerSettingsTargets(_database: Database, workspaceDatabase: Database, ownerId: string): Promise<Target[]> {
+async function accountSettingsTargets(workspaceDatabase: Database, ownerId: string, kind: 'model_settings' | 'integration_settings'): Promise<Target[]> {
   const { rows: memberships } = await workspaceDatabase.query<{ workspaceId: string }>(`SELECT "workspaceId" FROM mikka_workspace_members WHERE "userId"=$1 AND status='active'`, [ownerId])
-  return mergeTargets(memberships.map(({ workspaceId }) => target({ ownerId, workspaceId }, ['model_settings'])))
+  return mergeTargets(memberships.map(({ workspaceId }) => target({ ownerId, workspaceId }, [kind])))
 }
+export const ownerSettingsTargets = (_database: Database, workspaceDatabase: Database, ownerId: string) => accountSettingsTargets(workspaceDatabase, ownerId, 'model_settings')
+export const ownerIntegrationSettingsTargets = (_database: Database, workspaceDatabase: Database, ownerId: string) => accountSettingsTargets(workspaceDatabase, ownerId, 'integration_settings')
 /** Best effort: an action that already succeeded never fails on its invalidation (the page's own response updates it). */
 export const ownerSettingsChanged = (executor: object, ownerId: string) => changed(executor, `owner-settings:${ownerId}`, (database, workspace) => ownerSettingsTargets(database, workspace, ownerId))
   .catch(() => console.warn('[live] settings invalidation unavailable'))
+/** Device-side connection checks finish after the initiating settings response. */
+export const ownerIntegrationSettingsChanged = (executor: object, ownerId: string) => changed(executor, `integration-settings:${ownerId}`, (database, workspace) => ownerIntegrationSettingsTargets(database, workspace, ownerId))
+  .catch(() => console.warn('[live] integration settings invalidation unavailable'))
 
 /** Account-level keyboard settings refresh only their owner in every active
  * workspace. The existing key contains a workspace ID, never bindings. */
@@ -212,6 +217,18 @@ export async function ownerKeyboardShortcutTargets(database: Database, workspace
 }
 export const ownerKeyboardShortcutsChanged = (executor: object, ownerId: string) => changed(executor, `owner-shortcuts:${ownerId}`, (database, workspace) => ownerKeyboardShortcutTargets(database, workspace, ownerId))
   .catch(() => console.warn('[live] keyboard settings invalidation unavailable'))
+
+/** A Linear connection is owner-specific, but its settings appear in each of
+ * that owner's active workspaces. Publish only a content-free settings event
+ * to those owner channels after the connection transaction commits. */
+export async function ownerWorkspaceSettingsTargets(_database: Database, workspace: Database, ownerId: string): Promise<Target[]> {
+  const { rows } = await workspace.query<LiveScope>(`SELECT m."userId" AS "ownerId",w.id AS "workspaceId"
+    FROM mikka_workspaces w JOIN mikka_workspace_members m ON m."workspaceId"=w.id AND m.status='active'
+    WHERE m."userId"=$1 AND (w.kind='team' OR w."userId"=$1)`, [ownerId])
+  return rows.map(scope => target(scope, ['workspace_settings']))
+}
+export const ownerWorkspaceSettingsChanged = (executor: object, ownerId: string) => changed(executor, `owner-workspace-settings:${ownerId}`, (database, workspace) => ownerWorkspaceSettingsTargets(database, workspace, ownerId))
+  .catch(() => console.warn('[live] workspace settings invalidation unavailable'))
 
 /** The account's workspace directory and personal issue identifiers are read
  * across selected workspaces. Their transport still uses the actual owned

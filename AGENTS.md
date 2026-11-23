@@ -16,6 +16,7 @@
 - For test authoring, duplicate proof or CI cost audits, use `.claude/skills/test-audit/SKILL.md` with its Mikka usage note. Preserve independent contracts and follow `docs/ci/test-ownership.md` for surviving proof and affected validation.
 - Run settings (repositories, setup script, variables, secrets) belong to an **Environment** (`workspace_environments`), never a Project; Bots and automations each pick one ([2026-11-19-2100](docs/design/decisions/2026-11-19-2100-environment-not-project.md)). Bots are Capy's Captains without Promote/Demote ([2105](docs/design/decisions/2026-11-19-2105-bot-is-captain-no-promote.md)); creating a task only records it and assigning a Bot wakes it ([2110](docs/design/decisions/2026-11-19-2110-new-task-create-only.md)); task states are workspace-defined, Needs you / Waiting stay derived run states ([2115](docs/design/decisions/2026-11-19-2115-workspace-issue-states.md)).
 - There is one UI ([decision 2026-11-08-2133](docs/design/decisions/2026-11-08-2133-one-ui.md)). Fix a page where its code lives, in this repository or in the private `mikka-hosted-ui`; don't add a slot or move code just to make a fix possible. Exception (Alex, [2026-11-19-2120](docs/design/decisions/2026-11-19-2120-slots-for-paid-surfaces.md)): Automations, the automation editor, the PR directory and Environments settings get new slots so their paid implementation lives in `mikka-hosted-ui`. Use BoardUI Pro, affectUI or beUI Pro only where they are already used or clearly the right tool, and never put their source into this repository or its image. The public build only has to compile: don't design, screenshot or review a separate open-source look. UI screenshots are of the official build (this repository plus `mikka-hosted-ui`).
+- **Headless engine direction & view-model decoupling ([decision 2026-11-22-2205](docs/design/decisions/2026-11-22-2205-headless-public-engine-and-ui-decoupling.md), [#3174](https://github.com/alexj11324/Mikka/issues/3174)):** Public `Mikka` is phasing toward a headless engine/API/daemon core while the product Web UI moves to `mikka-hosted-ui`. Web and Desktop official builds cross a **2-entry overlay boundary** in `lib/ui-overlay.mjs` (`auth-sso` in `PUBLIC_CONTRACT_SLOTS`, plus `workspace-entry` loaded dynamically by `apps/desktop/src/renderer/workspace-loader.ts`), with `components/nav/bot-avatar.tsx` rendering the self-contained public fallback for server pages and `apps/frontend/scripts/shared-styles.mjs` scanning `.hosted-ui/{web,slots,lib}` (never during `--server-pages`). Do **not** delete remaining legacy public UI or `@ui-slot/*` files in Wave 1 before official release builds and Wave 2 cleanup finish cutting over. Decouple UI view/catalogue state models from backend dispatch/scheduling projections (never infer catalogue rows or card order from filtered dispatch candidates) and cover real multi-item user workflows with Playwright + PostgreSQL 17 E2E regressions.
 - Before any design, spec or UI work, read `docs/design/README.md`. It sets which source wins and points to the rules, component list, decision log and spec template. Run `docs/review-checklist.md` before showing UI to anyone; new decisions from Alex go into `docs/design/decisions/` the same day, one file each (see its README); `docs/design/decisions.md` is frozen history.
 - Official Web, Desktop and iOS clients use one product interface across Cloud and self-hosted servers. Keep one authorized reader and writer per operation. Preserve public authentication pages and protocol contracts. Workbench providers are linked from their owning repositories during trusted builds; a missing required provider or export must fail that build. Public fork jobs must build the server without private source or credentials.
 - Reuse existing components (R-90). Before drawing a frame or writing UI, find the component for the job in `docs/design/components.md`, the live screens and the libraries (`components/reui/`, `components/ui/` including unimported ones, `components/motion/`, the OpenUI catalog). Draw and use it as its code renders it; never redraw a look-alike. A new component only when none fits, added to `components.md` in the same PR. Inside a paid block or component (BoardUI Pro, affectUI, beUI Pro) keep its own parts: it is used as shipped, only data and text change ([2026-11-09-0050](docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
@@ -54,6 +55,43 @@
 - **No new polling** ([2026-11-05-0200](docs/design/decisions/2026-11-05-0200-no-new-polling.md)): data changes reach the screen or process by live push (`hooks/use-live-key.tsx`, `lib/live/*`), never a new `refreshInterval`, `setInterval` or sleep loop. `scripts/polling-policy.mjs` fails CI otherwise; its allowlist takes only UI timers and external APIs, with a reason.
 - **Keep error causes** ([2026-11-05-0330](docs/design/decisions/2026-11-05-0330-error-causes.md)): a `catch` that throws a new error hands on the caught one (`{ cause: error }`); one code from several checks carries a detail from a closed set (`CodedError` in `@mikka/protocol/coded-error`); every code a person can see has copy in both `messages/*.json` (`RunErrors.*`, registry `packages/protocol/src/user-error-codes.ts`). Log causes by name and code, never by message. `scripts/error-cause-policy.mjs` fails CI otherwise.
 - **Scope discipline:** Do not design for rare or future cases nobody asked about. Prefer the smallest verified fix to a demonstrated defect or explicit requirement; introduce defensive complexity only when justified by a realistic, material failure mode.
+
+## 破坏性接口改动分三步
+
+Hosted services can deploy independently; Desktop, iOS, CLI and daemon may
+remain installed for weeks. Reuse `packages/protocol/src/version.ts` and the
+existing update-required UI/errors for their shared reader version. An app's
+store/semver release, Desktop RPC envelope and daemon device session remain
+separate contracts. Follow [decision 2026-11-20-1300](docs/design/decisions/2026-11-20-1300-hosted-api-compatibility.md):
+
+1. Ship readers that accept both old and new shapes and send the next
+   `HOSTED_API_VERSION`. Services still serve the old shape; renamed fields
+   keep both keys. Add a regression for the existing caller before changing
+   its service.
+2. Release **all four installed clients** from that reader commit or a
+   descendant, and record their immutable release sources. A merged source,
+   an unreleased build or only one client's update does not complete this step.
+3. In a later change, remove the old shape and raise `HOSTED_API_FLOOR`.
+   An older identified client receives HTTP 426 `update_required` with a typed
+   `cause`, and its existing upgrade flow stops incompatible operations.
+   Keep `/api/version` readable. The initial version is 1 and floor is 0:
+   clients released before the header count as 0 until step 2 is proven.
+
+Internal API ↔ Eve ↔ Task ↔ World changes first accept both caller versions;
+remove the old contract only after every affected caller has been deployed
+and the rollback version remains compatible. Preserve at least one
+old-caller → new-service test using immutable source from the last successful
+serving release, with its source SHA, release receipt and file hashes. Never
+regenerate an old fixture from the code under test to make the check pass.
+
+Database migrations first add tables/columns and compatible readers/writers,
+then switch all code and backfill, then contract in a separate later migration.
+`scripts/check-migrations.mjs` rejects a new `DROP COLUMN` (including shorthand
+`DROP name`). A justified contract migration needs a leading
+`-- migrate: contract #<issue> <reader-cutover/backfill/rollback evidence>`
+comment and review of that evidence. The marker is a reviewed exception,
+not permission to remove a live reader's column. Preserve executed migration
+names and bytes; deployment rollback restores code/artifacts, not deleted data.
 
 ## Cursor Cloud runtime
 

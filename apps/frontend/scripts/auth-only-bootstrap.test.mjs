@@ -22,7 +22,7 @@ const stateAccess = 'globalThis[Symbol.for("mikka.test.auth-only-bootstrap")]'
 const wrapper = '({ children }) => children'
 const fixtureModules = new Map([
   ['@/lib/intl/i18n-client', `export const NextIntlClientProvider = ${wrapper}; export const IntlProvider = ${wrapper}; export const useTranslations = () => value => value; export const useLocale = () => 'en';`],
-  ['lucide-react', 'export const ArrowLeft = () => null;'],
+  ['lucide-react', 'export const ArrowLeft = () => null; export const ArrowRight = () => null; export const Plus = () => null; export const X = () => null;'],
   ['sonner', 'export const toast = { error() {}, dismiss() {} };'],
   ['@/messages/en.json', 'export default {};'], ['@/messages/zh-CN.json', 'export default {};'],
   ['@/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
@@ -66,11 +66,11 @@ const compiled = await build({
     builder.onResolve({ filter: /^(?:\.\/|\.\.\/).*rpc$/ }, args => {
       if (resolve(dirname(args.importer), args.path) === resolve(renderer, 'rpc') && args.importer !== resolve(web, 'rpc.ts')) return { path: resolve(web, 'rpc.ts') }
     })
-    builder.onResolve({ filter: /^\.\/workspace$/ }, args => args.importer === resolve(renderer, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'auth-fixture' } : undefined)
+    builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args => args.importer === resolve(renderer, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'auth-fixture' } : undefined)
     builder.onResolve({ filter: /^\.\/offline$/ }, args => args.importer === resolve(renderer, 'app.tsx') ? { path: 'offline', namespace: 'auth-fixture' } : undefined)
     builder.onResolve({ filter: /^\.\/deep-link-routes$/ }, args => args.importer === resolve(renderer, 'app.tsx') ? { path: 'deep-links', namespace: 'auth-fixture' } : undefined)
     builder.onLoad({ filter: /.*/, namespace: 'auth-fixture' }, args => ({ loader: 'js', contents:
-      args.path === 'workspace' ? `import { createElement, useLayoutEffect } from 'react'; export default function Workspace({ user, bootstrap }) { useLayoutEffect(() => { ${stateAccess}.workspaceMounts++; }, []); return createElement('div', { 'data-workspace': true, 'data-owner': user.id, 'data-role': bootstrap.cacheWorkspace?.role ?? 'none' }); }`
+      args.path === 'workspace' ? `import { createElement, useLayoutEffect } from 'react'; export function Workspace({ user, bootstrap }) { useLayoutEffect(() => { ${stateAccess}.workspaceMounts++; }, []); return createElement('div', { 'data-workspace': true, 'data-owner': user.id, 'data-role': bootstrap.cacheWorkspace?.role ?? 'none' }); }`
         : args.path === 'offline' ? 'import { createElement } from "react"; export const Offline = () => createElement("div", { "data-offline": true });'
           : args.path === 'deep-links' ? 'export const SharedArtifactRoute = () => null; export const WorkspaceLinkRoute = () => null;'
           : fixtureModules.get(args.path) }))

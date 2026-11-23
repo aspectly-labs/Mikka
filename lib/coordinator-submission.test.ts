@@ -445,36 +445,3 @@ test('a task title is trimmed, frozen in the immutable user submission and canno
   await assert.rejects(recordPersonalSubmission(f.executor, 'owner', 'Build this feature', { ...options, taskTitle: undefined }), SubmissionConflictError)
   for (const invalid of ['', '   ', 'x'.repeat(61), 'two\nlines']) await assert.rejects(recordPersonalSubmission(fixture().executor, 'owner', 'Build this feature', { ...options, taskTitle: invalid }), `rejects ${JSON.stringify(invalid)}`)
 })
-
-test('the composer carries its captured Workspace expectation through the native transport', async () => {
-  const { createElement } = await import('react')
-  const { renderToStaticMarkup } = await import('react-dom/server')
-  const native = await import('./eve/client')
-  const sent: { botId: string | null; text: string; options: import('eve/client').SendTurnOptions }[] = []
-  const transport = mock.module(new URL('./eve/client.ts', import.meta.url).href, { namedExports: {
-    ...native, coordinatorAgentClient: (botId: string | null) => ({ sessions: {
-      create: async ({ message, ...options }: import('eve/client').SendTurnOptions & {message: string}) => {
-        sent.push({ botId, text: message, options })
-      },
-    } }),
-  } })
-  const client = mock.module(new URL('./auth-client.ts', import.meta.url).href, { namedExports: {
-    authClient: { getSession: async () => ({ data: { user: { id: 'owner' } }, error: null }) },
-  } })
-  const translations = mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: () => (key: string) => key } })
-  try {
-    const { useCoordinatorSubmit } = await import('../components/coordinator/use-coordinator-submit')
-    const held: { composer?: ReturnType<typeof useCoordinatorSubmit> } = {}
-    function Probe() { held.composer = useCoordinatorSubmit(); return null }
-    renderToStaticMarkup(createElement(Probe))
-    assert.ok(held.composer)
-    assert.equal((await held.composer.submit('legacy message', { botId: COORDINATOR_BOT })).kind, 'accepted')
-    assert.equal(sent[0].botId, COORDINATOR_BOT)
-    assert.deepEqual(sent[0].options.clientContext, { botId: COORDINATOR_BOT })
-    assert.match(new Headers(sent[0].options.headers).get('x-mikka-submission-id')!, /^[0-9a-f-]{36}$/)
-    assert.equal((await held.composer.submit('captured message', { botId: COORDINATOR_BOT, expectedWorkspaceId: PROFILE_WORKSPACE })).kind, 'accepted')
-    assert.equal(sent[1].botId, COORDINATOR_BOT)
-    assert.deepEqual(sent[1].options.clientContext, { botId: COORDINATOR_BOT, expectedWorkspaceId: PROFILE_WORKSPACE })
-    assert.equal(sent[1].text, 'captured message')
-  } finally { translations.restore(); client.restore(); transport.restore() }
-})

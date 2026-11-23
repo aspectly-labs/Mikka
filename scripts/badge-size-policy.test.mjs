@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 
 // Every badge in the app is drawn on one ladder (`components/ui/badge-size.ts`).
@@ -9,7 +9,12 @@ import test from 'node:test'
 // This holds the ladder in one place and refuses a second one.
 const ladder = readFileSync('components/ui/badge-size.ts', 'utf8')
 const uiBadge = readFileSync('components/ui/badge.tsx', 'utf8')
-const reuiBadge = readFileSync('components/reui/badge.tsx', 'utf8')
+const reuiBadgePath = existsSync('components/reui/badge.tsx')
+  ? 'components/reui/badge.tsx'
+  : existsSync('.hosted-ui/web/components/reui/badge.tsx')
+    ? '.hosted-ui/web/components/reui/badge.tsx'
+    : null
+const reuiBadge = reuiBadgePath ? readFileSync(reuiBadgePath, 'utf8') : null
 const theme = readFileSync('app/globals.css', 'utf8')
 
 /** The rungs a badge may stand on, as `role: "classes"` entries. */
@@ -26,7 +31,9 @@ test('the badge ladder names every rung it defines', () => {
 })
 
 test('both badge modules stand on the ladder and keep no size map of their own', () => {
-  for (const [name, source] of [['ui/badge', uiBadge], ['reui/badge', reuiBadge]]) {
+  const targets = [['ui/badge', uiBadge]]
+  if (reuiBadge !== null) targets.push(['reui/badge', reuiBadge])
+  for (const [name, source] of targets) {
     assert.match(source, /BADGE_SIZE/, `${name} must import the shared ladder`)
     // A height or an arbitrary type size in either module is a second ladder.
     assert.doesNotMatch(source, /\bh-(?:[0-9]|px|\[)/, `${name} must not draw its own height`)

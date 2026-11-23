@@ -8,7 +8,7 @@ import type { SecretsTx } from './store'
 
 export type SecretChange = { name: string } & (
   | { ownerId: string }
-  | { id: string; workspaceId: string; scopeType: 'workspace' | 'repository'; scopeRef: string }
+  | { id: string; workspaceId: string; scopeType: 'workspace' | 'repository' | 'thread'; scopeRef: string }
 )
 
 type Candidate = {
@@ -58,7 +58,8 @@ export async function stopRunsForSecretChanges(tx: SecretsTx, changes: readonly 
     // No Environment preserves the ordinary workspace/repository inheritance.
     // An Environment, including an empty selection, admits only its frozen IDs.
     const selected = run.hasEnvironment
-      ? new Set(Array.isArray(run.environmentSecretIds) ? run.environmentSecretIds.filter((id): id is string => typeof id === 'string') : [])
+      // Postgres reports UUIDs lowercase; a stored uppercase id must still match.
+      ? new Set(Array.isArray(run.environmentSecretIds) ? run.environmentSecretIds.filter((id): id is string => typeof id === 'string').map(id => id.toLowerCase()) : [])
       : null
     return changes.some(change => {
       if ('ownerId' in change) return change.ownerId === run.userId

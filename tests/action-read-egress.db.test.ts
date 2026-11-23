@@ -399,7 +399,7 @@ test('thread identity reads keep owner-only, live membership and checkpoint beha
           const selected = result.reads.findLast(read => read.text.includes('from "agent_runs" inner join "agents"'))
           assert.ok(selected)
           const route = '/actions/threads/' + action
-          const expectedQueries = label === 'linked' ? 6 : action === 'changes' ? 3 : 2
+          const expectedQueries = label === 'linked' ? 6 : action === 'changes' ? 4 : 2
           if (result.reads.length !== expectedQueries) sub.diagnostic(JSON.stringify({ read: 'thread-' + action + '-' + label,
             queryShapes: result.reads.map(read => ({ tables: [...read.text.matchAll(/(?:from|join)\s+"?([a-z_]+)"?/gi)].map(match => match[1]), fields: read.fields })) }))
           sub.diagnostic(JSON.stringify({ read: 'thread-' + action + '-' + label, beforeResultBytes: baseline.reads[0].bytes, resultBytes: selected.bytes,
@@ -419,6 +419,12 @@ test('thread identity reads keep owner-only, live membership and checkpoint beha
     await t.test('both actions preserve owner, peer, missing and null-issue boundaries', async () => {
       assert.deepEqual(await find(peer, peerRun), { issueId: issue })
       assert.deepEqual(await changes(peer, issue, peerRun), { state: 'none' })
+      // A task-linked run opened by id alone resolves its binding, then the task's
+      // access check decides: the owner reads it, a peer without thread access and
+      // a non-member both get the same runNotFound a missing run returns.
+      assert.deepEqual(await changes(owner, null, linked), { state: 'none' })
+      await assert.rejects(changes(peer, null, linked), { code: 'runNotFound' })
+      await assert.rejects(changes(outsider, null, linked), { code: 'runNotFound' })
       for (const [userId, runId, issueId] of [[peer, linked, issue], [owner, peerRun, issue], [peer, solo, null], [peer, botRun, null]] as const) {
         assert.equal(await find(userId, runId), null)
         const denied = await measured(() => assert.rejects(changes(userId, issueId, runId), { code: 'runNotFound' }))
@@ -426,7 +432,6 @@ test('thread identity reads keep owner-only, live membership and checkpoint beha
       }
       assert.equal(await find(outsider, linked), null)
       await assert.rejects(changes(outsider, issue, linked), { code: 'issueNotFound' })
-      await assert.rejects(changes(owner, null, linked), { code: 'runNotFound' })
       await assert.rejects(changes(owner, issue, solo), { code: 'runNotFound' })
       const invalid = await measured(() => find(owner, 'not-a-uuid'))
       assert.equal(invalid.value, null); assert.equal(invalid.reads.length, 0)

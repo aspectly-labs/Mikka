@@ -7,6 +7,7 @@ export const ONBOARDING_STEPS = ['workspace', 'model', 'recommended', 'plan'] as
 export type OnboardingStepId = (typeof ONBOARDING_STEPS)[number]
 export type OnboardingStepStatus = 'done' | 'skipped'
 export type OnboardingProgress = { step: number; status: Record<number, OnboardingStepStatus> }
+export type OnboardingComputer = 'ask' | 'none'
 
 const last = ONBOARDING_STEPS.length - 1
 

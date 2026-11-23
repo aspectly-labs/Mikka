@@ -11,6 +11,7 @@ import { normalizeRepository } from '@mikka/protocol/repository'
 import { SKILL_ARTIFACT_HEADER } from '@mikka/protocol/skill'
 import { POLICY_SNAPSHOT_HEADER } from '@mikka/protocol/policy-snapshot'
 import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-secrets'
+import { TASK_MCP_HEADER, TASK_MCP_TOOL_FILTER_HEADER, TASK_MCP_VERSION, type TaskMcpServer } from '@mikka/protocol'
 import { policyDistributionContext } from '../lib/agent-tool-approval/policy-distribution'
 import { verifyPolicySnapshot } from '@mikka/protocol/node-policy-snapshot'
 import { POST } from '../app/v1/devices/[deviceId]/runs/[runId]/claim/route'
@@ -55,6 +56,13 @@ function fixture() {
     customBranchCapability: false,
     catalogueCapability: false,
     secretCapability: undefined as string | undefined,
+    nativeMcpServers: undefined as TaskMcpServer[] | undefined,
+    taskMcpVersion: TASK_MCP_VERSION as string,
+    taskMcpToolFilter: false,
+    mcpRevoked: false,
+    mcpAssignmentError: undefined as Error | undefined,
+    mcpErrors: { identity: [] as Error[], fence: [] as Error[] },
+    mcpChecks: [] as string[],
     secretInjection: undefined as Partial<TaskSecretInjection> | undefined,
     secretSnapshot: undefined as string | undefined,
     secretReads: [] as unknown[][],
@@ -88,7 +96,7 @@ function fixture() {
 async function claim(probe: ReturnType<typeof fixture>, preparation = ['skill-preflight','policy','secrets','publication','claim','skill-claim','benchmark-claim','token','settings'], expectsProjectAdmission = true) {
   const diagnostics: unknown[][] = []
   const errors = mock.method(console, 'error', (...args: unknown[]) => { diagnostics.push(args) })
-  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',...(probe.customBranchCapability ? {[CUSTOM_TASK_BRANCH_HEADER]:'1'} : {}),...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
+  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',...(probe.customBranchCapability ? {[CUSTOM_TASK_BRANCH_HEADER]:'1'} : {}),...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: probe.taskMcpVersion } : {}),...(probe.taskMcpToolFilter ? {[TASK_MCP_TOOL_FILTER_HEADER]:'1'} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
   finally {
     errors.mock.restore()
     // The route logs only error names. Keep the intentional refusal distinct
@@ -266,6 +274,111 @@ test('task access database errors are not misclassified as a permission denial',
   probe.issueAccessError = failure
   await assert.rejects(() => claim(probe, []), error => error === failure)
 })
+
+test('a daemon without tool filters gets an upgrade notice before leasing an MCP-enabled run', async () => {
+  const probe = fixture()
+  Object.assign(probe.run, { agentDefinition: { harness: 'codex', customMcp: { servers: [{ id: 'fixture-mcp' }] } } })
+  probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: ['write_docs'] }]
+  const response = await claim(probe, ['skill-preflight', 'policy', 'secrets', 'daemon-upgrade'])
+  assert.equal(response.status, 409)
+  assert.equal((await response.json()).code, 'daemonUpgradeRequired')
+  assert.equal(probe.run.status, 'failed')
+  assert.equal(probe.run.leaseExpiresAt, null)
+})
+
+test('a preview daemon advertising MCP version 2 receives its filtered connection', async () => {
+  const probe = fixture()
+  Object.assign(probe.run, { agentDefinition: { harness: 'codex', customMcp: { servers: [{ id: 'fixture-mcp' }] } } })
+  probe.taskMcpVersion = '2'
+  probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: ['write_docs'] }]
+  const response = await claim(probe)
+  assert.equal(response.status, 200)
+  assert.deepEqual((await response.json()).mcp.servers, probe.nativeMcpServers)
+})
+
+test('an unavailable MCP assignment records the MCP diagnostic without taking a lease', async () => {
+  const probe = fixture()
+  Object.assign(probe.run, { agentDefinition: { harness: 'codex', customMcp: { servers: [{ id: 'fixture-mcp' }] } } })
+  probe.taskMcpToolFilter = true
+  probe.nativeMcpServers = []
+  probe.mcpAssignmentError = Object.assign(new Error('mcpUnavailable'), { status: 403 })
+  const response = await claim(probe, ['skill-preflight', 'policy', 'secrets'])
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+  assert.equal(probe.run.status, 'failed')
+  assert.equal(probe.run.leaseExpiresAt, null)
+  assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_mcp_unavailable')
+})
+
+test('the current daemon receives filtered MCP, unless the grant is revoked before response', async () => {
+  for (const revoke of [false, true]) {
+    const probe = fixture()
+    Object.assign(probe.run, { agentDefinition: { harness: 'codex', customMcp: { servers: [{ id: 'fixture-mcp' }] } } })
+    probe.taskMcpToolFilter = true
+    probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: ['write_docs'] }]
+    probe.beforeToken = async () => { probe.mcpRevoked = revoke }
+    const response = await claim(probe)
+    assert.equal(response.status, revoke ? 409 : 200)
+    const body = await response.json()
+    if (revoke) {
+      assert.deepEqual(body, { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+      assert.equal(probe.run.status, 'failed')
+      assert.equal(probe.run.stopReason, 'blocked')
+      assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_mcp_unavailable')
+    }
+    else assert.deepEqual(body.mcp.servers, probe.nativeMcpServers)
+  }
+})
+
+test('a frozen MCP execution identity refuses revoked authority before the final fence and ends the claim', async () => {
+  for (const revoke of [false, true]) {
+    const probe = fixture()
+    const server = { id: 'fixture-mcp', ownerId: 'member', revision: 7, grantId: null }
+    const executionIdentity = localExecutionIdentity(workspaceId)
+    executionIdentity.resourceBindings.push({ kind: 'mcp', id: server.id, ownerId: server.ownerId, access: 'owner', revision: '7', workspaceId })
+    Object.assign(probe.run, { agentDefinition: { harness: 'codex', executionIdentity, customMcp: { workspaceId, servers: [server] } } })
+    probe.taskMcpToolFilter = true
+    probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: [] }]
+    probe.beforeToken = async () => { probe.mcpRevoked = revoke }
+    const response = await claim(probe)
+    assert.equal(response.status, revoke ? 409 : 200)
+    assert.deepEqual(probe.mcpChecks, revoke ? ['identity'] : ['identity', 'fence'])
+    if (revoke) {
+      assert.deepEqual(await response.json(), { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+      assert.equal(probe.run.status, 'failed')
+      assert.equal(probe.run.stopReason, 'blocked')
+      assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_mcp_unavailable')
+    } else assert.deepEqual((await response.json()).mcp.servers, probe.nativeMcpServers)
+  }
+})
+test('a final MCP database failure ends the preparing claim with the native assignment diagnostic', async t => {
+  for (const stage of ['identity', 'fence'] as const) await t.test(stage, async () => {
+    const probe = fixture()
+    const server = { id: 'fixture-mcp', ownerId: 'member', revision: 7, grantId: null }
+    const executionIdentity = localExecutionIdentity(workspaceId)
+    executionIdentity.resourceBindings.push({ kind: 'mcp', id: server.id, ownerId: server.ownerId, access: 'owner', revision: '7', workspaceId })
+    Object.assign(probe.run, { agentDefinition: { harness: 'codex', executionIdentity, customMcp: { workspaceId, servers: [server] } } })
+    probe.taskMcpToolFilter = true
+    probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: [] }]
+    probe.mcpErrors[stage].push(
+      Object.assign(new Error('synthetic MCP deadlock'), { code: '40P01' }),
+      Object.assign(new Error('synthetic MCP DB failure'), { code: '42P01' }),
+    )
+    const response = await claim(probe)
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), { error: 'MCP configuration unavailable.', code: 'mcpUnavailable' })
+    const checks = stage === 'identity' ? ['identity'] : ['identity', 'fence']
+    assert.deepEqual(probe.mcpChecks, [...checks, ...checks])
+    assert.equal(probe.transactions, 2)
+    assert.equal(probe.run.status, 'failed')
+    assert.equal(probe.run.stopReason, 'error')
+    const run = probe.run as typeof probe.run & { error?: string; failureDetails?: { code: string } }
+    assert.equal(run.error, 'mcpUnavailable')
+    assert.equal(run.failureDetails?.code, 'run_mcp_unavailable')
+    assert.deepEqual((probe as typeof probe & { endedRuns?: unknown[] }).endedRuns, [{ ownerId: 'member', runId: 'run' }])
+  })
+})
+
 function validCheckpoint(): RunCheckpoint {
   return {baseCommit:'a'.repeat(40),patch:gzipSync(Buffer.alloc(0)).toString('base64'),files:0,takenAt:new Date().toISOString()}
 }

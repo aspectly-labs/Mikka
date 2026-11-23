@@ -3,7 +3,7 @@ import test from 'node:test'
 import { hasScreenshot, isFrontendVisual, missingScreenshots } from './frontend-screenshot-check.mjs'
 
 test('interface files need a screenshot and server files do not', () => {
-  assert.equal(isFrontendVisual('components/settings/settings-view.tsx'), true)
+  assert.equal(isFrontendVisual('components/plugins/github-settings.tsx'), true)
   assert.equal(isFrontendVisual('messages/zh-CN.json'), true)
   assert.equal(isFrontendVisual('apps/mobile/app/(tabs)/settings/index.tsx'), true)
   assert.equal(isFrontendVisual('apps/desktop/src/renderer/styles.css'), true)
@@ -29,6 +29,6 @@ test('an explicit opt-out needs a reason', () => {
 
 test('only a frontend diff is blocked', () => {
   assert.deepEqual(missingScreenshots(['lib/settings-sections.ts'], ''), [])
-  assert.deepEqual(missingScreenshots(['components/settings/settings-view.tsx'], 'no image'), ['components/settings/settings-view.tsx'])
-  assert.deepEqual(missingScreenshots(['components/settings/settings-view.tsx'], '![nav](https://example.com/nav.png)'), [])
+  assert.deepEqual(missingScreenshots(['components/plugins/github-settings.tsx'], 'no image'), ['components/plugins/github-settings.tsx'])
+  assert.deepEqual(missingScreenshots(['components/plugins/github-settings.tsx'], '![nav](https://example.com/nav.png)'), [])
 })

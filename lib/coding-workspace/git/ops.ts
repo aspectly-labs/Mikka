@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg'
 import { WorkspaceGitError } from '@mikka/protocol/coding-workspace-git'
 import type { WorkspaceQuery } from '../identity'
 
-export type GitOperationKind = 'revert' | 'restore'
+export type GitOperationKind = 'revert' | 'restore' | 'save' | 'rename' | 'delete'
 export type GitOperationState = 'previewed' | 'delivering' | 'applied' | 'failed' | 'undone'
 export type GitOperationRow = {
   operationId: string; runId: string; repoId: string; ownerId: string; workspaceId: string

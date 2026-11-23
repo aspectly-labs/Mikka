@@ -47,7 +47,7 @@ test('the navigation module itself, comments and Settings sections pass', () => 
 })
 
 test('an allowance covers exactly its count', () => {
-  const file = 'components/nav-user.tsx'
-  assert.deepEqual(rules('router.replace(a)', file), [])
-  assert.deepEqual(rules('router.replace(a); router.push(b)', file), ['navigation/router'])
+  const file = 'components/plugins/connected-apps.tsx'
+  assert.deepEqual(rules('history.replaceState(null, "", url)', file), [])
+  assert.deepEqual(rules('history.replaceState(null, "", url); history.pushState(null, "", url)', file), ['navigation/history'])
 })

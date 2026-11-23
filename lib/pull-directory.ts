@@ -396,3 +396,12 @@ export type PullMergeResult =
   | { kind: "merged"; mergeCommitSha: string | null }
   | { kind: "needs_confirm"; failing: number }
   | { kind: "refused"; code: string };
+
+/** Requesting changes on a PR, as the person (app/api/integrations/github/repositories/pulls/review). */
+export const pullReviewInput = z.strictObject({
+  repo: pullPageInput.shape.repo,
+  number: z.number().int().positive().max(9_999_999_999),
+  body: z.string().trim().min(1).max(65_536),
+});
+export type PullReviewInput = z.input<typeof pullReviewInput>;
+export type PullReviewResult = { kind: "submitted"; id: number | null } | { kind: "refused"; code: string };

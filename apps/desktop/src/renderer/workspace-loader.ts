@@ -1,19 +1,24 @@
+import type { ComponentType } from 'react'
+import type { WorkspaceEntryProps } from '@/components/slots/workspace-entry-contract'
 import { BASE_PATH } from '@/lib/base-path'
 import { markStartup } from '../startup'
 import { rendererHost } from './host'
 
-let loading: Promise<typeof import('./workspace')> | undefined
+type WorkspaceModule = { default: ComponentType<WorkspaceEntryProps> }
+
+let loading: Promise<WorkspaceModule> | undefined
 let preloading: Promise<void> | undefined
-let loaded: typeof import('./workspace') | undefined
+let loaded: WorkspaceModule | undefined
 
 /** Both React.lazy and the optional warm-up join the same local module load. */
 export function loadWorkspace() {
   if (!loading) {
     markStartup('renderer.workspace.import.start')
-    loading = import('./workspace').then(module => {
-      loaded = module
+    loading = import('@ui-slot/workspace-entry').then(module => {
+      const entry: WorkspaceModule = { default: module.Workspace }
+      loaded = entry
       markStartup('renderer.workspace.import.end')
-      return module
+      return entry
     })
   }
   return loading

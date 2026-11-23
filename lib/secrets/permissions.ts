@@ -5,7 +5,7 @@ import type { SecretScopeType } from './format'
 
 export type WorkspaceRole = 'admin' | 'member'
 /** A secret/env row as far as permissions care. */
-export interface SecretTarget { scopeType: SecretScopeType }
+export interface SecretTarget { scopeType: SecretScopeType | 'thread' }
 export type SecretAction =
   | 'secret.list' | 'secret.create' | 'secret.replace' | 'secret.delete'
   | 'e2b.status' | 'e2b.write'
@@ -22,7 +22,7 @@ export const SECRET_POLICY = {
 } as const
 
 /** Can a member write a row with this scope? (No environment dimension: a value reaches every run of its scope.) */
-export const memberMayWrite = (target: SecretTarget) => SECRET_POLICY.memberScopes.includes(target.scopeType)
+export const memberMayWrite = (target: SecretTarget) => (SECRET_POLICY.memberScopes as readonly string[]).includes(target.scopeType)
 
 /**
  * The matrix. `targets` are every row state the action touches: for create the new values,

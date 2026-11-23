@@ -17,6 +17,7 @@ import { workspaceListChanged } from '@/lib/live/lists'
 import { db, pool } from '@/lib/db'
 import { issues } from '@/lib/db/schema'
 import { issueVisibilityPredicate } from '@/lib/issue-visibility-policy'
+import { taskIdentifierNamespaceInUse } from '@/lib/task-identifier-server'
 import { stopRunsForPolicyChange } from '@/lib/run-policy-stop'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 
@@ -75,12 +76,26 @@ export async function saveTeam(input: { id?: string; workspaceId: string; name: 
       await lockTeamRelations(tx)
       if (input.id) {
         const current = await requireActiveTeam(tx, input.id, user.id, true, input.workspaceId)
+        // A Team key and the workspace task prefix spell the same `KEY-N`
+        // namespace; the prefix side is reserved in updateWorkspaceGeneral.
+        if (values.identifier !== current.identifier && values.identifier === workspace.taskPrefix)
+          throw new WorkspaceError('teamIdentifierClashesWithWorkspacePrefix')
+        // A key the workspace already issued `KEY-N` under (retired prefix or
+        // another owner) can never be reused: new spellings would duplicate
+        // immutable identifiers and alias resolution turns ambiguous.
+        if (values.identifier !== current.identifier && await taskIdentifierNamespaceInUse(input.workspaceId, values.identifier))
+          throw new WorkspaceError('teamIdentifierNamespaceInUse')
         if (current.workspaceId !== input.workspaceId) throw new WorkspaceError(i18nText("FeatureCopy.c_55559894"))
         const [team] = await tx.update(teams).set({ ...values, updatedAt: new Date() }).where(and(eq(teams.id, input.id), eq(teams.workspaceId, current.workspaceId))).returning()
         await workspaceListChanged(tx, current.workspaceId, ['workspace_settings', 'issue_list'])
         return team
       }
       if (workspace.kind === 'personal') throw new WorkspaceError('teamPersonalWorkspace')
+      // A Team key and the workspace task prefix spell the same `KEY-N`
+      // namespace; the prefix side is reserved in updateWorkspaceGeneral.
+      if (values.identifier === workspace.taskPrefix) throw new WorkspaceError('teamIdentifierClashesWithWorkspacePrefix')
+      if (await taskIdentifierNamespaceInUse(input.workspaceId, values.identifier))
+        throw new WorkspaceError('teamIdentifierNamespaceInUse')
       const [team] = await tx.insert(teams).values({ ...values, id: crypto.randomUUID(), workspaceId: input.workspaceId, userId: user.id }).returning()
       await tx.insert(teamMembers).values({ teamId: team.id, userId: user.id, role: 'owner' })
       await workspaceListChanged(tx, input.workspaceId, ['workspace_settings', 'issue_list'])

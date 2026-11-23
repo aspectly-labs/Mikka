@@ -31,7 +31,8 @@ test('a document poll with no edits on either side reads a version, not the body
   const { actAs } = await import('../lib/acting-user')
   const { saveIssue } = await import('../app/actions/issues')
   const { exchangeDocument } = await import('../app/actions/collaboration')
-  const { createDocumentSeed } = await import('../components/workspace/issue-editor-schema')
+  const { issueDocumentSeed } = await import('../lib/issue-document-seed')
+  const { serverIssueSchema } = await import('../lib/issue-editor-schema-snapshot')
   const owner = `doc-sync-${randomUUID()}`
   const stranger = `doc-sync-stranger-${randomUUID()}`
   // About 20 KB of body: an ordinary long task description.
@@ -41,7 +42,7 @@ test('a document poll with no edits on either side reads a version, not the body
     const saved = await actAs(owner, () => saveIssue({ title: 'Document sync egress', content, status: 'todo', priority: 'normal' }))
     assert.ok('issue' in saved && saved.issue, JSON.stringify(saved))
     const id = saved.issue.id
-    const seed = createDocumentSeed(content, id)
+    const seed = issueDocumentSeed(serverIssueSchema(), content, id)
     assert.ok(seed)
     const client = new Y.Doc()
 

@@ -227,4 +227,12 @@ test('protected task Secret claims and use-time checks against PostgreSQL', { sk
     assert.equal(result?.status, 200, 'an unchanged security snapshot may finish the claim')
     assert.ok(!(await result!.text()).includes(f.value))
   })
+
+  await t.test('a mixed-case frozen Environment secret id still invalidates its run on rotation', async () => {
+    const f = await fixture({ environment: true })
+    await pool.query(`update agent_runs set "agentDefinition"=jsonb_set("agentDefinition",'{projectExecution,environment,secretIds}', to_jsonb(array[upper($2::text)])) where id=$1`, [f.runId, f.saved.id])
+    await store.replaceWorkspaceSecret(f.owner, f.ws.id, { id: f.saved.id, value: f.value + '-rotated' })
+    const { rows: [row] } = await pool.query('select "stopRequestedAt" from agent_runs where id=$1', [f.runId])
+    assert.notEqual(row.stopRequestedAt, null, 'rotating a selected secret stops the run whatever case its frozen id was stored in')
+  })
 })

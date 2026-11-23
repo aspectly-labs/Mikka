@@ -46,7 +46,7 @@ async function selectionFixture(t) {
 
 test('automatic builds select an independent compatible UI pin while preserving the serving staging request', async t => {
   const { directory, staging, stagingBytes, select } = await selectionFixture(t)
-  const requiredAdditions = new Set(['automation-editor', 'automations', 'pull-directory'])
+  const requiredAdditions = new Set(['workspace-entry'])
   for (const pin of [revision, merge]) {
     const slots = join(directory, pin, 'slots')
     await mkdir(slots, { recursive: true })
@@ -57,7 +57,7 @@ test('automatic builds select an independent compatible UI pin while preserving 
   }
   // A pinned official build must still reject the old provider inventory.
   assert.throws(() => uiOverlay(directory, { MIKKA_UI_OVERLAY_DIR: revision, MIKKA_UI_OVERLAY_SHA: revision }),
-    /UI_OVERLAY_SLOT_REQUIRED: automation-editor/)
+    /UI_OVERLAY_SLOT_REQUIRED: workspace-entry/)
   const result = await select()
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, '')

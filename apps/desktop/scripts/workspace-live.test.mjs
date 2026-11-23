@@ -19,7 +19,7 @@ const stateAccess = 'globalThis[Symbol.for("mikka.test.workspace-live")]'
 const wrapper = '({ children }) => children'
 const fixtureModules = new Map([
   ['@/lib/intl/i18n-client', `export const NextIntlClientProvider = ${wrapper}; export const IntlProvider = ${wrapper}; export const useTranslations = () => value => value; export const useLocale = () => 'en';`],
-  ['lucide-react', 'export const ArrowLeft = () => null;'],
+  ['lucide-react', 'export const ArrowLeft = () => null; export const ArrowRight = () => null; export const Plus = () => null; export const X = () => null;'],
   ['sonner', 'export const toast = { error() {}, dismiss() {} };'],
   ['@/messages/en.json', 'export default {};'], ['@/messages/zh-CN.json', 'export default {};'],
   ['@/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
@@ -55,7 +55,7 @@ function Reads({ workspaceId }) {
   useLayoutEffect(() => { state().live = live }, [live])
   return createElement('div', { 'data-workspace': true })
 }
-export default function Workspace({ user, bootstrap, livePreparation }) {
+export function Workspace({ user, bootstrap, livePreparation }) {
   const [config] = useState(() => ({ provider: () => new Map() }))
   useLayoutEffect(() => { state().mounts++; state().preparations.push(livePreparation) }, [livePreparation])
   return createElement(SWRConfig, { value: config }, createElement(LiveProvider, {
@@ -80,11 +80,12 @@ const compiled = await build({
     }))
     builder.onResolve({ filter: /^mikka:platform$/ }, () => ({ path: resolve(renderer, 'platform.tsx') }))
     builder.onResolve({ filter: /.*/ }, args => fixtureModules.has(args.path) ? { path: args.path, namespace: 'live-fixture' } : undefined)
+    builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args =>
+      args.importer === resolve(renderer, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'live-fixture' } : undefined)
     builder.onResolve({ filter: /^\.\// }, args => {
       const target = resolve(dirname(args.importer), args.path)
-      for (const name of ['workspace', 'offline', 'deep-link-routes', 'auth-form', 'auth-client', 'open-settings']) {
+      for (const name of ['offline', 'deep-link-routes', 'auth-form', 'auth-client', 'open-settings']) {
         if (target !== resolve(renderer, name)) continue
-        if (name === 'workspace' && args.importer !== resolve(renderer, 'workspace-loader.ts')) continue
         return { path: name, namespace: 'live-fixture' }
       }
     })
