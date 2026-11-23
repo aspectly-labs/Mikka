@@ -14,14 +14,14 @@ export type PullReviewDependencies = {
   detail: (userId: string, repo: string, number: number) => Promise<PullDetail>;
   /** The person's own GitHub user-to-server token: reviews post as them, never as an app. */
   userToken: (userId: string) => Promise<string>;
-  review: (token: string, repo: string, number: number, body: string) => Promise<number | null>;
+  review: (token: string, repo: string, number: number, headSha: string | null, body: string) => Promise<number | null>;
 };
 
 export function pullReviewDependencies(budget: RequestBudget): PullReviewDependencies {
   return {
     detail: (userId, repo, number) => readPullDetail(userId, repo, number, budget),
     userToken: async (userId) => (await githubTokenForUser(userId, { budget })).token,
-    review: async (token, repo, number, body) => {
+    review: async (token, repo, number, headSha, body) => {
       const response = await fetch(`https://api.github.com/repos/${repo}/pulls/${number}/reviews`, {
         method: "POST",
         headers: {
@@ -30,10 +30,16 @@ export function pullReviewDependencies(budget: RequestBudget): PullReviewDepende
           "content-type": "application/json",
           "x-github-api-version": "2022-11-28",
         },
-        body: JSON.stringify({ event: "REQUEST_CHANGES", body }),
+        // commit_id binds the review to the head the reader saw — a later push
+        // must not catch feedback written against an older diff.
+        body: JSON.stringify({ event: "REQUEST_CHANGES", body, ...(headSha ? { commit_id: headSha } : {}) }),
         signal: budget.signal,
       });
-      if (response.status === 422) throw new ReviewRefused("githubReviewRefused");
+      if (response.status === 422) {
+        const payload = (await response.json().catch(() => null)) as { message?: string; errors?: { message?: string }[] } | null;
+        const text = `${payload?.message ?? ""} ${(payload?.errors ?? []).map(e => e.message ?? "").join(" ")}`;
+        throw new ReviewRefused(/own pull request/i.test(text) ? "githubReviewSelf" : "githubReviewRefused");
+      }
       if (response.status === 403) throw new ReviewRefused("githubReviewForbidden");
       if (!response.ok) throw new GitHubAccessError("githubUnavailable", 502);
       const review = (await response.json()) as { id?: number };
@@ -67,7 +73,7 @@ export async function requestPullChanges(
     throw error;
   }
   try {
-    return { kind: "submitted", id: await deps.review(token, detail.repo, input.number, input.body) };
+    return { kind: "submitted", id: await deps.review(token, detail.repo, input.number, detail.headSha, input.body) };
   } catch (error) {
     if (error instanceof ReviewRefused) return { kind: "refused", code: error.code };
     throw error;

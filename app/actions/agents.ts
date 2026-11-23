@@ -1192,12 +1192,16 @@ export async function setThreadPullMergeWhenReady(issueId: string | null, runId:
     const { rows: [meta] } = await pool.query<{ issueId: string | null; workspaceId: string | null }>('SELECT "issueId","workspaceId" FROM agent_runs WHERE id=$1', [row.id])
     const pulls = await import('@/lib/thread-pulls')
     const state = await pulls.setThreadPullMergeIntent(pool, user.id, meta?.workspaceId ?? null, meta?.issueId ?? null, row.id, input)
+    let outcome: { outcome: string; code: string | null } | null = null
     if (state === 'armed') {
       const chain = await readRunChain(pool, row.userId, row.id)
       const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
-      await pulls.drainThreadPullMergeIntents(pool, user.id, runIds)
+      // The first drain's verdict for this pull (merged/refused/still armed)
+      // reaches the caller so the tab can say what actually happened.
+      outcome = (await pulls.drainThreadPullMergeIntents(pool, user.id, runIds))
+        .find(entry => entry.repo === input.repo && entry.number === input.number) ?? null
     }
-    return { state }
+    return { state, outcome }
   })
 }
 
