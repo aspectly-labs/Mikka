@@ -4385,5 +4385,33 @@
     "behavior": "Wakes durable due timers after committed database writes and selects deployment-aware recovery using explicit Mikka deployment configuration.",
     "test": "lib/due-timer.test.ts",
     "suite": "test:schedules"
+  },
+  "drizzle/20261122164438_bot_chat_revisions.sql": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Keeps a Bot chat's replaced turns and their Edit or Regenerate revisions in the installation database.",
+    "test": "tests/bot-chat-revisions.db.test.ts",
+    "suite": "test:activity-actor-db"
+  },
+  "lib/coordinator/turn-revisions.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Takes a Bot chat's latest turn out of the chat and the Bot's history as a stored version, in the installation database.",
+    "test": "tests/bot-chat-revisions.db.test.ts",
+    "suite": "test:activity-actor-db"
+  },
+  "lib/eve/revise.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Clears the Bot's eve session history and sends the edited or same message again through the installation's own eve channel.",
+    "test": "lib/eve/revise.test.ts",
+    "suite": "test:eve"
+  },
+  "app/actions/coordinator.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Owner-only Bot chat actions, including Edit and Regenerate of the latest turn, against the installation database and eve channel.",
+    "test": "tests/bot-chat-revisions.db.test.ts",
+    "suite": "test:activity-actor-db"
   }
 }

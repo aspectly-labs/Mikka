@@ -63,7 +63,11 @@ export function mikkaEveChannel() {
         if (error instanceof ActionFailureError && error.code === 'accessChangeConfirmationRequired' && error.confirmable) accessRefusals.add(ctx.eve.request)
         throw error
       })
-      return { auth: { ...scopeAuth(scope), attributes: { ...scopeAuth(scope).attributes, sourceEventId: accepted.eventId } }, context: accepted.context, clientContext: [] }
+      // The first message after an Edit or Regenerate cleared the Bot's history brings the chat's remaining history back
+      // (lib/eve/revise.ts): the Bot then knows what the chat shows, without the turn it replaced.
+      const restored = scope.surface === 'web' && await (await import('../coordinator/turn-revisions')).claimRevisionImport((await import('../db')).pool, { userId: scope.ownerId, botId: scope.botId })
+      return { auth: { ...scopeAuth(scope), attributes: { ...scopeAuth(scope).attributes, sourceEventId: accepted.eventId } }, context: accepted.context, clientContext: [],
+        ...(restored ? { history: await priorHistory(scope) } : {}) }
     },
   })
   const follow = base.routes.find(route => route.transport !== 'websocket' && route.method === 'POST' && route.path === '/eve/v1/session/:sessionId') as HttpRouteDefinition | undefined
@@ -102,7 +106,7 @@ export function mikkaEveChannel() {
           const forwarded = forwardEveRequest(request,url,JSON.stringify(payload))
           if (payload.turnPolicy === 'steer') steeringRequests.add(forwarded)
           const response = await admit(forwarded, auth, () => follow.handler(forwarded, { ...args, params:{sessionId:session.id} }))
-          if (response.ok) await (await import('./submission')).commitEveIngress(forwarded)
+          if (response.ok) await (await import('./submission')).commitEveIngress(forwarded, session.id)
           return response
         }
         const sessionId = args.params.sessionId ?? args.params.parentSessionId
@@ -132,7 +136,7 @@ export function mikkaEveChannel() {
           if (input.turnPolicy === 'steer') steeringRequests.add(forwarded)
         }
         const response = await admit(forwarded, auth, () => withSessionControlDelivery(route, sessionId, () => route.handler(forwarded,args)))
-        if (response.ok) await (await import('./submission')).commitEveIngress(forwarded)
+        if (response.ok) await (await import('./submission')).commitEveIngress(forwarded, sessionId)
         if (response.ok && response.body && request.method === 'GET' && route.path.endsWith('/stream')) {
           const [{credentialChatFingerprints},{maskEveStream}] = await Promise.all([import('../credentials/chat-guard'),import('./stream-mask')])
           const projection=maskEveStream(scope.ownerId,await credentialChatFingerprints(scope.ownerId),streamAfter)

@@ -110,6 +110,10 @@ const database = {
 const chainRow = (run = current.run) => ({ rootRunId: current.run.id, runId: run.id, status: run.status, stopRequestedAt: run.stopRequestedAt, createdAt: run.createdAt, finishedAt: run.finishedAt, rootCreatedAt: current.run.createdAt })
 const chainReads: string[] = []
 async function runChainQuery(sql: string, params: unknown[]) {
+  // The live plan's read (lib/thread-plan-read.ts, readIssueThread): this fixture's runs have no plan chunks.
+  if (/FROM run_chunks c JOIN agent_runs r ON r\.id = c\."runId"/.test(sql) && /todowrite/.test(sql)) return { rows: [] }
+  // A soft-deleted thread takes no message (lib/thread-continue.ts threadDeleted, #2936): none of this fixture's are.
+  if (/^\s*SELECT 1 FROM agent_runs WHERE id=\$1 AND "deletedAt" IS NOT NULL/.test(sql)) return { rows: [] }
   if (!/^\s*WITH RECURSIVE/.test(sql)) throw new Error('Unexpected SQL pool access outside thread control')
   if (/WHERE id = \$1::uuid AND "userId" = \$2/.test(sql)) { // readRunChain(runId, userId)
     chainReads.push('chain')

@@ -111,6 +111,7 @@ test('a redelivered workflow result wakes the owning run once and stays a no-op 
     await acceptWorkflowResult({ ...result, installationId: 12, attempt: 3, deliveryId: 'delivery-5' })
     assert.equal(repositoryReads(), readsBeforeStale + 1, 'the stale grant reached the live repository recheck')
     assert.equal(sends.length, sendsBefore + 3, 'a stale installation grant suppresses the queued result')
+    assert.equal(repositoryReads(), readsBefore, 'a stale grant is refused before the repository is read')
     assert.equal((await eventCount()).n, 2)
   } finally {
     await pool.query(`DELETE FROM coordinator_events WHERE "runId"=$1`, [runId])

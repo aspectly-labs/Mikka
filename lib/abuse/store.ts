@@ -317,11 +317,14 @@ export class HostedUsageStore {
       // period's remaining grant; it never consumes a future period's allowance.
       const available = await this.balance(row.workspaceId, tx, row.createdAt)
       const legacyRow = Number(row.reservedFree) > 0 || Number(row.reservedPurchased) > 0 || Number(row.reservedUnpaid) > 0
+      // Who funded the cost is written once, here, as "platformMicroUsd" (#2934): the part the platform paid.
+      // The workspace was charged the rest: plan allowance, purchased credit and any overrun debt it owes.
+      // Free credit (a hosted_allowances grant) and a free-message turn are the platform's, never a charge.
       // A free-message turn (no card, nothing bought): the platform pays, as unpaid spend under its daily cap,
       // never as a debt the workspace's allowance would repay once a card is verified.
       if (!legacyRow && !available.verified && available.purchased <= 0) {
         await tx.query(
-          `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=0,"purchasedMicroUsd"=0,"inputTokens"=$3,"outputTokens"=$4,"generationId"=COALESCE($5,"generationId"),"unpaidMicroUsd"=$2,"cacheReadTokens"=$6,"cacheWriteTokens"=$7,"settledAt"=now() WHERE id=$1`,
+          `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=0,"purchasedMicroUsd"=0,"inputTokens"=$3,"outputTokens"=$4,"generationId"=COALESCE($5,"generationId"),"unpaidMicroUsd"=$2,"platformMicroUsd"=$2,"cacheReadTokens"=$6,"cacheWriteTokens"=$7,"settledAt"=now() WHERE id=$1`,
           [id, cost, inputTokens, outputTokens, generationId ?? null, ...cacheColumns],
         )
         return
@@ -359,12 +362,14 @@ export class HostedUsageStore {
               purchased - available.purchased - Number(row.reservedPurchased),
             )
           : 0 // Any one-call overrun stays as debt; never erase it.
+      // "unpaidMicroUsd" counts free credit and debt together for the platform's daily cap, so it cannot
+      // say who paid. The platform funded `free` alone; plan, purchased and debt are charged.
       await tx.query(
         'UPDATE hosted_allowances SET remaining=remaining+$2-$3 WHERE "workspaceId"=$1',
         [row.workspaceId, Number(row.reservedFree), free],
       )
       await tx.query(
-        `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=$3,"purchasedMicroUsd"=$4,"inputTokens"=$5,"outputTokens"=$6,"generationId"=COALESCE($7,"generationId"),"unpaidMicroUsd"=$8,"planMicroUsd"=$9,"planAllocations"=$10,"cacheReadTokens"=$11,"cacheWriteTokens"=$12,"settledAt"=now() WHERE id=$1`,
+        `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=$3,"purchasedMicroUsd"=$4,"inputTokens"=$5,"outputTokens"=$6,"generationId"=COALESCE($7,"generationId"),"unpaidMicroUsd"=$8,"planMicroUsd"=$9,"planAllocations"=$10,"cacheReadTokens"=$11,"cacheWriteTokens"=$12,"platformMicroUsd"=$3,"settledAt"=now() WHERE id=$1`,
         [
           id,
           cost,

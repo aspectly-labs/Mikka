@@ -2,6 +2,8 @@ import type { ToolSet } from 'ai'
 
 /** UI metadata only. Never changes a tool's inputs, execution, result or authority. */
 export const TOOL_TARGET_CHARS = 160
+/** How long the chat's tool input and output previews are (context.ts): a preview this long may have been cut. */
+export const TOOL_PREVIEW_CHARS = 200
 export const TOOL_DISPLAY_NAME_CHARS = 128
 export const TOOL_OPERATION_CHARS = 128
 export const TOOL_IDENTIFIER_SOURCE = '[A-Za-z][A-Za-z0-9_.:-]{0,127}'

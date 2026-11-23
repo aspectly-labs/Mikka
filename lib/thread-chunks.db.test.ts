@@ -56,7 +56,7 @@ test('a thread read with a cursor returns only later chunks, and reads everythin
     await insert(first, [200, 201, 202])
     const more = await measured(() => readThreadChunks([first], quiet.value.cursor))
     assert.equal(more.value.append, true)
-    assert.deepEqual(more.value.chunks.map(row => row.chunk.id), ['t200', 't201', 't202'])
+    assert.deepEqual(more.value.chunks.map(row => row.chunk.id), [`${first}:t200`, `${first}:t201`, `${first}:t202`], 'ids are scoped to their run from the first run on')
     assert.deepEqual(more.value.cursor, { chain: first, runId: first, seq: 202, runs: 1, count: 202 })
     t.diagnostic(JSON.stringify({ chunks: 199, fullReadDbBytes: full.bytes, quietReadDbBytes: quiet.bytes, threeNewChunksDbBytes: more.bytes }))
     assert.ok(quiet.bytes * 20 < full.bytes && more.bytes * 10 < full.bytes)
@@ -66,16 +66,18 @@ test('a thread read with a cursor returns only later chunks, and reads everythin
     const late = await readThreadChunks([first], more.value.cursor)
     assert.equal(late.append, false)
     assert.equal(late.chunks.length, 203)
-    assert.equal(late.chunks[150].chunk.id, 't150')
+    assert.equal(late.chunks[150].chunk.id, `${first}:t150`)
 
-    // The thread runs again (R-81): a new chain is read whole; the second run's chunks rename every id.
+    // The thread runs again (R-81): a new chain is read whole once.
+    const rechained = await readThreadChunks([first, second], late.cursor)
+    assert.equal(rechained.append, false)
+    assert.equal(rechained.chunks.length, 203)
+    // The second run's first chunks append like any others: no id is renamed, so nothing is read again.
     await insert(second, [0, 1])
-    const chained = await readThreadChunks([first, second], late.cursor)
-    assert.equal(chained.append, false)
-    assert.equal(chained.chunks.length, 205)
-    assert.equal(chained.chunks[0].chunk.id, `${first}:t0`)
-    assert.equal(chained.chunks.at(-1)?.chunk.id, `${second}:t1`)
-    // Once the chain spans both runs, appended chunks carry the same per-run ids.
+    const chained = await readThreadChunks([first, second], rechained.cursor)
+    assert.equal(chained.append, true)
+    assert.deepEqual(chained.chunks.map(row => row.chunk.id), [`${second}:t0`, `${second}:t1`])
+    assert.equal(chained.cursor.runs, 2)
     await insert(second, [2])
     const appended = await readThreadChunks([first, second], chained.cursor)
     assert.equal(appended.append, true)

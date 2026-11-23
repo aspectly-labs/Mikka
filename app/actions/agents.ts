@@ -234,6 +234,7 @@ const threadColumns = {
   // Only the report's summary: runSummaryText reads nothing else of it.
   sessionId: agentRuns.sessionId, deviceRepoId: agentRuns.deviceRepoId, failureDetails: agentRuns.failureDetails, report: sql<Record<string, unknown> | null>`case when jsonb_typeof(${agentRuns.report}) = 'object' then jsonb_build_object('summary', ${agentRuns.report}->'summary') end`, error: agentRuns.error, createdAt: agentRuns.createdAt, finishedAt: agentRuns.finishedAt,
   agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind,
+  botId: sql<string | null>`(select b.id from bots b where b.id = ${runBotId})`, startedAt: agentRuns.startedAt,
   botColor: sql<string | null>`(select b.color from bots b where b.id = ${runBotId})`, botShape: sql<string | null>`(select b.shape from bots b where b.id = ${runBotId})`,
   // Who did the stretch (lib/issue-threads.ts threadProfile): the frozen Profile's public summary and its current mark.
   profile: sql<unknown>`case when ${agentRuns.agentDefinition}->'agentProfile' is null then null else jsonb_build_object(
@@ -410,6 +411,8 @@ export interface IssueThreadDetail {
    */
   context?: import('@/lib/context-usage').ContextUsage
   composerModel?: import('@/lib/context-usage').ContextUsage['composerModel']
+  /** The owner's live run's plan over all of that run's chunks, whichever page is held (lib/thread-plan-read.ts); absent otherwise. */
+  plan?: import('@/lib/thread-plan').ThreadPlanItem[] | null
 }
 
 /**
@@ -519,24 +522,9 @@ export async function getThreadSummary(issueId: string | null, runId: string) {
  * It covers the whole run chain and the whole stored brief whatever the cursor
  * returned, so a cursor read reports the same usage as a full one.
  */
+/** What this thread's run holds; the one reader is lib/context-usage-read.ts. */
 async function readContextUsage(runIds: string[], rootRunId: string, latestRunId: string): Promise<import('@/lib/context-usage').ContextUsage> {
-  const { CONTEXT_CHARS_SQL, contextUsageFromCounts } = await import('@/lib/context-usage')
-  const { rows: [counted] } = await pool.query<Record<string, string | number | null>>(CONTEXT_CHARS_SQL, [runIds, rootRunId, latestRunId])
-  const count = (value: unknown) => Number(value ?? 0) || 0
-  const counts = (ascii: unknown, other: unknown) => ({ ascii: count(ascii), other: count(other) })
-  return contextUsageFromCounts({
-    prompt: counts(counted?.promptAscii, counted?.promptOther),
-    // The task range is sliced in SQL by the recorded code points, and is empty
-    // when the range does not hold (lib/thread-prompt.ts rejects it there).
-    task: counts(counted?.taskAscii, counted?.taskOther),
-    messages: counts(counted?.messageAscii, counted?.messageOther),
-    conversation: counts(counted?.conversationAscii, counted?.conversationOther),
-    ...(typeof counted?.selectedModel === 'string' || typeof counted?.servedModel === 'string' ? { composerModel: {
-      selected: typeof counted?.selectedModel === 'string' ? counted.selectedModel : null,
-      served: typeof counted?.servedModel === 'string' ? counted.servedModel : null,
-    } } : {}),
-    model: typeof counted?.model === 'string' ? counted.model : null,
-  })
+  return (await import('@/lib/context-usage-read')).readContextUsage(pool, runIds, rootRunId, latestRunId)
 }
 
 /** Load the whole-history estimate after the conversation's first page. */
@@ -676,7 +664,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
   const [{ threadLiveReferences, documentLiveWorkspace }, { workspacePool }] = await Promise.all([import('@/lib/live/panels'), import('@/lib/workspace-db')])
   const chainRunIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
   const quotaView = row.userId === user.id ? import('@/lib/run-quota-view') : null
-  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback] = await Promise.all([
+  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback, plan] = await Promise.all([
     threadLiveReferences(pool, workspacePool, runIds, user.id),
     row.issueId ? documentLiveWorkspace(pool, workspacePool, row.issueId, user.id) : null,
     // Over the whole chain and the whole brief, so a cursor read reports what a full one does.
@@ -686,6 +674,8 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
       threadDeliveryView(pool, user.id, chain?.rootRunId ?? row.id, thread.latestRunId)) : undefined,
     quotaView?.then(({ threadQuotaView }) => threadQuotaView(user.id, chainRunIds, thread.latestRunId)),
     quotaView?.then(({ threadModelFallbackState }) => threadModelFallbackState(user.id, chainRunIds, thread.latestRunId)),
+    row.userId === user.id && runIsActive(liveStatus) && runIds.includes(thread.latestRunId)
+      ? import('@/lib/thread-plan-read').then(({ readRunPlan }) => readRunPlan(pool, { runId: thread.latestRunId, ownerId: user.id })) : undefined,
   ])
   return {
     readReceipts,
@@ -700,6 +690,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
     ...(messageUpdates?.length ? { messageUpdates } : {}),
     context,
     ...(composerModel ? { composerModel } : {}),
+    ...(plan !== undefined ? { plan } : {}),
     ...(promptOmitted ? { promptOmitted: true as const } : {}),
   }
 }
@@ -822,6 +813,7 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
     body = (await import('@/lib/thread-references-server')).expandReferences(resolved) + body
     if (body.length > 10_000) throw new ActionFailureError('messageRequired')
   }
+  await refuseUnavailableReferences(user.id,row.id,text.data)
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
   return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
 }
@@ -931,6 +923,16 @@ export async function mentionThreadBot(input: { issueId: string | null; runId: s
     await wakeCoordinator(bot.ownerId)
   }
   return { dispatched: true, eventId: inserted?.id ?? null }
+}
+
+/** A typed reference the sender cannot read (deleted, another workspace, no access) is refused before it reaches the thread (#2941). */
+async function refuseUnavailableReferences(userId: string, runId: string, text: string) {
+  const { messageReferences } = await import('@/lib/composer-references')
+  if (!messageReferences(text).length) return
+  const { rows: [run] } = await pool.query<{ workspaceId: string | null }>('SELECT "workspaceId" FROM agent_runs WHERE id=$1 AND "userId"=$2', [runId, userId])
+  if (!run?.workspaceId) throw new ActionFailureError('runNotFound')
+  const { unavailableReferences } = await import('@/lib/message-references')
+  if ((await unavailableReferences({ userId, workspaceId: run.workspaceId }, text)).length) throw new ActionFailureError('referenceBroken')
 }
 
 /**

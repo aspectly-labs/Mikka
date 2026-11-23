@@ -1,8 +1,9 @@
 import { parts, calls, turn, type SessionView, type TurnOutcome } from 'eve/events'
 import type { sessions } from 'eve/server'
 import type { EveScope } from './scope'
+import { eveStreamId } from './stream-id'
 
-export const eveStreamId = (sessionId:string,turnId:string) => `eve:${sessionId}:${turnId}`
+export { eveStreamId }
 
 const FAILURE_CODE = /^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}(?: · ref [A-Za-z0-9_-]{1,128})?$/
 

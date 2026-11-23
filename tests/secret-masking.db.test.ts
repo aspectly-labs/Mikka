@@ -152,7 +152,7 @@ test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
     }
     const { rows } = await pool.query('select chunk, "createdAt" as at from run_chunks where "runId"=$1 order by seq', [runId])
     assert.equal(rows.length, 2)
-    const [item] = threadItems(rows, [])
+    const [item] = await threadItems(rows, [])
     assert.ok(item.kind === 'steps')
     assert.equal(item.steps[0].ms, 1250)
     assert.equal(item.steps[0].failed, false)

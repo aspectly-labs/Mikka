@@ -3,6 +3,7 @@ import * as instructionActions from '@/app/actions/instructions'
 import * as reviewSettingsActions from '@/app/actions/review-settings'
 import * as taskDomainActions from '@/app/actions/task-domain'
 import * as projectResourcesActions from '@/app/actions/project-resources'
+import * as environmentActions from '@/app/actions/environments'
 import * as enabledModels from '@/app/actions/enabled-models'
 import 'server-only'
 import { desktopActionSchemas, type DesktopActionName } from './schemas'
@@ -237,16 +238,20 @@ const functions = {
   'coordinator.coordinatorHistory': actions8.coordinatorHistory,
   'coordinator.coordinatorCitationSources': actions8.coordinatorCitationSources,
   'coordinator.coordinatorReasoning': actions8.coordinatorReasoning,
+  'coordinator.coordinatorToolCall': actions8.coordinatorToolCall,
   'coordinator.pollBotChatSummaries': actions8.pollBotChatSummaries,
   'coordinator.welcomeCoordinator': actions8.welcomeCoordinator,
   'coordinator.stopCoordinatorTurn': actions8.stopCoordinatorTurn,
   'coordinator.retryCoordinatorTurn': actions8.retryCoordinatorTurn,
+  'coordinator.reviseCoordinatorTurn': actions8.reviseCoordinatorTurn,
+  'coordinator.coordinatorTurnVersions': actions8.coordinatorTurnVersions,
   'coordinator.sendSuggestion': actions8.sendSuggestion,
   'coordinator.issueCreationAvailable': actions8.issueCreationAvailable,
   'desktop-notifications.chooseDesktopNotifications': actions9.chooseDesktopNotifications,
   'execution-settings.getBotModelMenu': actions10.getBotModelMenu,
   'execution-settings.refreshBotModelMenuAction': actions10.refreshBotModelMenuAction,
   'execution-settings.chooseBotModel': actions10.chooseBotModel,
+  'execution-settings.getUsageLimits': actions10.getUsageLimits,
   'issue-metadata.getIssuePropertyOptions': actions11.getIssuePropertyOptions,
   'issue-metadata.getNewTaskOptions': actions11.getNewTaskOptions,
   'issue-metadata.updateIssueMetadata': actions11.updateIssueMetadata,
@@ -377,9 +382,19 @@ const functions = {
   'task-runs.deleteThread': actions26.deleteThread,
   'task-runs.restoreThread': actions26.restoreThread,
   'task-runs.threadAutomation': actions26.threadAutomation,
+  'task-runs.readThreadSummary': actions26.readThreadSummary,
+  'task-runs.readSubagentRuns': actions26.readSubagentRuns,
+  'task-runs.readThreadWorkspace': actions26.readThreadWorkspace,
+  'task-runs.readThreadMachineMetrics': actions26.readThreadMachineMetrics,
+  'task-runs.readBotChatUploads': actions26.readBotChatUploads,
   'task-runs.setConversationOrganization': actions26.setConversationOrganization,
   'task-runs.renameConversation': actions26.renameConversation,
   'task-runs.regenerateConversationTitle': actions26.regenerateConversationTitle,
+  'task-runs.removeThread': actions26.removeThread,
+  'task-runs.undoRemoveThread': actions26.undoRemoveThread,
+  'task-runs.threadTags': actions26.threadTags,
+  'task-runs.threadAutomationSeed': actions26.threadAutomationSeed,
+  'task-runs.forkThreadFrom': actions26.forkThreadFrom,
   'team-relations.getIssueTeam': actions27.getIssueTeam,
   'team-relations.setIssueTeam': actions27.setIssueTeam,
   'team-relations.listProjectTeams': actions27.listProjectTeams,
@@ -394,6 +409,7 @@ const functions = {
   'project-resources.listProjectSetupVersions': projectResourcesActions.listProjectSetupVersions,
   'project-resources.rollbackProjectSetup': projectResourcesActions.rollbackProjectSetup,
   'project-resources.listProjectResources': projectResourcesActions.listProjectResources,
+  'environments.listEnvironments': environmentActions.listEnvironments,
   'project-resources.setProjectDefaultEnvironment': projectResourcesActions.setProjectDefaultEnvironment,
   'project-resources.saveEnvironment': projectResourcesActions.saveEnvironment,
   'project-resources.searchProjectPullAuthors': projectResourcesActions.searchProjectPullAuthors,

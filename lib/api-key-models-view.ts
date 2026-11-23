@@ -22,8 +22,8 @@ export type ApiKeyModelsView = {
  * Projects an API key's discovered models into the Settings "Models available for this key" dialog
  * (Figma "Chat+右栏" section 18, node 1381:4660, #2925 item 5).
  * Recognized models come first, followed by unrecognized models returned by the provider's `/models`.
- * When backend #2938 adds authoritative `known` flags via `GET /connections/:id/models`, callers
- * can pass `known` directly and it takes precedence over `modelDisplayName(id).family !== null`.
+ * The settings read (`readEnabledModels`) sends each model's `known` from Mikka's LiteLLM catalogue (#2938,
+ * lib/model-known.ts); it takes precedence over the name-based `modelDisplayName(id).family !== null` fallback.
  */
 export function buildApiKeyModelsView(
   models: readonly { id: string; enabled: boolean; known?: boolean }[],

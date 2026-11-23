@@ -31,7 +31,7 @@ export function createGitHubRoutes({ getScenario, getPullRequests, observe, git,
   if (['/user','/user/installations','/user/installations/99/repositories'].includes(path) && method === 'GET') {
     assert.equal(bearer,'Bearer mikka-local-synthetic-user-token','Expected local user authorization');
     if (path === '/user') return reply(githubUser);
-    if (path === '/user/installations') return reply({ installations: [{ id:99,app_id:Number(process.env.GITHUB_APP_ID ?? '123'),account:{login:'mikka-e2e'},suspended_at:null }] });
+    if (path === '/user/installations') return reply({ installations: [{ id:99,app_id:Number(process.env.GITHUB_APP_ID ?? '123'),account:{login:'mikka-e2e'},suspended_at:scenario.installationSuspendedAt ?? null }] });
     return reply({ repositories: [{id:REPOSITORY_ID,full_name:'mikka-e2e/core-loop',private:false,description:'Disposable local acceptance repository',homepage:null,pushed_at:null}] });
   }
   if (path === `${REPO_PATH}/installation` && method === 'GET') {

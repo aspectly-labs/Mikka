@@ -34,7 +34,7 @@ export function useArtifactMeta() {
 export function ArtifactCard({ artifact, onOpen, title, meta: line, icon }: { artifact: ArtifactSummary; onOpen: (id: string) => void; title?: string; meta?: string; icon?: ReactNode }) {
   const meta = useArtifactMeta()
   return <Button variant="ghost" data-slot="artifact-card" onClick={() => onOpen(artifact.id)}
-    className="h-16 w-full max-w-[26.25rem] justify-start gap-3 rounded-xl bg-muted/60 px-3 text-left font-normal hover:bg-muted">
+    className="h-16 w-full justify-start gap-3 rounded-xl bg-muted/60 px-3 text-left font-normal hover:bg-muted">
     <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-background text-foreground">{icon ?? <ArtifactKindIcon kind={artifact.kind} className="size-5" />}</span>
     <span className="flex min-w-0 flex-1 flex-col">
       <span className="truncate text-sm font-medium text-foreground">{title ?? artifact.title}</span>
