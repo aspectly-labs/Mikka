@@ -69,6 +69,10 @@ def fixed_file(directory, name, flags):
 
 def execution_fence(scope, control=CONTROL):
     """Check the same fixed inode the daemon holds, then retain it for PTY life."""
+    # Thread-owned terminals share the machine with its executor by design; the
+    # lock/idle receipt only fences review provenance on task-review machines.
+    if scope.get('control') == 'thread':
+        return None
     directory = os.open(control, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     lock = None
     try:
