@@ -7,7 +7,7 @@ import { readFactoryFlowStates } from './factory/public-flow'
 /**
  * One needs-you projection over the live sources (issue #2935): approvals come
  * from the pending-action cards, questions from the factory flow, limits from
- * the quota pause (source lands with E — the kind stays in the union now).
+ * quota-paused runs (lib/run-quota.ts).
  * It projects only; no second state is stored or derived.
  */
 export interface NeedsYouItem {
@@ -41,6 +41,15 @@ export async function listNeedsYou(user: NeedsYouUser): Promise<NeedsYouItem[]> 
     const state = states.get(row.id)
     if (!state?.needsYou || await namedOutsideToken(user, [row.workspaceId])) continue
     items.push({ kind: 'question', threadId: row.issueId, createdAt: state.needsYou.since, detail: state.needsYou.kind })
+  }
+  // Limits: threads paused on an exhausted subscription quota (lib/run-quota.ts)
+  // wait on the person — retry once the window resets or they switch to credits.
+  const paused = await pool.query<{ id: string; issueId: string | null; workspaceId: string | null; updatedAt: Date }>(
+    `SELECT id, "issueId", "workspaceId", "updatedAt" FROM agent_runs
+      WHERE "userId" = $1 AND status = 'paused' AND "pauseReason" = 'quota_exhausted'`, [user.id])
+  for (const run of paused.rows) {
+    if (await namedOutsideToken(user, [run.workspaceId])) continue
+    items.push({ kind: 'limit', threadId: run.issueId ?? run.id, createdAt: run.updatedAt.toISOString(), detail: 'quota_exhausted' })
   }
   return items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 }

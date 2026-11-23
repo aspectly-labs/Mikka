@@ -341,6 +341,38 @@ export async function readThreadSummary(runId: string): Promise<ActionResult<imp
 }
 
 /**
+ * The thread's stored right-rail state ({tabs, active, open}; #2935 item 2), the same
+ * on every device. Only the thread's owner reads it; any other reader gets runNotFound.
+ */
+export async function getThreadPanels(runId: string): Promise<ActionResult<import('@/lib/thread-panels').ThreadPanelState | null, 'runNotFound'>> {
+  const { ownerId } = await conversationActor()
+  const [row] = await db.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, ownerId))).limit(1)
+  if (!row) return { error: 'runNotFound' }
+  const state = await (await import('@/lib/thread-panels')).readThreadPanels(ownerId, runId)
+  return { state }
+}
+
+/** Persist the thread's rail state; only its owner writes it, anyone else gets runNotFound. */
+export async function setThreadPanels(runId: string, state: import('@/lib/thread-panels').ThreadPanelState): Promise<ActionResult<{ saved: true }, 'runNotFound' | 'invalid'>> {
+  const { ownerId } = await conversationActor()
+  const panels = await import('@/lib/thread-panels')
+  if (!panels.isThreadPanelState(state)) return { error: 'invalid' }
+  return (await panels.writeThreadPanels(ownerId, runId, state)) ? { saved: true } : { error: 'runNotFound' }
+}
+
+/**
+ * A thread's lightweight hover preview (#2935 item 5): title, status, last activity and
+ * the latest reply line in one indexed read, meant for a 30s client cache on hover.
+ * Only the thread's owner in its workspace reads it; any other reader gets runNotFound.
+ */
+export async function getThreadPreview(runId: string): Promise<ActionResult<import('@/lib/thread-preview').ThreadPreview, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const preview = await (await import('@/lib/thread-preview')).readThreadPreview(pool, { ownerId, workspaceId, runId })
+  return preview ?? { error: 'runNotFound' }
+}
+
+/**
  * A thread's machine workspace for the right column's Files and Setup tabs (#2928, #2940): its checkout, machine,
  * frozen Environment and uploads (lib/thread-workspace.ts). Only the thread's owner reads it; anyone else gets runNotFound.
  */

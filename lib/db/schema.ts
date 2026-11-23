@@ -1029,6 +1029,15 @@ export const suggestionTriggerChecks = pgTable('suggestion_trigger_checks', {
   checkedAt: timestamp('checkedAt', { withTimezone: true }).notNull(),
 })
 
+/** A thread's right-rail state (#2935): which panel tabs the person opened on it,
+ * which is active and whether the rail is open — the same on every device. */
+export const threadPanels = pgTable('thread_panels', {
+  userId: uuid('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  runId: uuid('runId').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
+  state: jsonb('state').$type<{ tabs: string[]; active: string | null; open: boolean }>().notNull(),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [primaryKey({ columns: [table.userId, table.runId] })])
+
 /**
  * Per Composio connected account: the provider email read at connect time and
  * whether it is the account bots use for its toolkit (one default per person
