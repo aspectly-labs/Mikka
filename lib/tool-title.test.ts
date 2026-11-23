@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { toolTitle } from './tool-title'
 
@@ -42,6 +42,9 @@ test('no locale translates tool names: the Bot chat and threads share the Englis
     const messages = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), 'utf8'))
     assert.equal(messages.Coordinator.activity.tools, undefined, `${locale} has no Coordinator.activity.tools`)
   }
-  const source = readFileSync(new URL('../components/coordinator/reply-activity.tsx', import.meta.url), 'utf8')
+  // The UI lives in the private layer now (decision 2026-11-22-2205); without it there is no renderer to check.
+  const file = [new URL('../.hosted-ui/web/components/coordinator/reply-activity.tsx', import.meta.url), new URL('../components/coordinator/reply-activity.tsx', import.meta.url)].find(url => existsSync(url))
+  if (!file) return
+  const source = readFileSync(file, 'utf8')
   assert.doesNotMatch(source, /`tools\.\$\{/, 'reply-activity does not look tool names up in the messages')
 })
