@@ -7679,8 +7679,9 @@
     "anyLabel": "全部标签",
     "done": "完成",
     "deselect": "取消选择",
-    "diffPartial": "改动太多，GitHub 只列到上限——还有更多文件",
-    "diffPatchUnavailable": "{count} 个文件没有补丁（二进制或被截断）"
+    "diffPartial": "改动文件数超过本次读取的上限",
+    "diffPatchUnavailable": "{count} 个文件没有补丁（二进制或被截断）",
+    "reviewSelf": "不能在自己的 PR 上请求修改"
   },
   "HostedConnections": {
     "state": {

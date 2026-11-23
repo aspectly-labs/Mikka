@@ -28,12 +28,12 @@ import { PullRequestIcon } from './pull-request-icon'
 import { ThreadChangesPane } from './thread-changes'
 import { Fact, checkKeys, readDetail, reviewKeys, stateKeys } from './pull-preview'
 
-const checkRunKeys: Record<PullCheck['state'], `checksState.${string}`> = {
+const checkRunKeys = {
   success: 'checksState.SUCCESS',
   failure: 'checksState.FAILURE',
   pending: 'checksState.PENDING',
   skipped: 'checksState.EXPECTED',
-}
+} as const satisfies Record<PullCheck['state'], `checksState.${string}`>
 
 const mergeableKeys: Record<NonNullable<PullDetail['mergeable']>, `mergeableState.${string}`> = {
   MERGEABLE: 'mergeableState.MERGEABLE',
@@ -81,7 +81,7 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
         void detail.mutate()
         return
       }
-      toast.error(t('reviewFailed'))
+      toast.error(result.code === 'githubReviewSelf' ? t('reviewSelf') : t('reviewFailed'))
     } catch {
       toast.error(t('reviewFailed'))
     } finally {
@@ -98,6 +98,10 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
       // The publishing run carries the intent — a continuation's pull does not
       // answer to the run the reader happens to have open (its own receipt row).
       const result = await setThreadPullMergeWhenReady(pull.issueId, pull.runId, { repo: pull.repo, number: pull.number, headSha, enabled })
+      // The arm drains once: the outcome tells whether it already merged,
+      // hit a terminal refusal, or is still waiting on GitHub.
+      if (result?.outcome?.outcome === 'merged') { toast.success(t('states.merged')); void detail.mutate(); onChanged(); return }
+      if (result?.outcome?.outcome === 'failed') { toast.error(t('mergeFailed')); void detail.mutate(); onChanged(); return }
       if (result?.state === 'armed' || result?.state === 'cancelled') { toast.success(result.state === 'armed' ? t('mergeArmed') : t('mergeDisarmed')); onChanged(); return }
       toast.error(t('mergeFailed'))
     } catch {
