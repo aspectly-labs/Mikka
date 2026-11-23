@@ -27,8 +27,9 @@ export function AgentMessageRow({ title, subject, children, open }: {
   return (
     <Collapsible data-agent-message-row="" className="ui-th-tool-details min-w-0">
       <CollapsibleTrigger className="ui-th-tool w-full cursor-pointer rounded-md text-start outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" data-kind="message" data-status="done">
-        <span className="ui-th-tool__label" dir="auto" title={label}>{label}</span>
-        <span className="ui-th-tool__chev transition-transform in-data-panel-open:rotate-90 motion-reduce:transition-none" aria-hidden="true"><ChevronRight className="size-3" /></span>
+        {/* The muted colour is set here: inside a message's words the thread's own `--muted` is the surface's, not the text's. */}
+        <span className="min-w-0 flex-1 truncate text-muted-foreground" dir="auto" title={label}>{label}</span>
+        <span className="grid flex-none place-items-center text-muted-foreground transition-transform in-data-panel-open:rotate-90 motion-reduce:transition-none" aria-hidden="true"><ChevronRight className="size-3" /></span>
       </CollapsibleTrigger>
       <CollapsibleContent keepMounted className="ui-th-tool-details__body">
         <div data-agent-message-body="" className="flex max-h-96 min-w-0 flex-col gap-2 overflow-auto overscroll-contain rounded-lg border border-border bg-card px-2.5 py-2 text-start scrollbar-thin">
