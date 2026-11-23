@@ -1,0 +1,84 @@
+import 'server-only'
+import { z } from 'zod'
+import type { Pool } from 'pg'
+import { getApiSession, apiWorkspaceAllowed } from '@/lib/api-auth'
+import { loadWorkspaceContext } from '@/lib/workspace-access'
+import { ComputerError } from '@/lib/computer/store'
+import { hostedSnapshot } from './sponsored-task'
+import { connectComputer, computerGone } from '@/lib/computer/e2b-provider'
+
+export type ThreadFileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed'
+
+/** One file the thread's run touched (#2940 Files tab「This thread」). */
+export type ThreadTouchedFile = { path: string; status: ThreadFileStatus; committed: boolean }
+
+function porcelainStatus(code: string): ThreadFileStatus {
+  if (code.includes('R')) return 'renamed'
+  if (code.includes('A')) return 'added'
+  if (code.includes('D')) return 'deleted'
+  if (code === '??') return 'untracked'
+  return 'modified'
+}
+
+/** Parses `git status --porcelain=v1` output, skipping unmerged entries the
+ * thread's own commits would not produce. */
+export function parsePorcelain(output: string): ThreadTouchedFile[] {
+  const files: ThreadTouchedFile[] = []
+  for (const line of output.split('\n')) {
+    if (line.length < 4) continue
+    const code = line.slice(0, 2)
+    if (code === '!!') continue
+    let path = line.slice(3)
+    const arrow = path.indexOf(' -> ')
+    if (arrow >= 0) path = path.slice(arrow + 4)
+    if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1)
+    files.push({ path, status: porcelainStatus(code), committed: false })
+  }
+  return files
+}
+
+/** The thread's touched files: a live `git status` of the running machine's
+ * worktree when one is attached, the frozen `report.filesChanged` otherwise.
+ * Never fabricates — an unavailable live read degrades to the report. */
+export async function readThreadTouchedFiles(pool: Pool, actor: { userId: string; workspaceId: string }, runId: string, signal: AbortSignal) {
+  if (!z.uuid().safeParse(runId).success) throw new ComputerError(404, 'Thread unavailable')
+  const run = (await pool.query<{ worktreePath: string | null; filesChanged: unknown }>(
+    `SELECT r."worktreePath",r.report->'filesChanged' AS "filesChanged" FROM agent_runs r
+    WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3`,
+    [runId, actor.userId, actor.workspaceId])).rows[0]
+  if (!run) throw new ComputerError(404, 'Thread unavailable')
+
+  const machine = (await pool.query<{ sandboxId: string | null; snapshotId: string | null; state: string }>(
+    `SELECT "sandboxId","snapshotId",state FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3`,
+    [runId, actor.userId, actor.workspaceId])).rows[0]
+
+  // Live projection first: the running sandbox answers `git status`. A
+  // sponsored machine never takes the owner's E2B key, so it skips to the
+  // frozen report below.
+  if (machine?.sandboxId && machine.state === 'running' && machine.snapshotId !== hostedSnapshot && run.worktreePath) {
+    try {
+      const sandbox = await connectComputer(actor.workspaceId, machine.sandboxId, signal)
+      const result = await sandbox.commands.run('git status --porcelain=v1 -z', { cwd: run.worktreePath, timeoutMs: 30_000, signal })
+      if (result.exitCode === 0) return { files: parsePorcelain(result.stdout.replace(/\0/g, '\n')), source: 'live' as const }
+    } catch (error) {
+      if (!computerGone(error)) throw error
+    }
+  }
+
+  const committed = Array.isArray(run.filesChanged) ? run.filesChanged.filter((f): f is string => typeof f === 'string') : []
+  return { files: committed.map(path => ({ path, status: 'modified' as const, committed: true })), source: 'report' as const }
+}
+
+export async function threadFilesRoute(request: Request, pool: Pool, runId: string) {
+  try {
+    const session = await getApiSession({ headers: request.headers })
+    if (!session?.user?.id) return Response.json({ error: 'auth_required' }, { status: 401 })
+    const context = await loadWorkspaceContext(undefined, session.user)
+    if (!apiWorkspaceAllowed(session, context.workspace.id)) return Response.json({ error: 'forbidden' }, { status: 403 })
+    const result = await readThreadTouchedFiles(pool, { userId: session.user.id, workspaceId: context.workspace.id }, runId, request.signal)
+    return Response.json(result)
+  } catch (error) {
+    if (error instanceof ComputerError) return Response.json({ error: error.message }, { status: error.status })
+    throw error
+  }
+}
