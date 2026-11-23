@@ -32,7 +32,7 @@ export function RailCrewThreads({ issues, threads, loading, onOpenThread }: { is
 /** Crew ＋ Pull requests: the runs' published PRs from the coordinator overview. */
 export function RailCrewPulls({ workspaceId }: { workspaceId: string }) {
   const t = useTranslations('IssueThreads')
-  const { data, error } = useSWR<CoordinatorOverview>('/api/coordinator/overview', url => readJson<CoordinatorOverview>(url))
+  const { data, error } = useSWR<CoordinatorOverview>('/api/coordinator/overview', (url: string) => readJson<CoordinatorOverview>(url))
   useLiveKey('thread_list', workspaceId, ['/api/coordinator/overview'], workspaceId)
   const pulls = data?.pullRequests ?? []
   if (error) return <p className="p-4 text-sm text-muted-foreground">{t('crewPullsError')}</p>
@@ -54,7 +54,7 @@ export function RailCrewPulls({ workspaceId }: { workspaceId: string }) {
 export function RailCrewSide({ runId, workspaceId, onOpenThread }: { runId: string; workspaceId: string; onOpenThread: (thread: { issueId: string | null; runId: string }) => void }) {
   const t = useTranslations('IssueThreads')
   const key = `/api/threads/${runId}/children`
-  const { data, error } = useSWR<{ children: ThreadChild[] }>(key, url => readJson<{ children: ThreadChild[] }>(url))
+  const { data, error } = useSWR<{ children: ThreadChild[] }>(key, (url: string) => readJson<{ children: ThreadChild[] }>(url))
   useLiveKey('thread_list', workspaceId, [key], workspaceId)
   const sides = (data?.children ?? []).filter(child => child.threadRelation === 'side')
   if (error) return <p className="p-4 text-sm text-muted-foreground">{t('crewSideError')}</p>
