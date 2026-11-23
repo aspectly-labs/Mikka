@@ -4,7 +4,7 @@
  * `name = Expr` lines it may refer to, components called with positional
  * arguments, JSON-like strings, arrays and objects with bare keys. The web
  * renders it with @openuidev/react-lang. The iOS app reads the same text here
- * and draws the cards it knows natively (apps/mobile/components/OpenUI.tsx);
+ * and draws the cards it knows natively (mikka-hosted-ui mobile/components/OpenUI.tsx);
  * the phone push uses its words (lib/mobile-push.ts). No imports, so both the
  * server and the app's bundler can load it.
  */

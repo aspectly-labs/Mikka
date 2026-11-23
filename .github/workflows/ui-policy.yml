@@ -189,7 +189,6 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         if: always()
       - run: pnpm --filter @mikka/protocol typecheck
-      - run: pnpm --filter @mikka/mobile typecheck
 
       - name: Audit business UI composition
         run: pnpm --silent lint:ui --json > ui-audit.json

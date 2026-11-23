@@ -14,7 +14,7 @@ export const desktopScheme = z.enum(DESKTOP_SCHEMES)
 export type DesktopScheme = z.infer<typeof desktopScheme>
 
 /**
- * Deep-link scheme of the phone app (`apps/mobile/app.json`'s `scheme`). The
+ * Deep-link scheme of the phone app (`mobile/app.json`'s `scheme` in mikka-hosted-ui). The
  * phone has one scheme and no dev flavor: a development build deep-links back
  * through `mikka://` too, and Expo Go — development only — owns `exp://`
  * instead (ADR 0032).

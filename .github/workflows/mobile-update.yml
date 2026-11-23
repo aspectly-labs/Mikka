@@ -3,15 +3,14 @@ name: Mobile OTA update
 # Production OTA shares the deployment pipeline's default-off owner window
 # and completed staging proof. A main push still checks the client, but cannot
 # publish ahead of staging. A completed automatic deployment supplies the next
-# release opportunity without polling. PR previews keep their own EAS branch;
-# mark the PR Ready or apply the mobile-preview label to publish one.
+# release opportunity without polling. The app itself lives in the private
+# mikka-hosted-ui repository (mobile/); it is checked out at the staged UI
+# revision and bundled from .hosted-ui/mobile. Its pull requests are reviewed
+# there, so this public workflow publishes no PR previews.
 on:
   push:
     branches: [main]
-    paths: ['apps/mobile/**', 'packages/protocol/**']
-  pull_request:
-    types: [ready_for_review, labeled]
-    paths: ['apps/mobile/**', 'packages/protocol/**']
+    paths: ['packages/protocol/**']
   workflow_run:
     workflows: [Cloudflare application deployment]
     types: [completed]
@@ -37,7 +36,7 @@ permissions:
 
 concurrency:
   group: mobile-update-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   MIKKA_PRIVATE_GITHUB_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER }}
@@ -48,9 +47,6 @@ jobs:
     name: EAS Update
     if: >-
       (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) &&
-      (github.event_name != 'pull_request' ||
-       (github.event.pull_request.head.repo.full_name == github.repository &&
-        (github.event.action == 'ready_for_review' || github.event.label.name == 'mobile-preview'))) &&
       (github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'workflow_run' &&
        github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' &&
@@ -76,8 +72,6 @@ jobs:
           cache: pnpm
       - name: Verify production credential delivery boundaries
         run: node --test scripts/mobile-ota-credentials.test.mjs
-      - run: pnpm install --frozen-lockfile --filter @mikka/mobile...
-      - run: pnpm --filter @mikka/mobile typecheck
       - name: Validate the selected private UI owner before credential access
         run: |
           node --input-type=module - <<'JS'
@@ -215,16 +209,20 @@ jobs:
           ssh-key: ${{ env.HOSTED_UI_READ_KEY }}
           path: .hosted-ui
           persist-credentials: false
-      - name: Use the private UI's mobile layer
+      - name: Use the private UI's mobile app
         if: steps.eligibility.outputs.allowed == 'true'
         env:
           OVERLAY_SHA: ${{ steps.eligibility.outputs.overlay_sha }}
         run: |
           echo "HOSTED_UI_READ_KEY=" >> "$GITHUB_ENV"
           test "$(git -C .hosted-ui rev-parse HEAD)" = "$OVERLAY_SHA"
-          test -d .hosted-ui/mobile || { echo "::error::Official mobile UI checkout required."; exit 1; }
-          echo "MIKKA_MOBILE_OVERLAY_DIR=.hosted-ui/mobile" >> "$GITHUB_ENV"
-          echo "::notice::Bundling the private UI layer at $(git -C .hosted-ui rev-parse HEAD)."
+          test -f .hosted-ui/mobile/package.json || { echo "::error::Official mobile app checkout required."; exit 1; }
+          echo "::notice::Bundling the private mobile app at $(git -C .hosted-ui rev-parse HEAD)."
+      - name: Install and type-check the mobile app
+        if: steps.eligibility.outputs.allowed == 'true'
+        run: |
+          pnpm --dir .hosted-ui/mobile install --frozen-lockfile
+          pnpm --dir .hosted-ui/mobile typecheck
       - name: Compare actual mobile release inputs
         if: steps.eligibility.outputs.allowed == 'true'
         id: mobile-source
@@ -287,7 +285,7 @@ jobs:
         if: >-
           env.EXPO_TOKEN != '' && steps.mobile-source.outputs.selected == 'true' && steps.publication-eligibility.outputs.allowed == 'true' &&
           steps.publication-eligibility.outputs.overlay_sha == steps.eligibility.outputs.overlay_sha
-        working-directory: apps/mobile
+        working-directory: .hosted-ui/mobile
         env:
           OVERLAY_SHA: ${{ steps.eligibility.outputs.overlay_sha }}
         run: |
@@ -299,15 +297,3 @@ jobs:
           (steps.publication-eligibility.outputs.allowed != 'true' ||
            steps.publication-eligibility.outputs.overlay_sha != steps.eligibility.outputs.overlay_sha)
         run: echo 'Production OTA was not published because the final owner window or staged UI identity no longer matched.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Publish to pr-${{ github.event.number }}
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        working-directory: apps/mobile
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          if [ -n "$EXPO_TOKEN" ]; then
-            npx -y eas-cli@27.2.0 update --branch "pr-${{ github.event.number }}" --platform ios --message "$PR_TITLE" --non-interactive
-          else
-            echo "::notice::EXPO_TOKEN is not set; no PR preview was published."
-          fi

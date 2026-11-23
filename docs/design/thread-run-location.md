@@ -17,8 +17,8 @@ version-bound acceptance evidence.
 The web implementation is `components/workspace/thread-run-place.tsx` and the
 `thread-header` UI slot. `MachineDetails` displays the machine facts and copies
 the sandbox ID. The older frame's Open computer action is not present in that
-component. Mobile uses Expo / React Native in `apps/mobile`, with machine DTOs
-in `apps/mobile/lib/thread-machine.ts`. Its task conversation screen follows
+component. Mobile uses Expo / React Native in `mikka-hosted-ui mobile/`, with machine DTOs
+in `mikka-hosted-ui mobile/lib/thread-machine.ts`. Its task conversation screen follows
 the later task-title/current-Agent header. The SwiftUI popover described by
 the original frame is not an implementation instruction.
 

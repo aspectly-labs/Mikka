@@ -82,7 +82,7 @@ proves the entry was packaged, not that production spans reached PostHog.
 ## Mobile app
 
 The iOS app exports no spans of its own. Every request it sends to Mikka's
-`/api/*` (`apps/mobile/lib/tracing.ts`, from `@mikka/protocol/trace-context`)
+`/api/*` (`mikka-hosted-ui mobile/lib/tracing.ts`, from `@mikka/protocol/trace-context`)
 carries:
 
 - `traceparent`: a fresh W3C trace context per request, flagged not sampled.

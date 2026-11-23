@@ -5,7 +5,7 @@ import { buildGraph } from './graph.mjs'
 import { select } from './select.mjs'
 const plan = buildGraph()
 const scenarios = {
-  mobile: 'apps/mobile/lib/theme.ts', web: 'components/plugins/github-settings.tsx',
+  web: 'components/plugins/github-settings.tsx',
   daemon: 'packages/daemon/src/adapters/codex.ts', factory: 'lib/factory/store.ts',
   shared: 'packages/protocol/src/run.ts', migration: 'drizzle/new.sql', docs: 'docs/dev-workflow.md',
 }

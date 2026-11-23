@@ -21,19 +21,20 @@ export function mobileInputs(root, overlay, sourceCommit, overlayCommit) {
     assert.equal(git(path, 'rev-parse', 'HEAD'), expected)
     assert.equal(git(path, 'status', '--porcelain', '--untracked-files=no'), '')
   }
-  const inputs = { mobile: git(root, 'rev-parse', 'HEAD:apps/mobile'), protocol: git(root, 'rev-parse', 'HEAD:packages/protocol'),
-    overlayMobile: git(overlay, 'rev-parse', 'HEAD:mobile') }
+  // The app lives in the private UI (mikka-hosted-ui mobile/); the engine contributes its protocol.
+  const inputs = { protocol: git(root, 'rev-parse', 'HEAD:packages/protocol'), overlayMobile: git(overlay, 'rev-parse', 'HEAD:mobile') }
   for (const value of Object.values(inputs)) assert.match(value, sha)
   return { sourceCommit, overlayCommit, inputs }
 }
 
-export function sourceReceipt(value) {
+/** Version 2 since the app left the public repository; a version 1 receipt (with the public `mobile` tree) is still a readable baseline. */
+export function sourceReceipt(value, { legacy = false } = {}) {
   assert.deepEqual(keys(value), ['inputs', 'kind', 'overlayCommit', 'runAttempt', 'runId', 'sourceCommit', 'version'])
-  assert.equal(value.version, 1)
+  assert.ok(value.version === 2 || (legacy && value.version === 1))
   assert.equal(value.kind, 'mobile-ota-source')
   for (const key of ['sourceCommit', 'overlayCommit']) assert.match(value[key], sha)
   for (const key of ['runId', 'runAttempt']) assert.match(value[key], number)
-  assert.deepEqual(keys(value.inputs), ['mobile', 'overlayMobile', 'protocol'])
+  assert.deepEqual(keys(value.inputs), value.version === 1 ? ['mobile', 'overlayMobile', 'protocol'] : ['overlayMobile', 'protocol'])
   for (const tree of Object.values(value.inputs)) assert.match(tree, sha)
   return value
 }
@@ -54,7 +55,7 @@ function trustedRun(run, { originalAttempt = true } = {}) {
 
 /** The source archive alone never claims publication. The original publish step must have completed. */
 export function checkedMobilePublication(run, jobs, artifact, receipt) {
-  sourceReceipt(receipt); trustedRun(run)
+  sourceReceipt(receipt, { legacy: true }); trustedRun(run)
   assert.equal(String(run.id), receipt.runId)
   assert.equal(String(run.run_attempt), receipt.runAttempt)
   assert.equal(run.head_sha, receipt.sourceCommit)
@@ -129,7 +130,7 @@ export async function latestMobilePublication({ json, download, now = Date.now()
   assert.equal(artifact.archive_download_url, artifact.url + '/zip')
   const bytes = await download({ selected: true, artifact: { id: artifact.id, repositoryId: Number(publicRepositoryId), sha256: artifact.digest.slice(7), sizeBytes: artifact.size_in_bytes } })
   assert.ok(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= 8 * 1024)
-  const receipt = sourceReceipt(JSON.parse(bytes))
+  const receipt = sourceReceipt(JSON.parse(bytes), { legacy: true })
   assert.equal(receipt.runId, String(artifact.workflow_run.id))
   assert.equal(receipt.sourceCommit, artifact.workflow_run.head_sha)
   const attempt = `actions/runs/${receipt.runId}/attempts/${receipt.runAttempt}`
@@ -138,6 +139,7 @@ export async function latestMobilePublication({ json, download, now = Date.now()
 
 export function selectMobilePublication(candidate, baseline, event) {
   if (baseline.status === 'published') {
+    // The candidate's inputs decide; a version 1 baseline's extra public `mobile` tree is ignored.
     const changed = keys(candidate.inputs).some(key => candidate.inputs[key] !== baseline.receipt.inputs[key])
     return { selected: changed, reason: changed ? 'mobile_inputs_changed' : 'mobile_inputs_unchanged' }
   }
@@ -157,7 +159,7 @@ function candidate(env) {
   assert.equal(env.GITHUB_WORKFLOW_SHA, env.GITHUB_SHA)
   assert.ok(['push', 'workflow_run', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME))
   const root = resolve(env.GITHUB_WORKSPACE)
-  return sourceReceipt({ version: 1, kind: 'mobile-ota-source', runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT,
+  return sourceReceipt({ version: 2, kind: 'mobile-ota-source', runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT,
     ...mobileInputs(root, resolve(root, '.hosted-ui'), env.GITHUB_SHA, env.OVERLAY_SHA) })
 }
 

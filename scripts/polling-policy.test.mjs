@@ -26,7 +26,7 @@ test("ordinary TypeScript assertions do not hide a positional mobile interval", 
   const source =
     "const path = <string>input\nconst page = useApi<Page>(path, 5000)";
   assert.deepEqual(
-    findPolling("apps/mobile/example.ts", source).map((result) => result.rule),
+    findPolling("lib/example.ts", source).map((result) => result.rule),
     ["polling/helper"],
   );
 });

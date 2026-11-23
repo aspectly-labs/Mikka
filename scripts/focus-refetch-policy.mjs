@@ -13,10 +13,6 @@ export const focusListenerAllowlist = {
   'lib/hooks/use-check-on-return.ts': 'checks armed only by a hand-off to the browser or Telegram (one, or each return until the link is done), never by plain focus',
   'lib/live/browser-runtime.ts': 'the shared live transport visibility subscription, extracted from use-live-key: closes scoped channels while hidden; on show reconnects and catches up missed revisions (#1212), with no plain focus listener or additional reads',
   'apps/desktop/src/renderer/live-runtime.ts': 'the bundled transport equivalent of lib/live/browser-runtime: pauses the same scoped channels while hidden and resumes revision catch-up; the shared LiveChannel owns the unchanged read budget',
-  'apps/mobile/lib/push.ts': 'refreshes the push token registration; the screen is not re-read',
-  'apps/mobile/lib/apple-auth.ts': 'checks the Apple credential state with iOS after foregrounding and clears a revoked session; reads no application or third-party connection data',
-  'apps/mobile/lib/updates.ts': 'prefetches an OTA bundle in the background; the screen is not re-read',
-  'apps/mobile/lib/useApi.ts': 'pauses polling in the background; on return one silent read only past FRESH_FOR_MS',
 }
 
 /** Third-party connection status (GitHub, Composio): every SWR hook here sets revalidateOnFocus: false. */

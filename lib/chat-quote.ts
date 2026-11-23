@@ -1,5 +1,5 @@
 // A part of an earlier message the person quotes rides at the head of their message as Markdown quote lines, the
-// format the phone app already sends (apps/mobile/components/ui.tsx), so the Coordinator, a thread's agent and every
+// format the phone app already sends (mikka-hosted-ui mobile/components/ui.tsx), so the Coordinator, a thread's agent and every
 // client read the same text:
 //   > 先把首页截图放大
 //

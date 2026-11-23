@@ -7,7 +7,6 @@ import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { serve } from 'srvx/node'
 import { DESKTOP_RPC_VERSION } from '../lib/desktop-rpc/wire'
-import { saveProfileName } from '../apps/mobile/lib/profile-name'
 import { parseSetCookieHeader } from 'better-auth/cookies'
 import { apiAliases } from '../apps/api/compat-aliases.mjs'
 import { createApiHandler } from '../apps/api/src/application'
@@ -77,7 +76,14 @@ test('mobile Settings and confirmed browser handoff require a current team admin
       if (!response.ok) throw new Error('rpc ' + response.status)
       return response.json()
     }
-    const save = (name: string, credentials: string) => saveProfileName(name, (_path, init) => rpc(credentials, init.body))
+    // What the iOS app's profile screen sends (mikka-hosted-ui mobile/lib/profile-name.ts), and the receipt it requires.
+    const save = async (name: string, credentials: string) => {
+      const receipt = await rpc(credentials, { version: DESKTOP_RPC_VERSION, action: 'account.updateDisplayName', args: [name] })
+      if (receipt?.version !== DESKTOP_RPC_VERSION || receipt.ok !== true || receipt.result?.error || typeof receipt.result?.name !== 'string' || !receipt.result.name.trim()) {
+        throw new Error('profile_name_unconfirmed')
+      }
+      return receipt.result.name as string
+    }
     await assert.rejects(save('x'.repeat(81), cookie))
     assert.equal(await save(' Native edit ', cookie), 'Native edit')
     const native = () => fetch(api + 'mobile/settings?view=profile', { headers: { cookie: cached } }).then(response => {

@@ -6,7 +6,7 @@
 - **GitHub:** #1296
 - **Figma:** `zPe5LKycb2XuT1ivCLRw07`; page `268:4750` is archived per #1296 and is not a design authority. Page `358:9186` is a reference to verify. Current main and accepted decisions govern; do not redesign from archived or unaccepted frames.
 - **Owner thread:** `claude/mikka-mobile-tech-choice-jrtbd3`
-- **Code:** `apps/mobile` (Expo SDK 58) on the server's `app/api/mobile/*`
+- **Code:** `mikka-hosted-ui mobile/` (Expo SDK 58) on the server's `app/api/mobile/*`
   routes. Earlier Expo Web acceptance belongs to its recorded revision;
   native behavior requires its own compatible build and device evidence.
 
@@ -22,8 +22,9 @@ briefing in the morning and see what is waiting on me.
 
 ## Platform and stack
 
-- Expo (React Native) with Expo Router, in the main repository at
-  `apps/mobile`, using `@mikka/protocol` from the pnpm workspace.
+- Expo (React Native) with Expo Router, in the private mikka-hosted-ui
+  repository at `mobile/` (built inside a public checkout at `.hosted-ui`),
+  using `@mikka/protocol` from this repository.
 - iOS ships first. Android builds from the same code later; Android pushes in
   mainland China need a vendor push service (FCM is not available there).
 - Builds run on EAS, not on the developer's Mac (`AGENTS.md`).
@@ -140,14 +141,14 @@ matching evidence before claiming the entire flow works.
 
 ### Spacing and controls
 
-`apps/mobile/lib/theme.ts` owns the layout tokens. Page side margins are
+`mikka-hosted-ui mobile/lib/theme.ts` owns the layout tokens. Page side margins are
 20 pt, list rows have 15 pt vertical padding, blocks are 20 pt apart, and
 sections 30 pt apart. Task group headers are plain secondary text on the
 page. Properties sit as chips without a box
 ([spacing decision](decisions/2026-11-08-0200-mobile-spacing.md)).
 
 System navigation, menus, switches, search and sheets use native controls.
-Shared product content follows `apps/mobile/DESIGN.md`; Liquid Glass is for
+Shared product content follows `mikka-hosted-ui mobile/DESIGN.md`; Liquid Glass is for
 controls. Every animation retains its Reduce Motion behavior. Device-only
 scrolling, accessibility and keyboard behavior need native evidence.
 
@@ -227,7 +228,7 @@ What is still our own, and why:
 | Settings rows (`components/settings.tsx` `Row`) | Drawn as an inset grouped list; moving them to `@expo/ui` `Form` is a separate change. |
 | Reactions, mention chips, cards (`cards.tsx`) | No system equivalent. |
 
-Motion: `apps/mobile/lib/springs.ts` holds the one spring family (snap back ζ≈0.73, a new message
+Motion: `mikka-hosted-ui mobile/lib/springs.ts` holds the one spring family (snap back ζ≈0.73, a new message
 rising 8 pt at ζ≈0.8). Every animation keeps its Reduce Motion branch.
 
 ## Layout and states
@@ -274,7 +275,7 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   own or from 通知, never at launch; denied or failed shows 「推送无法送达」.
   A tap opens the proposal's card (`pendingActionId`), its task and attempt
   (`issueId`, `runId`) or the chat (`botId`), also when it launched the app.
-  `apps/mobile/lib/push-route.ts` binds the notification to its account/server;
+  `mikka-hosted-ui mobile/lib/push-route.ts` binds the notification to its account/server;
   a legacy run without a task retains the `/thread/:id` fallback.
 - **Cards and proposals:** OpenUI replies are drawn natively
   (`components/OpenUI.tsx`: text, choice and question cards, approval,
@@ -331,14 +332,14 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   unscoped transport retains its two-image/text-file path in source.
 - **现状（非决定）:** thread filters 待审阅 and 已归档, and dictation remain outside the implemented first-version flow. Pins are implemented. Appearance follows the system ([decision](decisions/2026-11-02-1410-mobile-follows-system-appearance.md)); changing the native appearance configuration requires a compatible EAS build.
 - **App icon:** the Mikka mark, the same file as the desktop app's
-  (`apps/mobile/assets/icon.icon`, Icon Composer; `icon.png` is the opaque
+  (`mikka-hosted-ui mobile/assets/icon.icon`, Icon Composer; `icon.png` is the opaque
   1024 fallback). Two layers on the dark fill: the lit dots (Liquid Glass,
   specular) and the unlit dots (white at 14%), so iOS 26 draws the default,
   dark, tinted and clear looks itself; actool also writes flat icons for
   earlier iOS. `.github/workflows/app-icon.yml` compiles it for iOS and macOS
   and renders each look on a pull request. A new icon needs a new build,
   dispatched by hand (`mobile-native.yml` does not watch `assets/`).
-- **Updates:** `.github/workflows/mobile-update.yml` publishes JavaScript to the production OTA channel on main. Native configuration changes use `.github/workflows/mobile-native.yml`: exact-commit main CI, a completed EAS iOS build, then submission of that exact build id to App Store Connect/TestFlight. The workflow's automatic path filters cover `app.json`, `app.config.ts` and `eas.json`; native dependency or asset changes outside those filters need manual dispatch on main. A different runtime needs a compatible binary. TestFlight processing, installation and device acceptance remain separate from publication; see `apps/mobile/README.md`.
+- **Updates:** `.github/workflows/mobile-update.yml` publishes JavaScript to the production OTA channel on main. Native configuration changes use `.github/workflows/mobile-native.yml`: exact-commit main CI, a completed EAS iOS build, then submission of that exact build id to App Store Connect/TestFlight. The app lives in the private mikka-hosted-ui repository, so a native build is a manual dispatch on main with that repository's reviewed commit. A different runtime needs a compatible binary. TestFlight processing, installation and device acceptance remain separate from publication; see `mikka-hosted-ui mobile/README.md`.
 
 ## Out of scope (first version)
 

@@ -120,12 +120,7 @@ yarn-error.log*
 /.cloudflare-marketing/
 /data/
 
-# EAS replaces all nested .gitignore files. Preserve the mobile and e2b exclusions.
-/apps/mobile/.expo/
-/apps/mobile/dist/
-/apps/mobile/expo-env.d.ts
-/apps/mobile/ios/
-/apps/mobile/android/
+# EAS replaces all nested .gitignore files. Preserve the e2b exclusions.
 /scripts/e2b/__pycache__/
 /scripts/e2b/*.pyc
 
@@ -153,3 +148,9 @@ credentials.json
 /.hosted-ui/dist/
 /.hosted-ui/build/
 /.hosted-ui/out/
+# The app's own generated folders (its mobile/.gitignore), which EAS does not read.
+/.hosted-ui/mobile/.expo/
+/.hosted-ui/mobile/dist/
+/.hosted-ui/mobile/expo-env.d.ts
+/.hosted-ui/mobile/ios/
+/.hosted-ui/mobile/android/

@@ -53,8 +53,6 @@ jobs:
         run: node scripts/release/mobile-screenshots.mjs source
       - name: Check screenshot credential and artifact boundaries
         run: node --test scripts/release/mobile-screenshots.test.mjs
-      - run: pnpm install --frozen-lockfile --filter @mikka/mobile...
-      - run: pnpm --filter @mikka/mobile typecheck
       - name: Install pinned native UI driver
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,12 +95,15 @@ jobs:
           ssh-key: ${{ env.HOSTED_UI_READ_KEY }}
           path: .hosted-ui
           persist-credentials: false
-      - name: Require the exact mobile overlay
+      - name: Require the exact mobile app
         run: |
           test "$(git -C .hosted-ui rev-parse HEAD)" = "$OVERLAY_SHA"
-          test -d .hosted-ui/mobile
+          test -f .hosted-ui/mobile/package.json
           echo 'HOSTED_UI_READ_KEY=' >> "$GITHUB_ENV"
-          echo 'MIKKA_MOBILE_OVERLAY_DIR=.hosted-ui/mobile' >> "$GITHUB_ENV"
+      - name: Install and type-check the mobile app
+        run: |
+          pnpm --dir .hosted-ui/mobile install --frozen-lockfile
+          pnpm --dir .hosted-ui/mobile typecheck
       - name: Build unsigned Release app and boot English iPhone
         run: bash scripts/release/mobile-screenshots-build.sh
       - name: Read existing review email

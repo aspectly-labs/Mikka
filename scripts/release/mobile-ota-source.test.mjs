@@ -9,10 +9,10 @@ import { checkedMobilePublication, latestMobilePublication, mobileInputs, OTA_SO
 import { downloadReleaseReport } from '../acceptance/task-secrets-ci.mjs'
 
 const repository = { id: 1427517699, full_name: 'alexj11324/Mikka', private: false, fork: false }
-const source = 'a'.repeat(40), overlay = 'b'.repeat(40), inputs = { mobile: 'c'.repeat(40), protocol: 'd'.repeat(40), overlayMobile: 'e'.repeat(40) }
+const source = 'a'.repeat(40), overlay = 'b'.repeat(40), inputs = { protocol: 'd'.repeat(40), overlayMobile: 'e'.repeat(40) }
 const now = Date.parse('2026-11-20T12:00:00Z')
 function fixture(id = 10, created = '2026-11-20T10:00:05Z') {
-  const receipt = { version: 1, kind: 'mobile-ota-source', runId: String(id), runAttempt: '1', sourceCommit: source, overlayCommit: overlay, inputs }
+  const receipt = { version: 2, kind: 'mobile-ota-source', runId: String(id), runAttempt: '1', sourceCommit: source, overlayCommit: overlay, inputs }
   const run = { id, run_attempt: 1, repository, head_repository: repository, head_sha: source, head_branch: 'main',
     path: '.github/workflows/mobile-update.yml', event: 'workflow_run', actor: { id: 183887963 }, triggering_actor: { id: 183887963 },
     status: 'completed', conclusion: 'success' }
@@ -53,6 +53,16 @@ test('publication provenance rejects another attempt, source, actor, fork, step 
     assert.throws(() => checkedMobilePublication(f.run, f.jobs, f.artifact, f.receipt))
   }
   assert.throws(() => sourceReceipt({ ...fixture().receipt, token: 'unwanted-field' }))
+  assert.throws(() => sourceReceipt({ ...fixture().receipt, version: 1 }), 'a new receipt is never version 1')
+})
+
+test('a version 1 receipt from before the app left the public repository is still a baseline', () => {
+  const f = fixture()
+  const legacy = { ...f.receipt, version: 1, inputs: { mobile: 'c'.repeat(40), ...inputs } }
+  assert.equal(checkedMobilePublication(f.run, f.jobs, f.artifact, legacy).status, 'published')
+  const baseline = { status: 'published', receipt: legacy }
+  assert.equal(selectMobilePublication(f.receipt, baseline, 'workflow_run').selected, false)
+  assert.equal(selectMobilePublication({ ...f.receipt, inputs: { ...inputs, overlayMobile: 'f'.repeat(40) } }, baseline, 'workflow_run').selected, true)
 })
 
 test('organization-hosted publication retains official repository identity checks', async () => {
@@ -119,16 +129,15 @@ test('expired or missing latest evidence requires an owner dispatch; malformed e
   assert.deepEqual(downloaded, [newer.artifact.id])
 })
 
-test('actual Git trees preserve deferred mobile changes across later Web merges and ignore Web-only overlays', async t => {
+test('actual Git trees preserve deferred protocol changes across later Web merges and ignore Web-only overlays', async t => {
   const root = await mkdtemp(join(tmpdir(), 'mobile-ota-source-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const product = join(root, 'product'), ui = join(root, 'ui')
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   const commit = cwd => { git(cwd, 'add', '.'); git(cwd, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture'); return git(cwd, 'rev-parse', 'HEAD') }
-  await mkdir(join(product, 'apps/mobile'), { recursive: true }); await mkdir(join(product, 'packages/protocol'), { recursive: true })
+  await mkdir(join(product, 'packages/protocol'), { recursive: true })
   await mkdir(join(ui, 'mobile'), { recursive: true })
   for (const directory of [product, ui]) git(directory, 'init', '-q')
-  await writeFile(join(product, 'apps/mobile/view.tsx'), 'old reader')
   await writeFile(join(product, 'packages/protocol/version.ts'), 'version one')
   await writeFile(join(ui, 'mobile/view.tsx'), 'official mobile')
   const firstSource = commit(product), firstOverlay = commit(ui)
@@ -136,7 +145,7 @@ test('actual Git trees preserve deferred mobile changes across later Web merges 
   const runner = join(root, 'runner')
   await mkdir(join(runner, 'mobile-ota-source'), { recursive: true })
   await symlink(ui, join(product, '.hosted-ui'))
-  await writeFile(join(runner, 'mobile-ota-source/release.json'), JSON.stringify({ ...first, version: 1, kind: 'mobile-ota-source', runId: '10', runAttempt: '1' }))
+  await writeFile(join(runner, 'mobile-ota-source/release.json'), JSON.stringify({ ...first, version: 2, kind: 'mobile-ota-source', runId: '10', runAttempt: '1' }))
   const env = { ...process.env, GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REPOSITORY_ID: '1427517699',
     GITHUB_REPOSITORY_OWNER_ID: '359279274', GITHUB_ACTOR_ID: '183887963', GITHUB_REF: 'refs/heads/main',
     GITHUB_WORKFLOW_REF: 'aspectly-labs/Mikka/.github/workflows/mobile-update.yml@refs/heads/main', GITHUB_WORKFLOW_SHA: firstSource,
@@ -150,7 +159,7 @@ test('actual Git trees preserve deferred mobile changes across later Web merges 
   await writeFile(join(ui, 'web-only.txt'), 'new web overlay')
   const web = mobileInputs(product, ui, commit(product), commit(ui))
   assert.equal(selectMobilePublication(web, baseline, 'workflow_run').selected, false)
-  await writeFile(join(product, 'apps/mobile/view.tsx'), 'new mobile reader'); commit(product)
+  await writeFile(join(product, 'packages/protocol/version.ts'), 'version two'); commit(product)
   await writeFile(join(product, 'web-only.txt'), 'later superseding web merge')
   const deferred = mobileInputs(product, ui, commit(product), git(ui, 'rev-parse', 'HEAD'))
   assert.equal(selectMobilePublication(deferred, baseline, 'workflow_run').selected, true)
@@ -158,7 +167,7 @@ test('actual Git trees preserve deferred mobile changes across later Web merges 
   await writeFile(join(ui, 'mobile/view.tsx'), 'new official mobile')
   const newOverlay = mobileInputs(product, ui, deferred.sourceCommit, commit(ui))
   assert.equal(selectMobilePublication(newOverlay, { status: 'published', receipt: deferred }, 'workflow_run').selected, true)
-  await writeFile(join(product, 'apps/mobile/view.tsx'), 'uncommitted replacement')
+  await writeFile(join(product, 'packages/protocol/version.ts'), 'uncommitted replacement')
   assert.throws(() => mobileInputs(product, ui, deferred.sourceCommit, newOverlay.overlayCommit))
 })
 

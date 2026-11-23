@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import type { MessageContent } from 'eve/channels'
 import { dbUrl, seedBot, seedUser, seedWorkspace } from './support/workspace-admin-db'
-import { personalMessage, sendFailureState, submissionBody, unsettled } from '../apps/mobile/lib/outbox'
-import { mobileMessages } from '../apps/mobile/lib/messages'
+
+/** The body the iOS app sends, and resends unchanged after an unconfirmed send (its outbox, in mikka-hosted-ui mobile/lib/outbox.ts). */
+type Submission = { text: string; botId: string; submissionId: string; images?: { dataUrl: string }[] }
 import { SubmissionConflictError } from '../lib/coordinator-submission'
 import { normalizeUserImages } from '../lib/coordinator/user-attachments'
 
@@ -22,7 +23,7 @@ test('native Eve keeps the mobile submission receipt when a response is lost', {
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])
   })
   const scope = { ownerId, botId, workspaceId: workspace.id, surface: 'web' as const }
-  const send = ({ text, images, submissionId }: ReturnType<typeof submissionBody>) => {
+  const send = ({ text, images, submissionId }: Submission) => {
     const message: MessageContent = [
       ...(text ? [{ type: 'text' as const, text }] : []),
       ...(images ?? []).map(({ dataUrl }) => ({ type: 'file' as const, data: dataUrl, mediaType: 'image/jpeg' })),
@@ -35,13 +36,10 @@ test('native Eve keeps the mobile submission receipt when a response is lost', {
   const text = 'accepted-but-response-lost-' + randomUUID()
   const submissionId = randomUUID()
   const images = [{ uri: 'file:///fixture.jpg', dataUrl: 'data:image/jpeg;base64,/9j/' }]
-  const original = personalMessage(submissionId, text, images, { botId, chatKey: botId, context: 1 })
-  const body = submissionBody(original)
+  const body: Submission = { text, botId, submissionId, images: images.map(({ dataUrl }) => ({ dataUrl })) }
   const accepted = await send(body)
-  assert.equal(sendFailureState(new Error('response lost after database commit')), 'unconfirmed')
-  const retry = unsettled([{ ...original, phase: 'failed', error: mobileMessages.Coordinator.sendUncertain }], text, images, botId, 1)!
-  assert.deepEqual(submissionBody(retry), body)
-  for (const receipt of await Promise.all(Array.from({ length: 5 }, () => send(submissionBody(retry))))) {
+  // The response was lost after the commit: the phone retries the same body, several times over.
+  for (const receipt of await Promise.all(Array.from({ length: 5 }, () => send({ ...body })))) {
     assert.equal(receipt.eventId, accepted.eventId)
   }
   await assert.rejects(send({ ...body, text: 'changed body' }), SubmissionConflictError)

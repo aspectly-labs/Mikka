@@ -74,7 +74,8 @@ node scripts/release/mobile-screenshots.mjs driver-preflight
 
 if [ "${1:-}" = --preflight-only ]; then exit 0; fi
 
-cd apps/mobile
+# The app is the private UI's (mikka-hosted-ui mobile/), checked out at .hosted-ui.
+cd .hosted-ui/mobile
 run_build_phase expo-prebuild pnpm exec expo prebuild --platform ios --no-install
 # Keep the embedded bundle tied to GITHUB_SHA, even when a production OTA exists.
 disable_updates() {

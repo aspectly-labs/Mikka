@@ -73,8 +73,7 @@ runs:
         SKIP_ELECTRON: ${{ inputs.skip-electron }}
       run: |
         case "$INSTALL_PROFILE" in
-          full) echo 'NPM_CONFIG_FILTER=' >> "$GITHUB_ENV" ;;
-          desktop) echo 'NPM_CONFIG_FILTER=!@mikka/mobile' >> "$GITHUB_ENV" ;;
+          full|desktop) echo 'NPM_CONFIG_FILTER=' >> "$GITHUB_ENV" ;;
           *) echo '::error::Unknown dependency installation profile'; exit 1 ;;
         esac
         if [ "$SKIP_ELECTRON" = 'true' ]; then echo 'ELECTRON_SKIP_BINARY_DOWNLOAD=1' >> "$GITHUB_ENV"; fi

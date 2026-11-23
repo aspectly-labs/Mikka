@@ -46,7 +46,7 @@ dailySuggestions: boolean   // always false while memoryEnabled is false
   - `proactive` writes `attention_settings`, as before.
   - Saving `memoryEnabled: false` also stores `dailySuggestions: false`. Turning 记忆 back on leaves 每日建议 off, so the person turns it on again (the UI shows the S-G state 「需要先打开记忆」 while 记忆 is off).
   - `personalInstructions` applies from the Coordinator's or Bot's next turn (see below).
-- **Mobile:** `PATCH /api/mobile/preferences` shares the schema. It answers `409 { error: 'dailySuggestionsNeedMemory' }` for that rule and still answers `400 invalidPreferences` for a malformed patch. `apps/mobile/lib/types.ts` `Preferences` has the three new fields.
+- **Mobile:** `PATCH /api/mobile/preferences` shares the schema. It answers `409 { error: 'dailySuggestionsNeedMemory' }` for that rule and still answers `400 invalidPreferences` for a malformed patch. `mikka-hosted-ui mobile/lib/types.ts` `Preferences` has the three new fields.
 
 ### `getTimeZoneSetting(): Promise<ActionResult<TimeZoneSetting>>`
 

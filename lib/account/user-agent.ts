@@ -42,7 +42,7 @@ const SYSTEMS: ReadonlyArray<readonly [RegExp, string]> = [
 
 // The iOS app's own requests: React Native's networking sends
 // "Mikka/<build> CFNetwork/… Darwin/…" (or "Expo/…" in Expo Go). The app ships
-// for iPhone only (apps/mobile/app.json supportsTablet: false).
+// for iPhone only (mikka-hosted-ui mobile/app.json supportsTablet: false).
 const IOS_APP = /^(?:Mikka|Expo)\/\S+ CFNetwork\/\S+ Darwin\//
 
 export function describeUserAgent(userAgent: string | null | undefined): DeviceDescription {

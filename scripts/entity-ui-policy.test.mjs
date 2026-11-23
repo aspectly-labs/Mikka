@@ -44,7 +44,9 @@ test('the manifest resolves actual value exports and catches an erased command',
 
 test('an unregistered mobile entity route and a false Task re-export cannot bypass registration', () => {
   const task = 'apps/mobile/app/task/[id]/index.tsx'
-  assert.deepEqual(auditEntityDetail(task, readFileSync(task, 'utf8')), [])
+  // The app is the private UI's now; its registered route is checked when that checkout is present.
+  const resolved = resolveEntityFile(task)
+  if (resolved) assert.deepEqual(auditEntityDetail(task, readFileSync(resolved, 'utf8')), [])
   assert.equal(auditEntityDetail('apps/mobile/app/invoice/[slug].tsx', 'export default function Screen() {}')[0].rule, 'entity/native-detail-route')
   assert.equal(auditEntityDetail(task, "export { TaskScreen as default } from './copy'")[0].rule, 'entity/native-detail-route')
   assert.equal(auditEntityDetail('hooks/use-detail.ts', 'export function useTaskPanelController() {}')[0].rule, 'entity/detail-source')

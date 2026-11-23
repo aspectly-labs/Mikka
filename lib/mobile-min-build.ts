@@ -7,5 +7,5 @@
  */
 export const MIN_MOBILE_BUILD = 0
 
-/** Where 更新 takes the phone: the app in TestFlight (App Store Connect app 6829300983, apps/mobile/eas.json). */
+/** Where 更新 takes the phone: the app in TestFlight (App Store Connect app 6829300983, mikka-hosted-ui mobile/eas.json). */
 export const MOBILE_UPDATE_URL = 'itms-beta://beta.itunes.apple.com/v1/app/6829300983'

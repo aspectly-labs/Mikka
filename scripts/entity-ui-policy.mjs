@@ -3,12 +3,17 @@ import path from 'node:path'
 import ts from 'typescript'
 
 const PUBLIC_WEB_FILES = new Set(['components/plugins/connected-apps.tsx'])
-export const isMovedWebFile = file => /^(?:components|hooks)\//.test(file) && !PUBLIC_WEB_FILES.has(file)
+// The iOS app moved to the private UI as a whole (mikka-hosted-ui mobile/); its
+// contract paths keep their old names and resolve to .hosted-ui/mobile when present.
+export const isMovedMobileFile = file => file.startsWith('apps/mobile/')
+export const isMovedWebFile = file => (/^(?:components|hooks)\//.test(file) && !PUBLIC_WEB_FILES.has(file)) || isMovedMobileFile(file)
 export const resolveEntityFile = (file, root = '.') => {
   const direct = path.join(root, file)
   if (existsSync(direct)) return direct
   if (isMovedWebFile(file)) {
-    const hosted = path.join(root, '.hosted-ui/web', file)
+    const hosted = isMovedMobileFile(file)
+      ? path.join(root, '.hosted-ui/mobile', file.slice('apps/mobile/'.length))
+      : path.join(root, '.hosted-ui/web', file)
     if (existsSync(hosted)) return hosted
   }
   return null
@@ -128,7 +133,7 @@ export function auditEntityDetail(file, text) {
 export function verifyEntityContracts(read, root = process.cwd()) {
   const diagnostics = []
   for (const contract of entityContracts) {
-    for (const [file] of contract.routes ?? []) if (read(file) === undefined) diagnostics.push({ file, line: 1, column: 1,
+    for (const [file] of contract.routes ?? []) if (read(file) === undefined && !(isMovedWebFile(file) && resolveEntityFile(file, root) === null)) diagnostics.push({ file, line: 1, column: 1,
       rule: 'entity/native-detail-route', message: `${contract.entity} requires its registered native detail route.` })
     for (const [file, ...names] of [contract.detail, ...(contract.adapters ?? []), ...contract.sources].filter(Boolean)) {
       const text = read(file)

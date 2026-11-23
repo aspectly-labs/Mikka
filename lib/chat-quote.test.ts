@@ -20,7 +20,7 @@ test('a message that is only a Markdown quote is the person’s own text, not a 
 })
 
 test('the phone app’s quoted messages read the same way', () => {
-  // apps/mobile/components/ui.tsx writes `> ${line}` for every line, blank ones included.
+  // The iOS app (mikka-hosted-ui mobile/components/ui.tsx) writes `> ${line}` for every line, blank ones included.
   assert.deepEqual(splitReplyQuote('> 关于你\n> 第二行\n\n好的'), { quote: '关于你\n第二行', text: '好的' })
 })
 

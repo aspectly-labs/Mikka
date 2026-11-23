@@ -121,7 +121,12 @@ test('the main OTA path reaches the shared private policy before either producti
   assert.ok(!candidate.if.includes("github.event_name == 'pull_request'"))
   const gate = steps.find(step => step.id === 'eligibility')
   assert.equal(gate.run, 'node .mikka-cloud/operations/business-api/pipeline-policy.mjs mobile-eligibility')
-  assert.ok(steps.findIndex(step => step.run === 'pnpm --filter @mikka/mobile typecheck') < steps.indexOf(gate))
+  // The app is the private UI's: it is installed and type-checked from the staged checkout, before any Expo access.
+  const typecheck = steps.find(step => step.run?.includes('pnpm --dir .hosted-ui/mobile typecheck'))
+  const ui = steps.find(step => step.with?.path === '.hosted-ui')
+  assert.ok(steps.indexOf(ui) < steps.indexOf(typecheck))
+  assert.ok(steps.indexOf(typecheck) < steps.indexOf(steps.find(step => step.with?.['secret-name'] === 'EXPO_TOKEN')))
+  assert.ok(typecheck.run.includes('pnpm --dir .hosted-ui/mobile install --frozen-lockfile'))
   for (const name of ['EXPO_TOKEN', 'HOSTED_UI_READ_KEY']) {
     const delivery = steps.filter(step => step.with?.['secret-name'] === name)
     assert.equal(delivery.length, 1)
@@ -167,21 +172,14 @@ test('completed automatic staging can wake OTA, while a new main push cannot can
   assert.deepEqual(parsed.on.workflow_run, { workflows: ['Cloudflare application deployment'], types: ['completed'] })
   assert.ok(parsed.jobs.update.if.includes("github.event.workflow_run.event == 'workflow_run'"))
   assert.ok(parsed.jobs.update.if.includes('!github.event.workflow_run.head_repository.fork'))
-  assert.deepEqual(parsed.on.pull_request.types, ['ready_for_review', 'labeled'])
+  assert.equal(parsed.on.pull_request, undefined, 'public pull requests never publish the private app')
   const admitted = github => Function('github', `return (${parsed.jobs.update.if})`)(github)
   const base = { repository: 'aspectly-labs/Mikka', repository_id: '1427517699', repository_owner_id: '359279274' }
-  for (const [action, label, sameRepository, expected] of [
-    ['ready_for_review', '', true, true], ['labeled', 'mobile-preview', true, true],
-    ['labeled', 'unrelated', true, false], ['ready_for_review', '', false, false],
-  ]) {
-    assert.equal(admitted({ ...base, event_name: 'pull_request', event: { action, label: { name: label },
-      pull_request: { head: { repo: { full_name: sameRepository ? base.repository : 'fork/Mikka' } } } } }), expected)
-  }
   assert.equal(admitted({ ...base, event_name: 'push' }), true)
   const upstream = { event: 'workflow_run', head_branch: 'main', conclusion: 'success', repository: { id: 1427517699 }, head_repository: { id: 1427517699, fork: false } }
   assert.equal(admitted({ ...base, event_name: 'workflow_run', event: { workflow_run: upstream } }), true)
   assert.equal(admitted({ ...base, event_name: 'workflow_run', event: { workflow_run: { ...upstream, conclusion: 'failure' } } }), false)
-  assert.equal(parsed.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}")
+  assert.equal(parsed.concurrency['cancel-in-progress'], false)
 })
 
 test('mobile input evidence precedes Expo access and stays immutable before a guarded publication', async () => {

@@ -210,7 +210,7 @@ test('foreign, stale, incomplete and recovery-only runs never supply original ar
 test('archive preserves transitive tracked UI bytes and rejects missing, extra, changed or excluded files', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mikka-archive-unit-'))
   const archive = join(dir, 'archive'), overlay = join(dir, 'overlay')
-  const files = ['mobile/slots/bot-avatar.tsx', 'components/mikka/bot-paper.tsx']
+  const files = ['mobile/package.json', 'mobile/eas.json', 'components/mikka/bot-paper.tsx']
   const write = (root, file, text) => {
     mkdirSync(join(root, file, '..'), { recursive: true })
     writeFileSync(join(root, file), text)
@@ -220,16 +220,14 @@ test('archive preserves transitive tracked UI bytes and rejects missing, extra, 
       write(overlay, file, `synthetic ${file}`)
       write(archive, `.hosted-ui/${file}`, `synthetic ${file}`)
     }
-    const profiles = { production: { env: { MIKKA_MOBILE_OVERLAY_DIR: '.hosted-ui/mobile' } },
-      'hosted-production': { extends: 'production', env: { MIKKA_MOBILE_OVERLAY_DIR: '.hosted-ui/mobile' } } }
-    write(archive, 'apps/mobile/eas.json', JSON.stringify({ build: profiles }))
+    const profiles = { production: {}, 'hosted-production': { extends: 'production' } }
+    for (const root of [overlay, join(archive, '.hosted-ui')]) write(root, 'mobile/eas.json', JSON.stringify({ build: profiles }))
     const check = () => verifyHostedArchive({ archive, overlay, trackedFiles: [...files, 'docs/private.md'], sourceSha: SOURCE, overlaySha: DRIVER })
-    write(archive, 'apps/mobile/eas.json', JSON.stringify({ build: { ...profiles, production: {} } }))
-    assert.throws(check, /officialStoreOverlayRequired/)
-    write(archive, 'apps/mobile/eas.json', JSON.stringify({ build: profiles }))
+    assert.throws(() => verifyHostedArchive({ archive, overlay, trackedFiles: files.slice(2), sourceSha: SOURCE, overlaySha: DRIVER }), /hostedMobileAppRequired/)
+    write(archive, 'lib/shared.ts', 'synthetic engine code the app imports')
     const proof = check()
-    assert.equal(proof.overlayFiles, 2)
-    assert.equal(proof.files, 3)
+    assert.equal(proof.overlayFiles, 3)
+    assert.equal(proof.files, 4)
     assert.match(proof.archiveDigest, /^[a-f0-9]{64}$/)
     mkdirSync(join(archive, 'docs'), { recursive: true })
     mkdirSync(join(archive, '.hosted-ui/docs'), { recursive: true })
@@ -256,13 +254,10 @@ test('archive preserves transitive tracked UI bytes and rejects missing, extra, 
 
 test('official packaging keeps public profiles and ignored paths while adding the complete protected checkout', () => {
   const root = new URL('../../', import.meta.url)
-  const eas = JSON.parse(readFileSync(new URL('apps/mobile/eas.json', root), 'utf8'))
-  assert.equal(eas.build.production.env.MIKKA_MOBILE_OVERLAY_DIR, '.hosted-ui/mobile')
-  assert.equal(eas.build['hosted-production'].extends, 'production')
-  assert.equal(eas.build['hosted-production'].env.MIKKA_MOBILE_OVERLAY_DIR, '.hosted-ui/mobile')
   const ignore = readFileSync(new URL('.easignore', root), 'utf8')
   assert.ok(ignore.startsWith(readFileSync(new URL('.gitignore', root), 'utf8')))
   assert.ok(ignore.includes('!/.hosted-ui/**'))
+  assert.ok(ignore.indexOf('/.hosted-ui/mobile/ios/') > ignore.indexOf('!/.hosted-ui/**'), 'the app\'s generated folders stay out of the upload')
   const workflow = readFileSync(new URL('.github/workflows/mobile-native.yml', root), 'utf8')
   assert.ok(workflow.indexOf('mobile-native.mjs recover') > workflow.indexOf('mobile-native.mjs source'))
   assert.ok(workflow.indexOf('mobile-native.mjs recover') < workflow.indexOf('Read existing EXPO_TOKEN'))
@@ -271,4 +266,10 @@ test('official packaging keeps public profiles and ignored paths while adding th
   assert.ok(workflow.indexOf('mobile-native.mjs archive') < workflow.indexOf('build --platform ios --profile hosted-production'))
   assert.ok(workflow.includes('ssh-key: ${{ env.HOSTED_UI_READ_KEY }}'))
   assert.ok(workflow.includes("echo 'HOSTED_UI_READ_KEY='"))
+  // The app is the private UI's; EAS uploads this public checkout around it, not the private repository alone.
+  assert.ok(!workflow.includes('apps/mobile'))
+  assert.equal(workflow.match(/working-directory: \.hosted-ui\/mobile/g)?.length, 3)
+  assert.equal(workflow.match(/EAS_NO_VCS: '1'/g)?.length, 2)
+  assert.equal(workflow.match(/EAS_PROJECT_ROOT: \$\{\{ github\.workspace \}\}/g)?.length, 2)
+  assert.ok(workflow.indexOf('pnpm --dir .hosted-ui/mobile typecheck') > workflow.indexOf('Check out the exact official UI'))
 })

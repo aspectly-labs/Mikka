@@ -288,8 +288,8 @@ root has one centred native title, with actions grouped on the right and an
 empty left side. Bot's + creates a Bot or group; 任务 has filter and +.
 Workspaces switch only in 设置 › 工作区. Tabs carry no badges. Rows show
 the task's own state glyph, with its semantic colour; 活动 rows show their
-own result and never the hand. Native source is in `apps/mobile/app/(tabs)`
-and `apps/mobile/features/tasks/`; [mobile.md](mobile.md) owns the details.
+own result and never the hand. Native source is in `mikka-hosted-ui mobile/app/(tabs)`
+and `mikka-hosted-ui mobile/features/tasks/`; [mobile.md](mobile.md) owns the details.
 
 ### Global entries and notifications
 
@@ -300,7 +300,7 @@ Decisions API which transition notifications to show. Its link names the
 issue and referenced run (`lib/platform/desktop-notifications.ts`). Native
 push routing binds the current server/account and resolves a task-bound run
 to `/task/:id?attempt=:runId`, then the task conversation
-(`apps/mobile/lib/push-route.ts`).
+(`mikka-hosted-ui mobile/lib/push-route.ts`).
 
 ## 6. Labeling
 

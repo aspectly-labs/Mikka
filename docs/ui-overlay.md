@@ -69,35 +69,29 @@ When a slot export changes, update its contract in this repository, publish the 
 
 ## iOS app
 
-Both App Store profiles select the private mobile checkout, including the default `production` profile used by the EAS CLI. The official release workflow also checks the contents of the source archive before invoking EAS. To recover a completed build, provide its EAS build ID and main source commit. The workflow finds the original native run and checks its protected archive, private revision and runtime fingerprint against the EAS build before submitting. A failed TestFlight submission remains recoverable while the original artifact is available.
+The iOS app is not a slot consumer any more: the whole app lives in the
+private `mikka-hosted-ui` repository (`mobile/`), the way the standalone Web UI
+lives in its `web/` (decision
+[2026-11-23-1500](design/decisions/2026-11-23-1500-ios-app-in-private-ui.md)).
+This repository keeps what the app talks to: `app/api/mobile/*`, the shared
+`lib/` modules it imports by relative path, `messages/` and `@mikka/protocol`.
 
-The iOS app (`apps/mobile`) has its own slots, filled from the layer's
-`mobile/` folder. They are React Native components, so they share nothing with
-the web slots but the idea.
+Official workflows here still build and publish it. They check out the
+reviewed private revision at `.hosted-ui` and work in `.hosted-ui/mobile`:
+`pnpm --dir .hosted-ui/mobile install --frozen-lockfile`, then its typecheck.
+`mobile-update.yml` publishes the production OTA from there.
+`mobile-native.yml` (dispatched with `overlay_sha`) uploads this public checkout
+around the app to EAS (`EAS_NO_VCS=1`, `EAS_PROJECT_ROOT` at the workspace,
+this repository's `.easignore`), checks that archive, builds and submits.
+`mobile-screenshots.yml` builds the simulator app from the same folder. Both
+App Store profiles build the same app; there is no open-source iOS build. To
+recover a completed build, provide its EAS build ID and main source commit: the
+workflow finds the original native run and checks its protected archive,
+private revision and runtime fingerprint against the EAS build before
+submitting.
 
-| | Build without `mikka-hosted-ui` | Official OTA |
-| --- | --- | --- |
-| `MIKKA_MOBILE_OVERLAY_DIR` | unset | `.hosted-ui/mobile`, relative to the repository root and inside it |
-| `@ui-slot/<name>` | `apps/mobile/slots/<name>.tsx` | `$MIKKA_MOBILE_OVERLAY_DIR/slots/<name>.tsx` (required in a configured layer) |
-| `@hosted/*` | does not resolve | `$MIKKA_MOBILE_OVERLAY_DIR/*` |
-
-`apps/mobile/ui-overlay.js` decides this and `apps/mobile/metro.config.js`
-applies it as Metro's `resolveRequest`. Every other import in a layer file
-resolves as if from `apps/mobile`, so the layer uses the app's `react`,
-`react-native`, `react-native-svg` and `react-native-reanimated` and installs
-no packages of its own. `@/` in the layer is `apps/mobile` (for example
-`@/lib/bot-look`, `@/slots/bot-avatar-contract`). `apps/mobile/tsconfig.json`
-maps `@ui-slot/*` to the defaults, so typecheck always sees the open-source
-build. A set but missing directory fails the bundle.
-
-| Slot | Surface | Props | Callers import |
-| --- | --- | --- | --- |
-| `bot-avatar` | the still blob with one eye | `BotAvatarProps` in `apps/mobile/slots/bot-avatar-contract.ts` (`color`, `shape`, `size`; `id` and `coordinator` when the caller has them, as on the web); colours and shapes in `apps/mobile/lib/bot-look.ts` | `BotAvatar` from `@/components/icons` |
-
-Required exports are `MOBILE_SLOT_EXPORTS` in `apps/mobile/ui-overlay.js`;
-the same rule as the web applies (merge the layer's export first).
-
-`mobile-update.yml` obtains the production Expo and UI-checkout credentials through the trusted main workflow. A production OTA requires the private mobile folder and its native slots. The native TestFlight workflow selects a reviewed overlay revision for its hosted production build. The public native source and contract tests can run without private credentials.
+The app's bot avatar is the web's paper avatar; both pick the paper with
+`botPaper` (`components/mikka/bot-paper.ts` in the private repository).
 
 ## Rules for the layer
 

@@ -361,22 +361,7 @@ export const pollingAllowlist = {
     hits: 1,
   },
   // UI timers: read no data.
-  "apps/mobile/components/beui/components/loader/loader.tsx": ui(
-    "loader animation frames",
-    3,
-  ),
-  "apps/mobile/components/beui/components/loading-states/agent-progress.tsx":
-    ui("progress animation", 1),
-  "apps/mobile/components/beui/components/loading-states/reasoning-text.tsx":
-    ui("reasoning text animation", 2),
-  "apps/mobile/components/beui/components/tool-result/tool-result.tsx": ui(
-    "elapsed-time clock",
-    1,
-  ),
-  "apps/mobile/features/chat/screens/chat-screen.tsx": ui(
-    "the 1 s elapsed clock of a reply in progress; the chat and its proposals are pushed (lib/live.ts)",
-    1,
-  ),
+  // The iOS app's UI timers moved with it (mikka-hosted-ui mobile/scripts/policies.mjs).
 }
 
 const delayCall =

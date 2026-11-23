@@ -1465,7 +1465,7 @@ export const nativeCoordinatorTools = pgTable('native_coordinator_tools', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [primaryKey({ columns: [table.turnId, table.callId] })])
 
-/** One Expo push token per installed copy of the iOS app (apps/mobile); removed on sign-out. */
+/** One Expo push token per installed copy of the iOS app (mikka-hosted-ui mobile/); removed on sign-out. */
 export const mobilePushTokens = pgTable('mobile_push_tokens', {
   id: uuid('id').primaryKey(),
   userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),

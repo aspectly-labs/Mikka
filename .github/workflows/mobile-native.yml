@@ -3,14 +3,10 @@ name: Mobile native release
 # Native configuration changes need a new fingerprint-compatible iOS binary.
 # Reuse the existing Expo signing and App Store Connect credentials; never
 # create or repair credentials in CI. OTA publication remains a separate job.
+# The app lives in the private mikka-hosted-ui repository (mobile/): a native
+# build is dispatched with that repository's reviewed commit as overlay_sha and
+# built from .hosted-ui/mobile inside this checkout.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/mobile/app.json'
-      - 'apps/mobile/app.config.ts'
-      - 'apps/mobile/eas.json'
-      - '.easignore'
   workflow_dispatch:
     inputs:
       overlay_sha:
@@ -67,8 +63,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --filter @mikka/mobile...
-      - run: pnpm --filter @mikka/mobile typecheck
       - name: Require successful checks for the workflow and binary source commits
         id: source
         env:
@@ -86,7 +80,6 @@ jobs:
       - name: Verify production credential delivery boundaries
         run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs scripts/release/mobile-native.test.mjs
       - name: Validate the official UI pin before credential access
-        if: steps.source.outputs.build_id == ''
         run: node -e "if (!/^[a-f0-9]{40}$/.test(process.env.OVERLAY_SHA || '')) process.exit(1)"
       - name: Validate the selected private UI owner before credential access
         run: |
@@ -95,7 +88,6 @@ jobs:
           privateMikkaRepository('mikka-hosted-ui')
           JS
       - name: Read existing HOSTED_UI_READ_KEY through OIDC
-        if: steps.source.outputs.build_id == ''
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
           method: oidc
@@ -108,7 +100,6 @@ jobs:
           recursive: false
           include-imports: false
       - name: Check out the exact official UI
-        if: steps.source.outputs.build_id == ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ format('{0}/mikka-hosted-ui', vars.MIKKA_HOSTED_UI_GITHUB_OWNER || vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324') }}
@@ -117,8 +108,11 @@ jobs:
           path: .hosted-ui
           persist-credentials: false
       - name: Clear the checkout key before packaging
-        if: steps.source.outputs.build_id == ''
         run: echo 'HOSTED_UI_READ_KEY=' >> "$GITHUB_ENV"
+      - name: Install and type-check the mobile app
+        run: |
+          pnpm --dir .hosted-ui/mobile install --frozen-lockfile
+          pnpm --dir .hosted-ui/mobile typecheck
       - name: Read existing EXPO_TOKEN through OIDC
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
@@ -176,20 +170,27 @@ jobs:
         run: node scripts/release/mobile-native.mjs credentials
       - name: Inspect the official source upload without building
         if: steps.source.outputs.build_id == ''
-        working-directory: apps/mobile
+        working-directory: .hosted-ui/mobile
         env:
           CI: '1'
+          # The upload is rooted at this public checkout (its .easignore), not at the private
+          # UI's own Git repository, so the shared engine code travels with the app.
+          EAS_NO_VCS: '1'
+          EAS_PROJECT_ROOT: ${{ github.workspace }}
         run: npx -y eas-cli@27.2.0 build:inspect --platform ios --profile hosted-production --stage archive --output "$RUNNER_TEMP/mikka-eas-archive"
       - name: Require the complete protected UI in the EAS archive
         if: steps.source.outputs.build_id == ''
         run: node scripts/release/mobile-native.mjs archive
       - name: Build iOS with existing signing credentials
         if: steps.source.outputs.build_id == ''
-        working-directory: apps/mobile
+        working-directory: .hosted-ui/mobile
+        env:
+          EAS_NO_VCS: '1'
+          EAS_PROJECT_ROOT: ${{ github.workspace }}
         run: npx -y eas-cli@27.2.0 build --platform ios --profile hosted-production --non-interactive --freeze-credentials --wait --json > "$RUNNER_TEMP/mikka-native-build.json"
       - name: Read the existing completed build without rebuilding
         if: steps.source.outputs.build_id != ''
-        working-directory: apps/mobile
+        working-directory: .hosted-ui/mobile
         env:
           EXISTING_BUILD_ID: ${{ steps.source.outputs.build_id }}
         run: npx -y eas-cli@27.2.0 build:view "$EXISTING_BUILD_ID" --json > "$RUNNER_TEMP/mikka-native-build.json"

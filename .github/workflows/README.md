@@ -82,10 +82,13 @@ App, Eve and local-device build and startup on Node 24.
 See [test ownership and CI cost](../../docs/ci/test-ownership.md) before
 adding or duplicating regression suites.
 
-Mark a same-repository mobile PR Ready or apply the `mobile-preview` label to
-publish a preview of the current PR to its `pr-<n>` EAS branch. Remove and reapply the
-label to publish a newer head. Production OTA still runs on its main push, after a successful automatic
-Cloudflare deployment (`workflow_run`), or by existing manual dispatch.
+The iOS app lives in the private mikka-hosted-ui repository (`mobile/`), so
+public pull requests publish no mobile previews. Production OTA runs on a
+`packages/protocol` main push, after a successful automatic Cloudflare
+deployment (`workflow_run`), or by existing manual dispatch, and bundles
+`.hosted-ui/mobile` at the staged private UI revision. Native builds
+(`mobile-native.yml`) and store screenshots (`mobile-screenshots.yml`) are
+dispatched with that repository's reviewed commit.
 
 ## Draft pull requests
 
@@ -179,7 +182,8 @@ product regression. Main pushes and merge groups continue normal full coverage.
 
 ## Production mobile OTA
 
-- `mobile-update.yml` keeps its mobile type check on main pushes. Production
+- `mobile-update.yml` type-checks the private app once its staged checkout is
+  in place. Production
   OTA waits for the private deployment policy's explicit owner window, merged
   compatibility change and authenticated automatic staging receipts. It reads
   that policy at a fixed private main commit through the existing read-only
@@ -188,10 +192,10 @@ product regression. Main pushes and merge groups continue normal full coverage.
   from the verified staging manifest. A completed automatic Cloudflare
   deployment supplies the next opportunity; no polling or new release identity
   is introduced. A declined gate explicitly records that no OTA was published.
-  Main events do not cancel an active OTA; PR preview cancellation stays local
-  to its PR ref. After the policy permits the candidate, production OTA compares
-  the actual Git trees of `apps/mobile`, `packages/protocol`, and the reviewed
-  private mobile layer with the most recent verified publication. A later
+  Main events do not cancel an active OTA. After the policy permits the candidate, production OTA compares
+  the actual Git trees of `packages/protocol` and the reviewed
+  private mobile app with the most recent verified publication (a version 1
+  receipt from before the move still serves as the baseline). A later
   Web-only merge therefore preserves an earlier, unpublished mobile change;
   unchanged mobile inputs do not read an Expo credential or publish an update.
   The immutable `mobile-production-ota-source` artifact records only source and

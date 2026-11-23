@@ -126,14 +126,15 @@ export function excludedFromNativeArchive(path) {
   return segments.some(part => ['.git', 'node_modules', 'docs'].includes(part) || /^\.env/i.test(part)) ||
     /(?:\.map|\.pem|\.key|\.p8|\.p12)$/i.test(path) ||
     /(?:^|\/)(?:id_rsa[^/]*|id_ed25519[^/]*|credentials\.json)$/i.test(path) ||
-    /^\.hosted-ui\/(?:\.next|\.output|dist|build|out)\//.test(path)
+    /^\.hosted-ui\/(?:\.next|\.output|dist|build|out)\//.test(path) ||
+    /^\.hosted-ui\/mobile\/(?:\.expo|dist|ios|android)\//.test(path) || path === '.hosted-ui/mobile/expo-env.d.ts'
 }
 
 export function verifyHostedArchive({ archive, overlay, trackedFiles, sourceSha, overlaySha }) {
   assert.match(sourceSha, SHA)
   assert.match(overlaySha, SHA)
   const expected = trackedFiles.filter(file => !excludedFromNativeArchive(`.hosted-ui/${file}`)).sort()
-  assert.ok(expected.includes('mobile/slots/bot-avatar.tsx'), 'hostedMobileSlotRequired')
+  assert.ok(expected.includes('mobile/package.json') && expected.includes('mobile/eas.json'), 'hostedMobileAppRequired')
   const uploaded = []
   const digest = createHash('sha256')
   let files = 0
@@ -162,11 +163,8 @@ export function verifyHostedArchive({ archive, overlay, trackedFiles, sourceSha,
   uploaded.sort()
   assert.ok(uploaded.length === expected.length && uploaded.every((path, index) => path === expected[index]),
     'nativeArchiveOverlayTrackedSetMismatch')
-  const profiles = JSON.parse(readFileSync(join(archive, 'apps/mobile/eas.json'), 'utf8')).build
+  const profiles = JSON.parse(readFileSync(join(archive, '.hosted-ui/mobile/eas.json'), 'utf8')).build
   assert.equal(profiles[OFFICIAL_PROFILE]?.extends, 'production')
-  for (const name of ['production', OFFICIAL_PROFILE]) {
-    assert.equal(profiles[name]?.env?.MIKKA_MOBILE_OVERLAY_DIR, '.hosted-ui/mobile', 'officialStoreOverlayRequired')
-  }
   return { sourceSha, overlaySha, archiveDigest: digest.digest('hex'), files, overlayFiles: expected.length,
     stage: 'eas build:inspect archive', profile: 'hosted-production' }
 }
@@ -234,7 +232,7 @@ async function main(mode) {
     console.log('Existing App Store Connect credential inputs are configured.')
   } else if (mode === 'verify') {
     const parsed = JSON.parse(readFileSync(join(env.RUNNER_TEMP, 'mikka-native-build.json'), 'utf8'))
-    const app = JSON.parse(readFileSync('apps/mobile/app.json', 'utf8')).expo
+    const app = JSON.parse(readFileSync('.hosted-ui/mobile/app.json', 'utf8')).expo
     const report = validateNativeBuild(parsed, { sourceSha: env.NATIVE_SOURCE_SHA,
       buildId: env.EXISTING_BUILD_ID, driverSha: env.GITHUB_SHA,
       recovery: env.EXISTING_BUILD_ID ? JSON.parse(readFileSync(join(env.RUNNER_TEMP, 'mikka-native-origin.json'), 'utf8')) : undefined,
@@ -245,11 +243,11 @@ async function main(mode) {
     appendFileSync(env.GITHUB_STEP_SUMMARY, `### Completed iOS build\n\nBuild: ${report.id}\n\nSource commit: ${report.gitCommitHash}\n\nWorkflow commit: ${report.driverSha}\n\nRuntime: ${report.runtimeVersion}\n\nBinary build verified. TestFlight submission, processing and device installation are separate.\n`)
   } else if (mode === 'submit') {
     if (!UUID.test(env.NATIVE_BUILD_ID ?? '')) throw Error('verifiedBuildIdRequired')
-    withAscProfile({ easPath: 'apps/mobile/eas.json', tempDir: env.RUNNER_TEMP, env,
+    withAscProfile({ easPath: '.hosted-ui/mobile/eas.json', tempDir: env.RUNNER_TEMP, env,
       run: submitEnv => {
         const result = spawnSync('npx', ['-y', 'eas-cli@27.2.0', 'submit', '--platform', 'ios',
           '--profile', 'ci-existing-asc', '--id', env.NATIVE_BUILD_ID, '--non-interactive', '--wait',
-          '--no-auto-testflight-setup'], { cwd: 'apps/mobile', env: submitEnv, stdio: 'inherit' })
+          '--no-auto-testflight-setup'], { cwd: '.hosted-ui/mobile', env: submitEnv, stdio: 'inherit' })
         if (result.error || result.status !== 0) throw Error('existingBuildSubmissionFailed')
       } })
   } else if (mode === 'cleanup') {
