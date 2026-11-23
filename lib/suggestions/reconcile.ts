@@ -57,11 +57,20 @@ async function recentNotion(userId: string, since: Date, readThrough: (accountId
   let cursor: string | undefined
   for (let page = 0; page < NOTION_PAGE_LIMIT; page++) {
     const result = await runComposioAction(userId, 'list_recent_notion_pages', { page_size: 100, start_cursor: cursor })
-    if ('error' in result) throw new ProviderReadError(result.error, result.accountId)
+    if ('error' in result) {
+      if (!edited.length) throw new ProviderReadError(result.error, result.accountId)
+      // A later page failed: keep what the earlier ones fetched; the tail retries on the next due pass.
+      console.warn('Suggestions backfill kept a partial Notion read')
+      break
+    }
     readThrough(result.accountId)
-    edited.push(...list(result.data.results))
+    const batch = list(result.data.results)
+    edited.push(...batch)
     const data = record(result.data)
-    if (data.has_more !== true || typeof data.next_cursor !== 'string' || !data.next_cursor) break
+    // Sorted newest first: once a page's oldest item is outside the window, every later page is too.
+    const oldest = Date.parse(String(batch[batch.length - 1]?.last_edited_time ?? ''))
+    if (data.has_more !== true || typeof data.next_cursor !== 'string' || !data.next_cursor
+      || (Number.isFinite(oldest) && oldest < since.getTime())) break
     cursor = data.next_cursor
   }
   const pages = edited.flatMap(page => notionSearchNotification(userId, page) ?? []).filter(page => page.occurredAt >= since)
@@ -187,8 +196,9 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
         // It runs for everyone swept, so a person with nothing connected still advances their check.
         await ensureComposioTriggers(userId).catch((error: unknown) => console.error('Composio trigger check failed', error instanceof Error ? error.name : 'unknown'))
         const failedReads = toolkits.length ? await reconcilePerson(userId, toolkits, since, result) : 0
-        // A pass whose reads failed stays due, so the next sweep retries them before the window ages edits out.
-        if (!failedReads) await db.update(suggestionTriggerChecks).set({ reconciledAt: now }).where(eq(suggestionTriggerChecks.userId, userId))
+        // A pass whose reads failed stays due whatever the other clock says — clearing the marker keeps it
+        // in the next sweep, so the retry lands before the window ages the missed edits out.
+        await db.update(suggestionTriggerChecks).set({ reconciledAt: failedReads ? null : now }).where(eq(suggestionTriggerChecks.userId, userId))
       } catch (error) {
         result.failed.composio = (result.failed.composio ?? 0) + 1
         console.error('Suggestions backfill could not list connected apps', error instanceof Error ? error.name : 'unknown')
