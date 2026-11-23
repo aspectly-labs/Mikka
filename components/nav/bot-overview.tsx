@@ -172,7 +172,9 @@ export function BotOverviewBody({ conversation, tabs, tab, onTab, query, onQuery
   // the thread list's and pending actions' live channels like the other lists.
   const overviewKeys = overviewKey ? [unstable_serialize(overviewKey)] : []
   useLiveKey('thread_list', isCoordinator ? workspaceId ?? UNRESOLVED_LIST_SCOPE : null, overviewKeys, workspaceId)
-  useLiveKey('pending_actions', isCoordinator ? workspaceId ?? UNRESOLVED_APPROVAL_SCOPE : null, overviewKeys, workspaceId)
+  // pendingActionTargets publishes only on the personal scope: the channel is
+  // always UNRESOLVED_APPROVAL_SCOPE, whatever workspace the rail names.
+  useLiveKey('pending_actions', isCoordinator ? UNRESOLVED_APPROVAL_SCOPE : null, overviewKeys, workspaceId)
   const coordinator: BotOverviewProps['coordinator'] = !isCoordinator ? null : {
     needsYou: overview.data?.needsYou ?? [],
     running: overview.data?.running ?? [],
