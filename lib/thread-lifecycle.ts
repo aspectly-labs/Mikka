@@ -274,6 +274,7 @@ export async function moveThread(user: ApiUser, runId: string, target: { deviceI
        FROM agent_runs WHERE id IN (SELECT id FROM chain) AND status='queued' LIMIT 1`, [root])
     if (queued && (target.deviceId === 'cloud' || queued.cloudBound)) { await client.query('ROLLBACK'); return null }
     let deviceId: string
+    let deviceAgentId: string | null = null
     let cloudRuntime: { workspaceId: string; agentId: string } | null = null
     if (target.deviceId === 'cloud') {
       // The next continuation resolves its model and runtime on the Bot's cloud
@@ -297,11 +298,20 @@ export async function moveThread(user: ApiUser, runId: string, target: { deviceI
       const { rows: [device] } = await client.query(`SELECT id FROM devices WHERE id=$1 AND "ownerId"=$2`, [target.deviceId, user.id])
       if (!device) { await client.query('ROLLBACK'); return null }
       deviceId = target.deviceId
-      // A local continuation resolves the thread agent's own device — moving a
-      // settled thread anywhere else would silently run it on the old device.
+      // The next local continuation resolves the Agent the newest run names —
+      // a cloud move may have repointed it — so it must live on the target, or
+      // another of the chain's Agents there takes over below.
       if (!queued) {
-        const { rows: [agent] } = await client.query(`SELECT "deviceId" FROM agents WHERE id=$1`, [source.agentId])
-        if (agent?.deviceId !== deviceId) { await client.query('ROLLBACK'); return null }
+        const { rows: [agent] } = await client.query<{ id: string }>(
+          `${CHAIN_SQL} SELECT a.id FROM agents a
+           WHERE a."userId"=$2 AND a."deviceId"=$3
+             AND a.harness=(SELECT coalesce(s."agentDefinition"->>'harness', sa."harness")
+                 FROM agent_runs s JOIN agents sa ON sa.id=s."agentId"
+                 WHERE s.id IN (SELECT id FROM chain) ORDER BY s."createdAt" DESC LIMIT 1)
+           ORDER BY (SELECT MAX(r."createdAt") FROM agent_runs r WHERE r."agentId"=a.id AND r.id IN (SELECT id FROM chain)) DESC NULLS LAST
+           LIMIT 1`, [root, user.id, deviceId])
+        if (!agent) { await client.query('ROLLBACK'); return null }
+        deviceAgentId = agent.id
       }
     }
     const targetRepo = await ensureDeviceRepository(user.id, deviceId, repo.remoteUrl, client)
@@ -341,6 +351,14 @@ export async function moveThread(user: ApiUser, runId: string, target: { deviceI
       // onto the cloud path.
       await client.query(
         `${CHAIN_SQL} DELETE FROM computer_run_bindings WHERE "runId" IN (SELECT id FROM chain) AND "ownerId"=$2`, [root, user.id])
+      if (deviceAgentId) {
+        // A cloud move repointed the newest run to the cloud Agent; point the
+        // next continuation at the Agent living on the target device.
+        await client.query(
+          `${CHAIN_SQL} UPDATE agent_runs SET "agentId"=$2
+           WHERE id=(SELECT r.id FROM agent_runs r WHERE r.id IN (SELECT id FROM chain) ORDER BY r."createdAt" DESC LIMIT 1)`,
+          [root, deviceAgentId])
+      }
     }
     await client.query('COMMIT')
     if (target.deviceId !== 'cloud') notifyDeviceWork(deviceId)
