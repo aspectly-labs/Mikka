@@ -21,3 +21,15 @@ test('Up walks back to the oldest and stops; Down walks forward to the draft', (
   assert.equal(stepPrompt(history, null, 'newer'), undefined)
   assert.equal(stepPrompt([], null, 'older'), undefined)
 })
+
+test('a prompt’s document is kept once per prompt, newest last, and the oldest go first past the cap', async () => {
+  const { rememberPromptDoc, PROMPT_DOCS_MAX_CHARS } = await import('./prompt-history')
+  let docs = rememberPromptDoc([], { prompt: ' a ', doc: { type: 'doc' }, files: [] })
+  docs = rememberPromptDoc(docs, { prompt: 'b', doc: { type: 'doc' }, files: [] })
+  docs = rememberPromptDoc(docs, { prompt: 'a', doc: { type: 'doc', n: 2 }, files: [] })
+  assert.deepEqual(docs.map(item => item.prompt), ['b', 'a'])
+  const big = 'x'.repeat(20_000)
+  for (let index = 0; index < 5; index++) docs = rememberPromptDoc(docs, { prompt: `p${index}`, doc: { big }, files: [] })
+  assert.ok(JSON.stringify(docs).length <= PROMPT_DOCS_MAX_CHARS)
+  assert.equal(docs.at(-1)?.prompt, 'p4')
+})

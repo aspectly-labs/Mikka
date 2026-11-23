@@ -11,6 +11,8 @@ import type { ThreadEntry } from '@/components/slots/thread-contract'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
 import { ConversationPageLoading } from '@/components/workspace/workspace-loading'
 import { navigate, openTask } from '@/components/workspace/workspace-navigation'
+import { useLiveCitations } from '@/components/coordinator/use-live-citations'
+import type { AgentCitations } from './agent-citations'
 import { useConversationPanels } from '@/components/coordinator/conversation-panels-context'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
 import { namedConversationModelBot } from '@/lib/named-conversation-model'
@@ -199,6 +201,9 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
   const readRevision = first?.readRevision
   const referenceWorkspace = namedChat && readRevision !== undefined && !blockingCode && !accessRejected && !refused && !departed.current ? group.workspaceId : null
   const modelBot = namedConversationModelBot(referenceWorkspace && !membersError && !error ? referenceWorkspace : null, members, ownedBots, draft)
+  // A saved draft's references are named from the tasks and threads looked up for it (the editor's chips).
+  const draftCitationBase = useMemo<AgentCitations>(() => ({ sources: {}, previews: {}, onOpenIssue: openTask }), [])
+  const draftSources = useLiveCitations([draft], draftCitationBase).settled.sources
   // `@` names the group's members in the composer; a Bot named so answers (lib/group-mentions.ts).
   const mentionable = useMemo(() => members.filter(item => item.memberType !== 'user' || item.id !== userId)
     .map(item => ({ id: item.id, name: item.name || (item.memberType === 'user' ? people.get(item.id) ?? '' : ''), kind: item.memberType === 'user' ? 'person' as const : 'bot' as const }))
@@ -348,7 +353,7 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
         leftControls: modelBot ? <BotModelPicker key={modelBot} botId={modelBot} running={replying} /> : undefined,
         sending: stopping, editableWhileSending: stopping, running: replying && !stopping,
         // `@` names the group's members and references; skills where the group holds one of the person's Bots.
-        references: referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined, people: mentionable, historyKey: `group:${group.id}`,
+        references: referenceWorkspace ? { workspaceId: referenceWorkspace } : undefined, people: mentionable, historyKey: `group:${group.id}`, referenceSources: draftSources,
         skills: members.some(item => item.memberType === 'bot' && ownedBots?.some(bot => bot.id === item.id)) }}
       pending={[]}
       questions={[]} onAnswer={async () => ({ status: 'unavailable', error: actionError() })}

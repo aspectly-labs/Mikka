@@ -443,6 +443,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // The tasks and threads the person's own messages reference, looked up the same way (#2924).
   const personTexts = useMemo(() => [...(data?.items ?? []).flatMap(item => item.from === 'person' ? [item.text] : []), ...localMessages.map(row => row.text)], [data?.items, localMessages])
   const personCitations = useLiveCitations(personTexts, citations).settled
+  // A saved draft's references are named from the same sources, looked up the same way (the editor's chips).
+  const draftSources = useLiveCitations([draft], personCitations).settled.sources
   const composerCommands = useMemo(() => [{ id: 'new', name: '/new', description: t('commandNew'), run: startNewConversation }], [t])
   // What the person said next after each reply, so a choice card shows its answer after a reload.
   const answers = useMemo(() => {
@@ -741,7 +743,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         working={working && !stopping} onStop={stoppable && !resuming && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
-          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands, historyKey: stateKey }}
+          references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands, historyKey: stateKey, referenceSources: draftSources }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
         // The row keeps its height before the read arrives (the ring's own), so the footer never grows after a switch.
         under={!embedded ? <div data-slot="thread-under-composer" className="flex min-h-6 min-w-0 items-center justify-end px-1">{data?.context && <CoordinatorContextUsage usage={data.context} />}</div> : undefined}

@@ -492,6 +492,8 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const previews = useLinkPreviews(citationTexts)
   const citationBase = useMemo<AgentCitations>(() => ({ sources: {}, previews, onOpenIssue: openTask }), [previews])
   const citations = useLiveCitations(citationTexts, citationBase)
+  // A saved draft's references are named from the same sources, looked up the same way (the editor's chips).
+  const draftCitations = useLiveCitations([draft], citations.settled)
   // A layer's thread screen (slot `thread`) draws the conversation from these rows: each part as Mikka renders it, the
   // run's Agent as the author line, its steps as tool rows.
   // As LobeHub's chat, an Agent's reply opens with its mark and name (Alex, 2026-11-22: chat look as LobeHub, except avatars).
@@ -690,7 +692,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
       // The thread's own run, not the live attempt: a scope change drops the draft's files, and the server takes files
       // from any attempt of the chain (lib/chat-attachments/store.ts).
       attachmentScope: { kind: 'thread', id: runId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
-      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands, historyKey: `thread:${runId}` }}
+      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true, references, commands: composerCommands, historyKey: `thread:${runId}`, referenceSources: draftCitations.settled.sources }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
     plan={plan ?? undefined}
     notices={<>

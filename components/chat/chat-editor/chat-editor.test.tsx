@@ -396,3 +396,50 @@ test('a draft with chips and a pasted-text attachment survives a reload (a new w
   assert.match(dom().textContent ?? '', /^先看 CHAT-1，日志 /, 'the task chip keeps its code, not 「任务 0f8fad5b」')
   assert.equal(shown(), before.nodes)
 })
+
+test('a prompt recalled with Up comes back as it was sent: chips in place, the task by its code, the paste as its attachment', async () => {
+  localStorage.clear(); sessionStorage.clear()
+  const long = Array.from({ length: 40 }, (_, index) => `row ${index}`).join('\n')
+  globalThis.fetch = (async () => new Response(long)) as typeof fetch
+  await mount('', { attachmentScope: { kind: 'bot', id: 'bot' }, historyKey: 'chat:a' })
+  await type('先看 ')
+  await act(async () => { latest.editor.editor!.commands.insertContent([{ type: 'mention', attrs: { id: task, label: 'CHAT-1', kind: 'task', mentionSuggestionChar: '@' } }, { type: 'text', text: '，日志 ' }]) })
+  await paste({ text: long })
+  await act(async () => { finishUpload?.() })
+  await settle(20)
+  const sentValue = latest.value
+  const shownText = dom().textContent
+  await key({ key: 'Enter' })
+  assert.deepEqual(sent, [sentValue])
+  assert.equal(latest.value, '')
+  await key({ key: 'ArrowUp' })
+  await settle(20)
+  assert.deepEqual(chips(), ['task', 'pasted'], 'each chip where it was typed')
+  assert.equal(dom().textContent, shownText, 'the same words and labels')
+  assert.equal(latest.value.trim(), sentValue.trim(), 'and it sends the same message again, its attachment included')
+  // A reload keeps the history with its documents.
+  await act(async () => root.unmount())
+  root = createRoot(container)
+  await mount('', { attachmentScope: { kind: 'bot', id: 'bot' }, historyKey: 'chat:a' })
+  await act(async () => latest.editor.focus())
+  await key({ key: 'ArrowUp' })
+  await settle(20)
+  assert.deepEqual(chips(), ['task', 'pasted'])
+  assert.match(dom().textContent ?? '', /^先看 CHAT-1，日志 /)
+})
+
+test('a stored draft with no kept document names its references from the chat’s citation sources', async () => {
+  localStorage.clear(); sessionStorage.clear()
+  const run = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+  const stored = `先看 [[issue:${task}]] 和 [[run:${run}]]`
+  await mount(stored, { references: { workspaceId: 'w' } })
+  assert.match(dom().textContent ?? '', /ThreadReferences\.task 0f8fad5b/, 'nothing resolves yet: kind and short id')
+  const sources = {
+    [task]: { kind: 'issue', id: task, title: '校验聊天结构', identifier: 'CHAT-1', status: 'todo' },
+    [run]: { kind: 'run', id: run, name: 'Check the structure', title: '核对结构', issue: null, harness: 'codex', status: 'succeeded', summary: null, steps: 0, createdAt: '', finishedAt: null },
+  } as unknown as NonNullable<Parameters<typeof useChatComposer>[0]['referenceSources']>
+  await mount(stored, { references: { workspaceId: 'w' }, referenceSources: sources })
+  await settle(20)
+  assert.equal(dom().textContent, '先看 CHAT-1 和 核对结构')
+  assert.equal(latest.value, stored, 'naming a chip changes nothing that is sent')
+})

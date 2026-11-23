@@ -20,6 +20,7 @@ import { stepPrompt } from '@/lib/chat/prompt-history'
 import { touchKeyboard } from '@/lib/touch-keyboard'
 import { withBasePath } from '@/lib/base-path'
 import { useViewState } from '@/lib/hooks/view-state'
+import { runTitle, type CitationSource } from '@/lib/coordinator/citations'
 import { chatEditorSchemaExtensions } from './schema'
 import { docToStored, isLongPaste, pastedFileName, storedToDoc, type ChipKind, type JSONNode, type MentionAttrs } from './serialize'
 import { ChatChipContext, ImageView, PastedView, SourceFileView, type ChatChipRenderer } from './chips'
@@ -80,6 +81,9 @@ export function useChatEditor(composer: ChatComposerState, options: {
   const t = useTranslations('ChatEditor')
   const tReferences = useTranslations('ThreadReferences')
   const tFiles = useTranslations('RightColumn.files')
+  // Nothing names it yet: its kind and short id, as the textarea showed it.
+  const shortLabel = (reference: { type: ReferenceType; id: string }) =>
+    reference.type === 'pr' ? undefined : `${tReferences(reference.type === 'chat' ? 'thread' : reference.type)} ${reference.id.slice(0, 8)}`
   // Why the run's files cannot be read, in the Files tab's words (components/right-column/files-tab.tsx).
   const fileFailure = (error: unknown) => {
     const code = error instanceof WorkspaceFilesError ? error.code : 'unknown'
@@ -101,7 +105,7 @@ export function useChatEditor(composer: ChatComposerState, options: {
   const menuSearching = useRef(false)
   const hydrate = useRef<(stored: string) => JSONNode>(() => ({ type: 'doc', content: [{ type: 'paragraph' }] }))
   const emitted = useRef(field.stored)
-  const recall = useRef<{ at: number | null; draft: string }>({ at: null, draft: '' })
+  const recall = useRef<{ at: number | null; draft: string; files: readonly { id: string; name: string }[] }>({ at: null, draft: '', files: [] })
 
   const skillsWanted = field.skills
   const skills = useSWR(skillsWanted && trigger && trigger.char !== '@' ? ['personal-skills'] : null, readSkills, { revalidateOnFocus: false, shouldRetryOnError: false })
@@ -118,10 +122,11 @@ export function useChatEditor(composer: ChatComposerState, options: {
     // Unchanged is not written again (every render reads files anew).
     if (JSON.stringify(next) !== JSON.stringify(savedRef.current)) { savedRef.current = next; setSaved(next) }
   }
-  hydrate.current = stored => savedRef.current && savedRef.current.stored === stored ? savedRef.current.doc : storedToDoc(stored, {
+  const keptPrompt = (stored: string) => stored.trim() ? field.promptDocs.find(item => item.prompt === stored.trim())?.doc as JSONNode | undefined : undefined
+  hydrate.current = stored => savedRef.current && savedRef.current.stored === stored ? savedRef.current.doc : keptPrompt(stored) ?? storedToDoc(stored, {
     // A reference this composer has not looked up (a saved draft): its kind and short id, as the textarea showed it.
     label: (reference: MessageReference) => names.current.get(referenceKey(reference))
-      ?? (reference.type === 'pr' ? undefined : `${tReferences(reference.type === 'chat' ? 'thread' : reference.type)} ${reference.id.slice(0, 8)}`),
+      ?? sourceLabel(field.referenceSources, reference) ?? shortLabel(reference),
     people: field.people,
     skills: skills.data?.map(skill => ({ slug: skill.slug, name: skill.name })),
     files: !!field.runId,
@@ -205,10 +210,15 @@ export function useChatEditor(composer: ChatComposerState, options: {
       if (event.key === 'ArrowDown' && !(recalling && selection.$to.index(0) === doc.childCount - 1)) return false
       const next = stepPrompt(current.field.history, recall.current.at, event.key === 'ArrowUp' ? 'older' : 'newer')
       if (next === undefined) return false
-      if (recall.current.at === null) recall.current.draft = stored
+      if (recall.current.at === null) { recall.current.draft = stored; recall.current.files = current.field.attachments }
       recall.current.at = next
       event.preventDefault()
-      current.field.setStored(next === null ? recall.current.draft : current.field.history[next])
+      // A prompt comes back as it was sent: with its document (chips in place) and the files it went with.
+      const prompt = next === null ? null : current.field.history[next]
+      const kept = prompt === null ? null : current.field.promptDocs.find(item => item.prompt === prompt)
+      if (prompt === null) current.field.setDraft(recall.current.draft, recall.current.files)
+      else if (kept) current.field.setDraft(prompt, kept.files)
+      else current.field.setStored(prompt)
       return true
     }
     return false
@@ -299,6 +309,27 @@ export function useChatEditor(composer: ChatComposerState, options: {
 
   // A saved draft's collapsed pastes are chips from the start: the strip leaves their files out.
   useEffect(() => { if (editor) reportImages(editor, false) }, [editor]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The document Up brings back: the one sent, as it is kept.
+  useEffect(() => {
+    const holder = composer.field.snapshot
+    holder.current = () => editor ? forStorage(editor.getJSON() as JSONNode, live.current.composer.field.fileOf) : null
+    return () => { holder.current = null }
+  }, [editor]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // References named by kind and short id take their names once the chat's citation sources know them.
+  useEffect(() => {
+    const sources = field.referenceSources
+    if (!editor || !sources) return
+    const { tr } = editor.state
+    editor.state.doc.descendants((node, at) => {
+      if (node.type.name !== 'mention' || (node.attrs.kind !== 'task' && node.attrs.kind !== 'thread')) return
+      const reference = { type: node.attrs.kind as 'task' | 'thread', id: String(node.attrs.id) }
+      const label = sourceLabel(sources, reference)
+      if (label && node.attrs.label === shortLabel(reference)) tr.setNodeMarkup(at, undefined, { ...node.attrs, label })
+    })
+    if (tr.docChanged) editor.view.dispatch(tr.setMeta('addToHistory', false))
+  }, [editor, field.referenceSources]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // An upload that finishes turns its chip's key into the file's id: the kept document follows.
   const attached = field.attachments.map(file => file.id).join(' ')
   useEffect(() => { if (editor) save(field.stored, editor.getJSON() as JSONNode) }, [editor, attached]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -428,6 +459,14 @@ export function useChatEditor(composer: ChatComposerState, options: {
 }
 
 type SavedDraft = { stored: string; doc: JSONNode }
+
+/** A task by its code (its title without one), a thread by its title: as the live chip names them (chipLabel). */
+function sourceLabel(sources: Readonly<Record<string, CitationSource>> | undefined, reference: { type: ReferenceType; id: string }) {
+  const source = sources?.[reference.id]
+  if (reference.type === 'task' && source?.kind === 'issue') return source.identifier ?? source.title
+  if (reference.type === 'thread' && source?.kind === 'run') return runTitle(source)
+  return undefined
+}
 
 const hasChip = (node: JSONNode): boolean => !!node.attrs?.fileKey || (node.content ?? []).some(hasChip)
 
