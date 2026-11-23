@@ -8,6 +8,7 @@ import { useState, type ReactElement } from 'react'
 import useSWR from 'swr'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { withBasePath } from '@/lib/base-path'
+import { ReadResponseError } from '@/lib/swr/retry'
 import { TaskStatusIcon } from '@/components/workspace/task-state-icon'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import type { ThreadPreview } from '@/lib/thread-preview'
@@ -18,7 +19,7 @@ export function useThreadPreview(issueId: string | null, enabled: boolean) {
   return useSWR<ThreadPreview | null>(issueId && enabled ? ['thread-preview', issueId] : null,
     async ([, id]) => {
       const response = await fetch(withBasePath(`/api/threads/${id}/preview`))
-      if (!response.ok) throw new Error(`preview ${response.status}`)
+      if (!response.ok) throw new ReadResponseError(response.status)
       return response.json() as Promise<ThreadPreview>
     })
 }
