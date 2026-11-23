@@ -48,6 +48,7 @@ import { cn } from '@/lib/utils'
 import { BrowserPane } from '@/components/browser/browser-pane'
 import { RailThreadChanges } from './thread-changes'
 import { RailCrewPulls, RailCrewSide, RailCrewThreads } from './crew-rail'
+import { RailThreadPull } from './rail-pull'
 import { browserAddressRequest, browserAddressVersion, subscribeBrowserAddress } from '@/lib/browser/navigation'
 import { ThreadColumn } from './thread-column'
 import { AllThreadsColumn, AllThreadsToggle } from '@/components/nav/all-threads'
@@ -821,6 +822,7 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
   const changesIssueId = (changesRunId ? threads.find(thread => thread.id === changesRunId)?.issueId : undefined) ?? mainThread?.issueId ?? taskId
   const conversationTools = panelsInFrame ? [
     ...(changesRunId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={changesIssueId} runId={changesRunId} /> }] : []),
+    ...(changesRunId ? [{ id: 'pull-request' as const, title: i18nText('IssueThreads.pullTab'), content: <RailThreadPull issueId={changesIssueId ?? null} runId={changesRunId} /> }] : []),
     ...(section === 'coordinator' && !activeBot ? [
       { id: 'crew:threads' as const, title: i18nText('IssueThreads.crewThreads'), content: <RailCrewThreads issues={tasks} threads={threads} loading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} /> },
       { id: 'crew:pulls' as const, title: i18nText('IssueThreads.crewPulls'), content: <RailCrewPulls workspaceId={listWorkspaceId} /> },

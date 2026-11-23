@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import useSWR from 'swr'
-import { getThreadMachine, getThreadChanges } from '@/app/actions/agents'
+import { getThreadMachine, getThreadChanges, listThreadPulls } from '@/app/actions/agents'
 import { listRunArtifacts } from '@/app/actions/artifacts'
 
 // SWR reads on mount and when the key changes. Only a state change within
@@ -35,6 +35,14 @@ export function useThreadMachine(issueId: string | null, runId: string, status: 
 export function useThreadChanges(issueId: string | null, runId: string | null, status?: string) {
   const read = useSWR(runId ? ['thread-changes', issueId, runId] as const : null,
     ([, issue, run]) => getThreadChanges(issue, run), { dedupingInterval: 0 })
+  useStatusRefresh(runId, issueId, status, read.mutate)
+  return read
+}
+
+/** The pull requests a thread published (#2929): its rail's PR tab reads them by run. */
+export function useThreadPulls(issueId: string | null, runId: string | null, status?: string) {
+  const read = useSWR(runId ? ['thread-pulls', issueId, runId] as const : null,
+    ([, issue, run]) => listThreadPulls(issue, run), { dedupingInterval: 0 })
   useStatusRefresh(runId, issueId, status, read.mutate)
   return read
 }

@@ -27,7 +27,7 @@ import {
 import { openGroupConversation, openTask, openThread } from "./workspace-navigation";
 import { PullRequestIcon } from "./pull-request-icon";
 
-const stateKeys: Record<PullState, `states.${PullState}`> = {
+export const stateKeys: Record<PullState, `states.${PullState}`> = {
   ready: "states.ready",
   pending: "states.pending",
   attention: "states.attention",
@@ -37,7 +37,7 @@ const stateKeys: Record<PullState, `states.${PullState}`> = {
   closed: "states.closed",
 };
 type CheckState = NonNullable<PullDirectoryRow["checks"]> | "unknown";
-const checkKeys: Record<CheckState, `checksState.${CheckState}`> = {
+export const checkKeys: Record<CheckState, `checksState.${CheckState}`> = {
   SUCCESS: "checksState.SUCCESS",
   PENDING: "checksState.PENDING",
   FAILURE: "checksState.FAILURE",
@@ -46,14 +46,14 @@ const checkKeys: Record<CheckState, `checksState.${CheckState}`> = {
   unknown: "checksState.unknown",
 };
 type ReviewState = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "unknown";
-const reviewKeys: Record<ReviewState, `reviewState.${ReviewState}`> = {
+export const reviewKeys: Record<ReviewState, `reviewState.${ReviewState}`> = {
   APPROVED: "reviewState.APPROVED",
   CHANGES_REQUESTED: "reviewState.CHANGES_REQUESTED",
   REVIEW_REQUIRED: "reviewState.REVIEW_REQUIRED",
   unknown: "reviewState.unknown",
 };
 
-async function readDetail(repo: string, number: number): Promise<PullDetail> {
+export async function readDetail(repo: string, number: number): Promise<PullDetail> {
   const response = await fetch(
     withBasePath("/api/integrations/github/repositories/pulls/detail?" + new URLSearchParams({ repo, number: String(number) })),
     { cache: "no-store" },
@@ -409,7 +409,7 @@ export function PullPreview({
   );
 }
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+export function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <>
       <dt className="text-muted-foreground">{label}</dt>
