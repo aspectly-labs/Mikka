@@ -5,7 +5,7 @@ import { pool } from '@/lib/db'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { ComputerError } from '@/lib/computer/store'
 import { threadMachineAction } from '@/lib/cloud-computer/thread-machines'
-import { readThreadMachineDetail } from '@/lib/cloud-computer/thread-machine-detail'
+import { readThreadMachineDetail, rerunThreadMachineSetup } from '@/lib/cloud-computer/thread-machine-detail'
 export const maxDuration = 300
 
 /** The Setup tab's machine detail: state, provider specs, metrics, uptime,
@@ -37,8 +37,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     if (!session?.user) return respond({ error: 'authRequired' }, 401)
     if (request.headers.get('origin') !== new URL(request.url).origin) return respond({ error: 'Invalid origin' }, 403)
     const runId = z.uuid().parse((await params).runId)
-    const { action } = z.object({ action: z.enum(['pause', 'resume', 'end', 'refresh_runtime']) }).strict().parse(await request.json())
+    const { action } = z.object({ action: z.enum(['pause', 'resume', 'end', 'refresh_runtime', 'setup_rerun']) }).strict().parse(await request.json())
     const context = await loadWorkspaceContext(undefined, session.user)
+    if (action === 'setup_rerun') {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 280_000)
+      try {
+        return respond(await rerunThreadMachineSetup(pool, { userId: session.user.id, workspaceId: context.workspace.id }, runId, controller.signal), 200)
+      } finally {
+        clearTimeout(timeout)
+      }
+    }
     return respond(await threadMachineAction(pool, { userId: session.user.id, workspaceId: context.workspace.id }, runId, action), 200)
   } catch (error) {
     if (error instanceof ComputerError) return respond({ error: error.message }, error.status)

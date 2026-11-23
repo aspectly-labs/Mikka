@@ -4,7 +4,7 @@ import type { Pool } from 'pg'
 import { ComputerError } from '@/lib/computer/store'
 import { cloudMachineState, type ThreadMachineState } from '@/lib/thread-machine'
 import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
-import { readComputerMetrics } from '@/lib/computer/e2b-provider'
+import { readComputerMetrics, connectComputer, computerGone } from '@/lib/computer/e2b-provider'
 import type { Actor } from './subagents'
 
 type MachineRow = {
@@ -78,4 +78,36 @@ export async function readThreadMachineDetail(pool: Pool, actor: Actor, runId: s
     setup: environment?.setup ? { command: environment.setup.command ?? null, copyFiles: environment.setup.copyFiles ?? [], approved: environment.setup.approved === true } : null,
     environment: environment?.id ? { id: environment.id, name: environment.name ?? null } : null,
   }
+}
+
+/** 「Run setup again」 (#2940): re-executes the frozen recipe's command inside
+ * the thread's own sandbox worktree. copyFiles are not re-copied — their
+ * sources live on the admission-side checkout, unavailable to a rerun; the
+ * command is the repeatable half. Returns the exit code and the tail. */
+export async function rerunThreadMachineSetup(pool: Pool, actor: Actor, runId: string, signal: AbortSignal) {
+  const run = (await pool.query<{ worktreePath: string | null; agentDefinition: { projectExecution?: { environment?: { setup?: { command?: string; approved?: boolean } | null } } } | null }>(
+    `SELECT r."worktreePath",r."agentDefinition" FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3`,
+    [runId, actor.userId, actor.workspaceId])).rows[0]
+  if (!run?.worktreePath) throw new ComputerError(404, 'Thread machine unavailable')
+  const recipe = run.agentDefinition?.projectExecution?.environment?.setup
+  if (!recipe?.approved || !recipe.command) throw new ComputerError(409, 'No approved setup recipe')
+
+  const machine = (await pool.query<{ sandboxId: string | null; state: string }>(
+    `SELECT "sandboxId",state FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3`,
+    [runId, actor.userId, actor.workspaceId])).rows[0]
+  if (!machine?.sandboxId || machine.state === 'ended') throw new ComputerError(409, 'Thread machine unavailable')
+
+  let sandbox
+  try {
+    sandbox = await connectComputer(actor.workspaceId, machine.sandboxId, signal)
+  } catch (error) {
+    if (computerGone(error)) throw new ComputerError(409, 'Thread machine unavailable')
+    throw error
+  }
+  const result = await sandbox.commands.run(recipe.command, {
+    cwd: run.worktreePath,
+    timeoutMs: 30 * 60_000,
+    signal,
+  })
+  return { exitCode: result.exitCode, stdout: result.stdout.slice(-4000), stderr: result.stderr.slice(-4000) }
 }
