@@ -50,14 +50,13 @@ export function RailThreadPull({ issueId, runId, status }: { issueId: string | n
     const text = pulls.error && !pulls.data ? t('loadError') : pulls.data ? t('empty') : t('loading')
     return <p className="px-4 pt-3 text-xs text-muted-foreground">{text}</p>
   }
-  return <ThreadPullPane issueId={issueId} runId={runId} pull={pull} onChanged={() => void pulls.mutate()} />
+  return <ThreadPullPane pull={pull} onChanged={() => void pulls.mutate()} />
 }
 
-function ThreadPullPane({ issueId, runId, pull, onChanged }: {
-  issueId: string | null; runId: string; pull: ThreadPullRef; onChanged: () => void
+function ThreadPullPane({ pull, onChanged }: {
+  pull: ThreadPullRef; onChanged: () => void
 }) {
   const t = useTranslations('PullDirectory')
-  const refusal = useTranslations('FactoryAcceptance.mergeRefusal')
   const common = useTranslations('Common')
   const detail = useSWR(['pull-detail', pull.repo, pull.number], ([, repo, number]) => readDetail(repo, number),
     { revalidateOnFocus: false, shouldRetryOnError: false })
