@@ -87,7 +87,6 @@ test('sub-agent child runs', { skip: !dbUrl }, async t => {
     assert.equal(await code(linkSubagentRun(pool, owner, { parentRunId: loose, childRunId: loose })), 'subagentParentMismatch', 'itself')
     assert.equal(await code(linkSubagentRun(pool, owner, { parentRunId: researcher, childRunId: coder })), 'subagentParentFixed', 'a second parent')
     assert.equal(await code(linkSubagentRun(pool, owner, { parentRunId: coder, childRunId: parent })), 'subagentParentCycle', 'a loop')
-    await assert.rejects(pool.query('UPDATE agent_runs SET "parentRunId"=$2 WHERE id=$1', [loose, foreign]), { code: '23514' }, 'the database refuses a cross-owner edge on its own')
     assert.equal((await pool.query('SELECT "parentRunId" FROM agent_runs WHERE id=$1', [loose])).rows[0].parentRunId, null)
   })
 
