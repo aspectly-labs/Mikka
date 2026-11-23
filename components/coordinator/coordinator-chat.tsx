@@ -31,7 +31,7 @@ import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { AgentInteractionContext } from '@/components/workspace/agent-interaction'
 import { ReplyAnswer } from '@/components/workspace/agent-decision'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
-import { navigate, openTask, openThread } from '@/components/workspace/workspace-navigation'
+import { navigate, openContextPanel, openTask, openThread } from '@/components/workspace/workspace-navigation'
 import { CoordinatorReply } from './coordinator-reply'
 import { BotModelPicker, botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
@@ -239,6 +239,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     } catch { /* storage unavailable */ }
   }, [userId, botId, embedded, setDraft])
   const [following, setFollowing] = useViewState(`${stateKey}:following`, true)
+  // The right rail's Tasks tab the thread 打开任务 button targets (#2930).
+  const [, setPanelTab] = useViewState(`context:coordinator:${botId ?? 'coordinator'}:tab`, 'threads')
   // Hydration first exposes server defaults; lock the initial scroll choice only
   // after the saved session and the transcript have both been read.
   const [mounted, setMounted] = useState(false)
@@ -696,7 +698,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
             return receipt.status === 'accepted' ? receipt : { ...receipt, error: actionError(receipt.error) }
           }}
           running={Object.values(sources ?? {}).filter(source => source.kind === 'run' && !source.finishedAt).length}
-          onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })} />
+          onOpenTask={openTask} onOpenInbox={() => navigate({ section: 'suggestions' })}
+          onOpenTasks={() => { setPanelTab('threads'); openContextPanel() }} />
         <SelectionQuote root={rootRef} onQuote={quoteReply} />
       </section>
     </AgentInteractionContext></AgentThemeProvider>

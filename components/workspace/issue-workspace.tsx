@@ -93,7 +93,7 @@ import { forgetGroupReads, useGroupMembershipLoss } from './group-membership-cac
 import { AutomationsPageLoading, BoardPageLoading, ConversationPageLoading, ProjectsPageLoading, SettingsPageLoading, TaskPageLoading, WorkspaceLoading } from './workspace-loading'
 import { InlineLoadError } from '@/components/load-error'
 import { SuggestionsRefresh } from '@/components/suggestions/suggestion-feed'
-import { backToTaskOrigin, closeTask, dropQueryKeys, goTo, LEGACY_TASKS_SECTION, navigate as navigateWorkspace, NAVIGATE_EVENT, openedFromList, openTask, openThread, queryMoved, readLocation, sameLocation, sectionFor, taskOrigin, tidyAddress, toggleAllThreads, type WorkspaceLocation, type WorkspaceSection } from './workspace-navigation'
+import { backToTaskOrigin, closeTask, dropQueryKeys, goTo, LEGACY_TASKS_SECTION, navigate as navigateWorkspace, NAVIGATE_EVENT, openedFromList, OPEN_CONTEXT_PANEL_EVENT, openTask, openThread, queryMoved, readLocation, sameLocation, sectionFor, taskOrigin, tidyAddress, toggleAllThreads, type WorkspaceLocation, type WorkspaceSection } from './workspace-navigation'
 import { pushSettingsHistory, requestShellSearch, takeShellSearchRequest, appHrefBeforeSettings, rememberAppHref } from '@/lib/settings-navigation'
 import { resolveSettingsSection, type SettingsSectionId } from '@/lib/settings-sections'
 import { bufferTypeAhead, typingOrDialog } from '@/lib/shortcut-guard'
@@ -318,6 +318,12 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
     return () => wide.removeEventListener('change', close)
   }, [])
   function openPanel() { showPanel(true); if (!window.matchMedia('(min-width: 80rem)').matches) setPanelSheet(true) }
+  // A thread asks for the panel (the 打开任务 button, #2930); its tab is set by the caller.
+  useEffect(() => {
+    const open = () => openPanel()
+    window.addEventListener(OPEN_CONTEXT_PANEL_EVENT, open)
+    return () => window.removeEventListener(OPEN_CONTEXT_PANEL_EVENT, open)
+  }, [])
   function showPanel(next: boolean) { setPanelOpen(next); try { window.localStorage.setItem('mikka:context-panel', next ? '1' : '0') } catch { /* storage unavailable */ } }
   // The app-wide browser (top bar 🌐): while open it takes the right panel's place.
   const [browserMode, setBrowserMode] = useState<'closed' | 'column' | 'address'>('closed')

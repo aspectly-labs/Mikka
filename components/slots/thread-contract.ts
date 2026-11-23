@@ -143,6 +143,8 @@ export type ThreadScreenProps = {
   /** Opens a task and the Inbox. */
   onOpenTask: (taskId: string) => void
   onOpenInbox: () => void
+  /** The thread 打开任务 button's target (#2930): the right rail's Tasks tab. */
+  onOpenTasks?: () => void
   /**
    * Tabs the page adds to the conversation's right-hand work area when the frame owns that panel
    * (FRAME_OWNS_PANEL): the chat's Overview and the browser. `reveal` counts up each time the page asks for one

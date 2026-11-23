@@ -88,6 +88,19 @@ export type BotOverviewProps = {
   tasks: ReactNode
   /** PR: by 等待审查 / 进行中 / 已合并; `total` counts them before the search. */
   pullRequests: { total: number; groups: { id: string; label: string; rows: BotOverviewPullRequest[] }[] }
+  /**
+   * The Coordinator's 详情 (#2930): what needs the person and what is running,
+   * from GET /api/coordinator/overview. Present only for conversation.kind
+   * 'coordinator'; Threads and Pull requests stay the Glance rows and tabs.
+   */
+  coordinator?: {
+    needsYou: { kind: 'approval' | 'question' | 'limit'; threadId: string | null; createdAt: string; detail: string | null }[]
+    running: { runId: string; issueId: string | null; title: string | null; status: string; updatedAt: string }[]
+    loadError: boolean
+    retry: () => void
+    /** Opens a row: its thread where the workspace knows it, else its task. */
+    onOpen: (ref: { issueId: string | null; runId: string | null }) => void
+  } | null
   /** 电脑: null without one. `screen` draws the live screen with `overlay` on it once it runs. */
   computer: null | {
     name: string

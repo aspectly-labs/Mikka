@@ -20,6 +20,7 @@ import { useViewState } from '@/lib/hooks/view-state'
 import { ReviewSummaryLine } from '@ui-slot/review-summary'
 import { openReview } from '@/hooks/code-review/use-review-page'
 import { threadTitle } from '@/lib/short-title'
+import { ThreadHoverCard } from './thread-hover-card'
 
 type Issue = Awaited<ReturnType<typeof listIssues>>[number]
 
@@ -80,7 +81,8 @@ function ThreadRow({ thread, group, issues, all, now, onOpenThread }: { thread: 
   const waiting = thread.status === 'queued' ? (thread as ThreadView).waitingFor : undefined
   // The PRs its task carries, as on the chat's card (R-66).
   const pullRequests = thread.issueId ? issues.find(issue => issue.id === thread.issueId)?.metadata.pullRequests : undefined
-  return <li data-slot="thread-card" className={THREAD_CARD}>
+  // 任务/线程 hover 卡片 (#2930): the light preview read opens on hover intent.
+  const row = <li data-slot="thread-card" className={THREAD_CARD}>
     <Button variant="ghost" className={THREAD_CARD_BUTTON} aria-label={name} data-focus-id={thread.id} onClick={() => onOpenThread({ issueId: thread.issueId ?? null, runId: thread.id })} />
     <span data-slot="thread-status" className="pointer-events-none relative flex shrink-0 items-center justify-center"><ThreadStatusIcon group={group} /></span>
     <span className="pointer-events-none relative flex min-w-0 flex-1 flex-col gap-0.5">
@@ -100,6 +102,7 @@ function ThreadRow({ thread, group, issues, all, now, onOpenThread }: { thread: 
     {pullRequests && <PullRequestsBadge pullRequests={pullRequests} />}
     <ChevronRight aria-hidden="true" className="pointer-events-none relative size-4 shrink-0 text-muted-foreground" />
   </li>
+  return thread.issueId ? <ThreadHoverCard issueId={thread.issueId}>{row}</ThreadHoverCard> : row
 }
 
 /**

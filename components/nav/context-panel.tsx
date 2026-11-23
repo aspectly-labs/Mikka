@@ -113,7 +113,8 @@ export function ContextPanel({ issues, threads, threadsLoading = false, conversa
   const body = <BotOverviewBody conversation={conversation} workspaceId={workspaceId} threads={ownThreads} issues={issues} tasks={tasks}
     tabs={tabs.map(item => ({ id: item, label: item === 'threads' && botTasksSlot.LISTS_TASKS ? t('tasks') : t(item) }))} tab={shown} onTab={value => { setTab(value); setTabChosen(true) }}
     query={query} onQuery={setQuery}
-    computer={!computer ? null : chatBotId ? { botId: chatBotId, name: conversation.name } : registered ? { botId: registered.botId, name: registered.botName } : null} />
+    computer={!computer ? null : chatBotId ? { botId: chatBotId, name: conversation.name } : registered ? { botId: registered.botId, name: registered.botName } : null}
+    onOpenThread={onOpenThread} onOpenTask={id => { onOpenTask?.(); openTask(id) }} />
 
   if (frameTab) return body
 

@@ -10,6 +10,7 @@ import { E2BKeyDialog, useE2BKeyStatus } from '@/components/settings/e2b-key-dia
 import { ComputerScreen } from '@/components/computer/computer-screen'
 import { ComputerViewer } from '@/components/computer/computer-viewer'
 import { deleteLibraryFile, fetchBotLibrary } from '@/lib/bot-library'
+import { fetchSettingsData } from '@/lib/settings-data'
 import { BOT_COLORS, BOT_NAME_MAX, BOT_SHAPES } from '@/lib/bot-shapes'
 import { isMockedComputer } from '@/lib/computer/client'
 import { PR_GROUPS, botGlance, pullRequestsOf } from '@/lib/thread-groups'
@@ -116,7 +117,7 @@ function EditsOf({ botId, workspaceId, color, shape, children }: { botId: string
  * The frame tab, standalone column and sheet share the Bot's name, appearance, public role,
  * library, pull requests, computer and edit commands.
  */
-export function BotOverviewBody({ conversation, tabs, tab, onTab, query, onQuery, workspaceId, threads, issues, tasks, computer: target }: {
+export function BotOverviewBody({ conversation, tabs, tab, onTab, query, onQuery, workspaceId, threads, issues, tasks, computer: target, onOpenThread, onOpenTask }: {
   conversation: BotOverviewProps['conversation']
   tabs: { id: BotOverviewTab; label: string }[]
   tab: BotOverviewTab
@@ -129,6 +130,9 @@ export function BotOverviewBody({ conversation, tabs, tab, onTab, query, onQuery
   issues: Issue[]
   tasks: ReactNode
   computer: { botId: string; name: string } | null
+  /** The Coordinator's overview rows open their thread, or their task where no thread is known (#2930). */
+  onOpenThread?: (thread: { issueId: string | null; runId: string }) => void
+  onOpenTask?: (issueId: string) => void
 }) {
   const t = useTranslations('Shell.panel')
   const botId = conversation.kind === 'bot' ? conversation.id ?? null : null
@@ -153,8 +157,26 @@ export function BotOverviewBody({ conversation, tabs, tab, onTab, query, onQuery
     }).filter(group => group.rows.length),
   }
   const glance = botGlance(threads, issues)
+  // The Coordinator's 详情 groups (#2930) come from the overview read, scoped
+  // like the panel's own lists.
+  const isCoordinator = conversation.kind === 'coordinator'
+  const overview = useSWR(
+    isCoordinator && tab === 'details' ? ['coordinator-overview', workspaceId ?? ''] : null,
+    ([, scope]) => fetchSettingsData<{ needsYou: NonNullable<BotOverviewProps['coordinator']>['needsYou']; running: NonNullable<BotOverviewProps['coordinator']>['running'] }>(
+      `/api/coordinator/overview${scope ? `?workspaceId=${scope}` : ''}`))
+  const coordinator: BotOverviewProps['coordinator'] = !isCoordinator ? null : {
+    needsYou: overview.data?.needsYou ?? [],
+    running: overview.data?.running ?? [],
+    loadError: !!overview.error && !overview.data,
+    retry: () => { void overview.mutate() },
+    onOpen: ref => {
+      const runId = ref.runId ?? threads.find(item => item.issueId === ref.issueId)?.id ?? null
+      if (runId) onOpenThread?.({ issueId: ref.issueId, runId })
+      else if (ref.issueId) onOpenTask?.(ref.issueId)
+    },
+  }
   const draw = (role: BotOverviewProps['details']['role'], edit: BotOverviewProps['edit'], settings: BotOverviewProps['settings'] = null) => <BotOverview conversation={conversation} tabs={tabs} tab={tab} onTab={onTab} query={query} onQuery={onQuery}
-    edit={edit} details={{ role, routines: [], library }} glance={glance} tasks={tasks} pullRequests={pullRequests} computer={computer} settings={settings} dialogs={dialogs} />
+    edit={edit} details={{ role, routines: [], library }} glance={glance} tasks={tasks} pullRequests={pullRequests} computer={computer} settings={settings} dialogs={dialogs} coordinator={coordinator} />
   if (!botId) return draw(null, null)
   return <RoleOf key={botId} botId={botId} workspaceId={workspaceId} visible={tab === 'details'}>{role =>
     <SettingsOf botId={botId} workspaceId={workspaceId} visible={tab === 'details'}>{settings =>
