@@ -71,7 +71,6 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
     await pool.query('INSERT INTO mikka_workspaces(id,kind) VALUES ($1,$2),($3,$4)', [personal.id, personal.kind, team.id, team.kind])
     await pool.query('INSERT INTO mikka_workspace_members VALUES ($1,\'alice\',\'active\'),($1,\'bob\',\'active\'),($1,\'carol\',\'active\')', [team.id])
     // A personal workspace always uses its owner's credentials; in the team Alice shared hers, Bob did not.
-    await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2),($3,$4)', ['alice', personal.id, 'alice', team.id])
 
     // A rejected key is never stored.
     const calls: { url: string; headers: Record<string, string> }[] = []

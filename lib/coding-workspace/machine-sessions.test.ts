@@ -14,11 +14,11 @@ mock.module('./review-authority', { namedExports: {
   },
 } })
 mock.module('./review-sessions', { namedExports: {
-  readReviewSession: async (authority: TaskReviewAuthority, { kind }: { kind: string }, connection: object) => {
+  listReviewSessions: async (authority: TaskReviewAuthority, connection: object) => {
     assert.equal(authority, scope)
     assert.equal(connection, client)
     reads++
-    return active && kind === 'terminal' ? { id: 'private-lease-id', expiresAt: '2026-01-01T00:00:00.000Z', reviewOperationId: 'private-operation' } : null
+    return active ? [{ kind: 'terminal', name: '', expiresAt: '2026-01-01T00:00:00.000Z' }] : []
   },
 } })
 const { GET } = await import('../../app/api/tasks/[taskId]/review/machine-sessions/route')
@@ -29,7 +29,7 @@ test('only current-credential review leases expose their kind and absolute expir
   const result = await read()
   assert.equal(result.status, 200)
   assert.equal(result.headers.get('cache-control'), 'private, no-store')
-  assert.deepEqual(await result.json(), { runId: 'current-run', sessions: [{ kind: 'terminal', expiresAt: '2026-01-01T00:00:00.000Z' }] })
+  assert.deepEqual(await result.json(), { runId: 'current-run', sessions: [{ kind: 'terminal', name: '', expiresAt: '2026-01-01T00:00:00.000Z' }] })
   active = false
   assert.deepEqual(await (await read()).json(), { runId: 'current-run', sessions: [] })
 })

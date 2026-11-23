@@ -66,7 +66,7 @@ export function createLocalPublicationAdapter(
           (await lstat(path)).isSymbolicLink() ||
           (await readFile(path, "utf8")) !== serialized
         )
-          throw new FactoryError("factoryLocalReceiptMismatch");
+          throw Object.assign(new FactoryError("factoryLocalReceiptMismatch"), { cause: error });
       }
       if (file) {
         try {
@@ -110,8 +110,8 @@ export function configuredLocalPublicationAdapters(
   let origin: URL;
   try {
     origin = new URL(env.BETTER_AUTH_URL ?? "");
-  } catch {
-    throw new FactoryError("factoryLocalTargetInvalid");
+  } catch (error) {
+    throw Object.assign(new FactoryError("factoryLocalTargetInvalid"), { cause: error });
   }
   if (
     env.FACTORY_PUBLICATION_MODE !== "local-artifact" ||

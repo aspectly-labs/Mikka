@@ -4,7 +4,10 @@
  */
 import { resolve } from 'node:path'
 import { attestAcceptance, assertArtifactIdentity, downloadReleaseReport, releasePins } from './task-secrets-ci.mjs'
-import { assertReleaseIdentity, selectRelease, REPOSITORY } from './thread-lifecycle-ci.mjs'
+import { assertReleaseIdentity, selectRelease } from './thread-lifecycle-ci.mjs'
+import { actionsMikkaRepository, publicRepositoryId } from '../cloudflare-source.mjs'
+import { readReleaseArtifact } from '../e2b/runtime-report.mjs'
+import { containsDesktopSource } from '../release/web-deploy.mjs'
 
 const SHA = /^[a-f0-9]{40}$/
 const positive = value => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value))
@@ -12,7 +15,7 @@ const check = value => { if (!value) throw Error('workspace_review_guard_refused
 
 export function readWorkspaceReviewOptions(args, env = process.env) {
   check(args.length === 1 && ['--execute', '--cleanup'].includes(args[0]))
-  check(env.GITHUB_ACTIONS === 'true' && env.GITHUB_REPOSITORY === REPOSITORY && env.GITHUB_REF === 'refs/heads/main'
+  check(env.GITHUB_ACTIONS === 'true' && actionsMikkaRepository(env) && env.GITHUB_REF === 'refs/heads/main'
     && env.GITHUB_EVENT_NAME === 'workflow_dispatch' && env.ACCEPTANCE_MODE === 'workspace-review'
     && env.TASK_SECRETS_MODEL_CASE === 'all' && env.PRODUCTION_CANARY === 'false'
     && env.FACTORY_ACCEPTANCE_REQUESTED === 'false' && !env.TASK_SECRETS_WINDOW
@@ -38,7 +41,7 @@ export async function attestCodingWorkspace(env = process.env, { fetchImpl = fet
   const application = await attest(env, { fetchImpl })
   check(application?.sourceCommit === options.sourceCommit && application.publicBuild === options.sourceCommit)
   const read = async path => {
-    const response = await fetchImpl(`https://api.github.com/repos/${REPOSITORY}${path}`, {
+    const response = await fetchImpl(`https://api.github.com/repositories/${publicRepositoryId}${path}`, {
       headers: { accept: 'application/vnd.github+json', authorization: 'Bearer ' + env.GITHUB_TOKEN,
         'x-github-api-version': '2022-11-28' }, redirect: 'error', signal: AbortSignal.timeout(20000) })
     check(response.ok); return response.json()
@@ -46,20 +49,23 @@ export async function attestCodingWorkspace(env = process.env, { fetchImpl = fet
   const [workflow, run] = await Promise.all([
     read('/actions/workflows/e2b-official-runtime.yml'), read(`/actions/runs/${options.releaseRunId}`),
   ])
-  const expected = { sourceCommit: options.workerSourceCommit, runId: options.releaseRunId,
-    runAttempt: options.releaseRunAttempt, workflowId: workflow.id, event: run.event }
+  const expected = { sourceCommit: run.head_sha, runId: options.releaseRunId,
+    runAttempt: options.releaseRunAttempt, workflowId: workflow.id, event: run.event,
+    repositoryFullName: actionsMikkaRepository(env), repositoryId: Number(publicRepositoryId),
+    repositoryOwnerId: env.GITHUB_REPOSITORY_OWNER_ID }
   assertReleaseIdentity(expected, workflow, run)
+  // #2699 permits a later workflow to publish an older served source. Keep
+  // both pinned identities, and prove their order on the application's main.
+  check(expected.sourceCommit === options.workerSourceCommit || ['workflow_dispatch', 'workflow_run'].includes(run.event))
+  const ancestry = { token: env.GITHUB_TOKEN, fetchImpl }
+  check(await containsDesktopSource({ expectedBuild: options.workerSourceCommit, publicCommit: expected.sourceCommit, ...ancestry })
+    && await containsDesktopSource({ expectedBuild: expected.sourceCommit, publicCommit: options.sourceCommit, ...ancestry }))
   const jobs = await read(`/actions/runs/${expected.runId}/attempts/${expected.runAttempt}/jobs?per_page=100`)
   const selection = selectRelease(expected, jobs, [])
   check(selection.runtime === 'validated_and_published' && selection.selected === true)
-  const listing = await read(`/actions/runs/${expected.runId}/artifacts?per_page=100`)
-  check(Array.isArray(listing?.artifacts) && listing.total_count === listing.artifacts.length && listing.total_count <= 100)
-  const matches = listing.artifacts.filter(item => item.name === `e2b-release-evidence-${expected.runId}-${expected.runAttempt}`)
-  check(matches.length === 1)
-  const listed = assertArtifactIdentity(expected, run, matches[0], now())
-  const artifact = assertArtifactIdentity(expected, run, await read(`/actions/artifacts/${listed.id}`), now())
-  check(JSON.stringify(artifact) === JSON.stringify(listed))
-  const pins = releasePins(await download({ selected: true, artifact }, { token: env.GITHUB_TOKEN, fetchImpl }), expected, options.workerSha)
+  const artifact = await readReleaseArtifact(expected, run, { read, now })
+  const pins = releasePins(await download({ selected: true, artifact }, { token: env.GITHUB_TOKEN, fetchImpl }),
+    { ...expected, sourceCommit: options.workerSourceCommit }, options.workerSha, selection.publication)
   check(pins.workerSourceCommit === options.workerSourceCommit && pins.templates.claude_code === options.templates.claude_code
     && pins.templates.codex === options.templates.codex)
   // An upstream rerun or artifact replacement invalidates this selection.
@@ -68,6 +74,6 @@ export async function attestCodingWorkspace(env = process.env, { fetchImpl = fet
   const final = await attest(env, { fetchImpl })
   check(final.sourceCommit === options.sourceCommit && final.publicBuild === options.sourceCommit)
   return { kind: 'coding-workspace-release-attestation', sourceCommit: options.sourceCommit, publicBuild: options.sourceCommit,
-    upstream: { runId: expected.runId, runAttempt: expected.runAttempt, workflowId: expected.workflowId },
+    upstream: { runId: expected.runId, runAttempt: expected.runAttempt, workflowId: expected.workflowId, sourceCommit: expected.sourceCommit },
     driver: options.driver, ...pins, artifact, runtime: selection.runtime }
 }

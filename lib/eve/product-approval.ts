@@ -12,14 +12,14 @@ async function run(call:ApprovalCall,review:NativeWriteReview,signal?:AbortSigna
     const {COMPOSIO_ACTIONS}=await import('../composio-actions')
     const {botMayUseApp}=await import('../app-policy/store')
     const action=call.name as 'send_email'|'create_calendar_event'|'update_calendar_event'
-    if(!await botMayUseApp(call.botId,COMPOSIO_ACTIONS[action].toolkit))return {error:'integrationBlockedByWorkspace'}
+    if(!await botMayUseApp(call.botId,COMPOSIO_ACTIONS[action].toolkit,call.ownerId))return {error:'integrationBlockedByWorkspace'}
     const {account_id,...input}=call.input as Record<string,unknown>
-    return (await import('../pending-action-store')).writeAccountAction(call.ownerId,action,input,typeof account_id==='string'?account_id:undefined,call.botId,undefined,review,signal)
+    return (await import('../pending-action-store')).writeAccountAction(call.ownerId,action,input,typeof account_id==='string'?account_id:undefined,call.botId,review,signal)
   }
   if(!call.executionId)throw new Error('agentExecutionClosed')
   const {WRITE_TOOL_APPS}=await import('../app-policy/apps')
   const app=WRITE_TOOL_APPS[call.name]
-  if(app&&!await (await import('../app-policy/store')).botMayUseApp(call.botId,app))return {error:'integrationBlockedByWorkspace'}
+  if(app&&!await (await import('../app-policy/store')).botMayUseApp(call.botId,app,call.ownerId))return {error:'integrationBlockedByWorkspace'}
   try {
     return await (await import('../operations/write-runtime')).personalWriteFromRun(call.ownerId,call.botId,call.executionId,{action:call.name,input:call.input as Record<string,unknown>,toolCallId:call.callId},undefined,review,signal)
   } catch(error) {

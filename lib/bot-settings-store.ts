@@ -13,7 +13,10 @@ export interface BotOwnerScope { ownerId: string; workspaceId: string }
 export function parseBotSettings(input: BotSettingsInput): BotSettings {
   const parsed = botSettingsSchema.safeParse(input)
   if (parsed.success) return parsed.data
-  throw new ActionFailureError(parsed.error.issues[0]?.path[0] === 'alias' ? 'botAliasInvalid' : 'validationGeneric')
+  const first = parsed.error.issues[0]
+  if (first?.path[0] === 'alias') throw new ActionFailureError('botAliasInvalid')
+  if (first?.path[0] === 'instructions' && first.message === 'personalInstructionsTooLong') throw new ActionFailureError('personalInstructionsTooLong')
+  throw new ActionFailureError('validationGeneric')
 }
 
 /**
@@ -54,7 +57,7 @@ export async function assertBotSettings(query: Query, owner: BotOwnerScope, sett
 
 /** The columns a parsed setting writes; undefined fields are left out. */
 export function botSettingsColumns(settings: BotSettings): Partial<{ alias: string | null; environmentId: string | null; crewTarget: TaskDestination | null;
-  defaultAgent: 'claude_code' | 'codex' | null; defaultProfileId: string | null; runsOn: BotRunsOn | null }> {
+  defaultAgent: 'claude_code' | 'codex' | null; defaultProfileId: string | null; runsOn: BotRunsOn | null; instructions: string }> {
   return Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== undefined))
 }
 
@@ -84,13 +87,14 @@ export interface OwnedBotSettings {
   defaultAgent: 'claude_code' | 'codex' | null
   defaultProfileId: string | null
   runsOn: BotRunsOn | null
+  instructions?: string
   effort: import('@/lib/model-routing').ModelRoutingEffort | null
 }
 
 /** Null for a Bot that is not the owner's here. */
 export async function readOwnedBotSettings(query: Query, owner: BotOwnerScope, botId: string): Promise<OwnedBotSettings | null> {
   if (!z.uuid().safeParse(botId).success) return null
-  const { rows: [row] } = await query.query<OwnedBotSettings>(`SELECT b.alias,b."environmentId",b."crewTarget",b."defaultAgent",b."defaultProfileId",b."runsOn",c.effort
+  const { rows: [row] } = await query.query<OwnedBotSettings>(`SELECT b.alias,b."environmentId",b."crewTarget",b."defaultAgent",b."defaultProfileId",b."runsOn",b.instructions,c.effort
     FROM bots b LEFT JOIN bot_model_choices c ON c."ownerId"=b."ownerId" AND c."workspaceId"=b."workspaceId" AND c."botKey"=b.id::text
     WHERE b.id=$1 AND b."ownerId"=$2 AND b."workspaceId"=$3`, [botId, owner.ownerId, owner.workspaceId])
   return row ?? null

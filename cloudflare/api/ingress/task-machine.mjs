@@ -34,7 +34,7 @@ function machineFailure(error) {
     case 'Task machine already has a writer':
     case 'Task machine interrupted':
     case 'Task machine is not running': return refused('machine_unavailable', 409)
-    case 'Product task machine capacity exhausted': return refused('capacity', 429)
+    case 'Workspace task machine capacity exhausted': return refused('capacity', 429)
     default: return refused('machine_unavailable', 503)
   }
 }

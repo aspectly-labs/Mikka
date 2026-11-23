@@ -1,6 +1,5 @@
 import type { Cache, Key, useSWRConfig } from 'swr'
 import { prefetchScopedRead } from '@/lib/swr/prefetch'
-import { botPermissionsKeys } from '@/lib/swr/keys'
 
 const loadTaskDetail = () => import('./task-detail')
 export const loadAutomations = () => import('@/components/automations/automations-section').then(module => module.AutomationsSection)
@@ -14,22 +13,7 @@ type ScopedMutate = ReturnType<typeof useSWRConfig>['mutate']
 /** Where a page's speculative reads go: the open workspace's own cache, and the workspace they are scoped to. */
 export type WorkspacePageReads = { cache: Cache; mutate: ScopedMutate; workspaceId: string }
 
-/**
- * The reads a page's first paint waits on, with the same keys and the same reads the page uses.
- * Only reads that can start without something the page itself has to read first belong here: 设置 ›
- * 应用与运行权限 reads the workspace's Bots, then that Bot's workspace policy, then the run policy,
- * and only the first of those three can be asked for before the section is mounted.
- *
- * The actions are imported here rather than at the top of the module: a preload is speculative and may
- * never run, and a top-level server-action import makes every host of this module carry it — including
- * the tests that mount the workspace with their own action mocks.
- */
-const reads: Partial<Record<WorkspacePage, (scope: WorkspacePageReads) => [Key, () => Promise<unknown>][]>> = {
-  settings: ({ workspaceId }) => [
-    [botPermissionsKeys.bots(workspaceId), () => import('@/app/actions/bots').then(module => module.listBotsForWorkspace(workspaceId))],
-    [botPermissionsKeys.agents(), () => import('@/app/actions/agents').then(module => module.listAgents())],
-  ],
-}
+const reads: Partial<Record<WorkspacePage, (scope: WorkspacePageReads) => [Key, () => Promise<unknown>][]>> = {}
 
 /** Start the same module import used by the destination without mounting it, and its first reads beside it. */
 export function preloadWorkspacePage(page: WorkspacePage, scope?: WorkspacePageReads) {

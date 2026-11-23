@@ -5,6 +5,7 @@ import { getEdition } from './edition'
 import { isLoopbackHost } from './loopback'
 import { mailConfigured } from './mail-delivery'
 import { webConnectionEnabled, webConnectionURL } from './web-connection/policy'
+import { desktopReleasesUrl } from './platform/client-config'
 
 type Environment = Record<string, string | undefined>
 type Query = (sql: string) => Promise<{ rows: Array<{ hasUsers?: unknown }> }>
@@ -57,13 +58,13 @@ export async function readServerInfo(options: { env?: Environment; query?: Query
   return {
     kind: 'mikka-server', schemaVersion: 1, edition: 'community',
     name: env.MIKKA_SERVER_NAME?.trim().slice(0, 120) || 'Mikka', address,
-    version: APP_BUILD || env.MIKKA_BUILD_REVISION || env.VERCEL_GIT_COMMIT_SHA || 'development',
+    version: APP_BUILD || env.MIKKA_BUILD_REVISION || 'development',
     status: { configuration: origin ? 'ready' : 'unavailable', database: databaseReady ? 'ready' : 'unavailable', authentication: authReady ? 'ready' : 'unavailable' },
     // Retain the v1 discovery field for installed clients.
     communityUI: { enabled: false, frozen: true },
     clients: {
       web: { url: webConnectionURL(env), enabled: webConnectionEnabled(env), requiresHttps: true, serverAddressSupported: Boolean(origin?.startsWith('https://')) },
-      desktop: { url: 'https://github.com/alexj11324/Mikka/releases/latest' },
+      desktop: { url: desktopReleasesUrl() },
       // No verified App Store/TestFlight link is present in this release's
       // official metadata. Do not invent a download destination.
       ios: { url: null, availability: 'link_unavailable', serverReady: mobileReady },

@@ -29,6 +29,40 @@ test('non-documentation plans keep the suite that actually exercises the docs cl
   assert.deepEqual(owners, ['ci-core-7'])
 })
 
+for (const [file, primary] of [
+  ['lib/agent-kit/registry-compat.test.ts', 'ci-core-29'],
+  ['lib/agent-kit/tool-defaults-compat.test.ts', 'ci-core-29'],
+  ['lib/coordinator/issue-tools.test.ts', 'ci-core-43'],
+  ['components/workspace/issue-workspace-settings.test.tsx', 'ci-core-57'],
+  ['lib/search/search.test.ts', 'ci-integration-9'],
+]) test(`same-environment shared regression has one selected owner: ${file}`, async () => {
+  const result = await pick(file)
+  const owners = result.units.filter(unit =>
+    plan.graph.dependencies[unit]?.some(edge => edge.target === sourceId(file)))
+  assert.deepEqual(owners, [primary])
+})
+
+test('personal mailbox shell legs keep their last test files in the selection graph', async () => {
+  for (const file of ['lib/personal-mailbox-retry-context.test.ts', 'lib/personal-mailbox-runtime-off.test.ts']) {
+    assert(plan.graph.dependencies['ci-core-18'].some(edge => edge.target === sourceId(file)), file)
+    assert((await pick(file)).units.includes('ci-core-18'), file)
+  }
+})
+
+test('approved-write policy, provider and UI regressions have one selected primary owner', async () => {
+  for (const [input, proof] of [
+    ['lib/operations/write-feature.ts', 'lib/operations/write-feature.test.ts'],
+    ['lib/operations/policy-authorization.ts', 'lib/operations/policy-authorization.test.ts'],
+    ['scripts/approved-write-actions.live.test.tsx', 'scripts/approved-write-actions.live.test.tsx'],
+  ]) {
+    const result = await pick(input)
+    const owners = result.units.filter(unit =>
+      plan.graph.dependencies[unit]?.some(edge => edge.target === sourceId(proof)))
+    assert.deepEqual(owners, ['ci-core-30'], input)
+    assert.equal(result.source, true, 'source and security checks remain required')
+  }
+})
+
 test('web component edits select their consumers without server DB or Docker', async () => {
   const result = await pick('components/settings/settings-view.tsx')
   assert.equal(result.full, false)
@@ -50,6 +84,57 @@ test('Factory store selects marker-backed suites and real downstream imports', a
   for (const suite of ['test:factory','test:factory-routing-db']) assert(result.db_suites.includes(suite), suite)
   assert(result.affected.includes(dbId('test:factory')))
   assert(result.db_suites.length < plan.db.scripts.length)
+})
+test('enrolled billing fixture edits retain their real DB consumers without unrelated lanes', async () => {
+  // The seven-file local-fixtures candidate previously selected all 87 DB
+  // suites solely because the four root tests had no path-area classification.
+  const result = await select(plan, [
+    'lib/abuse/card.db.test.ts', 'lib/abuse/card.test.ts', 'lib/abuse/model-postpay.db.test.ts',
+    'tests/billing-history.db.test.ts', 'tests/credit-shares.db.test.ts',
+    'tests/model-order.db.test.ts', 'tests/personal-workspace.db.test.ts',
+  ].map(file => change(file)))
+  assert.equal(result.full, false)
+  // Keep both explicit package owners and the existing source-contract callers.
+  assert.deepEqual(result.db_suites, [
+    'test:abuse-db', 'test:approved-writes-db', 'test:bot-threads-db',
+    'test:coordinator-task-binding-db', 'test:migration-steps-db',
+    'test:onboarding-db', 'test:scope-detachment-db', 'test:workspace-admin-db',
+  ])
+  assert(result.source)
+  for (const flag of ['daemon', 'desktop', 'mobile', 'analytics']) assert.equal(result[flag], false, flag)
+  for (const script of ['test:release-security', 'test:credentials', 'test:test-accounts', 'test:abuse']) {
+    assert(result.unit_tasks.some(task => task.command.includes(`pnpm ${script}`)), script)
+  }
+})
+test('a DB-looking path needs both enrollment and an existing direct suite edge', async () => {
+  const file = 'tests/billing-history.db.test.ts'
+  const withoutEnrollment = { ...plan, db: { ...plan.db, files: plan.db.files.filter(value => value !== file) } }
+  const dependencies = Object.fromEntries(Object.entries(plan.graph.dependencies).map(([id, edges]) => [
+    id, id.startsWith('db-') ? edges.filter(edge => edge.target !== sourceId(file)) : edges,
+  ]))
+  const withoutSuiteEdge = { ...plan, graph: { ...plan.graph, dependencies } }
+  for (const incomplete of [withoutEnrollment, withoutSuiteEdge]) {
+    const result = await select(incomplete, [change(file)])
+    assert(result.full)
+    assert(result.reasons.includes('unmapped file'))
+    assert.deepEqual(result.db_suites, plan.db.scripts)
+  }
+  assert((await pick('tests/not-enrolled.db.test.ts')).full)
+})
+test('enrolled root DB tests still respect full-validation reasons', async () => {
+  const file = 'tests/billing-history.db.test.ts'
+  for (const extra of [{ status: 'D' }, { status: 'R100' }, { mode: '100755' }, { mode: '120000' }, { oldMode: '100755' }]) {
+    assert((await pick(file, extra)).full)
+  }
+  const unresolved = await select({ ...plan, unresolved: [...plan.unresolved, { file, spec: '<computed import>' }] }, [change(file)])
+  assert(unresolved.full)
+  assert(unresolved.reasons.includes('changed source has unresolved/generated imports'))
+  const forced = await select(plan, [change(file)], { force: true })
+  assert(forced.full)
+  assert.deepEqual(forced.db_suites, plan.db.scripts)
+  const mixedUnknown = await select(plan, [change(file), change('unmapped.bin')])
+  assert(mixedUnknown.full)
+  assert(mixedUnknown.reasons.includes('unmapped file'))
 })
 test('Eve model changes select native unit tests and schedule authority selects its database gate', async () => {
   const unit = await pick('lib/eve/streaming-model.ts')
@@ -127,7 +212,6 @@ test('every heavy consumer uses the same trusted triage and required names remai
 
 test('the actual required gate scripts reject drafts, unselected failures and selected skips', () => {
   const workflow = yaml.load(readFileSync('.github/workflows/ui-policy.yml','utf8'))
-  const uiChecks = ['CORE', 'INTEGRATION', 'SOURCE', 'DAEMON', 'ANALYTICS', 'GOVERNANCE']
   for (const job of ['ui-policy','browser-tests']) {
     const steps = workflow.jobs[job].steps
     const draftGate = steps.find(step => step.name === 'Draft PR is not a validated merge candidate')
@@ -136,6 +220,9 @@ test('the actual required gate scripts reject drafts, unselected failures and se
       if (draft) assert.equal(spawnSync('bash', ['-e', '-c', draftGate.run], { env: { PATH: process.env.PATH, GITHUB_STEP_SUMMARY: '/dev/null' } }).status, 1)
     }
     const script = steps.find(step => step.name?.startsWith('Require every selected ')).run
+    const declared = script.match(/for name in ([A-Z ]+); do/)
+    const names = declared ? declared[1].split(/\s+/) : []
+    if (job === 'ui-policy') assert.ok(names.length, 'the gate names the results it requires')
     const run = overrides => {
       const env = {
         PATH: process.env.PATH,
@@ -144,7 +231,7 @@ test('the actual required gate scripts reject drafts, unselected failures and se
         EXPECT_DB: 'true',
         DB_RESULT: 'success',
       }
-      for (const key of uiChecks) {
+      for (const key of names) {
         env['EXPECT_' + key] = 'true'
         env[key] = 'success'
       }
@@ -154,7 +241,7 @@ test('the actual required gate scripts reject drafts, unselected failures and se
     assert(run({}))
     assert(!run({CHANGES_RESULT:'failure'}))
     for(const result of ['skipped','failure','cancelled','timed_out','']) {
-      if(job==='ui-policy') for(const key of uiChecks) assert(!run({[key]:result}))
+      if(job==='ui-policy') for(const key of names) assert(!run({[key]:result}))
       else assert(!run({DB_RESULT:result}))
     }
     if (job === 'ui-policy') {
@@ -164,14 +251,38 @@ test('the actual required gate scripts reject drafts, unselected failures and se
         for (const result of ['success', 'skipped', 'failure', 'cancelled', 'timed_out', ''])
           assert(run({ ['EXPECT_' + retired]: 'true', [retired]: result }), `a retired ${retired} result does not affect the automatic gate`)
       }
-      for (const key of uiChecks) {
+      for (const key of names) {
         assert(run({['EXPECT_' + key]: 'false', [key]: 'skipped'}), key)
         for (const result of ['success', 'failure', 'cancelled']) {
           assert(!run({['EXPECT_' + key]: 'false', [key]: result}), key)
         }
       }
     }
-    if(job==='browser-tests') { assert(run({EXPECT_DB:'false',DB_RESULT:'skipped'}));assert(!run({EXPECT_DB:'false',DB_RESULT:'failure'})) }
+    if(job==='browser-tests') {
+      assert(run({EXPECT_DB:'false',DB_RESULT:'skipped'}))
+      assert(!run({EXPECT_DB:'false',DB_RESULT:'failure'}))
+      const report = overrides => {
+        const root = mkdtempSync(join(tmpdir(), 'mikka-db-deferral-'))
+        try {
+          const summary = join(root, 'summary.md')
+          const output = execFileSync('bash', ['-e', '-c', script], { encoding: 'utf8', env: {
+            PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary, CHANGES_RESULT: 'success',
+            EXPECT_DB: 'false', DB_RESULT: 'skipped', DB_SELECTED: 'true', ...overrides,
+          } })
+          return { output, summary: readFileSync(summary, 'utf8') }
+        } finally { rmSync(root, { recursive: true, force: true }) }
+      }
+      const bare = report({})
+      assert.equal(bare.output, '::notice::Database checks deferred to merge queue\n')
+      assert.equal(bare.summary, 'Database checks deferred to merge queue\n')
+      const detailed = report({ DB_SUITES: '["test:example-db"]', DB_MATRIX: '{"shard":["1/2","2/2"]}' })
+      const message = 'Database checks deferred to merge queue; suites: ["test:example-db"]; shard count: 2\n'
+      assert.equal(detailed.output, `::notice::${message}`)
+      assert.equal(detailed.summary, message)
+      const selected = report({ EXPECT_DB: 'true', DB_RESULT: 'success' })
+      assert.equal(selected.summary, 'Database gate: success; complete inventory validated in Changed files.\n')
+      assert.equal(selected.output, '')
+    }
   }
 })
 

@@ -52,7 +52,7 @@ export function createFactoryMonitorIssueLinks(pool:Pool,authorize:FactoryAuthor
       const before=await transaction(userId,id,async(_tx,state)=>state)
       let repository:ReturnType<typeof githubRepository>
       let remoteKey:string
-      try{remoteKey=before.repository.startsWith('v2/')?before.repository:normalizeRepository(before.repository).key;repository=githubRepository(remoteKey)}catch{throw new FactoryError('factoryMonitorRepositoryUnavailable')}
+      try{remoteKey=before.repository.startsWith('v2/')?before.repository:normalizeRepository(before.repository).key;repository=githubRepository(remoteKey)}catch(error){throw Object.assign(new FactoryError('factoryMonitorRepositoryUnavailable'),{cause:error})}
       const remote=new URL(parsed.data.url)
       if(remote.pathname.split('/').slice(1,3).join('/').toLowerCase()!==`${repository.owner}/${repository.repo}`.toLowerCase())throw new FactoryError('factoryMonitorRepositoryMismatch')
       // Provider IO is outside SQL locks. The final transaction rechecks current

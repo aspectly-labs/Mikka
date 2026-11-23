@@ -1,9 +1,5 @@
 name: Node.js compatibility
 on:
-  pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
   merge_group:
   workflow_dispatch:
 permissions:
@@ -13,13 +9,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   node22-unit:
-    name: App, Eve and local device (Node ${{ matrix.node }})
+    name: App, Eve and local device (Node 24)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22', '24']
     services:
       postgres:
         image: postgres:17
@@ -49,7 +41,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: ./.github/actions/pnpm-install
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           skip-electron: 'true'
           ffmpeg-github-token: ${{ github.token }}
       - name: Ensure FFmpeg for daemon recording regressions

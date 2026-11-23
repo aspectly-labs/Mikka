@@ -59,7 +59,7 @@ const keyAad = (id: string, ownerId: string) => ['model_api_key', id.toLowerCase
  */
 export async function checkBaseUrl(raw: string, env: Env = process.env, resolve: (host: string) => Promise<string[]> = defaultResolve): Promise<string> {
   let url: URL
-  try { url = new URL(raw) } catch { throw new WorkspaceError('apiKeyBaseUrlInvalid') }
+  try { url = new URL(raw) } catch (error) { throw new WorkspaceError('apiKeyBaseUrlInvalid', { cause: error }) }
   if (url.username || url.password || url.search || url.hash) throw new WorkspaceError('apiKeyBaseUrlInvalid')
   const host = url.hostname.replace(/^\[|\]$/g, '')
   const loopbackTest = env.MIKKA_MODEL_KEY_LOOPBACK === '1' && !env.VERCEL && !env.VERCEL_ENV
@@ -141,7 +141,7 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   const id = existing?.id ?? randomUUID()
   let sealed: ReturnType<typeof sealSecret>
   try { sealed = sealSecret(parsed.apiKey, keyAad(id, ownerId), env) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable')
+    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     throw error
   }
   const result = await verifyApiKey(target, parsed.apiKey, options.fetch)
@@ -257,9 +257,9 @@ async function openKey(query: Query, keyId: string, env: Env) {
   const { rows: [row] } = await query.query<Row & { ciphertext: string; iv: string; keyVersion: number }>(`SELECT ${COLUMNS},ciphertext,iv,"keyVersion" FROM model_api_keys WHERE id=$1`, [keyId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
   try { return { row, apiKey: openSecret(row, keyAad(row.id, row.ownerId), env) } } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable')
+    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     console.error(`[model-api-keys] open_failed id=${row.id}`)
-    throw new WorkspaceError('apiKeyNotFound')
+    throw new WorkspaceError('apiKeyNotFound', { cause: error })
   }
 }
 
@@ -341,7 +341,7 @@ export async function validateRunApiKey(query: Query, runId: string, keyId: stri
   if (run.workspaceId) await assertOrganizationModelProvider(run.workspaceId, 'api-key')
   if (run.agentDefinition && run.agentDefinition.apiKey?.keyId !== keyId) throw new WorkspaceError('apiKeyNotFound')
   try { await revalidateExecutionIdentity(query, run) }
-  catch (error) { if (error instanceof ExecutionIdentityError) throw new WorkspaceError('apiKeyNotFound'); throw error }
+  catch (error) { if (error instanceof ExecutionIdentityError) throw new WorkspaceError('apiKeyNotFound', { cause: error }); throw error }
   const usable = run.workspaceId
     ? (await usableApiKeys(query, run.userId, run.workspaceId)).some(key => key.id === keyId)
     : Boolean((await query.query('SELECT 1 FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [keyId, run.userId])).rowCount)

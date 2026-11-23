@@ -531,6 +531,7 @@ export async function chatFileContent(
 
 export async function chatFileDownloadUrl(file: FileRow, download = true): Promise<string | null> {
   if (!file.storageKey) return null
+  if (artifactStorage() !== 'r2') return null
   const inline = !download && /^(image\/(png|jpeg|webp|gif)|application\/pdf|audio\/)/.test(file.mediaType)
   return presignArtifactGet(
     file.storageKey,

@@ -6,6 +6,7 @@ import { Pool } from 'pg'
 import { bindFixtureWorkspaceDatabase, createFixtureWorkspaceTables } from '../../tests/helpers/workspace-database'
 import { seedFixtureWorkspace } from '../../tests/helpers/task-workspace'
 import { isE2eTarget } from '../../tests/helpers/e2e-target.mjs'
+import { applySettingsMigration } from '../../tests/support/settings-migration'
 import { SubagentStore } from './subagents'
 import { wakeTokens, wakeTransport } from '@/lib/workflow-wake'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -45,20 +46,20 @@ test('real DB: additive migration, subagent owner isolation and separate thread 
     await seedFixtureWorkspace(pool, stranger.userId, 'team', stranger.workspaceId)
     await pool.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,'bob','Bob','bob@example.invalid','member','active')`, [alice.workspaceId])
     await pool.query(`CREATE TABLE "user"(id text PRIMARY KEY);INSERT INTO "user" VALUES('alice'),('bob');
-      CREATE TABLE agent_runs(id uuid PRIMARY KEY,"userId" text,"agentId" uuid,"deviceId" uuid,"botId" uuid,"agentDefinition" jsonb,"workspaceId" uuid,status text,report jsonb,"stopRequestedAt" timestamptz,"finishedAt" timestamptz,"startedAt" timestamptz,"leaseExpiresAt" timestamptz,"updatedAt" timestamptz);
+      CREATE TABLE agent_runs(id uuid PRIMARY KEY,"userId" text,"agentId" uuid,"deviceId" uuid,"botId" uuid,"agentDefinition" jsonb,"workspaceId" uuid,status text,"pauseReason" text,report jsonb,"stopRequestedAt" timestamptz,"finishedAt" timestamptz,"startedAt" timestamptz,"leaseExpiresAt" timestamptz,"updatedAt" timestamptz);
       CREATE TABLE agents(id uuid PRIMARY KEY,"userId" text NOT NULL,harness text NOT NULL);
-      CREATE TABLE devices(id uuid PRIMARY KEY,"ownerId" text,kind text,enabled boolean DEFAULT true,"removedAt" timestamptz);
+      CREATE TABLE devices(id uuid PRIMARY KEY,"ownerId" text,kind text,enabled boolean DEFAULT true,"removedAt" timestamptz,"maxConcurrentRuns" integer NOT NULL DEFAULT 3);
       CREATE TABLE device_tokens("boundDeviceId" uuid,"revokedAt" timestamptz);
       CREATE TABLE device_repos(id uuid PRIMARY KEY);
       CREATE TABLE suggestions(id uuid PRIMARY KEY,"botId" uuid);
       CREATE TABLE workspace_computer_policies("workspaceId" uuid PRIMARY KEY,permission text,version integer);
-      CREATE TABLE workspace_subscription_shares("ownerId" text,"workspaceId" uuid,"allowOthers" boolean NOT NULL DEFAULT false,PRIMARY KEY("ownerId","workspaceId"));
       CREATE TABLE workspace_personal_policies("workspaceId" uuid PRIMARY KEY,subscriptions boolean NOT NULL DEFAULT true);
       CREATE TABLE byos_connections(id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,provider text,state text,epoch bigint, paused boolean NOT NULL DEFAULT false);
       CREATE TABLE byos_bindings(id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,route text,"modelId" text,"createdAt" timestamptz DEFAULT now());
       CREATE TABLE byos_native_runs("runId" uuid PRIMARY KEY,"bindingId" uuid);
     `)
     for (const name of ['20261027164501_cloud_computers.sql', '20261027164502_computer_run_bindings.sql']) await pool.query(await readFile(new URL(`../../drizzle/${name}`, import.meta.url), 'utf8'))
+    await applySettingsMigration(pool)
     await pool.query('ALTER TABLE cloud_machines ADD COLUMN "deviceId" uuid')
     const migration = await readFile(new URL('../../drizzle/20261029011635_subagents_thread_machines.sql', import.meta.url), 'utf8')
     await pool.query(migration); await pool.query(migration)

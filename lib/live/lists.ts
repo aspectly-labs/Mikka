@@ -159,6 +159,10 @@ export const archivePreferenceChanged = (executor: object, ownerId: string) => c
     WHERE m."userId"=$1 AND m.status='active' AND (w.kind='team' OR w."userId"=$1)`, [ownerId])
   return rows.map(scope => target(scope, ['thread_list', 'group_list']))
 })
+/** Workspace defaults affect its members; a scoped personal pin preference affects only that reader. */
+export const threadDirectorySettingsChanged = (executor: object, workspaceId: string, ownerId?: string) =>
+  changed(executor, `directory-settings:${workspaceId}:${ownerId ?? 'workspace'}`, async (_db, workspace) =>
+    (await workspaceScopes(workspace, workspaceId, ownerId ? [ownerId] : null)).map(scope => target(scope, ['thread_list', 'group_list'])))
 export const ownerListChanged = (executor: object, ownerId: string, kinds: readonly OwnerListKind[]) => changed(executor, `owner:${ownerId}:${[...kinds].sort().join(',')}`, (_db, workspace) => ownerListTargets(workspace, ownerId, kinds))
 /** 自动化: a workspace's schedules, their next run and their history. */
 export const scheduleListChanged = (executor: object, workspaceId: string) => workspaceListChanged(executor, workspaceId, ['schedule_list'])
@@ -200,6 +204,14 @@ export async function ownerSettingsTargets(_database: Database, workspaceDatabas
 /** Best effort: an action that already succeeded never fails on its invalidation (the page's own response updates it). */
 export const ownerSettingsChanged = (executor: object, ownerId: string) => changed(executor, `owner-settings:${ownerId}`, (database, workspace) => ownerSettingsTargets(database, workspace, ownerId))
   .catch(() => console.warn('[live] settings invalidation unavailable'))
+
+/** Account-level keyboard settings refresh only their owner in every active
+ * workspace. The existing key contains a workspace ID, never bindings. */
+export async function ownerKeyboardShortcutTargets(database: Database, workspaceDatabase: Database, ownerId: string): Promise<Target[]> {
+  return (await ownerSettingsTargets(database, workspaceDatabase, ownerId)).map(({ scope }) => target(scope, ['workspace_settings']))
+}
+export const ownerKeyboardShortcutsChanged = (executor: object, ownerId: string) => changed(executor, `owner-shortcuts:${ownerId}`, (database, workspace) => ownerKeyboardShortcutTargets(database, workspace, ownerId))
+  .catch(() => console.warn('[live] keyboard settings invalidation unavailable'))
 
 /** The account's workspace directory and personal issue identifiers are read
  * across selected workspaces. Their transport still uses the actual owned

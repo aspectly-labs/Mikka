@@ -104,6 +104,22 @@ export async function threadDeliveryView(pool: Pool, ownerId: string, rootRunId:
   return { modes, queued: rows }
 }
 
+/** #2938 (3): edit a still-queued message's text; 'tooLate' once delivery claimed it. */
+export async function editQueuedThreadReply(pool: Pool, userId: string, runId: string, messageId: string, text: string) {
+  return withFactoryBackgroundWorkspace(pool, userId, { kind: 'run', id: runId }, async () => {
+    const chain = await readRunChain(pool, userId, runId)
+    if (!chain) throw new ActionFailureError('runNotFound')
+    const { rows: [row] } = await pool.query<Pick<QueueRow,'status'>>(`UPDATE thread_queued_messages q SET text=$5
+      FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=q."workspaceId"
+      AND q."rootRunId"=$3 AND q."userId"=$2 AND q.id=$4 AND q.status='queued'
+      RETURNING q.status`, [runId, userId, chain.rootRunId, messageId, text])
+    if (row) { await runChanged(pool, runId); return 'edited' as const }
+    const prior = await pool.query('SELECT 1 FROM thread_queued_messages WHERE id=$1 AND "userId"=$2 AND "rootRunId"=$3', [messageId, userId, chain.rootRunId])
+    if (!prior.rowCount) throw new ActionFailureError('runNotFound')
+    return 'tooLate' as const
+  })
+}
+
 export async function cancelQueuedThreadReply(pool: Pool, userId: string, runId: string, messageId: string) {
   return withFactoryBackgroundWorkspace(pool, userId, { kind: 'run', id: runId }, async () => {
     const chain = await readRunChain(pool, userId, runId)

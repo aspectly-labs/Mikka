@@ -9,7 +9,7 @@ import { availableParallelism } from 'node:os'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { posix, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isE2eTarget, E2E_DB_RULE } from '../tests/helpers/e2e-target.mjs'
 
 export const REQUIRED_SUITES = [
@@ -25,9 +25,14 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/project-resources/run-lease.ts', file: 'tests/project-resource-lease.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'drizzle/20261111030006_project_history_retention.sql', file: 'tests/domain-lifecycle.db.test.ts', script: 'test:domain-lifecycle-db' },
   { marker: 'lib/project-resources/store.ts', file: 'tests/project-resources.db.test.ts', script: 'test:project-resources-db' },
+  { marker: 'lib/bot-instructions-store.ts', file: 'tests/instructions-extension.db.test.ts', script: 'test:project-resources-db' },
+  { marker: 'lib/settings/instruction-preview.ts', file: 'tests/instructions-extension.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'lib/task-identity-store.ts', file: 'tests/task-identity.db.test.ts', script: 'test:task-identity-db' },
   { marker: 'scripts/project-v2-backfill.mjs', file: 'tests/project-v2.db.test.ts', script: 'test:project-v2-db' },
   { marker: 'drizzle/20261111030003_team_lifecycle.sql', file: 'tests/team-lifecycle.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/settings/device-policy.ts', file: 'tests/settings-ws-g.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/settings/ops-metrics.ts', file: 'tests/settings-ws-g.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/billing/settings.ts', file: 'tests/settings-ws-g.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/inbox/store.ts', file: 'lib/inbox/store.db.test.ts', script: 'test:inbox-db' },
   { marker: 'app/api/factory/tasks/[taskId]/activity/route.ts', file: 'tests/factory-activity-http.db.test.ts', script: 'test:factory-activity-http-db' },
   { marker: 'lib/factory/activity.ts', file: 'lib/factory/activity.db.test.ts', script: 'test:factory-activity-db' },
@@ -40,6 +45,8 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/enterprise/audit-outbox.ts', file: 'lib/enterprise/audit-outbox.db.test.ts', script: 'test:enterprise-db' },
   { marker: 'lib/enterprise/execution-authority.ts', file: 'lib/enterprise/execution-authority.db.test.ts', script: 'test:enterprise-db' },
   { marker: 'lib/enterprise/live-authority.ts', file: 'lib/enterprise/live-authority.db.test.ts', script: 'test:enterprise-db' },
+  { marker: 'lib/enterprise/two-factor.ts', file: 'tests/organization-security.db.test.ts', script: 'test:enterprise-db' },
+  { marker: 'lib/account/passkeys.ts', file: 'tests/passkey-security.db.test.ts', script: 'test:enterprise-db' },
   { marker: 'lib/enterprise/sso-plugin.ts', file: 'lib/enterprise/http.db.test.ts', script: 'test:enterprise-db' },
   { marker: 'lib/governance/organizations.ts', file: 'lib/enterprise/governance.db.test.ts', script: 'test:enterprise-db' },
   { marker: 'lib/mobile-push.ts', file: 'tests/mobile-push-workspace.db.test.ts', script: 'test:visibility-db' },
@@ -141,6 +148,8 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/secrets/store.ts', file: 'tests/workspace-secrets.db.test.ts', script: 'test:secrets-db' },
   { marker: 'lib/session-mailbox.ts', file: 'tests/session-mailbox.db.test.ts', script: 'test:session-mailbox-db' },
   { marker: 'lib/suggestions/time-zone.ts', file: 'tests/settings-preferences.db.test.ts', script: 'test:settings-prefs-db' },
+  { marker: 'lib/code-review/repositories.ts', file: 'lib/code-review/settings.db.test.ts', script: 'test:settings-prefs-db' },
+  { marker: 'lib/settings/notification-preferences.ts', file: 'tests/settings-memory-notify.db.test.ts', script: 'test:settings-prefs-db' },
   { marker: 'lib/tokens/store.ts', file: 'tests/personal-access-tokens.db.test.ts', script: 'test:pat-db' },
   { marker: 'lib/api-auth.ts', file: 'tests/personal-access-token-api.db.test.ts', script: 'test:pat-api-db' },
   { marker: 'lib/coordinator/bot-instructions.ts', file: 'lib/coordinator/bot-chats.db.test.ts', script: 'test:bot-chats-db' },
@@ -159,6 +168,8 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/app-policy/store.ts', file: 'tests/app-policy.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/model-api-keys.ts', file: 'tests/model-api-keys.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/usage/read.ts', file: 'tests/usage.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/thread-cost.ts', file: 'tests/thread-cost.db.test.ts', script: 'test:workspace-admin-db' },
+  { marker: 'lib/turn-usage.ts', file: 'tests/turn-usage.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/run-bot-name.ts', file: 'tests/run-agent-names.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/run-outcome-judge.ts', file: 'tests/run-outcomes.db.test.ts', script: 'test:workspace-admin-db' },
   { marker: 'lib/billing/service.ts', file: 'tests/billing.db.test.ts', script: 'test:workspace-admin-db' },
@@ -504,6 +515,18 @@ export function runScript(command, args, options) {
   })
 }
 
+const blockingStdio = fileURLToPath(new URL('./ci/blocking-stdio.mjs', import.meta.url))
+
+// Force-exit can return before libc/libuv flushes the TAP summary. A single
+// node --test command gets a blocking stdio handle so the summary is in the
+// pipe before exit. Shell chains stay on pnpm so each command keeps its flags.
+export function launch(script, command) {
+  if (typeof command === 'string' && command.startsWith('node ') && command.includes('--test-force-exit') && !/['"\\&|;]/.test(command)) {
+    return [process.execPath, ['--import', blockingStdio, ...command.slice(5).trim().split(/\s+/)]]
+  }
+  return ['pnpm', ['-s', script]]
+}
+
 export function concurrency(value, fallback = DEFAULT_CONCURRENCY) {
   if (value === undefined || value === '') return fallback
   if (!/^[1-9]\d?$/.test(value)) throw new Error('DB_TEST_CONCURRENCY must be an integer from 1 to 99')
@@ -550,7 +573,8 @@ export async function main({ root = '.', env = process.env, run = runScript, clo
     const timings = []
     const execute = async ({ script, database }) => {
       const started = now()
-      const result = await run('pnpm', ['-s', script], { cwd: root, encoding: 'utf8', env: suiteEnv(env, database), maxBuffer: 64 << 20, script })
+      const [bin, args] = launch(script, scripts[script])
+      const result = await run(bin, args, { cwd: root, encoding: 'utf8', env: suiteEnv(env, database), maxBuffer: 64 << 20, script })
       const seconds = Math.round((now() - started) / 100) / 10
       timings.push({ script, seconds })
       console.log(`::group::pnpm ${script} (${database ?? 'template database'}, ${seconds}s)`)
