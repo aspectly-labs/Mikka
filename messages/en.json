@@ -3437,6 +3437,36 @@
       "unbilled": "Unbilled",
       "unknownSize": "Unknown size"
     },
+    "actionFailed": "The action failed.",
+    "composerMenu": {
+      "title": "Add to this thread",
+      "newSideThread": "New side thread",
+      "envVars": "Environment variables",
+      "references": "Reference",
+      "refTask": "Mention a task",
+      "refThread": "Mention a thread",
+      "refPr": "Mention a pull request",
+      "refBot": "Mention a bot"
+    },
+    "commands": {
+      "title": "Commands",
+      "fork": "Fork this thread with its full context",
+      "forkSummary": "Fork this thread with a summary",
+      "new": "Start a side thread",
+      "compact": "Compact this thread’s context",
+      "btw": "Leave a note without interrupting"
+    },
+    "envVars": {
+      "title": "Environment variables",
+      "close": "Done",
+      "empty": "No variables on this thread yet.",
+      "name": "Name",
+      "value": "Value",
+      "add": "Add",
+      "remove": "Remove",
+      "failed": "Couldn’t update the variables.",
+      "replaces": "This name already exists — adding replaces its saved value."
+    },
     "threadMenu": {
       "copyLink": "Copy link",
       "copied": "Copied",
@@ -10403,7 +10433,8 @@
     "error": "Couldn’t load references",
     "searching": "Searching…",
     "thread": "Thread",
-    "sourceUnavailable": "Source file and folder references are unavailable for this thread."
+    "sourceUnavailable": "Source file and folder references are unavailable for this thread.",
+    "bot": "Bot"
   },
   "HostedPlugins": {
     "moreTwo": "{first} and {second}",

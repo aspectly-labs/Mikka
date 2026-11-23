@@ -13,8 +13,8 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const URL_CHARS = '[^\\s<>()\\[\\]"\'`\\u0080-\\uffff]+'
 const citationPattern = (kinds: string) => new RegExp(`\\[([^\\]\\n]{1,200})\\]\\((https?://${URL_CHARS})\\)|(https?://${URL_CHARS})|\\[\\[(${kinds}):(${UUID})\\]\\]|\\b(${UUID})\\b`, 'gi')
 const CITATION = citationPattern('issue|run')
-const WITH_NAMED_CHAT = citationPattern('issue|run|chat')
-type NamedChatPart = { type: 'chat'; id: string }
+const WITH_NAMED_CHAT = citationPattern('issue|run|chat|bot')
+type NamedChatPart = { type: 'chat' | 'bot'; id: string }
 
 /** Punctuation that ends a sentence rather than a bare URL. */
 const TRAILING = /[.,;:!?。，；：！？、）]+$/
@@ -32,7 +32,7 @@ export function splitCitations(text: string, namedChats = false): (CitationPart 
     else if (match[3]) {
       raw = match[3].replace(TRAILING, '')
       parts.push({ type: 'link', url: raw, label: null, raw })
-    } else if (match[4]?.toLowerCase() === 'chat') parts.push({ type: 'chat', id: match[5].toLowerCase() })
+    } else if (match[4]?.toLowerCase() === 'chat' || match[4]?.toLowerCase() === 'bot') parts.push({ type: match[4].toLowerCase() as 'chat' | 'bot', id: match[5].toLowerCase() })
     else parts.push({ type: 'citation', kind: match[4] ? match[4].toLowerCase() as CitationKind : null, id: (match[5] ?? match[6]).toLowerCase(), raw })
     last = match.index + raw.length
   }

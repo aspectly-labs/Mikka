@@ -1,7 +1,8 @@
 import 'server-only'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import { sql } from 'drizzle-orm'
 import { db, pool } from '@/lib/db'
-import { issues } from '@/lib/db/schema'
+import { bots, issues } from '@/lib/db/schema'
 import { parseSearchParams, searchIssues } from '@/lib/issue-search'
 import { issueVisibility, type IssueReader } from '@/lib/issue-visibility'
 import { pullRequestSchema } from '@/lib/issue-metadata'
@@ -27,16 +28,24 @@ async function pullRequests(reader: IssueReader, workspaceId: string, query: str
 export async function searchThreadReferences(reader: IssueReader, workspaceId: string, query: string, kind?: ThreadReference['kind']) {
   const userId = typeof reader === 'string' ? reader : reader.id
   return withTaskWorkspace(reader, workspaceId, async () => {
-    const [tasks, threads, prs] = await Promise.all([
+    // Match names in JS like the other kinds: PostgreSQL's lower() folds final ς differently and would drop hits.
+    const botsQuery = db.select({ id: bots.id, name: bots.name }).from(bots)
+      .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)).$dynamic()
+    const [tasks, threads, prs, botRows] = await Promise.all([
       kind && kind !== 'task' ? null : searchIssues(db, { userId, workspaceId, params: parseSearchParams(new URLSearchParams({ q: query, limit: '8', workspaceId })) }),
       kind && kind !== 'thread' ? null : conversationDirectory(pool, reader, workspaceId, { search: query }),
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
+      // No query needs only the picker's eight; a real query stays uncapped so the filter always precedes any cap.
+      kind && kind !== 'bot' ? null : query.trim() ? botsQuery : botsQuery.limit(8),
     ])
+    const needle = query.toLowerCase().replace(/ς/g, 'σ')
     return [
       ...tasks?.items.map(item => ({ kind: 'task' as const, id: item.id, title: [item.identifier, item.title].filter(Boolean).join(' ') })) ?? [],
       ...threads?.items.slice(0, 8).map(item => ({ kind: 'thread' as const, id: item.id, title: item.title,
         ...(item.kind === 'chat' ? { conversationKind: 'chat' as const } : {}) })) ?? [],
       ...prs,
+      ...botRows?.filter(bot => !needle || bot.name.toLowerCase().replace(/ς/g, 'σ').includes(needle)).slice(0, 8)
+        .map(bot => ({ kind: 'bot' as const, id: bot.id, title: bot.name })) ?? [],
     ]
   })
 }
