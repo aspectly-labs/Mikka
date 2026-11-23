@@ -32,10 +32,11 @@ test('reference search scopes tasks, conversation roots, and PRs to the active v
   const { searchThreadReferences } = await import('../lib/thread-reference-search')
   const owner = 'mention-' + randomUUID(), other = 'mention-' + randomUUID()
   const chat = randomUUID(), issue = randomUUID(), agent = randomUUID(), run = randomUUID(), url = 'https://github.com/test/mikka/pull/2259'
+  let workspace = '', foreign = ''
   try {
     for (const user of [owner, other]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES ($1,$1,$2,true,now(),now())', [user, user + '@example.invalid'])
-    const workspace = await seedFixtureWorkspace(pool, owner)
-    const foreign = await seedFixtureWorkspace(pool, other)
+    workspace = await seedFixtureWorkspace(pool, owner)
+    foreign = await seedFixtureWorkspace(pool, other)
     await pool.query(`INSERT INTO issues(id,"userId",title,content,status,priority,"workspaceId","ownershipState")
       VALUES ($1,$2,'Checkout data',$3,'doing','normal',$4,'bound')`, [issue, owner, JSON.stringify({ type: 'doc', attrs: { mikka: { pullRequests: [{ url, title: 'Checkout fix', state: 'open' }] } } }), workspace])
     await pool.query(`INSERT INTO agents(id,"userId",name,harness) VALUES ($1,$2,'Coding','codex')`, [agent, owner])

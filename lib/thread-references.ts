@@ -33,6 +33,6 @@ export function personReferenceParts(text: string) {
     if (part.type === 'chat' || part.type === 'bot') return { kind: part.type, id: part.id }
     if (part.type === 'citation' && part.kind) return { kind: part.kind === 'issue' ? 'task' as const : 'thread' as const, id: part.id }
     if (part.type === 'link' && pullRequest.test(part.url)) return { kind: 'pr' as const, id: part.url }
-    return { kind: 'text' as const, text: part.type === 'text' ? part.text : part.raw }
+    return { kind: 'text' as const, text: part.type === 'text' ? part.text : 'raw' in part ? part.raw : '' }
   })
 }
