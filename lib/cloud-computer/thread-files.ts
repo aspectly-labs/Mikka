@@ -5,7 +5,9 @@ import { getApiSession, apiWorkspaceAllowed } from '@/lib/api-auth'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { ComputerError } from '@/lib/computer/store'
 import { hostedSnapshot } from './sponsored-task'
+import { Sandbox } from 'e2b'
 import { connectComputer, computerGone } from '@/lib/computer/e2b-provider'
+import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 
 export type ThreadFileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed'
 
@@ -20,19 +22,19 @@ function porcelainStatus(code: string): ThreadFileStatus {
   return 'modified'
 }
 
-/** Parses `git status --porcelain=v1` output, skipping unmerged entries the
- * thread's own commits would not produce. */
+/** Parses raw `git status --porcelain=v1 -z` output. With `-z` a rename or
+ * copy emits the from-path as the record after the status line, so no ` -> `
+ * separator or quoting ever appears in real filenames. */
 export function parsePorcelain(output: string): ThreadTouchedFile[] {
   const files: ThreadTouchedFile[] = []
-  for (const line of output.split('\n')) {
-    if (line.length < 4) continue
-    const code = line.slice(0, 2)
+  const records = output.split('\0')
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    if (record.length < 4) continue
+    const code = record.slice(0, 2)
     if (code === '!!') continue
-    let path = line.slice(3)
-    const arrow = path.indexOf(' -> ')
-    if (arrow >= 0) path = path.slice(arrow + 4)
-    if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1)
-    files.push({ path, status: porcelainStatus(code), committed: false })
+    files.push({ path: record.slice(3), status: porcelainStatus(code), committed: false })
+    if (code.includes('R') || code.includes('C')) index += 1
   }
   return files
 }
@@ -57,16 +59,27 @@ export async function readThreadTouchedFiles(pool: Pool, actor: { userId: string
   // frozen report below.
   if (machine?.sandboxId && machine.state === 'running' && machine.snapshotId !== hostedSnapshot && run.worktreePath) {
     try {
-      const sandbox = await connectComputer(actor.workspaceId, machine.sandboxId, signal)
-      const result = await sandbox.commands.run('git status --porcelain=v1 -z', { cwd: run.worktreePath, timeoutMs: 30_000, signal })
-      if (result.exitCode === 0) return { files: parsePorcelain(result.stdout.replace(/\0/g, '\n')), source: 'live' as const }
+      // The database can still say `running` while the provider has already
+      // paused the VM; `Sandbox.connect` would billably resume it. getInfo is
+      // a pure read, so only a sandbox the provider itself reports running is
+      // worth connecting to.
+      const apiKey = await e2bApiKey(actor.userId, 'Cloud computer is not configured')
+      const info = await withE2BErrors(actor.userId, false, () => Sandbox.getInfo(machine.sandboxId!, { apiKey, requestTimeoutMs: 10_000, signal }))
+      if (info.state === 'running') {
+        const sandbox = await connectComputer(actor.workspaceId, machine.sandboxId, signal)
+        const result = await sandbox.commands.run('git status --porcelain=v1 -z', { cwd: run.worktreePath, timeoutMs: 30_000, signal })
+        if (result.exitCode === 0) return { files: parsePorcelain(result.stdout), source: 'live' as const }
+      }
     } catch (error) {
       if (!computerGone(error)) throw error
     }
   }
 
-  const committed = Array.isArray(run.filesChanged) ? run.filesChanged.filter((f): f is string => typeof f === 'string') : []
-  return { files: committed.map(path => ({ path, status: 'modified' as const, committed: true })), source: 'report' as const }
+  // `report.filesChanged` diffs the worktree against the base commit; a run
+  // that stopped with dirty paths still lists them, so nothing here can be
+  // claimed committed.
+  const changed = Array.isArray(run.filesChanged) ? run.filesChanged.filter((f): f is string => typeof f === 'string') : []
+  return { files: changed.map(path => ({ path, status: 'modified' as const, committed: false })), source: 'report' as const }
 }
 
 export async function threadFilesRoute(request: Request, pool: Pool, runId: string) {
