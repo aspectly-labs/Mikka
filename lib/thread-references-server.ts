@@ -32,7 +32,7 @@ export async function resolveThreadReferences(database: Pick<Pool, 'query'>,
         case 'task': {
           if (!workspaceId) return broken(ref)
           const { rows: [row] } = await database.query<{ title: string; status: string; identifier: string | null }>(
-            `SELECT title,status,identifier FROM issues WHERE id=$1 AND "workspaceId"=$2 AND content->'attrs'->'mikka'->>'deletedAt' IS NULL`, [ref.id, workspaceId])
+            `SELECT title,status,"issuedIdentifier" AS identifier FROM issues WHERE id=$1 AND "workspaceId"=$2 AND content->'attrs'->'mikka'->>'deletedAt' IS NULL`, [ref.id, workspaceId])
           return row ? { ...ref, state: 'ok', title: row.title, detail: `${row.identifier ?? ''} ${row.status}`.trim() } : broken(ref)
         }
         case 'pr': {
@@ -43,7 +43,7 @@ export async function resolveThreadReferences(database: Pick<Pool, 'query'>,
         }
         case 'thread': {
           const { rows: [row] } = await database.query<{ status: string; title: string | null }>(
-            `SELECT r.status,COALESCE(i.identifier||' '||i.title,i.title) AS title FROM agent_runs r
+            `SELECT r.status,COALESCE(i."issuedIdentifier"||' '||i.title,i.title) AS title FROM agent_runs r
               LEFT JOIN issues i ON i.id=r."issueId" WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId" IS NOT DISTINCT FROM $3`,
             [ref.id, ownerId, workspaceId])
           return row ? { ...ref, state: 'ok', title: row.title, detail: row.status } : broken(ref)

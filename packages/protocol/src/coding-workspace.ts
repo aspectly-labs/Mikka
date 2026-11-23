@@ -101,7 +101,7 @@ export const workspaceFileWriteResult = z.strictObject({ ...observation,
   idempotent: z.boolean() })
 export type WorkspaceFileWriteResult = z.infer<typeof workspaceFileWriteResult>
 
-export const workspaceReadResult = z.union([workspaceFileWriteResult, 
+export const workspaceReadResult = z.union([workspaceFileWriteResult,
   workspaceFailure,
   workspaceDiffReadResult,
   workspaceGitReadResult,

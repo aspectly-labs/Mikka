@@ -24,6 +24,7 @@ export const pollingRoots = [
   "deploy/",
 ];
 
+const web = "hooks/use-live-key.tsx";
 const daemon = "lib/device-gateway-notify.ts";
 const server = "lib/live/notify.ts";
 const db = (replaceWith, reason, hits) => ({
@@ -139,10 +140,6 @@ export const pollingAllowlist = {
   "scripts/acceptance/wake-consumer-closeout.mjs": harness(
     "waits until the persisted nextWakeAt deadline during explicit wake-recovery acceptance",
     1,
-  ),
-  "scripts/acceptance/workflow-migration-production.mjs": harness(
-    "bounded integration acceptance checks its own schedule create/cancel actions and persisted results",
-    3,
   ),
   "scripts/dev-local.mjs": local(
     "local developer fixture refresh retries account linking and seed setup; not a shipped runtime or production reader",
@@ -300,6 +297,14 @@ export const pollingAllowlist = {
   "scripts/e2b/worker-live.ts": local(
     "acceptance-only bounded machine and run waits; not shipped product runtime",
     3,
+  ),
+  "scripts/ci/pr-acceptance-github.mjs": external(
+    "bounded GitHub API rate-limit retry (up to 4 attempts on 429 or 403 rate-limit headers); not idle polling",
+    1,
+  ),
+  "scripts/fixtures/start.mjs": harness(
+    "bounded readiness check while starting the local loopback UI fixture server; not shipped product runtime",
+    1,
   ),
   "lib/builtin-gateway/scheduler.ts": local(
     "自托管 cron 调度器替代 Cloudflare cron，不是数据轮询；复用已有 due-timer 和 15 分钟 safety sweep",

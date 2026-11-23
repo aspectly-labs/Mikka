@@ -17,7 +17,7 @@ patchedDependencies:
     hash: 4c366142582a7e49bf37b4e30502f6cc47d708fe1d91b0627c029c3872963573
     path: patches/@novnc__novnc@1.6.0.patch
   '@workflow/world-postgres@5.4.1':
-    hash: 42f48feebe96d9c0980afda1697139e3510c0748ae059a9e70c25ab28c057151
+    hash: bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56
     path: patches/@workflow__world-postgres@5.4.1.patch
   eve@1.3.0:
     hash: 566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed
@@ -552,7 +552,7 @@ importers:
         version: link:../../packages/eve-cloudflare-world
       '@workflow/world-postgres':
         specifier: 5.4.1
-        version: 5.4.1(patch_hash=42f48feebe96d9c0980afda1697139e3510c0748ae059a9e70c25ab28c057151)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)
+        version: 5.4.1(patch_hash=bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)
       eve:
         specifier: 1.3.0
         version: 1.3.0(patch_hash=566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed)(b99b53494634a2b2300a4f3b0e6df2e7)
@@ -18531,7 +18531,7 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.10.0
 
-  '@workflow/world-postgres@5.4.1(patch_hash=42f48feebe96d9c0980afda1697139e3510c0748ae059a9e70c25ab28c057151)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)':
+  '@workflow/world-postgres@5.4.1(patch_hash=bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)':
     dependencies:
       '@workflow/errors': 5.1.5
       '@workflow/utils': 5.1.1

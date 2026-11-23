@@ -1593,13 +1593,32 @@
       "sourceHash": "79cb7d4c89453d123f2ed724ca8e3d3688c03c5534d6545f6319bd230ab71537"
     },
     {
+      "path": "/mikka/api/integrations/mcp/catalog",
+      "template": "/api/integrations/mcp/catalog",
+      "source": "app/api/integrations/mcp/catalog/route.ts",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "sourceHash": "785120d20476d4975863f3fbfb180a9bcc300a5f758f18d0ce42502f0e42ebac"
+    },
+    {
       "path": "/mikka/api/integrations/mcp/refresh",
       "template": "/api/integrations/mcp/refresh",
       "source": "app/api/integrations/mcp/refresh/route.ts",
       "methods": [
         "POST"
       ],
-      "sourceHash": "011ca580d14d1729082cb397c44cc40d02e85816f3b1603d31bbf77b2ba7a433"
+      "sourceHash": "17da2254a0f0bd4bc2a5b5f7a59bec6e558cbbf0510df77199a677fc5fe64e14"
+    },
+    {
+      "path": "/mikka/api/integrations/mcp/search",
+      "template": "/api/integrations/mcp/search",
+      "source": "app/api/integrations/mcp/search/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "d098c66187962028ddfaec4c781572557a3e6d69df52d216c16d24ae80fd2e44"
     },
     {
       "path": "/mikka/api/integrations/mcp/shares",
@@ -1609,6 +1628,60 @@
         "PATCH"
       ],
       "sourceHash": "d450b093e5517282b41f6a49e6b712675ee8f33e8a0be7b4bafa04fa483ecf31"
+    },
+    {
+      "path": "/mikka/api/integrations/mcp/[id]",
+      "template": "/api/integrations/mcp/[id]",
+      "source": "app/api/integrations/mcp/[id]/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "0acdb32f444a1e8d9d65520163dd020ad166eb96aebf01c4ac83a9990253cdf7"
+    },
+    {
+      "path": "/mikka/api/integrations/mcp/[id]/check",
+      "template": "/api/integrations/mcp/[id]/check",
+      "source": "app/api/integrations/mcp/[id]/check/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "ad523fdf93a3c527e926ae82ff14fb4dddddde8c12d20c1cfe8d6daf3277ef4f"
+    },
+    {
+      "path": "/mikka/api/integrations/mcp/[id]/environments",
+      "template": "/api/integrations/mcp/[id]/environments",
+      "source": "app/api/integrations/mcp/[id]/environments/route.ts",
+      "methods": [
+        "PATCH"
+      ],
+      "sourceHash": "3129929de349c90bb876ff9d6eeaafce4ded8817f11ed382a19451de9686112b"
+    },
+    {
+      "path": "/mikka/api/integrations/mcp/[id]/oauth/callback",
+      "template": "/api/integrations/mcp/[id]/oauth/callback",
+      "source": "app/api/integrations/mcp/[id]/oauth/callback/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "f32831d2df1e891bdc955cc47a8f496567c0a30c2b2f47b6c7ced03bcd6753b4"
+    },
+    {
+      "path": "/mikka/api/integrations/mcp/[id]/oauth/start",
+      "template": "/api/integrations/mcp/[id]/oauth/start",
+      "source": "app/api/integrations/mcp/[id]/oauth/start/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "3dcdf9ec5d179e1fc4bd45da2e13db420c79c44aad0e542c15940eb2833b523a"
+    },
+    {
+      "path": "/mikka/api/integrations/mcp/[id]/tools/[name]",
+      "template": "/api/integrations/mcp/[id]/tools/[name]",
+      "source": "app/api/integrations/mcp/[id]/tools/[name]/route.ts",
+      "methods": [
+        "PATCH"
+      ],
+      "sourceHash": "dcc160221c970052c657a728374ebdd87fcecf5b231acef470bc8ddcfd52b59e"
     },
     {
       "path": "/mikka/api/integrations/slack",
@@ -3858,7 +3931,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "01625bca7d6374054aee08da16a5b948a4ea020efa0cc742bec692c65fd44735"
+      "sourceHash": "f666e75f7fe93a8d80ed81f1e0841de3731210db29ad2c10e30441feff980608"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/commands/ack",
@@ -3921,7 +3994,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "f88da8028042c0b5b6fae602764c64d0825cb71c012344d0a27782c0bb42551a"
+      "sourceHash": "28647f0c4061d829503334afd4c8e42955841ff14593b9071dc52c132b96066b"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/repos",
@@ -3957,7 +4030,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "834ac137c5555ac9fda3e4c936ae85fa534eb5b023631deedd4e1f72a2b25906"
+      "sourceHash": "38b1121d48a3e14f38de571b73471b8c4f317978ba562249c4d0ccef83c6098d"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

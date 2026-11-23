@@ -1,3 +1,15 @@
+diff --git a/dist/queue.js b/dist/queue.js
+--- a/dist/queue.js
++++ b/dist/queue.js
+@@ -1268,7 +1268,7 @@
+             ...(config.applicationManagedShutdown === true && {
+                 noHandleSignals: true,
+             }),
+-            pollInterval: config.pollInterval ?? 500, // per worker; LISTEN/NOTIFY only wakes idle workers early
++            pollInterval: config.pollInterval ?? 0, // per worker; patched Graphile Worker uses LISTEN/NOTIFY + due timers
+             taskList,
+         });
+         // Graphile Worker only resets locks older than 4 hours. Release this
 diff --git a/dist/storage.js b/dist/storage.js
 index 2dcc348..3fdc94b 100644
 --- a/dist/storage.js

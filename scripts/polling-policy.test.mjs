@@ -311,7 +311,7 @@ test("Cloudflare, API, subscription worker, all packages and scripts belong to s
     "cloudflare/eve-runtime/runtime/config.mjs",
     "apps/api/src/server.ts",
     "packages/subscription-worker/device_oauth.go",
-    "scripts/acceptance/workflow-migration-production.mjs",
+    "scripts/acceptance/wake-consumer-closeout.mjs",
   ])
     assert.ok(
       pollingRoots.some((root) => file.startsWith(root)),
@@ -320,7 +320,7 @@ test("Cloudflare, API, subscription worker, all packages and scripts belong to s
   const files = pollingPolicyFiles();
   assert.ok(files.includes("cloudflare/eve-runtime/runtime/config.mjs"));
   assert.ok(files.includes("components/settings/linear-settings.tsx"));
-  assert.ok(files.includes("scripts/acceptance/workflow-migration-production.mjs"));
+  assert.ok(files.includes("scripts/acceptance/wake-consumer-closeout.mjs"));
   assert.ok(files.includes("scripts/test-subscription-worker.mjs"));
 });
 
