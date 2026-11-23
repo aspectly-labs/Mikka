@@ -4,7 +4,7 @@ import { beforeEach, mock, test } from 'node:test'
 const RUN = '20000000-0000-4000-8000-000000000001'
 const SANDBOX = { id: 'sandbox-one' }
 let rows: Record<string, unknown>[] = []
-let browserState: { targetId: string } | Error | null = { targetId: 'target-one' }
+let browserState: { targetId: string; url?: string; guarded?: boolean } | Error | null = { targetId: 'target-one' }
 let installed = 0, granted: { role?: string } | null = null
 
 mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: {
