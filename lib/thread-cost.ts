@@ -1,0 +1,162 @@
+import { readRunChain, type RunChainQueryable } from './run-chain'
+import { isMachineSize, machineHourlyMicroUsd, type MachineSize } from './cloud-computer/machine-pricing'
+import { THREAD_COST_GROUPINGS, type ThreadCostGrouping } from './thread-cost-grouping'
+
+export { THREAD_COST_GROUPINGS, type ThreadCostGrouping }
+
+/**
+ * A thread's cost (#2934 item 4): every model receipt and machine charge of the
+ * runs in one run chain, read from hosted_usage and thread_machine_sessions.
+ * Nothing here is a price list: model cost is what settlement recorded, and a
+ * machine's metered cost uses the same per-GiB-hour rate as its prepaid chunks.
+ */
+
+/** Who paid: Mikka 额度, the person's subscription (Claude / Codex) or their own API key. */
+export type ThreadCostSource = 'credits' | 'subscription' | 'api_key'
+
+export interface ThreadCostAmount {
+  /** Sum of settled receipts that report a cost. */
+  microUsd: number
+  /** Receipts with no known cost yet (pending, unknown, or a provider that reports none). Never read as zero. */
+  unpricedReceipts: number
+}
+
+export interface ThreadModelCost {
+  model: string
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  bySource: Record<ThreadCostSource, ThreadCostAmount>
+}
+
+/**
+ * One row per machine size. `billing` says how the row's running time is priced:
+ * `metered` at the size's rate; `unknown_size` when Mikka billed the run but its
+ * size is unrecognised or changed within the run (no rate is guessed); `unbilled`
+ * when the run's cloud machine has no Mikka charge at all (no prepaid chunk).
+ */
+export interface ThreadMachineCost {
+  size: MachineSize | null
+  billing: 'metered' | 'unknown_size' | 'unbilled'
+  /** Running time recorded per interval in thread_machine_sessions, to the second; an open interval counts up to now. */
+  seconds: number
+  /** seconds × the size's hourly rate; null unless `billing` is `metered`. */
+  meteredMicroUsd: number | null
+  /** What was prepaid from Mikka 额度 in 5-minute chunks (decision 2026-11-15-1900). */
+  chargedMicroUsd: number
+  /** Prepaid chunks with no settled cost yet. */
+  unpricedReceipts: number
+}
+
+export interface ThreadCost {
+  threadId: string
+  groupBy: ThreadCostGrouping
+  /** Two columns in the UI: Mikka 额度, and usage included in the person's own subscription or key. */
+  totals: {
+    credits: ThreadCostAmount
+    included: ThreadCostAmount & { bySource: Record<Exclude<ThreadCostSource, 'credits'>, ThreadCostAmount> }
+  }
+  models?: ThreadModelCost[]
+  machines?: ThreadMachineCost[]
+}
+
+const MACHINE_PREFIX = 'machine/cloudflare-'
+const amount = (): ThreadCostAmount => ({ microUsd: 0, unpricedReceipts: 0 })
+const add = (target: ThreadCostAmount, cost: number | null) => {
+  if (cost === null) target.unpricedReceipts++
+  else target.microUsd += cost
+}
+const sourceOf = (value: unknown): ThreadCostSource =>
+  value === 'subscription' || value === 'api_key' ? value : 'credits'
+
+/**
+ * The cost of the thread containing `runId`, or null when `ownerId` does not
+ * own that run in `workspaceId`. Ownership is the run chain's own fence
+ * (readRunChain), so another member of the workspace reads nothing.
+ */
+export async function readThreadCost(
+  q: RunChainQueryable,
+  input: { ownerId: string; workspaceId: string; runId: string; groupBy: ThreadCostGrouping },
+): Promise<ThreadCost | null> {
+  if (!(THREAD_COST_GROUPINGS as readonly string[]).includes(input.groupBy)) return null
+  // A corrupt chain (cycle or over the depth cap) throws runChainDepthExceeded, like every other chain read.
+  const chain = await readRunChain(q, input.ownerId, input.runId)
+  if (!chain) return null
+  const runIds = chain.attempts.map(attempt => attempt.runId)
+  const { rows: fenced } = await q.query(
+    'SELECT count(*)::int AS n FROM agent_runs WHERE id=ANY($1::uuid[]) AND "userId"=$2 AND "workspaceId"=$3',
+    [runIds, input.ownerId, input.workspaceId],
+  )
+  if (Number(fenced[0]?.n) !== runIds.length) return null
+
+  // Failed receipts were released and charged nothing; every other state is real usage.
+  const { rows: receipts } = await q.query(
+    `SELECT id,model,"billingSource" AS source,state,"costMicroUsd" AS cost,"inputTokens" AS input,"outputTokens" AS output,"usageRunId"::text AS "runId"
+      FROM hosted_usage WHERE "usageRunId"=ANY($1::uuid[]) AND state<>'failed'`,
+    [runIds],
+  )
+  // Intervals are read in the thread's own owner and workspace; time recorded after a
+  // scope_changed hand-off belongs to the new scope, not to this thread's cost.
+  const { rows: sessions } = await q.query(
+    `SELECT "runId"::text AS "runId",
+        COALESCE(sum(EXTRACT(EPOCH FROM (COALESCE("endedAt",clock_timestamp())-"startedAt"))),0)::float8 AS seconds
+      FROM thread_machine_sessions WHERE "runId"=ANY($1::uuid[]) AND "ownerId"=$2 AND "workspaceId"=$3 GROUP BY "runId"`,
+    [runIds, input.ownerId, input.workspaceId],
+  )
+
+  const credits = amount()
+  const included = { ...amount(), bySource: { subscription: amount(), api_key: amount() } }
+  const models = new Map<string, ThreadModelCost>()
+  const machines = new Map<string, ThreadMachineCost>()
+  const machine = (size: MachineSize | null, billing: ThreadMachineCost['billing']) => {
+    const key = billing === 'metered' ? `size:${size}` : billing
+    let row = machines.get(key)
+    if (!row) machines.set(key, row = { size: billing === 'metered' ? size : null, billing, seconds: 0,
+      meteredMicroUsd: billing === 'metered' ? 0 : null, chargedMicroUsd: 0, unpricedReceipts: 0 })
+    return row
+  }
+  // The sizes each run's prepaid chunks name. One recognised size meters the run's time at its rate;
+  // several sizes or an unrecognised one leave the rate unknown rather than guessed.
+  const runSizes = new Map<string, Set<string>>()
+
+  for (const receipt of receipts) {
+    const settled = receipt.state === 'settled' && receipt.cost !== null
+    const cost = settled ? Number(receipt.cost) : null
+    const source = sourceOf(receipt.source)
+    if (source === 'credits') add(credits, cost)
+    else { add(included, cost); add(included.bySource[source], cost) }
+    const model = String(receipt.model)
+    // A prepayment is known by machineChunkId's receipt id, never by its label alone:
+    // a custom API-key provider can name a model anything, including a machine label.
+    if (String(receipt.id).startsWith('machine:') && source === 'credits' && model.startsWith(MACHINE_PREFIX)) {
+      const size = model.slice(MACHINE_PREFIX.length)
+      const run = String(receipt.runId)
+      runSizes.set(run, (runSizes.get(run) ?? new Set()).add(size))
+      const row = isMachineSize(size) ? machine(size, 'metered') : machine(null, 'unknown_size')
+      if (cost === null) row.unpricedReceipts++
+      else row.chargedMicroUsd += cost
+      continue
+    }
+    let row = models.get(model)
+    if (!row) models.set(model, row = { model, calls: 0, inputTokens: 0, outputTokens: 0,
+      bySource: { credits: amount(), subscription: amount(), api_key: amount() } })
+    row.calls++
+    row.inputTokens += Number(receipt.input ?? 0)
+    row.outputTokens += Number(receipt.output ?? 0)
+    add(row.bySource[source], cost)
+  }
+  for (const session of sessions) {
+    const sizes = [...runSizes.get(String(session.runId)) ?? []]
+    const [only] = sizes
+    const row = !sizes.length ? machine(null, 'unbilled')
+      : sizes.length === 1 && isMachineSize(only) ? machine(only, 'metered') : machine(null, 'unknown_size')
+    const seconds = Math.max(0, Math.floor(Number(session.seconds)))
+    row.seconds += seconds
+    if (row.size && row.meteredMicroUsd !== null) row.meteredMicroUsd += Math.round(seconds * machineHourlyMicroUsd(row.size) / 3600)
+  }
+
+  const result: ThreadCost = { threadId: chain.rootRunId, groupBy: input.groupBy, totals: { credits, included } }
+  if (input.groupBy === 'model') result.models = [...models.values()].sort((a, b) => b.calls - a.calls || a.model.localeCompare(b.model))
+  if (input.groupBy === 'machine') result.machines = [...machines.values()].sort((a, b) => b.seconds - a.seconds || b.chargedMicroUsd - a.chargedMicroUsd)
+  return result
+}

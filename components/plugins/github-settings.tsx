@@ -22,6 +22,7 @@ import { authClient, endSession } from '@/lib/auth-client'
 import { openPathInBrowser } from '@/lib/platform/open-settings'
 import { useCheckOnReturn, useChecksUntilDone } from '@/lib/hooks/use-check-on-return'
 import { bridgeFromWindow, type MikkaWindow } from '@/lib/platform/detect'
+import { randomKey, s256 } from '@/lib/loopback'
 import { GITHUB_APP_INSTALL_URL } from '@/lib/github/repository-match'
 import { GitHubAppSettings } from '@/components/plugins/github-app-settings'
 import { settingsHref } from '@/lib/settings-sections'
@@ -42,9 +43,7 @@ const LINK_WINDOW_MS = 10 * 60_000
 const INTENT_TOKEN = /^ghi_[A-Za-z0-9_-]{43}$/
 type IntentView = { state: 'expired' } | { state: 'waiting' | 'started'; browserAccount: string | null } | { state: 'otherAccount'; browserAccount: string; appAccount: string }
 
-const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-const randomKey = () => base64url(crypto.getRandomValues(new Uint8Array(32)))
-const s256 = async (value: string) => base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))))
+
 
 async function readIntent(token: string): Promise<IntentView> {
   const response = await fetch(`${INTENT_PATH}?token=${encodeURIComponent(token)}`, { cache: 'no-store' })

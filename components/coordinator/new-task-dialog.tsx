@@ -26,6 +26,9 @@ import { newTaskBotChoices } from '@/lib/new-task-bot'
 import { usePersonalProjectPicker } from './personal-project-picker'
 import { useTaskDictation } from './use-task-dictation'
 import { NewTask } from '@ui-slot/new-task'
+import { TaskWorkspace } from '@ui-slot/task-workspace'
+import { useTaskWorkspace } from '@/hooks/use-task-workspace'
+import type { TaskWorkspaceState } from '@/lib/task-workspace-state'
 import type { NewTaskProps } from '@/components/slots/new-task-contract'
 
 const MAX_LENGTH = 8000
@@ -65,6 +68,7 @@ export function NewTaskDialog({ open, onOpenChange, project: pageProject, projec
   initialText?: string
 }) {
   const t = useTranslations('Shell.newTaskDialog')
+  const tCommon = useTranslations('Common')
   const tIssue = useTranslations('Issue')
   const projectPicker = usePersonalProjectPicker(open && !pageProjectId ? readerId : undefined, workspaceId)
   const projectId = pageProjectId ?? projectPicker.project?.id
@@ -92,6 +96,10 @@ export function NewTaskDialog({ open, onOpenChange, project: pageProject, projec
   const [accessChange, setAccessChange] = useState<{ fingerprint: string; tasks: number } | null>(null)
 
   const { data: options } = useSWR(open && workspaceId ? ['new-task-options', workspaceId] : null, () => getNewTaskOptions(workspaceId!))
+  // The task is created in the workspace shown now: the dialog's `workspaceId` prop is the captured target; the
+  // account menu's fresh read must still confirm it before anything is sent (#1661, never a silent retarget).
+  const target = useTaskWorkspace(workspaceId)
+  const workspace = target.state.status === 'ready' ? target.state.workspace : null
   const { data: bots = [] } = useSWR(open ? 'bots' : null, listBots)
   const botChoices = newTaskBotChoices(bots)
   const dictation = useTaskDictation(text => setDraft(current => current.trim() ? `${current.trimEnd()}\n${text}` : text),
@@ -127,6 +135,15 @@ export function NewTaskDialog({ open, onOpenChange, project: pageProject, projec
     if (!name || !workspaceId || pending.current || projectPicker.pending || dictation.state !== 'idle') return
     pending.current = true
     setSending(true)
+    let ready: TaskWorkspaceState
+    try {
+      // One fresh read must confirm the captured workspace is still the one shown before anything is sent.
+      ready = await target.confirm(workspaceId)
+    } catch {
+      ready = { status: 'error' }
+    }
+    if (ready.status === 'mismatch') { toast.error(t('workspaceChanged')); pending.current = false; setSending(false); return }
+    if (ready.status !== 'ready') { toast.error(t('workspaceUnconfirmed'), { action: { label: tCommon('retry'), onClick: () => { void submit() } } }); pending.current = false; setSending(false); return }
     try {
       const requestId = createRequests.current.get(fingerprint) ?? crypto.randomUUID()
       createRequests.current.set(fingerprint, requestId)
@@ -135,6 +152,8 @@ export function NewTaskDialog({ open, onOpenChange, project: pageProject, projec
         ...backlogTaskDraft(name, text, status), priority,
         ...(properties.assignee ? { assignee: properties.assignee } : {}), ...(dueDate ? { dueDate } : {}), ...(labels.length ? { labels } : {}), ...(accessCommand ? { access: accessCommand } : {}) })
       if (result.error && 'confirmable' in result && result.confirmable) { setAccessChange({ fingerprint, tasks: Number(result.params?.tasks ?? 1) }); return }
+      // The server's trusted selection is no longer the captured one (a switch after the check): a mismatch refusal.
+      if (result.error === 'workspaceAccessDenied') { toast.error(t('workspaceChanged')); return }
       if (result.error || !('taskId' in result)) { toast.error(actionError(result.error)); return }
       createRequests.current.delete(fingerprint)
       const pickedFiles = files
@@ -205,8 +224,8 @@ export function NewTaskDialog({ open, onOpenChange, project: pageProject, projec
       machines={[]} machine="auto" onMachine={() => {}} bots={[]} bot={null} onBot={() => {}}
       agent={{ value: null, choices: [], onChange: () => {}, disabled: true }}
       profile={{ choices: [], value: 'auto', label: '', onChange: () => {}, disabled: true }}
-      intent="create_only" more={{ checked: more, onChange: setMore }} notices={null} sending={sending}
-      canSubmit={!projectPicker.pending && Boolean(workspaceId) && !!title.trim() && dictation.state === 'idle'}
+      intent="create_only" more={{ checked: more, onChange: setMore }} notices={<TaskWorkspace variant="create" workspace={workspace} state={target.state} onRetry={target.retry} />} sending={sending}
+      canSubmit={!projectPicker.pending && Boolean(workspaceId) && !!title.trim() && dictation.state === 'idle' && workspace !== null}
       onSubmit={() => { void submit() }} />}
     {accessChange && <AccessChangeDialog change={accessChange} pending={sending} onCancel={() => setAccessChange(null)} onConfirm={async () => {
       const current = accessChange

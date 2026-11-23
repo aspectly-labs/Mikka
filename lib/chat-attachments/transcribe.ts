@@ -34,6 +34,6 @@ export async function transcribeChatAudio(
     return result.text
   } catch (error) {
     if (error instanceof ChatFileError) throw error
-    throw new ChatFileError('unavailable')
+    throw Object.assign(new ChatFileError('unavailable'), { cause: error })
   }
 }

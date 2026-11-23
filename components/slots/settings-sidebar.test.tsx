@@ -22,6 +22,7 @@ mock.module(new URL('../../app/actions/teams.ts', import.meta.url).href, { named
 // The team read has already settled before the Workspace identity arrives.
 // This is the cold route ordering that differs from a warm cached Workspace.
 const teams: never[] = []
+mock.module('posthog-js', { defaultExport: { onFeatureFlags: () => () => {}, getFeatureFlag: () => undefined } })
 mock.module('swr', { defaultExport: () => ({ data: teams, mutate: async () => teams }) })
 mock.module(new URL('../nav/icon-rail.tsx', import.meta.url).href, { namedExports: { RAIL_ITEMS: [] } })
 

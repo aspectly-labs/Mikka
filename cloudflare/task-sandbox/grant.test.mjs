@@ -21,6 +21,16 @@ test('task workspaces and fenced run ownership have independent lifetimes', () =
   assert.throws(() => machineGrant({ ...scope, taskId: '../other' }), /Invalid/)
 })
 
+test('a grant may carry the billed machine size; unknown sizes are rejected', () => {
+  assert.equal(machineGrant({ ...scope, size: 'standard-4' }).size, 'standard-4')
+  assert.equal(machineGrant({ ...scope, size: 'standard-4-16' }).size, 'standard-4-16',
+    'the Worker trusts the API quota gate and accepts every catalogued size')
+  assert.equal('size' in machineGrant(scope), false)
+  for (const bad of ['huge', 'standard-4-17', 4, null, ' standard-4']) {
+    assert.throws(() => machineGrant({ ...scope, size: bad }), /Invalid task machine grant/, String(bad))
+  }
+})
+
 test('only a live prepaid lease retains compute; there is no fixed run length', () => {
   assert.equal(liveUntil(scope, now), scope.expiresAt)
   assert.equal(liveUntil({ expiresAt: now + 6 * 3_600_000 }, now), now + 6 * 3_600_000)

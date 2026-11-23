@@ -46,8 +46,8 @@ export function cleanText(value: unknown, max = 40): string | null {
 export function parseJson(raw: string): unknown {
   try {
     return JSON.parse(raw)
-  } catch {
-    throw new Error("Credential file is not valid JSON")
+  } catch (error) {
+    throw Object.assign(new Error("Credential file is not valid JSON"), { cause: error })
   }
 }
 

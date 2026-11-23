@@ -3,13 +3,14 @@ import { publishedActions, rendererActionName } from '../../lib/renderer-actions
 export { publishedActions }
 import { decode, DESKTOP_RPC_VERSION, encode } from '../../lib/desktop-rpc/wire.ts'
 
-// This is deliberately the existing five read operations, not the RPC registry.
+// This is deliberately the existing six read operations, not the RPC registry.
 export const readRpcActions = Object.freeze({
   syncCoordinatorChat: 'coordinator.syncCoordinatorChat',
   syncIssueList: 'issues.syncIssueList',
   syncThreadList: 'task-runs.syncThreadList',
   pollIssue: 'issues.pollIssue',
-  pollIssueVersionSummaries: 'issues.pollIssueVersionSummaries',
+  pollIssueActivityPage: 'issues.pollIssueActivityPage',
+  loadEarlierIssueActivity: 'issues.loadEarlierIssueActivity',
 })
 export function publishedReadActions(manifest) {
   const published = publishedActions(manifest)

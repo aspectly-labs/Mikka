@@ -28,7 +28,7 @@ const saved = (row: Row, value: string | undefined): SavedUserSecretView => ({ .
 
 function seal(value: string, row: { userId: string; kind: string; name: string }) {
   try { return sealSecret(value, userSecretAad(row)) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable')
+    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     throw error
   }
 }
@@ -104,7 +104,7 @@ export async function importUserSecrets(userId: string, input: unknown, context:
   const { text, masked, onConflict, overrideWorkspace } = importUserSecretsInput.parse(input)
   const kind = masked ? 'secret' as const : 'env' as const
   let parsed: ReturnType<typeof parseDotenv>
-  try { parsed = parseDotenv(text) } catch { throw new WorkspaceError('secretImportTooLarge') }
+  try { parsed = parseDotenv(text) } catch (error) { throw new WorkspaceError('secretImportTooLarge', { cause: error }) }
   const errors: UserImportResult['errors'] = [...parsed.errors]
   const shadowed = overrideWorkspace ? new Set<string>() : await workspaceNames(userId, context.workspaceId, parsed.entries.map(entry => entry.name))
   const entries = parsed.entries.filter(entry => {

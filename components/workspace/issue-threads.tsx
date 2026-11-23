@@ -25,7 +25,7 @@ import { InlineLoadError } from '@/components/load-error'
 import { useAcceptanceTasks } from './factory-acceptance'
 
 /** Shared by the Task's workspace reads and its thread actions. */
-export const issueThreadsKey = (issueId: string) => ['issue-threads', issueId] as const
+export const issueThreadsKey = issueKeys.threads
 export const threadTopologyKey = (issueId: string) => ['issue-thread-topology', issueId] as const
 export type IssueThreadsRead = Awaited<ReturnType<typeof pollIssueThreads>>
 type History = ListSnapshot<Awaited<ReturnType<typeof listIssueVersions>>[number]>

@@ -18,9 +18,9 @@ async function stateTransaction<T>(pool: Pool, action: (client: PoolClient) => P
     const result = await action(client)
     await client.query('COMMIT')
     return result
-  } catch {
+  } catch (error) {
     await client.query('ROLLBACK').catch(() => {})
-    throw Error('__providerEgressCollectorStateUnavailable')
+    throw Object.assign(Error('__providerEgressCollectorStateUnavailable'), { cause: error })
   } finally { client.release() }
 }
 
@@ -45,7 +45,7 @@ export async function collectProviderEgress(pool: Pool, options: Options = {}) {
     try {
       if (options.collect) await options.collect()
       else {
-        const report = await run({ vercelToken: undefined, neonToken: options.neonToken, providerOnly: true })
+        const report = await run({ neonToken: options.neonToken, providerOnly: true })
         // Publish failure health too; never replace missing supplier data with 0.
         await publish(report, options.posthogKey)
         if (report.reasons.length) throw Error('egressProviderUnavailable')

@@ -59,7 +59,7 @@ export function createFirecrawlProvider(fetchImpl: typeof fetch = fetch, options
       }), combined)
     } catch (error) {
       signal?.throwIfAborted()
-      if (timeout.aborted) throw new SearchProviderError('timeout', 'Firecrawl timed out')
+      if (timeout.aborted) throw Object.assign(new SearchProviderError('timeout', 'Firecrawl timed out'), { cause: error })
       if (error instanceof SearchProviderError) throw error
       throw new SearchProviderError('error', 'Invalid Firecrawl response')
     }

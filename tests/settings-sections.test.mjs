@@ -1,17 +1,34 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { SETTINGS_SECTIONS, isSettingsSectionParam, resolveSettingsSection, settingsHref, visibleSettingsSections } from '../lib/settings-sections.ts'
+import {
+  SETTINGS_ITEM_STATUS,
+  SETTINGS_SECTIONS,
+  SETTINGS_SECTION_STATUS,
+  WIDE_SETTINGS_SECTIONS,
+  isSettingsSectionParam,
+  resolveSettingsSection,
+  settingItemPending,
+  settingItemShown,
+  settingItemStatus,
+  settingSectionStatus,
+  settingsHref,
+  visibleSettingsSections,
+  withPendingSuffix,
+} from '../lib/settings-sections.ts'
 
-test('every v4 nav item has exactly one section, in Figma order (app permissions in the workspace group, 2026-11-10)', () => {
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal').map(s => s.id), ['account', 'security', 'preferences', 'notifications', 'memory', 'connections', 'models', 'logins', 'privacy', 'computers', 'developer'])
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace').map(s => s.id), ['general', 'issue-states', 'bot-permissions', 'members', 'teams', 'permissions', 'secrets', 'environments', 'audit', 'organization', 'usage', 'billing', 'cloud'])
+test('every nav item has exactly one section, in the Figma 1508:2 group order', () => {
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !s.withheld && !s.unbuilt && s.sidebar !== false).map(s => s.id), ['preferences', 'appearance', 'account', 'security', 'notifications', 'shortcuts', 'models', 'environments', 'mcp', 'connections', 'developer', 'secrets', 'computers'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld).map(s => s.id), ['instructions', 'team-skills', 'threads', 'git', 'memory'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'review' && !s.unbuilt && !s.withheld).map(s => s.id), [])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'organization', 'issue-states', 'members', 'teams', 'billing', 'usage', 'activity', 'audit', 'cloud'])
 })
 
-test('old links keep landing on the page that now holds their content', () => {
-  // v4 reuses `account` for 账户, so v3's account link lands there; its sign-in rows are one click away under 安全.
-  for (const [old, now] of [['profile', 'account'], ['integrations', 'connections'], ['devices', 'computers'], ['workspace', 'general']]) {
+test('old links keep landing on the page that now holds their content, and deleted bot-permissions is not a legacy alias', () => {
+  for (const [old, now] of [['profile', 'account'], ['integrations', 'connections'], ['devices', 'computers'], ['workspace', 'general'], ['memory', 'memory'], ['privacy', 'account']]) {
     assert.equal(resolveSettingsSection('/settings', old), now, old)
   }
+  assert.equal(isSettingsSectionParam('bot-permissions'), false)
+  assert.equal(resolveSettingsSection('/settings', 'bot-permissions'), 'preferences')
 })
 
 test('routed pages win over the query, and unknown input falls back to preferences', () => {
@@ -28,18 +45,30 @@ test('hrefs keep the workspace and use the routed paths for members and teams', 
   assert.equal(settingsHref('preferences'), '/settings?section=preferences')
 })
 
-const UNBUILT = ['developer']
-// 组织 shows only where a UI layer draws it (`organization: true`); the open-source UI has none.
-const LAYER_ONLY = ['organization']
+const PENDING_SECTIONS = []
+const SKIPPED_SECTIONS = ['review-repositories', 'review-config', 'referrals', 'experiments', 'cloud-credentials']
+const SIDEBAR_OFF = ['logins', 'permissions']
+
+test('centralized 3-tier status governs section and item presentation', () => {
+  for (const id of PENDING_SECTIONS) assert.equal(settingSectionStatus(id), 'pending', id)
+  for (const id of SKIPPED_SECTIONS) assert.equal(settingSectionStatus(id), 'skipped', id)
+  assert.equal(settingItemStatus('environments.networkAccess'), 'skipped')
+  assert.equal(settingItemShown('environments.networkAccess'), false)
+  assert.equal(settingItemPending('threads.subagentDepth'), true)
+  assert.equal(settingItemPending('threads.subagentMaxConcurrent'), false)
+  assert.equal(settingItemPending('workspace.workVisibility'), true)
+  assert.equal(SETTINGS_ITEM_STATUS['appearance.sync'], 'available')
+  assert.equal(withPendingSuffix('嵌套深度', '待接入'), '嵌套深度 · 待接入')
+  assert.deepEqual([...WIDE_SETTINGS_SECTIONS], ['shortcuts', 'environments', 'members', 'teams', 'usage', 'activity', 'audit'])
+})
 
 test('members do not see admin-only sections; admins see every built one', () => {
   const member = visibleSettingsSections({ admin: false }).map(s => s.id)
   assert.equal(member.includes('permissions'), false)
-  // 计费: members see 付款 only (their card designation and credit share; C19).
-  // 密钥与环境: members see every entry and write repository ones (decision 2026-11-02-2120).
-  for (const id of ['general', 'members', 'teams', 'computers', 'usage', 'billing', 'secrets']) assert.equal(member.includes(id), true, id)
+  for (const id of ['general', 'members', 'teams', 'computers', 'usage', 'billing', 'environments']) assert.equal(member.includes(id), true, id)
+  for (const id of SIDEBAR_OFF) assert.equal(member.includes(id), false, id)
   for (const id of ['audit']) assert.equal(member.includes(id), false, id)
-  assert.deepEqual(visibleSettingsSections({ admin: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => !UNBUILT.includes(s.id) && !LAYER_ONLY.includes(s.id) && s.id !== 'cloud').map(s => s.id))
+  assert.deepEqual(visibleSettingsSections({ admin: true, memory: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available' && !SIDEBAR_OFF.includes(s.id) && s.id !== 'cloud').map(s => s.id))
 })
 
 test('cloud server settings require the explicit server administrator capability', () => {
@@ -48,27 +77,36 @@ test('cloud server settings require the explicit server administrator capability
     assert.equal(visibleSettingsSections({ admin, cloudAdmin: false }).some(s => s.id === 'cloud'), false)
     assert.equal(visibleSettingsSections({ admin, cloudAdmin: true }).some(s => s.id === 'cloud'), true)
   }
-  assert.deepEqual(visibleSettingsSections({ admin: true, cloudAdmin: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => !UNBUILT.includes(s.id) && !LAYER_ONLY.includes(s.id)).map(s => s.id))
+  assert.deepEqual(visibleSettingsSections({ admin: true, cloudAdmin: true, memory: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available' && !SIDEBAR_OFF.includes(s.id)).map(s => s.id))
 })
 
-test('组织 requires the official UI layer, including Organization-only personal members without team permissions', () => {
+test('身份与访问 is in the public team sidebar; a personal workspace has no organization', () => {
   for (const admin of [false, true]) {
-    assert.equal(visibleSettingsSections({ admin }).some(s => s.id === 'organization'), false)
+    assert.equal(visibleSettingsSections({ admin }).some(s => s.id === 'organization'), true)
     assert.equal(visibleSettingsSections({ admin, personal: true }).some(s => s.id === 'organization'), false)
-    assert.equal(visibleSettingsSections({ admin, organization: true, personal: true }).some(s => s.id === 'organization'), true)
+    assert.equal(visibleSettingsSections({ admin, organization: true, personal: true }).some(s => s.id === 'organization'), false)
   }
   assert.equal(visibleSettingsSections({ admin: true, organization: true }).some(s => s.id === 'organization'), true)
-  const personalMember = visibleSettingsSections({ admin: false, organization: true, personal: true }).map(s => s.id)
-  for (const teamOnly of ['members', 'teams', 'permissions', 'audit']) assert.equal(personalMember.includes(teamOnly), false, teamOnly)
-  assert.deepEqual(visibleSettingsSections({ admin: true, cloudAdmin: true, organization: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => !UNBUILT.includes(s.id)).map(s => s.id))
+  const personalMember = visibleSettingsSections({ admin: false, organization: true, personal: true, memory: true }).map(s => s.id)
+  for (const teamOnly of ['organization', 'members', 'teams', 'permissions', 'audit']) assert.equal(personalMember.includes(teamOnly), false, teamOnly)
+  assert.deepEqual(visibleSettingsSections({ admin: true, cloudAdmin: true, organization: true, memory: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available' && !SIDEBAR_OFF.includes(s.id)).map(s => s.id))
 })
 
-test('sections without a page body are hidden until their UI lands, and their links open preferences', () => {
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.unbuilt).map(s => s.id), UNBUILT)
-  for (const admin of [false, true]) for (const id of UNBUILT) assert.equal(visibleSettingsSections({ admin }).some(s => s.id === id), false, `${id} admin=${admin}`)
-  for (const id of UNBUILT) {
+test('pending sections without a page body are hidden until their UI lands, and their links open preferences', () => {
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.unbuilt).map(s => s.id), PENDING_SECTIONS)
+  for (const admin of [false, true]) for (const id of PENDING_SECTIONS) assert.equal(visibleSettingsSections({ admin }).some(s => s.id === id), false, `${id} admin=${admin}`)
+  for (const id of PENDING_SECTIONS) {
     assert.equal(resolveSettingsSection('/settings', id), 'preferences', id)
     assert.equal(isSettingsSectionParam(id), true, `${id} is still a known link`)
+  }
+})
+
+test('skipped pages (05/06/13 and UI-only 20/21) are not links and never appear', () => {
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.withheld).map(s => s.id), SKIPPED_SECTIONS)
+  for (const id of SKIPPED_SECTIONS) {
+    assert.equal(visibleSettingsSections({ admin: true, cloudAdmin: true, organization: true }).some(s => s.id === id), false, id)
+    assert.equal(isSettingsSectionParam(id), false, id)
+    assert.equal(resolveSettingsSection('/settings', id), 'preferences', id)
   }
 })
 
@@ -83,10 +121,19 @@ test('a current id wins over a legacy alias with the same name', () => {
 })
 
 test('a personal workspace has every setting of the workspace itself; only what is between people is a team\'s', () => {
-  // Decision 2026-11-02-0203: the two kinds differ only in 成员, 团队, 团队权限 and 审计日志.
-  const personal = visibleSettingsSections({ admin: true, personal: true }).map(s => s.id)
-  const account = SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !UNBUILT.includes(s.id)).map(s => s.id)
-  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'bot-permissions', 'secrets', 'environments', 'usage', 'billing'])
+  const personal = visibleSettingsSections({ admin: true, personal: true, memory: true }).map(s => s.id)
+  const account = SETTINGS_SECTIONS.filter(s => (s.group === 'personal' || s.group === 'agent') && SETTINGS_SECTION_STATUS[s.id] === 'available' && s.sidebar !== false).map(s => s.id)
+  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'billing', 'usage', 'activity'])
   const team = visibleSettingsSections({ admin: true }).map(s => s.id)
-  for (const id of ['general', 'members', 'teams', 'permissions', 'secrets', 'environments', 'audit', 'usage', 'billing']) assert.ok(team.includes(id), id)
+  for (const id of ['general', 'organization', 'members', 'teams', 'environments', 'secrets', 'audit', 'usage', 'activity', 'billing']) assert.ok(team.includes(id), id)
+  assert.equal(team.includes('permissions'), false)
+  assert.equal(team.includes('logins'), false)
+})
+
+test('记忆 shows only while the memory PostHog flag is on', () => {
+  for (const admin of [false, true]) for (const personal of [false, true]) {
+    assert.equal(visibleSettingsSections({ admin, personal }).some(s => s.id === 'memory'), false, `admin=${admin} personal=${personal}`)
+    assert.equal(visibleSettingsSections({ admin, personal, memory: false }).some(s => s.id === 'memory'), false)
+    assert.equal(visibleSettingsSections({ admin, personal, memory: true }).some(s => s.id === 'memory'), true)
+  }
 })

@@ -30,6 +30,7 @@ import { sanitizeTraceContext } from './trace-context'
 import { nativeLeaseSchema } from './subscription'
 import { mailboxCatalogueSchema } from './mailbox'
 import { taskSecretAccessSchema } from './task-secrets'
+import { taskBranchSchema } from './orchestrator'
 
 const id = z.string().min(1).max(64)
 const isoTime = z.iso.datetime({ offset: true })
@@ -367,6 +368,8 @@ export const MODEL_GATEWAY_LOOPBACK_HEADER = "x-mikka-model-gateway-loopback"
 export const RUN_CREDENTIALS_HEADER = "x-mikka-run-credentials"
 /** Only the first cloud claim can replace that sync's repository discovery. */
 export const INITIAL_REPOSITORY_HEADER = "x-mikka-initial-repository"
+/** The daemon accepts a configured prefix in the task's GitHub delivery branch. */
+export const CUSTOM_TASK_BRANCH_HEADER = "x-mikka-custom-task-branch"
 
 const credentialKey = z.string().min(1).max(4_096).refine(value => !/[\r\n\0]/.test(value))
 /** Background refresh response; null means the provider set no expiry. */
@@ -393,6 +396,38 @@ export const runModelCredentialSchema = z.discriminatedUnion("kind", [
   }),
 ])
 export type RunModelCredential = z.infer<typeof runModelCredentialSchema>
+
+const hasGitIdentityForbiddenChar = (value: string) =>
+  [...value].some(char => {
+    const code = char.charCodeAt(0)
+    return code < 0x20 || code === 0x7f || char === "<" || char === ">"
+  })
+
+/** Commit author/committer name: <= 100 chars non-empty after trim, or "" for default fallback. */
+export const gitAuthorNameSchema = z
+  .string()
+  .refine(value => value === "" || value.trim().length > 0, { message: "Invalid git author name" })
+  .transform(value => value.trim())
+  .pipe(z.string().max(100).refine(value => !hasGitIdentityForbiddenChar(value), { message: "Invalid git author name" }))
+
+/** Commit author/committer email: valid email (<= 254 chars) or "" for default fallback. */
+export const gitAuthorEmailSchema = z
+  .string()
+  .refine(value => value === "" || value.trim().length > 0, { message: "Invalid git author email" })
+  .transform(value => value.trim())
+  .pipe(
+    z.string().max(254).refine(
+      value => value === "" || (!hasGitIdentityForbiddenChar(value) && z.email().safeParse(value).success),
+      { message: "Invalid git author email" },
+    ),
+  )
+
+/** Resolved non-empty Git identity delivered to a run at claim time. */
+export const runGitIdentitySchema = z.strictObject({
+  name: gitAuthorNameSchema.pipe(z.string().min(1)).optional(),
+  email: gitAuthorEmailSchema.pipe(z.string().min(1)).optional(),
+})
+export type RunGitIdentity = z.infer<typeof runGitIdentitySchema>
 
 /** A repository record and its identity-scoped settings. */
 export const deviceRepoSchema = z.object({
@@ -477,14 +512,16 @@ export const runAssignmentSchema = z.object({
   /** Local host authority comes only from the server's owner-bound Bot run. */
   localComputer: z.object({
     botId: z.uuid(), ownerId: z.string().min(1).max(128), workspaceId: z.uuid(),
-    policyVersion: z.number().int().nonnegative().max(2147483647),
+    /** Compat: released daemons still require the field; new code ignores it. */
+    policyVersion: z.number().int().nonnegative().max(2147483647).optional(),
     permission: z.enum(['allow', 'ask']),
   }).strict().optional(),
   /** Trusted server assignment; the model cannot choose a Bot or display. */
   computer: z.object({
     botId: z.uuid(), ownerId: z.string().min(1).max(128),
     display: z.string().regex(/^:[1-9][0-9]{0,2}$/),
-    policyVersion: z.number().int().nonnegative().max(2147483647),
+    /** Compat: released daemons still require the field; new code ignores it. */
+    policyVersion: z.number().int().nonnegative().max(2147483647).optional(),
   }).strict().optional(),
   /**
    * 4e3: the task's explicit user variables (workspace + matching repository secrets/env, NAME -> value).
@@ -503,7 +540,7 @@ export const runAssignmentSchema = z.object({
   /** Mock harness only: fixture name under `packages/daemon/fixtures`. */
   fixture: z.string().max(200).optional(),
   /**
-   * The issue's branch (`mikka/<team>-<number>`, ADR 0024): every run of
+   * The issue's branch (default `mikka/<team>-<number>`, ADR 0024): every run of
    * the issue pushes its verified commit here, so one pull request follows
    * the issue across fix rounds. A run that starts a new worktree builds on
    * this branch from the remote when it exists. Without it the daemon
@@ -540,7 +577,7 @@ export const runAssignmentSchema = z.object({
    */
   github: z.object({
     endpoint: z.url(), repository: z.string().regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
-    branch: z.string().regex(/^mikka\/[a-z0-9-]+-[1-9][0-9]*$/).optional(),
+    branch: taskBranchSchema.optional(),
     token: runGitHubCredentialSchema.shape.token.optional(),
     expiresAt: runGitHubCredentialSchema.shape.expiresAt.optional(),
   }).strict().refine(value => Boolean(value.token) === (value.expiresAt !== undefined), { message: 'A prepared GitHub token includes its natural expiry', path: ['expiresAt'] }).optional(),
@@ -612,6 +649,8 @@ export const runAssignmentSchema = z.object({
   repositorySkills: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(MAX_PROFILE_SKILLS_PER_RUN).optional(),
   /** Frozen by the server benchmark ledger; never extracted from model output. */
   benchmark: runBenchmarkContext.optional(),
+  /** Resolved personal/workspace Git commit author & committer identity (#3110). */
+  gitIdentity: runGitIdentitySchema.optional(),
 }).refine(value => !(value.modelCredential && value.subscriptionBinding), { message: "A run has one model credential", path: ["modelCredential"] })
   .refine(value => !value.subscriptionLease || Boolean(value.subscriptionBinding && value.subscriptionBinding.route === value.subscriptionLease.route &&
     (value.harness === 'codex' ? value.subscriptionLease.route === 'codex_cli' : value.harness === 'claude_code' && value.subscriptionLease.route === 'claude_code_cli')),

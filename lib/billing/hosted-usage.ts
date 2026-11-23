@@ -2,7 +2,7 @@
 // as the backend reports them (#531, #558, #559), and the UI's helpers for them.
 
 /** Every state `getHostedUsage` reports; a refused model call carries the same code. */
-export const HOSTED_STATES = ['ready', 'verification_required', 'free_allowance_used', 'points_exhausted', 'platform_paused', 'usage_in_progress', 'usage_concurrency_limit', 'usage_cost_unavailable', 'usage_budget_exhausted', 'billing_authorization_revoked'] as const
+export const HOSTED_STATES = ['ready', 'verification_required', 'free_allowance_used', 'points_exhausted', 'platform_paused', 'usage_in_progress', 'usage_concurrency_limit', 'usage_cost_unavailable', 'usage_budget_exhausted', 'billing_authorization_revoked', 'billing_scope_missing', 'billing_owner_missing'] as const
 export type HostedState = (typeof HOSTED_STATES)[number]
 export type HostedRefusal = Exclude<HostedState, 'ready'>
 
@@ -67,7 +67,7 @@ const MICRO_USD_PER_POINT = 10_000
  */
 export function hostedRefusal(message: string | null | undefined): HostedRefusal | null {
   if (!message) return null
-  const match = /\b(verification_required|free_allowance_used|points_exhausted|platform_paused|usage_in_progress|usage_concurrency_limit|usage_cost_unavailable|usage_budget_exhausted|billing_authorization_revoked)\b/.exec(message)
+  const match = /\b(verification_required|free_allowance_used|points_exhausted|platform_paused|usage_in_progress|usage_concurrency_limit|usage_cost_unavailable|usage_budget_exhausted|billing_authorization_revoked|billing_scope_missing|billing_owner_missing)\b/.exec(message)
   return match ? match[1] as HostedRefusal : null
 }
 

@@ -24,6 +24,8 @@ export const gatedFeatures = {
   cloudComputer: 'mikka-cloud-computer',
   /** Points that bill cloud computer time (计费 › 点数). Hidden while E2B runs on the workspace's own API key (Alex, 2026-10-30). */
   computerBilling: 'mikka-computer-billing',
+  /** 记忆 (sidebar entry, its page and its settings section). Hidden: it does not work yet (Alex, 2026-11-20). */
+  memory: 'mikka-memory',
 } as const
 
 export type GatedFeature = keyof typeof gatedFeatures
@@ -33,6 +35,7 @@ export type GatedFeature = keyof typeof gatedFeatures
 export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
   'mikka-cloud-computer': true,
   'mikka-computer-billing': false,
+  'mikka-memory': false,
   'mikka-byos-subscription-chat': true,
   'mikka-byos-subscription-native': true,
   'mikka-email-sign-in-off': false,
@@ -42,6 +45,25 @@ export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
   ...Object.fromEntries(Object.values(upcomingFeatures).map(feature => [feature.key, false])),
 }
 export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[key] ?? false
+
+/** Local server acceptance can exercise both flag states without a PostHog key.
+ * Production ignores this setting before reading or parsing it. */
+export function localFlagOverride(key: string): boolean | undefined {
+  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') return undefined
+  const configured = process.env.MIKKA_FLAG_OVERRIDES
+  if (!configured) return undefined
+  let overrides: unknown
+  try {
+    overrides = JSON.parse(configured)
+  } catch (error) {
+    throw new Error('MIKKA_FLAG_OVERRIDES_INVALID_JSON', { cause: error })
+  }
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)
+    || Object.values(overrides).some(value => typeof value !== 'boolean')) {
+    throw new Error('MIKKA_FLAG_OVERRIDES_REQUIRE_BOOLEANS')
+  }
+  return Object.hasOwn(overrides, key) ? (overrides as Record<string, boolean>)[key] : undefined
+}
 
 /**
  * Who gets proactive work (R-73, docs/design/proactive.md § 3), checked on the

@@ -140,7 +140,7 @@ export async function withFactoryPublicationEvidence<T>(pool: Pick<Pool, 'connec
 }
 
 /** Only an acknowledged PR body with this exact receipt is ready to hand over. */
-export async function factoryPublicationEvidenceReady(tx: Query, task: { id: string; userId: string; issueId: string; candidateId: string | null }) {
+export async function factoryPublicationEvidenceReady(tx: Query, task: { id: string; userId: string; issueId: string; candidateId: string | null }, retryRunId?: string) {
   const { rows: [row] } = await tx.query(`SELECT c.kind,c.sha,c."runId",p.status,p."pullRequest"->>'evidenceDigest' AS digest
     FROM factory_candidates c LEFT JOIN run_publications p ON p."runId"=c."runId" AND p."userId"=$3
     WHERE c."taskId"=$1 AND c.id=$2`, [task.id, task.candidateId, task.userId])
@@ -149,7 +149,7 @@ export async function factoryPublicationEvidenceReady(tx: Query, task: { id: str
   // The event key is derived from the producer, never from an untrusted report URL.
   const { rows: [event] } = await tx.query('SELECT result FROM factory_events WHERE "taskId"=$1 AND "eventId"=$2', [task.id, receiptId(row.runId)])
   const receipt = validPublicationEvidence(event?.result)
-  if (!receipt || row.status !== 'published' || row.digest !== receipt.digest) return false
+  if (!receipt || row.digest !== receipt.digest || (row.status !== 'published' && !(row.status === 'processing' && row.runId === retryRunId))) return false
   try {
     const current = await currentCandidate(tx, { userId: task.userId, issueId: task.issueId, runId: row.runId, sha: row.sha })
     if (current.taskId !== task.id || current.candidateId !== task.candidateId) return false
@@ -158,6 +158,6 @@ export async function factoryPublicationEvidenceReady(tx: Query, task: { id: str
   } catch (error) { if (error instanceof PublicationError) return false; throw error }
 }
 
-export async function assertFactoryPublicationEvidence(tx: Query, task: { id: string; userId: string; issueId: string; candidateId: string | null }) {
-  if (!await factoryPublicationEvidenceReady(tx, task)) throw rejected()
+export async function assertFactoryPublicationEvidence(tx: Query, task: { id: string; userId: string; issueId: string; candidateId: string | null }, retryRunId?: string) {
+  if (!await factoryPublicationEvidenceReady(tx, task, retryRunId)) throw rejected()
 }

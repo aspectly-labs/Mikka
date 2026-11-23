@@ -20,7 +20,15 @@ test('native connection exports only the frozen authorized endpoints and encrypt
     for (const migration of ['20261031040000_personal_plugins.sql','20261104003000_mcp_workspace_shares.sql','20261112030000_native_task_mcp.sql']) await pool.query(await readFile(new URL('../../drizzle/'+migration,import.meta.url),'utf8'))
     const store = new PersonalPluginStore(pool,{WORKSPACE_SECRETS_KEY:randomBytes(32).toString('hex')})
     const secret = `synthetic-${randomUUID()}`
+    const bareStdio = await store.createMcp('owner',createMcpSchema.parse({name:'BareLocal',transport:'stdio',command:'node',args:['bare.js']}))
+    assert.equal(bareStdio.authKind, 'none')
+    const promotedStdio = await store.updateMcp('owner',{id:bareStdio.id,env:{BARE_TOKEN:'set'}})
+    assert.equal(promotedStdio.authKind, 'env')
+    const clearedStdio = await store.updateMcp('owner',{id:bareStdio.id,env:{}})
+    assert.equal(clearedStdio.authKind, 'none')
+    await store.deleteMcp('owner', bareStdio.id)
     const native = await store.createMcp('owner',createMcpSchema.parse({name:'Local',transport:'stdio',command:'node',args:['server.js'],cwd:'/workspace/repo',env:{SERVICE_TOKEN:secret}}))
+    assert.equal(native.authKind, 'env')
     const remote = await store.createMcp('owner',createMcpSchema.parse({name:'Remote',url:'https://mcp.acme.dev/rpc',headers:{Authorization:`Bearer ${secret}`,'X-Account':'test'}}))
     const authority = {requester:'owner',workspaceId:null,servers:[native,remote].map(s=>({id:s.id,name:s.name,revision:s.revision,ownerId:'owner',grantId:null}))}
     assert.ok(!JSON.stringify(await store.listMcp('owner')).includes(secret))

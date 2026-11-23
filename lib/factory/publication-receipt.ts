@@ -112,8 +112,8 @@ export function assertPublicationTarget(
     let url: URL;
     try {
       url = new URL(v.reference);
-    } catch {
-      throw new FactoryError("factoryPublicationReceiptMismatch");
+    } catch (error) {
+      throw Object.assign(new FactoryError("factoryPublicationReceiptMismatch"), { cause: error });
     }
     if (
       action !==

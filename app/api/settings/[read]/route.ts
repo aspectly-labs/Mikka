@@ -6,10 +6,10 @@ import { getPasswordStatus, listSessions } from '@/app/actions/account'
 import { getPreferences } from '@/app/actions/preferences'
 import { getIssuePrefixState } from '@/app/actions/issue-prefix'
 import { cacheReadAction } from '@/lib/cache-read-action'
-import { listSavedLogins } from '@/app/actions/settings-activity'
+import { listActivity, listSavedLogins } from '@/app/actions/settings-activity'
 import { getWorkspaceDeletionImpact, getWorkspaceGeneral, getWorkspaceTransferTargets } from '@/app/actions/workspace-settings'
 import { getAppPolicy } from '@/app/actions/app-policy'
-import { getSharePolicy } from '@/app/actions/personal-policy'
+import { getCreditShare, getPaymentDesignation, getSharePolicy } from '@/app/actions/personal-policy'
 import { getE2BKeyCapability, listSecrets } from '@/app/actions/workspace-secrets'
 import { getUsage } from '@/app/actions/usage'
 import { cardVerificationStatus, getBilling, getCreditBilling } from '@/app/actions/billing'
@@ -35,11 +35,15 @@ const READS: Record<SettingsRead, (query: URLSearchParams) => Promise<unknown>> 
   preferences: () => getPreferences(),
   'issue-prefix': () => getIssuePrefixState(),
   'saved-logins': () => listSavedLogins(),
+  activity: query => listActivity({ filter: (query.get('filter') ?? undefined) as NonNullable<Parameters<typeof listActivity>[0]>['filter'], cursor: query.get('cursor') }),
   'workspace-general': query => getWorkspaceGeneral(workspace(query)),
   'transfer-targets': query => getWorkspaceTransferTargets(workspace(query)),
   'deletion-impact': query => getWorkspaceDeletionImpact(workspace(query)),
   'app-policy': query => getAppPolicy(workspace(query)),
   'share-policy': query => getSharePolicy(workspace(query)),
+  // 团队工作区专属 (#838, 决定 2310): 个人工作区视图里这两项不出现，函数返回成员视角的空值。
+  'payment-designation': query => getPaymentDesignation(workspace(query)),
+  'credit-share': query => getCreditShare(workspace(query)),
   secrets: query => listSecrets(workspace(query)),
   // The E2B row needs canEdit as well as the key's state.
   'e2b-key': query => getE2BKeyCapability(workspace(query)),
@@ -82,7 +86,7 @@ async function shareKey(read: string, query: URLSearchParams) {
 }
 
 /** Reads of the signed-in account alone, with no workspace input. */
-const ACCOUNT_READS = new Set<string>(['password', 'preferences', 'issue-prefix', 'saved-logins'])
+const ACCOUNT_READS = new Set<string>(['password', 'preferences', 'issue-prefix', 'saved-logins', 'activity'])
 
 function workspace(query: URLSearchParams) {
   return query.get('workspace') ?? undefined
