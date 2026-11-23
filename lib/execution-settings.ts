@@ -221,7 +221,18 @@ export class ExecutionSettings {
     const source = (await this.connectedBindings(scope, bindingId, query)).find(
       (row) => row.bindingId === bindingId,
     );
-    if (!source) throw new ActionFailureError("executionModelUnknown");
+    if (!source) {
+      // A member re-sending an owner's subscription-bound run holds someone
+      // else's binding: refuse it as theirs-not-yours, not an unknown model
+      // (issue #3057 — turn.started must not report executionModelUnknown).
+      const { rows: [held] } = await query.query<{ ownerId: string }>(
+        'SELECT b."ownerId" FROM byos_bindings b WHERE b.id=$1', [bindingId]);
+      if (held && held.ownerId !== scope.ownerId) {
+        const { SubscriptionRefusal } = await import("@mikka/protocol/subscription");
+        throw new SubscriptionRefusal("account_unavailable");
+      }
+      throw new ActionFailureError("executionModelUnknown");
+    }
     if (source.workspaceId === scope.workspaceId && (botId === null || source.consumerId === botId)) return bindingId;
     const hash = createHash("sha256")
       .update(

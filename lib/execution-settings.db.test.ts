@@ -340,7 +340,7 @@ test(
       // Unshared, it is hers alone.
       assert.equal((await settings.botModels({ownerId:'bob',workspaceId:teamB.workspaceId})).length,0,'another member of team B never sees or uses it');
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'executionModelUnknown'},'another member\'s bot asks for a model');
-      await assert.rejects(settings.bindingForBot({ownerId:'bob',workspaceId:teamB.workspaceId},null,catalogue.bindingId),{code:'executionModelUnknown'});
+      await assert.rejects(settings.bindingForBot({ownerId:'bob',workspaceId:teamB.workspaceId},null,catalogue.bindingId),{code:'account_unavailable'},'another member\'s binding is a borrow refusal, not an unknown model');
       await assert.rejects(settings.setBotModel({ownerId:'bob',workspaceId:teamB.workspaceId},bobBot,catalogue.bindingId),{code:'executionModelUnknown'});
       // Team B's admin switch never limits her own use.
       await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)',[teamB.workspaceId]);
