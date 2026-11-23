@@ -34,7 +34,9 @@ export async function searchThreadReferences(reader: IssueReader, workspaceId: s
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
       // Match names in JS like the other kinds: PostgreSQL's lower() folds final ς differently and would drop hits.
       kind && kind !== 'bot' ? null : db.select({ id: bots.id, name: bots.name }).from(bots)
-        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)),
+        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt))
+        // A real query caps well past the picker's eight so the JS filter always precedes it; no query needs only eight.
+        .limit(query.trim() ? 512 : 8),
     ])
     const needle = query.toLowerCase().replace(/ς/g, 'σ')
     return [
