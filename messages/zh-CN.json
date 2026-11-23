@@ -3427,7 +3427,15 @@
       "included": "你的订阅或 API Key",
       "calls": "{count} 次调用",
       "unpricedCalls": "另有 {count} 次调用没有单次价格",
-      "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
+      "includedNote": "不扣 Mikka 额度；订阅不按次计价。",
+      "groupBy": "费用按…分",
+      "byThread": "按线程",
+      "byModel": "按模型",
+      "byMachine": "按机器",
+      "minutes": "{count} 分钟",
+      "tokens": "{input} 入 · {output} 出",
+      "unbilled": "未计费",
+      "unknownSize": "未知规格"
     },
     "actionFailed": "操作失败。",
     "composerMenu": {
@@ -3458,6 +3466,39 @@
       "remove": "删除",
       "failed": "环境变量更新失败。",
       "replaces": "同名变量已存在，添加会覆盖已保存的值。"
+    },
+    "threadMenu": {
+      "copyLink": "复制链接",
+      "copied": "已复制",
+      "copyFailed": "复制失败",
+      "share": "分享…",
+      "shareTitle": "分享这条线程",
+      "shareFailed": "无法分享",
+      "copy": "复制",
+      "done": "完成",
+      "revoke": "撤销分享",
+      "revoked": "已撤销分享",
+      "forkFull": "分叉 · 完整线程",
+      "forkSummary": "分叉 · 摘要",
+      "forkFailed": "无法分叉线程",
+      "moveToTask": "移动到任务…",
+      "moveTitle": "移动到任务",
+      "moveSearch": "搜索任务",
+      "moveClear": "无任务",
+      "moveEmpty": "没有匹配的任务",
+      "moved": "已移动",
+      "moveFailed": "无法移动线程",
+      "tags": "标签…",
+      "tagsTitle": "线程标签",
+      "tagsLabel": "标签",
+      "tagsPlaceholder": "标签，标签…",
+      "tagsSaved": "标签已保存",
+      "tagsFailed": "无法保存标签",
+      "delete": "删除线程…",
+      "deleteTitle": "删除这条线程？",
+      "deleteBody": "30 天内可恢复。",
+      "deleted": "线程已删除",
+      "deleteFailed": "无法删除线程"
     }
   },
   "FactoryFlow": {
@@ -4475,7 +4516,8 @@
     "mcpOAuthUnavailable": "无法连接 MCP 服务器完成登录。",
     "mcpCatalogUnavailable": "MCP 目录不可用。",
     "mcpCatalogRemoteUnavailable": "无法访问 MCP 目录源。",
-    "mcpCatalogMismatch": "该目录条目与服务器已不匹配。"
+    "mcpCatalogMismatch": "该目录条目与服务器已不匹配。",
+    "restoreExpired": "已超过可恢复期限。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
