@@ -25,20 +25,22 @@ export async function readCoordinatorOverview(user: OverviewUser, workspaceId?: 
     tokenScopeFilter(user, 'r."workspaceId"', 2),
     tokenScopeFilter(user, 'i."workspaceId"', 2),
   ])
-  const namedRun = workspaceId ? ` AND r."workspaceId" = $${2 + runScope.params.length}` : ''
-  const namedPublication = workspaceId ? ` AND i."workspaceId" = $${2 + publicationScope.params.length}` : ''
+  // The named workspace narrows the section that asked (the Crew pane's pulls);
+  // needs-you and running keep the token's scope. The placeholder follows the
+  // scope clause's own params — a browser session adds none, so $2 it is.
+  const named = workspaceId ? ` AND i."workspaceId" = $${2 + publicationScope.params.length}` : ''
   const namedParams = workspaceId ? [workspaceId] : []
   const [needsYou, running, pullRequests] = await Promise.all([
     listNeedsYou(user),
     pool.query<{ runId: string; issueId: string | null; title: string | null; status: string; updatedAt: Date }>(
       `SELECT r.id AS "runId", r."issueId", i.title, r.status, r."updatedAt"
        FROM agent_runs r LEFT JOIN issues i ON i.id = r."issueId"
-       WHERE r."userId" = $1 AND r.status IN ('queued', 'running')${runScope.sql}${namedRun}
-       ORDER BY r."updatedAt" DESC LIMIT 20`, [user.id, ...runScope.params, ...namedParams]),
+       WHERE r."userId" = $1 AND r.status IN ('queued', 'running')${runScope.sql}
+       ORDER BY r."updatedAt" DESC LIMIT 20`, [user.id, ...runScope.params]),
     pool.query<{ issueId: string; branch: string | null; pullRequest: { url?: string; state?: string } | null; status: string; updatedAt: Date }>(
       `SELECT p."issueId", p.branch, p."pullRequest", p.status, p."updatedAt"
        FROM run_publications p LEFT JOIN issues i ON i.id = p."issueId"
-       WHERE p."userId" = $1 AND p."pullRequest" IS NOT NULL AND p.status <> 'skipped'${publicationScope.sql}${namedPublication}
+       WHERE p."userId" = $1 AND p."pullRequest" IS NOT NULL AND p.status <> 'skipped'${publicationScope.sql}${named}
        ORDER BY p."updatedAt" DESC LIMIT 20`, [user.id, ...publicationScope.params, ...namedParams]),
   ])
   return {
