@@ -1308,6 +1308,32 @@ export async function getThreadGitHistory(issueId: string | null, runId: string,
   })
 }
 
+/** #2929: the thread's turns as diff boundaries — one entry per run-chain
+ * attempt, each carrying the base/head its checkpoint review retained. */
+export async function getThreadGitTurns(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-turns', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunGitTurns } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunGitTurns({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId))
+  })
+}
+
+/** #2929: one turn's diff — the pair (previous turn's head, this turn's head)
+ * read through the ordinary `commit` diff selection. */
+export async function getThreadGitTurnDiff(issueId: string | null, runId: string, input: { baseSha: string; headSha: string; cursor?: string; limit?: number }) {
+  return withDatabaseOperation('/actions/threads/git-turn-diff', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { diffPage } = await import('@/lib/coding-workspace/diff/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return diffPage({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId,
+      { selection: { source: 'commit', baseSha: input.baseSha, headSha: input.headSha },
+        ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
+  })
+}
+
 /** #2940 item 3/6: the run's checkpoint/snapshot list, adapted to the thread. */
 export async function listThreadGitCheckpoints(issueId: string | null, runId: string) {
   return withDatabaseOperation('/actions/threads/git-checkpoints', async () => {
