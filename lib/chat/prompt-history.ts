@@ -27,3 +27,16 @@ export function stepPrompt(history: readonly string[], at: number | null, direct
   if (at === null) return undefined
   return at < history.length - 1 ? at + 1 : null
 }
+
+/** An earlier prompt as it was typed: its editor document and the files it went with, so Up brings it back whole. */
+export type PromptDoc = { prompt: string; doc: unknown; files: { id: string; name: string }[] }
+/** The kept documents stay within one durable cell (lib/hooks/view-state.tsx DURABLE_MAX): the oldest go first. */
+export const PROMPT_DOCS_MAX_CHARS = 64 * 1024 - 1024
+
+export function rememberPromptDoc(docs: readonly PromptDoc[], entry: PromptDoc): PromptDoc[] {
+  const prompt = entry.prompt.trim()
+  if (!prompt || prompt.length > PROMPT_HISTORY_ENTRY_MAX) return [...docs]
+  const kept = [...docs.filter(item => item.prompt !== prompt), { ...entry, prompt }].slice(-PROMPT_HISTORY_MAX)
+  while (kept.length && JSON.stringify(kept).length > PROMPT_DOCS_MAX_CHARS) kept.shift()
+  return kept
+}

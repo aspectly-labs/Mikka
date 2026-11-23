@@ -57,6 +57,11 @@ export type ChatComposerProps = {
    * whether the chat has `/` commands (a Bot chat, a thread); a group chat says so when it holds one of their Bots.
    */
   skills?: boolean
+  /**
+   * The tasks and threads this chat has already looked up (its citation sources): a reference in a draft the editor
+   * did not type itself is named from them, as its live chip is, instead of by kind and short id.
+   */
+  referenceSources?: Readonly<Record<string, import('@/lib/coordinator/citations').CitationSource>>
   /** Where the person's earlier prompts are kept (a thread's or chat's own key): Up in an empty composer recalls them. */
   historyKey?: string
   /** The `/` commands this chat can run; only commands with a working action are listed. */

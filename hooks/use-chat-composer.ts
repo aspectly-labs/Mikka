@@ -6,11 +6,11 @@ import { toast } from 'sonner'
 import { TEXT_ATTACHMENT_ACCEPT, textAttachment } from '@/lib/text-attachment'
 import { MESSAGE_MAX } from '@/lib/message-limits'
 import { sendsMessage } from '@/lib/send-key'
-import { CHAT_FILE_ACCEPT } from '@mikka/protocol/chat-attachments'
+import { CHAT_FILE_ACCEPT, withChatFiles } from '@mikka/protocol/chat-attachments'
 import { useChatFiles } from '@/components/chat/use-chat-files'
 import type { ChatComposerInput, ChatComposerProps } from '@/components/slots/chat-composer-contract'
 import { useViewState } from '@/lib/hooks/view-state'
-import { rememberPrompt } from '@/lib/chat/prompt-history'
+import { rememberPrompt, rememberPromptDoc, type PromptDoc } from '@/lib/chat/prompt-history'
 import { useComposerReferences } from '@/hooks/use-composer-references'
 
 /** The default slot's field is a textarea; the hosted one is the chat editor, which handles its own caret and size. */
@@ -22,7 +22,7 @@ const textareaOf = (node: ChatComposerInput | null) => (node as HTMLElement | nu
  * drop and paste, the length limit. The default slot and the hosted layer both
  * call it, so the two composers cannot behave differently.
  */
-export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands, people, historyKey, skills }: ChatComposerProps) {
+export function useChatComposer({ ref, value, onChange, onSubmit, sending = false, running = false, editableWhileSending = false, submitDisabled = false, disabled = false, onStop, sendKey = 'enter', thread = false, attachmentScope, attachmentDisabled = false, references: referenceScope, commands, people, historyKey, skills, referenceSources }: ChatComposerProps) {
   const tShell = useTranslations('Shell')
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<ChatComposerInput | null>(null)
@@ -36,6 +36,10 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
 
   // The person's earlier prompts here, newest last; kept with the drafts (lib/hooks/view-state.tsx), cleared on logout.
   const [history, setHistory] = useViewState<string[]>(historyKey ? `${historyKey}:history` : 'composer:history:none', [])
+  // Each earlier prompt as it was typed (the chat editor's document and its files), kept the same way.
+  const [promptDocs, setPromptDocs] = useViewState<PromptDoc[]>(historyKey ? `${historyKey}:editor:history` : 'composer:editor-history:none', [])
+  // The chat editor's document at the moment of sending, as it keeps it (components/chat/chat-editor).
+  const snapshot = useRef<(() => unknown) | null>(null)
   // Images drawn in the field as chips (the chat editor): the attachment strip leaves them out while they upload fine.
   const [inline, setInlineState] = useState<string[]>([])
   const setInline = useCallback((keys: string[]) => setInlineState(previous => previous.length === keys.length && previous.every((key, index) => key === keys[index]) ? previous : keys), [])
@@ -83,7 +87,11 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
 
   function submit() {
     if (!canSend) return
-    if (historyKey) setHistory(previous => rememberPrompt(previous, files.text))
+    if (historyKey) {
+      setHistory(previous => rememberPrompt(previous, files.text))
+      const doc = snapshot.current?.()
+      if (doc) setPromptDocs(previous => rememberPromptDoc(previous, { prompt: files.text, doc, files: files.files }))
+    }
     onSubmit()
   }
 
@@ -115,10 +123,18 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
     field: {
       stored: files.text,
       setStored: files.edit,
+      /** Where the editor keeps the draft as typed (chip places and names), beside the draft; none without a history. */
+      editorKey: historyKey ? `${historyKey}:editor:draft` : null,
       /** The longest the stored draft may grow: the message limit less its file markers. */
       maxLength: MESSAGE_MAX - (value.length - files.text.length),
       disabled,
       history,
+      /** The documents of earlier prompts, by prompt. */
+      promptDocs,
+      snapshot,
+      /** A recalled prompt: its text and the files it went with. */
+      setDraft: (text: string, attached: readonly { id: string; name: string }[]) => onChange(withChatFiles(text, attached)),
+      referenceSources,
       workspaceId: referenceScope?.workspaceId,
       runId: referenceScope?.runId,
       commands,
