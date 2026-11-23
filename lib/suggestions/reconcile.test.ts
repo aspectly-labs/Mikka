@@ -12,6 +12,8 @@ const cleared: unknown[][] = []
 const notionCalls: { userId: string; input: { page_size?: number; start_cursor?: string } }[] = []
 const stamps: { reconciledAt: unknown }[] = []
 const notionPages: Record<string, number> = {}
+// Which page a person's failure lands on (default 1 = the read fails outright).
+const failAfter: Record<string, number> = {}
 const page = (id: string) => ({ object: 'page', id, url: `https://www.notion.so/${id}`, last_edited_time: new Date().toISOString(), properties: { title: { type: 'title', title: [{ plain_text: 'Plan' }] } } })
 
 let reconcile: typeof import('./reconcile')
@@ -34,15 +36,16 @@ before(async () => {
     getComposio: () => ({ connectedAccounts: { list: async ({ userIds }: { userIds: string[] }) => ({ items: [{ id: `acct-${userIds[0]}`, status: 'ACTIVE', isDisabled: false, toolkit: { slug: 'notion' } }], nextCursor: null }) } }),
     runComposioAction: async (userId: string, action?: string, input?: { page_size?: number; start_cursor?: string }) => {
       const error = failure(userId)
-      if (error) return { error, accountId: `acct-${userId}` }
       if (action === 'list_recent_notion_pages') {
         notionCalls.push({ userId, input: input ?? {} })
         const seen = (notionPages[userId] = (notionPages[userId] ?? 0) + 1)
+        if (error && seen >= (failAfter[userId] ?? 1)) return { error, accountId: `acct-${userId}` }
         // The first answer says more pages exist; the follow-up must carry its cursor.
         return seen === 1
           ? { data: { results: [page(`${userId}-page`)], has_more: true, next_cursor: 'cursor-2' }, accountId: `acct-${userId}` }
           : { data: { results: [page(`${userId}-page2`)], has_more: false }, accountId: `acct-${userId}` }
       }
+      if (error) return { error, accountId: `acct-${userId}` }
       return { data: { results: [] }, accountId: `acct-${userId}` }
     },
   } })
@@ -51,6 +54,7 @@ before(async () => {
 beforeEach(() => {
   ingested.length = 0; marked.length = 0; cleared.length = 0; notionCalls.length = 0; stamps.length = 0
   for (const key of Object.keys(notionPages)) delete notionPages[key]
+  for (const key of Object.keys(failAfter)) delete failAfter[key]
   failure = () => null
 })
 
@@ -86,6 +90,20 @@ test('any other provider failure is still a failed read', async () => {
     assert.deepEqual(marked, [], 'a provider outage is not the person\'s to reconnect')
     assert.ok(stamps.some(value => value.reconciledAt === null), 'the failed pass stays due')
     assert.ok(stamps.some(value => value.reconciledAt instanceof Date), 'the clean pass is stamped')
+  } finally { errors.mock.restore() }
+})
+
+test('a failed later Notion page keeps the fetched pages and stays due', async () => {
+  failAfter['person-revoked'] = 2
+  failure = userId => userId === 'person-revoked' ? '{"status":502}' : null
+  const errors = mock.method(console, 'error', () => {})
+  try {
+    const result = await reconcile.reconcileSuggestions()
+    assert.equal(result.failed.notion, 1, 'the broken tail counts as a failed read')
+    assert.ok(ingested.some(notifications => notifications.length > 0), 'the first page\'s edits were ingested')
+    assert.ok(stamps.some(value => value.reconciledAt === null), 'the partial pass stays due')
+    assert.ok(stamps.some(value => value.reconciledAt instanceof Date), 'the clean pass is stamped')
+    assert.ok(errors.mock.calls.every(call => !JSON.stringify(call.arguments).includes('502')), 'only the error name is logged')
   } finally { errors.mock.restore() }
 })
 

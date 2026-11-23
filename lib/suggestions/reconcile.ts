@@ -136,7 +136,7 @@ async function reconcilePerson(userId: string, toolkits: readonly string[], sinc
       }
       result.failed[toolkit] = (result.failed[toolkit] ?? 0) + 1
       failedReads++
-      console.error(`Suggestions backfill could not read ${toolkit}`, message)
+      console.error(`Suggestions backfill could not read ${toolkit}`, error instanceof Error ? error.name : 'unknown')
     }
   }
   return failedReads
