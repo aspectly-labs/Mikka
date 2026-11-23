@@ -1119,14 +1119,18 @@ test('group stop without a listener keeps the existing one-second fallback', asy
 test('a missing stop listener is re-attached on a later read', async t => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const done = Promise.withResolvers<void>()
-  let checks = 0, attempts = 0, wake: (() => void) | undefined
-  const pending = untilStopped(async () => { checks++; return false }, {
+  let checks = 0, attempts = 0, wake: (() => void) | undefined, signal!: AbortSignal
+  const pending = untilStopped(async () => {
+    checks++
+    if (checks === 2) throw new Error('catch-up read failed')
+    return checks === 3
+  }, {
     resubscribe: async () => {
       attempts++
       if (attempts < 3) return undefined
       return callback => { wake = callback; return () => {} }
     },
-  }, () => done.promise)
+  }, current => { signal = current; return done.promise })
   try {
     await setImmediate()
     assert.equal(attempts, 2, 'setup retries the listener before the first tick, and the read that follows retries once more')
@@ -1137,9 +1141,8 @@ test('a missing stop listener is re-attached on a later read', async t => {
     assert.ok(wake, 'the third attempt latches the listener')
     t.mock.timers.tick(1_000); await setImmediate()
     assert.equal(attempts, 3, 'no further retries once the listener is back')
-    assert.equal(checks, 2, 'and the one-second reads stop with it')
-    wake!(); await setImmediate()
-    assert.equal(checks, 3, 'pushes drive reads again')
+    assert.equal(checks, 3, 'a failed catch-up keeps the one-second reads — the next one still cancels generation')
+    assert.equal(signal.aborted, true, 'the stop is honoured even when the catch-up read failed')
   } finally { done.resolve(); await pending }
 })
 test('expired execution budget cancels before generation/status publication', async () => {
