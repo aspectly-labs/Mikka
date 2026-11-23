@@ -31,7 +31,9 @@ before(async () => {
     orderBy: async () => people.map(userId => ({ userId })),
     // where() must stay awaitable rows for the already-on-file read while still chaining orderBy for the people query.
     where: () => Object.assign(Promise.resolve([]), { orderBy: async () => people.map(userId => ({ userId })) }),
-  }) }) }, update: () => ({ set: (value: unknown) => { stamps.push(value as { reconciledAt: unknown }); return { where: async () => [] } } }), pool: null } })
+  }) }),
+    update: () => ({ set: (value: unknown) => { stamps.push(value as { reconciledAt: unknown }); return { where: async () => [] } } }),
+  }, pool: null } })
   mock.module('@/lib/composio', { namedExports: {
     getComposio: () => ({ connectedAccounts: { list: async ({ userIds }: { userIds: string[] }) => ({ items: [{ id: `acct-${userIds[0]}`, status: 'ACTIVE', isDisabled: false, toolkit: { slug: 'notion' } }], nextCursor: null }) } }),
     runComposioAction: async (userId: string, action?: string, input?: { page_size?: number; start_cursor?: string }) => {
