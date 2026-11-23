@@ -38,6 +38,24 @@ export const userOnboarding = pgTable('user_onboarding', {
   completedAt: timestamp('completedAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/** Native WebAuthn passkeys (@better-auth/passkey@1.7.12). */
+export const passkeys = pgTable('passkey', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  publicKey: text('publicKey').notNull(),
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  credentialID: text('credentialID').notNull(),
+  counter: integer('counter').notNull().default(0),
+  deviceType: text('deviceType').notNull(),
+  backedUp: boolean('backedUp').notNull().default(false),
+  transports: text('transports'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
+  aaguid: text('aaguid'),
+}, table => [
+  uniqueIndex('passkey_credential_id_unique').on(table.credentialID),
+  index('passkey_user_id_idx').on(table.userId),
+])
+
 /** An unfinished first-run guide's place: its step and what was done or skipped (decision 2026-11-15-1900). */
 export const userOnboardingProgress = pgTable('user_onboarding_progress', {
   userId: text('userId').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
@@ -203,6 +221,8 @@ export const bots = pgTable('bots', {
   name: text('name').notNull(),
   /** Public duties visible to group participants; never populated from private instructions. */
   publicRole: text('publicRole').notNull().default(''),
+  /** Private standing instructions for this Bot (≤2000 chars); never exposed to group participants or mixed with agents.instructions. */
+  instructions: text('instructions').notNull().default(''),
   /** A bloub colour id, see components/nav/bot-avatar.tsx. */
   color: text('color').notNull().default('encre'),
   shape: text('shape').notNull().default('cercle'),
@@ -244,6 +264,8 @@ export const slackThreadBots = pgTable('slack_thread_bots', {
   threadTs: text('threadTs').notNull(),
   ownerId: text('ownerId').notNull().references(() => users.id, { onDelete: 'cascade' }),
   botId: uuid('botId').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+  /** The Mikka thread (root run) this Slack thread is bound to (#2936); null keeps the old bot routing. */
+  boundRunId: uuid('boundRunId').references(() => agentRuns.id, { onDelete: 'set null' }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [primaryKey({ columns: [table.linkId, table.channelId, table.threadTs] }), index('slack_thread_bots_bot_idx').on(table.botId)])
 
@@ -295,6 +317,7 @@ export const issueVersions = pgTable('issue_versions', {
   content: jsonb('content').$type<JSONContent>().notNull(), status: text('status').notNull(), priority: text('priority').notNull(),
   // Who made the change; set on the server only. Null on rows written before 20261025200000_activity_version_actor.
   actorType: text('actor_type').$type<'user' | 'agent' | 'system'>(), actorId: text('actor_id'),
+  sourceRunId: uuid('source_run_id'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -399,6 +422,8 @@ export const devices = pgTable('devices', {
   computerUse: jsonb('computerUse').$type<{ installed: boolean; version: string | null }>().notNull().default({ installed: false, version: null }),
   /** Off: the device stays registered but the orchestrator gives it no runs. */
   enabled: boolean('enabled').notNull().default(true),
+  /** Off: runs on this device receive no local or cloud desktop computer-use grant (binary allow/deny). */
+  computerUseEnabled: boolean('computerUseEnabled').notNull().default(true),
   /** Retired 「允许自动调度」 (decision 2026-11-02-1400 merged it into enabled, 参与调度); kept for old rows, no longer read. */
   autoSchedule: boolean('autoSchedule'),
   /** The person renamed it; a daemon re-register keeps this name. */
@@ -458,6 +483,7 @@ export const deviceTokenDevices = pgTable('device_token_devices', {
 export const deviceRepos = pgTable('device_repos', {
   id: uuid('id').primaryKey(), deviceId: uuid('deviceId').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   userId: text('userId').notNull(), repoPath: text('repoPath').notNull(), remoteUrl: text('remoteUrl'),
+  localPath: text('localPath'),
   baseBranch: text('baseBranch'), verifyCommand: text('verifyCommand'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('device_repos_key').on(table.deviceId, table.repoPath)])
@@ -561,6 +587,19 @@ export const agentRuns = pgTable('agent_runs', {
   conversationPinnedAt: timestamp('conversationPinnedAt', { withTimezone: true }),
   /** On a thread's root run: the root of the thread that replaced it, when the person explicitly asked for a new one. */
   threadReplacedBy: uuid('threadReplacedBy').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  /** The thread this one descends from (#2936); `threadRelation` names the link: fork, side or subagent. Shared with F. */
+  parentRunId: uuid('parentRunId').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  threadRelation: text('threadRelation').$type<'fork' | 'side' | 'subagent' | null>(),
+  /** The message a fork or side thread starts from; FK lives in the migration (forward reference). */
+  sourceMessageId: uuid('sourceMessageId'),
+  /** The thread's own labels, kept on the chain's root run (#2936). */
+  tags: jsonb('tags').$type<string[] | null>(),
+  /** Soft delete: hidden from every list for 30 days, restorable inside them (#2936). */
+  deletedAt: timestamp('deletedAt', { withTimezone: true }), deletedBy: text('deletedBy'),
+  /** Sub-agent card fields (F #2939): the child's display name, its mark and the parent's one-line brief. */
+  name: varchar('name', { length: 120 }),
+  profile: jsonb('profile').$type<{ icon: string; color: string } | null>(),
+  brief: text('brief'),
   stopRequestedAt: timestamp('stopRequestedAt', { withTimezone: true }),
   /** Set with an explicit owner-scoped cancel request, never inferred from a policy or lease stop. */
   explicitStopRequested: boolean('explicitStopRequested').notNull().default(false),
@@ -568,7 +607,7 @@ export const agentRuns = pgTable('agent_runs', {
   finishedAt: timestamp('finishedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
-}, table => [index('agent_runs_device_status_idx').on(table.deviceId, table.status), index('agent_runs_issue_idx').on(table.issueId, table.createdAt), index('agent_runs_bot_created_idx').on(table.botId, table.createdAt.desc()).where(sql`${table.botId} is not null`), uniqueIndex('agent_runs_user_dispatch_key').on(table.userId, table.dispatchKey).where(sql`${table.dispatchKey} is not null`), index('agent_runs_retry_of_idx').on(table.retryOf).where(sql`${table.retryOf} is not null`), index('agent_runs_continues_run_idx').on(table.continuesRunId).where(sql`${table.continuesRunId} is not null`), index('agent_runs_status_lease_idx').on(table.status, table.leaseExpiresAt)])
+}, table => [index('agent_runs_device_status_idx').on(table.deviceId, table.status), index('agent_runs_issue_idx').on(table.issueId, table.createdAt), index('agent_runs_bot_created_idx').on(table.botId, table.createdAt.desc()).where(sql`${table.botId} is not null`), uniqueIndex('agent_runs_user_dispatch_key').on(table.userId, table.dispatchKey).where(sql`${table.dispatchKey} is not null`), index('agent_runs_retry_of_idx').on(table.retryOf).where(sql`${table.retryOf} is not null`), index('agent_runs_continues_run_idx').on(table.continuesRunId).where(sql`${table.continuesRunId} is not null`), index('agent_runs_parent_idx').on(table.parentRunId).where(sql`${table.parentRunId} is not null`), index('agent_runs_status_lease_idx').on(table.status, table.leaseExpiresAt)])
 
 /** Confirmed VM running intervals; mutable thread-machine custody is separate. */
 export const threadMachineSessions = pgTable('thread_machine_sessions', {
@@ -619,6 +658,10 @@ export const runPublications = pgTable('run_publications', {
   scopeVersion: integer('scopeVersion'), issueTitle: text('issueTitle'),
   remoteUrl: text('remoteUrl').notNull(), remoteKey: text('remoteKey').notNull(),
   identifier: text('identifier'), branch: text('branch'), baseBranch: text('baseBranch'),
+  titlePrefix: text('titlePrefix').notNull().default(''),
+  autoMerge: boolean('autoMerge').notNull().default(false),
+  defaultDraft: boolean('defaultDraft').notNull().default(false),
+  autoMergeRequestedAt: timestamp('autoMergeRequestedAt', { withTimezone: true }),
   pushApproved: boolean('pushApproved').notNull().default(false),
   status: text('status').$type<'assigned' | 'pending' | 'processing' | 'awaiting_approval' | 'published' | 'blocked' | 'skipped'>().notNull().default('assigned'),
   workflowRunId: text('workflowRunId'), leaseToken: uuid('leaseToken'), leaseExpiresAt: timestamp('leaseExpiresAt', { withTimezone: true }),
@@ -1222,11 +1265,12 @@ export const artifactVersions = pgTable('artifact_versions', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('artifact_versions_version_key').on(table.artifactId, table.version)])
 
-/** A link anyone can open at /a/<token>. Only the token's hash is stored; revoking ends it. */
+/** A scoped link at /a/<token>. Only the token's hash is stored; revoking ends it. */
 export const artifactShares = pgTable('artifact_shares', {
   id: uuid('id').primaryKey(),
   artifactId: uuid('artifactId').notNull().references(() => artifacts.id, { onDelete: 'cascade' }),
   tokenHash: text('tokenHash').notNull(), createdBy: text('createdBy').notNull(),
+  visibility: text('visibility').$type<'private' | 'workspace' | 'link'>().notNull().default('link'),
   revokedAt: timestamp('revokedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('artifact_shares_token_key').on(table.tokenHash), index('artifact_shares_artifact_idx').on(table.artifactId)])
@@ -1297,6 +1341,16 @@ export const runCaptureSteps = pgTable('run_capture_steps', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('run_capture_steps_capture_idx').on(table.captureId, table.atMs)])
 
+/** A read-only link anyone can open to a thread's transcript, as `run_capture_shares`:
+ * only the token's hash is stored; revoking ends it (#2936). */
+export const runThreadShares = pgTable('run_thread_shares', {
+  id: uuid('id').primaryKey(),
+  runId: uuid('runId').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
+  tokenHash: text('tokenHash').notNull(), createdBy: text('createdBy').notNull(),
+  revokedAt: timestamp('revokedAt', { withTimezone: true }),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [uniqueIndex('run_thread_shares_token_key').on(table.tokenHash), index('run_thread_shares_run_idx').on(table.runId)])
+
 /** A link anyone can open, as `artifact_shares`: only the token's hash is stored; revoking ends it. */
 export const runCaptureShares = pgTable('run_capture_shares', {
   id: uuid('id').primaryKey(),
@@ -1329,6 +1383,17 @@ export const pendingActions = pgTable('pending_actions', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   decidedAt: timestamp('decidedAt', { withTimezone: true }),
 }, table => [index('pending_actions_user_status_idx').on(table.userId, table.status, table.createdAt)])
+
+/** The right column's per-thread layout, kept per viewer (#2935). */
+export const threadPanelStates = pgTable('thread_panel_states', {
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** The thread's identity: its chain's root run, so two threads on one task keep separate layouts. */
+  runId: uuid('runId').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
+  tabs: jsonb('tabs').$type<string[]>().notNull().default([]),
+  active: text('active').notNull().default(''),
+  open: boolean('open').notNull().default(false),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [primaryKey({ columns: [table.userId, table.runId] })])
 
 // Factory #192 uses existing issues, Coordinator events and Harness runs.
 export const factoryTasks = pgTable('factory_tasks', {

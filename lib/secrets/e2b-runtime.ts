@@ -75,6 +75,6 @@ export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: 
     const code = classifyE2BError(error, creating)
     if (!code) throw error
     if (code in CARD_CODE) await (await import('./e2b')).recordE2BKeyError(ownerId, CARD_CODE[code as keyof typeof CARD_CODE]).catch(() => undefined)
-    throw new E2BKeyError(code)
+    throw Object.assign(new E2BKeyError(code), { cause: error })
   }
 }

@@ -1,0 +1,47 @@
+{
+  "name": "mikka-eve-world-dev",
+  "main": "src/authority.mjs",
+  "compatibility_date": "2026-10-22",
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "WORLD_WORKLOAD": "eve",
+    "EVE_WORLD_NAMESPACE": "epic3076-dev",
+    "EVE_RELEASES": "{\"8ba495970a-1-1\":\"EVE_DELIVERY_DEV\"}"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "EVE_WORLD", "class_name": "EveWorldAuthority" },
+      { "name": "EVE_STREAMS", "class_name": "EveWorldStream" },
+      { "name": "EVE_CLAIMS", "class_name": "EveQueueClaim" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["EveWorldAuthority"] },
+    { "tag": "v2", "new_sqlite_classes": ["EveWorldStream", "EveQueueClaim"] }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "EVE_QUEUE", "queue": "mikka-eve-world-dev-events" },
+      { "binding": "EVE_CONTROL_QUEUE", "queue": "mikka-eve-world-dev-control" }
+    ],
+    "consumers": [
+      {
+        "queue": "mikka-eve-world-dev-events",
+        "max_batch_size": 5, "max_batch_timeout": 5,
+        "max_retries": 5, "retry_delay": 30,
+        "dead_letter_queue": "mikka-eve-world-dev-events-dlq"
+      },
+      {
+        "queue": "mikka-eve-world-dev-control",
+        "max_batch_size": 5, "max_batch_timeout": 1,
+        "max_retries": 5, "retry_delay": 15,
+        "dead_letter_queue": "mikka-eve-world-dev-control-dlq"
+      }
+    ]
+  },
+  "services": [
+    { "binding": "EVE_DELIVERY_DEV", "service": "mikka-eve-epic3076-dev", "entrypoint": "EveWorkflowDelivery" }
+  ]
+}

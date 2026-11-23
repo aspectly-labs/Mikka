@@ -41,7 +41,7 @@ export async function materializeChatFiles(
           .update(await readFile(path))
           .digest('hex') !== file.sha256
       )
-        throw Error('Attachment file unavailable')
+        throw Object.assign(Error('Attachment file unavailable'), { cause: error })
     }
     let textPath: string | undefined
     if (file.text !== null) {
@@ -54,7 +54,7 @@ export async function materializeChatFiles(
           (await lstat(textPath)).isSymbolicLink() ||
           (await readFile(textPath, 'utf8')) !== file.text
         )
-          throw Error('Attachment text unavailable')
+          throw Object.assign(Error('Attachment text unavailable'), { cause: error })
       }
     }
     entries.push({ name: file.name, path, ...(textPath ? { textPath } : {}) })

@@ -1,0 +1,146 @@
+{
+  "schema": "mikka.dev/zero-residency/v1",
+  "issue": "https://github.com/aspectly-labs/Mikka/issues/3077",
+  "epic": "https://github.com/aspectly-labs/Mikka/issues/3076",
+  "baseline": "baseline-2026-11-21.json",
+  "updatedAt": "2026-11-21",
+  "modes": {
+    "on-demand": "Container starts only for claimed work and stops when it drains (durable_object scheduling policy or an equivalent owned wake path).",
+    "managed": "Instance-level sleep configured (sleepAfter); the Cloudflare application object stays deployed and is woken by its Worker/Durable Object.",
+    "retire-under-#1954": "Retained per-release residue that no current serving route requires; retirement is executed only by the release owner under #1954.",
+    "always-on-tracked": "Known always-on compute with an owning follow-up issue; must not expand beyond the tracked declarations.",
+    "event-infra": "Workers, Durable Objects, Queues, R2 and Neon: managed event or persistence services, exempt from container residency rules."
+  },
+  "declarations": [
+    {
+      "source": "cloudflare/task-sandbox/wrangler.jsonc",
+      "generated": false,
+      "className": "TaskMachine",
+      "appPattern": "mikka-task-sandbox*",
+      "mode": "on-demand",
+      "ownerIssue": 3080,
+      "evidence": [
+        "cloudflare/task-sandbox/wrangler.jsonc declares scheduling_policy=durable_object",
+        "baseline-2026-11-21.json: mikka-task-sandbox and mikka-task-sandbox-staging are the only durable_object applications"
+      ],
+      "notes": "Leases, DO alarms and R2 checkpoints already implement start-on-demand/stop-on-completion; #3080 verifies and extends, does not rebuild."
+    },
+    {
+      "source": "cloudflare/engineering-sandbox/wrangler.jsonc",
+      "generated": false,
+      "className": "EngineeringRun",
+      "appPattern": "mikka-engineering-sandbox*",
+      "mode": "on-demand",
+      "ownerIssue": 1948,
+      "evidence": [
+        "cloudflare/engineering-sandbox/wrangler.jsonc declares scheduling_policy=durable_object",
+        "docs/operations/engineering-sandbox.md (hosted acceptance runs start a PG17 container per run)"
+      ],
+      "notes": "Not present in the 2026-11-21 production inventory; only created for authorized engineering runs."
+    },
+    {
+      "source": "cloudflare/litellm/wrangler.jsonc",
+      "generated": false,
+      "className": "LiteLlm",
+      "appPattern": "mikka-litellm*",
+      "mode": "managed",
+      "ownerIssue": 3079,
+      "sleepEvidence": "cloudflare/litellm/worker.mjs",
+      "evidence": [
+        "cloudflare/litellm/worker.mjs: LiteLlm container class sets sleepAfter='5m'",
+        "baseline-2026-11-21.json: mikka-litellm and mikka-litellm-staging observed with one running instance (wake reason unverified)"
+      ],
+      "notes": "Every managed model request egresses through backend LiteLLM (ADR 2026-11-20-0530). Idle instance sleep exists; whether model-gateway cold starts meet SLO is a #3079 input, not decided here."
+    },
+    {
+      "source": "cloudflare/eve-runtime/wrangler.jsonc",
+      "generated": false,
+      "className": "EveRuntime",
+      "appPattern": "mikka-eve-*",
+      "mode": "always-on-tracked",
+      "ownerIssue": 3078,
+      "alwaysOnEvidence": "cloudflare/eve-runtime/src/index.mjs",
+      "evidence": [
+        "cloudflare/eve-runtime/src/index.mjs: onActivityExpired(){} and onStop() restarts the container while the stored state is not stopped",
+        "No mikka-eve-* application appeared in the 2026-11-21 inventory; this is the in-flight CF candidate (see PR #3068), production Eve is the Oracle VM"
+      ],
+      "notes": "PostgreSQL queue consumer keeps the container alive by code; #3078 adds the event-driven wake path before this may run always-on in production."
+    },
+    {
+      "source": "cloudflare/api/ingress/config.mjs",
+      "generated": true,
+      "generatorExport": "ingressConfig",
+      "className": "BusinessApi",
+      "appPattern": "mikka-api-*-businessapi",
+      "mode": "retire-under-#1954",
+      "ownerIssue": 3079,
+      "retirementIssue": 1954,
+      "sleepEvidence": "cloudflare/api/ingress/worker.mjs",
+      "evidence": [
+        "cloudflare/api/ingress/config.mjs emits containers[0] class_name=BusinessApi, max_instances=1, no scheduling_policy per release",
+        "cloudflare/api/ingress/worker.mjs: BusinessApi container class sets sleepAfter='5m'",
+        "baseline-2026-11-21.json: 23 applications across 13 releases retain one running instance each"
+      ],
+      "notes": "Instances sleep after 5m idle but each release's application object and deployment stay provisioned. Old releases are retirement candidates under #1954; the current serving release stays managed until #3079 lands the on-demand API."
+    },
+    {
+      "source": "scripts/cloudflare-native-oci.mjs (credentialBroker bundle); deployed by private publisher",
+      "generated": "private",
+      "className": "CredentialBrokerRuntime",
+      "appPattern": "mikka-credential-broker-*",
+      "mode": "managed",
+      "ownerIssue": 3079,
+      "sleepEvidence": "cloudflare/credential-broker/worker.mjs",
+      "evidence": [
+        "cloudflare/credential-broker/worker.mjs: CredentialBrokerRuntime container class sets sleepAfter='5m'",
+        "baseline-2026-11-21.json: mikka-credential-broker-credentialbrokerruntime and mikka-credential-broker-preview-credentialbrokerruntime"
+      ],
+      "notes": "Auth path service. Wake path and whether broker traffic keeps it awake are #3079 inputs."
+    },
+    {
+      "source": "private cloud-services deployer (mikka-cloud)",
+      "generated": "private",
+      "className": "unverified",
+      "appPattern": "mikka-cloud-services-*",
+      "mode": "managed",
+      "ownerIssue": 3079,
+      "verified": false,
+      "evidence": [
+        "baseline-2026-11-21.json: mikka-cloud-services-cloudservices and mikka-cloud-services-staging-cloudservices",
+        "Container class and sleepAfter are configured in the private repository; unverified in this checkout"
+      ],
+      "notes": "Private Cloud Services own their own configuration per epic #3076; mode recorded from observed behaviour, source unverified."
+    }
+  ],
+  "oracle": {
+    "mode": "always-on-tracked",
+    "ownerIssue": 3078,
+    "retirementIssue": 1954,
+    "containers": [
+      { "name": "mikka-eve-prod", "role": "production Eve (PostgreSQL workflow queue consumer)", "observedIdle": "0.00% CPU, ~288MiB RSS, ~20s queue poll" },
+      { "name": "mikka-eve-staging", "role": "staging Eve", "observedIdle": "0.00% CPU, ~186MiB RSS" }
+    ],
+    "tunnel": "cloudflared -> dify/pdf.nebula-spaces.com behind mikka-eve-relay-prod",
+    "evidence": [
+      "baseline-2026-11-21.json oracle section",
+      "API deliveries to Eve (MIKKA_EVE_ORIGIN) have no wake path; #3078 owns the durable queue / ensure-Eve step"
+    ]
+  },
+  "exempt": {
+    "mode": "event-infra",
+    "entries": [
+      { "name": "packages/eve-cloudflare-world (mikka-eve-world)", "kind": "Worker + Durable Objects", "note": "no containers[] declaration; Eve World authority/streams" },
+      { "name": "cloudflare/device-gateway", "kind": "Worker + Durable Objects", "note": "device tunnel signalling" },
+      { "name": "cloudflare/linear-sync", "kind": "Worker", "note": "Linear webhook sync" },
+      { "name": "cloudflare/suggestions-cron", "kind": "Worker Cron", "note": "scheduled suggestions" },
+      { "name": "business-world queue / CI_WORKFLOW_RESULTS queue / due-timer workflows", "kind": "Queues + Workflows", "note": "existing event-driven wake machinery, reused by #3078/#3083" },
+      { "name": "mikka-task-workspaces R2 bucket", "kind": "R2", "note": "workspace persistence for task sandboxes" },
+      { "name": "Neon PostgreSQL", "kind": "managed database", "note": "data authority; not application compute" }
+    ]
+  },
+  "contract": {
+    "test": "test/zero-residency-contract.test.mjs",
+    "run": "cd cloudflare/zero-residency && npx vitest run",
+    "rule": "Every containers[] declaration in cloudflare/* and packages/* wrangler.jsonc files, and every generated declaration listed here, must map to a declarations[] entry. A declaration with no durable_object scheduling_policy and no verifiable sleepAfter evidence fails unless it is recorded as always-on-tracked or retire-under-#1954 with an owner issue. Every baseline application name must match one declarations[].appPattern."
+  }
+}

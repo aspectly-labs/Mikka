@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
+import { skillMarkdown } from '@mikka/protocol/skill'
 import { withRequestLog } from '@/lib/request-log'
 import { pluginActor } from '@/lib/plugins/actor'
-import { deletePluginSchema, installSkillSchema, PluginError, updateSkillSchema } from '@/lib/plugins/contracts'
+import { createSkillSchema, deletePluginSchema, PluginError, updateSkillSchema } from '@/lib/plugins/contracts'
 import { pluginBody, pluginResponse } from '@/lib/plugins/http'
 import { personalPlugins } from '@/lib/plugins/runtime'
 import { fetchSkillSource } from '@/lib/plugins/skill-source'
@@ -18,13 +20,32 @@ export const GET = withRequestLog('/api/skills', request => pluginResponse(async
 }))
 export const POST = withRequestLog('/api/skills', request => pluginResponse(async () => {
   const userId = await pluginActor(request)
-  const input = await pluginBody(request, installSkillSchema)
-  const existing = (await personalPlugins.listSkills(userId)).find(skill => skill.source.toLowerCase() === input.source.toLowerCase() && skill.slug === input.slug)
-  return { skill: existing ?? await personalPlugins.installSkill(userId, await fetchSkillSource(input)) }
+  const input = await pluginBody(request, createSkillSchema)
+  if ('source' in input) {
+    const existing = (await personalPlugins.listSkills(userId)).find(skill => skill.source.toLowerCase() === input.source.toLowerCase() && skill.slug === input.slug)
+    return { skill: existing ?? await personalPlugins.installSkill(userId, await fetchSkillSource(input)) }
+  }
+  const body = skillMarkdown({ name: input.name, instructions: input.instructions })
+  const sha256 = createHash('sha256').update(body, 'utf8').digest('hex')
+  return {
+    skill: await personalPlugins.installSkill(userId, {
+      name: input.name,
+      source: 'local/manual',
+      slug: input.slug,
+      sourceKind: 'self-improvement',
+      sourceRevision: sha256,
+      sourcePath: 'SKILL.md',
+      body,
+      sha256,
+    }),
+  }
 }, 201))
 export const PATCH = withRequestLog('/api/skills', request => pluginResponse(async () => {
   const userId = await pluginActor(request), input = await pluginBody(request, updateSkillSchema)
-  return { skill: await personalPlugins.updateSkill(userId, input.id, input.enabled) }
+  if (input.name === undefined && input.instructions === undefined && input.enabled !== undefined) {
+    return { skill: await personalPlugins.updateSkill(userId, input.id, input.enabled) }
+  }
+  return { skill: await personalPlugins.editSkill(userId, input.id, input) }
 }))
 export const DELETE = withRequestLog('/api/skills', request => pluginResponse(async () => {
   const userId = await pluginActor(request)

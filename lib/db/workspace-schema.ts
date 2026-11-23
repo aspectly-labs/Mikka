@@ -1,11 +1,14 @@
 import type { AuditRow } from '@/lib/audit/events'
-import { pgTable, text, timestamp, uuid, varchar, primaryKey, unique, index, jsonb } from 'drizzle-orm/pg-core'
+import type { EnvironmentConfiguration } from '@/lib/project-resources/contracts'
+import { pgTable, text, timestamp, uuid, varchar, primaryKey, unique, index, jsonb, integer } from 'drizzle-orm/pg-core'
 
 export const workspaces = pgTable('mikka_workspaces', {
   id: uuid('id').primaryKey(),
   userId: text('userId').notNull(),
   name: varchar('name', { length: 120 }).notNull(),
   slug: varchar('slug', { length: 64 }).unique('mikka_workspaces_slug_unique'),
+  /** Four-letter prefix shown for this workspace. Issued task numbers do not change. */
+  taskPrefix: varchar('taskPrefix', { length: 4 }),
   /** A small image data URL (≤200 KB decoded); see lib/workspace-admin/icon.ts. */
   icon: text('icon'),
   /** 'personal': the one workspace each person has, with only them as a member (decision 2026-10-31-2130). */
@@ -51,3 +54,22 @@ export const workspaceAuditOutbox = pgTable('workspace_audit_outbox', {
   lastAttemptAt: timestamp('lastAttemptAt', { withTimezone: true }),
   deliveredAt: timestamp('deliveredAt', { withTimezone: true }),
 })
+
+/** Reusable execution environment in the Workspace database (DATABASE_URL). */
+export const workspaceEnvironments = pgTable('workspace_environments', {
+  id: uuid('id').primaryKey(),
+  workspaceId: uuid('workspaceId').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  configuration: jsonb('configuration').$type<EnvironmentConfiguration>().notNull(),
+  instructions: text('instructions').notNull().default(''),
+  defaultMachineSize: text('defaultMachineSize'),
+  revision: integer('revision').notNull().default(1),
+  archivedAt: timestamp('archivedAt', { withTimezone: true }),
+  createdBy: text('createdBy').notNull(),
+  updatedBy: text('updatedBy').notNull(),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [
+  unique().on(table.id, table.workspaceId),
+  index('workspace_environments_workspace_idx').on(table.workspaceId, table.archivedAt),
+])

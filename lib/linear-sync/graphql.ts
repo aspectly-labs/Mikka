@@ -28,15 +28,15 @@ export async function linearGraphQL<T>(accessToken: string, query: string, varia
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(linearRequestTimeout.ms),
     })
-  } catch {
-    throw new LinearApiError('Linear could not be reached', true)
+  } catch (error) {
+    throw Object.assign(new LinearApiError('Linear could not be reached', true), { cause: error })
   }
 
   let result: { data?: T; errors?: { message?: string; extensions?: { code?: string } }[] }
   try {
     result = await response.json()
-  } catch {
-    throw new LinearApiError('Linear returned an invalid response', response.status >= 500, response.status)
+  } catch (error) {
+    throw Object.assign(new LinearApiError('Linear returned an invalid response', response.status >= 500, response.status), { cause: error })
   }
 
   const error = result.errors?.[0]

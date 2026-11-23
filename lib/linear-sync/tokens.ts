@@ -27,8 +27,8 @@ export async function postToken(form: URLSearchParams) {
       body: form,
       signal: AbortSignal.timeout(10_000),
     })
-  } catch {
-    throw new LinearApiError('Could not reach Linear OAuth', true)
+  } catch (error) {
+    throw Object.assign(new LinearApiError('Could not reach Linear OAuth', true), { cause: error })
   }
   if (!response.ok) throw new LinearApiError('Linear OAuth token exchange failed', response.status >= 500 || response.status === 429, response.status)
   return tokenPayload.parse(await response.json())

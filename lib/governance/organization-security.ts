@@ -9,6 +9,7 @@ import { lockOrganizationLiveAuthority, revokeOrganizationLiveCapabilities } fro
 import { drainOrganizationLiveRevocations } from '@/lib/enterprise/live-authority'
 import { requireOrganizationAdmin } from './organizations'
 import { GovernanceError } from './errors'
+import { countUserPasskeys } from '@/lib/account/passkeys'
 import type { OrganizationSecurityPolicy, PersonalSecurityState } from './organization-security-contract'
 
 const policyInput = z.object({ requireTwoFactor: z.boolean(), gracePeriodDays: z.number().int().min(0).max(30).default(DEFAULT_TWO_FACTOR_GRACE_DAYS) }).strict()
@@ -67,11 +68,15 @@ async function securityOrganizations(userId: string) {
 
 /** Personal access stays available to enroll, step up, or use the native recovery codes. */
 export async function readPersonalSecurity(userId: string, sessionId: string): Promise<PersonalSecurityState> {
-  const [state, organizations] = await Promise.all([twoFactorSessionState(userId, sessionId), securityOrganizations(userId)])
+  const [state, passkeyCount, organizations] = await Promise.all([
+    twoFactorSessionState(userId, sessionId),
+    countUserPasskeys(userId),
+    securityOrganizations(userId),
+  ])
   const { rows: policies } = organizations.length ? await pool.query<PolicyRow & { organizationId: string; inGrace: boolean }>(`SELECT
     "organizationId",${policyColumns},${twoFactorInGrace} AS "inGrace" FROM enterprise_org_policy
     WHERE "organizationId"=ANY($1::uuid[])`, [organizations.map(organization => organization.id)]) : { rows: [] }
-  return { twoFactorEnabled: state.enabled, sessionVerified: state.verified,
+  return { twoFactorEnabled: state.enabled, sessionVerified: state.verified, passkeyCount,
     organizations: organizations.map(organization => {
       const row = policies.find(row => row.organizationId === organization.id)
       const policy = policyView(row)

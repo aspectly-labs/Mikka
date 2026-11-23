@@ -69,6 +69,14 @@ mock.module(new URL('../coordinator/product-instructions.ts', import.meta.url).h
   },
 } })
 mock.module(new URL('../coordinator/instructions.ts', import.meta.url).href, { namedExports: { COORDINATOR_INSTRUCTIONS: 'Host policy' } })
+mock.module(new URL('../coordinator/workspace-instructions.ts', import.meta.url).href, { namedExports: {
+  async readWorkspaceInstructionsForBot(ownerId: string, botId: string) {
+    assert.deepEqual(principal, { ...scope, surface: 'slack' })
+    assert.equal(ownerId, scope.ownerId)
+    assert.equal(botId, scope.botId)
+    return 'Use the workspace handoff format.'
+  },
+} })
 mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: { pool: {
   async query(sql: string) {
     sourceReads++
@@ -228,6 +236,7 @@ test('Slack instructions skip private web memory, profile and Factory compositio
   await contextStorage.run(new ContextContainer(), async () => {
     const instructions = await instructionsForSession(context({ surface: 'slack' }))
     assert.match(instructions, /^Host policy\nUse only this Slack conversation/)
+    assert.match(instructions, /<workspace_instructions>\nUse the workspace handoff format\.\n<\/workspace_instructions>/)
     assert.equal(instructionCalls.length + rpcCalls.length, 0)
   })
 })

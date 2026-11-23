@@ -9,6 +9,7 @@ export type OrganizationSecurityPolicy = {
 export type PersonalSecurityState = {
   twoFactorEnabled: boolean
   sessionVerified: boolean
+  passkeyCount: number
   organizations: Array<{
     organizationId: string
     name: string

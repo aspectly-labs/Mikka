@@ -10,6 +10,7 @@ import type { RunCommand } from '@mikka/protocol/device'
 import type { DeviceCommandKind } from '@/lib/device-management'
 import { deviceRequestCaller } from '@/lib/device-request-context'
 import { ackMailboxNotices, pendingMailboxNotices } from '@/lib/device-mailbox-notices'
+import { freeDeviceSlots } from '@/lib/device-capacity'
 
 /**
  * The single workspace this MVP serves. The protocol's register answer
@@ -205,7 +206,10 @@ export async function deviceWork(deviceId: string, skip: readonly string[], opti
   const takenBack = rows.filter(run => run.takenBack && !skipped.has(run.id)).map(run => ({ kind: 'stop' as const, runId: run.id }))
   const runs = rows.filter(run => (LIVE_RUN_STATUSES as readonly string[]).includes(run.status) && !run.takenBack)
   const live = runs.filter(run => !skipped.has(run.id))
-  const queuedRuns = options.queued ? live.filter(run => run.status === 'queued').map(run => run.id).slice(0, 100) : []
+  // A device is offered only as many queued runs as its saved concurrency limit still allows.
+  const queuedRuns = options.queued
+    ? live.filter(run => run.status === 'queued').map(run => run.id).slice(0, Math.min(100, await freeDeviceSlots(pool, deviceId)))
+    : []
   if (live.length === 0) return { commands: takenBack.slice(0, 500), queuedRuns }
   const messages = await db
     .select({ id: runMessages.id, runId: runMessages.runId, text: runMessages.text, origin: runMessages.origin,

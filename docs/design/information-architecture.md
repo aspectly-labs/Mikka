@@ -180,7 +180,6 @@ terms) and tenancy rule.
 | 成员 (`members`) | Team-only | Member | T2 | Team-only | Between people |
 | 团队 (`teams`) | Team-only | Team | T2 | Team-only (server gap M5) | Between people |
 | Bot 与 Agents (`bots`) | Workspace; 已暂停的 Bot team-only | Bot, Agent | T1, T2 | Team-only; fixed by #890 | A person's bots need defaults; bots of people who left are a team's |
-| 应用与运行权限 (`bot-permissions`) | Workspace | Workspace (policies) | T1 | Workspace | The workspace's app access and run policy; every Bot inherits it |
 | 团队权限 (`permissions`) | Team-only | Workspace (policies) | T2 | Team-only | Governs sharing with other members (2240); still holds 允许使用的应用 (`workspace_app_policies`) |
 | 密钥与环境 (`secrets`) | Workspace | Secret | T5 | Team-only, admin-only; fixed by #895 (members gap M6) | Injected into the workspace's own runs |
 | 运行环境 (`environments`) | Workspace, personal and shared | Run environment, Project default | T1, T5 | Active members read; admins edit, archive/restore and select defaults | Reuses canonical resource configuration; setup approval is explicit and each Run freezes its selected revision |

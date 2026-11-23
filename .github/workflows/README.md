@@ -43,6 +43,11 @@ It adds an eligible same-repository PR to the end of the queue once all required
 checks pass. Stacks and PRs included in an open batch follow their owner's merge
 flow. The GitHub App installation token lets queue candidates trigger CI.
 
+A pull request that changes the interface must include a screenshot or
+recording in its description. `UI policy (strict)` requires it, and
+`frontend-screenshots.yml` reruns that check on PR description edits (`edited`)
+without rerunning the suite. Neither job launches a browser.
+
 The required checks are `UI policy (strict)` and `Production build and browser interactions`
 on both the PR and its queue candidate. `GitGuardian Security Checks` remains optional
 and unchanged. The echo-only compatibility workflow has been removed.

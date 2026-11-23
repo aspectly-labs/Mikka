@@ -97,6 +97,7 @@ test('the protected parent requires Analytics on merge candidates and PRs withou
         'source-checks': { result: 'skipped' }, 'daemon-checks': { result: 'skipped' },
         'workspace-governance-checks': { result: 'skipped' }, 'analytics-checks': { result },
         'candidate-checks': { result: candidate ? 'success' : 'skipped' },
+        'frontend-screenshots': { result: event === 'pull_request' ? 'success' : 'skipped' },
       } }
       for (const [, name] of JSON.stringify(gate.env).matchAll(/needs\.([\w-]+)/g)) {
         if (!context.needs[name]) context.needs[name] = { result: 'success' }

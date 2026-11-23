@@ -8,6 +8,7 @@ import { assertSessionScope, conversationAddress, registerSession, scopeFromAuth
 import { priorHistory } from './history'
 import { withSessionControlDelivery } from './session-control-delivery.mjs'
 import { forwardEveRequest } from './forward-request'
+import { eveFactoryAttemptsRoute } from './factory/channel'
 
 const body = z.object({ message: z.unknown().optional(), operationId: z.string().optional(), clientContext: z.unknown().optional() }).passthrough()
 
@@ -158,5 +159,9 @@ export function mikkaEveChannel() {
       const delivery = await deliverEveEvent(scope,session,input.eventId)
       return Response.json({ok:true,sessionId:delivery.sessionId,deliveryId:delivery.deliveryId})
     }),
+    // #3082: the Eve Software Factory role-session entry. The app host drives
+    // it after a `cloud.eve_factory` run is frozen and bound; the route
+    // re-derives all authority from the persisted Factory rows.
+    eveFactoryAttemptsRoute(),
   ] }
 }

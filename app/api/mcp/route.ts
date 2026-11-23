@@ -309,6 +309,41 @@ function createWorkerHandler(mailbox: readonly MailboxToolName[]) { return creat
     }
   })
 
+  // A run's credential fixes both the task and the tenant; callers cannot choose
+  // a run, workspace, delegate, project, membership or access change.
+  server.registerTool('update_issue', {
+    title: 'Update this run’s issue',
+    description: 'Update the title, status or priority of this run’s own issue.',
+    inputSchema: z.object({ issueId: id, title: z.string().trim().min(1).max(200).optional(), status: z.enum(ISSUE_STATUS_CODES).optional(), priority: z.enum(ISSUE_PRIORITY_CODES).optional() }).strict()
+      .refine(value => value.title !== undefined || value.status !== undefined || value.priority !== undefined),
+    annotations: { idempotentHint: true },
+  }, async (input, ctx) => outcome(await worker.updateOwnIssue(ctx.http?.authInfo, input)))
+
+  // The daemon's `mikka` server proxies this tool into the run; the server's
+  // publication record is the only authority for branch/PR/check state.
+  server.registerTool('pr_status', {
+    description: 'Read the delivery state Mikka recorded for this run’s task: the assigned issue branch and base, the bound pull request URL, number and state, its head SHA, and the latest synchronized check rollup (counts and per-check states). The server’s publication record is the authority: an absent pull request or check means unknown, never passing.',
+    inputSchema: z.object({}).strict(),
+    annotations: { readOnlyHint: true },
+  }, async (_input, ctx) => {
+    const { runPrStatus } = await import('@/lib/mcp/run-pr-status')
+    return json(await runPrStatus(worker.workerRun(ctx.http?.authInfo)))
+  })
+
+  // A run delegates bounded work to a sub-agent (docs/factory/3089-run-delegation.md).
+  // The authenticated run is the parent; scope, credentials and the one-live
+  // child rule are enforced by the ordinary local admission, never by the call.
+  server.registerTool('delegate_subagent', {
+    description: 'Queue one bounded sub-agent run on this task. It runs on your own Agent, computer and repository with your `task` text appended after the task brief, is claimed through the normal device path, and reports on this task’s thread. Only one delegated run may be live at a time and retries must reuse `requestKey`. Returns the child run id; track it with list_runs/get_run. It never names a different account, repository, credential or device.',
+    inputSchema: z.object({
+      task: z.string().trim().min(1).max(4000).describe('The bounded work for the sub-agent.'),
+      requestKey: z.string().trim().min(1).max(140).describe('Idempotency key; a retry of this same call must reuse it.'),
+    }).strict(),
+  }, async (input, ctx) => {
+    const { delegateSubagent } = await import('@/lib/mcp/run-delegation')
+    return json(await delegateSubagent(worker.workerRun(ctx.http?.authInfo), input))
+  })
+
   server.registerTool('report', {
     title: 'Report progress',
     description: 'Tell the person\'s Coordinator about progress on this run. Use it sparingly, at milestones (a plan settled, a hard part solved, ready for review), not after every step.',

@@ -23,10 +23,11 @@ const chosen: [string | null, string][] = []
 let defaultsResult: { error?: string; defaultModel?: null; defaultRepository?: string | null; models?: string[]; repositories?: string[] }
 let menu: BotModelMenu
 let failChoose = false
+let shareable = false
 mock.module(new URL('../../app/actions/bots.ts', import.meta.url).href, { namedExports: {
   getWorkspaceBotDefaults: async (workspaceId?: string) => { selectedScopes.push(workspaceId); calls.push('defaults'); return defaultsResult },
   createBot: async (input: Record<string, unknown>, workspaceId?: string) => { selectedScopes.push(workspaceId); created.push(input); return { id: 'new-bot', name: input.name, color: input.color, shape: input.shape } },
-  listBotEnvironments: async () => { calls.push('environments'); return { environments: [{ id: 'env-default', name: 'Default', repositoryKeys: ['v2/github.com/acme/app'] }], shareable: false } },
+  listBotEnvironments: async () => { calls.push('environments'); return { environments: [{ id: 'env-default', name: 'Default', repositoryKeys: ['v2/github.com/acme/app'] }], shareable } },
   setBotEffort: async (botId: string, effort: string | null) => { calls.push(`effort:${botId}:${effort}`); return { id: botId, effort } },
 } })
 mock.module(new URL('../../app/actions/agents.ts', import.meta.url).href, { namedExports: {
@@ -42,16 +43,17 @@ const browser = new Window({ url: 'https://fixture.example/mikka' })
 let container: HTMLDivElement, root: Root
 let createRoot: typeof import('react-dom/client')['createRoot']
 let SWRConfig: typeof import('swr')['SWRConfig']
+let useSWRConfig: typeof import('swr')['useSWRConfig']
 let NewBotDialog: typeof import('./new-bot-dialog')['NewBotDialog']
 before(async () => {
   Object.assign(globalThis, { window: browser, document: browser.document, IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element })
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: browser.navigator })
   ;({ createRoot } = await import('react-dom/client'))
-  ;({ SWRConfig } = await import('swr'))
+  ;({ SWRConfig, useSWRConfig } = await import('swr'))
   ;({ NewBotDialog } = await import('./new-bot-dialog'))
 })
 beforeEach(() => {
-  props = null; failChoose = false; selectedScopes.length = 0; calls.length = 0; toasts.length = 0; created.length = 0; chosen.length = 0
+  props = null; failChoose = false; shareable = false; selectedScopes.length = 0; calls.length = 0; toasts.length = 0; created.length = 0; chosen.length = 0
   defaultsResult = { defaultModel: null, defaultRepository: 'acme/app', models: [], repositories: ['acme/app', 'acme/web'] }
   menu = {
     groups: [{ kind: 'subscription', provider: 'claude', credentialLabel: 'Work', options: [
@@ -110,6 +112,89 @@ test('a picked model and repository are saved on the new Bot', async () => {
   assert.deepEqual(chosen, [['new-bot', 'binding-sonnet']])
   assert.equal(opened, 'new-bot')
   assert.deepEqual(selectedScopes, ['shown-team', 'shown-team', 'shown-team'])
+})
+
+for (const scenario of ['shared default', 'explicit private', 'private disabled'] as const) test(`New Bot applies access policy: ${scenario}`, async t => {
+  shareable = true
+  const fetchPolicy = t.mock.method(globalThis, 'fetch', async (_url: string) => Response.json({
+    workCreation: { effectiveVisibility: 'shared', privateAllowed: scenario !== 'private disabled' },
+  }))
+  await render(dialog(true, undefined, 'shown-team'))
+  await settle()
+  assert.match(String(fetchPolicy.mock.calls[0].arguments[0]), /\/api\/settings\/personal\?workspaceId=shown-team$/)
+  assert.equal(props!.access?.value, 'shared')
+  assert.equal(props!.access?.disabled, scenario === 'private disabled')
+  if (scenario === 'explicit private') await act(async () => props!.access?.onChange('private'))
+  if (scenario === 'private disabled') assert.deepEqual(props!.access?.choices.map(choice => choice.value), ['shared'])
+  await act(async () => props!.onName('Builder'))
+  await act(async () => props!.onSubmit())
+  if (scenario === 'explicit private') assert.equal(created[0].visibility, 'private')
+  else assert.equal(Object.hasOwn(created[0], 'visibility'), false)
+})
+
+test('reopening New Bot waits for fresh access policy in the same settings cache', async t => {
+  shareable = true
+  let next = Promise.resolve(Response.json({ workspaceId: 'shown-team', workCreation: { effectiveVisibility: 'private', privateAllowed: true } }))
+  t.mock.method(globalThis, 'fetch', () => next)
+  const show = (open: boolean) => render(dialog(open, undefined, 'shown-team'))
+  await show(true)
+  await settle()
+  assert.equal(props!.access?.value, 'private')
+  await show(false)
+  let finish!: (value: Response) => void
+  next = new Promise(resolve => { finish = resolve })
+  await show(true)
+  await act(async () => props!.onName('Builder'))
+  assert.equal(props!.access?.value, null)
+  await act(async () => props!.onSubmit())
+  assert.equal(created.length, 0)
+  await act(async () => finish(Response.json({ workspaceId: 'shown-team', workCreation: { effectiveVisibility: 'shared', privateAllowed: false } })))
+  await settle()
+  assert.equal(props!.access?.value, 'shared')
+  await act(async () => props!.onSubmit())
+  assert.equal(Object.hasOwn(created[0], 'visibility'), false)
+})
+
+test('a legacy settings response leaves Access unavailable but allows creation with the server default', async t => {
+  shareable = true
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ workspaceId: 'shown-team', values: {} }))
+  await render(dialog(true, undefined, 'shown-team'))
+  await settle()
+  assert.equal(props!.access?.label, 'Coordinator.modelPicker.unavailable')
+  assert.equal(props!.access?.disabled, true)
+  await act(async () => props!.onName('Builder'))
+  await act(async () => props!.onSubmit())
+  assert.equal(created.length, 1)
+  assert.equal(Object.hasOwn(created[0], 'visibility'), false)
+})
+
+test('a policy refresh never submits an explicit Private selection as Shared', async t => {
+  shareable = true
+  let privateAllowed = true
+  t.mock.method(globalThis, 'fetch', async () => Response.json({
+    workspaceId: 'shown-team', workCreation: { effectiveVisibility: 'shared', privateAllowed },
+  }))
+  let refresh: () => Promise<unknown>
+  function CacheControl() {
+    const { mutate } = useSWRConfig()
+    refresh = () => mutate('/api/settings/personal?workspaceId=shown-team')
+    return null
+  }
+  await render(<>{dialog(true, undefined, 'shown-team')}<CacheControl /></>)
+  await settle()
+  await act(async () => { props!.onName('Builder'); props!.access?.onChange('private') })
+  assert.equal(props!.access?.value, 'private')
+  privateAllowed = false
+  await act(async () => { await refresh() })
+  assert.equal(props!.access?.value, null)
+  assert.equal(props!.access?.label, 'Coordinator.modelPicker.unavailable')
+  assert.deepEqual(props!.access?.choices.map(choice => choice.value), ['shared'])
+  assert.equal(props!.access?.disabled, false)
+  await act(async () => props!.onSubmit())
+  assert.equal(created.length, 0)
+  await act(async () => props!.access?.onChange('shared'))
+  await act(async () => props!.onSubmit())
+  assert.equal(created[0].visibility, 'shared')
 })
 
 test('without a pick, only a model the Coordinator chose is pinned; an unchosen default is left to the resolver', async () => {
