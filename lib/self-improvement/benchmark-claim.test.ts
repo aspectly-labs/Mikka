@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import { transpileModule, ModuleKind } from 'typescript'
-import { TASK_MCP_HEADER, TASK_MCP_VERSION } from '@mikka/protocol'
+import * as mikkaProtocol from '@mikka/protocol'
 import * as codedErrorProtocol from '@mikka/protocol/coded-error'
 import * as daemonProtocol from '@mikka/protocol/daemon'
 import * as deviceProtocol from '@mikka/protocol/device'
@@ -22,6 +22,7 @@ import * as startupTracing from '../computer/startup-tracing'
 import * as startupDiagnostics from '../computer/startup-diagnostics'
 import * as questionDeliveryContext from '../factory/questions/continuation-delivery-context'
 import * as decisionMcpTool from '../project-map/mcp-tool'
+import * as pluginContracts from '../plugins/contracts'
 import { issueTaskSecretAccess } from '../secrets/task-access'
 import { deploymentSwitch, type DeploymentSwitch } from '@/lib/deployment-switches'
 import messages from '@/messages/zh-CN.json'
@@ -50,7 +51,9 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
   const db={select:()=>{selectionsRead++;return {from:()=>({where:()=>({limit:async()=>[selections.shift()]})})}},update:()=>({set:(values:object)=>({where:()=>({returning:async()=>{calls.push('block');Object.assign(run,values);return [{id:run.id}]}})})})}
   const benchmark={harness:'codex',model:'actual-observed-model',verifyCommand:'git diff --exit-code HEAD --',policy:{readOnly:true,networkAllow:[],permissions:{install_dependency:'deny',write_outside_repo:'deny',git_push:'deny',network:'ask'}},benchmark:{caseId:'case',benchmarkDigest:'digest',sourceCommit:'frozen-sha'}}
   const modules:Record<string,unknown>={
-    '@mikka/protocol':{TASK_MCP_HEADER,TASK_MCP_VERSION},
+    '@mikka/protocol':mikkaProtocol,
+    '@/lib/db/commit-effects':{captureDatabaseQuery:(tx:unknown)=>tx},
+    '@/lib/plugins/contracts':pluginContracts,
     // This VM owns frozen benchmark composition, not credential admission;
     // the actual route/fence and token revocation have real PostgreSQL tests.
     '@/lib/issue-access':{issueForUser:async(userId:string,id:string)=>{assert.equal(projectLease.active,true);assert.equal(userId,'owner');assert.equal(id,'issue');return issueDenied?null:{id,userId,workspaceId:run.workspaceId,ownershipState:'bound',scope:'personal',content:{type:'doc'}}}},
@@ -173,6 +176,7 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
       remoteRepositoryRef:()=>null,
     },
     '@/lib/secrets/task-access':{issueTaskSecretAccess},
+    '@/lib/run-chain':{readRunChain:async()=>null},
     '@/lib/execution-identity':{executionMembersActive:async()=>{throw Error('This benchmark fixture has no frozen workspace Secret authority')}},
     '@/lib/personal-mailbox-config':{personalMailboxEnabled:()=>false},
     '@/lib/factory/questions/continuation-delivery-context':questionDeliveryContext,
