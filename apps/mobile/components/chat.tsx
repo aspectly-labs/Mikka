@@ -32,7 +32,7 @@ export function MyBubble({ text, photos, selecting, threadReferences }: { thread
   const parsed = splitChatFiles(text)
   const pictures = useImageFiles(parsed.files)
   const { quoted, words } = splitQuoted(parsed.text)
-  const parts = threadReferences && /\[\[(?:issue|run|chat):|https:\/\/github\.com\//i.test(words) ? personReferenceParts(words) : null
+  const parts = threadReferences && /\[\[(?:issue|run|chat|bot):|https:\/\/github\.com\//i.test(words) ? personReferenceParts(words) : null
   return (
     <View style={styles.mine}>
       <ChatFiles files={parsed.files.filter(file => !isImageFile(file))} />
@@ -42,6 +42,8 @@ export function MyBubble({ text, photos, selecting, threadReferences }: { thread
           {quoted ? <Text numberOfLines={3} style={styles.quoted}>{quoted}</Text> : null}
           {selecting ?? (words ? <FoldedWords text={words} color={colors.onAccent}>{parts?.map((part, index) => {
             if (part.kind === 'text') return part.text
+            // A bot mention dispatches on send; in the bubble it is a label, not a thread link.
+            if (part.kind === 'bot') return <Text key={index} style={{ color: colors.onAccent }}>{`${mobileMessages.ThreadReferences.bot} ${part.id.slice(0, 8)}`}</Text>
             return <Text key={index} accessibilityRole="link" style={{ color: colors.onAccent, textDecorationLine: 'underline' }} onPress={() => {
               if (part.kind === 'pr') void Linking.openURL(part.id)
               else if (part.kind === 'chat') router.push(`/groups/${part.id}`)

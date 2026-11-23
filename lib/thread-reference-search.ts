@@ -1,7 +1,8 @@
 import 'server-only'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import { sql } from 'drizzle-orm'
 import { db, pool } from '@/lib/db'
-import { issues } from '@/lib/db/schema'
+import { bots, issues } from '@/lib/db/schema'
 import { parseSearchParams, searchIssues } from '@/lib/issue-search'
 import { issueVisibility, type IssueReader } from '@/lib/issue-visibility'
 import { pullRequestSchema } from '@/lib/issue-metadata'
@@ -31,7 +32,8 @@ export async function searchThreadReferences(reader: IssueReader, workspaceId: s
       kind && kind !== 'task' ? null : searchIssues(db, { userId, workspaceId, params: parseSearchParams(new URLSearchParams({ q: query, limit: '8', workspaceId })) }),
       kind && kind !== 'thread' ? null : conversationDirectory(pool, reader, workspaceId, { search: query }),
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
-      kind && kind !== 'bot' ? null : (await import('@/lib/workspace-admin/bots')).workspaceBots(workspaceId),
+      kind && kind !== 'bot' ? null : db.select({ id: bots.id, name: bots.name }).from(bots)
+        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)).limit(8),
     ])
     const needle = query.toLowerCase()
     return [

@@ -437,7 +437,7 @@ export const desktopActionSchemas = {
   'task-runs.pollTaskRuns': none,
   'task-runs.pollThreads': tuple(version.optional(), listPositions(200).optional()),
   'task-runs.syncThreadList': tuple(version.optional(), listPositions(200).optional()),
-  'task-runs.findThreadReferences': z.union([tuple(uuid, text(120)), tuple(uuid, text(120), z.enum(['task', 'thread', 'pr']))]),
+  'task-runs.findThreadReferences': z.union([tuple(uuid, text(120)), tuple(uuid, text(120), z.enum(['task', 'thread', 'pr', 'bot']))]),
   'task-runs.listConversations': tuple(directoryInput),
   'list-views.listPullPins': oneId,
   'list-views.setPullPins': tuple(uuid, z.array(text(500)).min(1).max(100), bool),

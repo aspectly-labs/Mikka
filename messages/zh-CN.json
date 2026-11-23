@@ -3425,7 +3425,7 @@
       "unpricedCalls": "另有 {count} 次调用没有单次价格",
       "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
     },
-    "actionFailed": "操作失败，请重试。",
+    "actionFailed": "操作失败。",
     "composerMenu": {
       "title": "加入线程",
       "newSideThread": "新建旁支线程",
@@ -3452,7 +3452,7 @@
       "value": "值",
       "add": "添加",
       "remove": "删除",
-      "failed": "环境变量更新失败，请重试。"
+      "failed": "环境变量更新失败。"
     }
   },
   "FactoryFlow": {
