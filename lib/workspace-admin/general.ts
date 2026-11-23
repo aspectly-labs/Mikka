@@ -13,6 +13,7 @@ import { enqueueWorkspaceAudit, type AuditRequestContext } from '@/lib/audit/del
 import { deleteWorkspaceRows } from '@/lib/workspace-rows'
 import { teardownWorkspaceMachines } from '@/lib/cloud-computer/workspace-teardown'
 import { parseWorkspaceIcon } from './icon'
+import { syncWorkspaceTaskPrefix } from '@/lib/task-identifier-server'
 import { updateWorkspaceInput, type UpdateWorkspaceInput } from './general-input'
 import { ownerListChanged, workspaceListChanged, workspaceListScopesBeforeChange, workspaceListScopeChanged } from '../live/lists'
 import { markReviewSessionsRevoked, drainRevokedReviewSessions } from '../coding-workspace/review-sessions'
@@ -55,8 +56,16 @@ export async function updateWorkspaceGeneral(actorId: string, workspaceId: strin
   const values = updateWorkspaceInput.parse(input)
   const icon = values.icon === undefined ? undefined : parseWorkspaceIcon(values.icon)
   if (icon === false) throw new WorkspaceError('workspaceIconInvalid')
-  return workspaceDb.transaction(async tx => {
+  const saved = await workspaceDb.transaction(async tx => {
     const { workspace, membership } = await requireWorkspace(tx, workspaceId, actorId, true)
+    // A task prefix and a Team key spell the same `KEY-N` namespace: once both
+    // exist their future numbers collide, so reserve the prefix here and the
+    // Team key side in saveTeam.
+    if (values.taskPrefix && values.taskPrefix !== workspace.taskPrefix) {
+      const [clash] = await tx.select({ id: teams.id }).from(teams)
+        .where(and(eq(teams.workspaceId, workspaceId), eq(teams.identifier, values.taskPrefix))).limit(1)
+      if (clash) throw new WorkspaceError('workspaceTaskPrefixClashesWithTeam')
+    }
     const changes: Partial<typeof workspaces.$inferInsert> = {}
     if (values.name !== undefined && values.name !== workspace.name) changes.name = values.name
     if (icon !== undefined && icon !== workspace.icon) changes.icon = icon
@@ -79,6 +88,11 @@ export async function updateWorkspaceGeneral(actorId: string, workspaceId: strin
     })
     return profile(updated)
   })
+  // The allocator reads the mirror in the application database; sync after the
+  // workspace commit even when the value did not change, so a missing or stale
+  // mirror converges on the next save instead of silently keeping W<uuid>.
+  if (values.taskPrefix !== undefined) await syncWorkspaceTaskPrefix(workspaceId)
+  return saved
 }
 
 /**
