@@ -3452,7 +3452,8 @@
       "value": "Value",
       "add": "Add",
       "remove": "Remove",
-      "failed": "Couldn’t update the variables."
+      "failed": "Couldn’t update the variables.",
+      "replaces": "This name already exists — adding replaces its saved value."
     }
   },
   "FactoryFlow": {
