@@ -19,8 +19,11 @@ import { PULL_STATE_TONES } from '@/lib/pull-request-appearance'
 import type { ThreadPullRef } from '@/lib/thread-pulls'
 import { useThreadPulls } from '@/hooks/use-thread-run-reads'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ExternalLink, GitMerge } from '@/components/icons'
+import type { PullReviewResult } from '@/lib/pull-directory'
 import { PullRequestIcon } from './pull-request-icon'
 import { ThreadChangesPane } from './thread-changes'
 import { Fact, checkKeys, readDetail, reviewKeys, stateKeys } from './pull-preview'
@@ -56,6 +59,35 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
     { revalidateOnFocus: false, shouldRetryOnError: false })
   const [view, setView] = useState('overview')
   const [arming, setArming] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
+  const [reviewBody, setReviewBody] = useState('')
+  const [reviewBusy, setReviewBusy] = useState(false)
+
+  async function requestChanges() {
+    const body = reviewBody.trim()
+    if (!body) return
+    setReviewBusy(true)
+    try {
+      const response = await fetch(withBasePath('/api/integrations/github/repositories/pulls/review'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ repo: pull.repo, number: pull.number, body }),
+      })
+      const result = (await response.json().catch(() => ({}))) as Partial<PullReviewResult> & { error?: string }
+      if (result.kind === 'submitted') {
+        toast.success(t('reviewSubmitted'))
+        setReviewing(false)
+        setReviewBody('')
+        void detail.mutate()
+        return
+      }
+      toast.error(t('reviewFailed'))
+    } catch {
+      toast.error(t('reviewFailed'))
+    } finally {
+      setReviewBusy(false)
+    }
+  }
   const armed = pull.mergeIntentState === 'armed' || pull.autoMerge
 
   async function mergeWhenReady(enabled: boolean) {
@@ -96,6 +128,9 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
             <GitMerge data-icon />{armed ? t('mergeDisarm') : t('mergeWhenReady')}
           </Button>
         </>}
+        {(pull.state === 'open' || pull.state === 'draft') && (
+          <Button size="sm" variant="secondary" onClick={() => setReviewing(true)}>{t('requestChanges')}</Button>
+        )}
         <Button size="sm" variant="secondary" nativeButton={false}
           render={<a href={pull.url} target="_blank" rel="noopener noreferrer" />}>
           <ExternalLink data-icon />{t('openGitHub')}
@@ -153,6 +188,19 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
         {detail.data?.moreChecks && <p className="text-xs text-muted-foreground">{t('moreChecks')}</p>}
       </TabsContent>
     </Tabs>
+    <Dialog open={reviewing} onOpenChange={next => { if (!next) setReviewing(false) }}>
+      <DialogContent>
+        <DialogTitle>{t('requestChangesTitle', { repo: pull.repo, number: pull.number })}</DialogTitle>
+        <Textarea value={reviewBody} onChange={event => setReviewBody(event.target.value)}
+          placeholder={t('requestChangesBody')} rows={5} autoFocus />
+        <DialogFooter>
+          <Button size="sm" variant="ghost" onClick={() => setReviewing(false)}>{common('cancel')}</Button>
+          <Button size="sm" disabled={reviewBusy || !reviewBody.trim()} onClick={() => void requestChanges()}>
+            {reviewBusy ? common('sending') : t('requestChanges')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 }
 
