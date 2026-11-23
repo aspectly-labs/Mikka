@@ -3276,6 +3276,10 @@
     "title": "线程",
     "chatTab": "线程",
     "openTask": "打开任务",
+    "mergeWait": {
+      "line": "等你合并",
+      "dismiss": "忽略"
+    },
     "waiting": "等你回复",
     "contextListSeparator": "、",
     "hidden": "线程",

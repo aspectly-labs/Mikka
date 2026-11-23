@@ -3276,6 +3276,10 @@
     "title": "Threads",
     "chatTab": "Thread",
     "openTask": "Open task",
+    "mergeWait": {
+      "line": "Waiting on you to merge",
+      "dismiss": "Dismiss"
+    },
     "waiting": "Waiting for you",
     "contextListSeparator": ", ",
     "hidden": "Thread",
