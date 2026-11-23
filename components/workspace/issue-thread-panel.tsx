@@ -515,14 +515,16 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         : [t('activityLine.worked', { duration }), ...status === 'failed' ? [t('activityLine.failed')] : status === 'stopped' || status === 'cancelled' ? [t('activityLine.stopped')] : []].join(' · ')
       const folds = !active && items.some(item => item.kind === 'steps')
       // #2926: the workspace quota card replaces the activity line while a
-      // usage limit has the thread paused — 「在等你回复」 does not apply.
-      if (!data.thread.quota?.paused) entries.push({ id: `${runId}:activity`, role: 'bot', at: at(data.thread.createdAt), event: true, parts: [{ kind: 'text', text: line, node:
+      // usage limit has the thread paused — 「在等你回复」 does not apply. The
+      // steps fold toggle is not the waiting row: it stays so collapsed steps open.
+      const quotaPaused = Boolean(data.thread.quota?.paused)
+      if (!quotaPaused || folds) entries.push({ id: `${runId}:activity`, role: 'bot', at: at(data.thread.createdAt), event: true, parts: [{ kind: 'text', text: line, node:
         <div data-attempt-section={runId} data-event-line="" data-activity-line="" className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
           {folds ? <Button type="button" variant="ghost" size="xs" aria-expanded={stepsOpen} onClick={() => setStepsOpen(value => !value)} className="text-muted-foreground">
             {line}<ChevronDown data-icon="inline-end" aria-hidden className={cn('transition-transform', stepsOpen && 'rotate-180')} />
           </Button> : <span role="status">{line}</span>}
-          {showBadge && <ThreadStatus status={status} outcome={outcome} waiting={waitingForReply} icon={false} />}
-          <ThreadOutlineIndex entries={outline} />
+          {!quotaPaused && showBadge && <ThreadStatus status={status} outcome={outcome} waiting={waitingForReply} icon={false} />}
+          {!quotaPaused && <ThreadOutlineIndex entries={outline} />}
         </div> }] })
     }
     if (!attempt && asked && !independentCheck) { open = null; sentAt.set(`${runId}:prompt`, at(data.thread.createdAt)); entries.push({ id: `${runId}:prompt`, role: 'person', at: at(data.thread.createdAt), text: asked }) }
@@ -627,7 +629,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const queueControls = <div className="flex flex-col gap-1 px-3">
     {queuedRows.length > 0 && <div className="flex flex-col gap-0.5">
       <span className="text-xs font-medium">{t('queuedTitle', { count: queuedRows.length })}</span>
-      <span className="text-xs text-muted-foreground">{t('queuedHint')}</span>
+      {data?.thread.quota?.paused && <span className="text-xs text-muted-foreground">{t('queuedHint')}</span>}
     </div>}
     {modes.length > 0 && <NativeSelect size="sm" aria-label={t('deliveryMode')} value={selectedMode} onChange={event => {
       const next = modes.find(mode => mode === event.target.value)
@@ -635,9 +637,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     }}>{modes.map(mode => <NativeSelectOption key={mode} value={mode}>{t(`deliveryModes.${mode}`)}</NativeSelectOption>)}</NativeSelect>}
     {queuedRows.map(row => <div key={row.id} className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
       {queueEditing === row.id
-        ? <input autoFocus defaultValue={row.text} maxLength={10000} className="min-w-0 flex-1 rounded-md border border-rule bg-transparent px-2 py-1"
+        ? <textarea autoFocus defaultValue={row.text} maxLength={10000} rows={2} className="min-w-0 flex-1 rounded-md border border-rule bg-transparent px-2 py-1"
           onKeyDown={event => {
-            if (event.key === 'Enter') void updateQueue(row.id, 'edit', event.currentTarget.value)
+            if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void updateQueue(row.id, 'edit', event.currentTarget.value) }
             if (event.key === 'Escape') setQueueEditing(null)
           }}
           onBlur={event => { if (event.target.value !== row.text) void updateQueue(row.id, 'edit', event.target.value); else setQueueEditing(null) }} />

@@ -97,8 +97,11 @@ export function QuotaPausedCard({ paused, creditsModel, onContinued }: {
     if (pending || (kind === 'credits' && !creditsModel)) return
     setPending(kind); setFailed(false)
     try {
-      if (kind === 'credits') await resumeAllQuotaPausedOnCredits(creditsModel!)
-      else await retryAllQuotaPausedRuns()
+      // Both bulk actions skip per-run failures instead of throwing — surface them.
+      const failed = kind === 'credits'
+        ? (await resumeAllQuotaPausedOnCredits(creditsModel!)).filter(row => !row.continued).length
+        : (await retryAllQuotaPausedRuns()).filter(row => !row.retried).length
+      setFailed(failed > 0)
       await onContinued()
     }
     catch { setFailed(true) }
