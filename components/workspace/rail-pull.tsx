@@ -73,7 +73,7 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ repo: pull.repo, number: pull.number, body }),
       })
-      const result = (await response.json().catch(() => ({}))) as Partial<PullReviewResult> & { error?: string }
+      const result = (await response.json().catch(() => ({}))) as { kind?: PullReviewResult['kind']; code?: string; error?: string }
       if (result.kind === 'submitted') {
         toast.success(t('reviewSubmitted'))
         setReviewing(false)
