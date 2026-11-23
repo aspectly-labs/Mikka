@@ -20,6 +20,7 @@ import { withBasePath } from '@/lib/base-path'
 import { PersonReferences, ThreadReferencePicker } from './thread-references'
 import { VisibleReadEnd } from './visible-read-end'
 import { ThreadHeader } from './thread-header'
+import { WorkingStatus } from './working-status'
 import { ConversationPill } from '@/components/nav/conversation-pill'
 import { GroupAvatar, groupMembersKey, memberAvatar, useGroupMembers } from '@/components/nav/group-avatar'
 import { useLiveKey } from '@/hooks/use-live-key'
@@ -285,7 +286,10 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       </>,
       end: namedChat && readRevision !== undefined && !blockingCode && !accessRejected && <VisibleReadEnd onSeen={acknowledge} />,
     }}
-      beforeComposer={referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
+      beforeComposer={<>
+        <WorkingStatus revision={pages?.[0]?.revision} />
+        {referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
+      </>}
       composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={composerInput} value={draft} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
         leftControls={modelBot && <BotModelPicker key={modelBot} botId={modelBot} running={replying} />}
         sending={stopping} editableWhileSending={stopping} running={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined} />} />

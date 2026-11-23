@@ -1,7 +1,7 @@
 import { isToolkitSlug, OWN_INTEGRATIONS } from '@/lib/composio-accounts'
 import { PluginError } from './contracts'
 import type { StoreCategory } from './catalog'
-import { connectKind, credentialForms, type ConnectKind, type CredentialForm } from './connect-kind'
+import { connectKind, credentialForms, detailAuthSchemes, type ConnectKind, type CredentialForm } from './connect-kind'
 
 // One store app's page (decision 2026-10-31, as Codex's app page): Composio's
 // own description, tool list and facts, shown whether or not the person has
@@ -76,13 +76,8 @@ export async function fetchAppDetail(source: AppDetailSource, slug: string): Pro
   return {
     id: slug, name: clean(toolkit.name, 200) || slug, description: clean(meta.description, 2000), iconUrl: publicUrl(meta.logo),
     categories, website: publicUrl(meta.app_url), version: clean(meta.version, 40) || null, tools,
-    auth: { kind: connectKind({ ...toolkit, auth_schemes: toolkit.auth_schemes ?? schemesOf(toolkit.auth_config_details) }), forms: credentialForms(toolkit.auth_config_details), guideUrl: publicUrl(toolkit.auth_guide_url) },
+    auth: { kind: connectKind({ ...toolkit, auth_schemes: toolkit.auth_schemes ?? detailAuthSchemes(toolkit.auth_config_details) }), forms: credentialForms(toolkit.auth_config_details), guideUrl: publicUrl(toolkit.auth_guide_url) },
   }
-}
-
-/** The single-toolkit endpoint names its schemes inside `auth_config_details`. */
-function schemesOf(details: unknown) {
-  return Array.isArray(details) ? details.flatMap(detail => typeof (detail as { mode?: unknown })?.mode === 'string' ? [(detail as { mode: string }).mode] : []) : []
 }
 
 const cache = new Map<string, { at: number; value: Promise<AppDetail> }>()

@@ -325,9 +325,20 @@ export async function runProductionReadCache({ env = process.env, event, attesta
       check(detail.viewerId === ownerId, 'scope_changed'); check(version(detail.version), 'response_invalid'); measureResult(detail)
       if (detail.unchanged === true) check(held.detail?.readVersion === detail.version, 'list_merge_invalid')
       else { check(detail.issue?.id === issueId && detail.issue.content && typeof detail.issue.content === 'object', 'response_invalid'); held.detail = { ...detail.issue, readVersion: detail.version } }
-      const activity = await action('pollIssueVersionSummaries', [issueId, ...listArguments(held.activity)], 'task-activity', scenario)
+      const activity = await action('pollIssueActivityPage', [issueId, held.activity?.readVersion], 'task-activity', scenario)
       check(activity.viewerId === ownerId, 'scope_changed'); measureResult(activity.snapshot)
-      held.activity = mergeReadList(held.activity, activity.snapshot, 50)
+      if (activity.snapshot?.unchanged === true) check(held.activity?.readVersion === activity.snapshot.version, 'list_merge_invalid')
+      else {
+        check(activity.snapshot && version(activity.snapshot.version) && Array.isArray(activity.snapshot.items), 'response_invalid')
+        held.activity = { ...activity.snapshot, readVersion: activity.snapshot.version }
+        if (scenario === 'cold') {
+          const earliest = activity.snapshot.items.at(-1)
+          check(earliest && Number.isInteger(earliest.revision) && typeof earliest.id === 'string', 'response_invalid')
+          const earlier = (await action('loadEarlierIssueActivity', [issueId, earliest.revision, earliest.id], 'task-activity', scenario)).page
+          check(earlier && Array.isArray(earlier.items) && earlier.hasMore === false && earlier.cursor === null, 'response_invalid')
+          measureResult(earlier)
+        }
+      }
       const prefix = await client.json('/mikka/api/settings/issue-prefix', 'settings', scenario)
       check(typeof prefix?.suggested === 'string' && Array.isArray(prefix.teamKeys)
         && prefix.teamKeys.every(key => typeof key === 'string'), 'response_invalid')
@@ -394,7 +405,7 @@ export function productionOutcome(report, attesting = false) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const attesting = process.argv.includes('--attest')
-  const issueNumber = process.argv.includes('--migration-1415') ? 1415 : 1372
+  const issueNumber = process.env.MIKKA_ACCEPTANCE_TARGET_MODE === 'deployed-target' ? 1415 : 1372
   let report
   try {
     const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'))

@@ -11,7 +11,7 @@ import { credentialKms } from './kms'
 import { isCloudEdition } from '@/lib/edition'
 import { CredentialStore, type BrowserTarget } from './store'
 import { credentialVaultEnabled } from './feature'
-import { credentialRuntimeEnvironment } from './runtime-identity'
+import { cloudflareCredentialToken, credentialRuntimeEnvironment } from './runtime-identity'
 
 export const credentialStore = new CredentialStore(pool, credentialKms('app'))
 export async function credentialActor(request: Request) {
@@ -72,7 +72,7 @@ export async function executeCredentialLease(lease: string, origin: string, scop
   if (!cloudflare && (broker.protocol !== 'https:' || !broker.hostname.endsWith('.vercel.app') || broker.pathname !== '/' || broker.username || broker.password || broker.search || broker.hash)) throw new CredentialError()
   let dispatched = false, responseReceived = false
   try {
-    const identity = cloudflare ? null : await getVercelOidcToken()
+    const identity = cloudflare ? await cloudflareCredentialToken() : await getVercelOidcToken()
     dispatched = true
     const response = await fetch(new URL('/api/fill', broker), { method: 'POST', headers: {
       'Content-Type': 'application/json', ...(identity ? { Authorization: `Bearer ${identity}` } : {}),
@@ -95,7 +95,7 @@ export async function executeCredentialLease(lease: string, origin: string, scop
     return { status: result.status as 'submitted' | 'session_applied' | 'guarded', origin }
   } catch (error) {
     if (error instanceof CredentialError && error.code === 'credential_outcome_unknown') throw error
-    if (dispatched && !responseReceived) throw new CredentialError('credential_outcome_unknown', 409)
-    throw new CredentialError()
+    if (dispatched && !responseReceived) throw Object.assign(new CredentialError('credential_outcome_unknown', 409), { cause: error })
+    throw Object.assign(new CredentialError(), { cause: error })
   }
 }

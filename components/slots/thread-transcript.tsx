@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef } from 'react'
 import { ChatMessage } from '@ui-slot/chat-message'
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport, useMessageScroller } from '@/components/ui/message-scroller'
+import { currentUiPreferences } from '@/lib/ui-preferences'
 import { cn } from '@/lib/utils'
 import type { ThreadTranscriptMessage, ThreadTranscriptScreenProps } from './thread-contract'
 
@@ -19,7 +20,14 @@ function FollowSentMessages({ count }: { count: number | null }) {
   const seen = useRef(count)
   useEffect(() => {
     if (count === null) return
-    if (seen.current !== null && count > seen.current) scrollToEnd()
+    if (seen.current !== null && count > seen.current) {
+      if (currentUiPreferences().scrollNewToTop) {
+        const items = document.querySelectorAll('[data-slot="message-scroller-item"]')
+        const last = items[items.length - 1]
+        if (last) last.scrollIntoView({ block: 'start' })
+        else scrollToEnd()
+      } else scrollToEnd()
+    }
     seen.current = count
   }, [count, scrollToEnd])
   return null

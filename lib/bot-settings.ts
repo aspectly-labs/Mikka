@@ -16,6 +16,11 @@ export type BotRunsOn = z.infer<typeof botRunsOnSchema>
 export const BOT_DEFAULT_AGENTS = ['claude_code', 'codex'] as const
 export type BotDefaultAgent = typeof BOT_DEFAULT_AGENTS[number]
 
+export const BOT_INSTRUCTIONS_MAX = 2000
+export const botInstructionsSchema = z.string()
+  .transform(text => text.trim())
+  .refine(text => [...text].length <= BOT_INSTRUCTIONS_MAX, { message: 'personalInstructionsTooLong' })
+
 /** Every Bot setting a writer may change; undefined leaves it, null clears it. */
 export const botSettingsSchema = z.object({
   alias: botAliasSchema.nullable().optional(),
@@ -24,6 +29,7 @@ export const botSettingsSchema = z.object({
   defaultAgent: z.enum(BOT_DEFAULT_AGENTS).nullable().optional(),
   defaultProfileId: z.uuid().nullable().optional(),
   runsOn: botRunsOnSchema.nullable().optional(),
+  instructions: botInstructionsSchema.optional(),
 }).strict()
 export type BotSettingsInput = z.input<typeof botSettingsSchema>
 export type BotSettings = z.infer<typeof botSettingsSchema>

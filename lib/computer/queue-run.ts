@@ -17,12 +17,15 @@ import { ComputerError } from './store'
 import { RunModelMissingError } from './run-model'
 import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source'
 import { cloudTaskTarget } from './cloud-task-target'
+import { provisionableMachineSize } from '../cloud-computer/machine-pricing'
+import { verifiedMachineQuota } from '../cloud-computer/sponsored-task'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { resolveRunOrigin, type RunOrigin, type RunOriginRef } from '@/lib/run-origin'
 import type { ProjectExecutionSnapshot } from '@/lib/project-resources/contracts'
 import { requestedRunSettings, storedRunSettings, withRequestedEffort } from '@/lib/task-run-settings'
 import { assertFrozenProjectExecution, assertProjectExecutionTarget, requireProjectResourceLease } from '@/lib/project-resources/store'
+import { initializeWorkVisibility } from '@/lib/settings/work-creation'
 
 /** Issue access is checked by the caller. Queue and Bot binding are committed
  * together so the cloud worker never observes an unbound queued run. The
@@ -50,6 +53,8 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
   idempotencyKey?: string; execution?: AgentExecution
   /** A quota continuation's key (lib/run-quota.ts): frozen as given instead of choosing the credential. */
   apiKey?: RunApiKey
+  /** A quota continuation's Mikka-额度 slot (lib/run-quota.ts): frozen as given instead of choosing the credential. */
+  credits?: { model: string }
   /** The API key the 优先使用的模型 entry names; used only when the run may use it (lib/run-credential-source.ts). */
   apiKeyId?: string
   /** The dispatcher's exact subscription selection; an id is reauthorized here, never an owner grant. */
@@ -114,7 +119,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     const allowLocalRecovery = input.allowLocalRecovery === true && request && request.destination == null ? true as const : undefined
     // Absent stays byte-compatible with historical fingerprints; a replay
     // cannot upgrade an old cloud-only run to a newly inferred permission.
-    const selectionFingerprint = createHash('sha256').update(JSON.stringify([input.subscriptionBindingId ?? null, model, input.apiKeyId ?? null, input.apiKey ?? null, ...(allowLocalRecovery ? [{ allowLocalRecovery }] : []), ...(sponsored ? [{ cloudflareRequest:input.sourceEventId }] : []), ...(input.modelDispatch ? [{ modelDispatch: input.modelDispatch }] : []), ...(input.agentProfile ? [{ agentProfile: input.agentProfile }] : []), ...(input.policyCeiling ? [{ policyCeiling: input.policyCeiling }] : [])])).digest('hex')
+    const selectionFingerprint = createHash('sha256').update(JSON.stringify([input.subscriptionBindingId ?? null, model, input.apiKeyId ?? null, input.apiKey ?? null, ...(allowLocalRecovery ? [{ allowLocalRecovery }] : []), ...(sponsored ? [{ cloudflareRequest:input.sourceEventId }] : []), ...(input.modelDispatch ? [{ modelDispatch: input.modelDispatch }] : []), ...(input.agentProfile ? [{ agentProfile: input.agentProfile }] : []), ...(input.policyCeiling ? [{ policyCeiling: input.policyCeiling }] : []), ...(settings.visibility ? [{ visibility: settings.visibility }] : [])])).digest('hex')
     const target = await cloudTaskTarget(client, actor, input)
     if (!target) throw new ComputerError(409, 'Bot computer task is unavailable')
     const { rows: [repository] } = await client.query<{ repoPath: string; remoteUrl: string | null }>('SELECT "repoPath","remoteUrl" FROM device_repos WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3 FOR SHARE', [input.deviceRepoId, actor.userId, target.deviceId])
@@ -139,7 +144,9 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     const binding = await (await import('./native-run-binding')).nativeRunBinding(client, actor.userId, input.agentId, target.harness, actor.workspaceId, input.subscriptionBindingId)
     if (input.subscriptionBindingId && (!binding || model !== binding.modelId)) throw new ComputerError(409, 'Bot subscription unavailable')
     const runBotId = input.withoutBot ? null : input.botId
-    const { subscription, apiKey, credits } = input.apiKey ? { subscription: null, apiKey: input.apiKey, credits: undefined } : await runCredentialSource(client, { ownerId: actor.userId, botId: runBotId, harness: target.harness, model, keyId: input.apiKeyId,
+    const { subscription, apiKey, credits } = input.apiKey ? { subscription: null, apiKey: input.apiKey, credits: undefined }
+      : input.credits ? { subscription: null, apiKey: undefined, credits: input.credits }
+      : await runCredentialSource(client, { ownerId: actor.userId, botId: runBotId, harness: target.harness, model, keyId: input.apiKeyId,
       botWorkspaceId: runBotId ? actor.workspaceId : null, choiceWorkspaceId: actor.workspaceId, subscription: binding })
     // A key selected before runtime preparation can be withdrawn during wake.
     if (input.apiKeyId && apiKey?.keyId !== input.apiKeyId) throw new ComputerError(409, 'Bot subscription unavailable')
@@ -166,9 +173,13 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
           (prior && !earlierPlacement) || (earlierPlacement && (earlierPlacement.ownerId!==actor.userId || earlierPlacement.workspaceId!==actor.workspaceId ||
              earlierPlacement.taskId!==input.issueId || earlierPlacement.botId!==input.botId || earlierPlacement.repositoryKey!==effectiveExecution.repositoryKey)))
         throw new ComputerError(409,'Cloudflare coding task unavailable')
+      // The quota gate (#3080): the frozen placement records what actually starts
+      // and is billed, with an over-limit request and its reason alongside.
+      const requestedSize = settings.machineSize ?? effectiveExecution.environment?.defaultMachineSize
+      const provision = requestedSize ? provisionableMachineSize(requestedSize, verifiedMachineQuota()) : null
       frozen.taskMachine=earlierPlacement ?? {provider:'cloudflare',payer:'mikka',ownerId:actor.userId,workspaceId:actor.workspaceId,
         taskId:input.issueId,botId:input.botId,repositoryKey:effectiveExecution.repositoryKey,requestEventId:input.sourceEventId!,
-        ...(settings.machineSize ?? effectiveExecution.environment?.defaultMachineSize ? { size: settings.machineSize ?? effectiveExecution.environment!.defaultMachineSize! } : {})}
+        ...(provision ? { size: provision.size, ...(provision.adjusted ? { requestedSize: provision.requested, sizeReason: provision.adjusted } : {}) } : {})}
     }
     frozen.definitionDigest = workerDefinitionDigest(frozen)
     frozen.executionIdentity = await freezeExecutionIdentity(client, { userId: actor.userId, botId: runBotId, deviceId: target.deviceId, agentDefinition: frozen }, undefined, actor.workspaceId)
@@ -185,6 +196,9 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     scheduleThreadTitle(client, runId, actor.userId, 'created')
     await client.query(`INSERT INTO agent_runs (id,"userId","issueId","agentId","deviceId","deviceRepoId",status,kind,"baseBranch",prompt,"botId","agentDefinition","dispatchFingerprint","promptTaskStart","promptTaskLength","workspaceId",origin,"originRef")
       VALUES ($1,$2,$3,$4,$5,$6,'queued','implement',$7,$8,$9,$10,$11,0,$12,$13,$14,$15)`, [runId, actor.userId, input.issueId, input.agentId, target.deviceId, input.deviceRepoId, effectiveBaseBranch, prompt, runBotId,JSON.stringify(agentDefinition), digest ? selectionFingerprint : null, promptTaskLength, actor.workspaceId, entry.origin, entry.originRef ? JSON.stringify(entry.originRef) : null])
+    // Recovery/continuation callers link this row after queueing. Their source
+    // arguments, not the not-yet-linked row, identify the existing thread.
+    if (!sourceId) await initializeWorkVisibility(client, actor, { kind: 'thread', id: runId, visibility: settings.visibility })
     if (push) await client.query(`INSERT INTO run_publications ("runId","userId","issueId","scopeVersion","issueTitle","remoteUrl","remoteKey",identifier,branch,"baseBranch","pushApproved")
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`, [runId, push.publication.userId, push.publication.issueId, push.publication.scopeVersion, push.publication.issueTitle, push.publication.remoteUrl, push.publication.remoteKey, push.publication.identifier, push.publication.branch, push.publication.baseBranch])
     if (settings.pin) await client.query('UPDATE agent_runs SET "conversationPinnedAt"=clock_timestamp() WHERE id=$1', [runId])
@@ -194,5 +208,5 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     await runChanged(client, runId)
     if (!existing) await client.query('COMMIT')
     return { runId }
-  } catch (error) { if (!existing) await client.query('ROLLBACK'); if (error instanceof ExecutionIdentityError) throw new ComputerError(409, 'Execution identity or resource unavailable'); throw error } finally { if (!existing) client.release() }
+  } catch (error) { if (!existing) await client.query('ROLLBACK'); if (error instanceof ExecutionIdentityError) throw Object.assign(new ComputerError(409, 'Execution identity or resource unavailable'), { cause: error }); throw error } finally { if (!existing) client.release() }
 }

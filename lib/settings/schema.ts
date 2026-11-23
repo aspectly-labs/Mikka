@@ -31,3 +31,10 @@ export const keyboardShortcuts = pgTable('keyboard_shortcuts', {
   actionId: text('actionId').notNull(), binding: text('binding'),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [primaryKey({ columns: [table.userId, table.actionId] })])
+
+/** Runtime prompt storage is separate from personal and thread-title instructions. */
+export const workspaceInstructions = pgTable('workspace_instructions', {
+  workspaceId: uuid('workspaceId').primaryKey(),
+  instructions: text('instructions').notNull().default(''),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [check('workspace_instructions_length', sql`char_length(${table.instructions}) <= 2000`)])

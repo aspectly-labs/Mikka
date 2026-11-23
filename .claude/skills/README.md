@@ -51,6 +51,11 @@ text is at [`../skill-licenses/anthropic-frontend-design/LICENSE`](../skill-lice
 
 ## Which skill to use
 
+- **Acceptance** uses the Mikka-authored `acceptance` adapter for separate
+  runner/checker plan reviews and final evidence decisions. Its canonical
+  instructions are `.agents/acceptance/PROCESS.md` and `PROJECT.md`;
+  `.agents/skills/acceptance` links to the same Claude skill for Codex.
+
 - **Documentation updates** use `update-docs` to discover affected pages and
   `technical-documentation` to check facts, structure and writing. Use the
   existing `writing-for-agents` for Agent instructions. Start with

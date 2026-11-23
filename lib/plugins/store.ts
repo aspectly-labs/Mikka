@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { skillMarkdown } from '@mikka/protocol/skill'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
 import { PluginError, type InstalledSkill, type McpServerView, type PersonalPluginSnapshot, type SkillContent, type createMcpSchema, type updateMcpSchema } from './contracts'
 import type { z } from 'zod'
@@ -12,7 +13,10 @@ type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
 }
 const mcpColumns = 'id,name,url,transport,enabled,revision,auth_header,ciphertext,iv,key_version,created_at'
 const skillColumns = 'id,name,source,slug,source_kind AS "sourceKind",source_revision AS "sourceRevision",source_path AS "sourcePath",sha256,enabled,created_at AS "createdAt"'
-const mcpView = (row: McpRow): McpServerView => ({ id: row.id, name: row.name, url: row.url, transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: row.transport === 'stdio' ? 'env' : row.auth_header ? 'header' : 'none', createdAt: row.created_at.toISOString() })
+const stdioHeader = (env: Record<string, string> | undefined) => env && Object.keys(env).length > 0 ? '__stdio__' : '__stdio_noenv__'
+const mcpAuthKind = (row: Pick<McpRow, 'transport' | 'auth_header'>): McpServerView['authKind'] =>
+  row.transport === 'stdio' ? (row.auth_header === '__stdio_noenv__' ? 'none' : 'env') : row.auth_header ? 'header' : 'none'
+const mcpView = (row: McpRow): McpServerView => ({ id: row.id, name: row.name, url: row.url, transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: mcpAuthKind(row), createdAt: row.created_at.toISOString() })
 const aad = (userId: string, id: string, url: string, header: string) => JSON.stringify(['personal-mcp', userId, id, url, header.toLowerCase()])
 
 export class PersonalPluginStore {
@@ -32,7 +36,7 @@ export class PersonalPluginStore {
   }
   async createMcp(userId: string, input: z.infer<typeof createMcpSchema>) {
     const id = randomUUID(), url = input.transport === 'stdio' ? '' : input.url
-    const header = input.transport === 'stdio' ? '__stdio__' : input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
+    const header = input.transport === 'stdio' ? stdioHeader(input.env) : input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
     const value = input.transport === 'stdio' ? JSON.stringify({ command: input.command, args: input.args, cwd: input.cwd, env: input.env }) : input.headers ? JSON.stringify(input.headers) : input.auth?.value
     const sealed = value !== undefined ? sealSecret(value, aad(userId, id, url, header!), this.env) : null
     return this.write(userId, async client => {
@@ -50,7 +54,8 @@ export class PersonalPluginStore {
       let sealed: Sealed | null = row.ciphertext ? { ciphertext: row.ciphertext, iv: row.iv!, keyVersion: row.key_version! } : null
       if (row.transport === 'stdio' && input.env !== undefined) {
         const value = JSON.parse(openSecret(sealed!, aad(userId,row.id,row.url,header!),this.env))
-        sealed = sealSecret(JSON.stringify({ ...value, env: input.env }), aad(userId,row.id,row.url,header!),this.env)
+        header = stdioHeader(input.env)
+        sealed = sealSecret(JSON.stringify({ ...value, env: input.env }), aad(userId,row.id,row.url,header),this.env)
       } else if (input.headers !== undefined || input.auth !== undefined) {
         header = input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
         const value = input.headers ? JSON.stringify(input.headers) : input.auth?.value
@@ -92,9 +97,9 @@ export class PersonalPluginStore {
   async listSkills(userId: string): Promise<InstalledSkill[]> {
     return (await this.pool.query<InstalledSkill>(`SELECT ${skillColumns} FROM personal_skills WHERE user_id=$1 ORDER BY created_at,id`, [userId])).rows
   }
-  async getSkill(userId: string, id: string): Promise<InstalledSkill> {
-    const { rows: [skill] } = await this.pool.query<InstalledSkill>(
-      `SELECT ${skillColumns} FROM personal_skills WHERE user_id=$1 AND id=$2`, [userId, id],
+  async getSkill(userId: string, id: string): Promise<InstalledSkill & { body: string }> {
+    const { rows: [skill] } = await this.pool.query<InstalledSkill & { body: string }>(
+      `SELECT ${skillColumns},body FROM personal_skills WHERE user_id=$1 AND id=$2`, [userId, id],
     )
     if (!skill) throw new PluginError('skillNotFound', 404)
     return skill
@@ -113,6 +118,40 @@ export class PersonalPluginStore {
     const row = (await this.pool.query<InstalledSkill>(`UPDATE personal_skills SET enabled=$3 WHERE id=$1 AND user_id=$2 RETURNING ${skillColumns}`, [id, userId, enabled])).rows[0]
     if (!row) throw new PluginError('skillNotFound', 404)
     return row
+  }
+  async editSkill(userId: string, id: string, input: { enabled?: boolean; name?: string; instructions?: string }) {
+    return this.write(userId, async client => {
+      const current = (await client.query<InstalledSkill & { body: string }>(
+        `SELECT ${skillColumns},body FROM personal_skills WHERE id=$1 AND user_id=$2 FOR UPDATE`, [id, userId],
+      )).rows[0]
+      if (!current) throw new PluginError('skillNotFound', 404)
+      if ((input.name !== undefined || input.instructions !== undefined) && current.source !== 'local/manual') {
+        throw new PluginError('invalidPluginInput', 400)
+      }
+      const name = input.name ?? current.name
+      const enabled = input.enabled ?? current.enabled
+      let body = current.body
+      let sha256 = current.sha256
+      let sourceRevision = current.sourceRevision
+      if (input.name !== undefined || input.instructions !== undefined) {
+        const frontmatterMatch = /^---\r?\n[\s\S]*?\r?\n---\r?\n*/.exec(current.body)
+        const currentInstructions = frontmatterMatch ? current.body.slice(frontmatterMatch[0].length).trim() : current.body.trim()
+        const instructions = input.instructions ?? currentInstructions
+        body = skillMarkdown({ name, instructions })
+        const otherBytes = (await client.query<{ bytes: number }>(
+          'SELECT COALESCE(sum(octet_length(body)),0)::int AS bytes FROM personal_skills WHERE user_id=$1 AND id<>$2',
+          [userId, id],
+        )).rows[0].bytes
+        if (otherBytes + Buffer.byteLength(body) > 100_000) throw new PluginError('skillLimitReached', 409)
+        sha256 = createHash('sha256').update(body, 'utf8').digest('hex')
+        sourceRevision = sha256
+      }
+      const { rows } = await client.query<InstalledSkill>(
+        `UPDATE personal_skills SET name=$3,enabled=$4,body=$5,sha256=$6,source_revision=$7 WHERE id=$1 AND user_id=$2 RETURNING ${skillColumns}`,
+        [id, userId, name, enabled, body, sha256, sourceRevision],
+      )
+      return rows[0]
+    })
   }
   async deleteSkill(userId: string, id: string) {
     if (!(await this.pool.query('DELETE FROM personal_skills WHERE id=$1 AND user_id=$2', [id, userId])).rowCount) throw new PluginError('skillNotFound', 404)

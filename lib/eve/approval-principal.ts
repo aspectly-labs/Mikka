@@ -1,5 +1,5 @@
 export interface ApprovalPrincipal {authenticator:string;principalType:string;principalId:string;attributes?:Record<string,unknown>}
-export interface ApprovalScope {ownerId:string;botId:string;workspaceId:string;surface:'web'|'slack'}
+export interface ApprovalScope {ownerId:string;botId:string;workspaceId:string;surface:'web'|'slack'|'factory'}
 
 /** Native Eve authentication supplies these identities, never model input. */
 export function isEveApprovalResponder(scope:ApprovalScope,principal:ApprovalPrincipal|null|undefined):boolean {

@@ -5,28 +5,25 @@ import type { getPasswordStatus, listSessions } from '@/app/actions/account'
 import type { getPreferences } from '@/app/actions/preferences'
 import type { getIssuePrefixState } from '@/app/actions/issue-prefix'
 import type { listSavedLogins } from '@/app/actions/settings-activity'
-import type { getWorkspaceDeletionImpact, getWorkspaceGeneral, getWorkspaceTransferTargets } from '@/app/actions/workspace-settings'
+import type { getWorkspaceGeneral } from '@/app/actions/workspace-settings'
 import { apiKeysKey, readApiKeys } from '@/components/settings/api-key-settings'
 import { readSubscriptionUsage, readSubscriptions, subscriptionUsageKey, subscriptionsKey } from '@/components/settings/subscription-settings'
 import type { getAppPolicy } from '@/app/actions/app-policy'
 import type { getSharePolicy } from '@/app/actions/personal-policy'
 import type { getE2BKeyCapability, listSecrets } from '@/app/actions/workspace-secrets'
 import type { getUsage } from '@/app/actions/usage'
-import type { getBilling } from '@/app/actions/billing'
 import type { listAuditLog } from '@/app/actions/audit-log'
-import { getCreditBilling, readCardVerification } from '@/lib/billing/verification-client'
+import { billingManagementPath, billingManagementRequest } from '@/lib/billing/management-client'
+import { getCreditBilling } from '@/lib/billing/verification-client'
 import { modelOrderKey, readModelOrder } from '@/components/settings/model-order-settings'
 import { creditBillingKey } from '@/components/billing/balance-section'
-import { cardVerificationKey } from '@/components/billing/free-allowance-section'
 import { computerPolicyKey, readComputerPolicy } from '@/hooks/settings/use-team-permissions'
 import { connectedAppsKey, readConnectedApps } from '@/components/plugins/connected-apps'
-import { OWN_APP_STATES_KEY, fetchOwnAppStates } from '@/components/plugins/plugins-view'
-import { listAgents } from '@/app/actions/agents'
-import { listBotsForWorkspace } from '@/app/actions/bots'
 import { currentMonth } from '@/lib/usage/month'
+import { fetchSettingsData } from '@/lib/settings-data'
 import { settingsRead } from '@/lib/settings-read'
 import type { SettingsSectionId } from '@/lib/settings-sections'
-import { botPermissionsKeys, settingsKeys } from '@/lib/swr/keys'
+import { settingsKeys } from '@/lib/swr/keys'
 import { prefetchScopedRead } from '@/lib/swr/prefetch'
 
 type Result<F extends (...args: never[]) => unknown> = Awaited<ReturnType<F>>
@@ -36,42 +33,41 @@ type Result<F extends (...args: never[]) => unknown> = Awaited<ReturnType<F>>
  * section uses, so the cache is filled before the section opens. Keep a key
  * here in step with its section.
  */
-const READS: Partial<Record<SettingsSectionId, (workspaceId: string) => [key: Key, read: () => Promise<unknown>][]>> = {
-  preferences: () => [[settingsKeys.issuePrefix(), () => settingsRead<Result<typeof getIssuePrefixState>>('issue-prefix')]],
+const READS: Partial<Record<SettingsSectionId, (workspaceId: string, admin: boolean) => [key: Key, read: () => Promise<unknown>][]>> = {
+  preferences: () => [[settingsKeys.personalRegistry(), () => fetchSettingsData('/api/settings/personal')], [settingsKeys.issuePrefix(), () => settingsRead<Result<typeof getIssuePrefixState>>('issue-prefix')]],
+  appearance: () => [[settingsKeys.personalRegistry(), () => fetchSettingsData('/api/settings/personal')]],
+  threads: id => [[settingsKeys.threadTitles(id), () => settingsRead('thread-titles', { workspace: id })], [settingsKeys.workspaceRegistry(id), () => fetchSettingsData(`/api/settings/workspace/${encodeURIComponent(id)}`)]],
   security: () => [[settingsKeys.password(), () => settingsRead<Result<typeof getPasswordStatus>>('password')], [settingsKeys.sessions(), () => settingsRead<Result<typeof listSessions>>('sessions')]],
   notifications: () => [[settingsKeys.preferences(), () => settingsRead<Result<typeof getPreferences>>('preferences')]],
   logins: () => [[settingsKeys.savedLogins(), () => settingsRead<Result<typeof listSavedLogins>>('saved-logins')]],
+  mcp: () => [[connectedAppsKey, readConnectedApps]],
   // 连接 is also the rail's 插件 page: the Composio apps' state, a GET.
   connections: () => [[connectedAppsKey, readConnectedApps]],
-  // 应用与运行权限 waits on four reads before it can draw a row, and its policy reads wait on the first:
-  // the Bots, their agent, the workspace's own app states and the connected apps all start here.
-  'bot-permissions': id => [
-    [botPermissionsKeys.bots(id), () => listBotsForWorkspace(id)],
-    [botPermissionsKeys.agents(), () => listAgents()],
-    [OWN_APP_STATES_KEY, () => fetchOwnAppStates()],
-    [connectedAppsKey, readConnectedApps],
-  ],
   general: id => [
     [settingsKeys.workspaceGeneral(id), () => settingsRead<Result<typeof getWorkspaceGeneral>>('workspace-general', { workspace: id })],
-    [settingsKeys.transferTargets(id), () => settingsRead<Result<typeof getWorkspaceTransferTargets>>('transfer-targets', { workspace: id })],
-    [settingsKeys.deletionImpact(id), () => settingsRead<Result<typeof getWorkspaceDeletionImpact>>('deletion-impact', { workspace: id })],
   ],
   permissions: id => [[computerPolicyKey(id), () => readComputerPolicy(id)], [settingsKeys.sharePolicy(id), () => settingsRead<Result<typeof getSharePolicy>>('share-policy', { workspace: id })], [settingsKeys.appPolicy(id), () => settingsRead<Result<typeof getAppPolicy>>('app-policy', { workspace: id })]],
   secrets: id => [[settingsKeys.secrets(id), () => settingsRead<Result<typeof listSecrets>>('secrets', { workspace: id })], [settingsKeys.e2bKey(id), () => settingsRead<Result<typeof getE2BKeyCapability>>('e2b-key', { workspace: id })]],
   environments: id => [[settingsKeys.environments(id), () => settingsRead<Result<typeof listEnvironments>>('environments', { workspace: id })]],
   'issue-states': id => [[settingsKeys.issueStates(id), () => settingsRead<Result<typeof getIssueStates>>('issue-states', { workspace: id })]],
-  usage: id => { const month = currentMonth(); return [[settingsKeys.usage(id, month), () => settingsRead<Result<typeof getUsage>>('usage', { month, workspace: id })], [creditBillingKey(id), () => getCreditBilling(id)]] },
-  billing: id => [[settingsKeys.billing(id), () => settingsRead<Result<typeof getBilling>>('billing', { workspace: id })], [creditBillingKey(id), () => getCreditBilling(id)], [cardVerificationKey(id), () => readCardVerification(id)]],
+  usage: (id, admin) => {
+    const month = currentMonth()
+    const reads: [key: Key, read: () => Promise<unknown>][] = [[settingsKeys.usage(id, month), () => settingsRead<Result<typeof getUsage>>('usage', { month, workspace: id })]]
+    if (admin) reads.push([creditBillingKey(id), () => getCreditBilling(id)])
+    return reads
+  },
+  billing: (id, admin) => admin ? [[billingManagementPath({ kind: 'workspace', id }, null), () => billingManagementRequest({ kind: 'workspace', id }, undefined, null)]] : [],
   // 模型与订阅: its GET reads.
   models: id => [[subscriptionsKey(id), () => readSubscriptions(id)], [subscriptionUsageKey(id), () => readSubscriptionUsage(id)], [apiKeysKey(id), () => readApiKeys(id)], [modelOrderKey(id), () => readModelOrder(id)], [settingsKeys.e2bKey(id), () => settingsRead<Result<typeof getE2BKeyCapability>>('e2b-key', { workspace: id })]],
-  // useSWRInfinite takes a preloaded page by the page's own key: page one of 全部.
-  audit: id => [[settingsKeys.audit(id, 'all', null), () => settingsRead<Result<typeof listAuditLog>>('audit', { workspace: id, filter: 'all' })]],
+  // useSWRInfinite takes a preloaded page by the page's own key: page one of 全部 (admins only).
+  audit: (id, admin) => admin ? [[settingsKeys.audit(id, 'all', null), () => settingsRead<Result<typeof listAuditLog>>('audit', { workspace: id, filter: 'all' })]] : [],
 }
 
-export function prefetchSettingsSection(section: SettingsSectionId, workspaceId: string | undefined, cache: Cache, mutate: ReturnType<typeof useSWRConfig>['mutate']) {
+export function prefetchSettingsSection(section: SettingsSectionId, workspaceId: string | undefined, cache: Cache, mutate: ReturnType<typeof useSWRConfig>['mutate'], options?: { admin?: boolean }) {
   const reads = READS[section]
-  if (!reads || (!workspaceId && !['preferences', 'security', 'notifications', 'logins', 'connections'].includes(section))) return
-  for (const [key, read] of reads(workspaceId ?? '')) {
+  if (!reads || (!workspaceId && !['preferences', 'appearance', 'security', 'notifications', 'logins', 'mcp', 'connections'].includes(section))) return
+  const admin = Boolean(options?.admin)
+  for (const [key, read] of reads(workspaceId ?? '', admin)) {
     void prefetchScopedRead(cache, mutate, key, read)
   }
 }

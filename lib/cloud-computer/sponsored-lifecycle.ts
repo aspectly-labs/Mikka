@@ -8,9 +8,9 @@ import { ComputerError } from '../computer/store'
 import { runChanged } from '../live/panels'
 import { openOwnedCloudflareTaskMachine, releaseOwnedCloudflareTaskMachine } from '../eve/cloudflare-task-bridge'
 import { finishThreadRegistration, prepareThreadRegistration } from './thread-registration'
-import { hostedSnapshot, type TaskMachineActor } from './sponsored-task'
+import { hostedSnapshot, verifiedMachineQuota, type TaskMachineActor } from './sponsored-task'
 import { PaidResourceError } from '../abuse/policy'
-import { DEFAULT_MACHINE_SIZE, isMachineSize, MACHINE_CHUNK_MS, MACHINE_GRACE_MS, MACHINE_RENEW_BEFORE_MS, type MachineSize } from './machine-pricing'
+import { DEFAULT_MACHINE_SIZE, isMachineSize, MACHINE_CHUNK_MS, MACHINE_GRACE_MS, MACHINE_RENEW_BEFORE_MS, provisionableMachineSize, type MachineSize } from './machine-pricing'
 
 const unavailable = () => new ComputerError(409, 'Cloudflare task machine unavailable')
 const fixedWorker =
@@ -133,7 +133,10 @@ async function reserve(tx: PoolClient, actor: TaskMachineActor, runId: string): 
     definition.repositoryAdmission = { ...a, deviceId }
   }
   const frozenSize = run.agentDefinition.taskMachine.size
-  const size: MachineSize = isMachineSize(frozenSize) ? frozenSize : DEFAULT_MACHINE_SIZE
+  // The quota gate (#3080): an over-limit request is billed and started at the
+  // largest default-quota size, with the request and reason kept in the record.
+  const provision = provisionableMachineSize(isMachineSize(frozenSize) ? frozenSize : DEFAULT_MACHINE_SIZE, verifiedMachineQuota())
+  const size: MachineSize = provision.size
   const issued = await prepareThreadRegistration(tx, {
     runId,
     deviceId,
@@ -158,8 +161,10 @@ async function reserve(tx: PoolClient, actor: TaskMachineActor, runId: string): 
     `UPDATE thread_machines SET state='starting',epoch=epoch+1,"sandboxId"=NULL,"operationId"=$2,"workerLeaseId"=$3,
     "workerLeaseUntil"=clock_timestamp()+interval '90 seconds',"lifecycleAt"=clock_timestamp()+interval '90 seconds',
     lifecycle=lifecycle||jsonb_build_object('phase','create_requested','sponsoredUntil',clock_timestamp()+make_interval(secs=>$6::double precision/1000),
-      'sponsoredRepositoryKey',$4::text,'sponsoredChunks',1,'sponsoredSize',$7::text) || CASE WHEN $5::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sponsoredRestore',$5::jsonb) END WHERE "runId"=$1`,
-    [runId, operationId, leaseId, run.repoPath, requiredCheckpoint ? JSON.stringify(requiredCheckpoint) : null, MACHINE_CHUNK_MS, size],
+      'sponsoredRepositoryKey',$4::text,'sponsoredChunks',1,'sponsoredSize',$7::text) || CASE WHEN $5::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sponsoredRestore',$5::jsonb) END
+      || CASE WHEN $8::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('sponsoredSizeAdjusted',$8::jsonb) END WHERE "runId"=$1`,
+    [runId, operationId, leaseId, run.repoPath, requiredCheckpoint ? JSON.stringify(requiredCheckpoint) : null, MACHINE_CHUNK_MS, size,
+      provision.adjusted ? JSON.stringify({ requested: provision.requested, reason: provision.adjusted }) : null],
   )
   await tx.query(`UPDATE device_tokens SET "expiresAt"=clock_timestamp()+interval '15 minutes' WHERE id=$1`, [tokenId])
   return {
@@ -384,7 +389,10 @@ export async function reconcileSponsoredTaskMachine(
 
 /** Pays the next chunk and extends the lease; returns the (possibly new) paid deadline. */
 async function renewSponsoredMachine(pool: Pool, actor: TaskMachineActor, runId: string, row: Reconciliation, deadline: number): Promise<{ until: number; unfunded: boolean }> {
-  const size = isMachineSize(row.lifecycle.sponsoredSize) ? row.lifecycle.sponsoredSize : DEFAULT_MACHINE_SIZE
+  // Rows admitted before the quota gate may still carry an over-limit size:
+  // they are billed at what can actually start, like new admissions (#3080).
+  const stored = isMachineSize(row.lifecycle.sponsoredSize) ? row.lifecycle.sponsoredSize : DEFAULT_MACHINE_SIZE
+  const size = provisionableMachineSize(stored, verifiedMachineQuota()).size
   const index = typeof row.lifecycle.sponsoredChunks === 'number' ? row.lifecycle.sponsoredChunks : 1
   const { fundMachineChunk } = await import('./machine-billing')
   const funded = await fundMachineChunk({ ownerId: actor.userId, workspaceId: actor.workspaceId, runId, operationId: row.operationId!, index, size })

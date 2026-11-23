@@ -5,7 +5,7 @@ import { acceptanceSummary, inspectAcceptance } from './pr-acceptance-check.mjs'
 
 const label = 'acceptance:missing'
 const context = 'PR acceptance'
-const fail = (code, cause) => { throw Object.assign(new Error(code, { cause }), { code }) }
+const fail = (code, cause, detail) => { throw Object.assign(new Error(detail ?? code, { cause }), { code, detail }) }
 const snapshot = pr => JSON.stringify([pr.head?.sha, pr.base?.sha, pr.body, pr.draft, pr.state])
 
 /** Inspect current GitHub metadata. PR files/body are data: this driver neither
@@ -43,7 +43,7 @@ export async function checkPullRequest({ repository, number, token, publish = fa
         await new Promise(resolve => setTimeout(resolve, waitMs))
         continue
       }
-      fail(`prAcceptanceGitHubHttp${response.status}`)
+      fail(`prAcceptanceGitHubHttp${response.status}`, undefined, `prAcceptanceGitHubHttp${response.status}(${method} ${path.split('?')[0]})`)
     }
   }
   const detailsUrl = targetUrl ?? `https://github.com/${repository}/pull/${number}`
@@ -126,7 +126,7 @@ async function main() {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().catch(error => {
     // Do not echo PR text, API bodies, credentials, or raw transport messages.
-    console.error(error.code ?? 'prAcceptanceFailed')
+    console.error(error.detail ?? error.code ?? 'prAcceptanceFailed')
     process.exitCode = 1
   })
 }

@@ -25,6 +25,28 @@ function fixture(url, edition) {
       choices: [workspace], members: [], invitations: [] }
   }
   if (url.pathname === '/mikka/api/settings/issue-prefix') return { prefix: 'DEMO', saved: 'DEMO', suggested: 'DEMO', teamKeys: [] }
+  if (url.pathname === '/mikka/api/settings/personal') return { workspaceId, values: {
+    sidebarPages: { value: ['chats', 'board', 'projects', 'pulls', 'automations', 'plugins', 'suggestions', 'artifacts'], source: 'default' },
+    sidebarLayout: { value: 'hybrid', source: 'default' },
+    pinPages: { value: false, source: 'default' },
+    openInDesktop: { value: false, source: 'default' },
+    scrollNewToTop: { value: true, source: 'default' },
+    enterAction: { value: 'steer', source: 'default' },
+    modEnterAction: { value: 'interrupt', source: 'default' },
+    altEnterAction: { value: 'queue', source: 'default' },
+    appearanceSync: { value: false, source: 'default' },
+    appearanceColorScheme: { value: 'system', source: 'default' },
+    appearanceTheme: { value: 'mikka', source: 'default' },
+    appearanceAccentColor: { value: '#2365db', source: 'default' },
+    appearanceBackgroundEffect: { value: 'none', source: 'default' },
+    codeFontSize: { value: 'default', source: 'default' },
+    diffView: { value: 'unified', source: 'default' },
+    diffColors: { value: 'redGreen', source: 'default' },
+    hiddenFiles: { value: 'generated', source: 'default' },
+  } }
+  if (url.pathname === '/mikka/api/settings/preferences') return { archiveIdleAfterDays: 0 }
+  if (url.pathname === '/mikka/api/workspace/switcher') return { accounts: [] }
+  if (url.pathname === '/mikka/api/settings/workspace-general') return { id: workspaceId, name: `合成工作区 · ${edition}`, slug: 'synth', icon: null, taskPrefix: 'MIK', canEdit: true, canTransfer: false, personal: false }
   return null
 }
 
@@ -88,6 +110,12 @@ try {
         prefix: await page.locator('#issue-prefix').inputValue(),
       }
       await page.screenshot({ path: resolve(out, file), fullPage: true, animations: 'disabled' })
+      await page.getByRole('button', { name: zh.Settings.sections.appearance.title, exact: true }).click()
+      await page.getByRole('heading', { name: zh.Settings.appearance.displayMode, exact: true }).waitFor()
+      await page.screenshot({ path: resolve(out, file.replace('-settings.png', '-appearance.png')), fullPage: true, animations: 'disabled' })
+      await page.getByRole('button', { name: zh.Settings.sections.general.title, exact: true }).click()
+      await page.getByRole('heading', { name: zh.Settings.workspaceForm.profile, exact: true }).waitFor()
+      await page.screenshot({ path: resolve(out, file.replace('-settings.png', '-workspace.png')), fullPage: true, animations: 'disabled' })
       evidence.push({ file, source: 'existing SettingsView, SettingsSidebar, Preferences and AppFrame; synthetic GET records',
         edition, requestedSection, observed, theme, locale: 'zh-CN', viewport: page.viewportSize(), origin,
         path: new URL(page.url()).pathname + new URL(page.url()).search, reads })

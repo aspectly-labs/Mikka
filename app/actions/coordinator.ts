@@ -289,7 +289,7 @@ export async function sendSuggestion(suggestionId: string): Promise<ActionResult
         if (claimed) await suggestionInboxChanged(tx, userId, item.botId)
       })
     } catch (error) {
-      if (error instanceof SubmissionConflictError) throw new ActionFailureError('submissionConflict')
+      if (error instanceof SubmissionConflictError) throw Object.assign(new ActionFailureError('submissionConflict'), { cause: error })
       throw error
     }
     afterJob('after:coordinator-wake', () => wakeCoordinator(userId))

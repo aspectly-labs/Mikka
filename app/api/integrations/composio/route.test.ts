@@ -19,16 +19,18 @@ stub('../../../../lib/composio.ts', {
 stub('../../../../lib/composio-account-store.ts', { chooseComposioDefault: () => {}, listComposioAccountRecords: async () => [], noteComposioEmailAttempt: () => {}, saveComposioAccountEmail: () => {} })
 stub('../../../../lib/composio-pagination.ts', { listComposioPages: async () => [] })
 stub('../../../../lib/composio-config.ts', { isComposioCallbackVerifierConfigured: () => true })
+const catalogCalls: { id: string; kind: string; verified: boolean }[] = []
 stub('../../../../lib/plugins/catalog.ts', {
   composioToolkitLister: () => async () => ({ items: [] }),
-  assertCatalogToolkit: async (_list: unknown, id: string) => { if (!store.has(id)) throw new PluginError('integrationToolkitNotSupported', 400) },
+  composioToolkitRetriever: () => async () => ({}),
+  assertCatalogToolkit: async (_list: unknown, id: string, kind = 'managed', verify?: unknown) => { catalogCalls.push({ id, kind, verified: typeof verify === 'function' }); if (!store.has(id)) throw new PluginError('integrationToolkitNotSupported', 400) },
 })
 let POST: typeof import('./route').POST
 before(async () => { POST = (await import('./route')).POST })
 const connect = (body: unknown, origin = 'https://example.test') => new Request('https://example.test/api/integrations/composio', { method: 'POST', headers: { origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 test('any store toolkit starts a per-person Composio connect link', async () => {
-  authorized.length = 0
+  authorized.length = 0; catalogCalls.length = 0
   for (const toolkit of ['hubspot', 'googlesheets', 'dcr_provider']) {
     const response = await POST(connect({ toolkit, returnTo: '/plugins' }) as never)
     assert.equal(response.status, 200)
@@ -36,6 +38,8 @@ test('any store toolkit starts a per-person Composio connect link', async () => 
     assert.match(response.headers.get('set-cookie') ?? '', /mikka_composio_flow=/)
   }
   assert.deepEqual(authorized, [{ user: 'synthetic-user', toolkit: 'hubspot' }, { user: 'synthetic-user', toolkit: 'googlesheets' }, { user: 'synthetic-user', toolkit: 'dcr_provider' }])
+  // The admission check gets the detail retriever so a reduced bulk list is verified on demand.
+  assert.deepEqual(catalogCalls, ['hubspot', 'googlesheets', 'dcr_provider'].map(id => ({ id, kind: 'managed', verified: true })))
 })
 
 test('a toolkit outside the store, a malformed slug or a cross-origin request never reaches Composio', async () => {
