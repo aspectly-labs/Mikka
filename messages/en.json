@@ -4516,7 +4516,8 @@
     "mcpOAuthUnavailable": "The MCP server could not be reached for sign-in.",
     "mcpCatalogUnavailable": "The MCP catalog is unavailable.",
     "mcpCatalogRemoteUnavailable": "The MCP catalog source could not be reached.",
-    "mcpCatalogMismatch": "This catalog entry no longer matches the server."
+    "mcpCatalogMismatch": "This catalog entry no longer matches the server.",
+    "restoreExpired": "The restore window has passed."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",

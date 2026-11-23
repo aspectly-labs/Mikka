@@ -4516,7 +4516,8 @@
     "mcpOAuthUnavailable": "无法连接 MCP 服务器完成登录。",
     "mcpCatalogUnavailable": "MCP 目录不可用。",
     "mcpCatalogRemoteUnavailable": "无法访问 MCP 目录源。",
-    "mcpCatalogMismatch": "该目录条目与服务器已不匹配。"
+    "mcpCatalogMismatch": "该目录条目与服务器已不匹配。",
+    "restoreExpired": "已超过可恢复期限。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
