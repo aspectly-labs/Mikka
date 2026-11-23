@@ -1,17 +1,24 @@
 import assert from 'node:assert/strict'
-import { beforeEach, mock, test } from 'node:test'
+import { after, before, beforeEach, mock, test } from 'node:test'
+import { Sandbox } from 'e2b'
+import { startExternalServices } from '../../tests/fakes/external-services.mjs'
+import { LOCAL_E2B_KEY } from '../../tests/fakes/e2b.mjs'
 
 const RUN = '20000000-0000-4000-8000-000000000001'
-const SANDBOX = { id: 'sandbox-one' }
 let rows: Record<string, unknown>[] = []
 let browserState: { targetId: string; url?: string; guarded?: boolean } | Error | null = { targetId: 'target-one' }
 let installed = 0, granted: { role?: string } | null = null
+let services: Awaited<ReturnType<typeof startExternalServices>>, sandboxId = ''
+const saved = Object.fromEntries(['E2B_API_URL', 'E2B_SANDBOX_URL', 'E2B_HTTP_VERSION', 'HTTPS_PROXY', 'https_proxy'].map(key => [key, process.env[key]]))
 
 mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: {
   pool: { query: async () => ({ rows }) },
 } })
-mock.module(new URL('../computer/e2b-provider.ts', import.meta.url).href, { namedExports: {
-  connectComputer: async () => SANDBOX,
+mock.module(new URL('../secrets/e2b-runtime.ts', import.meta.url).href, { namedExports: {
+  e2bApiKey: async () => LOCAL_E2B_KEY,
+  sandboxKeyOwner: async () => 'owner',
+  computerTemplate: () => 'desktop',
+  withE2BErrors: async (_owner: string, _creating: boolean, operation: () => Promise<unknown>) => operation(),
 } })
 mock.module(new URL('./runtime.ts', import.meta.url).href, { namedExports: {
   installSubagentRuntime: async () => { installed += 1 },
@@ -28,7 +35,18 @@ mock.module(new URL('./runtime.ts', import.meta.url).href, { namedExports: {
 
 const { resolveThreadBrowserViewer, resolveThreadBrowserTarget } = await import('./subagent-browser')
 
-const machine = (extra: Record<string, unknown> = {}) => ({ runId: RUN, ownerId: 'owner', workspaceId: 'workspace-one', state: 'running', sandboxId: 'sandbox-one', targetId: 'target-one', epoch: 1, botId: 'bot', ...extra })
+before(async () => {
+  services = await startExternalServices()
+  Object.assign(process.env, { E2B_API_URL: services.e2bOptions.apiUrl, E2B_SANDBOX_URL: services.e2bOptions.sandboxUrl,
+    E2B_HTTP_VERSION: '1.1', HTTPS_PROXY: '', https_proxy: '' })
+  sandboxId = (await Sandbox.create('base', services.e2bOptions)).sandboxId
+})
+after(async () => {
+  await services?.close()
+  for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
+})
+
+const machine = (extra: Record<string, unknown> = {}) => ({ runId: RUN, ownerId: 'owner', workspaceId: 'workspace-one', state: 'running', sandboxId, targetId: 'target-one', epoch: 1, botId: 'bot', ...extra })
 const input = { userId: 'owner', workspaceId: 'workspace-one', runId: RUN }
 
 beforeEach(() => { rows = [machine()]; browserState = { targetId: 'target-one' }; installed = 0; granted = null })
