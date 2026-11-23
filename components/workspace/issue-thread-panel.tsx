@@ -497,7 +497,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   // A layer's thread screen (slot `thread`) draws the conversation from these rows: each part as Mikka renders it, the
   // run's Agent as the author line, its steps as tool rows.
   // As LobeHub's chat, an Agent's reply opens with its mark and name (Alex, 2026-11-22: chat look as LobeHub, except avatars).
-  const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} />, header: true } : undefined
+  const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} size="message" />, header: true } : undefined
   const at = (value: number | string | Date | undefined) => (value === undefined ? 0 : new Date(value).getTime()) || (data ? new Date(data.thread.createdAt).getTime() : Date.now())
   const entries: ThreadEntry[] = []
   /** Each message's own send time, when it has one; the line under it shows nothing rather than a fallback. */
@@ -581,7 +581,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         else {
           const files = splitChatFiles(item.text)
           entries.push({ id, role: 'bot', at: at(item.at),
-            author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} /> },
+            author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} size="message" /> },
             actions: <ReplyActions at={item.at ? at(item.at) : undefined} copyText={files.text} />,
             parts: [{ kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}>
               <span data-thread-item={item.id}><PersonReferences text={files.text} /></span>

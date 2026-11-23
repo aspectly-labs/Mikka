@@ -30,10 +30,13 @@ export function harnessName(harness: string): string {
   return HARNESS_NAMES[harness] ?? harness
 }
 
-/** A coding agent's mark alone, named for screen readers, where a row lists several (R-74). */
-export function HarnessMark({ harness }: { harness: string }) {
+/** A coding agent's mark alone, named for screen readers, where a row lists several (R-74); `message` is a thread
+ *  author's mark, filling the 28px box every author's mark takes (Bots, people, Mikka). */
+export function HarnessMark({ harness, size = 'line' }: { harness: string; size?: 'line' | 'message' }) {
   const Icon = HARNESS_MARKS[harness] ?? Box
-  return <span role="img" aria-label={harnessName(harness)} className="inline-flex"><Icon aria-hidden="true" className="size-3.5 shrink-0" /></span>
+  return <span role="img" aria-label={harnessName(harness)} className={cn('inline-flex shrink-0', size === 'message' && 'size-7')}>
+    <Icon aria-hidden="true" className={cn('shrink-0', size === 'message' ? 'size-full' : 'size-3.5')} />
+  </span>
 }
 
 /** A coding agent in a status line: its mark, its name, then the version its CLI reported (R-74). */
