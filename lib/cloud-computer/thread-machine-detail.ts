@@ -7,6 +7,8 @@ import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { readComputerMetrics, connectComputer, computerGone } from '@/lib/computer/e2b-provider'
 import { E2BKeyError } from '@/lib/secrets/e2b'
 import { environmentSecretInjection, remoteRepositoryRef } from '@/lib/secrets/runtime'
+import { createSecretMasker } from '@/lib/secrets/mask'
+import { withTaskEnv } from '../../packages/daemon/src/task-env'
 import { hostedSnapshot } from './sponsored-task'
 import type { Actor } from './subagents'
 
@@ -111,13 +113,16 @@ export async function rerunThreadMachineSetup(pool: Pool, actor: Actor, runId: s
   if (!machine?.sandboxId || machine.state !== 'running' || machine.snapshotId === hostedSnapshot)
     throw new ComputerError(409, 'Thread machine unavailable')
 
-  let taskEnv: Record<string, string> = {}
+  let injection = { env: {} as Record<string, string>, secretNames: [] as string[] }
   try {
-    taskEnv = environment
-      ? (await environmentSecretInjection(actor.workspaceId, remoteRepositoryRef(run.remoteUrl),
-        { variables: environment.variables ?? {}, secretIds: environment.secretIds ?? [] }, process.env, actor.userId)).env
-      : {}
+    injection = environment
+      ? await environmentSecretInjection(actor.workspaceId, remoteRepositoryRef(run.remoteUrl),
+        { variables: environment.variables ?? {}, secretIds: environment.secretIds ?? [] }, process.env, actor.userId)
+      : injection
   } catch (error) { throw Object.assign(new ComputerError(409, 'Thread environment unavailable'), { cause: error }) }
+  // Same reserved-name guard the daemon's setup bootstrap applies to the claim's taskEnv.
+  const taskEnv = withTaskEnv({}, injection.env).env
+  const mask = createSecretMasker(injection.secretNames.map(name => ({ name, value: injection.env[name] ?? '' })))
 
   let sandbox
   try {
@@ -132,5 +137,5 @@ export async function rerunThreadMachineSetup(pool: Pool, actor: Actor, runId: s
     timeoutMs: 30 * 60_000,
     signal,
   })
-  return { exitCode: result.exitCode, stdout: result.stdout.slice(-4000), stderr: result.stderr.slice(-4000) }
+  return { exitCode: result.exitCode, stdout: mask(result.stdout).slice(-4000), stderr: mask(result.stderr).slice(-4000) }
 }
