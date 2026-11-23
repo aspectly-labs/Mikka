@@ -157,12 +157,14 @@ test('a saved choice whose account is gone, with nothing bound, asks for a model
   for (const botId of [null, id(1)]) await assert.rejects(freezeBotModel({ ...scope, botId }, noSubscription), NOT_CHOSEN)
 })
 
-test('a saved choice still held by another owner refuses as theirs-not-yours, not an unselected model', async () => {
+test('a coordinator saved choice still held by another owner refuses as theirs-not-yours, not an unselected model', async () => {
   // #3057: a member's stored borrow of an owner's binding must surface
   // account_unavailable so the run says why, instead of asking for a model.
+  // (The named-bot refusal is covered by the real-PG regression in
+  // lib/execution-settings.db.test.ts; this adds the coordinator path.)
   selected = id(9)
   bindingElsewhere = true
-  for (const botId of [null, id(1)]) await assert.rejects(freezeBotModel({ ...scope, botId }, noSubscription), { code: 'account_unavailable' })
+  await assert.rejects(freezeBotModel({ ...scope, botId: null }, noSubscription), { code: 'account_unavailable' })
 })
 
 test('a Mikka 额度 model picked in the composer stays on Mikka 额度 while a subscription is bound', async () => {
