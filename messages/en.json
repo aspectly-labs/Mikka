@@ -3376,7 +3376,8 @@
       "wakeFailed": "Could not wake the machine",
       "setupFailed": "Could not re-run setup",
       "keepAwakeFailed": "Could not update keep awake",
-      "moveFailed": "Could not move the thread"
+      "moveFailed": "Could not move the thread",
+      "copyFailed": "Copy failed"
     },
     "queuedTitle": "Queued · {count}",
     "queuedHint": "Sends when the limit resets",

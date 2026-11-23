@@ -3376,7 +3376,8 @@
       "wakeFailed": "无法唤醒机器",
       "setupFailed": "无法重新运行初始化",
       "keepAwakeFailed": "无法更新保持唤醒",
-      "moveFailed": "无法移动线程"
+      "moveFailed": "无法移动线程",
+      "copyFailed": "复制失败"
     },
     "queuedTitle": "排队中 · {count}",
     "queuedHint": "限额重置后发送",
@@ -8405,7 +8406,12 @@
   },
   "HostedThread": {
     "needsCount": "{count} 个等你",
-    "toolsGroups": { "common": "常用", "related": "相关", "terminals": "终端", "crew": "Crew" },
+    "toolsGroups": {
+      "common": "常用",
+      "related": "相关",
+      "terminals": "终端",
+      "crew": "Crew"
+    },
     "toolKinds": {
       "failed": "{failed} 个失败",
       "separator": "，",
