@@ -5,6 +5,7 @@ The [One UI slot inventory](design/one-ui-slot-inventory.md) lists each Web/Desk
 There is one UI ([decision 2026-11-08-2133](design/decisions/2026-11-08-2133-one-ui.md)).
 
 **Build ownership:** The public Mikka workspace is the source and root of an official build. A trusted Cloudflare release environment can obtain this private overlay read-only at its selected SHA and set `MIKKA_UI_OVERLAY_DIR=.hosted-ui` in that public checkout. The private location of paid UI code does not require CI or the product build to *start* in the private repository. The current private-triggered OCI process is a temporary migration implementation, not the target architecture. See [build source of truth](operations/build-source-of-truth.md).
+**Target decoupling ([decision 2026-11-22-2205](design/decisions/2026-11-22-2205-headless-public-engine-and-ui-decoupling.md), [#3174](https://github.com/aspectly-labs/Mikka/issues/3174)):** Public `Mikka` is transitioning in phases to a headless engine/API/daemon core while the product Web UI moves to a standalone app in `mikka-hosted-ui`. Keep `@ui-slot/*` contracts and public UI files intact throughout Phases 1–3 until the release pipelines (`apps/api`, `cloudflare-api-image.yml`, `#1954`) cut over.
 Its code lives in this repository and in the private `alexj11324/mikka-hosted-ui`.
 Slots are how official web and desktop builds bring the private code in
 ([decision 2026-11-06-2000](design/decisions/2026-11-06-2000-hosted-ui-overlay.md)).
