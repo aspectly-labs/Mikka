@@ -1,7 +1,7 @@
 import 'server-only'
 import { pool } from '@/lib/db'
 import { connectComputer } from '@/lib/computer/e2b-provider'
-import { endpointPath, grant, runtimeRequest, type BrowserBinding } from './runtime'
+import { endpointPath, grant, installSubagentRuntime, runtimeRequest, type BrowserBinding } from './runtime'
 import { z } from 'zod'
 const observationSchema = z.object({ targetId: z.string().min(1), origin: z.string().url(), loaderId: z.string().min(1), inputs: z.array(z.object({ backendNodeId: z.number().int().positive(), credentialRole: z.enum(['username', 'password']) }).strict()).min(1).max(2) }).strict()
 
@@ -33,18 +33,23 @@ async function resolveThreadMachineBinding(input: { userId: string; workspaceId:
     WHERE m."runId"=$1 AND m."ownerId"=$2 AND m."workspaceId"=$3 AND m.state='running'
       AND r.status IN ('running','waiting_input','preparing') AND r."stopRequestedAt" IS NULL`, [input.runId, input.userId, input.workspaceId])).rows[0]
   if (!row?.sandboxId) throw new Error('Thread browser unavailable')
+  const sandbox = await connectComputer(input.workspaceId, row.sandboxId)
+  // Thread machines never get the runtime at provision; installing is
+  // idempotent, so it lands here for broker and viewer alike — including on
+  // sandboxes started before the thread browser existed.
+  await installSubagentRuntime(sandbox, input.userId)
   const binding: BrowserBinding = { id: input.runId, ownerId: input.userId, workspaceId: input.workspaceId, botId: row.botId, epoch: row.epoch, display: 1 }
-  return { row, binding }
+  return { row, binding, sandbox }
 }
 
 export async function resolveThreadBrowserTarget(input: { userId: string; workspaceId: string; runId: string }) {
-  const { row, binding } = await resolveThreadMachineBinding(input)
+  const { row, binding, sandbox } = await resolveThreadMachineBinding(input)
   if (!row.targetId) throw new Error('Thread browser unavailable')
   const state = await runtimeRequest(row.sandboxId, binding, '/state')
   if (state.guarded || state.targetId !== row.targetId || typeof state.url !== 'string') throw new Error('Thread browser unavailable')
   const url = new URL(state.url)
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Thread browser unavailable')
-  return { targetId: row.targetId as string, origin: url.origin, ...await grant(await connectComputer(input.workspaceId, row.sandboxId), binding, 'broker') }
+  return { targetId: row.targetId as string, origin: url.origin, ...await grant(sandbox, binding, 'broker') }
 }
 
 /** The thread's cloud browser shown to its owner: a view-only capability on the
@@ -52,7 +57,7 @@ export async function resolveThreadBrowserTarget(input: { userId: string; worksp
  * frames while a credential guard holds, so viewing needs no state probe
  * (#2940). */
 export async function resolveThreadBrowserViewer(input: { userId: string; workspaceId: string; runId: string }) {
-  const { row, binding } = await resolveThreadMachineBinding(input)
-  const capability = await grant(await connectComputer(input.workspaceId, row.sandboxId), binding, 'view')
+  const { binding, sandbox } = await resolveThreadMachineBinding(input)
+  const capability = await grant(sandbox, binding, 'view')
   return { url: endpointPath(capability.endpoint, '/viewer').replace('https:', 'wss:'), expiresAt: new Date(capability.expiresAt).toISOString() }
 }
