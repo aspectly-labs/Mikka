@@ -817,8 +817,14 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
   // The rail's ＋ menu tools ride the chat's `work` channel (ConversationTools): the frame-owned
   // panel stays the pinned Overview + Browser pair, and every other page tool lands in the same
   // work area grouped by id (Changes, the Coordinator's Crew group).
-  // Changes follows the work tab in front: an opened Crew thread's diff, else the page thread's.
-  const changesRunId = (isConversation && activeWorkTab?.scope === conversationScope && activeWorkTab.tabId?.startsWith('thread:') ? activeWorkTab.tabId.slice(7) : null) ?? threadId ?? mainThreadId
+  // Changes/PR follow the work tab in front: an opened Crew thread, else the page thread. A tool
+  // tab (changes, pull-request) replaces the thread's tab id, so the scope is sticky: the last
+  // thread work tab keeps owning the tools until another thread tab comes forward.
+  const workThreadId = isConversation && activeWorkTab?.scope === conversationScope && activeWorkTab.tabId?.startsWith('thread:') ? activeWorkTab.tabId.slice(7) : null
+  const lastWorkThread = useRef<string | null>(null)
+  if (workThreadId) lastWorkThread.current = workThreadId
+  useEffect(() => { lastWorkThread.current = null }, [conversationScope])
+  const changesRunId = workThreadId ?? lastWorkThread.current ?? threadId ?? mainThreadId
   const changesIssueId = (changesRunId ? threads.find(thread => thread.id === changesRunId)?.issueId : undefined) ?? mainThread?.issueId ?? taskId
   const conversationTools = panelsInFrame ? [
     ...(changesRunId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={changesIssueId} runId={changesRunId} /> }] : []),
