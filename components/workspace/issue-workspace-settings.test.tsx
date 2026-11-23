@@ -100,7 +100,7 @@ mock.module('@/hooks/use-live-lists', { namedExports: {
 for (const [file, names] of [
   ['../../app/actions/projects.ts', ['listProjects', 'listWorkspaceProjects']], ['../../app/actions/teams.ts', ['listTeams']],
   ['../../app/actions/team-relations.ts', ['listProjectTeams']], ['../../app/actions/workspace-secrets.ts', ['saveE2BKey']],
-  ['../../app/actions/bots.ts', ['listBots', 'listBotsForWorkspace', 'archiveBot', 'deleteBot', 'listArchivedOwnBots']], ['../../app/actions/agents.ts', ['listAgents', 'getThreadName', 'findThreadIssue', 'getThreadChanges']],
+  ['../../app/actions/bots.ts', ['listBots', 'listBotsForWorkspace', 'archiveBot', 'deleteBot', 'listArchivedOwnBots']], ['../../app/actions/agents.ts', ['listAgents', 'getThreadName', 'findThreadIssue', 'getThreadChanges', 'getThreadMachine']],
 ] as const) mock.module(new URL(file, import.meta.url).href, { namedExports: Object.fromEntries(names.map(name => [name, async () => []])) })
 
 // Exercise the production lazy/Suspense boundary, with its chunk deliberately
@@ -120,6 +120,7 @@ for (const [file, names] of [
   ['./task-column.tsx', ['TaskColumn']],
   ['../plugins/plugins-view.tsx', ['PluginsPage']], ['../suggestions/suggestion-feed.tsx', ['SuggestionFeed', 'SuggestionsRefresh', 'useSuggestionCount']],
   ['../artifacts/artifact-library.tsx', ['ArtifactLibrary']], ['./legacy-chat-archive.tsx', ['LegacyChatArchive']],
+  ['./thread-changes.tsx', ['RailThreadChanges']],
 ] as const) mock.module(new URL(file, import.meta.url).href, { namedExports: Object.fromEntries(names.map(name => [name, name === 'useSuggestionCount' ? () => 0 : empty])) })
 // 概览 is the right column this page owns; it renders a marker so a test can see the column is there at all,
 // which is what #2835 broke by gating it on `isConversation`.
@@ -156,7 +157,7 @@ mock.module('@/components/nav/new-group-dialog', { namedExports: {
   NewGroupDialog: ({ open, workspaceId }: { open: boolean; workspaceId: string }) => open ? <div data-create-group={workspaceId} /> : null,
 } })
 mock.module('@/components/nav/bot-list', { namedExports: { BotList: () => <div data-retired-bot-list="" />, useChatNav: () => ({ entries: [], referenceGroups: [], reloadGroups: async () => {} }) } })
-mock.module('@/components/nav/thread-list', { namedExports: { threadName: () => '' } })
+mock.module('@/components/nav/thread-list', { namedExports: { threadName: () => '', ThreadList: empty } })
 mock.module('@/components/nav/bot-avatar', { namedExports: { BotAvatar: empty, COORDINATOR_AVATAR: {} } })
 mock.module('@/components/nav/all-threads', { namedExports: { AllThreadsColumn: empty, AllThreadsToggle: empty } })
 let browserFits = true
@@ -322,7 +323,7 @@ test('a thread opened in the centre hands its work area to a frame that owns the
   await act(async () => root.render(<OfficialIssueWorkspace user={user} />))
   assert.ok(container.querySelector('[data-main-thread]'), 'the thread is the centre page')
   assert.ok(reportedPanels, 'and the frame was handed the Overview tab')
-  assert.deepEqual(reportedPanels?.tabs.map(tab => tab.id), ['overview', 'browser'])
+  assert.deepEqual(reportedPanels?.tabs.map(tab => tab.id), ['overview', 'browser', 'changes', 'crew:threads', 'crew:pulls', 'crew:side'])
 })
 
 test('an explicit Bot mounts only its own composer after its roster resolves', async () => {
