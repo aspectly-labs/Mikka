@@ -48,13 +48,16 @@ test('limit items name the chain root across retryOf, continuesRunId and questio
   // A paused root run names itself.
   const root = randomUUID(), orphan = randomUUID()
   await insertRun(pool, { id: root, issueId: issue, workspaceId: ws })
-  // Three parent edges, each a paused descendant of the same RUNNING root — a
-  // drop or a missed edge surfaces as a missing/own-id item, not the root.
-  const base = randomUUID(), retried = randomUUID(), continued = randomUUID(), resumed = randomUUID()
-  await insertRun(pool, { id: base, issueId: issue, workspaceId: ws, status: 'running', pauseReason: null })
-  await insertRun(pool, { id: retried, issueId: issue, workspaceId: ws, retryOf: base })
-  await insertRun(pool, { id: continued, issueId: issue, workspaceId: ws, continuesRunId: base })
-  await insertRun(pool, { id: resumed, issueId: issue, workspaceId: ws, originRunId: base })
+  // Each parent edge gets its own chain — a paused descendant of a RUNNING
+  // root, so a drop or a missed edge surfaces as a missing/own-id item.
+  const retryBase = randomUUID(), continueBase = randomUUID(), originBase = randomUUID()
+  const retried = randomUUID(), continued = randomUUID(), resumed = randomUUID()
+  await insertRun(pool, { id: retryBase, issueId: issue, workspaceId: ws, status: 'running', pauseReason: null })
+  await insertRun(pool, { id: continueBase, issueId: issue, workspaceId: ws, status: 'running', pauseReason: null })
+  await insertRun(pool, { id: originBase, issueId: issue, workspaceId: ws, status: 'running', pauseReason: null })
+  await insertRun(pool, { id: retried, issueId: issue, workspaceId: ws, retryOf: retryBase })
+  await insertRun(pool, { id: continued, issueId: issue, workspaceId: ws, continuesRunId: continueBase })
+  await insertRun(pool, { id: resumed, issueId: issue, workspaceId: ws, originRunId: originBase })
   // An origin pointing at another task is outside the fence: the run is its own root.
   await insertRun(pool, { id: orphan, issueId: issue, workspaceId: ws, originRunId: randomUUID() })
   // ...and a real cross-task parent exists but must not be followed. It stays
@@ -67,9 +70,9 @@ test('limit items name the chain root across retryOf, continuesRunId and questio
   const byThread = new Map(limits.map(i => [i.threadId, i]))
   assert.ok(byThread.has(root), 'paused root names itself')
   assert.equal(byThread.get(root)?.detail, 'quota_exhausted')
-  assert.equal(limits.filter(i => i.threadId === base).length, 3, 'each parent edge collapses to the chain root')
-  for (const child of [retried, continued, resumed]) {
-    assert.ok(!byThread.has(child), `${child} collapses to the root, never self-lists`)
+  for (const [child, base] of [[retried, retryBase], [continued, continueBase], [resumed, originBase]] as const) {
+    assert.ok(byThread.has(base), 'parent edge collapses to the chain root')
+    assert.ok(!byThread.has(child), 'paused descendant never self-lists')
   }
   assert.ok(byThread.has(orphan), 'dangling origin: the paused run is its own root')
   assert.ok(byThread.has(moved), 'cross-task origin is fenced: the paused run is its own root')
