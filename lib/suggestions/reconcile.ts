@@ -21,6 +21,10 @@ import { clearComposioNeedsReconnect, markComposioNeedsReconnect } from '@/lib/c
 
 /** How far back the backfill looks. Longer than its interval, so one missed run is still covered. */
 export const RECONCILE_WINDOW_MS = 26 * 60 * 60 * 1000
+/** A person is re-reconciled well inside the window, so a sweep running late still reaches edits its previous pass already missed. */
+const RECONCILE_DUE_MS = RECONCILE_WINDOW_MS - 2 * 60 * 60 * 1000
+/** Notion pages per sweep are capped in case a workspace accumulates edits faster than the backfill can page. */
+const NOTION_PAGE_LIMIT = 3
 // Slack is left out: it is moving off Composio to Mikka's own Slack app.
 const COMPOSIO_TOOLKITS = ['gmail', 'notion'] as const
 const PEOPLE_CONCURRENCY = 4
@@ -49,10 +53,18 @@ async function recentGmail(userId: string, readThrough: (accountId: string) => v
  * and a duplicate would show twice.
  */
 async function recentNotion(userId: string, since: Date, readThrough: (accountId: string) => void): Promise<ExternalNotification[]> {
-  const result = await runComposioAction(userId, 'list_recent_notion_pages', { page_size: 25 })
-  if ('error' in result) throw new ProviderReadError(result.error, result.accountId)
-  readThrough(result.accountId)
-  const pages = list(result.data.results).flatMap(page => notionSearchNotification(userId, page) ?? []).filter(page => page.occurredAt >= since)
+  const edited: Json[] = []
+  let cursor: string | undefined
+  for (let page = 0; page < NOTION_PAGE_LIMIT; page++) {
+    const result = await runComposioAction(userId, 'list_recent_notion_pages', { page_size: 100, start_cursor: cursor })
+    if ('error' in result) throw new ProviderReadError(result.error, result.accountId)
+    readThrough(result.accountId)
+    edited.push(...list(result.data.results))
+    const data = record(result.data)
+    if (data.has_more !== true || typeof data.next_cursor !== 'string' || !data.next_cursor) break
+    cursor = data.next_cursor
+  }
+  const pages = edited.flatMap(page => notionSearchNotification(userId, page) ?? []).filter(page => page.occurredAt >= since)
   if (!pages.length) return []
   const known = await db.select({ externalId: suggestions.externalId }).from(suggestions)
     .where(and(eq(suggestions.userId, userId), eq(suggestions.source, 'notion'), gte(suggestions.createdAt, new Date(since.getTime() - RECONCILE_WINDOW_MS))))
@@ -79,9 +91,9 @@ export interface ReconcileResult {
   deferred: number; linear: { deliveries: number; notifications: number }; github: RedeliveryResult | null
 }
 
-async function reconcilePerson(userId: string, toolkits: readonly string[], since: Date, result: ReconcileResult) {
-  // A lost subscription is the likeliest reason deliveries stopped; re-create it (at most hourly).
-  await ensureComposioTriggers(userId).catch((error: unknown) => console.error('Composio trigger check failed', error instanceof Error ? error.message : error))
+/** Returns how many provider reads failed; the caller only stamps a clean pass as reconciled. */
+async function reconcilePerson(userId: string, toolkits: readonly string[], since: Date, result: ReconcileResult): Promise<number> {
+  let failedReads = 0
   let readThroughAccount: string | null = null
   const readThrough = (accountId: string) => { readThroughAccount = accountId }
   const readers: Record<string, () => Promise<ExternalNotification[]>> = {
@@ -110,9 +122,11 @@ async function reconcilePerson(userId: string, toolkits: readonly string[], sinc
         continue
       }
       result.failed[toolkit] = (result.failed[toolkit] ?? 0) + 1
+      failedReads++
       console.error(`Suggestions backfill could not read ${toolkit}`, message)
     }
   }
+  return failedReads
 }
 
 /**
@@ -159,7 +173,7 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
   // window — not because the hour fired. Least recently checked first, so a deadline-cut run resumes at the front.
   const people = (await db.select({ userId: suggestionTriggerChecks.userId }).from(suggestionTriggerChecks)
     .where(or(lt(suggestionTriggerChecks.checkedAt, new Date(now.getTime() - TRIGGER_CHECK_INTERVAL_MS)),
-      or(isNull(suggestionTriggerChecks.reconciledAt), lt(suggestionTriggerChecks.reconciledAt, since))))
+      or(isNull(suggestionTriggerChecks.reconciledAt), lt(suggestionTriggerChecks.reconciledAt, new Date(now.getTime() - RECONCILE_DUE_MS)))))
     .orderBy(suggestionTriggerChecks.checkedAt)).map(row => row.userId)
   for (let index = 0; index < people.length; index += PEOPLE_CONCURRENCY) {
     if (Date.now() > deadline) { result.deferred = people.length - index; break }
@@ -169,11 +183,15 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
         const toolkits = [...new Set(accounts.filter(account => account.status === 'ACTIVE' && !account.isDisabled).map(account => account.toolkit.slug.toLowerCase()))]
           .filter(toolkit => (COMPOSIO_TOOLKITS as readonly string[]).includes(toolkit))
         result.people++
-        if (toolkits.length) await reconcilePerson(userId, toolkits, since, result)
-        await db.update(suggestionTriggerChecks).set({ reconciledAt: now }).where(eq(suggestionTriggerChecks.userId, userId))
+        // A lost subscription is the likeliest reason deliveries stopped; re-create it (at most hourly).
+        // It runs for everyone swept, so a person with nothing connected still advances their check.
+        await ensureComposioTriggers(userId).catch((error: unknown) => console.error('Composio trigger check failed', error instanceof Error ? error.name : 'unknown'))
+        const failedReads = toolkits.length ? await reconcilePerson(userId, toolkits, since, result) : 0
+        // A pass whose reads failed stays due, so the next sweep retries them before the window ages edits out.
+        if (!failedReads) await db.update(suggestionTriggerChecks).set({ reconciledAt: now }).where(eq(suggestionTriggerChecks.userId, userId))
       } catch (error) {
         result.failed.composio = (result.failed.composio ?? 0) + 1
-        console.error('Suggestions backfill could not list connected apps', error instanceof Error ? error.message : error)
+        console.error('Suggestions backfill could not list connected apps', error instanceof Error ? error.name : 'unknown')
       }
     }))
   }

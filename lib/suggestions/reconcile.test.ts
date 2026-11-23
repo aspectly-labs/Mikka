@@ -24,7 +24,8 @@ before(async () => {
   // Two selects: the people to backfill, then (per person with pages) the suggestions already on file.
   mock.module('@/lib/db', { namedExports: { db: { select: () => ({ from: () => ({
     orderBy: async () => people.map(userId => ({ userId })),
-    where: () => ({ orderBy: async () => people.map(userId => ({ userId })) }),
+    // where() must stay awaitable rows for the already-on-file read while still chaining orderBy for the people query.
+    where: () => Object.assign(Promise.resolve([]), { orderBy: async () => people.map(userId => ({ userId })) }),
   }) }) }, update: () => ({ set: () => ({ where: async () => [] }) }) }, pool: null } })
   mock.module('@/lib/composio', { namedExports: {
     getComposio: () => ({ connectedAccounts: { list: async ({ userIds }: { userIds: string[] }) => ({ items: [{ id: `acct-${userIds[0]}`, status: 'ACTIVE', isDisabled: false, toolkit: { slug: 'notion' } }], nextCursor: null }) } }),
