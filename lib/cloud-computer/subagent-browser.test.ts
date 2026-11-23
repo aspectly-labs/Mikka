@@ -53,6 +53,8 @@ test('a stopped browser registration gets no ticket', async () => {
 })
 
 test('the broker path still refuses a guarded or foreign page', async () => {
-  browserState = { targetId: 'other-target' }
+  browserState = { targetId: 'other-target', url: 'https://example.com/', guarded: false }
+  await assert.rejects(resolveThreadBrowserTarget(input), /Thread browser unavailable/)
+  browserState = { targetId: 'target-one', url: 'https://example.com/', guarded: true }
   await assert.rejects(resolveThreadBrowserTarget(input), /Thread browser unavailable/)
 })
