@@ -85,6 +85,16 @@ for (const [device, viewport] of [['desktop', { width: 1440, height: 1000 }], ['
     await expect(page.locator('.ui-th-text').filter({ hasText: '结果' }).locator('table')).toBeVisible()
     // The expanded result of the first tool.
     const head = page.locator('.ui-th-tools__head').first()
+    // The thread follows the latest until the reader scrolls up themselves (patches/agent-thread.virtual-list.patch):
+    // a script's scrollIntoView is put back at the end, so scroll up with the wheel, as a reader would, on a phone.
+    const scroller = (await page.locator('.ui-th-scroll').first().boundingBox())!
+    await page.mouse.move(scroller.x + scroller.width / 2, scroller.y + scroller.height / 2)
+    await expect(async () => {
+      const box = (await head.boundingBox())!
+      if (box.y < scroller.y) await page.mouse.wheel(0, Math.min(-60, box.y - scroller.y - 40))
+      else if (box.y + box.height > scroller.y + scroller.height) await page.mouse.wheel(0, 300)
+      await expect(head).toBeInViewport({ ratio: 1, timeout: 500 })
+    }).toPass({ timeout: 15_000 })
     if (await head.getAttribute('aria-expanded') !== 'true') await head.click()
     await page.locator('summary.ui-th-tool').first().click()
     const width = async (selector: string) => (await page.locator(selector).first().boundingBox())?.width ?? -1
