@@ -144,6 +144,8 @@ export type ThreadScreenProps = {
     tabs: ThreadPanelTab[]; reveal: number; revealId: string | null
     /** The real active work tab's task, or null for another tab. */
     onActiveTask?: (taskId: string | null) => void
+    /** The real active work tab's id (`task:<issueId>` / `thread:<runId>`), or null for another tab. */
+    onActiveTab?: (tabId: string | null) => void
   }
   /**
    * Tabs the chat opens itself in the same work area (FRAME_OWNS_PANEL, decision 2026-11-10): a task's view

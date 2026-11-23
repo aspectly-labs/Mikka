@@ -32,8 +32,9 @@ export function RailCrewThreads({ issues, threads, loading, onOpenThread }: { is
 /** Crew ＋ Pull requests: the runs' published PRs from the coordinator overview. */
 export function RailCrewPulls({ workspaceId }: { workspaceId: string }) {
   const t = useTranslations('IssueThreads')
-  const { data, error } = useSWR<CoordinatorOverview>('/api/coordinator/overview', (url: string) => readJson<CoordinatorOverview>(url))
-  useLiveKey('thread_list', workspaceId, ['/api/coordinator/overview'], workspaceId)
+  const key = `/api/coordinator/overview?workspaceId=${workspaceId}`
+  const { data, error } = useSWR<CoordinatorOverview>(key, (url: string) => readJson<CoordinatorOverview>(url))
+  useLiveKey('thread_list', workspaceId, [key], workspaceId)
   const pulls = data?.pullRequests ?? []
   if (error) return <p className="p-4 text-sm text-muted-foreground">{t('crewPullsError')}</p>
   if (!data) return null

@@ -758,6 +758,12 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
     if (currentConversationScope.current !== conversationScope) return
     setActiveWorkTask(current => current?.scope === conversationScope && current.taskId === taskId ? current : { scope: conversationScope, taskId })
   }, [conversationScope])
+  // The work-area tab in front, so the Changes tool can bind the thread it names.
+  const [activeWorkTab, setActiveWorkTab] = useState<{ scope: string; tabId: string | null } | null>(null)
+  const onActiveWorkTab = useCallback((tabId: string | null) => {
+    if (currentConversationScope.current !== conversationScope) return
+    setActiveWorkTab(current => current?.scope === conversationScope && current.tabId === tabId ? current : { scope: conversationScope, tabId })
+  }, [conversationScope])
   // A group chat has its own 详情 in the right column (R-13): members, no computer.
   const groupPanel = !selected && section === 'group' && groupRequest ? groupRequest : null
   // An open thread takes the right column beside the chat or a page (R-82); a task shows its own threads in its own right column,
@@ -802,7 +808,7 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
       showBrowser('address')
     }
   }, [browserRequestVersion, panelsInFrame, threadId, taskId, threadsView])
-  const conversationPanels = panelsInFrame ? { ...panelReveal, onActiveTask: onActiveWorkTask, tabs: [
+  const conversationPanels = panelsInFrame ? { ...panelReveal, onActiveTask: onActiveWorkTask, onActiveTab: onActiveWorkTab, tabs: [
     { id: 'overview' as const, title: i18nText('Shell.panel.overview'), content: <ContextPanel key="context-panel" sheet frameTab workspaceId={listWorkspaceId} issues={tasks} threads={threads} threadsLoading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} onClose={() => {}}
       conversation={activeBot ? { id: activeBot.id, name: activeBot.name, color: activeBot.color, shape: activeBot.shape, kind: 'bot' } : { id: coordinatorBot?.id, name: i18nText('Nav.coordinator'), kind: 'coordinator', updatedAt: botChatSummaries && coordinatorBot ? botChatSummaries.items[coordinatorBot.id]?.at ?? undefined : undefined }} /> },
     { id: 'browser' as const, title: i18nText('Browser.label'), content: <BrowserPane inTab onClose={() => showBrowser('closed')} /> },
@@ -810,8 +816,11 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
   // The rail's ＋ menu tools ride the chat's `work` channel (ConversationTools): the frame-owned
   // panel stays the pinned Overview + Browser pair, and every other page tool lands in the same
   // work area grouped by id (Changes, the Coordinator's Crew group).
+  // Changes follows the work tab in front: an opened Crew thread's diff, else the page thread's.
+  const changesRunId = (isConversation && activeWorkTab?.scope === conversationScope && activeWorkTab.tabId?.startsWith('thread:') ? activeWorkTab.tabId.slice(7) : null) ?? threadId ?? mainThreadId
+  const changesIssueId = (changesRunId ? threads.find(thread => thread.id === changesRunId)?.issueId : undefined) ?? mainThread?.issueId ?? taskId
   const conversationTools = panelsInFrame ? [
-    ...(threadId ?? mainThreadId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={taskId} runId={(threadId ?? mainThreadId)!} /> }] : []),
+    ...(changesRunId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={changesIssueId} runId={changesRunId} /> }] : []),
     ...(section === 'coordinator' && !activeBot ? [
       { id: 'crew:threads' as const, title: i18nText('IssueThreads.crewThreads'), content: <RailCrewThreads issues={tasks} threads={threads} loading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} /> },
       { id: 'crew:pulls' as const, title: i18nText('IssueThreads.crewPulls'), content: <RailCrewPulls workspaceId={listWorkspaceId} /> },

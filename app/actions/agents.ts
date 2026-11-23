@@ -336,6 +336,11 @@ async function readableThread(issueId: string | null, runId: string, columns: Th
   }
   const user = await getWorkspaceReader()
   if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
+  // A caller that doesn't know the task (a thread opened by run id alone) still
+  // reaches an attached run: the run's own binding names the issue whose access
+  // check decides. Unattached runs keep the owner-only rule below.
+  const [binding] = await db.select({ issueId: agentRuns.issueId }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1)
+  if (binding?.issueId) return readableThread(binding.issueId, runId, columns)
   const [row] = await db.select(columns)
     .from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, user.id), eq(agentRuns.workspaceId, user[tokenWorkspace]), isNull(agentRuns.issueId))).limit(1)

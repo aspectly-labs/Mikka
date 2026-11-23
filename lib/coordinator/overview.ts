@@ -17,25 +17,28 @@ export interface CoordinatorOverview {
 
 interface OverviewUser { id: string }
 
-export async function readCoordinatorOverview(user: OverviewUser): Promise<CoordinatorOverview> {
+export async function readCoordinatorOverview(user: OverviewUser, workspaceId?: string): Promise<CoordinatorOverview> {
   // The token's workspace filters inside the queries, before the row cap:
   // twenty newer foreign rows must not starve a scoped caller's own work.
+  // A caller naming a workspace narrows further — it can never widen the token.
   const [runScope, publicationScope] = await Promise.all([
     tokenScopeFilter(user, 'r."workspaceId"', 2),
     tokenScopeFilter(user, 'i."workspaceId"', 2),
   ])
+  const named = workspaceId ? ` AND i."workspaceId" = $3` : ''
+  const namedParams = workspaceId ? [workspaceId] : []
   const [needsYou, running, pullRequests] = await Promise.all([
     listNeedsYou(user),
     pool.query<{ runId: string; issueId: string | null; title: string | null; status: string; updatedAt: Date }>(
       `SELECT r.id AS "runId", r."issueId", i.title, r.status, r."updatedAt"
        FROM agent_runs r LEFT JOIN issues i ON i.id = r."issueId"
-       WHERE r."userId" = $1 AND r.status IN ('queued', 'running')${runScope.sql}
-       ORDER BY r."updatedAt" DESC LIMIT 20`, [user.id, ...runScope.params]),
+       WHERE r."userId" = $1 AND r.status IN ('queued', 'running')${runScope.sql}${named}
+       ORDER BY r."updatedAt" DESC LIMIT 20`, [user.id, ...runScope.params, ...namedParams]),
     pool.query<{ issueId: string; branch: string | null; pullRequest: { url?: string; state?: string } | null; status: string; updatedAt: Date }>(
       `SELECT p."issueId", p.branch, p."pullRequest", p.status, p."updatedAt"
        FROM run_publications p LEFT JOIN issues i ON i.id = p."issueId"
-       WHERE p."userId" = $1 AND p."pullRequest" IS NOT NULL AND p.status <> 'skipped'${publicationScope.sql}
-       ORDER BY p."updatedAt" DESC LIMIT 20`, [user.id, ...publicationScope.params]),
+       WHERE p."userId" = $1 AND p."pullRequest" IS NOT NULL AND p.status <> 'skipped'${publicationScope.sql}${named}
+       ORDER BY p."updatedAt" DESC LIMIT 20`, [user.id, ...publicationScope.params, ...namedParams]),
   ])
   return {
     needsYou,
