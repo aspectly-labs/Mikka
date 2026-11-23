@@ -65,6 +65,7 @@ test('a revoked provider token skips that person as needing reconnecting; the ru
     assert.deepEqual(result.reconnect, { notion: 1 })
     assert.equal(result.read.notion, 2, 'the next person is still read, both pages')
     assert.equal(errors.mock.callCount(), 0)
+    assert.equal(stamps.length, 2, 'both people were stamped')
     assert.ok(stamps.every(value => value.reconciledAt instanceof Date), 'clean passes stamp the reconcile time')
     // The refused account is marked for the person to reconnect; the one that read fine is cleared.
     assert.deepEqual(marked, [['person-revoked', 'notion', 'acct-person-revoked']])

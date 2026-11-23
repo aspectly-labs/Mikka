@@ -52,15 +52,17 @@ async function recentGmail(userId: string, readThrough: (accountId: string) => v
  * skipped: the trigger's edit time may be written differently from search's,
  * and a duplicate would show twice.
  */
-async function recentNotion(userId: string, since: Date, readThrough: (accountId: string) => void): Promise<ExternalNotification[]> {
+async function recentNotion(userId: string, since: Date, readThrough: (accountId: string) => void): Promise<{ notifications: ExternalNotification[]; partialError?: ProviderReadError }> {
   const edited: Json[] = []
+  let partialError: ProviderReadError | undefined
   let cursor: string | undefined
   for (let page = 0; page < NOTION_PAGE_LIMIT; page++) {
     const result = await runComposioAction(userId, 'list_recent_notion_pages', { page_size: 100, start_cursor: cursor })
     if ('error' in result) {
       if (!edited.length) throw new ProviderReadError(result.error, result.accountId)
-      // A later page failed: keep what the earlier ones fetched; the tail retries on the next due pass.
-      console.warn('Suggestions backfill kept a partial Notion read')
+      // A later page failed: keep what the earlier ones fetched, but report it — the pass is
+      // not complete, so the marker stays due and the tail retries before the window ages out.
+      partialError = new ProviderReadError(result.error, result.accountId)
       break
     }
     readThrough(result.accountId)
@@ -74,12 +76,12 @@ async function recentNotion(userId: string, since: Date, readThrough: (accountId
     cursor = data.next_cursor
   }
   const pages = edited.flatMap(page => notionSearchNotification(userId, page) ?? []).filter(page => page.occurredAt >= since)
-  if (!pages.length) return []
+  if (!pages.length) return { notifications: [], partialError }
   const known = await db.select({ externalId: suggestions.externalId }).from(suggestions)
     .where(and(eq(suggestions.userId, userId), eq(suggestions.source, 'notion'), gte(suggestions.createdAt, new Date(since.getTime() - RECONCILE_WINDOW_MS))))
   const pageId = (externalId: string) => externalId.split(':')[0]
   const knownPages = new Set(known.map(row => pageId(row.externalId)))
-  return pages.filter(page => !knownPages.has(pageId(page.externalId)))
+  return { notifications: pages.filter(page => !knownPages.has(pageId(page.externalId))), partialError }
 }
 
 /**
@@ -105,19 +107,21 @@ async function reconcilePerson(userId: string, toolkits: readonly string[], sinc
   let failedReads = 0
   let readThroughAccount: string | null = null
   const readThrough = (accountId: string) => { readThroughAccount = accountId }
-  const readers: Record<string, () => Promise<ExternalNotification[]>> = {
-    gmail: () => recentGmail(userId, readThrough),
+  const readers: Record<string, () => Promise<{ notifications: ExternalNotification[]; partialError?: ProviderReadError }>> = {
+    gmail: async () => ({ notifications: await recentGmail(userId, readThrough) }),
     notion: () => recentNotion(userId, since, readThrough),
   }
   for (const toolkit of toolkits) {
     readThroughAccount = null
     try {
-      const notifications = await readers[toolkit]()
+      const { notifications, partialError } = await readers[toolkit]()
       // It works again (or was reconnected in place): it no longer needs reconnection.
       if (readThroughAccount) await clearComposioNeedsReconnect(userId, readThroughAccount)
         .catch((error: unknown) => console.error('Could not clear a reconnect mark', error instanceof Error ? error.name : 'unknown'))
       await ingestNotifications(notifications)
       result.read[toolkit] = (result.read[toolkit] ?? 0) + notifications.length
+      // The fetched pages are in; the failed tail still counts the pass as failed.
+      if (partialError) throw partialError
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (needsReconnect(message)) {
