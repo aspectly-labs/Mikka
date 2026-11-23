@@ -194,7 +194,7 @@ export function threadTerminalHandlers(deps: Dependencies): {
 export function threadTerminalRuntime(pool: Pool): Dependencies {
   return {
     authority: (request, runId) => resolve(pool, request, runId, {}) as Promise<ThreadTerminalScope>,
-    authorized: (request, runId, work, expected = {}) => resolve(pool, request, runId, expected, work) as Promise<ReturnType<typeof work>>,
+    authorized: (request, runId, work, expected = {}) => resolve(pool, request, runId, expected, work) as Promise<Awaited<ReturnType<typeof work>>>,
     begin: beginReviewSession, read: readReviewSession, close: closeReviewSession, revoke: revokeReviewSession,
     list: listReviewSessions, prepare: prepareTerminal, existing: existingTerminal, request: terminalRequest, grant: terminalGrant,
   }

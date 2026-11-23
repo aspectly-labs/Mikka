@@ -56,7 +56,7 @@ export async function readThreadMachineDetail(pool: Pool, actor: Actor, runId: s
   if (machine.sandboxId && machine.snapshotId !== hostedSnapshot && state !== 'ended' && state !== 'error') {
     try {
       const apiKey = await e2bApiKey(actor.userId, 'Cloud computer is not configured')
-      const info = await withE2BErrors(actor.userId, false, () => Sandbox.getInfo(machine.sandboxId!, { apiKey, timeoutMs: 10_000, requestTimeoutMs: 10_000, signal }))
+      const info = await withE2BErrors(actor.userId, false, () => Sandbox.getInfo(machine.sandboxId!, { apiKey, requestTimeoutMs: 10_000, signal }))
       sandbox = { state: info.state, startedAt: info.startedAt?.toISOString() ?? null, endAt: info.endAt?.toISOString() ?? null,
         cpuCount: info.cpuCount ?? null, memoryMB: info.memoryMB ?? null, templateId: info.templateId ?? null }
     } catch (error) {
