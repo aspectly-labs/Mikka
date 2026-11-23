@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type { ComputerThread } from '@/components/computer/computer-agents'
 import type { SettingsFrameProps } from '@/components/slots/settings-frame-contract'
 import { browserAddressRequest, consumeBrowserAddress, openBrowserAddress } from '@/lib/browser/navigation'
-import { useConversationPanels as useThreadPanelContext } from '@/components/coordinator/conversation-panels-context'
+import { useConversationPanels as useThreadPanelContext, useConversationTools } from '@/components/coordinator/conversation-panels-context'
 
 const nothing = () => {}
 const empty = () => null
@@ -131,9 +131,11 @@ mock.module(new URL('../nav/context-panel.tsx', import.meta.url).href, { namedEx
 // work area up when the frame owns the panel. The hook is read from its own leaf module, so this stub does not
 // depend on the dynamically imported conversation-panels.tsx below.
 let reportedPanels: import('@/components/slots/thread-contract').ThreadScreenProps['panels']
+let reportedTools: NonNullable<import('@/components/slots/thread-contract').ThreadScreenProps['work']>['tabs'] | undefined
 mock.module(new URL('./thread-column.tsx', import.meta.url).href, { namedExports: {
   ThreadColumn: ({ main }: { main?: boolean }) => {
     reportedPanels = useThreadPanelContext()
+    reportedTools = useConversationTools()
     return <section data-main-thread={main ? '' : undefined} />
   },
 } })
@@ -323,7 +325,10 @@ test('a thread opened in the centre hands its work area to a frame that owns the
   await act(async () => root.render(<OfficialIssueWorkspace user={user} />))
   assert.ok(container.querySelector('[data-main-thread]'), 'the thread is the centre page')
   assert.ok(reportedPanels, 'and the frame was handed the Overview tab')
-  assert.deepEqual(reportedPanels?.tabs.map(tab => tab.id), ['overview', 'browser', 'changes', 'crew:threads', 'crew:pulls', 'crew:side'])
+  assert.deepEqual(reportedPanels?.tabs.map(tab => tab.id), ['overview', 'browser'])
+  // The page's static tools ride the work channel instead: delivered for the ＋ menu, closed until picked.
+  assert.ok(reportedTools?.some(tab => tab.id === 'changes'), 'the Changes tool reaches the frame through work tabs')
+  assert.equal(reportedTools?.every(tab => tab.id !== 'overview' && tab.id !== 'browser'), true)
 })
 
 test('an explicit Bot mounts only its own composer after its roster resolves', async () => {
