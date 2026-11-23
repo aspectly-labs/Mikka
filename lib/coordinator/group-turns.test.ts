@@ -1116,6 +1116,29 @@ test('group stop without a listener keeps the existing one-second fallback', asy
     assert.equal(checks, 1, 'reliability without a subscription cannot disable the fallback')
   } finally { done.resolve(); await pending }
 })
+test('a missing stop listener is re-attached on a later read', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const done = Promise.withResolvers<void>()
+  let checks = 0, attempts = 0, wake: (() => void) | undefined
+  const pending = untilStopped(async () => { checks++; return false }, {
+    resubscribe: async () => {
+      attempts++
+      if (attempts < 3) return undefined
+      return callback => { wake = callback; return () => {} }
+    },
+  }, () => done.promise)
+  try {
+    for (let i = 0; i < 3; i++) { t.mock.timers.tick(1_000); await setImmediate() }
+    assert.equal(attempts, 3, 'every one-second read retries the listener until it latches')
+    assert.equal(checks, 3, 'the read that re-latches doubles as the catch-up read')
+    assert.ok(wake, 'the third attempt latches the listener')
+    t.mock.timers.tick(1_000); await setImmediate()
+    assert.equal(attempts, 3, 'no further retries once the listener is back')
+    assert.equal(checks, 3, 'and the one-second reads stop with it')
+    wake!(); await setImmediate()
+    assert.equal(checks, 4, 'pushes drive reads again')
+  } finally { done.resolve(); await pending }
+})
 test('expired execution budget cancels before generation/status publication', async () => {
   await assert.rejects(runGroupRounds({by:'mention',responders:[a]},message,{
     async eligible() {return members}, async generate() {assert.fail('expired')},async status() {assert.fail('expired')}, async publish() {assert.fail('expired')},

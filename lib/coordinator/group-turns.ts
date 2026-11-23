@@ -173,12 +173,16 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
     messageId = root.messageId
     // Listen before the claim: a stop that commits after it is pushed to this
     // session at once. Without LISTEN the generation falls back to checking every second.
-    const stops: Listener | null = await listenOn(client, GROUP_TURN_STOP_CHANNEL).catch(() => null)
     // Losing the session (and its lock) wakes the same check as a pushed stop.
-    const stopPushed = stops ? (wake: () => void) => {
-      const offStop = stops.on(root.messageId, wake), offLost = session.onLost(wake)
-      return () => { offStop(); offLost() }
-    } : undefined
+    const subscribeStops = async () => {
+      const stops: Listener | null = await listenOn(client, GROUP_TURN_STOP_CHANNEL).catch(() => null)
+      if (!stops) return undefined
+      return (wake: () => void) => {
+        const offStop = stops.on(root.messageId, wake), offLost = session.onLost(wake)
+        return () => { offStop(); offLost() }
+      }
+    }
+    const stopPushed = await subscribeStops()
     // Stop may commit after the queue read; it must win over this claim.
     const claimed = await client.query(`UPDATE group_turns SET status='running',"updatedAt"=now() WHERE "messageId"=$1 AND status='queued'`, [messageId])
     if (!claimed.rowCount) return true
@@ -251,7 +255,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
           session.assertHeld()
           return runtime.delegate!({ userId:root.userId, workspaceId:root.workspaceId, conversationId, messageId:messageId!, reporter, text:input.text, delegation },client)
         } : undefined,
-        generate: (agent, input) => untilStopped(stopped, { subscribe: stopPushed, reliable: !!stopPushed }, async signal => {
+        generate: (agent, input) => untilStopped(stopped, { subscribe: stopPushed, reliable: !!stopPushed, resubscribe: subscribeStops }, async signal => {
           session.assertHeld()
           input = { ...input, signal, attachmentContext: { userId: root.userId, conversationId } }
           const replyId = randomUUID()
@@ -382,15 +386,16 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
  * notification, is reliable. It reads on pushes alone unless a read fails;
  * a successful read clears that temporary fallback. Other subscriptions keep
  * STOP_FALLBACK_MS, and no subscription keeps STOP_CHECK_MS. */
-export async function untilStopped<T>(stopped: () => Promise<boolean>, options: { subscribe?: (wake: () => void) => () => void; reliable?: boolean; every?: number }, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+export async function untilStopped<T>(stopped: () => Promise<boolean>, options: { subscribe?: (wake: () => void) => () => void; reliable?: boolean; resubscribe?: () => Promise<((wake: () => void) => () => void) | undefined>; every?: number }, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
-  const reliable = !!options.subscribe && options.reliable === true
+  let reliable = !!options.subscribe && options.reliable === true
   let checking = false, again = false, closed = false
   let timer: ReturnType<typeof setInterval> | undefined
+  let extraUnsub: (() => void) | undefined
   const clearFallback = () => { clearInterval(timer); timer = undefined }
   const startFallback = () => {
     if (!closed && !controller.signal.aborted && timer === undefined)
-      timer = setInterval(check, options.every ?? (options.subscribe ? STOP_FALLBACK_MS : STOP_CHECK_MS))
+      timer = setInterval(check, options.every ?? (reliable || options.subscribe ? STOP_FALLBACK_MS : STOP_CHECK_MS))
   }
   const check = () => {
     if (closed || controller.signal.aborted) return
@@ -398,6 +403,18 @@ export async function untilStopped<T>(stopped: () => Promise<boolean>, options: 
     checking = true
     void (async () => {
       try {
+        // A missing or dropped listener is retried on every read. Once it is
+        // back, the one read right below is the catch-up: the stop flag is
+        // latched state, so a single bounded read covers the outage window.
+        if (!reliable && options.resubscribe) {
+          const sub = await options.resubscribe().catch(() => undefined)
+          if (sub && !closed && !controller.signal.aborted) {
+            reliable = true
+            extraUnsub = sub(check)
+            clearFallback()
+            startFallback()
+          }
+        }
         const yes = await stopped()
         if (closed) return
         if (reliable || yes) clearFallback()
@@ -413,7 +430,7 @@ export async function untilStopped<T>(stopped: () => Promise<boolean>, options: 
   const unsubscribe = options.subscribe?.(check) ?? (() => {})
   if (!reliable) startFallback()
   try { return await work(controller.signal) }
-  finally { closed = true; again = false; clearFallback(); unsubscribe() }
+  finally { closed = true; again = false; clearFallback(); unsubscribe(); extraUnsub?.() }
 }
 
 /** Pure serial round engine, shared by the real adapter and scripted CI. */
