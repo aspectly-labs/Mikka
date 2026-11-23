@@ -32,10 +32,11 @@ test('reference search scopes tasks, conversation roots, and PRs to the active v
   const { searchThreadReferences } = await import('../lib/thread-reference-search')
   const owner = 'mention-' + randomUUID(), other = 'mention-' + randomUUID()
   const chat = randomUUID(), issue = randomUUID(), agent = randomUUID(), run = randomUUID(), url = 'https://github.com/test/mikka/pull/2259'
+  let workspace = '', foreign = ''
   try {
     for (const user of [owner, other]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES ($1,$1,$2,true,now(),now())', [user, user + '@example.invalid'])
-    const workspace = await seedFixtureWorkspace(pool, owner)
-    const foreign = await seedFixtureWorkspace(pool, other)
+    workspace = await seedFixtureWorkspace(pool, owner)
+    foreign = await seedFixtureWorkspace(pool, other)
     await pool.query(`INSERT INTO issues(id,"userId",title,content,status,priority,"workspaceId","ownershipState")
       VALUES ($1,$2,'Checkout data',$3,'doing','normal',$4,'bound')`, [issue, owner, JSON.stringify({ type: 'doc', attrs: { mikka: { pullRequests: [{ url, title: 'Checkout fix', state: 'open' }] } } }), workspace])
     await pool.query(`INSERT INTO agents(id,"userId",name,harness) VALUES ($1,$2,'Coding','codex')`, [agent, owner])
@@ -70,7 +71,17 @@ test('reference search scopes tasks, conversation roots, and PRs to the active v
     await assert.rejects(searchThreadReferences(other, workspace, 'checkout'))
     await pool.query(`UPDATE issues SET content=jsonb_set(content,'{attrs,mikka,deletedAt}',to_jsonb(now())) WHERE id=$1`, [issue])
     assert.deepEqual(await searchThreadReferences(owner, workspace, 'checkout'), [])
+
+    // A newer bot still matches behind hundreds of older ones: the cap never applies before the name filter.
+    const special = randomUUID()
+    await pool.query(`INSERT INTO bots(id,"workspaceId","ownerId",name,"createdAt") SELECT gen_random_uuid(),$1,$2,'Filler '||n, now() - (n||' seconds')::interval FROM generate_series(1,600) n`, [workspace, owner])
+    await pool.query('INSERT INTO bots(id,"workspaceId","ownerId",name) VALUES($1,$2,$3,\'Special helper\')', [special, workspace, owner])
+    assert.deepEqual(await searchThreadReferences(owner, workspace, 'special', 'bot'), [{ kind: 'bot', id: special, title: 'Special helper' }])
+    const greek = randomUUID()
+    await pool.query('INSERT INTO bots(id,"workspaceId","ownerId",name) VALUES($1,$2,$3,\'ΟΣ\')', [greek, workspace, owner])
+    assert.deepEqual(await searchThreadReferences(owner, workspace, 'ος', 'bot'), [{ kind: 'bot', id: greek, title: 'ΟΣ' }])
   } finally {
+    await pool.query('DELETE FROM bots WHERE "workspaceId"=$1', [workspace])
     await pool.query('DELETE FROM conversations WHERE id=$1', [chat])
     await pool.query('DELETE FROM agent_runs WHERE id=$1', [run])
     await pool.query('DELETE FROM issues WHERE id=$1', [issue])

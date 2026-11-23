@@ -3428,6 +3428,36 @@
       "calls": "{count} 次调用",
       "unpricedCalls": "另有 {count} 次调用没有单次价格",
       "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
+    },
+    "actionFailed": "操作失败。",
+    "composerMenu": {
+      "title": "加入线程",
+      "newSideThread": "新建旁支线程",
+      "envVars": "环境变量",
+      "references": "引用",
+      "refTask": "提及任务",
+      "refThread": "提及线程",
+      "refPr": "提及合并请求",
+      "refBot": "提及 Bot"
+    },
+    "commands": {
+      "title": "命令",
+      "fork": "带全部上下文分叉此线程",
+      "forkSummary": "带摘要分叉此线程",
+      "new": "开始旁支线程",
+      "compact": "压缩此线程的上下文",
+      "btw": "留一条不打扰的备注"
+    },
+    "envVars": {
+      "title": "环境变量",
+      "close": "完成",
+      "empty": "此线程还没有环境变量。",
+      "name": "名称",
+      "value": "值",
+      "add": "添加",
+      "remove": "删除",
+      "failed": "环境变量更新失败。",
+      "replaces": "同名变量已存在，添加会覆盖已保存的值。"
     }
   },
   "FactoryFlow": {
@@ -4555,10 +4585,22 @@
         "inProgress": "进行中",
         "untitled": "未命名线程",
         "loadError": "概览读取失败",
-        "kinds": { "approval": "等待审批", "question": "等待回答", "limit": "已达用量上限" },
-        "status": { "queued": "排队中", "running": "运行中" }
+        "kinds": {
+          "approval": "等待审批",
+          "question": "等待回答",
+          "limit": "已达用量上限"
+        },
+        "status": {
+          "queued": "排队中",
+          "running": "运行中"
+        }
       },
-      "preview": { "untitled": "未命名任务", "agent": "{name} 负责", "pullRequest": "Pull request", "unavailable": "预览不可用" },
+      "preview": {
+        "untitled": "未命名任务",
+        "agent": "{name} 负责",
+        "pullRequest": "Pull request",
+        "unavailable": "预览不可用"
+      },
       "prs": "PR",
       "narrow": "恢复右栏宽度",
       "noTasks": "还没有任务",
@@ -10350,7 +10392,8 @@
     "error": "引用加载失败",
     "searching": "正在搜索…",
     "thread": "线程",
-    "sourceUnavailable": "此线程暂时无法引用源码文件或目录。"
+    "sourceUnavailable": "此线程暂时无法引用源码文件或目录。",
+    "bot": "Bot"
   },
   "HostedPlugins": {
     "moreTwo": "{first} 和 {second}",

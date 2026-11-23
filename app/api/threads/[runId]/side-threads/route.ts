@@ -12,7 +12,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
     if (!session?.user) return respond({ error: 'authRequired' }, 401)
     if (request.headers.get('origin') !== new URL(request.url).origin) return respond({ error: 'Invalid origin' }, 403)
     const runId = z.uuid().parse((await params).runId)
-    const { messageId } = z.object({ messageId: z.uuid() }).strict().parse(await request.json())
+    // `messageId` anchors the side thread at that message; omitted, the branch is the whole thread (#2924 ＋ menu).
+    const { messageId } = z.object({ messageId: z.uuid().nullish() }).strict().parse(await request.json())
     const run = await spawnThread(session.user, runId, { relation: 'side', fromMessageId: messageId })
     if (!run) return respond({ error: 'threadNotFound' }, 404)
     return respond({ run }, 201)
