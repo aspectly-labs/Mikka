@@ -28,6 +28,14 @@ export type ThreadToolRow = {
   detail?: string
   command?: string
   exitCode?: number
+  /** The step's structured family (read | search | shell | edit | other): row labels and the
+   * group line count by it — no name regex (#2923). */
+  kind?: string
+  /** Its target in the person's words (the path, the query, the command line) for a kind-aware label. */
+  title?: string
+  /** The run it belongs to and its output handle: the expanded shell row fetches full output on demand. */
+  runId?: string
+  outputRef?: string
 }
 
 /** One part of a Bot's message, top to bottom as it happened. */
