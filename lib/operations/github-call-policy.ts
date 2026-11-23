@@ -1,10 +1,20 @@
 import 'server-only'
+import { z } from 'zod'
+import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { explicitSetting } from '@/lib/app-tools'
 import { appCallAllowed } from './app-permission-keys'
-import { readWriteSettingLayers } from './write-setting-layers'
+import { permissionDecision } from './permission-precedence'
 
 type SettingLayers = { workspace: unknown } | null
+
+const layer = z.record(z.string(), z.enum(['allow', 'ask', 'deny'])).nullable().optional()
+
+/** The workspace's write settings for this Bot. Identity comes from the host, never a tool argument. */
+async function readWorkspacePermissions(userId: string, botId: string | null): Promise<SettingLayers> {
+  if (!botId) return null
+  const { rows } = await db.execute(sql`select w.external_write_permissions as workspace from bots b left join workspace_computer_policies w on w."workspaceId" = b."workspaceId" where b.id=${botId} and b."ownerId"=${userId}`)
+  return (rows[0] as { workspace: unknown } | undefined) ?? null
+}
 
 /** The layers are injectable so a database error and malformed stored settings are testable. */
 export type GitHubCallPolicyDeps = {
@@ -21,14 +31,11 @@ export type GitHubCallPolicy = 'allow' | 'deny' | 'unavailable'
  * layer must never turn an explicit deny into an allow. */
 export async function githubCallDecision(userId: string, botId: string | null, deps: GitHubCallPolicyDeps = {}): Promise<GitHubCallPolicy> {
   try {
-    const layers = await (deps.layers ?? ((owner, bot) => readWriteSettingLayers(db, owner, bot)))(userId, botId)
-    return appCallAllowed(explicitSetting(layers, ['github'])) ? 'allow' : 'deny'
+    const layers = await (deps.layers ?? readWorkspacePermissions)(userId, botId)
+    const workspace = layer.parse(layers?.workspace) ?? {}
+    const decision = permissionDecision(Object.hasOwn(workspace, 'github') ? [workspace['github']] : [])
+    return appCallAllowed(decision) ? 'allow' : 'deny'
   } catch {
     return 'unavailable'
   }
-}
-
-/** Boolean form for callers that treat an unreadable policy as not allowed. */
-export async function githubCallAllowed(userId: string, botId: string | null, deps: GitHubCallPolicyDeps = {}): Promise<boolean> {
-  return await githubCallDecision(userId, botId, deps) === 'allow'
 }

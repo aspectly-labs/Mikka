@@ -24,13 +24,42 @@ export const environmentConfiguration = z.object({
   repositoryKeys: z.array(projectRepositoryKey).max(100).default([]),
 }).strict().refine(value => Object.keys(value.variables).length <= 100)
 export type EnvironmentConfiguration = z.infer<typeof environmentConfiguration>
+export const ENVIRONMENT_INSTRUCTIONS_MAX = 2000
+export const environmentInstructionsSchema = z.string()
+  .transform(text => text.trim())
+  .refine(text => [...text].length <= ENVIRONMENT_INSTRUCTIONS_MAX, { message: 'personalInstructionsTooLong' })
+
 export const saveEnvironmentInput = z.object({
   workspaceId: z.uuid(), id: z.uuid().optional(), revision: z.number().int().positive().optional(),
   name: z.string().trim().min(1).max(120), configuration: environmentConfiguration,
+  instructions: environmentInstructionsSchema.optional(),
   archived: z.boolean().default(false),
   /** The machine size runs in this Environment get by default; null is Mikka's default, absent keeps the saved one. */
   defaultMachineSize: z.enum(Object.keys(MACHINE_SIZES) as [MachineSize, ...MachineSize[]]).nullable().optional(),
 }).strict()
+
+export const environmentInstructionsScope = z.object({
+  workspaceId: z.uuid(),
+  environmentId: z.uuid(),
+}).strict()
+
+export const saveEnvironmentInstructionsInput = environmentInstructionsScope.extend({
+  instructions: environmentInstructionsSchema,
+  revision: z.number().int().positive().optional(),
+}).strict()
+
+export interface EnvironmentInstructionsView {
+  workspaceId: string
+  environmentId: string
+  name: string
+  instructions: string
+  charCount: number
+  maxChars: number
+  revision: number
+  archived: boolean
+  canEdit: boolean
+  source: 'environment' | 'default'
+}
 export const repositoryBindingInput = z.object({
   repositoryKey: projectRepositoryKey, baseBranch: projectBranch.nullable().default(null),
   environmentId: z.uuid().nullable().default(null), isPrimary: z.boolean().default(false),

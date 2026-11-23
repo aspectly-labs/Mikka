@@ -20,7 +20,7 @@ const mutate = async () => { reads++; return pages }
 const sent: { group: string; body: string }[] = []
 let post: (id: string, body: string) => Promise<GroupMessage>
 const notices = new Map<string, { message: string; action?: { label: string; onClick: (event: Event) => void } }>()
-mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: () => translate, useMessages: () => ({ AgentCopy: {} }), useFormatter: () => ({}) } })
+mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: () => translate, useMessages: () => ({ AgentCopy: {} }), useFormatter: () => ({ dateTime: (value: Date) => value.toISOString() }) } })
 mock.module('swr', { defaultExport: () => ({ data: undefined }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
 mock.module('swr/infinite', { defaultExport: () => ({ data: pages, error: readError, size: 1, setSize: async () => {}, mutate, isValidating: false }), namedExports: { unstable_serialize: (getKey: (index: number, previous: null) => unknown) => '$inf$' + JSON.stringify(getKey(0, null)) } })
 mock.module('@/lib/group-messages', { namedExports: { ...groupMessages, postGroupMessage: async (id: string, body: string) => { sent.push({ group: id, body }); return post(id, body) } } })
@@ -40,7 +40,7 @@ mock.module('@/components/workspace/agent-markdown', { namedExports: { AgentMark
 mock.module('@/components/workspace/message-reactions', { namedExports: { MessageReactions: empty, useMessageReactions: () => ({}) } })
 type ComposerProps = { value: string; onChange: (value: string) => void; onSubmit: () => void; disabled: boolean; label: string }
 let composer: ComposerProps
-mock.module('@/components/coordinator/chat-composer', { namedExports: { ChatComposer: (props: ComposerProps) => {
+mock.module('@/components/coordinator/chat-composer', { namedExports: { ChatComposerAttachment: () => null, ChatComposer: (props: ComposerProps) => {
   composer = props
   return <div><Textarea aria-label={props.label} value={props.value} disabled={props.disabled} onChange={event => props.onChange(event.target.value)} /><Button disabled={props.disabled} onClick={props.onSubmit}>send</Button></div>
 } } })

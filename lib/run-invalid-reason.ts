@@ -10,8 +10,11 @@ export const RUN_INVALID_REASONS = {
   repositoryMismatch: 'The repository does not match the device checkout.',
   botUnavailable: 'The bot that dispatched this run is unavailable.',
   sourceRunMismatch: 'An earlier run for this request does not match this dispatch.',
+  parentRunMismatch: 'The parent run for this sub-agent is unavailable to this person.',
   taskIdentifierRequired: 'The task has no identifier for its branch.',
   branchInUse: 'The task branch is already used by another task in this repository.',
+  delegationUnavailable: 'The parent run cannot delegate this task.',
+  delegationLimit: 'This run has reached its delegated sub-agent limit.',
 } as const
 
 export type RunInvalidReason = keyof typeof RUN_INVALID_REASONS

@@ -134,6 +134,14 @@ describe("run homes", () => {
     const home = prepareCodexHome(join(tempDir(), "codex-home"), createLogger())
     expect(readdirSync(home.home)).toEqual(["config.toml"])
   })
+
+  it("a Codex home config never asks for tool approval (#3076)", () => {
+    const home = prepareCodexHome(join(tempDir(), "codex-home"), createLogger())
+    const config = readFileSync(join(home.home, "config.toml"), "utf8")
+    expect(config).toContain('approval_policy = "never"')
+    expect(config).toContain('sandbox_mode = "danger-full-access"')
+    expect(config).not.toMatch(/approval_policy\s*=\s*"(?!never")[^"]+"/)
+  })
 })
 
 describe("credential cleanup", () => {

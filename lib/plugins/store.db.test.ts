@@ -49,7 +49,7 @@ test('real Postgres: personal ownership, encrypted auth, revocation, installatio
     const skill: SkillContent = { name: 'Example', source: 'owner/skills', slug: 'example', sourceKind: 'skills.sh', sourceRevision: 'a'.repeat(40), sourcePath: 'skills/example/SKILL.md', body: '# Fixed skill', sha256: 'b'.repeat(64) }
     const installed = await store.installSkill('owner', skill)
     assert.equal((await store.installSkill('owner', { ...skill, body: '# Changed upstream' })).id, installed.id)
-    assert.deepEqual(await store.getSkill('owner', installed.id), installed)
+    assert.deepEqual(await store.getSkill('owner', installed.id), { ...installed, body: skill.body })
     await assert.rejects(store.getSkill('peer', installed.id), /skillNotFound/)
     assert.equal((await store.listSkills('owner')).length, 1); assert.deepEqual(await store.listSkills('peer'), [])
     await assert.rejects(store.updateSkill('peer', installed.id, false), /skillNotFound/)

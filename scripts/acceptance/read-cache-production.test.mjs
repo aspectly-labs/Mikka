@@ -46,7 +46,7 @@ function fixture(options = {}) {
   const list = (name, read, args) => {
     const ids = name === 'syncIssueList' ? [TASK, id(4)] : name === 'syncThreadList' ? [id(5), id(6)] : [id(7), id(8)]
     const changed = options.changed && read >= 2, current = changed ? V2 : V1
-    const offset = name === 'pollIssueVersionSummaries' ? 1 : 0
+    const offset = name === 'pollIssueActivityPage' ? 1 : 0
     if (read === 1 || args[offset] == null && args[offset + 1] == null) return {
       version: current,
       items: ids.map(value => ({ ...row(value), ...(options.rejectedNonChat ? { credential: PRIVATE } : {}) })),
@@ -94,7 +94,17 @@ function fixture(options = {}) {
       if (options.accessLost && name === 'pollIssue') return flight({ error: 'issueNotFound' })
       if (name === 'syncIssueList' || name === 'syncThreadList') return flight({ snapshot: options.noTask && name === 'syncIssueList'
         ? { version: V1, items: [], positions: [], live: live() } : list(name, read, args) })
-      if (name === 'pollIssueVersionSummaries') return flight({ viewerId: OWNER, snapshot: list(name, read, args) })
+      if (name === 'pollIssueActivityPage') {
+        const current = options.changed && read >= 2 ? V2 : V1
+        if (args[1] === current) return flight({ viewerId: OWNER, snapshot: { version: current, unchanged: true } })
+        return flight({ viewerId: OWNER, snapshot: { version: current, hasMore: false, predecessor: null,
+          items: [id(7), id(8)].map((value, index) => ({ id: value, revision: index + 1,
+            ...(options.rejectedNonChat ? { credential: PRIVATE } : {}) })), live: live() } })
+      }
+      if (name === 'loadEarlierIssueActivity') {
+        assert.deepEqual(args, [TASK, 2, id(8)])
+        return flight({ viewerId: OWNER, page: { items: [], hasMore: false, predecessor: null, cursor: null } })
+      }
       if (name === 'pollIssue') {
         const current = options.changed && read >= 2 ? V2 : V1
         return flight({ viewerId: options.foreignViewer ? 'foreign' : OWNER, version: current,
@@ -185,6 +195,7 @@ test('automatic proof checks the open issue and the live public build before cre
   assert.deepEqual(f.calls, [`${repositoryApi}/issues/1372`, `${ORIGIN}/mikka/api/version`])
   assert.deepEqual(productionOutcome(proof, true), { readable: true, exitCode: 0 })
   const accepted = await fixture().run({ env: automaticEnv(), event: automaticEvent(), attestation: proof })
+  if (accepted.status !== 'pass') console.log('REPORT', JSON.stringify(accepted))
   assert.equal(accepted.status, 'pass'); assert.equal(accepted.sessionClosed, true)
   assert.equal(accepted.trigger, 'workflow_run')
 })
@@ -263,11 +274,11 @@ test('stable production cursors cover four HTTP scenarios with only a normal own
   assert.equal(report.normalSessionObserved, true)
   assert.equal(report.sessionClosed, true)
   assert.equal(report.browserCacheVerified, false)
-  assert.equal(report.reads.length, 27)
+  assert.equal(report.reads.length, 28)
   assert.equal(report.businessMutationRequests, 0)
   assert.equal(report.modelCalls, 0)
   assert.equal(report.fixturesCreated, 0)
-  for (const scenario of SCENARIOS) assert.equal(report.reads.filter(read => read.scenario === scenario).length, 6)
+  for (const scenario of SCENARIOS) assert.equal(report.reads.filter(read => read.scenario === scenario).length, scenario === 'cold' ? 7 : 6)
   for (const read of report.reads) {
     assert.ok(read.httpBytes > 0 && read.resultBytes > 0)
     assert.equal(read.httpStatus, 200)
@@ -282,7 +293,7 @@ test('stable production cursors cover four HTTP scenarios with only a normal own
   assert.equal(chats[1].args[1], V1)
   for (const read of chats.slice(2, 4)) { assert.equal(read.args[1], null); assert.equal(read.args[2].cursor, 2) }
   assert.equal(f.calls.filter(call => call.path === '/mikka/api/auth/sign-out').length, 1)
-  assert.equal(f.calls.filter(call => call.method === 'POST').length, 25)
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 26)
   const evidence = JSON.stringify(report)
   for (const secret of [EMAIL, PASSWORD, COOKIE, PRIVATE, OWNER, WORKSPACE, BOT, TASK, refs.pollIssue]) assert.equal(evidence.includes(secret), false)
   assert.deepEqual(publicFailure(new Error(PASSWORD + COOKIE)), { status: 'fail', code: 'acceptance_failed' })
@@ -302,7 +313,7 @@ test('page discovery cookies accompany later chunks, actions, Settings and sign-
     assert.equal(requestCookies(call.cookie).get('NEXT_LOCALE'), 'zh-CN', call.path)
     assert.equal(requestCookies(call.cookie).get('better-auth.session_token'), COOKIE, call.path)
   }
-  assert.equal(report.reads.length, 27)
+  assert.equal(report.reads.length, 28)
   assert.equal(JSON.stringify(report).includes('NEXT_LOCALE'), false)
 })
 
@@ -486,9 +497,9 @@ test('rejected task, thread and activity records reload without their former ver
   const f = fixture({ rejectedNonChat: true }), report = await f.run()
   assert.equal(report.status, 'pass')
   assert.equal(report.browserCacheVerified, false)
-  for (const name of ['syncIssueList', 'syncThreadList', 'pollIssue', 'pollIssueVersionSummaries']) {
+  for (const name of ['syncIssueList', 'syncThreadList', 'pollIssue', 'pollIssueActivityPage']) {
     const reads = f.actions.filter(action => action.name === name)
-    const offset = name === 'pollIssue' || name === 'pollIssueVersionSummaries' ? 1 : 0
+    const offset = name === 'pollIssue' || name === 'pollIssueActivityPage' ? 1 : 0
     assert.equal(reads[1].args[offset], V1, 'warm memory remains usable before restart')
     assert.ok(reads[2].args[offset] == null, `${name} cannot send a rejected version`)
     assert.ok(reads[2].args[offset + 1] == null, `${name} cannot send rejected row proofs`)

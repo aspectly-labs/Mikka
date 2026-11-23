@@ -91,8 +91,6 @@ import { QuotaPoller, type QuotaSource } from "./quota/poller"
 import { DAEMON_VERSION, daemonPaths, type DaemonPaths } from "./paths"
 import { daemonTracer, runIdHash } from "./tracing"
 import { decide, pushDecision, runPolicy } from "./permissions"
-import { judgeComputerAction, noServerDecision } from "./decision-judgments"
-import type { ServerDecide } from "./server-decision"
 import { RpcServer, type RpcHandlers } from "./rpc/server"
 import { RunJournal } from "./runs/journal"
 import { baseReport } from "./runs/publication"
@@ -114,7 +112,6 @@ import { createHostedBotRunner } from "./subscription-hosted-runner"
 import { ComputerBroker } from "./computer/broker.mjs"
 import { detectComputerDriver, executeDriver, type ComputerDriver } from "./computer/driver.mjs"
 import { createHostedComputerExecutor, type CredentialExecutorAuthority } from "./computer/credential-executor"
-import { followWebComputerReviews } from "./computer/web-review"
 import { DeviceWorkSignal } from "./device-work-signal"
 import { localComputerMcp } from "./computer/local-grant.mjs"
 
@@ -288,6 +285,7 @@ export class Daemon {
   private refusedRuns = new Set<string>()
   /** Runs a commands read reported queued: being claimed, or failed until the next pass retries them. */
   private queuedClaims = new Map<string, "claiming" | "failed">()
+  private deferredQueueClaims = new Set<string>()
   private quota: QuotaPoller | null = null
   /** Aborts the daemon's own requests (claims, reads) when it stops. */
   private lifetime = new AbortController()
@@ -317,8 +315,6 @@ export class Daemon {
   /** Resolved when a credential arrives (`device.setCredential`). */
   private credentialArrived = new Set<() => void>()
   private deviceType: "laptop" | "server" | undefined
-  private reviewAbort: AbortController | null = null
-  private reviewLoop: Promise<void> = Promise.resolve()
   private cloudComputerBroker: ComputerBroker | null = null
   private localComputerDriver: ComputerDriver | null = null
   private localComputerBroker: ComputerBroker | null = null
@@ -389,12 +385,11 @@ export class Daemon {
     this.options.link.onUpgradeRequired?.(latest => this.enterUpdateRequired(latest))
     if (this.stopped) throw new Error("daemon stopped during startup")
     if (!this.options.hostedSubscriptions && this.sandbox) this.localComputerDriver = await detectComputerDriver()
-    if (this.localComputerDriver && this.options.link.syncComputerReviews) {
+    if (this.localComputerDriver) {
       this.localComputerBroker = new ComputerBroker({
         driver: this.localComputerDriver,
         socketPath: join(paths.dataDir, 'local-computer.sock'),
         transport: 'tcp',
-        needsPerson: this.computerNeedsPerson(),
         permitted: runId => {
           const assignment = this.journal.get(runId)?.assignment
           return Boolean(!this.stopped && this.registered && assignment?.localComputer && !assignment.computer &&
@@ -407,7 +402,7 @@ export class Daemon {
           const recheck = async () => {
             const current = this.journal.get(runId)?.assignment.localComputer
             context.assertLive()
-            if (!this.supervisor.computerRunAllowed(runId) || !current || current.botId !== initial.botId || current.ownerId !== initial.ownerId || current.workspaceId !== initial.workspaceId || current.policyVersion !== initial.policyVersion || current.permission !== initial.permission)
+            if (!this.supervisor.computerRunAllowed(runId) || !current || current.botId !== initial.botId || current.ownerId !== initial.ownerId || current.workspaceId !== initial.workspaceId || current.permission !== initial.permission)
               throw new Error('Local computer authority changed')
           }
           try {
@@ -433,10 +428,9 @@ export class Daemon {
       }
       const executeOrdinary = async (current: typeof driver, call: import('./computer/driver.mjs').ComputerCall, display: string | undefined, runId: string, assertLive: () => void) => {
         const computer = liveComputer(runId, display)
-        return executeDriver(current, call, display, { botId: computer.botId, ownerId: computer.ownerId, policyVersion: computer.policyVersion }, assertLive)
+        return executeDriver(current, call, display, { botId: computer.botId, ownerId: computer.ownerId }, assertLive)
       }
       this.cloudComputerBroker = new ComputerBroker({ driver, socketPath: join(paths.dataDir, 'computer.sock'),
-        needsPerson: this.computerNeedsPerson(),
         permitted: runId => {
           const entry = this.journal.get(runId)
           return Boolean(!this.stopped && this.registered && cloudComputerGrantMatches(entry?.assignment, runId, this.device.deviceId) && this.supervisor?.computerRunAllowed(runId))
@@ -451,7 +445,7 @@ export class Daemon {
           } catch (error) {
             // A refusal carries the server's own fixed wording (a recording already going, the person holds the desktop).
             const detail = error instanceof DaemonError && typeof (error.data as { error?: unknown } | undefined)?.error === 'string' ? (error.data as { error: string }).error : undefined
-            throw Object.assign(new Error('Capture failed'), detail ? { safeMessage: detail } : {})
+            throw Object.assign(new Error('Capture failed'), detail ? { safeMessage: detail, cause: error } : { cause: error })
           }
         },
       })
@@ -620,6 +614,7 @@ export class Daemon {
             issueId: assignment.issueId,
             summary: report.summary,
             signal,
+            gitIdentity: assignment.gitIdentity,
             pushBranch: assignment.pushBranch,
             baseBranch: assignment.remoteUrl ? await this.repositories.baseRef(assignment.remoteUrl, assignment.baseBranch) : assignment.baseBranch,
             push: (() => {
@@ -1015,6 +1010,7 @@ export class Daemon {
   /** One read after a push, or right after the socket opens. Wait is zero: the signal already arrived. */
   private async pullSignaledWork(deviceId: string, signal: AbortSignal) {
     const failedClaims = [...this.queuedClaims].flatMap(([id, state]) => state === "failed" ? [id] : [])
+    const pendingAtRead = this.pendingQueueClaims()
     const skipRuns = [...failedClaims, ...this.refusedRuns, ...this.stopping, ...this.ended].slice(0, COMMANDS_MAX_SKIP)
     let queued: string[] = []
     const commands = await this.options.link.fetchCommands(deviceId, 0, {
@@ -1032,7 +1028,7 @@ export class Daemon {
     })
     if (this.stopped || signal.aborted) return
     await this.applyCommands(commands)
-    if (queued.length > 0) this.claimQueued(queued)
+    if (queued.length > 0) this.claimQueued(this.unreservedOffers(queued, pendingAtRead))
     // Confirm delivery, retaining IDs on failure so the next read retries without redelivery.
     while ((this.unacked.size > 0 || this.refusedSteers.size > 0) && !signal.aborted) {
       const ids = [...this.unacked].slice(0, 500)
@@ -1042,6 +1038,29 @@ export class Daemon {
       for (const id of ids) this.unacked.delete(id)
       for (const id of refused) this.refusedSteers.delete(id)
     }
+  }
+
+  private pendingQueueClaims() {
+    return [...this.queuedClaims].flatMap(([runId, state]) => state === "claiming" ? [runId] : [])
+  }
+
+  private unreservedOffers(offered: string[], pendingAtRead: string[]) {
+    const pending = new Set([...pendingAtRead, ...this.pendingQueueClaims()])
+    const candidates = offered.filter(runId => !pending.has(runId))
+    const available = Math.max(0, offered.length - pending.size)
+    if (available < candidates.length) {
+      let settled = false
+      for (const runId of pending) {
+        if (this.queuedClaims.get(runId) === "claiming") this.deferredQueueClaims.add(runId)
+        else settled = true
+      }
+      if (settled) void this.syncWithServer()
+    }
+    return candidates.slice(0, available)
+  }
+
+  private recheckDeferredOffers(runId: string) {
+    if (this.deferredQueueClaims.delete(runId)) void this.syncWithServer()
   }
 
   /** Starts claiming the reported queued runs; true when any claim began. */
@@ -1056,13 +1075,15 @@ export class Daemon {
         () => {
           if (this.initialRepositorySync?.runId === runId) this.initialRepositorySync.received?.()
           this.queuedClaims.delete(runId)
+          this.recheckDeferredOffers(runId)
         },
         (error: unknown) => {
           if (this.initialRepositorySync?.runId === runId) this.initialRepositorySync.received?.()
           this.queuedClaims.set(runId, "failed")
           // The server has no open session for this device: redial, and the reopened socket claims again.
-          if (error instanceof DeviceSessionRequiredError) { this.session?.redial(); return }
+          if (error instanceof DeviceSessionRequiredError) { this.deferredQueueClaims.delete(runId); this.session?.redial(); return }
           this.log.warn({ run_id: runId, err: error }, "could not start run")
+          this.recheckDeferredOffers(runId)
         }
       )
     }
@@ -1371,18 +1392,6 @@ export class Daemon {
     ]
   }
 
-  /** The server's Decisions API for this daemon's runs; no answer until the link provides one. */
-  private serverDecide(): ServerDecide {
-    const link = this.options.link
-    return link.decide ? link.decide.bind(link) : noServerDecision
-  }
-
-  /** Under computer `ask`: whether one action needs the person, judged with the run's task. */
-  private computerNeedsPerson() {
-    return (runId: string, evidence: { call: unknown; recent: string[] }, signal?: AbortSignal) =>
-      judgeComputerAction(this.serverDecide(), runId, { ...evidence, task: this.journal.get(runId)?.assignment.prompt }, signal)
-  }
-
   /** What every real adapter of this daemon is built with, subscription runs included. */
   private adapterOptions() {
     const sandbox = this.agentSandbox()
@@ -1475,19 +1484,11 @@ export class Daemon {
     }
     // Only Mikka's own daemon operations; the server sends the settings (docs/operations/tracing.md, "Daemon").
     if (!this.stopped) daemonTracer.configure(tracing, { version: DAEMON_VERSION })
-    const computerBroker = this.localComputerBroker ?? this.cloudComputerBroker ?? this.options.computerBroker
-    if (computerBroker && !this.options.link.syncComputerReviews) throw new Error("Computer review transport unavailable")
     this.registered = true
     if (this.options.hostedSubscriptions && !this.stopped) this.options.taskRegistered?.()
     if (this.options.hostedSubscriptions && this.options.e2bContainerRuntime && workspaceId && !this.stopped) {
       try { writeCloudRegistration(this.paths.dataDir, deviceId, workspaceId, credential) }
       catch { this.log.warn({ event: 'cloud_registration_notice_failed' }, 'Cloud registration notification unavailable') }
-    }
-    if (computerBroker && !this.stopped) {
-      this.reviewAbort?.abort()
-      const abort = new AbortController()
-      this.reviewAbort = abort
-      this.reviewLoop = followWebComputerReviews(computerBroker, deviceId, this.options.link, abort.signal, this.workSignal, () => this.session?.redial())
     }
   }
 
@@ -1560,13 +1561,24 @@ export class Daemon {
         await this.supervisor.resumeAll(true)
         // Claims that failed after a commands read reported them are retried here.
         for (const [runId, state] of this.queuedClaims) if (state === "failed") this.queuedClaims.delete(runId)
-        for (const runId of await link.pendingRuns(deviceId)) {
-          if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) continue
-          await this.claimAndStart(runId).catch((error: unknown) => {
-            // No open session on the server: this pass ends and the socket is redialed.
-            if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
-            this.log.warn({ run_id: runId, err: error }, "could not start run")
-          })
+        const skip = new Set([...this.queuedClaims.keys(), ...this.refusedRuns].slice(0, COMMANDS_MAX_SKIP))
+        while (true) {
+          const pendingAtRead = this.pendingQueueClaims()
+          const offered = this.unreservedOffers((await link.pendingRuns(deviceId, [...skip])).filter(runId => !skip.has(runId)), pendingAtRead)
+          if (!offered.length) break
+          let retry = false
+          for (const runId of offered) {
+            skip.add(runId)
+            if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) { retry = true; continue }
+            try { await this.claimAndStart(runId) }
+            catch (error) {
+              // No open session on the server: this pass ends and the socket is redialed.
+              if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
+              this.log.warn({ run_id: runId, err: error }, "could not start run")
+              retry = true
+            }
+          }
+          if (!retry || skip.size >= COMMANDS_MAX_SKIP) break
         }
       }
       await this.pruneWorktrees()
@@ -1623,8 +1635,6 @@ export class Daemon {
     this.server = "unregistered"
     this.revokeLocalComputerGrants()
     this.registered = false
-    this.reviewAbort?.abort()
-    this.reviewAbort = null
     this.saveDevice({ credential: undefined })
     for (const runId of this.supervisor?.activeRunIds() ?? []) {
       void this.supervisor.cancel(runId).catch(() => this.log.warn({ run_id: runId }, 'could not stop revoked session'))
@@ -1884,8 +1894,6 @@ export class Daemon {
       },
       "daemon.update": async () => ({ state: await this.requestUpdate() }),
       "device.setCredential": (raw) => {
-        this.reviewAbort?.abort()
-        this.reviewAbort = null
         const { credential, workspaceId, traceContext } =
           daemonRpc["device.setCredential"].params.parse(raw)
         // The device id is kept, in every workspace (ADR ORV-284):
@@ -1904,8 +1912,6 @@ export class Daemon {
         return { ok: true as const }
       },
       "device.clearCredential": () => {
-        this.reviewAbort?.abort()
-        this.reviewAbort = null
         // Signed out in the app: stop talking to the server as that person.
         // The device id stays, so signing in again keeps the device.
         this.saveDevice({ credential: undefined })
@@ -2043,8 +2049,6 @@ export class Daemon {
     this.lifetime.abort()
     for (const arrived of [...this.credentialArrived]) arrived()
     await this.session?.stop()
-    this.reviewAbort?.abort()
-    await this.reviewLoop.catch(() => undefined)
     await this.syncing
     await this.checkpointScan
     // A commands read starts claims outside the pass. Abort their HTTP

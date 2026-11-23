@@ -1,6 +1,7 @@
 import 'server-only'
 import { createHash, randomBytes } from 'node:crypto'
 import type { Pool } from 'pg'
+import { B64URL_43, loopbackReturn } from '../loopback'
 
 /**
  * Plugins → GitHub from the desktop app (2026-11-03): the authorization runs in
@@ -17,18 +18,9 @@ type Query = Pick<Pool, 'query'>
 const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 export const isIntentToken = (value: unknown): value is string => typeof value === 'string' && TOKEN.test(value)
 
-const B64URL_43 = /^[A-Za-z0-9_-]{43}$/
 const s256 = (value: string) => createHash('sha256').update(value).digest('base64url')
 
-/** The desktop app's one-shot return listener (RFC 8252 §7.3): http://127.0.0.1:<port>/return, nothing else. */
-export function loopbackReturn(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 64) return null
-  try {
-    const url = new URL(value)
-    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/return') return null
-    return `${url.origin}${url.pathname}`
-  } catch { return null }
-}
+export { loopbackReturn }
 
 /**
  * A desktop app that can take the return on its loopback: where to return, the

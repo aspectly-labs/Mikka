@@ -145,7 +145,8 @@ release results. Record each result against its own source commit.
 ### JavaScript updates
 
 `.github/workflows/mobile-update.yml` publishes iOS JavaScript updates:
-main goes to the `production` channel, a pull request to branch `pr-<n>`.
+main goes to the `production` channel. Mark an eligible pull request Ready or
+apply the `mobile-preview` label to publish to branch `pr-<n>`.
 Check that the publish step actually ran. The PR preview step reports a notice
 and succeeds without an update when its repository `EXPO_TOKEN` is absent.
 Production publication depends on the preceding Infisical credential delivery

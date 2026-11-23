@@ -6,22 +6,29 @@ import { Window } from 'happy-dom'
 import { Textarea } from '@/components/ui/textarea'
 import type { ChatComposerProps } from '@/components/slots/chat-composer-contract'
 import * as live from '@/hooks/use-live-key'
-import type { GroupMember, GroupMessage, GroupMessagePage } from '@/lib/group-messages'
+import type { GroupExchange, GroupMember, GroupMessage, GroupMessagePage } from '@/lib/group-messages'
 
 let pages: GroupMessagePage[] = []
 let hasMemberPage = true
 let groupMembers: GroupMember[] = []
 let membersError: Error | undefined
+const exchangeReads: string[] = []
 mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en',
   useTranslations: () => (key: string) => key,
   useMessages: () => ({ AgentCopy: {} }),
-  useFormatter: () => ({}),
+  useFormatter: () => ({ dateTime: (value: Date) => value.toISOString() }),
 } })
 const infinite: { config?: Record<string, unknown> } = {}
 const liveKeys: unknown[][] = []
 const refreshed: unknown[] = []
 let headerTitleChanged: (() => void) | undefined
-mock.module('swr', { defaultExport: () => ({ data: undefined }), namedExports: { useSWRConfig: () => ({ mutate: async (key: unknown) => { refreshed.push(key) } }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
+mock.module('swr', { defaultExport: (key: unknown) => {
+  if (Array.isArray(key) && key[0] === 'group-exchange') {
+    exchangeReads.push(key[1])
+    return { data: { messages: [{ id: 'exchange-message', position: '1', body: 'Linked exchange transcript', author: { id: 'agent', memberType: 'agent', name: 'Agent' } }] } }
+  }
+  return { data: undefined }
+}, namedExports: { useSWRConfig: () => ({ mutate: async (key: unknown) => { refreshed.push(key) } }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
 mock.module('swr/infinite', {
   defaultExport: (_key: unknown, _fetcher: unknown, config: Record<string, unknown>) => { infinite.config = config; return { data: pages, size: 1, setSize: async () => {}, mutate: async () => {}, isValidating: false } },
   namedExports: { unstable_serialize: (getKey: (index: number, previous: null) => unknown) => '$inf$' + JSON.stringify(getKey(0, null)) },
@@ -39,7 +46,7 @@ mock.module(new URL('../../lib/hooks/view-state.tsx', import.meta.url).href, { n
 mock.module(new URL('../../app/actions/task-runs.ts', import.meta.url).href, { namedExports: { findThreadReferences: async () => [{ kind: 'task', id: issueId, title: 'Authorized task' }] } })
 mock.module(new URL('./thread-header.tsx', import.meta.url).href, { namedExports: { ThreadHeader: ({ onTitleChanged }: { onTitleChanged?: () => void }) => { headerTitleChanged = onTitleChanged; return null } } })
 mock.module(new URL('../coordinator/bot-model-picker.tsx', import.meta.url).href, { namedExports: { BotModelPicker: ({ botId, running }: { botId: string; running: boolean }) => <span aria-label="Fixture Bot model">{botId} {running ? 'next message' : 'current'}</span> } })
-mock.module(new URL('../coordinator/chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposer: ({ ref, value, onChange, model }: ChatComposerProps) => <>{model}<Textarea ref={ref} value={value} onChange={event => onChange(event.currentTarget.value)} /></> } })
+mock.module(new URL('../coordinator/chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null, ChatComposer: ({ ref, value, onChange, leftControls }: ChatComposerProps) => <>{leftControls}<Textarea ref={ref} value={value} onChange={event => onChange(event.currentTarget.value)} /></> } })
 mock.module(new URL('../nav/conversation-pill.tsx', import.meta.url).href, { namedExports: { ConversationPill: () => null } })
 mock.module(new URL('../nav/group-avatar.tsx', import.meta.url).href, { namedExports: { GroupAvatar: () => null, groupMembersKey: (id: string) => ['group-members', id], memberAvatar: (member: { id: string }) => ({ id: member.id }), useGroupMembers: () => ({ data: hasMemberPage ? groupMembers : undefined, error: membersError }) } })
 mock.module(new URL('../nav/letter-avatar.tsx', import.meta.url).href, { namedExports: { LetterAvatar: () => null } })
@@ -65,7 +72,7 @@ before(async () => {
   Object.defineProperty(globalThis, 'window', { configurable: true, value: browser })
   Object.defineProperty(globalThis, 'document', { configurable: true, value: browser.document })
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: browser.navigator })
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element, Node: browser.Node, IntersectionObserver: browser.IntersectionObserver, requestAnimationFrame: browser.requestAnimationFrame.bind(browser) })
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true, HTMLElement: browser.HTMLElement, Element: browser.Element, Node: browser.Node, IntersectionObserver: browser.IntersectionObserver, requestAnimationFrame: browser.requestAnimationFrame.bind(browser), cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser) })
   ;({ createRoot } = await import('react-dom/client'))
   ;({ GroupChatView } = await import('./group-chat-view'))
 })
@@ -112,6 +119,49 @@ test('group replies use the existing Markdown HTML and URL protections', async (
   assert.equal(reply.querySelector('script'), null)
   assert.equal(reply.querySelector('a[href^="javascript:"]'), null)
   assert.deepEqual([...reply.querySelectorAll('a[href]')].filter(link => link.getAttribute('href')).map(link => link.getAttribute('href')), [taskHref, threadHref, threadHref])
+})
+
+test('anchored exchanges follow their author run once and open the linked transcript', async () => {
+  const exchange: GroupExchange = { type: 'agent_exchange', linkId: 'linked-exchange', anchorPosition: '1', count: '2', participants: [{ id: 'agent', name: 'Agent', harness: 'codex', avatarUrl: null }] }
+  pages = [
+    { messages: [message('bot', 3, 'Later reply')], timeline: [exchange], nextBefore: '3' },
+    { messages: [message('user', 1, 'Anchor message'), message('user', 2, 'Same author run')], timeline: [exchange], nextBefore: null },
+  ]
+  exchangeReads.length = 0
+  await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+  const list = container.querySelector('ol[aria-label="messages"]')!
+  const rows = [...list.children]
+  assert.equal(rows.length, 3, 'the exchange is a separate row after its grouped anchor messages')
+  assert.match(rows[0].textContent ?? '', /Anchor message.*Same author run/)
+  assert.match(rows[2].textContent ?? '', /Later reply/)
+  const marker = rows[1].querySelector('button')!
+  assert.ok(marker, 'the exchange marker is available to group members')
+  assert.equal(list.querySelector('li li'), null, 'the marker does not nest list items')
+  assert.deepEqual(exchangeReads, [], 'closed exchange transcripts are not read')
+  await act(async () => marker.click())
+  assert.ok(exchangeReads.length > 0)
+  assert.ok(exchangeReads.every(linkId => linkId === exchange.linkId))
+  assert.match(document.body.textContent ?? '', /Linked exchange transcript/)
+  membersError = Object.assign(new Error('membership removed'), { status: 403 })
+  try {
+    await act(async () => root.render(<GroupChatView group={{ id: 'group', title: 'Fixture group', workspaceId: 'workspace' }} userId="owner" people={new Map()} />))
+    assert.equal(container.querySelector('ol[aria-label="messages"]'), null, 'refused membership hides the anchored exchange along with its messages')
+    assert.doesNotMatch(document.body.textContent ?? '', /Linked exchange transcript/)
+  } finally { membersError = undefined }
+})
+
+test('another person\'s grouped messages keep plain text and one author line', async () => {
+  await render([1, 2].map(position => ({ ...message('user', position, handoff), authorId: 'peer' })))
+  const rows = [...container.querySelectorAll('ol[aria-label="messages"] > li')]
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].textContent?.match(/member/g)?.length, 1)
+  const words = [...rows[0].querySelectorAll('[data-slot="user-message-text"]')]
+  assert.equal(words.length, 2)
+  for (const text of words) {
+    assert.equal(text.textContent, handoff)
+    assert.equal(text.querySelector('a'), null)
+  }
+  assert.equal(rows[0].querySelectorAll('[data-slot="bubble"][data-align="start"]').length, 2)
 })
 
 test('the chat reads its newest page and members on the group key, never on a timer (#1212)', async () => {

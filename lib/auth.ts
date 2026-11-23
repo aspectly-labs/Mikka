@@ -1,8 +1,9 @@
-import { betterAuth } from 'better-auth'
+import { betterAuth, type BetterAuthPlugin } from 'better-auth'
 import { createAuthMiddleware } from 'better-auth/api'
-import { bearer, deviceAuthorization, multiSession } from 'better-auth/plugins'
+import { bearer, deviceAuthorization, multiSession, twoFactor } from 'better-auth/plugins'
 import { oauthProvider } from '@better-auth/oauth-provider'
 import { expo } from '@better-auth/expo'
+import { getAuthenticatorName, passkey } from '@better-auth/passkey'
 import { oAuthProxy, oneTimeToken } from 'better-auth/plugins'
 import { pool } from '@/lib/db'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
@@ -23,6 +24,9 @@ import { readFreshSessionsInScope, SESSION_OPTIONS } from '@/lib/fresh-session'
 import { desktopSessionCacheAfter, withDesktopSessionCache } from '@/lib/desktop-rpc/session-cache'
 import { completeEnterpriseSignIn, enterpriseIdentityModels, enterpriseSessionFields, enterpriseSso, ssoSessionData, withEnterpriseAuthRequest } from '@/lib/enterprise/sso-plugin'
 
+import { assertTwoFactorManagement, completeTwoFactorVerification, twoFactorSessionFields } from '@/lib/enterprise/two-factor'
+import { assertTwoFactorCanBeDisabled } from '@/lib/governance/organization-security'
+
 /** The iOS app's URL scheme: OAuth returns here, and its requests carry it as their origin. */
 export { MOBILE_APP_ORIGIN } from '@/lib/auth-config'
 
@@ -30,6 +34,8 @@ export const { github: githubEnabled, google: googleEnabled } = authSignInMethod
 export const authBaseURL = appOrigin
 const appleOptions = authAppleOptions(process.env)
 const proxyOptions = authOAuthProxyOptions(process.env)
+const trustedOrigins = authEffectiveTrustedOrigins(process.env)
+const passkeyOrigins = trustedOrigins.filter(origin => /^https?:\/\//.test(origin))
 export const oauthCallbackBaseURL = proxyOptions?.productionURL ?? authBaseURL
 const email = createAuthEmail({
   origin: authBaseURL ?? 'http://localhost:3000',
@@ -43,102 +49,27 @@ export type DeviceSessionSummary = {
   user: { id: string; email: string }
 }
 
-export const auth = betterAuth({
-  appName: 'Mikka',
-  onAPIError: { errorURL: withBasePath('/sign-in?oauth=failed') },
-  database: pool,
-  account: { encryptOAuthTokens: true, accountLinking: { trustedProviders: [] } },
-  databaseHooks: {
-    session: {
-      create: { before: async session => ({ data: { ...session, ...ssoSessionData(session.userId) } }) },
-      // Native hooks run after the deletion transaction commits. The durable
-      // trigger already stopped fan-out; transport retries must not hold auth.
-      delete: { after: async session => {
-        (await import('@/lib/enterprise/live-authority')).scheduleSessionLiveRevocation(session.userId)
-        // The SQL delete has also fenced this real review-session credential.
-        // Await its close; an unavailable provider remains durably due for retry.
-        const { revokeReviewSessions } = await import('./coding-workspace/review-sessions')
-        await revokeReviewSessions(pool, { credentialKind: 'session', credentialId: session.id }, 'credential_revoked')
-      } },
-    },
-    // A new account without a picture gets a default avatar now; older accounts are left as they are.
-    user: { create: {
-      before: async user => ({ data: { ...user, image: user.image || newUserAvatar(user.name || user.email) } }),
-      // Every person's first workspace is their personal one (decision 2026-11-02-1500). Loading any
-      // workspace page creates it too, so a failure here only delays it.
-      after: async user => {
-        try {
-          const { ensurePersonalWorkspace } = await import('@/lib/personal-workspace')
-          await ensurePersonalWorkspace({ id: user.id, email: user.email, name: user.name }, 'zh-CN')
-        } catch (error) { console.error('Personal workspace at sign-up failed', error instanceof Error ? error.name : 'UnknownError') }
-      },
-    } },
-    account: {
-      create: { before: async account => ({ data: { ...account, idToken: null } }) },
-      update: { before: async account => ({ data: { ...account, idToken: null } }) },
-    },
-  },
-  socialProviders: {
-    ...(appleOptions ? { apple: appleOptions } : {}),
-    github: async () => {
-      const client = await githubSignInClient()
-      return { ...client,
-        refreshAccessToken: (refreshToken: string) => refreshGitHubOAuthToken(client, refreshToken),
-      getUserInfo: githubVerifiedProfile(),
-      requireEmailVerification: true,
-    } },
-    ...(googleEnabled ? { google: {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      scope: ['openid', 'email', 'profile'],
-      includeGrantedScopes: false,
-      requireEmailVerification: true,
-    } } : {}),
-  },
-  baseURL: authBaseURL,
-  // Its routes sit under the app's base path (app/api/auth → /mikka/api/auth).
-  basePath: withBasePath('/api/auth'),
-  emailAndPassword: email.emailAndPassword,
-  emailVerification: email.emailVerification,
-  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(process.env) }, storage: 'database' },
-  trustedOrigins: authEffectiveTrustedOrigins(process.env),
-  // Makes the app an OAuth 2.1 server so agents (Claude Code, Codex…) can sign
-  // in to the MCP server at /api/mcp as the person. Clients register
-  // themselves (RFC 7591) and use PKCE; access tokens are opaque and hashed in
-  // the database, and lib/mcp/auth.ts checks them.
-  plugins: [
-    enterpriseIdentityModels,
-    enterpriseSso(),
-    bearer(),
-    ...(proxyOptions ? [oAuthProxy(proxyOptions)] : []),
-    // The iOS app signs in through the system browser and keeps its session cookie in the keychain.
-    expo(),
-    // The app opens a web page signed in as the person (app/api/mobile/open): a one-minute, single-use token, stored hashed.
-    oneTimeToken({ expiresIn: 1, storeToken: 'hashed' }),
-    multiSession(),
-    deviceAuthorization(daemonAuthorizationOptions(BASE_PATH)),
-    oauthProvider({
-      loginPage: withBasePath('/sign-in'),
-      consentPage: withBasePath('/oauth/consent'),
-      scopes: [MCP_SCOPE, 'offline_access'],
-      allowDynamicClientRegistration: true,
-      allowUnauthenticatedClientRegistration: true,
-      clientRegistrationDefaultScopes: [MCP_SCOPE, 'offline_access'],
-      clientRegistrationAllowedScopes: [MCP_SCOPE, 'offline_access'],
-      ...(mcpResourceURL ? { resources: [mcpResourceURL], clientRegistrationDefaultResources: [mcpResourceURL] } : {}),
-      grantTypes: ['authorization_code', 'refresh_token'],
-      disableJwtPlugin: true,
-      prefix: { opaqueAccessToken: 'mka_', refreshToken: 'mkr_' },
-    }),
-    mikkaCookies(),
-  ],
+/** After native 2FA withholding, before bearer/header and cookie publication. */
+const authCompletion: BetterAuthPlugin = {
+  id: 'mikka-auth-completion',
   hooks: {
-    before: createAuthMiddleware(async ctx => {
-      requireAppleSignInNonce(ctx)
-      await beforeSignup(pool,ctx)
-      return email.before(ctx)
-    }),
-    after: createAuthMiddleware(async ctx => {
+    // Better Auth applies before-hook header replacements after the whole chain.
+    // Resolve through its fresh session API so both cookie and bearer identities
+    // finish native normalization before this management authorization check.
+    before: [{ matcher: ctx => [
+      '/two-factor/disable', '/two-factor/get-totp-uri', '/two-factor/generate-backup-codes',
+      '/passkey/generate-register-options', '/passkey/verify-registration', '/passkey/delete-passkey', '/passkey/update-passkey',
+    ].includes(ctx.path ?? ''),
+      handler: createAuthMiddleware(async ctx => {
+        const session = await auth.api.getSession({ headers: ctx.headers ?? ctx.request?.headers ?? new Headers(), query: { disableCookieCache: true } })
+        if (session) {
+          await assertTwoFactorManagement(session.user.id, session.session.id)
+          if (ctx.path === '/two-factor/disable') await assertTwoFactorCanBeDisabled(session.user.id)
+        }
+      }),
+    }],
+    after: [{ matcher: () => true, handler: createAuthMiddleware(async ctx => {
+      await completeTwoFactorVerification(ctx)
       await completeEnterpriseSignIn(ctx)
       await auditAuthentication(ctx)
       const deviceToken = await exchangeDaemonSession({
@@ -172,11 +103,138 @@ export const auth = betterAuth({
         ...cookie.attributes,
         maxAge: Math.max(0, Math.floor((active.session.expiresAt.getTime() - Date.now()) / 1000)),
       })
+    }) }] },
+}
+
+export const auth = betterAuth({
+  appName: 'Mikka',
+  onAPIError: { errorURL: withBasePath('/sign-in?oauth=failed') },
+  database: pool,
+  account: { encryptOAuthTokens: true, accountLinking: { trustedProviders: [] } },
+  databaseHooks: {
+    session: {
+      create: { before: async session => ({ data: { ...session, ...ssoSessionData(session.userId), twoFactorVerifiedAt: null, twoFactorMethod: null } }) },
+      // Native hooks run after the deletion transaction commits. The durable
+      // trigger already stopped fan-out; transport retries must not hold auth.
+      delete: { after: async session => {
+        (await import('@/lib/enterprise/live-authority')).scheduleSessionLiveRevocation(session.userId)
+        // The SQL delete has also fenced this real review-session credential.
+        // Await its close; an unavailable provider remains durably due for retry.
+        const { revokeReviewSessions } = await import('./coding-workspace/review-sessions')
+        await revokeReviewSessions(pool, { credentialKind: 'session', credentialId: session.id }, 'credential_revoked')
+      } },
+    },
+    // A new account without a picture gets a default avatar now; older accounts are left as they are.
+    user: { create: {
+      before: async user => ({ data: { ...user, image: user.image || newUserAvatar(user.name || user.email) } }),
+      // Every person's first workspace is their personal one (decision 2026-11-02-1500). Loading any
+      // workspace page creates it too, so a failure here only delays it.
+      after: async (user, ctx) => {
+        try {
+          const { ensurePersonalWorkspace } = await import('@/lib/personal-workspace')
+          await ensurePersonalWorkspace({ id: user.id, email: user.email, name: user.name }, 'zh-CN')
+        } catch (error) { console.error('Personal workspace at sign-up failed', error instanceof Error ? error.name : 'UnknownError') }
+        // One completed registration, attributed to the validated first touch
+        // from the shared marketing/app cookie. Sign-ins and failed attempts
+        // never reach this hook.
+        try {
+          const { serverPostHog } = await import('@/lib/posthog-server')
+          const posthog = serverPostHog()
+          if (posthog) {
+            const { parseFirstTouch, firstTouchProperties } = await import('@/lib/first-touch')
+            const { isSmokeAccountEmail } = await import('@/lib/smoke-account')
+            posthog.capture({ distinctId: user.id, event: 'registration_completed', properties: {
+              app: 'mikka', environment: process.env.NODE_ENV,
+              ...firstTouchProperties(parseFirstTouch(ctx?.headers?.get('cookie'))),
+              ...(isSmokeAccountEmail(user.email) ? { test_account: true } : {}),
+            } })
+          }
+        } catch { /* analytics never blocks sign-up */ }
+      },
+    } },
+    account: {
+      create: { before: async account => ({ data: { ...account, idToken: null } }) },
+      update: { before: async account => ({ data: { ...account, idToken: null } }) },
+    },
+  },
+  socialProviders: {
+    ...(appleOptions ? { apple: appleOptions } : {}),
+    github: async () => {
+      const client = await githubSignInClient()
+      return { ...client,
+        refreshAccessToken: (refreshToken: string) => refreshGitHubOAuthToken(client, refreshToken),
+      getUserInfo: githubVerifiedProfile(),
+      requireEmailVerification: true,
+    } },
+    ...(googleEnabled ? { google: {
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      scope: ['openid', 'email', 'profile'],
+      includeGrantedScopes: false,
+      requireEmailVerification: true,
+    } } : {}),
+  },
+  baseURL: authBaseURL,
+  // Its routes sit under the app's base path (app/api/auth → /mikka/api/auth).
+  basePath: withBasePath('/api/auth'),
+  emailAndPassword: email.emailAndPassword,
+  emailVerification: email.emailVerification,
+  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(process.env) }, storage: 'database' },
+  trustedOrigins,
+  // Makes the app an OAuth 2.1 server so agents (Claude Code, Codex…) can sign
+  // in to the MCP server at /api/mcp as the person. Clients register
+  // themselves (RFC 7591) and use PKCE; access tokens are opaque and hashed in
+  // the database, and lib/mcp/auth.ts checks them.
+  plugins: [
+    enterpriseIdentityModels,
+    enterpriseSso(),
+    twoFactor({ issuer: 'Mikka', allowPasswordless: true }),
+    passkey({
+      rpName: 'Mikka',
+      rpID: authBaseURL ? new URL(authBaseURL).hostname : undefined,
+      ...(passkeyOrigins.length ? { origin: passkeyOrigins } : {}),
+      registration: {
+        afterVerification: ({ verification }) => {
+          const provider = getAuthenticatorName(verification.registrationInfo?.aaguid)
+          return provider ? { name: provider } : undefined
+        },
+      },
+    }),
+    authCompletion,
+    bearer(),
+    ...(proxyOptions ? [oAuthProxy(proxyOptions)] : []),
+    // The iOS app signs in through the system browser and keeps its session cookie in the keychain.
+    expo(),
+    // The app opens a web page signed in as the person (app/api/mobile/open): a one-minute, single-use token, stored hashed.
+    oneTimeToken({ expiresIn: 1, storeToken: 'hashed' }),
+    multiSession(),
+    deviceAuthorization(daemonAuthorizationOptions(BASE_PATH)),
+    oauthProvider({
+      loginPage: withBasePath('/sign-in'),
+      consentPage: withBasePath('/oauth/consent'),
+      scopes: [MCP_SCOPE, 'offline_access'],
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      clientRegistrationDefaultScopes: [MCP_SCOPE, 'offline_access'],
+      clientRegistrationAllowedScopes: [MCP_SCOPE, 'offline_access'],
+      ...(mcpResourceURL ? { resources: [mcpResourceURL], clientRegistrationDefaultResources: [mcpResourceURL] } : {}),
+      grantTypes: ['authorization_code', 'refresh_token'],
+      disableJwtPlugin: true,
+      prefix: { opaqueAccessToken: 'mka_', refreshToken: 'mkr_' },
+    }),
+    // Authentication may still revoke/replace cookies; publish the final journal last.
+    mikkaCookies(),
+  ],
+  hooks: {
+    before: createAuthMiddleware(async ctx => {
+      requireAppleSignInNonce(ctx)
+      await beforeSignup(pool,ctx)
+      return email.before(ctx)
     }),
   },
   // Polls read the session from a signed cookie for up to 5 minutes instead of two queries each time (Alex
   // 2026-11-02). Money, permissions, credentials and deletion read it fresh (lib/fresh-session.ts).
-  session: { ...SESSION_OPTIONS, storeSessionInDatabase: true, additionalFields: enterpriseSessionFields },
+  session: { ...SESSION_OPTIONS, storeSessionInDatabase: true, additionalFields: { ...enterpriseSessionFields, ...twoFactorSessionFields } },
   // Organization identity management uses the fresh-session, organization-admin route.
   disabledPaths: ['/sso/register', '/sso/update-provider', '/sso/delete-provider', '/sso/providers', '/sso/get-provider', '/sso/request-domain-verification', '/sso/verify-domain'],
   advanced: {

@@ -3,13 +3,16 @@ import {randomUUID} from 'node:crypto'
 import {afterEach, before, beforeEach, mock, test} from 'node:test'
 import type { SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
+import type { PoolClient } from 'pg'
 import {defaultRunPolicy} from '@mikka/protocol/agent-policy'
-import {REPO_ORIGIN_HEADER} from '@mikka/protocol/device'
+import {REPO_ORIGIN_HEADER, CUSTOM_TASK_BRANCH_HEADER} from '@mikka/protocol/device'
 import {freezeWorkerDefinition, retryWorkerDefinition} from './worker'
 import {runPrompt} from '../run-prompt'
 import {DEFAULT_AGENT_DEFINITION} from './builtin'
 import {makeSnapshot} from './definition'
 import { overrideDeploymentSwitch } from '../deployment-switches'
+import { captureFixtureLiveEffects } from '../../tests/support/live-runtime'
+import { observeCommitEffects } from '../db/commit-effects'
 
 const owner=randomUUID(),workspace=randomUUID(),agentId=randomUUID(),deviceId=randomUUID(),repoId=randomUUID(),botId=randomUUID(),issueId=randomUUID()
 const otherWorkspace=randomUUID()
@@ -26,12 +29,14 @@ let computerPermission: 'ask' | 'allow' = 'ask'
 const cloudClaimed=mock.fn(async(_pool:unknown,_owner:unknown,_run:string,_device:string,lease:Date)=>{currentRun.status='preparing';currentRun.leaseExpiresAt=lease;return {botId,ownerId:owner,display:':3',policyVersion:1,permission:computerPermission}})
 const publicationPolicy=defaultRunPolicy()
 publicationPolicy.permissions.git_push='allow'
-const publicationAssignment={pushBranch:'mikka/mik-42',policy:publicationPolicy}
+const publicationAssignment={pushBranch:'mikka/mik-42',policy:publicationPolicy,defaultDraft:false}
 // This suite owns claim routing and snapshot compatibility. Publication's real
 // ownership/approval/transaction behavior is exercised by its CI DB suite.
 const prepared=mock.fn(async(..._args:Parameters<typeof import('../run-publications').prepareRunPublication>)=>structuredClone(publicationAssignment))
 const completed=mock.fn(async()=>{throw Error('Claim unexpectedly completed a run')})
 const stub=(path:string,namedExports:Record<string,unknown>)=>mock.module(new URL(path,import.meta.url).href,{namedExports})
+const scheduledAfter = captureFixtureLiveEffects()
+beforeEach(()=>{scheduledAfter.length=0})
 const compactSql = (sql: string) => sql.replace(/\s+/g, ' ').trim()
 const fixtureRows = <T>(rows: T[]) => ({ rows, rowCount: rows.length })
 // Keep real identity freezing. Every storage response names its exact query,
@@ -241,7 +246,7 @@ before(async()=>{
  queue=(await import('../computer/queue-run')).queueCloudRun
 })
 beforeEach(()=>{definition=frozen();subscription={...binding};missing=false;cloud=false;localCapable=false;cliReadOnly=false;cliPolicy.permissions.git_push='deny';publicationPolicy.permissions.git_push='allow';computerPermission='ask';mismatch=undefined;protocolVersion=3;selectIndex=0;stopDuringToken=false;githubAccount=null;revokeDuringToken=false;memberActive=true;memberLease=false;repositoryDenied=false;resourceReads.length=0;lockOrder.length=0;process.env.MIKKA_BYOS_ENABLED='1';process.env.MIKKA_AGENT_KIT='1';process.env.MIKKA_CLOUD_COMPUTER_TASKS='1';for(const fn of [modelAdmissionCheck,bindingById,latestBinding,scopedBinding,claimed,cloudClaimed,prepared,completed,githubConfigured,githubCredential])fn.mock.resetCalls()})
-const request=()=>{requestedRunId=randomUUID();return claim(new Request('https://example.test/v1/devices/'+deviceId+'/runs/'+requestedRunId+'/claim',{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1'}}),{params:Promise.resolve({deviceId,runId:requestedRunId})})}
+const request=(headers:Record<string,string>={})=>{requestedRunId=randomUUID();return claim(new Request('https://example.test/v1/devices/'+deviceId+'/runs/'+requestedRunId+'/claim',{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',...headers}}),{params:Promise.resolve({deviceId,runId:requestedRunId})})}
 const assertCliPolicy=(body:{policy:ReturnType<typeof defaultRunPolicy>;policyRevision:string})=>{assert.equal(body.policy.permissions.network,'deny');assert.equal(body.policy.permissions.install_dependency,'deny');assert.deepEqual(body.policy.networkAllow,['cli-policy.invalid']);assert.equal(body.policyRevision,'a'.repeat(64))}
 // A non-GitHub repository keeps these queue cases focused on frozen worker
 // selection. GitHub publication admission is covered by the claim cases below.
@@ -253,10 +258,11 @@ function cloudQueueFixture(instructions='Review',priorRun?:Record<string,unknown
   release(){assert.equal(connected,true);assert.equal(transactionOpen,false);connected=false;releases++},
   async query(raw:string,args:unknown[]=[]){
    const sql=compactSql(raw);calls.push({sql:raw,args})
+   assert.equal(scheduledAfter.length,0,'a queue write cannot schedule response work before its COMMIT')
    assert.equal(connected,true);assert.equal(memberLease,true);requireResourceLease(owner,workspace)
-   if(sql==='BEGIN'){assert.deepEqual(args,[]);assert.equal(transactionOpen,false);transactionOpen=true;return fixtureRows([])}
+   if(sql==='BEGIN'){assert.deepEqual(args,[]);assert.equal(transactionOpen,false);transactionOpen=true;return {...fixtureRows([]),command:sql}}
    assert.equal(transactionOpen,true,'every queue read/write uses the same APP transaction')
-   if(sql==='COMMIT'||sql==='ROLLBACK'){assert.deepEqual(args,[]);transactionOpen=false;return fixtureRows([])}
+   if(sql==='COMMIT'||sql==='ROLLBACK'){assert.deepEqual(args,[]);transactionOpen=false;return {...fixtureRows([]),command:sql}}
    if(sql==='SELECT pg_advisory_xact_lock(hashtextextended($1,0))'){
     assert.equal(args.length,1)
     assert.ok(args[0]===`computer-policy:${workspace}`||(priorRun&&typeof args[0]==='string'&&/^computer-task:[0-9a-f]{64}$/.test(args[0])))
@@ -310,6 +316,14 @@ function cloudQueueFixture(instructions='Review',priorRun?:Record<string,unknown
     assert.equal(args[13],'web');assert.equal(args[14],null)
     insertedRunId=String(args[0]);return fixtureRows([])
    }
+   if(sql.includes('FROM workspace_setting_values') && sql.includes('FROM personal_setting_values')){
+    assert.deepEqual(args,[workspace,'newWorkVisibility','allowPrivateNewWork',owner,workspace,'newWorkVisibility','allowPrivateNewWork'])
+    return fixtureRows([])
+   }
+   if(sql.startsWith('SELECT p.visibility FROM resource_access_policies p')){
+    assert.deepEqual(args,['thread',insertedRunId,owner,workspace])
+    return fixtureRows([{visibility:'private'}])
+   }
    if(sql==='INSERT INTO computer_run_bindings ("runId","botId","workspaceId","ownerId") VALUES ($1,$2,$3,$4)'){
     assert.ok(insertedRunId);assert.deepEqual(args,[insertedRunId,botId,workspace,owner]);return fixtureRows([])
    }
@@ -320,6 +334,7 @@ function cloudQueueFixture(instructions='Review',priorRun?:Record<string,unknown
    throw new Error(`Unexpected cloud queue SQL: ${sql}`)
   },
  }
+ observeCommitEffects(client as unknown as PoolClient)
  const pool={
   connect:async()=>{assert.equal(connected,false);assert.equal(memberLease,true);requireResourceLease(owner,workspace);connected=true;connections++;return client},
   query:async(raw:string,args:unknown[])=>{
@@ -425,6 +440,7 @@ test('cloud queue captures exact worker and parent snapshot in the same transact
  const insert=calls.find(c=>c.sql.startsWith('INSERT INTO agent_runs'))!;const snapshot=JSON.parse(insert.args[9] as string);assert.equal(snapshot.harness,'codex');assert.equal(snapshot.subscription.bindingId,binding.id);assert.equal(snapshot.parent.executionId,parent.id);assert.equal(calls.at(-1)!.sql,'COMMIT');assert.ok(calls.some(c=>c.sql.startsWith('INSERT INTO computer_run_bindings')))
  assert.deepEqual(snapshot.projectExecution,{version:1,workspaceId:workspace,projectId:null,projectRevision:null,policyRevision:0,repositoryKey:queueRepository.repoPath,baseBranch:queueRepository.baseBranch,environment:null})
  assert.deepEqual(resourceReads,['policy','project']);fixture.assertClosed()
+ assert.ok(scheduledAfter.length>0,'the committed queue reaches the real response scheduler')
 })
 
 
@@ -456,6 +472,7 @@ test('cloud request replay cannot substitute another parent execution',async()=>
  const parent={id:randomUUID(),status:'running' as const,snapshot:makeSnapshot(randomUUID(),2,DEFAULT_AGENT_DEFINITION,'HOST',{harness:'codex',model:null})}
  await assert.rejects(queue(fixture.pool,{userId:owner,workspaceId:workspace},{botId,issueId,agentId,deviceRepoId:repoId,title:'Review',body:'',model:binding.modelId,execution:parent,idempotencyKey:'same-call'}),/Task request changed/)
  assert.equal(fixture.calls.some(call=>call.sql.startsWith('INSERT INTO ')),false);assert.equal(fixture.calls.at(-1)?.sql,'ROLLBACK');fixture.assertClosed()
+ assert.equal(scheduledAfter.length,0,'a refused queue schedules no response work')
 })
 
 test('current Workspace repository refusal blocks local/cloud claims before credentials or leases',async()=>{
@@ -514,6 +531,42 @@ test('a cloud run admitted with the GitHub App grant gets its publication and al
  assert.equal(prepared.mock.callCount(),1,'the admitted cloud run reserves its publication before the lease')
  assert.equal(body.pushBranch,publicationAssignment.pushBranch)
  assert.equal(body.policy.permissions.git_push,'allow')
+})
+
+test('a configured prefix preserves old native push delivery and is advertised to capable daemons', async () => {
+ githubAccount='123';cliPolicy.permissions.git_push='allow'
+ publicationAssignment.pushBranch='team/changes/mik-42'
+ overrideDeploymentSwitch('personalMailbox', false)
+ try {
+  for(const supportsCustom of [false,true]) {
+   selectIndex=0
+   const response=await request(supportsCustom?{[CUSTOM_TASK_BRANCH_HEADER]:'1'}:{})
+   assert.equal(response.status,200)
+   const body=await response.json()
+   assert.equal(body.pushBranch,'team/changes/mik-42')
+   assert.equal(body.github?.repository,'example/repo')
+   assert.equal(body.github?.branch,supportsCustom?'team/changes/mik-42':undefined)
+   assert.equal(body.policy.permissions.git_push,'allow')
+   if(!supportsCustom) {
+    // Decode the actual claim response with the immutable released parser;
+    // do not update that fixture to make a new server assignment pass.
+    const {HttpServerLink}=await import(new URL('../../packages/daemon/test/fixtures/released-0.0.456/http-link.js',import.meta.url).href)
+    const legacy=new HttpServerLink('https://example.test',async()=>Response.json(body))
+    const decoded=await legacy.claimRun(deviceId,requestedRunId)
+    assert.equal(decoded.pushBranch,'team/changes/mik-42')
+    assert.equal(decoded.github?.branch,undefined)
+   }
+  }
+  publicationAssignment.defaultDraft=true
+  selectIndex=0
+  const draft=await request({[CUSTOM_TASK_BRANCH_HEADER]:'1'})
+  assert.equal(draft.status,200)
+  const draftBody=await draft.json()
+  assert.equal(draftBody.pushBranch,'team/changes/mik-42')
+  assert.equal(draftBody.github?.repository,'example/repo')
+  assert.equal(draftBody.github?.branch,undefined)
+  assert.equal(draftBody.defaultDraft,undefined)
+ } finally {publicationAssignment.pushBranch='mikka/mik-42';publicationAssignment.defaultDraft=false;overrideDeploymentSwitch('personalMailbox',undefined)}
 })
 
 test('a read-only local run gets no push branch and a read-only policy, but the owner\'s GitHub credential like any run', async () => {
