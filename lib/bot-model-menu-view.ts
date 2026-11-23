@@ -40,6 +40,13 @@ export interface BotModelMenuOption {
   featured?: boolean
   /** A community default uses cloud credits or the administrator's own provider. */
   hostedSource?: 'cloud' | 'self-hosted'
+  /**
+   * #2938 (2): where a turn on this option runs. `subscription` is a connected
+   * account (`connectionId`), `byok` one of the person's API keys (`keyId`),
+   * `credits` Mikka 额度 on the LiteLLM catalogue. `label` is the credential's
+   * name (account label or key name — never a secret).
+   */
+  route?: { source: 'subscription' | 'byok' | 'credits'; connectionId?: string; keyId?: string; label?: string }
 }
 
 export interface BotModelMenuGroup {

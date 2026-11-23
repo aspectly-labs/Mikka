@@ -70,9 +70,8 @@ import { openArtifact as openArtifactWindow } from '@/components/workspace/works
 import { ArtifactChip } from '@/components/artifacts/artifact-card'
 import { ArtifactReviewCard } from '@/components/workspace/artifact-review'
 import { ArtifactQuoteChip, ArtifactQuoteLine, QuoteChip, QuoteLine } from '@/components/artifacts/artifact-quote'
-import { MessageActions } from '@/components/ai-elements/message'
-import { CopyAction, REPLY_ACTIONS } from '@/components/chat/copy-action'
 import { SelectionQuote } from '@/components/chat/selection-quote'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { replyCopyText } from '@/lib/chat-copy'
 import type { ArtifactChatSlot } from '@/components/artifacts/artifact-viewer'
@@ -134,7 +133,6 @@ function PersonWords({ text, before }: { text: string; before?: ReactNode }) {
   const { quote, text: words } = splitReplyQuote(text)
   return <CollapsibleMessage>{quote && <QuoteLine slot="reply-quote" text={quote} />}{before}<UserMessageText text={words} /></CollapsibleMessage>
 }
-
 
 /**
  * The person's conversation with their Coordinator, which dispatches agents to
@@ -347,6 +345,10 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   const modelRequired = (liveFailure?.kind === 'failed' && liveFailure.reason === 'modelRequired') || (welcomeNeedsModel && !working && !items.length && !stream.replies.length)
   const liveRaw = liveFailure?.raw ?? null
   const wakeError = liveFailure?.kind === 'wake' ? liveFailure.code : null
+  // #3028: an unrecognised failure on an account with no model set up is almost always the missing model — name it and offer the fix instead of a bare failedTitle.
+  const unclassified = Boolean(data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance && !wakeError)
+  const failureModel = useSWR<BotModelMenu>(unclassified ? botModelMenuKey(botId ?? null) : null, () => getBotModelMenu(botId ?? null))
+  const noModel = Boolean(unclassified && failureModel.data?.current.kind === 'none')
   // With no Coordinator here, the person's last message gets no reply: show it as a failed turn instead of silence.
   // A failed turn's own line already says why; this one is only for a chat with no Coordinator to answer.
   const unanswered = data?.enabled === false && !data.error && items.findLast(item => item.from !== 'event')?.from === 'person'
@@ -427,7 +429,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     {paywall.dialog}
     {declined && declined !== 'quotaUsed' && <SubscriptionRefusalNotice notice={declined} retry={retry} botId={botId} />}
     {apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="balance">{t('apiBalance')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button></span></Alert>}
-    {data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}>{wakeError ? <AlertTitle>{t(`wakeErrors.${wakeError}`)}</AlertTitle> : <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="failed">{t('failedTitle')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">{retry}</span></>}</Alert>}
+    {data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}>{wakeError ? <AlertTitle>{t(`wakeErrors.${wakeError}`)}</AlertTitle> : noModel ? <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="no-model">{t('modelPicker.noModelSetUp')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button></span></> : <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="failed">{t('failedTitle')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">{retry}</span></>}</Alert>}
     {/* The stored codes, and the turn failure behind a wake code, only under 详情 (decision 2026-11-05-0330). */}
     {liveRaw && <RunErrorDetails code={liveRaw} />}
   </>
@@ -497,7 +499,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   }
 
   /** Sends `text` to the Coordinator or bot, with the browser's notes when `withNotes`: sent, failed (now a failed bubble), or skipped. */
-  async function deliver(text: string, withNotes = false, retryOf?: number, previous?: PersonalChatSend, releaseDraft?: () => void): Promise<'sent' | 'failed' | 'skipped'> {
+  async function deliver(text: string, withNotes = false, retryOf?: number, previous?: PersonalChatSend, releaseDraft?: () => void, policy?: 'queue' | 'steer'): Promise<'sent' | 'failed' | 'skipped'> {
     if (!text || resuming || unavailable) return 'skipped'
     // A double-click can enter twice before React paints the emptied draft.
     // A different draft has its own journal ID and may enter Eve immediately.
@@ -505,7 +507,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     if (!previous && draftInFlight.current.has(draftKey)) return 'skipped'
     const notes = withNotes && browser?.notes.length ? [...browser.notes] : undefined
     const command = previous ?? { id: crypto.randomUUID(), at: Date.now(), text,
-      ...(working ? { turnPolicy } : {}),
+      ...(working ? { turnPolicy: policy ?? turnPolicy } : {}),
       context: { quote: embedded?.quote, botId, notes, expectedWorkspaceId: selectedWorkspaceId ?? undefined, expectedOwnerId: userId ?? liveOwner ?? undefined,
         ...(retryOf !== undefined ? { retryOf } : {}) } }
     if (!delivery.begin(command)) return 'skipped'
@@ -551,7 +553,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     const outcome = await deliver(text)
     return outcome === 'sent' ? { sent: true } : { sent: false, reason: outcome === 'failed' ? lastSendFailure.current : undefined }
   }
-  async function send(event?: FormEvent) {
+  async function send(event?: FormEvent, policy?: 'queue' | 'steer') {
     event?.preventDefault()
     const text = draft.trim()
     if (text && await paywall.blocked({ model: true })) return
@@ -561,13 +563,18 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       setReplyQuote(null)
       embedded?.clearQuote()
       suggestion.current = null
-    }) : 'skipped'
+    }, policy) : 'skipped'
     if (result !== 'sent') return
     if (id) {
       await fetch(withBasePath(`/api/suggestions/${id}`), { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined)
       void mutateAll(key => typeof key === 'string' && key.includes('/api/suggestions'))
       void mutateAll(key => key === 'threads' || Array.isArray(key) && key[0] === 'threads')
     }
+  }
+
+  function onRunKey(action: 'steer' | 'queue' | 'interrupt') {
+    if (action === 'interrupt') void stop()
+    else void send(undefined, action)
   }
 
   // 全部展开 / 全部收起 for the chat's tool groups (R-83).
@@ -585,7 +592,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     // line, with 重试 under it; a failure with its own reason (cloud, refusal, subscription, API balance) keeps its notice.
     const plainFailure = Boolean(data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance)
     const liveFailurePart: ThreadEntryPart = plainFailure
-      ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : t('failedTitle'), actions: <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
+      ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : noModel ? t('modelPicker.noModelSetUp') : t('failedTitle'), actions: noModel ? <><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button>{liveRaw && <RunErrorDetails code={liveRaw} />}</> : <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
       : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
     const rows = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: String(item.pending ? `pending-${item.position}` : item.streamId ?? item.position) })),
       ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))]
@@ -607,7 +614,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
         ]
         entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-          actions: item.text ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}><CopyAction text={text} />{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</MessageActions> : undefined })
+          actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
         if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
         continue
       }
@@ -624,11 +631,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
         parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
       entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-        actions: item.text && !streaming ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}>
-          <CopyAction text={replyCopyText(item.text)} />
+        // The reply's author line already shows its time; the line under it does not repeat it.
+        actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
           <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
           {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
-        </MessageActions> : undefined })
+        </ReplyActions> : undefined })
     }
     for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
       status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
@@ -668,6 +675,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
           working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
           composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
+            onRunKey,
             attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
           pending={[
             ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),
@@ -726,10 +734,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
                       return run?.kind === 'run' ? <ThreadCard key={id} run={run} onOpen={showThread} onOpenTask={openTask} /> : null
                     })}</>,
       // Copy and the pages it cites, on one line under the reply, always there and quiet (R-83 revised 2026-11-10).
-      actions: item.text && !(live && live.committedThrough === undefined) && <MessageActions className={cn('-mt-1 items-start', REPLY_ACTIONS)}>
-                      <CopyAction text={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text} />
+      actions: item.text && !(live && live.committedThrough === undefined) && <ReplyActions at={item.createdAt ? Date.parse(item.createdAt) : undefined}
+                      copyText={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text}
+                      onQuote={item.from === 'coordinator' ? quoteReply : undefined}>
                       {item.from === 'coordinator' && <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>}
-                    </MessageActions>,
+                    </ReplyActions>,
       copyText: item.text ? item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text : undefined,
       sources: item.from === 'coordinator' && item.text ? <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext> : undefined,
       after: <>{item.id && <MessageReactions reactions={reactions[item.id]} align={item.from === 'person' ? 'end' : 'start'} />}
@@ -805,6 +814,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       {turnOptions}{queuedNotice}</>}
         composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={inputRef} label={bot ? t('inputTo', { name: bot.name }) : t('input')} placeholder={placeholder} value={draft} onChange={updateDraft} sending={resuming} editableWhileSending={resuming} onSubmit={() => { void send() }} attachmentScope={data?.botId ? { kind: 'bot', id: data.botId } : undefined}
         running={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
+        onRunKey={onRunKey}
         leftControls={<div className="flex min-w-0 items-center gap-1">
           <BotModelPicker botId={botId ?? null} running={working || sending} />
           {/* How near the next fold is (lib/coordinator/context-usage.ts). Beside the model chip,

@@ -58,7 +58,7 @@ type Row = typeof workspaceSecrets.$inferSelect
 
 function seal(value: string, row: Parameters<typeof secretAad>[0]) {
   try { return sealSecret(value, secretAad(row)) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable')
+    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     throw error
   }
 }
@@ -98,7 +98,7 @@ export class SecretsStoreError extends Error {
 export async function guardSecretsDb<T>(work: () => Promise<T>, onUnique?: () => Error): Promise<T> {
   try { return await work() } catch (error) {
     if (error instanceof WorkspaceError || error instanceof SecretsStoreError) throw error
-    if (onUnique && isUnique(error)) throw onUnique()
+    if (onUnique && isUnique(error)) throw Object.assign(onUnique(), { cause: error })
     if (!isDbError(error)) throw error
     throw new SecretsStoreError(pgCode(error))
   }
@@ -216,7 +216,7 @@ export async function importWorkspaceSecrets(userId: string, workspaceId: string
   const scoped = { workspaceId, kind, ...scopeColumns(scope) }
   assertSecretPermission(role, 'secret.create', [scoped])
   let parsed: ReturnType<typeof parseDotenv>
-  try { parsed = parseDotenv(text) } catch { throw new WorkspaceError('secretImportTooLarge') }
+  try { parsed = parseDotenv(text) } catch (error) { throw new WorkspaceError('secretImportTooLarge', { cause: error }) }
   const errors: ImportResult['errors'] = [...parsed.errors]
   const entries = parsed.entries.filter(entry => isReservedEnvName(entry.name) ? (errors.push({ line: entry.line, name: entry.name, reason: 'reserved' }), false) : true)
   errors.sort((a, b) => a.line - b.line)

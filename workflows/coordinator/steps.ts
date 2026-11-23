@@ -193,21 +193,15 @@ export async function personalMcp(userId: string, botId: string, executionId: st
 // preserve the first uncertain outcome rather than replaying this step.
 personalMcp.maxRetries = 0
 
-/** GitHub's workspace app policy for github_call, read in a step: a workflow body never does DB I/O. */
-export async function githubCallAllowedStep(userId: string, botId: string | null) {
-  'use step'
-  const { githubCallDecision } = await import('@/lib/operations/github-call-policy')
-  return githubCallDecision(userId, botId)
-}
-
 /** GitHub's hosted MCP server as the caller, with the caller's own token only (decision 2026-11-02-1730). */
-export async function githubMcp(userId: string, input: import('@/lib/github/mcp').GitHubMcpCommand, scope?: NativeToolScope) {
+export async function githubMcp(userId: string, input: import('@/lib/github/mcp').GitHubMcpCommand, scope?: NativeToolScope, request?: { botId: string; sourceEventId: string }) {
   'use step'
   await assertNativeToolScope(userId, scope)
   if (scope?.scheduledRead) return { error: 'mcpNotAllowedForScheduledRead' }
   const { createGitHubMcpRuntime, GITHUB_MCP_MIN_VALIDITY_MS } = await import('@/lib/github/mcp')
   const { githubTokenForUser } = await import('@/lib/github/user-access')
-  return createGitHubMcpRuntime(owner => githubTokenForUser(owner, { minValidityMs: GITHUB_MCP_MIN_VALIDITY_MS }))(userId, input)
+  const execute = (guard?: import('@/lib/github/mcp').GitHubMcpGuard) => createGitHubMcpRuntime(owner => githubTokenForUser(owner, { minValidityMs: GITHUB_MCP_MIN_VALIDITY_MS }), {}, guard)(userId, input)
+  return request ? (await import('@/lib/code-review/github-call')).reviewGitHubCall(userId, request, input, execute) : execute()
 }
 // A GitHub write has no idempotency key; never replay an uncertain call.
 githubMcp.maxRetries = 0
@@ -226,11 +220,7 @@ appTools.maxRetries = 0
 export async function accountWrite(userId: string, action: ApprovalActionName, input: unknown, scope?: NativeToolScope, accountId?: string, botId?: string) {
   'use step'
   await assertNativeToolScope(userId,scope)
-  // Two app surfaces, both checked before anything is sent: 团队权限 › 允许使用的应用
-  // blocks the app outright for a named Bot, and the workspace's own app setting
-  // (deny / ask / allow, 设置 › 应用与运行权限) decides inside writeAccountAction
-  // through lib/operations/account-write-setting.ts. Reading only the first let the
-  // Coordinator send mail while the same app's call_app_tool was denied (ALE-8).
+  // Workspace app availability applies before resolving the connected account.
   if (await appBlockedForBot(botId, action, userId)) return { error: 'integrationBlockedByWorkspace' }
   return writeAccountAction(userId, action, input, accountId, botId ?? null)
 }
@@ -621,9 +611,9 @@ export async function createComputerBot(userId: string, input: { workspaceId: st
     await (await import('@/lib/subscription-runtime')).authorizeSubscriptionWorkspace(userId, input.workspaceId)
     const hash = createHash('sha256').update(JSON.stringify(['create-bot', userId, toolCallId])).digest('hex')
     const botId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`
-    await pool.query('INSERT INTO bots (id,"workspaceId","ownerId",name) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING', [botId, input.workspaceId, userId, input.name])
-    const found = await pool.query('SELECT id,name FROM bots WHERE id=$1 AND "workspaceId"=$2 AND "ownerId"=$3 AND name=$4', [botId, input.workspaceId, userId, input.name])
-    return found.rows[0] ?? { error: 'cloudComputerUnavailable' }
+    const { ComputerStore } = await import('@/lib/computer/store')
+    const bot = await new ComputerStore(pool).createBot({ userId, workspaceId: input.workspaceId }, input.name, { id: botId })
+    return { id: bot.id, name: bot.name }
   } catch { return { error: 'cloudComputerUnavailable' } }
 }
 

@@ -6,7 +6,8 @@ export const threadHistoryPosition = z.strictObject({
   at: z.iso.datetime(),
   lane: z.union([z.literal(0), z.literal(1)]),
   runId: z.uuid(),
-  seq: z.number().int().nonnegative(),
+  // Negative too: a fork's copied history holds negative seqs (#2936).
+  seq: z.number().int(),
   id: z.uuid(),
 })
 export type ThreadHistoryPosition = z.infer<typeof threadHistoryPosition>

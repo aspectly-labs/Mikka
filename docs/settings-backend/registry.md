@@ -63,8 +63,32 @@ workspace/admin scope, typed persistence, reset and schema metadata. P2 owns
 consuming this setting at the subagent admission boundary; P1 only provides
 the setting contract and storage.
 
+### Appearance, interface, memory and notification keys (`#3110`)
+
+Personal interface (`sidebarPages`, `sidebarLayout`, `pinPages`, `openInDesktop`,
+`scrollNewToTop`, `enterAction`, `modEnterAction`, `altEnterAction`) and
+appearance (`appearanceSync`, `appearanceColorScheme`, `appearanceTheme`,
+`appearanceAccentColor`, `appearanceBackgroundEffect`, `codeFontSize`,
+`diffView`, `diffColors`, `hiddenFiles`) persist in `personal_setting_values`
+as account-wide personal settings (`scopes: ['personal']`, `personalScope:
+'account'`, `write: 'self'`). Each field resolves to `{ value, source }` where
+`source` is `'personal'` when an explicit row value exists or `'default'` when
+the row is absent or reset (`null`).
+
+Pure client-only items stay in browser `localStorage` (`mikka:ui-local`) and
+are not written to PostgreSQL:
+- When `appearanceSync === false`, per-device `colorScheme`, `themeId` and
+  `accent` changes stay local to the current browser/desktop device instead of
+  mutating the account-wide `personal_setting_values` rows.
+- Extended CSS token overrides (`fill`, `foreground`, `border`, dark-side color
+  overrides) apply locally on the current client.
+- Items whose server capability is not built yet (`appearance.myThemes`,
+  `appearance.dashboardBackground`, `threads.subagentDepth`, workspace sharing
+  defaults) are centrally marked `pending` in `lib/settings-sections.ts` and
+  rendered with `· 待接入` (`· Pending`) as disabled controls.
+
 Account-scoped personal fields (`personalContext: 'account'`, `scope: ['personal']`)
-also persist in `personal_setting_values` (`workspaceId IS NULL`) without schema
+for memory and notifications also persist in `personal_setting_values` (`workspaceId IS NULL`) without schema
 migrations:
 
 - **Memory (`group: 'memory'`, `page: 'instructions'`)**: `memoryAutoApprove` (`boolean`, default `false`) auto-approves non-conflicting extracted facts in `lib/profile/store.ts` while holding slot-contradicting facts as `'pending'` and keeping self-added (`'told'`) facts unconditionally `'approved'`.

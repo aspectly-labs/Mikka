@@ -3,6 +3,7 @@ import 'server-only'
 import { releaseAttention } from '@/lib/attention/store'
 import { claimTriageAttempt, completeTriageAttempt, recordTriageFailure, setEventTier, untriagedEvents, wakingChats } from '@/lib/coordinator/store'
 import { invokeDecision } from '@/lib/coordinator/decide'
+import { decisionTimeoutMs } from './decision-timeout'
 import { tierFromDecision, triageQuestions, triageInput } from '@/lib/coordinator/triage'
 import { runTestFixture } from '@/lib/run-test-fixture'
 import { runTriageBatch, TRIAGE_BATCH_BUDGET_MS } from './triage-batch'
@@ -25,13 +26,15 @@ export async function coordinatorEnabled(ownerId?: string, botId: string | null 
 }
 
 /** Missing model answers stay pending except for host-verified failed run completions. */
-export async function triageInbox(userId: string, botId: string): Promise<void> {
+export async function triageInbox(userId: string, botId: string, signal = new AbortController().signal, wakeDeadline = Infinity, priorityEventId?: string): Promise<void> {
   'use step'
   const { hostedBillingScope } = await import('@/lib/abuse/context')
   const { executionWorkspace } = await import('@/lib/execution-settings')
   const scope = { userId, botId }
-  const budget = AbortSignal.timeout(TRIAGE_BATCH_BUDGET_MS)
-  const outcome = await runTriageBatch(await untriagedEvents(userId, botId), {
+  // Stop admitting work at the batch deadline; an admitted call owns its full transport timeout.
+  const deadline = Date.now() + TRIAGE_BATCH_BUDGET_MS
+  const outcome = await runTriageBatch(await untriagedEvents(userId, botId, priorityEventId), {
+    canClassify: () => Date.now() < deadline && Date.now() + decisionTimeoutMs() <= wakeDeadline,
     claim: event => claimTriageAttempt(event, scope),
     deliverUser: event => setEventTier(event.id, 'attention', scope),
     deliverCompletion: event => deliverRunCompletion(pool, event, scope, workspacePool),
@@ -52,7 +55,7 @@ export async function triageInbox(userId: string, botId: string): Promise<void> 
     recordFailure: (event, attemptedAt, reason) => recordTriageFailure(event, scope, attemptedAt, reason),
     complete: (event, attemptedAt, judgment) => completeTriageAttempt(event, scope, attemptedAt, judgment),
     observe: (event, judgment, application) => console.info('Coordinator model judgment observed', { eventId: event.id, ...judgment.execution, application }),
-  }, budget)
+  }, signal)
   for (const eventId of outcome.pending) console.error('Coordinator event judgment pending', { eventId })
 }
 
@@ -64,14 +67,15 @@ export async function triageInbox(userId: string, botId: string): Promise<void> 
  * Claimed batches also get a durable deadline. The independent sweep still
  * repairs the commit-to-start gap and workflow infrastructure failures.
  */
-export async function wakeCoordinator(userId: string): Promise<void> {
+export async function wakeCoordinator(userId: string, signal?: AbortSignal): Promise<void> {
   try {
     // Resolving the Coordinator first moves any of its chat still stored the old way onto its personal Coordinator.
     // A person with no workspace to resolve has no Coordinator turn to start; their bots still wake.
     await coordinatorBot(userId, null).catch(() => undefined)
     await releaseAttention(userId)
     for (const botId of await wakingChats(userId)) {
-      if (await coordinatorEnabled(userId, botId)) await wakeChat({ userId, botId })
+      if (signal?.aborted) break
+      if (await coordinatorEnabled(userId, botId)) await wakeChat({ userId, botId }, signal)
     }
   } catch (error) {
     // Name and code only: messages can carry chat or database content.
@@ -80,17 +84,20 @@ export async function wakeCoordinator(userId: string): Promise<void> {
 }
 
 /** Product outbox delivery only. eve owns turn queueing, retry and recovery. */
-async function wakeChat(scope: { userId: string; botId: string }) {
-  await triageInbox(scope.userId,scope.botId)
+async function wakeChat(scope: { userId: string; botId: string }, signal?: AbortSignal, deadline = Infinity, eventId?: string) {
+  await triageInbox(scope.userId,scope.botId,signal,deadline,eventId)
+  if (signal?.aborted) return 'deferred' as const
   const { rows: events } = await pool.query<{ id: string; workspaceId: string }>(`
     SELECT e.id, b."workspaceId" FROM coordinator_events e
     JOIN bots b ON b.id = e."botId" AND b."ownerId" = e."userId"
     WHERE e."userId" = $1 AND e."botId" = $2 AND e."deliveredAt" IS NULL
       AND (e.kind = 'user_message' OR (e.tier IS NOT NULL AND e.tier <> 'background'))
-    ORDER BY e."createdAt", e.id LIMIT 50`, [scope.userId, scope.botId])
+      AND ($3::uuid IS NULL OR e.id = $3::uuid)
+    ORDER BY e."createdAt", e.id LIMIT 50`, [scope.userId, scope.botId, eventId ?? null])
   if (!events.length) return 'deferred' as const
   const { sendEveEvent } = await import('../eve/server-client')
   for (const event of events) {
+    if (signal?.aborted) return 'deferred' as const
     await sendEveEvent({ ownerId: scope.userId, botId: scope.botId, workspaceId: event.workspaceId, surface: 'web' }, event.id)
   }
   return 'started' as const
@@ -109,14 +116,21 @@ export async function retryCoordinatorWakes(deadline = Date.now()+45_000) {
   counts.due = scopes.length
   for (const scope of scopes) {
     if (Date.now()>=deadline || !await coordinatorEnabled(scope.userId,scope.botId)) {counts.deferred++;continue}
-    try { counts[await wakeChat(scope)]++ } catch {counts.failed++}
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {counts.deferred++;continue}
+    try { counts[await wakeChat(scope, AbortSignal.timeout(Math.min(remaining, 2_147_483_647)), deadline)]++ } catch {counts.failed++}
   }
   return counts
 }
 
-export async function replayCoordinatorWake(eventId:string) {
-  const row = (await pool.query<{userId:string}>('SELECT "userId" FROM coordinator_events WHERE id=$1 AND "deliveredAt" IS NULL',[eventId])).rows[0]
-  if (!row) return false
-  await wakeCoordinator(row.userId)
-  return true
+export async function replayCoordinatorWake(eventId:string, signal?: AbortSignal) {
+  if (signal?.aborted) return false
+  const eventScope = async () => (await pool.query<{userId:string;botId:string|null}>('SELECT "userId","botId" FROM coordinator_events WHERE id=$1 AND "deliveredAt" IS NULL',[eventId])).rows[0]
+  let row = await eventScope()
+  if (row && !row.botId) {
+    await coordinatorBot(row.userId, null)
+    row = await eventScope()
+  }
+  if (!row?.botId || signal?.aborted || !await coordinatorEnabled(row.userId, row.botId)) return false
+  return await wakeChat({ userId: row.userId, botId: row.botId }, signal, Infinity, eventId) === 'started'
 }

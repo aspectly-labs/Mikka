@@ -20,6 +20,7 @@ import { withBasePath } from '@/lib/base-path'
 import { PersonReferences, ThreadReferencePicker } from './thread-references'
 import { VisibleReadEnd } from './visible-read-end'
 import { ThreadHeader } from './thread-header'
+import { WorkingStatus } from './working-status'
 import { ConversationPill } from '@/components/nav/conversation-pill'
 import { GroupAvatar, groupMembersKey, memberAvatar, useGroupMembers } from '@/components/nav/group-avatar'
 import { useLiveKey } from '@/hooks/use-live-key'
@@ -29,6 +30,7 @@ import { UserMessageText } from '@/components/workspace/user-message-text'
 import { CollapsibleMessage } from '@/components/chat/collapsible-message'
 import { AgentMarkdown } from '@/components/workspace/agent-markdown'
 import { MessageReactions, useMessageReactions } from '@/components/workspace/message-reactions'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { cn } from '@/lib/utils'
 import { mentionsIn } from '@/lib/group-mentions'
 import { authorRuns, chronological, fetchGroupMessages, mergeGroupPoll, mayLeaveGroup, newestGroupPosition, GroupMessagesRequestError, postGroupMessage, stopGroupReply, type GroupExchange, type GroupMessagePage } from '@/lib/group-messages'
@@ -227,13 +229,19 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
     return [{
       kind: 'author', id: run.key, mine, name,
       mark: bot ? <BotAvatar {...memberAvatar(bot)} size="message" still /> : <LetterAvatar name={name} size="message" />,
-      messages: run.messages.map((message): ThreadTranscriptMessage => mine
+      messages: run.messages.map((message): ThreadTranscriptMessage => {
+        // The line under every message: when it was sent and Copy (#2922); a layer drawing its own copies copyText.
+        const line = { actions: <ReplyActions at={Date.parse(message.createdAt)} copyText={message.body} />, copyText: message.body }
+        return mine
         ? { id: message.id, message: { from: 'person', speaker,
           body: <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage>,
+          ...line,
           after: <MessageReactions reactions={reactions[message.id]} align="end" /> } }
         : { id: message.id, message: { from: 'bot', speaker, presentation: 'group-received',
           body: run.authorType === 'user' ? <CollapsibleMessage><UserMessageText text={message.body} renderText={referenceText} /></CollapsibleMessage> : <AgentMarkdown text={message.body} />,
-          after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }),
+          ...line,
+          after: <MessageReactions reactions={reactions[message.id]} align="start" /> } }
+      }),
     }, ...run.messages.flatMap(message => exchanges.get(message.position) ?? []).map((exchange): ThreadGroupRow => ({
       kind: 'notice', id: `exchange:${exchange.linkId}`,
       label: t('exchange.title', { names: exchange.participants.map(participant => participant.name).join(' & ') }),
@@ -278,7 +286,10 @@ export function GroupChatView({ group, userId, people, ownedBots, onLeft }: {
       </>,
       end: namedChat && readRevision !== undefined && !blockingCode && !accessRejected && <VisibleReadEnd onSeen={acknowledge} />,
     }}
-      beforeComposer={referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
+      beforeComposer={<>
+        <WorkingStatus revision={pages?.[0]?.revision} />
+        {referenceWorkspace && <ThreadReferencePicker key={group.id} draft={draft} workspaceId={referenceWorkspace} input={composerInput} onChange={setDraft} />}
+      </>}
       composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={composerInput} value={draft} onChange={value => { submittedDraft.current = null; setDraft(value) }} onSubmit={send} label={t('composer', { name: group.title || t('untitled') })} disabled={!!blockingCode} attachmentScope={{ kind: 'group', id: group.id }}
         leftControls={modelBot && <BotModelPicker key={modelBot} botId={modelBot} running={replying} />}
         sending={stopping} editableWhileSending={stopping} running={replying && !stopping} onStop={replying && !stopping ? () => { void stop() } : undefined} />} />

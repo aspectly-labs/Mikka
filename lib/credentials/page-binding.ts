@@ -25,5 +25,5 @@ export function assertCredentialPageBinding(lease: CredentialPageBinding & { exp
   if (lease.permissionAction !== 'computer_use' || current.permissionAction !== 'computer_use') throw denied()
   try {
     if (canonicalOrigin(lease.origin) !== canonicalOrigin(current.origin)) throw denied()
-  } catch { throw denied() }
+  } catch (error) { throw Object.assign(denied(), { cause: error }) }
 }

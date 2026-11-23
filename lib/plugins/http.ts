@@ -30,6 +30,6 @@ export async function pluginBody<T>(request: Request, schema: z.ZodType<T>): Pro
     return parsed.data
   } catch (error) {
     if (error instanceof PluginError) throw error
-    throw new PluginError('invalidPluginInput', 400)
+    throw Object.assign(new PluginError('invalidPluginInput', 400), { cause: error })
   } finally { void reader.cancel().catch(() => {}) }
 }

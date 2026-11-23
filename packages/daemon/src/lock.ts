@@ -123,7 +123,7 @@ export async function acquireLock(
         return await lock()
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ELOCKED") {
-          throw new DaemonAlreadyRunningError(dataDir)
+          throw Object.assign(new DaemonAlreadyRunningError(dataDir), { cause: error })
         }
         throw error
       }

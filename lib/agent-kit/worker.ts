@@ -74,6 +74,8 @@ export interface WorkerDefinitionSnapshot {
   repositoryAdmission?: RepositoryAdmission
   /** A run that changes nothing (investigation, review): read-only worktree and no task branch. */
   readOnly?: true
+  /** Durable parent/child provenance recorded at delegation admission (#3089); grants nothing by itself. */
+  delegation?: { parentRunId: string }
 }
 
 /** Captured atomically with dispatch, not retroactively inferred from a renamed Agent. */

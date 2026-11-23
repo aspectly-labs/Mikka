@@ -146,7 +146,7 @@ test('a recorded model stays available to the composer without a context estimat
   try {
     const html = render({ issueId: null })
     assert.doesNotMatch(html, /data-slot="thread-context-usage"|25K/)
-    assert.match(renderToStaticMarkup(shownThread?.composer.model), /GPT-5\.1/)
+    assert.match(renderToStaticMarkup(shownThread?.composer.leftControls), /GPT-5\.1/)
   } finally {
     runContext = undefined
   }
@@ -695,4 +695,19 @@ test('a version with a lost confirmation or stale read-back keeps its request un
   assert.equal(refreshes, 1)
   assert.equal(ids.length, 5)
   assert.equal(new Set(ids).size, 1, 'each retry recovers the original operation')
+})
+
+test('the line under the person own messages shows only a time the message really has', () => {
+  // A valid send time shows; an unknown one shows nothing, never the thread start that at() falls back to (#2922).
+  storedMessages = [
+    { id: 'timed', text: 'Timed message.', at: new Date('2026-11-20T15:42:00Z'), mine: true },
+    { id: 'untimed', text: 'Untimed message.', at: new Date(Number.NaN), mine: true },
+  ]
+  thread = { ...base, createdAt: new Date('2026-11-20T15:00:00Z') }
+  const html = render()
+  const item = (words: string) => html.split('<li').find(part => part.includes(words)) ?? ''
+  assert.ok(item('Timed message.'), 'the timed message renders')
+  assert.ok(item('Untimed message.'), 'the untimed message still renders, only without a time')
+  assert.match(item('Timed message.'), /<time[^>]*dateTime="2026-11-20T15:42:00.000Z"/i)
+  assert.doesNotMatch(item('Untimed message.'), /<time/)
 })

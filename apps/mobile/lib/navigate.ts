@@ -22,7 +22,7 @@ export function openChat(href: Href) {
 // The newest tap owns navigation. A later tap only waits for a workspace
 // preference write already in flight, never for a previous bot lookup.
 let latestPush = 0
-let savingWorkspace = Promise.resolve()
+let savingWorkspace: Promise<unknown> = Promise.resolve()
 
 /** A task or thread opens over the current screen. A chat opens over home. */
 export async function openPush(href: string) {
