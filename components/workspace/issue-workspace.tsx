@@ -808,8 +808,8 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
     ...(threadId ?? mainThreadId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={taskId} runId={(threadId ?? mainThreadId)!} /> }] : []),
     ...(section === 'coordinator' && !activeBot ? [
       { id: 'crew:threads' as const, title: i18nText('IssueThreads.crewThreads'), content: <RailCrewThreads issues={tasks} threads={threads} loading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} /> },
-      { id: 'crew:pulls' as const, title: i18nText('IssueThreads.crewPulls'), content: <RailCrewPulls /> },
-      ...(mainThreadId ? [{ id: 'crew:side' as const, title: i18nText('IssueThreads.crewSide'), content: <RailCrewSide runId={mainThreadId} onOpenThread={thread => openThread(thread.runId)} /> }] : []),
+      { id: 'crew:pulls' as const, title: i18nText('IssueThreads.crewPulls'), content: <RailCrewPulls workspaceId={listWorkspaceId} /> },
+      ...(mainThreadId ? [{ id: 'crew:side' as const, title: i18nText('IssueThreads.crewSide'), content: <RailCrewSide runId={mainThreadId} workspaceId={listWorkspaceId} onOpenThread={thread => openThread(thread.runId)} /> }] : []),
     ] : []),
   ] } : undefined
   // Stable while the live sessions stay put: the dialogs below read this, and a fresh array every render would rebuild them all.
