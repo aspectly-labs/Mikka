@@ -30,13 +30,16 @@ const WEB_ONLY = new Map([
   ['@/lib/auth-client', ['cloudAuthClient']],
 ])
 
-const webFile = specifier => ['.ts', '.tsx', '/index.ts', '/index.tsx'].map(ext => join(repository, specifier.slice(2) + ext)).find(existsSync)
+// A web module that moved to the private UI layer (decision 2026-11-22-2205) is read there when it is checked out.
+const webFile = specifier => ['', '.hosted-ui/web/'].flatMap(root => ['.ts', '.tsx', '/index.ts', '/index.tsx'].map(ext => join(repository, root + specifier.slice(2) + ext))).find(existsSync)
+const movedToHostedLayer = specifier => specifier.startsWith('@/hooks/') || specifier.startsWith('@/components/')
 
 test('each desktop alias exports every value name of the web module it replaces', () => {
   const pairs = [...desktopAliases].filter(([specifier]) => specifier.startsWith('@/'))
   assert.ok(pairs.some(([specifier]) => specifier === '@/lib/platform/client-config'), 'the client config alias is covered')
   for (const [specifier, target] of pairs) {
     const web = webFile(specifier)
+    if (!web && movedToHostedLayer(specifier)) continue
     assert.ok(web, `${specifier} resolves to a web module`)
     const desktop = valueExports(join(renderer, target))
     const webOnly = new Set(WEB_ONLY.get(specifier) ?? [])

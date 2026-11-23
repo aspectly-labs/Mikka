@@ -195,7 +195,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     // 3. The Coordinator's picker chooses a model only: no Agent (harness) in its menu.
     assert.ok(!JSON.stringify(coordinator).includes("harness"));
     for (const group of coordinator.groups) for (const option of group.options)
-      assert.deepEqual(Object.keys(option).filter((key) => !(group.kind === "hosted" && ["name", "price", "featured"].includes(key)) && !["route", "unavailable"].includes(key)).sort(), ["id", "modelId", "provider"]);
+      assert.deepEqual(Object.keys(option).filter((key) => !(group.kind === "hosted" && ["name", "featured"].includes(key)) && !["route", "unavailable", "price"].includes(key)).sort(), ["id", "modelId", "provider"]);
     // Every option names its route (#2938): what pays, which connection, and the connection's own label.
     assert.deepEqual([...new Set(coordinator.groups.flatMap((group) => group.options.map((option) => `${group.kind}:${option.route?.source}`)))].sort(),
       ["hosted:credits", "subscription:subscription"]);
@@ -295,7 +295,8 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const keyOption = apiKeyOptionId(key.id, "deepseek-v4-pro");
     let keyMenu = await botModelMenu(pool, settings, alice, null);
     assert.equal(keyMenu.groups.find((group) => group.kind === "apiKey")?.credentialLabel, `····${key.last4}`);
-    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options, [{ id: keyOption, modelId: "deepseek-v4-pro", provider: "deepseek",
+    // The catalogue's price (#2938) rides along where the gateway lists the model; this checks the route.
+    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options.map(({ price: _price, ...option }) => option), [{ id: keyOption, modelId: "deepseek-v4-pro", provider: "deepseek",
       route: { source: "byok", connectionId: key.id, label: `····${key.last4}` } }]);
     // 刷新 re-reads the person's own keys' model lists too (the provider's free /models read), then the menu.
     const { refreshApiKeyModels } = await import("./model-api-keys");
