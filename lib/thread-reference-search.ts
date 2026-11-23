@@ -32,8 +32,9 @@ export async function searchThreadReferences(reader: IssueReader, workspaceId: s
       kind && kind !== 'task' ? null : searchIssues(db, { userId, workspaceId, params: parseSearchParams(new URLSearchParams({ q: query, limit: '8', workspaceId })) }),
       kind && kind !== 'thread' ? null : conversationDirectory(pool, reader, workspaceId, { search: query }),
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
+      // Match names in JS like the other kinds: PostgreSQL's lower() folds final ς differently and would drop hits.
       kind && kind !== 'bot' ? null : db.select({ id: bots.id, name: bots.name }).from(bots)
-        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt), sql`strpos(lower(${bots.name}), lower(${query}))>0`)).orderBy(asc(bots.createdAt)).limit(8),
+        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)).limit(200),
     ])
     const needle = query.toLowerCase()
     return [
