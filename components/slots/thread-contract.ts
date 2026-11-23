@@ -152,12 +152,16 @@ export type ThreadScreenProps = {
     tabs: ThreadPanelTab[]; reveal: number; revealId: string | null
     /** The real active work tab's task, or null for another tab. */
     onActiveTask?: (taskId: string | null) => void
+    /** The real active work tab's id (`task:<issueId>` / `thread:<runId>`), or null for another tab. */
+    onActiveTab?: (tabId: string | null) => void
   }
   /**
    * Tabs the chat opens itself in the same work area (FRAME_OWNS_PANEL, decision 2026-11-10): a task's view
    * (`task:<issueId>`) from a task card or chip, a thread's conversation (`thread:<runId>`) from a thread chip, an
-   * Agent's stretch or a subagent. `reveal` counts up each time one is asked for (`revealId`). With `work`, a task card
-   * opens through its part's `onOpen` only, never the template's own task tab.
+   * Agent's stretch or a subagent, plus the page's static tool tabs (ConversationTools — Changes, the
+   * Coordinator's Crew group) the rail's ＋ menu offers alongside. `reveal` counts up each time one is asked
+   * for (`revealId`). With `work`, a task card opens through its part's `onOpen` only, never the template's
+   * own task tab.
    */
   work?: {
     tabs: ThreadPanelTab[]; reveal: number; revealId: string | null; beforeClose?: (tabId: string) => Promise<boolean>
@@ -230,4 +234,9 @@ export type ThreadTranscriptScreenProps = {
 /** The hosted shell waits for a task tab's existing save before removing it. */
 export const WorkTabCloseContext = createContext<((tabId: string) => Promise<boolean>) | null>(null)
 
-export type ThreadPanelTab = { id: 'overview' | 'browser' | `task:${string}` | `thread:${string}`; title: string; label?: string; content: ReactNode }
+export type ThreadPanelTab = {
+  id:
+    | 'overview' | 'browser' | 'changes' | 'files' | 'setup' | 'computer' | 'terminals' | 'pull-request'
+    | `task:${string}` | `thread:${string}` | `crew:${string}`
+  title: string; label?: string; content: ReactNode
+}

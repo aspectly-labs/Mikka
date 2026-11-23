@@ -9,10 +9,11 @@ const overview = {
   pullRequests: [{ issueId: '10000000-0000-4000-8000-000000000001', branch: 'feat', url: 'https://example.invalid/pr/1', state: 'open', status: 'published', updatedAt: '2026-11-22T11:00:00.000Z' }],
 }
 mock.module(new URL('../../../../lib/api-auth.ts', import.meta.url).href, { namedExports: { auth: { api: { getSession: async () => signedIn ? { user: identity } : null } } } })
-mock.module(new URL('../../../../lib/coordinator/overview.ts', import.meta.url).href, { namedExports: { readCoordinatorOverview: async (user: { id: string }) => { assert.equal(user.id, identity.id); reads++; return overview } } })
+mock.module(new URL('../../../../lib/coordinator/overview.ts', import.meta.url).href, { namedExports: { readCoordinatorOverview: async (user: { id: string }, workspaceId?: string) => { assert.equal(user.id, identity.id); assert.equal(workspaceId, requestedWorkspace); reads++; return overview } } })
+let requestedWorkspace: string | undefined
 let GET: typeof import('./route')['GET']
 before(async () => { ({ GET } = await import('./route')) })
-beforeEach(() => { signedIn = true; reads = 0 })
+beforeEach(() => { signedIn = true; reads = 0; requestedWorkspace = undefined })
 
 test('unauthenticated overview still fails before its read', async () => {
   signedIn = false
@@ -26,5 +27,12 @@ test('the overview aggregates needs-you, running work and pull requests with pri
   assert.deepEqual(await response.json(), overview)
   assert.equal(response.headers.get('cache-control'), 'private, no-store')
   assert.equal(response.headers.get('x-mikka-viewer'), 'owner')
+  assert.equal(reads, 1)
+})
+
+test('a named workspace reaches the overview reader', async () => {
+  requestedWorkspace = 'workspace-one'
+  const response = await GET(new Request('https://mikka.example/api/coordinator/overview?workspaceId=workspace-one'))
+  assert.equal(response.status, 200)
   assert.equal(reads, 1)
 })

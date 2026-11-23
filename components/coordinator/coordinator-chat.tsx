@@ -52,6 +52,7 @@ import { CHAT_SURFACE, ChatWaiting } from '@ui-slot/chat-message'
 import { ChatComposer, ChatComposerAttachment } from './chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
 import { useConversationPanels, useWorkTabs } from '@/components/coordinator/conversation-panels'
+import { useConversationTools } from '@/components/coordinator/conversation-panels-context'
 import type { ThreadEntry, ThreadEntryPart, ThreadScrolledRow } from '@/components/slots/thread-contract'
 import { factoryQuestionUnavailable, useFactoryQuestions } from '@/hooks/use-factory-questions'
 import { noteChipText } from '@/lib/browser/note'
@@ -448,6 +449,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // The board's chat column (compact) is a conversation too; only an artifact's chat (embedded) keeps its chips.
   // The Overview and the browser, when the frame's work area holds them (FRAME_OWNS_PANEL).
   const panels = useConversationPanels()
+  const tools = useConversationTools()
   // Tasks and threads opened from this chat open as tabs of that work area (decision 2026-11-10), named by their code.
   const work = useWorkTabs(Boolean(!embedded && panels && !compact), {
     task: id => {
@@ -669,7 +671,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       {/* The page's floating title pill sits over the top 56px on wide screens: the screen starts below it. Without one (the
           hosted shell owns the header and the thread names itself) no band is left. */}
       <section ref={rootRef} aria-label={name} className={cn('mikka-agent flex min-h-0 min-w-0 flex-1 flex-col', pill && 'md:pt-14')}>
-        <ThreadScreen host={compact ? 'column' : 'page'} botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={compact ? undefined : panels} work={work.work}
+        <ThreadScreen host={compact ? 'column' : 'page'} botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={compact ? undefined : panels} work={work.work ? { ...work.work, tabs: [...(tools ?? []), ...work.work.tabs] } : tools?.length ? { tabs: tools, reveal: 0, revealId: null } : undefined}
           transcriptLabel={bot ? t('conversationWith', { name: bot.name }) : t('conversation')}
           loadingLabel={!data && !loadError ? tCommon('loading') : undefined}
           older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}

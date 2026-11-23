@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
 import { organizationResourceAllowed, assertOrganizationModelProvider } from './governance/resource-access'
+import { McpValidationError, PluginError } from './plugins/contracts'
 
 /** Authority is host data, never a Decision/model argument. References only: no credentials. */
 const resource = z.object({
@@ -26,8 +27,9 @@ type Query = Pick<Pool | PoolClient, 'query'>
 type RunAuthority = { userId: string; botId: string | null; deviceId: string | null; agentDefinition: WorkerDefinitionSnapshot | null }
 
 export class ExecutionIdentityError extends Error {
-  constructor() { super('executionIdentityUnavailable'); this.name = 'ExecutionIdentityError' }
+  constructor(options?: ErrorOptions) { super('executionIdentityUnavailable', options); this.name = 'ExecutionIdentityError' }
 }
+export class ExecutionMcpAuthorityError extends ExecutionIdentityError {}
 const denied = (): never => { throw new ExecutionIdentityError() }
 
 /** Membership is in the workspace DB, not the application's DB. */
@@ -58,7 +60,11 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
   const resourceBindings: ExecutionIdentity['resourceBindings'] = [{ kind: 'device', id: run.deviceId, ownerId: device.ownerId, access: 'owner' }]
   if (definition.customMcp) {
     if (definition.customMcp.workspaceId !== workspaceId) return denied()
-    const authority = await (await import('./plugins/workspace-mcp')).validateMcpAuthority(query, run.userId, definition.customMcp, membership).catch(() => denied())
+    const authority = await (await import('./plugins/workspace-mcp')).validateMcpAuthority(query, run.userId, definition.customMcp, membership).catch(error => {
+      if (!(error instanceof PluginError)) throw new McpValidationError('identity_validation', error)
+      if (error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
+      throw new ExecutionIdentityError({ cause: error })
+    })
     for (const grant of authority.servers) resourceBindings.push({ kind: 'mcp', id: grant.id, ownerId: grant.ownerId,
       access: grant.grantId ? 'workspace_share' : 'owner', revision: String(grant.revision),
       ...(grant.grantId ? { grantId: grant.grantId } : {}), ...(authority.workspaceId ? { workspaceId: authority.workspaceId } : {}),

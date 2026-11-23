@@ -20,7 +20,7 @@ let lookup: { issueId: string | null } | null = { issueId: null }
 let failure: unknown = null
 let lookupHold: Promise<void> | null = null
 let lookupReads = 0
-mock.module(at('app/actions/agents.ts'), { namedExports: { findThreadIssue: async () => {
+mock.module(at('app/actions/agents.ts'), { namedExports: { getThreadMachine: async () => null, findThreadIssue: async () => {
   lookupReads++
   if (lookupHold) await lookupHold
   if (failure) throw failure

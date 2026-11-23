@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 60
     env:
       NITRO_PRESET: node-server
-      WORKFLOW_TARGET_WORLD: '@workflow/world-postgres'
+      WORKFLOW_TARGET_WORLD: '@mikka/eve-cloudflare-world'
       NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

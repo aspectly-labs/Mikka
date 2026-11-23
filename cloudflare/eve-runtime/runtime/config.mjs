@@ -3,19 +3,16 @@ export const EVE_PUBLIC_PREFIX = '/mikka/api/agents'
 export function hostConfiguration(env) {
   const publicOrigin = env.EVE_PUBLIC_ORIGIN
   const runtime = Object.fromEntries(Object.entries(env)
-    .filter(([key]) => key.startsWith('EVE_ENV_'))
+    .filter(([key]) => key.startsWith('EVE_ENV_')
+      && key !== 'EVE_ENV_WORKFLOW_POSTGRES_POLL_INTERVAL_MS')
     .map(([key, value]) => [key.slice('EVE_ENV_'.length), value]))
   return {
     releaseId: env.EVE_RELEASE_ID, sourceSha: env.EVE_SOURCE_SHA, uiSha: env.EVE_UI_SHA,
     publicOrigin,
     runtimeEnv: {
-      // The Postgres World defaults to 50 workers each polling every 500 ms,
-      // about 100 queries a second while idle. LISTEN/NOTIFY wakes idle
-      // workers when a job is added, so this only delays scheduled jobs.
-      WORKFLOW_POSTGRES_POLL_INTERVAL_MS: '5000',
       // The image records the World it was built with; the release pipeline
       // supplies EVE_ENV_WORKFLOW_TARGET_WORLD to match it when a release ships
-      // a queue-driven World. Keep it overridable alongside the poll interval.
+      // a queue-driven World.
       WORKFLOW_TARGET_WORLD: '@workflow/world-postgres',
       ...runtime, NODE_ENV: 'production', MIKKA_EVE_HOST: 'cloudflare',
       MIKKA_DEPLOYMENT_ID: env.EVE_RELEASE_ID, WORKFLOW_DEPLOYMENT_ID: env.EVE_RELEASE_ID, MIKKA_EVE_PUBLIC_ORIGIN: publicOrigin,

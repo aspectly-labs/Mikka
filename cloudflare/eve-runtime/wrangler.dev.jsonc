@@ -36,14 +36,14 @@
     "rollout_active_grace_period": 60
   }],
   "queues": {
-    "producers": [{ "binding": "EVE_WAKE", "queue": "mikka-eve-wake" }],
+    "producers": [{ "binding": "EVE_WAKE", "queue": "mikka-eve-wake-epic3076-dev" }],
     "consumers": [{
-      "queue": "mikka-eve-wake",
+      "queue": "mikka-eve-wake-epic3076-dev",
       "max_batch_size": 10,
       "max_batch_timeout": 5,
       "max_retries": 5,
       "retry_delay": 30,
-      "dead_letter_queue": "mikka-eve-wake-dlq"
+      "dead_letter_queue": "mikka-eve-wake-epic3076-dev-dlq"
     }]
   }
 }

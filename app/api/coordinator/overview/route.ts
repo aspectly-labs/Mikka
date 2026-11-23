@@ -8,7 +8,8 @@ const headers = { 'Cache-Control': 'private, no-store' }
 export async function GET(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session?.user) return NextResponse.json({ error: 'authRequired' }, { status: 401, headers })
-  return NextResponse.json(await readCoordinatorOverview(session.user), {
+  const workspaceId = new URL(request.url).searchParams.get('workspaceId') ?? undefined
+  return NextResponse.json(await readCoordinatorOverview(session.user, workspaceId), {
     headers: { ...headers, 'X-Mikka-Observed-At': new Date().toISOString(), 'X-Mikka-Viewer': session.user.id },
   })
 }

@@ -3,7 +3,7 @@ import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'dri
 import type { SecretDelivery } from '@/lib/secrets/delivery'
 
 export const WORKSPACE_SECRET_KINDS = ['secret', 'env'] as const
-export const WORKSPACE_SECRET_SCOPES = ['workspace', 'repository'] as const
+export const WORKSPACE_SECRET_SCOPES = ['workspace', 'repository', 'thread'] as const
 export const E2B_KEY_ERROR_CODES = ['invalid', 'rate_limited', 'template_unavailable', 'unavailable'] as const
 
 export const workspaceSecrets = pgTable('workspace_secrets', {

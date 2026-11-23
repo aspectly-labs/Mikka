@@ -6,6 +6,12 @@ export class PluginError extends Error {
   constructor(readonly code: string, readonly status = 503, options?: { cause?: unknown }) { super(code, options) }
 }
 
+export class McpValidationError extends Error {
+  constructor(readonly stage: 'identity_validation' | 'connection_lock', cause: unknown) {
+    super('MCP validation failed', { cause }); this.name = 'McpValidationError'
+  }
+}
+
 // User-provided MCP servers receive only their explicitly saved credential.
 // Never accept transport, forwarding, cookie or hop-by-hop headers as auth.
 export const mcpAuthSchema = z.object({
@@ -17,7 +23,7 @@ const remoteMcpSchema = z.object({
   transport: z.enum(['http', 'sse']).default('http'),
   enabled: z.boolean().default(true), auth: mcpAuthSchema.optional(), headers: mcpHeadersSchema.optional(),
 }).strict().refine(value => !(value.auth && value.headers), 'Use auth or headers, not both')
-const stdioMcpSchema = taskMcpServerSchema.options[1].omit({ name: true }).extend({ name: z.string().trim().min(1).max(80), enabled: z.boolean().default(true) })
+const stdioMcpSchema = taskMcpServerSchema.options[1].omit({ name: true, disabledTools: true }).extend({ name: z.string().trim().min(1).max(80), enabled: z.boolean().default(true) })
 export const createMcpSchema = z.union([remoteMcpSchema, stdioMcpSchema])
 export const updateMcpSchema = z.object({
   id: z.uuid(), name: z.string().trim().min(1).max(80).optional(), enabled: z.boolean().optional(),
@@ -45,7 +51,7 @@ export const updateSkillSchema = z.object({
 }).strict().refine(value => value.enabled !== undefined || value.name !== undefined || value.instructions !== undefined)
 export type McpServerView = {
   id: string; name: string; url: string; transport: 'http' | 'sse' | 'stdio'; enabled: boolean;
-  revision: number; authKind: 'header' | 'none' | 'env'; createdAt: string;
+  revision: number; authKind: 'header' | 'none' | 'env' | 'oauth'; createdAt: string;
 }
 export type McpWorkspaceServerView = Omit<McpServerView, 'url'> & {
   /** A teammate receives public metadata, never the owner's private endpoint. */
@@ -61,7 +67,7 @@ export const mcpServerGrantSchema = z.object({
   grantId: z.uuid().nullable(),
 }).strict()
 export const mcpAuthoritySchema = z.object({
-  requester: z.string().min(1), workspaceId: z.uuid().nullable(), servers: z.array(mcpServerGrantSchema).max(64),
+  requester: z.string().min(1), workspaceId: z.uuid().nullable(), environmentId: z.uuid().nullable().optional(), servers: z.array(mcpServerGrantSchema).max(64),
 }).strict()
 export type McpServerGrant = z.infer<typeof mcpServerGrantSchema>
 export type McpAuthority = z.infer<typeof mcpAuthoritySchema>
