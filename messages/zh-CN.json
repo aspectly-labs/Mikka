@@ -5338,7 +5338,7 @@
     "recentConversations": "最近线程",
     "forExampleProductTeam": "例如：产品团队",
     "activeAgentsNoParameters": "此接口不接受任何参数。",
-    "conversationNotFound": "找不到此会话。",
+    "conversationNotFound": "找不到此线程。",
     "pleaseSignInFirst": "请先登录。",
     "inProgress": "进行中",
     "formContent": "表单内容：",

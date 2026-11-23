@@ -74,3 +74,51 @@ test("another repository's identity or a missing PR is refused, never read", asy
   body = () => ({ ...response(pull()), errors: [{ message: "private" }] });
   await assert.rejects(read(), { message: "githubUnavailable" });
 });
+
+test("commits and review threads are included when GitHub reports them", async () => {
+  body = () =>
+    response({
+      ...pull(),
+      commitList: {
+        totalCount: 3,
+        nodes: [
+          {
+            commit: {
+              oid: sha,
+              abbreviatedOid: "aaaaaaa",
+              messageHeadline: "feat: align PR sidebar",
+              committedDate: "2026-11-18T00:00:00Z",
+              url: "https://github.com/Owner/Repo/commit/" + sha,
+              author: { name: "Alex", user: { login: "alexj11324" } },
+            },
+          },
+        ],
+      },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            path: "web/components/workspace/pull-preview.tsx",
+            line: 42,
+            comments: {
+              nodes: [
+                {
+                  id: "c1",
+                  bodyText: "Please keep the commit selector visible.",
+                  createdAt: "2026-11-18T01:00:00Z",
+                  author: { login: "reviewer" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+  const detail = await read();
+  assert.equal(detail.commitCount, 3);
+  assert.equal(detail.commits?.[0]?.shortOid, "aaaaaaa");
+  assert.equal(detail.commits?.[0]?.author, "alexj11324");
+  assert.equal(detail.comments?.length, 1);
+  assert.equal(detail.comments?.[0]?.path, "web/components/workspace/pull-preview.tsx");
+  assert.equal(detail.comments?.[0]?.resolved, false);
+});
