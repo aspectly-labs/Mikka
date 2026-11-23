@@ -3,8 +3,9 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { CodingWorkspaceError, type RunWorktreeIdentity, type WorkspaceReadRequest } from '@mikka/protocol/coding-workspace'
 import { diffSnapshot } from '@mikka/protocol/coding-workspace-review'
-import { gitCheckpointList, type GitCheckpointList, type GitFrozen, type GitHistory, type GitStatus } from '@mikka/protocol/coding-workspace-git'
+import { gitCheckpointList, gitTurnList, type GitCheckpointList, type GitFrozen, type GitHistory, type GitStatus, type GitTurnList } from '@mikka/protocol/coding-workspace-git'
 import { requestWorkspaceRead } from '../requests'
+import { readRunChain } from '../../run-chain'
 import { withReviewTransaction, type ReviewActor, type ReviewScope } from '../diff/authority'
 import type { WorkspaceQuery } from '../identity'
 
@@ -128,4 +129,28 @@ export async function listRunCheckpoints(dependencies: GitDependencies, actor: R
 export async function readCheckpointRevision(client: WorkspaceQuery, scope: ReviewScope, checkpointId: string) {
   const entries = await readCheckpointEntries(client, scope)
   return entries.find(entry => entry.checkpointId === checkpointId) ?? null
+}
+
+/** #2929: the thread's turns as diff boundaries. A turn is one attempt of the
+ * run chain; its checkpoint review retains the base/head it wrote against, so a
+ * per-turn diff is the pair (previous turn's head, this turn's head) read with
+ * the ordinary `commit` source. A turn without a retained head is still live
+ * work — the frontend scopes that pane to `working` instead. */
+export async function listRunGitTurns(dependencies: GitDependencies, actor: ReviewActor, runId: string,
+  repoId: string, signal?: AbortSignal): Promise<GitTurnList> {
+  return withReviewTransaction(dependencies.database, dependencies.membership, actor, runId, repoId, async (client, scope) => {
+    const chain = await readRunChain(client, scope.identity.ownerId, runId)
+    const attempts: { runId: string; attempt: number; status: string; finishedAt: Date | null }[] = chain?.attempts
+      ?? [{ runId, attempt: 1, status: 'running', finishedAt: null }]
+    const { rows } = await client.query<{ runId: string; baseSha: string | null; headSha: string | null }>(
+      `SELECT "runId","baseSha","headSha" FROM coding_workspace_checkpoint_reviews
+        WHERE "runId" = ANY($1::uuid[]) AND "repoId"=$2 AND "workspaceId"=$3`,
+      [attempts.map(attempt => attempt.runId), repoId, scope.identity.workspaceId])
+    const byRun = new Map(rows.map(row => [row.runId, row]))
+    const turns = attempts.map(attempt => ({
+      runId: attempt.runId, attempt: attempt.attempt, status: attempt.status,
+      baseSha: byRun.get(attempt.runId)?.baseSha ?? null, headSha: byRun.get(attempt.runId)?.headSha ?? null,
+      finishedAt: attempt.finishedAt?.toISOString() ?? null }))
+    return gitTurnList.parse({ ok: true, identity: scope.identity, turns })
+  }, { historical: true, signal })
 }
