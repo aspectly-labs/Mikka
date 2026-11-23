@@ -7653,7 +7653,11 @@
     "mergeDisarm": "Armed — disarm merge",
     "mergeDisarmed": "Merge intent disarmed",
     "mergeable": "Mergeable",
-    "mergeableState": { "MERGEABLE": "Mergeable", "CONFLICTING": "Conflicts", "UNKNOWN": "Unknown" },
+    "mergeableState": {
+      "MERGEABLE": "Mergeable",
+      "CONFLICTING": "Conflicts",
+      "UNKNOWN": "Unknown"
+    },
     "detailFailed": "Pull request details unavailable",
     "requestChanges": "Request changes",
     "requestChangesTitle": "Request changes on {repo} #{number}",
@@ -7674,7 +7678,9 @@
     "description": "Description",
     "anyLabel": "Any label",
     "done": "Done",
-    "deselect": "Deselect"
+    "deselect": "Deselect",
+    "diffPartial": "GitHub stopped listing at the read cap — more files changed",
+    "diffPatchUnavailable": "{count} file(s) have no patch (binary or truncated)"
   },
   "HostedConnections": {
     "state": {
@@ -8388,7 +8394,12 @@
   },
   "HostedThread": {
     "needsCount": "{count, plural, one {# needs you} other {# need you}}",
-    "toolsGroups": { "common": "Common", "related": "Related", "terminals": "Terminals", "crew": "Crew" },
+    "toolsGroups": {
+      "common": "Common",
+      "related": "Related",
+      "terminals": "Terminals",
+      "crew": "Crew"
+    },
     "toolKinds": {
       "failed": "{failed} failed",
       "separator": ", ",
