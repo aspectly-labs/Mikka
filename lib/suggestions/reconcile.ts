@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, gte, inArray } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { linearSyncInbox, suggestions, suggestionTriggerChecks } from '@/lib/db/schema'
 import { getComposio, runComposioAction } from '@/lib/composio'
@@ -7,6 +7,7 @@ import { listComposioPages } from '@/lib/composio-pagination'
 import { redeliverFailedGitHubWebhooks, type RedeliveryResult } from './github-redelivery'
 import { gmailNotification, notionSearchNotification, type ExternalNotification } from './notification'
 import { ensureComposioTriggers, linearWebhookNotifications } from './sources'
+import { TRIGGER_CHECK_INTERVAL_MS } from './triggers'
 import { ingestNotifications } from './store'
 import { linearSyncEnabled } from '@/lib/linear-sync/flags'
 import { clearComposioNeedsReconnect, markComposioNeedsReconnect } from '@/lib/composio-account-store'
@@ -153,7 +154,13 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
   const composio = getComposio()
   if (!composio) return result
   // Least recently checked first, so a run cut short by the deadline moves on to others next time.
-  const people = (await db.select({ userId: suggestionTriggerChecks.userId }).from(suggestionTriggerChecks).orderBy(suggestionTriggerChecks.checkedAt)).map(row => row.userId)
+  // Per-item due (#2820): a person belongs in the sweep when the suggestions pipeline hasn't touched them
+  // within the trigger interval (their pushes may be stale) or nobody reconciled them inside the backfill
+  // window — not because the hour fired. Least recently checked first, so a deadline-cut run resumes at the front.
+  const people = (await db.select({ userId: suggestionTriggerChecks.userId }).from(suggestionTriggerChecks)
+    .where(or(lt(suggestionTriggerChecks.checkedAt, new Date(now.getTime() - TRIGGER_CHECK_INTERVAL_MS)),
+      or(isNull(suggestionTriggerChecks.reconciledAt), lt(suggestionTriggerChecks.reconciledAt, since))))
+    .orderBy(suggestionTriggerChecks.checkedAt)).map(row => row.userId)
   for (let index = 0; index < people.length; index += PEOPLE_CONCURRENCY) {
     if (Date.now() > deadline) { result.deferred = people.length - index; break }
     await Promise.all(people.slice(index, index + PEOPLE_CONCURRENCY).map(async userId => {
@@ -163,6 +170,7 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
           .filter(toolkit => (COMPOSIO_TOOLKITS as readonly string[]).includes(toolkit))
         result.people++
         if (toolkits.length) await reconcilePerson(userId, toolkits, since, result)
+        await db.update(suggestionTriggerChecks).set({ reconciledAt: now }).where(eq(suggestionTriggerChecks.userId, userId))
       } catch (error) {
         result.failed.composio = (result.failed.composio ?? 0) + 1
         console.error('Suggestions backfill could not list connected apps', error instanceof Error ? error.message : error)
