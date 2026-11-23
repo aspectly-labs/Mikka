@@ -464,7 +464,7 @@ export const desktopActionSchemas = {
   'task-runs.threadAutomation': tuple(uuid, z.record(z.string(), z.unknown())),
   'task-runs.readThreadSummary': tuple(uuid),
   'task-runs.getThreadPanels': tuple(uuid),
-  'task-runs.setThreadPanels': tuple(uuid, object({ tabs: z.array(text(40)).max(16), active: text(40).nullable(), open: bool })),
+  'task-runs.setThreadPanels': tuple(uuid, object({ tabs: z.array(text(40)).max(16).optional(), active: text(40).nullable().optional(), open: bool.optional() })),
   'task-runs.getThreadPreview': tuple(uuid),
   'task-runs.readSubagentRuns': tuple(uuid),
   'task-runs.readThreadWorkspace': tuple(uuid),

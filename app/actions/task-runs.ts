@@ -353,10 +353,10 @@ export async function getThreadPanels(runId: string): Promise<ActionResult<impor
 }
 
 /** Persist the thread's rail state; only its owner writes it, anyone else gets runNotFound. */
-export async function setThreadPanels(runId: string, state: import('@/lib/thread-panels').ThreadPanelState): Promise<ActionResult<{ saved: true }, 'runNotFound' | 'invalid'>> {
+export async function setThreadPanels(runId: string, state: Partial<import('@/lib/thread-panels').ThreadPanelState>): Promise<ActionResult<{ saved: true }, 'runNotFound' | 'invalid'>> {
   const { ownerId } = await conversationActor()
   const panels = await import('@/lib/thread-panels')
-  if (!panels.isThreadPanelState(state)) return { error: 'invalid' }
+  if (typeof state !== 'object' || state === null) return { error: 'invalid' }
   return (await panels.writeThreadPanels(ownerId, runId, state)) ? { saved: true } : { error: 'runNotFound' }
 }
 

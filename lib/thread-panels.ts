@@ -30,13 +30,21 @@ export async function readThreadPanels(ownerId: string, runId: string): Promise<
   return row && isThreadPanelState(row.state) ? row.state : null
 }
 
-/** Persist the rail state; false when the run is not the person's (no row is
- * written for someone else's thread). */
-export async function writeThreadPanels(ownerId: string, runId: string, state: ThreadPanelState): Promise<boolean> {
-  if (!isThreadPanelState(state)) return false
+/** Persist the rail state — a partial write merges over what is stored, so a
+ * client that only owns one field (the rail's open, or its active tab) never
+ * clobbers the rest. False when the run is not the person's or the merged
+ * state fails validation. */
+export async function writeThreadPanels(ownerId: string, runId: string, patch: Partial<ThreadPanelState>): Promise<boolean> {
   const owned = await db.select({ id: agentRuns.id }).from(agentRuns)
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, ownerId))).limit(1)
   if (!owned.length) return false
+  const stored = await readThreadPanels(ownerId, runId)
+  const state: ThreadPanelState = {
+    tabs: patch.tabs ?? stored?.tabs ?? [],
+    active: patch.active === undefined ? stored?.active ?? null : patch.active,
+    open: patch.open ?? stored?.open ?? true,
+  }
+  if (!isThreadPanelState(state)) return false
   await db.insert(threadPanels).values({ userId: ownerId, runId, state })
     .onConflictDoUpdate({ target: [threadPanels.userId, threadPanels.runId], set: { state, updatedAt: new Date() } })
   return true
