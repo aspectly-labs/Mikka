@@ -19,6 +19,7 @@ import { sendsMessage } from '@/lib/send-key'
 import { stepPrompt } from '@/lib/chat/prompt-history'
 import { touchKeyboard } from '@/lib/touch-keyboard'
 import { withBasePath } from '@/lib/base-path'
+import { useViewState } from '@/lib/hooks/view-state'
 import { chatEditorSchemaExtensions } from './schema'
 import { docToStored, isLongPaste, pastedFileName, storedToDoc, type ChipKind, type JSONNode, type MentionAttrs } from './serialize'
 import { ChatChipContext, ImageView, PastedView, SourceFileView, type ChatChipRenderer } from './chips'
@@ -105,7 +106,19 @@ export function useChatEditor(composer: ChatComposerState, options: {
   const skillsWanted = field.skills
   const skills = useSWR(skillsWanted && trigger && trigger.char !== '@' ? ['personal-skills'] : null, readSkills, { revalidateOnFocus: false, shouldRetryOnError: false })
 
-  hydrate.current = stored => storedToDoc(stored, {
+  // The draft as it was typed: the stored message keeps files apart from its text and references by id only, so the
+  // document itself is kept beside it (with the draft, in localStorage) and read back while it still matches.
+  const [saved, setSaved] = useViewState<SavedDraft | ''>(field.editorKey ?? 'composer:editor:none', '')
+  const savedRef = useRef(saved)
+  savedRef.current = saved
+  function save(stored: string, doc: JSONNode) {
+    const current = live.current.composer.field
+    if (!current.editorKey) return
+    const next: SavedDraft | '' = stored || hasChip(doc) ? { stored, doc: forStorage(doc, current.fileOf) } : ''
+    // Unchanged is not written again (every render reads files anew).
+    if (JSON.stringify(next) !== JSON.stringify(savedRef.current)) { savedRef.current = next; setSaved(next) }
+  }
+  hydrate.current = stored => savedRef.current && savedRef.current.stored === stored ? savedRef.current.doc : storedToDoc(stored, {
     // A reference this composer has not looked up (a saved draft): its kind and short id, as the textarea showed it.
     label: (reference: MessageReference) => names.current.get(referenceKey(reference))
       ?? (reference.type === 'pr' ? undefined : `${tReferences(reference.type === 'chat' ? 'thread' : reference.type)} ${reference.id.slice(0, 8)}`),
@@ -239,8 +252,10 @@ export function useChatEditor(composer: ChatComposerState, options: {
       },
     },
     onUpdate: ({ editor: current }) => {
-      const stored = docToStored(current.getJSON() as JSONNode)
+      const doc = current.getJSON() as JSONNode
+      const stored = docToStored(doc)
       reportImages(current)
+      save(stored, doc)
       if (stored === emitted.current) return
       emitted.current = stored
       live.current.composer.field.setStored(stored)
@@ -284,6 +299,9 @@ export function useChatEditor(composer: ChatComposerState, options: {
 
   // A saved draft's collapsed pastes are chips from the start: the strip leaves their files out.
   useEffect(() => { if (editor) reportImages(editor, false) }, [editor]) // eslint-disable-line react-hooks/exhaustive-deps
+  // An upload that finishes turns its chip's key into the file's id: the kept document follows.
+  const attached = field.attachments.map(file => file.id).join(' ')
+  useEffect(() => { if (editor) save(field.stored, editor.getJSON() as JSONNode) }, [editor, attached]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reads, callers and the composer's own frame focus the field through the same handle the textarea gave.
   useEffect(() => {
@@ -407,6 +425,26 @@ export function useChatEditor(composer: ChatComposerState, options: {
       editor.chain().focus().insertContent(`${before && !/\s/.test(before) ? ' ' : ''}@${kind}:`).run()
     },
   }
+}
+
+type SavedDraft = { stored: string; doc: JSONNode }
+
+const hasChip = (node: JSONNode): boolean => !!node.attrs?.fileKey || (node.content ?? []).some(hasChip)
+
+/**
+ * The document as kept with the draft: an uploaded file's chip names the file itself (its upload key dies with the
+ * page); a paste that is a file drops its text (read back from the file), and an image shows its file, not the
+ * page's own preview.
+ */
+function forStorage(node: JSONNode, fileOf: (key: string) => { id: string } | null): JSONNode {
+  const key = node.attrs?.fileKey ? String(node.attrs.fileKey) : null
+  const file = key ? fileOf(key) : null
+  const attrs = file ? {
+    ...node.attrs, fileKey: file.id,
+    ...node.type === 'pasted' ? { text: '' } : {},
+    ...node.type === 'image' ? { src: withBasePath(`/api/chat/attachments/${file.id}?download`) } : {},
+  } : node.attrs
+  return { ...node, ...attrs ? { attrs } : {}, ...node.content ? { content: node.content.map(child => forStorage(child, fileOf)) } : {} }
 }
 
 /** One debounced search; its last results stay while the next run, so a growing query never blinks to 「正在搜索」. */

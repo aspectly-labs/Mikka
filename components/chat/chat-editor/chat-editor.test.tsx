@@ -11,9 +11,10 @@ const task = '0f8fad5b-d9cb-469f-a165-70867728950e'
 const uploaded = { id: '10000000-0000-4000-8000-000000000001', name: 'shot.png', mediaType: 'image/png', size: 12 }
 let finishUpload: (() => void) | null = null
 let lastUpload: File | null = null
+let nextUploadId: string | null = null
 mock.module(new URL('../../../lib/chat-attachments/client.ts', import.meta.url).href, { namedExports: {
   ChatUploadError: class extends Error {},
-  uploadChatFile: (file: File) => new Promise(resolve => { lastUpload = file; finishUpload = () => resolve({ ...uploaded, name: file.name }) }),
+  uploadChatFile: (file: File) => new Promise(resolve => { lastUpload = file; finishUpload = () => resolve({ ...uploaded, ...nextUploadId ? { id: nextUploadId } : {}, name: file.name }) }),
 } })
 let referencesFound = true
 mock.module(new URL('../../../app/actions/task-runs.ts', import.meta.url).href, { namedExports: {
@@ -368,17 +369,30 @@ test('a draft with chips and a pasted-text attachment survives a reload (a new w
     await settle(20)
   }
   await open()
-  await type('see ')
-  await act(async () => { latest.editor.editor!.commands.insertContent({ type: 'mention', attrs: { id: task, label: 'MIK-12', kind: 'task', mentionSuggestionChar: '@' } }) })
+  await type('先看 ')
+  await act(async () => { latest.editor.editor!.commands.insertContent([{ type: 'mention', attrs: { id: task, label: 'CHAT-1', kind: 'task', mentionSuggestionChar: '@' } }, { type: 'text', text: '，日志 ' }]) })
   await paste({ text: long })
   await act(async () => { finishUpload?.() })
   await settle(20)
+  await type(' 完')
+  nextUploadId = '10000000-0000-4000-8000-000000000002'
+  await paste({ files: [new browser.File(['x'], 'shot.png', { type: 'image/png' }) as unknown as File] })
+  await act(async () => { finishUpload?.() })
+  await settle(20)
+  nextUploadId = null
   const saved = latest.value
-  assert.match(saved, /^\[mikka-file:[^\]]+pasted-text-[^\]]+\]\n\nsee \[\[issue:/)
+  assert.match(saved, /^\[mikka-file:[^\]]+pasted-text-[^\]]+\]\n\[mikka-file:[^\]]+shot\.png\]\n\n先看 \[\[issue:[^\]]+\]\]，日志  完 $/)
+  const shown = () => Array.from(dom().querySelectorAll('p > *, p > [data-type]')).length
+  const before = { text: dom().textContent, chips: chips(), nodes: shown() }
   // The window closes and opens again: a new store, the same browser storage.
   await act(async () => root.unmount())
   root = createRoot(container)
   await open()
   assert.equal(latest.value, saved, 'the draft is read back as it was')
-  assert.deepEqual(chips(), ['pasted', 'task'])
+  assert.deepEqual(chips(), ['task', 'pasted', 'image'], 'each chip where it was typed, the image too')
+  assert.match(dom().querySelector('[data-chat-chip="image"] img')?.getAttribute('src') ?? '', /\/api\/chat\/attachments\/10000000-0000-4000-8000-000000000002\?download$/, 'the image shows its file, not the closed page\'s preview')
+  assert.equal(latest.state.strip.files.length, 0, 'both stay chips, out of the strip')
+  assert.equal(dom().textContent, before.text, 'the same words and chip labels in the same order')
+  assert.match(dom().textContent ?? '', /^先看 CHAT-1，日志 /, 'the task chip keeps its code, not 「任务 0f8fad5b」')
+  assert.equal(shown(), before.nodes)
 })

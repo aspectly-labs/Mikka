@@ -115,6 +115,8 @@ export function useChatComposer({ ref, value, onChange, onSubmit, sending = fals
     field: {
       stored: files.text,
       setStored: files.edit,
+      /** Where the editor keeps the draft as typed (chip places and names), beside the draft; none without a history. */
+      editorKey: historyKey ? `${historyKey}:editor:draft` : null,
       /** The longest the stored draft may grow: the message limit less its file markers. */
       maxLength: MESSAGE_MAX - (value.length - files.text.length),
       disabled,
