@@ -17,7 +17,7 @@ type Actor = { user: Exclude<IssueReader, string>; workspaceId: string; taskId: 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 export class TaskFileError extends Error {
-  constructor(readonly code: 'tooMany' | 'conflict' | 'notFound') { super(code) }
+  constructor(readonly code: 'tooMany' | 'conflict' | 'notFound' | 'storage', options?: { cause?: unknown }) { super(code, options) }
 }
 
 /** Always acquire the membership and resource ACL leases before the task lock.
@@ -56,7 +56,9 @@ export function readTaskFile(actor: Actor, id: string, signal: AbortSignal) {
     const { rows: [file] } = await tx.execute<{ name: string; size: number; storageKey: string | null; inlineData: Buffer | null }>(
       sql`SELECT name,size,"storageKey","inlineData" FROM task_attachments WHERE "taskId"=${actor.taskId} AND id=${id}`)
     if (!file) throw new TaskFileError('notFound')
-    const body = file.storageKey ? await getArtifactObjectStream(file.storageKey, signal) : new Uint8Array(file.inlineData!)
+    const body = file.storageKey
+      ? await getArtifactObjectStream(file.storageKey, signal).catch(cause => { throw new TaskFileError('storage', { cause }) })
+      : new Uint8Array(file.inlineData!)
     return { name: file.name, size: file.size, body }
   })
 }
@@ -94,7 +96,9 @@ export async function saveTaskFile(actor: Actor, file: TaskFile, bytes: Uint8Arr
       return file
     }
     if (key) {
-      await putArtifactObject(key, bytes, 'application/octet-stream')
+      // A configured-but-unreachable object store must not surface as a bare
+      // TypeError: callers get a retryable 'storage' failure instead of a 500.
+      await putArtifactObject(key, bytes, 'application/octet-stream').catch(cause => { throw new TaskFileError('storage', { cause }) })
       await tx.execute(sql`DELETE FROM chat_attachment_retirements WHERE "storageKey"=${key}`)
     }
     await tx.execute(sql`INSERT INTO task_attachments("taskId",id,name,size,sha256,"storageKey","inlineData","userId")

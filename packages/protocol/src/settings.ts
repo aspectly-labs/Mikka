@@ -1,4 +1,8 @@
+import type { WorkCreationView } from './work-visibility'
+
 /** Shared settings contract. Clients never import the server registry or storage. */
+import type { KeyboardShortcutAction, KeyboardShortcutContext } from './keyboard-shortcuts'
+
 export type SettingSource = 'personal' | 'workspace' | 'default'
 export type SettingScope = 'personal' | 'workspace'
 export type SettingValue = string | number | boolean | string[]
@@ -20,13 +24,22 @@ export interface SettingSchemaEntry {
   personalOverride: boolean
   writeAccess: { personal?: 'owner'; workspace?: 'admin' }
   options?: SettingValue[]
+  /** Present for a configurable existing keyboard action. */
+  action?: KeyboardShortcutAction
+  context?: KeyboardShortcutContext
 }
 
 export interface SettingsView {
   workspaceId: string
   values: Record<string, ResolvedSetting>
+  workCreation: WorkCreationView
 }
 
 export interface SettingsPatch {
   values: Record<string, SettingValue | null>
 }
+export type ShareVisibility = 'private' | 'workspace' | 'link'
+export interface ResolvedShareVisibility { value: ShareVisibility; source: SettingSource }
+export interface WorkspaceSharingDefaults { thread: ResolvedShareVisibility; artifact: ResolvedShareVisibility }
+/** Device capacity is explicit device state, not an inherited personal preference. */
+export interface DeviceConcurrencySettings { deviceId: string; maxConcurrentRuns: number }

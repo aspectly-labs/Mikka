@@ -110,8 +110,8 @@ export function githubMergeApi(fetcher: typeof fetch = fetch, budget?: RequestBu
         redirect: "error",
         signal: budget ? requestBudgetSignal(budget, 15_000) : AbortSignal.timeout(15_000),
       });
-    } catch {
-      throw new FactoryMergeRefused("githubUnavailable", null);
+    } catch (error) {
+      throw new FactoryMergeRefused("githubUnavailable", null, { cause: error });
     }
     const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     return { status: response.status, data };
@@ -286,10 +286,24 @@ export function createFactoryMerges(
         `UPDATE factory_merges SET status='merged',"headSha"=$2,"mergeCommitSha"=$3,"finishedAt"=clock_timestamp() WHERE id=$1 AND status='merging'`,
         [mergeId, outcome.headSha, outcome.mergeCommitSha],
       );
-      // The candidate card's PR reads merged at once, not only after the webhook.
+      // The candidate card's PR reads merged at once, not only after the webhook. The task's
+      // metadata copy is the single source the badge/status/task page read (#1863).
       await tx.query(
         `UPDATE run_publications SET "pullRequest"=jsonb_set("pullRequest",'{state}','"merged"') WHERE lower("pullRequest"->>'url')=lower($1)`,
         [pullRequestUrl],
+      );
+      await tx.query(
+        `WITH saved AS (
+           UPDATE issues i SET content=jsonb_set(i.content,'{attrs,mikka,pullRequests}',(
+               SELECT jsonb_agg(CASE WHEN lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) THEN e || '{"state":"merged"}'::jsonb ELSE e END ORDER BY n)
+               FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') WITH ORDINALITY AS list(e,n))),
+             revision=i.revision+1,"updatedAt"=now()
+           WHERE i.id=$2 AND jsonb_typeof(i.content #> '{attrs,mikka,pullRequests}')='array'
+             AND EXISTS (SELECT 1 FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') e WHERE lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')))
+           RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
+         INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
+         SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'system','factory-merge' FROM saved`,
+        [pullRequestUrl, task.issueId],
       );
       await factoryChanged(tx, task);
       const done = await finalize(tx, task, mergeId);

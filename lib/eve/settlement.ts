@@ -42,6 +42,14 @@ export async function finishEveTurn(scope:EveScope,input:EveTurnSettlement) {
       }
       receipt = (await client.query<Receipt>('INSERT INTO eve_turn_settlements(session_id,turn_id,request_digest,occurrence)VALUES($1,$2,$3,$4)RETURNING *',[input.sessionId,input.turnId,requestDigest,occurrence])).rows[0]
     }
+    if (scope.surface === 'factory' && input.messages !== undefined) {
+      // #3082: a Factory role turn never projects into chat; its structured
+      // result becomes the bound run's completion through the ordinary
+      // run/factory reconciliation instead.
+      await (await import('./factory/adapter')).eveFactorySettleTurn(scope, input)
+      await client.query('UPDATE eve_turn_settlements SET completed_at=now() WHERE session_id=$1 AND turn_id=$2',[input.sessionId,input.turnId])
+      return {status:'accepted'}
+    }
     if (input.messages !== undefined) {
       // A very fast native turn may settle before its accepting HTTP request
       // returns. Publish its owned source first so the failure/result cannot

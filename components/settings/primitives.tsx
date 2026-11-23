@@ -1,14 +1,17 @@
 import type { ComponentProps, ReactNode } from 'react'
+import { cn } from '@/lib/utils'
 import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 
 /**
  * S-Q: a section that is still loading keeps its shape instead of rendering nothing.
  * `bare` is for rows inside a card or dialog that already has a surface: only the rows, no second card.
  */
 export function SettingsLoading({ label, rows = 3, bare = false }: { label: string; rows?: number; bare?: boolean }) {
-  const skeletonRows = Array.from({ length: rows }, (_, i) => <div key={i} className="flex items-center justify-between gap-3 px-5 py-4"><Skeleton className="h-4 w-40" /><Skeleton className="h-6 w-12" /></div>)
+  const skeletonRows = Array.from({ length: rows }, (_, i) => <div key={i} className="flex items-center justify-between gap-3 px-4 py-3"><Skeleton className="h-4 w-40" /><Skeleton className="h-6 w-12" /></div>)
   if (bare) return <div role="status" aria-label={label} data-loading-placeholder="" className="flex flex-col divide-y divide-border">
     <span className="sr-only">{label}</span>
     {skeletonRows}
@@ -16,7 +19,7 @@ export function SettingsLoading({ label, rows = 3, bare = false }: { label: stri
   return <div role="status" aria-label={label} data-loading-placeholder="" className="flex flex-col gap-1">
     <span className="sr-only">{label}</span>
     <Skeleton className="mx-1 h-4 w-24" />
-    <div className="flex flex-col divide-y divide-border overflow-hidden rounded-xl border bg-card">
+    <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border bg-card">
       {skeletonRows}
     </div>
   </div>
@@ -31,12 +34,7 @@ export function SettingsSaveError({ message, retryLabel, onRetry }: { message: s
 }
 
 /**
- * Settings section: a titled group of rows.
- *
- * Deliberately surface-free — no background, border or radius. Rows are
- * separated by hairlines so the settings page reads as one continuous column
- * instead of a stack of cards. A card around a section is the pattern this
- * component exists to prevent.
+ * Settings section: a titled group of rows inside an `r=8` (`rounded-lg`) card (#3118).
  */
 export function SettingsSection({
   id,
@@ -53,9 +51,7 @@ export function SettingsSection({
   children: ReactNode
 }) {
   return (
-    <section className="flex flex-col gap-1" aria-labelledby={title ? id : undefined}>
-      {/* The title is inset like the row text; the action has no inset so its
-          right edge lines up with the card's right edge below it. */}
+    <section className="flex flex-col gap-1.5" aria-labelledby={title ? id : undefined}>
       {(title || action) && <header className="flex items-end justify-between gap-3 pl-1">
         <div className="flex min-w-0 flex-col gap-0.5">
           {title && <h2 id={id} className="text-sm font-medium">
@@ -65,7 +61,7 @@ export function SettingsSection({
         </div>
         {action && <div data-settings-section-action className="flex shrink-0 items-center gap-2">{action}</div>}
       </header>}
-      <div data-settings-card className="overflow-hidden rounded-xl border bg-card">
+      <div data-settings-card className="overflow-hidden rounded-lg border bg-card">
         <div data-settings-rows className="divide-y divide-border">{children}</div>
       </div>
     </section>
@@ -74,10 +70,7 @@ export function SettingsSection({
 
 /**
  * One setting = one row: title and description on the left, value or control
- * on the right.
- *
- * Never give a single row a background, border or radius. If a row needs to
- * look different, change what it contains, not its surface.
+ * on the right. Inner rows remain flat (`r=0`) with compact vertical rhythm (#3118).
  */
 export function SettingRow({
   title,
@@ -92,18 +85,48 @@ export function SettingRow({
   children?: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-2.5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-3">
         {icon}
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-sm leading-snug font-medium text-foreground">{title}</span>
-          {description && <p className="text-sm text-muted-foreground">{description}</p>}
+          {description && <p className="text-xs text-muted-foreground">{description}</p>}
         </div>
       </div>
       <div className="shrink-0 text-sm">{children}</div>
     </div>
   )
 }
+
+export function SettingSwitch({ label, checked, disabled, onCheckedChange }: {
+  label: string
+  checked: boolean
+  disabled?: boolean
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return <Switch aria-label={label} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+}
+
+/** Clean 1px bordered surface select trigger matching Figma 1508:2 (frames 01/02/18/19/22/29). */
+export const settingsSelectTriggerClass = 'border-border bg-background hover:bg-control'
+
+export function SettingSelect({ label, value, onValueChange, options, disabled, fluid = false }: {
+  label: string
+  value: string
+  onValueChange: (value: string | null) => void
+  options: readonly { value: string; label: string }[]
+  disabled?: boolean
+  /** Hug the label instead of the fixed 10rem trigger. */
+  fluid?: boolean
+}) {
+  const current = options.find(option => option.value === value)
+  return <Select value={value} onValueChange={onValueChange} disabled={disabled}>
+    <SelectTrigger aria-label={label} className={cn(settingsSelectTriggerClass, fluid ? 'w-auto max-w-full' : 'w-40')}><span>{current?.label ?? value}</span></SelectTrigger>
+    <SelectContent><SelectGroup>{options.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectGroup></SelectContent>
+  </Select>
+}
+
+export { SettingSelect as SettingsSelect }
 
 /** Spread on the Button in a section header (添加, 打开设置…): gray-filled secondary, small. */
 export const settingsSectionAction = { variant: 'secondary', size: 'sm' } as const satisfies Pick<ComponentProps<typeof Button>, 'variant' | 'size'>

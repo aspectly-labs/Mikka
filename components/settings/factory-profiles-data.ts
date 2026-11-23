@@ -3,6 +3,7 @@
 import useSWR from 'swr'
 import { withBasePath } from '@/lib/base-path'
 import { BUILTIN_AGENT_PROFILE_ID } from '@/lib/factory/agent-profile-reference'
+import { WORKSPACE_SELECTION_HEADER } from '@/lib/workspace-selection'
 import type { AgentProfile, AgentProfileDefinition } from '@/lib/factory/agent-profile-definition'
 
 export type ProfileModel = Extract<AgentProfileDefinition['model'], { mode: 'fixed' }> & {
@@ -55,7 +56,8 @@ export async function profileRequest<T>(workspaceId: string, method = 'GET', id?
   const response = await fetch(withBasePath('/api/factory/agent-profiles' + (id ? '/' + encodeURIComponent(id) : '') + '?' + query.toString()), {
     method, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
     signal: AbortSignal.timeout(20_000),
-    ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, workspaceId }) } : {}),
+    headers: { [WORKSPACE_SELECTION_HEADER]: workspaceId, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    ...(body ? { body: JSON.stringify({ ...body, workspaceId }) } : {}),
   })
   if (!response.ok) {
     const result = await response.json().catch(() => null) as { error?: string } | null
@@ -100,7 +102,7 @@ export function profileAvailabilityKey(reason?: string) {
 export async function shareWorkspaceSkill(workspaceId: string, skillId: string, shared: boolean) {
   const response = await fetch(withBasePath('/api/skills/share'), {
     method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-    headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(20_000),
+    headers: { 'Content-Type': 'application/json', [WORKSPACE_SELECTION_HEADER]: workspaceId }, signal: AbortSignal.timeout(20_000),
     body: JSON.stringify({ workspaceId, skillId, shared }),
   })
   if (!response.ok) {

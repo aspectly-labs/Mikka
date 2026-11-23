@@ -30,7 +30,7 @@ test('real PostgreSQL serializes seats across acceptance and restoration', { ski
   const quotaPool = new Pool({ connectionString: target.toString(), max: 5 })
   const db = drizzle(pool, { schema: workspaceSchema })
   try {
-    await pool.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,name varchar(120) NOT NULL,slug varchar(64) UNIQUE,icon text,kind text NOT NULL DEFAULT 'team',"createdAt" timestamptz NOT NULL DEFAULT now());
+    await pool.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,name varchar(120) NOT NULL,slug varchar(64) UNIQUE,"taskPrefix" varchar(4),icon text,kind text NOT NULL DEFAULT 'team',"createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL,"userId" text NOT NULL,name text NOT NULL,email text NOT NULL,role text NOT NULL,status text NOT NULL DEFAULT 'active',"createdAt" timestamptz NOT NULL DEFAULT now(),PRIMARY KEY("workspaceId","userId"));
       CREATE TABLE mikka_workspace_invitations (id uuid PRIMARY KEY,"workspaceId" uuid NOT NULL,"userId" text NOT NULL,email text NOT NULL,role text NOT NULL,"tokenHash" text NOT NULL UNIQUE,status text NOT NULL DEFAULT 'pending',"expiresAt" timestamptz NOT NULL,"createdAt" timestamptz NOT NULL DEFAULT now(),UNIQUE("workspaceId",email));
       CREATE TABLE workspace_projects (id uuid PRIMARY KEY,"userId" text NOT NULL,"workspaceId" uuid,"leadUserId" text,"archivedAt" timestamptz);`)
@@ -183,6 +183,7 @@ test('real PostgreSQL serializes seats across acceptance and restoration', { ski
       // columns has to run too rather than being restated by hand.
       await pool.query(await readFile(new URL('../drizzle/20261111060000_hosted_usage_token_breakdown.sql', import.meta.url), 'utf8'))
       await pool.query(await readFile(new URL('../drizzle/20261121043334_add_hosted_usage_message_attribution.sql', import.meta.url), 'utf8'))
+      await pool.query(await readFile(new URL('../drizzle/20261122084255_hosted_usage_turn_ref.sql', import.meta.url), 'utf8'))
       const id = await workspace(1)
       await db.insert(workspaceEntitlements).values({ workspaceId: id, plan: 'pro', source: 'cloud', seatLimit: 20 })
       await pool.query('insert into hosted_verifications values($1)', [id])

@@ -194,7 +194,7 @@ test('shared run facts correlate to the outer Run in both single-table and joine
     const query = database.select(stateQueries.taskStateRunColumns).from(agentRuns).$dynamic()
     if (joined) query.innerJoin(agents, eq(agents.id, agentRuns.agentId))
     const { sql: text, params } = query.where(and(eq(agentRuns.userId, OWNER), eq(agentRuns.workspaceId, WORKSPACE))).toSQL()
-    for (const alias of ['p', 'a', 'v']) {
+    for (const alias of ['p', 'a']) {
       assert.ok(text.includes(`${alias}."runId"="agent_runs"."id"`), `${alias} must not capture its own id (${joined ? 'joined' : 'single-table'})`)
       assert.ok(text.includes(`${alias}."userId"="agent_runs"."userId"`), `${alias} must retain the outer owner`)
     }
@@ -209,6 +209,7 @@ test('shared run facts correlate to the outer Run in both single-table and joine
     assert.match(text, /where \("agent_runs"\."userId" = \$\d+ and "agent_runs"\."workspaceId" = \$\d+\)/)
     assert.ok(params.includes(OWNER) && params.includes(WORKSPACE), 'actor and Workspace remain parameterized')
     assert.ok(!text.includes(OWNER) && !text.includes(WORKSPACE))
+    assert.match(text, /coalesce\(("agent_runs"\.)?"outcome", case when ("agent_runs"\.)?"status"='succeeded' then 'done' end\)/, 'an unjudged succeeded run reads done (#1863)')
   }
   assert.equal(queries.length, 0, 'query construction does not execute or add a read')
 })

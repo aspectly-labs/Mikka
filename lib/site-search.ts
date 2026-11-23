@@ -58,7 +58,7 @@ async function requestPage(url: string, signal: AbortSignal | undefined, fetcher
   try { response = await fetcher(url, { cache: 'no-store', credentials: 'same-origin', signal }) }
   catch (error) {
     if (signal?.aborted) throw error
-    throw new SiteSearchRequestError('searchUnavailable', 0)
+    throw Object.assign(new SiteSearchRequestError('searchUnavailable', 0), { cause: error })
   }
   if (response.status === 401) throw new SiteSearchRequestError('authRequired', 401)
   if (response.status === 403) throw new SiteSearchRequestError('searchAccessDenied', 403)

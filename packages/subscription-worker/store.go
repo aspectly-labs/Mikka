@@ -121,11 +121,11 @@ func (s *Store) Save(ctx context.Context, a *core.Auth) (string, error) {
 		return "", err
 	}
 	if err = createArtifact(ctx, s.Repo, s.Secrets, o, "grant", name, raw); err != nil {
-		_ = s.Repo.Fail(context.WithoutCancel(ctx), o, "publication_failed")
+		_ = s.Repo.Fail(context.WithoutCancel(ctx), o, "publication_failed", "grant_store_failed")
 		return "", err
 	}
 	if err = createArtifact(ctx, s.Repo, s.AccessSecrets, o, "access", accessName, accessRaw); err != nil {
-		_ = s.Repo.Fail(context.WithoutCancel(ctx), o, "publication_failed")
+		_ = s.Repo.Fail(context.WithoutCancel(ctx), o, "publication_failed", "access_secret_store_failed")
 		return "", err
 	}
 	if err = s.Repo.Publish(ctx, o, name, digest, accessName, accessDigest, next.subject()); err != nil {

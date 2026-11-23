@@ -24,9 +24,8 @@ import { ThreadExecutionIdentity } from './thread-execution-identity'
 import { ThreadRunPlace } from './thread-run-place'
 import { acceptedProducerOutcome, isThreadRun, threadQuestionView } from '@/lib/issue-threads'
 import { threadComposerHarness } from '@/lib/run-model-fallback-view'
-import { MessageActions } from '@/components/ai-elements/message'
-import { CopyAction, HOVER_ACTIONS } from '@/components/chat/copy-action'
 import { QUOTE_SOURCE_ATTR, SelectionQuote } from '@/components/chat/selection-quote'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { splitChatFiles } from '@mikka/protocol/chat-attachments'
 import { ChatFileCards } from '@/components/chat/chat-file-cards'
@@ -40,10 +39,11 @@ import type { IssueView } from '@/app/actions/issues'
 import type { IssueWorkSnapshot } from '@/app/actions/agents'
 import { harnessLabel, threadTopologyKey, type IssueThreadsRead } from './issue-threads'
 import { BotModelPicker } from '@/components/coordinator/bot-model-picker'
+import { ChatComposerAttachment } from '@/components/coordinator/chat-composer'
 import { choiceFromMenu, threadModelKey, type ThreadModelChoice } from '@/lib/thread-model-choice'
 import { ThreadScreen } from '@ui-slot/thread'
 import { useConversationPanels } from '@/components/coordinator/conversation-panels-context'
-import type { ThreadEntry, ThreadEntryPart } from '@/components/slots/thread-contract'
+import type { ThreadEntry, ThreadEntryPart, ThreadHost } from '@/components/slots/thread-contract'
 import { atTheirTime } from '@/lib/thread-child-entries'
 import { HarnessMark, harnessName, ProviderMark } from '@/components/labels/entity-labels'
 import { PersonAvatar } from '@/components/person-avatar'
@@ -116,6 +116,7 @@ function ThreadInstructions({ issueId, runId, mine }: { issueId: string | null; 
  */
 type ThreadTab = 'chat' | 'changes' | 'acceptance' | 'artifacts'
 type IssueThreadPanelProps = {
+  host?: ThreadHost
   issueId: string | null
   runId: string
   onBack?: () => void
@@ -144,7 +145,7 @@ export function IssueThreadPanel(props: IssueThreadPanelProps) {
   return <ThreadPanel key={props.runId} {...props} />
 }
 
-function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab = 'chat', onOpenThread, onOpenTask, name: listedName, changeRequest, focusRunId, transcriptOnly = false, attempt, collect, beforeEntries, afterEntries, childEntries, openSender }: IssueThreadPanelProps) {
+function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare = false, initialTab = 'chat', onOpenThread, onOpenTask, name: listedName, changeRequest, focusRunId, transcriptOnly = false, attempt, collect, beforeEntries, afterEntries, childEntries, openSender }: IssueThreadPanelProps) {
   const t = useTranslations('IssueThreads')
   const tArtifact = useTranslations('ArtifactsPage')
   const messages = useMessages()
@@ -466,6 +467,8 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
   const author = detail?.harness ? { id: detail.harness, name: harnessName(detail.harness), mark: <HarnessMark harness={detail.harness} />, quiet: true } : undefined
   const at = (value: number | string | Date | undefined) => (value === undefined ? 0 : new Date(value).getTime()) || (data ? new Date(data.thread.createdAt).getTime() : Date.now())
   const entries: ThreadEntry[] = []
+  /** Each message's own send time, when it has one; the line under it shows nothing rather than a fallback. */
+  const sentAt = new Map<string, number>()
   if (data) {
     // The run's own rows read as one message until the person speaks; each person message starts the next.
     let open: Extract<ThreadEntry, { role: 'bot' }> | null = null
@@ -522,7 +525,7 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
           <ThreadOutlineIndex entries={outline} />
         </div> }] })
     }
-    if (!attempt && asked && !independentCheck) { open = null; entries.push({ id: `${runId}:prompt`, role: 'person', at: at(data.thread.createdAt), text: asked }) }
+    if (!attempt && asked && !independentCheck) { open = null; sentAt.set(`${runId}:prompt`, at(data.thread.createdAt)); entries.push({ id: `${runId}:prompt`, role: 'person', at: at(data.thread.createdAt), text: asked }) }
     if (!attempt && data.thread.hasInstructions) bot('instructions', [{ kind: 'text', text: '', node: <ThreadInstructions issueId={issueId} runId={runId} mine={data.thread.ownedByCurrentUser} /> }])
     if (collect && olderPosition) {
       open = null
@@ -533,17 +536,22 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
         </div>,
       }] })
     }
+    // Every reply the open message holds, for Reply; Copy keeps the newest words, as before.
+    let openWords: string[] = []
     for (const item of items) {
       if (item.kind === 'steps' && !active && !stepsOpen) continue
       if (item.kind === 'person') {
         open = null
+        openWords = []
         const id = `${runId}:${item.id}`
+        // The line under the message shows only a time the message really has, not at()'s fallback.
+        if (item.at) sentAt.set(id, at(item.at))
         if (item.mine) entries.push({ id, role: 'person', at: at(item.at), text: item.text, actions: versionControl(item) })
         else {
           const files = splitChatFiles(item.text)
           entries.push({ id, role: 'bot', at: at(item.at),
             author: { id: `person:${item.author}`, name: item.author, mark: <PersonAvatar name={item.author} image={item.image} /> },
-            actions: <MessageActions className={HOVER_ACTIONS}><CopyAction text={files.text} /></MessageActions>,
+            actions: <ReplyActions hover at={item.at ? at(item.at) : undefined} copyText={files.text} />,
             parts: [{ kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}>
               <span data-thread-item={item.id}><PersonReferences text={files.text} /></span>
               <ChatFileCards files={files.files} sent />
@@ -551,6 +559,7 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
         }
         continue
       }
+      if (item.kind === 'agent') openWords = open ? [...openWords, item.text] : [item.text]
       const part: ThreadEntryPart = item.kind === 'agent' ? { kind: 'text', text: item.text, node: <AgentCitationsContext value={citations.settled}><div {...{ [QUOTE_SOURCE_ATTR]: '' }}><AgentMarkdown text={item.text} isStreaming={active} /></div></AgentCitationsContext> }
         : item.kind === 'steps' ? { kind: 'tools', id: `${runId}:${item.id}`, tools: item.steps.map(step => ({ id: step.id, label: step.name, status: step.failed ? 'failed' as const : 'done' as const,
           ms: step.ms, note: step.detail ?? undefined, command: step.command, detail: threadStepOutput(step), exitCode: step.exitCode ?? undefined })) }
@@ -559,7 +568,8 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
           ? <ComputerCard botId={item.botId} runId={item.runId} task={item.task} state={active ? 'working' : (view?.status ?? data.thread.status) === 'succeeded' ? 'done' : 'failed'} />
           : <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground" data-slot="thread-stages">{item.stages.map((stage, index) => <span key={index} className={cn(!stage.ok && 'text-destructive-foreground')}>
             {t(`stages.${stage.stage}`)} {t('stages.duration', { seconds: (stage.ms / 1000).toFixed(1) })} {stage.ok ? '✓' : '✗'}</span>)}</p> }
-      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <MessageActions className={cn('self-start', HOVER_ACTIONS)}><CopyAction text={item.text} />{versionControl(item)}<AgentCitationsContext value={citations.settled}><CitationSources text={item.text} /></AgentCitationsContext></MessageActions> } : {}), ...(active && item === items.at(-1) ? { streaming: true } : {}) })
+      bot(item.id, [part], { ...(item.kind === 'agent' ? { actions: <ReplyActions hover at={item.at || undefined} copyText={item.text} quoteText={openWords.join('\n\n')}
+          onQuote={replyBlocked || changeRequest ? undefined : text => { setReplyQuote(text); inputRef.current?.focus() }}>{versionControl(item)}<AgentCitationsContext value={citations.settled}><CitationSources text={item.text} /></AgentCitationsContext></ReplyActions> } : {}), ...(active && item === items.at(-1) ? { streaming: true } : {}) })
     }
     if (failure && !providerExplained) bot('failure', [{ kind: 'text', text: failureText.message ?? '', node: <div data-slot="thread-failure" className="flex flex-wrap items-start gap-2">
       <FieldError>{failureText.message}</FieldError>
@@ -594,7 +604,7 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
       <ChatFileCards files={files.files} sent />
     </AgentCitationsContext>
     const previous = entry.actions
-    entry.actions = <MessageActions className={HOVER_ACTIONS}><CopyAction text={files.text} />{previous}</MessageActions>
+    entry.actions = <ReplyActions hover at={sentAt.get(entry.id)} copyText={files.text}>{previous}</ReplyActions>
   }
   if (!data && collect) entries.push({ id: `${runId}:loading`, role: 'bot', event: true, at: 0, parts: [{ kind: 'text', text: '', node: waiting }] })
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.
@@ -639,12 +649,12 @@ function ThreadPanel({ issueId, runId, onBack, onClose, bare = false, initialTab
   const referenceWorkspace = liveRuns.find(run => run.id === liveRunId)?.workspaceId
   const references = !composerUnavailable && referenceWorkspace && data?.thread.ownedByCurrentUser ? <ThreadReferencePicker draft={draft}
     workspaceId={referenceWorkspace} input={inputRef} onChange={setDraft} /> : null
-  const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
+  const conversation = data || beforeEntries?.length || afterEntries?.length ? <div data-slot="thread-conversation" className="flex min-h-0 flex-1 flex-col"><ThreadScreen host={host} botId={null} name={title} mark={author?.mark ?? null} readOnly={readOnly && !changeRequest} scrollRef={transcript} entries={atTheirTime([...beforeEntries ?? [], ...entries, ...afterEntries ?? [], ...!data ? [{ id: `${runId}:loading`, role: 'bot' as const, event: true as const, at: Date.now(), parts: [{ kind: 'text' as const, text: '', node: waiting }] }] : []], childEntries)}
     panels={bare || transcriptOnly || collect ? undefined : panels}
     historyPrepend={historyPrepend}
     older={olderPosition ? { loading: olderState === 'loading', auto: olderState === 'idle', onLoad: () => { void loadOlder() } } : undefined}
     working={working} onStop={working && canStop ? () => { void stop() } : undefined}
-    composer={{ ref: inputRef, model: modelControl, label: composerUnavailable ? t(data && !isThreadRun(data.thread) ? 'checkEnded' : 'replyUnavailable') : t('composer', { agent: harnessLabel(threadComposerHarness(detail?.harness ?? '', liveRunId, modelFallback)) }), value: draft, onChange: setDraft, onSubmit: () => { void send() },
+    composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, leftControls: modelControl, label: composerUnavailable ? t(data && !isThreadRun(data.thread) ? 'checkEnded' : 'replyUnavailable') : t('composer', { agent: harnessLabel(threadComposerHarness(detail?.harness ?? '', liveRunId, modelFallback)) }), value: draft, onChange: setDraft, onSubmit: () => { void send() },
       attachmentScope: { kind: 'thread', id: liveRunId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
       running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}

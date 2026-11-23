@@ -94,8 +94,8 @@ test('publication reads complete file evidence and retains independently bound m
   assert.equal(cli.status, 0, cli.stderr)
   assert.deepEqual(JSON.parse(cli.stdout), cloud)
   assert.ok(!cli.stdout.includes('providerManifest') && !cli.stdout.includes('subscriptionAcceptance'))
-  assert.deepEqual(applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', ...cloud, E2B_API_KEY: 'platform-only' }), {
-    BETTER_AUTH_URL: 'https://app.example', MIKKA_API_INGRESS: 'cloudflare', ...cloud,
+  assert.deepEqual(applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', ...cloud, E2B_API_KEY: 'platform-only', MIKKA_DECISION_TIMEOUT_MS: '45000' }), {
+    BETTER_AUTH_URL: 'https://app.example', MIKKA_API_INGRESS: 'cloudflare', ...cloud, MIKKA_DECISION_TIMEOUT_MS: '45000',
   })
   assert.throws(() => cloudflareRuntimeConfiguration(path, { ...expectedRelease, runAttempt: '3' }), /attempt_mismatch/)
   assert.throws(() => cloudflareRuntimeConfiguration(path, { ...expectedRelease, sha256: 'c'.repeat(64) }), /digest_mismatch/)
@@ -106,6 +106,12 @@ test('publication reads complete file evidence and retains independently bound m
   assert.throws(() => publicationInputFromFile(path, { ...expected, runAttempt: '3' }), /attempt_mismatch/)
   assert.throws(() => publicationInputFromFile(path, { ...expected, sha256: 'c'.repeat(64) }), /digest_mismatch/)
   assert.throws(() => assertReleaseEvidence(publicationInputFromFile(path, { ...expected, templates: { ...TEMPLATES, codex: 'other' } })), /template_invalid/)
+})
+
+test('an absent, empty or non-string Decision timeout leaves the runtime default intact', () => {
+  for (const value of [undefined, null, '', 45000]) {
+    assert.equal(Object.hasOwn(applicationEnvironment({ MIKKA_DECISION_TIMEOUT_MS: value }), 'MIKKA_DECISION_TIMEOUT_MS'), false)
+  }
 })
 
 test('the publisher CLI reports a closed parse error without printing the report cause', t => {
@@ -255,7 +261,7 @@ function fixture(options = {}) {
     }
     if (url.origin === 'https://app.aspectlylabs.com') {
       assert.equal(init.headers.authorization, undefined)
-      return Response.json({ build: options.publicBuild ?? COMMIT })
+      return Response.json({ build: options.publicBuild ?? COMMIT }, { headers: { 'cf-ray': 'fixture' } })
     }
     assert.equal(url.origin, 'https://api.vercel.com')
     assert.equal(url.searchParams.get('teamId'), TEAM)
@@ -351,19 +357,19 @@ test('obsolete refreshes fail even when their old runtime env already matches', 
   assert.equal(fake.calls.filter(call => call.origin === 'https://api.vercel.com').length, 0)
 })
 
-test('a different serving alias or public version prevents every configuration write', async () => {
-  for (const options of [{ aliasBuild: OTHER }, { publicBuild: OTHER }]) {
+test('a mismatched Cloudflare-served version prevents every configuration write', async () => {
+  for (const options of [{ publicBuild: OTHER }]) {
     const fake = fixture(options)
     await assert.rejects(fake.run(), /production_source_changed/)
     assert.equal(fake.calls.filter(call => call.method === 'POST').length, 0)
   }
 })
 
-test('does not search past a newer application for an older matching READY deployment', async () => {
-  const fake = fixture({ aliasBuild: OTHER })
-  await assert.rejects(fake.run(), /production_source_changed/)
-  assert.equal(fake.calls.filter(call => call.path === '/v6/deployments').length, 0)
-  assert.equal(fake.calls.filter(call => call.method === 'POST').length, 0)
+test('does not consult retired Vercel deployment metadata when checking production source', async () => {
+  const fake = fixture()
+  await fake.run()
+  assert.equal(fake.calls.filter(call => call.path.startsWith('/v4/aliases/') || call.path.startsWith('/v13/deployments/')).length, 0)
+  assert.equal(fake.calls.filter(call => call.method === 'POST').length, 1)
 })
 
 test('refuses missing or short source identities and candidate mismatches before requests', async () => {
@@ -438,19 +444,12 @@ test('GitHub-only build timeline waits for source upload before the single runti
           'Verify the public production version before releasing the deployment queue'].map(name => ({ name, status: 'completed', conclusion: 'success' })),
       }] })
     }
-    if (url.origin === 'https://app.aspectlylabs.com') return Response.json({ build: elapsed < 300 ? OTHER : COMMIT })
+    if (url.origin === 'https://app.aspectlylabs.com') return Response.json({ build: elapsed < 300 ? OTHER : COMMIT }, { headers: { 'cf-ray': 'fixture' } })
     assert.equal(url.origin, 'https://api.vercel.com')
     if (method === 'POST' && url.pathname.endsWith('/env')) { wrote = true; published = Object.fromEntries(JSON.parse(init.body).map(row => [row.key, row.value])); return Response.json({ created: [] }) }
     const values = wrote ? published : { ...STORED, MIKKA_CLOUD_WORKER_SHA: OTHER }
     if (url.pathname.endsWith('/env')) return Response.json({ envs: Object.keys(values).map(key => ({ id: `id-${key}`, key, target: ['production'] })) })
     if (url.pathname.includes('/env/id-')) return Response.json({ value: values[url.pathname.split('/env/id-')[1]] })
-    // Reproduce the observed gap: while GitHub is building there is NO Vercel
-    // in-flight deployment, only the previous READY application. The legacy
-    // orchestration fails production_source_changed here without waiting.
-    if (url.pathname === '/v6/deployments') return Response.json({ deployments: [{ uid: 'dpl_live', name: 'mikka', state: 'READY',
-      meta: { githubCommitSha: elapsed < 300 ? OTHER : COMMIT } }] })
-    if (url.pathname.startsWith('/v4/aliases/')) return Response.json({ deploymentId: 'dpl_live' })
-    if (url.pathname === '/v13/deployments/dpl_live') return Response.json({ meta: { githubCommitSha: elapsed < 300 ? OTHER : COMMIT } })
     assert.fail(`unexpected publication ${method} ${url.pathname}`)
   }
   // Run the same fixture with either checkout's actual orchestration. The
@@ -479,4 +478,3 @@ test('publication requires these exact public candidates before any network requ
     assert.equal(fake.calls.length, 0)
   }
 })
-

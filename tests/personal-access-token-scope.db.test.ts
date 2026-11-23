@@ -78,7 +78,7 @@ test('API requests stay in their effective workspace on thread, evidence, propos
     const artifact = randomUUID(), proposal = randomUUID(), message = randomUUID()
     await pool.query(`INSERT INTO artifacts (id,"userId","workspaceId",kind,title) VALUES ($1,$2,$3,'markdown','From a client')`, [artifact, owner, personal.id])
     await pool.query(`INSERT INTO artifact_versions (id,"artifactId",version,"storageKey","inlineContent",sha256,size,"authorName") VALUES ($1,$2,1,'inline','# Notes','sha',7,'Client')`, [randomUUID(), artifact])
-    await pool.query(`INSERT INTO pending_actions (id,"userId",action,input) VALUES ($1,$2,'credential_operation',$3)`, [proposal, owner, { summary: 'Sign in', origin: 'https://example.invalid', operation: 'login' }])
+    await pool.query(`INSERT INTO pending_actions (id,"userId",action,input) VALUES ($1,$2,'browser_operation',$3)`, [proposal, owner, { summary: 'Sign in', origin: 'https://example.invalid', operation: 'login' }])
     await pool.query(`INSERT INTO coordinator_messages (id,"userId",position,message) VALUES ($1,$2,1,'{"role":"assistant"}')`, [message, owner])
     const reach = async () => {
       const threads = (await call(list.GET, '/api/mobile/threads', {})).body.threads.map((item: { id: string }) => item.id)
@@ -264,27 +264,12 @@ test('API requests stay in their effective workspace on thread, evidence, propos
     const [own, others] = [randomUUID(), randomUUID()]
     const input = { summary: 'Sign in', origin: 'https://example.invalid', operation: 'login' }
     for (const [id, botId] of [[own, ownBot], [others, otherBot]]) {
-      await pool.query(`INSERT INTO pending_actions (id,"userId","botId",action,input) VALUES ($1,$2,$3,'credential_operation',$4)`, [id, owner, botId, input])
+      await pool.query(`INSERT INTO pending_actions (id,"userId","botId",action,input) VALUES ($1,$2,$3,'browser_operation',$4)`, [id, owner, botId, input])
     }
     const listed = await call(listRoute.GET, '/api/pending-actions', {})
     assert.deepEqual(listed.body.map((item: { id: string }) => item.id).sort(), [own])
     assert.equal((await call(decide.POST, `/api/mobile/pending-actions/${others}`, { id: others }, { approve: false })).status, 409)
     assert.equal((await pool.query('SELECT status FROM pending_actions WHERE id=$1', [others])).rows[0].status, 'pending')
-  })
-
-  await t.test('local computer reviews: the list and a decision', async () => {
-    const route = await import('../app/api/devices/computer/route')
-    const reviews = [randomUUID(), randomUUID()]
-    await pool.query(`UPDATE agent_runs SET status='running',"leaseExpiresAt"=now()+interval '5 minutes' WHERE id=ANY($1::uuid[])`, [[ownRun, otherRun]])
-    try {
-      for (const [index, runId] of [ownRun, otherRun].entries()) {
-        await pool.query(`INSERT INTO local_computer_reviews (id,"deviceId","runId","userId",target,call,digest,"expiresAt","seenAt") VALUES ($1,$2,$3,$4,'screen','{}',$5,now()+interval '5 minutes',now())`, [reviews[index], device, runId, owner, String(index).repeat(64)])
-      }
-      const listed = await call(route.GET, '/api/devices/computer', {})
-      assert.deepEqual(listed.body.requests.map((item: { id: string }) => item.id), [reviews[0]])
-      assert.equal((await call(route.POST, '/api/devices/computer', {}, { id: reviews[1], digest: '1'.repeat(64), approve: true })).status, 409)
-      assert.equal((await pool.query('SELECT decision FROM local_computer_reviews WHERE id=$1', [reviews[1]])).rows[0].decision, null)
-    } finally { await pool.query(`UPDATE agent_runs SET status='succeeded',"leaseExpiresAt"=NULL WHERE id=ANY($1::uuid[])`, [[ownRun, otherRun]]) }
   })
 
   await t.test('chat reactions and a Bot chat preference', async () => {

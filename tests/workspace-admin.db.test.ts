@@ -57,7 +57,7 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     const admin = await seedUser(pool, 'admin'), member = await seedUser(pool, 'member'), stranger = await seedUser(pool, 'stranger')
     const ws = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }, { userId: member, role: 'member' }])
     const other = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }])
-    assert.deepEqual(await general.readWorkspaceGeneral(member, ws.id), { id: ws.id, name: ws.name, slug: ws.slug, icon: null, canEdit: false, canTransfer: false, personal: false })
+    assert.deepEqual(await general.readWorkspaceGeneral(member, ws.id), { id: ws.id, name: ws.name, slug: ws.slug, icon: null, taskPrefix: null, canEdit: false, canTransfer: false, personal: false })
     assert.equal((await general.readWorkspaceGeneral(admin, ws.id)).canEdit, true)
     await rejects(general.readWorkspaceGeneral(stranger, ws.id), 'workspaceAccessDenied')
     await seedBot(pool, ws.id, admin); await seedBot(pool, ws.id, member); await seedBot(pool, other.id, admin)
@@ -152,7 +152,6 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
         [`insert into workspace_e2b_keys ("workspaceId",ciphertext,iv,"keyVersion",last4,"createdBy","updatedBy") values ($1,'c','i',1,'abcd',$2,$2)`, [workspaceId, admin]],
         [`insert into workspace_app_policies ("workspaceId",app,access,"updatedBy") values ($1,'gmail','deny',$2)`, [workspaceId, admin]],
         ['insert into workspace_personal_policies ("workspaceId") values ($1)', [workspaceId]],
-        ['insert into workspace_subscription_shares ("ownerId","workspaceId") values ($1,$2)', [member, workspaceId]],
         ['insert into workspace_credit_shares ("workspaceId","userId") values ($1,$2)', [workspaceId, member]],
         [`insert into model_api_keys (id,"ownerId",provider,protocol,ciphertext,iv,"keyVersion",last4) values ($1,$2,$3,'openai','c','i',1,'abcd')`, [key, member, `provider-${workspaceId}`]],
         ['insert into model_api_key_shares ("keyId","workspaceId") values ($1,$2)', [key, workspaceId]],
@@ -221,7 +220,7 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     // No row keyed by the deleted workspace is left; the other workspace keeps every one of its own.
     assert.deepEqual(await rowsKeyedBy(ws.id), [])
     const seeded = ['bot_model_choices', 'bots', 'conversations', 'execution_rules', 'hosted_allowances', 'hosted_verifications', 'model_api_key_shares', 'personal_access_tokens', 'session_mailboxes',
-      'workspace_app_policies', 'workspace_credit_shares', 'workspace_e2b_keys', 'workspace_payment_designations', 'workspace_personal_policies', 'workspace_secrets', 'workspace_settings', 'workspace_subscription_shares']
+      'workspace_app_policies', 'workspace_credit_shares', 'workspace_e2b_keys', 'workspace_payment_designations', 'workspace_personal_policies', 'workspace_secrets', 'workspace_settings',]
     const left = await rowsKeyedBy(keep.id)
     assert.deepEqual(seeded.filter(table => !left.includes(table)), [], 'the other workspace is untouched')
     assert.equal(await count(pool, 'hosted_card_claims where "workspaceId"=$1', [ws.id]), 1, 'a card claim is never released')

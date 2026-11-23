@@ -57,13 +57,14 @@ function render(metadata: Record<string, unknown>, threads: IssueThread[] = [], 
   }
   const content = { type: 'doc', attrs: { mikka: metadata } }
   const task: IssueView = { id: '10000000-0000-4000-8000-000000000001', userId: human.id, title: 'Task', content,
-    metadata: readIssueMetadata(content), status: 'todo', stateId: null, priority: 'normal', scope: 'workspace', scopeSetBy: 'user',
+    metadata: readIssueMetadata(content), status: 'todo', stateId: null, number: null, priority: 'normal', scope: 'workspace', scopeSetBy: 'user',
     workspaceId: '20000000-0000-4000-8000-000000000001', ownershipState: 'bound', scopeVersion: 1, scopeConfidence: null,
     linearSyncPolicy: 'disabled', linearSyncBlocked: false, linearTargetVerified: false,
     shortTitle: null, shortTitleFrom: null, issuedIdentifier: 'TEAM-1', projectId: null,
     revision: 1, sourceScheduleId: null, identifier: 'TEAM-1', createdAt: new Date('2026-11-10T08:00:00Z'), updatedAt: new Date('2026-11-10T08:00:00Z') }
   const props: FramedTaskProps = {
     Frame, rootRef: { current: null }, onKeyDown: noop, label: 'Task', preview: false, locked, origin: 'Tasks',
+    earlierActivity: { hasMore: false, loading: false, failed: false, load: noop },
     navigation: { index: 0, total: 1, onOpen: noop }, onClose: noop, onOpen: noop, onDeleted: noop,
     userId: human.id, task, title: task.title, status: task.status, priority: task.priority, liveWorkspaceId: null,
     saveLabel: '', saved: true, titleField: { value: task.title, label: 'Title', readOnly: false, maxLength: 500,

@@ -141,7 +141,7 @@ export const changeSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("retry"), reason }).strict(),
   z.object({ action: z.literal("retry_publication"), publicationId: canonicalUuid, reason }).strict(),
   z.object({ action: z.literal("repair"), reason }).strict(),
-  z.object({ action: z.literal("cancel"), reason }).strict(),
+  z.object({ action: z.literal("cancel"), reason, internal: z.boolean().optional() }).strict(),
   z.object({ action: z.literal("revoke"), reason }).strict(),
 ]);
 export type FactoryChange = z.infer<typeof changeSchema>;

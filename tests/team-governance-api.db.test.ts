@@ -113,14 +113,14 @@ test('Team governance HTTP handlers enforce actual entitlements and workspace bo
     //     so they are null, NOT "0": absent means uncollected. cacheCollectedRequests
     //     reports 0, which is how a reader tells this apart from a real zero.
     assert.deepEqual(data.hosted, [{
-      day: '2026-11-07', model: '=literal-model', memberId: null, repository: null, requests: 1, unknownRequests: 0,
+      day: '2026-11-07', model: '=literal-model', memberId: null, repository: null, environmentId: null, environmentName: null, requests: 1, unknownRequests: 0,
       inputTokens: '50', outputTokens: '70', cacheReadTokens: null, cacheWriteTokens: null, cacheCollectedRequests: 0,
       costMicroUsd: '123', freeMicroUsd: '23', purchasedMicroUsd: '100',
     }])
     assert.deepEqual(data.runs, [{ status: 'succeeded', count: 1 }])
     // A new client learns the available dimensions from the response itself, so a
     // dimension added here is discoverable without reading this source.
-    assert.deepEqual(data.availableGroupBy, ['day', 'model', 'member', 'repository'])
+    assert.deepEqual(data.availableGroupBy, ['day', 'model', 'member', 'repository', 'environment'])
     assert.equal(data.groupBy, null, 'an omitted groupBy keeps the unsubdivided shape')
     assert.equal((await report('?from=2026-11-07&to=2026-11-07&groupBy=bogus')).status, 400, 'an unknown dimension is refused, never guessed')
     const csvResponse = await report('?from=2026-11-07&to=2026-11-07&format=csv')

@@ -76,7 +76,6 @@ test('provider failure continues the same task through its own Agent\'s authoriz
       await pool.query('DELETE FROM model_api_keys WHERE "ownerId" = ANY($1)', [users])
       await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
       await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-      await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
       await pool.query('DELETE FROM device_tokens WHERE "userId" = ANY($1)', [users])
       await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
       await pool.query('DELETE FROM device_repos WHERE "userId" = ANY($1)', [users])
@@ -98,7 +97,6 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     const id = await seedUser(pool, label)
     users.push(id)
     const ws = await seedWorkspace(pool, id, [{ userId: id, role: 'admin' }])
-    await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)', [id, ws.id])
     const botId = await seedBot(pool, ws.id, id)
     const remote = `https://github.com/mikka-ci/provider-fallback-${randomUUID()}.git`
     await recordPushGrant(pool, id, normalizeRepository(remote).key)

@@ -18,6 +18,8 @@ import { notifyDeviceWork } from '../device-gateway-notify'
 import type { FactoryTask, createFactoryStore } from './store'
 import { assertRecoveredCheck, type FrozenFactoryCheck } from './check-start-recovery'
 import { candidateRecheckRound, candidateRecheckDispatchSource, refreshRecheckSource, admitRecheckSource } from './candidate-recheck'
+import { withDatabaseClient } from '@/lib/db'
+import { codeReviewConfiguration } from '@/lib/code-review/settings-storage'
 
 /** Provider I/O boundary; no model input selects these callbacks. */
 export const factoryAutomaticRuntime = {
@@ -88,12 +90,34 @@ export function automaticFactoryDispatch(pool: Pool) {
     // the planner's role, credential, read-only grant or native session.
     const firstImplementation = !check && source.kind === 'plan'
     const selectStageProfile = check || firstImplementation
+    const reviewConfig = task.stage === 'review' && !checkStart ? await withDatabaseClient(tx, () => codeReviewConfiguration(workspaceId)) : null
     const continueImplementation = !check && !firstImplementation
     if (checkStart && (!check || checkStart.taskId !== task.id || checkStart.candidateId !== task.candidateId ||
         checkStart.sourceEventId !== task.sourceEventId || checkStart.attemptId === task.attemptId ||
         checkStart.run.deviceKind !== source.deviceKind || checkStart.run.agentDefinition.executionIdentity.workspaceId !==
           (source.workspaceId ?? source.agentDefinition?.executionIdentity?.workspaceId)))
       throw new FactoryError('factoryCheckBindingMismatch')
+    // #3082: a task explicitly routed `cloud.eve_factory` dispatches every
+    // later stage through the Eve adapter instead of a native harness. Its
+    // provider/model was admitted and frozen on the task at intake; the
+    // ordinary profile/model preference selection never applies to it, and a
+    // native fallback is never substituted for a missing provider.
+    if (task.route && typeof task.route === 'object' && (task.route as Record<string, unknown>).eveFactory) {
+      if (source.deviceKind !== 'cloud') throw new FactoryError('eveFactoryRouteMismatch')
+      const { queueEveFactoryStageRun, eveFactoryDispatchAdapters, driveEveFactoryStage, failEveFactoryStage } = await import('../eve/factory/adapter')
+      const dispatch = createFactoryDispatch(pool, store, queueEveFactoryStageRun, { ...eveFactoryDispatchAdapters, configure: {
+        ...eveFactoryDispatchAdapters.configure,
+        review: (client, current, id) => configureFactoryCheck(client, current, id, checkStart?.selection.policyCeiling),
+        verify: (client, current, id) => configureFactoryCheck(client, current, id, checkStart?.selection.policyCeiling),
+      } })
+      const result = await dispatch(task.userId, { binding: factoryBinding(task), agentId: checkStart?.run.agentId ?? source.agentId, deviceRepoId: checkStart?.run.deviceRepoId ?? source.deviceRepoId }, tx)
+      await assertFrozenDispatch(result.runId)
+      if (continueImplementation) await tx.query('UPDATE agent_runs SET "continuesRunId"=$2 WHERE id=$1', [result.runId, source.id])
+      return async () => {
+        try { await driveEveFactoryStage(result.runId) }
+        catch (error) { await failEveFactoryStage(result.runId, error instanceof FactoryError ? error.code : 'eveFactorySessionUnavailable') }
+      }
+    }
     // The producer still supplies the candidate/runtime admission. A host-only
     // unstarted retry keeps the failed check's exact role and credential instead
     // of choosing again from the person's now-current stage preferences.
@@ -113,6 +137,7 @@ export function automaticFactoryDispatch(pool: Pool) {
       ownerId: task.userId, workspaceId, botId: task.botId,
     }, { issueId: task.issueId, stage: task.stage, location: source.deviceKind === 'cloud' ? 'cloud' : 'local',
       defaultHarness: source.harness, cloudPurpose: source.remoteUrl ? 'task' : 'desktop',
+      ...(reviewConfig?.model ? { asked: { harness: source.harness, model: reviewConfig.model } } : {}),
       ...(source.agentDefinition?.pinnedDeviceId ? { deviceId: source.agentDefinition.pinnedDeviceId } : {}),
     }, { transaction: tx }) : undefined
     if (profileChoice?.target.kind === 'none') throw new FactoryError('factoryCheckHarnessUnavailable')

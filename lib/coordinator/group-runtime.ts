@@ -62,9 +62,9 @@ export const groupRuntime: GroupRuntime = {
   async delegate(scope,client) { return (await import('./group-factory')).delegateGroupTask(client,scope) },
   async generate(agent, input) {
     const scope = hostedBillingScope.getStore()
-    // Same code the chat shows today; the detail tells the two missing scopes apart in the stored error and logs.
-    if (!scope) throw new CodedError('verification_required', { detail: 'billing_scope_missing' })
-    if (agent.memberType === 'bot' && !scope.ownerId) throw new CodedError('verification_required', { detail: 'billing_owner_missing' })
+    // Missing billing scope is its own refusal, not a credits/cards failure.
+    if (!scope) throw new CodedError('billing_scope_missing')
+    if (agent.memberType === 'bot' && !scope.ownerId) throw new CodedError('billing_owner_missing')
     // 停止 in the group aborts it too (lib/coordinator/group-turns.ts).
     const signal = input.signal ? AbortSignal.any([AbortSignal.timeout(20000), input.signal]) : AbortSignal.timeout(20000)
     let streamFailure: unknown

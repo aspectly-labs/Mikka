@@ -25,11 +25,10 @@ export function autoRechargePolicy(row?: Pick<typeof workspaceBilling.$inferSele
     monthlyCapPoints: row?.autoRechargeMonthlyCap ?? null, revision: row?.autoRechargeRevision ?? 0 }
 }
 
-const input = z.object({ enabled: z.boolean(), consent: z.boolean().default(false), expectedRevision: z.number().int().nonnegative(),
-  thresholdPoints: z.number().int().min(0).max(100_000_000), amountPoints: z.union([z.literal(1000), z.literal(2500), z.literal(5000)]),
-  monthlyCapPoints: z.number().int().min(1000).max(100_000_000) }).strict()
-  .refine(value => value.thresholdPoints < value.amountPoints && value.monthlyCapPoints >= value.amountPoints)
-  .refine(value => !value.enabled || value.consent)
+import { autoRechargeInputSchema } from './auto-recharge-schema'
+export { autoRechargeInputSchema, type AutoRechargeInput } from './auto-recharge-schema'
+
+const input = autoRechargeInputSchema
 
 /** Owner-only saved limits/revocation. Enabling an unsupported payment flow is refused before any provider I/O. */
 export async function saveAutoRechargePolicy(actorId: string, accountWorkspaceId: string, raw: unknown) {

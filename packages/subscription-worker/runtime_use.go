@@ -116,11 +116,11 @@ func (w *Worker) prepareRuntime(ctx context.Context, epoch int64, maintenance bo
 		store := w.store(&op)
 		b, e := store.load(ctx, record)
 		if e != nil {
-			_ = w.Repo.Fail(ctx, op, "projection_failed")
+			_ = w.Repo.Fail(ctx, op, "projection_failed", "projection_load_failed")
 			return Metadata{}, e
 		}
 		if _, e = store.Save(ctx, hydrate(record, b, true)); e != nil {
-			_ = w.Repo.Fail(ctx, op, "projection_failed")
+			_ = w.Repo.Fail(ctx, op, "projection_failed", "projection_save_failed")
 			return Metadata{}, e
 		}
 		migrationDone()

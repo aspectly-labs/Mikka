@@ -1,7 +1,7 @@
 'use client'
 
 import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import useSWR, { unstable_serialize, useSWRConfig } from 'swr'
 import { AnimatePresence } from 'motion/react'
 import { withBasePath } from '@/lib/base-path'
@@ -19,13 +19,11 @@ import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { cn } from '@/lib/utils'
 import { useActionError } from '@/lib/use-action-error'
 import { Alert, AlertTitle } from '@/components/ui/alert'
-import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Message, MessageContent, MessageFooter } from '@/components/ui/message'
-import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport, useMessageScroller } from '@/components/ui/message-scroller'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { CircleAlert, CircleHelp } from '@/components/icons'
+import { CircleHelp } from '@/components/icons'
 import { toast } from 'sonner'
 import { AgentCitationsContext, CitationSources, useLinkPreviews, type AgentCitations } from '@/components/workspace/agent-citations'
 import { UserMessageText } from '@/components/workspace/user-message-text'
@@ -35,7 +33,6 @@ import { ReplyAnswer } from '@/components/workspace/agent-decision'
 import { AgentThemeProvider } from '@/components/workspace/agent-theme'
 import { navigate, openTask, openThread } from '@/components/workspace/workspace-navigation'
 import { CoordinatorReply } from './coordinator-reply'
-import { ChatComposer } from './chat-composer'
 import { BotModelPicker, botModelMenuKey, openModelPicker } from './bot-model-picker'
 import { CoordinatorContextUsage } from './coordinator-context-usage'
 import { isWebChatOffline, useChatDelivery, type ChatSubmission } from '@/lib/hooks/chat-delivery'
@@ -51,13 +48,13 @@ import type { CoordinatorLiveReply } from '@/lib/eve/chat-view'
 import { ThreadCard } from './thread-card'
 import { firstThreadCards, staleEventPositions, visibleDivider } from '@/lib/coordinator/chat-dedupe'
 import { ActivityExpansionContext, ReplyActivity, useActivityExpansion, useThreadToolRows } from './reply-activity'
-import { CHAT_SURFACE, ChatMessage, ChatWaiting } from '@ui-slot/chat-message'
+import { CHAT_SURFACE, ChatWaiting } from '@ui-slot/chat-message'
+import { ChatComposer, ChatComposerAttachment } from './chat-composer'
 import { ThreadScreen } from '@ui-slot/thread'
 import { useConversationPanels, useWorkTabs } from '@/components/coordinator/conversation-panels'
-import type { ThreadEntry, ThreadEntryPart } from '@/components/slots/thread-contract'
+import type { ThreadEntry, ThreadEntryPart, ThreadScrolledRow } from '@/components/slots/thread-contract'
 import { factoryQuestionUnavailable, useFactoryQuestions } from '@/hooks/use-factory-questions'
 import { noteChipText } from '@/lib/browser/note'
-import { PERSON_BUBBLE } from '@/components/slots/chat-message'
 import type { ChatSpeaker } from '@/components/slots/chat-message-contract'
 import { replySegments, type ReplySegment } from '@/lib/coordinator/reply-segments'
 import { runThreadName, runTitle } from '@/lib/coordinator/citations'
@@ -73,9 +70,8 @@ import { openArtifact as openArtifactWindow } from '@/components/workspace/works
 import { ArtifactChip } from '@/components/artifacts/artifact-card'
 import { ArtifactReviewCard } from '@/components/workspace/artifact-review'
 import { ArtifactQuoteChip, ArtifactQuoteLine, QuoteChip, QuoteLine } from '@/components/artifacts/artifact-quote'
-import { MessageActions } from '@/components/ai-elements/message'
-import { CopyAction, REPLY_ACTIONS } from '@/components/chat/copy-action'
 import { SelectionQuote } from '@/components/chat/selection-quote'
+import { ReplyActions } from '@/components/chat/reply-actions'
 import { splitReplyQuote, withReplyQuote } from '@/lib/chat-quote'
 import { replyCopyText } from '@/lib/chat-copy'
 import type { ArtifactChatSlot } from '@/components/artifacts/artifact-viewer'
@@ -83,13 +79,10 @@ import { BrowserNoteChip, BrowserNoteLine, useBrowserNotesComposer } from '@/com
 import { SentSuggestion } from '@/components/suggestions/mobile-card'
 import { HostedRefusalNotice } from '@/components/billing/hosted-refusal-notice'
 import { usePaywall } from '@/components/billing/paywall'
-import { hostedRefusal } from '@/lib/billing/verification-client'
-import { subscriptionRefusal } from '@/lib/subscription-refusal'
-import { chatBalanceRefusal } from '@/lib/chat-balance'
 import { chatFailure } from '@/lib/chat-failure'
 import { SubscriptionRefusalNotice } from './subscription-refusal-notice'
 import { HostedUnavailableNotice } from './hosted-unavailable-notice'
-import { CloudFailureAction, FailureReason } from './failure-reason'
+import { CloudFailureAction, FailureReason, ModelSettingsAction } from './failure-reason'
 import { RunErrorDetails } from '@/components/workspace/run-error-text'
 import { QuotaNotice, QuotaSwitchLine } from './quota-notice'
 import { ChatEventLine } from './chat-event-line'
@@ -99,14 +92,6 @@ import { COMPOSER_NOTICE } from './composer-notice'
 
 /** A new message's enter: a short fade (docs/design/decisions/2026-10-31-1814-segmented-control-motion.md). */
 const ENTER = 'animate-in fade-in-0 duration-(--motion-base) motion-reduce:animate-none'
-
-/**
- * The band under the header pill (top 12px, 36px tall): nothing shows down to 56px, 8px below the pill, then rows fade
- * in over 40px by 96px, where the first message starts (`pt-24`). A shorter ramp left a chart under the pill reading as a
- * gradient fill. It replaces the scroller's own mask and keeps its bottom fade. Wide screens only;
- * phones have no pill.
- */
-const HEADER_FADE = 'md:[--scroll-fade-mask:linear-gradient(to_bottom,transparent_3.5rem,#000_6rem,#000_calc(100%_-_var(--scroll-fade-b,0px)),transparent)]'
 
 
 /** Text put into the composer from elsewhere; `suggestionId` when it came from a 建议 item. */
@@ -147,18 +132,6 @@ function liveThinking(reply: CoordinatorLiveReply) {
 function PersonWords({ text, before }: { text: string; before?: ReactNode }) {
   const { quote, text: words } = splitReplyQuote(text)
   return <CollapsibleMessage>{quote && <QuoteLine slot="reply-quote" text={quote} />}{before}<UserMessageText text={words} /></CollapsibleMessage>
-}
-
-/** Only an accepted send from this composer brings the chat back to its end. Background catch-up keeps the reading position. */
-function FollowSentMessages({ count }: { count: number | null }) {
-  const { scrollToEnd } = useMessageScroller()
-  const seen = useRef(count)
-  useEffect(() => {
-    if (count === null) return
-    if (seen.current !== null && count > seen.current) scrollToEnd()
-    seen.current = count
-  }, [count, scrollToEnd])
-  return null
 }
 
 /**
@@ -359,17 +332,23 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   })
   const workingEnter = loaded.current && !workingAtOpen.current
   const entering = (item: (typeof items)[number]) => arriving(`item-${item.position}`) && !(item.from === 'coordinator' && item.position <= streamedThrough.current)
+  const liveFailure = data?.error && !working ? chatFailure({ working: false, error: data.error, cause: data.cause }) : null
   // A turn the hosted model (Mikka 默认) refused: verification, allowance or pause (#523, #525, #526).
-  const refusal = working ? null : hostedRefusal(data?.error)
+  const refusal = liveFailure?.kind === 'hosted' ? liveFailure.code : null
   // The chosen subscription refused it: the mapped line, never the raw step error.
-  const declined = working || refusal ? null : subscriptionRefusal(data?.error)
-  const apiBalance = !working && !refusal && !declined && chatBalanceRefusal(data?.error)
+  const declined = liveFailure?.kind === 'subscription' ? liveFailure.notice : null
+  const apiBalance = liveFailure?.kind === 'failed' && liveFailure.reason === 'balance'
   // 重试 on any failed reply, never on a wake still being retried by the server.
   const retry = <RetryReplyButton botId={botId} onQueued={mutate} />
-  const liveFailure = data?.error && !working ? chatFailure({ working: false, error: data.error, cause: data.cause }) : null
   const cloudCode = liveFailure?.kind === 'failed' ? liveFailure.cloudCode : undefined
+  const [welcomeNeedsModel, setWelcomeNeedsModel] = useState(false)
+  const modelRequired = (liveFailure?.kind === 'failed' && liveFailure.reason === 'modelRequired') || (welcomeNeedsModel && !working && !items.length && !stream.replies.length)
   const liveRaw = liveFailure?.raw ?? null
-  const wakeError = data?.error === 'wake_failed' || data?.error === 'wake_start_unconfirmed' || data?.error === 'wake_exhausted' ? data.error : null
+  const wakeError = liveFailure?.kind === 'wake' ? liveFailure.code : null
+  // #3028: an unrecognised failure on an account with no model set up is almost always the missing model — name it and offer the fix instead of a bare failedTitle.
+  const unclassified = Boolean(data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance && !wakeError)
+  const failureModel = useSWR<BotModelMenu>(unclassified ? botModelMenuKey(botId ?? null) : null, () => getBotModelMenu(botId ?? null))
+  const noModel = Boolean(unclassified && failureModel.data?.current.kind === 'none')
   // With no Coordinator here, the person's last message gets no reply: show it as a failed turn instead of silence.
   // A failed turn's own line already says why; this one is only for a chat with no Coordinator to answer.
   const unanswered = data?.enabled === false && !data.error && items.findLast(item => item.from !== 'event')?.from === 'person'
@@ -391,6 +370,12 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     try {
       if (manual && !await checkPageBuildBeforeAction()) return
       const result = await (retryTurn ? retryCoordinatorTurn(botId) : welcomeCoordinator(botId))
+      if ('reason' in result && result.reason === 'modelRequired') {
+        setWelcomeNeedsModel(true)
+        setWelcomeError(null)
+        return
+      }
+      setWelcomeNeedsModel(false)
       if (result.error) { setWelcomeError(actionError(result.error)); return }
       await mutate()
       setWelcomeError(null)
@@ -406,17 +391,27 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // arrived, a card was verified): only on a change from not runnable to runnable seen by this mount, never on open
   // (the menu can read runnable while the server still refuses), never for a passing usage limit, never in a hidden
   // tab, and once per failure (store.retryFailedTurn), so a visit never fires another refused turn.
-  const welcomeModel = useSWR<BotModelMenu>(welcomeFailed && refusal ? botModelMenuKey(botId ?? null) : null, () => getBotModelMenu(botId ?? null))
+  const welcomeModel = useSWR<BotModelMenu>(welcomeNeedsModel || (welcomeFailed && (refusal || modelRequired)) ? botModelMenuKey(botId ?? null) : null, () => getBotModelMenu(botId ?? null))
   const runnable = welcomeModel.data?.current?.available
+  const retriedWelcomeModel = useRef<string | null>(null)
   const wasRunnable = useRef<boolean | undefined>(undefined)
   const rewelcomed = useRef<string | null>(null)
   useEffect(() => {
-    if (!data?.enabled || working || resuming || !stream.session || welcomed.current) return
+    if (!data?.enabled || working || resuming || !stream.session) return
+    if (welcomeNeedsModel) {
+      if (runnable === false) retriedWelcomeModel.current = null
+      const model = welcomeModel.data?.current
+      if (items.length || document.visibilityState !== 'visible' || !model || model.kind === 'none' || !runnable || retriedWelcomeModel.current === model.id) return
+      retriedWelcomeModel.current = model.id
+      void requestWelcome()
+      return
+    }
+    if (welcomed.current) return
     if (data.error) {
       if (document.visibilityState !== 'visible') return
       const was = wasRunnable.current
       if (runnable !== undefined) wasRunnable.current = runnable
-      if (!welcomeFailed || !refusal || TRANSIENT_REFUSALS.has(refusal) || was !== false || runnable !== true || rewelcomed.current === data.error) return
+      if (!welcomeFailed || (!refusal && !modelRequired) || (refusal && TRANSIENT_REFUSALS.has(refusal)) || was !== false || runnable !== true || rewelcomed.current === data.error) return
       rewelcomed.current = data.error
       void requestWelcome(true)
       return
@@ -427,13 +422,14 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   })
   // The raw step error (workflow ids, retries, socket codes) is for the logs, never the chat: 回复失败 and 重试 (review C4).
   const failureNotice = <>
+    {modelRequired && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="model-required">{t('modelRequired')}</AlertTitle><ModelSettingsAction /></Alert>}
     {welcomeRequestFailed && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="welcome-request">{welcomeError}</AlertTitle><Button variant="ghost" size="sm" disabled={welcoming} onClick={() => { void requestWelcome(false, true) }}>{tCommon('retry')}</Button></Alert>}
     {cloudCode && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="cloud">{cloudErrors(`${cloudCode}.default`)}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><CloudFailureAction code={cloudCode} fallback={retry} /></span></Alert>}
     {refusal && <HostedRefusalNotice code={refusal} botId={botId} retry={retry} onQueued={mutate} />}
     {paywall.dialog}
     {declined && declined !== 'quotaUsed' && <SubscriptionRefusalNotice notice={declined} retry={retry} botId={botId} />}
     {apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="balance">{t('apiBalance')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button></span></Alert>}
-    {data?.error && !working && !cloudCode && !refusal && !declined && !apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}>{wakeError ? <AlertTitle>{t(`wakeErrors.${wakeError}`)}</AlertTitle> : <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="failed">{t('failedTitle')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">{retry}</span></>}</Alert>}
+    {data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance && <Alert variant="destructive" className={COMPOSER_NOTICE}>{wakeError ? <AlertTitle>{t(`wakeErrors.${wakeError}`)}</AlertTitle> : noModel ? <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="no-model">{t('modelPicker.noModelSetUp')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1"><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button></span></> : <><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="failed">{t('failedTitle')}</AlertTitle><span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">{retry}</span></>}</Alert>}
     {/* The stored codes, and the turn failure behind a wake code, only under 详情 (decision 2026-11-05-0330). */}
     {liveRaw && <RunErrorDetails code={liveRaw} />}
   </>
@@ -503,7 +499,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   }
 
   /** Sends `text` to the Coordinator or bot, with the browser's notes when `withNotes`: sent, failed (now a failed bubble), or skipped. */
-  async function deliver(text: string, withNotes = false, retryOf?: number, previous?: PersonalChatSend, releaseDraft?: () => void): Promise<'sent' | 'failed' | 'skipped'> {
+  async function deliver(text: string, withNotes = false, retryOf?: number, previous?: PersonalChatSend, releaseDraft?: () => void, policy?: 'queue' | 'steer'): Promise<'sent' | 'failed' | 'skipped'> {
     if (!text || resuming || unavailable) return 'skipped'
     // A double-click can enter twice before React paints the emptied draft.
     // A different draft has its own journal ID and may enter Eve immediately.
@@ -511,7 +507,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     if (!previous && draftInFlight.current.has(draftKey)) return 'skipped'
     const notes = withNotes && browser?.notes.length ? [...browser.notes] : undefined
     const command = previous ?? { id: crypto.randomUUID(), at: Date.now(), text,
-      ...(working ? { turnPolicy } : {}),
+      ...(working ? { turnPolicy: policy ?? turnPolicy } : {}),
       context: { quote: embedded?.quote, botId, notes, expectedWorkspaceId: selectedWorkspaceId ?? undefined, expectedOwnerId: userId ?? liveOwner ?? undefined,
         ...(retryOf !== undefined ? { retryOf } : {}) } }
     if (!delivery.begin(command)) return 'skipped'
@@ -557,7 +553,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     const outcome = await deliver(text)
     return outcome === 'sent' ? { sent: true } : { sent: false, reason: outcome === 'failed' ? lastSendFailure.current : undefined }
   }
-  async function send(event?: FormEvent) {
+  async function send(event?: FormEvent, policy?: 'queue' | 'steer') {
     event?.preventDefault()
     const text = draft.trim()
     if (text && await paywall.blocked({ model: true })) return
@@ -567,13 +563,18 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       setReplyQuote(null)
       embedded?.clearQuote()
       suggestion.current = null
-    }) : 'skipped'
+    }, policy) : 'skipped'
     if (result !== 'sent') return
     if (id) {
       await fetch(withBasePath(`/api/suggestions/${id}`), { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined)
       void mutateAll(key => typeof key === 'string' && key.includes('/api/suggestions'))
       void mutateAll(key => key === 'threads' || Array.isArray(key) && key[0] === 'threads')
     }
+  }
+
+  function onRunKey(action: 'steer' | 'queue' | 'interrupt') {
+    if (action === 'interrupt') void stop()
+    else void send(undefined, action)
   }
 
   // 全部展开 / 全部收起 for the chat's tool groups (R-83).
@@ -589,10 +590,10 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   if (!embedded) {
     // The live failure as the thread's error line: a plain failure says 回复失败 (or why the wake failed) once, on the
     // line, with 重试 under it; a failure with its own reason (cloud, refusal, subscription, API balance) keeps its notice.
-    const plainFailure = Boolean(data?.error && !working && !cloudCode && !refusal && !declined && !apiBalance)
+    const plainFailure = Boolean(data?.error && !working && !modelRequired && !cloudCode && !refusal && !declined && !apiBalance)
     const liveFailurePart: ThreadEntryPart = plainFailure
-      ? { kind: 'error', text: wakeError ? t(`wakeErrors.${wakeError}`) : t('failedTitle'), actions: <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
-      : { kind: 'error', text: t('failedTitle'), actions: failureNotice }
+      ? { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: wakeError ? t(`wakeErrors.${wakeError}`) : noModel ? t('modelPicker.noModelSetUp') : t('failedTitle'), actions: noModel ? <><Button size="sm" onClick={() => openModelPicker(botId)}>{t('modelPicker.changeModel')}</Button>{liveRaw && <RunErrorDetails code={liveRaw} />}</> : <>{retry}{liveRaw && <RunErrorDetails code={liveRaw} />}</> }
+      : { kind: 'error', failure: welcomeFailed ? 'welcome' : 'live', text: t(modelRequired ? 'modelRequired' : 'failedTitle'), actions: modelRequired ? <><ModelSettingsAction />{liveRaw && <RunErrorDetails code={liveRaw} />}</> : failureNotice }
     const rows = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined as CoordinatorLiveReply | undefined, key: String(item.pending ? `pending-${item.position}` : item.streamId ?? item.position) })),
       ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))]
     const entries: ThreadEntry[] = []
@@ -613,8 +614,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           ...(item.notes ?? []).map(note => ({ id: `note-${note.n}`, name: noteChipText(note), meta: tNavAll('Editor.richText.annotate') })),
         ]
         entries.push({ id: key, role: 'person', at, text, ...(attachments.length ? { attachments } : {}), status: item.pending ? 'sending' : 'sent',
-          actions: item.text ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}><CopyAction text={text} />{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</MessageActions> : undefined })
-        if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t('failedTitle'), actions: <FailureReason retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
+          actions: item.text ? <ReplyActions at={item.createdAt ? at : undefined} copyText={text}>{item.id && <MessageReactions reactions={reactions[item.id]} align="end" />}</ReplyActions> : undefined })
+        if (item.failure) entries.push({ id: `${key}-failure`, role: 'bot', at, parts: [item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /> }] })
         continue
       }
       const parts: ThreadEntryPart[] = item.welcome ? [] : replyRows(item, live).map((segment, index): ThreadEntryPart => segment.kind === 'tools'
@@ -626,15 +627,15 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       }
       const artifacts = item.artifacts.flatMap(id => data?.artifacts[id] ? [{ id, name: data.artifacts[id].title }] : [])
       if (artifacts.length) parts.push({ kind: 'artifacts', items: artifacts, onOpen: openArtifact })
-      if (item.failure) parts.push(item.position === failedAt ? liveFailurePart : { kind: 'error', text: t('failedTitle'), actions: <FailureReason retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()) }} /> })
+      if (item.failure) parts.push(item.position === failedAt ? liveFailurePart : { kind: 'error', text: t((item.failure.kind === 'failed' && item.failure.reason === 'modelRequired') ? 'modelRequired' : 'failedTitle'), actions: <FailureReason showReason={!(item.failure.kind === 'failed' && item.failure.reason === 'modelRequired')} retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()) }} /> })
       if (!live && item.position === unreadItems.findLast(row => row.reportable)?.position)
         parts.push({ kind: 'text', text: '', node: <VisibleReadEnd onSeen={unread.reportEnd} /> })
       entries.push({ id: key, role: 'bot', at, parts, streaming, ...(item.stopped ? { stopped: true } : {}),
-        actions: item.text && !streaming ? <MessageActions className={cn('items-start', REPLY_ACTIONS)}>
-          <CopyAction text={replyCopyText(item.text)} />
+        // The reply's author line already shows its time; the line under it does not repeat it.
+        actions: item.text && !streaming ? <ReplyActions copyText={replyCopyText(item.text)} onQuote={quoteReply}>
           <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>
           {item.id && <MessageReactions reactions={reactions[item.id]} align="start" />}
-        </MessageActions> : undefined })
+        </ReplyActions> : undefined })
     }
     for (const row of localMessages) entries.push({ id: row.id, role: 'person', at: row.at, text: splitReplyQuote(row.text).text,
       status: row.phase === 'accepted' ? 'sent' : row.phase, deliveryMessage: row.error,
@@ -645,7 +646,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     if (working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && !stopping)
       entries.push({ id: 'waiting', role: 'bot', at: Date.now(), parts: [], streaming: true })
     if (welcomeFailed && !items.length) entries.push({ id: 'welcome-failure', role: 'bot', at: Date.now(), parts: [liveFailurePart] })
-    const empty = data && !items.length && !stream.replies.length && !data.error && !welcomeRequestFailed ? (data.enabled
+    const empty = data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed ? (data.enabled
       ? <p role="status">{tNav('writingWelcome')}</p>
       : <p>{t('empty', { name })}</p>) : undefined
     const notices = <>
@@ -668,10 +669,13 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
       {/* The page's floating title pill sits over the top 56px on wide screens: the screen starts below it. Without one (the
           hosted shell owns the header and the thread names itself) no band is left. */}
       <section ref={rootRef} aria-label={name} className={cn('mikka-agent flex min-h-0 min-w-0 flex-1 flex-col', pill && 'md:pt-14')}>
-        <ThreadScreen botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={compact ? undefined : panels} work={work.work}
+        <ThreadScreen host={compact ? 'column' : 'page'} botId={botId} name={name} mark={avatar('pill')} entries={data || localMessages.length ? entries : null} empty={empty} panels={compact ? undefined : panels} work={work.work}
+          transcriptLabel={bot ? t('conversationWith', { name: bot.name }) : t('conversation')}
+          loadingLabel={!data && !loadError ? tCommon('loading') : undefined}
           older={data?.historyBefore ? { loading: loadingHistory, onLoad: () => void loadHistory() } : undefined}
           working={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
-          composer={{ ref: inputRef, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
+          composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, onSubmit: () => { void send() },
+            onRunKey,
             attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping }}
           pending={[
             ...(replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: tMessage('quote'), onRemove: () => setReplyQuote(null) }] : []),
@@ -696,6 +700,62 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     </AgentInteractionContext></AgentThemeProvider>
   }
 
+  // Stable keys keep streamed replies mounted when they become stored history. The screen owns the list.
+  const transcriptRows: ThreadScrolledRow[] = [...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined, key: item.pending ? `pending-${item.position}` : item.streamId ?? item.position })),
+              // After 停止 the reply in flight no longer draws as streaming (no cursor, no running activity) while it is stored.
+              ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))].map(({ item, live, key }): ThreadScrolledRow => ({
+    id: String(key), messageId: live ? live.id : String(item.position),
+    before: !live && dividerAt === item.position && <UnreadDivider />,
+    arriving: live ? arriving(`stream-${live.id}`) : entering(item),
+    attributes: live ? { 'data-coordinator-stream-id': live.id, 'data-streaming': live.committedThrough === undefined } : item.from === 'event' ? {} : { [MESSAGE_POSITION_ATTR]: item.position },
+    ...(item.from === 'event'
+      ? { content: item.notice ? <QuotaSwitchLine notice={item.notice} botId={botId} /> : item.line ? <ChatEventLine line={item.line} citations={citations} /> : null }
+      : { message: {
+      from: item.from === 'person' ? 'person' : 'bot',
+      speaker: speaker,
+      compact: compact,
+      streaming: Boolean(live && live.committedThrough === undefined),
+      // A tapped 建议 card: the same card, then only what it adds (R-21, R-40).
+      lead: item.suggestion && <SentSuggestion card={item.suggestion} compact={compact} speaker={speaker} />,
+      // Top to bottom as it happened: thinking, then the words and each tool after the words said before it.
+                    // The same rows live and stored, so storing keeps them in place.
+      body: item.welcome ? null : item.from === 'coordinator'
+                      ? <ReplyAnswer value={live ? null : answers.get(item.position) ?? null}>{replyRows(item, live).map((segment, index) => segment.kind === 'tools'
+                        ? <AgentCitationsContext key={index} value={citations}><ReplyActivity tools={segment.tools} {...(index === 0 && item.activity ? { thinking: live ? liveThinking(live) : undefined, thought: item.activity.thought, reasoningAt: item.activity.reasoningAt } : {})} botId={botId} live={Boolean(live && live.committedThrough === undefined)} /></AgentCitationsContext>
+                        : <CoordinatorReply key={index} text={segment.text} carded={cardsOf(item, Boolean(live)).join(',')} citations={live ? live.committedThrough === undefined ? liveCitations.streaming : liveCitations.settled : citations} isStreaming={Boolean(live && live.committedThrough === undefined)} />)}</ReplyAnswer>
+                      : item.text && <PersonWords text={item.text} before={<>{item.quote && <ArtifactQuoteLine quote={item.quote} />}{item.notes?.map(note => <BrowserNoteLine key={note.n} note={note} />)}</>} />,
+      extras: <>{item.artifacts.length > 0 && <div className={cn('flex flex-col gap-2', embedded ? 'items-start gap-1.5' : 'w-full')}>
+                      {item.artifacts.flatMap(id => { const artifact = data?.artifacts[id]; return artifact ? [embedded
+                        ? <ArtifactChip key={id} artifact={artifact} active={id === embedded.activeArtifactId} onOpen={openArtifact} />
+                        : <ArtifactReviewCard key={id} artifact={artifact} onOpen={openArtifact} />] : [] })}
+                    </div>}
+                    {cardsOf(item, Boolean(live)).map(id => {
+                      const run = sources?.[id]
+                      return run?.kind === 'run' ? <ThreadCard key={id} run={run} onOpen={showThread} onOpenTask={openTask} /> : null
+                    })}</>,
+      // Copy and the pages it cites, on one line under the reply, always there and quiet (R-83 revised 2026-11-10).
+      actions: item.text && !(live && live.committedThrough === undefined) && <ReplyActions at={item.createdAt ? Date.parse(item.createdAt) : undefined}
+                      copyText={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text}
+                      onQuote={item.from === 'coordinator' ? quoteReply : undefined}>
+                      {item.from === 'coordinator' && <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>}
+                    </ReplyActions>,
+      copyText: item.text ? item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text : undefined,
+      sources: item.from === 'coordinator' && item.text ? <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext> : undefined,
+      after: <>{item.id && <MessageReactions reactions={reactions[item.id]} align={item.from === 'person' ? 'end' : 'start'} />}
+                    {item.stopped && <MessageFooter><p role="status">{t('stopped')}</p></MessageFooter>}
+                    {item.failure && (item.position === failedAt
+                      ? <div data-message-failure={item.welcome ? 'welcome' : 'live'} className={cn('flex w-full max-w-md flex-col gap-2', item.welcome ? 'self-start' : 'self-end')}>{failureNotice}</div>
+                      : <MessageFooter className={cn(item.welcome ? 'self-start' : 'self-end')}><FailureReason retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /></MessageFooter>)}</>,
+    } }),
+  }))
+  for (const row of localMessages) transcriptRows.push({ id: row.id, messageId: row.id,
+    attributes: { 'data-testid': row.phase === 'failed' ? 'failed-message' : 'local-message' },
+    message: { from: 'person', speaker, compact,
+      body: <><PersonWords text={row.text} />{row.context.quote && <span>{row.context.quote.label ?? row.context.quote.text}</span>}</>,
+      delivery: { phase: row.phase, label: row.phase === 'sending' ? tNavAll('HostedThread.sending') : row.error,
+        retry: row.phase === 'failed' && <Button variant="ghost" size="xs" className="text-foreground" disabled={sending} onClick={() => { void deliver(row.text, false, undefined, row) }}>{tCommon('retry')}</Button> } },
+  })
+
   return <AgentThemeProvider><AgentInteractionContext value={{ busy: sending || Boolean(working), continueFromAnswer: prompt => post(prompt.trim()), answer: prompt => answer(prompt.trim()) }}>
   {/* The chat never widens what holds it: whatever a message carries scrolls or wraps inside its own box, and anything that still
       reaches past the column is clipped here instead of scrolling the whole page sideways. */}
@@ -703,15 +763,13 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
     {/* Follow the end while the person is there, never anchor rows to the top: the scroller re-anchors any person row
         whose element it has not seen, and a stored message remounts its pending row, so the chat jumped up the history.
         Rows render at their real height: an estimated height on a new row shifts the end by the difference. */}
-    <MessageScrollerProvider key={stateKey} defaultScrollPosition={startAtEnd ? "end" : "start"} autoScroll>
-      <FollowSentMessages count={data ? localSend.key === stateKey ? localSend.count : 0 : null} />
-      <MessageScroller className="min-h-0 flex-1">
-        {/* Full size, the header pill floats over the top of the chat: rows scrolled up fade out above it instead of
-            running under it, so the top reads as a solid band in either theme and in the translucent desktop window (R-35). */}
-        <MessageScrollerViewport ref={transcript} onScroll={event => { const node = event.currentTarget; const next = node.scrollHeight - node.scrollTop - node.clientHeight < 56; if (next !== following) setFollowing(next) }} aria-label={bot ? t('conversationWith', { name: bot.name }) : t('conversation')} className={cn(!compact && HEADER_FADE)}>
-          <MessageScrollerContent className={cn('flex w-full min-w-0 max-w-full flex-col gap-5 pb-6', compact ? 'px-3 pt-4' : 'px-4 pt-24 sm:px-6')}>
-            <ActivityExpansionContext value={expansion}>
-            {data?.historyBefore && <Button variant="ghost" size="sm" disabled={loadingHistory} onClick={() => void loadHistory()}>{tCommon('loadMore')}</Button>}
+    <ActivityExpansionContext value={expansion}>
+      <ThreadScreen host="embedded"
+        transcript={{ kind: 'embedded', rows: transcriptRows, stateKey, startAtEnd, compact,
+          sentCount: data ? localSend.key === stateKey ? localSend.count : 0 : null,
+          scroll: { ref: transcript, label: bot ? t('conversationWith', { name: bot.name }) : t('conversation'),
+            onScroll: event => { const node = event.currentTarget; const next = node.scrollHeight - node.scrollTop - node.clientHeight < 56; if (next !== following) setFollowing(next) } },
+          before: <>{data?.historyBefore && <Button variant="ghost" size="sm" disabled={loadingHistory} onClick={() => void loadHistory()}>{tCommon('loadMore')}</Button>}
             {/* A slow first load shows the shape of a conversation, not an empty page (state completeness). */}
             {!data && !loadError && <div role="status" aria-label={tCommon('loading')} className="flex flex-col gap-5">
               <Skeleton className="h-16 w-3/5 rounded-2xl" />
@@ -720,86 +778,24 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
             </div>}
             {/* The header pill and the 概览 panel already name the bot: an empty chat says one line, no third avatar (R-41). */}
             {welcomeFailed && !items.length && <div data-message-failure="welcome" className="flex w-full max-w-md flex-col gap-2 self-start">{failureNotice}</div>}
-            {data && !items.length && !stream.replies.length && !data.error && !welcomeRequestFailed && (data.enabled
+            {data && !items.length && !stream.replies.length && !data.error && !modelRequired && !welcomeRequestFailed && (data.enabled
               ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">{avatar('pill', 'thinking')}{tNav('writingWelcome')}</p>
               : <div className="m-auto flex flex-col items-center gap-3">
                 <p className="text-sm text-muted-foreground">{t('empty', { name })}</p>
-              </div>)}
-            {/* Stored and streamed replies are one list: a stored reply takes the key of the stream it was shown from, so
-                storing it keeps its row, text and chips in place instead of mounting them again (the chat flashed). */}
-            {[...items.filter(item => !staleEvents.has(item.position) && item.line?.kind !== 'runQuestion').map(item => ({ item, live: undefined, key: item.pending ? `pending-${item.position}` : item.streamId ?? item.position })),
-              // After 停止 the reply in flight no longer draws as streaming (no cursor, no running activity) while it is stored.
-              ...stream.replies.map(reply => ({ item: streamedItem(reply, stopping), live: stopping && reply.committedThrough === undefined ? { ...reply, committedThrough: -1 } : reply, key: reply.id }))].map(({ item, live, key }) => <Fragment key={key}>
-              {!live && dividerAt === item.position && <UnreadDivider />}
-              <MessageScrollerItem messageId={live ? live.id : String(item.position)} className={cn('[content-visibility:visible]', (live ? arriving(`stream-${live.id}`) : entering(item)) && ENTER)}
-                {...(live ? { 'data-coordinator-stream-id': live.id, 'data-streaming': live.committedThrough === undefined } : item.from === 'event' ? {} : { [MESSAGE_POSITION_ATTR]: item.position })}>
-              {item.from === 'event'
-                ? item.notice
-                  ? <QuotaSwitchLine notice={item.notice} botId={botId} />
-                  : item.line ? <ChatEventLine line={item.line} citations={citations} /> : null
-                : <ChatMessage from={item.from === 'person' ? 'person' : 'bot'} speaker={speaker} compact={compact} streaming={Boolean(live && live.committedThrough === undefined)}
-                    // A tapped 建议 card: the same card, then only what it adds (R-21, R-40).
-                    lead={item.suggestion && <SentSuggestion card={item.suggestion} compact={compact} />}
-                    // Top to bottom as it happened: thinking, then the words and each tool after the words said before it.
-                    // The same rows live and stored, so storing keeps them in place.
-                    body={item.welcome ? null : item.from === 'coordinator'
-                      ? <ReplyAnswer value={live ? null : answers.get(item.position) ?? null}>{replyRows(item, live).map((segment, index) => segment.kind === 'tools'
-                        ? <AgentCitationsContext key={index} value={citations}><ReplyActivity tools={segment.tools} {...(index === 0 && item.activity ? { thinking: live ? liveThinking(live) : undefined, thought: item.activity.thought, reasoningAt: item.activity.reasoningAt } : {})} botId={botId} live={Boolean(live && live.committedThrough === undefined)} /></AgentCitationsContext>
-                        : <CoordinatorReply key={index} text={segment.text} carded={cardsOf(item, Boolean(live)).join(',')} citations={live ? live.committedThrough === undefined ? liveCitations.streaming : liveCitations.settled : citations} isStreaming={Boolean(live && live.committedThrough === undefined)} />)}</ReplyAnswer>
-                      : item.text && <PersonWords text={item.text} before={<>{item.quote && <ArtifactQuoteLine quote={item.quote} />}{item.notes?.map(note => <BrowserNoteLine key={note.n} note={note} />)}</>} />}
-                    extras={<>{item.artifacts.length > 0 && <div className={cn('flex flex-col gap-2', embedded ? 'items-start gap-1.5' : 'w-full')}>
-                      {item.artifacts.flatMap(id => { const artifact = data?.artifacts[id]; return artifact ? [embedded
-                        ? <ArtifactChip key={id} artifact={artifact} active={id === embedded.activeArtifactId} onOpen={openArtifact} />
-                        : <ArtifactReviewCard key={id} artifact={artifact} onOpen={openArtifact} />] : [] })}
-                    </div>}
-                    {cardsOf(item, Boolean(live)).map(id => {
-                      const run = sources?.[id]
-                      return run?.kind === 'run' ? <ThreadCard key={id} run={run} onOpen={showThread} onOpenTask={openTask} /> : null
-                    })}</>}
-                    // Copy and the pages it cites, on one line under the reply, always there and quiet (R-83 revised 2026-11-10).
-                    actions={item.text && !(live && live.committedThrough === undefined) && <MessageActions className={cn('-mt-1 items-start', REPLY_ACTIONS)}>
-                      <CopyAction text={item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text} />
-                      {item.from === 'coordinator' && <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext>}
-                    </MessageActions>}
-                    copyText={item.text ? item.from === 'coordinator' ? replyCopyText(item.text) : splitReplyQuote(item.text).text : undefined}
-                    sources={item.from === 'coordinator' && item.text ? <AgentCitationsContext value={citations}><CitationSources text={item.text} /></AgentCitationsContext> : undefined}
-                    after={<>{item.id && <MessageReactions reactions={reactions[item.id]} align={item.from === 'person' ? 'end' : 'start'} />}
-                    {item.stopped && <MessageFooter><p role="status">{t('stopped')}</p></MessageFooter>}
-                    {item.failure && (item.position === failedAt
-                      ? <div data-message-failure={item.welcome ? 'welcome' : 'live'} className={cn('flex w-full max-w-md flex-col gap-2', item.welcome ? 'self-start' : 'self-end')}>{failureNotice}</div>
-                      : <MessageFooter className={cn(item.welcome ? 'self-start' : 'self-end')}><FailureReason retry={item.welcome} failure={item.failure} botId={botId} sending={sending} onResend={() => { if (item.welcome) void (botId ? retryCoordinatorTurn(botId) : retryCoordinatorTurn()).then(() => mutate()); else void deliver(item.text, false, item.position) }} /></MessageFooter>)}</>} />}
-            </MessageScrollerItem>
-            </Fragment>)}
-            {localMessages.map(row => <MessageScrollerItem key={row.id} messageId={row.id} data-testid={row.phase === 'failed' ? 'failed-message' : 'local-message'} className="[content-visibility:visible]">
-              <Message align="end"><MessageContent>
-                <span className="flex w-full min-w-0 items-center justify-end gap-2">
-                  {row.phase === 'failed' && <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive-foreground" />}
-                  <Bubble variant="secondary" align="end" className={cn(PERSON_BUBBLE, compact ? 'max-w-[90%]' : 'max-w-[min(26rem,80%)]')}><BubbleContent size="roomy" className="flex flex-col gap-1.5 whitespace-pre-wrap"><PersonWords text={row.text} />{row.context.quote && <span>{row.context.quote.label ?? row.context.quote.text}</span>}</BubbleContent></Bubble>
-                </span>
-                <span role={row.phase === 'failed' ? 'alert' : 'status'} className="flex items-center justify-end gap-1 self-end text-xs text-muted-foreground">
-                  {row.phase === 'sending' ? tNavAll('HostedThread.sending') : row.error}
-                  {row.phase === 'failed' && <Button variant="ghost" size="xs" className="text-foreground" disabled={sending} onClick={() => { void deliver(row.text, false, undefined, row) }}>{tCommon('retry')}</Button>}
-                </span>
-              </MessageContent></Message>
-            </MessageScrollerItem>)}
-            {/* Before the reply has anything to show: the Trace's Thinking row. Once the reply streams, its own Trace takes
+              </div>)}</>,
+          after: <>{/* Before the reply has anything to show: the Trace's Thinking row. Once the reply streams, its own Trace takes
                 over. It fades in (R-37: opacity on a duration) and leaves at once: an exit would keep its height after the
                 reply lands and pull the scroll position back (coordinator-scroll.spec). */}
             {working && items.length > 0 && !stream.replies.length && !(lastSaid?.from === 'coordinator' && lastSaid.text) && (stopping
               ? <Message align="start"><MessageContent><MessageFooter><p role="status">{t('stopped')}</p></MessageFooter></MessageContent></Message>
-              : <div className={cn('flex', workingEnter && ENTER)}><ChatWaiting speaker={speaker} /></div>)}
-            </ActivityExpansionContext>
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        <AnimatePresence initial={false}>
+              : <div className={cn('flex', workingEnter && ENTER)}><ChatWaiting speaker={speaker} /></div>)}</>,
+          overlay: <AnimatePresence initial={false}>
           {unread.showTop && <UnreadPill key="up" direction="up" count={unread.topCount} onJump={unread.jumpToDivider} onDismiss={unread.dismissTop} />}
           {unread.showBottom && <UnreadPill key="down" direction="down" count={unread.bottomCount} onJump={unread.jumpToLatest} onDismiss={unread.dismissBottom} />}
-        </AnimatePresence>
-        {!unread.showBottom && <MessageScrollerButton />}
-      </MessageScroller>
-    </MessageScrollerProvider>
-    <div className={cn('flex w-full min-w-0 max-w-full flex-col gap-2', compact ? 'px-3 pb-3' : 'px-4 pb-4 sm:px-6')}>
-      {(loadError || stream.error) && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
+        </AnimatePresence>,
+          jumpToEnd: !unread.showBottom,
+        }}
+        beforeComposer={<>{(loadError || stream.error) && <Alert variant="destructive" role="status" className={COMPOSER_NOTICE}><AlertTitle className="min-w-0 flex-1 basis-48" data-chat-failure="load">{t('loadError')}</AlertTitle><Button variant="ghost" size="sm" onClick={() => { void mutate() }}>{tCommon('retry')}</Button></Alert>}
       {failedAt === null && !welcomeFailed && failureNotice}
       <EveInteractions agent={stream} />
       {/* Out of quota: after a turn stopped on it, or before the next message is sent. */}
@@ -815,10 +811,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         {waitingQuestions[0].runId && <Button variant="link" size="xs" className="h-auto min-w-0 max-w-full px-0 font-normal" onClick={() => showThread({ runId: waitingQuestions[0].runId! })}><span className="min-w-0 truncate">{waitingQuestions[0].title}</span></Button>}
       </p>}
       <PendingActions />
-      {turnOptions}{queuedNotice}
-      <ChatComposer ref={inputRef} label={bot ? t('inputTo', { name: bot.name }) : t('input')} placeholder={placeholder} value={draft} onChange={updateDraft} sending={resuming} editableWhileSending={resuming} onSubmit={() => { void send() }} attachmentScope={data?.botId ? { kind: 'bot', id: data.botId } : undefined}
+      {turnOptions}{queuedNotice}</>}
+        composer={<ChatComposer leadingControls={<ChatComposerAttachment />} ref={inputRef} label={bot ? t('inputTo', { name: bot.name }) : t('input')} placeholder={placeholder} value={draft} onChange={updateDraft} sending={resuming} editableWhileSending={resuming} onSubmit={() => { void send() }} attachmentScope={data?.botId ? { kind: 'bot', id: data.botId } : undefined}
         running={working && !stopping} onStop={(working || sending || activeTurn(stream.view) !== undefined) && !resuming && !stopping ? () => { void stop() } : undefined}
-        model={<div className="flex min-w-0 items-center gap-1">
+        onRunKey={onRunKey}
+        leftControls={<div className="flex min-w-0 items-center gap-1">
           <BotModelPicker botId={botId ?? null} running={working || sending} />
           {/* How near the next fold is (lib/coordinator/context-usage.ts). Beside the model chip,
               because both describe the next turn rather than anything already in the list. */}
@@ -828,8 +825,8 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
           {embedded?.quote && <ArtifactQuoteChip quote={embedded.quote} onRemove={embedded.clearQuote} />}
           {replyQuote && <QuoteChip slot="reply-quote-chip" text={replyQuote} onRemove={() => { setReplyQuote(null); inputRef.current?.focus() }} />}
           {browser?.notes.map(note => <BrowserNoteChip key={note.n} note={note} onRemove={() => browser.remove(note.n)} />)}
-        </div> : undefined} />
-    </div>
+        </div> : undefined} />} />
+    </ActivityExpansionContext>
     <SelectionQuote root={rootRef} onQuote={quoteReply} />
   </section>
   </AgentInteractionContext></AgentThemeProvider>

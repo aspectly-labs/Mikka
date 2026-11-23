@@ -69,7 +69,7 @@ function FileList({ taskId, taskCode }: { taskId: string; taskCode?: string | nu
       const response = await fetch(`${endpoint}?id=${id}`, file ? { method: 'POST', body } : { method: 'DELETE' })
       if (!response.ok) {
         const code = (await response.json().catch(() => ({}))).error
-        setError(code === 'tooMany' ? t('limit') : code === 'tooLarge' ? t('size') : t('failed'))
+        setError(code === 'tooMany' ? t('limit') : code === 'tooLarge' ? t('size') : code === 'storage' ? t('storage') : t('failed'))
         return
       }
       setPending(null)

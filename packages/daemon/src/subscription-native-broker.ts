@@ -117,9 +117,9 @@ export async function createNativeSubscriptionBroker(host: {
       server.listen(socket, resolve);
     });
     chmodSync(socket, 0o600);
-  } catch {
+  } catch (error) {
     rmSync(dir, { recursive: true, force: true });
-    throw new Error("native_broker_unavailable");
+    throw Object.assign(new Error("native_broker_unavailable"), { cause: error });
   }
   return {
     socket,

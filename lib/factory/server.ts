@@ -50,7 +50,11 @@ const authorize: FactoryAuthorize = (userId, issueId, tx, lockedIssue) => withDa
     }
     return Boolean(await issueForUser(reader, issueId, false, drizzle(tx)));
   }
-  await tx.query("SELECT id FROM issues WHERE id=$1 FOR SHARE", [issueId]);
+  // No row lock: a share-mode pin held here conflicts with the issue UPDATE a
+  // sibling task's apply can issue in the same window (both hold, then both
+  // wait — a deadlock). The subsequent issueForUser re-reads the row anyway,
+  // and the UPDATE's own lock serializes concurrent writers.
+  await tx.query("SELECT id FROM issues WHERE id=$1", [issueId]);
   return Boolean(await issueForUser(await factoryWorkspaceReader(userId), issueId, false, drizzle(tx)));
 });
 const humanGates = {
@@ -143,7 +147,7 @@ export const questionSkillAssignments: QuestionSkillGuards = {
       await prelockCliRunPolicy(tx,question.originRunId,userId);
     } catch (error) {
       if (error instanceof Error && error.message === "agentPolicyUnavailable")
-        throw new FactoryError("factoryNotFound");
+        throw Object.assign(new FactoryError("factoryNotFound"), { cause: error });
       throw error;
     }
   },
@@ -152,7 +156,7 @@ export const questionSkillAssignments: QuestionSkillGuards = {
       await (await import("../self-improvement/server")).skillAssignments.lockQuestion(...args);
     } catch (error) {
       if (error instanceof ImprovementError)
-        throw new FactoryError("factoryQuestionContinuationUnavailable");
+        throw Object.assign(new FactoryError("factoryQuestionContinuationUnavailable"), { cause: error });
       throw error;
     }
   },
@@ -161,7 +165,7 @@ export const questionSkillAssignments: QuestionSkillGuards = {
       await (await import("../self-improvement/server")).skillAssignments.continueQuestion(...args);
     } catch (error) {
       if (error instanceof ImprovementError)
-        throw new FactoryError("factoryQuestionContinuationUnavailable");
+        throw Object.assign(new FactoryError("factoryQuestionContinuationUnavailable"), { cause: error });
       throw error;
     }
   },

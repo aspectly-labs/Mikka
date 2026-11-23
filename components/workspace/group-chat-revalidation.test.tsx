@@ -21,7 +21,7 @@ let currentRole: 'owner' | 'member' = 'owner'
 let leaveStatus = 200
 let leftId = ''
 let namedRevision: number | undefined
-mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: () => translate, useMessages: () => ({ AgentCopy: {} }), useFormatter: () => ({}) } })
+mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: () => translate, useMessages: () => ({ AgentCopy: {} }), useFormatter: () => ({ dateTime: (value: Date) => value.toISOString() }) } })
 mock.module('@/lib/group-messages', { namedExports: { ...groupMessages, leaveGroupConversation: async (id: string, self: string) => {
   assert.equal(id, 'group-one'); assert.equal(self, 'owner')
   if (leaveStatus !== 200) throw new groupMessages.GroupMessagesRequestError('unavailable', leaveStatus)
@@ -43,7 +43,7 @@ mock.module('@/components/nav/letter-avatar', { namedExports: { LetterAvatar: em
 mock.module('@/components/nav/bot-avatar', { namedExports: { BotAvatar: empty } })
 mock.module('@/components/workspace/agent-markdown', { namedExports: { AgentMarkdown: empty } })
 mock.module('@/components/workspace/message-reactions', { namedExports: { MessageReactions: empty, useMessageReactions: () => ({}) } })
-mock.module('@/components/coordinator/chat-composer', { namedExports: { ChatComposer: ({ value, label, disabled }: { value: string; label: string; disabled: boolean }) => <Textarea aria-label={label} value={value} disabled={disabled} readOnly /> } })
+mock.module('@/components/coordinator/chat-composer', { namedExports: { ChatComposerAttachment: () => null, ChatComposer: ({ value, label, disabled }: { value: string; label: string; disabled: boolean }) => <Textarea aria-label={label} value={value} disabled={disabled} readOnly /> } })
 
 let GroupChatView: typeof import('./group-chat-view')['GroupChatView']
 let SWRConfig: typeof import('swr')['SWRConfig']
