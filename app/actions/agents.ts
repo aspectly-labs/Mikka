@@ -1036,6 +1036,50 @@ export async function rerunThreadMachineSetup(issueId: string | null, runId: str
   })
 }
 
+/** #2926 composer machine menu: Sleep machine / Wake machine — the same
+ * pause|resume the machine route serves, through threadMachineAction. */
+export async function pauseOrResumeThreadMachine(issueId: string | null, runId: string, action: 'pause' | 'resume') {
+  return withDatabaseOperation('/actions/threads/machine-state', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const { threadMachineAction } = await import('@/lib/cloud-computer/thread-machines')
+    return threadMachineAction(pool, { userId: user.id, workspaceId: row.workspaceId ?? '' } as never, row.id, action)
+  })
+}
+
+/** #2926 composer machine menu: the Keep awake switch, persisted on the
+ * machine row for the lifecycle's idle-sleep decision. */
+export async function setThreadMachineKeepAwake(issueId: string | null, runId: string, keepAwake: boolean) {
+  return withDatabaseOperation('/actions/threads/machine-keep-awake', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).setThreadMachineKeepAwake(pool, user.id, row.workspaceId ?? null, row.id, keepAwake)
+  })
+}
+
+/** #2926 composer machine menu: Move to cloud / a device — the move route's
+ * own handler, as a server action for the composer. */
+export async function moveThreadToTarget(issueId: string | null, runId: string, target: { deviceId: string | 'cloud' }) {
+  return withDatabaseOperation('/actions/threads/move', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-lifecycle')).moveThread(user, row.id, target)
+  })
+}
+
+/** #2926 usage-limit card: try every quota-paused thread again with its own
+ * credential — per-run failures are skipped, like the bulk credits switch. */
+export async function retryAllQuotaPausedRuns(): Promise<{ runId: string; retried: boolean }[]> {
+  const userId = await getUserId()
+  const { pausedQuotaRuns, retryQuotaPausedRun } = await import('@/lib/run-quota')
+  const results: { runId: string; retried: boolean }[] = []
+  for (const runId of await pausedQuotaRuns(userId)) {
+    try { await retryQuotaPausedRun(userId, runId); results.push({ runId, retried: true }) }
+    catch { results.push({ runId, retried: false }) }
+  }
+  return results
+}
+
 /** #2940 item 5: the pull requests a thread's chain published, owner only —
  * the publication receipt is the requester's own record, like the run-location
  * icon getThreadMachine serves. */

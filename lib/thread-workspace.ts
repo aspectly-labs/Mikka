@@ -48,24 +48,54 @@ export async function listThreadChangedFiles(membership: Pick<Pool, 'query'>, ow
 }
 
 /** #2940 item 3: the thread's machine — spec identity (sandbox, snapshot,
- * device, repo) and its liveness metrics. Null when the run never got one. */
+ * device, repo) and its liveness metrics. Null when the run never got one.
+ * #2926: `keepAwake` backs the composer's switch; `repo`/`worktreePath` name
+ * the footer triggers (owner/repo · base branch, Worktree vs Current checkout). */
 export type ThreadMachineDetail = {
   state: 'starting' | 'running' | 'paused' | 'ended' | 'error'
   spec: { sandboxId: string | null; snapshotId: string; filesystemSnapshotId: string | null; deviceId: string | null; repoId: string | null; targetId: string | null }
   metrics: { epoch: number; lastActiveAt: string; createdAt: string; endedAt: string | null; workerLeaseUntil: string | null }
+  keepAwake: boolean
+  repo: { name: string; baseBranch: string | null; remoteUrl: string | null } | null
+  worktreePath: string | null
+}
+
+/** `owner/repo` out of a git remote, else the repo path's tail. */
+function repoDisplayName(remoteUrl: string | null, repoPath: string | null): string | null {
+  const remote = remoteUrl?.trim().replace(/\.git$/, '')
+  if (remote) {
+    const segments = remote.split(/[/:]/).filter(Boolean)
+    if (segments.length >= 2) return segments.slice(-2).join('/')
+  }
+  return repoPath ? repoPath.replace(/[/\\]+$/, '').split(/[/\\]/).pop() ?? null : null
 }
 
 export async function getThreadMachineDetail(database: Pick<Pool, 'query'>, ownerId: string, workspaceId: string | null, runId: string): Promise<ThreadMachineDetail | null> {
   const { rows: [row] } = await database.query(
-    `SELECT state,"sandboxId","snapshotId","filesystemSnapshotId","deviceId","repoId","targetId",epoch,"lastActiveAt","createdAt","endedAt","workerLeaseUntil"
-       FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3`, [runId, ownerId, workspaceId])
+    `SELECT m.state,m."sandboxId",m."snapshotId",m."filesystemSnapshotId",m."deviceId",m."repoId",m."targetId",m.epoch,m."lastActiveAt",m."createdAt",m."endedAt",m."workerLeaseUntil",m."keepAwake",
+       repo."remoteUrl",repo."baseBranch",repo."repoPath",run."worktreePath"
+       FROM thread_machines m
+       LEFT JOIN device_repos repo ON repo.id=m."repoId"
+       LEFT JOIN agent_runs run ON run.id=m."runId"
+       WHERE m."runId"=$1 AND m."ownerId"=$2 AND m."workspaceId"=$3`, [runId, ownerId, workspaceId])
   if (!row) return null
   const r = row as Record<string, unknown>
+  const repoName = repoDisplayName(r.remoteUrl as string | null, r.repoPath as string | null)
   return {
     state: r.state as ThreadMachineDetail['state'],
     spec: { sandboxId: r.sandboxId as string | null, snapshotId: r.snapshotId as string, filesystemSnapshotId: r.filesystemSnapshotId as string | null, deviceId: r.deviceId as string | null, repoId: r.repoId as string | null, targetId: r.targetId as string | null },
     metrics: { epoch: r.epoch as number, lastActiveAt: (r.lastActiveAt as Date).toISOString(), createdAt: (r.createdAt as Date).toISOString(), endedAt: r.endedAt ? (r.endedAt as Date).toISOString() : null, workerLeaseUntil: r.workerLeaseUntil ? (r.workerLeaseUntil as Date).toISOString() : null },
+    keepAwake: r.keepAwake === true,
+    repo: repoName ? { name: repoName, baseBranch: r.baseBranch as string | null, remoteUrl: r.remoteUrl as string | null } : null,
+    worktreePath: r.worktreePath as string | null,
   }
+}
+
+/** #2926: the composer's Keep awake switch — persists on the machine row, the
+ * lifecycle's idle-sleep decision reads it. Owner-scoped like the detail read. */
+export async function setThreadMachineKeepAwake(database: Pick<Pool, 'query'>, ownerId: string, workspaceId: string | null, runId: string, keepAwake: boolean): Promise<boolean> {
+  const { rowCount } = await database.query(`UPDATE thread_machines SET "keepAwake"=$4 WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3`, [runId, ownerId, workspaceId, keepAwake])
+  return rowCount === 1
 }
 
 /** #2940 item 3: setup/maintenance re-run on the thread's machine — the same

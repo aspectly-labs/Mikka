@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import useSWR from 'swr'
-import { getThreadMachine, getThreadChanges } from '@/app/actions/agents'
+import { getThreadMachine, getThreadChanges, getThreadMachineDetail } from '@/app/actions/agents'
 import { listRunArtifacts } from '@/app/actions/artifacts'
 
 // SWR reads on mount and when the key changes. Only a state change within
@@ -28,6 +28,15 @@ export function useThreadMachine(issueId: string | null, runId: string, status: 
   const read = useSWR(['thread-machine', issueId, runId], () => getThreadMachine(issueId, runId), {
     revalidateOnFocus: false, dedupingInterval: 0,
   })
+  useStatusRefresh(runId, issueId, status, read.mutate)
+  return read
+}
+
+/** #2926: the machine detail behind the composer footer — keepAwake switch
+ * state and the repo/branch trigger labels. */
+export function useThreadMachineDetail(issueId: string | null, runId: string | null, status?: string) {
+  const read = useSWR(runId ? ['thread-machine-detail', issueId, runId] as const : null,
+    ([, issue, run]) => getThreadMachineDetail(issue, run), { dedupingInterval: 0 })
   useStatusRefresh(runId, issueId, status, read.mutate)
   return read
 }

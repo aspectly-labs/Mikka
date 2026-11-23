@@ -3344,7 +3344,35 @@
     "changesBinary": "Binary file",
     "hideInstructions": "Hide full instructions",
     "composerModelRequested": "Requested {model}",
-    "loadFailed": "Thread failed to load"
+    "loadFailed": "Thread failed to load",
+    "machineMenu": {
+      "machine": "Machine",
+      "cloud": "Cloud",
+      "runOn": "Run this chat on",
+      "addMachine": "Add a machine…",
+      "machineSleep": "Sleep machine",
+      "machineWake": "Wake machine",
+      "machineKeepAwake": "Keep awake",
+      "keepAwakeHint": "Sleeps after 15 min idle · billed while awake",
+      "runSetupAgain": "Run setup again",
+      "moveToCloud": "Move to cloud",
+      "moveToDevice": "Move to a device",
+      "noDevices": "No devices",
+      "repo": "Repository",
+      "copyBranch": "Copy branch name",
+      "branchCopied": "Branch name copied",
+      "openRemote": "Open on remote",
+      "awake": "Awake",
+      "asleep": "Asleep",
+      "sleepFailed": "Could not sleep the machine",
+      "wakeFailed": "Could not wake the machine",
+      "setupFailed": "Could not re-run setup",
+      "keepAwakeFailed": "Could not update keep awake",
+      "moveFailed": "Could not move the thread"
+    },
+    "queuedTitle": "Queued · {count}",
+    "queuedHint": "Sends when the limit resets",
+    "deliveryEdit": "Edit"
   },
   "FactoryFlow": {
     "card": {
@@ -4003,7 +4031,11 @@
       "next": "Next message uses your {key} API key, billed per token",
       "resets": "Resets {time}",
       "used": "{name} quota used up",
-      "addKey": "Add API key to continue"
+      "addKey": "Add API key to continue",
+      "tryAllNow": "Try all now",
+      "switchAllCredits": "Switch all to Mikka credits",
+      "seeUsage": "See usage",
+      "later": "Later"
     },
     "contextNearFold": "The next turn folds older turns first",
     "sendAccessDenied": "Sending was refused. Check your access before retrying.",

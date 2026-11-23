@@ -63,7 +63,9 @@ import { useRightColumnWiden } from './right-column-widen'
 import { RunErrorDetails, useRunErrorText } from './run-error-text'
 import { CreditsRefusalActions } from '@/components/billing/paywall'
 import { hostedRefusal } from '@/lib/billing/hosted-usage'
-import { ThreadModelFallbackNotice, ThreadQuotaPausedCard, ThreadQuotaSwitchLine } from './thread-quota'
+import { ThreadModelFallbackNotice, QuotaPausedCard, ThreadQuotaSwitchLine } from './thread-quota'
+import { ThreadComposerFooter } from './thread-composer-footer'
+import { catalogIdFor } from '@/lib/model-catalog'
 import { cn } from '@/lib/utils'
 import { ThreadArtifactChips } from './artifact-review'
 import { ArtifactIcon } from '@/components/icons/artifact-icon'
@@ -295,6 +297,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   const [stepsOpen, setStepsOpen] = useState(false)
   // false, or what to say: the refusal's reason when the server gave one (threadReplaced…), else 发送失败.
   const [sendFailed, setSendFailed] = useState<string | false>(false)
+  const [queueEditing, setQueueEditing] = useState<string | null>(null)
 
   const actionError = useActionError()
   const [stopAttempt, setStopAttempt] = useState<number | null>(null)
@@ -511,7 +514,9 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
         : active ? t('activityLine.working', { duration })
         : [t('activityLine.worked', { duration }), ...status === 'failed' ? [t('activityLine.failed')] : status === 'stopped' || status === 'cancelled' ? [t('activityLine.stopped')] : []].join(' · ')
       const folds = !active && items.some(item => item.kind === 'steps')
-      entries.push({ id: `${runId}:activity`, role: 'bot', at: at(data.thread.createdAt), event: true, parts: [{ kind: 'text', text: line, node:
+      // #2926: the workspace quota card replaces the activity line while a
+      // usage limit has the thread paused — 「在等你回复」 does not apply.
+      if (!data.thread.quota?.paused) entries.push({ id: `${runId}:activity`, role: 'bot', at: at(data.thread.createdAt), event: true, parts: [{ kind: 'text', text: line, node:
         <div data-attempt-section={runId} data-event-line="" data-activity-line="" className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
           {folds ? <Button type="button" variant="ghost" size="xs" aria-expanded={stepsOpen} onClick={() => setStepsOpen(value => !value)} className="text-muted-foreground">
             {line}<ChevronDown data-icon="inline-end" aria-hidden className={cn('transition-transform', stepsOpen && 'rotate-180')} />
@@ -608,27 +613,43 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
   // Re-publish the admitted read itself; identical lengths need not mean the content or permission is unchanged.
   useEffect(() => { if (collect) collect(runId, entries) }, [collect, runId, data, error, active, canRetry, sending, view?.status, retryLabel, delivery.rows, stepsOpen, citations.settled, olderState]) // eslint-disable-line react-hooks/exhaustive-deps
   if (collect) return null
-  async function updateQueue(messageId: string, action: 'cancel' | 'sendNow') {
+  async function updateQueue(messageId: string, action: 'cancel' | 'sendNow' | 'edit', text?: string) {
     try {
       const { changeQueuedThreadReply } = await import('@/app/actions/agents')
-      const result = await changeQueuedThreadReply({ issueId, runId: liveRunId, messageId, action })
+      const result = await changeQueuedThreadReply({ issueId, runId: liveRunId, messageId, action, text })
       if (result.error) setSendFailed(actionError(result.error))
       else if (result.status === 'tooLate') setSendFailed(t('deliveryTooLate'))
+      else setQueueEditing(null)
       await mutate()
     } catch { setSendFailed(feedback('sendUncertain')) }
   }
+  const queuedRows = data?.delivery?.queued ?? []
   const queueControls = <div className="flex flex-col gap-1 px-3">
+    {queuedRows.length > 0 && <div className="flex flex-col gap-0.5">
+      <span className="text-xs font-medium">{t('queuedTitle', { count: queuedRows.length })}</span>
+      <span className="text-xs text-muted-foreground">{t('queuedHint')}</span>
+    </div>}
     {modes.length > 0 && <NativeSelect size="sm" aria-label={t('deliveryMode')} value={selectedMode} onChange={event => {
       const next = modes.find(mode => mode === event.target.value)
       if (next) setDeliveryMode(next)
     }}>{modes.map(mode => <NativeSelectOption key={mode} value={mode}>{t(`deliveryModes.${mode}`)}</NativeSelectOption>)}</NativeSelect>}
-    {data?.delivery?.queued.map(row => <div key={row.id} className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-      <span className="min-w-0 flex-1 break-words">{row.text}</span>
-      <span>{row.status === 'failed' ? row.failureCode ? actionError(row.failureCode) : t('deliveryFailed') : row.status === 'delivering' ? t('deliverySending') : t('deliveryQueued')}</span>
-      {row.status === 'queued' && <>
-        {modes.includes('steer') && <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'sendNow')}>{t('deliverySendNow')}</Button>}
-        <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'cancel')}>{t('deliveryCancel')}</Button>
-      </>}
+    {queuedRows.map(row => <div key={row.id} className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+      {queueEditing === row.id
+        ? <input autoFocus defaultValue={row.text} maxLength={10000} className="min-w-0 flex-1 rounded-md border border-rule bg-transparent px-2 py-1"
+          onKeyDown={event => {
+            if (event.key === 'Enter') void updateQueue(row.id, 'edit', event.currentTarget.value)
+            if (event.key === 'Escape') setQueueEditing(null)
+          }}
+          onBlur={event => { if (event.target.value !== row.text) void updateQueue(row.id, 'edit', event.target.value); else setQueueEditing(null) }} />
+        : <>
+          <span className="min-w-0 flex-1 break-words">{row.text}</span>
+          <span>{row.status === 'failed' ? row.failureCode ? actionError(row.failureCode) : t('deliveryFailed') : row.status === 'delivering' ? t('deliverySending') : t('deliveryQueued')}</span>
+          {row.status === 'queued' && <>
+            {modes.includes('steer') && <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'sendNow')}>{t('deliverySendNow')}</Button>}
+            <Button type="button" size="xs" variant="ghost" onClick={() => setQueueEditing(row.id)}>{t('deliveryEdit')}</Button>
+            <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'cancel')}>{t('deliveryCancel')}</Button>}
+          </>}
+        </>}
     </div>)}
   </div>
   const recorded = data?.composerModel ?? data?.context?.composerModel
@@ -654,13 +675,14 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     working={working} onStop={working && canStop ? () => { void stop() } : undefined}
     composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, leftControls: modelControl, label: composerUnavailable ? t(data && !isThreadRun(data.thread) ? 'checkEnded' : 'replyUnavailable') : t('composer', { agent: harnessLabel(threadComposerHarness(detail?.harness ?? '', liveRunId, modelFallback)) }), value: draft, onChange: setDraft, onSubmit: () => { void send() },
       attachmentScope: { kind: 'thread', id: liveRunId }, attachmentDisabled: composerUnavailable, sending: sending || stopPending, editableWhileSending: true, submitDisabled: changeRequest ? false : replyBlocked || stopRequested || question === 'resuming',
-      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true }}
+      running: working || (question === 'resuming' && !data?.thread.questionWake), thread: true,
+      footer: !composerUnavailable && <ThreadComposerFooter issueId={issueId} runId={liveRunId} status={data?.thread.status ?? ''} /> }}
     pending={[...changeRequest ? [{ id: 'change-request', name: changeRequest.label, onRemove: changeRequest.onCancel }] : [], ...replyQuote ? [{ id: 'reply-quote', name: replyQuote, meta: quoteLabel, onRemove: () => setReplyQuote(null) }] : []]}
     notices={<>
       {olderState === 'failed' && olderPosition && <InlineLoadError message={readFailedMessage} retryLabel={retryLabel} onRetry={() => { void loadOlder() }} />}
       {queueControls}
       {references}
-      {data?.thread.quota?.paused && <ThreadQuotaPausedCard paused={data.thread.quota.paused} onContinued={() => { void mutate(); refreshLists() }} />}
+      {data?.thread.quota?.paused && <QuotaPausedCard paused={data.thread.quota.paused} creditsModel={currentModel ? catalogIdFor(currentModel) ?? currentModel : null} onContinued={() => { void mutate(); refreshLists() }} />}
       {sendFailed && <FieldError className="px-3 text-xs">{sendFailed}</FieldError>}
       {stopFailed && <div role="alert" className="flex items-center gap-2 px-3 text-xs"><span className="text-destructive-foreground">{t('stopFailed')}</span><Button variant="ghost" size="sm" className="min-w-22 max-sm:h-11" onClick={() => { void stop() }}>{t('retryStop')}</Button></div>}
     </>}

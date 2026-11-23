@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { ChevronRight, Info } from '@/components/icons'
-import { resumeQuotaPausedRunOnApiKey, retryQuotaPausedRun } from '@/app/actions/agents'
+import { resumeAllQuotaPausedOnCredits, retryAllQuotaPausedRuns } from '@/app/actions/agents'
 import { Alert, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { FieldError } from '@/components/ui/field'
@@ -77,42 +77,45 @@ export function ThreadQuotaSwitchLine({ switched }: { switched: ThreadQuotaView[
 }
 
 /**
- * A thread whose run paused because its subscription ran out: when it resets,
- * and the way on. 用 API Key 继续 once the person has a key (添加 API Key 继续
- * takes them to add one), and 重置后重试 with the original credential once it resets.
+ * #2926: the workspace pause card above the composer — "Paused · Usage limit ·
+ * 订阅名" with Try all now / Switch all to Mikka credits / See usage / Later.
+ * The bulk actions run every paused thread (this thread's catalogued model is
+ * the credits route's model), not only this one.
  */
-export function ThreadQuotaPausedCard({ paused, onContinued }: { paused: NonNullable<ThreadQuotaView['paused']>; onContinued: () => unknown }) {
+export function QuotaPausedCard({ paused, creditsModel, onContinued }: {
+  paused: NonNullable<ThreadQuotaView['paused']>
+  /** LiteLLM catalogue id the credits continuations run; null hides the switch. */
+  creditsModel: string | null
+  onContinued: () => unknown
+}) {
   const t = useTranslations('Coordinator.quota')
   const resetTime = useResetTime()
-  const [pending, setPending] = useState<'key' | 'retry' | null>(null)
+  const [pending, setPending] = useState<'retry' | 'credits' | null>(null)
   const [failed, setFailed] = useState(false)
-  const [reset, setReset] = useState(() => !paused.resetsAt || Date.parse(paused.resetsAt) <= Date.now())
-  useEffect(() => {
-    if (!paused.resetsAt) { setReset(true); return }
-    const wait = Date.parse(paused.resetsAt) - Date.now()
-    setReset(wait <= 0)
-    if (wait <= 0) return
-    const timer = setTimeout(() => setReset(true), Math.min(wait, 2 ** 31 - 1))
-    return () => clearTimeout(timer)
-  }, [paused.resetsAt])
-  async function run(kind: 'key' | 'retry') {
-    if (pending) return
+  const [dismissed, setDismissed] = useState(false)
+  async function run(kind: 'retry' | 'credits') {
+    if (pending || (kind === 'credits' && !creditsModel)) return
     setPending(kind); setFailed(false)
-    try { await (kind === 'key' ? resumeQuotaPausedRunOnApiKey(paused.runId) : retryQuotaPausedRun(paused.runId)); await onContinued() }
+    try {
+      if (kind === 'credits') await resumeAllQuotaPausedOnCredits(creditsModel!)
+      else await retryAllQuotaPausedRuns()
+      await onContinued()
+    }
     catch { setFailed(true) }
     finally { setPending(null) }
   }
+  if (dismissed) return null
   const title = t('used', { name: subscriptionName(paused.subscription, paused.plan) })
-  const detail = paused.resetsAt && !reset ? t('resets', { time: resetTime(paused.resetsAt) }) : null
+  const detail = paused.resetsAt ? t('resets', { time: resetTime(paused.resetsAt) }) : null
   return <div className="flex flex-col gap-1">
     <Alert data-thread-quota-paused role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 pr-1.5">
       <Info aria-hidden="true" className="shrink-0" />
       <AlertTitle className="min-w-0 flex-1 basis-48 font-normal">{detail ? `${title} · ${detail}` : title}</AlertTitle>
       <span className="ml-auto flex shrink-0 items-center gap-1">
-        {paused.keyReady
-          ? <Button size="sm" disabled={pending !== null} onClick={() => void run('key')}>{t('useKey')}</Button>
-          : <Button size="sm" nativeButton={false} role="link" render={<Link href={settingsHref('models')} />}>{t('addKey')}</Button>}
-        <Button size="sm" variant="outline" disabled={!reset || pending !== null} onClick={() => void run('retry')}>{t('retryAfterReset')}</Button>
+        <Button size="sm" disabled={pending !== null} onClick={() => void run('retry')}>{t('tryAllNow')}</Button>
+        {creditsModel && <Button size="sm" variant="outline" disabled={pending !== null} onClick={() => void run('credits')}>{t('switchAllCredits')}</Button>}
+        <Button size="sm" variant="ghost" nativeButton={false} role="link" render={<Link href={settingsHref('usage')} />}>{t('seeUsage')}</Button>
+        <Button size="sm" variant="ghost" onClick={() => setDismissed(true)}>{t('later')}</Button>
       </span>
     </Alert>
     {failed && <FieldError className="px-3 text-xs">{t('continueFailed')}</FieldError>}

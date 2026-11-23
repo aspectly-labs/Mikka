@@ -47,6 +47,9 @@ export type ThreadLifecycleRow = {
   reviewExpiresAt?: Instant
   issueId: string | null; taskClosed: boolean; checkpointReady: boolean
   filesystemSnapshotId?: string | null; snapshotState?: string | null; restoreStartedAt?: Instant
+  /** #2926 composer's Keep awake: the person's switch, honoured on the idle
+   * sleep decision only — lease loss and run ends still pause the machine. */
+  keepAwake?: boolean
 }
 type Dependencies = {
   provider: Pick<typeof threadLifecycleProvider, 'info' | 'keepAlive'> & Partial<Pick<typeof threadLifecycleProvider, 'findCreated'>>
@@ -134,6 +137,7 @@ export function threadMachineLifecycleDecision(row: ThreadLifecycleRow, provider
   if (terminal) return { action: 'pause', at: now, reason: 'run_ended' }
   if (row.status === 'queued' && !live(row.leaseExpiresAt, now)) {
     const idleAt = at(row.lastActiveAt) + THREAD_MACHINE_IDLE_MS
+    if (row.keepAwake) return { action: 'keep', at: now + THREAD_MACHINE_REFRESH_MS, reason: 'unclaimed_idle' }
     return { action: now >= idleAt ? 'pause' : 'keep', at: Math.min(idleAt, now + THREAD_MACHINE_REFRESH_MS), reason: 'unclaimed_idle' }
   }
   return { action: 'keep', at: now + THREAD_MACHINE_REFRESH_MS, reason: row.stopRequestedAt ? 'stop_pending' : 'active_run' }
