@@ -1128,15 +1128,18 @@ test('a missing stop listener is re-attached on a later read', async t => {
     },
   }, () => done.promise)
   try {
-    for (let i = 0; i < 3; i++) { t.mock.timers.tick(1_000); await setImmediate() }
+    await setImmediate()
+    assert.equal(attempts, 2, 'setup retries the listener before the first tick, and the read that follows retries once more')
+    assert.equal(checks, 1, 'one bounded read ran with it')
+    t.mock.timers.tick(1_000); await setImmediate()
     assert.equal(attempts, 3, 'every one-second read retries the listener until it latches')
-    assert.equal(checks, 3, 'the read that re-latches doubles as the catch-up read')
+    assert.equal(checks, 2, 'the read that re-latches doubles as the catch-up read')
     assert.ok(wake, 'the third attempt latches the listener')
     t.mock.timers.tick(1_000); await setImmediate()
     assert.equal(attempts, 3, 'no further retries once the listener is back')
-    assert.equal(checks, 3, 'and the one-second reads stop with it')
+    assert.equal(checks, 2, 'and the one-second reads stop with it')
     wake!(); await setImmediate()
-    assert.equal(checks, 4, 'pushes drive reads again')
+    assert.equal(checks, 3, 'pushes drive reads again')
   } finally { done.resolve(); await pending }
 })
 test('expired execution budget cancels before generation/status publication', async () => {
