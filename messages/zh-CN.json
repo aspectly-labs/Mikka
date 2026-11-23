@@ -7537,7 +7537,7 @@
       "forkFromHere": "从此处分叉",
       "fork": "分叉",
       "forkSummary": "带摘要分叉",
-      "sideChat": "侧边聊天",
+      "sideChat": "旁支线程",
       "actionFailed": "无法启动新线程"
     },
     "tool": {
