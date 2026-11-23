@@ -160,8 +160,9 @@ test('move retargets a queued run device↔device and a settled thread to cloud,
 
   // Once the chain settles the thread may move to cloud; the newest run gains
   // the binding that steers the next continuation onto the cloud path. A frozen
-  // identity that cannot travel — this owner has no E2B key — refuses the move
-  // outright, before the identity is lifted for the happy path.
+  // identity whose grants cannot travel — this fixture's model configuration is
+  // refused before any key check — denies the move outright, before the
+  // identity is lifted for the happy path.
   await pool.query(`UPDATE agent_runs SET status='succeeded' WHERE id=$1`, [queuedId])
   assert.equal(await moveThread(owner, rootId, { deviceId: 'cloud' }), null)
   await pool.query(`UPDATE agent_runs SET "agentDefinition"='{}' WHERE id=$1`, [queuedId])
