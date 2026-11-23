@@ -33,7 +33,7 @@ export function RailCrewThreads({ issues, threads, loading, onOpenThread }: { is
 export function RailCrewPulls({ workspaceId }: { workspaceId: string }) {
   const t = useTranslations('IssueThreads')
   const { data, error } = useSWR<CoordinatorOverview>('/api/coordinator/overview', url => readJson<CoordinatorOverview>(url))
-  useLiveKey('task_run_list', workspaceId, ['/api/coordinator/overview'], workspaceId)
+  useLiveKey('thread_list', workspaceId, ['/api/coordinator/overview'], workspaceId)
   const pulls = data?.pullRequests ?? []
   if (error) return <p className="p-4 text-sm text-muted-foreground">{t('crewPullsError')}</p>
   if (!data) return null
@@ -55,7 +55,7 @@ export function RailCrewSide({ runId, workspaceId, onOpenThread }: { runId: stri
   const t = useTranslations('IssueThreads')
   const key = `/api/threads/${runId}/children`
   const { data, error } = useSWR<{ children: ThreadChild[] }>(key, url => readJson<{ children: ThreadChild[] }>(url))
-  useLiveKey('task_run_list', workspaceId, [key], workspaceId)
+  useLiveKey('thread_list', workspaceId, [key], workspaceId)
   const sides = (data?.children ?? []).filter(child => child.threadRelation === 'side')
   if (error) return <p className="p-4 text-sm text-muted-foreground">{t('crewSideError')}</p>
   if (!data) return null
