@@ -156,7 +156,7 @@ mock.module('@/components/nav/new-group-dialog', { namedExports: {
   NewGroupDialog: ({ open, workspaceId }: { open: boolean; workspaceId: string }) => open ? <div data-create-group={workspaceId} /> : null,
 } })
 mock.module('@/components/nav/bot-list', { namedExports: { BotList: () => <div data-retired-bot-list="" />, useChatNav: () => ({ entries: [], referenceGroups: [], reloadGroups: async () => {} }) } })
-mock.module('@/components/nav/thread-list', { namedExports: { threadName: () => '' } })
+mock.module('@/components/nav/thread-list', { namedExports: { threadName: () => '', ThreadList: empty } })
 mock.module('@/components/nav/bot-avatar', { namedExports: { BotAvatar: empty, COORDINATOR_AVATAR: {} } })
 mock.module('@/components/nav/all-threads', { namedExports: { AllThreadsColumn: empty, AllThreadsToggle: empty } })
 let browserFits = true
