@@ -103,3 +103,11 @@ test("an Agent's message back keeps its own words for the chat's collapsed row (
   const asked = eventPrompt({ kind: 'run_question', issueId, runId, payload: { question: 'Which branch?', options: ['main', 'dev'] } })
   assert.equal(eventLine('run_question', asked).message, 'Which branch?\n\nmain / dev')
 })
+
+test("the stored display keeps an Agent's words, so the chat's row survives a reload", async () => {
+  const { runtimeMessageDisplay, messageDisplay } = await import('./message-display')
+  const payload = { text: 'Line one\nLine two' }
+  const display = runtimeMessageDisplay({ kind: 'run_report', payload }, eventPrompt({ kind: 'run_report', issueId, runId, payload }))
+  const read = messageDisplay({ role: 'user', content: 'x', mikkaDisplay: JSON.parse(JSON.stringify(display)) })
+  assert.equal(read?.kind === 'event' ? read.line.message : undefined, 'Line one\nLine two')
+})
