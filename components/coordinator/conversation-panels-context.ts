@@ -15,3 +15,13 @@ import type { ThreadScreenProps } from '@/components/slots/thread-contract'
 export const ConversationPanels = createContext<ThreadScreenProps['panels'] | undefined>(undefined)
 
 export const useConversationPanels = () => useContext(ConversationPanels)
+
+/**
+ * The page's static tool tabs for the same work area — Changes, the Coordinator's
+ * Crew group and friends. They ride the chat's `work` channel, so `panels` keeps
+ * its pinned Overview + Browser pair (FRAME_OWNS_PANEL) while the rail's ＋ menu
+ * still lists them, grouped by id.
+ */
+export const ConversationTools = createContext<NonNullable<ThreadScreenProps['work']>['tabs'] | undefined>(undefined)
+
+export const useConversationTools = () => useContext(ConversationTools)
