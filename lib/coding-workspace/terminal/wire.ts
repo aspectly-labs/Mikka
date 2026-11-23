@@ -18,7 +18,7 @@ export function terminalKey(target: Pick<TerminalTarget, 'ownerId' | 'workspaceI
 /** Call inside the final short authority/lease transaction. The captured boot
  * nonce cannot be refreshed after that transaction: a revoke/restart winning
  * the network race must invalidate this exact, one-use authorization. */
-export function terminalGrant(prepared: TerminalPrepared, scope: TaskReviewAuthority, lease: TerminalLease,
+export function terminalGrant(prepared: TerminalPrepared, scope: TaskReviewAuthority & { threadTerminal?: boolean }, lease: TerminalLease,
   operation: Exclude<TerminalOperation, 'revoke' | 'inspect'>, body = '', now = Date.now()) {
   const expiry = Date.parse(lease.expiresAt)
   if (prepared.bindingId !== scope.bindingId || !scope.sandboxId || !Number.isFinite(expiry) || expiry <= now || expiry > now + 300_000)
@@ -31,6 +31,9 @@ export function terminalGrant(prepared: TerminalPrepared, scope: TaskReviewAutho
     deviceId: scope.deviceId, repoId: scope.repoId, bindingId: scope.bindingId,
     machineEpoch: scope.machineEpoch, worktreePath: scope.worktreePath,
     credentialId: `${scope.credential.kind}:${scope.credential.id}`,
+    // 'thread' lets an owner's terminal run beside the executor; review
+    // terminals keep the daemon's lock + idle-receipt fence.
+    control: scope.threadTerminal ? 'thread' : 'review',
   })
 }
 

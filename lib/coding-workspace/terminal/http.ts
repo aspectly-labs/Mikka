@@ -9,7 +9,7 @@ import { resumeReviewMachine } from '../review-machine'
 import { prepareTerminal, existingTerminal, terminalRequest } from './runtime'
 import { terminalGrant, type TerminalLease, type TerminalPrepared } from './wire'
 
-const HEADERS = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }
+export const HEADERS = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }
 type Dependencies = {
   authority: typeof taskReviewAuthority
   authorized: <T>(request: Request, taskId: string, work: (scope: TaskReviewAuthority, client: PoolClient) => Promise<T>, expected?: ReviewAuthorityExpectation) => Promise<T>
@@ -21,14 +21,14 @@ const runtime: Dependencies = { authority: taskReviewAuthority, authorized: with
   begin: beginReviewSession, read: readReviewSession, close: closeReviewSession, revoke: revokeReviewSession, resume: resumeReviewMachine,
   prepare: prepareTerminal, existing: existingTerminal, request: terminalRequest, grant: terminalGrant }
 
-function origin(request: Request, stream = false) {
+export function origin(request: Request, stream = false) {
   const value = request.headers.get('origin')
   if (value && value !== new URL(request.url).origin || request.headers.get('sec-fetch-site') === 'cross-site'
     || stream && (request.headers.get('sec-fetch-mode') === 'navigate' || !request.headers.get('accept')?.includes('text/event-stream')))
     throw new ReviewAuthorityError('review_scope_denied')
 }
 
-async function body(request: Request): Promise<unknown> {
+export async function body(request: Request): Promise<unknown> {
   const reader = request.body?.getReader()
   if (!reader) throw new TerminalError('terminal_invalid_request')
   const chunks: Uint8Array[] = []
@@ -46,7 +46,7 @@ async function body(request: Request): Promise<unknown> {
   } finally { await reader.cancel(); reader.releaseLock() }
 }
 
-function failure(error: unknown) {
+export function failure(error: unknown) {
   if (error instanceof ReviewAuthorityError || error instanceof TerminalError) {
     return Response.json({ error: error.code, ...(error.detail ? { detail: error.detail } : {}) }, { status: error.status, headers: HEADERS })
   }

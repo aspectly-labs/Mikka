@@ -69,6 +69,10 @@ def fixed_file(directory, name, flags):
 
 def execution_fence(scope, control=CONTROL):
     """Check the same fixed inode the daemon holds, then retain it for PTY life."""
+    # Thread-owned terminals share the machine with its executor by design; the
+    # lock/idle receipt only fences review provenance on task-review machines.
+    if scope.get('control') == 'thread':
+        return None
     directory = os.open(control, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     lock = None
     try:
@@ -444,7 +448,9 @@ class Gateway:
             raise RuntimeError('terminal_task_account_unavailable')
         if self.account.pw_uid == 0:
             raise RuntimeError('terminal_user_required')
-        self.session = None
+        # One PTY session per terminal lease ('sessionId'). Review terminals
+        # mint at most one live session per run; thread terminals share the run.
+        self.sessions = {}
         self.connection_count = 0
         self.children_changed = asyncio.Event()
         # PR_SET_CHILD_SUBREAPER. It is local process containment, not a claim
@@ -461,9 +467,11 @@ class Gateway:
                 break
             if pid == 0:
                 break
-            if self.session and pid == self.session.pid:
-                code = os.waitstatus_to_exitcode(status)
-                self.session.stop('terminal_exited', code if code >= 0 else 128 - code)
+            for session in list(self.sessions.values()):
+                if pid == session.pid:
+                    code = os.waitstatus_to_exitcode(status)
+                    session.stop('terminal_exited', code if code >= 0 else 128 - code)
+                    break
         self.children_changed.set()
 
     def children(self):
@@ -516,16 +524,16 @@ class Gateway:
                 raise RuntimeError('terminal_cleanup_unconfirmed') from None
 
     def forget(self, session):
-        if self.session is session and session.ended:
+        if self.sessions.get(session.id) is session and session.ended:
             session.history.clear()
             session.requests.clear()
-            self.session = None
+            self.sessions.pop(session.id, None)
 
     def current(self, grant, create=False):
         if self.revoked.get(grant['sessionId'], 0) > time.time() or self.revoked.get('run:' + grant['runId'], 0) > time.time():
             refuse(409, 'terminal_binding_changed')
-        session = self.session
-        if session and session.ended and session.id != grant['sessionId']:
+        session = self.sessions.get(grant['sessionId'])
+        if session and session.ended:
             self.forget(session)
             session = None
         if session and not session.matches(grant):
@@ -533,7 +541,13 @@ class Gateway:
         if session is None:
             if not create:
                 refuse(409, 'terminal_ended')
-            session = self.session = Session(self, grant, self.account)
+            live = [other for other in self.sessions.values() if not other.ended
+                    and other.grant.get('runId') == grant['runId']]
+            if grant.get('control') != 'thread' and live:
+                refuse(423, 'terminal_already_controlled')
+            if len(live) >= 8:
+                refuse(503, 'terminal_unavailable')
+            session = self.sessions[grant['sessionId']] = Session(self, grant, self.account)
         session.authorize()
         if not session.ended:
             session.renew(grant)
@@ -622,11 +636,11 @@ class Gateway:
                     self.revoked[lease_id] = now + LEASE_SECONDS + 35
                 if not ids:
                     self.revoked['run:' + grant['runId']] = now + LEASE_SECONDS + 35
-                session = self.session
-                if session and (not ids or session.id in ids) and all(session.grant.get(key) == grant.get(key) for key in ('runId', 'ownerId', 'workspaceId')):
-                    closing = session.stop('terminal_revoked')
-                    if closing:
-                        await closing
+                for session in list(self.sessions.values()):
+                    if (not ids or session.id in ids) and all(session.grant.get(key) == grant.get(key) for key in ('runId', 'ownerId', 'workspaceId')):
+                        closing = session.stop('terminal_revoked')
+                        if closing:
+                            await closing
                 await respond(writer, 204)
             elif operation == 'stream':
                 # Admission errors still return an HTTP error; once headers
@@ -745,8 +759,37 @@ async def main(*, cloudflare=False):
     listener.listen(128)
     server = await asyncio.start_server(gateway.serve, sock=listener, limit=16_384)
     print('terminal-ready', flush=True)
+    stopping = asyncio.Event()
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopping.set)
     async with server:
-        await server.serve_forever()
+        serving = asyncio.create_task(server.serve_forever())
+        await stopping.wait()
+        serving.cancel()
+        # SIGTERM means an upgrade is replacing this gateway (prepareTerminal's
+        # pkill). Drain before leaving the context: on Python 3.12+ its
+        # wait_closed blocks on live streams, and the process is the shells'
+        # subreaper — ending each session runs reap_shells, which SIGKILLs and
+        # reaps the PTYs' children instead of orphaning writers that could still
+        # touch the worktree mid-run.
+        await drain_sessions(gateway)
+
+
+async def drain_sessions(gateway, attempts=2):
+    # SIGTERM means an upgrade is replacing this gateway (prepareTerminal's
+    # pkill). The process is the shells' subreaper: ending each session runs
+    # reap_shells, which SIGKILLs and reaps the PTYs' children instead of
+    # orphaning writers that could still touch the worktree mid-run.
+    for _ in range(attempts):
+        live = [session for session in list(gateway.sessions.values()) if not session.ended]
+        if not live:
+            break
+        for session in live:
+            try:
+                closing = session.stop('gateway_upgrade')
+                if closing:
+                    await asyncio.wait_for(asyncio.shield(closing), 6)
+            except (OSError, RuntimeError, asyncio.TimeoutError):
+                pass
 
 
 if __name__ == '__main__':
