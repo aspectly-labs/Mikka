@@ -131,6 +131,7 @@ const functions = {
   'agents.listThreadGitCheckpoints': actions1.listThreadGitCheckpoints,
   'agents.getThreadGitTurns': actions1.getThreadGitTurns,
   'agents.getThreadGitTurnDiff': actions1.getThreadGitTurnDiff,
+  'agents.getThreadTurnChanges': actions1.getThreadTurnChanges,
   'agents.getThreadInstructions': actions1.getThreadInstructions,
   'agents.sendIssueThreadReply': actions1.sendIssueThreadReply,
   'agents.createThreadReplyVersion': actions1.createThreadReplyVersion,

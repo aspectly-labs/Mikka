@@ -196,6 +196,7 @@ export const desktopActionSchemas = {
   'agents.listThreadGitCheckpoints': tuple(uuid.nullable(), uuid),
   'agents.getThreadGitTurns': tuple(uuid.nullable(), uuid),
   'agents.getThreadGitTurnDiff': tuple(uuid.nullable(), uuid, object({ turnRunId: uuid.optional(), live: bool.optional(), cursor: text(256).optional(), limit: z.number().int().min(1).max(50).optional() })),
+  'agents.getThreadTurnChanges': tuple(uuid.nullable(), uuid, uuid),
   'agents.getThreadInstructions': tuple(uuid.nullable(), uuid),
   'agents.sendIssueThreadReply': tuple(object({ expectedOwnerId: text(256).optional(), expectedWorkspaceId: uuid.optional(), issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), requestId: uuid.optional(), retryOriginalSession: z.literal(true).optional(), questionWakeGeneration: uuid.optional(), modelChoice: threadModelChoice.optional(), delivery: z.enum(['queue','steer','interrupt']).optional(), references: z.array(object({ type: z.enum(['file','task','pr','thread','bot']), id: text(2048).min(1), offset: z.number().int().min(0).optional() })).max(20).optional() })),
   'agents.createThreadReplyVersion': tuple(object({issueId:uuid.nullable(),runId:uuid,change:z.discriminatedUnion('operation',[

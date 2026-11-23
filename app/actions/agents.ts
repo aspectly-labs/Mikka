@@ -740,6 +740,29 @@ async function readThreadChanges(issueId: string | null, runId: string): Promise
 
 const THREAD_CHANGES_MAX_TEXT = 8 * 1024 * 1024
 
+/** #2929: one turn's changes — the same gzip patch path as getThreadChanges but
+ * scoped to a single attempt of the chain, so the Changes view can page turns. */
+export async function getThreadTurnChanges(issueId: string | null, runId: string, turnRunId: string): Promise<ThreadChangesResult> {
+  return withDatabaseOperation('/actions/threads/turn-changes', async () => {
+    const { row } = await readableThread(issueId, runId, threadIdentityColumns)
+    const chain = await readRunChain(pool, row.userId, row.id)
+    if (chain && !chain.attempts.some(attempt => attempt.runId === turnRunId)) return { state: 'none' }
+    const { rows: [checkpoint] } = await pool.query<{ patch: Buffer | null; unavailableReason: string | null }>(
+      'SELECT patch,"unavailableReason" FROM run_checkpoints WHERE "runId"=$1 AND "userId"=$2', [turnRunId, row.userId])
+    if (!checkpoint?.patch) return { state: 'none' }
+    if (checkpoint.unavailableReason) return { state: 'tooLarge' }
+    let text: string
+    try { text = gunzipSync(checkpoint.patch, { maxOutputLength: THREAD_CHANGES_MAX_TEXT }).toString('utf8') } catch { return { state: 'tooLarge' } }
+    const changes = parseUnifiedDiff(text)
+    if (!changes.files.length) return { state: 'none' }
+    const { rows: [published] } = await pool.query<{ url: string }>(
+      `SELECT "pullRequest"->>'url' AS url FROM run_publications WHERE "runId"=$1 AND "pullRequest"->>'url' IS NOT NULL ORDER BY "updatedAt" DESC LIMIT 1`, [turnRunId])
+    const prUrl = published && safeHttpUrl(published.url)
+    if (prUrl) for (const file of changes.files) file.url = `${prUrl.replace(/\/+$/, '')}/files#diff-${createHash('sha256').update(file.path).digest('hex')}`
+    return { state: 'ready', changes }
+  })
+}
+
 function safeHttpUrl(value: string) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.toString() : null } catch { return null }
 }
