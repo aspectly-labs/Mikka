@@ -132,10 +132,8 @@
       "duplicate": "复制为新的 Agent 配置",
       "mark": {
         "colors": {
-          "graphite": "石墨",
           "pink": "粉",
           "teal": "青绿",
-          "ink": "墨黑",
           "blue": "蓝",
           "violet": "紫",
           "emerald": "翠绿"
@@ -3810,7 +3808,13 @@
         "empty": "没有参数或结果",
         "usedTools": "用了 {count} 个工具",
         "command": "命令",
-        "thinkingDone": "思考完毕"
+        "thinkingDone": "思考完毕",
+        "shell": "Shell",
+        "succeeded": "✓ 成功",
+        "running": "运行中",
+        "stopped": "已停止",
+        "fullOutput": "查看完整输出",
+        "loadingOutput": "正在加载输出…"
       },
       "detail": {
         "page": "网页",
@@ -8397,7 +8401,7 @@
     "decline": "不同意",
     "uploadFailed": "上传失败",
     "away": "你不在时",
-    "toolsRunning": "正在用 {count} 个工具",
+    "toolsRunning": "{count, plural, one {正在运行命令} other {正在运行 # 个工具}}",
     "offline": "连接断了，正在重连…",
     "runningCount": "{count} 个在进行",
     "sending": "发送中…",
@@ -8419,7 +8423,12 @@
     "openTasks": "打开任务",
     "toolsRanTime": "用了 {count} 个工具 · {seconds} 秒",
     "waitingToSend": "等待发送",
-    "backOnline": "已重新连上"
+    "backOnline": "已重新连上",
+    "steps": {
+      "read": "已读取 {target}",
+      "search": "已搜索“{target}”",
+      "edit": "已编辑 {target}"
+    }
   },
   "Board": {
     "scrollRight": "向右滚动看板",

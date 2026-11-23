@@ -132,10 +132,8 @@
       "duplicate": "Duplicate profile",
       "mark": {
         "colors": {
-          "graphite": "Graphite",
           "pink": "Pink",
           "teal": "Teal",
-          "ink": "Ink",
           "blue": "Blue",
           "violet": "Violet",
           "emerald": "Emerald"
@@ -3810,7 +3808,13 @@
         "empty": "No arguments or result",
         "usedTools": "Used {count, plural, one {# tool} other {# tools}}",
         "command": "Command",
-        "thinkingDone": "Done thinking"
+        "thinkingDone": "Done thinking",
+        "shell": "Shell",
+        "succeeded": "✓ Succeeded",
+        "running": "Running",
+        "stopped": "Stopped",
+        "fullOutput": "Show full output",
+        "loadingOutput": "Loading output…"
       },
       "detail": {
         "page": "Page",
@@ -8397,7 +8401,7 @@
     "decline": "Decline",
     "uploadFailed": "Upload failed",
     "away": "While you were away",
-    "toolsRunning": "{count, plural, one {Running a tool} other {Running # tools in parallel}}",
+    "toolsRunning": "{count, plural, one {Running a command} other {Running # tools}}",
     "offline": "Connection lost – reconnecting…",
     "runningCount": "{count} running",
     "sending": "Sending…",
@@ -8419,7 +8423,12 @@
     "openTasks": "Open Tasks",
     "toolsRanTime": "{count, plural, one {Ran a tool} other {Ran # tools}} · {seconds}s",
     "waitingToSend": "Waiting to send",
-    "backOnline": "Back online"
+    "backOnline": "Back online",
+    "steps": {
+      "read": "Read {target}",
+      "search": "Searched “{target}”",
+      "edit": "Edited {target}"
+    }
   },
   "Board": {
     "scrollRight": "Scroll board right",
