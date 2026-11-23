@@ -23,7 +23,8 @@ before(async () => {
   await run(async () => {
     const { pool } = await import('./db')
     await pool.query(`CREATE TABLE agent_runs (id uuid PRIMARY KEY,"userId" text,"issueId" uuid,"workspaceId" uuid,
-      "retryOf" uuid,"continuesRunId" uuid,"questionContinuation" jsonb,status text,"pauseReason" text,"updatedAt" timestamptz)`)
+      "retryOf" uuid,"continuesRunId" uuid,"questionContinuation" jsonb,status text,"pauseReason" text,"updatedAt" timestamptz);
+    CREATE TABLE factory_tasks (id uuid PRIMARY KEY,"userId" text,"issueId" uuid,"workspaceId" uuid,stage text,status text)`)
   })
 })
 after(async () => { mock.restoreAll(); await scope.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end() })
@@ -53,9 +54,10 @@ test('limit items name the chain root across retryOf, continuesRunId and questio
   await insertRun(pool, { id: resumed, issueId: issue, workspaceId: ws, originRunId: root })
   // An origin pointing at another task is outside the fence: the run is its own root.
   await insertRun(pool, { id: orphan, issueId: issue, workspaceId: ws, originRunId: randomUUID() })
-  // ...and a real cross-task parent exists but must not be followed.
+  // ...and a real cross-task parent exists but must not be followed. It stays
+  // running (not quota-paused) so it does not list itself.
   const otherRoot = randomUUID(), moved = randomUUID()
-  await insertRun(pool, { id: otherRoot, issueId: otherIssue, workspaceId: ws })
+  await insertRun(pool, { id: otherRoot, issueId: otherIssue, workspaceId: ws, status: 'running', pauseReason: null })
   await insertRun(pool, { id: moved, issueId: issue, workspaceId: ws, originRunId: otherRoot })
   const items = await listNeedsYou({ id: 'owner' })
   const byThread = new Map(items.filter(i => i.kind === 'limit').map(i => [i.threadId, i]))
