@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react'
 import { useTranslations } from '@/lib/intl/i18n-client'
-import useSWR from 'swr'
+import useSWR, { unstable_serialize } from 'swr'
 import { toast } from 'sonner'
 import type { listIssues } from '@/app/actions/issues'
 import type { Thread } from '@/app/actions/task-runs'
@@ -11,6 +11,9 @@ import { ComputerScreen } from '@/components/computer/computer-screen'
 import { ComputerViewer } from '@/components/computer/computer-viewer'
 import { deleteLibraryFile, fetchBotLibrary } from '@/lib/bot-library'
 import { fetchSettingsData } from '@/lib/settings-data'
+import { useLiveKey } from '@/hooks/use-live-key'
+import { UNRESOLVED_LIST_SCOPE } from '@/lib/live/list-read'
+import { UNRESOLVED_APPROVAL_SCOPE } from '@/lib/live/approval-cache'
 import { BOT_COLORS, BOT_NAME_MAX, BOT_SHAPES } from '@/lib/bot-shapes'
 import { isMockedComputer } from '@/lib/computer/client'
 import { PR_GROUPS, botGlance, pullRequestsOf } from '@/lib/thread-groups'
@@ -160,10 +163,16 @@ export function BotOverviewBody({ conversation, tabs, tab, onTab, query, onQuery
   // The Coordinator's 详情 groups (#2930) come from the overview read, scoped
   // like the panel's own lists.
   const isCoordinator = conversation.kind === 'coordinator'
+  const overviewKey = isCoordinator && tab === 'details' ? ['coordinator-overview', workspaceId ?? ''] : null
   const overview = useSWR(
-    isCoordinator && tab === 'details' ? ['coordinator-overview', workspaceId ?? ''] : null,
+    overviewKey,
     ([, scope]) => fetchSettingsData<{ needsYou: NonNullable<BotOverviewProps['coordinator']>['needsYou']; running: NonNullable<BotOverviewProps['coordinator']>['running'] }>(
       `/api/coordinator/overview${scope ? `?workspaceId=${scope}` : ''}`))
+  // Finished runs and answered needs-you items leave the groups: revalidate on
+  // the thread list's and pending actions' live channels like the other lists.
+  const overviewKeys = overviewKey ? [unstable_serialize(overviewKey)] : []
+  useLiveKey('thread_list', isCoordinator ? workspaceId ?? UNRESOLVED_LIST_SCOPE : null, overviewKeys, workspaceId)
+  useLiveKey('pending_actions', isCoordinator ? workspaceId ?? UNRESOLVED_APPROVAL_SCOPE : null, overviewKeys, workspaceId)
   const coordinator: BotOverviewProps['coordinator'] = !isCoordinator ? null : {
     needsYou: overview.data?.needsYou ?? [],
     running: overview.data?.running ?? [],
