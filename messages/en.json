@@ -4485,6 +4485,15 @@
         "running": "{count} in progress",
         "prNone": "No open PRs"
       },
+      "coordinator": {
+        "needsYou": "Needs you",
+        "inProgress": "In progress",
+        "untitled": "Untitled thread",
+        "loadError": "The overview could not be read",
+        "kinds": { "approval": "Approval requested", "question": "Question waiting", "limit": "Usage limit reached" },
+        "status": { "queued": "Queued", "running": "Running" }
+      },
+      "preview": { "untitled": "Untitled task", "agent": "Agent {name}", "pullRequest": "Pull request", "unavailable": "Preview unavailable" },
       "prs": "PRs",
       "narrow": "Restore panel width",
       "noTasks": "No tasks yet",
