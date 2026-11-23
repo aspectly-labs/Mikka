@@ -126,6 +126,9 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
         if (!Object.hasOwn(UI_SLOT_EXPORTS, name)) throw new Error(`UI_SLOT_UNKNOWN: ${source}`)
         return officialSlot + name
       }
+      if (publicTestFixture && !uiSlots.dir && source === `${SLOT_PREFIX}workspace-entry`) {
+        return bundlerResolved(resolve(frontend, 'src/public-test-fixture-workspace.tsx'))
+      }
       const candidate = resolveOverlaySpecifier(source, uiSlots) ?? (source.startsWith('@/') ? resolve(repository, source.slice(2)) : source)
       // Keep require-call/import semantics when resolving conditional package
       // exports; a CommonJS helper must not become an ESM namespace object.
