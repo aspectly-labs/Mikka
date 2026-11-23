@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDiffOptions } from '@/components/agents/file-diff'
 import { useViewScroll, useViewState } from '@/lib/hooks/view-state'
 import { DIFF_WRAP_KEY, diffWrapFrom, filePatch, splitPath, type ChangedFile, type DiffWrap, type ThreadChanges } from '@/lib/thread-changes'
+import { useThreadChanges } from '@/hooks/use-thread-run-reads'
 
 /**
  * A thread's 改动 tab (Figma 820:4843), read-only: no terminal, no inline
@@ -23,6 +24,15 @@ export function ThreadChangesPane({ changes, stateKey = 'changes' }: { changes: 
   const [wrap, setWrap] = useDiffWrap()
   const [filesOpen, setFilesOpen] = useViewState(`${stateKey}:files`, false)
   return <ThreadChangesView stateKey={stateKey} changes={changes} wrap={wrap} onWrapChange={setWrap} filesOpen={filesOpen} onFilesOpenChange={setFilesOpen} />
+}
+
+/** The rail's Changes tab for the open thread: the same pane, fetched by run. */
+export function RailThreadChanges({ issueId, runId, status }: { issueId: string | null; runId: string; status?: string }) {
+  const { data: changes } = useThreadChanges(issueId, runId, status)
+  const t = useTranslations('IssueThreads')
+  if (!changes || changes.state === 'none') return null
+  if (changes.state !== 'ready') return <p className="p-4 text-sm text-muted-foreground">{t('changesTooLarge')}</p>
+  return <ThreadChangesPane stateKey={`thread:${runId}:rail-changes`} changes={changes.changes} />
 }
 
 /** The person's long-line choice, kept on this device; wrapping until the stored value is read. */

@@ -230,4 +230,9 @@ export type ThreadTranscriptScreenProps = {
 /** The hosted shell waits for a task tab's existing save before removing it. */
 export const WorkTabCloseContext = createContext<((tabId: string) => Promise<boolean>) | null>(null)
 
-export type ThreadPanelTab = { id: 'overview' | 'browser' | `task:${string}` | `thread:${string}`; title: string; label?: string; content: ReactNode }
+export type ThreadPanelTab = {
+  id:
+    | 'overview' | 'browser' | 'changes' | 'files' | 'setup' | 'computer' | 'terminals' | 'pull-request'
+    | `task:${string}` | `thread:${string}` | `crew:${string}`
+  title: string; label?: string; content: ReactNode
+}
