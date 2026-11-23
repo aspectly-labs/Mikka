@@ -57,7 +57,9 @@ export async function listNeedsYou(user: NeedsYouUser): Promise<NeedsYouItem[]> 
         SELECT r.id,r."retryOf",r."continuesRunId",r."issueId",r."workspaceId",r."userId",
           CASE WHEN r."questionContinuation"->>'originRunId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
             THEN (r."questionContinuation"->>'originRunId')::uuid END
-          FROM agent_runs r JOIN up ON up."retryOf"=r.id OR up."continuesRunId"=r.id OR up.origin=r.id)
+          FROM agent_runs r JOIN up ON (up."retryOf"=r.id OR up."continuesRunId"=r.id OR up.origin=r.id)
+            AND r."userId"=up."userId" AND r."issueId" IS NOT DISTINCT FROM up."issueId"
+            AND r."workspaceId"=up."workspaceId")
       SELECT id FROM up WHERE NOT EXISTS (SELECT 1 FROM agent_runs parent
         WHERE parent.id IN (up.origin,up."retryOf",up."continuesRunId") AND parent."userId"=up."userId"
           AND parent."issueId" IS NOT DISTINCT FROM up."issueId" AND parent."workspaceId"=up."workspaceId") LIMIT 1) root ON true
