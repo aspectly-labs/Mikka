@@ -148,7 +148,7 @@ export async function listRunGitTurns(dependencies: GitDependencies, actor: Revi
       `SELECT "runId","baseSha","headSha","capturedAt" FROM coding_workspace_checkpoint_reviews
         WHERE "runId" = ANY($1::uuid[]) AND "repoId"=$2 ORDER BY "capturedAt" DESC`,
       [attempts.map(attempt => attempt.runId), repoId])
-    const byRun = new Map(rows.map(row => [row.runId, row]).reverse())
+    const byRun = new Map<string, (typeof rows)[number]>(rows.map(row => [row.runId, row]).reverse())
     const turns = attempts.map(attempt => ({
       runId: attempt.runId, attempt: attempt.attempt, status: attempt.status,
       baseSha: byRun.get(attempt.runId)?.baseSha ?? null, headSha: byRun.get(attempt.runId)?.headSha ?? null,
