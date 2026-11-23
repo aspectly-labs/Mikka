@@ -7530,7 +7530,15 @@
       "copyFailed": "Couldn't copy",
       "copied": "Copied",
       "copy": "Copy",
-      "reply": "Reply"
+      "reply": "Reply",
+      "more": "More",
+      "copyWhole": "Copy whole message",
+      "quoteInReply": "Quote in reply",
+      "forkFromHere": "Fork from here",
+      "fork": "Fork",
+      "forkSummary": "Fork with summary",
+      "sideChat": "Side chat",
+      "actionFailed": "Couldn't start the thread"
     },
     "tool": {
       "pending": "Pending",

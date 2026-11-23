@@ -7530,7 +7530,15 @@
       "copyFailed": "复制失败",
       "copied": "已复制",
       "copy": "复制",
-      "reply": "回复"
+      "reply": "回复",
+      "more": "更多",
+      "copyWhole": "复制整条消息",
+      "quoteInReply": "在回复中引用",
+      "forkFromHere": "从此处分叉",
+      "fork": "分叉",
+      "forkSummary": "带摘要分叉",
+      "sideChat": "侧边聊天",
+      "actionFailed": "无法启动新线程"
     },
     "tool": {
       "pending": "等待中",
