@@ -57,7 +57,7 @@ export async function createCardSetup(actorId: string, currentWorkspaceId: strin
     await pool.query('INSERT INTO hosted_setup_intents (id,"workspaceId","customerId") VALUES ($1,$2,$3)', [session.id, workspaceId, binding.id])
     return { url: session.url }
   } catch (error) {
-    if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed')
+    if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed', { cause: error })
     throw error
   }
 }

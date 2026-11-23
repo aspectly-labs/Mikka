@@ -1,6 +1,7 @@
 import { DECISION_MODEL } from './decision'
 import type { DecisionExecution } from './decide'
 import assert from 'node:assert/strict'
+import { decisionTimeoutMs } from './decision-timeout'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { isE2eTarget } from '../../tests/helpers/e2e-target.mjs'
@@ -293,7 +294,7 @@ dbTest('unclassified runtime data stays pending while direct user input and clas
 })
 
 dbTest('durable attempts advance past one inbox batch and persist only a matching event receipt',async t=>{
-  const [{createRequestDatabaseScope,db},schema,store,{eq,and,sql}]=await Promise.all([
+  const [{createRequestDatabaseScope,db},schema,store,{eq,and,isNull,sql}]=await Promise.all([
     import('../db'),import('../db/schema'),import('@/tests/support/legacy-coordinator-store'),import('drizzle-orm'),
   ])
   const scope=createRequestDatabaseScope(databaseUrl!),owner=`test-triage-attempt-${randomUUID()}`
@@ -313,6 +314,14 @@ dbTest('durable attempts advance past one inbox batch and persist only a matchin
     })
     const first=await store.untriagedEvents(owner, coordinator)
     assert.equal(first.length,50)
+    const [outsideBatch] = (await db.select().from(schema.coordinatorEvents)
+      .where(eq(schema.coordinatorEvents.userId, owner))).filter(item => !first.some(prior => prior.id === item.id))
+    assert.ok(outsideBatch)
+    const prioritized = await store.untriagedEvents(owner, coordinator, outsideBatch.id)
+    assert.equal(prioritized.length, 50)
+    assert.equal(prioritized[0].id, outsideBatch.id, 'the replay target is selected before the inbox batch limit')
+    assert.deepEqual((await store.untriagedEvents(owner, coordinator, randomUUID())).map(item => item.id), first.map(item => item.id),
+      'a missing or foreign replay target cannot change scoped inbox ordering')
     const event=first[0],identity={userId:owner,botId:coordinator}
     const claims=await Promise.all([store.claimTriageAttempt(event,identity),store.claimTriageAttempt(event,identity)])
     const tokens=claims.filter((value):value is Date=>value!==null)
@@ -356,6 +365,16 @@ dbTest('durable attempts advance past one inbox batch and persist only a matchin
     assert.deepEqual((await readPending()).triageDecision,completed.triageDecision,'late failures cannot overwrite a completed judgment')
     const [changed]=await db.select().from(schema.coordinatorEvents).where(eq(schema.coordinatorEvents.id,event.id))
     assert.equal(changed.tier,null);assert.equal(changed.triageDecision,null)
+    const inFlightAt = new Date(Date.now() - 15_000 - Math.floor(decisionTimeoutMs() / 2))
+    await db.update(schema.coordinatorEvents).set({ lastTriageAttemptAt: inFlightAt }).where(eq(schema.coordinatorEvents.id,event.id))
+    const [inFlight] = await db.select().from(schema.coordinatorEvents).where(eq(schema.coordinatorEvents.id,event.id))
+    assert.equal((await store.untriagedEvents(owner, coordinator)).some(item => item.id === event.id), false,
+      'a call still inside its configured transport window stays out of selection')
+    assert.equal(await store.claimTriageAttempt(inFlight, identity), null, 'a concurrent wake cannot reclaim the live attempt')
+    await db.update(schema.coordinatorEvents).set({ lastTriageAttemptAt: new Date(Date.now() - 16_000 - decisionTimeoutMs()) }).where(and(eq(schema.coordinatorEvents.userId, owner), isNull(schema.coordinatorEvents.tier)))
+    const retryable = (await store.untriagedEvents(owner, coordinator)).find(item => item.id === event.id)
+    assert.ok(retryable, 'an expired attempt becomes selectable again')
+    assert.ok(await store.claimTriageAttempt(retryable, identity))
   })
 })
 

@@ -58,7 +58,7 @@ export async function readCommittedSkill(source: SkillSource, fetcher: typeof fe
       return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))
     } catch (error) {
       if (error instanceof ImprovementError) throw error
-      // Do not surface fetch errors that can contain URLs or transport credentials.
+      // error-cause: fetch errors can contain URLs or transport credentials; never surfaced
       throw new ImprovementError('sourceRequired')
     }
   }
@@ -105,7 +105,7 @@ export async function readCommittedSkill(source: SkillSource, fetcher: typeof fe
     throw new ImprovementError('sourceMismatch')
   let markdown: string
   try { markdown = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
-  catch { throw new ImprovementError('sourceMismatch') }
+  catch (error) { throw Object.assign(new ImprovementError('sourceMismatch'), { cause: error }) }
   if (!Buffer.from(markdown, 'utf8').equals(bytes)) throw new ImprovementError('sourceMismatch')
   canonicalSkill(markdown)
   return markdown

@@ -476,8 +476,18 @@
     "kind": "integration",
     "env": {}
   },
+  "core-58": {
+    "command": "pnpm test:zero-residency",
+    "kind": "core",
+    "env": {}
+  },
   "integration-http-fakes": {
     "command": "pnpm test:http-fakes",
+    "kind": "integration",
+    "env": {}
+  },
+  "integration-ui-fixture-guards": {
+    "command": "pnpm test:ui-fixture-guards",
     "kind": "integration",
     "env": {}
   }

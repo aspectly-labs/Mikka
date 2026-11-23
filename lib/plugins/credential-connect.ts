@@ -46,7 +46,7 @@ export async function connectWithCredentials(deps: CredentialConnectDeps, userId
   try {
     account = await deps.initiate(userId, await deps.authConfig(toolkit, scheme), scheme, values)
   } catch {
-    // Never pass Composio's message on: it may quote what was submitted.
+    // error-cause: never pass Composio's message on; it may quote what was submitted
     throw new PluginError('integrationConnectFailed', 502)
   }
   if (account.status !== 'ACTIVE') throw new PluginError('integrationConnectFailed', 502)

@@ -20,7 +20,7 @@ export function maskCheckpoint<F>(input: { patch: Buffer; files: F }, mask: Mask
   let patch: Buffer
   if (input.patch.length >= 2 && input.patch[0] === 0x1f && input.patch[1] === 0x8b) {
     let inflated: Buffer
-    try { inflated = gunzipSync(input.patch, { maxOutputLength: CHECKPOINT_MASK_MAX_INFLATED }) } catch { throw new CheckpointUnmaskable() }
+    try { inflated = gunzipSync(input.patch, { maxOutputLength: CHECKPOINT_MASK_MAX_INFLATED }) } catch (error) { throw Object.assign(new CheckpointUnmaskable(), { cause: error }) }
     const masked = maskText(inflated, mask)
     patch = masked === inflated ? input.patch : gzipSync(masked)
   } else patch = maskText(input.patch, mask)

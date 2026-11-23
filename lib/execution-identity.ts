@@ -84,7 +84,9 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
     if (!binding || binding.modelId !== definition.subscription.modelId || binding.route !== definition.subscription.route || binding.ownerId !== run.userId) return denied()
     resourceBindings.push({ kind: 'subscription', id: definition.subscription.bindingId, ownerId: binding.ownerId, access: 'owner', revision: binding.revision })
     model = { kind: 'subscription', ownerId: binding.ownerId, resourceId: definition.subscription.bindingId, amount: 'provider_unknown' }
-  } else if (device.kind === 'cloud') return denied()
+  // A credits-only definition bills the catalogue model through Mikka's native login — the
+  // same 'native_login' account shape queued credits runs already freeze with.
+  } else if (!definition.credits && device.kind === 'cloud') return denied()
   const placement=definition.taskMachine
   if (placement) {
     if (device.kind!=='cloud'||placement.provider!=='cloudflare'||placement.payer!=='mikka'||placement.ownerId!==run.userId||placement.botId!==run.botId||placement.workspaceId!==workspaceId||

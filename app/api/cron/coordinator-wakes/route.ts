@@ -17,7 +17,7 @@ async function handlePOST(request: Request) {
   const refused = await cronUnauthorized(request); if (refused) return refused
   const input = z.strictObject({ eventId: z.uuid() }).safeParse(await request.json().catch(() => null))
   if (!input.success) return Response.json({ error: 'invalidWakeReplay' }, { status: 400, headers })
-  try { return Response.json({ replayed: await replayCoordinatorWake(input.data.eventId) }, { headers }) }
+  try { return Response.json({ replayed: await replayCoordinatorWake(input.data.eventId, AbortSignal.any([request.signal, AbortSignal.timeout(45_000)])) }, { headers }) }
   catch { return Response.json({ error: 'coordinatorWakeReplayFailed' }, { status: 502, headers }) }
 }
 

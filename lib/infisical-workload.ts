@@ -42,7 +42,7 @@ async function loginWorkload(origin: string, clientId: string, clientSecret: str
     if (typeof token !== 'string' || token.length < 1 || token.length > 16384) throw new Error()
     return { token, expiresIn: (data as { expiresIn?: unknown }).expiresIn }
   } catch {
-    // Never expose a provider response, client secret, or token in errors.
+    // error-cause: never expose a provider response, client secret, or token in errors.
     throw new Error('infisical_identity_unavailable')
   } finally { timingDone?.() }
 }

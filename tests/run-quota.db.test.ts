@@ -72,7 +72,6 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
     await pool.query('DELETE FROM user_e2b_keys WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM device_tokens WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM bot_cloud_runtimes WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM bot_desktops WHERE "ownerId" = ANY($1)', [users])
@@ -97,7 +96,6 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
     const id = await seedUser(pool, label)
     users.push(id)
     const ws = await seedWorkspace(pool, id, [{ userId: id, role: 'admin' }])
-    await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)', [id, ws.id])
     const botId = await seedBot(pool, ws.id, id)
     const remote = `https://github.com/mikka-ci/run-quota-${randomUUID()}.git`
     // An installation row an earlier build recorded; admission no longer reads it (decision 2026-11-02-1600).
@@ -268,6 +266,7 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
     assert.deepEqual(recorded[0].payload, {
       reason: 'quota_exhausted', provider: 'codex', connectionId: null, resetsAt, why: 'noApiKey',
       actions: [{ action: 'addApiKey' }, { action: 'retryAfterReset', at: resetsAt }],
+      pausedThreadIds: [runId],
     })
     await reclaimLostRuns(p.id, new Date(Date.now() + 3_600_000))
     assert.equal((await row(runId)).status, 'paused', 'a paused run is not lost')

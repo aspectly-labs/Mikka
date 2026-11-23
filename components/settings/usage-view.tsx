@@ -5,6 +5,7 @@ import { Download } from '@/components/icons'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { BotAvatar } from '@/components/nav/bot-avatar'
 import { SettingsLoading } from '@/components/settings/primitives'
+import { SettingsTable } from '@/components/ui/settings-layout'
 import { Button } from '@/components/ui/button'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -63,7 +64,7 @@ export function UsagePageView({ month, months, onMonthChange, view, onViewChange
         <div className="flex flex-col gap-0.5 pl-1"><dd className="text-xl font-semibold">{duration(data.totals.seconds)}</dd><dt className="text-xs text-muted-foreground">{t('runTime')}</dt></div>
         {balance !== null && <div data-slot="balance" className="flex flex-col gap-0.5 pl-1"><dd className="text-xl font-semibold tabular-nums">{t('points', { points: number.format(balance) })}</dd><dt className="text-xs text-muted-foreground">{t('balance')}</dt></div>}
       </dl>
-      <div data-settings-card className="rounded-xl border bg-card p-4">
+      <div data-settings-card className="rounded-lg border bg-card p-4">
         <ChartContainer config={chartConfig} className="aspect-auto h-44 w-full" aria-label={t('chartLabel')}>
           {/* Weekly ticks (days 1, 8, 15, 22, 29) so the axis is evenly spaced; a y axis with grid lines gives the bars a scale. */}
           <BarChart data={data.daily} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
@@ -75,30 +76,30 @@ export function UsagePageView({ month, months, onMonthChange, view, onViewChange
           </BarChart>
         </ChartContainer>
       </div>
-      <div data-settings-card className="overflow-hidden rounded-xl border bg-card">
+      <SettingsTable>
         <Table>
           <TableHeader><TableRow>
-            <TableHead className="pl-5">{admin ? view === 'members' ? t('member') : t('bot') : t('yourBots')}</TableHead>
+            <TableHead className="pl-4">{admin ? view === 'members' ? t('member') : t('bot') : t('yourBots')}</TableHead>
             <TableHead className="text-right">{t('threads')}</TableHead>
-            <TableHead className="pr-5 text-right">{t('runTime')}</TableHead>
+            <TableHead className="pr-4 text-right">{t('runTime')}</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {rows.length === 0 && <TableRow><TableCell colSpan={3} className="pl-5 text-muted-foreground">{t('empty')}</TableCell></TableRow>}
+            {rows.length === 0 && <TableRow><TableCell colSpan={3} className="pl-4 text-muted-foreground">{t('empty')}</TableCell></TableRow>}
             {rows.map(row => <TableRow key={row.id || 'awaiting-takeover'}>
-              <TableCell className="pl-5"><span className="flex items-center gap-2">{'color' in row && <BotAvatar size="row" color={row.color} shape={row.shape} />}{rowName(row)}</span></TableCell>
+              <TableCell className="pl-4"><span className="flex items-center gap-2">{'color' in row && <BotAvatar size="row" color={row.color} shape={row.shape} />}{rowName(row)}</span></TableCell>
               <TableCell className="text-right text-muted-foreground tabular-nums">{number.format(row.threads)}</TableCell>
-              <TableCell className="pr-5 text-right tabular-nums">{duration(row.seconds)}</TableCell>
+              <TableCell className="pr-4 text-right tabular-nums">{duration(row.seconds)}</TableCell>
             </TableRow>)}
           </TableBody>
         </Table>
-      </div>
-      {Boolean(data.executionAccounts?.length) && <section data-settings-card className="overflow-hidden rounded-xl border bg-card">
-        <h2 className="px-5 pt-4 text-sm font-medium">{t('executionAccounts')}</h2>
-        <Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-1/3 whitespace-normal pl-5">{t('accountKind')}</TableHead><TableHead className="w-1/4 whitespace-normal">{t('accountPayer')}</TableHead><TableHead className="pr-5">{t('accountBilling')}</TableHead></TableRow></TableHeader>
+      </SettingsTable>
+      {Boolean(data.executionAccounts?.length) && <section className="flex flex-col gap-1.5">
+        <h2 className="pl-1 text-sm font-medium">{t('executionAccounts')}</h2>
+        <SettingsTable><Table className="table-fixed"><TableHeader><TableRow><TableHead className="w-1/3 whitespace-normal pl-4">{t('accountKind')}</TableHead><TableHead className="w-1/4 whitespace-normal">{t('accountPayer')}</TableHead><TableHead className="pr-4">{t('accountBilling')}</TableHead></TableRow></TableHeader>
           <TableBody>{data.executionAccounts!.map(account => <TableRow key={account.id}>
-            <TableCell className="wrap-break-word whitespace-normal pl-5">{t(`accountKinds.${account.kind}`)}</TableCell><TableCell className="wrap-break-word whitespace-normal">{account.ownerName}</TableCell>
-            <TableCell className="wrap-break-word whitespace-normal pr-5 text-muted-foreground">{t(`accountAmounts.${account.amount}`)}</TableCell>
-          </TableRow>)}</TableBody></Table>
+            <TableCell className="wrap-break-word whitespace-normal pl-4">{t(`accountKinds.${account.kind}`)}</TableCell><TableCell className="wrap-break-word whitespace-normal">{account.ownerName}</TableCell>
+            <TableCell className="wrap-break-word whitespace-normal pr-4 text-muted-foreground">{t(`accountAmounts.${account.amount}`)}</TableCell>
+          </TableRow>)}</TableBody></Table></SettingsTable>
       </section>}
     </>}
   </div>

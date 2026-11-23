@@ -31,7 +31,7 @@ export function useTeamDirectory(workspaceId?: string) {
   const router = useRouter()
   const params = useSearchParams()
   const { mutate: refresh } = useSWRConfig()
-  const { data, error: readError, mutate } = useSWR<TeamDirectoryData>(teamDirectoryKey(workspaceId), fetchTeamDirectory, settingsReadOptions)
+  const { data, error: readError, isValidating, mutate } = useSWR<TeamDirectoryData>(teamDirectoryKey(workspaceId), fetchTeamDirectory, { ...settingsReadOptions, revalidateOnMount: true })
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -124,7 +124,7 @@ export function useTeamDirectory(workspaceId?: string) {
 
   const selected = data?.teams.find(team => team.id === teamId)
   return {
-    data, loading: !data && !readError, readError, accessError: isSettingsAccessError(readError), retry: () => void mutate(),
+    data, loading: !data && !readError, isValidating, readError, accessError: isSettingsAccessError(readError), retry: () => void mutate(),
     admin: data?.role === 'admin',
     pending, error, notice, clearMessages: () => { setError(''); setNotice('') }, clearNotice: () => setNotice(''),
     /** What the address asks for: the list, a new team, or one team's page (overview, 常规 or 成员). */
@@ -202,7 +202,7 @@ export function useTeamForm({ workspaceId, team, existingIdentifiers = [], edita
 /** A team's 成员: who is in it, 设为负责人 / 设为成员, 移出 (asked first) and 添加工作区成员, as TeamMembersSettings. */
 export function useTeamMembers(teamId: string, onUpdated: () => void) {
   const t = useTranslations()
-  const { data, error: readError, mutate } = useSWR(teamMembersKey(teamId), fetchTeamMembers, settingsReadOptions)
+  const { data, error: readError, mutate } = useSWR(teamMembersKey(teamId), fetchTeamMembers, { ...settingsReadOptions, revalidateOnMount: true })
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const [removing, setRemoving] = useState<string | null>(null)

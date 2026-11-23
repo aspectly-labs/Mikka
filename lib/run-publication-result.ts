@@ -28,13 +28,18 @@ export type PublicationErrorCode = keyof typeof PUBLICATION_ERRORS
 
 export class PublicationError extends Error {
   /** `status` is GitHub's HTTP status when GitHub answered, for server logs only. */
-  constructor(readonly code: PublicationErrorCode, readonly retryable = false, readonly status?: number) {
+  constructor(readonly code: PublicationErrorCode, readonly retryable = false, readonly status?: number, readonly retryAt?: number) {
     super(PUBLICATION_ERRORS[code])
     this.name = 'PublicationError'
   }
 }
 
 export interface PublishedPullRequest {
+  /** GitHub acknowledged its native queue; this is not a merged receipt. */
+  autoMergeEnabled?: boolean
+  autoMergeError?: PublicationErrorCode
+  autoMergeRetryable?: true
+  autoMergeRetryAt?: number
   /** Present for deliveries recorded after #541. */
   title?: string
   url: string
