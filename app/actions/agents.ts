@@ -325,22 +325,32 @@ type ReadableThreadResult<T extends ThreadColumns> = {
 function readableThread(issueId: string | null, runId: string, columns: typeof threadColumns): Promise<ReadableThreadResult<typeof threadColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadCursorColumns): Promise<ReadableThreadResult<typeof threadCursorColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadIdentityColumns): Promise<ReadableThreadResult<typeof threadIdentityColumns>>
+async function readableThreadSelect<C extends ThreadColumns>(issueId: string, runId: string, columns: C): Promise<ReadableThreadResult<C>> {
+  const access = await issueThreadAccess(issueId)
+  if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
+  const [row] = await db.select(columns).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.issueId, access.issue.id), eq(agentRuns.workspaceId, access.issue.workspaceId!))).limit(1)
+  if (!row || !canReadThread(row.userId, access.user.id, access.memberIds)) throw new ActionFailureError('runNotFound')
+  return { row, user: access.user }
+}
 async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<ThreadColumns>> {
-  if (issueId !== null) {
-    const access = await issueThreadAccess(issueId)
-    if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
-    const [row] = await db.select(columns).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
-      .where(and(eq(agentRuns.id, runId), eq(agentRuns.issueId, access.issue.id), eq(agentRuns.workspaceId, access.issue.workspaceId!))).limit(1)
-    if (!row || !canReadThread(row.userId, access.user.id, access.memberIds)) throw new ActionFailureError('runNotFound')
-    return { row, user: access.user }
-  }
+  if (issueId !== null) return readableThreadSelect(issueId, runId, columns)
   const user = await getWorkspaceReader()
   if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
   // A caller that doesn't know the task (a thread opened by run id alone) still
   // reaches an attached run: the run's own binding names the issue whose access
   // check decides. Unattached runs keep the owner-only rule below.
   const [binding] = await db.select({ issueId: agentRuns.issueId }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1)
-  if (binding?.issueId) return readableThread(binding.issueId, runId, columns)
+  if (binding?.issueId) {
+    // A denied task read must not reveal the run exists: collapse the task's
+    // refusal into the same runNotFound a missing run returns.
+    try {
+      return await readableThreadSelect(binding.issueId, runId, columns)
+    } catch (error) {
+      if (error instanceof ActionFailureError && error.code === 'issueNotFound') throw new ActionFailureError('runNotFound')
+      throw error
+    }
+  }
   const [row] = await db.select(columns)
     .from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, user.id), eq(agentRuns.workspaceId, user[tokenWorkspace]), isNull(agentRuns.issueId))).limit(1)
