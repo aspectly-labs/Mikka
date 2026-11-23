@@ -30,12 +30,12 @@ function StateDot({ machine }: { machine: ThreadMachine }) {
 
 function Trigger({ children, 'aria-label': ariaLabel }: { children: React.ReactNode; 'aria-label': string }) {
   return (
-    <DropdownMenuTrigger asChild>
-      <Button variant="ghost" size="sm" aria-label={ariaLabel}
-        className="h-6 gap-1.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
-        {children}
-        <ChevronDown aria-hidden="true" className="size-3 opacity-60" />
-      </Button>
+    <DropdownMenuTrigger
+      render={<Button variant="ghost" size="sm" aria-label={ariaLabel}
+        className="h-6 gap-1.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground" />}
+    >
+      {children}
+      <ChevronDown aria-hidden="true" className="size-3 opacity-60" />
     </DropdownMenuTrigger>
   )
 }
@@ -67,7 +67,7 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
   // Moving a run whose worker is still live breaks its device-bound completion.
   const movable = !(runIsActive(status) && running)
   const refresh = () => { void machine.mutate(); void detail.mutate() }
-  const act = (fn: () => Promise<unknown>, failKey: string) => startTransition(async () => {
+  const act = (fn: () => Promise<unknown>, failKey: Parameters<typeof t>[0]) => startTransition(async () => {
     try { await fn(); refresh() } catch { toast.error(t(failKey)) }
   })
 
@@ -96,26 +96,26 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
                   {' · '}{t(running ? 'awake' : 'asleep')}
                 </span>
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => router.push(settingsHref('computers'))}>
+              <DropdownMenuItem onClick={() => router.push(settingsHref('computers'))}>
                 <Plus aria-hidden="true" className="size-4" />{t('addMachine')}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             {(showPower || showSetup || showKeepAwake) && <DropdownMenuSeparator />}
             <DropdownMenuGroup>
               {showPower && (
-                <DropdownMenuItem disabled={pending} onSelect={() => act(() => pauseOrResumeThreadMachine(issueId, runId, running ? 'pause' : 'resume'), running ? 'sleepFailed' : 'wakeFailed')}>
+                <DropdownMenuItem disabled={pending} onClick={() => act(() => pauseOrResumeThreadMachine(issueId, runId, running ? 'pause' : 'resume'), running ? 'sleepFailed' : 'wakeFailed')}>
                   {running ? <Moon aria-hidden="true" className="size-4" /> : <Sun aria-hidden="true" className="size-4" />}
                   {t(running ? 'machineSleep' : 'machineWake')}
                 </DropdownMenuItem>
               )}
               {showSetup && (
-                <DropdownMenuItem disabled={pending} onSelect={() => act(() => rerunThreadMachineSetup(issueId, runId), 'setupFailed')}>
+                <DropdownMenuItem disabled={pending} onClick={() => act(() => rerunThreadMachineSetup(issueId, runId), 'setupFailed')}>
                   <RefreshCw aria-hidden="true" className="size-4" />{t('runSetupAgain')}
                 </DropdownMenuItem>
               )}
               {showKeepAwake && (
                 <DropdownMenuItem
-                  onSelect={event => event.preventDefault()}
+                  onClick={event => event.preventDefault()}
                   className="flex items-center justify-between gap-3">
                   <span className="flex flex-col gap-0.5">
                     <span className="flex items-center gap-2">{t('machineKeepAwake')}</span>
@@ -133,7 +133,7 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
             {movable && (
               <DropdownMenuGroup>
                 {m.kind !== 'cloud' && (
-                  <DropdownMenuItem disabled={pending} onSelect={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: 'cloud' }), 'moveFailed')}>
+                  <DropdownMenuItem disabled={pending} onClick={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: 'cloud' }), 'moveFailed')}>
                     <Cloud aria-hidden="true" className="size-4" />{t('moveToCloud')}
                   </DropdownMenuItem>
                 )}
@@ -144,7 +144,7 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
                   <DropdownMenuSubContent>
                     {(devices ?? []).filter(device => device.id !== d?.spec.deviceId).map(device => (
                       <DropdownMenuItem key={device.id} disabled={pending}
-                        onSelect={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: device.id }), 'moveFailed')}>
+                        onClick={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: device.id }), 'moveFailed')}>
                         <Laptop aria-hidden="true" className="size-4" />{device.name}
                       </DropdownMenuItem>
                     ))}
@@ -165,17 +165,17 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
           <DropdownMenuContent align="start">
             <DropdownMenuGroup>
               <DropdownMenuLabel className="max-w-64 truncate">{d.repo.name}{d.repo.baseBranch ? ` · ${d.repo.baseBranch}` : ''}</DropdownMenuLabel>
+              {d.repo.baseBranch && (
+                <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(d.repo!.baseBranch!); toast.success(t('branchCopied')) }}>
+                  <Copy aria-hidden="true" className="size-4" />{t('copyBranch')}
+                </DropdownMenuItem>
+              )}
+              {d.repo.remoteUrl && (
+                <DropdownMenuItem onClick={() => window.open(remoteToUrl(d.repo!.remoteUrl!), '_blank', 'noopener')}>
+                  <ChevronRight aria-hidden="true" className="size-4" />{t('openRemote')}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuGroup>
-            {d.repo.baseBranch && (
-              <DropdownMenuItem onSelect={() => { void navigator.clipboard.writeText(d.repo!.baseBranch!); toast.success(t('branchCopied')) }}>
-                <Copy aria-hidden="true" className="size-4" />{t('copyBranch')}
-              </DropdownMenuItem>
-            )}
-            {d.repo.remoteUrl && (
-              <DropdownMenuItem onSelect={() => window.open(remoteToUrl(d.repo!.remoteUrl!), '_blank', 'noopener')}>
-                <ChevronRight aria-hidden="true" className="size-4" />{t('openRemote')}
-              </DropdownMenuItem>
-            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}
