@@ -30,12 +30,13 @@ function useSettled<T>(value: T, delay: number) {
 }
 
 /** "Who is working" strip above the group composer. Hidden when nobody is working.
- * The endpoint is account-wide while the live channel is this group's, so the
- * strip also polls — but only while someone is known to be working: an idle
- * group makes zero activity requests (tests/idle-request-budget.json). */
-export function WorkingStatus({ revision }: { revision: number | undefined }) {
+ * The server scopes the read to this group's conversation_members, so bots from
+ * the person's other groups never appear; the strip also polls — but only while
+ * someone is known to be working: an idle group makes zero activity requests
+ * (tests/idle-request-budget.json). */
+export function WorkingStatus({ revision, conversationId }: { revision: number | undefined; conversationId: string }) {
   const t = useTranslations('GroupChat.workingStatus')
-  const { data, mutate } = useSWR('/api/agent/sessions/active', fetchActiveAgents, {
+  const { data, mutate } = useSWR(`/api/agent/sessions/active?conversation=${conversationId}`, fetchActiveAgents, {
     refreshInterval: latest => workingPollMs(latest),
     revalidateOnFocus: false,
   })

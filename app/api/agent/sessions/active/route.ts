@@ -1,7 +1,7 @@
 import { defaultAgentCopy as agentCopy } from '@/lib/agent-copy'
 import { auth } from '@/lib/api-auth'
 import { db } from '@/lib/db'
-import { activeAgentsResponse, listActiveAgents } from '@/lib/active-agents'
+import { activeAgentsResponse, isConversationUserMember, listActiveAgents } from '@/lib/active-agents'
 
 /** The agents (and Coordinator) working for the signed-in person right now. */
 export async function GET(request: Request) {
@@ -10,5 +10,9 @@ export async function GET(request: Request) {
     pleaseSignIn: agentCopy.pleaseSignInFirst,
     unavailable: agentCopy.unableToLoadChatHistoryPleaseTry,
     noParameters: agentCopy.activeAgentsNoParameters,
+    groupNotFound: agentCopy.activeAgentsGroupNotFound,
+  }, {
+    member: (userId, conversationId) => isConversationUserMember(db, conversationId, userId, session?.tokenWorkspaceId),
+    list: (userId, conversationId) => listActiveAgents(db, userId, undefined, session?.tokenWorkspaceId, conversationId),
   })
 }

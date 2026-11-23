@@ -5380,7 +5380,8 @@
     "noDisplayableContent": "No displayable content",
     "compareImplementationApproachesByCostComplexityAnd": "Compare implementation approaches by cost, complexity, and maintainability.",
     "unableToDisplayResponse": "Unable to display response",
-    "thisMessageWasAlreadySubmittedPleaseAsk": "This message was already submitted. Please ask a new question."
+    "thisMessageWasAlreadySubmittedPleaseAsk": "This message was already submitted. Please ask a new question.",
+    "activeAgentsGroupNotFound": "Group not found or you are not a member."
   },
   "RunErrors": {
     "run_subscription_expired": {

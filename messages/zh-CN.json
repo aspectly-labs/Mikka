@@ -5380,7 +5380,8 @@
     "noDisplayableContent": "回复没有可显示的内容",
     "compareImplementationApproachesByCostComplexityAnd": "帮我从成本、复杂度和可维护性三个方面比较实施方案。",
     "unableToDisplayResponse": "回复显示出错",
-    "thisMessageWasAlreadySubmittedPleaseAsk": "此轮消息不能重复提交，请新建一轮提问。"
+    "thisMessageWasAlreadySubmittedPleaseAsk": "此轮消息不能重复提交，请新建一轮提问。",
+    "activeAgentsGroupNotFound": "群不存在或你不是成员。"
   },
   "RunErrors": {
     "run_subscription_expired": {
