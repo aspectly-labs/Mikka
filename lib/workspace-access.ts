@@ -43,12 +43,13 @@ export { WorkspaceError }
 export type WorkspaceTransaction = Parameters<Parameters<typeof workspaceDb.transaction>[0]>[0]
 type AuthenticatedUser = Awaited<ReturnType<typeof requireUser>>
 
-export async function requireWorkspace(tx: WorkspaceTransaction, workspaceId: string, userId: string, admin = false, principal?: EnterprisePrincipal) {
+/** `lock` is 'share' for a read that already holds the workspace share lock: upgrading it to exclusive deadlocks two concurrent readers. */
+export async function requireWorkspace(tx: WorkspaceTransaction, workspaceId: string, userId: string, admin = false, principal?: EnterprisePrincipal, lock: 'update' | 'share' = 'update') {
   z.uuid().parse(workspaceId)
   const [row] = await tx.select({ workspace: workspaces, membership: workspaceMembers }).from(workspaces)
     .innerJoin(workspaceMembers, eq(workspaceMembers.workspaceId, workspaces.id))
     .where(and(eq(workspaces.id, workspaceId), eq(workspaceMembers.userId, userId), eq(workspaceMembers.status, 'active')))
-    .for('update').limit(1)
+    .for(lock).limit(1)
   if (!row || (admin && row.membership.role !== 'admin')) throw new WorkspaceError('workspaceAccessDenied')
   await requireEnterpriseWorkspace(userId, workspaceId, principal, tx)
   return row
