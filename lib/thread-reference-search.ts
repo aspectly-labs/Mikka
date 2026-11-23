@@ -28,15 +28,15 @@ async function pullRequests(reader: IssueReader, workspaceId: string, query: str
 export async function searchThreadReferences(reader: IssueReader, workspaceId: string, query: string, kind?: ThreadReference['kind']) {
   const userId = typeof reader === 'string' ? reader : reader.id
   return withTaskWorkspace(reader, workspaceId, async () => {
+    // Match names in JS like the other kinds: PostgreSQL's lower() folds final ς differently and would drop hits.
+    const botsQuery = db.select({ id: bots.id, name: bots.name }).from(bots)
+      .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)).$dynamic()
     const [tasks, threads, prs, botRows] = await Promise.all([
       kind && kind !== 'task' ? null : searchIssues(db, { userId, workspaceId, params: parseSearchParams(new URLSearchParams({ q: query, limit: '8', workspaceId })) }),
       kind && kind !== 'thread' ? null : conversationDirectory(pool, reader, workspaceId, { search: query }),
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
-      // Match names in JS like the other kinds: PostgreSQL's lower() folds final ς differently and would drop hits.
-      kind && kind !== 'bot' ? null : db.select({ id: bots.id, name: bots.name }).from(bots)
-        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt))
-        // A real query caps well past the picker's eight so the JS filter always precedes it; no query needs only eight.
-        .limit(query.trim() ? 512 : 8),
+      // No query needs only the picker's eight; a real query stays uncapped so the filter always precedes any cap.
+      kind && kind !== 'bot' ? null : query.trim() ? botsQuery : botsQuery.limit(8),
     ])
     const needle = query.toLowerCase().replace(/ς/g, 'σ')
     return [
