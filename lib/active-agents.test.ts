@@ -282,7 +282,7 @@ dbTest('active agents on the database', async t => {
   await t.test('a conversation-scoped read returns only that group\'s members', async () => {
     const { conversations, conversationMembers, conversationMessages, groupTurns, bots } = schema
     const group = randomUUID(), stray = randomUUID()
-    const memberBot = randomUUID(), outsideBot = randomUUID()
+    const memberBot = randomUUID(), outsideBot = randomUUID(), strayOnlyBot = randomUUID()
     await db.insert(conversations).values([
       { id: group, workspaceId, kind: 'group', title: 'group', createdBy: me },
       { id: stray, workspaceId, kind: 'group', title: 'other', createdBy: me },
@@ -291,21 +291,26 @@ dbTest('active agents on the database', async t => {
       { conversationId: group, memberType: 'user', memberId: me, role: 'owner' },
       { conversationId: group, memberType: 'agent', memberId: a.id, role: 'member' },
       { conversationId: group, memberType: 'bot', memberId: memberBot, role: 'member' },
+      { conversationId: group, memberType: 'bot', memberId: strayOnlyBot, role: 'member' },
       { conversationId: group, memberType: 'agent', memberId: e.id, role: 'member', leftAt: now }, // left members do not count
       { conversationId: stray, memberType: 'agent', memberId: b.id, role: 'member' },
     ])
     await db.insert(bots).values([
       { id: memberBot, ownerId: me, workspaceId, name: 'MemberBot' },
       { id: outsideBot, ownerId: me, workspaceId, name: 'OutsideBot' },
+      { id: strayOnlyBot, ownerId: me, workspaceId, name: 'StrayOnlyBot' },
     ])
-    const [m1, m2] = [randomUUID(), randomUUID()]
+    const [m1, m2, m3] = [randomUUID(), randomUUID(), randomUUID()]
     await db.insert(conversationMessages).values([
       { id: m1, conversationId: group, position: 1n, authorType: 'user', authorId: me, body: 'go' },
       { id: m2, conversationId: stray, position: 1n, authorType: 'user', authorId: me, body: 'go' },
+      { id: m3, conversationId: stray, position: 2n, authorType: 'user', authorId: me, body: 'go' },
     ])
     await db.insert(groupTurns).values([
       { messageId: m1, conversationId: group, userId: me, botId: memberBot, status: 'running', updatedAt: now },
       { messageId: m2, conversationId: stray, userId: me, botId: outsideBot, status: 'running', updatedAt: now },
+      // a member of `group` whose only live turn runs in `stray` must not light up `group`'s strip
+      { messageId: m3, conversationId: stray, userId: me, botId: strayOnlyBot, status: 'running', updatedAt: now },
     ])
     await db.insert(agentRuns).values(run(e.id, 'running', { startedAt: ago(10_000) })) // a departed member with a live run still cannot appear
     const { isConversationUserMember } = await import('./active-agents')
@@ -325,7 +330,7 @@ dbTest('active agents on the database', async t => {
       await db.delete(conversationMessages).where(inArray(conversationMessages.conversationId, [group, stray]))
       await db.delete(conversationMembers).where(inArray(conversationMembers.conversationId, [group, stray]))
       await db.delete(conversations).where(inArray(conversations.id, [group, stray]))
-      await db.delete(bots).where(inArray(bots.id, [memberBot, outsideBot]))
+      await db.delete(bots).where(inArray(bots.id, [memberBot, outsideBot, strayOnlyBot]))
     }
   })
 })

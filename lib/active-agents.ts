@@ -113,7 +113,14 @@ export async function listActiveAgents(database: Database, userId: string, now =
       .from(groupTurns)
       .innerJoin(conversations, and(eq(conversations.id, groupTurns.conversationId), eq(conversations.createdBy, userId)))
       .innerJoin(bots, and(eq(bots.id, groupTurns.botId), eq(bots.ownerId, userId), eq(bots.workspaceId, conversations.workspaceId), members ? inArray(bots.id, botIds) : undefined))
-      .where(and(eq(groupTurns.status, 'running'), gt(groupTurns.updatedAt, new Date(now.getTime() - 60_000)), workspaceId ? eq(bots.workspaceId, workspaceId) : undefined)),
+      .where(and(
+        eq(groupTurns.status, 'running'),
+        gt(groupTurns.updatedAt, new Date(now.getTime() - 60_000)),
+        workspaceId ? eq(bots.workspaceId, workspaceId) : undefined,
+        // A member bot only counts when it is working in *this* group (#101):
+        // the roster filter limits who appears, not where the turn runs.
+        conversationId ? eq(groupTurns.conversationId, conversationId) : undefined,
+      )),
   ])
   const list = mergeAgentRuns(rows)
   const byBot = new Map<string, typeof workingBots[number]>()
