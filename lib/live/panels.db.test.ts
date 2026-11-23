@@ -251,9 +251,10 @@ test('panel notifications follow actual committed writes and persisted owner/wor
       const { actAs } = await import('../acting-user')
       const { tokenWorkspace } = await import('../tokens/principal')
       const { exchangeDocument } = await import('../../app/actions/collaboration')
-      const { createDocumentSeed } = await import('../../components/workspace/issue-editor-schema')
+      const { issueDocumentSeed } = await import('../issue-document-seed')
+      const { serverIssueSchema } = await import('../issue-editor-schema-snapshot')
       const docId = await issue()
-      const seed = createDocumentSeed({ type: 'doc', content: [] }, docId)!
+      const seed = issueDocumentSeed(serverIssueSchema(), { type: 'doc', content: [] }, docId)!
       await scope.run(async () => {
         await assert.rejects(db.transaction(outer => withDatabaseTransaction(outer, async () => {
           await actAs({ id: 'owner', [tokenWorkspace]: personal }, () => exchangeDocument({ id: docId, seed: Buffer.from(seed).toString('base64') }))
@@ -277,11 +278,12 @@ test('panel notifications follow actual committed writes and persisted owner/wor
       const { actAs } = await import('../acting-user')
       const { tokenWorkspace } = await import('../tokens/principal')
       const { exchangeDocument } = await import('../../app/actions/collaboration')
-      const { createDocumentSeed } = await import('../../components/workspace/issue-editor-schema')
+      const { issueDocumentSeed } = await import('../issue-document-seed')
+      const { serverIssueSchema } = await import('../issue-editor-schema-snapshot')
       const id = await issue('owner', a)
       await databasePool.query(`UPDATE issues SET "linearSyncPolicy"='explicit',"linearSyncBlocked"=false WHERE id=$1`, [id])
       const before = (await databasePool.query('SELECT revision FROM issues WHERE id=$1', [id])).rows[0].revision
-      const seed = createDocumentSeed({ type: 'doc', content: [] }, id)!
+      const seed = issueDocumentSeed(serverIssueSchema(), { type: 'doc', content: [] }, id)!
       await scope.run(async () => {
         await db.transaction(outer => withDatabaseTransaction(outer, async () => {
           const result = await changeIssueScopeLocally('owner', { id, revision: before, scope: 'personal' }, { allowLinkedPersonal: true })

@@ -38,13 +38,13 @@ const compiled = await build({
       builder.onResolve({ filter: /^react(?:\/.*)?$/ }, args => ({ path: require.resolve(args.path), external: true }))
       builder.onResolve({ filter: /^@\/lib\/base-path$/ }, () => ({ path: resolve(repository, 'lib/base-path.ts') }))
       builder.onResolve({ filter: /^@\/components\/workspace\/workspace-loading$/ }, () => ({ path: 'loading', namespace: 'fixture' }))
-      builder.onResolve({ filter: /^\.\/workspace$/ }, args => {
+      builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args => {
         assert.equal(args.importer, resolve(renderer, 'workspace-loader.ts'))
         return { path: 'workspace', namespace: 'fixture' }
       })
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({
         contents: args.path === 'workspace'
-          ? 'const fixture = globalThis[Symbol.for("mikka.test.installed-workspace")]; fixture.moduleEvaluations++; const module = await fixture.module; export default module.default;'
+          ? 'const fixture = globalThis[Symbol.for("mikka.test.installed-workspace")]; fixture.moduleEvaluations++; const module = await fixture.module; export const Workspace = module.Workspace;'
           : 'import { createElement, useLayoutEffect } from "react"; export function WorkspaceLoading() { useLayoutEffect(() => { globalThis[Symbol.for("mikka.test.installed-workspace")].fallbacks++ }, []); return createElement("span", { id: "workspace-fallback" }, "Loading"); }',
         loader: 'js',
       }))
@@ -106,7 +106,7 @@ async function fixture(t) {
   root.render(React.createElement(App))
   await waitFor(() => typeof authenticate === 'function')
   return {
-    ...loaded, state, complete: () => finish({ default: Workspace }), reject,
+    ...loaded, state, complete: () => finish({ Workspace }), reject,
     authenticate: () => authenticate(), refresh: () => refresh(), workspace: Workspace,
   }
 }

@@ -1,5 +1,5 @@
 import { readTaskEvidenceTarget, taskEvidenceHref } from './task-factory-events'
-import { workspaceSectionLink } from '../components/workspace/workspace-navigation'
+import { workspaceSectionLink } from './workspace-navigation'
 import { desktopWebTarget } from './desktop-web-target'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

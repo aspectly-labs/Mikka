@@ -76,10 +76,7 @@
     "app/actions/issues.ts",
     "app/actions/task-runs.ts",
     "app/api/settings/**",
-    "components/authenticated-read-cache.tsx",
     "components/swr-defaults.tsx",
-    "components/workspace/task-detail.tsx",
-    "hooks/use-live-lists.ts",
     "package.json",
     "pnpm-lock.yaml"
   ],
@@ -114,7 +111,6 @@
     "lib/cloud-computer/**",
     "lib/computer/**",
     "lib/credentials/**",
-    "components/settings/computer-policy-settings.tsx",
     "tests/e2e/computer-policy-settings.spec.ts",
     "workflows/subagent/**",
     "pnpm-lock.yaml"

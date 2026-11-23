@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { slackUserId } from './user-id'
 import { withBasePath } from '../base-path'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 
 export const SLACK_STATE_COOKIE = 'mikka-slack-install'
 export const SLACK_INSTALL_RETURN_PATH = withBasePath(`${workspaceLink({ section: 'plugins' })}&app=slack&installation=failed`)

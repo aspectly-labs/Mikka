@@ -1,5 +1,5 @@
 import { DESKTOP_RPC_VERSION } from '../../../lib/desktop-rpc/version'
-import type { DecisionReceipt } from '../../../hooks/decision-submission'
+import type { DecisionReceipt } from '../../../lib/decision-submission'
 
 type Response = {
   version?: number

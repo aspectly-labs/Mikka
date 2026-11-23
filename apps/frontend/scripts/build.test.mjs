@@ -83,7 +83,7 @@ test('the public server ships its real handoff pages without the workspace or pr
       'components/oauth-consent.tsx', 'components/plugins/github-settings.tsx', 'apps/desktop/src/renderer/deep-link-routes.tsx']) {
       assert.ok(manifest.inputs.includes(required), required)
     }
-    const forbidden = /(?:^|\/)(?:\.hosted-ui\/|apps\/desktop\/src\/renderer\/workspace(?:-loader)?\.tsx?$|components\/(?:workspace\/issue-workspace|slots\/(?:app-frame|tasks|task-detail|inbox|board))\.tsx?$)/
+    const forbidden = /(?:^|\/)(?:\.hosted-ui\/|apps\/desktop\/src\/renderer\/workspace(?:-loader)?\.tsx?$|components\/(?:workspace\/issue-workspace|slots\/(?:workspace-entry|app-frame|tasks|task-detail|inbox|board))\.tsx?$)/
     assert.deepEqual(manifest.inputs.filter(path => forbidden.test(path)), [])
     assert.ok(manifest.inputs.includes('apps/frontend/src/web/server-workspace-loader.ts'))
   } finally { await rm(directory, { recursive: true, force: true }) }

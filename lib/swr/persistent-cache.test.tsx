@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { after, before, mock, test } from 'node:test'
-import { act, StrictMode } from 'react'
+import { act, StrictMode, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Window } from 'happy-dom'
-import { clearPersistentReadCaches, PersistentReadCache, readCacheNamespace, type ReadCacheScope } from './persistent-cache'
+import { clearPersistentReadCaches, PersistentReadCache, readCacheNamespace, type ReadCacheScope, type ReadCacheState } from './persistent-cache'
 import type { ReadStorage, StoredRead } from './indexed-db'
 import { registerLiveKeyConnection } from './live-focus'
 
@@ -32,15 +32,59 @@ const browser = new Window({ url: 'https://mikka.example/mikka/en' })
 let createRoot: typeof import('react-dom/client')['createRoot']
 let swr: typeof import('swr')
 let useSWRInfinite: typeof import('swr/infinite')['default']
-let HydrateReadCache: typeof import('../../components/authenticated-read-cache')['HydrateReadCache']
-let AuthenticatedReadCache: typeof import('../../components/authenticated-read-cache')['AuthenticatedReadCache']
 let swrDefaults: typeof import('../../components/swr-defaults')['swrDefaults']
-let requestedWorkspace: string | null = null
 let refreshes = 0
-const router = { refresh: () => { refreshes++ } }
-mock.module('@/lib/client-runtime/navigation', { namedExports: { useSearchParams: () => ({ get: () => requestedWorkspace }) } })
-mock.module(new URL('../../i18n/navigation.ts', import.meta.url).href, { namedExports: { useRouter: () => router } })
-mock.module(new URL('../app-build.ts', import.meta.url).href, { namedExports: { APP_BUILD: 'build-one', pageNeedsRefresh: () => false } })
+
+function HydrateReadCache() {
+  const { cache, mutate } = swr.useSWRConfig()
+  useEffect(() => {
+    if (!(cache instanceof PersistentReadCache)) return
+    let mounted = true
+    void cache.hydrate((key, data) => mutate(key, data, { revalidate: false })).then(() => {
+      if (mounted) cache.resumeHydrationReads()
+    })
+    return () => { mounted = false }
+  }, [cache, mutate])
+  return null
+}
+
+function PersistentCacheBoundaryInner({ cacheScope, initialReads, children }: {
+  cacheScope: ReadCacheScope
+  initialReads?: readonly { key: unknown; data: unknown }[]
+  children: ReactNode
+}) {
+  const [state, setState] = useState<{ cache: import('swr').Cache; generation: number; retired?: boolean }>(() => {
+    const cache: import('swr').Cache = new PersistentReadCache(cacheScope)
+    for (const read of initialReads ?? []) {
+      const initialState: ReadCacheState = { data: read.data, _k: read.key }
+      cache.set(swr.unstable_serialize(read.key as import('swr').Key), initialState)
+    }
+    return { cache, generation: 0 }
+  })
+  const config = useMemo(() => ({ provider: () => state.cache }), [state.cache])
+  useEffect(() => {
+    if (state.retired || !(state.cache instanceof PersistentReadCache)) return
+    return state.cache.connect(documentNavigation => {
+      if (documentNavigation) {
+        setState(current => ({ ...current, retired: true }))
+        return
+      }
+      setState(current => ({ cache: new Map(), generation: current.generation + 1 }))
+      refreshes++
+    })
+  }, [state.cache, state.retired])
+  if (state.retired) return null
+  return <swr.SWRConfig key={state.generation} value={config}><HydrateReadCache />{children}</swr.SWRConfig>
+}
+
+function PersistentCacheBoundary({ workspaceId = scope.workspaceId, initialReads, children }: {
+  workspaceId?: string
+  initialReads?: readonly { key: unknown; data: unknown }[]
+  children: ReactNode
+}) {
+  const cacheScope: ReadCacheScope = { ...scope, workspaceId }
+  return <PersistentCacheBoundaryInner key={readCacheNamespace(cacheScope)} cacheScope={cacheScope} initialReads={initialReads}>{children}</PersistentCacheBoundaryInner>
+}
 
 before(async () => {
   Object.defineProperty(globalThis, 'window', { configurable: true, value: browser })
@@ -49,7 +93,6 @@ before(async () => {
   ;({ createRoot } = await import('react-dom/client'))
   swr = await import('swr')
   ;({ default: useSWRInfinite } = await import('swr/infinite'))
-  ;({ HydrateReadCache, AuthenticatedReadCache } = await import('../../components/authenticated-read-cache'))
   ;({ swrDefaults } = await import('../../components/swr-defaults'))
 })
 after(async () => { mock.restoreAll(); await browser.close() })
@@ -59,27 +102,6 @@ test('disk namespaces distinguish owner, viewed workspace, build and authorized 
   for (const change of [{ userId: 'other' }, { workspaceId: 'other' }, { build: 'build-two' }, { role: 'member' }]) {
     assert.notEqual(readCacheNamespace({ ...scope, ...change }), baseline)
   }
-})
-
-test('installed UI may supply its build identity while retaining server workspace authority', async () => {
-  const observed: (string | null)[] = []
-  function Read() {
-    const { cache } = swr.useSWRConfig()
-    observed.push(cache instanceof PersistentReadCache ? cache.namespace : null)
-    return <output>shared cache</output>
-  }
-  const container = browser.document.createElement('div') as unknown as HTMLDivElement, root = createRoot(container)
-  const workspace = { workspaceId: scope.workspaceId, role: 'admin' as const }
-  const nativeBuild = 'desktop:installed-content-hash:https://mikka.example'
-  try {
-    await act(async () => root.render(<AuthenticatedReadCache ownerId={scope.userId} workspace={workspace}><Read /></AuthenticatedReadCache>))
-    assert.equal(observed.at(-1), readCacheNamespace(scope), 'web keeps its deployment build by default')
-    await act(async () => root.render(<AuthenticatedReadCache ownerId={scope.userId} workspace={workspace} build={nativeBuild}><Read /></AuthenticatedReadCache>))
-    assert.equal(observed.at(-1), readCacheNamespace({ ...scope, build: nativeBuild }))
-    requestedWorkspace = 'unproven-workspace'
-    await act(async () => root.render(<AuthenticatedReadCache ownerId={scope.userId} workspace={workspace} build={nativeBuild}><Read /></AuthenticatedReadCache>))
-    assert.equal(observed.at(-1), null, 'changing the URL cannot borrow the old workspace authority')
-  } finally { requestedWorkspace = null; await act(async () => root.unmount()) }
 })
 
 test('fresh server seed and an optimistic write both win over a late disk hydration', async () => {
@@ -194,7 +216,7 @@ for (const navigationType of ['document', undefined] as const) test(navigationTy
   let navigation: Promise<void> | undefined
   try {
     const render = (workspaceId: string) => <NextIntlClientProvider locale="en" timeZone="UTC" messages={{ Workspace: { loadingEditor: 'Loading workspace' } }}><swr.SWRConfig value={swrDefaults}>
-      <AuthenticatedReadCache ownerId={scope.userId} workspace={{ workspaceId, role: 'admin' }}><Read /></AuthenticatedReadCache>
+      <PersistentCacheBoundary workspaceId={workspaceId}><Read /></PersistentCacheBoundary>
     </swr.SWRConfig></NextIntlClientProvider>
     await act(async () => root.render(render(scope.workspaceId)))
     assert.equal(reads, 1)
@@ -358,9 +380,9 @@ test('the authenticated boundary seeds real SWR before an inner fallback can be 
   const container = browser.document.createElement('div') as unknown as HTMLDivElement, root = createRoot(container)
   try {
     await act(async () => root.render(<swr.SWRConfig value={swrDefaults}>
-      <AuthenticatedReadCache ownerId={scope.userId} workspace={{ workspaceId: scope.workspaceId, role: 'admin' }} initialReads={[{ key: 'preferences', data: fresh }]}>
+      <PersistentCacheBoundary initialReads={[{ key: 'preferences', data: fresh }]}>
         <swr.SWRConfig value={{ fallback: { preferences: fresh } }}><Read /></swr.SWRConfig>
-      </AuthenticatedReadCache>
+      </PersistentCacheBoundary>
     </swr.SWRConfig>))
     assert.equal(container.textContent, 'fresh server')
     await act(async () => { disk.resolve([stored({ theme: 'old disk' })]); await disk.promise })
@@ -419,30 +441,6 @@ test('real SWR keeps a connected key fresh for five minutes, then validates in t
   } finally { unregister(); await act(async () => root.unmount()); clock.mock.restore(); await cache.flushed() }
 })
 
-test('a server-denied workspace clears durable data without hydrating or refreshing in a loop', async () => {
-  const { IndexedReadStorage } = await import('./indexed-db')
-  const originalIndexedDB = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB')
-  Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: {} })
-  let clears = 0, activations = 0
-  const clear = mock.method(IndexedReadStorage.prototype, 'clear', async () => { clears++ })
-  const activate = mock.method(IndexedReadStorage.prototype, 'activate', async () => { activations++; return [] })
-  const container = browser.document.createElement('div') as unknown as HTMLDivElement, root = createRoot(container)
-  const beforeRefresh = refreshes
-  try {
-    requestedWorkspace = 'revoked-workspace'
-    await act(async () => root.render(<AuthenticatedReadCache ownerId={scope.userId} workspace={null}><output>unavailable</output></AuthenticatedReadCache>))
-    assert.equal(clears, 1)
-    assert.equal(activations, 0)
-    assert.equal(refreshes, beforeRefresh)
-  } finally {
-    requestedWorkspace = null
-    await act(async () => root.unmount())
-    clear.mock.restore(); activate.mock.restore()
-    if (originalIndexedDB) Object.defineProperty(globalThis, 'indexedDB', originalIndexedDB)
-    else Reflect.deleteProperty(globalThis, 'indexedDB')
-  }
-})
-
 test('a document workspace departure retires readers instead of reading again before navigation', async t => {
   let reads = 0, departed: PersistentReadCache | undefined, latest: PersistentReadCache | undefined
   function Read() {
@@ -454,7 +452,7 @@ test('a document workspace departure retires readers instead of reading again be
   const container = browser.document.createElement('div') as unknown as HTMLDivElement
   let root = createRoot(container)
   const beforeRefresh = refreshes
-  const content = () => <swr.SWRConfig value={swrDefaults}><AuthenticatedReadCache ownerId={scope.userId} workspace={{ workspaceId: scope.workspaceId, role: 'admin' }}><Read /></AuthenticatedReadCache></swr.SWRConfig>
+  const content = () => <swr.SWRConfig value={swrDefaults}><PersistentCacheBoundary><Read /></PersistentCacheBoundary></swr.SWRConfig>
   try {
     await act(async () => root.render(content()))
     assert.equal(reads, 1)
@@ -497,7 +495,7 @@ test('document retirement disables and clears synchronously but still waits for 
   }
   const container = browser.document.createElement('div') as unknown as HTMLDivElement, root = createRoot(container)
   try {
-    await act(async () => root.render(<swr.SWRConfig value={swrDefaults}><AuthenticatedReadCache ownerId={scope.userId} workspace={{ workspaceId: scope.workspaceId, role: 'admin' }}><Read /></AuthenticatedReadCache></swr.SWRConfig>))
+    await act(async () => root.render(<swr.SWRConfig value={swrDefaults}><PersistentCacheBoundary><Read /></PersistentCacheBoundary></swr.SWRConfig>))
     assert.equal(reads, 1)
     await act(async () => {
       clearing = clearPersistentReadCaches({ documentNavigation: true }).then(() => { finished = true })
@@ -540,7 +538,7 @@ test('document departure still broadcasts clear while remote and denied scopes k
       const container = browser.document.createElement('div') as unknown as HTMLDivElement, root = createRoot(container)
       const beforeRefresh = refreshes, firstMessage = messages.length
       try {
-        await act(async () => root.render(<swr.SWRConfig value={swrDefaults}><AuthenticatedReadCache ownerId={scope.userId} workspace={{ workspaceId: scope.workspaceId, role: 'admin' }}><Read /></AuthenticatedReadCache></swr.SWRConfig>))
+        await act(async () => root.render(<swr.SWRConfig value={swrDefaults}><PersistentCacheBoundary><Read /></PersistentCacheBoundary></swr.SWRConfig>))
         assert.equal(reads, 1)
         const receiver = channels.find(channel => !channel.closed && channel.onmessage)
         assert.ok(receiver)

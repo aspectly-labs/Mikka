@@ -1,17 +1,81 @@
 'use client'
 
-import { BotAvatar } from '@ui-slot/bot-avatar'
-import type { BotAvatarSize, BotMood } from '@/components/slots/bot-avatar-contract'
 import { BOT_COLORS, BOT_SHAPES, DEFAULT_BOT_COLOR, DEFAULT_BOT_SHAPE, type BotColor, type BotShape } from '@/lib/bot-shapes'
+import { cn } from '@/lib/utils'
 
 export { BOT_COLORS, BOT_SHAPES, DEFAULT_BOT_COLOR, DEFAULT_BOT_SHAPE, type BotColor, type BotShape }
-export { BOT_MOOD_SECONDS, type BotAvatarProps, type BotAvatarSize, type BotMood, type BotMove } from '@/components/slots/bot-avatar-contract'
+
+export type BotMove = 'wide' | 'hexagon' | 'burst'
+export type BotMood = 'idle' | 'thinking' | 'wink' | 'exclaim' | 'sleep' | BotMove
+
+export const BOT_MOOD_SECONDS: Record<BotMood, number> = {
+  idle: 2.4, thinking: 2.6, wink: 1.6, exclaim: 2, sleep: 2.4, wide: 1.8, hexagon: 1.6, burst: 2.6,
+}
+
+export const BOT_AVATAR_SIZES = {
+  row: 16, pill: 22, message: 24, search: 28, list: 34, cell: 40, profile: 72, hero: 144,
+} as const
+
+export type BotAvatarSize = keyof typeof BOT_AVATAR_SIZES
+
+export type BotAvatarProps = {
+  color?: string | null
+  shape?: string | null
+  id?: string | null
+  coordinator?: boolean
+  size?: BotAvatarSize
+  mood?: BotMood
+  label?: string
+  still?: boolean
+  brisk?: boolean
+}
+
+const pick = <T extends string>(value: string | null | undefined, options: readonly T[], fallback: T) =>
+  (options as readonly string[]).includes(value ?? '') ? value as T : fallback
 
 /**
- * A bot's avatar. The look is a UI slot (docs/ui-overlay.md): the bloub blob
- * in components/slots/bot-avatar.tsx, or the hosted layer's.
+ * Public server-pages fallback avatar for shared views.
+ * Official builds render the animated avatar inside the hosted workspace entry.
  */
-export { BotAvatar }
+export function BotAvatar({ color, shape, coordinator, size = 'list', mood = 'idle', label }: BotAvatarProps) {
+  const tone = pick(color, BOT_COLORS, DEFAULT_BOT_COLOR)
+  const form = pick(shape, BOT_SHAPES, DEFAULT_BOT_SHAPE)
+  return (
+    <span
+      role={label ? 'img' : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+      data-slot="bot-avatar"
+      data-color={tone}
+      data-shape={form}
+      data-mood={mood}
+      data-coordinator={coordinator ? 'true' : undefined}
+      className={cn(
+        'relative inline-flex shrink-0 rounded-full',
+        tone === 'encre' && 'bg-foreground',
+        tone === 'brun' && 'bg-bot-brun',
+        tone === 'rouge' && 'bg-bot-rouge',
+        tone === 'orange' && 'bg-bot-orange',
+        tone === 'ambre' && 'bg-bot-ambre',
+        tone === 'vert' && 'bg-bot-vert',
+        tone === 'turquoise' && 'bg-bot-turquoise',
+        tone === 'bleu' && 'bg-bot-bleu',
+        tone === 'violet' && 'bg-bot-violet',
+        tone === 'rose' && 'bg-bot-rose',
+        tone === 'gris' && 'bg-bot-gris',
+        tone === 'creme' && 'bg-bot-creme',
+        size === 'row' && 'size-4',
+        size === 'pill' && 'size-5.5',
+        size === 'message' && 'size-6',
+        size === 'search' && 'size-7',
+        size === 'list' && 'size-8.5',
+        size === 'cell' && 'size-10',
+        size === 'profile' && 'size-18',
+        size === 'hero' && 'size-36',
+      )}
+    />
+  )
+}
 
 /** A steady colour for something that has a name but no colour of its own, such as an agent assignee. */
 export function colorFor(name: string): BotColor {
