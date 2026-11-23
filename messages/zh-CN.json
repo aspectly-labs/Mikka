@@ -3496,7 +3496,7 @@
       "tagsFailed": "无法保存标签",
       "delete": "删除线程…",
       "deleteTitle": "删除这条线程？",
-      "deleteBody": "线程会立即从列表消失，30 天内可恢复。",
+      "deleteBody": "30 天内可恢复。",
       "deleted": "线程已删除",
       "deleteFailed": "无法删除线程"
     }

@@ -379,11 +379,11 @@ export async function deleteThread(runId: string): Promise<ActionResult<{ recove
   return deleted === null ? { error: 'runNotFound' } : { recoveryDays: 30 }
 }
 
-export async function restoreThread(runId: string): Promise<ActionResult<{ restored: true }, 'runNotFound'>> {
+export async function restoreThread(runId: string): Promise<ActionResult<{ restored: true }, 'runNotFound' | 'restoreExpired'>> {
   const { reader } = await conversationActor()
   if (!isRunId(runId)) return { error: 'runNotFound' }
   const restored = await (await import('@/lib/thread-lifecycle')).restoreThread(reader, runId)
-  return restored === null ? { error: 'runNotFound' } : { restored: true }
+  return restored === null ? { error: 'runNotFound' } : restored ? { restored: true } : { error: 'restoreExpired' }
 }
 
 export async function threadAutomation(runId: string, definition: Record<string, unknown>): Promise<ActionResult<Record<string, unknown>, 'runNotFound' | 'scheduleRejected' | 'validationGeneric'>> {
