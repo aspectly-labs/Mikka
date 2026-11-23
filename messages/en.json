@@ -8324,6 +8324,7 @@
   },
   "HostedThread": {
     "needsCount": "{count, plural, one {# needs you} other {# need you}}",
+    "toolsGroups": { "common": "Common", "related": "Related", "terminals": "Terminals", "crew": "Crew" },
     "toolKinds": {
       "failed": "{failed} failed",
       "separator": ", ",

@@ -8324,6 +8324,7 @@
   },
   "HostedThread": {
     "needsCount": "{count} 个等你",
+    "toolsGroups": { "common": "常用", "related": "相关", "terminals": "终端", "crew": "Crew" },
     "toolKinds": {
       "failed": "{failed} 个失败",
       "separator": "，",
