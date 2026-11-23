@@ -116,13 +116,19 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
     const version = createHash('sha256').update(source).digest('hex')
     const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
     let current = await health(origin, key, signal)
-    if (current && current.version !== version) throw new TerminalError('terminal_unsupported', { detail: 'runtime_version' })
     // Only opening/reconnecting performs this root check. Input/resize/close
     // keep the existing data plane and never issue a per-command SDK RPC.
     const sandbox = await withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...config, timeoutMs: 5 * 60_000 }))
     // The review egress guard is a task-review runtime; thread machines are
     // not required to carry it.
     if (!scope.threadTerminal) await verifyRuntime(sandbox, signal)
+    if (current && current.version !== version) {
+      // A gateway from an older source hash keeps the socket and the service
+      // lock for the VM's life; ending it frees both so the install below
+      // takes over instead of refusing the terminal for good.
+      await sandbox.commands.run(`pkill -f '${INSTALL}/gateway-' ; sleep 1`, { user: 'root', timeoutMs: 10_000, signal }).catch(() => undefined)
+      current = null
+    }
     if (!current) {
       // resumeReviewMachine has already acquired the dedicated review lease.
       // The same running sandbox is the only target; never create a VM here.
