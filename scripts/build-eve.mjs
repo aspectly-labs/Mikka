@@ -9,6 +9,7 @@ export async function buildEve({ root = process.cwd(), env = process.env, execut
   const preset = env.NITRO_PRESET || 'node-server'
   if (preset !== 'node-server') throw new Error('EVE_BUILD_PRESET_INVALID')
   const postgres = env.WORKFLOW_TARGET_WORLD === '@workflow/world-postgres'
+  const queueWorld = env.WORKFLOW_TARGET_WORLD === '@mikka/eve-cloudflare-world'
   const eve = JSON.parse(await readFile(join(root, 'node_modules/eve/package.json'), 'utf8')).version
   if (eve !== '1.3.0') throw new Error('EVE_BUILD_VERSION_MISMATCH')
   const childEnv = { ...env, NITRO_PRESET: preset, EVE_PUBLIC_ROUTE_PREFIX: '/mikka/api/agents' }
@@ -17,7 +18,8 @@ export async function buildEve({ root = process.cwd(), env = process.env, execut
     cwd: join(root, 'apps/eve'), stdio: 'inherit', env: childEnv,
   })
   const output = join(root, 'apps/eve/.output')
-  await writeFile(join(output, 'mikka-eve-build.json'), `${JSON.stringify({ version: 1, eve, revision, preset, ...(postgres ? { world: '@workflow/world-postgres', worldVersion: '5.4.1' } : {}) })}\n`)
+  const worldMeta = postgres ? { world: '@workflow/world-postgres', worldVersion: '5.4.1' } : queueWorld ? { world: '@mikka/eve-cloudflare-world' } : {}
+  await writeFile(join(output, 'mikka-eve-build.json'), `${JSON.stringify({ version: 1, eve, revision, preset, ...worldMeta })}\n`)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await buildEve()
