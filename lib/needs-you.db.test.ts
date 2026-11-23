@@ -45,11 +45,13 @@ test('limit items name the chain root across retryOf, continuesRunId and questio
   const { pool } = await import('./db')
   const { listNeedsYou } = await import('./needs-you')
   const issue = randomUUID(), otherIssue = randomUUID(), ws = randomUUID()
-  const root = randomUUID(), retried = randomUUID(), resumed = randomUUID(), orphan = randomUUID()
+  const root = randomUUID(), retried = randomUUID(), continued = randomUUID(), resumed = randomUUID(), orphan = randomUUID()
   // A paused root run names itself.
   await insertRun(pool, { id: root, issueId: issue, workspaceId: ws })
   // A paused retry walks retryOf up to the same chain's root.
   await insertRun(pool, { id: retried, issueId: issue, workspaceId: ws, retryOf: root, status: 'paused' })
+  // A direct continuation walks continuesRunId up to the same chain's root.
+  await insertRun(pool, { id: continued, issueId: issue, workspaceId: ws, continuesRunId: root })
   // A question-resumed run walks questionContinuation.originRunId up to the root.
   await insertRun(pool, { id: resumed, issueId: issue, workspaceId: ws, originRunId: root })
   // An origin pointing at another task is outside the fence: the run is its own root.
@@ -63,6 +65,7 @@ test('limit items name the chain root across retryOf, continuesRunId and questio
   const byThread = new Map(items.filter(i => i.kind === 'limit').map(i => [i.threadId, i]))
   assert.ok(byThread.has(root), 'paused root names itself')
   assert.ok(!byThread.has(retried), 'retry collapses to the root')
+  assert.ok(!byThread.has(continued), 'direct continuation collapses to the root')
   assert.ok(!byThread.has(resumed), 'question-resumed run collapses to the root')
   assert.equal(byThread.get(root)?.detail, 'quota_exhausted')
   assert.ok(byThread.has(orphan), 'dangling origin: the paused run is its own root')
