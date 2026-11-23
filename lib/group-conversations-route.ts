@@ -65,9 +65,9 @@ export async function respondGroup(request: Request, resource: GroupRequest['res
     body: request.method !== 'GET' ? await request.text().catch(() => '') : undefined,
     before: url.searchParams.get('before'), after: url.searchParams.get('after'), limit: url.searchParams.get('limit'), workspaceId: url.searchParams.get('workspaceId') ?? session?.tokenWorkspaceId,
   }, true)
-  if (resource === 'messages' && id && result.status < 300 && request.method !== 'GET') {
-    // A send starts the worker (#2820: reads never do; the minute cron's
-    // resumePendingGroupTurns recovers turns and task reports that outlive a request).
+  if (resource === 'messages' && id && request.method === 'POST' && result.status < 300) {
+    // Only a committed send starts a request-bound worker (#2820: reads never do;
+    // the minute cron's resumePendingGroupTurns recovers turns and task reports that outlive a request).
     afterJob('after:group-turn', () => drainGroupTurns(id, Date.now() + 220000))
   }
   return NextResponse.json(result.body, { status: result.status, headers: { 'Cache-Control': 'private, no-store' } })
