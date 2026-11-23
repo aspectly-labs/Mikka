@@ -7,6 +7,7 @@
   "exports": {
     "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts",
     "./task-labels": "./src/task-labels.ts",
+    "./mcp-check": "./src/mcp-check.ts",
     "./settings": "./src/settings.ts",
     "./work-visibility": "./src/work-visibility.ts",
     "./coding-terminal": "./src/coding-terminal.ts",

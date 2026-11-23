@@ -4355,7 +4355,23 @@
     "issueStateNotFound": "这个状态已不存在，请刷新列表。",
     "workspaceTaskPrefixClashesWithTeam": "工作区中已有团队使用该缩写。请更换前缀，或重命名该团队。",
     "teamIdentifierClashesWithWorkspacePrefix": "该缩写已被用作工作区任务前缀。请更换缩写，或在工作区设置中修改前缀。",
-    "teamIdentifierNamespaceInUse": "该缩写曾在此签发任务编号，不能再次使用。请更换缩写。"
+    "teamIdentifierNamespaceInUse": "该缩写曾在此签发任务编号，不能再次使用。请更换缩写。",
+    "mcpNeedsConnect": "请先连接此 MCP 服务器再使用。",
+    "mcpConnectionChanged": "MCP 连接已变更，请重新加载后再试。",
+    "mcpToolDisabled": "此连接已关闭该 MCP 工具。",
+    "mcpCheckRequiresDevice": "请先选择运行该命令的设备，再进行检查。",
+    "mcpCheckNotAvailable": "此连接无法在设备上检查。",
+    "mcpCheckDeviceNotFound": "设备不存在或已移除。",
+    "mcpCheckReceiptExpired": "检查超时，请重新检查。",
+    "invalidMcpCheckReceipt": "设备返回的检查结果无效。",
+    "mcpOAuthNotSupported": "此 MCP 服务器不支持 OAuth 登录。",
+    "mcpOAuthOriginUnavailable": "只能从本站开始登录。",
+    "mcpOAuthStateInvalid": "登录链接无效或已过期，请重新开始。",
+    "mcpOAuthExchangeFailed": "MCP 服务器拒绝了此次登录，请重新开始。",
+    "mcpOAuthUnavailable": "无法连接 MCP 服务器完成登录。",
+    "mcpCatalogUnavailable": "MCP 目录不可用。",
+    "mcpCatalogRemoteUnavailable": "无法访问 MCP 目录源。",
+    "mcpCatalogMismatch": "该目录条目与服务器已不匹配。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
@@ -5870,6 +5886,9 @@
     },
     "workspace_review_conflict": {
       "default": "审阅记录已变化，请刷新后再修改。"
+    },
+    "run_mcp_unavailable": {
+      "default": "此任务使用的 MCP 连接已更改或暂不可用。"
     }
   },
   "Automations": {

@@ -10,7 +10,8 @@ import { orderMigrations } from '../../scripts/migration-order.mjs'
 import { isE2eTarget, E2E_DB_RULE } from '../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-test-database'
 import { PersonalPluginStore } from './store'
-import { WorkspaceMcpStore } from './workspace-mcp'
+import { McpConnectionStore } from './connection-store'
+import { lockNativeMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
 import { createMcpSchema } from './contracts'
 import { createPersonalMcpRuntime, type McpDependencies } from './mcp'
 import { AgentKitStore } from '@/lib/agent-kit/store'
@@ -173,6 +174,29 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
       await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, user])
       assert.ok('error' in await runtime(requester, snapshot, command)); assert.equal(calls, before)
       await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, user])
+    })
+    await t.test('the locked native claim fence rejects a committed MCP tool edit', async () => {
+      const before = await personal.snapshot(requester, pool, workspace)
+      assert.ok(before.mcpAuthority?.servers.length)
+      const verify = async (authority: NonNullable<typeof before.mcpAuthority>) => {
+        const client = await pool.connect()
+        try {
+          await client.query('BEGIN')
+          await lockNativeMcpAuthority(client, requester, authority)
+        } finally {
+          await client.query('ROLLBACK')
+          client.release()
+        }
+      }
+      await verify(before.mcpAuthority)
+      const connections = new McpConnectionStore(personal)
+      await pool.query('INSERT INTO mcp_server_tools(server_id,tool_name) VALUES($1,$2) ON CONFLICT DO NOTHING', [connection.id, 'echo'])
+      await connections.setTool(owner, connection.id, 'echo', false)
+      await assert.rejects(verify(before.mcpAuthority), /mcpUnavailable/)
+      await connections.setTool(owner, connection.id, 'echo', true)
+      snapshot = await personal.snapshot(requester, pool, workspace)
+      assert.ok(snapshot.mcpAuthority?.servers.length)
+      await verify(snapshot.mcpAuthority)
     })
     await t.test('disconnect/revision changes and normal member departure revoke references without rewriting history', async () => {
       const before = calls

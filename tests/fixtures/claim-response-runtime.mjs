@@ -225,7 +225,7 @@ function update(value){
   }}}}
 }
 let checkedOutClient
-export const db={session:{client:committedWriter},select:query,update,transaction:async fn=>{const p=globalThis.claimResponseProbe;assert.equal(p.appActive,1,'claim transaction uses the checked-out APP client');p.transactions++;const error=p.transactionErrors.shift();if(error)throw error;return fn({select:query})}}
+export const db={session:{client:committedWriter},select:query,update,transaction:async fn=>{const p=globalThis.claimResponseProbe;assert.equal(p.appActive,1,'claim transaction uses the checked-out APP client');p.transactions++;const error=p.transactionErrors.shift();if(error)throw error;return fn({select:query,session:{client:checkedOutClient}})}}
 export const pool={async query(sql,args){
   const p=globalThis.claimResponseProbe
   if (sql === 'SELECT 1 FROM thread_reply_versions WHERE "resultRunId"=$1 AND "userId"=$2 AND "workspaceId"=$3') {
@@ -242,7 +242,7 @@ export const pool={async query(sql,args){
   assert.equal(p.projectAdmission.active,true,'resource lease survives through the final response fence')
   assert.equal(p.locks.at(-1),'workspace_members','Workspace admission precedes APP checkout')
   p.appActive=1;p.appCheckouts++
-  const client={release(){
+  const client={async query(){throw new Error('unexpected raw claim transaction query')},release(){
     assert.equal(checkedOutClient,client,'release the exact owning APP client')
     assert.equal(p.appActive,1)
     checkedOutClient=undefined;p.appActive=0;p.appReleases++
@@ -329,6 +329,12 @@ const sources = new Map([
   ['/lib/run-chain.ts', 'export async function readRunChain(){const p=globalThis.claimResponseProbe;return p.runChain??null}'],
   ['/lib/secrets/runtime.ts', secretSource],
   ['/lib/run-completion-effects.ts', 'export async function afterRunEnded(ownerId,runId){const p=globalThis.claimResponseProbe;(p.endedRuns??=[]).push({ownerId,runId})}'],
+  ['/lib/plugins/runtime.ts', 'export const personalPlugins = { async nativeMcpAssignment(_userId,authority) { const p = globalThis.claimResponseProbe; if (p.mcpAssignmentError) throw p.mcpAssignmentError; return {authority,servers:p.nativeMcpServers} } };'],
+  ['/lib/plugins/workspace-mcp.ts', `import { PluginError } from ${JSON.stringify(new URL('../../lib/plugins/contracts.ts', import.meta.url).href)};
+    function check(stage) { const p = globalThis.claimResponseProbe; p.mcpChecks.push(stage); const error = p.mcpErrors[stage].shift(); if (error) throw error; if (p.mcpRevoked) throw new PluginError('mcpUnavailable',403) }
+    export async function validateMcpAuthority(_query, _owner, authority) { check('identity'); return authority }
+    export async function lockNativeMcpAuthority() { check('fence') }
+  `],
   ['/lib/run-leases.ts', 'export async function latestCheckpoint(){const p=globalThis.claimResponseProbe;p.preparation.push("checkpoint");return structuredClone(p.checkpoint)};export async function failRunForDaemonUpgrade(...args){const p=globalThis.claimResponseProbe;p.preparation.push("daemon-upgrade");(p.upgradeRefusals??=[]).push(args);p.run.status="failed";p.run.stopReason="error";return true};export async function failQueuedSubscriptionRuntime(...args){const p=globalThis.claimResponseProbe;p.preparation.push("subscription-preflight");p.runtimeRefusal=args;p.run.status="failed";return true}'],
   ['/lib/daemon-release.ts', 'export function daemonTooOld(){return false};export async function daemonVersions(){return {min:"0.0.1",latest:"0.0.1"}}'],
   ['/lib/app-tools-server.ts', `import assert from 'node:assert/strict'

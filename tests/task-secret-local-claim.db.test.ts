@@ -17,7 +17,8 @@ import { join } from 'node:path'
 import { mock, test } from 'node:test'
 import { promisify } from 'node:util'
 import { gzipSync } from 'node:zlib'
-import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
+import type { PoolClient } from 'pg'
+import { DAEMON_PROTOCOL_VERSION, DAEMON_RPC_ERRORS } from '@mikka/protocol/daemon'
 import { CLIENT_VERSION_HEADER } from '@mikka/protocol/version'
 import { DEVICE_SESSION_HEADER, DEVICE_SESSION_VERSION, MIN_DAEMON_VERSION, type DeviceRegistration, type RunAssignment, type RunCheckpoint, type RunCheckpointReceipt } from '@mikka/protocol/device'
 import type { RunCompletion } from '@mikka/protocol/run'
@@ -372,11 +373,14 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
   // Every stage is a new normal admission and HTTP claim on the existing Bot's
   // workspace. No run identity, Secret grant or capability is patched by SQL.
   let taskNumber = 1
-  const freshClaim = async () => {
+  const freshQueuedRun = async () => {
     const taskId = await seedIssue(pool, owner, workspace.id)
     await pool.query('UPDATE issues SET content=$2 WHERE id=$1', [taskId, JSON.stringify({ type: 'doc', attrs: { mikka: { number: ++taskNumber } } })])
-    const next = await queueRun(owner, { issueId: taskId, agentId: b.agentId, repo: remote, model: 'fixture-model',
+    return queueRun(owner, { issueId: taskId, agentId: b.agentId, repo: remote, model: 'fixture-model',
       modelDispatch: { mode: 'preference', routing: { version: 1, difficulty: 'hard', model: 'fixture-model', harness: 'claude_code', tier: 'standard', effort: 'high', reason: 'difficulty_fit' } } }, botId)
+  }
+  const freshClaim = async () => {
+    const next = await freshQueuedRun()
     const claimed = await b.link.claimRun(b.id, next.runId)
     const row = (await pool.query<{ workspaceId: string; principal: string; repository: string }>(
       `SELECT r."agentDefinition"->'executionIdentity'->>'workspaceId' AS "workspaceId",
@@ -387,6 +391,59 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
     assert.equal(row.repository, remote)
     return claimed
   }
+  await t.test('the final MCP lock error rolls back before the claim writes a terminal state', async t => {
+    const { freezeExecutionIdentity } = await import('../lib/execution-identity')
+    const serverId = randomUUID()
+    await pool.query('INSERT INTO personal_mcp_servers (id,user_id,name,url,transport) VALUES ($1,$2,\'Fixture MCP\',\'https://mcp.example.invalid/\',\'http\')', [serverId, owner])
+    const { runId } = await freshQueuedRun()
+    const { rows: [run] } = await pool.query<Parameters<typeof freezeExecutionIdentity>[1]>(
+      'SELECT "userId","botId","deviceId","agentDefinition" FROM agent_runs WHERE id=$1', [runId])
+    assert.ok(run?.agentDefinition)
+    run.agentDefinition.customMcp = { requester: owner, workspaceId: workspace.id,
+      servers: [{ id: serverId, name: 'Fixture MCP', ownerId: owner, revision: 1, grantId: null }] }
+    run.agentDefinition.executionIdentity = await freezeExecutionIdentity(pool, run, pool)
+    await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [runId, JSON.stringify(run.agentDefinition)])
+
+    const blocker = await pool.connect()
+    const events: string[] = []
+    const wrapped = new WeakSet<PoolClient>()
+    let failedClient: PoolClient | undefined
+    const observe = (client: PoolClient) => {
+      if (wrapped.has(client)) return
+      wrapped.add(client)
+      t.mock.method(client, 'query', new Proxy(client.query, { apply(query, self, args) {
+        const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text
+        if (sql?.includes('FROM personal_mcp_servers') && sql.endsWith('FOR SHARE')) {
+          failedClient = client
+          return Promise.resolve(Reflect.apply(query, self, ["SET LOCAL lock_timeout = '100ms'"])).then(async () => {
+            try { return await Reflect.apply(query, self, args) }
+            catch (error) { assert.deepEqual((error as { code?: string }).code, '55P03'); events.push('lock_timeout'); throw error }
+          })
+        }
+        if (client === failedClient && sql?.toLowerCase() === 'rollback') {
+          return Promise.resolve(Reflect.apply(query, self, args)).then(result => { events.push('rollback'); return result })
+        }
+        if (sql?.startsWith('update "agent_runs"') && sql.includes('"failureDetails"') && args[1]?.includes(runId)) events.push('terminal_write')
+        return Reflect.apply(query, self, args)
+      } }))
+    }
+    appPool.on('acquire', observe)
+    try {
+      await blocker.query('BEGIN')
+      await blocker.query('SELECT id FROM personal_mcp_servers WHERE id=$1 FOR UPDATE', [serverId])
+      await assert.rejects(b.link.claimRun(b.id, runId), { code: DAEMON_RPC_ERRORS.runNotPinnedHere })
+      assert.deepEqual(events, ['lock_timeout', 'rollback', 'terminal_write'])
+      const { rows: [failed] } = await pool.query('SELECT status,"stopReason",error,"failureDetails","finishedAt" FROM agent_runs WHERE id=$1', [runId])
+      assert.equal(failed.status, 'failed')
+      assert.equal(failed.stopReason, 'error')
+      assert.equal(failed.error, 'mcpUnavailable')
+      assert.equal(failed.failureDetails.code, 'run_mcp_unavailable')
+      assert.ok(failed.finishedAt)
+    } finally {
+      appPool.off('acquire', observe)
+      try { await blocker.query('ROLLBACK') } finally { blocker.release() }
+    }
+  })
   const complete = (claimed: RunAssignment) => b.link.completeRun(claimed.runId, { stopReason: 'cancelled',
     report: { summary: 'Local Secret scope fixture', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } })
   const assertJournalWithheld = async (claimed: RunAssignment, values: string[]) => {

@@ -6,10 +6,19 @@ import { sessionMustBeFresh } from '@/lib/fresh-session'
 const calls: unknown[][] = []
 let owner: string | null = 'owner'
 let installedForRefresh: { id: string; enabled: boolean; transport: string }[] = []
+let availableTools = ['list_issues']
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports })
 stub('../api-auth.ts', { auth: { api: { getSession: async () => owner ? { user: { id: owner } } : null } } })
 stub('../request-log.ts', { noteLogRpcAction: () => {}, noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
-stub('./runtime.ts', { runPersonalMcp: async (actor: string, authority: unknown, command: { serverId: string; cursor?: string }) => {
+stub('./runtime.ts', { mcpConnections: { check: async (actor: string, serverId: string) => {
+  assert.ok(sessionMustBeFresh())
+  calls.push(['checkMcp', actor, serverId])
+  return { status: 'connected', tools: availableTools.map(name => ({ name, enabled: true, available: true, description: 'server description' })) }
+}, detail: async (actor: string, serverId: string) => {
+  assert.ok(sessionMustBeFresh())
+  calls.push(['detailMcp', actor, serverId])
+  return { status: 'connected', tools: availableTools.map(name => ({ name, enabled: true, available: true, description: 'server description' })) }
+} }, runPersonalMcp: async (actor: string, authority: unknown, command: { serverId: string; cursor?: string }) => {
   assert.ok(sessionMustBeFresh())
   calls.push(['refreshMcp', actor, authority, command])
   return { serverId: command.serverId, tools: [{ name: 'list_issues', description: 'server description', inputSchema: {} }], nextCursor: null }
@@ -209,9 +218,23 @@ test('owner Settings refresh uses the personal discovery grant, accepts only a l
   assert.equal((await POST(request(path, 'POST', { serverId }))).status, 409)
   installedForRefresh = [{ id: serverId, enabled: true, transport: 'http' }]
   calls.length = 0
-  const result = await POST(request(path, 'POST', { serverId, cursor: 'next' }))
-  installedForRefresh = []
+  assert.equal((await POST(request(path, 'POST', { serverId, cursor: 'not a tool name' }))).status, 400)
+  const result = await POST(request(path, 'POST', { serverId }))
   assert.equal(result.status, 200)
   assert.deepEqual(await result.json(), { serverId, tools: [{ name: 'list_issues' }], nextCursor: null })
-  assert.deepEqual(calls, [['listMcp', 'owner'], ['refreshMcp', 'owner', undefined, { serverId, cursor: 'next' }]])
+  assert.deepEqual(calls, [['listMcp', 'owner'], ['checkMcp', 'owner', serverId]])
+  try {
+    availableTools = Array.from({ length: 51 }, (_, i) => `tool_${String(i).padStart(2, '0')}`)
+    const first = await (await POST(request(path, 'POST', { serverId }))).json()
+    assert.equal(first.tools.length, 50)
+    assert.equal(first.nextCursor, 'tool_49')
+    availableTools.shift()
+    calls.length = 0
+    const second = await POST(request(path, 'POST', { serverId, cursor: first.nextCursor }))
+    assert.deepEqual(await second.json(), { serverId, tools: [{ name: 'tool_50' }], nextCursor: null })
+    assert.deepEqual(calls, [['listMcp', 'owner'], ['detailMcp', 'owner', serverId]])
+  } finally {
+    installedForRefresh = []
+    availableTools = ['list_issues']
+  }
 })

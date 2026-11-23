@@ -4355,7 +4355,23 @@
     "issueStateNotFound": "This status no longer exists. Reload the list.",
     "workspaceTaskPrefixClashesWithTeam": "A team in this workspace already uses this key. Choose another prefix, or rename the team.",
     "teamIdentifierClashesWithWorkspacePrefix": "This key is the workspace task prefix. Choose another key, or change the prefix in workspace settings.",
-    "teamIdentifierNamespaceInUse": "This key once issued task identifiers here and can never be reused. Choose another key."
+    "teamIdentifierNamespaceInUse": "This key once issued task identifiers here and can never be reused. Choose another key.",
+    "mcpNeedsConnect": "Connect this MCP server before using it.",
+    "mcpConnectionChanged": "The MCP connection changed. Please reload and try again.",
+    "mcpToolDisabled": "This MCP tool is turned off for the connection.",
+    "mcpCheckRequiresDevice": "Choose the device that runs this command before checking it.",
+    "mcpCheckNotAvailable": "This connection cannot be checked on a device.",
+    "mcpCheckDeviceNotFound": "The device doesn't exist or was removed.",
+    "mcpCheckReceiptExpired": "The check took too long. Please check again.",
+    "invalidMcpCheckReceipt": "The device's check result is invalid.",
+    "mcpOAuthNotSupported": "This MCP server doesn't offer OAuth sign-in.",
+    "mcpOAuthOriginUnavailable": "Sign-in can only start from this site.",
+    "mcpOAuthStateInvalid": "The sign-in link is invalid or expired. Please start again.",
+    "mcpOAuthExchangeFailed": "The MCP server refused the sign-in. Please start again.",
+    "mcpOAuthUnavailable": "The MCP server could not be reached for sign-in.",
+    "mcpCatalogUnavailable": "The MCP catalog is unavailable.",
+    "mcpCatalogRemoteUnavailable": "The MCP catalog source could not be reached.",
+    "mcpCatalogMismatch": "This catalog entry no longer matches the server."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",
@@ -5870,6 +5886,9 @@
     },
     "workspace_review_conflict": {
       "default": "The review changed. Refresh it before applying this update."
+    },
+    "run_mcp_unavailable": {
+      "default": "An MCP connection used by this task changed or is unavailable."
     }
   },
   "Automations": {

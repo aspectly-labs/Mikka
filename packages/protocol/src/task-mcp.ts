@@ -2,11 +2,12 @@ import { z } from 'zod'
 
 export const TASK_MCP_HEADER = 'x-mikka-task-mcp'
 export const TASK_MCP_VERSION = '1'
+export const TASK_MCP_TOOL_FILTER_HEADER = 'x-mikka-task-mcp-tool-filter'
 
 const atom = z.string().min(1).max(4096).refine(value => !/[\r\n\0]/.test(value))
 export const mcpEnvironmentSchema = z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string().max(16_384).refine(value => !value.includes('\0')))
 export const mcpHeadersSchema = z.record(z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/).refine(name => !/^(?:host|cookie|set-cookie|connection|content-length|transfer-encoding|proxy-.*|x-forwarded-.*)$/i.test(name)), atom)
-const common = { name: z.string().regex(/^mcp_[a-z0-9_]{1,64}$/) }
+const common = { name: z.string().regex(/^mcp_[a-z0-9_]{1,64}$/), disabledTools: z.array(z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/)).max(2000).optional() }
 /** Host-selected configuration delivered only to the task machine, never to a reusable image. */
 export const taskMcpServerSchema = z.discriminatedUnion('transport', [
   z.object({ ...common, transport: z.enum(['http', 'sse']), url: z.url().refine(value => { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password && !u.hash }), headers: mcpHeadersSchema.default({}) }).strict(),
@@ -17,4 +18,9 @@ export type TaskMcpServer = z.infer<typeof taskMcpServerSchema>
 /** Values are allowed in the selected task, while logs and journals remain credential-free. */
 export function taskMcpSecretValues(servers: readonly TaskMcpServer[] = []): string[] {
   return servers.flatMap(server => Object.values(server.transport === 'stdio' ? server.env : server.headers)).filter(Boolean)
+}
+
+export function taskMcpForDaemon(servers: TaskMcpServer[], supportsToolFilter: boolean): TaskMcpServer[] {
+  if (supportsToolFilter) return servers
+  return servers.flatMap(({ disabledTools, ...server }) => disabledTools?.length ? [] : [server])
 }
