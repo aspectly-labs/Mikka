@@ -64,6 +64,7 @@ import { RunErrorDetails, useRunErrorText } from './run-error-text'
 import { CreditsRefusalActions } from '@/components/billing/paywall'
 import { hostedRefusal } from '@/lib/billing/hosted-usage'
 import { ThreadModelFallbackNotice, QuotaPausedCard, ThreadQuotaSwitchLine } from './thread-quota'
+import { Textarea } from '@/components/ui/textarea'
 import { ThreadComposerFooter } from './thread-composer-footer'
 import { catalogIdFor } from '@/lib/model-catalog'
 import { cn } from '@/lib/utils'
@@ -637,7 +638,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
     }}>{modes.map(mode => <NativeSelectOption key={mode} value={mode}>{t(`deliveryModes.${mode}`)}</NativeSelectOption>)}</NativeSelect>}
     {queuedRows.map(row => <div key={row.id} className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
       {queueEditing === row.id
-        ? <textarea autoFocus defaultValue={row.text} maxLength={10000} rows={2} className="min-w-0 flex-1 rounded-md border border-rule bg-transparent px-2 py-1"
+        ? <Textarea autoFocus defaultValue={row.text} maxLength={10000} rows={2} className="min-w-0 flex-1 px-2 py-1"
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void updateQueue(row.id, 'edit', event.currentTarget.value) }
             if (event.key === 'Escape') setQueueEditing(null)
@@ -649,7 +650,7 @@ function ThreadPanel({ host = 'embedded', issueId, runId, onBack, onClose, bare 
           {row.status === 'queued' && <>
             {modes.includes('steer') && <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'sendNow')}>{t('deliverySendNow')}</Button>}
             <Button type="button" size="xs" variant="ghost" onClick={() => setQueueEditing(row.id)}>{t('deliveryEdit')}</Button>
-            <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'cancel')}>{t('deliveryCancel')}</Button>}
+            <Button type="button" size="xs" variant="ghost" onClick={() => void updateQueue(row.id, 'cancel')}>{t('deliveryCancel')}</Button>
           </>}
         </>}
     </div>)}

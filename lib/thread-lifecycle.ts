@@ -247,7 +247,8 @@ export async function moveThread(user: ApiUser, runId: string, target: { deviceI
   const { rows: [busy] } = await pool.query(
     `${CHAIN_SQL} SELECT 1 FROM agent_runs r LEFT JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=r."userId"
      WHERE r.id IN (SELECT id FROM chain) AND r.status IN ('queued','preparing','running','waiting_input','finishing')
-     AND COALESCE(m.state,'running') IN ('online','running','starting','restore') LIMIT 1`, [root])
+     AND COALESCE(m.state,'running') IN ('online','running','starting','restore')
+     AND (m."runId" IS NOT NULL OR r.status <> 'queued') LIMIT 1`, [root])
   if (busy) return null
   // Execution moves with the thread: every run in the chain, not just the root.
   if (target.deviceId === 'cloud') {

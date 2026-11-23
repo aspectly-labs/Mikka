@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { useTranslations } from '@/lib/intl/i18n-client'
 import { ChevronRight, Info } from '@/components/icons'
 import { resumeAllQuotaPausedOnCredits, retryAllQuotaPausedRuns } from '@/app/actions/agents'
@@ -98,10 +99,12 @@ export function QuotaPausedCard({ paused, creditsModel, onContinued }: {
     setPending(kind); setFailed(false)
     try {
       // Both bulk actions skip per-run failures instead of throwing — surface them.
+      // The card unmounts once this thread resumes, so failures ride a toast too.
       const failed = kind === 'credits'
         ? (await resumeAllQuotaPausedOnCredits(creditsModel!)).filter(row => !row.continued).length
         : (await retryAllQuotaPausedRuns()).filter(row => !row.retried).length
       setFailed(failed > 0)
+      if (failed > 0) toast.error(t('continueFailed'))
       await onContinued()
     }
     catch { setFailed(true) }
