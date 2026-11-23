@@ -3307,6 +3307,7 @@
     "acceptanceTab": "Acceptance",
     "composer": "Tell {agent} what to do next…",
     "changesTab": "Changes",
+    "pullTab": "Pull request",
     "crewThreads": "All threads",
     "crewPulls": "Pull requests",
     "crewSide": "Side threads",
@@ -7647,6 +7648,24 @@
     "notReported": "Not reported",
     "merge": "Merge",
     "mergeFailed": "Could not merge.",
+    "mergeWhenReady": "Merge when ready",
+    "mergeArmed": "Merge armed",
+    "mergeDisarm": "Armed — disarm merge",
+    "mergeDisarmed": "Merge intent disarmed",
+    "mergeable": "Mergeable",
+    "mergeableState": {
+      "MERGEABLE": "Mergeable",
+      "CONFLICTING": "Conflicts",
+      "UNKNOWN": "Unknown"
+    },
+    "detailFailed": "Pull request details unavailable",
+    "requestChanges": "Request changes",
+    "requestChangesTitle": "Request changes on {repo} #{number}",
+    "requestChangesBody": "What needs to change…",
+    "reviewSubmitted": "Changes requested",
+    "reviewFailed": "Could not submit the review",
+    "noChecks": "No checks reported",
+    "moreChecks": "GitHub stopped listing at the read's cap",
     "anyAuthor": "Anyone",
     "list": "Pull request list",
     "copyLinks": "Copy links",
@@ -7659,7 +7678,10 @@
     "description": "Description",
     "anyLabel": "Any label",
     "done": "Done",
-    "deselect": "Deselect"
+    "deselect": "Deselect",
+    "diffPartial": "More files changed than this read reached",
+    "diffPatchUnavailable": "{count} file(s) have no patch (binary or truncated)",
+    "reviewSelf": "You cannot request changes on your own pull request"
   },
   "HostedConnections": {
     "state": {
@@ -8373,7 +8395,12 @@
   },
   "HostedThread": {
     "needsCount": "{count, plural, one {# needs you} other {# need you}}",
-    "toolsGroups": { "common": "Common", "related": "Related", "terminals": "Terminals", "crew": "Crew" },
+    "toolsGroups": {
+      "common": "Common",
+      "related": "Related",
+      "terminals": "Terminals",
+      "crew": "Crew"
+    },
     "toolKinds": {
       "failed": "{failed} failed",
       "separator": ", ",

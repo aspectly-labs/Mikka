@@ -3307,6 +3307,7 @@
     "acceptanceTab": "验收",
     "composer": "告诉 {agent} 下一步做什么…",
     "changesTab": "改动",
+    "pullTab": "Pull request",
     "crewThreads": "全部线程",
     "crewPulls": "Pull requests",
     "crewSide": "旁支线程",
@@ -7647,6 +7648,24 @@
     "notReported": "未报告",
     "merge": "合并",
     "mergeFailed": "合并没有完成。",
+    "mergeWhenReady": "就绪后合并",
+    "mergeArmed": "已就绪合并",
+    "mergeDisarm": "已就绪——取消合并",
+    "mergeDisarmed": "已取消就绪合并",
+    "mergeable": "可合并",
+    "mergeableState": {
+      "MERGEABLE": "可合并",
+      "CONFLICTING": "有冲突",
+      "UNKNOWN": "未知"
+    },
+    "detailFailed": "Pull request 详情不可用",
+    "requestChanges": "请求修改",
+    "requestChangesTitle": "对 {repo} #{number} 请求修改",
+    "requestChangesBody": "需要改什么…",
+    "reviewSubmitted": "已请求修改",
+    "reviewFailed": "评审没有提交成功",
+    "noChecks": "还没有检查报告",
+    "moreChecks": "检查太多，GitHub 只列到上限",
     "anyAuthor": "全部作者",
     "list": "PR 列表",
     "copyLinks": "复制链接",
@@ -7659,7 +7678,10 @@
     "description": "描述",
     "anyLabel": "全部标签",
     "done": "完成",
-    "deselect": "取消选择"
+    "deselect": "取消选择",
+    "diffPartial": "改动文件数超过本次读取的上限",
+    "diffPatchUnavailable": "{count} 个文件没有补丁（二进制或被截断）",
+    "reviewSelf": "不能在自己的 PR 上请求修改"
   },
   "HostedConnections": {
     "state": {
@@ -8373,7 +8395,12 @@
   },
   "HostedThread": {
     "needsCount": "{count} 个等你",
-    "toolsGroups": { "common": "常用", "related": "相关", "terminals": "终端", "crew": "Crew" },
+    "toolsGroups": {
+      "common": "常用",
+      "related": "相关",
+      "terminals": "终端",
+      "crew": "Crew"
+    },
     "toolKinds": {
       "failed": "{failed} 个失败",
       "separator": "，",
