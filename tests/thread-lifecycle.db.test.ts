@@ -6,6 +6,7 @@ import {
   bindSlackThread, createThreadShare, revokeThreadShares, deleteThread, listThreadChildren, moveThread,
   patchThread, restoreThread, sharedThread, spawnThread,
 } from '../lib/thread-lifecycle.js'
+import { remoteKey } from '@mikka/protocol/repository'
 import { seedAgent, seedIssue, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db.js'
 import { tokenWorkspace } from '../lib/tokens/principal.js'
 
@@ -108,18 +109,35 @@ test('soft-delete hides the thread from operations and restores inside the windo
   assert.equal(await restoreThread(owner, rootId), false)
 })
 
-test('move retargets cloud ↔ device only for the owner', async () => {
-  const { rootId } = await fixture()
-  const deviceId = randomUUID()
-  await pool.query(`INSERT INTO devices (id,"ownerId",name) VALUES ($1,$2,'box')`, [deviceId, owner.id])
+test('move retargets cloud ↔ device only for the owner, rebinding the repo onto the target', async () => {
+  const { rootId, workspace } = await fixture()
+  const sourceDevice = randomUUID(), deviceId = randomUUID(), cloudDevice = randomUUID()
+  await pool.query(`INSERT INTO devices (id,"ownerId",name) VALUES ($1,$3,'src'),($2,$3,'box')`, [sourceDevice, deviceId, owner.id])
+  await pool.query(`INSERT INTO devices (id,"ownerId",name,kind) VALUES ($1,$2,'cloud','cloud')`, [cloudDevice, owner.id])
+  const remote = 'https://github.com/acme/app.git'
+  const sourceRepo = randomUUID()
+  await pool.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath","remoteUrl") VALUES ($1,$2,$3,$4,$5)`, [sourceRepo, sourceDevice, owner.id, remoteKey(remote), remote])
+  await pool.query(`UPDATE agent_runs SET "deviceId"=$2,"deviceRepoId"=$3 WHERE id=$1`, [rootId, sourceDevice, sourceRepo])
+  await pool.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","operationId","sandboxId","deviceId",state) VALUES ($1,$2,$3,$4,$5,'running')`, [workspace.id, owner.id, randomUUID(), `synthetic-${rootId.slice(0, 8)}`, cloudDevice])
+
   assert.equal(await moveThread(owner, rootId, { deviceId }), true)
-  const { rows: [moved] } = await pool.query(`SELECT "deviceId","machineAuthority" FROM agent_runs WHERE id=$1`, [rootId])
+  const { rows: [moved] } = await pool.query(
+    `SELECT r."deviceId", r."deviceRepoId", r."machineAuthority", repo."deviceId" AS "repoDevice" FROM agent_runs r JOIN device_repos repo ON repo.id=r."deviceRepoId" WHERE r.id=$1`, [rootId])
   assert.equal(moved.deviceId, deviceId)
+  assert.equal(moved.repoDevice, deviceId)
   assert.equal(moved.machineAuthority, false)
+  assert.notEqual(moved.deviceRepoId, sourceRepo)
+
   assert.equal(await moveThread(owner, rootId, { deviceId: 'cloud' }), true)
-  const { rows: [back] } = await pool.query(`SELECT "deviceId","machineAuthority" FROM agent_runs WHERE id=$1`, [rootId])
-  assert.equal(back.deviceId, null)
+  const { rows: [back] } = await pool.query(
+    `SELECT r."deviceId", r."machineAuthority", repo."deviceId" AS "repoDevice" FROM agent_runs r JOIN device_repos repo ON repo.id=r."deviceRepoId" WHERE r.id=$1`, [rootId])
+  assert.equal(back.deviceId, cloudDevice)
+  assert.equal(back.repoDevice, cloudDevice)
   assert.equal(back.machineAuthority, true)
+
+  // A thread without a repository cannot run anywhere else — the move refuses.
+  const bare = await fixture()
+  assert.equal(await moveThread(owner, bare.rootId, { deviceId }), null)
   assert.equal(await moveThread(outsider, rootId, { deviceId: 'cloud' }), null)
 })
 

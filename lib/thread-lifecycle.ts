@@ -6,6 +6,7 @@ import { runOutsideToken } from '@/lib/tokens/scope'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { notifyDeviceWork } from '@/lib/device-gateway-notify'
+import { ensureDeviceRepository } from '@/lib/device-repositories'
 import { schedules } from '@/lib/schedules/runtime'
 import type { RequestWorkspaceUser } from '@/lib/request-workspace'
 
@@ -241,25 +242,54 @@ export async function moveThread(user: ApiUser, runId: string, target: { deviceI
   if (!source) return null
   const root = await rootRunId(user, runId)
   if (!root) return null
-  // A live worker's completion credential is bound to its device; moving while
-  // it runs rejects the completion. Re-targeting pending or parked work is the
-  // use case, so only an awake machine with an active run blocks the move.
-  const { rows: [busy] } = await pool.query(
-    `${CHAIN_SQL} SELECT 1 FROM agent_runs r LEFT JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=r."userId"
-     WHERE r.id IN (SELECT id FROM chain) AND r.status IN ('queued','preparing','running','waiting_input','finishing')
-     AND COALESCE(m.state,'running') IN ('online','running','starting','restore')
-     AND (m."runId" IS NOT NULL OR r.status <> 'queued') LIMIT 1`, [root])
-  if (busy) return null
-  // Execution moves with the thread: every run in the chain, not just the root.
-  if (target.deviceId === 'cloud') {
-    await pool.query(`${CHAIN_SQL} UPDATE agent_runs SET "deviceId"=NULL,"deviceRepoId"=NULL,"machineAuthority"=true WHERE id IN (SELECT id FROM chain)`, [root])
-  } else {
-    if (!isRunId(target.deviceId)) return null
-    const { rows: [device] } = await pool.query(`SELECT id FROM devices WHERE id=$1 AND "ownerId"=$2`, [target.deviceId, user.id])
-    if (!device) return null
-    await pool.query(`${CHAIN_SQL} UPDATE agent_runs SET "deviceId"=$2,"machineAuthority"=false WHERE id IN (SELECT id FROM chain)`, [root, target.deviceId])
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    // Lock the chain's claimable rows first so a device claim in flight
+    // serializes with the move: the claim's own FOR UPDATE re-reads the run
+    // under the same lock and finds the device (or this finds its new status).
+    await client.query(
+      `${CHAIN_SQL} SELECT 1 FROM agent_runs WHERE id IN (SELECT id FROM chain) AND status='queued' FOR UPDATE`, [root])
+    // A live worker's completion credential is bound to its device; moving while
+    // it runs rejects the completion. Re-targeting pending or parked work is the
+    // use case, so only an awake machine with an active run blocks the move.
+    const { rows: [busy] } = await client.query(
+      `${CHAIN_SQL} SELECT 1 FROM agent_runs r LEFT JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=r."userId"
+       WHERE r.id IN (SELECT id FROM chain) AND r.status IN ('queued','preparing','running','waiting_input','finishing')
+       AND COALESCE(m.state,'running') IN ('online','running','starting','restore')
+       AND (m."runId" IS NOT NULL OR r.status <> 'queued') LIMIT 1`, [root])
+    if (busy) { await client.query('ROLLBACK'); return null }
+    // The destination only claims a repository bound on itself, and cloud
+    // provisioning requires one — rebind the thread's repo onto the target.
+    const { rows: [repo] } = await client.query(
+      `SELECT repo."remoteUrl" FROM agent_runs r JOIN device_repos repo ON repo.id=r."deviceRepoId" WHERE r.id=$1 AND repo."userId"=$2`, [root, user.id])
+    if (!repo?.remoteUrl) { await client.query('ROLLBACK'); return null }
+    let deviceId: string
+    if (target.deviceId === 'cloud') {
+      const { rows: [cloud] } = await client.query(
+        `SELECT m."deviceId" FROM cloud_machines m JOIN devices d ON d.id=m."deviceId" AND d.enabled=true AND d."removedAt" IS NULL
+         WHERE m."ownerId"=$1 AND m."workspaceId"=$2 AND m."deviceId" IS NOT NULL`, [user.id, source.workspaceId])
+      if (!cloud) { await client.query('ROLLBACK'); return null }
+      deviceId = cloud.deviceId
+    } else {
+      if (!isRunId(target.deviceId)) { await client.query('ROLLBACK'); return null }
+      const { rows: [device] } = await client.query(`SELECT id FROM devices WHERE id=$1 AND "ownerId"=$2`, [target.deviceId, user.id])
+      if (!device) { await client.query('ROLLBACK'); return null }
+      deviceId = target.deviceId
+    }
+    const targetRepo = await ensureDeviceRepository(user.id, deviceId, repo.remoteUrl, client)
+    // Execution moves with the thread: every run in the chain, not just the root.
+    await client.query(
+      `${CHAIN_SQL} UPDATE agent_runs SET "deviceId"=$2,"deviceRepoId"=$3,"machineAuthority"=$4 WHERE id IN (SELECT id FROM chain)`,
+      [root, deviceId, targetRepo.id, target.deviceId === 'cloud'])
+    await client.query('COMMIT')
+    if (target.deviceId !== 'cloud') notifyDeviceWork(deviceId)
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
   }
-  if (target.deviceId !== 'cloud') notifyDeviceWork(target.deviceId)
   await runListChanged(pool, root); await runChanged(pool, root)
   return true
 }
