@@ -299,8 +299,8 @@ test('the recorded exceptions still describe a route the renderer asks for', () 
 
 test('the scan sees the panels whose routes drifted before', () => {
   // Guards the scan itself: a broken walk would make the rule above pass for the wrong reason.
-  const expected = ['/api/integrations/github/tools', '/api/devices']
-  if (hasHostedUi) expected.push('/api/integrations/github/repositories/pulls')
+  const expected = ['/api/integrations/github/tools', '/api/organizations', '/api/artifacts/shared/*']
+  if (hasHostedUi) expected.push('/api/devices', '/api/integrations/github/repositories/pulls')
   for (const path of expected) {
     assert.ok(asked.has(path), `${path} missing from the scan`)
   }

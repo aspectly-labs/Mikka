@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
+import { promisify } from 'node:util'
 import postcss from 'postcss'
 import { repository } from './application-plugin.mjs'
 import { sharedStylePlugins } from './shared-styles.mjs'
 import { sharedCssTargets } from './css-targets.mjs'
+
+const runNode = promisify(execFile)
 
 const css = name => readFile(new URL(`../../../app/${name}`, import.meta.url), 'utf8')
 
@@ -92,4 +96,15 @@ test('official builds scan gitignored overlay web/slots/lib utilities while serv
 
   const serverPagesCss = await compileThroughSharedStyles(globals, { env, serverPages: true })
   assert.ok(!serverPagesCss.includes('31337px') && !serverPagesCss.includes('31339px'), 'serverPages skips overlay @source scanning')
+
+  const { stdout } = await runNode(process.execPath, [
+    '--input-type=module',
+    '-e',
+    `import { readFileSync } from 'node:fs'; import postcss from 'postcss'; import { sharedStylePlugins } from './scripts/shared-styles.mjs';`
+      + `const globals = readFileSync(${JSON.stringify(join(repository, 'app/globals.css'))}, 'utf8');`
+      + `const res = await postcss(sharedStylePlugins(${JSON.stringify(repository)}, { env: { MIKKA_UI_OVERLAY_DIR: ${JSON.stringify(overlay)} } })).process(globals, { from: 'app/globals.css' });`
+      + `if (!res.css.includes('31337px') || !res.css.includes('31339px')) throw new Error('MISSING_OVERLAY_UTILITIES_FROM_FRONTEND_CWD');`
+      + `console.log('ok');`,
+  ], { cwd: join(repository, 'apps/frontend') })
+  assert.equal(stdout.trim(), 'ok')
 })

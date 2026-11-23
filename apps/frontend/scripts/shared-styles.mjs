@@ -27,6 +27,7 @@ export function sharedStylePlugins(repository, { development = false, env = proc
       if (serverPages) return
       const from = result.opts.from ? resolve(repository, result.opts.from) : null
       if (!from || !entryStylesheets.has(from)) return
+      result.opts.from = from
       const { dir } = uiOverlay(repository, env)
       if (!dir) return
       const sources = OVERLAY_CSS_DIRECTORIES
@@ -35,7 +36,7 @@ export function sharedStylePlugins(repository, { development = false, env = proc
         .map(directory => `@source ${JSON.stringify(slash(relative(dirname(from), directory)))};`)
       if (!sources.length) return
       const { default: postcss } = await import('postcss')
-      const next = postcss.parse(`${root.toString()}\n${sources.join('\n')}\n`, { from: result.opts.from })
+      const next = postcss.parse(`${root.toString()}\n${sources.join('\n')}\n`, { from })
       root.removeAll()
       root.append(next.nodes)
       root.source = next.source
