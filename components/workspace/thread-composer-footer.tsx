@@ -19,7 +19,7 @@ import { settingsHref } from '@/lib/settings-sections'
 import { statusDots } from '@/lib/status-appearance'
 import { markOfValue, stateMarkTone } from '@/lib/state-mark'
 import { cn } from '@/lib/utils'
-import { useRouter } from 'next/navigation'
+import { useRouter } from '@/i18n/navigation'
 
 const KIND_ICONS = { cloud: Cloud, laptop: Laptop, server: Server } as const
 
@@ -163,7 +163,9 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
             <span className="max-w-48 truncate">{d.repo.name}{d.repo.baseBranch ? ` · ${d.repo.baseBranch}` : ''}</span>
           </Trigger>
           <DropdownMenuContent align="start">
-            <DropdownMenuLabel className="max-w-64 truncate">{d.repo.name}{d.repo.baseBranch ? ` · ${d.repo.baseBranch}` : ''}</DropdownMenuLabel>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="max-w-64 truncate">{d.repo.name}{d.repo.baseBranch ? ` · ${d.repo.baseBranch}` : ''}</DropdownMenuLabel>
+            </DropdownMenuGroup>
             {d.repo.baseBranch && (
               <DropdownMenuItem onSelect={() => { void navigator.clipboard.writeText(d.repo!.baseBranch!); toast.success(t('branchCopied')) }}>
                 <Copy aria-hidden="true" className="size-4" />{t('copyBranch')}
