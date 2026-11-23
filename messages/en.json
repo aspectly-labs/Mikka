@@ -3468,7 +3468,7 @@
       "replaces": "This name already exists — adding replaces its saved value."
     },
     "threadMenu": {
-      "copyLink": "Copy link",
+      "copyLink": "Copy thread link",
       "copied": "Copied",
       "copyFailed": "Could not copy",
       "share": "Share…",
