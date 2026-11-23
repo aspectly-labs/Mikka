@@ -53,11 +53,14 @@ export async function resolveThreadBrowserTarget(input: { userId: string; worksp
 }
 
 /** The thread's cloud browser shown to its owner: a view-only capability on the
- * managed Chromium's screencast, minted per request. The gateway itself stops
- * frames while a credential guard holds, so viewing needs no state probe
- * (#2940). */
+ * managed Chromium's screencast, minted per request. The ticket is unusable
+ * when the run never opened a browser (the gateway 404s its socket), so a live
+ * registration is probed first; the gateway itself stops frames while a
+ * credential guard holds, so the probed URL is not needed (#2940). */
 export async function resolveThreadBrowserViewer(input: { userId: string; workspaceId: string; runId: string }) {
-  const { binding, sandbox } = await resolveThreadMachineBinding(input)
+  const { row, binding, sandbox } = await resolveThreadMachineBinding(input)
+  if (!row.targetId) throw new Error('Thread browser unavailable')
+  await runtimeRequest(row.sandboxId, binding, '/state')
   const capability = await grant(sandbox, binding, 'view')
   return { url: endpointPath(capability.endpoint, '/viewer').replace('https:', 'wss:'), expiresAt: new Date(capability.expiresAt).toISOString() }
 }
