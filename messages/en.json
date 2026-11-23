@@ -4338,7 +4338,10 @@
     "projectDependencyNotFound": "A dependency project does not exist or you do not have access.",
     "agentSaveFailed": "Could not save this item.",
     "secretNameReserved": "This name is reserved by the runtime (for example PATH, HOME, proxy, TLS, loader, git, E2B or MIKKA variables). Choose another name.",
-    "issueStateNotFound": "This status no longer exists. Reload the list."
+    "issueStateNotFound": "This status no longer exists. Reload the list.",
+    "workspaceTaskPrefixClashesWithTeam": "A team in this workspace already uses this key. Choose another prefix, or change that team's identifier.",
+    "teamIdentifierClashesWithWorkspacePrefix": "This key is the workspace task prefix. Choose another key, or change the prefix in workspace settings.",
+    "teamIdentifierNamespaceInUse": "This key once issued task identifiers here and can never be reused. Choose another key."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",

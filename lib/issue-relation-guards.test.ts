@@ -144,6 +144,7 @@ before(async () => {
   mock.module(file('./task-identifier-server.ts'), { namedExports: {
     issueView: async (issue: Parameters<typeof issueWithMetadata>[0]) => issueWithMetadata(issue),
     taskIdentifiers: async () => new Map(),
+    syncWorkspaceTaskPrefix: async () => {},
   } })
   mock.module(file('./linear-sync/dispatch.ts'), { namedExports: { dispatchLinearWork: () => {}, dispatchLinearIssueSync: () => {} } })
   mock.module(file('./live/lists.ts'), { namedExports: { issueListChanged: async () => {} } })

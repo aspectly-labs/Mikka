@@ -4338,7 +4338,10 @@
     "projectDependencyNotFound": "依赖项目不存在或无访问权限。",
     "agentSaveFailed": "保存失败，请重试。",
     "secretNameReserved": "该名称为运行环境保留（例如 PATH、HOME、代理、TLS、加载器、git、E2B 或 MIKKA 相关变量），请换一个名称。",
-    "issueStateNotFound": "这个状态已不存在，请刷新列表。"
+    "issueStateNotFound": "这个状态已不存在，请刷新列表。",
+    "workspaceTaskPrefixClashesWithTeam": "工作区中已有团队使用该标识符。请更换前缀，或修改该团队的标识符。",
+    "teamIdentifierClashesWithWorkspacePrefix": "该缩写已被用作工作区任务前缀。请更换缩写，或在工作区设置中修改前缀。",
+    "teamIdentifierNamespaceInUse": "该缩写曾在此签发任务编号，不能再次使用。请更换缩写。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
