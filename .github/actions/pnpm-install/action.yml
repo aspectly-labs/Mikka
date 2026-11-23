@@ -40,6 +40,7 @@ runs:
           node_modules
           apps/*/node_modules
           packages/*/node_modules
+          cloudflare/*/node_modules
         key: ${{ steps.modules-key.outputs.key }}
     - id: store
       if: steps.modules.outputs.cache-hit != 'true'
@@ -97,6 +98,7 @@ runs:
           node_modules
           apps/*/node_modules
           packages/*/node_modules
+          cloudflare/*/node_modules
         key: ${{ steps.modules-key.outputs.key }}
     # Avoid uploading two near-identical large archives for one installation.
     # The store remains a fallback for misses; update it only when hooks prevent
