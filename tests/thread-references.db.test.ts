@@ -71,9 +71,9 @@ test('reference search scopes tasks, conversation roots, and PRs to the active v
     await pool.query(`UPDATE issues SET content=jsonb_set(content,'{attrs,mikka,deletedAt}',to_jsonb(now())) WHERE id=$1`, [issue])
     assert.deepEqual(await searchThreadReferences(owner, workspace, 'checkout'), [])
 
-    // A newer bot still matches when eight older ones do not: the cap never applies before the name filter.
+    // A newer bot still matches behind hundreds of older ones: the cap never applies before the name filter.
     const special = randomUUID()
-    await pool.query(`INSERT INTO bots(id,"workspaceId","ownerId",name,"createdAt") SELECT gen_random_uuid(),$1,$2,'Filler '||n, now() - (n||' hours')::interval FROM generate_series(1,9) n`, [workspace, owner])
+    await pool.query(`INSERT INTO bots(id,"workspaceId","ownerId",name,"createdAt") SELECT gen_random_uuid(),$1,$2,'Filler '||n, now() - (n||' seconds')::interval FROM generate_series(1,600) n`, [workspace, owner])
     await pool.query('INSERT INTO bots(id,"workspaceId","ownerId",name) VALUES($1,$2,$3,\'Special helper\')', [special, workspace, owner])
     assert.deepEqual(await searchThreadReferences(owner, workspace, 'special', 'bot'), [{ kind: 'bot', id: special, title: 'Special helper' }])
     const greek = randomUUID()
