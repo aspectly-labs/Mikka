@@ -33,6 +33,8 @@ export type ThreadHeaderProps = {
   acceptanceBadge: ReactNode
   /** The execution identity (ThreadExecutionIdentity), for its owner; null otherwise. */
   identity: ReactNode
+  /** The viewer owns this thread, so the header offers its cost (useThreadCost / ThreadCostButton, #2922). */
+  showCost?: boolean
   /** A named, member-owned chat offers conversation controls without a run identity. */
   standalone?: boolean
   views?: readonly ThreadViewAction[]

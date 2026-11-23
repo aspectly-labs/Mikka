@@ -3346,7 +3346,21 @@
     "changesBinary": "二进制文件",
     "hideInstructions": "隐藏完整指令",
     "composerModelRequested": "所选模型：{model}",
-    "loadFailed": "线程加载失败"
+    "loadFailed": "线程加载失败",
+    "cost": {
+      "label": "本线程费用 {amount}",
+      "labelAtLeast": "本线程费用至少 {amount}，还有调用在结算",
+      "labelSettling": "本线程费用还在结算",
+      "title": "本线程",
+      "credits": "经由 Mikka",
+      "settling": "结算中",
+      "underCent": "<{amount}",
+      "unsettled": "还有 {count} 次调用在结算",
+      "included": "你的订阅或 API Key",
+      "calls": "{count} 次调用",
+      "unpricedCalls": "另有 {count} 次调用没有单次价格",
+      "includedNote": "不扣 Mikka 额度；订阅不按次计价。"
+    }
   },
   "FactoryFlow": {
     "card": {
