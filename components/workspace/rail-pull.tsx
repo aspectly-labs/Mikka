@@ -43,9 +43,10 @@ const mergeableKeys: Record<NonNullable<PullDetail['mergeable']>, `mergeableStat
 
 /** The rail's PR tab for the open thread: pick the pull still open, else the newest. */
 export function RailThreadPull({ issueId, runId, status }: { issueId: string | null; runId: string; status?: string }) {
+  const t = useTranslations('PullDirectory')
   const pulls = useThreadPulls(issueId, runId, status)
   const pull = pulls.data?.find(item => item.state === 'open' || item.state === 'draft') ?? pulls.data?.[0]
-  if (!pull) return null
+  if (!pull) return <p className="px-4 pt-3 text-xs text-muted-foreground">{pulls.data ? t('empty') : t('loading')}</p>
   return <ThreadPullPane issueId={issueId} runId={runId} pull={pull} onChanged={() => void pulls.mutate()} />
 }
 
@@ -125,7 +126,7 @@ function ThreadPullPane({ issueId, runId, pull, onChanged }: {
 
   return <div className="flex min-h-0 flex-1 flex-col">
     <header className="flex shrink-0 flex-col gap-1 px-4 pb-2 pt-3">
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         <PullRequestIcon state={pull.state} />
         <bdi className="min-w-0 flex-1 truncate text-xs text-muted-foreground tabular-nums">{pull.repo} #{pull.number}</bdi>
         {(pull.state === 'open' || pull.state === 'draft') && <>
