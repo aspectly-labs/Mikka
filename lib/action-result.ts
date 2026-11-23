@@ -247,6 +247,8 @@ export const ACTION_ERROR_CODES = [
   'botAliasTaken',
   'botTargetUnavailable',
   'botShareUnavailable',
+  'privateWorkNotAllowed',
+  'sharedWorkNotAllowed',
   'botSubscriberNoAccess',
   'usageLimitReached',
   'usageCreditsExhausted',

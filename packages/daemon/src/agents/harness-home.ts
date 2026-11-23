@@ -29,7 +29,9 @@ export interface CodexHome {
 /** Settings every Mikka Codex run starts from; nothing from the user's config. */
 export const CODEX_CONFIG = [
   "# Written by Mikka for agent runs. Edits are overwritten.",
-  'approval_policy = "on-request"',
+  // #3076: runs must never pause for tool approval, matching the
+  // thread/start `approvalPolicy: "never"` the adapter always sends.
+  'approval_policy = "never"',
   // Mikka's sandbox is the boundary; Codex's own Seatbelt cannot nest in it.
   'sandbox_mode = "danger-full-access"',
   "",

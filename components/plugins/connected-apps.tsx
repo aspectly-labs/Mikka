@@ -1,7 +1,7 @@
 'use client'
 
 import { ReadResponseError } from '@/lib/swr/retry'
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import useSWR from 'swr'
 import { useFormatter, useTranslations } from '@/lib/intl/i18n-client'
 import { ArrowUpRight, Blocks, ChevronDown, ChevronRight, Ellipsis, Plus } from '@/components/icons'
@@ -27,8 +27,11 @@ import { appState, needsReconnect } from '@/lib/composio-account-state'
 import { composioConnectRedirect, type ConnectedAccountView as AccountView } from '@/lib/composio-accounts'
 import { findCredentialAlternative, type StoreApp, type StoreCatalog } from '@/lib/plugins/catalog'
 import type { AppDetail, AppTool } from '@/lib/plugins/app-detail'
+import { bridgeFromWindow, type MikkaWindow } from '@/lib/platform/detect'
 import { openCurrentPageInBrowser } from '@/lib/platform/open-settings'
-import { useCheckOnReturn } from '@/lib/hooks/use-check-on-return'
+import { publicServiceLink } from '@/lib/platform/public-origin'
+import { randomKey } from '@/lib/loopback'
+import { useCheckOnReturn, useChecksUntilDone } from '@/lib/hooks/use-check-on-return'
 import { cn } from '@/lib/utils'
 
 /** Any store toolkit's account (lib/composio-accounts). */
@@ -84,6 +87,9 @@ export function useAppInfo() {
 
 const integrationPath = withBasePath('/api/integrations/composio')
 const credentialsPath = withBasePath('/api/integrations/composio/credentials')
+const intentPath = withBasePath('/api/integrations/composio/connect/intent')
+/** How long a browser link may take before its loopback return counts as dead. */
+const LINK_WINDOW_MS = 10 * 60_000
 
 /** The SWR key of the Composio apps' state; 建议 reads the same key. */
 export const connectedAppsKey = integrationPath
@@ -158,6 +164,22 @@ export function useConnectedApps(enabled = true) {
 
   // A connect that finished in the system browser: read once on the way back, never on plain focus.
   const checkOnReturn = useCheckOnReturn(() => { void refresh() })
+  // A return the app's loopback did not deliver (the window never got it) is still caught on focus.
+  const returns = useChecksUntilDone(() => { void refresh() })
+  // The returnState of each link in flight; a matching onReturn event is this link's answer.
+  const pendingReturns = useRef(new Set<string>())
+  const stopReturns = returns.stop
+
+  useEffect(() => {
+    const bridge = bridgeFromWindow(window as MikkaWindow)
+    if (!enabled || typeof bridge?.app.onReturn !== 'function') return
+    return bridge.app.onReturn(({ state, result }) => {
+      if (!pendingReturns.current.delete(state)) return
+      if (!pendingReturns.current.size) stopReturns()
+      if (result === 'connected') { setNotice({ tone: 'status', text: t('connectionCompleted') }); void mutate() }
+      else setError(result === 'cancelled' ? t('connectCancelled') : t('connectFailed'), `composio_connect_${result === 'cancelled' ? 'cancelled' : 'failed'}`)
+    })
+  }, [t, enabled, mutate, stopReturns])
 
   useEffect(() => {
     if (!enabled) return
@@ -173,6 +195,25 @@ export function useConnectedApps(enabled = true) {
   async function startLink(key: string, body: { toolkit: string } | { accountId: string }) {
     setPending(key); setError('')
     try {
+      const bridge = bridgeFromWindow(window as MikkaWindow)
+      // A desktop that takes the return on its own loopback (RFC 8252 §7.3):
+      // a one-time intent names this account and the loopback, so the system
+      // browser goes straight to the provider and the answer lands back here —
+      // no Mikka page in the middle, no waiting for focus to refresh.
+      if (bridge && typeof bridge.app.prepareReturn === 'function' && typeof bridge.app.onReturn === 'function' && typeof bridge.app.openExternal === 'function') {
+        const returnState = randomKey()
+        const returnTo = await bridge.app.prepareReturn(returnState)
+        const created = await fetch(intentPath, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, loopback: { returnTo, returnState } }),
+        })
+        const token = created.ok ? (await created.json().catch(() => null) as { token?: unknown } | null)?.token : null
+        if (typeof token !== 'string') throw new Error(`http_${created.status}`)
+        pendingReturns.current.add(returnState)
+        await bridge.app.openExternal(publicServiceLink(`/api/integrations/composio/connect?intent=${encodeURIComponent(token)}`))
+        returns.arm(LINK_WINDOW_MS)
+        return
+      }
       // A reconnect keeps its replaced account in a callback cookie (#601).
       // The bundled renderer has no browser auth cookies at all: both kinds
       // of OAuth link begin through main's account-bound browser handoff.

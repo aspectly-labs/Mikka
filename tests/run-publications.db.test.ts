@@ -105,6 +105,175 @@ test('run result publication commits one owner-scoped result through retries and
   try {
     assert.equal((await pool.query('show server_version_num')).rows[0].server_version_num.slice(0, 2), '17')
 
+    await t.test('registry PR defaults are consumed by local and cloud publication and frozen without renaming an existing task branch', async () => {
+      const { writeSettings } = await import('../lib/settings/store')
+      const { admitCloudPush } = await import('../lib/computer/cloud-push')
+      const f = await fixture(), context = { userId: f.userId, workspaceId: f.workspaceId }
+      await writeSettings(context, 'workspace', { values: { prBranchPrefix: 'team/changes', prTitlePrefix: '[team]', prAutoMerge: true, prDraft: true } })
+      await writeSettings(context, 'personal', { values: { prTitlePrefix: '[mine]', prDraft: false } })
+      f.branch = `team/changes/${f.identifier.toLowerCase()}`
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const cloud = await admitCloudPush(client, { userId: f.userId, workspaceId: f.workspaceId, issueId: f.issueId,
+          agentId: f.agentId, deviceId: f.deviceId, deviceRepoId: f.repoId, now: new Date() })
+        assert.equal(cloud?.publication.branch, f.branch)
+        assert.equal(cloud?.publication.titlePrefix, '[mine]')
+        assert.equal(cloud?.publication.autoMerge, true)
+        assert.equal(cloud?.publication.defaultDraft, false)
+        await client.query('COMMIT')
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+      assert.equal((await prepareRunPublication(assignment(f), f.remoteUrl)).pushBranch, f.branch)
+      await writeSettings(context, 'workspace', { values: { prBranchPrefix: 'changed-later', prTitlePrefix: '[changed]', prDraft: true } })
+      await writeSettings(context, 'personal', { values: { prTitlePrefix: '[changed-personal]', prDraft: true } })
+      assert.equal((await prepareRunPublication(assignment(f), f.remoteUrl)).pushBranch, f.branch)
+      assert.equal((await receipt(f)).titlePrefix, '[mine]')
+      assert.equal((await receipt(f)).defaultDraft, false)
+      assert.equal((await persistRunCompletion(f.userId, f.runId, completion(f)))?.publicationPending, true)
+      let writes = 0
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.branch, f.branch)
+        assert.equal(input.titlePrefix, '[mine]')
+        assert.equal(input.draft, false)
+        assert.equal(input.autoMerge, true)
+        return input.withWrite!(async () => { writes++; return { ...prFor(f), autoMergeEnabled: true } })
+      }), { done: true })
+      assert.equal(writes, 1)
+      assert.ok((await receipt(f)).autoMergeRequestedAt)
+      // An accepted native queue is a receipt, not a claim that GitHub merged.
+      assert.equal((await receipt(f)).pullRequest.state, 'open')
+      await writeSettings(context, 'workspace', { values: { prAutoMerge: false } })
+      assert.deepEqual(await publishRunResult(f.runId, async () => assert.fail('Accepted queues are not resent or silently revoked by changing defaults')), { done: true })
+      const nextRun = randomUUID()
+      await pool.query('INSERT INTO agent_runs(id,"userId","issueId","agentId","deviceId","deviceRepoId",status,kind,prompt) VALUES($1,$2,$3,$4,$5,$6,\'running\',\'implement\',\'Continue same task\')',
+        [nextRun, f.userId, f.issueId, f.agentId, f.deviceId, f.repoId])
+      assert.equal((await prepareRunPublication({ ...assignment(f), id: nextRun }, f.remoteUrl)).pushBranch, f.branch)
+      const next = (await pool.query('SELECT "titlePrefix","autoMerge","defaultDraft" FROM run_publications WHERE "runId"=$1', [nextRun])).rows[0]
+      assert.deepEqual(next, { titlePrefix: '[changed-personal]', autoMerge: false, defaultDraft: true })
+    })
+
+    await t.test('a retryable native auto-merge error preserves the PR and retries without creating another', async () => {
+      const { writeSettings } = await import('../lib/settings/store')
+      const f = await fixture()
+      await writeSettings({ userId: f.userId, workspaceId: f.workspaceId }, 'workspace', { values: { prAutoMerge: true } })
+      await prepareRunPublication(assignment(f), f.remoteUrl)
+      await persistRunCompletion(f.userId, f.runId, completion(f))
+      const retryAt = Date.now() + 20 * 60_000
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.autoMerge, true)
+        return { ...prFor(f), autoMergeError: 'github_unavailable', autoMergeRetryable: true, autoMergeRetryAt: retryAt }
+      }), { done: false, retryAt })
+      const pending = await receipt(f)
+      assert.equal(pending.pullRequest.url, prFor(f).url)
+      assert.equal(pending.autoMergeRequestedAt, null)
+      assert.deepEqual(await publishRunResult(f.runId, async () => assert.fail('A duplicate workflow must respect the stored retry deadline')), { done: false, retryAt })
+      await pool.query('UPDATE run_publications SET "leaseExpiresAt"=now()-interval \'1 second\' WHERE "runId"=$1', [f.runId])
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.autoMerge, true)
+        assert.equal(input.allowCreate, false)
+        return { ...prFor(f), autoMergeEnabled: true }
+      }), { done: true })
+      assert.equal((await receipt(f)).pullRequest.autoMergeEnabled, true)
+    })
+
+    await t.test('initial publication respects a stored GitHub rate-limit deadline before opening a PR', async () => {
+      const f = await fixture()
+      await prepareRunPublication(assignment(f), f.remoteUrl)
+      await persistRunCompletion(f.userId, f.runId, completion(f))
+      const retryAt = Date.now() + 20 * 60_000
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.allowCreate, true)
+        throw new PublicationError('github_unavailable', true, 429, retryAt)
+      }), { done: false, retryAt })
+      const pending = await receipt(f)
+      assert.equal(pending.status, 'pending')
+      assert.equal(pending.pullRequest, null)
+      assert.equal(pending.leaseToken, null)
+      assert.equal(pending.leaseExpiresAt.getTime(), retryAt)
+      assert.deepEqual(await publishRunResult(f.runId, async () => assert.fail('A duplicate workflow must not open the PR early')), { done: false, retryAt })
+      await pool.query('UPDATE run_publications SET "leaseExpiresAt"=now()-interval \'1 second\' WHERE "runId"=$1', [f.runId])
+      assert.deepEqual(await publishRunResult(f.runId, async input => {
+        assert.equal(input.allowCreate, true)
+        return prFor(f)
+      }), { done: true })
+      assert.equal((await receipt(f)).pullRequest.url, prFor(f).url)
+    })
+
+    await t.test('a failed retry keeps the PR state written after it claimed the publication', async () => {
+      const f = await fixture()
+      await prepareRunPublication(assignment(f), f.remoteUrl)
+      await persistRunCompletion(f.userId, f.runId, completion(f))
+      assert.deepEqual(await publishRunResult(f.runId, async () =>
+        ({ ...prFor(f), autoMergeError: 'github_unavailable', autoMergeRetryable: true })), { done: false })
+      assert.deepEqual(await publishRunResult(f.runId, async () => {
+        await pool.query(`UPDATE run_publications SET "pullRequest"="pullRequest" || '{"state":"closed"}'::jsonb WHERE "runId"=$1`, [f.runId])
+        throw new PublicationError('branch_not_pushed')
+      }), { done: true })
+      assert.equal((await receipt(f)).pullRequest.state, 'closed')
+      assert.equal(readIssueMetadata((await task(f)).content).pullRequests[0].state, 'closed')
+    })
+
+    await t.test('auto merge reads its held SQL transaction and cannot override withdrawal, drafts, failed verification or Factory review evidence', async () => {
+      const { writeSettings } = await import('../lib/settings/store')
+      const { automaticMergeReadiness } = await import('../lib/code-review/auto-merge')
+      const { withDatabaseClient } = await import('../lib/db')
+      const f = await fixture(), context = { userId: f.userId, workspaceId: f.workspaceId }
+      await writeSettings(context, 'workspace', { values: { prAutoMerge: true } })
+      const stranger = await fixture()
+      await prepareRunPublication(assignment(f), f.remoteUrl)
+      const input = { ...context, issueId: f.issueId, runId: f.runId, commit: 'a'.repeat(40), preferred: true, draft: false, verification: 'passed' as const }
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await withDatabaseClient(client, async () => {
+          assert.equal(await automaticMergeReadiness(client, input), 'ready')
+          await client.query('UPDATE pull_request_defaults SET "autoMerge"=false WHERE "workspaceId"=$1 AND "userId" IS NULL', [f.workspaceId])
+          assert.equal(await automaticMergeReadiness(client, input), 'ineligible', 'uncommitted settings are read on the held publication connection, never a second checkout')
+        })
+        await client.query('ROLLBACK')
+      } finally { client.release() }
+      await writeSettings(context, 'workspace', { values: { prAutoMerge: false } })
+      await persistRunCompletion(f.userId, f.runId, completion(f))
+      assert.deepEqual(await publishRunResult(f.runId, async input => { assert.equal(input.autoMerge, false); return prFor(f) }), { done: true })
+      assert.equal((await receipt(f)).autoMergeRequestedAt, null)
+      for (const failed of [false, true]) {
+        const next = await fixture()
+        await writeSettings({ userId: next.userId, workspaceId: next.workspaceId }, 'workspace', { values: { prAutoMerge: true, prDraft: true } })
+        await prepareRunPublication(assignment(next), next.remoteUrl)
+        const result = completion(next)
+        if (failed) result.report!.verify = { status: 'failed', command: 'node --test', output: 'Synthetic failure' }
+        await persistRunCompletion(next.userId, next.runId, result)
+        let opened = 0
+        assert.deepEqual(await publishRunResult(next.runId, async input => {
+          opened++; assert.equal(input.draft, true); assert.equal(input.autoMerge, false)
+          return { ...prFor(next), state: 'draft' }
+        }), { done: true })
+        assert.equal(opened, failed ? 0 : 1)
+        assert.equal((await receipt(next)).status, failed ? 'skipped' : 'published')
+      }
+      await writeSettings(context, 'workspace', { values: { prAutoMerge: true } })
+      const taskId = randomUUID(), candidateId = randomUUID(), executeId = randomUUID(), reviewId = randomUUID()
+      const tx = await pool.connect()
+      try {
+        await tx.query('BEGIN')
+        await tx.query(`INSERT INTO factory_tasks(id,"userId","workspaceId","issueId","sourceEventId",route,stage,status,"attemptId",reason) VALUES($1,$2,$3,$4,$5,'{"flowVersion":2}','review','pending',$6,'Synthetic gate fixture')`, [taskId, f.userId, f.workspaceId, f.issueId, randomUUID(), reviewId])
+        await tx.query(`INSERT INTO factory_candidates(id,"taskId",sha,repository,environment,scope,"runId") VALUES($1,$2,$3,$4,'fixture','fixture',$5)`, [candidateId, taskId, input.commit, f.remoteKey, f.runId])
+        await tx.query(`INSERT INTO factory_attempts(id,"taskId",stage,ordinal,position,status,"candidateId","runId",reason) VALUES($1,$2,'execute',1,1,'passed',$3,$4,'Synthetic execute')`, [executeId, taskId, candidateId, f.runId])
+        await tx.query(`INSERT INTO factory_attempts(id,"taskId",stage,ordinal,position,status,"candidateId",reason) VALUES($1,$2,'review',1,2,'pending',$3,'Synthetic review')`, [reviewId, taskId, candidateId])
+        await tx.query('UPDATE factory_tasks SET "candidateId"=$2 WHERE id=$1', [taskId, candidateId])
+        await withDatabaseClient(tx, async () => {
+          assert.equal(await automaticMergeReadiness(tx, input), 'waiting')
+          await tx.query('UPDATE factory_tasks SET stage=\'approval\',status=\'waiting\' WHERE id=$1', [taskId])
+          assert.equal(await automaticMergeReadiness(tx, input), 'ineligible', 'a task position never substitutes for a passed independent review')
+          await tx.query('UPDATE factory_attempts SET status=\'passed\' WHERE id=$1', [reviewId])
+          assert.equal(await automaticMergeReadiness(tx, input), 'ineligible', 'a passed flag cannot replace the existing real Factory evidence and visual handoff gate')
+          assert.equal(await automaticMergeReadiness(tx, { ...input, commit: 'b'.repeat(40) }), 'ineligible')
+          assert.equal(await automaticMergeReadiness(tx, { ...input, userId: stranger.userId }), 'ineligible')
+        })
+        await tx.query('ROLLBACK')
+      } catch (error) { await tx.query('ROLLBACK'); throw error } finally { tx.release() }
+    })
+
     await t.test('runtime failure details survive an independent connection and first-completion replay', async () => {
       const { Client } = await import('pg')
       const { visibleRuns } = await import('../lib/agent-runs')
@@ -167,6 +336,34 @@ test('run result publication commits one owner-scoped result through retries and
           assert.equal(row.failureDetails.code, 'run_failed')
           assert.equal(row.failureDetails.providerMessage, undefined)
         } else assert.equal(row.failureDetails, null)
+      }
+    })
+
+    await t.test('local completion wakes the same device after the slot is released', async t => {
+      const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
+      const { NextRequest } = await import('../lib/server-runtime/server')
+      const f = await fixture()
+      const previousUrl = process.env.DEVICE_GATEWAY_URL, previousSecret = process.env.DEVICE_GATEWAY_PUSH_SECRET
+      process.env.DEVICE_GATEWAY_URL = 'http://127.0.0.1:9'
+      process.env.DEVICE_GATEWAY_PUSH_SECRET = randomUUID()
+      const originalFetch = globalThis.fetch
+      const observed: string[] = []
+      t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) !== `http://127.0.0.1:9/v1/devices/${f.deviceId}/push`) return originalFetch(input, init)
+        const { rows: [run] } = await pool.query('select status from agent_runs where id=$1', [f.runId])
+        observed.push(run.status)
+        return new Response(null, { status: 204 })
+      })
+      try {
+        const scope = createRequestScope(new NextRequest('http://127.0.0.1/mikka/v1/runs/complete'))
+        await runRequestScope(scope, async () => {
+          assert.ok(await persistRunCompletion(f.userId, f.runId, { stopReason: 'timeout' }))
+          await scope.after.finish()
+        })
+        assert.deepEqual(observed, ['failed'])
+      } finally {
+        if (previousUrl === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = previousUrl
+        if (previousSecret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = previousSecret
       }
     })
 

@@ -79,7 +79,7 @@ export class WorkspaceMcpStore {
     const names = await this.activeNames(workspaceId, [userId, ...rows.map(row => row.user_id)])
     const servers: McpWorkspaceServerView[] = rows.map(row => ({
       id: row.id, name: row.name, url: row.user_id === userId ? row.url : null,
-      transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: row.transport === 'stdio' ? 'env' : row.auth_header ? 'header' : 'none',
+      transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: row.transport === 'stdio' ? (row.auth_header === '__stdio_noenv__' ? 'none' : 'env') : row.auth_header ? 'header' : 'none',
       createdAt: row.created_at.toISOString(), ownerId: row.user_id, ownerName: names.get(row.user_id) ?? null,
       mine: row.user_id === userId, shared: Boolean(row.grant_id),
     }))

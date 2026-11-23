@@ -242,7 +242,7 @@ test('background Factory transactions use persisted tenants before the APP pool 
       writing = runtime.store.apply(owner, factoryBinding(f.task), randomUUID(), { action: 'cancel', reason: 'Serialize the real background transition' })
       await Promise.race([
         waitFor(async () => (await controls.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
-          AND application_name='factory_background_app' AND wait_event_type='Lock' AND query LIKE '%FROM issues%'`)).rowCount! > 0, 'background writer must hold WS and wait for the real issue row'),
+          AND application_name='factory_background_app' AND wait_event_type='Lock' AND query LIKE '%issues%'`)).rowCount! > 0, 'background writer must hold WS and wait for the real issue row'),
         writing.then(() => { throw new Error('Background write escaped the held issue lock') }),
       ])
       revoking = (async () => {

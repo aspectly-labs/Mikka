@@ -95,7 +95,7 @@ export async function createLegacyPersonalAccessToken(userId: string, workspaceI
 async function createToken(userId: string, workspaceId: string, input: { name: string; expiresAt?: string | null }, tokenScopes: TokenScope[], now: Date, audit?: TokenAuditContext): Promise<CreatedPersonalAccessToken> {
   const { name, expiresAt } = input
   let expiry: Date | null
-  try { expiry = checkExpiry(expiresAt, now) } catch { throw new WorkspaceError('validationGeneric') }
+  try { expiry = checkExpiry(expiresAt, now) } catch (error) { throw new WorkspaceError('validationGeneric', { cause: error }) }
   await requireMember(userId, workspaceId)
   const { token, tokenHash, hint } = generatePersonalAccessToken()
   const row = await guardTokenDb(() => db.transaction(async tx => {

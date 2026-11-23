@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
  * - Minimum 24px (`px-6`) right padding so the right edge stays `<= 1076` inside the 1100px shell.
  */
 export function SettingsContent({ wide = false, className, ...props }: ComponentProps<'div'> & { wide?: boolean }) {
-  return <div className={cn('mx-auto flex w-full flex-col gap-6 px-6 py-8 sm:py-10', wide ? 'max-w-[824px]' : 'max-w-[612px]', className)} {...props} />
+  return <div data-wide={wide ? 'true' : undefined} className={cn('mx-auto flex w-full flex-col gap-6 px-6 py-8 sm:py-10', wide ? 'max-w-[824px]' : 'max-w-[612px]', className)} {...props} />
 }
 
 export function SettingsGroup({ className, ...props }: ComponentProps<typeof FieldGroup>) {

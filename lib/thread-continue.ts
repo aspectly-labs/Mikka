@@ -41,7 +41,7 @@ export async function sendThreadMessage(userId: string, runId: string, text: str
     // query failure inside the same call is a server fault and must not reach
     // the user as "messageRequired".
     try { await validateChatFiles(userId, { kind: 'thread', id: parsed.data.runId }, parsed.data.text) }
-    catch (error) { if (error instanceof ChatFileError) throw new ActionFailureError('messageRequired'); throw error }
+    catch (error) { if (error instanceof ChatFileError) throw new ActionFailureError('messageRequired', undefined, undefined, { cause: error }); throw error }
   }
   const active = UNFINISHED_RUN_STATUSES.some(status => status === chain.attempts.at(-1)?.status)
   if (delivery === 'queue' && requestId && !parsed.data.modelChoice) {

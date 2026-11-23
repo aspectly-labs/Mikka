@@ -1,12 +1,13 @@
 'use client'
 import { createAuthClient } from 'better-auth/react'
 import { multiSessionClient, twoFactorClient } from 'better-auth/client/plugins'
+import { passkeyClient } from '@better-auth/passkey/client'
 import { useEffect, useSyncExternalStore } from 'react'
 import { withBasePath } from '@/lib/base-path'
 import { clearChatDrafts } from '@/lib/chat-drafts'
 import { clearPersistentReadCaches } from '@/lib/swr/persistent-cache'
 import { currentWebServers, subscribeWebServers, webServerSnapshot } from '@/lib/web-connection/browser'
-export const cloudAuthClient = createAuthClient({ basePath: withBasePath('/api/auth'), plugins: [multiSessionClient(), twoFactorClient()] })
+export const cloudAuthClient = createAuthClient({ basePath: withBasePath('/api/auth'), plugins: [multiSessionClient(), twoFactorClient(), passkeyClient()] })
 
 async function getServerSession(...args: Parameters<typeof cloudAuthClient.getSession>) {
   const servers = currentWebServers()

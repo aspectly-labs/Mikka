@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, or, sql, type SQL } from 'drizzle-orm'
 import { getTranslations } from '@/lib/intl/i18n-server'
 import { z } from 'zod'
 import { ActionFailureError, runAction } from '@/lib/action-error'
+import { WorkspaceError } from '@/lib/workspace-error'
 import { db, withDatabaseTransaction } from '@/lib/db'
 import { issueListChanged } from '@/lib/live/lists'
 import { reviewTaskChanged } from '@/lib/coding-workspace/review-sessions'
@@ -287,7 +288,10 @@ export async function getDeletedIssue(id: string) {
     const deletedAt = readIssueMetadata(issue.content).deletedAt
     if (issue.userId !== user.id || !deletedAt) return null
     return { id: issue.id, title: issue.title, deletedAt, canRestore: Date.now() <= issueRestoreDeadline(deletedAt) }
-  } catch { return null }
+    // Access denials are the only expected failure; returning null for a
+    // transient throw would cache "no access" in SWR and hide a recoverable
+    // Restore card behind the generic unavailable page (#1966).
+  } catch (error) { if (error instanceof ActionFailureError || error instanceof WorkspaceError) return null; throw error }
 }
 
 export async function setIssueDeleted(input: { id: string; revision?: number; restore?: boolean }) {

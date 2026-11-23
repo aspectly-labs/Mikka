@@ -146,7 +146,7 @@ async function workspaceSkillsAllowed(workspaceId: string, skills: readonly { id
     if (rule === 'deny') return new Set()
     const { rows } = await workspacePool.query<{ resourceId: string; ownerId: string; status: string }>(`select "resourceId","ownerId",status
       from mikka_organization_resource_approvals
-      where "organizationId"=$1 and "workspaceId"=$2 and kind='skill' and "resourceId"=ANY($3::uuid[])`,
+      where "organizationId"=$1 and "workspaceId"=$2 and kind='skill' and "resourceId"=ANY($3::text[])`,
       [policy.organizationId, workspaceId, skills.map(skill => skill.id)])
     const approvals = new Map(rows.map(row => [`${row.ownerId}:${row.resourceId}`.toLowerCase(), row.status]))
     return new Set(skills.filter(skill => {

@@ -105,6 +105,7 @@ stub('../issue-access.ts', { issueForUser: forbidden, requireUser: forbidden })
 stub('../task-identifier-server.ts', { taskIdentifiers: forbidden, taskPrefixInput: forbidden, issueView: forbidden, syncWorkspaceTaskPrefix: forbidden, taskIdentifierNamespaceInUse: forbidden })
 stub('../artifacts/store.ts', { artifactSummaries: forbidden })
 stub('./bot-instructions.ts', { botInstructions: forbidden })
+stub('./workspace-instructions.ts', { readWorkspaceInstructionsForBot: async () => '' })
 stub('./execution-context.ts', { executionContextParts: async () => ({ models: 'Synthetic allowed models', live: 'Synthetic current availability' }) })
 stub('./github-context.ts', { githubPromptContext: async () => 'Synthetic authorized repositories' })
 stub('../profile/memory.ts', { memoryForBotPrompt: async (who: string, botId: string, enabled?: boolean, nativeTurn?: unknown) => { profileReads.push({ owner: who, bot: botId, enabled, nativeTurn }); return profileText } })
@@ -119,6 +120,10 @@ stub('../github/user-access.ts', { readAuthorizedIssue: forbidden })
 stub('../pending-action-store.ts', { proposeAction: forbidden, writeAccountAction: forbidden, proposeRepositoryPush: forbidden })
 stub('../telegram/client.ts', { postTelegramText: forbidden })
 stub('../../workflows/coordinator/tool-scope.ts', { assertNativeToolScope: forbidden })
+stub('./environment-instructions.ts', {
+  instructionsWithEnvironment: (_instructions: string) => _instructions,
+  readScopedPromptInstructionsForBot: async () => ({ environmentId: null, environmentInstructions: '', botInstructions: '' }),
+})
 mock.module('@/lib/server-runtime/server', { namedExports: { NextResponse: Response, after: () => {} } })
 
 let composer: typeof import('./product-instructions'), store: typeof import('./store'), personal: typeof import('./personal-instructions')

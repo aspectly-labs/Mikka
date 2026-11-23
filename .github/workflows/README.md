@@ -3,13 +3,48 @@
 This guide maps required pull-request checks, release jobs and their source
 bindings. Current workflow files define the triggers and selected coverage.
 
-## Pull requests and merge candidates
+## Pull requests: blocking checks
 
 Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
 and Cloudflare API source qualification for PRs targeting main. CI runs
-affected source, unit and daemon checks. Its unit matrix runs Node 24 for PRs
-targeting main. PRs targeting dev, which has no merge queue, retain the two
-Node versions and selected acceptance in the protected UI check.
+affected source, unit and daemon checks on Node 24 only
+([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
+PRs targeting dev, which has no merge queue, retain selected acceptance in the
+protected UI check.
+
+- `ui-policy.yml` runs for `pull_request` and `merge_group`, not for each
+  same-repository branch push. Actions' default PR checkout runs GitHub's
+  synthetic merge commit, including the PR together with its target branch at
+  the time of the check. A changed PR head gets a new check run.
+- Keep `UI policy (strict)` and `Production build and browser interactions`
+  successful for non-documentation PRs; the latter gates the selected isolated PostgreSQL suites across 1–4 dynamic
+  shards. Full inventory validation runs even when DB execution is skipped. Despite its name, CI
+  does not build the production Web release artifact. The retired Vercel
+  `web-deploy.yml` workflow was removed on 2026-11-17.
+  Current Cloudflare native CI and the transitionary private-triggered OCI issuer
+  are **different** operations; neither changes long-term public build ownership.
+  See [build-source-of-truth.md](../../docs/operations/build-source-of-truth.md).
+- Ordinary acceptance uses API/CLI flows under decision 2026-11-01-1520.
+  Targeted Desktop and Analytics jobs retain their selected browser
+  checks. `browser-gate.yml` only keeps the protected check name
+  `Browser tests (before merge)` and passes at once; delete it once that name
+  is removed from the required checks in the repository settings.
+- `GitGuardian Security Checks` is a separate external required check.
+- All four existing required names remain intact. Do not silently replace
+  them with a new aggregate check until the GitHub branch-protection settings
+  have been migrated and verified.
+
+`local-device-node22.yml` now runs an actual app/Eve build and startup smoke
+on Node 24, retaining the daemon and installer tests. The core,
+integration and PG17 database jobs above also run the selected suites on
+Node 24 only ([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md));
+the original Node 24 protected-check names stay unchanged.
+
+## Focused governance acceptance and superseded PR runs
+Merge queue autopilot checks the PR head after CI or Browser gate completes.
+It adds an eligible same-repository PR to the end of the queue once all required
+checks pass. Stacks and PRs included in an open batch follow their owner's merge
+flow. The GitHub App installation token lets queue candidates trigger CI.
 
 A pull request that changes the interface must include a screenshot or
 recording in its description. `UI policy (strict)` requires it, and
@@ -19,42 +54,127 @@ without rerunning the suite. Neither job launches a browser.
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
 Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
-checks that trusted selection succeeded and the deferred DB jobs skipped.
+checks that trusted selection succeeded and the deferred DB jobs skipped, with a visible
+“Database checks deferred to merge queue” summary and check notice when DB suites are selected.
 
-On `merge_group`, CI retains the full Node 22 and 24 unit and PG17 shard
-matrices. Selected Analytics, Workspace Governance and specialty acceptance
+On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path
 policy from the candidate's immutable base and selects all checks if that base
-predates the policy. Node.js compatibility continues its separate candidate
-workflow with real App, Eve and local-device builds and startup on both majors.
+predates the policy. The Node.js compatibility candidate workflow keeps its real
+App, Eve and local-device build and startup on Node 24.
 
-The specialty checks cover app icon compilation, cloud computer, coding
-workspace, credential isolation, E2B subscription custody, Read Cache, Site
-Search, SSH, unattended sandbox and credential-free Cloudflare image builds.
-Use `workflow_dispatch` in the individual workflow where it is available to
-request its evidence before queueing.
+- `Workspace governance HTTP (Item 11)` now runs as a reusable job of
+  `ui-policy.yml` for PRs and merge groups that the trusted Nx selector
+  classifies as database-affecting. Global, permission, auth, schema,
+  workflow and unknown inputs expand coverage rather than silently skip it.
+  The required `UI policy (strict)` gate checks the selected job's actual
+  conclusion, and requires an intentional skip when unselected. Unrelated
+  UI PRs do not allocate an extra PostgreSQL-backed governance workflow.
+  On every `main` push, independent postmerge governance acceptance remains.
+- Browser compatibility, E2B PR runtime, E2B BYOS and SSH device workflows
+  cancel obsolete **same-PR** attempts. They never cancel main or manually
+  dispatched production publication or recovery.
+- All protected check names remain stable. In particular,
+  `Browser tests (before merge)` must remain until GitHub branch protection
+  is read and migrated; a read-only connector's 403 is not authorization
+  to remove it.
 
-Mark a same-repository mobile PR Ready or apply the `mobile-preview` label to
-publish a preview of the current PR to its `pr-<n>` EAS branch. Remove and reapply the
-label to publish a newer head. Production OTA still runs on its main push or
-existing manual dispatch.
+See [test ownership and CI cost](../../docs/ci/test-ownership.md) before
+adding or duplicating regression suites.
 
-## Main pushes
+## Draft pull requests
 
-CI retains the existing postmerge checks for each distinct main commit.
-Device Gateway, Minute Worker, Engineering Sandbox and E2B offline release
-validation use their existing main workflows. Production Readiness, Read Cache
-Production, Cloud Core and Task Attachment offline guards run on relevant
-main pushes. Their production acceptance entry points retain their existing
-dispatch and authorization conditions. The unified protected Cloudflare
-publisher continues to own main image builds.
+`pr-acceptance.yml` separately checks the PR's `## Acceptance` declaration on
+open, edit, synchronize, reopen, ready and draft transitions. It executes only
+the default branch's reviewed checker, reads all changed filenames through
+GitHub, and publishes the **`PR acceptance`** commit status on the PR head.
+Missing evidence adds `acceptance:missing`; a corrected declaration removes it.
+Drafts are not evaluated and retain a pending status, which is not acceptance.
+The existing required source/security checks still run on drafts.
 
-See [test ownership and CI cost](../../docs/ci/test-ownership.md) before adding
-or duplicating suites.
+After this workflow is merged, Alex enables **`PR acceptance`** as an additional
+required status check for `main` in GitHub branch protection. The job name
+`Inspect PR acceptance` is not the head status to require. Workflow YAML does
+not change that repository setting. Declaration checks establish that the PR
+names its evidence; independent review still decides whether it proves the
+change. The checker never calls a model or runs PR-provided code.
+
+To inspect a PR with the same checker, run:
+
+```sh
+node scripts/ci/pr-acceptance-github.mjs --repo alexj11324/Mikka --pr PR_NUMBER
+```
+
+Replace `PR_NUMBER` with its number. For an authorized live admission rehearsal,
+add `--publish` with the existing `GITHUB_TOKEN` credential delivery; never put
+the token in command arguments. This updates the same status and label. The
+trusted workflow itself starts automatically only after it exists on `main`.
+
+There are two intentionally different classes of PR checks:
+
+- **Required check names never become false green on drafts**: in the main `CI`
+  workflow, the lightweight selector and required aggregators (`UI policy
+  (strict)`, `Production build and browser interactions`) run on Draft PRs;
+  those aggregators explicitly **fail** until the PR is Ready. Core, Integration,
+  Source, Daemon, Analytics, Governance and DB runner-heavy jobs are deferred.
+  `ready_for_review` re-runs the complete applicable protected verification
+  even if the commit SHA has not changed. `Browser tests (before merge)` and
+  external GitGuardian retain their original workflows. A skipped required
+  job can be reported successful by GitHub; these named aggregators must never
+  skip or accept the draft as complete.
+- **Non-required specialized acceptances** (`E2B additive runtime release`
+  offline PR test, E2B subscription custody, Read cache API acceptance,
+  SSH device backend, Site search read contract and Unattended sandbox
+  acceptance) skip their runner jobs while the PR is a draft. Each workflow
+  explicitly handles `ready_for_review` to execute its real proof on the
+  same code even without an extra commit. On `converted_to_draft`, the
+  six jobs skip. The E2B offline job cancels an older eligible check when its
+  replacement enters the same PR group. An already running E2B check may
+  finish after conversion to draft.
+- Mobile OTA preview publication remains available on drafts for UI evidence
+  and TestFlight-oriented review. Other specialized evidence may have its
+  own intentional manual or source-version trigger.
+
+This reduces runner allocation during the local red→green cycle without
+mistaking a draft-only skipped result for proof that a Ready PR is safe to
+merge. Draft check failure means "not yet a merge candidate," not an ordinary
+product regression. Main pushes and merge groups continue normal full coverage.
+
+## Main pushes: postmerge checks
+
+- A push to `main` triggers the required `ui-policy.yml` checks again. Daemon
+  and desktop releases wait for that exact commit
+  (`scripts/release/ci-gate.mjs`). Production acceptance workflows have their
+  own successful-Web triggers and account queues.
+- The special suites (`analytics-ssr`, `cloud-computer`, `desktop`,
+  `e2b-byos`, `site-search`, `ssh-device-backend`, `unattended-sandbox`) run on
+  pull requests only, selected by trusted dependencies or their existing path filters; each can still be run
+  by hand (`workflow_dispatch`). Production Web is promoted through the
+  Cloudflare deployment workflow; Vercel publication was removed on 2026-11-17.
+- `publish-daemon.yml` uses daemon/package-input path filters.
+  `desktop-release.yml` also watches the shared frontend, UI and API inputs.
+  On a push it builds nothing and leaves a note in the run summary. The
+  installer is built when the Cloudflare deployment workflow's serving-release
+  observation shows current main, or from a dispatch carrying
+  `cloudflare_receipt`. A Markdown file under a
+  watched directory still matches those release filters. Read the exact
+  workflow paths before predicting release work.
+- The run-dispatch and Controlled Skill improvement suites run in the CI
+  database shards (`pnpm test:db`); they no longer have workflows of their own.
+- The `ui-policy.yml` concurrency key includes `github.run_id` only on `main`.
+  This prevents GitHub from evicting an older *pending* main verification,
+  in addition to not cancelling a running main job. Superseded PR checks may
+  still be cancelled.
+- Device Gateway, Minute Worker, Engineering Sandbox and E2B offline release
+  validation use their existing main workflows. Production Readiness, Read
+  Cache Production, Cloud Core and Task Attachment offline guards run on
+  relevant main pushes. Their production acceptance entry points retain
+  their existing dispatch and authorization conditions. The unified
+  protected Cloudflare publisher continues to own main image builds.
 
 ## Cloud worker template release
 
-`e2b-official-runtime.yml` is the only production release coordinator. It checks
+`e2b-official-runtime.yml` is the template publication coordinator. It checks
 the immutable worker digest and failed runtime input fingerprints before entering
 the publication queue. Its reusable `e2b-runtime-release.yml` holds that queue
 through validation, publication and cleanup, and calls `e2b-template.yml` to build unique
@@ -63,43 +183,47 @@ executes the existing additive installer beneath `/opt/mikka`, leaving an
 anonymous worker preloaded at E2B's ready checkpoint. No runtime credential or
 user data enters the template.
 
-Publication has two mandatory gates: original official files retain their
-SHA-256, type, mode, owner and link target; and both official Claude Code
-(`claude-haiku-5-5`) and Codex (`gpt-6-luna`) execute a real subscription task on
-the exact candidates. A model catalogue probe is additional capability data,
-not subscription acceptance. Candidate tests use normal device enrollment,
-owner-bound runs and subscription leases. Each release records original CLI
-paths and hashes in its own manifest; production, probing and acceptance use
-the same resolver, without an acceptance-only binary override.
-The gate also requires the official CLI to acknowledge this exact task
-(Claude's matching first-prompt UUID echo or Codex's `turn/start` ACK), plus a
-complete run-bound HTTP receipt with no extra execution-time authorization or
-provider-proxy calls. Process startup and `system/init` cannot satisfy it.
+Publication requires original-file conservation and candidate build-time
+readiness: the template builds, both official CLIs start and the execution
+fence opens. Original files retain their SHA-256, type, mode, owner and link
+target. E2B uses the user's own key, so live subscription execution is not a
+template-publication gate
+([#2789](https://github.com/alexj11324/Mikka/pull/2789)). Runtime acceptance
+retains its own criteria; build-time readiness does not prove a completed
+subscription task. Each release records original CLI paths and hashes in its
+own manifest; production, probing and acceptance use the same resolver,
+without an acceptance-only binary override.
 Installation preserves every original persistent entry exactly. E2B's final
 boot and a disposable fresh instance are checked separately against the
 recorded exact-path provider-runtime policy; original CLI/software bytes and
 all other fields remain protected. File-scan verification instances are never
 reused as cold-start performance samples.
 The finalizer always closes instances labelled with this exact source, run and
-attempt. A failed build, obsolete source, failed Web wait or subscription gate
-also removes this run's exact named private candidates and verifies their
+attempt. It also removes this run's exact named private candidates and verifies their
 absence. Public images and previous releases remain available. Cleanup receipts
-are artifacts; a cleanup error fails the workflow. After a build or subscription failure on current main, the workflow retains a
-SHA-256 fingerprint of all `runtime_paths` Git entries, including dependency
-locks, in an Actions artifact for 90 days. A subsequent automatic push with the
-same inputs reports `skipped: same inputs as failed run <id>` and succeeds before
-entering the release queue or creating E2B machines. The queue checks again after
-entry to suppress already-queued duplicates. Obsolete sources, cancellations,
-Web failures and cleanup-only failures do not create failure fingerprints.
+are artifacts; a cleanup error fails the workflow. An eligible candidate-build
+failure on current main records a fingerprint of the declared runtime inputs
+in an Actions artifact for 90 days. `scripts/e2b/runtime-inputs.mjs` verifies
+the original failed step and current attempt before an automatic input decision
+can skip matching failed inputs. The queue checks again after entry. Obsolete
+sources, cancellations, Web failures and cleanup-only failures do not create
+failure fingerprints.
 
 A push only compares the worker inputs and builds no candidate. When they
 changed, its run summary says so. The release starts by itself when the
-Cloudflare deployment workflow's serving-release observation shows current main
-and the worker differs from the last release that made templates public. A
+Cloudflare deployment workflow's serving-release observation identifies the
+eligible current-main source and the existing input checks select a release. A
 dispatch of **E2B additive runtime release** on current main with `reason` and
 `cloudflare_receipt` also starts it; a dispatch without a receipt fails before
-any template builder starts. Every gate rechecks the receipt against the live
-gateway and current main.
+any template builder starts. Initial automatic runtime selection binds the
+observed product to current main and the consumer run's recorded source.
+Subsequent gates recheck the original receipt, live serving identity and the
+served commit's membership in main's history. Later merges neither replace
+that source nor block its publication
+([#2699](https://github.com/alexj11324/Mikka/pull/2699)). A manual dispatch may
+therefore build an earlier still-served commit from main's history, never the
+newer dispatch commit in its place. Respect release windows explicitly declared
+by the #1752/#1954 owner; an offline push run itself holds no publication window.
 
 The Coding Workspace, Task VM and Task Secret consumers accept this official
 producer's `workflow_run` event alongside its retained push/manual events. The
@@ -117,25 +241,28 @@ runtime inputs produce a new fingerprint. Missing or expired failure artifacts
 permit the normal worker comparison; history API errors fail the check. Do not
 retry only failed candidate/gate jobs: cleanup has removed their candidates.
 
-After both gates pass, the workflow makes the candidates public and keeps the
+After the candidate and receipt checks pass, the workflow makes the candidates
+public and keeps the
 release report (all three IDs, their official base kinds, worker digest, source
-commit and measured models) as an immutable artifact for the private Cloudflare
+commit and original candidate evidence) as an immutable artifact for the private Cloudflare
 API deployment. Old template IDs and aliases are never updated or deleted. A
-failure before publication leaves the selected release unchanged. Exact-main and
-exact-serving source checks reject stale jobs. A rollback uses the normal
-rollback PR and matched application/worker release, preserving these gates.
+failure before publication leaves the selected release unchanged. Publication
+verifies the candidate's source, run, attempt and report digests. The private
+Cloudflare deployment selects the verified IDs under the #1954 release owner;
+publishing IDs alone does not change production selection. Rollback follows
+that owner's existing procedure and a normal rollback PR when code changes,
+preserving matched application/worker sources and the current admission gates.
 
 PR runs use no release credentials. Main builds read the existing `E2B_API_KEY`
-from Infisical `prod:/vercel`. The subscription gate reads the authorized
-`SMOKE_OWNER_EMAIL` / `SMOKE_OWNER_PASSWORD` from `prod:/`, signs in normally, uses
-tasks titled “测试” in `alexj11324/Mikka-handoff`, then removes its own fixtures.
-Delivery uses the existing GitHub OIDC identity; credential values never enter reports or logs.
+from the existing Infisical `prod:/vercel` path. That retained secret location
+does not imply a Vercel publisher. Delivery uses the existing GitHub OIDC
+identity; credential values never enter reports or logs.
 
 The worker digest excludes unrelated Web lock entries and package scripts.
-Every main push compares that wanted digest with the published production
-digest. Matching digests reuse the release. After a failed publication, a
-documentation-only push can still rebuild and revalidate the unpublished worker. The existing no-new-polling rule
-and task-owner E2B billing apply. See
+A main push compares the immutable event's before/after inputs and reports the
+result; it never starts candidate builders. Publication and retry use the
+serving-observation or authorized-dispatch paths above. The existing
+no-new-polling rule and task-owner E2B billing apply. See
 [Alex's preservation clarification](../../docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md).
 
 ## Factory visual evidence acceptance
@@ -191,21 +318,45 @@ retained as workflow artifacts; credentials and raw task logs are excluded.
 
 ## GitHub branch protection (separate repository setting)
 
-Keep required status checks enabled. Disable **Require branches to be up to
-date before merging** (GitHub's *loose* status-check mode), as in Codex.
-Moving `main` does not by itself force every otherwise-mergeable PR to rebase
-or rerun its existing checks. Git merge conflicts and PR-head changes still
-need resolution and a fresh check; integration risks can require additional
-targeted tests.
-
-This branch-protection toggle **cannot be changed by editing workflow YAML**.
-Verify it in `Settings > Branches > main > Edit`, and do not claim that the
-repository is already in loose mode without verifying its effective settings.
+Keep the existing protection and required checks. Read the effective repository
+settings; workflow YAML and a permission-denied administration API cannot
+establish them. Do not change protection to shorten a validation cycle. Follow
+the single [merge procedure](../../docs/dev-workflow.md#5-ownership-and-merging):
+normally integrate `main` when protection requires it, a conflict exists or a
+relevant landed change requires verification, then validate that candidate.
+An unrelated main change does not justify a rebase or an invented up-to-date
+requirement. Missing external-check evidence is not a successful check or an
+exemption from its existing requirement.
 
 Do not skip the required gates, silently accept failed/skipped dependencies or
 publish from a red PR. The workflows bootstrap the trusted Nx selector from
 `origin/main` and the immutable base; documentation-only PRs still publish their required gate names.
 CI source changes are not classified as documentation-only.
+
+## Protected Cloudflare operations
+
+`cloudflare-operations.yml` is the public protected entry for existing private
+operator capabilities. It verifies the actual main workflow, owner and OIDC
+claims before source credential access, then verifies the selected private
+checkout belongs to canonical operations main before installing or importing it.
+The private driver independently checks source and original Cloud Services
+qualification before selecting provider credentials and the fixed operation.
+The three marketing emergency recovery actions instead require authenticated
+original resource or permit evidence before any resource write.
+
+The entry uses `cloudflare-runtime-release`, read-only repository-scoped source
+App tokens and a separate public Actions token. Marketing uses its own website
+token, selected independently of operations ownership. Provider locators, fixed
+request documents, raw reports and recovery records stay private. Public output contains
+the operation status and a checksum for evidence retained and read back from the
+existing private storage. The original private workflows and prior receipts stay
+intact during the transition; source checks do not establish runtime acceptance.
+
+Public operator drivers are checked out at immutable approved source revisions
+before installing their locked dependencies. Canary and daemon revisions come
+from fixed reviewed private request files; an absent canary request refuses the
+operation. Manual observation is separate from the original scheduled observer
+and private JIT runner; admitting one does not prove the others work.
 
 ## Official UI overlay
 
@@ -264,6 +415,29 @@ a frozen install on a miss. PRs do not upload dependency caches. See
 [cache boundaries and performance evidence](../../docs/ci/1765-optimizations.md).
 `ci-dependencies.yml` warms Desktop's Linux dependency key when install
 inputs change on main; dispatch it to repopulate evicted or changed-image keys.
+
+## Scheduled offline journeys and deployment route probes
+
+`nightly-journey.yml` runs `pnpm test:e2e:mvp --grep @journey` at 06:43 UTC
+and on manual dispatch, on `main` only. It uses a fresh local PostgreSQL 17
+`mikka_e2e` service and scripted LiteLLM, E2B, Slack and GitHub boundaries.
+It does not read model keys or create a preview database. The `@p0` tag
+identifies core journeys; it does not add browser execution to pull-request CI.
+
+The nightly job restores the official compiled renderer from the successful
+public service producer for its exact main source, using the normal Actions
+artifact token only during that read. It verifies the original web build and
+archive, compiles the local API/Eve, and reports the tested source separately
+from the actual reused web source and private overlay SHA. Missing exact-source
+publication fails the job. The evidence audit must pass before reports upload.
+This proves the local scripted composition, not a live model or deployment.
+
+`production-smoke.yml` resolves the API's serving source through the anonymous
+version endpoint and reads that immutable main commit's generated route list.
+Its route probe uses undeclared methods, checking dispatch status and `Allow`
+without credentials or business handlers; a missing route or 5xx fails before
+the existing account sign-in and capability-read smoke. Internal production
+rollout and flag deadlines follow the [production acceptance decision](../../docs/design/decisions/2026-11-20-1905-internal-production-acceptance.md).
 
 ## Engineering sandbox
 

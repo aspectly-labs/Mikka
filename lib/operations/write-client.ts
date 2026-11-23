@@ -15,7 +15,7 @@ export async function loadApprovedWriteAvailability(): Promise<boolean> {
     const result = await response.json()
     if (!response.ok || typeof result?.enabled !== 'boolean') throw new ApprovedWriteClientError()
     return result.enabled
-  } catch { throw new ApprovedWriteClientError() }
+  } catch (error) { throw Object.assign(new ApprovedWriteClientError(), { cause: error }) }
 }
 
 /** A notification only invalidates reads. A decision is sent once per explicit click. */
@@ -23,7 +23,7 @@ async function request(body: Record<string, unknown>, decision = false): Promise
   let response: Response
   try {
     response = await fetch(withBasePath('/api/approved-writes'), { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  } catch { throw new ApprovedWriteClientError(decision) }
+  } catch (error) { throw Object.assign(new ApprovedWriteClientError(decision), { cause: error }) }
   const result = await response.json().catch(() => null)
   if (!response.ok || !result || typeof result !== 'object' || Array.isArray(result)) {
     const disabled = response.status === 503 && result?.error === 'approvedWritesDisabled'

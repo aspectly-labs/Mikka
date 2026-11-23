@@ -243,6 +243,16 @@ test('task thread lists retain exact titles, summaries and privacy while details
     assert.deepEqual(snapshot.threads, work.threads)
     assert.equal(snapshot.threads.find(row => row.id === peerId)?.detail, null)
     assert.ok(snapshot.work?.presentation)
+    // The detail can opt into bounded activity without another client round trip;
+    // legacy callers above retain the list-position protocol.
+    const paged = await withActivitySession(owner, () => pollTaskDetail(issue, undefined, { paged: true }), workspace)
+    assert.ok(!paged.error && paged.taskWork)
+    assert.ok('hasMore' in paged.taskWork.activity)
+    const pageVersion = paged.taskWork.activity.version
+    const unchangedPage = await withActivitySession(owner, () => pollTaskDetail(issue, paged.version, { paged: true, version: pageVersion }), workspace)
+    assert.ok(!unchangedPage.error && unchangedPage.taskWork && 'unchanged' in unchangedPage.taskWork.activity && unchangedPage.taskWork.activity.unchanged)
+    const deniedPage = await withActivitySession(outsider, () => pollTaskDetail(issue, paged.version, { paged: true, version: pageVersion }), workspace)
+    assert.equal(deniedPage.error, 'issueNotFound')
     const forbidden = await readDetail(outsider, combined.value.version)
     assert.equal(forbidden.error, 'issueNotFound')
     assert.equal('taskWork' in forbidden, false)
@@ -394,7 +404,7 @@ test('thread identity reads keep owner-only, live membership and checkpoint beha
             queryShapes: result.reads.map(read => ({ tables: [...read.text.matchAll(/(?:from|join)\s+"?([a-z_]+)"?/gi)].map(match => match[1]), fields: read.fields })) }))
           sub.diagnostic(JSON.stringify({ read: 'thread-' + action + '-' + label, beforeResultBytes: baseline.reads[0].bytes, resultBytes: selected.bytes,
             selectQueries: result.reads.length, allResultBytes: result.reads.reduce((sum, read) => sum + read.bytes, 0), rowCount: selected.rows, fields: selected.fields }))
-          samples.push({ read: selected, route, expectedFields: action === 'find-issue' && issueId === null ? ['id', 'userId', 'issueId', 'workspaceId'] : ['id', 'userId'], baselineBytes: baseline.reads[0].bytes, scoped: result.reads.every(read => read.route === route), queries: result.reads.length, expectedQueries })
+          samples.push({ read: selected, route, expectedFields: action === 'find-issue' && issueId === null ? ['id', 'userId', 'workspaceId', 'issueId'] : ['id', 'userId', 'workspaceId'], baselineBytes: baseline.reads[0].bytes, scoped: result.reads.every(read => read.route === route), queries: result.reads.length, expectedQueries })
         }
       }
       for (const sample of samples) {

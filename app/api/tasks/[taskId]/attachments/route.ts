@@ -75,7 +75,7 @@ async function attachments(request: Request, context: Context) {
     return Response.json(await saveTaskFile(actor, { id, name, size }, bytes), { headers })
   } catch (error) {
     if (error instanceof ActionFailureError || error instanceof WorkspaceError) return failure('notFound', 404)
-    if (error instanceof TaskFileError) return failure(error.code, error.code === 'notFound' ? 404 : 409)
+    if (error instanceof TaskFileError) return failure(error.code, error.code === 'notFound' ? 404 : error.code === 'storage' ? 503 : 409)
     throw error
   }
 }

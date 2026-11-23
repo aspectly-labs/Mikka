@@ -39,7 +39,7 @@ async function respond(
           return (await githubUserToken(request.headers)).token;
         } catch (error) {
           if (error instanceof GitHubAccessError && error.code === "githubUnavailable")
-            throw new FactoryMergeRefused("githubUnavailable", null);
+            throw new FactoryMergeRefused("githubUnavailable", null, { cause: error });
           if (error instanceof GitHubAccessError) return null;
           throw error;
         }

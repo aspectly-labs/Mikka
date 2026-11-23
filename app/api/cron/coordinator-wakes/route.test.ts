@@ -4,15 +4,16 @@ import { before, beforeEach, mock, test } from 'node:test'
 let sweeps = 0
 let replays: string[] = []
 let fail = false
+let replayed = true
 const secret = 'synthetic-isolated-cron-secret'
 const eventId = '00000000-0000-4000-8000-000000000176'
 mock.module(new URL('../../../../lib/coordinator/wake.ts', import.meta.url).href, { namedExports: {
   retryCoordinatorWakes: async () => { sweeps++; if (fail) throw new Error('private-error-secret'); return { due: 3, started: 1, deferred: 1, failed: 1, exhausted: 0 } },
-  replayCoordinatorWake: async (id: string) => { replays.push(id); return true },
+  replayCoordinatorWake: async (id: string, signal: AbortSignal) => { assert.ok(signal instanceof AbortSignal); replays.push(id); if (fail) throw new Error('private-error-secret'); return replayed && !signal.aborted },
 } })
 let GET: typeof import('./route')['GET'], POST: typeof import('./route')['POST']
 before(async () => { ({ GET, POST } = await import('./route')) })
-beforeEach(() => { process.env.CRON_SECRET = secret; sweeps = 0; replays = []; fail = false })
+beforeEach(() => { process.env.CRON_SECRET = secret; sweeps = 0; replays = []; fail = false; replayed = true })
 const call = (method: 'GET' | 'POST', token: string | null = secret, body?: unknown) => {
   const request = new Request('http://127.0.0.1/mikka/api/cron/coordinator-wakes', {
     method, headers: token ? { authorization: `Bearer ${token}` } : {},
@@ -50,4 +51,14 @@ test('explicit replay accepts only an event UUID and leaves other events alone',
   assert.deepEqual(replays, [])
   assert.deepEqual(await (await call('POST', secret, { eventId })).json(), { replayed: true })
   assert.deepEqual(replays, [eventId])
+})
+test('a deferred replay reports false without changing the response shape', async () => {
+  replayed = false
+  const result = await call('POST', secret, { eventId })
+  assert.equal(result.status, 200)
+  assert.deepEqual(await result.json(), { replayed: false })
+  fail = true
+  const failed = await call('POST', secret, { eventId })
+  assert.equal(failed.status, 502)
+  assert.doesNotMatch(await failed.text(), /private-error-secret/)
 })

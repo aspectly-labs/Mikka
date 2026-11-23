@@ -21,12 +21,13 @@ import { settingsItemVisible } from '@/lib/settings-sidebar-search'
 import { SETTINGS_GROUPS, settingsHref, visibleSettingsSections, type SettingsGroup, type SettingsSectionId } from '@/lib/settings-sections'
 import { ResizablePane } from '@/components/ui/resizable-pane'
 import type { SettingsSidebarProps } from '@/components/slots/settings-sidebar-contract'
+import { useGatedFeature } from '@/hooks/use-feature-availability'
 
 const icons = {
   preferences: Settings, appearance: SlidersHorizontal, account: UserRound, security: Shield, notifications: Bell,
-  models: Gauge, environments: Folder, connections: Blocks, logins: KeyRound, developer: SquareTerminal, computers: Monitor,
-  instructions: Brain, threads: MessageSquareText, shortcuts: Keyboard, git: GitPullRequest, 'review-repositories': Folder, 'review-config': CircleCheck, activity: History,
-  general: Building2, 'issue-states': CircleDashed, members: Users, teams: SquareUserRound, permissions: ShieldCheck, secrets: HardDrive,
+  models: Gauge, environments: Folder, mcp: Blocks, connections: Blocks, logins: KeyRound, developer: SquareTerminal, computers: Monitor,
+  instructions: FileText, threads: MessageSquareText, shortcuts: Keyboard, git: GitPullRequest, memory: Brain, 'review-repositories': Folder, 'review-config': CircleCheck, activity: History,
+  general: Building2, 'issue-states': CircleDashed, 'team-skills': Brain, members: Users, teams: SquareUserRound, permissions: ShieldCheck, secrets: HardDrive,
   audit: FileText, organization: Landmark, usage: ChartColumn, billing: CreditCard, cloud: Cloud,
   referrals: Star, experiments: Lightbulb, 'cloud-credentials': Cloud,
 } satisfies Record<SettingsSectionId, IconGlyph>
@@ -35,6 +36,7 @@ const GROUP_TITLES = { personal: 'Personal', agent: 'Agent', review: 'Review', w
 
 export function SettingsSidebar({ section, activeSection, admin, personal = false, billing = true, cloudAdmin = false, organization = false, workspaceName, selectedTeamId, workspaceId, onSectionChange, onIntent, onRail }: SettingsSidebarProps) {
   const i18nText = useTranslations();
+  const memory = useGatedFeature('memory')
   const [query, setQuery] = useState('')
   const params = useSearchParams()
   const creating = params.get('create') === '1'
@@ -45,13 +47,13 @@ export function SettingsSidebar({ section, activeSection, admin, personal = fals
   // Recheck visibility changes before paint as well as route/team changes.
   useLayoutEffect(() => {
     contentRef.current?.querySelector('[aria-current="page"]')?.closest('[data-slot="sidebar-group"]')?.scrollIntoView({ block: 'nearest' })
-  }, [creating, section, selectedTeamId, teams.length, personal, admin, billing, cloudAdmin, organization])
+  }, [creating, section, selectedTeamId, teams.length, personal, admin, billing, cloudAdmin, organization, memory])
   const normalizedQuery = query.trim().toLowerCase()
   const joinedTeams = teams.filter(team => team.role && (!workspaceId || team.workspaceId === workspaceId) && `${team.name} ${team.identifier}`.toLowerCase().includes(normalizedQuery))
   const href = (id: SettingsSectionId) => settingsHref(id, workspaceId)
   const groups = SETTINGS_GROUPS.map(group => {
     const groupLabel = i18nText(`Settings.groups.${group}`)
-    const items = visibleSettingsSections({ admin, personal, billing, cloudAdmin, organization }).filter(item => item.group === group && settingsItemVisible({
+    const items = visibleSettingsSections({ admin, personal, billing, cloudAdmin, organization, memory }).filter(item => item.group === group && settingsItemVisible({
       query, groupTitle: GROUP_TITLES[group], groupLabel, itemTitle: item.title,
       label: i18nText.has(`Settings.sections.${item.id}.nav` as never) ? i18nText(`Settings.sections.${item.id}.nav` as never) : i18nText(`Settings.sections.${item.id}.title` as never),
       keywords: i18nText.has(`Settings.sections.${item.id}.keywords` as never) ? i18nText(`Settings.sections.${item.id}.keywords` as never) : '',

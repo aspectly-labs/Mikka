@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { SettingRow, SettingSelect, SettingsLoading, SettingsSaveError, SettingsSection } from '@/components/settings/primitives'
 import { useUiPreferences } from '@/hooks/settings/use-ui-preferences'
 import { settingItemPending, settingItemShown, withPendingSuffix } from '@/lib/settings-sections'
-import { UI_THEMES, type UiPreferences } from '@/lib/ui-preferences'
+import { resolvedColors, themeById, UI_THEMES, type UiPreferences } from '@/lib/ui-preferences'
 import { useTheme } from 'next-themes'
 
 const MODES = ['system', 'light', 'dark'] as const
@@ -35,9 +35,17 @@ export function AppearanceSettings() {
   if (prefs.denied) return <p role="status" className="text-sm text-muted-foreground">{t('noPermission')}</p>
   if (prefs.failed) return <SettingsSaveError message={t('unavailable')} retryLabel={common('retry')} onRetry={prefs.reload} />
   const { ui, save } = prefs
-  const accent = side === 'dark' ? ui.accentDark ?? ui.accent : ui.accent
-  const fill = side === 'dark' ? ui.fillDark ?? ui.fill : ui.fill
-  const foreground = side === 'dark' ? ui.foregroundDark ?? ui.foreground : ui.foreground
+  const colors = resolvedColors(ui)
+  const preset = themeById(ui.themeId)
+  const accent = side === 'dark' ? ui.accentDark ?? colors.accent : colors.accent
+  const fill = side === 'dark' ? ui.fillDark ?? colors.fill : colors.fill
+  const foreground = side === 'dark' ? ui.foregroundDark ?? colors.foreground : colors.foreground
+  const hasCustomColors = colors.accent !== preset.accent
+    || colors.fill !== preset.fill
+    || colors.foreground !== preset.foreground
+    || ui.accentDark !== null
+    || ui.fillDark !== null
+    || ui.foregroundDark !== null
   const pendingTag = t('pendingBadge')
   const myThemesPending = settingItemPending('appearance.myThemes')
   const dashboardBgPending = settingItemPending('appearance.dashboardBackground')
@@ -68,7 +76,7 @@ export function AppearanceSettings() {
       <div className="grid grid-cols-2 gap-2 p-4 min-[720px]:grid-cols-6">
         {UI_THEMES.map(theme => {
           const selected = ui.themeId === theme.id
-          return <Button key={theme.id} type="button" aria-pressed={selected} variant="outline" onClick={() => paint({ themeId: theme.id, accent: theme.accent, fill: theme.fill, foreground: theme.foreground })}
+          return <Button key={theme.id} type="button" aria-pressed={selected} variant="outline" onClick={() => paint({ themeId: theme.id, accent: theme.accent, fill: theme.fill, foreground: theme.foreground, accentDark: null, fillDark: null, foregroundDark: null, border: null })}
             className={cn('h-auto min-w-0 flex-col items-start gap-1.5 p-1.5 text-xs', selected && selectedFrame)}>
             <ThemeThumb fill={theme.fill} accent={theme.accent} foreground={theme.foreground} />
             {t(`theme_${theme.id}` as 'theme_mikka')}
@@ -76,15 +84,18 @@ export function AppearanceSettings() {
         })}
       </div>
     </SettingsSection>
-    <SettingsSection title={t('colors')} action={<div className="flex gap-1.5" role="radiogroup" aria-label={t('colors')}>
-      {(['light', 'dark'] as const).map(value => <Button key={value} type="button" role="radio" aria-checked={side === value} size="sm" variant={side === value ? 'secondary' : 'outline'} onClick={() => setSide(value)}>{t(value)}</Button>)}
+    <SettingsSection title={t('colors')} action={<div className="flex items-center gap-1.5">
+      {hasCustomColors && <Button type="button" variant="ghost" size="sm" onClick={() => paint({ accent: preset.accent, fill: preset.fill, foreground: preset.foreground, accentDark: null, fillDark: null, foregroundDark: null })}>{t('resetColors')}</Button>}
+      <div className="flex gap-1.5" role="radiogroup" aria-label={t('colors')}>
+        {(['light', 'dark'] as const).map(value => <Button key={value} type="button" role="radio" aria-checked={side === value} size="sm" variant={side === value ? 'secondary' : 'outline'} onClick={() => setSide(value)}>{t(value)}</Button>)}
+      </div>
     </div>}>
       <ColorRow label={t('accent')} value={accent} onChange={next => paint(side === 'dark' ? { accentDark: next } : { themeId: 'mikka', accent: next })} />
       <ColorRow label={t('surface')} value={fill} onChange={next => paint(side === 'dark' ? { fillDark: next } : { themeId: 'mikka', fill: next })} />
       <ColorRow label={t('foreground')} value={foreground} onChange={next => paint(side === 'dark' ? { foregroundDark: next } : { themeId: 'mikka', foreground: next })} />
     </SettingsSection>
     <Button type="button" variant="ghost" size="sm" className="self-start" aria-expanded={advanced} onClick={() => setAdvanced(open => !open)}>{t('advanced')}<ChevronRight data-icon /></Button>
-    {advanced ? <SettingsSection><ColorRow label={t('border')} value={ui.border ?? '#e5e5e5'} onChange={border => paint({ border })} /></SettingsSection> : null}
+    {advanced ? <SettingsSection action={ui.border !== null ? <Button type="button" variant="ghost" size="sm" onClick={() => paint({ border: null })}>{t('resetColors')}</Button> : undefined}><ColorRow label={t('border')} value={ui.border ?? '#e5e5e5'} onChange={border => paint({ border })} /></SettingsSection> : null}
     {settingItemShown('appearance.myThemes') && <SettingsSection title={t('explore')}>
       <SettingRow title={myThemesPending ? withPendingSuffix(t('exploreCard'), pendingTag) : t('exploreCard')} description={t('exploreHint')}>
         <ChevronRight className="text-muted-foreground" aria-hidden />

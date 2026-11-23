@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { after, afterEach, before, beforeEach, mock, test } from 'node:test'
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
+import type { ThreadScreenProps } from '../components/slots/thread-contract'
 import type { Root } from 'react-dom/client'
 import type { State } from 'swr'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -22,7 +23,7 @@ let draftText = ''
 let draftQuote: string | null = null
 let storedMessages: { id: string; text: string; at: Date; mine: boolean }[] = []
 let runContext: import('../lib/context-usage').ContextUsage | undefined
-let shownThread: import('../components/slots/thread-contract').ThreadScreenProps | undefined
+let shownThread: (ThreadScreenProps & { composer: ThreadScreenProps['composer'] & { model?: ReactNode } }) | undefined
 let pageChecks = 0
 let buildGate: Promise<boolean> | undefined
 let postReply = async (_request: { requestId: string; text: string }) => ({ sent: true })
@@ -90,7 +91,7 @@ mock.module(at('components/workspace/self-improvement.tsx'), { namedExports: { T
 type ComposerProps = { label: string; value: string; submitDisabled?: boolean; onSubmit: () => void; onChange: (value: string) => void }
 let composer: ComposerProps | null = null
 let replyCalls = 0
-mock.module(at('components/coordinator/chat-composer.tsx'), { namedExports: { ChatComposer: (props: ComposerProps) => {
+mock.module(at('components/coordinator/chat-composer.tsx'), { namedExports: { ChatComposerAttachment: () => null, ChatComposer: (props: ComposerProps) => {
   composer = props
   return <><textarea data-composer="" aria-label={props.label} value={props.value} onChange={event => props.onChange(event.currentTarget.value)} /><button data-composer-send="" disabled={props.submitDisabled}>Send</button></>
 } } })
@@ -99,7 +100,8 @@ mock.module(at('components/coordinator/chat-composer.tsx'), { namedExports: { Ch
 const { ChatComposer } = await import('../components/coordinator/chat-composer')
 mock.module(at('components/slots/thread.tsx'), { namedExports: {
   ThreadScreen: (props: import('../components/slots/thread-contract').ThreadScreenProps) => {
-    shownThread = props
+    // Keep the fixture's existing model projection as the contract moves that node into controls.
+    shownThread = { ...props, composer: { ...props.composer, model: props.composer.leftControls } }
     return <section data-required-thread-screen="">
       <div ref={props.scrollRef}><ol>{props.entries?.map(entry => <li key={entry.id} data-delivery-status={entry.role === 'person' ? entry.status : undefined}>
         {entry.role === 'person' ? <>{entry.attachments?.map(item => <span key={item.id} data-slot={item.id} aria-label={item.name}>{item.name}</span>)}{entry.body ?? entry.text}
@@ -127,13 +129,24 @@ const render = (props: Partial<Parameters<typeof IssueThreadPanel>[0]> = {}) => 
   <IssueThreadPanel bare issueId="issue-1" runId="run-1" onClose={() => {}} {...props} />
 </IntlProvider>)
 
+test('an explicitly opened run requires an owned detail read before exposing a composer', () => {
+  for (const read of [null, { ...base, ownedByCurrentUser: false }, { ...base, detail: null }]) {
+    thread = read
+    const html = render({ runId: 'outside-topology' })
+    assert.doesNotMatch(html, /data-composer=""/)
+  }
+  thread = { ...base }
+  assert.match(render({ runId: 'outside-topology' }), /data-composer=""/)
+  assert.equal(shownThread?.readOnly, false)
+})
+
 test('a recorded model stays available to the composer without a context estimate in the thread', () => {
   runContext = { used: 6, promptUsed: 6, promptBudget: 25_000, estimated: true, segments: [], unmeasured: [], model: null,
     compactAtTokens: null, windowTokens: null, composerModel: { selected: 'gpt-5.1', served: null } }
   try {
     const html = render({ issueId: null })
     assert.doesNotMatch(html, /data-slot="thread-context-usage"|25K/)
-    assert.match(renderToStaticMarkup(shownThread?.composer.model), /GPT-5\.1/)
+    assert.match(renderToStaticMarkup(shownThread?.composer.leftControls), /GPT-5\.1/)
   } finally {
     runContext = undefined
   }
@@ -682,4 +695,19 @@ test('a version with a lost confirmation or stale read-back keeps its request un
   assert.equal(refreshes, 1)
   assert.equal(ids.length, 5)
   assert.equal(new Set(ids).size, 1, 'each retry recovers the original operation')
+})
+
+test('the line under the person own messages shows only a time the message really has', () => {
+  // A valid send time shows; an unknown one shows nothing, never the thread start that at() falls back to (#2922).
+  storedMessages = [
+    { id: 'timed', text: 'Timed message.', at: new Date('2026-11-20T15:42:00Z'), mine: true },
+    { id: 'untimed', text: 'Untimed message.', at: new Date(Number.NaN), mine: true },
+  ]
+  thread = { ...base, createdAt: new Date('2026-11-20T15:00:00Z') }
+  const html = render()
+  const item = (words: string) => html.split('<li').find(part => part.includes(words)) ?? ''
+  assert.ok(item('Timed message.'), 'the timed message renders')
+  assert.ok(item('Untimed message.'), 'the untimed message still renders, only without a time')
+  assert.match(item('Timed message.'), /<time[^>]*dateTime="2026-11-20T15:42:00.000Z"/i)
+  assert.doesNotMatch(item('Untimed message.'), /<time/)
 })

@@ -1,5 +1,6 @@
 import type { AuditRow } from '@/lib/audit/events'
-import { pgTable, text, timestamp, uuid, varchar, primaryKey, unique, index, jsonb } from 'drizzle-orm/pg-core'
+import type { EnvironmentConfiguration } from '@/lib/project-resources/contracts'
+import { pgTable, text, timestamp, uuid, varchar, primaryKey, unique, index, jsonb, integer } from 'drizzle-orm/pg-core'
 
 export const workspaces = pgTable('mikka_workspaces', {
   id: uuid('id').primaryKey(),
@@ -53,3 +54,22 @@ export const workspaceAuditOutbox = pgTable('workspace_audit_outbox', {
   lastAttemptAt: timestamp('lastAttemptAt', { withTimezone: true }),
   deliveredAt: timestamp('deliveredAt', { withTimezone: true }),
 })
+
+/** Reusable execution environment in the Workspace database (DATABASE_URL). */
+export const workspaceEnvironments = pgTable('workspace_environments', {
+  id: uuid('id').primaryKey(),
+  workspaceId: uuid('workspaceId').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  configuration: jsonb('configuration').$type<EnvironmentConfiguration>().notNull(),
+  instructions: text('instructions').notNull().default(''),
+  defaultMachineSize: text('defaultMachineSize'),
+  revision: integer('revision').notNull().default(1),
+  archivedAt: timestamp('archivedAt', { withTimezone: true }),
+  createdBy: text('createdBy').notNull(),
+  updatedBy: text('updatedBy').notNull(),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [
+  unique().on(table.id, table.workspaceId),
+  index('workspace_environments_workspace_idx').on(table.workspaceId, table.archivedAt),
+])

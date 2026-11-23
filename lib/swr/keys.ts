@@ -33,6 +33,7 @@ export const issueKeys = {
   versions: (id: string) => ['versions', id] as const,
   activityVersions: (id: string) => ['issue-activity-versions', id] as const,
   connections: (id: string) => ['issue-connections', id] as const,
+  threads: (id: string) => ['issue-threads', id] as const,
   deleted: (id: string) => ['deleted-issue', id] as const,
   document: (id: string, clientId: number) => ['document-sync', id, clientId] as const,
 }
@@ -49,6 +50,7 @@ export const settingsKeys = {
   preferences: () => 'preferences' as const,
   personalRegistry: () => 'settings:personal' as const,
   workspaceRegistry: (id: string) => ['settings:workspace', id] as const,
+  personalSettings: (workspaceId: string) => `settings:personal:${workspaceId}` as const,
   password: () => 'account:password' as const,
   sessions: () => 'account:sessions' as const,
   savedLogins: () => 'account:saved-logins' as const,

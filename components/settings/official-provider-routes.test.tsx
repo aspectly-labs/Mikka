@@ -40,6 +40,7 @@ slot('settings-governance', { GovernancePlan: none, GovernanceUsage: none, Gover
 mock.module('../nav/use-save-bot', { namedExports: { useSaveBot: (workspaceId: string | undefined) => async (id: string, patch: unknown) => { writes.push({ workspaceId, id, patch }) } } })
 mock.module('./settings-sidebar', { namedExports: { SettingsSidebar: none } })
 mock.module('@/hooks/use-workspace', { namedExports: { useWorkspace: () => ({ data: workspace, error: readError }) } })
+mock.module('posthog-js', { defaultExport: { onFeatureFlags: () => () => {}, getFeatureFlag: () => undefined } })
 mock.module('@/i18n/navigation', { namedExports: { Link: identity, usePathname: () => '/settings', useRouter: () => ({}) } })
 // The inactive settings sections and computer surfaces have their own data and tests.
 for (const [path, exports] of Object.entries({
@@ -57,9 +58,14 @@ for (const [path, exports] of Object.entries({
   './privacy-settings': ['PrivacySettings'],
   './secrets-page': ['SecretsPage'],
   '../devices/devices-settings': ['DevicesSettings'],
+  './git-settings': ['GitSettings'],
+  './instructions-settings': ['InstructionsSettings'],
   './memory-settings': ['MemorySettings'],
+  './shortcuts-settings': ['ShortcutsSettings'],
+  './team-skills-settings': ['TeamSkillsSettings'],
   './notifications-settings': ['NotificationSettings'],
   './access-tokens-settings': ['AccessTokensSettings'],
+  './activity-settings': ['ActivitySettings'],
   './audit-log-settings': ['AuditLogSettings'],
   './usage-settings': ['UsageSettings'],
   './billing-settings': ['BillingSettings'],

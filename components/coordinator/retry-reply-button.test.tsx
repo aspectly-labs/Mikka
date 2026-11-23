@@ -18,13 +18,13 @@ let chatItems: import('@/lib/coordinator/context').ChatItem[] = []
 let chatError: string | null = null
 let chatEnabled = false
 let streamStatus: 'idle' | 'resuming' = 'idle'
+let streamError: Error | false = false
 let welcomeReply: unknown = { queued: true }
 let welcomeCalls = 0
 const modelPicks: (string | null)[] = []
 // A chat whose welcome failed: its read, the model menu's 可用, the refusal code and whether the tab is visible.
 let chatData: Record<string, unknown> | null = null
 let menu: unknown = undefined
-let refusalCode: string | null = null
 let visibility: 'visible' | 'hidden' = 'visible'
 let versionReads = 0
 let pageRefreshRequired = false
@@ -32,6 +32,7 @@ let pathname = '/mikka/en', search = ''
 let serverVersion: { build: string } = { build: 'fixture-current' }
 const notices: unknown[] = []
 const notes = [{ n: 1, kind: 'region' as const, url: 'https://example.com', label: 'fixture', note: 'keep this note', rect: { x: 0, y: 0, width: 1, height: 1, viewportWidth: 1, viewportHeight: 1 } }]
+let ThreadTranscript: typeof import('../slots/thread-transcript')['ThreadTranscript']
 let composer: { sending?: boolean; editableWhileSending?: boolean; value: string; onChange: (value: string) => void; onSubmit: () => void }
 const plain = ({ children }: { children?: ReactNode }) => <div>{children}</div>
 const nothing = () => null
@@ -41,15 +42,16 @@ mock.module(new URL('../../hooks/use-factory-questions.ts', import.meta.url).hre
   useFactoryQuestions: () => ({ questions: [], error: null, reload: nothing }),
 } })
 mock.module(new URL('../slots/thread.tsx', import.meta.url).href, { namedExports: {
-  ThreadScreen: (props: import('../slots/thread-contract').ThreadScreenProps) => {
+  ThreadScreen: (props: import('../slots/thread-contract').ThreadScreenProps | import('../slots/thread-contract').ThreadTranscriptScreenProps) => {
+    if ('transcript' in props) return <ThreadTranscript {...props} />
     composer = props.composer
     const { entries } = props
     return <div data-official-thread="">
-    {entries?.map(entry => entry.role === 'person' ? <div key={entry.id} data-testid={entry.status === 'failed' ? 'failed-message' : 'local-message'}>
+    {props.notices}{entries?.map(entry => entry.role === 'person' ? <div key={entry.id} data-testid={entry.status === 'failed' ? 'failed-message' : 'local-message'}>
       {entry.text}{entry.attachments?.map(item => <span key={item.id}>{item.name}</span>)}{entry.deliveryMessage}
       {entry.onRetry && <Button onClick={entry.onRetry}>Retry</Button>}
     </div> : <div key={entry.id}>{entry.parts.map((part, i) =>
-      part.kind === 'error' ? <span key={i}>{part.text}{part.actions}</span> : null)}</div>)}
+      part.kind === 'error' ? <span key={i} data-message-failure={part.failure}>{part.text}{part.actions}</span> : null)}</div>)}
   </div>
   },
 } })
@@ -66,9 +68,8 @@ mock.module(new URL('../../app/actions/coordinator.ts', import.meta.url).href, {
   welcomeCoordinator: async () => { welcomeCalls++; if (welcomeReply instanceof Error) throw welcomeReply; if (typeof welcomeReply === 'function') return welcomeReply(); return welcomeReply }, coordinatorCitationSources: async () => ({}),
 } })
 mock.module(new URL('../../app/actions/execution-settings.ts', import.meta.url).href, { namedExports: { getBotModelMenu: async () => ({}) } })
-mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}` } })
+mock.module('@/lib/intl/i18n-client', { namedExports: { useLocale: () => 'en', useFormatter: () => ({ dateTime: (value: Date) => value.toISOString() }), useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}` } })
 mock.module(new URL('../../lib/use-action-error.ts', import.meta.url).href, { namedExports: { useActionError: () => (key: string) => `Errors.${key}` } })
-mock.module(new URL('../../lib/billing/verification-client.ts', import.meta.url).href, { namedExports: { hostedRefusal: () => refusalCode } })
 mock.module(new URL('../../lib/app-build.ts', import.meta.url).href, { namedExports: {
   checkPageBuildBeforeAction: () => buildCheck(),
   markPageNeedsRefresh: () => { pageRefreshRequired = true }, pageNeedsRefresh: () => pageRefreshRequired, APP_BUILD: 'fixture-current', STALE_BUILD_EVENT: 'mikka:stale-build',
@@ -82,12 +83,12 @@ mock.module(new URL('../../lib/app-build.ts', import.meta.url).href, { namedExpo
   readAppVersion: async () => { versionReads++; return serverVersion },
 } })
 mock.module('@/lib/client-runtime/navigation', { namedExports: { usePathname: () => pathname, useSearchParams: () => new URLSearchParams(search) } })
-mock.module(new URL('../../i18n/navigation.ts', import.meta.url).href, { namedExports: { Link: plain, useRouter: () => ({ push: nothing }), usePathname: () => pathname } })
+mock.module(new URL('../../i18n/navigation.ts', import.meta.url).href, { namedExports: { Link: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>, useRouter: () => ({ push: nothing }), usePathname: () => pathname } })
 mock.module('sonner', { namedExports: { toast: Object.assign((...args: unknown[]) => { notices.push(args) }, { error: nothing }) } })
 mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
 mock.module(new URL('./use-coordinator-submit.ts', import.meta.url).href, { namedExports: { useCoordinatorSubmit: () => ({ submit: async (text: string, context?: { retryOf?: number }) => { submissions++; submitted.push({ text, context }); return { kind: 'accepted' } }, failureMessage: () => 'fixture failed' }) } })
-mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: [], error: false, reconnect: nothing, status: streamStatus, view: emptySessionView(), session: { sessionId: 'wrun_fixture' } }) } })
-mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposer: (props: { value: string; onChange: (value: string) => void; onSubmit: () => void; ref: Ref<HTMLTextAreaElement>; quote?: ReactNode }) => {
+mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: [], error: streamError, reconnect: nothing, status: streamStatus, view: emptySessionView(), session: { sessionId: 'wrun_fixture' } }) } })
+mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null, ChatComposer: (props: { value: string; onChange: (value: string) => void; onSubmit: () => void; ref: Ref<HTMLTextAreaElement>; quote?: ReactNode }) => {
   composer = props
   return <div>{props.quote}<Textarea ref={props.ref} value={props.value} onChange={event => props.onChange(event.target.value)} /><Button onClick={props.onSubmit}>fixture-send</Button></div>
 } } })
@@ -135,11 +136,12 @@ before(async () => {
   }
   ;({ createRoot } = await import('react-dom/client'))
   ;({ RetryReplyButton } = await import('./retry-reply-button'))
+  ;({ ThreadTranscript } = await import('../slots/thread-transcript'))
   ;({ CoordinatorChat } = await import('./coordinator-chat'))
   ;({ VersionGuard } = await import('../version-guard'))
   Object.defineProperty(browser.document, 'visibilityState', { configurable: true, get: () => visibility })
 })
-beforeEach(() => { streamStatus = 'idle'; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; refusalCode = null; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; scrollRequests = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
+beforeEach(() => { streamStatus = 'idle'; streamError = false; welcomeCalls = 0; welcomeReply = { queued: true }; chatData = null; menu = undefined; visibility = 'visible'; calls = 0; currentBuild = true; buildCheck = async () => currentBuild; submissions = 0; scrollRequests = 0; submitted.length = 0; chatItems = []; chatError = null; chatEnabled = false; modelPicks.length = 0; removedNotes = 0; versionReads = 0; pageRefreshRequired = false; pathname = '/mikka/en'; search = ''; serverVersion = { build: 'fixture-current' }; notices.length = 0; reply = { queued: true }; container = browser.document.createElement('div') as unknown as HTMLDivElement; document.body.append(container); root = createRoot(container) })
 afterEach(async () => { await act(async () => root.unmount()); container.remove() })
 after(() => browser.happyDOM.close())
 const render = async (onQueued = async () => {}) => { await act(async () => root.render(<RetryReplyButton botId={null} onQueued={onQueued} />)) }
@@ -161,6 +163,55 @@ for (const full of [true, false]) for (const live of [true, false]) test(`a ${li
   assert.deepEqual(modelPicks, ['fixture-bot'])
   assert.equal(calls, 0)
   assert.equal(submissions, 0)
+})
+
+for (const full of [true, false]) for (const live of [true, false]) test(`a ${live ? 'current' : 'historical'} missing model links settings in ${full ? 'full' : 'embedded'} chat without resending`, async () => {
+  chatEnabled = true
+  chatError = live ? 'executionModelUnknown' : null
+  chatItems = [{ id: 'fixture-no-model', position: 86, from: 'person', text: 'Start a cloud machine and print the Node.js version.', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z', failure: { kind: 'failed', reason: 'modelRequired' } }]
+  await act(async () => root.render(<CoordinatorChat embedded={full ? undefined : artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
+  const notice = container.querySelector(full ? '[data-official-thread]' : `[data-message-failure="${live ? 'live' : 'past'}"]`)!
+  assert.ok(notice)
+  assert.match(notice.textContent ?? '', /Coordinator.modelRequired/)
+  assert.equal((notice.textContent?.match(/Coordinator\.modelRequired/g) ?? []).length, 1)
+  assert.doesNotMatch(notice.textContent ?? '', /Coordinator.failedTitle|Common.retry|Coordinator.resend/)
+  assert.equal(notice.querySelector('a')?.getAttribute('href'), '/settings?section=models')
+  assert.equal(calls, 0)
+  assert.equal(submissions, 0)
+})
+
+for (const full of [true, false]) test(`a referenced subscription refusal keeps settings and Details in ${full ? 'full' : 'embedded'} chat`, async () => {
+  chatEnabled = true
+  chatError = 'reconnect_required · ref fixture-reference'
+  chatItems = [{ id: 'fixture-referenced-refusal', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z', failure: { kind: 'subscription', notice: 'reconnect', raw: chatError } }]
+  await act(async () => root.render(<CoordinatorChat embedded={full ? undefined : artifactChat} onOpenIssue={nothing} userId="fixture-owner" />))
+  const notice = container.querySelector('[data-subscription-refusal="reconnect"]')
+  assert.ok(notice)
+  assert.equal(notice.querySelector('a')?.getAttribute('href'), '/settings?section=models')
+  assert.doesNotMatch(notice.textContent ?? '', /Coordinator.resend|Common.retry/)
+  const details = container.querySelector('[data-slot="run-error-details"]')!
+  assert.ok(details)
+  await act(async () => (details.querySelector('button') as HTMLElement).click())
+  assert.match(details.textContent ?? '', /reconnect_required · ref fixture-reference/)
+  assert.equal(calls, 0)
+})
+
+for (const code of ['executionModelUnknown', 'HOOK_FAILED', 'HOOK_FAILED · ref fixture-reference']) test(`the failure code ${code} does not itself create composer load or unavailable warnings`, async () => {
+  chatEnabled = true
+  chatError = code
+  chatItems = [{ id: 'fixture-warning', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z', failure: code === 'executionModelUnknown' ? { kind: 'failed', reason: 'modelRequired' } : { kind: 'failed', raw: code } }]
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(container.querySelector('[data-chat-failure="load"]'), null)
+  assert.doesNotMatch(container.textContent ?? '', /Coordinator.unavailable/)
+})
+
+test('an unchanged native stream error and disabled chat reproduce the composer warnings without a model-required failure', async () => {
+  streamError = new Error('HOOK_FAILED')
+  chatItems = [{ id: 'fixture-disabled', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z', failure: { kind: 'failed', raw: 'HOOK_FAILED' } }]
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.ok(container.querySelector('[data-chat-failure="load"]'))
+  assert.match(container.textContent ?? '', /Coordinator.unavailable/)
+  assert.equal(welcomeCalls, 0)
 })
 
 for (const live of [true, false]) test(`a ${live ? 'current' : 'historical'} cloud quota refusal offers cloud billing without resending`, async () => {
@@ -193,6 +244,34 @@ test('a generic current reply failure retains its explicit retry action', async 
   await act(async () => notice.querySelector<HTMLButtonElement>('button')!.click())
   assert.equal(calls, 1)
   assert.deepEqual(modelPicks, [])
+})
+
+for (const state of ['live', 'welcome', 'welcome-empty', 'past'] as const) test(`the full chat keeps one ${state} failure marker with its existing recovery action`, async () => {
+  chatEnabled = true
+  chatError = state === 'past' ? null : 'model timed out'
+  chatItems = state === 'welcome-empty' ? [] : [{ id: 'fixture-failure', position: 7,
+    from: state === 'welcome' ? 'coordinator' : 'person', text: state === 'welcome' ? '' : 'retry this original message',
+    tools: [], threads: [], artifacts: [], createdAt: '2026-11-05T03:08:00Z',
+    ...(state === 'welcome' ? { welcome: true as const } : {}), failure: { kind: 'failed' } }]
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  const kind = state === 'welcome-empty' ? 'welcome' : state
+  const notice = container.querySelector(`[data-message-failure="${kind}"]`)
+  assert.ok(notice)
+  assert.equal(container.querySelectorAll('[data-message-failure]').length, 1, 'the historical notice is not marked again by its surrounding error line')
+  assert.match(notice.textContent ?? '', /Coordinator.failedTitle/)
+  const button = notice.querySelector<HTMLButtonElement>('button')!
+  assert.equal(button.textContent, state === 'past' ? 'Coordinator.resend' : 'Common.retry')
+  assert.equal(calls, 0)
+  assert.equal(submissions, 0)
+  await act(async () => button.click())
+  assert.equal(calls, state === 'past' ? 0 : 1)
+  assert.equal(submissions, state === 'past' ? 1 : 0)
+  if (state === 'past') {
+    assert.deepEqual(submitted, [{ text: 'retry this original message', context: {
+      retryOf: 7, botId: null, expectedOwnerId: 'fixture-owner', expectedWorkspaceId: undefined, notes: undefined, quote: undefined,
+    } }])
+    assert.equal(container.querySelector('[data-message-failure]'), null)
+  }
 })
 
 test('background chat catch-up preserves the reading position and an in-progress draft', async () => {
@@ -459,9 +538,52 @@ test('an idle page detects the new build on its minute probe and keeps the draft
 const welcomeFailed = (error = 'Error: verification_required') => {
   chatItems = [{ id: 'fixture-welcome', position: 1, from: 'coordinator', text: '', tools: [], threads: [], artifacts: [], createdAt: '2026-11-05T03:00:00Z', welcome: true, failure: { kind: 'hosted', code: 'verification_required' } }]
   chatData = { items: chatItems, enabled: true, working: false, error, artifacts: {} }
-  refusalCode = error.includes('verification_required') ? 'verification_required' : error
 }
 const chat = () => root.render(<CoordinatorChat embedded={artifactChat} onOpenIssue={nothing} userId="fixture-owner" />)
+
+test('a gated welcome shows model settings without looping, then starts once a model is chosen', async () => {
+  chatEnabled = true
+  welcomeReply = { queued: false, reason: 'modelRequired' }
+  menu = { current: { id: 'none', kind: 'none', available: false } }
+  await act(async () => chat())
+  await act(async () => chat())
+  assert.equal(welcomeCalls, 1)
+  assert.ok(container.querySelector('[data-chat-failure="model-required"]'))
+  assert.equal(container.querySelector('a')?.getAttribute('href'), '/settings?section=models')
+  assert.doesNotMatch(container.textContent ?? '', /Nav.writingWelcome|Coordinator.failedTitle|Coordinator.resend/)
+  welcomeReply = { queued: true }
+  menu = { current: { id: 'credits:fixture/model', kind: 'hosted', available: true } }
+  await act(async () => chat())
+  await act(async () => chat())
+  assert.equal(welcomeCalls, 2)
+  assert.equal(container.querySelector('[data-chat-failure="model-required"]'), null)
+  assert.equal(calls, 0)
+})
+
+test('a stored model-required welcome retries once after choosing a model', async () => {
+  chatItems = [{ id: 'fixture-model-welcome', position: 1, from: 'coordinator', text: '', tools: [], threads: [], artifacts: [], createdAt: '2026-11-05T03:00:00Z', welcome: true, failure: { kind: 'failed', reason: 'modelRequired' } }]
+  chatData = { items: chatItems, enabled: true, working: false, error: 'executionModelUnknown', artifacts: {} }
+  menu = { current: { id: 'none', kind: 'none', available: false } }
+  await act(async () => chat())
+  assert.equal(calls, 0)
+  menu = { current: { id: 'credits:fixture/model', kind: 'hosted', available: true } }
+  await act(async () => chat())
+  await act(async () => chat())
+  assert.equal(calls, 1)
+  assert.equal(welcomeCalls, 0)
+})
+
+test('a stale runnable menu cannot repeatedly submit a welcome refused for no model', async () => {
+  chatEnabled = true
+  welcomeReply = { queued: false, reason: 'modelRequired' }
+  menu = { current: { id: 'credits:fixture/model', kind: 'hosted', available: true } }
+  await act(async () => chat())
+  const attempts = welcomeCalls
+  await act(async () => chat())
+  await act(async () => chat())
+  assert.equal(welcomeCalls, attempts)
+  assert.ok(attempts <= 2)
+})
 
 test('a failed welcome shows on the Bot\'s side in the chat, not only above the composer', async () => {
   welcomeFailed()

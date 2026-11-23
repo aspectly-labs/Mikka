@@ -3,6 +3,7 @@ import { createAuthMiddleware } from 'better-auth/api'
 import { bearer, deviceAuthorization, multiSession, twoFactor } from 'better-auth/plugins'
 import { oauthProvider } from '@better-auth/oauth-provider'
 import { expo } from '@better-auth/expo'
+import { getAuthenticatorName, passkey } from '@better-auth/passkey'
 import { oAuthProxy, oneTimeToken } from 'better-auth/plugins'
 import { pool } from '@/lib/db'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
@@ -33,6 +34,8 @@ export const { github: githubEnabled, google: googleEnabled } = authSignInMethod
 export const authBaseURL = appOrigin
 const appleOptions = authAppleOptions(process.env)
 const proxyOptions = authOAuthProxyOptions(process.env)
+const trustedOrigins = authEffectiveTrustedOrigins(process.env)
+const passkeyOrigins = trustedOrigins.filter(origin => /^https?:\/\//.test(origin))
 export const oauthCallbackBaseURL = proxyOptions?.productionURL ?? authBaseURL
 const email = createAuthEmail({
   origin: authBaseURL ?? 'http://localhost:3000',
@@ -53,7 +56,10 @@ const authCompletion: BetterAuthPlugin = {
     // Better Auth applies before-hook header replacements after the whole chain.
     // Resolve through its fresh session API so both cookie and bearer identities
     // finish native normalization before this management authorization check.
-    before: [{ matcher: ctx => ['/two-factor/disable', '/two-factor/get-totp-uri', '/two-factor/generate-backup-codes'].includes(ctx.path ?? ''),
+    before: [{ matcher: ctx => [
+      '/two-factor/disable', '/two-factor/get-totp-uri', '/two-factor/generate-backup-codes',
+      '/passkey/generate-register-options', '/passkey/verify-registration', '/passkey/delete-passkey', '/passkey/update-passkey',
+    ].includes(ctx.path ?? ''),
       handler: createAuthMiddleware(async ctx => {
         const session = await auth.api.getSession({ headers: ctx.headers ?? ctx.request?.headers ?? new Headers(), query: { disableCookieCache: true } })
         if (session) {
@@ -123,11 +129,27 @@ export const auth = betterAuth({
       before: async user => ({ data: { ...user, image: user.image || newUserAvatar(user.name || user.email) } }),
       // Every person's first workspace is their personal one (decision 2026-11-02-1500). Loading any
       // workspace page creates it too, so a failure here only delays it.
-      after: async user => {
+      after: async (user, ctx) => {
         try {
           const { ensurePersonalWorkspace } = await import('@/lib/personal-workspace')
           await ensurePersonalWorkspace({ id: user.id, email: user.email, name: user.name }, 'zh-CN')
         } catch (error) { console.error('Personal workspace at sign-up failed', error instanceof Error ? error.name : 'UnknownError') }
+        // One completed registration, attributed to the validated first touch
+        // from the shared marketing/app cookie. Sign-ins and failed attempts
+        // never reach this hook.
+        try {
+          const { serverPostHog } = await import('@/lib/posthog-server')
+          const posthog = serverPostHog()
+          if (posthog) {
+            const { parseFirstTouch, firstTouchProperties } = await import('@/lib/first-touch')
+            const { isSmokeAccountEmail } = await import('@/lib/smoke-account')
+            posthog.capture({ distinctId: user.id, event: 'registration_completed', properties: {
+              app: 'mikka', environment: process.env.NODE_ENV,
+              ...firstTouchProperties(parseFirstTouch(ctx?.headers?.get('cookie'))),
+              ...(isSmokeAccountEmail(user.email) ? { test_account: true } : {}),
+            } })
+          }
+        } catch { /* analytics never blocks sign-up */ }
       },
     } },
     account: {
@@ -158,7 +180,7 @@ export const auth = betterAuth({
   emailAndPassword: email.emailAndPassword,
   emailVerification: email.emailVerification,
   rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(process.env) }, storage: 'database' },
-  trustedOrigins: authEffectiveTrustedOrigins(process.env),
+  trustedOrigins,
   // Makes the app an OAuth 2.1 server so agents (Claude Code, Codex…) can sign
   // in to the MCP server at /api/mcp as the person. Clients register
   // themselves (RFC 7591) and use PKCE; access tokens are opaque and hashed in
@@ -167,6 +189,17 @@ export const auth = betterAuth({
     enterpriseIdentityModels,
     enterpriseSso(),
     twoFactor({ issuer: 'Mikka', allowPasswordless: true }),
+    passkey({
+      rpName: 'Mikka',
+      rpID: authBaseURL ? new URL(authBaseURL).hostname : undefined,
+      ...(passkeyOrigins.length ? { origin: passkeyOrigins } : {}),
+      registration: {
+        afterVerification: ({ verification }) => {
+          const provider = getAuthenticatorName(verification.registrationInfo?.aaguid)
+          return provider ? { name: provider } : undefined
+        },
+      },
+    }),
     authCompletion,
     bearer(),
     ...(proxyOptions ? [oAuthProxy(proxyOptions)] : []),

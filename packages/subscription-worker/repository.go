@@ -147,12 +147,19 @@ func (r *Repository) Publish(ctx context.Context, o Operation, name, digest, acc
 	}
 	return nil
 }
-func (r *Repository) Fail(ctx context.Context, o Operation, code string) error {
+// codedText stores the code (detail) serialization CodedError writes on the Node side.
+func codedText(code, detail string) string {
+	if detail == "" {
+		return code
+	}
+	return code + " (" + detail + ")"
+}
+func (r *Repository) Fail(ctx context.Context, o Operation, code, detail string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Pending publications remain recoverable. A new refresh must never replay
 	// a rotating grant whose previous outcome is uncertain.
-	_, err := r.DB.ExecContext(ctx, `update byos_connections set state=case when state='publication_pending' then state else 'reconnect_required' end,"lastErrorCode"=$8,"updatedAt"=now() where id=$1 and "ownerId"=$2 and "workspaceId"=$3 and provider=$4 and epoch=$5 and "credentialVersion"=$6 and "operationId"=$7`, o.ConnectionID, o.OwnerID, o.WorkspaceID, o.Provider, o.Epoch, o.Version, o.OperationID, code)
+	_, err := r.DB.ExecContext(ctx, `update byos_connections set state=case when state='publication_pending' then state else 'reconnect_required' end,"lastErrorCode"=$8,"updatedAt"=now() where id=$1 and "ownerId"=$2 and "workspaceId"=$3 and provider=$4 and epoch=$5 and "credentialVersion"=$6 and "operationId"=$7`, o.ConnectionID, o.OwnerID, o.WorkspaceID, o.Provider, o.Epoch, o.Version, o.OperationID, codedText(code, detail))
 	if err != nil {
 		return ErrDatabase
 	}
