@@ -347,7 +347,7 @@ async function readableThread(issueId: string | null, runId: string, columns: Th
     try {
       return await readableThreadSelect(binding.issueId, runId, columns)
     } catch (error) {
-      if (error instanceof ActionFailureError && error.code === 'issueNotFound') throw new ActionFailureError('runNotFound')
+      if (error instanceof ActionFailureError && error.code === 'issueNotFound') throw new ActionFailureError('runNotFound', undefined, undefined, { cause: error })
       throw error
     }
   }
