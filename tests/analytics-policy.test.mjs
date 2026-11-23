@@ -205,8 +205,11 @@ test('the active Vite web entry initializes PostHog and the shared application m
   // PostHog starts after first paint: the runtime only schedules it, and posthog-js is never a static client import.
   assert.match(source('instrumentation-client.ts'), /if \(posthogConfig\.token\) loadPostHogAfterIdle\(window\)/)
   assert.match(source('lib/analytics/posthog.ts'), /import\('posthog-js'\), import\('\.\/posthog-init'\)/)
-  for (const file of ['instrumentation-client.ts', 'components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'hooks/use-approval-live.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts'])
-    assert.doesNotMatch(source(file), /from 'posthog-js'/, file)
+  // The UI moved to the private layer (decision 2026-11-22-2205): check its copy when it is checked out.
+  for (const file of ['instrumentation-client.ts', 'components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'hooks/use-approval-live.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
+    const path = [file, `.hosted-ui/web/${file}`].find(candidate => existsSync(new URL(`../${candidate}`, import.meta.url)))
+    if (path) assert.doesNotMatch(source(path), /from 'posthog-js'/, file)
+  }
   assert.match(source('lib/analytics/posthog-init.ts'), /posthog\.init\(posthogConfig\.token/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_pageview: false/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_unhandled_errors: true/)
