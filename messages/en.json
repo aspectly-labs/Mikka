@@ -3353,7 +3353,7 @@
       "machineSleep": "Sleep machine",
       "machineWake": "Wake machine",
       "machineKeepAwake": "Keep awake",
-      "keepAwakeHint": "Sleeps after 15 min idle · billed while awake",
+      "keepAwakeHint": "Sleeps after 2 min idle · billed while awake",
       "runSetupAgain": "Run setup again",
       "moveToCloud": "Move to cloud",
       "moveToDevice": "Move to a device",

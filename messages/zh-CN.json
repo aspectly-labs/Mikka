@@ -3353,7 +3353,7 @@
       "machineSleep": "休眠机器",
       "machineWake": "唤醒机器",
       "machineKeepAwake": "保持唤醒",
-      "keepAwakeHint": "闲置 15 分钟后休眠 · 唤醒期间计费",
+      "keepAwakeHint": "闲置 2 分钟后休眠 · 唤醒期间计费",
       "runSetupAgain": "重新运行初始化",
       "moveToCloud": "移到云端",
       "moveToDevice": "移到设备",

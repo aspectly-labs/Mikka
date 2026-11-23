@@ -7,6 +7,7 @@ import { useTranslations } from '@/lib/intl/i18n-client'
 import { useThreadMachine, useThreadMachineDetail } from '@/hooks/use-thread-run-reads'
 import { listDevices, pauseOrResumeThreadMachine, rerunThreadMachineSetup, setThreadMachineKeepAwake, moveThreadToTarget } from '@/app/actions/agents'
 import { cloudShortId, machineDot, type ThreadMachine } from '@/lib/thread-machine'
+import { runIsActive } from '@/lib/issue-run-conversation'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -53,7 +54,18 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
   const m = machine.data
   const d = detail.data
   const Icon = KIND_ICONS[m?.kind ?? 'cloud'] ?? Cloud
-  const asleep = m ? machineDot(m.state) !== 'running' : false
+  const running = m ? machineDot(m.state) === 'running' : false
+  // Runtime admission: pause/resume/refresh_runtime need a cloud machine row, wake
+  // rejects a finished E2B run and setup rejects an active one — and the sponsored
+  // provider reconciles its machines outside the idle-sleep branch keepAwake guards.
+  const isCloud = m?.kind === 'cloud'
+  const sponsored = d?.spec.snapshotId === 'cloudflare-task-v1'
+  const terminal = ['succeeded', 'failed', 'stopped', 'cancelled'].includes(status)
+  const showPower = isCloud && (running || m?.state === 'paused')
+  const showSetup = isCloud && terminal
+  const showKeepAwake = isCloud && !sponsored
+  // Moving a run whose worker is still live breaks its device-bound completion.
+  const movable = !(runIsActive(status) && running)
   const refresh = () => { void machine.mutate(); void detail.mutate() }
   const act = (fn: () => Promise<unknown>, failKey: string) => startTransition(async () => {
     try { await fn(); refresh() } catch { toast.error(t(failKey)) }
@@ -81,58 +93,66 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
                   {m.kind === 'cloud'
                     ? `${t('cloud')} · ${m.cloud?.sandboxId ? cloudShortId(m.cloud.sandboxId) : ''}`
                     : m.hostname ?? m.name}
-                  {' · '}{t(machineDot(m.state) === 'running' ? 'awake' : 'asleep')}
+                  {' · '}{t(running ? 'awake' : 'asleep')}
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => router.push(settingsHref('computers'))}>
                 <Plus aria-hidden="true" className="size-4" />{t('addMachine')}
               </DropdownMenuItem>
             </DropdownMenuGroup>
-            <DropdownMenuSeparator />
+            {(showPower || showSetup || showKeepAwake) && <DropdownMenuSeparator />}
             <DropdownMenuGroup>
-              <DropdownMenuItem disabled={pending} onSelect={() => act(() => pauseOrResumeThreadMachine(issueId, runId, asleep ? 'resume' : 'pause'), asleep ? 'wakeFailed' : 'sleepFailed')}>
-                {asleep ? <Sun aria-hidden="true" className="size-4" /> : <Moon aria-hidden="true" className="size-4" />}
-                {t(asleep ? 'machineWake' : 'machineSleep')}
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={pending} onSelect={() => act(() => rerunThreadMachineSetup(issueId, runId), 'setupFailed')}>
-                <RefreshCw aria-hidden="true" className="size-4" />{t('runSetupAgain')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={event => event.preventDefault()}
-                className="flex items-center justify-between gap-3">
-                <span className="flex flex-col gap-0.5">
-                  <span className="flex items-center gap-2">{t('machineKeepAwake')}</span>
-                  <span className="text-xs text-muted-foreground">{t('keepAwakeHint')}</span>
-                </span>
-                <Switch
-                  checked={d?.keepAwake ?? false}
-                  disabled={pending || !d}
-                  onCheckedChange={checked => act(() => setThreadMachineKeepAwake(issueId, runId, checked), 'keepAwakeFailed')}
-                />
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              {m.kind !== 'cloud' && (
-                <DropdownMenuItem disabled={pending} onSelect={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: 'cloud' }), 'moveFailed')}>
-                  <Cloud aria-hidden="true" className="size-4" />{t('moveToCloud')}
+              {showPower && (
+                <DropdownMenuItem disabled={pending} onSelect={() => act(() => pauseOrResumeThreadMachine(issueId, runId, running ? 'pause' : 'resume'), running ? 'sleepFailed' : 'wakeFailed')}>
+                  {running ? <Moon aria-hidden="true" className="size-4" /> : <Sun aria-hidden="true" className="size-4" />}
+                  {t(running ? 'machineSleep' : 'machineWake')}
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <Monitor aria-hidden="true" className="size-4" />{t('moveToDevice')}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  {(devices ?? []).filter(device => device.id !== d?.spec.deviceId).map(device => (
-                    <DropdownMenuItem key={device.id} disabled={pending}
-                      onSelect={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: device.id }), 'moveFailed')}>
-                      <Laptop aria-hidden="true" className="size-4" />{device.name}
-                    </DropdownMenuItem>
-                  ))}
-                  {devices && devices.length === 0 && <DropdownMenuItem disabled>{t('noDevices')}</DropdownMenuItem>}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+              {showSetup && (
+                <DropdownMenuItem disabled={pending} onSelect={() => act(() => rerunThreadMachineSetup(issueId, runId), 'setupFailed')}>
+                  <RefreshCw aria-hidden="true" className="size-4" />{t('runSetupAgain')}
+                </DropdownMenuItem>
+              )}
+              {showKeepAwake && (
+                <DropdownMenuItem
+                  onSelect={event => event.preventDefault()}
+                  className="flex items-center justify-between gap-3">
+                  <span className="flex flex-col gap-0.5">
+                    <span className="flex items-center gap-2">{t('machineKeepAwake')}</span>
+                    <span className="text-xs text-muted-foreground">{t('keepAwakeHint')}</span>
+                  </span>
+                  <Switch
+                    checked={d?.keepAwake ?? false}
+                    disabled={pending || !d}
+                    onCheckedChange={checked => act(() => setThreadMachineKeepAwake(issueId, runId, checked), 'keepAwakeFailed')}
+                  />
+                </DropdownMenuItem>
+              )}
             </DropdownMenuGroup>
+            {movable && <DropdownMenuSeparator />}
+            {movable && (
+              <DropdownMenuGroup>
+                {m.kind !== 'cloud' && (
+                  <DropdownMenuItem disabled={pending} onSelect={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: 'cloud' }), 'moveFailed')}>
+                    <Cloud aria-hidden="true" className="size-4" />{t('moveToCloud')}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Monitor aria-hidden="true" className="size-4" />{t('moveToDevice')}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {(devices ?? []).filter(device => device.id !== d?.spec.deviceId).map(device => (
+                      <DropdownMenuItem key={device.id} disabled={pending}
+                        onSelect={() => act(() => moveThreadToTarget(issueId, runId, { deviceId: device.id }), 'moveFailed')}>
+                        <Laptop aria-hidden="true" className="size-4" />{device.name}
+                      </DropdownMenuItem>
+                    ))}
+                    {devices && devices.length === 0 && <DropdownMenuItem disabled>{t('noDevices')}</DropdownMenuItem>}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuGroup>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

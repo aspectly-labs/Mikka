@@ -241,6 +241,14 @@ export async function moveThread(user: ApiUser, runId: string, target: { deviceI
   if (!source) return null
   const root = await rootRunId(user, runId)
   if (!root) return null
+  // A live worker's completion credential is bound to its device; moving while
+  // it runs rejects the completion. Re-targeting pending or parked work is the
+  // use case, so only an awake machine with an active run blocks the move.
+  const { rows: [busy] } = await pool.query(
+    `${CHAIN_SQL} SELECT 1 FROM agent_runs r LEFT JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=r."userId"
+     WHERE r.id IN (SELECT id FROM chain) AND r.status IN ('queued','preparing','running','waiting_input','finishing')
+     AND COALESCE(m.state,'running') IN ('online','running','starting','restore') LIMIT 1`, [root])
+  if (busy) return null
   // Execution moves with the thread: every run in the chain, not just the root.
   if (target.deviceId === 'cloud') {
     await pool.query(`${CHAIN_SQL} UPDATE agent_runs SET "deviceId"=NULL,"deviceRepoId"=NULL,"machineAuthority"=true WHERE id IN (SELECT id FROM chain)`, [root])
