@@ -34,7 +34,7 @@ export function buildGraph(root = process.cwd(), tasks = defaultTasks) {
     let base
     if (spec.startsWith('.')) base = posix.normalize(posix.join(posix.dirname(file), spec))
     else if (spec.startsWith('@/')) base = (file.startsWith('apps/mobile/') ? 'apps/mobile/' : '') + spec.slice(2)
-    else if (spec.startsWith('@ui-slot/')) base = `components/slots/${spec.slice(9)}`
+    else if (spec.startsWith('@ui-slot/')) base = `${file.startsWith('apps/mobile/') ? 'apps/mobile/slots' : 'components/slots'}/${spec.slice(9)}`
     else {
       const pkg = packages.find(p => spec === p.name || spec.startsWith(`${p.name}/`))
       if (!pkg) return [] // External modules are covered by global lockfile inputs.

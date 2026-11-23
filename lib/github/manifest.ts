@@ -2,7 +2,7 @@ import 'server-only'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
 import { secretsKey } from '@/lib/secrets/crypto'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 import { GitHubAppSetupError, validateGitHubAppCredentials, type GitHubAppCredentials, type GitHubAppQuery } from './app-config'
 
 export const GITHUB_MANIFEST_COOKIE = 'mikka-github-app-manifest'

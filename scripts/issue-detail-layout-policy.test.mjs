@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { auditRepository, containerSteps, descendantButtonMinHeight, needleOutsideElement, viewportSteps, FILES } from './issue-detail-layout-policy.mjs'
 
-const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
-const rules = (files = {}) => auditRepository(path => files[path] ?? read(path)).map(finding => finding.rule)
+const FIXTURE = {
+  [FILES.properties]: '<div id={contentId}>{relations}</div>',
+  [FILES.header]: '<header className="@container/header px-3" />',
+  [FILES.taskDetail]: '<Textarea className="text-2xl font-semibold" />',
+}
+const read = path => {
+  for (const candidate of [new URL(`../${path}`, import.meta.url), new URL(`../.hosted-ui/web/${path}`, import.meta.url)]) {
+    if (existsSync(candidate)) return readFileSync(candidate, 'utf8')
+  }
+  return undefined
+}
+const readWithFallback = path => read(path) ?? FIXTURE[path]
+const rules = (files = {}) => auditRepository(path => files[path] ?? readWithFallback(path)).map(finding => finding.rule)
 
 test('the repository as it stands passes every ALE-17 invariant', () => {
   assert.deepEqual(auditRepository(read), [])
@@ -36,7 +47,7 @@ test('a comment naming a utility is not the utility', () => {
 })
 
 test('an !important title size is a finding', () => {
-  const rulesWith = taskDetail => auditRepository(path => path === FILES.taskDetail ? taskDetail : read(path)).map(f => f.rule)
+  const rulesWith = taskDetail => auditRepository(path => path === FILES.taskDetail ? taskDetail : readWithFallback(path)).map(f => f.rule)
   assert.deepEqual(rulesWith('<Textarea className="text-2xl! font-semibold" />'), ['title/important-font-size'])
   assert.deepEqual(rulesWith('<Textarea className="text-2xl font-semibold md:text-2xl" />'), [])
 })

@@ -5,7 +5,7 @@ import { auditActionBindings, auditInteractions } from './interaction-policy.mjs
 import { auditSettingsSurface } from './settings-policy.mjs'
 import { auditIconButtons } from './icon-button-policy.mjs'
 import { auditBasePath } from './base-path-policy.mjs'
-import { auditEntityDetail, auditTaskEntry, verifyEntityContracts } from './entity-ui-policy.mjs'
+import { auditEntityDetail, auditTaskEntry, resolveEntityFile, verifyEntityContracts } from './entity-ui-policy.mjs'
 import { auditSplitPanes } from './split-pane-policy.mjs'
 import { auditControlSizes } from './control-size-policy.mjs'
 import { auditMotion } from './motion-policy.mjs'
@@ -16,7 +16,9 @@ const policy = JSON.parse(readFileSync('ui-policy.json', 'utf8'))
 const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\0')
 const files = tracked.filter(file => /\.(?:[cm]?[jt]sx?|css)$/.test(file) && !/^(?:apps|packages|scripts|node_modules|\.next|\.vercel|out|build|user_read_only_context|v0_memories|\.claude)\//.test(file) && !file.endsWith('.d.ts') && existsSync(file))
 const diagnostics = verifyEntityContracts(file => {
-  try { return readFileSync(file, 'utf8') } catch (error) { if (error.code !== 'ENOENT') throw error }
+  const resolved = resolveEntityFile(file)
+  if (!resolved) return undefined
+  return readFileSync(resolved, 'utf8')
 })
 const config = JSON.parse(readFileSync('components.json', 'utf8'))
 if (config.style !== policy.style || config.iconLibrary !== policy.iconLibrary.replace('-react', '')) diagnostics.push({ file: 'components.json', line: 1, column: 1, rule: 'policy/config-drift', message: '组件 base/style/iconLibrary 与 ui-policy.json 不一致；变更预设需同步审核策略。' })

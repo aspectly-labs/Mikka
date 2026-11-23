@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { factInput, parseFacts } from './facts'
 import { memoryTargetUrl, notificationMemorySource, notificationSourceUrl, suggestionSourceId } from './provenance'
-import { readLocation } from '@/components/workspace/workspace-navigation'
+import { readLocation } from '@/lib/workspace-navigation'
 import { BASE_PATH } from '@/lib/base-path'
 
 const id = '10000000-0000-4000-8000-000000000001'

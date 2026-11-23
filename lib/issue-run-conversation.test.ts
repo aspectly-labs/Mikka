@@ -103,9 +103,11 @@ test('summary provenance preserves the exact report, error fallback and empty di
     { summary: 'Fixed the login loop.', summarySource: 'report' })
 })
 
-test('the issue thread list reads on its live key, never on a timer', async () => {
-  const { readFileSync } = await import('node:fs')
-  const source = readFileSync('components/workspace/issue-threads.tsx', 'utf8')
+test('the issue thread list reads on its live key, never on a timer', async t => {
+  const { existsSync, readFileSync } = await import('node:fs')
+  const file = '.hosted-ui/web/components/workspace/issue-threads.tsx'
+  if (!existsSync(file)) { t.skip('.hosted-ui not checked out'); return }
+  const source = readFileSync(file, 'utf8')
   assert.match(source, /useLiveKey\('issue_threads',/)
   assert.doesNotMatch(source, /refreshInterval/)
 })

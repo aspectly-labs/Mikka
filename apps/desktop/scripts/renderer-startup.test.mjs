@@ -28,8 +28,8 @@ async function fixture(t, pathname = '/mikka') {
     tsconfig: join(repository, 'apps/desktop/tsconfig.renderer.json'),
     define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '"/mikka"', 'process.env': '{}' },
     plugins: [{ name: 'local-workspace-module-fixture', setup(builder) {
-      builder.onResolve({ filter: /^\.\/workspace$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-fixture' } : undefined)
-      builder.onLoad({ filter: /.*/, namespace: 'startup-fixture' }, () => ({ contents: 'globalThis.__workspaceImported++; export default function Workspace() { globalThis.__workspaceRendered++; return null }', loader: 'js' }))
+      builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-fixture' } : undefined)
+      builder.onLoad({ filter: /.*/, namespace: 'startup-fixture' }, () => ({ contents: 'globalThis.__workspaceImported++; export function Workspace() { globalThis.__workspaceRendered++; return null }', loader: 'js' }))
     } }],
   })
   const module = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}#${++imports}`)

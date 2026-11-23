@@ -1,5 +1,18 @@
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
+
+const PUBLIC_WEB_FILES = new Set(['components/plugins/connected-apps.tsx'])
+export const isMovedWebFile = file => /^(?:components|hooks)\//.test(file) && !PUBLIC_WEB_FILES.has(file)
+export const resolveEntityFile = (file, root = '.') => {
+  const direct = path.join(root, file)
+  if (existsSync(direct)) return direct
+  if (isMovedWebFile(file)) {
+    const hosted = path.join(root, '.hosted-ui/web', file)
+    if (existsSync(hosted)) return hosted
+  }
+  return null
+}
 
 // Public business operations, their authorized sources, and the detail components
 // permitted to present them. "adapters" reuse an operation or represent it natively.
@@ -112,13 +125,14 @@ export function auditEntityDetail(file, text) {
   return violations
 }
 
-export function verifyEntityContracts(read) {
+export function verifyEntityContracts(read, root = process.cwd()) {
   const diagnostics = []
   for (const contract of entityContracts) {
     for (const [file] of contract.routes ?? []) if (read(file) === undefined) diagnostics.push({ file, line: 1, column: 1,
       rule: 'entity/native-detail-route', message: `${contract.entity} requires its registered native detail route.` })
     for (const [file, ...names] of [contract.detail, ...(contract.adapters ?? []), ...contract.sources].filter(Boolean)) {
       const text = read(file)
+      if (text === undefined && isMovedWebFile(file) && resolveEntityFile(file, root) === null) continue
       const actual = new Set(text === undefined ? [] : declarations(sourceFile(file, text)).filter(item => item.exported).map(item => item.name))
       for (const name of names) if (!actual.has(name)) diagnostics.push({ file, line: 1, column: 1,
         rule: 'entity/contract-export', message: `${contract.entity} requires the declared export ${name}.` })
@@ -138,7 +152,7 @@ function visit(node, callback) {
 }
 
 function importsTaskDetail(file, specifier) {
-  const module = specifier.startsWith('.') ? path.posix.join(path.posix.dirname(file), specifier) : specifier.replace(/^@\//, '')
+  const module = specifier.startsWith('.') ? path.posix.join(path.posix.dirname(file), specifier) : specifier.replace(/^(?:@\/|@hosted\/web\/)/, '')
   return module.replace(/\.tsx?$/, '') === taskDetail.replace(/\.tsx$/, '')
 }
 

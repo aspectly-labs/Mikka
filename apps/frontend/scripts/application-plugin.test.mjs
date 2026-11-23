@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, relative, resolve, sep } from 'node:path'
 import test from 'node:test'
 import postcss from 'postcss'
-import { repository } from './application-plugin.mjs'
+import { build } from 'vite'
+import { applicationPlugin, repository } from './application-plugin.mjs'
 import { compileApplication as compile } from './application-test-build.mjs'
 import { sharedStylePlugins } from './shared-styles.mjs'
 
@@ -109,24 +111,79 @@ test('official Web and Desktop require the registered providers and link their m
       else process.env[key] = value
     }
   })
-  const consumer = 'import * as slot from "@ui-slot/task-detail"; export const detail = slot.TaskDetailFrame ?? "alternate"'
-  await writeFile(join(dir, 'slots/task-detail.tsx'), 'export {}')
+  const consumer = 'import * as slot from "@ui-slot/workspace-entry"; export const workspace = slot.Workspace ?? "alternate"'
+  await writeFile(join(dir, 'slots/workspace-entry.tsx'), 'export {}')
   for (const target of ['web', 'desktop']) await assert.rejects(compile(consumer, target), /MISSING_EXPORT|not exported/)
-  await writeFile(join(dir, 'slots/task-detail.tsx'), 'export const TaskDetailFrame = "official"')
+  await writeFile(join(dir, 'slots/workspace-entry.tsx'), 'export const Workspace = "official"')
   for (const target of ['web', 'desktop']) assert.match((await compile(consumer, target)).code, /official/)
 
   const entry = 'import "mikka:frontend-runtime"; export const ready = true'
   const platformRuntime = ['apps/frontend/src/web/runtime.ts', 'apps/desktop/src/renderer/installed-startup.ts'].map(file => resolve(repository, file))
-  for (const name of PUBLIC_CONTRACT_SLOTS) {
+  for (const name of UI_SLOTS) {
     await rm(join(dir, 'slots', name + '.tsx'))
     for (const target of ['web', 'desktop']) {
       await assert.rejects(compile(entry, target, platformRuntime), { message: 'UI_OVERLAY_SLOT_REQUIRED: ' + name })
     }
     await writeProvider(name)
   }
-  const unusedProvider = join(dir, 'slots/settings-usage.tsx')
-  await writeFile(unusedProvider, 'export type UsagePage = string')
+  assert.deepEqual([...PUBLIC_CONTRACT_SLOTS], ['auth-sso'])
+  const unusedProvider = join(dir, 'slots/workspace-entry.tsx')
+  await writeFile(unusedProvider, 'export type Workspace = string')
   for (const target of ['web', 'desktop']) await assert.rejects(compile(entry, target, platformRuntime), /MISSING_EXPORT|not exported/)
-  await writeFile(unusedProvider, 'globalThis.unusedProviderSideEffect = 1; export const UsagePage = "unusedProviderValue"')
+  await writeFile(unusedProvider, 'globalThis.unusedProviderSideEffect = 1; export const Workspace = "unusedProviderValue"')
   for (const target of ['web', 'desktop']) assert.doesNotMatch((await compile(entry, target, platformRuntime)).code, /unusedProviderSideEffect|unusedProviderValue/)
+})
+
+test('official builds compile @hosted/web and desktop feature overrides while --server-pages swaps workspace-loader cleanly', async t => {
+  const dir = await mkdtemp(join(repository, '.hosted-test-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await mkdir(join(dir, 'slots'), { recursive: true })
+  await mkdir(join(dir, 'web/hooks'), { recursive: true })
+  await writeFile(join(dir, 'slots/auth-sso.tsx'), 'export const AuthSso = () => null')
+  await writeFile(join(dir, 'slots/workspace-entry.tsx'), 'export { Workspace } from "@hosted/web/entry"')
+  await writeFile(join(dir, 'web/hooks/use-feature-availability.ts'), 'import "posthog-js"; export function useFeatureAvailability() { return "hosted-posthog" }')
+  await writeFile(
+    join(dir, 'web/entry.tsx'),
+    'import { useFeatureAvailability } from "@hosted/web/hooks/use-feature-availability"\n'
+      + 'import { listProjects } from "@/app/actions/projects"\n'
+      + 'export function Workspace() { return { useFeatureAvailability, listProjects } }\n',
+  )
+
+  const before = { MIKKA_UI_OVERLAY_DIR: process.env.MIKKA_UI_OVERLAY_DIR, MIKKA_UI_OVERLAY_SHA: process.env.MIKKA_UI_OVERLAY_SHA }
+  process.env.MIKKA_UI_OVERLAY_DIR = dir
+  process.env.MIKKA_UI_OVERLAY_SHA = 'a'.repeat(40)
+  t.after(() => {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
+  const relDir = relative(repository, dir).split(sep).join('/')
+  const consumer = 'export { Workspace } from "@ui-slot/workspace-entry"'
+  const webCompiled = await compile(consumer, 'web', ['posthog-js', 'react', 'react/jsx-runtime', 'use-intl'])
+  assert.ok(webCompiled.inventory.usedActions.includes('projects.listProjects'))
+  assert.ok(webCompiled.inventory.inputs.includes(`${relDir}/slots/workspace-entry.tsx`))
+  assert.ok(webCompiled.inventory.inputs.includes(`${relDir}/web/entry.tsx`))
+  assert.ok(webCompiled.inventory.inputs.includes(`${relDir}/web/hooks/use-feature-availability.ts`))
+
+  const desktopCompiled = await compile(consumer, 'desktop', ['posthog-js', 'react', 'react/jsx-runtime', 'use-intl'])
+  assert.ok(desktopCompiled.inventory.inputs.includes('apps/desktop/src/renderer/feature-availability.ts'))
+  assert.ok(!desktopCompiled.inventory.inputs.includes(`${relDir}/web/hooks/use-feature-availability.ts`))
+  assert.doesNotMatch(desktopCompiled.code, /hosted-posthog|posthog-js/)
+
+  const directory = await mkdtemp(join(tmpdir(), 'mikka-server-pages-plugin-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const entry = join(directory, 'entry.ts')
+  await writeFile(entry, 'export { loadWorkspace } from "@/apps/desktop/src/renderer/workspace-loader"')
+  const plugin = await applicationPlugin('web', { serverPages: true })
+  await build({
+    configFile: false, root: repository, publicDir: false, envDir: false, envPrefix: [], logLevel: 'silent',
+    plugins: [plugin],
+    define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '"/mikka"', 'process.env': '{}' },
+    build: { write: false, minify: false, target: 'es2023', rolldownOptions: { input: entry, preserveEntrySignatures: 'strict' } },
+  })
+  const serverPagesInventory = plugin.api.inventory()
+  assert.ok(serverPagesInventory.inputs.includes('apps/frontend/src/web/server-workspace-loader.ts'))
+  assert.ok(!serverPagesInventory.inputs.some(path => path.includes(relDir) || path.endsWith('/workspace-loader.ts')))
 })

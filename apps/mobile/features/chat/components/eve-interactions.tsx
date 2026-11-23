@@ -1,5 +1,5 @@
 import { useReducer, useState } from 'react'
-import { createDecisionSubmission } from '../../../../../hooks/decision-submission'
+import { createDecisionSubmission } from '../../../../../lib/decision-submission'
 import { Linking } from 'react-native'
 import { openInteractions } from 'eve/events'
 import { parseAnswers } from 'eve/client'

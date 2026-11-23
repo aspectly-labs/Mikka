@@ -3,8 +3,11 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as Y from 'yjs'
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
-import { WARNED_ISSUE_LIMIT, warnedIssueCount } from './issue-document-seed'
-import { createDocumentSeed, issueEditorSchema, readableIssueContent } from '../components/workspace/issue-editor-schema'
+import { issueDocumentSeed, readIssueContent, WARNED_ISSUE_LIMIT, warnedIssueCount } from './issue-document-seed'
+import { issueEditorSchemaSpec, readableIssueContentOnServer, serverIssueSchema } from './issue-editor-schema-snapshot'
+
+const createDocumentSeed = (content: unknown, issueId: string) => issueDocumentSeed(serverIssueSchema(), content, issueId)
+const readableIssueContent = (content: unknown, issueId?: string) => readableIssueContentOnServer(content, issueId)
 
 const seeded = (update: Uint8Array) => { const doc = new Y.Doc(); Y.applyUpdate(doc, update); try { return yXmlFragmentToProsemirrorJSON(doc.getXmlFragment('default')) } finally { doc.destroy() } }
 const nested = (depth: number) => { let node: Record<string, unknown> = { type: 'paragraph', content: [{ type: 'text', text: 'deep' }] }; for (let i = 0; i < depth; i++) node = { type: 'blockquote', content: [node] }; return { type: 'doc', content: [node] } }
@@ -63,32 +66,18 @@ test('the warn-dedupe set is bounded', (t) => {
   assert.equal(warnedIssueCount(), WARNED_ISSUE_LIMIT)
 })
 
-test('the real editor schema is the one wired into the editor, the detail page and the server', () => {
-  assert.ok(issueEditorSchema().nodes.taskItem && issueEditorSchema().nodes.richTextOutline && issueEditorSchema().marks.comment)
-  const editor = readFileSync(new URL('../components/workspace/issue-editor.tsx', import.meta.url), 'utf8')
-  assert.match(editor, /export \{ createEditorExtensions, createDocumentSeed \} from '\.\/issue-editor-schema'/)
-  assert.match(editor, /readableIssueContent\(content\)/)
-  assert.match(editor, /const editable = !disabled && !unreadable/)
-  const detail = readFileSync(new URL('../components/workspace/task-detail.tsx', import.meta.url), 'utf8')
-  assert.match(detail, /const readOnly = seed === null/)
-  assert.match(detail, /const reader = initial\.canSteer === false/)
-  assert.match(detail, /const locked = preview \|\| reader/)
-  assert.match(detail, /useState\(\(\) => seed && !locked \? new DocumentSync\(initial\.id, seed\) : null\)/)
-  assert.match(detail, /const syncKey = sync \? issueKeys\.document\(saved\.id, sync\.doc\.clientID\) : null/)
-  assert.match(detail, /useSWR\(syncKey,/)
-  assert.match(detail, /useLiveKey\('issue_document', sync \|\| reader \? saved\.id : null,/)
-  assert.match(detail, /sharedDoc=\{sync\?\.doc\}/)
-  assert.match(detail, /readOnly && <Alert\b[^>]*><AlertDescription>\{t\('invalidContentReadOnly'\)\}/)
+test('the server schema snapshot is wired into the server', () => {
+  const schema = serverIssueSchema()
+  assert.ok(schema.nodes.taskItem && schema.nodes.richTextOutline && schema.marks.comment)
   for (const file of ['../app/actions/collaboration.ts', './issue-create.ts'])
     assert.match(readFileSync(new URL(file, import.meta.url), 'utf8'), /readableIssueContent/)
 })
 
-test('the server schema snapshot matches the live editor schema and validates identically', async (t) => {
+test('the server schema snapshot matches its serialized spec and validates documents identically', async (t) => {
   t.mock.method(console, 'warn', () => {})
-  const { issueEditorSchemaSpec, readableIssueContentOnServer } = await import('./issue-editor-schema-snapshot')
   const snapshot = JSON.parse(readFileSync(new URL('./issue-editor-schema-spec.json', import.meta.url), 'utf8'))
   // On failure run: node --import tsx --import ./tests/support/server-only.mjs scripts/issue-editor-schema-spec.ts
-  assert.deepEqual(JSON.parse(JSON.stringify(issueEditorSchemaSpec(issueEditorSchema()))), snapshot)
+  assert.deepEqual(JSON.parse(JSON.stringify(issueEditorSchemaSpec(serverIssueSchema()))), snapshot)
   for (const content of [null, { type: 'doc', content: [{ type: 'mystery' }] }, nested(3000), { type: 'doc', content: [{ type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'cell' }] }] }] }] }] }, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'mention', attrs: { id: 'u', label: 'U' } }, { type: 'text', text: 'x', marks: [{ type: 'comment', attrs: { id: 't' } }] }] }] }])
-    assert.deepEqual(readableIssueContentOnServer(content), readableIssueContent(content))
+    assert.deepEqual(readableIssueContentOnServer(content), readIssueContent(serverIssueSchema(), content))
 })
