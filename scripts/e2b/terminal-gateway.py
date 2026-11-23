@@ -448,7 +448,9 @@ class Gateway:
             raise RuntimeError('terminal_task_account_unavailable')
         if self.account.pw_uid == 0:
             raise RuntimeError('terminal_user_required')
-        self.session = None
+        # One PTY session per terminal lease ('sessionId'). Review terminals
+        # mint at most one live session per run; thread terminals share the run.
+        self.sessions = {}
         self.connection_count = 0
         self.children_changed = asyncio.Event()
         # PR_SET_CHILD_SUBREAPER. It is local process containment, not a claim
@@ -465,9 +467,11 @@ class Gateway:
                 break
             if pid == 0:
                 break
-            if self.session and pid == self.session.pid:
-                code = os.waitstatus_to_exitcode(status)
-                self.session.stop('terminal_exited', code if code >= 0 else 128 - code)
+            for session in list(self.sessions.values()):
+                if pid == session.pid:
+                    code = os.waitstatus_to_exitcode(status)
+                    session.stop('terminal_exited', code if code >= 0 else 128 - code)
+                    break
         self.children_changed.set()
 
     def children(self):
@@ -520,16 +524,16 @@ class Gateway:
                 raise RuntimeError('terminal_cleanup_unconfirmed') from None
 
     def forget(self, session):
-        if self.session is session and session.ended:
+        if self.sessions.get(session.id) is session and session.ended:
             session.history.clear()
             session.requests.clear()
-            self.session = None
+            self.sessions.pop(session.id, None)
 
     def current(self, grant, create=False):
         if self.revoked.get(grant['sessionId'], 0) > time.time() or self.revoked.get('run:' + grant['runId'], 0) > time.time():
             refuse(409, 'terminal_binding_changed')
-        session = self.session
-        if session and session.ended and session.id != grant['sessionId']:
+        session = self.sessions.get(grant['sessionId'])
+        if session and session.ended:
             self.forget(session)
             session = None
         if session and not session.matches(grant):
@@ -537,7 +541,13 @@ class Gateway:
         if session is None:
             if not create:
                 refuse(409, 'terminal_ended')
-            session = self.session = Session(self, grant, self.account)
+            live = [other for other in self.sessions.values() if not other.ended
+                    and other.grant.get('runId') == grant['runId']]
+            if grant.get('control') != 'thread' and live:
+                refuse(423, 'terminal_already_controlled')
+            if len(live) >= 8:
+                refuse(503, 'terminal_unavailable')
+            session = self.sessions[grant['sessionId']] = Session(self, grant, self.account)
         session.authorize()
         if not session.ended:
             session.renew(grant)
@@ -626,11 +636,11 @@ class Gateway:
                     self.revoked[lease_id] = now + LEASE_SECONDS + 35
                 if not ids:
                     self.revoked['run:' + grant['runId']] = now + LEASE_SECONDS + 35
-                session = self.session
-                if session and (not ids or session.id in ids) and all(session.grant.get(key) == grant.get(key) for key in ('runId', 'ownerId', 'workspaceId')):
-                    closing = session.stop('terminal_revoked')
-                    if closing:
-                        await closing
+                for session in list(self.sessions.values()):
+                    if (not ids or session.id in ids) and all(session.grant.get(key) == grant.get(key) for key in ('runId', 'ownerId', 'workspaceId')):
+                        closing = session.stop('terminal_revoked')
+                        if closing:
+                            await closing
                 await respond(writer, 204)
             elif operation == 'stream':
                 # Admission errors still return an HTTP error; once headers
