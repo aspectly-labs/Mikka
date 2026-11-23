@@ -46,6 +46,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { cn } from '@/lib/utils'
 import { BrowserPane } from '@/components/browser/browser-pane'
 import { RailThreadChanges } from './thread-changes'
+import { RailCrewPulls, RailCrewSide, RailCrewThreads } from './crew-rail'
 import { browserAddressRequest, browserAddressVersion, subscribeBrowserAddress } from '@/lib/browser/navigation'
 import { ThreadColumn } from './thread-column'
 import { AllThreadsColumn, AllThreadsToggle } from '@/components/nav/all-threads'
@@ -805,6 +806,11 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
       conversation={activeBot ? { id: activeBot.id, name: activeBot.name, color: activeBot.color, shape: activeBot.shape, kind: 'bot' } : { id: coordinatorBot?.id, name: i18nText('Nav.coordinator'), kind: 'coordinator', updatedAt: botChatSummaries && coordinatorBot ? botChatSummaries.items[coordinatorBot.id]?.at ?? undefined : undefined }} /> },
     { id: 'browser' as const, title: i18nText('Browser.label'), content: <BrowserPane inTab onClose={() => showBrowser('closed')} /> },
     ...(threadId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={taskId} runId={threadId} /> }] : []),
+    ...(section === 'coordinator' && !activeBot ? [
+      { id: 'crew:threads' as const, title: i18nText('IssueThreads.crewThreads'), content: <RailCrewThreads issues={tasks} threads={threads} loading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} /> },
+      { id: 'crew:pulls' as const, title: i18nText('IssueThreads.crewPulls'), content: <RailCrewPulls /> },
+      ...(mainThreadId ? [{ id: 'crew:side' as const, title: i18nText('IssueThreads.crewSide'), content: <RailCrewSide runId={mainThreadId} onOpenThread={thread => openThread(thread.runId)} /> }] : []),
+    ] : []),
   ] } : undefined
   // Stable while the live sessions stay put: the dialogs below read this, and a fresh array every render would rebuild them all.
   const conversationSessions = useMemo(() => {
