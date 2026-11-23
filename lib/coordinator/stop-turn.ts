@@ -15,12 +15,19 @@ export async function stopChatTurn(userId:string,botId:string):Promise<boolean> 
   return before.ended > 0 || before.onTheirWay > 0 || turn
 }
 
-async function cancelRunningTurn(userId:string,botId:string) {
+/**
+ * The eve session running the chat's turn: the one holding the lease, which needs no stream on the page (a reload
+ * mid-turn); without a lease, the chat's newest web session, where eve accepted input and runs it. Owner-scoped.
+ */
+export async function runningTurnSession(userId:string,botId:string) {
   const {pool} = await import('../db')
-  // The session holding the lease runs the turn; without a lease, eve accepted input on the chat's web session and runs it.
-  const row = (await pool.query<{session_id:string;workspace_id:string}>(`SELECT s.session_id,s.workspace_id FROM eve_sessions s
+  return (await pool.query<{session_id:string;workspace_id:string}>(`SELECT s.session_id,s.workspace_id FROM eve_sessions s
     LEFT JOIN coordinator_sessions c ON c."userId"=s.owner_id AND c."botId"=s.bot_id AND c."leaseHolder"=s.session_id AND c."leaseUntil" > now()
-    WHERE s.owner_id=$1 AND s.bot_id=$2 AND s.surface='web' ORDER BY (c."leaseHolder" IS NOT NULL) DESC, s.created_at DESC LIMIT 1`,[userId,botId])).rows[0]
+    WHERE s.owner_id=$1 AND s.bot_id=$2 AND s.surface='web' ORDER BY (c."leaseHolder" IS NOT NULL) DESC, s.created_at DESC LIMIT 1`,[userId,botId])).rows[0] ?? null
+}
+
+async function cancelRunningTurn(userId:string,botId:string) {
+  const row = await runningTurnSession(userId,botId)
   if (!row) return false
   const scope = await assertEveScope({ownerId:userId,botId,workspaceId:row.workspace_id,surface:'web'})
   await eveClient(scope).sessions.attach(row.session_id).cancel()

@@ -18,6 +18,7 @@ let chatItems: import('@/lib/coordinator/context').ChatItem[] = []
 let chatError: string | null = null
 let chatEnabled = false
 const serverStops: (string | null)[] = []
+let streamReconnects = 0
 let streamStatus: 'idle' | 'resuming' | 'busy' = 'idle'
 let streamError: Error | false = false
 // The stream's server view (a running or failed turn) and its live replies.
@@ -117,7 +118,7 @@ mock.module(new URL('../../i18n/navigation.ts', import.meta.url).href, { namedEx
 mock.module('sonner', { namedExports: { toast: Object.assign((...args: unknown[]) => { notices.push(args) }, { error: nothing }) } })
 mock.module('swr', { defaultExport: (key: unknown) => Array.isArray(key) && key[0] === 'bot-turn-versions' ? { data: undefined, mutate: async () => {} } : Array.isArray(key) && key[0] === 'bot-model-menu' ? { data: menu, isLoading: menuLoading, mutate: async () => {} } : ({ data: chatData ?? { items: chatItems, enabled: chatEnabled, working: false, error: chatError, artifacts: {} }, mutate: async () => {} }), namedExports: { useSWRConfig: () => ({ mutate: async () => {} }), unstable_serialize: (key: unknown) => JSON.stringify(key) } })
 mock.module(new URL('./use-coordinator-submit.ts', import.meta.url).href, { namedExports: { useCoordinatorSubmit: () => ({ submit: async (text: string, context?: { retryOf?: number }) => { submissions++; submitted.push({ text, context }); return { kind: 'accepted' } }, failureMessage: () => 'fixture failed' }) } })
-mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: streamReplies, error: streamError, reconnect: nothing, status: streamStatus, view: streamView, session: { sessionId: 'wrun_fixture' } }) } })
+mock.module(new URL('./use-coordinator-agent.ts', import.meta.url).href, { namedExports: { useCoordinatorAgent: () => ({ replies: streamReplies, error: streamError, reconnect: () => { streamReconnects++ }, status: streamStatus, view: streamView, session: { sessionId: 'wrun_fixture' } }) } })
 mock.module(new URL('./chat-composer.tsx', import.meta.url).href, { namedExports: { ChatComposerAttachment: () => null } })
 mock.module(new URL('../workspace/agent-interaction.tsx', import.meta.url).href, { namedExports: { AgentInteractionContext: createContext({}) } })
 mock.module(new URL('../workspace/agent-theme.tsx', import.meta.url).href, { namedExports: { AgentThemeProvider: plain } })
@@ -779,6 +780,24 @@ test('with no model to answer, Send waits and the one notice says why; a Bot tha
   await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
   assert.deepEqual([...container.querySelectorAll('[data-notice]')].map(node => node.getAttribute('data-notice')), ['quota'])
   assert.equal(screen?.composer.submitDisabled, false)
+})
+
+test('a turn the server runs with no stream attached (a reload mid-turn) still shows Stop, reattaches, and stops on the server', async () => {
+  chatEnabled = true
+  serverStops.length = 0
+  streamReconnects = 0
+  streamStatus = 'idle'
+  streamView = emptySessionView()
+  chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  // The sidebar spins for this state: a turn holds the lease (coordinatorTurnStoppable), yet no stream is attached here.
+  chatData = { items: chatItems, enabled: true, working: true, error: null, artifacts: {} }
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))
+  assert.equal(screen?.composer.running, true, 'the composer\'s button shows its Stop face')
+  assert.equal(typeof screen?.onStop, 'function')
+  assert.ok(streamReconnects > 0, 'it tries to reattach the stream of the running turn')
+  await act(async () => { screen!.onStop!() })
+  assert.deepEqual(serverStops, [null], 'with no stream to cancel, the server stops the leased turn')
+  chatData = null
 })
 
 test('Stop is there the moment a send is accepted: accepted input waiting for its turn is stopped on the server', async () => {

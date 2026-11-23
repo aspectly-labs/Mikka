@@ -230,6 +230,10 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   useEffect(() => { setAcceptedSend(false) }, [data])
   const stoppable = turnConfirmed || Boolean(data?.working) || acceptedSend
   useEffect(() => { reconnectStream.current = stream.reconnect }, [stream.reconnect])
+  // The server runs a turn the page holds no stream for (a reload mid-turn, a dropped stream): the sidebar spins and the
+  // composer shows Stop for it all the same, and the page tries to attach to it again. Stop then goes to the server.
+  const unattached = Boolean(data?.working) && !working && !turnConfirmed && !resuming
+  useEffect(() => { if (unattached) reconnectStream.current() }, [unattached, data])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
   // Each chat keeps where the person was reading, as a group chat does; one read to its end follows the latest.
   const transcript = useViewScroll<HTMLDivElement>(`${stateKey}:transcript`, Boolean(data), true, 'end')
@@ -740,7 +744,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         historyPrepend={historyPrepend} scrollRef={transcript}
         working={working && !stopping} onStop={stoppable && !resuming && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
-          attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: working && !stopping,
+          attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: (working || stoppable) && !stopping,
           references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands, historyKey: stateKey }}
         controls={embedded && data?.context ? <CoordinatorContextUsage usage={data.context} /> : undefined}
         // The row keeps its height before the read arrives (the ring's own), so the footer never grows after a switch.

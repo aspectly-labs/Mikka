@@ -104,3 +104,22 @@ dbTest('Stop is owner-only: another person, a workspace member, another workspac
     assert.equal((await f.event(otherEvent)).deliveredAt, null, 'a Stop in one chat leaves the owner\'s other bot alone')
   })
 })
+
+dbTest('a turn that holds the lease with no stream on the page is the one Stop cancels: the lease holder\'s session, the owner\'s only', async t => {
+  const f = await fixture()
+  t.after(() => f.scope.close())
+  await f.scope.run(async () => {
+    const [{ stopBeforeTurn }, { runningTurnSession }] = await Promise.all([import('./stop-before-turn'), import('./stop-turn')])
+    const owner = await f.person(`stop-leased-${randomUUID()}`)
+    const stranger = await f.person(`stop-leased-other-${randomUUID()}`)
+    const older = `wrun_${randomUUID()}`, holder = `wrun_${randomUUID()}`, newer = `wrun_${randomUUID()}`
+    for (const [session, at] of [[older, '2026-11-20T10:00:00Z'], [holder, '2026-11-20T11:00:00Z'], [newer, '2026-11-20T12:00:00Z']]) {
+      await f.db.execute(f.sql`insert into eve_sessions(session_id,owner_id,bot_id,workspace_id,surface,created_at) values (${session},${owner.id},${owner.botId}::uuid,${owner.workspaceId}::uuid,'web',${at}::timestamptz)`)
+    }
+    await f.db.execute(f.sql`insert into coordinator_sessions("userId","botId","leaseHolder","leaseUntil") values (${owner.id},${owner.botId}::uuid,${holder},now()+interval '1 hour')`)
+    assert.deepEqual(await stopBeforeTurn(owner.id, owner.botId), { ended: 0, onTheirWay: 0, turnRunning: true }, 'the leased turn counts as running')
+    assert.equal((await runningTurnSession(owner.id, owner.botId))?.session_id, holder, 'Stop cancels the lease holder, not the newest session')
+    assert.equal(await runningTurnSession(stranger.id, owner.botId), null, 'another person finds no session of this chat')
+    assert.deepEqual(await stopBeforeTurn(stranger.id, owner.botId), { ended: 0, onTheirWay: 0, turnRunning: false })
+  })
+})
