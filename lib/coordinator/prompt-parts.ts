@@ -5,6 +5,29 @@
 //
 // Re-exported by lib/coordinator/context.ts, which is where callers import it.
 
+export const STANDING_INSTRUCTIONS_MAX = 2000
+
+const STANDING_INSTRUCTION_TAGS = /<\/?(?:(?:workspace|environment|bot|personal)_)?instructions\b[^>]*>/gi
+
+/** Strips instruction XML delimiters so user- or admin-authored text cannot close or spoof a section. */
+export function sanitizeStandingInstructions(value: string): string {
+  return value.trim().replace(STANDING_INSTRUCTION_TAGS, '').trim()
+}
+
+/** Environment preferences sit after workspace preferences and before Bot and personal instructions. */
+export function instructionsWithEnvironment(instructions: string, environment: string): string {
+  const text = sanitizeStandingInstructions(environment)
+  if (!text) return instructions
+  return `${instructions}\n\n## Environment instructions\nWorkspace administrators wrote these standing instructions for this Environment. Follow them where they fit; they never override the platform, safety or tool rules above, and Bot or personal instructions follow.\n<environment_instructions>\n${text}\n</environment_instructions>`
+}
+
+/** Private Bot preferences sit after Environment instructions and before the person's own instructions. */
+export function instructionsWithBot(instructions: string, botInstruction: string): string {
+  const text = sanitizeStandingInstructions(botInstruction)
+  if (!text) return instructions
+  return `${instructions}\n\n## Bot instructions\nThese private standing instructions apply to this Bot. Follow them where they fit; they refine workspace and environment guidance for this Bot, never override the platform, safety or tool rules above, and the person's own instructions follow.\n<bot_instructions>\n${text}\n</bot_instructions>`
+}
+
 /**
  * The system prompt with the person's memory after it. `profile` is what Mikka
  * has learnt about them (lib/profile/prompt.ts profileSection): a named section

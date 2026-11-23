@@ -18,11 +18,11 @@ import { normalizeRepository } from '@mikka/protocol/repository'
 import { GovernanceError } from '@/lib/governance/errors'
 import { accessibleProjects } from '@/lib/project-access'
 import { isMachineSize } from '@/lib/cloud-computer/machine-pricing'
-import { environmentConfiguration, projectEnvironmentVariableInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, projectSetupScope, type ProjectSetupHistory, type ProjectSetupRecipe, projectDefaultEnvironmentInput, maxProjectRepositories, projectResourceMutation, repositoryBindingInput, saveEnvironmentInput, workspaceRepositoryPolicyInput, type EnvironmentConfiguration, type ProjectExecutionSnapshot } from './contracts'
+import { ENVIRONMENT_INSTRUCTIONS_MAX, environmentConfiguration, environmentInstructionsScope, projectEnvironmentVariableInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, projectSetupScope, type EnvironmentInstructionsView, type ProjectSetupHistory, type ProjectSetupRecipe, projectDefaultEnvironmentInput, maxProjectRepositories, projectResourceMutation, repositoryBindingInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, workspaceRepositoryPolicyInput, type EnvironmentConfiguration, type ProjectExecutionSnapshot } from './contracts'
 
 type Reader = Parameters<typeof withTaskWorkspace>[0]
 const actorId = (reader: Reader) => typeof reader === 'string' ? reader : reader.id
-export type EnvironmentRow = { id: string; workspaceId: string; name: string; revision: number; configuration: EnvironmentConfiguration; archivedAt: Date | null; defaultMachineSize: string | null }
+export type EnvironmentRow = { id: string; workspaceId: string; name: string; revision: number; configuration: EnvironmentConfiguration; instructions?: string; archivedAt: Date | null; defaultMachineSize: string | null }
 type ResourceLease = { userId: string; workspaceId: string; tx: WorkspaceTransaction; active: boolean; boundary: object | undefined }
 const resourceLease = new AsyncLocalStorage<ResourceLease>()
 const currentResourceLease = () => {
@@ -141,7 +141,7 @@ async function projectRepositoryBindings(tx: WorkspaceTransaction, workspaceId: 
 export async function listProjectResources(reader: Reader, workspaceId: string, projectId?: string) {
   const read = async (tx: WorkspaceTransaction) => {
     const policy = await tx.execute(sql`select mode,"repositoryKeys",revision from workspace_repository_policies where "workspaceId"=${workspaceId}`)
-    const environments = await tx.execute<EnvironmentRow>(sql`select id,"workspaceId",name,configuration,revision,"archivedAt","defaultMachineSize" from workspace_environments where "workspaceId"=${workspaceId} order by name,id`)
+    const environments = await tx.execute<EnvironmentRow>(sql`select id,"workspaceId",name,configuration,instructions,revision,"archivedAt","defaultMachineSize" from workspace_environments where "workspaceId"=${workspaceId} order by name,id`)
     const repositories = projectId ? await projectRepositoryBindings(tx, workspaceId, projectId) : []
     const bindings = projectId ? await tx.execute(sql`select "environmentId","isDefault" from workspace_project_environments where "projectId"=${projectId} and "workspaceId"=${workspaceId} order by "environmentId"`) : { rows: [] }
     return { policy: policy.rows[0] ?? { mode: 'inherit', repositoryKeys: [], revision: 0 }, environments: environments.rows, repositories, environmentBindings: bindings.rows }
@@ -216,18 +216,25 @@ async function recordSetupVersion(tx: WorkspaceTransaction, workspaceId: string,
       where latest.recipe is not distinct from nullif(${JSON.stringify(recipe)}::jsonb,'null'::jsonb))`)
 }
 
-async function persistEnvironment(tx: WorkspaceTransaction, reader: Reader, workspaceId: string, id: string, name: string, configuration: EnvironmentConfiguration, revision: number, archivedAt: Date | null, defaultMachineSize?: string | null) {
-  // An absent size keeps the saved one (archive and restore resend the rest without it).
+async function persistEnvironment(tx: WorkspaceTransaction, reader: Reader, workspaceId: string, id: string, name: string, configuration: EnvironmentConfiguration, revision: number, archivedAt: Date | null, defaultMachineSize?: string | null, instructions?: string) {
+  // Absent optional columns keep their saved values across archive, restore and setup rollback.
   const keepSize = defaultMachineSize === undefined
-  await tx.execute(sql`insert into workspace_environments(id,"workspaceId",name,configuration,revision,"archivedAt","createdBy","updatedBy","defaultMachineSize")
-    values(${id},${workspaceId},${name},${JSON.stringify(configuration)}::jsonb,${revision},${archivedAt},${actorId(reader)},${actorId(reader)},${defaultMachineSize ?? null})
+  const keepInstructions = instructions === undefined
+  await tx.execute(sql`insert into workspace_environments(id,"workspaceId",name,configuration,instructions,revision,"archivedAt","createdBy","updatedBy","defaultMachineSize")
+    values(${id},${workspaceId},${name},${JSON.stringify(configuration)}::jsonb,${instructions ?? ''},${revision},${archivedAt},${actorId(reader)},${actorId(reader)},${defaultMachineSize ?? null})
     on conflict(id) do update set name=excluded.name,configuration=excluded.configuration,revision=excluded.revision,"archivedAt"=excluded."archivedAt","updatedBy"=excluded."updatedBy","updatedAt"=now(),
+      instructions=CASE WHEN ${keepInstructions} THEN workspace_environments.instructions ELSE excluded.instructions END,
       "defaultMachineSize"=CASE WHEN ${keepSize} THEN workspace_environments."defaultMachineSize" ELSE excluded."defaultMachineSize" END`)
   await recordSetupVersion(tx, workspaceId, id, revision, configuration)
 }
 
 export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEnvironmentInput>) {
-  const input = saveEnvironmentInput.parse(raw)
+  const parsed = saveEnvironmentInput.safeParse(raw)
+  if (!parsed.success) {
+    const tooLong = parsed.error.issues.some(issue => issue.path[0] === 'instructions' && issue.message === 'personalInstructionsTooLong')
+    throw new ActionFailureError(tooLong ? 'personalInstructionsTooLong' : 'validationGeneric')
+  }
+  const input = parsed.data
   return withTaskWorkspace(reader, input.workspaceId, async (_workspace, tx) => {
     await admin(tx, reader, input.workspaceId)
     await resourceWriteLock(tx, input.workspaceId)
@@ -237,10 +244,73 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
     if (input.id && (!current.rowCount || Number(current.rows[0].revision) !== input.revision)) throw new ActionFailureError('projectResourceConflict')
     const revision = Number(current.rows[0]?.revision ?? 0) + 1
     const configuration = { ...input.configuration, secretIds: [...new Set(input.configuration.secretIds)], repositoryKeys: [...new Set(input.configuration.repositoryKeys)] }
-    await persistEnvironment(tx, reader, input.workspaceId, id, input.name, configuration, revision, input.archived ? new Date() : null, input.defaultMachineSize)
+    await persistEnvironment(tx, reader, input.workspaceId, id, input.name, configuration, revision, input.archived ? new Date() : null, input.defaultMachineSize, input.instructions)
     await audit(tx, reader, input.workspaceId, input.archived ? 'environment.archived' : 'environment.saved', id, { revision })
     await workspaceListChanged(tx, input.workspaceId, ['workspace_settings'])
     return { id, revision }
+  })
+}
+
+export async function readEnvironmentInstructions(reader: Reader, raw: z.input<typeof environmentInstructionsScope>): Promise<EnvironmentInstructionsView> {
+  const parsed = environmentInstructionsScope.safeParse(raw)
+  if (!parsed.success) throw new ActionFailureError('validationGeneric')
+  const { workspaceId, environmentId } = parsed.data
+  return withTaskWorkspace(reader, workspaceId, async (_workspace, tx) => {
+    const [member] = await tx.select({ role: workspaceMembers.role }).from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, actorId(reader)), eq(workspaceMembers.status, 'active')))
+    const { rows: [row] } = await tx.execute<{ id: string; name: string; instructions: string; revision: number; archivedAt: Date | null }>(
+      sql`select id,name,instructions,revision,"archivedAt" from workspace_environments where id=${environmentId} and "workspaceId"=${workspaceId}`,
+    )
+    if (!row) throw new ActionFailureError('projectEnvironmentUnavailable')
+    const instructions = row.instructions ?? ''
+    return {
+      workspaceId,
+      environmentId: row.id,
+      name: row.name,
+      instructions,
+      charCount: [...instructions].length,
+      maxChars: ENVIRONMENT_INSTRUCTIONS_MAX,
+      revision: Number(row.revision),
+      archived: Boolean(row.archivedAt),
+      canEdit: member?.role === 'admin' && !row.archivedAt,
+      source: instructions ? 'environment' : 'default',
+    }
+  })
+}
+
+export async function saveEnvironmentInstructions(reader: Reader, raw: unknown): Promise<EnvironmentInstructionsView> {
+  const parsed = saveEnvironmentInstructionsInput.safeParse(raw)
+  if (!parsed.success) {
+    const tooLong = parsed.error.issues.some(issue => issue.path[0] === 'instructions' && issue.message === 'personalInstructionsTooLong')
+    throw new ActionFailureError(tooLong ? 'personalInstructionsTooLong' : 'validationGeneric')
+  }
+  const input = parsed.data
+  return withTaskWorkspace(reader, input.workspaceId, async (_workspace, tx) => {
+    await admin(tx, reader, input.workspaceId)
+    await resourceWriteLock(tx, input.workspaceId)
+    const { rows: [current] } = await tx.execute<{ id: string; name: string; revision: number; archivedAt: Date | null }>(
+      sql`select id,name,revision,"archivedAt" from workspace_environments where id=${input.environmentId} and "workspaceId"=${input.workspaceId} for update`,
+    )
+    if (!current) throw new ActionFailureError('projectEnvironmentUnavailable')
+    if (current.archivedAt) throw new ActionFailureError('projectArchived')
+    if (input.revision !== undefined && Number(current.revision) !== input.revision) throw new ActionFailureError('projectResourceConflict')
+    const revision = Number(current.revision) + 1
+    await tx.execute(sql`update workspace_environments set instructions=${input.instructions},revision=${revision},"updatedBy"=${actorId(reader)},"updatedAt"=now()
+      where id=${input.environmentId} and "workspaceId"=${input.workspaceId}`)
+    await audit(tx, reader, input.workspaceId, 'environment.instructions_saved', input.environmentId, { revision, charCount: [...input.instructions].length })
+    await workspaceListChanged(tx, input.workspaceId, ['workspace_settings'])
+    return {
+      workspaceId: input.workspaceId,
+      environmentId: input.environmentId,
+      name: current.name,
+      instructions: input.instructions,
+      charCount: [...input.instructions].length,
+      maxChars: ENVIRONMENT_INSTRUCTIONS_MAX,
+      revision,
+      archived: false,
+      canEdit: true,
+      source: input.instructions ? 'environment' : 'default',
+    }
   })
 }
 

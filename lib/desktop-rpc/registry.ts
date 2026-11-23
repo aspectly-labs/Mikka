@@ -1,4 +1,6 @@
 import * as settingsActions from '@/app/actions/settings'
+import * as instructionActions from '@/app/actions/instructions'
+import * as reviewSettingsActions from '@/app/actions/review-settings'
 import * as taskDomainActions from '@/app/actions/task-domain'
 import * as projectResourcesActions from '@/app/actions/project-resources'
 import * as enabledModels from '@/app/actions/enabled-models'
@@ -8,11 +10,14 @@ import { desktopBootstrap, desktopSession, desktopAccounts, desktopWorkspaceLink
 import type { DesktopActions } from './handler'
 import { createReadBatch } from './read-batch'
 import * as actions0 from '@/app/actions/account'
+import * as passkeyActions from '@/app/actions/passkeys'
 import * as actions1 from '@/app/actions/agents'
 import * as actions2 from '@/app/actions/app-policy'
 import * as actions3 from '@/app/actions/artifacts'
 import * as actions4 from '@/app/actions/audit-log'
 import * as actions5 from '@/app/actions/billing'
+import * as deviceSettingsActions from '@/app/actions/devices'
+import * as opsMetricsActions from '@/app/actions/ops-metrics'
 import * as actions6 from '@/app/actions/bots'
 import * as actions7 from '@/app/actions/collaboration'
 import * as actions8 from '@/app/actions/coordinator'
@@ -58,6 +63,15 @@ const functions = {
   'settings.resetPersonalSettings': settingsActions.resetPersonalSettings,
   'settings.resetWorkspaceSettings': settingsActions.resetWorkspaceSettings,
   'settings.getSettingsSchema': settingsActions.getSettingsSchema,
+  'settings.getInstructionPreview': instructionActions.getInstructionPreview,
+  'project-resources.getEnvironmentInstructions': instructionActions.getEnvironmentInstructions,
+  'project-resources.saveEnvironmentInstructions': instructionActions.updateEnvironmentInstructions,
+  'bots.getBotInstructions': instructionActions.getBotInstructions,
+  'bots.saveBotInstructions': instructionActions.updateBotInstructions,
+  'review-settings.getCodeReviewRepositories': reviewSettingsActions.getCodeReviewRepositories,
+  'review-settings.saveCodeReviewRepository': reviewSettingsActions.saveCodeReviewRepository,
+  'review-settings.deleteCodeReviewRepository': reviewSettingsActions.deleteCodeReviewRepository,
+  'settings.patchDeviceConcurrency': settingsActions.patchDeviceConcurrency,
   'desktop.readBatch': createReadBatch(() => desktopActions),
   'desktop.bootstrap': desktopBootstrap,
   'desktop.session': desktopSession,
@@ -74,8 +88,12 @@ const functions = {
   'account.revokeOtherSessions': actions0.revokeOtherSessions,
   'account.requestDataExport': actions0.requestDataExport,
   'account.deleteAccount': actions0.deleteAccount,
+  'passkeys.listPasskeys': passkeyActions.listPasskeys,
+  'passkeys.renamePasskey': passkeyActions.renamePasskey,
+  'passkeys.deletePasskey': passkeyActions.deletePasskey,
   'agents.listDevices': actions1.listDevices,
   'agents.pollDevices': actions1.pollDevices,
+  'agents.createDeviceToken': actions1.createDeviceToken,
   'agents.setDeviceEnabled': actions1.setDeviceEnabled,
   'agents.renameDevice': actions1.renameDevice,
   'agents.setDeviceDescription': actions1.setDeviceDescription,
@@ -89,6 +107,24 @@ const functions = {
   'agents.getOlderIssueThread': actions1.getOlderIssueThread,
   'agents.getThreadChanges': actions1.getThreadChanges,
   'agents.getThreadMachine': actions1.getThreadMachine,
+  'agents.getThreadSummary': actions1.getThreadSummary,
+  'agents.listSubagentRuns': actions1.listSubagentRuns,
+  'agents.listThreadPulls': actions1.listThreadPulls,
+  'agents.listThreadUploads': actions1.listThreadUploads,
+  'agents.listThreadReviewSessions': actions1.listThreadReviewSessions,
+  'agents.openThreadTerminal': actions1.openThreadTerminal,
+  'agents.closeThreadTerminal': actions1.closeThreadTerminal,
+  'agents.openThreadBrowser': actions1.openThreadBrowser,
+  'agents.closeThreadBrowser': actions1.closeThreadBrowser,
+  'agents.getThreadUploadDownloadUrl': actions1.getThreadUploadDownloadUrl,
+  'agents.listThreadChangedFiles': actions1.listThreadChangedFiles,
+  'agents.getThreadMachineDetail': actions1.getThreadMachineDetail,
+  'agents.rerunThreadMachineSetup': actions1.rerunThreadMachineSetup,
+  'agents.setThreadPullMergeWhenReady': actions1.setThreadPullMergeWhenReady,
+  'agents.syncThreadPullMerges': actions1.syncThreadPullMerges,
+  'agents.getThreadGitStatus': actions1.getThreadGitStatus,
+  'agents.getThreadGitHistory': actions1.getThreadGitHistory,
+  'agents.listThreadGitCheckpoints': actions1.listThreadGitCheckpoints,
   'agents.getThreadInstructions': actions1.getThreadInstructions,
   'agents.sendIssueThreadReply': actions1.sendIssueThreadReply,
   'agents.createThreadReplyVersion': actions1.createThreadReplyVersion,
@@ -99,6 +135,8 @@ const functions = {
   'agents.stopRun': actions1.stopRun,
   'agents.resumeQuotaPausedRunOnApiKey': actions1.resumeQuotaPausedRunOnApiKey,
   'agents.retryQuotaPausedRun': actions1.retryQuotaPausedRun,
+  'agents.resumeQuotaPausedRunOnCredits': actions1.resumeQuotaPausedRunOnCredits,
+  'agents.resumeAllQuotaPausedOnCredits': actions1.resumeAllQuotaPausedOnCredits,
   'agents.sendDeviceCommand': actions1.sendDeviceCommand,
   'app-policy.getAppPolicy': actions2.getAppPolicy,
   'app-policy.updateAppPolicy': actions2.updateAppPolicy,
@@ -119,6 +157,15 @@ const functions = {
   'billing.startPointsPurchase': actions5.startPointsPurchase,
   'billing.startChatPointsPurchase': actions5.startChatPointsPurchase,
   'billing.startCardVerification': actions5.startCardVerification,
+  'billing.getBillingSettings': actions5.getBillingSettings,
+  'billing.saveAutoRechargePolicy': actions5.saveAutoRechargePolicy,
+  'devices.getPolicy': deviceSettingsActions.getPolicy,
+  'devices.updatePolicy': deviceSettingsActions.updatePolicy,
+  'devices.listRepositories': deviceSettingsActions.listRepositories,
+  'devices.upsertRepository': deviceSettingsActions.upsertRepository,
+  'devices.patchRepository': deviceSettingsActions.patchRepository,
+  'devices.deleteRepository': deviceSettingsActions.deleteRepository,
+  'ops-metrics.getWorkspaceOpsMetrics': opsMetricsActions.getWorkspaceOpsMetrics,
   'bots.listBots': actions6.listBots,
   'bots.pollBots': actions6.pollBots,
   'bots.createBot': actions6.createBot,
@@ -232,6 +279,8 @@ const functions = {
   'issues.changeIssuePriority': actions14.changeIssuePriority,
   'issues.listIssueVersions': actions14.listIssueVersions,
   'issues.pollIssueVersionSummaries': actions14.pollIssueVersionSummaries,
+  'issues.pollIssueActivityPage': actions14.pollIssueActivityPage,
+  'issues.loadEarlierIssueActivity': actions14.loadEarlierIssueActivity,
   'issues.setIssueScope': actions14.setIssueScope,
   'linear-sync.getLinearIntegrationState': actions15.getLinearIntegrationState,
   'linear-sync.getLinearBoardSync': actions15.getLinearBoardSync,
@@ -313,6 +362,7 @@ const functions = {
   'list-views.deleteSavedView': listViews.deleteSavedView,
   'task-runs.listConversationSidebar': actions26.listConversationSidebar,
   'task-runs.readConversationOrganization': actions26.readConversationOrganization,
+  'task-runs.readThreadCost': actions26.readThreadCost,
   'task-runs.setConversationOrganization': actions26.setConversationOrganization,
   'task-runs.renameConversation': actions26.renameConversation,
   'task-runs.regenerateConversationTitle': actions26.regenerateConversationTitle,

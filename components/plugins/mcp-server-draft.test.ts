@@ -41,4 +41,10 @@ test('duplicate or incomplete credentials are rejected without echoing their val
     [{ name: 'Authorization', value: '' }],
   ]) assert.throws(() => mcpServerInput(draft({ values })), /^Error: invalidMcpVariables$/)
   assert.throws(() => mcpServerInput(draft({ transport: 'stdio', command: 'npx', values: [{ name: 'INVALID-NAME', value: 'sensitive' }] })), /^Error: invalidMcpVariables$/)
+  for (const name of ['Cookie', 'Host', 'X-Forwarded-For', 'Proxy-Authorization']) {
+    assert.throws(() => mcpServerInput(draft({ values: [{ name, value: 'sensitive' }] })), /^Error: invalidMcpVariables$/)
+  }
+  for (const url of ['not-a-url', 'https://docs.example.test/mcp?token=secret', 'https://user:pass@docs.example.test/mcp']) {
+    assert.throws(() => mcpServerInput(draft({ url })), /^Error: invalidMcpUrl$/)
+  }
 })

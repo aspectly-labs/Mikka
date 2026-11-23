@@ -14,7 +14,8 @@ import { chainChunks } from '@/lib/issue-run-conversation'
 export const threadChunkCursor = z.object({
   chain: z.string().max(4000),
   runId: z.uuid().nullable(),
-  seq: z.number().int().min(0),
+  // Negative too: a fork's copied history holds negative seqs (#2936).
+  seq: z.number().int(),
   runs: z.number().int().min(0),
   /** How many chunks the client holds: a batch stored late, below the cursor, makes the counts differ. */
   count: z.number().int().min(0),

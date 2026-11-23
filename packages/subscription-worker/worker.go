@@ -98,7 +98,7 @@ func (w *Worker) Acquire(ctx context.Context, expectedEpoch int64) (Metadata, er
 	// Real CLI-oriented authenticators are not registered by the shipped entrypoint.
 	_, _, err = manager.Login(ctx, w.Scope.Provider, &config.Config{}, &sdkauth.LoginOptions{NoBrowser: true})
 	if err != nil {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), o, "publication_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), o, "publication_failed", "provider_login_failed")
 		return Metadata{}, Refusal(safeCode(err))
 	}
 	r, err := w.Repo.Lookup(ctx, w.Scope)
@@ -144,7 +144,7 @@ func (w *Worker) Refresh(ctx context.Context, expectedEpoch int64) (Metadata, er
 		_, err = manager.ForceRefreshAuth(ctx, w.Scope.ConnectionID)
 	}
 	if err != nil {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), o, "refresh_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), o, "refresh_failed", "")
 		return Metadata{}, Refusal(safeCode(err))
 	}
 	// CPA's own registration/persistence behavior cannot override durable fencing.

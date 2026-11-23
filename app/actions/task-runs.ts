@@ -315,6 +315,19 @@ async function organizeTarget(target: ConversationTarget, { ownerId, workspaceId
   return state
 }
 
+/**
+ * A thread's cost for its ⋯ menu and cost popover (#2934, #2931): model receipts and machine time of every run in
+ * the thread's chain, split into Mikka 额度 and usage included in the person's own subscription or key.
+ * Only the thread's owner reads it; any other reader gets runNotFound.
+ */
+export async function readThreadCost(runId: string, groupBy: import('@/lib/thread-cost').ThreadCostGrouping = 'thread'): Promise<ActionResult<import('@/lib/thread-cost').ThreadCost, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  // Server actions are callable with any argument; the read rejects an unknown grouping as runNotFound.
+  const cost = await (await import('@/lib/thread-cost')).readThreadCost(pool, { ownerId, workspaceId, runId, groupBy })
+  return cost ?? { error: 'runNotFound' }
+}
+
 export async function readConversationOrganization(target: ConversationTarget) {
   return organizeTarget(target, await conversationActor())
 }

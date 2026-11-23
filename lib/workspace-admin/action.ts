@@ -16,7 +16,7 @@ export function workspaceAction<T>(fn: () => Promise<T>): Promise<ActionResult<T
       return await fn()
     } catch (error) {
       if (error instanceof WorkspaceError) throw new ActionFailureError(isActionErrorCode(error.code) ? error.code : 'generic')
-      if (error instanceof z.ZodError) throw new ActionFailureError('validationGeneric')
+      if (error instanceof z.ZodError) throw new ActionFailureError('validationGeneric', undefined, undefined, { cause: error })
       throw error
     }
   })

@@ -74,7 +74,7 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
       if (new URL(url).origin !== 'https://checkout.stripe.com') throw new WorkspaceError('billingProviderFailed')
       return { url }
     } catch (error) {
-      if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed')
+      if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed', { cause: error })
       throw error
     }
   }, { ownPlatformAccount: true })

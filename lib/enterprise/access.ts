@@ -38,7 +38,7 @@ export async function enterpriseWorkspaceAllowed(userId: string, workspaceId: st
   if (!organizationId) return true
   return organizationAccess(userId, workspaceId, organizationId, explicit, appExecutor)
 }
-async function organizationAccess(userId: string, workspaceId: string, organizationId: string, explicit?: EnterprisePrincipal | { kind: 'none' }, appExecutor: EnterpriseAuthExecutor = pool) {
+async function organizationAccessState(userId: string, organizationId: string, appExecutor: EnterpriseAuthExecutor) {
   const { rows } = await appExecutor.query<{ enforceSso: boolean; allowMachineCredentials: boolean; managedRevoked: boolean; requireTwoFactor: boolean }>(`select
     coalesce((select "enforceSso" from enterprise_org_policy where "organizationId"=$1),false) as "enforceSso",
     coalesce((select "allowMachineCredentials" from enterprise_org_policy where "organizationId"=$1),false) as "allowMachineCredentials",
@@ -46,10 +46,19 @@ async function organizationAccess(userId: string, workspaceId: string, organizat
     (exists(select 1 from enterprise_org_policy where "organizationId"=$1 and "archivedAt" is not null) or exists(select 1 from enterprise_scim_user u join enterprise_scim_connection c on c.id=u."connectionId"
       join enterprise_sso_provider p on p."providerId"=c."providerId"
       where u."organizationId"=$1 and u."userId"=$2 and (not u.active or u.deleted or c."revokedAt" is not null or not p."domainVerified"))) as "managedRevoked"`, [organizationId, userId])
-  const state: EnterpriseAccessState = { ...rows[0], credentialValid: false, sessionAssured: false, breakGlass: false }
+  return rows[0]
+}
+
+export async function enterpriseShareIssuerActive(userId: string, organizationId: string | null, appExecutor: EnterpriseAuthExecutor = pool) {
+  return organizationId === null || !(await organizationAccessState(userId, organizationId, appExecutor)).managedRevoked
+}
+
+async function organizationAccess(userId: string, workspaceId: string, organizationId: string, explicit?: EnterprisePrincipal | { kind: 'none' }, appExecutor: EnterpriseAuthExecutor = pool) {
+  const policy = await organizationAccessState(userId, organizationId, appExecutor)
+  const state: EnterpriseAccessState = { ...policy, credentialValid: false, sessionAssured: false, breakGlass: false }
   if (state.managedRevoked) return false
-  const principal = state.enforceSso || rows[0].requireTwoFactor ? await currentPrincipal(userId, workspaceId, explicit, appExecutor) : undefined
-  if (rows[0].requireTwoFactor && !await organizationTwoFactorAllowed(userId, organizationId,
+  const principal = state.enforceSso || policy.requireTwoFactor ? await currentPrincipal(userId, workspaceId, explicit, appExecutor) : undefined
+  if (policy.requireTwoFactor && !await organizationTwoFactorAllowed(userId, organizationId,
     principal?.kind === 'session' ? principal : { kind: principal ? 'machine' : 'none' }, appExecutor)) return false
   if (!state.enforceSso) return true
   if (principal?.kind === 'execution') {

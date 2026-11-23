@@ -1222,7 +1222,7 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     const previousEdition = process.env.MIKKA_EDITION
     process.env.MIKKA_EDITION = 'cloud'
     const workspaceId = randomUUID(), templateId = randomUUID(), plainSessionId = randomUUID(), plainToken = randomBytes(32).toString('hex')
-    const personalWorkspaceId = randomUUID(), personalTaskId = randomUUID(), organizationTaskId = randomUUID()
+    const personalWorkspaceId = randomUUID(), personalTaskId = randomUUID(), organizationTaskId = randomUUID(), artifactId = randomUUID()
     const signedIn = await session(oidcCookies); assert.ok(signedIn)
     const assuredToken = (await pool.query('select token from session where id=$1', [signedIn.session.id])).rows[0].token as string
     await pool.query('insert into mikka_workspaces (id,"userId",name,kind) values ($1,$2,\'Governance SSO fixture\',\'team\')', [workspaceId, userId])
@@ -1251,6 +1251,25 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     })
     const templateInput = { action: 'save', template: { name: 'SSO template', rules: { approvalMode: 'read_only' } } }
     try {
+      const artifactToken = `mks_${randomBytes(24).toString('base64url')}`
+      const html = '<main>Restricted native artifact</main>'
+      await pool.query('insert into artifacts (id,"userId","workspaceId",kind,title) values ($1,$2,$3,\'html\',\'Native share\')', [artifactId, userId, workspaceId])
+      await pool.query('insert into artifact_versions (id,"artifactId",version,"storageKey","inlineContent",sha256,size,"authorName") values ($1,$2,1,$3,$4,$5,$6,\'Fixture\')',
+        [randomUUID(), artifactId, `fixture/${artifactId}`, html, createHash('sha256').update(html).digest('hex'), Buffer.byteLength(html)])
+      await pool.query('insert into artifact_shares (id,"artifactId","tokenHash","createdBy",visibility) values ($1,$2,$3,$4,\'workspace\')',
+        [randomUUID(), artifactId, createHash('sha256').update(artifactToken).digest('hex'), userId])
+      const [metadata, frame] = await Promise.all([
+        import('../../app/api/artifacts/shared/[token]/route'), import('../../app/api/artifacts/shared/[token]/frame/route'),
+      ])
+      for (const [suffix, route] of [['', metadata], ['/frame', frame]] as const) {
+        const open = (token: string) => route.GET(new Request(`${appOrigin}/api/artifacts/shared/${artifactToken}${suffix}`, {
+          headers: { authorization: `Bearer ${token}`, 'x-mikka-client': 'desktop' },
+        }), { params: Promise.resolve({ token: artifactToken }) })
+        assert.equal((await open(plainToken)).status, 404)
+        const admitted = await open(assuredToken)
+        assert.equal(admitted.status, 200)
+        if (suffix) assert.ok((await admitted.text()).includes(html))
+      }
       assert.equal((await call(plainToken)).status, 403, 'ordinary authenticated session cannot read enforced-SSO usage')
       assert.equal((await call(plainToken, false, true)).status, 403)
       assert.equal((await call(plainToken, true)).status, 403, 'Workspace admin alone cannot apply an enforced-SSO template')
@@ -1301,6 +1320,7 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
       assert.equal((await templateCall(assuredToken)).status, 403)
       assert.equal((await templateCall(assuredToken, templateInput)).status, 403)
     } finally {
+      await pool.query('delete from artifacts where id=$1', [artifactId])
       await pool.query('delete from issues where id=any($1::uuid[])', [[personalTaskId, organizationTaskId]])
       await pool.query('delete from session where id=$1', [plainSessionId])
       await pool.query('delete from workspace_computer_policies where "workspaceId"=$1', [workspaceId])

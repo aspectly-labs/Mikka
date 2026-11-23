@@ -13,8 +13,11 @@ export function hostConfiguration(env) {
       // about 100 queries a second while idle. LISTEN/NOTIFY wakes idle
       // workers when a job is added, so this only delays scheduled jobs.
       WORKFLOW_POSTGRES_POLL_INTERVAL_MS: '5000',
-      ...runtime, NODE_ENV: 'production', MIKKA_EVE_HOST: 'cloudflare',
+      // The image records the World it was built with; the release pipeline
+      // supplies EVE_ENV_WORKFLOW_TARGET_WORLD to match it when a release ships
+      // a queue-driven World. Keep it overridable alongside the poll interval.
       WORKFLOW_TARGET_WORLD: '@workflow/world-postgres',
+      ...runtime, NODE_ENV: 'production', MIKKA_EVE_HOST: 'cloudflare',
       MIKKA_DEPLOYMENT_ID: env.EVE_RELEASE_ID, WORKFLOW_DEPLOYMENT_ID: env.EVE_RELEASE_ID, MIKKA_EVE_PUBLIC_ORIGIN: publicOrigin,
       MIKKA_BUILD_REVISION: env.EVE_SOURCE_SHA, MIKKA_UI_OVERLAY_SHA: env.EVE_UI_SHA,
       MIKKA_EVE_RELEASE_ID: env.EVE_RELEASE_ID,
@@ -24,6 +27,23 @@ export function hostConfiguration(env) {
 
 // Preserve the name previously supplied by @cloudflare/containers 0.3.7 when no release was configured.
 export const singletonContainerName = 'cf-singleton-container'
+
+/** Host residency is an explicit deployment choice, not an ambient default.
+ * `resident` keeps the shipped keepalive for releases whose World needs a live
+ * process (the Postgres World's Graphile worker polls and LISTEN/NOTIFYs).
+ * `on-demand` lets the container sleep between requests; it is honored only
+ * when the configured World delivers queued work through the native queues
+ * (the `@mikka/eve-cloudflare-world` transport), because queue delivery itself
+ * wakes the host. Any other value, or `on-demand` with the Postgres World,
+ * stays resident. */
+export function hostResidency(env) {
+  return env.MIKKA_EVE_HOST_RESIDENCY === 'on-demand' ? 'on-demand' : 'resident'
+}
+
+/** True only when on-demand residency can actually take effect. */
+export function onDemandHost(env, runtimeEnv) {
+  return hostResidency(env) === 'on-demand' && runtimeEnv.WORKFLOW_TARGET_WORLD !== '@workflow/world-postgres'
+}
 
 /** Keep the existing namespaced native protocol; do not capture business API routes. */
 export function nativeRequest(request) {

@@ -85,6 +85,18 @@ async function sessionDisconnected(deviceId: string, report: DeviceSessionReport
 
 const GATEWAY_STATUS_CONCURRENCY = 20
 
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  let nextIndex = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++
+      results[index] = await fn(items[index])
+    }
+  }))
+  return results
+}
+
 /**
  * Run-recovery backstop (decision 2026-11-17-2215): the gateway retries each
  * report until it is acknowledged, but a report can still be lost (a gateway
@@ -102,11 +114,8 @@ export async function closeLostDeviceSessions(now = new Date()): Promise<{ check
   // by one, a stalled gateway would hold the sweep past the cron's budget before
   // the lease sweep that follows it. An unanswered status proves nothing; the
   // next sweep asks again.
-  const offline: typeof rows = []
-  const pending = rows.values()
-  await Promise.all(Array.from({ length: Math.min(GATEWAY_STATUS_CONCURRENCY, rows.length) }, async () => {
-    for (const device of pending) if (await gatewayDeviceOnline(device.id) === false) offline.push(device)
-  }))
+  const statuses = await mapWithConcurrency(rows, GATEWAY_STATUS_CONCURRENCY, device => gatewayDeviceOnline(device.id))
+  const offline = rows.filter((_, index) => statuses[index] === false)
   let closed = 0
   for (const device of offline) {
     if ((await applyDeviceSessionReport(device.id, { state: 'disconnected', at: now.toISOString(), socketId: device.sessionSocketId })).applied) closed++

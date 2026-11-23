@@ -46,10 +46,16 @@ It adds an eligible same-repository PR to the end of the queue once all required
 checks pass. Stacks and PRs included in an open batch follow their owner's merge
 flow. The GitHub App installation token lets queue candidates trigger CI.
 
+A pull request that changes the interface must include a screenshot or
+recording in its description. `UI policy (strict)` requires it, and
+`frontend-screenshots.yml` reruns that check on PR description edits (`edited`)
+without rerunning the suite. Neither job launches a browser.
+
 GitHub requires `UI policy (strict)`, `Production build and browser interactions`
 and `Browser tests (before merge)` on both the PR and its queue candidate.
 Draft PRs fail the first two gates until marked Ready. On PRs targeting main, the database gate
-checks that trusted selection succeeded and the deferred DB jobs skipped.
+checks that trusted selection succeeded and the deferred DB jobs skipped, with a visible
+“Database checks deferred to merge queue” summary and check notice when DB suites are selected.
 
 On `merge_group`, CI retains the full Node 24 unit and PG17 shard matrices. Selected Analytics, Workspace Governance and specialty acceptance
 must pass before the required checks succeed. The specialty selector reads path

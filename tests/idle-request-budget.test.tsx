@@ -237,6 +237,7 @@ Object.assign(fixtures, {
   'issues.getIssue': (id: unknown) => ({ issue: issue(String(id), 'Fix sign-in redirect') }),
   'issues.pollIssue': (id: unknown, known: unknown) => known === CHAT_VERSION ? { viewerId: OWNER, unchanged: true, version: CHAT_VERSION } : { viewerId: OWNER, issue: issue(String(id), 'Fix sign-in redirect'), version: CHAT_VERSION },
   'issues.pollIssueVersionSummaries': () => ({ viewerId: OWNER, snapshot: { version: CHAT_VERSION, items: [], positions: [] } }),
+  'issues.pollIssueActivityPage': (_id: unknown, known: unknown) => ({ viewerId: OWNER, snapshot: known === CHAT_VERSION ? { version: CHAT_VERSION, unchanged: true } : { version: CHAT_VERSION, items: [], hasMore: false, predecessor: null } }),
   'issues.listIssueVersions': () => [],
   'issue-operations.getDeletedIssue': () => null,
   'issue-operations.listIssueConnections': () => [],
@@ -321,6 +322,7 @@ const groupMessage = (position: number, authorType: 'user' | 'bot', body: string
 routes['/api/conversations/:id/messages'] = url => ({ messages: url.searchParams.get('after') ? [] : [groupMessage(2, 'bot', 'Looking into the redirect now.'), groupMessage(1, 'user', 'Who can fix the sign-in redirect?')],
   nextBefore: null, agentStatus: { status: 'running' }, routingError: null, stopped: false, ...(url.searchParams.get('after') ? { unchanged: true } : {}) })
 routes['/api/conversations/:id/members'] = () => ({ members: [{ id: OWNER, name: 'Ada', memberType: 'user' }, { id: BOT, name: 'Scout', memberType: 'bot', color: 'bleu', shape: 'galet' }] })
+routes['/api/agent/sessions/active'] = () => ({ agents: [] })
 routes['/api/mobile/reactions'] = () => ({ reactions: {} })
 const CONNECTION = 'a0000000-0000-4000-8000-000000000001'
 routes['/api/subscriptions'] = () => ({ enabled: true, providers: [{ provider: 'claude', available: true }, { provider: 'codex', available: true }], connections: [{ id: CONNECTION, provider: 'claude', state: 'connected', revision: 1, account: 'ada@example.invalid', paused: false, bots: [] }] })

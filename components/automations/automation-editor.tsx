@@ -48,7 +48,7 @@ import { SlackTriggers } from './slack-triggers'
 import { AutomationUsagePanel } from './automation-usage'
 import { useNextRunLabel, useTimingSummary } from './automation-summary'
 import { harnessName } from '@/components/labels/entity-labels'
-import { MACHINE_SIZES, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
+import { MACHINE_SIZES, QUOTA_GATED_SIZES, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 import { supportedModelEfforts } from '@/lib/model-routing'
 import { AUTOMATION_EFFORTS, type AutomationEffort } from '@/lib/schedules/contract'
 import { fetchSettingsData } from '@/lib/settings-data'
@@ -321,7 +321,7 @@ export function AutomationEditor({ workspaceId, userId, id, template, onOpen, on
         value => set({ effort: value && (AUTOMATION_EFFORTS as readonly string[]).includes(value) ? value as AutomationEffort : null }))] : []),
     ] }] : []),
     { id: 'machine-size', label: t('machineSize'), controls: [select(t('machineSize'), draft.machineSize ?? '', [{ value: '', label: t('machineSizeDefault') },
-      ...(Object.keys(MACHINE_SIZES) as MachineSize[]).map(size => ({ value: size, label: t('machineSizeOption', { vcpu: MACHINE_SIZES[size].vcpu, gib: MACHINE_SIZES[size].gib }) }))],
+      ...(Object.keys(MACHINE_SIZES) as MachineSize[]).map(size => ({ value: size, label: t('machineSizeOption', { vcpu: MACHINE_SIZES[size].vcpu, gib: MACHINE_SIZES[size].gib }) + (QUOTA_GATED_SIZES.has(size) ? ` · ${t('machineSizeQuotaGated')}` : '') }))],
     value => set({ machineSize: value in MACHINE_SIZES ? value as MachineSize : null }))] },
     { id: 'profile', label: t('profile'), controls: [select(t('profile'), draft.profileId, profileChoices.choices.map(choice => ({ value: choice.value, label: choice.label,
       ...('disabled' in choice && choice.disabled ? { disabled: true } : {}) })), value => set({ profileId: value }), !workspaceId)] },

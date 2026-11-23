@@ -25,6 +25,11 @@ export function connectKind(item: { no_auth?: boolean | null; auth_schemes?: str
   return 'unsupported'
 }
 
+/** The single-toolkit detail endpoint names its schemes inside `auth_config_details`, not the flat list. */
+export function detailAuthSchemes(details: unknown): string[] {
+  return Array.isArray(details) ? details.flatMap(detail => typeof (detail as { mode?: unknown })?.mode === 'string' ? [(detail as { mode: string }).mode] : []) : []
+}
+
 export type CredentialField = { name: string; label: string; description: string; secret: boolean; required: boolean; defaultValue: string | null }
 export type CredentialForm = { scheme: CredentialScheme; fields: CredentialField[] }
 

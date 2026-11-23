@@ -74,8 +74,9 @@ export async function loadWorkspaceRuntimeSecrets(workspaceId: string, env: Env 
   const rows = await guardSecretsDb(() => db.select().from(workspaceSecrets).where(and(eq(workspaceSecrets.workspaceId, workspaceId), eq(workspaceSecrets.scopeType, 'workspace'))))
   return rows.map(row => {
     try { return { id: row.id, name: row.name, kind: row.kind, value: openSecret(row, secretAad(row), env), delivery: effectiveSecretDelivery(row.delivery), revision: secretRevision(row) } } catch (error) {
-      if (error instanceof SecretsKeyMissingError) throw new E2BKeyError('e2b_unavailable', 'secrets key missing')
+      if (error instanceof SecretsKeyMissingError) throw Object.assign(new E2BKeyError('e2b_unavailable', 'secrets key missing'), { cause: error })
       console.error(`workspace secret ${row.id} failed to decrypt`)
+      // error-cause: the raw crypto error is never surfaced past the seal boundary
       throw new E2BKeyError('e2b_unavailable', 'workspace secret unavailable')
     }
   })
@@ -99,9 +100,10 @@ export async function reservedInjectionFilter(workspaceId: string, secrets: Runt
 
 function openRuntime(row: typeof workspaceSecrets.$inferSelect, env: Env): RuntimeSecret {
   try { return { id: row.id, name: row.name, kind: row.kind, value: openSecret(row, secretAad(row), env), delivery: effectiveSecretDelivery(row.delivery), revision: secretRevision(row) } } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new E2BKeyError('e2b_unavailable', 'secrets key missing')
+    if (error instanceof SecretsKeyMissingError) throw Object.assign(new E2BKeyError('e2b_unavailable', 'secrets key missing'), { cause: error })
     console.error(`workspace secret ${row.id} failed to decrypt`)
-    throw new E2BKeyError('e2b_unavailable', 'workspace secret unavailable')
+    // error-cause: the raw crypto error is never surfaced past the seal boundary
+      throw new E2BKeyError('e2b_unavailable', 'workspace secret unavailable')
   }
 }
 
@@ -130,8 +132,9 @@ export async function loadUserRuntimeSecrets(ownerId: string, env: Env = process
   const rows = await guardSecretsDb(() => db.select().from(userSecrets).where(eq(userSecrets.userId, ownerId)))
   return rows.map(row => {
     try { return { id: row.id, name: row.name, kind: row.kind, value: openSecret(row, userSecretAad(row), env), delivery: effectiveSecretDelivery(row.delivery), revision: secretRevision(row) } } catch (error) {
-      if (error instanceof SecretsKeyMissingError) throw new E2BKeyError('e2b_unavailable', 'secrets key missing')
+      if (error instanceof SecretsKeyMissingError) throw Object.assign(new E2BKeyError('e2b_unavailable', 'secrets key missing'), { cause: error })
       console.error(`user secret ${row.id} failed to decrypt`)
+      // error-cause: the raw crypto error is never surfaced past the seal boundary
       throw new E2BKeyError('e2b_unavailable', 'user secret unavailable')
     }
   })

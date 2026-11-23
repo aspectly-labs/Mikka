@@ -5,6 +5,7 @@ import { readRunFailure, type RunFailure } from '@mikka/protocol/run-failure'
 import { withDatabaseOperation } from '@/lib/db/egress-sample'
 import { desktopHumanSessionId } from '@/lib/desktop-rpc/session'
 import { deploymentSwitch } from '@/lib/deployment-switches'
+import { withFreshSession } from '@/lib/fresh-session'
 
 import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
@@ -153,7 +154,7 @@ async function readDevices(userId: string) {
 }
 
 /** Mints a device token. The plaintext is returned once and never stored. */
-export async function createDeviceToken(input: { name: string }): Promise<ActionResult<{ token: string }>> {
+async function createDeviceTokenBody(input: { name: string }): Promise<ActionResult<{ token: string }>> {
   return runAction(async () => {
     const userId = await getUserId()
     const parsed = z.object({ name: z.string().trim().max(60) }).safeParse(input)
@@ -162,6 +163,8 @@ export async function createDeviceToken(input: { name: string }): Promise<Action
     return { token }
   })
 }
+
+export async function createDeviceToken(...args: Parameters<typeof createDeviceTokenBody>) { return withFreshSession(() => createDeviceTokenBody(...args)) }
 
 export interface SshHostView {
   alias: string
@@ -244,7 +247,7 @@ const threadColumns = {
 const threadCursorColumns = { ...threadColumns, prompt: sql<string>`coalesce(${threadNameLines}, '')` }
 
 // Read-only location and changes need authority, not conversation content.
-const threadIdentityColumns = { id: agentRuns.id, userId: agentRuns.userId }
+const threadIdentityColumns = { id: agentRuns.id, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId }
 
 const { title: _title, prompt: _prompt, promptTaskStart: _promptTaskStart, promptTaskLength: _promptTaskLength, sessionId: _sessionId, deviceRepoId: _deviceRepoId, report: _report, error: _error, ...threadListColumns } = threadColumns
 
@@ -255,7 +258,7 @@ export async function listIssueThreads(issueId: string): Promise<IssueThread[]> 
 
 /** The same list, plus the channel its `issue_threads` key arrives on: the issue's
  * workspace, or the owner's home for a personal issue; null reads once a minute. */
-export async function pollIssueThreads(issueId: string, includeTaskWork = false, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[] }) {
+export async function pollIssueThreads(issueId: string, includeTaskWork = false, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[]; paged?: boolean }) {
   return withDatabaseOperation('/actions/threads/issue-list', async () => {
     const { threads, issue, user, teamId } = await readIssueThreads(issueId)
     const [{ documentLiveWorkspace }, { workspacePool }] = await Promise.all([import('@/lib/live/panels'), import('@/lib/workspace-db')])
@@ -267,8 +270,10 @@ export async function pollIssueThreads(issueId: string, includeTaskWork = false,
     if (!includeTaskWork) return snapshot
     const { listIssueConnections } = await import('@/app/actions/issue-operations')
     const connections = await listIssueConnections(issue.id)
-    const { pollIssueVersionSummaries } = await import('@/app/actions/issues')
-    const activity = await pollIssueVersionSummaries(issue.id, activityCursor?.version, activityCursor?.positions)
+    const { pollIssueVersionSummaries, pollIssueActivityPage } = await import('@/app/actions/issues')
+    const activity = activityCursor?.paged
+      ? await pollIssueActivityPage(issue.id, activityCursor.version)
+      : await pollIssueVersionSummaries(issue.id, activityCursor?.version, activityCursor?.positions)
     if (activity.error) throw new ActionFailureError(activity.error)
     if (activity.viewerId !== user.id) throw new ActionFailureError('issueNotFound')
     return { ...snapshot, teamId, connections, activity: activity.snapshot, viewerId: user.id }
@@ -279,7 +284,7 @@ export type IssueWorkSnapshot = Extract<Awaited<ReturnType<typeof pollIssueThrea
 
 /** Reuse the authorized content read, then release its document lock before
  * reading the Work view. The stable task and both viewer identities must agree. */
-export async function pollTaskDetail(issueId: string, known?: string, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[] }) {
+export async function pollTaskDetail(issueId: string, known?: string, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[]; paged?: boolean }) {
   return cacheReadAction(async () => {
     const { pollIssue } = await import('@/app/actions/issues')
     const document = await pollIssue(issueId, known)
@@ -320,7 +325,7 @@ type ReadableThreadResult<T extends ThreadColumns> = {
 function readableThread(issueId: string | null, runId: string, columns: typeof threadColumns): Promise<ReadableThreadResult<typeof threadColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadCursorColumns): Promise<ReadableThreadResult<typeof threadCursorColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadIdentityColumns): Promise<ReadableThreadResult<typeof threadIdentityColumns>>
-async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<typeof threadColumns> | ReadableThreadResult<typeof threadCursorColumns> | ReadableThreadResult<typeof threadIdentityColumns>> {
+async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<ThreadColumns>> {
   if (issueId !== null) {
     const access = await issueThreadAccess(issueId)
     if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
@@ -453,6 +458,41 @@ export async function getThreadMachine(issueId: string | null, runId: string): P
     const chain = await readRunChain(pool, row.userId, row.id)
     const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
     return (await import('@/lib/thread-machine-view')).readThreadMachine(pool, user.id, runIds)
+  })
+}
+
+/**
+ * The thread summary header read (#2935): machine {kind,size,state}, repository,
+ * branch, and context used with its real model-catalog limit. Owner-only like
+ * getThreadMachine; cost waits on its source (A) and returns null until it lands.
+ */
+export async function getThreadSummary(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/summary', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const latestRunId = chain?.latestRunId ?? row.id
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    const [{ readThreadMachine }, { readThreadLocation }] = await Promise.all([
+      import('@/lib/thread-machine-view'), import('@/lib/thread-summary')])
+    const [machine, context, location] = await Promise.all([
+      readThreadMachine(pool, user.id, runIds),
+      readContextUsage(runIds, row.id, latestRunId),
+      readThreadLocation(pool, user.id, latestRunId)])
+    const { catalogIdFor, catalogModel } = await import('@/lib/model-catalog')
+    // The current attempt's model decides the window: after a continuation
+    // changes models, context.model is still the frozen original's.
+    const windowModel = context.composerModel?.served ?? context.composerModel?.selected ?? context.model
+    const windowTokens = windowModel
+      ? catalogModel(catalogIdFor(windowModel) ?? windowModel)?.contextWindow ?? null
+      : null
+    return {
+      cost: null,
+      machine: machine ? { kind: machine.kind, size: location.machineSize, state: machine.state } : null,
+      repository: location.repository,
+      branch: location.branch,
+      context: { ...context, windowTokens },
+    }
   })
 }
 
@@ -881,16 +921,22 @@ export async function getThreadReplyVersions(issueId:string|null,runId:string) {
   return (await import('@/lib/thread-reply-versions')).readReplyVersions(pool,user.id,row.id)
 }
 
-export async function changeQueuedThreadReply(input: { issueId: string | null; runId: string; messageId: string; action: 'cancel' | 'sendNow' }) {
+export async function changeQueuedThreadReply(input: { issueId: string | null; runId: string; messageId: string; action: 'cancel' | 'sendNow' | 'edit'; text?: string }) {
   return runAction(async () => {
-    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow'].includes(input.action)) throw new ActionFailureError('validationGeneric')
+    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow','edit'].includes(input.action)
+        || (input.action === 'edit' && !z.string().min(1).max(10_000).safeParse(input.text).success)) throw new ActionFailureError('validationGeneric')
     const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
     const requestHeaders = await headers()
     if (!desktopHumanSessionId() && (requestHeaders.has('authorization') || !requestHeaders.get('cookie'))) throw new ActionFailureError('authRequired')
     const session = await auth.api.getSession({ headers: requestHeaders, query: { disableCookieCache: true } })
     if (!session?.session?.id || session.user.id !== user.id || row.userId !== user.id) throw new ActionFailureError('runNotFound')
-    const { cancelQueuedThreadReply, deliverQueuedThreadReply } = await import('@/lib/thread-delivery-queue')
+    const { cancelQueuedThreadReply, deliverQueuedThreadReply, editQueuedThreadReply } = await import('@/lib/thread-delivery-queue')
     if (input.action === 'cancel') return { status: await cancelQueuedThreadReply(pool, user.id, row.id, input.messageId) }
+    if (input.action === 'edit') {
+      const text = typeof input.text === 'string' ? input.text : ''
+      if (!text.trim() || text.length > 10000) return { status: 'invalid' as const }
+      return { status: await editQueuedThreadReply(pool, user.id, row.id, input.messageId, text) }
+    }
     return { status: await deliverQueuedThreadReply(pool, user.id, row.id, input.messageId) ? 'sent' as const : 'tooLate' as const }
   })
 }
@@ -909,6 +955,12 @@ export async function getThreadContinuationModels(issueId: string, runId: string
  * a thread is one run, named for its work, never for its bot). Null when the
  * run is not this person's or works on no task.
  */
+/** A run's sub-agent cards (#2939): the parent's children with name, mark, brief and live state. */
+export async function listSubagentRuns(runId: string) {
+  const reader = await getWorkspaceReader()
+  return (await import('@/lib/subagent-runs')).listSubagentRuns(reader, runId)
+}
+
 export async function getThreadName(runId: string): Promise<string | null> {
   const reader = await getWorkspaceReader()
   const parsed = z.uuid().safeParse(runId)
@@ -917,6 +969,288 @@ export async function getThreadName(runId: string): Promise<string | null> {
   if (source?.kind !== 'run' || !source.issue) return null
   const key = source.issue.identifier ?? (source.issue.number === null ? null : `#${source.issue.number}`)
   return key ? `${key} ${source.issue.title}` : source.issue.title
+}
+
+
+
+
+/** #2940 items 1/4: review sessions minted on the thread's own machine —
+ * terminal (item 1, several per machine via the named-session key) and the
+ * user-facing preview browser (item 4, short-lived ticket through the same
+ * gateway). Task-scoped authority: only a thread bound to a task exposes a
+ * machine review capability at all. */
+async function threadSessionAuthority(issueId: string | null, runId: string) {
+  const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+  if (row.userId !== user.id || !issueId) return null
+  const [{ getApiSession }, { workspacePool }, { resolveTaskReviewAuthority }] = await Promise.all([
+    import('@/lib/api-auth'), import('@/lib/workspace-db'), import('@/lib/coding-workspace/review-authority')])
+  const session = await getApiSession({ headers: await headers(), query: { disableCookieCache: true, disableRefresh: true } })
+  if (!session) throw new ActionFailureError('authRequired')
+  // Fence every authority resolution to THIS thread's run — the resolver
+  // otherwise selects the task's newest run and a control could reach a
+  // different thread's machine (review_binding_changed denies instead).
+  return { session, workspacePool, resolve: resolveTaskReviewAuthority, runId: row.id }
+}
+
+export async function listThreadReviewSessions(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/review-sessions', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId }, async (authority, client) => {
+      const { rows } = await client.query<{ id: string; kind: string; name: string; expiresAt: Date; createdAt: Date }>(
+        `SELECT id,kind,name,"expiresAt","createdAt" FROM coding_review_sessions
+          WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND "revokedAt" IS NULL AND "expiresAt">clock_timestamp()
+          ORDER BY kind,name`, [authority.runId, authority.ownerId, authority.workspaceId])
+      return rows.map(r => ({ id: r.id, kind: r.kind, name: r.name, expiresAt: r.expiresAt.toISOString(), createdAt: r.createdAt.toISOString() }))
+    })
+  })
+}
+
+export async function openThreadTerminal(issueId: string | null, runId: string, input?: { name?: string }) {
+  return withDatabaseOperation('/actions/threads/terminal/open', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId }, async (authority, client) => {
+      if (authority.machineKind !== 'cloud') throw new ActionFailureError('runNotFound')
+      const { beginReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+      const lease = await beginReviewSession(authority, { kind: 'terminal', name: input?.name ?? '' }, client)
+      return { id: lease.id, name: input?.name ?? '', expiresAt: lease.expiresAt }
+    })
+  })
+}
+
+export async function closeThreadTerminal(issueId: string | null, runId: string, input: { id: string; name?: string }) {
+  return withDatabaseOperation('/actions/threads/terminal/close', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    // Confirm the lease inside the authority transaction, then release the
+    // SQL locks before the provider close — the HTTP close handler's order.
+    const authority = await ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId },
+      async (current, client) => {
+        const { readReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+        const lease = await readReviewSession(current, { kind: 'terminal', id: input.id, name: input.name ?? '' }, client)
+        if (!lease) return null
+        return current
+      })
+    if (!authority) return { closed: false }
+    const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const result = await revokeReviewSession(authority, { kind: 'terminal', id: input.id })
+    return { closed: !result.pending }
+  })
+}
+
+export async function openThreadBrowser(issueId: string | null, runId: string, input?: { port?: number }) {
+  return withDatabaseOperation('/actions/threads/browser/open', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    const session = ctx.session
+    const { resolveTaskReviewAuthority } = await import('@/lib/coding-workspace/review-authority')
+    const { beginReviewSession, readReviewSession, revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const { resumeReviewMachine } = await import('@/lib/coding-workspace/review-machine')
+    const { prepareRunPreview, issueRunPreview } = await import('@/lib/coding-workspace/preview/runtime')
+    const { isPreviewPort } = await import('@/lib/coding-workspace/preview/port')
+    const port = input?.port
+    if (port !== undefined && !isPreviewPort(port)) throw new ActionFailureError('runNotFound')
+    const parentOrigin = `https://${(await headers()).get('host')}`
+    const signal = AbortSignal.timeout(50_000)
+    let authority = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, { runId: ctx.runId })
+    const fence = () => ({ runId: authority.runId, bindingId: authority.bindingId })
+    const lease = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+      async (current, client) => { authority = current; return beginReviewSession(current, { kind: 'preview' }, client) })
+    try {
+      await resumeReviewMachine(authority, lease, signal)
+      const result = await prepareRunPreview(authority, { ...(port !== undefined ? { port } : {}), expiresAt: lease.expiresAt, ...(authority.sponsoredPlacement ? { lease } : {}) })
+      if (!result.running) {
+        await revokeReviewSession(authority, { kind: 'preview', id: lease.id })
+        return { running: false as const }
+      }
+      const confirmed = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+        async (current, client) => { authority = current; return readReviewSession(current, { kind: 'preview', id: lease.id }, client) })
+      if (!confirmed || confirmed.id !== lease.id) throw new ActionFailureError('runNotFound')
+      const preview = await issueRunPreview(result, parentOrigin, { id: confirmed.id,
+        expiresAt: new Date(Math.min(Date.parse(confirmed.expiresAt), Date.parse(result.expiresAt))).toISOString() })
+      const still = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+        async (current, client) => readReviewSession(current, { kind: 'preview', id: lease.id }, client))
+      if (!still) throw new ActionFailureError('runNotFound')
+      return { id: lease.id, url: preview.url, expiresAt: lease.expiresAt }
+    } catch (cause) {
+      try { await revokeReviewSession(authority, { kind: 'preview', id: lease.id }) } catch { /* best effort */ }
+      throw cause
+    }
+  })
+}
+
+export async function closeThreadBrowser(issueId: string | null, runId: string, input: { id: string }) {
+  return withDatabaseOperation('/actions/threads/browser/close', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    const authority = await ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId },
+      async (current, client) => {
+        const { readReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+        const lease = await readReviewSession(current, { kind: 'preview', id: input.id }, client)
+        if (!lease) return null
+        return current
+      })
+    if (!authority) return { closed: false }
+    const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const result = await revokeReviewSession(authority, { kind: 'preview', id: input.id })
+    return { closed: !result.pending }
+  })
+}
+
+/** #2940 item 2: uploads on the thread's chain, owner only. */
+export async function listThreadUploads(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/uploads', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).listThreadUploads(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 2: a fresh signed download URL for one of the thread's uploads. */
+export async function getThreadUploadDownloadUrl(issueId: string | null, runId: string, fileId: string) {
+  return withDatabaseOperation('/actions/threads/uploads/download', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).threadUploadDownloadUrl(pool, user.id, runIds, fileId)
+  })
+}
+
+/** #2940 item 2: the files this thread changed, from the latest
+ * coding-workspace diff snapshot per run. */
+export async function listThreadChangedFiles(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/changed-files', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).listThreadChangedFiles(pool, user.id, row.workspaceId ?? null, runIds)
+  })
+}
+
+/** #2940 item 3: the thread's machine — spec identity and liveness metrics. */
+export async function getThreadMachineDetail(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/machine-detail', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).getThreadMachineDetail(pool, user.id, row.workspaceId ?? null, row.id)
+  })
+}
+
+/** #2940 item 3: re-run setup/maintenance on the thread's machine — the
+ * refresh_runtime the machine route already serves. */
+export async function rerunThreadMachineSetup(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/machine-setup', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).rerunThreadMachineSetup(pool, user.id, row.workspaceId ?? null, row.id)
+  })
+}
+
+/** #2940 item 5: the pull requests a thread's chain published, owner only —
+ * the publication receipt is the requester's own record, like the run-location
+ * icon getThreadMachine serves. */
+export async function listThreadPulls(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/pulls', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    const pulls = await import('@/lib/thread-pulls')
+    await pulls.drainThreadPullMergeIntents(pool, user.id, runIds)
+    return pulls.listThreadPulls(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 5: arm or clear "merge when ready" on a pull this thread
+ * published. The intent never merges by itself — a read or poll drains it
+ * through mergePullRequest's own gates, as the person with their token. */
+export async function setThreadPullMergeWhenReady(issueId: string | null, runId: string, input: { repo: string; number: number; headSha: string; enabled: boolean; confirmFailedChecks?: boolean }) {
+  return withDatabaseOperation('/actions/threads/pulls/merge-intent', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const { rows: [meta] } = await pool.query<{ issueId: string | null; workspaceId: string | null }>('SELECT "issueId","workspaceId" FROM agent_runs WHERE id=$1', [row.id])
+    const pulls = await import('@/lib/thread-pulls')
+    const state = await pulls.setThreadPullMergeIntent(pool, user.id, meta?.workspaceId ?? null, meta?.issueId ?? null, row.id, input)
+    if (state === 'armed') {
+      const chain = await readRunChain(pool, row.userId, row.id)
+      const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+      await pulls.drainThreadPullMergeIntents(pool, user.id, runIds)
+    }
+    return { state }
+  })
+}
+
+/** #2940 item 5: one poll drains every armed merge intent on the thread's
+ * chain — the "when ready" tick. Still-blocked pulls stay armed. */
+export async function syncThreadPullMerges(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/pulls/merge-sync', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-pulls')).drainThreadPullMergeIntents(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 6: the review actor for this session — the same shape the git
+ * HTTP routes build, so the thread adapter reaches the existing git service
+ * unchanged rather than re-implementing it. */
+async function threadReviewActor() {
+  const { getApiSession } = await import('@/lib/api-auth')
+  const session = await getApiSession({ headers: await headers(), query: { disableCookieCache: true } })
+  if (!session?.user) throw new ActionFailureError('authRequired')
+  const context = await loadWorkspaceContext(undefined, session.user)
+  return { userId: session.user.id, workspaceId: context.workspace.id, credential: session.tokenId
+    ? { kind: 'pat' as const, id: session.tokenId }
+    : { kind: 'session' as const, id: session.session.id } }
+}
+
+async function threadGitScope(issueId: string | null, runId: string) {
+  const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+  if (row.userId !== user.id) return null
+  const { rows: [meta] } = await pool.query<{ deviceRepoId: string | null }>('SELECT "deviceRepoId" FROM agent_runs WHERE id=$1', [row.id])
+  if (!meta?.deviceRepoId) return null
+  return { actor: await threadReviewActor(), runId: row.id, repoId: meta.deviceRepoId }
+}
+
+/** #2940 item 6: git status adapted to the thread — resolves the run's repo
+ * itself and delegates to lib/coding-workspace/git unchanged. */
+export async function getThreadGitStatus(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-status', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { getRunGitStatus } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await getRunGitStatus({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId)).value
+  })
+}
+
+/** #2940 item 6: git history adapted to the thread, paged like the route. */
+export async function getThreadGitHistory(issueId: string | null, runId: string, input?: { cursor?: string; limit?: number }) {
+  return withDatabaseOperation('/actions/threads/git-history', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunGitHistory } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunGitHistory({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId,
+      { ...(input?.cursor ? { cursor: input.cursor } : {}), limit: input?.limit ?? 20 })).value
+  })
+}
+
+/** #2940 item 3/6: the run's checkpoint/snapshot list, adapted to the thread. */
+export async function listThreadGitCheckpoints(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-checkpoints', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunCheckpoints } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunCheckpoints({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId))
+  })
 }
 
 /** Asks the daemon to stop the run; it repeats until the run has ended. */
@@ -932,6 +1266,17 @@ export async function resumeQuotaPausedRunOnApiKey(runId: string): Promise<{ run
 /** A run paused because its subscription's quota ran out is tried again with its original credential. Owner only; a repeat returns the same run. */
 export async function retryQuotaPausedRun(runId: string): Promise<{ runId: string }> {
   return withOwnWorkspaceRun(runId, async userId => (await import('@/lib/run-quota')).retryQuotaPausedRun(userId, runId))
+}
+
+/** A quota-paused run switches to a Mikka 额度 model (a LiteLLM catalogue id). Owner only. */
+export async function resumeQuotaPausedRunOnCredits(runId: string, model: string): Promise<{ runId: string }> {
+  return withOwnWorkspaceRun(runId, async userId => (await import('@/lib/run-quota')).resumeQuotaPausedRunOnCredits(userId, runId, model))
+}
+
+/** #2938 (5): every quota-paused thread of the person moves to Mikka 额度 at once. */
+export async function resumeAllQuotaPausedOnCredits(model: string): Promise<{ runId: string; continued: string | null }[]> {
+  const userId = await getUserId()
+  return (await import('@/lib/run-quota')).resumeAllQuotaPausedOnCredits(userId, model)
 }
 
 /** Settings #504 queues maintenance through the same owner-scoped backend as HTTP. */
