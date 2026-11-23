@@ -343,53 +343,60 @@ export async function setConversationOrganization(target: ConversationTarget, ch
 /** ⋯ menu thread actions (#2931) — same lifecycle functions the /api/threads routes call; only the owner succeeds. */
 export async function shareThread(runId: string): Promise<ActionResult<{ shareId: string; url: string }, 'runNotFound'>> {
   const { reader } = await conversationActor()
-  if (!isRunId(runId)) return { error: 'runNotFound' }
-  const share = await (await import('@/lib/thread-lifecycle')).createThreadShare(reader, runId)
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const share = await lc.createThreadShare(reader, runId)
   return share ? { shareId: share.shareId, url: `/threads/shared/${share.token}` } : { error: 'runNotFound' }
 }
 
 export async function revokeThreadShare(runId: string): Promise<ActionResult<{ revoked: number }, 'runNotFound'>> {
   const { reader } = await conversationActor()
-  if (!isRunId(runId)) return { error: 'runNotFound' }
-  const revoked = await (await import('@/lib/thread-lifecycle')).revokeThreadShares(reader, runId)
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const revoked = await lc.revokeThreadShares(reader, runId)
   return revoked === null ? { error: 'runNotFound' } : { revoked }
 }
 
 export async function forkThread(runId: string, mode?: 'full' | 'summary'): Promise<ActionResult<{ runId: string }, 'runNotFound'>> {
   const { reader } = await conversationActor()
-  if (!isRunId(runId) || (mode !== undefined && mode !== 'full' && mode !== 'summary')) return { error: 'runNotFound' }
-  const run = await (await import('@/lib/thread-lifecycle')).spawnThread(reader, runId, { relation: 'fork', mode: mode ?? 'full' })
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId) || (mode !== undefined && mode !== 'full' && mode !== 'summary')) return { error: 'runNotFound' }
+  const run = await lc.spawnThread(reader, runId, { relation: 'fork', mode: mode ?? 'full' })
   return run ? { runId: run.id } : { error: 'runNotFound' }
 }
 
 export async function updateThread(runId: string, input: { taskId?: string | null; tags?: string[] }): Promise<ActionResult<{ updated: true }, 'runNotFound' | 'taskNotFound' | 'validationGeneric'>> {
   const { reader } = await conversationActor()
-  const taskId = input?.taskId === undefined ? undefined : input.taskId === null ? null : typeof input.taskId === 'string' && isRunId(input.taskId) ? input.taskId : undefined
+  const lc = await import('@/lib/thread-lifecycle')
+  const taskId = input?.taskId === undefined ? undefined : input.taskId === null ? null : typeof input.taskId === 'string' && lc.isRunId(input.taskId) ? input.taskId : undefined
   const tags = input?.tags === undefined ? undefined : Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0 && tag.trim().length <= 60).slice(0, 20).map(tag => tag.trim()) : undefined
-  if (!isRunId(runId) || (input?.taskId !== undefined && taskId === undefined) || (input?.tags !== undefined && tags === undefined) || (taskId === undefined && tags === undefined))
+  if (!lc.isRunId(runId) || (input?.taskId !== undefined && taskId === undefined) || (input?.tags !== undefined && tags === undefined) || (taskId === undefined && tags === undefined))
     return { error: 'validationGeneric' }
-  const run = await (await import('@/lib/thread-lifecycle')).patchThread(reader, runId, { ...(taskId !== undefined ? { taskId } : {}), ...(tags ? { tags } : {}) })
+  const run = await lc.patchThread(reader, runId, { ...(taskId !== undefined ? { taskId } : {}), ...(tags ? { tags } : {}) })
   return run === 'forbidden' ? { error: 'taskNotFound' } : run ? { updated: true } : { error: 'runNotFound' }
 }
 
 export async function deleteThread(runId: string): Promise<ActionResult<{ recoveryDays: number }, 'runNotFound'>> {
   const { reader } = await conversationActor()
-  if (!isRunId(runId)) return { error: 'runNotFound' }
-  const deleted = await (await import('@/lib/thread-lifecycle')).deleteThread(reader, runId)
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const deleted = await lc.deleteThread(reader, runId)
   return deleted === null ? { error: 'runNotFound' } : { recoveryDays: 30 }
 }
 
 export async function restoreThread(runId: string): Promise<ActionResult<{ restored: true }, 'runNotFound' | 'restoreExpired'>> {
   const { reader } = await conversationActor()
-  if (!isRunId(runId)) return { error: 'runNotFound' }
-  const restored = await (await import('@/lib/thread-lifecycle')).restoreThread(reader, runId)
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const restored = await lc.restoreThread(reader, runId)
   return restored === null ? { error: 'runNotFound' } : restored ? { restored: true } : { error: 'restoreExpired' }
 }
 
 export async function threadAutomation(runId: string, definition: Record<string, unknown>): Promise<ActionResult<Record<string, unknown>, 'runNotFound' | 'scheduleRejected' | 'validationGeneric'>> {
   const { reader } = await conversationActor()
-  if (!isRunId(runId) || !definition || typeof definition !== 'object' || Array.isArray(definition)) return { error: 'validationGeneric' }
-  const result = await (await import('@/lib/thread-lifecycle')).threadToAutomation(reader, runId, definition)
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId) || !definition || typeof definition !== 'object' || Array.isArray(definition)) return { error: 'validationGeneric' }
+  const result = await lc.threadToAutomation(reader, runId, definition)
   return result === 'forbidden' ? { error: 'scheduleRejected' } : result ? result as Record<string, unknown> : { error: 'runNotFound' }
 }
 
