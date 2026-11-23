@@ -56,6 +56,8 @@ for the part of Mikka you are changing. Development and acceptance rules live in
   commands, scripted boundaries, accounts, and runtime proof.
 - [Runtime acceptance](acceptance.md) covers specific identities, OAuth,
   deployed origins, and production exceptions.
+- [Released protocol fixtures](release-fixtures/README.md) preserve published
+  callers that contract tests execute against current services.
 - [Isolated test accounts](test-accounts.md) describes the loopback account pool
   and its application, database and lease boundaries.
 - [UI review checklist](review-checklist.md) applies before presenting UI.
