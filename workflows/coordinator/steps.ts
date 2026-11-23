@@ -340,7 +340,7 @@ export async function dispatchRun(userId: string, input: { brief?: string; issue
  */
 async function withDispatchBrief<T>(userId: string, brief: string | undefined, result: T): Promise<T> {
   if (!brief || !result || typeof result !== 'object' || !('runId' in result) || typeof result.runId !== 'string' || 'error' in result) return result
-  await (await import('@/lib/subagent-runs')).recordDispatchBrief(pool, userId, result.runId, brief)
+  await (await import('@/lib/subagent-run-read')).recordDispatchBrief(pool, userId, result.runId, brief)
   return result
 }
 

@@ -6223,7 +6223,7 @@
       "machine": "云机器",
       "machineSized": "云机器 · {vcpu} vCPU · {gib} GiB",
       "underMinute": "不到 1 分钟",
-      "minutes": "{count} 分钟",
+      "minutes": "{minutes} 分钟",
       "hours": "{hours} 小时 {minutes} 分钟",
       "breakdownFailed": "读不到明细。",
       "includedHeading": "你的订阅或 API Key（不扣 Mikka 额度）",

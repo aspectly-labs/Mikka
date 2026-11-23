@@ -6223,7 +6223,7 @@
       "machine": "Cloud machine",
       "machineSized": "Cloud machine · {vcpu} vCPU · {gib} GiB",
       "underMinute": "under 1 min",
-      "minutes": "{count} min",
+      "minutes": "{minutes} min",
       "hours": "{hours} h {minutes} min",
       "breakdownFailed": "Couldn't read the breakdown.",
       "includedHeading": "Your subscription or API key (not charged to Mikka credits)",

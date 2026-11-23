@@ -84,7 +84,7 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
   // A receipt settled before the funding column existed: who paid it is unknown, never zero.
   const settledBefore = randomUUID()
   await pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","unpaidMicroUsd") VALUES ($1,$2,'fixture/model','settled',23,23)`, [settledBefore, old])
-  const platformFunded = readFileSync('drizzle/20261122130426_hosted_usage_platform_funded.sql', 'utf8')
+  const platformFunded = readFileSync('drizzle/20261123210000_hosted_usage_platform_funded.sql', 'utf8')
   await pool.query(platformFunded)
   await pool.query(platformFunded)
   await t.test('a scripted LiteLLM BYOK receipt keeps its usage and does not consume the workspace budget', async t => {

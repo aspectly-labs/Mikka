@@ -331,7 +331,7 @@ async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, 
 export async function forkThread(userId: string, workspaceId: string, input: { runId: string; itemId?: string | null; mode: import('./thread-fork-context').ForkMode; text: string; requestId: string }): Promise<{ runId: string; threadId: string; replacedThreadId: string | null }> {
   const parsed = z.object({ runId: z.uuid(), itemId: z.string().min(1).max(200).nullish(), mode: z.enum(['full', 'summary']), text: z.string().trim().min(1).max(4_000), requestId: z.uuid() }).safeParse(input)
   if (!parsed.success) throw new ActionFailureError(typeof input?.text === 'string' && !input.text.trim() ? 'messageRequired' : 'validationGeneric')
-  const { ownedThreadChain } = await import('./thread-lifecycle')
+  const { ownedThreadChain } = await import('./thread-lifecycle-owner')
   const chain = await ownedThreadChain(pool, { ownerId: userId, workspaceId, runId: parsed.data.runId })
   if (!chain) throw new ActionFailureError('runNotFound')
   const [run] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, chain.latestRunId), eq(agentRuns.userId, userId))).limit(1)

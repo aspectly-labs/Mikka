@@ -4386,7 +4386,7 @@
     "test": "lib/due-timer.test.ts",
     "suite": "test:schedules"
   },
-  "drizzle/20261122164438_bot_chat_revisions.sql": {
+  "drizzle/20261123210100_bot_chat_revisions.sql": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Keeps a Bot chat's replaced turns and their Edit or Regenerate revisions in the installation database.",

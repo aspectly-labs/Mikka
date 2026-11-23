@@ -20,16 +20,17 @@ export function messageReferences(text: string): MessageReference[] {
   let offset = 0
   for (const part of splitCitations(text, true)) {
     if (part.type === 'text') { offset += part.text.length; continue }
-    if (part.type === 'chat') {
+    if (part.type === 'chat' || part.type === 'bot') {
+      if (part.type === 'bot') { offset += 8 + part.id.length; continue }
       // `[[chat:` + id + `]]`, as the pattern matched it.
       const length = 9 + part.id.length
       references.push({ type: 'chat', id: part.id, offset, length })
       offset += length
       continue
     }
-    if (part.type === 'citation' && part.kind) references.push({ type: part.kind === 'issue' ? 'task' : 'thread', id: part.id, offset, length: part.raw.length })
+    if (part.type === 'citation' && 'raw' in part && part.kind) references.push({ type: part.kind === 'issue' ? 'task' : 'thread', id: part.id, offset, length: part.raw.length })
     else if (part.type === 'link' && part.label === null && PULL_REQUEST.test(part.url)) references.push({ type: 'pr', id: part.url, offset, length: part.raw.length })
-    offset += part.raw.length
+    if ('raw' in part) offset += part.raw.length
   }
   return references
 }
