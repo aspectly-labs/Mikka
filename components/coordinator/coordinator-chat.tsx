@@ -240,7 +240,9 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   }, [userId, botId, embedded, setDraft])
   const [following, setFollowing] = useViewState(`${stateKey}:following`, true)
   // The right rail's Tasks tab the thread 打开任务 button targets (#2930).
-  const [, setPanelTab] = useViewState(`context:coordinator:${botId ?? 'coordinator'}:tab`, 'threads')
+  // The rail keys its tabs by the conversation's kind + id: `context:bot:<botId>`
+  // for a Bot's chat, `context:coordinator:coordinator` for the Coordinator's.
+  const [, setPanelTab] = useViewState(`context:${botId ? 'bot' : 'coordinator'}:${botId ?? 'coordinator'}:tab`, 'threads')
   // Hydration first exposes server defaults; lock the initial scroll choice only
   // after the saved session and the transcript have both been read.
   const [mounted, setMounted] = useState(false)
