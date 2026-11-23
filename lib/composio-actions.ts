@@ -49,9 +49,9 @@ export const COMPOSIO_ACTIONS = {
     description: 'List the pages in the connected Notion workspace, most recently edited first.',
     toolkit: 'notion',
     slug: 'NOTION_SEARCH_NOTION_PAGE',
-    inputSchema: z.object({ page_size: z.number().int().min(1).max(100).optional() }),
-    toArguments: (input: { page_size?: number }) => ({
-      query: '', page_size: input.page_size ?? 25, filter_property: 'object', filter_value: 'page', timestamp: 'last_edited_time', direction: 'descending',
+    inputSchema: z.object({ page_size: z.number().int().min(1).max(100).optional(), start_cursor: z.string().max(500).optional() }),
+    toArguments: (input: { page_size?: number; start_cursor?: string }) => ({
+      query: '', page_size: input.page_size ?? 25, filter_property: 'object', filter_value: 'page', timestamp: 'last_edited_time', direction: 'descending', start_cursor: input.start_cursor,
     }),
   },
   read_notion_page_blocks: {
