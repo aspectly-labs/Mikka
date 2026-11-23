@@ -195,7 +195,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     // 3. The Coordinator's picker chooses a model only: no Agent (harness) in its menu.
     assert.ok(!JSON.stringify(coordinator).includes("harness"));
     for (const group of coordinator.groups) for (const option of group.options)
-      assert.deepEqual(Object.keys(option).filter((key) => !(group.kind === "hosted" && ["name", "price", "featured"].includes(key))).sort(), ["id", "modelId", "provider"]);
+      assert.deepEqual(Object.keys(option).filter((key) => !(group.kind === "hosted" && ["name", "price", "featured"].includes(key))).sort(), ["id", "modelId", "provider", "route"]);
 
     // 4. The next run freezes the pick; a run already frozen keeps its model.
     const dependencies = { service: () => ({ repository: new SubscriptionRepository(pool) }) as never, workspace: async () => {} };
@@ -289,7 +289,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const keyOption = apiKeyOptionId(key.id, "deepseek-chat");
     let keyMenu = await botModelMenu(pool, settings, alice, null);
     assert.equal(keyMenu.groups.find((group) => group.kind === "apiKey")?.credentialLabel, `····${key.last4}`);
-    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options, [{ id: keyOption, modelId: "deepseek-chat", provider: "deepseek" }]);
+    assert.deepEqual(keyMenu.groups.find((group) => group.kind === "apiKey")?.options, [{ id: keyOption, modelId: "deepseek-chat", provider: "deepseek", route: { keyId: key.id, label: `····${key.last4}`, source: "byok" } }]);
     // Picked by its option id, as the web's action and the iOS app's PUT /api/mobile/model both send it.
     const { chooseBotModel } = await import("./bot-model-menu");
     keyMenu = await chooseBotModel(pool, settings, alice, null, keyOption);

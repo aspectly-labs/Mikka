@@ -6,7 +6,7 @@ import { getPasswordStatus, listSessions } from '@/app/actions/account'
 import { getPreferences } from '@/app/actions/preferences'
 import { getIssuePrefixState } from '@/app/actions/issue-prefix'
 import { cacheReadAction } from '@/lib/cache-read-action'
-import { listSavedLogins } from '@/app/actions/settings-activity'
+import { listActivity, listSavedLogins } from '@/app/actions/settings-activity'
 import { getWorkspaceDeletionImpact, getWorkspaceGeneral, getWorkspaceTransferTargets } from '@/app/actions/workspace-settings'
 import { getAppPolicy } from '@/app/actions/app-policy'
 import { getCreditShare, getPaymentDesignation, getSharePolicy } from '@/app/actions/personal-policy'
@@ -35,6 +35,7 @@ const READS: Record<SettingsRead, (query: URLSearchParams) => Promise<unknown>> 
   preferences: () => getPreferences(),
   'issue-prefix': () => getIssuePrefixState(),
   'saved-logins': () => listSavedLogins(),
+  activity: query => listActivity({ filter: (query.get('filter') ?? undefined) as NonNullable<Parameters<typeof listActivity>[0]>['filter'], cursor: query.get('cursor') }),
   'workspace-general': query => getWorkspaceGeneral(workspace(query)),
   'transfer-targets': query => getWorkspaceTransferTargets(workspace(query)),
   'deletion-impact': query => getWorkspaceDeletionImpact(workspace(query)),
@@ -85,7 +86,7 @@ async function shareKey(read: string, query: URLSearchParams) {
 }
 
 /** Reads of the signed-in account alone, with no workspace input. */
-const ACCOUNT_READS = new Set<string>(['password', 'preferences', 'issue-prefix', 'saved-logins'])
+const ACCOUNT_READS = new Set<string>(['password', 'preferences', 'issue-prefix', 'saved-logins', 'activity'])
 
 function workspace(query: URLSearchParams) {
   return query.get('workspace') ?? undefined

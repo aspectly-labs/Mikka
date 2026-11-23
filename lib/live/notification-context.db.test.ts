@@ -30,7 +30,7 @@ test('real Factory notifications retain their database across COMMIT and delayed
   const receiver = createServer(async (request, response) => {
     let body = ''
     for await (const part of request) body += part
-    sent.push({ path: request.url!, events: JSON.parse(body) })
+    sent.push({ path: request.url!, events: body ? JSON.parse(body) : null })
     response.writeHead(204); response.end()
   })
   receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening')

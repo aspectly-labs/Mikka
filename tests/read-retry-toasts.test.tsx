@@ -66,7 +66,7 @@ stub('components/coordinator/chat-composer.tsx', { ChatComposerAttachment: Empty
 mock.module('@/lib/client-runtime/dynamic', { defaultExport: () => Empty })
 
 const issue = { id: 'issue', userId: 'owner', title: 'Retained task', content: { type: 'doc', content: [] }, status: 'review', priority: 'normal', revision: 1, identifier: 'FIX-1', metadata: {}, createdAt: new Date(0), updatedAt: new Date(0) }
-stub('app/actions/issues.ts', { pollIssue: () => read('task', { viewerId: 'owner', version: '1', issue }), pollIssueVersionSummaries: async () => ({ viewerId: 'owner', snapshot: { version: '1', items: [] } }), listIssueVersions: async () => [], saveIssue: async () => { throw new Error('This read test must not save') } })
+stub('app/actions/issues.ts', { pollIssue: () => read('task', { viewerId: 'owner', version: '1', issue }), pollIssueVersionSummaries: async () => ({ viewerId: 'owner', snapshot: { version: '1', items: [] } }), pollIssueActivityPage: async () => ({ viewerId: 'owner', snapshot: { version: '1', items: [], hasMore: false } }), loadEarlierIssueActivity: async () => ({ viewerId: 'owner', page: { items: [], hasMore: false } }), listIssueVersions: async () => [], saveIssue: async () => { throw new Error('This read test must not save') } })
 stub('app/actions/issue-operations.ts', { getDeletedIssue: async () => null, listIssueConnections: async () => [], setIssueDeleted: async () => { throw new Error('This read test must not delete') } })
 stub('components/workspace/issue-editor.tsx', { createDocumentSeed: () => null, IssueEditor: Empty })
 for (const [file, name] of [['issue-description-history', 'IssueDescriptionHistory'], ['issue-relations', 'IssueRelations'], ['issue-members', 'IssueMembers'], ['issue-activity-feed', 'IssueActivityFeed']]) stub(`components/workspace/${file}.tsx`, { [name]: Empty })
@@ -77,6 +77,7 @@ stub('components/nav/conversation-pill.tsx', { ConversationPill: Empty })
 stub('components/nav/group-avatar.tsx', { GroupAvatar: Empty, groupMembersKey: (id: string) => ['group-members', id], memberAvatar: (member: { id: string }) => ({ id: member.id }), useGroupMembers: () => ({ data: [] }) })
 stub('components/nav/letter-avatar.tsx', { LetterAvatar: Empty })
 stub('components/nav/bot-avatar.tsx', { BotAvatar: Empty, CoordinatorAvatar: Empty, COORDINATOR_AVATAR: { color: 'encre', shape: 'cercle', coordinator: true } })
+stub('components/workspace/working-status.tsx', { WorkingStatus: Empty })
 // The task page's layer frame (docs/ui-overlay.md task-detail); this test reads through the open-source layout.
 stub('components/workspace/task-detail-frame.tsx', { FramedTask: ({ titleField }: import('../components/workspace/task-detail-frame').FramedTaskProps) => <Input id="task-title" value={titleField.value} readOnly /> })
 stub('components/slots/task-conversation.tsx', { TaskConversation: ({ issueId, runId }: { issueId: string; runId: string }) => <ol data-task-conversation={issueId}><li>{runId}</li></ol> })

@@ -15,7 +15,13 @@ import { ComputerError } from '@/lib/computer/store'
 import { latestThreadRunModel } from '@/lib/computer/run-model'
 import { queueFactoryCloudRun } from '@/lib/factory/queue-cloud'
 
-const inputSchema = z.object({ issueId: z.uuid(), harness: z.enum(['codex', 'claude_code']).optional(), profileId: agentProfileReferenceSchema.optional(), note: z.string().trim().max(10_000).optional(), needsSpec: z.boolean().optional() }).strict()
+const inputSchema = z.object({ issueId: z.uuid(), harness: z.enum(['codex', 'claude_code']).optional(), profileId: agentProfileReferenceSchema.optional(), note: z.string().trim().max(10_000).optional(), needsSpec: z.boolean().optional(),
+  // #3082: an explicit third-party provider selects the `cloud.eve_factory`
+  // route; harness/profile are the native selection and stay mutually exclusive
+  // with a provider choice.
+  provider: z.string().trim().min(1).max(128).regex(/^[a-z0-9][a-z0-9_.:/-]*$/i).optional(),
+  model: z.string().trim().min(1).max(500).optional(), effort: z.string().trim().min(1).max(64).optional() }).strict()
+  .refine(value => !(value.provider && (value.harness || value.profileId)), { message: 'provider or harness/profile, not both' })
 const headers = { 'Cache-Control': 'private, no-store' }
 class AgentNoModelError extends Error { constructor(public harness: 'claude_code' | 'codex') { super('agentNoModel') } }
 
@@ -36,10 +42,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ bot
     const { dispatchToTask, latestTaskRun } = await import('@/lib/thread-dispatch')
     const previousThread = await latestTaskRun(pool, session.user.id, parsed.data.issueId)
     const sourceEventId = previousThread && parsed.data.note ? await (await import('@/lib/factory/request-epoch')).recordOwnerFactoryContinuation(pool, session.user.id, previousThread.id, parsed.data.note) : undefined
+    let eveDrive: (() => Promise<unknown>) | undefined
     const result = await dispatchToTask(session.user.id, parsed.data.issueId, {
       note: parsed.data.note, sourceEventId,
       // A new thread takes 优先使用的模型's first cloud entry for the Agent it names; the thread's next run keeps its own Agent and model.
       start: async (previous, note) => {
+        if (parsed.data.provider) {
+          // #3082: the explicit third-party route. Placement still reuses the
+          // Bot's cloud runtime agent/device for the sponsored task machine;
+          // the role model/provider is admitted by the adapter, never by the
+          // Agent-Profile selection the native path uses.
+          const { queueFactoryEveRun } = await import('@/lib/eve/factory/adapter')
+          const { rows: [runtime] } = await pool.query('SELECT r."agentId",r."repoId",a."deviceId" FROM bot_cloud_runtimes r JOIN agents a ON a.id=r."agentId" WHERE r."botId"=$1 AND r."ownerId"=$2 AND r."workspaceId"=$3 ORDER BY r."createdAt" LIMIT 1', [botId, session.user.id, context.workspace.id])
+          if (!runtime) throw new ComputerError(409, 'Bot computer task is unavailable')
+          const deviceRepoId = previous?.remoteUrl ? (await (await import('@/lib/device-repositories')).ensureDeviceRepository(session.user.id, runtime.deviceId, previous.remoteUrl)).id : runtime.repoId
+          const eve = await queueFactoryEveRun(pool, session.user.id, {
+            ownerRequested: session.user.id === issue.userId, issueId: parsed.data.issueId, note, botId, sourceEventId,
+            ...(parsed.data.needsSpec !== undefined ? { needsSpec: parsed.data.needsSpec } : {}),
+            agentId: runtime.agentId, deviceRepoId,
+            ...(previous ? { key: `thread:${previous.id}:${sourceEventId ?? crypto.randomUUID()}` } : {}),
+            ...(previous ? { previousRunId: previous.id } : {}),
+            provider: parsed.data.provider, ...(parsed.data.model ? { model: parsed.data.model } : {}), ...(parsed.data.effort ? { effort: parsed.data.effort } : {}),
+          })
+          eveDrive = eve.drive
+          return { runId: eve.runId }
+        }
         const scope = { ownerId: session.user.id, workspaceId: context.workspace.id, botId }
         const needsSpec = !previous && await (await import('@/lib/factory/task-dispatch')).factoryTaskNeedsSpec(pool, session.user.id, { issueId: issue.id, botId, needsSpec: parsed.data.needsSpec })
         let runModel: import('@/lib/computer/run-model').RunModel
@@ -77,7 +104,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ bot
         return queueFactoryCloudRun(pool, actor, { ownerRequested: session.user.id === issue.userId, issueId: parsed.data.issueId, note, botId, sourceEventId, needsSpec, agentId: runtime.agentId, deviceRepoId, ...(previous?.botId === null ? {withoutBot:true} : {}), title: issue.title, body: tiptapToText(issue.content), ...(previous?.readOnly ? { readOnly: true } : {}), ...(previous ? { idempotencyKey: `thread:${previous.id}:${sourceEventId ?? crypto.randomUUID()}` } : {}), ...runModel, ...(previous ? { threadRunId: previous.id } : {}) })
       },
     })
-    if ('runId' in result && result.thread !== 'message') await (await import('@/lib/run-leases')).startThreadMachine({ userId: session.user.id, workspaceId: context.workspace.id }, result.runId)
+    // #3082: the Eve route's machine opens lazily with its first role turn;
+    // only the native thread machine needs an explicit start here.
+    if (eveDrive) await eveDrive()
+    else if ('runId' in result && result.thread !== 'message') await (await import('@/lib/run-leases')).startThreadMachine({ userId: session.user.id, workspaceId: context.workspace.id }, result.runId)
     return Response.json(result, { status: 202, headers })
   } catch (error) {
     if (error instanceof AgentNoModelError) {

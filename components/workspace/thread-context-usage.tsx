@@ -1,6 +1,7 @@
 'use client'
 
 import { useTranslations } from '@/lib/intl/i18n-client'
+import { ContextRing } from '@/components/chat/context-ring'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Progress, ProgressTrack } from '@/components/ui/progress'
@@ -10,8 +11,8 @@ import type { ContextSegmentKey, ContextUsage } from '@/lib/context-usage'
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
 /**
- * What the run holds, in the thread's status line: one button reading
- * `上下文 23.4k / 25k` for the brief, opening the measured segments.
+ * What the run holds, in the thread's status line: a ring of the share (ContextRing); the figures are in its
+ * tooltip, its accessible name and the panel it opens with the measured segments.
  *
  * Every figure is an estimate from stored text (lib/context-usage.ts), so the
  * panel says 估算, and the segments this host cannot read are named rather than
@@ -24,11 +25,12 @@ export function ThreadContextUsage({ usage }: { usage: ContextUsage }) {
   // The brief's share of its own cap is the one ratio this host can state.
   const share = usage.promptBudget > 0 ? Math.min(100, Math.round(usage.promptUsed / usage.promptBudget * 100)) : 0
   const used = compact.format(usage.promptUsed), budget = compact.format(usage.promptBudget)
+  const name = t('contextUsage', { used, budget })
   return <Popover>
-    <PopoverTrigger render={<Button variant="ghost" size="xs" data-slot="thread-context-usage"
-      aria-label={t('contextUsage', { used, budget })}
-      className="shrink-0 gap-1 px-1.5 text-xs tabular-nums text-muted-foreground" />}>
-      {t('context')} {used}<span aria-hidden="true">/</span>{budget}
+    <PopoverTrigger render={<Button variant="ghost" size="icon-xs" data-slot="thread-context-usage"
+      aria-label={name} title={name}
+      className="shrink-0 text-muted-foreground" />}>
+      <ContextRing share={share} />
     </PopoverTrigger>
     <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-3">
       <div className="flex items-baseline justify-between gap-2">

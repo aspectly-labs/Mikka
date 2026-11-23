@@ -59,10 +59,10 @@ export async function requireFactoryVisualEvidence(tx: PoolClient, task: Pick<Fa
 /** A refusal is returned so the caller can commit the blocked state. Other
  * failures still throw and roll back the whole transaction. */
 export async function factoryHandoffEvidenceError(tx: PoolClient, task: FactoryTask,
-  completedProducer?: { runId: string; sessionId: string }): Promise<FactoryError | null> {
+  completedProducer?: { runId: string; sessionId: string }, retryPublicationRunId?: string): Promise<FactoryError | null> {
   if (!await hasFactoryVisualEvidence(tx, task, completedProducer)) return new FactoryError(FACTORY_VISUAL_EVIDENCE_REQUIRED);
   const { assertFactoryPublicationEvidence } = await import('../captures/publication');
-  try { await assertFactoryPublicationEvidence(tx, task); }
+  try { await assertFactoryPublicationEvidence(tx, task, retryPublicationRunId); }
   catch (error) {
     if ((error as { code?: string } | null)?.code === FACTORY_PUBLIC_EVIDENCE_REQUIRED) return new FactoryError(FACTORY_PUBLIC_EVIDENCE_REQUIRED);
     throw error;

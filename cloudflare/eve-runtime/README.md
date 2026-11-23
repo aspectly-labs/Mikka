@@ -62,9 +62,57 @@ workers as soon as a job is added. A deployment can override it with
 `EVE_ENV_WORKFLOW_POSTGRES_POLL_INTERVAL_MS`. Keep the concurrency at 50: the
 package documents a deadlock at 10.
 
-Each release runs its own Eve Container, and the host never sleeps. Stop a
-release's Container with `stopForOwner` once no gateway release serves it,
-otherwise every release keeps polling the database.
+## Host residency
+
+`MIKKA_EVE_HOST_RESIDENCY` selects the lifecycle, defaulting to `resident`:
+
+- `resident` (default): the Containers SDK keepalive stays exactly as shipped —
+  `onActivityExpired` never fires while work exists, and `onStop` restarts the
+  server through `startAndWaitForPorts`. This mode is required while
+  `WORKFLOW_TARGET_WORLD=@workflow/world-postgres`: the Postgres World's
+  Graphile worker owns due-job delivery inside the live process, so a sleeping
+  host would stall timers, retries and queued turns. External hosts behind the
+  relay keep their own residency; this flag only covers this worker's
+  container.
+- `on-demand`: the container sleeps after `MIKKA_EVE_IDLE_TIMEOUT` (default
+  `15m`) once the SDK reports no in-flight request, stream or WebSocket.
+  `onStop` never self-restarts; the next request or queued delivery starts the
+  container through `containerFetch`. It is honored **only when the configured
+  World delivers through the native queues** (the
+  `@mikka/eve-cloudflare-world` transport); with the Postgres World the flag is
+  refused (`CF_EVE_RESIDENCY_REQUIRES_QUEUE_WORLD`) and the host stays
+  resident. Waiting states — approvals, human input, hooks, sleep-until — then
+  live in the queues and World storage, so no Linux container is held while a
+  run waits.
+
+## Durable wake delivery
+
+Two deliveries land durably before compute, and each is release/version bound:
+
+- `EVE_WAKE` (native queue, private binding + consumer in this worker):
+  `EveService` forwards `POST /eve/v1/mikka/events` to the container as usual,
+  and buffers the exact call into `EVE_WAKE` only when the host answers 503.
+  The product outbox (`coordinator_events.deliveredAt IS NULL`) remains the
+  claim authority and sweep fallback; the queue copy just recovers faster.
+  `consumeEveWake` re-delivers by event name, dedupes by `eventId` inside a
+  batch, acks only an accepted delivery and retries everything else with
+  bounded backoff into the configured dead-letter queue. Wider duplicates land
+  on Eve's `mikka-event:<id>` session idempotency and `markEventAccepted`, so
+  double delivery can never double-run a turn. A queue has exactly one
+  consumer worker, so the private release deployment provisions one queue pair
+  (`mikka-eve-wake-<release>` plus its DLQ) per release and keeps both until
+  the release's retained messages drain.
+- `EveWorkflowDelivery` (named entrypoint): the
+  `@mikka/eve-cloudflare-world` queue consumer posts each retained release's
+  queue messages to `https://eve.internal/.well-known/workflow/v1/flow`. The
+  entrypoint requires the release, retry-count, queue-time and signature
+  headers — the Node executor inside the container authenticates the signature
+  over the original bytes and echoes the release — then delivers through the
+  release-named container, which starts on demand.
+
+Each release runs its own Eve Container, and a resident host never sleeps.
+Stop a release's Container with `stopForOwner` once no gateway release serves
+it, otherwise every release keeps polling the database.
 
 The named service `EveService` forwards the native protocol at
 `https://eve.internal/eve/v1/*`. Postgres queue delivery stays inside the
@@ -72,9 +120,9 @@ Container. The ingress blocks external workflow queue callbacks, as required by
 the Postgres World's security guidance. Keep queue delivery on its default
 loopback origin.
 
-The Containers SDK keeps the server active through its documented
-`onActivityExpired` override and restarts it through `startAndWaitForPorts` after
-an exit. Explicit operator cleanup persists the stopped state through
+The Containers SDK keeps a resident server active through its documented
+`onActivityExpired` override and restarts it through `startAndWaitForPorts`
+after an exit. Explicit operator cleanup persists the stopped state through
 `stopForOwner`. A per-Container capability and an exact-host TLS intercept protect
 the existing `product.internal` business API transport.
 

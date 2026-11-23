@@ -10,6 +10,7 @@ export async function localComputerAuthority(pool: Pool, ownerId: string, device
       p.permission,coalesce(p.version,0) AS "policyVersion"
     FROM agent_runs r JOIN bots b ON b.id=r."botId" AND b."ownerId"=r."userId"
     JOIN devices d ON d.id=r."deviceId" AND d."ownerId"=r."userId" AND d.kind='local' AND d.enabled=true
+      AND coalesce((to_jsonb(d)->>'computerUseEnabled')::boolean, true)=true
     LEFT JOIN workspace_computer_policies p ON p."workspaceId"=b."workspaceId"
     WHERE r.id=$1 AND r."userId"=$2 AND r."deviceId"=$3
       AND r.status=ANY($4::text[]) AND r."stopRequestedAt" IS NULL AND r."leaseExpiresAt">now()

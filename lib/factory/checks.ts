@@ -1,4 +1,5 @@
 import { factoryReviewCriteriaComplete, factoryReviewVerdict } from './validation';
+import { codeReviewConfiguration } from '../code-review/settings-storage';
 import { factoryRunBotMatches } from './run-scope'
 import { cloudTaskTarget, ownedCloudTaskTarget } from '../computer/cloud-task-target'
 import type { PoolClient } from "pg";
@@ -390,6 +391,8 @@ export async function configureFactoryCheck(
     ...(priorReview ? { priorReviewArtifactObservation: { digest: priorReview.digest } } : {}),
   };
   const currentRequest = await currentFactoryRequest(tx, task);
+  const reviewConfig = task.stage === 'review' && task.workspaceId
+    ? await (await import('../db')).withDatabaseClient(tx, () => codeReviewConfiguration(task.workspaceId!)) : null;
   const prompt = [
     ...(currentRequest ? [currentRequest] : []),
     `Factory stage: ${task.stage}. Independent read-only check of candidate ${row.id}, fixed worktree ${row.executionSha}.`,
@@ -446,6 +449,7 @@ export async function configureFactoryCheck(
     `UPDATE factory_attempts SET output=output || $2::jsonb WHERE id=$1`,
     [task.attemptId, JSON.stringify({ check })],
   );
+  return reviewConfig ? { reviewConfig } : undefined;
 }
 
 /** Frozen assignment for a bound check. Called before claiming; fails closed after a stop/repair. */

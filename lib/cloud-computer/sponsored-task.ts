@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg'
 import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import type { WorkerDefinitionSnapshot } from '@/lib/agent-kit/worker'
 import type { TaskMachineGrant } from '@/lib/eve/cloudflare-task-connection'
+import { isMachineSize, provisionableMachineSize } from './machine-pricing'
 
 export type SponsoredTaskPlacement = Readonly<{
   provider: 'cloudflare'
@@ -13,8 +14,13 @@ export type SponsoredTaskPlacement = Readonly<{
   botId: string
   repositoryKey: string
   requestEventId: string
-  /** The size the machine is billed at: the run's request, else its Environment's default; absent is Mikka's default. */
+  /** The size the machine is billed at: the run's provisionable request after the quota
+   * gate (#3080), else its Environment's default; absent is Mikka's default. */
   size?: import('./machine-pricing').MachineSize
+  /** The requested size when the quota gate moved it (#3080); `size` is what runs and is billed. */
+  requestedSize?: import('./machine-pricing').MachineSize
+  /** Why `size` differs from `requestedSize`. */
+  sizeReason?: 'provider_quota_unverified'
 }>
 export type TaskMachineActor = { userId: string; workspaceId: string }
 type Query = Pick<PoolClient, 'query'>
@@ -24,6 +30,8 @@ type BoundRun = ResourceRun & {
   botId: string
   operationId: string
   requiredCheckpoint: TaskMachineGrant['requiredCheckpoint'] | null
+  /** The size recorded in the machine lifecycle at admission; the grant may only start that. */
+  sponsoredSize: string | null
   until: Date | null
   repoPath: string
   remoteUrl: string
@@ -42,6 +50,16 @@ export function hostedTaskEnabled(_workspaceId: string) {
   return Boolean(process.env.MIKKA_TASK_MACHINE_BRIDGE_TOKEN) && process.env.MIKKA_CLOUDFLARE_TASKS_DISABLED !== '1'
 }
 
+/**
+ * Operator proof that the provider account actually starts sizes over the
+ * default 12 GiB limit (#3080). Set MIKKA_TASK_MACHINE_16GIB_QUOTA=1 only after
+ * Cloudflare confirms the quota increase and the matching instance type in
+ * writing; that confirmation is an operations record, not product state.
+ */
+export function verifiedMachineQuota(env: NodeJS.ProcessEnv = process.env) {
+  return env.MIKKA_TASK_MACHINE_16GIB_QUOTA === '1'
+}
+
 export async function verifySponsoredChoice(query: Query, placement: SponsoredTaskPlacement) {
   if (!hostedTaskEnabled(placement.workspaceId)) throw denied()
   const result = await query.query(
@@ -57,6 +75,7 @@ export async function verifySponsoredChoice(query: Query, placement: SponsoredTa
 
 const bindingSql = `SELECT r.id,r."userId",r."workspaceId",r."issueId",r."botId",r."agentId",r."deviceId",
       r."deviceRepoId",r."baseBranch",r."agentDefinition",m."operationId",m.lifecycle->'sponsoredRestore' AS "requiredCheckpoint",
+      m.lifecycle->>'sponsoredSize' AS "sponsoredSize",
       COALESCE((m.lifecycle->>'sponsoredUntil')::timestamptz+CASE WHEN (m.lifecycle->>'sponsoredUnfunded')::boolean IS TRUE THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil") AS until,repo."repoPath",repo."remoteUrl"
     FROM agent_runs r
     JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId" AND b."workspaceId"=r."workspaceId" AND b."botId"=r."botId"
@@ -86,6 +105,9 @@ function frozenGrant(run: BoundRun | undefined, actor: TaskMachineActor): TaskMa
     run.agentDefinition.executionIdentity?.billingAccount.runtime.kind !== 'cloudflare_sponsored'
   )
     throw denied()
+  // The machine may only start at the size recorded in its lifecycle, re-checked
+  // against the quota gate so a stored over-limit size never provisions silently.
+  const size = isMachineSize(run.sponsoredSize) ? provisionableMachineSize(run.sponsoredSize, verifiedMachineQuota()).size : undefined
   return {
     ownerId: p.ownerId,
     workspaceId: p.workspaceId,
@@ -94,6 +116,7 @@ function frozenGrant(run: BoundRun | undefined, actor: TaskMachineActor): TaskMa
     runId: run.id,
     operationId: run.operationId,
     expiresAt: run.until?.getTime() ?? 0,
+    ...(size ? { size } : {}),
     ...(run.requiredCheckpoint ? { requiredCheckpoint:run.requiredCheckpoint } : {}),
   }
 }

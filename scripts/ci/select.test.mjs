@@ -258,7 +258,31 @@ test('the actual required gate scripts reject drafts, unselected failures and se
         }
       }
     }
-    if(job==='browser-tests') { assert(run({EXPECT_DB:'false',DB_RESULT:'skipped'}));assert(!run({EXPECT_DB:'false',DB_RESULT:'failure'})) }
+    if(job==='browser-tests') {
+      assert(run({EXPECT_DB:'false',DB_RESULT:'skipped'}))
+      assert(!run({EXPECT_DB:'false',DB_RESULT:'failure'}))
+      const report = overrides => {
+        const root = mkdtempSync(join(tmpdir(), 'mikka-db-deferral-'))
+        try {
+          const summary = join(root, 'summary.md')
+          const output = execFileSync('bash', ['-e', '-c', script], { encoding: 'utf8', env: {
+            PATH: process.env.PATH, GITHUB_STEP_SUMMARY: summary, CHANGES_RESULT: 'success',
+            EXPECT_DB: 'false', DB_RESULT: 'skipped', DB_SELECTED: 'true', ...overrides,
+          } })
+          return { output, summary: readFileSync(summary, 'utf8') }
+        } finally { rmSync(root, { recursive: true, force: true }) }
+      }
+      const bare = report({})
+      assert.equal(bare.output, '::notice::Database checks deferred to merge queue\n')
+      assert.equal(bare.summary, 'Database checks deferred to merge queue\n')
+      const detailed = report({ DB_SUITES: '["test:example-db"]', DB_MATRIX: '{"shard":["1/2","2/2"]}' })
+      const message = 'Database checks deferred to merge queue; suites: ["test:example-db"]; shard count: 2\n'
+      assert.equal(detailed.output, `::notice::${message}`)
+      assert.equal(detailed.summary, message)
+      const selected = report({ EXPECT_DB: 'true', DB_RESULT: 'success' })
+      assert.equal(selected.summary, 'Database gate: success; complete inventory validated in Changed files.\n')
+      assert.equal(selected.output, '')
+    }
   }
 })
 

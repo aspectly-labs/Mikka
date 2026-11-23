@@ -42,7 +42,7 @@ export async function sendOwnedRunMessageInTransaction(tx: RunMessageWriter, use
     const [repo] = await tx.select().from(deviceRepos).where(and(eq(deviceRepos.id, run.deviceRepoId), eq(deviceRepos.userId, userId))).limit(1)
     if (!repo || !repo.remoteUrl) throw new ActionFailureError('runInvalid')
     let key: string
-    try { key = remoteKey(repo.remoteUrl) } catch { throw new ActionFailureError('runInvalid') }
+    try { key = remoteKey(repo.remoteUrl) } catch (error) { throw Object.assign(new ActionFailureError('runInvalid'), { cause: error }) }
     // The receipt binds the task to its repository and branch.
     const receipt = run.agentDefinition?.repositoryAdmission
     if (receipt) {

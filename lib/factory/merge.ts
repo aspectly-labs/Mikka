@@ -110,8 +110,8 @@ export function githubMergeApi(fetcher: typeof fetch = fetch, budget?: RequestBu
         redirect: "error",
         signal: budget ? requestBudgetSignal(budget, 15_000) : AbortSignal.timeout(15_000),
       });
-    } catch {
-      throw new FactoryMergeRefused("githubUnavailable", null);
+    } catch (error) {
+      throw new FactoryMergeRefused("githubUnavailable", null, { cause: error });
     }
     const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     return { status: response.status, data };

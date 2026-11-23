@@ -31,6 +31,8 @@ const local = (reason, hits) => ({ kind: 'local', reason, hits })
 export const pollingAllowlist = {
   'lib/builtin-gateway/scheduler.ts': local('自托管 cron 调度器替代 Cloudflare cron，不是数据轮询；复用已有 due-timer 和 15 分钟 safety sweep', 1),
   // Web: SWR polling that reads our database.
+  'components/workspace/working-status.tsx': db(web, 'the activity strip reads /api/agent/sessions/active every 10 s only while entries are active; the interval is 0 when the feed is empty', 1),
+  'lib/working-status.ts': db(web, 'WORKING_POLL_MS backs the strip above: the account-wide activity feed cannot be driven by this group\'s live channel alone, so it polls only while someone works (0 when the feed is empty)', 1),
   'components/workspace/issue-pull-request-link.tsx': db(web, 'a PR with no webhook of ours (linked by hand, or a repository without the app) is re-checked with GitHub every 5 min while visible; a run-delivered PR also re-reads on pull_request_status', 1),
   // Server: loops that re-query our database.
   'lib/coordinator/group-turns.ts': db(server, 'untilStopped fallback only: 15 s for best-effort subscriptions or a failed reliable-push read, 1 s if LISTEN is unavailable', 1),

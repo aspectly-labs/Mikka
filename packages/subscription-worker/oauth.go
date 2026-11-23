@@ -131,12 +131,12 @@ func (w *Worker) StartOAuthWith(ctx context.Context, epoch int64, sessionID, red
 	start := OAuthStart{Flow: "callback_handoff", State: state, AuthorizationURL: authURL, Revision: op.Epoch, ExpiresAt: op.Deadline}
 	raw, _ := json.Marshal(oauthSecret{Scope: w.Scope, SessionHash: hashText(sessionID), Verifier: verifier, OperationID: op.OperationID, Redirect: redirectURI, Start: &start})
 	if err = createArtifact(ctx, w.Repo, w.Secrets, op, "oauth", name, raw); err != nil {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed", "oauth_secret_store_failed")
 		return OAuthStart{}, ErrStore
 	}
 	_, err = w.Repo.DB.ExecContext(ctx, `insert into byos_oauth_attempts ("stateHash","sessionHash","connectionId","ownerId","workspaceId","operationId","secretName","expiresAt") select $1,$2,$3,$4,$5,$6,$7,$8 where exists(select 1 from byos_connections where id=$3 and "ownerId"=$4 and "workspaceId"=$5 and "operationId"=$6 and epoch=$9 and state='pending' and "operationDeadline">now())`, hashText(state), hashText(sessionID), w.Scope.ConnectionID, w.Scope.OwnerID, w.Scope.WorkspaceID, op.OperationID, name, op.Deadline, op.Epoch)
 	if err != nil {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed", "oauth_attempt_record_failed")
 		return OAuthStart{}, ErrDatabase
 	}
 	return w.ResumeOAuth(ctx, sessionID)
@@ -214,7 +214,7 @@ func (w *Worker) CompleteOAuth(ctx context.Context, sessionID, state, code strin
 	}
 	op := Operation{r}
 	fail := func(e error) (Metadata, error) {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed", "oauth_secret_read_failed")
 		return Metadata{}, e
 	}
 	raw, err := w.Secrets.Read(ctx, name)

@@ -266,6 +266,7 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
     assert.deepEqual(recorded[0].payload, {
       reason: 'quota_exhausted', provider: 'codex', connectionId: null, resetsAt, why: 'noApiKey',
       actions: [{ action: 'addApiKey' }, { action: 'retryAfterReset', at: resetsAt }],
+      pausedThreadIds: [runId],
     })
     await reclaimLostRuns(p.id, new Date(Date.now() + 3_600_000))
     assert.equal((await row(runId)).status, 'paused', 'a paused run is not lost')

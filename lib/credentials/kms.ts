@@ -40,7 +40,10 @@ export function localKms(role: 'app' | 'broker', env: Record<string, string | un
         decipher.setAAD(aad(context, 'dek')); decipher.setAuthTag(data.subarray(-16))
         return Buffer.concat([decipher.update(data.subarray(12, -16)), decipher.final()])
       // error-cause: ciphertext, owner context and master-key failures must be indistinguishable outside the credential boundary.
-      } catch { throw new CredentialError() } finally { key.fill(0) }
+      } catch {
+    // error-cause: a cipher or key failure's raw cause is never surfaced past the seal boundary
+    throw new CredentialError()
+  } finally { key.fill(0) }
     },
   }
 }
@@ -68,7 +71,10 @@ export async function assumeVercelRole(role: 'app' | 'broker') {
     const accessKeyId = field('AccessKeyId'), secretAccessKey = field('SecretAccessKey'), sessionToken = field('SessionToken')
     if (!accessKeyId || !secretAccessKey || !sessionToken) throw new Error()
     return new AwsClient({ accessKeyId, secretAccessKey, sessionToken, region: process.env.AWS_REGION ?? 'us-east-1', service: 'kms', retries: 0 })
-  } catch { throw new CredentialError() }
+  } catch {
+    // error-cause: provider credential payloads and stack causes never leave this boundary
+    throw new CredentialError()
+  }
 }
 
 export function awsKms(role: 'app' | 'broker'): Kms {
@@ -83,7 +89,10 @@ export function awsKms(role: 'app' | 'broker'): Kms {
       })
       if (!response.ok) { await response.body?.cancel(); throw new Error() }
       return await response.json()
-    } catch { throw new CredentialError() } // Provider bodies, stack causes and credentials never leave this boundary.
+    } catch {
+      // error-cause: provider bodies, stack causes and credentials never leave this boundary
+      throw new CredentialError()
+    }
   }
   return {
     async generate(context) {
@@ -125,7 +134,10 @@ export async function open(kms: Kms, context: EncryptionContext, envelope: Envel
     const decipher = createDecipheriv('aes-256-gcm', key, nonce)
     decipher.setAAD(aad(context, kind)); decipher.setAuthTag(data.subarray(-16))
     return Buffer.concat([decipher.update(data.subarray(0, -16)), decipher.final()])
-  } catch { throw new CredentialError() } finally { key.fill(0) }
+  } catch {
+    // error-cause: a cipher or key failure's raw cause is never surfaced past the seal boundary
+    throw new CredentialError()
+  } finally { key.fill(0) }
 }
 
 /** Session snapshots use the credential's wrapped DEK with a fresh GCM nonce and

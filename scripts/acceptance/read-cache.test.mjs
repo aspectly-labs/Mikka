@@ -134,7 +134,7 @@ test('Vite asset and manifest queries accept only one valid public deployment pi
   for (const path of ['/mikka/assets/renderer-realbuild.js', '/mikka/renderer-manifest.json']) {
     for (const query of ['', '?dpl=370cc898-local-prebuilt-1'])
       assert.equal(requestAllowed(path + query, {}, environment), true, path + query)
-    for (const query of ['?other=1', '?dpl=', '?dpl=dpl_reserved', '?dpl=' + 'a'.repeat(33),
+    for (const query of ['?other=1', '?dpl=', '?dpl=bad%2Fpath', '?dpl=' + 'a'.repeat(33),
       '?dpl=first&dpl=second', '?dpl=valid&other=1', '?dpl=bad%2Fpath', '?dpl=bad%20value', '?dpl=valid#fragment'])
       assert.equal(requestAllowed(path + query, {}, environment), false, path + query)
     assert.equal(requestAllowed('https://foreign.example' + path + '?dpl=valid', {}, environment), false)
@@ -147,7 +147,7 @@ test('Vite asset and manifest queries accept only one valid public deployment pi
 test('Vite discovery rejects invalid or conflicting pins before fetching an action manifest', async () => {
   const script = query => '<script type="module" src="/mikka/assets/renderer-realbuild.js' + query + '"></script>'
   for (const html of [
-    script('?dpl='), script('?dpl=dpl_reserved'), script('?dpl=first&amp;dpl=second'),
+    script('?dpl='), script('?dpl=bad%2Fpath'), script('?dpl=first&amp;dpl=second'),
     script('?dpl=valid&amp;other=1'), script('?dpl=' + 'a'.repeat(33)),
     script('?dpl=first') + script('?dpl=second'), script('') + script('?dpl=valid'),
   ]) {
@@ -296,12 +296,23 @@ test('the HTTP scenario exercises real cursor arguments, account isolation, delt
         if (phase === 'changed') return { version: changed, issue: { title: 'Read cache changed' } }
         return args.length === 1 ? { version, issue: { content: { type: 'doc' } } } : { unchanged: true, version }
       }
+      if (name === 'loadEarlierIssueActivity') {
+        assert.deepEqual(args, [issueIds[0], 3, id(10)])
+        return { page: { items: [], hasMore: false, predecessor: null, cursor: null } }
+      }
+      if (name === 'pollIssueActivityPage') {
+        if (phase === 'removed') return { error: 'issueNotFound' }
+        if (phase === 'changed') return { snapshot: { version: changed, hasMore: false, predecessor: null, items: [id(8), id(9), id(10), id(11)].map((value, index) => ({ id: value, revision: index + 1 })) } }
+        if (args.length === 1) return { snapshot: { version, hasMore: false, predecessor: null, items: [id(8), id(9), id(10)].map((value, index) => ({ id: value, revision: index + 1 })) } }
+        assert.equal(args[1], version)
+        return { snapshot: { unchanged: true, version } }
+      }
       const ids = name === 'syncIssueList' ? issueIds : name === 'syncThreadList' ? runIds : [id(8), id(9), id(10)]
-      if (phase === 'removed') return name === 'pollIssueVersionSummaries' ? { error: 'issueNotFound' } : { snapshot: { delta: true, items: [], positions: positions(ids.slice(1)), version: changed } }
+      if (phase === 'removed') return { snapshot: { delta: true, items: [], positions: positions(ids.slice(1)), version: changed } }
       if (phase === 'changed') return { snapshot: { delta: true, items: [{ id: ids[0] }], positions: positions(ids), version: changed } }
-      const cold = name === 'pollIssueVersionSummaries' ? args.length === 1 : args.length === 0
+      const cold = args.length === 0
       if (!cold) {
-        assert.equal(args[name === 'pollIssueVersionSummaries' ? 1 : 0], version)
+        assert.equal(args[0], version)
         assert.deepEqual(args.at(-1), positions(ids))
       }
       return { snapshot: cold ? { version, items: ids.map(value => ({ id: value })), positions: positions(ids) } : { unchanged: true, version } }
@@ -310,5 +321,5 @@ test('the HTTP scenario exercises real cursor arguments, account isolation, delt
   await exerciseReadCases({ owner: client('owner'), peer: client('peer'), fixture, environment })
   assert.equal(phase, 'removed')
   for (const scenario of ['cold', 'warm', 'reload-restored', 'peer-denied', 'peer-isolation', 'one-row-delta', 'deleted']) assert.ok(calls.some(call => call.scenario === scenario), scenario)
-  assert.ok(calls.some(call => call.name === 'pollIssueVersionSummaries' && call.scenario === 'deleted'))
+  assert.ok(calls.some(call => call.name === 'pollIssueActivityPage' && call.scenario === 'deleted'))
 })
