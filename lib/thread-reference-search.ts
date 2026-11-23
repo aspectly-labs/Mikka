@@ -34,15 +34,15 @@ export async function searchThreadReferences(reader: IssueReader, workspaceId: s
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
       // Match names in JS like the other kinds: PostgreSQL's lower() folds final ς differently and would drop hits.
       kind && kind !== 'bot' ? null : db.select({ id: bots.id, name: bots.name }).from(bots)
-        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)).limit(200),
+        .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)),
     ])
-    const needle = query.toLowerCase()
+    const needle = query.toLowerCase().replace(/ς/g, 'σ')
     return [
       ...tasks?.items.map(item => ({ kind: 'task' as const, id: item.id, title: [item.identifier, item.title].filter(Boolean).join(' ') })) ?? [],
       ...threads?.items.slice(0, 8).map(item => ({ kind: 'thread' as const, id: item.id, title: item.title,
         ...(item.kind === 'chat' ? { conversationKind: 'chat' as const } : {}) })) ?? [],
       ...prs,
-      ...botRows?.filter(bot => !needle || bot.name.toLowerCase().includes(needle)).slice(0, 8)
+      ...botRows?.filter(bot => !needle || bot.name.toLowerCase().replace(/ς/g, 'σ').includes(needle)).slice(0, 8)
         .map(bot => ({ kind: 'bot' as const, id: bot.id, title: bot.name })) ?? [],
     ]
   })

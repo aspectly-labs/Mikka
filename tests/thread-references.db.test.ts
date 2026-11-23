@@ -76,6 +76,9 @@ test('reference search scopes tasks, conversation roots, and PRs to the active v
     await pool.query(`INSERT INTO bots(id,"workspaceId","ownerId",name,"createdAt") SELECT gen_random_uuid(),$1,$2,'Filler '||n, now() - (n||' hours')::interval FROM generate_series(1,9) n`, [workspace, owner])
     await pool.query('INSERT INTO bots(id,"workspaceId","ownerId",name) VALUES($1,$2,$3,\'Special helper\')', [special, workspace, owner])
     assert.deepEqual(await searchThreadReferences(owner, workspace, 'special', 'bot'), [{ kind: 'bot', id: special, title: 'Special helper' }])
+    const greek = randomUUID()
+    await pool.query('INSERT INTO bots(id,"workspaceId","ownerId",name) VALUES($1,$2,$3,\'ΟΣ\')', [greek, workspace, owner])
+    assert.deepEqual(await searchThreadReferences(owner, workspace, 'ος', 'bot'), [{ kind: 'bot', id: greek, title: 'ΟΣ' }])
   } finally {
     await pool.query('DELETE FROM bots WHERE "workspaceId"=$1', [workspace])
     await pool.query('DELETE FROM conversations WHERE id=$1', [chat])
