@@ -1197,9 +1197,11 @@ export async function setThreadPullMergeWhenReady(issueId: string | null, runId:
       const chain = await readRunChain(pool, row.userId, row.id)
       const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
       // The first drain's verdict for this pull (merged/refused/still armed)
-      // reaches the caller so the tab can say what actually happened.
+      // reaches the caller so the tab can say what actually happened. A
+      // continuation can re-publish the same pull: the drain walks intents
+      // oldest-first, so the freshest verdict is the last matching entry.
       outcome = (await pulls.drainThreadPullMergeIntents(pool, user.id, runIds))
-        .find(entry => entry.repo === input.repo && entry.number === input.number) ?? null
+        .findLast(entry => entry.repo === input.repo && entry.number === input.number) ?? null
     }
     return { state, outcome }
   })
