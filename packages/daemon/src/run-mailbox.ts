@@ -74,7 +74,7 @@ export async function createRunMailbox(host: {
   const catalogue = assigned?.mailboxCatalogue === undefined ? undefined : mailboxCatalogueSchema.parse(assigned.mailboxCatalogue)
   if (assigned?.mailbox !== true) return undefined
   let endpoint: URL
-  try { endpoint = new URL(assigned.url) } catch { throw unavailable() }
+  try { endpoint = new URL(assigned.url) } catch (error) { throw Object.assign(unavailable(), { cause: error }) }
   if (endpoint.href !== host.endpoint.href || !trustedServerEndpoint(endpoint) ||
       !/^mkw_[A-Za-z0-9_-]{43}$/.test(assigned.token)) throw unavailable()
   let nextId = 0, session: string | null = null, version = '2025-03-26', closed = false, inFlight = 0
@@ -98,7 +98,7 @@ export async function createRunMailbox(host: {
       active()
       if (packet.jsonrpc !== '2.0' || packet.id !== id || packet.error || !packet.result) throw unavailable()
       return packet.result
-    } catch { throw unavailable() } finally { pending.delete(abort) }
+    } catch (error) { throw Object.assign(unavailable(), { cause: error }) } finally { pending.delete(abort) }
   }
   active()
   let allowed: string[]

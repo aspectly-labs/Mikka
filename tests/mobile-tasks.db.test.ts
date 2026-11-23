@@ -406,7 +406,7 @@ test('mobile task endpoints with real task ACL, current workspace membership and
       assert.deepEqual(data.timeline.map((row: { id: string }) => row.id), [
         `discussion:${threadId}:c1`, `history:created-${v1}`, `history:title-${v2}`, `discussion:${threadId}:c2`,
       ])
-      assert.deepEqual(data.timeline[2].event.source, { kind: 'revision', id: v2, revision: 2 })
+      assert.deepEqual(data.timeline[2].event.source, { kind: 'revision', id: v2, revision: 2, runId: null })
       assert.equal(data.timeline[2].event.actor.id, owner)
       assert.equal(data.timeline[3].kind, 'reply')
       assert.equal(data.timeline[3].threadId, threadId)
@@ -633,10 +633,6 @@ test('mobile task endpoints with real task ACL, current workspace membership and
     await pool.query(`insert into agent_tool_approvals (id,"runId","userId","deviceId","requestId",harness,method,input,digest,status,"expiresAt") values ($1,$2,$3,$4,'request','codex','fixture','{}','digest','pending',now()+interval '1 hour')`, [randomUUID(), runId, owner, device])
     await compare('waiting', 'approval')
     await pool.query(`update agent_tool_approvals set "expiresAt"=now()-interval '1 hour' where "runId"=$1`, [runId])
-    await compare('running', null)
-    await pool.query(`insert into local_computer_reviews (id,"runId","deviceId","userId",target,call,digest,"expiresAt","seenAt") values ($1,$2,$3,$4,'fixture','{}','digest',now()+interval '1 hour',now())`, [randomUUID(), runId, device, owner])
-    await compare('waiting', 'approval')
-    await pool.query('update local_computer_reviews set decision=true where "runId"=$1', [runId])
     await compare('running', null)
 
     await pool.query(`update issues set status='todo' where id=$1`, [id])

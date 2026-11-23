@@ -8,7 +8,7 @@ import { TestAccountError } from '../test-accounts/pool.mjs'
 import { withTestAccounts } from '../test-accounts/session.mjs'
 import { publishedReadActions, readRpcActions, rpcReadAllowed, rpcReadRequest, rpcReadResult } from './read-action-transport.mjs'
 
-export const READ_ACTIONS = Object.freeze(['syncCoordinatorChat', 'syncIssueList', 'syncThreadList', 'pollIssue', 'pollIssueVersionSummaries'])
+export const READ_ACTIONS = Object.freeze(['syncCoordinatorChat', 'syncIssueList', 'syncThreadList', 'pollIssue', 'pollIssueActivityPage', 'loadEarlierIssueActivity'])
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
 const referenceId = value => typeof value === 'string' && /^[a-f0-9]{40,64}$/.test(value)
 export class ReadCacheAcceptanceError extends Error {
@@ -276,8 +276,11 @@ export async function exerciseReadCases({ owner, peer, fixture, environment }) {
   check(fixture.issueIds.every(id => issues.items?.some(row => row.id === id)), 'issue_fixture_missing')
   check(fixture.runIds.every(id => threads.items?.some(row => row.id === id)), 'thread_fixture_missing')
   const detail = success(await action('pollIssue', [fixture.issueIds[0]], 'task-detail', 'cold'))
-  const history = snapshot(await action('pollIssueVersionSummaries', [fixture.issueIds[0]], 'task-activity', 'cold'))
+  const history = snapshot(await action('pollIssueActivityPage', [fixture.issueIds[0]], 'task-activity', 'cold'))
   check(detail.issue?.content && history.items?.length === 3, 'detail_fixture_missing')
+  const earliest = history.items?.at(-1)
+  const earlier = success(await action('loadEarlierIssueActivity', [fixture.issueIds[0], earliest.revision, earliest.id], 'task-activity', 'cold-earlier')).page
+  check(earlier?.items?.length === 0 && earlier.hasMore === false && earlier.cursor === null, 'earlier_activity_invalid')
   const prefixPath = `${environment.basePath}/api/settings/issue-prefix`
   const prefix = await owner.json(prefixPath, 'settings', 'cold')
   check(typeof prefix.suggested === 'string' && Array.isArray(prefix.teamKeys), 'settings_read_invalid')
@@ -290,7 +293,7 @@ export async function exerciseReadCases({ owner, peer, fixture, environment }) {
     check(snapshot(await action('syncIssueList', [i.version, i.positions], 'task-list', scenario)).unchanged === true, 'issue_cursor_not_used')
     check(snapshot(await action('syncThreadList', [t.version, t.positions], 'thread-list', scenario)).unchanged === true, 'thread_cursor_not_used')
     check(success(await action('pollIssue', [fixture.issueIds[0], d.version], 'task-detail', scenario)).unchanged === true, 'detail_cursor_not_used')
-    check(snapshot(await action('pollIssueVersionSummaries', [fixture.issueIds[0], h.version, h.positions], 'task-activity', scenario)).unchanged === true, 'activity_cursor_not_used')
+    check(snapshot(await action('pollIssueActivityPage', [fixture.issueIds[0], h.version], 'task-activity', scenario)).unchanged === true, 'activity_cursor_not_used')
     const nextPrefix = await owner.json(prefixPath, 'settings', scenario)
     check(JSON.stringify(nextPrefix) === JSON.stringify(prefix), 'settings_read_changed')
   }
@@ -306,15 +309,15 @@ export async function exerciseReadCases({ owner, peer, fixture, environment }) {
   const issueDelta = snapshot(await action('syncIssueList', [issues.version, issues.positions], 'task-list', 'one-row-delta'))
   const threadDelta = snapshot(await action('syncThreadList', [threads.version, threads.positions], 'thread-list', 'one-row-delta'))
   const detailDelta = success(await action('pollIssue', [fixture.issueIds[0], detail.version], 'task-detail', 'changed'))
-  const historyDelta = snapshot(await action('pollIssueVersionSummaries', [fixture.issueIds[0], history.version, history.positions], 'task-activity', 'one-row-delta'))
+  const historyDelta = snapshot(await action('pollIssueActivityPage', [fixture.issueIds[0], history.version], 'task-activity', 'one-row-delta'))
   check(Number.isInteger(chatDelta.after) && chatDelta.items?.some(item => item.position === 13), 'chat_delta_invalid')
   check(issueDelta.delta === true && issueDelta.items?.length === 1 && issueDelta.items[0].id === fixture.issueIds[0], 'issue_delta_invalid')
   check(threadDelta.delta === true && threadDelta.items?.length === 1 && threadDelta.items[0].id === fixture.runIds[0], 'thread_delta_invalid')
-  check(detailDelta.issue?.title === 'Read cache changed' && historyDelta.delta === true && historyDelta.items?.length === 1, 'detail_delta_invalid')
+  check(detailDelta.issue?.title === 'Read cache changed' && historyDelta.unchanged !== true && historyDelta.items?.length === 4, 'detail_delta_invalid')
 
   await fixture.remove()
   check((await action('pollIssue', [fixture.issueIds[0], detailDelta.version], 'task-detail', 'deleted')).error === 'issueNotFound', 'deleted_detail_visible')
-  check((await action('pollIssueVersionSummaries', [fixture.issueIds[0], historyDelta.version, historyDelta.positions], 'task-activity', 'deleted')).error === 'issueNotFound', 'deleted_activity_visible')
+  check((await action('pollIssueActivityPage', [fixture.issueIds[0], historyDelta.version], 'task-activity', 'deleted')).error === 'issueNotFound', 'deleted_activity_visible')
   const afterIssues = snapshot(await action('syncIssueList', [issueDelta.version, issueDelta.positions], 'task-list', 'deleted'))
   const afterThreads = snapshot(await action('syncThreadList', [threadDelta.version, threadDelta.positions], 'thread-list', 'deleted'))
   const afterChat = success(await action('syncCoordinatorChat', [fixture.botId, chatDelta.version, continuation(chat)], 'bot-chat', 'deleted')).chat

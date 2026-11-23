@@ -147,7 +147,7 @@ export async function readmitLostLocalRun(original: Run, target: AdmittedTakeove
             AND "sandboxId"=$4 AND "deviceId"=$5 AND "operationId"=$6 AND "repoId"=$7 AND state='paused'`, [run.id, run.userId, cloudMachine.workspaceId, cloudMachine.sandboxId, run.deviceId, cloudMachine.operationId, run.deviceRepoId])
           if (!parked.rowCount) throw new CloudPauseUnconfirmed()
           await tx.query('UPDATE device_tokens SET "revokedAt"=COALESCE("revokedAt",now()) WHERE "boundDeviceId"=$1 AND "userId"=$2', [run.deviceId, run.userId])
-        } catch { throw new CloudPauseUnconfirmed() }
+        } catch (error) { throw Object.assign(new CloudPauseUnconfirmed(), { cause: error }) }
       }
       await recordCoordinatorEvent(db, runRetriedEvent(run, { runId: retryId, attempt: retry.attempt, maxAttempts: MAX_RUN_ATTEMPTS,
         movedToDeviceId: target.deviceId, movedTo: { kind: 'device', deviceId: target.deviceId } }))

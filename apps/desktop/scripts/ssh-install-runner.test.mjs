@@ -24,13 +24,13 @@ test('the SSH preload acceptance opts into the undistributed public renderer whi
   }, { filename: 'tests/ssh-install/run.mjs', timeout: 2000 })
   const build = commands.find(command => command.args[0] === 'apps/desktop/scripts/build.mjs')
   assert.ok(build, 'the actual SSH runner still builds the installed preload')
-  const names = ['MIKKA_UI_OVERLAY_DIR', 'MIKKA_UI_OVERLAY_SHA', 'VERCEL', 'VERCEL_ENV']
+  const names = ['MIKKA_UI_OVERLAY_DIR', 'MIKKA_UI_OVERLAY_SHA', 'MIKKA_DEPLOYMENT_STAGE', 'VERCEL', 'VERCEL_ENV']
   const previous = names.map(name => process.env[name])
   try {
     for (const name of names) delete process.env[name]
     await assert.rejects(frontendConfig({ target: 'desktop' }), /OFFICIAL_DESKTOP_UI_CHECKOUT_REQUIRED/)
     await frontendConfig({ target: 'desktop', publicTestFixture: build.args.includes('--public-test-fixture') })
-    process.env.VERCEL_ENV = 'production'
+    process.env.MIKKA_DEPLOYMENT_STAGE = 'production'
     await assert.rejects(frontendConfig({ target: 'desktop', publicTestFixture: true }), /PUBLIC_FIXTURE_REQUIRES_NON_RELEASE_BUILD/)
   } finally {
     names.forEach((name, index) => { if (previous[index] === undefined) delete process.env[name]; else process.env[name] = previous[index] })

@@ -2,7 +2,7 @@ import 'server-only'
 import { PaidResourceError } from '@/lib/abuse/policy'
 import { machineChunkMicroUsd, type MachineSize } from './machine-pricing'
 
-const FUNDING_REFUSALS = new Set(['verification_required', 'free_allowance_used', 'points_exhausted', 'usage_budget_exhausted', 'billing_authorization_revoked', 'platform_paused'])
+const FUNDING_REFUSALS = new Set(['verification_required', 'free_allowance_used', 'points_exhausted', 'usage_budget_exhausted', 'billing_authorization_revoked', 'platform_paused', 'billing_scope_missing', 'billing_owner_missing'])
 
 export interface MachineChunk {
   ownerId: string

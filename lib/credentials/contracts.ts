@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { AuditActor } from '../audit/events'
 
 export class CredentialError extends Error {
-  constructor(public code = 'credential_unavailable', public status = 503) { super(code) }
+  constructor(public code = 'credential_unavailable', public status = 503, options?: ErrorOptions) { super(code, options) }
 }
 export const secretText = z.string().min(1).max(4096).refine(value => !/[\r\n\0]/.test(value))
 export const submitSchema = z.object({
@@ -22,7 +22,7 @@ export function canonicalOrigin(value: string): string {
     if (url.protocol !== 'https:' || url.username || url.password || url.hostname.endsWith('.') || !url.hostname) throw new Error()
     // URL applies IDNA/punycode; confusable Unicode domains remain a different origin.
     return url.origin
-  } catch { throw new CredentialError('credential_origin_invalid', 400) }
+  } catch (error) { throw Object.assign(new CredentialError('credential_origin_invalid', 400), { cause: error }) }
 }
 export function assertSameOrigin(actual: string, expected: string) {
   if (canonicalOrigin(actual) !== canonicalOrigin(expected)) throw new CredentialError('credential_denied', 404)

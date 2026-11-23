@@ -9,13 +9,14 @@ export const activityFixtureSession = () => sessions.getStore() ?? null
  * @param {string} userId
  * @param {() => T} callback
  * @param {string} [workspaceId]
+ * @param {string} [sessionId]
  * @returns {T}
  */
-export const withActivitySession = (userId, callback, workspaceId) => {
+export const withActivitySession = (userId, callback, workspaceId, sessionId = `activity-fixture:${userId}`) => {
   const createdAt = new Date()
   return sessions.run({
     user: { id: userId, name: 'Synthetic', email: `${userId}@example.invalid` },
-    session: { id: `activity-fixture:${userId}`, userId, createdAt, updatedAt: createdAt, expiresAt: new Date(createdAt.getTime() + 60 * 60 * 1000) },
+    session: { id: sessionId, userId, createdAt, updatedAt: createdAt, expiresAt: new Date(createdAt.getTime() + 60 * 60 * 1000) },
     workspaceId,
   }, callback)
 }

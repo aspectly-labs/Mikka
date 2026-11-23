@@ -6,8 +6,9 @@ export async function publishResult(runId: string) {
   try {
     return await publishRunResult(runId)
   } catch {
-    // An interrupted worker may retain the DB lease for two minutes. Do not
-    // persist raw database/transport errors in Workflow or expose credentials.
+    // Raw database/transport errors must not persist in Workflow or expose credentials;
+    // an interrupted worker retains the DB lease for two minutes.
+    // error-cause: the raw transport error is dropped so it cannot persist or leak
     throw new RetryableError('Run publication is temporarily unavailable.', { retryAfter: '2m' })
   }
 }

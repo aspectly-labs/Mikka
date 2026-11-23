@@ -1,6 +1,7 @@
 'use client'
 
 import { useTranslations } from '@/lib/intl/i18n-client'
+import { ContextRing } from '@/components/chat/context-ring'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Progress, ProgressTrack } from '@/components/ui/progress'
@@ -10,8 +11,8 @@ import type { ConversationUsage } from '@/lib/coordinator/context-usage'
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 
 /**
- * How full the Coordinator's conversation is: one button reading
- * `上下文 23.4K/100K`, opening what the number means.
+ * How full the Coordinator's conversation is: a ring of the share (ContextRing); the figures are in its
+ * tooltip, its accessible name and the panel it opens, which explains what the number means.
  *
  * Every figure is an estimate from stored text (lib/coordinator/
  * context-usage.ts), and the fold threshold is a real constant rather than a
@@ -23,11 +24,12 @@ export function CoordinatorContextUsage({ usage }: { usage: ConversationUsage })
   const t = useTranslations('Coordinator')
   const used = compact.format(usage.used)
   const compactAt = compact.format(usage.compactAt)
+  const name = t('contextUsage', { used, compactAt })
   return <Popover>
-    <PopoverTrigger render={<Button variant="ghost" size="xs" data-slot="coordinator-context-usage"
-      aria-label={t('contextUsage', { used, compactAt })}
-      className="shrink-0 gap-1 px-1.5 text-xs tabular-nums text-muted-foreground" />}>
-      {t('context')} {used}<span aria-hidden="true">/</span>{compactAt}
+    <PopoverTrigger render={<Button variant="ghost" size="icon-xs" data-slot="coordinator-context-usage"
+      aria-label={name} title={name}
+      className="shrink-0 text-muted-foreground" />}>
+      <ContextRing share={usage.share} />
     </PopoverTrigger>
     <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-3">
       <div className="flex items-baseline justify-between gap-2">

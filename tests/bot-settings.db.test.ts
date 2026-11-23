@@ -38,6 +38,26 @@ test('bot settings', { skip: !dbUrl }, async t => {
   const archivedEnv = await environment(ws.id, 'Old', [], true)
   const foreignEnv = await environment(other.id, 'Theirs', [])
 
+  await t.test('Bot creation commits inherited and explicit visibility and rejects disallowed private work', async () => {
+    const { writeSettings } = await import('../lib/settings/store')
+    const settings = { userId: owner, workspaceId: ws.id }
+    const look = { color: 'encre', shape: 'cercle' }
+    const set = (values: Record<string, boolean | string | null>) => writeSettings(settings, 'workspace', { values })
+    await set({ newWorkVisibility: 'shared' })
+    try {
+      const inherited = await createOwnedBot(me, { ...look, name: 'Inherited visibility' })
+      const explicit = await createOwnedBot(me, { ...look, name: 'Explicit privacy', visibility: 'private' })
+      assert.equal((await access.botAccess(actor, inherited.id)).visibility, 'shared')
+      assert.equal((await access.botAccess(actor, explicit.id)).visibility, 'private')
+      await set({ allowPrivateNewWork: false })
+      await assert.rejects(createOwnedBot(me, { ...look, name: 'Denied privacy', visibility: 'private' }))
+      assert.equal((await pool.query('SELECT id FROM bots WHERE "workspaceId"=$1 AND name=$2', [ws.id, 'Denied privacy'])).rowCount, 0)
+    } finally {
+      await pool.query('DELETE FROM bots WHERE "workspaceId"=$1 AND name=ANY($2::text[])', [ws.id, ['Inherited visibility', 'Explicit privacy']])
+      await set({ newWorkVisibility: null, allowPrivateNewWork: null })
+    }
+  })
+
   await t.test('a new Bot binds an Environment and never writes the retired repository', async () => {
     const plain = await createOwnedBot(me, { name: 'Plain', color: 'encre', shape: 'cercle' })
     assert.equal((await row(plain.id)).environmentId, defaultEnv, 'no choice: the workspace default')

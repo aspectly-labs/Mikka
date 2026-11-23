@@ -1,5 +1,5 @@
 import { ReviewAuthorityError, withTaskReviewAuthority } from '@/lib/coding-workspace/review-authority'
-import { readReviewSession, type ReviewSessionKind } from '@/lib/coding-workspace/review-sessions'
+import { listReviewSessions } from '@/lib/coding-workspace/review-sessions'
 
 export const maxDuration = 30
 
@@ -12,12 +12,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ task
     return await withTaskReviewAuthority(request, taskId, async (authority, client) => {
       if (new URL(request.url).search) return json({ error: 'invalid_request' }, 400)
       if (authority.machineKind !== 'cloud') return json({ error: 'workspace_unsupported' }, 422)
-      const sessions: { kind: ReviewSessionKind; expiresAt: string }[] = []
-      for (const kind of ['terminal', 'preview'] as const) {
-        const lease = await readReviewSession(authority, { kind }, client)
-        if (lease) sessions.push({ kind, expiresAt: lease.expiresAt })
-      }
-      return json({ runId: authority.runId, sessions })
+      return json({ runId: authority.runId, sessions: await listReviewSessions(authority, client) })
     })
   } catch (error) {
     if (error instanceof ReviewAuthorityError) return json({ error: error.code }, error.status)

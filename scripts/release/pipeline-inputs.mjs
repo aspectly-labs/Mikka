@@ -22,21 +22,25 @@ const apiRoot = 'https://api.github.com/repositories/'
 
 export function checkedRun(run, path, { event, successful = true, automaticDeployment = false } = {}) {
   for (const key of ['repository', 'head_repository']) {
-    assert.ok(officialMikkaRepository(run[key]?.full_name, String(run[key]?.id)))
-    assert.equal(run[key].fork, false)
-    assert.equal(run[key].private, false)
+    assert.ok(officialMikkaRepository(run[key]?.full_name, String(run[key]?.id)), 'pipeline_run_repository_scope')
+    assert.equal(run[key].fork, false, 'pipeline_run_fork_rejected')
+    assert.equal(run[key].private, false, 'pipeline_run_repository_private')
   }
-  assert.equal(run.path, path)
-  assert.equal(run.head_branch, 'main')
+  assert.equal(run.path, path, 'pipeline_run_workflow_mismatch')
+  assert.equal(run.head_branch, 'main', 'pipeline_run_branch_required')
   const automatic = (path === producer && run.event === 'push') || (automaticDeployment && path === deployment && run.event === 'workflow_run')
-  assert.ok(trustedActor(run.actor, automatic))
-  assert.ok(trustedActor(run.triggering_actor, automatic))
-  assert.match(run.head_sha ?? '', sha)
-  assert.match(String(run.id), number)
-  assert.match(String(run.run_attempt), number)
-  assert.equal(run.status, 'completed')
-  if (successful) assert.equal(run.conclusion, 'success')
-  if (event) assert.equal(run.event, event)
+  // Dispatch runs are gated by repository write access, not a fixed actor list.
+  const dispatch = run.event === 'workflow_dispatch'
+  if (!dispatch) {
+    assert.ok(trustedActor(run.actor, automatic), 'pipeline_run_actor_untrusted')
+    assert.ok(trustedActor(run.triggering_actor, automatic), 'pipeline_run_trigger_untrusted')
+  }
+  assert.match(run.head_sha ?? '', sha, 'pipeline_run_sha_required')
+  assert.match(String(run.id), number, 'pipeline_run_id_required')
+  assert.match(String(run.run_attempt), number, 'pipeline_run_attempt_required')
+  assert.equal(run.status, 'completed', 'pipeline_run_incomplete')
+  if (successful) assert.equal(run.conclusion, 'success', 'pipeline_run_unsuccessful')
+  if (event) assert.equal(run.event, event, 'pipeline_run_event_mismatch')
   return run
 }
 
@@ -44,23 +48,23 @@ export function checkedRun(run, path, { event, successful = true, automaticDeplo
  * lease. Every main push produces a manifest; the latest build's completion
  * starts its own run. Superseded runs are recorded, never counted as releases. */
 export function selectAutomaticCandidate(event, actualRun, mainSha) {
-  assert.ok(officialMikkaRepository(event?.repository?.full_name, String(event?.repository?.id)))
-  assert.equal(event.action, 'completed')
+  assert.ok(officialMikkaRepository(event?.repository?.full_name, String(event?.repository?.id)), 'pipeline_event_repository_scope')
+  assert.equal(event.action, 'completed', 'pipeline_event_action_required')
   checkedRun(actualRun, producer, { event: 'push' })
   for (const field of ['id', 'run_attempt', 'head_sha', 'event', 'head_branch', 'status', 'conclusion'])
-    assert.equal(event.workflow_run?.[field], actualRun[field])
-  assert.match(mainSha ?? '', sha)
+    assert.equal(event.workflow_run?.[field], actualRun[field], 'pipeline_event_run_mismatch')
+  assert.match(mainSha ?? '', sha, 'pipeline_main_sha_required')
   return actualRun.head_sha === mainSha ? 'selected' : 'superseded'
 }
 
 /** A completed rollback makes its previous manifest current again. A failed
  * deployment must be recovered explicitly before another automatic writer. */
 export function baselineOrigin(summary, target = 'staging') {
-  assert.equal(summary?.version, 1)
-  assert.equal(summary.target, target)
+  assert.equal(summary?.version, 1, 'pipeline_summary_version_required')
+  assert.equal(summary.target, target, 'pipeline_summary_target_mismatch')
   if (summary.rollback?.status === 'passed') return summary.previousOrigin ?? null
   assert.equal(summary.status, 'passed', 'pipeline_previous_release_requires_recovery')
-  assert.equal(summary.verification?.status, 'pass')
+  assert.equal(summary.verification?.status, 'pass', 'pipeline_summary_verification_required')
   return summary.origin
 }
 
@@ -69,19 +73,19 @@ export function artifactFor(run, artifacts, prefix) {
   const matching = artifacts.filter(artifact => artifact.name === expected && !artifact.expired)
   assert.equal(matching.length, 1, 'pipeline_original_artifact_required')
   const artifact = matching[0]
-  assert.match(String(artifact.id), number)
-  assert.equal(artifact.workflow_run?.id, run.id)
-  assert.equal(artifact.workflow_run?.head_sha, run.head_sha)
-  assert.equal(artifact.workflow_run?.head_branch, run.head_branch)
-  assert.equal(artifact.workflow_run?.repository_id, 1427517699)
-  assert.equal(artifact.workflow_run?.head_repository_id, 1427517699)
-  assert.match(artifact.digest ?? '', archiveDigest)
-  assert.ok(artifact.size_in_bytes > 0 && artifact.size_in_bytes <= 4 * 1024 * 1024)
+  assert.match(String(artifact.id), number, 'pipeline_artifact_id_required')
+  assert.equal(artifact.workflow_run?.id, run.id, 'pipeline_artifact_run_mismatch')
+  assert.equal(artifact.workflow_run?.head_sha, run.head_sha, 'pipeline_artifact_sha_mismatch')
+  assert.equal(artifact.workflow_run?.head_branch, run.head_branch, 'pipeline_artifact_branch_mismatch')
+  assert.equal(artifact.workflow_run?.repository_id, 1427517699, 'pipeline_artifact_repository_scope')
+  assert.equal(artifact.workflow_run?.head_repository_id, 1427517699, 'pipeline_artifact_repository_scope')
+  assert.match(artifact.digest ?? '', archiveDigest, 'pipeline_artifact_digest_required')
+  assert.ok(artifact.size_in_bytes > 0 && artifact.size_in_bytes <= 4 * 1024 * 1024, 'pipeline_artifact_size_invalid')
   return artifact
 }
 
 export async function github(path, { token, method = 'GET', body, bytes = false } = {}) {
-  assert.ok(typeof path === 'string' && !path.startsWith('/') && !path.includes('://'))
+  assert.ok(typeof path === 'string' && !path.startsWith('/') && !path.includes('://'), 'pipeline_path_invalid')
   const prefix = path.startsWith(repository + '/') ? repository + '/' : 'alexj11324/mikka-cloud/'
   assert.ok(path.startsWith(prefix), 'pipeline_repository_scope')
   const repositoryId = prefix === repository + '/' ? publicRepositoryId : operationsRepositoryId
@@ -104,7 +108,7 @@ async function pages(api, path, key) {
   const result = []
   for (let page = 1; ; page++) {
     const value = await api(`${repository}/${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`)
-    assert.ok(Array.isArray(value[key]))
+    assert.ok(Array.isArray(value[key]), 'pipeline_inventory_response_invalid')
     result.push(...value[key])
     if (result.length >= value.total_count || value[key].length < 100) return result
     assert.ok(page < 100, 'pipeline_inventory_too_large')
@@ -112,8 +116,8 @@ async function pages(api, path, key) {
 }
 
 export function readArtifactMembers(bytes, artifact) {
-  assert.equal(bytes.length, artifact.size_in_bytes)
-  assert.equal('sha256:' + createHash('sha256').update(bytes).digest('hex'), artifact.digest)
+  assert.equal(bytes.length, artifact.size_in_bytes, 'pipeline_artifact_size_mismatch')
+  assert.equal('sha256:' + createHash('sha256').update(bytes).digest('hex'), artifact.digest, 'pipeline_artifact_digest_mismatch')
   let text
   try {
     text = execFileSync('python3', ['-c', String.raw`
@@ -144,7 +148,7 @@ async function members(api, run, prefix) {
 }
 
 async function releasePacket(api, runId, runAttempt) {
-  assert.match(String(runId ?? ''), number)
+  assert.match(String(runId ?? ''), number, 'pipeline_release_run_required')
   const path = runAttempt ? `actions/runs/${runId}/attempts/${runAttempt}` : `actions/runs/${runId}`
   const run = checkedRun(await api(`${repository}/${path}`), producer, { event: 'push' })
   assert.equal(String(run.id), String(runId), 'pipeline_release_run_mismatch')
@@ -153,7 +157,7 @@ async function releasePacket(api, runId, runAttempt) {
   assert.deepEqual(Object.keys(packet.files), ['release-manifest.json'], 'pipeline_release_member_required')
   const manifest = packet.files['release-manifest.json']
   assert.ok(manifest && typeof manifest === 'object' && !Array.isArray(manifest), 'pipeline_release_manifest_required')
-  assert.equal(manifest.sourceCommit, run.head_sha)
+  assert.equal(manifest.sourceCommit, run.head_sha, 'pipeline_release_source_mismatch')
   return { run, manifest,
     origin: { runId: String(run.id), runAttempt: String(run.run_attempt), artifactId: String(packet.artifact.id) } }
 }
@@ -178,7 +182,7 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
   for (const latest of runs) {
     const isCurrent = String(latest.id) === String(currentRun)
     if (!isCurrent && latest.status !== 'completed') continue
-    assert.ok(Number.isSafeInteger(latest.run_attempt) && latest.run_attempt > 0)
+    assert.ok(Number.isSafeInteger(latest.run_attempt) && latest.run_attempt > 0, 'pipeline_deployment_attempt_required')
     // Re-running only failed jobs does not erase an earlier writer. Search
     // every earlier completed attempt, including this run's previous attempt.
     // A fresh selection failure must never hide a partial deployment.
@@ -186,13 +190,13 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       const run = attempt === latest.run_attempt ? latest
         : await api(`${repository}/actions/runs/${latest.id}/attempts/${attempt}`)
       checkedRun(run, deployment, { successful: false, automaticDeployment: true })
-      assert.equal(run.run_attempt, attempt)
-      assert.ok(['workflow_run', 'workflow_dispatch'].includes(run.event))
+      assert.equal(run.run_attempt, attempt, 'pipeline_deployment_attempt_mismatch')
+      assert.ok(['workflow_run', 'workflow_dispatch'].includes(run.event), 'pipeline_deployment_event_invalid')
       const jobs = await pages(api, `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, 'jobs')
       const jobName = target === 'production' ? 'pipeline-production' : 'pipeline'
       const job = jobs.find(job => job.name === jobName)
       if (!job || job.conclusion === 'skipped') continue
-      assert.equal(job.status, 'completed')
+      assert.equal(job.status, 'completed', 'pipeline_deployment_job_incomplete')
       const applied = job.steps?.find(step => step.name === (target === 'production'
         ? 'Promote and verify the staged service manifest' : 'Deploy and verify staged service manifest'))
       // A failed checkout/selection never acquired a deployment writer. Do not
@@ -200,8 +204,8 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       if (!applied || applied.conclusion === 'skipped') continue
       const packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
       const summary = packet.files['pipeline-summary.json']
-      assert.equal(summary?.deployment?.runId, String(run.id))
-      assert.equal(summary.deployment.runAttempt, String(run.run_attempt))
+      assert.equal(summary?.deployment?.runId, String(run.id), 'pipeline_deployment_summary_run_mismatch')
+      assert.equal(summary.deployment.runAttempt, String(run.run_attempt), 'pipeline_deployment_summary_attempt_mismatch')
       const log = (await api(`${repository}/actions/jobs/${job.id}/logs`, { bytes: true })).toString('utf8')
       // Private deployment independently validates all manifests. This also
       // rejects an artifact name supplied by a different job in the same run.
@@ -235,8 +239,8 @@ async function qualificationOrigin(api) {
  * original jobs, upload logs, archive bytes and member digests before writers. */
 export async function selectPipeline({ env = process.env, api = github } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
-  assert.equal(env.GITHUB_REF, 'refs/heads/main')
-  assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, env.GITHUB_EVENT_NAME === 'workflow_run'))
+  assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
+  if (env.GITHUB_EVENT_NAME === 'workflow_run') assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, true), 'pipeline_actor_untrusted')
   const report = resolve(env.RUNNER_TEMP, 'deploy-pipeline')
   await mkdir(report, { recursive: true, mode: 0o700 })
   let selected, previous, rollback
@@ -246,10 +250,10 @@ export async function selectPipeline({ env = process.env, api = github } = {}) {
     const main = await api(`${repository}/git/ref/heads/main`)
     if (selectAutomaticCandidate(event, selected.run, main.object?.sha) === 'superseded') return { status: 'superseded', source: selected.manifest.sourceCommit }
   } else {
-    assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch')
-    assert.ok(['pipeline-stage', 'pipeline-rollback'].includes(env.MIKKA_DEPLOYMENT_PHASE))
+    assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch', 'pipeline_dispatch_event_required')
+    assert.ok(['pipeline-stage', 'pipeline-rollback'].includes(env.MIKKA_DEPLOYMENT_PHASE), 'pipeline_deployment_phase_invalid')
     if (env.MIKKA_DEPLOYMENT_PHASE === 'pipeline-rollback') {
-      assert.match(env.INPUT_PIPELINE_RUN ?? '', number)
+      assert.match(env.INPUT_PIPELINE_RUN ?? '', number, 'pipeline_rollback_run_required')
       rollback = await priorDeployment(api, env.GITHUB_RUN_ID, env.INPUT_PIPELINE_RUN)
       selected = await historicalRelease(api, rollback.summary.origin.runId, rollback.summary.origin.runAttempt)
       if (rollback.summary.previousOrigin) previous = await historicalRelease(api, rollback.summary.previousOrigin.runId, rollback.summary.previousOrigin.runAttempt)
@@ -261,7 +265,7 @@ export async function selectPipeline({ env = process.env, api = github } = {}) {
     if (origin) previous = await historicalRelease(api, origin.runId, origin.runAttempt)
   }
   const cloud = await api('alexj11324/mikka-cloud/git/ref/heads/main')
-  assert.match(cloud.object?.sha ?? '', sha)
+  assert.match(cloud.object?.sha ?? '', sha, 'pipeline_operations_sha_required')
   if (env.INPUT_CLOUD_SOURCE) assert.equal(env.INPUT_CLOUD_SOURCE, cloud.object.sha, 'pipeline_operations_source_must_be_current_main')
   const ops = await qualificationOrigin(api)
   const manifestPath = resolve(report, 'release-manifest.json')
@@ -282,7 +286,7 @@ export async function selectPipeline({ env = process.env, api = github } = {}) {
     variables.MIKKA_ROLLBACK_RECEIPT = resolve(env.RUNNER_TEMP, 'deploy-pipeline-rollback.json')
     await writeFile(variables.MIKKA_ROLLBACK_RECEIPT, JSON.stringify(rollback.summary) + '\n', { mode: 0o600 })
   }
-  for (const value of Object.values(variables)) assert.ok(!/[\r\n]/.test(value))
+  for (const value of Object.values(variables)) assert.ok(!/[\r\n]/.test(value), 'pipeline_env_value_invalid')
   await appendFile(env.GITHUB_ENV, Object.entries(variables).map(([key, value]) => `${key}=${value}\n`).join(''))
   const output = { status: 'selected', source: selected.manifest.sourceCommit, operations: cloud.object.sha, report,
     releaseRun: selected.origin.runId, releaseAttempt: selected.origin.runAttempt, releaseArtifact: selected.origin.artifactId }
@@ -293,20 +297,20 @@ export async function selectPipeline({ env = process.env, api = github } = {}) {
  * with its own serving baseline. It never silently uses the staging baseline. */
 export async function selectPromotion({ env = process.env, api = github } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
-  assert.equal(env.GITHUB_REF, 'refs/heads/main')
-  assert.equal(env.GITHUB_EVENT_NAME, 'workflow_run')
-  assert.equal(env.GITHUB_ACTOR_ID, trustedActors.owner.id)
-  for (const key of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'INPUT_STAGE_ARTIFACT']) assert.match(env[key] ?? '', number)
-  assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha)
+  assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
+  assert.equal(env.GITHUB_EVENT_NAME, 'workflow_run', 'pipeline_workflow_run_event_required')
+  assert.equal(env.GITHUB_ACTOR_ID, trustedActors.owner.id, 'pipeline_owner_required')
+  for (const key of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'INPUT_STAGE_ARTIFACT']) assert.match(env[key] ?? '', number, 'pipeline_promotion_input_required')
+  assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha, 'pipeline_operations_source_required')
   const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'))
   const selected = await release(api, event.workflow_run?.id, event.workflow_run?.run_attempt)
   const run = await api(`${repository}/actions/runs/${env.GITHUB_RUN_ID}/attempts/${env.GITHUB_RUN_ATTEMPT}`)
   const stage = await members(api, run, 'deploy-pipeline')
-  assert.equal(String(stage.artifact.id), env.INPUT_STAGE_ARTIFACT)
-  assert.deepEqual(stage.files['release-manifest.json'], selected.manifest)
-  assert.equal(stage.files['pipeline-summary.json']?.status, 'passed')
-  assert.equal(stage.files['pipeline-summary.json'].target, 'staging')
-  assert.equal(stage.files['pipeline-summary.json'].rollback, undefined)
+  assert.equal(String(stage.artifact.id), env.INPUT_STAGE_ARTIFACT, 'pipeline_stage_artifact_mismatch')
+  assert.deepEqual(stage.files['release-manifest.json'], selected.manifest, 'pipeline_stage_manifest_mismatch')
+  assert.equal(stage.files['pipeline-summary.json']?.status, 'passed', 'pipeline_stage_incomplete')
+  assert.equal(stage.files['pipeline-summary.json'].target, 'staging', 'pipeline_stage_target_mismatch')
+  assert.equal(stage.files['pipeline-summary.json'].rollback, undefined, 'pipeline_stage_rollback_rejected')
   const prior = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'production')
   const previousOrigin = prior && baselineOrigin(prior.summary, 'production')
   const previous = previousOrigin && await historicalRelease(api, previousOrigin.runId, previousOrigin.runAttempt)
@@ -329,7 +333,7 @@ export async function selectPromotion({ env = process.env, api = github } = {}) 
     await writeFile(variables.MIKKA_PRODUCTION_MANIFEST, JSON.stringify(previous.manifest, null, 2) + '\n', { mode: 0o600 })
     for (const [key, value] of Object.entries(previous.origin)) variables['MIKKA_PRODUCTION_RELEASE_' + { runId: 'RUN_ID', runAttempt: 'RUN_ATTEMPT', artifactId: 'ARTIFACT_ID' }[key]] = value
   }
-  for (const value of Object.values(variables)) assert.ok(!/[\r\n]/.test(value))
+  for (const value of Object.values(variables)) assert.ok(!/[\r\n]/.test(value), 'pipeline_env_value_invalid')
   await appendFile(env.GITHUB_ENV, Object.entries(variables).map(([key, value]) => `${key}=${value}\n`).join(''))
   return { status: 'selected', source: selected.manifest.sourceCommit, operations: env.INPUT_OPERATIONS_SOURCE, report }
 }
@@ -342,7 +346,7 @@ export function selectionError(error) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === 'promote'))
+    assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === 'promote'), 'pipeline_usage_invalid')
     const output = await (process.argv[2] === 'promote' ? selectPromotion() : selectPipeline())
     if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
       Object.entries(output).map(([key, value]) => `${key}=${value}\n`).join(''))

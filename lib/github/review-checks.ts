@@ -80,6 +80,34 @@ export function reviewCheckCounts(value: unknown, headSha: string | null): { cou
   return { counts, updatedAt: result.updatedAt }
 }
 
+function checkEntryName(key: string): string {
+  try {
+    const parts = JSON.parse(key) as unknown
+    if (Array.isArray(parts) && parts[0] === 'check' && typeof parts[3] === 'string') return parts[3]
+    if (Array.isArray(parts) && parts[0] === 'status' && typeof parts[1] === 'string') return parts[1]
+  } catch { /* A malformed key is unknown, never fabricated. */ }
+  return 'unknown'
+}
+
+/** The run-worker's own view of the persisted snapshot: check names and states
+ * are what the agent needs to act on a failing check; internal app/suite and
+ * check-run ids stay out. A snapshot for an older head reports as unknown, not
+ * stale truth, and an incomplete snapshot carries no counts. */
+export function reviewCheckDetails(value: unknown, headSha: string | null, limit = 50): {
+  headSha: string; complete: boolean; updatedAt: string; counts: ReviewCheckCounts | null
+  entries: { name: string; state: ReviewCheckState; at: string }[]
+} | null {
+  const parsed = snapshot.safeParse(value)
+  if (!parsed.success || !headSha || parsed.data.headSha !== headSha) return null
+  const result = parsed.data
+  const counts = result.complete ? { passed: 0, failed: 0, pending: 0, skipped: 0 } : null
+  const entries = Object.entries(result.entries).map(([key, check]) => {
+    if (counts) counts[check.state]++
+    return { name: checkEntryName(key), state: check.state, at: check.at }
+  }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).slice(0, Math.max(0, Math.min(limit, 200)))
+  return { headSha: result.headSha, complete: result.complete, updatedAt: result.updatedAt, counts, entries }
+}
+
 /** Called only after signature verification; metadata admits no token or URL. */
 export function reviewCheckEvent(event: string, payload: unknown) {
   const repository = z.object({ full_name: z.string().regex(/^[\w.-]+\/[\w.-]+$/) })

@@ -31,7 +31,7 @@ export function parseInput(params: URLSearchParams, userId: string): SearchInput
       const decoded = cursorSchema.parse(JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')))
       if (decoded.binding !== binding) throw new Error('context mismatch')
       cursor = decoded.key
-    } catch { throw new SearchInputError('searchInvalidParam') }
+    } catch (error) { throw Object.assign(new SearchInputError('searchInvalidParam'), { cause: error }) }
   }
   return { source, q, workspaceId, limit, cursor, binding }
 }

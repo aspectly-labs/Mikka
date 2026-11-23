@@ -2,8 +2,7 @@ import type { CoordinatorEventTier } from '../db/schema'
 import type { DecisionExecution } from './decide'
 import type { DecisionFailureReason } from './decision-failure'
 
-/** Longer than the whole classification budget, so an in-flight attempt is not
- * immediately reclaimed by another wake. This is transport scheduling only. */
+/** Added to the Decision timeout for claim cooldown: admission window plus write margin. */
 export const TRIAGE_RETRY_COOLDOWN_MS = 15_000
 export const TRIAGE_BATCH_BUDGET_MS = 10_000
 export const TRIAGE_ATTEMPTS_PER_WAKE = 2
@@ -30,6 +29,7 @@ export function triageDecisionReceipt(event: TriageBatchEvent, attemptedAt: Date
     ...('method' in judgment ? { method: 'rule', reason: 'failed_run_completion', lastErrorReason: judgment.errorReason } : { method: 'model', execution: judgment.execution }) }
 }
 export interface TriageBatchDependencies<T extends TriageBatchEvent> {
+  canClassify?(): boolean
   claim(event: T): Promise<Date | null>
   deliverUser(event: T): Promise<boolean>
   deliverCompletion?(event: T): Promise<boolean>
@@ -82,7 +82,7 @@ export async function runTriageBatch<T extends TriageBatchEvent>(
       outcome.classified.push(event.id)
       continue
     }
-    if (signal.aborted || remainingCalls === 0) { outcome.unattempted.push(event.id); continue }
+    if (signal.aborted || remainingCalls === 0 || dependencies.canClassify?.() === false) { outcome.unattempted.push(event.id); continue }
     // Claim before inference. A later wake can advance past a slow event even
     // if this process exits before receiving or persisting its model response.
     const attemptedAt = await dependencies.claim(event)
@@ -91,7 +91,7 @@ export async function runTriageBatch<T extends TriageBatchEvent>(
     let attempted = false
     const failedCompletion = completionDelivered === false && event.observedRun?.id === event.runId
       && event.observedRun?.status === 'failed' && event.observedRun.finishedAt != null
-    for (let attempt = 0; attempt < TRIAGE_ATTEMPTS_PER_WAKE && remainingCalls > 0 && !signal.aborted; attempt++) {
+    for (let attempt = 0; attempt < TRIAGE_ATTEMPTS_PER_WAKE && remainingCalls > 0 && !signal.aborted && dependencies.canClassify?.() !== false; attempt++) {
       remainingCalls--
       attempted = true
       try { judgment = await dependencies.classify(event, signal) }
