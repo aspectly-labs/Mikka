@@ -45,6 +45,7 @@ import { BotAvatar, COORDINATOR_AVATAR } from '@/components/nav/bot-avatar'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { BrowserPane } from '@/components/browser/browser-pane'
+import { RailThreadChanges } from './thread-changes'
 import { browserAddressRequest, browserAddressVersion, subscribeBrowserAddress } from '@/lib/browser/navigation'
 import { ThreadColumn } from './thread-column'
 import { AllThreadsColumn, AllThreadsToggle } from '@/components/nav/all-threads'
@@ -803,6 +804,7 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
     { id: 'overview' as const, title: i18nText('Shell.panel.overview'), content: <ContextPanel key="context-panel" sheet frameTab workspaceId={listWorkspaceId} issues={tasks} threads={threads} threadsLoading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} onClose={() => {}}
       conversation={activeBot ? { id: activeBot.id, name: activeBot.name, color: activeBot.color, shape: activeBot.shape, kind: 'bot' } : { id: coordinatorBot?.id, name: i18nText('Nav.coordinator'), kind: 'coordinator', updatedAt: botChatSummaries && coordinatorBot ? botChatSummaries.items[coordinatorBot.id]?.at ?? undefined : undefined }} /> },
     { id: 'browser' as const, title: i18nText('Browser.label'), content: <BrowserPane inTab onClose={() => showBrowser('closed')} /> },
+    ...(threadId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={taskId} runId={threadId} /> }] : []),
   ] } : undefined
   // Stable while the live sessions stay put: the dialogs below read this, and a fresh array every render would rebuild them all.
   const conversationSessions = useMemo(() => {
