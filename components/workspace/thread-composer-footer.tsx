@@ -68,7 +68,12 @@ export function ThreadComposerFooter({ issueId, runId, status }: { issueId: stri
   const movable = !(runIsActive(status) && running)
   const refresh = () => { void machine.mutate(); void detail.mutate() }
   const act = (fn: () => Promise<unknown>, failKey: Parameters<typeof t>[0]) => startTransition(async () => {
-    try { await fn(); refresh() } catch { toast.error(t(failKey)) }
+    try {
+      const result = await fn()
+      // A refused action resolves falsy rather than throwing (moveThread's null).
+      if (result === false || result === null) { toast.error(t(failKey)); return }
+      refresh()
+    } catch { toast.error(t(failKey)) }
   })
 
   return (
