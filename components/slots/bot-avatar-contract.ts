@@ -22,7 +22,7 @@ export type BotMove = 'wide' | 'hexagon' | 'burst'
 export const BOT_MOOD_SECONDS: Record<BotMood, number> = { idle: 2.4, thinking: 2.6, wink: 1.6, exclaim: 2, sleep: 2.4, wide: 1.8, hexagon: 1.6, burst: 2.6 }
 
 /** Visible avatar sizes, in CSS pixels. */
-export const BOT_AVATAR_SIZES = { row: 16, pill: 22, message: 24, search: 28, list: 34, cell: 40, profile: 72, hero: 144 } as const
+export const BOT_AVATAR_SIZES = { row: 16, pill: 22, message: 28, search: 28, list: 34, cell: 40, profile: 72, hero: 144 } as const
 
 export type BotAvatarSize = keyof typeof BOT_AVATAR_SIZES
 
