@@ -21,6 +21,12 @@ type MachineRow = {
 
 type SessionRow = { startedAt: Date; endedAt: Date | null }
 
+type FrozenEnvironment = {
+  id?: string; name?: string
+  setup?: { command?: string; copyFiles?: string[]; approved?: boolean } | null
+  variables?: Record<string, string>; secretIds?: string[]
+}
+
 /** The Setup tab's machine detail for one thread (docs/design/thread-run-right-panel.md):
  * state, provider specs, the last metrics sample, session uptime and snapshot/setup recipe.
  * Everything it reports is read, never fabricated: provider calls that find a gone or paused
@@ -93,8 +99,7 @@ export async function readThreadMachineDetail(pool: Pool, actor: Actor, runId: s
  * command is the repeatable half. Returns the exit code and the tail. */
 export async function rerunThreadMachineSetup(pool: Pool, actor: Actor, runId: string, signal: AbortSignal) {
   const run = (await pool.query<{ worktreePath: string | null; remoteUrl: string | null;
-    agentDefinition: { projectExecution?: { environment?: { setup?: { command?: string; approved?: boolean } | null;
-      variables?: Record<string, string>; secretIds?: string[] } | null } } } | null }>(
+    agentDefinition: { projectExecution?: { environment?: FrozenEnvironment | null } | null } | null }>(
     `SELECT r."worktreePath",r."agentDefinition",repo."remoteUrl" FROM agent_runs r
     LEFT JOIN device_repos repo ON repo.id=r."deviceRepoId" AND repo."userId"=r."userId"
     WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3`,
