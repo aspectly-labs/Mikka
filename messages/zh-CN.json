@@ -8678,6 +8678,14 @@
       "pending": "待处理",
       "inProgress": "进行中",
       "completed": "已完成"
+    },
+    "turnFold": {
+      "working": "工作中 {duration}",
+      "workingNow": "工作中",
+      "worked": "工作了 {duration}",
+      "workedNoTime": "工作过程",
+      "stopped": "已停止",
+      "failed": "失败"
     }
   },
   "Board": {
