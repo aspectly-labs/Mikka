@@ -718,6 +718,30 @@ test('a rejected automatic welcome recovery retains its stored refusal and never
   assert.equal(calls, 1)
 })
 
+test('a turn with no stream to reattach tries once, not in a loop, and keeps its Stop while it tries', async () => {
+  chatEnabled = true
+  serverStops.length = 0
+  streamReconnects = 0
+  streamStatus = 'idle'
+  streamView = emptySessionView()
+  chatItems = [{ id: 'fixture-sent', position: 1, from: 'person', text: 'fixture request', tools: [], threads: [], artifacts: [], createdAt: '2026-11-08T05:07:38Z' }]
+  chatData = { items: chatItems, enabled: true, working: true, error: null, artifacts: {} }
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" key="unattached-once" />))
+  assert.equal(streamReconnects, 1)
+  // The reattach is in flight, then finds nothing; fresh reads of the same running turn do not start it again.
+  streamStatus = 'resuming'
+  await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" key="unattached-once" />))
+  assert.equal(typeof screen?.onStop, 'function', 'Stop stays while it reattaches: it goes to the server')
+  streamStatus = 'idle'
+  for (let read = 0; read < 3; read++) {
+    chatData = { ...chatData, items: [...chatItems] }
+    await act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" key="unattached-once" />))
+  }
+  assert.equal(streamReconnects, 1, 'one reattach per running turn')
+  chatData = null
+  streamStatus = 'idle'
+})
+
 test('a reconnect keeps the first draft editable without sending or stopping the recovering turn', async () => {
   chatEnabled = true
   const show = () => act(async () => root.render(<CoordinatorChat onOpenIssue={nothing} userId="fixture-owner" />))

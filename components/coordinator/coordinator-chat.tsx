@@ -233,7 +233,11 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
   // The server runs a turn the page holds no stream for (a reload mid-turn, a dropped stream): the sidebar spins and the
   // composer shows Stop for it all the same, and the page tries to attach to it again. Stop then goes to the server.
   const unattached = Boolean(data?.working) && !working && !turnConfirmed && !resuming
-  useEffect(() => { if (unattached) reconnectStream.current() }, [unattached, data])
+  // Once per running turn: a turn whose stream cannot be reattached (none here to resume) is not tried again on every
+  // read, which looped the stream request and hid Stop while each try ran. A turn that ends and a new one tries afresh.
+  const reattached = useRef(false)
+  useEffect(() => { if (!data?.working) reattached.current = false }, [data?.working])
+  useEffect(() => { if (unattached && !reattached.current) { reattached.current = true; reconnectStream.current() } }, [unattached, data])
   const stateKey = `bot-chat:${botId ?? 'coordinator'}:${embedded?.activeArtifactId ?? 'main'}`
   // Each chat keeps where the person was reading, as a group chat does; one read to its end follows the latest.
   const transcript = useViewScroll<HTMLDivElement>(`${stateKey}:transcript`, Boolean(data), true, 'end')
@@ -745,7 +749,7 @@ function CoordinatorChatSession({ onOpenIssue, prefill, placeholder, compact = f
         // Scrolling near the top loads the page before, as LobeHub's useEarlierHistoryTrigger does.
         older={data?.historyBefore ? { loading: loadingHistory, auto: true, onLoad: () => void loadHistory() } : undefined}
         historyPrepend={historyPrepend} scrollRef={transcript}
-        working={working && !stopping} onStop={stoppable && !resuming && !stopping ? () => { void stop() } : undefined}
+        working={working && !stopping} onStop={stoppable && (!resuming || Boolean(data?.working)) && !stopping ? () => { void stop() } : undefined}
         composer={{ ref: inputRef, leadingControls: <ChatComposerAttachment />, label: bot ? t('inputTo', { name: bot.name }) : t('input'), placeholder, value: draft, onChange: updateDraft, sending: resuming, editableWhileSending: resuming, submitDisabled: noModel, onSubmit: () => { void send() },
           attachmentScope: data?.botId ? { kind: 'bot', id: data.botId } : undefined, running: (working || stoppable) && !stopping,
           references: selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : undefined, commands: composerCommands, historyKey: stateKey, referenceSources: draftSources }}
