@@ -31,7 +31,7 @@ export function RailCrewThreads({ issues, threads, loading, onOpenThread }: { is
 /** Crew ＋ Pull requests: the runs' published PRs from the coordinator overview. */
 export function RailCrewPulls() {
   const t = useTranslations('IssueThreads')
-  const { data, error } = useSWR<CoordinatorOverview>('/api/coordinator/overview', url => readJson<CoordinatorOverview>(url))
+  const { data, error } = useSWR<CoordinatorOverview>('/api/coordinator/overview', url => readJson<CoordinatorOverview>(url), { refreshInterval: 15000 })
   const pulls = data?.pullRequests ?? []
   if (error) return <p className="p-4 text-sm text-muted-foreground">{t('crewPullsError')}</p>
   if (!data) return null
@@ -51,7 +51,7 @@ export function RailCrewPulls() {
 /** Crew ＋ Side threads: this thread's side conversations, opening beside it. */
 export function RailCrewSide({ runId, onOpenThread }: { runId: string; onOpenThread: (thread: { issueId: string | null; runId: string }) => void }) {
   const t = useTranslations('IssueThreads')
-  const { data, error } = useSWR<{ children: ThreadChild[] }>(`/api/threads/${runId}/children`, url => readJson<{ children: ThreadChild[] }>(url))
+  const { data, error } = useSWR<{ children: ThreadChild[] }>(`/api/threads/${runId}/children`, url => readJson<{ children: ThreadChild[] }>(url), { refreshInterval: 15000 })
   const sides = (data?.children ?? []).filter(child => child.threadRelation === 'side')
   if (error) return <p className="p-4 text-sm text-muted-foreground">{t('crewSideError')}</p>
   if (!data) return null

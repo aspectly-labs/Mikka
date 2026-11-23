@@ -805,7 +805,7 @@ function IssueWorkspaceContent({ user, initialSelected = null, initialAgentHisto
     { id: 'overview' as const, title: i18nText('Shell.panel.overview'), content: <ContextPanel key="context-panel" sheet frameTab workspaceId={listWorkspaceId} issues={tasks} threads={threads} threadsLoading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} onClose={() => {}}
       conversation={activeBot ? { id: activeBot.id, name: activeBot.name, color: activeBot.color, shape: activeBot.shape, kind: 'bot' } : { id: coordinatorBot?.id, name: i18nText('Nav.coordinator'), kind: 'coordinator', updatedAt: botChatSummaries && coordinatorBot ? botChatSummaries.items[coordinatorBot.id]?.at ?? undefined : undefined }} /> },
     { id: 'browser' as const, title: i18nText('Browser.label'), content: <BrowserPane inTab onClose={() => showBrowser('closed')} /> },
-    ...(threadId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={taskId} runId={threadId} /> }] : []),
+    ...(threadId ?? mainThreadId ? [{ id: 'changes' as const, title: i18nText('IssueThreads.changesTab'), content: <RailThreadChanges issueId={taskId} runId={(threadId ?? mainThreadId)!} /> }] : []),
     ...(section === 'coordinator' && !activeBot ? [
       { id: 'crew:threads' as const, title: i18nText('IssueThreads.crewThreads'), content: <RailCrewThreads issues={tasks} threads={threads} loading={threadsLoading} onOpenThread={thread => openThread(thread.runId)} /> },
       { id: 'crew:pulls' as const, title: i18nText('IssueThreads.crewPulls'), content: <RailCrewPulls /> },
