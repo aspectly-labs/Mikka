@@ -1341,7 +1341,7 @@
   "lib/client-runtime/localized-navigation.tsx": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Navigate with the active locale applied to the href, and keep an explicit locale choice in the NEXT_LOCALE cookie under the deployment base path.",
+    "behavior": "Navigate with the active locale applied to the href, and keep an explicit locale choice in the mikka-locale cookie under the deployment base path.",
     "test": "lib/runtime-entrypoints.test.tsx",
     "suite": "test:lib-units"
   },

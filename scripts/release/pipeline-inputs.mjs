@@ -204,6 +204,17 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       if (!applied || applied.conclusion === 'skipped') continue
       const packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
       const summary = packet.files['pipeline-summary.json']
+      if (summary === undefined) {
+        // The publisher writes its first receipt and summary after reading every input and resource
+        // and before any migration or service write, and prints the summary on any failure that has one.
+        // A Deploy step that uploaded no summary and printed none (for example a GitHub read failed while
+        // authenticating the candidate) never reached a writer, so it neither blocks nor sets the baseline.
+        const log = (await api(`${repository}/actions/jobs/${job.id}/logs`, { bytes: true })).toString('utf8')
+        assert.ok(log.includes(`Artifact ${packet.artifact.name}.zip successfully finalized.`)
+          && log.includes(`Artifact ID ${packet.artifact.id}`), 'pipeline_summary_upload_evidence_required')
+        assert.ok(!log.includes('MIKKA_DEPLOYMENT_PIPELINE='), 'pipeline_deployment_summary_missing')
+        continue
+      }
       assert.equal(summary?.deployment?.runId, String(run.id), 'pipeline_deployment_summary_run_mismatch')
       assert.equal(summary.deployment.runAttempt, String(run.run_attempt), 'pipeline_deployment_summary_attempt_mismatch')
       const log = (await api(`${repository}/actions/jobs/${job.id}/logs`, { bytes: true })).toString('utf8')
@@ -299,7 +310,8 @@ export async function selectPromotion({ env = process.env, api = github } = {}) 
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
   assert.equal(env.GITHUB_EVENT_NAME, 'workflow_run', 'pipeline_workflow_run_event_required')
-  assert.equal(env.GITHUB_ACTOR_ID, trustedActors.owner.id, 'pipeline_owner_required')
+  // A merge through the merge queue promotes like the owner's own push (Alex 2026-11-24).
+  assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, true), 'pipeline_actor_untrusted')
   for (const key of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'INPUT_STAGE_ARTIFACT']) assert.match(env[key] ?? '', number, 'pipeline_promotion_input_required')
   assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha, 'pipeline_operations_source_required')
   const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'))

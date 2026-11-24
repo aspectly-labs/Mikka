@@ -40,6 +40,7 @@
       "app/actions/**",
       "apps/api/src/**",
       "apps/api/runtime/http-policy.mjs",
+      "i18n/locale-cookie.mjs",
       "packages/daemon/src/**",
       "agents/**",
       "scripts/preview-database-url.mjs",

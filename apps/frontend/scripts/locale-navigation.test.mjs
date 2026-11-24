@@ -52,6 +52,9 @@ async function navigation(url, callback) {
   }
 }
 
+/** Phase 1 of the cookie rename (i18n/locale-cookie.mjs): one switch writes both names alike. */
+const both = locale => [`mikka-locale=${locale}; Max-Age=31536000; Path=/mikka; SameSite=Lax`, `NEXT_LOCALE=${locale}; Max-Age=31536000; Path=/mikka; SameSite=Lax`]
+
 const request = (window, url = window.location.href) => new Request(url, {
   headers: { cookie: window.document.cookie, 'accept-language': 'en', 'sec-fetch-dest': 'document' },
 })
@@ -67,12 +70,12 @@ test('only backend authentication documents force business navigation back to th
 }))
 
 test('explicit en-to-zh web navigation retains the chosen language through server refresh and reentry', { skip: needsOfficialUi }, () => navigation('https://app.example/mikka/en/settings?section=general&workspace=team', async ({ window, render, writes }) => {
-  window.document.cookie = 'NEXT_LOCALE=en; Path=/mikka'
+  window.document.cookie = 'mikka-locale=en; Path=/mikka'
   window.document.cookie = 'other-preference=retained; Path=/mikka'
   writes.length = 0
   render('en').replace({ pathname: '/settings', query: { section: 'general', workspace: 'team' } }, { locale: 'zh-CN' })
   assert.equal(window.location.href, 'https://app.example/mikka/settings?section=general&workspace=team')
-  assert.deepEqual(writes, ['NEXT_LOCALE=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
+  assert.deepEqual(writes, both('zh-CN'))
   assert.match(window.document.cookie, /other-preference=retained/)
   for (const url of [window.location.href, 'https://app.example/mikka/settings?section=general']) {
     const result = localizePage(request(window, url))
@@ -84,20 +87,34 @@ test('explicit en-to-zh web navigation retains the chosen language through serve
 }))
 
 test('explicit zh-to-en web navigation retains the language and query on a fresh unprefixed entry', { skip: needsOfficialUi }, () => navigation('https://app.example/mikka/settings?section=general&workspace=team', async ({ window, render, writes }) => {
-  window.document.cookie = 'NEXT_LOCALE=zh-CN; Path=/mikka'
+  window.document.cookie = 'mikka-locale=zh-CN; Path=/mikka'
   writes.length = 0
   render('zh-CN').push('/settings?section=general&workspace=team', { locale: 'en' })
   assert.equal(window.location.href, 'https://app.example/mikka/en/settings?section=general&workspace=team')
-  assert.deepEqual(writes, ['NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
+  assert.deepEqual(writes, both('en'))
   assert.equal(localizePage(request(window)).redirect, undefined)
   const result = localizePage(request(window, 'https://app.example/mikka/settings?section=general&workspace=team'))
   assert.equal(result.locale, 'en')
   assert.equal(result.redirect.headers.get('location'), window.location.href)
 }))
 
+test('a choice still stored under the legacy name survives a switch, which writes both names so a rollback keeps it', { skip: needsOfficialUi }, () => navigation('https://app.example/mikka/en/settings?section=general', async ({ window, render, writes }) => {
+  window.document.cookie = 'NEXT_LOCALE=en; Path=/mikka'
+  writes.length = 0
+  assert.equal(localizePage(request(window, 'https://app.example/mikka/settings')).locale, 'en')
+  render('en').replace('/settings?section=general', { locale: 'zh-CN' })
+  assert.deepEqual(writes, both('zh-CN'))
+  assert.match(window.document.cookie, /(?:^|; )NEXT_LOCALE=zh-CN(?:;|$)/, 'a release that reads only the old name sees the switch')
+  assert.match(window.document.cookie, /(?:^|; )mikka-locale=zh-CN(?:;|$)/)
+  const result = localizePage(request(window))
+  assert.equal(result.locale, 'zh-CN')
+  assert.equal(result.redirect, undefined)
+  assert.equal(result.cookies, undefined, 'both cookies already match, so the document sends no Set-Cookie')
+}))
+
 test('ordinary navigation and the native custom scheme do not write a web locale cookie', { skip: needsOfficialUi }, async () => {
   await navigation('https://app.example/mikka/en/settings', async ({ window, render, writes }) => {
-    window.document.cookie = 'NEXT_LOCALE=en; Path=/mikka'
+    window.document.cookie = 'mikka-locale=en; Path=/mikka'
     writes.length = 0
     const router = render('en')
     router.push('/settings?section=privacy')

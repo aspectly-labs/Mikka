@@ -108,10 +108,10 @@ test('a request reads its own headers and cannot rewrite them', async () => {
     /outside a request scope/,
     'reading headers with no request in scope is an error, not an empty bag',
   )
-  const scope = scopeFor('http://localhost/mikka/api/x', 'NEXT_LOCALE=en')
+  const scope = scopeFor('http://localhost/mikka/api/x', 'mikka-locale=en')
   await runRequestScope(scope, async () => {
     const seen = await requestHeaders.headers()
-    assert.equal(seen.get('cookie'), 'NEXT_LOCALE=en', 'the scope carries the real request headers')
+    assert.equal(seen.get('cookie'), 'mikka-locale=en', 'the scope carries the real request headers')
     assert.throws(() => seen.set('x', 'y'), /API_REQUEST_HEADERS_READONLY/)
     assert.throws(() => seen.append('x', 'y'), /API_REQUEST_HEADERS_READONLY/)
     assert.throws(() => seen.delete('cookie'), /API_REQUEST_HEADERS_READONLY/)
@@ -119,7 +119,7 @@ test('a request reads its own headers and cannot rewrite them', async () => {
 })
 
 test('server translations read the locale of the request in scope', async () => {
-  const english = scopeFor('http://localhost/mikka/api/x', 'NEXT_LOCALE=en')
+  const english = scopeFor('http://localhost/mikka/api/x', 'mikka-locale=en')
   assert.equal(await runRequestScope(english, () => i18nServer.getLocale()), 'en')
   const chinese = scopeFor('http://localhost/mikka/api/x')
   assert.equal(await runRequestScope(chinese, () => i18nServer.getLocale()), 'zh-CN')
