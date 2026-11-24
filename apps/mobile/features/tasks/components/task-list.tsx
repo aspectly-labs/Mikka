@@ -83,12 +83,15 @@ export function TaskList({ filter = 'all', bot, bottom = 24, onClearFilter }: { 
       ListFooterComponent={<TaskListContinuation paging={paging} />}
       ListEmptyComponent={loading && !data ? <ListLoading /> : error ? undefined
         // Tasks hidden by a filter: say which filter, and offer the way back (#1, #3), not 「没有任务」.
+        // Unread pages may still hold the group's tasks: then the footer's 加载更多 is the answer, not 「没有」.
+        : filter !== 'all' && tasks.length && paging.hasMore ? undefined
         : filter !== 'all' && tasks.length ? <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />}
           title={mobileMessages.MobileCore.filteredEmpty.replace('{group}', GROUP_LABEL[filter])}
           action={onClearFilter ? <Pressable accessibilityRole="button" onPress={onClearFilter} hitSlop={6} style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}><Text style={styles.actionText}>{mobileMessages.MobileCore.showAllTasks}</Text></Pressable> : undefined} />
         : <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />} title={mobileMessages.MobileCore.noTasks} />}
       renderItem={({ item }) => item.kind === 'section'
-        ? <TaskGroupBar id={item.id} count={item.count} folded={item.folded} onToggle={() => toggle(item.id)} />
+        // A filtered group is shown open and cannot fold: its header is a plain label, so a tap never changes 全部's folds.
+        ? <TaskGroupBar id={item.id} count={item.count} folded={item.folded} onToggle={filter === 'all' ? () => toggle(item.id) : undefined} />
         : <TaskRowView task={item.task} />}
     />
   )
@@ -106,8 +109,15 @@ export function TaskListContinuation({ paging }: { paging: ReturnType<typeof use
 
 /** A group's header (Comma 15): its icon, name and count in the secondary colour on the page, no fill (Alex 2026-11-08:
  * no grey slabs), lined up with the rows' icons; a tap folds or opens it. */
-export function TaskGroupBar({ id, count, folded, onToggle }: { id: TaskGroup; count: number; folded: boolean; onToggle: () => void }) {
+export function TaskGroupBar({ id, count, folded, onToggle }: { id: TaskGroup; count: number; folded: boolean; onToggle?: () => void }) {
   const Chevron = folded ? ChevronRight : ChevronDown
+  if (!onToggle) return (
+    <View accessibilityRole="header" accessibilityLabel={`${GROUP_LABEL[id]}，${count}`} style={styles.bar}>
+      <TaskGroupIcon group={id} size={16} />
+      <Text style={styles.barTitle}>{GROUP_LABEL[id]}</Text>
+      <Text style={styles.barCount}>{count}</Text>
+    </View>
+  )
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ expanded: !folded }} accessibilityLabel={`${GROUP_LABEL[id]}，${count}`}
       onPress={() => { tap(); onToggle() }} style={({ pressed }) => [styles.bar, pressed && { opacity: 0.7 }]}>
