@@ -72,7 +72,14 @@ export function TaskConversationScreen() {
     const thread = newest ? threadLive(current?.threads[newest] ?? null, newest) : null
     return { minIntervalMs: tasks.minIntervalMs, refs: [...tasks.refs, ...(thread?.refs ?? [])] }
   }, read)
-  const segments = data ? conversationSegments(data.detail.activity, new Map(Object.entries(data.threads))) : []
+  // A refresh where one older attempt fails keeps what that attempt last showed, instead of dropping it.
+  const shown = useRef<Record<string, ThreadDetail>>({})
+  const threads = data ? { ...Object.fromEntries((data.failed ?? []).flatMap(runId => shown.current[runId] ? [[runId, shown.current[runId]!]] : [])), ...data.threads } : {}
+  if (data) shown.current = { ...shown.current, ...data.threads }
+  const missing = (data?.failed ?? []).filter(runId => !threads[runId])
+  const [retrying, setRetrying] = useState(false)
+  const retry = () => { setRetrying(true); void reload().finally(() => setRetrying(false)) }
+  const segments = data ? conversationSegments(data.detail.activity, new Map(Object.entries(threads))) : []
   const newest = data && conversationReplyRun(data.detail.task, data.detail.activity)
   const live = newest ? data?.threads[newest] ?? null : null
   const canSend = Boolean(newest && live && live.canReply !== false && !conversationAccessDenied(error))
@@ -132,8 +139,8 @@ export function TaskConversationScreen() {
               </ReviewCard>
               : segment.items.map((item, at) => <View key={item.id}><Item item={item} live={data?.threads[segment.attempt.runId]?.active === true && at === segment.items.length - 1} />
                 {(item.kind==='person' || (item.kind==='agent' && endsTurn(segment.items, at))) && <MobileReplyVersions detail={data?.threads[segment.attempt.runId]} runId={segment.attempt.runId} itemId={item.id} text={item.text} reload={reload} working={!!live?.active} side={item.kind === 'person' ? 'end' : 'start'} />}</View>)}
-            {data?.failed?.includes(segment.attempt.runId) ? <Pressable accessibilityRole="button" onPress={() => void reload()} hitSlop={6} style={({ pressed }) => [styles.segmentRetry, pressed && { opacity: 0.6 }]}>
-              <Text style={styles.causeLine}>{mobileMessages.ConversationDirectory.loadError} <Text style={styles.retry}>{mobileMessages.Common.retry}</Text></Text>
+            {missing.includes(segment.attempt.runId) ? <Pressable accessibilityRole="button" accessibilityState={{ busy: retrying, disabled: retrying }} disabled={retrying} onPress={retry} hitSlop={6} style={({ pressed }) => [styles.segmentRetry, pressed && { opacity: 0.6 }]}>
+              {retrying ? <Spinner /> : <Text style={styles.causeLine}>{mobileMessages.ConversationDirectory.loadError} <Text style={styles.retry}>{mobileMessages.Common.retry}</Text></Text>}
             </Pressable> : null}
             {/* A failed attempt's cause stays inside it, in words, with the raw code under 详情 (2026-11-05-0330). */}
             {segment.error && !(data?.threads[segment.attempt.runId]?.active) && !segment.items.some(item => item.kind === 'error') ? <AttemptError raw={segment.error} /> : null}
