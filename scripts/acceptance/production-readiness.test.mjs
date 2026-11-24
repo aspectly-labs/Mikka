@@ -333,7 +333,7 @@ test('Vite readiness permits only the same-origin manifest and one valid public 
   for (const path of ['/mikka/renderer-manifest.json', '/mikka/renderer-manifest.json?dpl=' + VITE_PIN])
     assert.equal(requestAllowed(url(path), 'GET'), true)
   for (const path of ['/mikka/renderer-manifest.json?dpl=', '/mikka/renderer-manifest.json?dpl=a&dpl=b',
-    '/mikka/renderer-manifest.json?dpl=' + VITE_PIN + '&extra=1', '/mikka/renderer-manifest.json?dpl=dpl_untrusted',
+    '/mikka/renderer-manifest.json?dpl=' + VITE_PIN + '&extra=1', '/mikka/renderer-manifest.json?dpl=not.a.pin', '/mikka/renderer-manifest.json?dpl=' + 'a'.repeat(33),
     '/mikka/assets/arbitrary.js', '/mikka/api/rpc', '/mikka/api/desktop/rpc']) {
     assert.equal(requestAllowed(url(path), 'GET'), false)
     assert.equal(requestAllowed(url(path), 'POST'), false)
