@@ -212,7 +212,9 @@ jobs:
           if ! (cd "$APP_DIR/ios" && pod install > "$RUNNER_TEMP/mobile-next-pods.log" 2>&1); then
             echo "::error::pod install failed; private source withheld."
             # CocoaPods' own [!] lines name public pods and their published errors, not app source.
-            grep -E '^\[!\]' "$RUNNER_TEMP/mobile-next-pods.log" | sed "s#${GITHUB_WORKSPACE}#.#g; s#${HOME}#~#g" | cut -c1-300 | head -n 8 || true
+            # A crash prints its "Class - message" line under "### Error" before the "[!] Oh no" banner.
+            # Hash and attribute dumps (Xcodeproj object data) are cut from those lines.
+            grep -E '^\[!\]|^[A-Z][A-Za-z0-9_]*(::[A-Z][A-Za-z0-9_]*)* - ' "$RUNNER_TEMP/mobile-next-pods.log" | sed -E "s#${GITHUB_WORKSPACE}#.#g; s#${HOME}#~#g; s/[[:space:]]*(\\{|=>|\\[[\"':]).*\$//" | cut -c1-200 | head -n 8 || true
             exit 1
           fi
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_DIR/ios/Mikka/Info.plist"
