@@ -1,6 +1,7 @@
 # One registry for every state mark, and a thread drawn with the same marks as a status
 
 - Date: 2026-11-19
+- **Status:** Accepted
 - Source: Alex, 2026-11-19: 「气泡你可以换吗？…我总感觉现在 issue 跟线程之类的有点不好看」, and authorising Capy's approach for it; the colour order was then read live from Capy 0.9.2 (`text-success` for review, the violet `text-complete` for done, which is Linear's order too).
 - Rule: R-52; `docs/design/components.md` (task status icon and Agent mark, thread state icon)
 - Replaces: `docs/design/chat-tool-calls.md` §2.5 (Alex, 2026-11-04: 「issue 和 chat 的状态要有区分度」), the clause 「线程一律用对话气泡，状态用气泡右上角的色点表示…线程的任何地方都不再用圆圈」 — a thread now draws its group with the same marks a task's status uses.

@@ -1,7 +1,7 @@
 # Chat reply actions and the waiting sentence
 
 - Date: 2026-11-10 20:02 UTC
-- Status: accepted
+- **Status:** Superseded in part by [2026-11-22-1500-chat-reply-actions-on-hover](2026-11-22-1500-chat-reply-actions-on-hover.md)
 - Supersedes in part: [2026-11-03-0455-chat-quote-and-copy](2026-11-03-0455-chat-quote-and-copy.md) (reply action visibility)
 - Superseded in part by: [2026-11-22-1500-chat-reply-actions-on-hover](2026-11-22-1500-chat-reply-actions-on-hover.md) (A: every message's action line now waits for hover or focus, always shown on touch; B stands)
 

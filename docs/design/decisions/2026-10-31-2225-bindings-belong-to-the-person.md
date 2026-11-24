@@ -1,6 +1,7 @@
 # Bindings belong to the person; the workspace where work happens pays
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-11-01-1152](2026-11-01-1152-payment-card-row-and-credit-shares.md)
 - Source: Alex, relayed by the coordinator:
   「所有的绑定（绑卡、绑订阅）默认都放给个人…首先是绑到个人，然后再分享到工作区，而不是由管理员统一来设置」
   and 「个人离开这个团队工作区以后…他个人的这个订阅就从团队工作区里面消失，团队工作区就不能用他个人的订阅了」;

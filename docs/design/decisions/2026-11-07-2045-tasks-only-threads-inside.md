@@ -1,6 +1,7 @@
 # Lists show tasks only; a thread is opened from inside its task
 
 - Date: 2026-11-07
+- **Status:** Superseded in part by [2026-11-10-1317](2026-11-10-1317-capy-sidebar-and-task-layout.md)
 - Source: Alex, 2026-11-07, comparing Mikka's iOS 线程 | 任务 segment with LobeHub's task list: 「一个任务一般对应一个线程，为什么这里写两个线程和任务……LobeHub 也是用 task 做，它的 thread 似乎在里面，而不是并列」; then 「以后电脑和手机端都不应该再在这里显示 thread，全部应该只显示任务，想看 thread 的话，就必须进到任务里面去看」. He approved the phone sketch (「手机端我没意见」) and the desktop sketch (「电脑端也没问题」), and added four points for the Bot tab (below).
 - Rule: `rules.md` R-50, R-52, R-82; `mobile.md` 「Where it lives」; `glossary.md` 「Rules for designs」
 - Superseded in part by: [2026-11-10-1317](2026-11-10-1317-capy-sidebar-and-task-layout.md) (hosted Bot rows can expand dispatched task/Agent work; an already visible standalone Agent run may appear beneath its dispatching Bot).

@@ -1,6 +1,7 @@
 # Overview and the browser are work-area tabs; no window bar on the web
 
 - Date: 2026-11-09
+- **Status:** Superseded by [2026-11-23-2200-right-column-as-tembo.md](2026-11-23-2200-right-column-as-tembo.md) (Overview tab and inner tabs retired; flat single-level right-column tabs)
 - Source: Alex, in the session for #1847: the search bar, ✋ and 🌐 at the top can go because the shell already replaces them, and 概览 can be a tab.
 - Rule: R-02, R-35, R-57 (hosted edition only).
 - Replaces: in the hosted edition, the right-hand 概览 column beside a chat, and the window bar's search pill, waiting count (✋) and 浏览器 globe.

@@ -1,6 +1,7 @@
 # iOS: one Stack in a push drawer, the chat list as home
 
 - Date: 2026-11-05
+- **Status:** Superseded by [2026-11-06-1200](2026-11-06-1200-ios-drop-drawer-comma-redesign.md)
 - Source: Alex, after checking the app on his phone (relayed by the coordinator at 20:00 UTC; #1408 corrected at
   20:05): the app still looks like the old Mikka. OpenBot has no tab bar; its whole app is one Stack inside a push
   drawer. Follow its structure, not only its libraries.

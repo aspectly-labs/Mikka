@@ -1,6 +1,7 @@
 # iOS: a bot's and an Agent's replies are full-width text, without the grey bubble
 
 - Date: 2026-11-24 05:20 UTC
+- **Status:** Accepted
 - Source: Alex, a comment on the iOS usability audit (Nielsen 10 heuristics), on the question 「助手回复去掉气泡？」: 「确认去掉气泡」. The coordinator relayed that every chat screen on the phone follows, not only the thread screen.
 - Rule: R-14 (amended for iOS)
 - Replaces: 2026-10-25 「One-to-one chats keep the grey bubble for a bot's text」 and the 2026-10-27 line 「Bot text stays in its grey bubble」 in [decisions.md](../decisions.md), on iOS.

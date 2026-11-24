@@ -1,6 +1,7 @@
 # A person's own subscriptions and API keys always work for them
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「自己的订阅当然默认永远允许自己用……分享给工作区其他人，其他人可以用，那个是需要打开的。但个人是必须默认打开的，不允许出现调用不允许这种情况。」
 - Rule: R-76 (exception)
 - Replaces:

@@ -1,6 +1,7 @@
 # Mobile home list: corner marks and row gestures
 
 - Date: 2026-11-05
+- **Status:** Superseded by [2026-11-05-2010](2026-11-05-2010-ios-home-list-interactions.md)
 - Source: Alex, issue #1408: the home chat list follows OpenBot's interactions, including an unread count on the avatar and a waiting mark that outranks it, a long-press menu, a pin swipe and hold-to-drag.
 - Rule: R-36, for the mobile home list only
 - Superseded by: [2026-11-05-2010](2026-11-05-2010-ios-home-list-interactions.md) (the list that landed). The waiting mark there is a thread waiting on the person, then the unread count, then a hand-marked dot.

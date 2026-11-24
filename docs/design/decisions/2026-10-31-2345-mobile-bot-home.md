@@ -1,6 +1,7 @@
 # The iOS app opens on its bots, with tabs
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-11-01-0045](2026-11-01-0045-mobile-home-bar.md)
 - Source: Alex, in the mobile session, with screenshots of the Claude app's
   Chat · Tasks · Make tabs and a messaging app's bot list: 「主页呢我们就改成
   这个…右上角就可以添加 Bot 或者是新建群聊」, 「所有的这些 task 我们叫

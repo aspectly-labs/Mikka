@@ -1,6 +1,7 @@
 # Push is what the GitHub App grants; Mikka asks for nothing on top
 
 - Date: 2026-11-01
+- **Status:** Superseded by [2026-11-02-1600-agents-use-own-github-credential](2026-11-02-1600-agents-use-own-github-credential.md)
 - Source: Alex, relayed by the coordinator session after the ZHIX-3 dispatch
   asked for a push card on a read-only investigation (「这里为什么还需要
   push？」). The relayed decision: 「用户已经在 GitHub App 里授予的权限，Mikka

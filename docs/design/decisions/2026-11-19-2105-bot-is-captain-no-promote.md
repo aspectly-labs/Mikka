@@ -1,5 +1,7 @@
 # Bot 对应 Capy 的 Captain，但不做 Promote / Demote
 
+- **Status:** Accepted
+
 2026-11-19。Bot 设置对照 Capy Captain（Figma 第 23–26 节）时 Alex 的决定。
 
 ## 决定

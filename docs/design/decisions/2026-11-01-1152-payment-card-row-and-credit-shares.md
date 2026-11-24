@@ -1,6 +1,7 @@
 # Credit shares in 计费 › 付款; the payer row names the card, not an action
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, on the Figma frames for credit shares (page 「待 Alex 确认 ·
   点数分享给团队（2026-11-01）」, node `790:50`), relayed by the coordinator
   session: everything accepted except the admin row 「林一 的卡 · 正在支付」.

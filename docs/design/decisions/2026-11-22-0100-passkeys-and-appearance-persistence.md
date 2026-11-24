@@ -1,5 +1,7 @@
 # Passkey authentication and appearance persistence boundary
 
+- **Status:** Accepted
+
 Scope: [settings backend supplement WS-E](https://github.com/aspectly-labs/Mikka/issues/3110),
 supporting frames 02 (外观) and 04 (安全) of [#2957](https://github.com/aspectly-labs/Mikka/issues/2957).
 

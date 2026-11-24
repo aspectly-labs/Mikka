@@ -1,6 +1,7 @@
 # Preserve browsing state when returning
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, bug report with screenshots: 「我们原本在最底下的『已解决』里，点进去之后再退出来，又会恢复成最顶上的那个状态」; follow-up: 「我发现很多地方都会直接复原……把所有的这些问题都查一遍，然后把该修复的就修复好」.
 - Rule: R-52, R-82 (existing list grouping and navigation behavior)
 - Replaces: —

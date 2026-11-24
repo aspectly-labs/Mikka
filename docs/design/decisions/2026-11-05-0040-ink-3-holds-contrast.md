@@ -1,6 +1,7 @@
 # `--ink-3` holds 4.5:1; Figma's tertiary text stays lighter
 
 - Date: 2026-11-05
+- **Status:** Accepted
 - Source: the Coordinator's token contrast task (PR #1295, "ink-3 ≥4.5:1") and its independent review, which measured the only place `--ink-3` is text.
 - Rule: the `text/tertiary` row of the Tokens table (`rules.md`, Figma ↔ code drift).
 - Replaces: —

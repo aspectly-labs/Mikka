@@ -1,5 +1,7 @@
 # 新建任务、新建 Bot 照 Capy 的新建窗口做
 
+- **Status:** Accepted
+
 Alex，2026-11-15：「去加吧，另外 mikka 新建 issue 的窗口也是能换的」。
 
 ## 决定

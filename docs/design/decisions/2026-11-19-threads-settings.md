@@ -1,5 +1,7 @@
 # One Threads destination in Settings
 
+- **Status:** Accepted
+
 Alex, 2026-11-19. Thread-title controls belong in Settings › Threads, with a
 Mine / Workspace selector, so both scopes can be found in one place. The
 workspace segment displays the current workspace's name.

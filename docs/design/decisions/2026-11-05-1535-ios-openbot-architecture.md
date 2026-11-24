@@ -1,6 +1,7 @@
 # iOS: rebuild the mobile frontend on OpenBot's architecture
 
 - Date: 2026-11-05
+- **Status:** Accepted
 - Source: Alex, issue #1408: "rebuild Mikka's mobile frontend to follow OpenBot's mobile app … and replace our current approach."
 - Rule: —
 - Replaces: —

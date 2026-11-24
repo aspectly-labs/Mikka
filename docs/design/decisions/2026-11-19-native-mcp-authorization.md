@@ -1,6 +1,7 @@
 # Authorized MCP connections run without a second decision
 
 - Date: 2026-11-19
+- **Status:** Accepted
 - Source: Alex, reviewing the Capy settings comparison, 「现在早就不需要使用 decision 进行判断了呀」.
 - Supersedes the app-action controls in [Workspace app permissions](2026-11-10-1730-workspace-app-permissions.md) and the [app-write Decision fallback](2026-11-01-1330-write-judgment-unavailable-goes-ahead.md).
 

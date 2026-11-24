@@ -1,6 +1,7 @@
 # 已完成 keeps its 300px beside the Coordinator sidebar
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, production screenshot of the board with the Coordinator sidebar
   open (`/en?section=all-issues`), the 40px 「Done」 strip next to the sidebar
   circled as a bug; relayed by the coordinator: 「看板列永远保持固定宽度，宽度不够时整个看板横向滚动」.

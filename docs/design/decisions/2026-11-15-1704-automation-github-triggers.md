@@ -1,5 +1,7 @@
 # 自动化：GitHub 事件触发
 
+- **Status:** Accepted
+
 Alex，2026-11-15：自动化按 Capy 的 Automations 补齐，第一步是 GitHub 事件触发。延续 [2026-11-15-1337](2026-11-15-1337-automations-v1.md)：执行内容仍是 `dispatch_task`，以创建者身份运行，每次触发都重新检查。
 
 ## 决定

@@ -1,6 +1,7 @@
 # Thread titles follow Codex's title generation
 
 - Date: 2026-11-19
+- **Status:** Accepted
 - Source: Alex: 「查一下 Codex 的仓库，看看 codex 标题和长度怎么做的，我们采纳 codex 的标题生成的做法，避免太长。」 Reference: openai/codex, `codex-rs/tui/src/app/thread_title.rs`.
 - Rule: R-01; the short-title contract.
 - Replaces: the generated and manually entered Latin title limit (6 words, 60 characters) in [2026-11-10-1341](2026-11-10-1341-sidebar-short-title-limits.md). The CJK limit, database contract, compact display and deterministic fallback stay as that decision states.

@@ -1,5 +1,7 @@
 # MCP connection settings
 
+- **Status:** Accepted
+
 Issue: #2956 P4. The connection owner manages authentication, tools and runtime
 environment scope. Workspace membership alone never grants a connection; the
 existing explicit share and organization policy still decide visibility.

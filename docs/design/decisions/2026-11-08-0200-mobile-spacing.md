@@ -1,6 +1,7 @@
 # Mobile spacing opened up, in theme tokens
 
 - Date: 2026-11-08
+- **Status:** Accepted
 - Source: Alex on TestFlight: chat list rows too small and cramped next to OpenBot's home, then 「把间距放大」 for the whole app (relayed by the coordinator with OpenBot and Comma as the references).
 - Rule: `apps/mobile/lib/theme.ts` (`LIST_INSET`, `SPACE`, `AVATAR`)
 - Replaces: the 16 pt list inset of 2026-11-06 and the per-screen paddings it set

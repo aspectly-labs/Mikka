@@ -1,5 +1,7 @@
 # 为 Automations、PR 目录、Environments、自动化编辑器新增付费实现的 slot
 
+- **Status:** Superseded by [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) (`@ui-slot/*` retired for Web and Desktop; all UI lives in `mikka-hosted-ui`)
+
 2026-11-19。Alex：「去用我们的付费组件库去实现吧，前后端一起实现。」
 
 ## 背景

@@ -1,6 +1,7 @@
 # The open drawer uses system surfaces, not a flat grey slab
 
 - Date: 2026-11-05
+- **Status:** Superseded by [2026-11-06-1200](2026-11-06-1200-ios-drop-drawer-comma-redesign.md)
 - Source: Alex, on his iPhone, about the drawer in #1455: 「这块这颜色之类都不像是原生的呀」. The open surface read as a hard grey rectangle, and the drawer as a flat white panel.
 - Rule: —
 - Replaces: the material of the dim and the drawer fill in [2026-11-05-2005](2026-11-05-2005-ios-push-drawer.md). The geometry (width, radius at least 34 pt, spring, gestures) stays.

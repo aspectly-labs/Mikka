@@ -3,7 +3,7 @@
 - Date: 2026-11-20
 - Source: Alex, [#2890](https://github.com/alexj11324/Mikka/issues/2890) and
   [#2891](https://github.com/alexj11324/Mikka/issues/2891).
-- Status: accepted. This is the bounded exception to the shipped-feature
+- **Status:** Accepted. This is the bounded exception to the shipped-feature
   default in `AGENTS.md`.
 
 ## Rule

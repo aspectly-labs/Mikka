@@ -1,6 +1,7 @@
 # iOS: native first
 
 - Date: 2026-11-05
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator on #1386: "wherever iOS has a native control or behavior, use it. Only build our own when nothing native exists."
 - Rule: —
 - Replaces: —

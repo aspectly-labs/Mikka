@@ -1,5 +1,7 @@
 # Side thread navigation and Artifact entry
 
+- **Status:** Accepted
+
 Web and Electron open the same chat at every width. The header carries the
 thread title, navigation and applicable controls. 改动 and 验收 open from
 更多. Back returns to the chat and restores its draft and reading position.

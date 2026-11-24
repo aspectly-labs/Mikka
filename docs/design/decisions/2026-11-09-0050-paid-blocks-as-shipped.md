@@ -1,6 +1,7 @@
 # Paid blocks and components are used as shipped
 
 - Date: 2026-11-09 00:50 UTC
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「原样使用，只换数据」. "Use paid blocks and components as they ship. Change only the data and the text strings. Keep their icons, avatars, logos, layout, spacing, density, colours, typography, borders and motion."
 - Rule: scopes `style/semantic-colors`, `typography/preset-only` and the copy-structure part of copy.md so they never restyle a paid block; BoardUI's token rules stay for BoardUI components and Mikka's own UI; adds the PR-template side-by-side item.
 - Replaces: the restyle clauses listed under "Superseded clauses" below.

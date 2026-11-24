@@ -1,6 +1,7 @@
 # The iOS app follows the system's appearance and colours
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: the iOS app follows the system dark mode; then 「颜色本身要跟系统走」: on iOS use the system's dynamic colours (PlatformColor) instead of the app's own hex values, so light/dark, Increase Contrast and the accent all follow the system. The Figma dark frames (file zPe5LKycb2XuT1ivCLRw07, page 843:2) give layout only.
 - Rule: —
 - Replaces: the light-only app (`userInterfaceStyle: light`)

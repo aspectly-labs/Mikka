@@ -1,6 +1,7 @@
 # Release the current subscription repairs after checks pass
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex in the subscription repair review: 「通过之后，你全部进行 merge，然后让他们上线 release 新版本」。
 - Rule: Applies to the current subscription/settings repair release.
 - Replaces: The earlier request in this conversation to monitor without merging or deploying.

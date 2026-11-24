@@ -1,6 +1,7 @@
 # Thread visibility follows Warp
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「按照他们的去做，我们的和他们不一样的话，以他们的为准」 (they = Warp Factories)
 - Rule: R-62
 - Superseded for access, collaboration and sharing by [2026-11-10-0017](2026-11-10-0017-collaboration-governance.md), authorized in #1849. This historical comparison does not authorize public links, retrospective sharing or private account delegation.

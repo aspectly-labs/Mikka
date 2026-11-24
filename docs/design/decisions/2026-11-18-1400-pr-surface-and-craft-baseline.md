@@ -1,5 +1,7 @@
 # PR 面：列表、详情与一次量好的工艺基线
 
+- **Status:** Accepted
+
 2026-11-18。Alex 的原话：「Look at this PR interface, it is completely messed up, very messy, very ugly.」他同时要求以 Capy 桌面版 0.9.2 为参照（「capy 怎么做，你就怎么做」的同一条思路），并让这件事在本地机器上做。
 
 PR 面是官方界面里唯一没有搬进官方组件集的一页：外壳、看板、任务、线程、审阅页都由 `mikka-hosted-ui` 的槽渲染，PR 列表仍是公开仓库里 `components/workspace/pull-directory.tsx` 的旧 shadcn 拼装。所以这一页看起来像另一个产品，根因在组合，不在 token——token 层本身是干净的（0 处 hex/oklch 字面量、1 处原始调色板类）。

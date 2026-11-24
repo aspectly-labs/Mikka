@@ -1,6 +1,7 @@
 # Thread header: icons only, and an Artifact button that is always there
 
 - Date: 2026-11-06
+- **Status:** Accepted
 - Source: Alex, reviewing the run-location and PR review frames (Figma
   `zPe5LKycb2XuT1ivCLRw07`, page `1052:6875`): 「这些都只留图标，文字必须要 hover
   上去才能看得见，你不能够直接写在上面。」 and 「我在你的聊天界面并没有看到 Artifact

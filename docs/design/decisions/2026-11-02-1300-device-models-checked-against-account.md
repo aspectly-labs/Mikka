@@ -1,6 +1,7 @@
 # A device's models are checked against the account that runs them
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: the coordinator session, deciding for Alex on the model probe (#963): 「按 A 做。证据充分，ADR 0009 成立。」 Probe without a login; device + Agent list = probe ∩ the catalogue of the subscription that would run it; without one, the probe list marked 「未与账号核对」; never read `~/.codex` or `~/.claude`.
 - Rule: —
 - Replaces: —

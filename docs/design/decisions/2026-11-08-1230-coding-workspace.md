@@ -1,7 +1,7 @@
 # Review a coding task's changes on one review page, opened from a one-line summary
 
 - Date: 2026-11-08
-- Status: accepted. Alex approved the R0–R3 design: 「可以」 (2026-11-08, relayed by the coordinator). On where the code tools go: 「只要求你把这些东西放进省略号里边…不是放在省略号的外边」, so they live in the ⋯ menu, not as visible buttons. The globe stays where it is: 「浏览器你可以放到最右上角呀」.
+- **Status:** Accepted. Alex approved the R0–R3 design: 「可以」 (2026-11-08, relayed by the coordinator). On where the code tools go: 「只要求你把这些东西放进省略号里边…不是放在省略号的外边」, so they live in the ⋯ menu, not as visible buttons. The globe stays where it is: 「浏览器你可以放到最右上角呀」.
 - Source:
   - Alex approved the research and sketches (「可以，先做调研和草图」).
   - Alex on sending comments: 「评论单独做一个发给 agent 的按钮」.

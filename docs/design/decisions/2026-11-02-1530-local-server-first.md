@@ -1,6 +1,7 @@
 # 本地 runs go to a server first, then the least busy device
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session after 「我的这个服务器是默认能跑的呀」: 「运行位置 · 本地」 dispatch puts servers first (online, 参与调度 on, deviceType server), then computers; devices of the same kind are ordered by a stable rule, not at random; the 本地 line shows 会先用 <设备名>, decided the same way as dispatch.
 - Rule: —
 - Replaces: in [2026-11-02-1400](2026-11-02-1400-model-order-dispatch.md), "One such computer is picked at random" (Dispatch, step 2, 本地).

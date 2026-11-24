@@ -1,5 +1,7 @@
 # Personal keyboard shortcuts
 
+- **Status:** Accepted
+
 Issue #2956 P9; frontend integration belongs to #2957. The existing product
 actions below have stable identities in `@mikka/protocol/keyboard-shortcuts`.
 Their declarations derive personal P1 registry fields, schema/search metadata,

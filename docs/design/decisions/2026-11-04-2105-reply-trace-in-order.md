@@ -1,6 +1,7 @@
 # A reply's words and tools read top to bottom, in the order they happened
 
 - Date: 2026-11-04
+- **Status:** Superseded in part by [2026-11-04-2221](2026-11-04-2221-chat-tool-groups-and-citations.md)
 - Source: Alex, GitHub issue #1235: 「按照道理来说应该是从上往下的顺序，他已经把文字发出来了，那下边这个 Tool use 工具调用之类，都应该放在这段话的下边才对啊。」
 - Rule: —
 - Superseded in part by: [2026-11-04-2221](2026-11-04-2221-chat-tool-groups-and-citations.md) (consecutive tools share one collapsed summary line; their order remains).

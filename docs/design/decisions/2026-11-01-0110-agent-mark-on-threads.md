@@ -1,6 +1,7 @@
 # Threads carry their Agent's mark, never a bot's
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinating session: 「BOT 是不干活的，至少是不干 coding 活的。这个 coding 活是要交给 harness 去做的，Agent 去做的」
 - Rule: adds R-78; changes R-50 (全部线程 row icon) and R-62 (who runs a thread); glossary
 - Replaces: R-50's 16px bot avatar on 全部线程 rows, and R-62's 「The bot runs the thread … never as the runner」

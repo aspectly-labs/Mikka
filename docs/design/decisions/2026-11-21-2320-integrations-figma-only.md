@@ -1,5 +1,7 @@
 # Paper, Revyl and Tailscale stay design-side until a real backend exists
 
+- **Status:** Accepted
+
 Scope: [settings backend #3110](https://github.com/alexj11324/Mikka/issues/3110),
 stream WS-D item E11 (Figma frame 12 集成). Verified against `main`
 `ad6c4e1e4` and the private `mikka-hosted-ui` checkout; no product code names

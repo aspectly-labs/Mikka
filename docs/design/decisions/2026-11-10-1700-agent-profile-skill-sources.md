@@ -1,6 +1,7 @@
 # Agent Profile Skills: sources, pinned versions and on-demand loading
 
 - Date: 2026-11-10
+- **Status:** Accepted
 - Source: Alex, issue [#1584](https://github.com/alexj11324/Mikka/issues/1584) (2026-11-06): "把 Mikka 的 Factory Agent Profiles 从仅配置 Harness / Model / Prompt 的对象升级为真正可复用的 Coding Agent 能力配置"; the unified Skill catalogue and real on-demand loading are the required first slice.
 - Rule: —
 - Replaces: —

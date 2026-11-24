@@ -1,5 +1,7 @@
 # Notification sound presets vs. arbitrary audio upload
 
+- **Status:** Accepted
+
 Source: Settings gap audit [#3110](https://github.com/aspectly-labs/Mikka/issues/3110) item D.8 (Frame 07 通知) and [#2957](https://github.com/aspectly-labs/Mikka/issues/2957).
 
 ## Context

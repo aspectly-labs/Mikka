@@ -1,6 +1,7 @@
 # Pause business connections while an update is required
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, Neon traffic investigation: 「弹窗期间应该暂停他的所有请求呀，直到它刷新新版为止呀」; also requested parallel implementation and verification.
 - Rule: —
 - Extends: [2026-11-03-1437](2026-11-03-1437-required-app-refresh.md)

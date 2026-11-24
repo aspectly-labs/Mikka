@@ -1,6 +1,7 @@
 # Factory runtime environment and accepted report state
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, reviewing the real #1118 acceptance UI: “环境那里为什么会写一个‘不可批准’呀？那个环境名字叫‘不可批准’吗？”
 - Rule: —
 - Replaces: using an approval-state fallback as the candidate environment label.

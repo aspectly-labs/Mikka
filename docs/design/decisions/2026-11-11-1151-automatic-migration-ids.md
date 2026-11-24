@@ -1,6 +1,7 @@
 # Automatic migration IDs and per-file execution
 
 - Date: 2026-11-11
+- **Status:** Accepted
 - Source: Alex selected Rails-style automatic timestamps and a per-migration
   execution ledger in the conversation, then instructed “继续”.
 - Rule: — (development process)

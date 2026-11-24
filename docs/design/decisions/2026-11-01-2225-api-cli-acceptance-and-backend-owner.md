@@ -1,6 +1,7 @@
 # Acceptance is API and CLI only; Codex owns backend changes
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-03-2359](2026-11-03-2359-issue-owner-merges-and-accepts-in-production.md)
 - Source: Alex, relayed by the coordinator session: no browser tests in CI or
   locally, acceptance through API and CLI; local work uses the DeepSeek key with
   DS 4.1 Flash, not the AI Gateway or Mikka 默认; backend changes are now

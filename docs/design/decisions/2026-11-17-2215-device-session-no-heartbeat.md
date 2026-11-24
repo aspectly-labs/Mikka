@@ -1,6 +1,7 @@
 # A device works only while it holds its gateway session; there is no heartbeat and no fallback
 
 - Date: 2026-11-17
+- **Status:** Accepted
 - Source: Alex, after one daemon stuck on 0.0.524 polled the heartbeat every 18 seconds (about 2,200 Neon queries an hour): 「我觉得应该彻底废除心跳模式，如果要继续用，必须更新daemon」, 「不要给fallback」, 「daemon太旧就必须先更新才能用」. Reference: Capy's desktop client keeps one WebSocket tunnel, pings it every 10 seconds, ties sessions to that tunnel, and closes it with code 4001 when the client must update. It has no HTTP heartbeat.
 - Rule: —
 - Replaces: the long-poll fallback in [Device work is pushed](2026-11-03-2030-device-push-gateway.md), and the heartbeat and command-poll update channels in [Updating and signing in are both required](2026-11-03-1535-daemon-update-and-login.md)

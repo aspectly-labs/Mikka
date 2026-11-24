@@ -1,6 +1,7 @@
 # Nothing on a bot's avatar: no ribbons, no dots
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-09-0050](2026-11-09-0050-paid-blocks-as-shipped.md)
 - Source: Alex, relayed by the coordinating session. On the 发布经理 profile's
   large avatar, the coloured ribbons circling the bot are wrong and must go;
   coloured lines on an avatar are not wanted at all. On the dots on the bot

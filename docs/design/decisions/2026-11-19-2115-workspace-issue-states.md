@@ -1,5 +1,7 @@
 # 任务状态由工作区自定义；Needs you / Waiting 是运行态
 
+- **Status:** Accepted
+
 2026-11-19。Alex 要求状态模型「和 Capy 保持做法一致」。
 
 ## Capy 怎么做（0.9.2 源码）

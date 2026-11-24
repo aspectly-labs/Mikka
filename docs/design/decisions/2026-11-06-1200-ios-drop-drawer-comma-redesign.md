@@ -1,6 +1,7 @@
 # iOS: drop the push drawer, redesign after Comma's iOS app
 
 - Date: 2026-11-06
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator on 2026-11-06: the drawer version (#1408, #1446, #1453) does not look good;
   no drawer. Redesign the mobile app after Comma's mobile app, which he considers in line with Apple's current design
   guidelines; where Comma and the HIG differ, the HIG wins.

@@ -1,6 +1,7 @@
 # The one task entry is named 任务; 看板 and 列表 are its views
 
 - Date: 2026-11-17
+- **Status:** Accepted
 - Source: Alex, 2026-11-17, on a Desktop build whose sidebar listed both 任务 and 看板: 「只留一个 task 嘛，看板跟 list 都属于 task 里面的一个部分」, 「这里我是绝对不允许有两个一级入口的……不管是看板还是 list，都只是显示这个 tasks 的一个 view 而已」.
 - Refines: [2026-11-13-1405](2026-11-13-1405-one-task-status.md) § One entry, which kept one item but named it 看板.
 

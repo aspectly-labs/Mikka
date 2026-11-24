@@ -1,6 +1,7 @@
 # 先完成单人工作流，再推进 Channel
 
 - Date: 2026-11-11
+- **Status:** Accepted
 - Source: Alex，Capy 能力对齐任务会话。先提出“Channel 包含 project 和 task，也包含成员”，随后明确纠正执行优先级为先做好单人整个 workflow；本任务协调记录确认 Channel 后置。
 - Rule: —（本轮产品范围与交付顺序）
 - Replaces: —

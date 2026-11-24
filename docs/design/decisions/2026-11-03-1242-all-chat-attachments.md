@@ -1,6 +1,7 @@
 # Attach files in every chat
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, in the attachment repair chat: 「很多都有麻烦，你全都加上可以吗？你就看其他竞品加了什么，你加什么，而且，像 Markdown 之类的肯定很重要的东西，麻烦你都要加上呀」; 「不只是BOT吧，还有Agent呀，凡是涉及聊天界面的，你都要处理吧」.
 - Rule: R-10, R-42
 - Replaces: —

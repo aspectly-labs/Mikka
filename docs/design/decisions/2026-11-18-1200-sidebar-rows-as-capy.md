@@ -1,5 +1,7 @@
 # 侧栏的 Bot 行和线程行画成 Capy 桌面版的样子
 
+- **Status:** Accepted
+
 2026-11-18：Alex 看了生产环境侧栏的截图后说：「你改得跟 capy 一模一样！」「我让你去下载他们 electron，直接去看他们前端的源代码」，又问：「capy 上面有那些什么数字，什么 3 啊 2 啊 1 啊之类的，为什么你要加呢？」
 
 参照的是 Capy 0.9.1 桌面安装包里渲染进程的源码（`shared/sidebar-threads.tsx` 的 `CaptainRow`、crew 线程行、`SectionHeading`、`CaptainOptionsMenu`）。这是对「付费组件原样使用」规则的一次明确例外：侧栏行的样子按 Capy，不按 App Shell 自带的行。

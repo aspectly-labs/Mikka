@@ -1,6 +1,7 @@
 # iOS: the home chat list's interactions follow OpenBot's
 
 - Date: 2026-11-05
+- **Status:** Accepted (amended 2026-11-07: hold-to-drag removed)
 - Source: Alex, via the coordinator (#1408 corrected at 20:05 UTC, "Home chat list"): Mikka's chat rows only respond
   to a tap; follow OpenBot's interactions as well as its structure.
 - Rule: —

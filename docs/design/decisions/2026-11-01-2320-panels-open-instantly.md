@@ -1,6 +1,7 @@
 # Panels and columns open and close instantly
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, through the coordinator session, on opening a thread from
   「全部线程」 and closing it with ✕: 「你不应该在这个地方加 motion 吧」
   「这个叉号跟点击进入，应该加这个 transition motion 吗？」

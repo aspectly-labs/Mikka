@@ -2,7 +2,7 @@
 
 - Date: 2026-11-22 16:00 UTC
 - Source: Alex, 2026-11-22, on a screenshot of an Agent thread while a run worked: a yellow 「进行中」 badge beside 「正在工作 · 18 分」, and a separate 停止 pill above the composer. His standing rule: behave like mature agent apps without asking.
-- Status: accepted
+- **Status:** Accepted
 - Supersedes: [2026-11-02-0301](2026-11-02-0301-esc-in-a-thread-composer.md) (Esc in a thread composer does not stop the thread). [2026-11-01-1155](2026-11-01-1155-stop-a-bot-reply.md) stands and now holds for every chat.
 
 ## What the references do

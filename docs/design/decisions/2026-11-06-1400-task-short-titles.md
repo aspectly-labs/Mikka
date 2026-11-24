@@ -1,6 +1,7 @@
 # Short titles for tasks and threads
 
 - Date: 2026-11-06
+- **Status:** Superseded by [2026-11-14-2330](2026-11-14-2330-capy-activity-and-thread-titles.md)
 - Source: Alex, relayed by the coordinator on 2026-11-06, after the research in
   [`docs/research/2026-11-06-agent-session-titles.md`](../../research/2026-11-06-agent-session-titles.md).
 - Rule: —

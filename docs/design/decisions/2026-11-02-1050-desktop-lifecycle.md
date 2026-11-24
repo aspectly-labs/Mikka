@@ -1,6 +1,7 @@
 # The life of a cloud desktop: viewing, operating, and when it is let go
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source:
   - The coordinating Claude session asked for this record on 2026-11-02 and reviewed the first draft.
   - Alex then gave his rules, relayed by the coordinating session: nobody can look at a thread's desktop, and on the Bot's desktop an open window means watching, not operating.

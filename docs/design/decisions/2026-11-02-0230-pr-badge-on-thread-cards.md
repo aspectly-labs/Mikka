@@ -1,6 +1,7 @@
 # Thread cards show their PRs as one badge
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinating session: a thread card should show
   which PRs its thread produced, in the style of Claude Code's web session
   list.

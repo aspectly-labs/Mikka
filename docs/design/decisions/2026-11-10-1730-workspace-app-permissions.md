@@ -1,6 +1,7 @@
 # App permissions belong to the workspace, not to each Bot
 
 - Date: 2026-11-10
+- **Status:** Superseded in part by [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) (per-call app-action Allow/Ask/Deny matrix and Decision check retired)
 - App-action controls superseded by [authorized MCP connections](2026-11-19-native-mcp-authorization.md).
 - Source: Alex: authorizing each Bot separately is the wrong shape; an app is
   connected once and every Bot in the workspace should inherit that choice.

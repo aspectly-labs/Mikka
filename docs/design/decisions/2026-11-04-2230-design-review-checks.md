@@ -1,6 +1,7 @@
 # Design review uses hard checks and an independent reviewer
 
 - Date: 2026-11-04
+- **Status:** Superseded in part by [2026-11-09-0050](2026-11-09-0050-paid-blocks-as-shipped.md)
 - Source: Alex, in the coordinator session, after his comments on the Factory
   redesign page: he asked why the Nielsen-heuristic self-review had not caught
   the problems he found, and approved the fix: 「好，就按这个来，规则写进去吧」.

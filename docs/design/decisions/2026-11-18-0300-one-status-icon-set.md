@@ -1,6 +1,7 @@
 # One icon set for task statuses and run states
 
 - Date: 2026-11-18
+- **Status:** Accepted
 - Source: Alex, 2026-11-18, on the official build: 「task 的状态图标不统一」. He pointed to LobeHub's source as the model, and left the open choices to the implementer: 「拉不准的地方，请你按照你的直觉决定。去改吧」.
 - Rule: R-52; `components.md` (Task status icon and Agent mark); `glossary.md` (Task status, Agent mark, Run result)
 - Replaces, in part: [2026-11-13-1405](2026-11-13-1405-one-task-status.md), the table of status icons (Orca's shapes for 进行中, 评审中, 已完成) and 「受阻 and 已隐藏 … keep the block's glyphs」 for 受阻.

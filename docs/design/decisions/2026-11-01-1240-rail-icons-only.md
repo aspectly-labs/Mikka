@@ -1,6 +1,7 @@
 # The icon rail shows icons only; names are tooltips
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator: 「把这个地方的文字去掉，hover 上去才显示」 (first decided in #580, recorded in `../decisions.md` under "2026-10-31 — Icon rail without labels")
 - Rule: R-35
 - Replaces: the label-under-icon rail that #747 brought back; the "72px icon rail with labels" phrase of the 2026-10-25 row in `../decisions.md`
