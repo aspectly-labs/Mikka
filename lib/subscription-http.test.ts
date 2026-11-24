@@ -243,7 +243,9 @@ test('clone hands the worker a minted target scope after membership checks on bo
   const targetWorkspace = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
   const response = await fixture.send({ action: 'clone', connectionId, ownerId: 'bob', workspaceId: targetWorkspace })
   assert.equal(response.status, 200)
-  assert.deepEqual(workspaces, [['alice', targetWorkspace], ['bob', targetWorkspace]])
+  // The shared fence first proves the caller in the source's workspace, then
+  // clone's own checks prove both sides in the target's.
+  assert.deepEqual(workspaces, [['alice', workspaceId], ['alice', targetWorkspace], ['bob', targetWorkspace]])
   const [call] = fixture.calls
   assert.equal(call.method, 'clone')
   const target = call.params.target as Record<string, string>
