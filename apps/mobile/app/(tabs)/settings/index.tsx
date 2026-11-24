@@ -18,7 +18,7 @@ import { clearApiCache } from '@/lib/useApi'
 import { usePluginConnections } from '@/features/plugins/use-plugin-connections'
 import { useSettings } from '@/lib/settings'
 import { versionLabel } from '@/lib/updates'
-import { setSidebarTrial, useSidebarTrial } from '@/lib/sidebar-trial'
+import { setSidebarTrial, useSettingsPath, useSidebarTrial } from '@/lib/sidebar-trial'
 import { colors } from '@/lib/theme'
 import { currentAccount, servers } from '@/lib/config'
 import { serverCopy } from '@/lib/server-copy'
@@ -47,6 +47,7 @@ export default function SettingsScreen() {
   const [signingOut, setSigningOut] = useState(false)
   const [signOutFailed, setSignOutFailed] = useState(false)
   const sidebarTrial = useSidebarTrial()
+  const settingsPath = useSettingsPath()
   const signOut = async () => {
     if (leaving.current) return
     leaving.current = true; setSigningOut(true); setSignOutFailed(false)
@@ -80,19 +81,19 @@ export default function SettingsScreen() {
           <PushRow proactive={data.preferences.proactive} />
           <PreferenceSaveNotice />
           <Group>
-            <Row icon={<Avatar name={data.user.name || data.user.email} image={data.user.image} size={56} />} label={data.user.name || data.user.email} detail={data.user.email} onPress={() => router.push('/settings/profile')} />
-            <Row label={serverCopy.accounts} value={currentAccount().server.name} onPress={() => router.push('/settings/accounts')} />
+            <Row icon={<Avatar name={data.user.name || data.user.email} image={data.user.image} size={56} />} label={data.user.name || data.user.email} detail={data.user.email} onPress={() => router.push(settingsPath('profile'))} />
+            <Row label={serverCopy.accounts} value={currentAccount().server.name} onPress={() => router.push(settingsPath('accounts'))} />
           </Group>
           <Group>
-            <Row icon={icon('briefcase.fill', BriefcaseBusiness, '#8E8E93')} label="工作区" value={data.workspace.name} onPress={() => router.push('/settings/workspaces')} />
+            <Row icon={icon('briefcase.fill', BriefcaseBusiness, '#8E8E93')} label="工作区" value={data.workspace.name} onPress={() => router.push(settingsPath('workspaces'))} />
             {data.organizationSettingsAvailable && <Row label={messages.MobileCore.organizationOnWeb} onPress={() => void openOnWeb(mobileOrganizationPath(data.workspace.id), { confirmAccount: true })} />}
             {data.personalFilesAvailable && <Row icon={icon('folder.fill', Folder, '#007AFF')} label={messages.MobileCore.personalFilesOnWeb} onPress={() => void openOnWeb(mobileFilesPath(data.workspace.id), { confirmAccount: true })} />}
-            {data.billingScope && <Row label={messages.Billing.management.billingEntry} onPress={() => router.push('/settings/billing')} />}
+            {data.billingScope && <Row label={messages.Billing.management.billingEntry} onPress={() => router.push(settingsPath('billing'))} />}
           </Group>
           <Group>
-            <Row icon={icon('bell.fill', Bell, '#FF3B30')} label={messages.Settings.sections.notifications.title} value={data.preferences.proactive ? messages.MobileCore.notifications.on : messages.MobileCore.notifications.off} onPress={() => router.push('/settings/notifications')} />
-            <Row icon={icon('book.fill', BookOpen, '#AF52DE')} label="记忆" onPress={() => router.push('/settings/memory')} />
-            <Row icon={icon('puzzlepiece.extension.fill', Blocks, '#34C759')} label="已连接的 App" value={connections.error ? '连接状态未知' : connections.snapshot ? String(connections.snapshot.toolkits.length) : undefined} onPress={() => router.push('/settings/plugins')} />
+            <Row icon={icon('bell.fill', Bell, '#FF3B30')} label={messages.Settings.sections.notifications.title} value={data.preferences.proactive ? messages.MobileCore.notifications.on : messages.MobileCore.notifications.off} onPress={() => router.push(settingsPath('notifications'))} />
+            <Row icon={icon('book.fill', BookOpen, '#AF52DE')} label="记忆" onPress={() => router.push(settingsPath('memory'))} />
+            <Row icon={icon('puzzlepiece.extension.fill', Blocks, '#34C759')} label="已连接的 App" value={connections.error ? '连接状态未知' : connections.snapshot ? String(connections.snapshot.toolkits.length) : undefined} onPress={() => router.push(settingsPath('plugins'))} />
           </Group>
           <Group>
             <Row icon={icon('globe', Globe, '#5856D6')} label="语言" value="简体中文" trailing={Platform.OS === 'web' ? null : <Symbol name="arrow.up.right" size={13} color={colors.tertiary} web={<ArrowUpRight size={16} color={colors.tertiary} strokeWidth={2} />} />}
