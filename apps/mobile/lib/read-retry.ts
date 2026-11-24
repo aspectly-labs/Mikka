@@ -41,7 +41,8 @@ export async function readWithRetry<T>(attempt: () => Promise<T>, options: {
   wait: (ms: number) => Promise<void>
   random?: () => number
 }): Promise<T> {
-  for (let tries = 0; ; tries++) {
+  // One attempt plus one per READ_RETRY_DELAYS_MS entry; the last failure is thrown.
+  for (let tries = 0; tries < 4; tries++) {
     try { return await attempt() }
     catch (failure) {
       const delay = readRetryDelay(tries, options.random)
@@ -50,6 +51,7 @@ export async function readWithRetry<T>(attempt: () => Promise<T>, options: {
       if (!options.canRetry()) throw failure
     }
   }
+  throw new Error('read_retry_exhausted')
 }
 
 /** Why a read ran: the person asked (first load, Retry, pull to refresh, after a write), or the app refreshed on its own. */
