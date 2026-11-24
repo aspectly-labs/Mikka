@@ -150,13 +150,16 @@ export async function readThreadCost(
     [runIds],
   )
   // Intervals are read in the thread's own owner and workspace; time recorded after a
-  // scope_changed hand-off belongs to the new scope, not to this thread's cost.
-  const { rows: sessions } = await q.query(
-    `SELECT "runId"::text AS "runId",
-        COALESCE(sum(EXTRACT(EPOCH FROM (COALESCE("endedAt",clock_timestamp())-"startedAt"))),0)::float8 AS seconds
-      FROM thread_machine_sessions WHERE "runId"=ANY($1::uuid[]) AND "ownerId"=$2 AND "workspaceId"=$3 GROUP BY "runId"`,
-    [runIds, input.ownerId, input.workspaceId],
-  )
+  // scope_changed hand-off belongs to the new scope, not to this thread's cost. Only the
+  // machine grouping returns them, so other groupings skip the read entirely.
+  const { rows: sessions } = input.groupBy === 'machine'
+    ? await q.query(
+      `SELECT "runId"::text AS "runId",
+          COALESCE(sum(EXTRACT(EPOCH FROM (COALESCE("endedAt",clock_timestamp())-"startedAt"))),0)::float8 AS seconds
+        FROM thread_machine_sessions WHERE "runId"=ANY($1::uuid[]) AND "ownerId"=$2 AND "workspaceId"=$3 GROUP BY "runId"`,
+      [runIds, input.ownerId, input.workspaceId],
+    )
+    : { rows: [] as { runId: string; seconds: number }[] }
 
   const credits = amount()
   const included = { ...amount(), bySource: { subscription: amount(), api_key: amount() } }
