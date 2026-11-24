@@ -5,7 +5,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { isSmokeAccountEmail } from '../../lib/smoke-account.ts'
 import {
-  CASES, ORIGIN, REPOSITORY, successfulRelease, workerReleaseProof, publicFailure as acceptanceFailure,
+  CASES, ORIGIN, REPOSITORY, matchingReleases, verifyWorkerReleaseCandidate, workerReleaseProof, publicFailure as acceptanceFailure,
 } from './project-decisions.mjs'
 import { assertWorkspaceIdle, caseOrderPlan, orderFingerprint, ownedSource } from './model-order-cases.mjs'
 import { discoverRpcActions, releaseHeaders, releaseVersionGuard } from './rpc-actions.mjs'
@@ -49,18 +49,23 @@ export function triggerGuard(env, event, plan) {
   return { applicationSha, driverRevision: env.GITHUB_SHA, mode: 'readonly' }
 }
 
-/** A successful hash-comparison workflow may have skipped both publication jobs. */
-export function runtimePublicationProof(worker, jobs, applicationSha) {
-  const proof = workerReleaseProof(worker, jobs)
+function runtimeFromProof(worker, proof, applicationSha) {
   const base = { ...(worker ? { runId: worker.id } : {}), sourceCommit: null, workerSha: null }
   if (proof.status === 'published') {
-    // The release workflow verifies sourceCommit against the promoted Web commit.
+    if (worker?.head_sha && worker.head_sha !== applicationSha) return { ...base, status: 'unproven', code: 'publish_unproven' }
+    // workflow_run enforces sourceCommit === head_sha in web-ready; workflow_dispatch
+    // requires a verified release report matching applicationSha.
     // The content hash is different; it is not exposed by the jobs API and must never be invented from app SHA.
     return { ...base, status: 'published', sourceCommit: applicationSha, sourceEvidence: 'verified_publish_step',
       validateJobId: proof.validateJobId, publishJobId: proof.publishJobId }
   }
-  if (proof.status === 'unchanged') return { ...base, status: 'not_published', code: 'publish_skipped' }
+  if (proof.status === 'not_published') return { ...base, status: 'not_published', code: 'publish_skipped' }
   return { ...base, status: 'unproven', code: proof.code }
+}
+
+/** A successful hash-comparison workflow may have skipped both publication jobs. */
+export function runtimePublicationProof(worker, jobs, applicationSha, options) {
+  return runtimeFromProof(worker, workerReleaseProof(worker, jobs, options), applicationSha)
 }
 
 /** Public Web identity is required before credentials. Runtime proof stays separate from read-only metadata. */
@@ -77,17 +82,27 @@ export async function attestReadiness({ env = process.env, event, plan, fetchImp
     check(value !== null, 'deployment_proof')
     return value
   }
+  const readGithub = path => read('https://api.github.com/repos/' + REPOSITORY + path, true)
   const sameRelease = releaseVersionGuard(guard.applicationSha)
   const pin = async () => check(sameRelease(await read(ORIGIN + '/mikka/api/version')), 'build_mismatch')
   await pin()
-  const runs = await read('https://api.github.com/repos/' + REPOSITORY + '/actions/runs?head_sha=' + guard.applicationSha + '&per_page=100', true)
-  const worker = successfulRelease(runs.workflow_runs, guard.applicationSha, 'worker')
-  let jobs
-  if (worker) {
-    try { jobs = (await read('https://api.github.com/repos/' + REPOSITORY + '/actions/runs/' + worker.id + '/jobs?filter=latest&per_page=100', true)).jobs }
-    catch { /* A metadata-only check cannot promote an unavailable worker proof to execution readiness. */ }
+  const runs = await readGithub('/actions/runs?head_sha=' + guard.applicationSha + '&per_page=100')
+  const candidates = matchingReleases(runs.workflow_runs, guard.applicationSha, 'worker')
+  let runtime = runtimePublicationProof(null, undefined, guard.applicationSha)
+  for (const candidate of candidates) {
+    let jobs
+    try {
+      const path = candidate.event === 'workflow_dispatch'
+        && Number.isSafeInteger(candidate.run_attempt) && candidate.run_attempt > 0
+        ? '/actions/runs/' + candidate.id + '/attempts/' + candidate.run_attempt + '/jobs?per_page=100'
+        : '/actions/runs/' + candidate.id + '/jobs?filter=latest&per_page=100'
+      jobs = (await readGithub(path)).jobs
+    } catch { /* A metadata-only check cannot promote an unavailable worker proof to execution readiness. */ }
+    const proof = await verifyWorkerReleaseCandidate(candidate, jobs, { readGithub, token: env.GH_TOKEN, fetchImpl, now })
+    const result = runtimeFromProof(candidate, proof, guard.applicationSha)
+    if (result.status === 'published') { runtime = result; break }
+    if (result.status === 'not_published' || runtime.code === 'release_missing') runtime = result
   }
-  const runtime = runtimePublicationProof(worker, jobs, guard.applicationSha)
   await pin()
   return { purpose: 'production-readiness', status: runtime.status === 'published' ? 'ready' : 'partial',
     repository: REPOSITORY, ...guard, metadataReadAuthorized: true, executionReady: false,
