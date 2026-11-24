@@ -17,7 +17,7 @@ import {
 import { discoverRpcActions, releaseHeaders, releaseVersionGuard, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
-export const REPOSITORY = 'alexj11324/Mikka'
+export const REPOSITORY = 'aspectly-labs/Mikka'
 export const MARKER = '[project-map-acceptance]'
 export const CASES = Object.freeze([
   { id: 'api_deepseek', model: 'deepseek-flash', provider: 'deepseek', harness: 'claude_code', kind: 'api_key' },

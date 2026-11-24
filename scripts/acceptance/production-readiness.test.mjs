@@ -11,12 +11,12 @@ const id = n => `11111111-2222-4333-8444-${String(n).padStart(12, '0')}`
 const OWNER = 'fixture-smoke-owner', WORKSPACE = id(1)
 const EMAIL = 'fixture+mikka-smoke-owner@example.invalid', PASSWORD = 'SYNTHETIC-PASSWORD-DO-NOT-REPORT'
 const COOKIE = 'SYNTHETIC-COOKIE-DO-NOT-REPORT'
-const env = () => ({ GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_SHA: DRIVER,
+const env = () => ({ GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_SHA: DRIVER,
   GITHUB_REF: ACCEPTANCE_BRANCH, GITHUB_EVENT_NAME: 'push', GH_TOKEN: 'SYNTHETIC-GITHUB-TOKEN',
   SMOKE_OWNER_EMAIL: EMAIL, SMOKE_OWNER_PASSWORD: PASSWORD })
-const event = () => ({ repository: { full_name: 'alexj11324/Mikka' }, ref: ACCEPTANCE_BRANCH, after: DRIVER, deleted: false })
+const event = () => ({ repository: { full_name: 'aspectly-labs/Mikka' }, ref: ACCEPTANCE_BRANCH, after: DRIVER, deleted: false })
 const plan = () => ({ purpose: 'production-readiness', mode: 'readonly', applicationSha: APP })
-const attestation = () => ({ purpose: 'production-readiness', status: 'ready', repository: 'alexj11324/Mikka',
+const attestation = () => ({ purpose: 'production-readiness', status: 'ready', repository: 'aspectly-labs/Mikka',
   applicationSha: APP, driverRevision: DRIVER, mode: 'readonly',
   metadataReadAuthorized: true, executionReady: false,
   runtime: { status: 'published', runId: 11, sourceCommit: APP, workerSha: null,
@@ -35,7 +35,7 @@ const viteDocument = (pin = VITE_PIN) => '<script type="module" crossorigin src=
   + (pin ? '?dpl=' + pin : '') + '"></script>'
 const release = () => ({ id: 11, name: 'E2B official instance runtime',
   path: '.github/workflows/e2b-official-runtime.yml', event: 'push',
-  head_branch: 'main', head_sha: APP, head_repository: { full_name: 'alexj11324/Mikka' }, status: 'completed', conclusion: 'success' })
+  head_branch: 'main', head_sha: APP, head_repository: { full_name: 'aspectly-labs/Mikka' }, status: 'completed', conclusion: 'success' })
 const publishedJobs = () => [
   { id: 110, run_id: 11, name: 'validate', status: 'completed', conclusion: 'success',
     steps: [{ name: 'Validate new official instances without template mutation', status: 'completed', conclusion: 'success' }] },
@@ -104,8 +104,10 @@ test('only the existing acceptance push or a main manual readonly request is aut
   const manualEnv = { ...env(), GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main' }
   assert.equal(triggerGuard(manualEnv, { repository: event().repository, inputs: { application_sha: APP } }, plan()).applicationSha, APP)
   for (const change of [{ GITHUB_REF: 'refs/heads/other' }, { GITHUB_EVENT_NAME: 'pull_request' },
-    { GITHUB_REPOSITORY: 'foreign/repo' }, { GITHUB_SHA: 'not-a-sha' }])
+    { GITHUB_REPOSITORY: 'foreign/repo' }, { GITHUB_REPOSITORY: 'alexj11324/Mikka' }, { GITHUB_SHA: 'not-a-sha' }])
     assert.throws(() => triggerGuard({ ...env(), ...change }, event(), plan()), /trigger_rejected/)
+  // The repository moved; the old name is not the canonical repository.
+  assert.throws(() => triggerGuard(env(), { ...event(), repository: { full_name: 'alexj11324/Mikka' } }, plan()), /trigger_rejected/)
   assert.throws(() => triggerGuard(env(), { ...event(), deleted: true }, plan()), /trigger_rejected/)
   assert.throws(() => triggerGuard(env(), { ...event(), after: APP }, plan()), /trigger_rejected/)
   assert.throws(() => triggerGuard(env(), event(), { ...plan(), mode: 'active' }), /plan_invalid/)

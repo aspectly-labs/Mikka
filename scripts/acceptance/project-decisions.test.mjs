@@ -46,6 +46,30 @@ test('trigger gate binds manual main SHA and explicitly marked successful main W
   ]) assert.throws(() => triggerGuard(automatic, { workflow_run: { ...release('web'), ...changed } }), /trigger_rejected/)
 })
 
+test('a canonical aspectly-labs/Mikka dispatch attests against its own receipts; the old repository name is refused', async () => {
+  assert.equal(REPOSITORY, 'aspectly-labs/Mikka')
+  const canonical = { ...env(), GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GH_TOKEN: 'private-github-token' }
+  const urls = []
+  const fetchImpl = async (url, init) => {
+    urls.push(String(url))
+    assert.equal(init.redirect, 'error')
+    return new URL(url).origin === ORIGIN ? Response.json({ build: SHA })
+      : Response.json({ workflow_runs: [{ ...release('worker'), head_repository: { full_name: 'aspectly-labs/Mikka' } }] })
+  }
+  const proof = await attestDeployment({ env: canonical, event: event(), fetchImpl, now: () => EPOCH })
+  assert.equal(proof.status, 'ready')
+  assert.equal(proof.repository, 'aspectly-labs/Mikka')
+  const github = urls.filter(url => url.startsWith('https://api.github.com/'))
+  assert.ok(github.length > 0 && github.every(url => url.startsWith('https://api.github.com/repos/aspectly-labs/Mikka/')))
+  // The repository moved: the old name is no longer the canonical one.
+  assert.throws(() => triggerGuard({ ...canonical, GITHUB_REPOSITORY: 'alexj11324/Mikka' }, event()), /trigger_rejected/)
+  assert.equal(successfulRelease([{ ...release('worker'), head_repository: { full_name: 'alexj11324/Mikka' } }], SHA, 'worker'), null)
+  const automatic = { ...env('active'), GITHUB_EVENT_NAME: 'workflow_run' }
+  assert.throws(() => triggerGuard(automatic, { workflow_run: { ...release('web'), head_repository: { full_name: 'alexj11324/Mikka' } } }), /trigger_rejected/)
+  await assert.rejects(runProjectDecisionsAcceptance({ env: env(), event: event(), attestation: { ...attestation(), repository: 'alexj11324/Mikka' },
+    fetchImpl: () => assert.fail('network before attestation') }), /attestation_required/)
+})
+
 test('runtime release must be exact SHA/repository/workflow/main; legitimate manual releases are accepted', () => {
   assert.equal(successfulRelease([release('worker')], SHA, 'worker').id, 12)
   assert.equal(successfulRelease([{ ...release('worker'), event: 'workflow_dispatch' }], SHA, 'worker').id, 12)

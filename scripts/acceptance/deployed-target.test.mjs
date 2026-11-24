@@ -3,13 +3,13 @@ import test from 'node:test'
 import { DEPLOYED_WORKFLOW, DeployedTargetError, deployedTargetGuard, attestDeployedTarget,
   assertDeployedTarget, publicTargetFailure } from './deployed-target.mjs'
 
-const REPOSITORY = 'alexj11324/Mikka', API = 'https://api.github.com/repos/' + REPOSITORY
+const REPOSITORY = 'aspectly-labs/Mikka', API = 'https://api.github.com/repos/' + REPOSITORY
 const ORIGIN = 'https://app.aspectlylabs.com', APP = 'a'.repeat(40), DRIVER = 'b'.repeat(40)
 const NOW = Date.parse('2026-11-06T12:00:00Z')
-const repository = () => ({ full_name: REPOSITORY, owner: { login: 'alexj11324' } })
+const repository = () => ({ full_name: REPOSITORY, owner: { login: 'aspectly-labs' } })
 const context = () => ({
   env: { MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target', APPLICATION_SHA: APP,
-    GITHUB_REPOSITORY: REPOSITORY, GITHUB_REPOSITORY_OWNER: 'alexj11324',
+    GITHUB_REPOSITORY: REPOSITORY, GITHUB_REPOSITORY_OWNER: 'aspectly-labs',
     GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
     GITHUB_WORKFLOW_REF: REPOSITORY + '/' + DEPLOYED_WORKFLOW + '@refs/heads/main',
     GITHUB_SHA: DRIVER, GITHUB_RUN_ID: '20', GITHUB_RUN_ATTEMPT: '2',
@@ -77,8 +77,15 @@ test('explicit mode binds real repository, workflow dispatch, exact inputs and d
     const c = context(); c.env[key] = value
     assert.throws(() => deployedTargetGuard(c.env, c.event), DeployedTargetError)
   }
+  // The repository moved; the old name and owner are not the canonical repository.
+  for (const [key, value] of [['GITHUB_REPOSITORY', 'alexj11324/Mikka'], ['GITHUB_REPOSITORY_OWNER', 'alexj11324'],
+    ['GITHUB_WORKFLOW_REF', 'alexj11324/Mikka/' + DEPLOYED_WORKFLOW + '@refs/heads/main']]) {
+    const c = context(); c.env[key] = value
+    assert.throws(() => deployedTargetGuard(c.env, c.event), DeployedTargetError)
+  }
   for (const change of [event => { event.inputs.extra = 'x' },
-    event => { event.inputs.web_run_id = '10' }, event => { event.repository.owner.login = 'foreign' }]) {
+    event => { event.inputs.web_run_id = '10' }, event => { event.repository.owner.login = 'foreign' },
+    event => { event.repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } } }]) {
     const c = context(); change(c.event)
     assert.throws(() => deployedTargetGuard(c.env, c.event), DeployedTargetError)
   }

@@ -7,7 +7,7 @@ import { SCENARIOS, attestProductionReadCache, mergeReadChat, mergeReadList, pro
   productionRequestAllowed, publicFailure, runProductionReadCache } from './read-cache-production.mjs'
 
 const APP = 'a'.repeat(40), OTHER = 'b'.repeat(40), NOW = Date.parse('2026-11-05T12:00:00Z')
-const ORIGIN = 'https://app.aspectlylabs.com', REPOSITORY = 'alexj11324/Mikka'
+const ORIGIN = 'https://app.aspectlylabs.com', REPOSITORY = 'aspectly-labs/Mikka'
 const id = n => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const OWNER = 'synthetic-smoke-owner', WORKSPACE = id(1), BOT = id(2), TASK = id(3)
 const EMAIL = 'fixture+mikka-smoke-owner@example.invalid', PASSWORD = 'SYNTHETIC-PASSWORD-NOT-EVIDENCE'
@@ -153,9 +153,10 @@ function fixture(options = {}) {
 test('manual triggers require main', () => {
   assert.deepEqual(productionGuard(env(), event()), { applicationSha: APP, driverRevision: APP, mode: 'readonly' })
   for (const change of [{ GITHUB_EVENT_NAME: 'push' }, { GITHUB_REF: 'refs/heads/acceptance/proactive-1157-1163' },
-    { GITHUB_EVENT_NAME: 'pull_request' }, { GITHUB_REPOSITORY: 'foreign/repo' }])
+    { GITHUB_EVENT_NAME: 'pull_request' }, { GITHUB_REPOSITORY: 'foreign/repo' }, { GITHUB_REPOSITORY: 'alexj11324/Mikka' }])
     assert.throws(() => productionGuard({ ...env(), ...change }, event()), /trigger_rejected/)
-  assert.throws(() => productionGuard(env(), { ...event(), repository: { full_name: 'foreign/repo' } }), /trigger_rejected/)
+  for (const full_name of ['foreign/repo', 'alexj11324/Mikka'])
+    assert.throws(() => productionGuard(env(), { ...event(), repository: { full_name } }), /trigger_rejected/)
   assert.throws(() => productionGuard(env(), { ...event(), inputs: { application_sha: APP, mode: 'active' } }), /trigger_rejected/)
 })
 
@@ -629,11 +630,11 @@ test('migration cannot adapt manual events or reuse another issue, stale main or
 })
 
 test('deployed target mode separates the actual dispatch driver from the application', () => {
-  const environment = { ...env(), GITHUB_SHA: OTHER, GITHUB_REPOSITORY_OWNER: 'alexj11324',
+  const environment = { ...env(), GITHUB_SHA: OTHER, GITHUB_REPOSITORY_OWNER: 'aspectly-labs',
     GITHUB_RUN_ID: '7001', GITHUB_RUN_ATTEMPT: '2',
     GITHUB_WORKFLOW_REF: REPOSITORY + '/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
     MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target', APPLICATION_SHA: APP }
-  const payload = { repository: { full_name: REPOSITORY, owner: { login: 'alexj11324' } },
+  const payload = { repository: { full_name: REPOSITORY, owner: { login: 'aspectly-labs' } },
     inputs: { application_sha: APP } }
   const guard = productionGuard(environment, payload)
   assert.equal(guard.targetMode, 'deployed-target')
@@ -643,11 +644,11 @@ test('deployed target mode separates the actual dispatch driver from the applica
 
 
 test('new deployed mode authorizes only the 1415 attestation and never reopens read/cache measurement', async () => {
-  const environment = { ...env(), GITHUB_SHA: OTHER, GITHUB_REPOSITORY_OWNER: 'alexj11324',
+  const environment = { ...env(), GITHUB_SHA: OTHER, GITHUB_REPOSITORY_OWNER: 'aspectly-labs',
     GITHUB_RUN_ID: '7001', GITHUB_RUN_ATTEMPT: '2',
     GITHUB_WORKFLOW_REF: REPOSITORY + '/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
     MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target', APPLICATION_SHA: APP }
-  const payload = { repository: { full_name: REPOSITORY, owner: { login: 'alexj11324' } },
+  const payload = { repository: { full_name: REPOSITORY, owner: { login: 'aspectly-labs' } },
     inputs: { application_sha: APP } }
   const options = { env: noCredentials(environment), event: payload,
     fetchImpl: () => assert.fail('out-of-scope mode reached the network') }
