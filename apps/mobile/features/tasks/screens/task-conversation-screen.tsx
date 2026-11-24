@@ -30,22 +30,27 @@ import { runErrorLine } from '@/lib/run-error'
 import type { TaskDetail, ThreadDetail, ThreadItem } from '@/lib/types'
 import { readPushedTask } from '@/lib/task-push-app'
 import { useLiveApi } from '@/lib/useApi'
+import { withholdsCachedRead } from '@/lib/api-read-state'
 import { useStop } from '@/lib/useStop'
 import { colors } from '@/lib/theme'
 import { ThreadArtifactsList, ThreadSegments } from '../components/thread-artifacts'
 import { hasThreadArtifacts, threadArtifactsPath, type ThreadArtifacts, type ThreadSegment } from '../model/thread-artifacts'
-import { boundary, conversationReplyRun, conversationSegments, currentAgent, reviewRun, type Attempt } from '../model/task-conversation'
+import { boundary, conversationReplyRun, conversationSegments, currentAgent, reviewRun, settledThreads, type Attempt } from '../model/task-conversation'
 import { STAGE_WORD, stageLine, verdictWord, type TaskFlow } from '../model/task-flow'
 
-type Conversation = { detail: TaskDetail; threads: Record<string, ThreadDetail> }
+type Conversation = { detail: TaskDetail; threads: Record<string, ThreadDetail>; failed?: string[]; gone?: string[] }
 
 /** The task's detail, then each attempt's thread: one read per attempt with the existing routes, no new API. */
 async function readConversation(id: string, workspace?: string): Promise<Conversation> {
   // Opened from a push: the task's detail only in the workspace it was confirmed in (lib/task-push.ts).
   const detail = workspace ? await readPushedTask(id, workspace) : await api<TaskDetail>(`/api/mobile/tasks/${id}`)
   const attempts = detail.activity.filter((item): item is Attempt => item.kind === 'attempt')
-  const threads = await Promise.all(attempts.map(attempt => api<ThreadDetail>(`/api/mobile/threads/${attempt.runId}`)))
-  return { detail, threads: Object.fromEntries(attempts.map((attempt, index) => [attempt.runId, threads[index]!])) }
+  // One attempt that cannot be read no longer blanks the whole conversation (#9); see settledThreads.
+  const reads = await Promise.allSettled(attempts.map(attempt => api<ThreadDetail>(`/api/mobile/threads/${attempt.runId}`)))
+  const { threads, failed, gone } = settledThreads(attempts.map(attempt => attempt.runId), reads, conversationReplyRun(detail.task, detail.activity),
+    reason => reason instanceof ApiError && reason.status === 401,
+    reason => reason instanceof ApiError && withholdsCachedRead(reason.status))
+  return { detail, threads, failed, gone }
 }
 
 /**
@@ -69,7 +74,17 @@ export function TaskConversationScreen() {
     const thread = newest ? threadLive(current?.threads[newest] ?? null, newest) : null
     return { minIntervalMs: tasks.minIntervalMs, refs: [...tasks.refs, ...(thread?.refs ?? [])] }
   }, read)
-  const segments = data ? conversationSegments(data.detail.activity, new Map(Object.entries(data.threads))) : []
+  // A refresh where one older attempt fails for a passing reason keeps what that attempt last showed, with a retry in
+  // place. One the server no longer serves (deleted, access withdrawn) leaves the screen and the saved copy at once.
+  const shown = useRef<Record<string, ThreadDetail>>({})
+  const gone = new Set(data?.gone ?? [])
+  if (data) shown.current = Object.fromEntries(Object.entries({ ...shown.current, ...data.threads }).filter(([runId]) => !gone.has(runId)))
+  const threads = data ? { ...Object.fromEntries((data.failed ?? []).flatMap(runId => shown.current[runId] ? [[runId, shown.current[runId]!]] : [])), ...data.threads } : {}
+  const failed = data?.failed ?? []
+  const activity = data ? data.detail.activity.filter(item => item.kind !== 'attempt' || !gone.has(item.runId)) : []
+  const [retrying, setRetrying] = useState(false)
+  const retry = () => { setRetrying(true); void reload().finally(() => setRetrying(false)) }
+  const segments = data ? conversationSegments(activity, new Map(Object.entries(threads))) : []
   const newest = data && conversationReplyRun(data.detail.task, data.detail.activity)
   const live = newest ? data?.threads[newest] ?? null : null
   const canSend = Boolean(newest && live && live.canReply !== false && !conversationAccessDenied(error))
@@ -129,6 +144,9 @@ export function TaskConversationScreen() {
               </ReviewCard>
               : segment.items.map((item, at) => <View key={item.id}><Item item={item} live={data?.threads[segment.attempt.runId]?.active === true && at === segment.items.length - 1} />
                 {(item.kind==='person' || item.kind==='agent') && <MobileReplyVersions detail={data?.threads[segment.attempt.runId]} runId={segment.attempt.runId} itemId={item.id} text={item.text} reload={reload} working={!!live?.active} side={item.kind === 'person' ? 'end' : 'start'} />}</View>)}
+            {failed.includes(segment.attempt.runId) ? <Pressable accessibilityRole="button" accessibilityState={{ busy: retrying, disabled: retrying }} disabled={retrying} onPress={retry} hitSlop={6} style={({ pressed }) => [styles.segmentRetry, pressed && { opacity: 0.6 }]}>
+              {retrying ? <Spinner /> : <Text style={styles.causeLine}>{mobileMessages.ConversationDirectory.loadError} <Text style={styles.retry}>{mobileMessages.Common.retry}</Text></Text>}
+            </Pressable> : null}
             {/* A failed attempt's cause stays inside it, in words, with the raw code under 详情 (2026-11-05-0330). */}
             {segment.error && !(data?.threads[segment.attempt.runId]?.active) && !segment.items.some(item => item.kind === 'error') ? <AttemptError raw={segment.error} /> : null}
           </View>
@@ -234,7 +252,9 @@ const styles = StyleSheet.create({
   segment: { gap: 4 },
   cause: { gap: 4, marginVertical: 4 },
   causeLine: { fontSize: 14, color: colors.secondary },
-  detailsToggle: { fontSize: 12, color: colors.secondary, textDecorationLine: 'underline' },
+  segmentRetry: { minHeight: 44, justifyContent: 'center' },
+  retry: { color: colors.accent, fontWeight: '600' },
+  detailsToggle: { fontSize: 13, color: colors.accent, paddingVertical: 6 },
   details: { fontSize: 12, color: colors.secondary, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
   divider: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 14 },
   rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator },

@@ -239,3 +239,16 @@ test('Native uses Capy activity sentences, conversation identity and the shared 
   assert.deepEqual(filteredTaskActivity(entries, 'agents'), [history, bot])
   assert.deepEqual(filteredTaskActivity(entries, 'all'), entries)
 })
+
+test('one unreadable attempt leaves the rest of the conversation; the reply run, signed-out or all failing still fail', async () => {
+  const { settledThreads } = await import('../features/tasks/model/task-conversation.ts')
+  const ok = (value: string) => ({ status: 'fulfilled' as const, value }), no = (reason: unknown) => ({ status: 'rejected' as const, reason })
+  const fatal = (reason: unknown) => reason === 'signed-out'
+  assert.deepEqual(settledThreads(['a', 'b', 'c'], [ok('A'), no('timeout'), ok('C')], 'c', fatal), { threads: { a: 'A', c: 'C' }, failed: ['b'], gone: [] })
+  // Deleted or withdrawn: listed as gone, not as a failure to retry, so nothing saved of it stays on screen.
+  const gone = (reason: unknown) => reason === '404'
+  assert.deepEqual(settledThreads(['a', 'b', 'c'], [no('404'), no('timeout'), ok('C')], 'c', fatal, gone), { threads: { c: 'C' }, failed: ['b'], gone: ['a'] })
+  assert.throws(() => settledThreads(['a', 'b'], [no('403'), ok('B')], 'a', fatal), (error: unknown) => error === '403')
+  assert.throws(() => settledThreads(['a', 'b'], [ok('A'), no('signed-out')], null, fatal), (error: unknown) => error === 'signed-out')
+  assert.throws(() => settledThreads(['a', 'b'], [no('x'), no('y')], null, fatal), (error: unknown) => error === 'x')
+})
