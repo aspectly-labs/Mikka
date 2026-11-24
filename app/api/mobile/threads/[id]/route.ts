@@ -36,12 +36,12 @@ async function handleGET(request: Request, { params }: Params) {
   const runIds = chain ? chain.attempts.slice(from).map(attempt => attempt.runId) : [detail.run.id]
   const live = chain?.attempts.find(attempt => attempt.runId === chain.latestRunId)?.status ?? detail.run.status
   const readReceipts = detail.run.agentId ? await threadReadReceipts(user.id, runIds) : []
-  const rawChunks = await db.select({ runId: runChunks.runId, chunk: runChunks.chunk, at: runChunks.createdAt }).from(runChunks)
+  const rawChunks = await db.select({ runId: runChunks.runId, seq: runChunks.seq, chunk: runChunks.chunk, at: runChunks.createdAt }).from(runChunks)
     .innerJoin(agentRuns, eq(agentRuns.id, runChunks.runId))
     .where(inArray(runChunks.runId, runIds)).orderBy(asc(agentRuns.createdAt), asc(runChunks.seq))
   const chunks = chainChunks(rawChunks)
   const messages = runIds.length > 1 ? await readRunMessages(user.id, runIds) : detail.messages
-  const items = threadItems(
+  const items = await threadItems(
     detail.run.agentId ? chunks : [],
     messages.map(message => ({ id: message.id, text: message.text, author: user.name, mine: true, at: message.createdAt })),
   )
@@ -63,9 +63,10 @@ async function handleGET(request: Request, { params }: Params) {
       return source?.sourceRunId ? [[item.id,{runId:source.sourceRunId,key:item.id,operation:'edit'}]] : []
     }
     if (item.kind!=='agent') return []
+    // Every chunk id is scoped to its run (chainChunks): the anchor is the run and the id the run gave the text.
     const part=item.id.slice('text:'.length)
-    const source=sourceRuns.length===1 ? sourceRuns[0] : sourceRuns.find(id=>part.startsWith(id+':'))
-    return source ? [[item.id,{runId:source,key:sourceRuns.length===1 ? part : part.slice(source.length+1),operation:'rerun'}]] : []
+    const source=sourceRuns.find(id=>part.startsWith(id+':'))
+    return source ? [[item.id,{runId:source,key:part.slice(source.length+1),operation:'rerun'}]] : []
   }))
   return json({ liveRunId, composerModel: model.rows[0] ?? null, readReceipts, versionAnchors, delivery, issueId: detail.run.issueId, canReply: Boolean(detail.run.agentId), confirmedSubmissionIds: messages.flatMap(message => message.submissionId ? [message.submissionId] : []), live: { runs }, thread, active: runIsActive(live), working: runIsWorking(live), paused, summary: detail.run.report && typeof detail.run.report.summary === 'string' ? detail.run.report.summary : null, error: detail.run.error, items })
 }

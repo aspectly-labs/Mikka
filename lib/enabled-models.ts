@@ -9,14 +9,16 @@ type Scope = { ownerId: string; workspaceId: string }
 export type ModelSourceKind = 'subscription' | 'api_key' | 'hosted'
 export interface EnabledModelsSource {
   id: string; kind: ModelSourceKind
-  models: { id: string; family: string | null; enabled: boolean; fresh: boolean }[]
+  /** `known`: Mikka's LiteLLM catalogue has the model (lib/model-known.ts); a listed model it lacks is added by its own id. */
+  models: { id: string; family: string | null; enabled: boolean; fresh: boolean; known: boolean }[]
   enabledCount: number; total: number; freshCount: number; autoEnable?: boolean
   refreshedAt: string | null; refreshError: 'invalid' | 'unavailable' | null
 }
 type SourceRow = { id: string; kind: ModelSourceKind; ids: string[]; settings: ModelSettings | null; refreshedAt: string | null; refreshError: EnabledModelsSource['refreshError'] }
-const project = (row: SourceRow): EnabledModelsSource => {
+const project = (row: SourceRow, known: ReadonlySet<string>): EnabledModelsSource => {
   const models = row.ids.map(id => ({ id, family: modelDisplayName(id).family,
-    enabled: row.settings?.models[id]?.enabled ?? true, fresh: row.settings?.models[id]?.fresh ?? false }))
+    enabled: row.settings?.models[id]?.enabled ?? true, fresh: row.settings?.models[id]?.fresh ?? false,
+    known: row.kind === 'hosted' || known.has(id) }))
   return { id: row.id, kind: row.kind, models, total: models.length, enabledCount: models.filter(item => item.enabled).length,
     freshCount: models.filter(item => item.fresh).length, ...(row.kind === 'subscription' ? { autoEnable: row.settings?.autoEnable ?? true } : {}),
     refreshedAt: row.refreshedAt, refreshError: row.refreshError }
@@ -36,8 +38,15 @@ async function sources(query: Pick<Pool | PoolClient, 'query'>, scope: Scope): P
     settings: { autoEnable: false, models: Object.fromEntries(hostedIds.map(id => [id, { enabled: hostedEnabled, fresh: false, manual: true }])) },
     refreshedAt: null, refreshError: null }]
 }
+/** Which listed ids Mikka's catalogue knows, read once per answer. */
+async function knownIds(rows: readonly SourceRow[]) {
+  const { knownModelCatalogue, knownModels } = await import('./model-known')
+  return knownModels(rows.flatMap(row => row.kind === 'hosted' ? [] : row.ids), await knownModelCatalogue())
+}
 export async function readEnabledModels(query: Pick<Pool | PoolClient, 'query'>, scope: Scope) {
-  return { sources: (await sources(query, scope)).map(project) }
+  const rows = await sources(query, scope)
+  const known = await knownIds(rows)
+  return { sources: rows.map(row => project(row, known)) }
 }
 export type ModelSettingsChange = { kind: 'model'; modelId: string; enabled: boolean } | { kind: 'all'; enabled: boolean }
   | { kind: 'auto'; enabled: boolean } | { kind: 'seen' }
@@ -87,7 +96,7 @@ export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: st
       await client.query('DELETE FROM model_order_entries WHERE "sourceKind"=$1 AND "sourceId"=$2::uuid AND model=ANY($3::text[])', [kind, sourceId, disabled])
     }
     await client.query('COMMIT')
-    return project({ ...row, settings })
+    return project({ ...row, settings }, await knownIds([row]))
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
 }
 

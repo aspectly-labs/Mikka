@@ -7,7 +7,7 @@ import { terminalKey } from './wire'
 import { terminalFixture } from './test-fixture'
 
 class MissingSandbox extends Error {}
-const state = { machine: 'running', present: true, validProof: true, version: '', boot: randomUUID(),
+const state = { machine: 'running', present: true, validProof: true, version: '', target: '', boot: randomUUID(),
   connects: 0, reads: 0, missing: false, status: 204, ingress: '', commands: [] as string[], writes: [] as { path: string; data: string | ArrayBuffer }[] }
 class SyntheticSandbox {
   constructor(_options: unknown) {}
@@ -17,6 +17,7 @@ class SyntheticSandbox {
   commands = { run: async (command: string) => {
     state.commands.push(command)
     if (command.startsWith('if test -f ')) return { exitCode: 0, stdout: state.ingress }
+    if (command.startsWith('pkill -f ')) { state.present = false; state.version = state.target }
     if (command.startsWith('python3 -I -c ')) state.present = true
     return { exitCode: 0, stdout: '' }
   } }
@@ -35,6 +36,7 @@ async function fixture() {
   const f = terminalFixture(), calls: string[] = []
   Object.assign(state, { machine: 'running', present: true, validProof: true, boot: randomUUID(), connects: 0, reads: 0, missing: false, status: 204, commands: [], writes: [] })
   state.version = createHash('sha256').update(await readFile('scripts/e2b/terminal-gateway.py')).digest('hex')
+  state.target = state.version
   state.ingress = JSON.stringify({ ok: true, version: 1, sourceSha256: 'a'.repeat(64), bootId: randomUUID(),
     installedTicks: 1, providerPorts: [49983], preparedBeforeWorker: true, rulesVerified: { ipv4: true, ipv6: true } })
   process.env.BETTER_AUTH_SECRET = 'synthetic-control-plane-fixture-'.repeat(2)
@@ -118,8 +120,12 @@ test('local devices, active Agents, destroyed machines and old gateway versions 
   state.missing = true
   await assert.rejects(existingTerminal(f.scope), (error: unknown) => error instanceof TerminalError && error.status === 409)
   state.missing = false; state.version = 'a'.repeat(64)
-  await assert.rejects(prepareTerminal(f.scope), (error: unknown) => error instanceof TerminalError && error.status === 404)
-  assert.equal(state.connects, 0)
+  // An older gateway is upgraded, not refused: the running process is killed,
+  // the current source installed, and the fresh health names the new version.
+  const upgraded = await prepareTerminal(f.scope)
+  assert.equal(upgraded.boot, state.boot)
+  assert.ok(state.commands.some(command => command.startsWith('pkill -f ')))
+  assert.equal(state.connects, 1)
 })
 
 test('revocation never wakes a paused VM and only acknowledges a proven expired or destroyed machine', async () => {

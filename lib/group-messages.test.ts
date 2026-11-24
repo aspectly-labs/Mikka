@@ -48,17 +48,17 @@ test('newest-first pages read oldest first, by bigint position, without duplicat
 
 test('an idle poll keeps the page, and a short page of new messages is prepended', () => {
   const previous = { messages: [message('4', 'u1'), message('3', 'a1', 'agent')], nextBefore: '3', agentStatus: { status: 'running' } }
-  const idle = group.mergeGroupPoll(previous, { messages: [], nextBefore: null, unchanged: true, agentStatus: null, stopped: true })
+  const idle = group.mergeGroupRead(previous, { messages: [], nextBefore: null, unchanged: true, agentStatus: null, stopped: true })
   assert.equal(idle.messages.length, 2)
   assert.equal(idle.nextBefore, '3')
   assert.equal(idle.agentStatus, null)
   assert.equal(idle.stopped, true)
-  const added = group.mergeGroupPoll(previous, { messages: [message('5', 'a1', 'agent')], nextBefore: null, appended: true, agentStatus: { status: 'running' } })
+  const added = group.mergeGroupRead(previous, { messages: [message('5', 'a1', 'agent')], nextBefore: null, appended: true, agentStatus: { status: 'running' } })
   assert.deepEqual(added.messages.map(item => item.position), ['5', '4', '3'])
   assert.equal(added.nextBefore, '3')
   assert.equal(added.appended, undefined)
   assert.equal(group.newestGroupPosition(added.messages), '5')
-  assert.equal(group.mergeGroupPoll(null, previous), previous)
+  assert.equal(group.mergeGroupRead(null, previous), previous)
 })
 
 test('consecutive messages from one author form one run', () => {

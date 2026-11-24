@@ -1,7 +1,7 @@
 import { captureRunFailure } from '@mikka/protocol/run-failure'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { coordinatorChatState } from './chat-state'
+import { coordinatorChatState, coordinatorTurnStoppable } from './chat-state'
 import { MAX_WAKE_ATTEMPTS } from './wake-recovery'
 
 const now = new Date('2026-10-31T12:00:00Z')
@@ -104,4 +104,13 @@ test('a structured failure belongs only to its failed input and remains hidden w
   assert.equal(coordinatorChatState(session, [event], now).failureDetails, undefined)
   assert.equal(coordinatorChatState({ ...session, leaseHolder: 'wrun_new', leaseUntil: future }, [], now).failureDetails, undefined)
   assert.equal(coordinatorChatState({ ...session, lastError: null }, [], now).failureDetails, undefined)
+})
+
+test('the sidebar spins for exactly what the chat can stop, accepted input waiting for its turn included', () => {
+  const lease = { leaseHolder: 'session', leaseUntil: future, lastError: null }
+  for (const [session, waiting] of [[undefined, [event]], [lease, []], [undefined, []], [{ ...lease, leaseUntil: expired }, []],
+    [undefined, [{ ...event, wakeAttempts: 1, wakeLeaseUntil: expired }]]] as const) {
+    assert.equal(coordinatorTurnStoppable(session, waiting, now), coordinatorChatState(session, waiting, now).working)
+  }
+  assert.equal(coordinatorTurnStoppable(undefined, [event], now), true)
 })

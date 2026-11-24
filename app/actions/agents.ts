@@ -234,6 +234,7 @@ const threadColumns = {
   // Only the report's summary: runSummaryText reads nothing else of it.
   sessionId: agentRuns.sessionId, deviceRepoId: agentRuns.deviceRepoId, failureDetails: agentRuns.failureDetails, report: sql<Record<string, unknown> | null>`case when jsonb_typeof(${agentRuns.report}) = 'object' then jsonb_build_object('summary', ${agentRuns.report}->'summary') end`, error: agentRuns.error, createdAt: agentRuns.createdAt, finishedAt: agentRuns.finishedAt,
   agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind,
+  botId: sql<string | null>`(select b.id from bots b where b.id = ${runBotId})`, startedAt: agentRuns.startedAt,
   botColor: sql<string | null>`(select b.color from bots b where b.id = ${runBotId})`, botShape: sql<string | null>`(select b.shape from bots b where b.id = ${runBotId})`,
   // Who did the stretch (lib/issue-threads.ts threadProfile): the frozen Profile's public summary and its current mark.
   profile: sql<unknown>`case when ${agentRuns.agentDefinition}->'agentProfile' is null then null else jsonb_build_object(
@@ -410,6 +411,8 @@ export interface IssueThreadDetail {
    */
   context?: import('@/lib/context-usage').ContextUsage
   composerModel?: import('@/lib/context-usage').ContextUsage['composerModel']
+  /** The owner's live run's plan over all of that run's chunks, whichever page is held (lib/thread-plan-read.ts); absent otherwise. */
+  plan?: import('@/lib/thread-plan').ThreadPlanItem[] | null
 }
 
 /**
@@ -519,24 +522,9 @@ export async function getThreadSummary(issueId: string | null, runId: string) {
  * It covers the whole run chain and the whole stored brief whatever the cursor
  * returned, so a cursor read reports the same usage as a full one.
  */
+/** What this thread's run holds; the one reader is lib/context-usage-read.ts. */
 async function readContextUsage(runIds: string[], rootRunId: string, latestRunId: string): Promise<import('@/lib/context-usage').ContextUsage> {
-  const { CONTEXT_CHARS_SQL, contextUsageFromCounts } = await import('@/lib/context-usage')
-  const { rows: [counted] } = await pool.query<Record<string, string | number | null>>(CONTEXT_CHARS_SQL, [runIds, rootRunId, latestRunId])
-  const count = (value: unknown) => Number(value ?? 0) || 0
-  const counts = (ascii: unknown, other: unknown) => ({ ascii: count(ascii), other: count(other) })
-  return contextUsageFromCounts({
-    prompt: counts(counted?.promptAscii, counted?.promptOther),
-    // The task range is sliced in SQL by the recorded code points, and is empty
-    // when the range does not hold (lib/thread-prompt.ts rejects it there).
-    task: counts(counted?.taskAscii, counted?.taskOther),
-    messages: counts(counted?.messageAscii, counted?.messageOther),
-    conversation: counts(counted?.conversationAscii, counted?.conversationOther),
-    ...(typeof counted?.selectedModel === 'string' || typeof counted?.servedModel === 'string' ? { composerModel: {
-      selected: typeof counted?.selectedModel === 'string' ? counted.selectedModel : null,
-      served: typeof counted?.servedModel === 'string' ? counted.servedModel : null,
-    } } : {}),
-    model: typeof counted?.model === 'string' ? counted.model : null,
-  })
+  return (await import('@/lib/context-usage-read')).readContextUsage(pool, runIds, rootRunId, latestRunId)
 }
 
 /** Load the whole-history estimate after the conversation's first page. */
@@ -676,7 +664,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
   const [{ threadLiveReferences, documentLiveWorkspace }, { workspacePool }] = await Promise.all([import('@/lib/live/panels'), import('@/lib/workspace-db')])
   const chainRunIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
   const quotaView = row.userId === user.id ? import('@/lib/run-quota-view') : null
-  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback] = await Promise.all([
+  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback, plan] = await Promise.all([
     threadLiveReferences(pool, workspacePool, runIds, user.id),
     row.issueId ? documentLiveWorkspace(pool, workspacePool, row.issueId, user.id) : null,
     // Over the whole chain and the whole brief, so a cursor read reports what a full one does.
@@ -686,6 +674,8 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
       threadDeliveryView(pool, user.id, chain?.rootRunId ?? row.id, thread.latestRunId)) : undefined,
     quotaView?.then(({ threadQuotaView }) => threadQuotaView(user.id, chainRunIds, thread.latestRunId)),
     quotaView?.then(({ threadModelFallbackState }) => threadModelFallbackState(user.id, chainRunIds, thread.latestRunId)),
+    row.userId === user.id && runIsActive(liveStatus) && runIds.includes(thread.latestRunId)
+      ? import('@/lib/thread-plan-read').then(({ readRunPlan }) => readRunPlan(pool, { runId: thread.latestRunId, ownerId: user.id })) : undefined,
   ])
   return {
     readReceipts,
@@ -700,6 +690,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
     ...(messageUpdates?.length ? { messageUpdates } : {}),
     context,
     ...(composerModel ? { composerModel } : {}),
+    ...(plan !== undefined ? { plan } : {}),
     ...(promptOmitted ? { promptOmitted: true as const } : {}),
   }
 }
@@ -739,6 +730,29 @@ async function readThreadChanges(issueId: string | null, runId: string): Promise
 }
 
 const THREAD_CHANGES_MAX_TEXT = 8 * 1024 * 1024
+
+/** #2929: one turn's changes — the same gzip patch path as getThreadChanges but
+ * scoped to a single attempt of the chain, so the Changes view can page turns. */
+export async function getThreadTurnChanges(issueId: string | null, runId: string, turnRunId: string): Promise<ThreadChangesResult> {
+  return withDatabaseOperation('/actions/threads/turn-changes', async () => {
+    const { row } = await readableThread(issueId, runId, threadIdentityColumns)
+    const chain = await readRunChain(pool, row.userId, row.id)
+    if (chain && !chain.attempts.some(attempt => attempt.runId === turnRunId)) return { state: 'none' }
+    const { rows: [checkpoint] } = await pool.query<{ patch: Buffer | null; unavailableReason: string | null }>(
+      'SELECT patch,"unavailableReason" FROM run_checkpoints WHERE "runId"=$1 AND "userId"=$2', [turnRunId, row.userId])
+    if (!checkpoint?.patch) return { state: 'none' }
+    if (checkpoint.unavailableReason) return { state: 'tooLarge' }
+    let text: string
+    try { text = gunzipSync(checkpoint.patch, { maxOutputLength: THREAD_CHANGES_MAX_TEXT }).toString('utf8') } catch { return { state: 'tooLarge' } }
+    const changes = parseUnifiedDiff(text)
+    if (!changes.files.length) return { state: 'none' }
+    const { rows: [published] } = await pool.query<{ url: string }>(
+      `SELECT "pullRequest"->>'url' AS url FROM run_publications WHERE "runId"=$1 AND "pullRequest"->>'url' IS NOT NULL ORDER BY "updatedAt" DESC LIMIT 1`, [turnRunId])
+    const prUrl = published && safeHttpUrl(published.url)
+    if (prUrl) for (const file of changes.files) file.url = `${prUrl.replace(/\/+$/, '')}/files#diff-${createHash('sha256').update(file.path).digest('hex')}`
+    return { state: 'ready', changes }
+  })
+}
 
 function safeHttpUrl(value: string) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.toString() : null } catch { return null }
@@ -799,6 +813,7 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
     body = (await import('@/lib/thread-references-server')).expandReferences(resolved) + body
     if (body.length > 10_000) throw new ActionFailureError('messageRequired')
   }
+  await refuseUnavailableReferences(user.id,row.id,text.data)
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
   return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
 }
@@ -908,6 +923,16 @@ export async function mentionThreadBot(input: { issueId: string | null; runId: s
     await wakeCoordinator(bot.ownerId)
   }
   return { dispatched: true, eventId: inserted?.id ?? null }
+}
+
+/** A typed reference the sender cannot read (deleted, another workspace, no access) is refused before it reaches the thread (#2941). */
+async function refuseUnavailableReferences(userId: string, runId: string, text: string) {
+  const { messageReferences } = await import('@/lib/composer-references')
+  if (!messageReferences(text).length) return
+  const { rows: [run] } = await pool.query<{ workspaceId: string | null }>('SELECT "workspaceId" FROM agent_runs WHERE id=$1 AND "userId"=$2', [runId, userId])
+  if (!run?.workspaceId) throw new ActionFailureError('runNotFound')
+  const { unavailableReferences } = await import('@/lib/message-references')
+  if ((await unavailableReferences({ userId, workspaceId: run.workspaceId }, text)).length) throw new ActionFailureError('referenceBroken')
 }
 
 /**
@@ -1167,6 +1192,50 @@ export async function rerunThreadMachineSetup(issueId: string | null, runId: str
   })
 }
 
+/** #2926 composer machine menu: Sleep machine / Wake machine — the same
+ * pause|resume the machine route serves, through threadMachineAction. */
+export async function pauseOrResumeThreadMachine(issueId: string | null, runId: string, action: 'pause' | 'resume') {
+  return withDatabaseOperation('/actions/threads/machine-state', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const { threadMachineAction } = await import('@/lib/cloud-computer/thread-machines')
+    return threadMachineAction(pool, { userId: user.id, workspaceId: row.workspaceId ?? '' } as never, row.id, action)
+  })
+}
+
+/** #2926 composer machine menu: the Keep awake switch, persisted on the
+ * machine row for the lifecycle's idle-sleep decision. */
+export async function setThreadMachineKeepAwake(issueId: string | null, runId: string, keepAwake: boolean) {
+  return withDatabaseOperation('/actions/threads/machine-keep-awake', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).setThreadMachineKeepAwake(pool, user.id, row.workspaceId ?? null, row.id, keepAwake)
+  })
+}
+
+/** #2926 composer machine menu: Move to cloud / a device — the move route's
+ * own handler, as a server action for the composer. */
+export async function moveThreadToTarget(issueId: string | null, runId: string, target: { deviceId: string | 'cloud' }) {
+  return withDatabaseOperation('/actions/threads/move', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-lifecycle')).moveThread(user, row.id, target)
+  })
+}
+
+/** #2926 usage-limit card: try every quota-paused thread again with its own
+ * credential — per-run failures are skipped, like the bulk credits switch. */
+export async function retryAllQuotaPausedRuns(): Promise<{ runId: string; retried: boolean }[]> {
+  const userId = await getUserId()
+  const { pausedQuotaRuns, retryQuotaPausedRun } = await import('@/lib/run-quota')
+  const results: { runId: string; retried: boolean }[] = []
+  for (const runId of await pausedQuotaRuns(userId)) {
+    try { await retryQuotaPausedRun(userId, runId); results.push({ runId, retried: true }) }
+    catch { results.push({ runId, retried: false }) }
+  }
+  return results
+}
+
 /** #2940 item 5: the pull requests a thread's chain published, owner only —
  * the publication receipt is the requester's own record, like the run-location
  * icon getThreadMachine serves. */
@@ -1261,6 +1330,37 @@ export async function getThreadGitHistory(issueId: string | null, runId: string,
     const { workspacePool } = await import('@/lib/workspace-db')
     return (await listRunGitHistory({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId,
       { ...(input?.cursor ? { cursor: input.cursor } : {}), limit: input?.limit ?? 20 })).value
+  })
+}
+
+/** #2929: the thread's turns as diff boundaries — one entry per run-chain
+ * attempt, each carrying the base/head its checkpoint review retained. */
+export async function getThreadGitTurns(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-turns', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunGitTurns } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunGitTurns({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId))
+  })
+}
+
+/** #2929: one turn's diff — a finished attempt reads its own retained
+ * checkpoint snapshot (`source: 'checkpoint'`, which carries the captured tree
+ * including uncommitted edits and works frozen); the still-running attempt
+ * reads `working`. `turnRunId` must be an attempt of the thread's chain. */
+export async function getThreadGitTurnDiff(issueId: string | null, runId: string, input: { turnRunId?: string; live?: boolean; cursor?: string; limit?: number }) {
+  return withDatabaseOperation('/actions/threads/git-turn-diff', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { diffPage } = await import('@/lib/coding-workspace/diff/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    const deps = { database: pool, membership: workspacePool }
+    if (input.live || !input.turnRunId || input.turnRunId === scope.runId)
+      return diffPage(deps, scope.actor, scope.runId, scope.repoId,
+        { selection: { source: 'working' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
+    return diffPage(deps, scope.actor, input.turnRunId, scope.repoId,
+      { selection: { source: 'checkpoint' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
   })
 }
 

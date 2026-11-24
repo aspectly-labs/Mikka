@@ -42,7 +42,7 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     github.restore()
     await pool.query('DELETE FROM run_messages WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM coordinator_events WHERE "userId" = ANY($1)', [users])
-    await pool.query('UPDATE agent_runs SET "continuesRunId"=NULL,"threadReplacedBy"=NULL WHERE "userId" = ANY($1)', [users])
+    await pool.query('UPDATE agent_runs SET "continuesRunId"=NULL,"threadReplacedBy"=NULL,"parentRunId"=NULL WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM agent_runs WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM model_order_entries WHERE "ownerId" = ANY($1)', [users])
@@ -1176,4 +1176,61 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     assert.deepEqual(rows, [{ id: first.runId, status: 'queued', continuesRunId: original.runId }])
   })
 
+  await t.test('a fork from a message is a new thread of the task that replaces the source; only its owner forks', async () => {
+    const { forkThread } = await import('../lib/thread-continue')
+    const owner = await person()
+    const source = await steps.dispatchRun(owner.id, { model: { harness: 'codex' as const }, issueId: owner.issueId, repo: 'octo/repo', requestKey: `dispatch:${randomUUID()}` }, undefined, owner.botId) as unknown as { runId: string }
+    await pool.query(`INSERT INTO run_chunks (id,"runId",seq,chunk) VALUES ($1,$2,1,$3),($4,$2,2,$5)`, [randomUUID(), source.runId,
+      JSON.stringify({ type: 'text-delta', id: 'p1', delta: 'The skeleton is three bars.' }), randomUUID(), JSON.stringify({ type: 'text-delta', id: 'p2', delta: 'Rewrote it as the page shape.' })])
+    await end(source.runId, 'succeeded')
+    await observeFixtureAllowance(owner)
+    const input = { runId: source.runId, itemId: 'text:p1', mode: 'full' as const, text: 'Try a CSS-only skeleton.', requestId: randomUUID() }
+    const count = async () => (await pool.query('SELECT count(*)::int AS n FROM agent_runs WHERE "issueId"=$1', [owner.issueId])).rows[0].n
+    const before = await count()
+    // Denied: another person, a member of the owner's workspace, the owner in another workspace, an unknown run.
+    const stranger = await person()
+    await assert.rejects(forkThread(stranger.id, stranger.ws.id, input), { code: 'runNotFound' })
+    const teammate = await seedUser(pool, 'thread-continue')
+    users.push(teammate)
+    await pool.query('insert into mikka_workspace_members ("workspaceId","userId",name,email,role,status) values ($1,$2,$2,$3,$4,$5)', [owner.ws.id, teammate, `${teammate}@example.invalid`, 'member', 'active'])
+    await assert.rejects(forkThread(teammate, owner.ws.id, input), { code: 'runNotFound' })
+    const other = await seedWorkspace(pool, owner.id, [{ userId: owner.id, role: 'admin' }])
+    await assert.rejects(forkThread(owner.id, other.id, input), { code: 'runNotFound' })
+    await assert.rejects(forkThread(owner.id, owner.ws.id, { ...input, runId: randomUUID() }), { code: 'runNotFound' })
+    await assert.rejects(forkThread(owner.id, owner.ws.id, { ...input, itemId: 'text:none' }), { code: 'runNotFound' })
+    await assert.rejects(forkThread(owner.id, owner.ws.id, { ...input, text: '  ' }), { code: 'messageRequired' })
+    assert.equal(await count(), before, 'nothing was queued for a refused fork')
+
+    const fork = await forkThread(owner.id, owner.ws.id, input)
+    assert.notEqual(fork.runId, source.runId)
+    assert.equal(fork.threadId, fork.runId, 'the fork is its own thread')
+    assert.equal(fork.replacedThreadId, source.runId)
+    const { rows: [run] } = await pool.query('SELECT status,"issueId","continuesRunId","parentRunId","threadRelation",prompt FROM agent_runs WHERE id=$1', [fork.runId])
+    assert.deepEqual([run.status, run.issueId, run.continuesRunId, run.parentRunId, run.threadRelation], ['queued', owner.issueId, null, source.runId, 'fork'])
+    assert.match(run.prompt, /## Forked thread/)
+    assert.match(run.prompt, /Agent: The skeleton is three bars\./)
+    assert.doesNotMatch(run.prompt, /Rewrote it as the page shape/)
+    assert.match(run.prompt, /Try a CSS-only skeleton\./)
+    const { rows: shown } = await pool.query('SELECT text,origin,"deliveredAt" FROM run_messages WHERE "runId"=$1', [fork.runId])
+    assert.deepEqual(shown.map(row => [row.text, row.origin, row.deliveredAt !== null]), [['Try a CSS-only skeleton.', 'owner', true]], 'the instruction shows in the fork, already delivered')
+    const { rows: [replaced] } = await pool.query('SELECT "threadReplacedBy" FROM agent_runs WHERE id=$1', [source.runId])
+    assert.equal(replaced.threadReplacedBy, fork.runId)
+    assert.equal((await readRunChain(pool, owner.id, fork.runId))?.rootRunId, fork.runId)
+    // The source is history now: forking it again, or sending to it, is refused.
+    await assert.rejects(forkThread(owner.id, owner.ws.id, { ...input, requestId: randomUUID() }), { code: 'threadReplaced' })
+    await assert.rejects(sendThreadMessage(owner.id, source.runId, 'Again.'), { code: 'threadReplaced' })
+  })
+
+  await t.test('a deleted thread takes no more messages until it is restored', async () => {
+    const { deleteThread, restoreThread } = await import('../lib/thread-lifecycle-owner')
+    const owner = await person()
+    const run = await steps.dispatchRun(owner.id, { model: { harness: 'codex' as const }, issueId: owner.issueId, repo: 'octo/repo', requestKey: `dispatch:${randomUUID()}` }, undefined, owner.botId) as unknown as { runId: string }
+    await end(run.runId, 'succeeded')
+    await observeFixtureAllowance(owner)
+    const deleted = await deleteThread(pool, { ownerId: owner.id, workspaceId: owner.ws.id, runId: run.runId })
+    assert.ok(deleted && deleted !== 'working')
+    await assert.rejects(sendThreadMessage(owner.id, run.runId, 'Go on.'), { code: 'runNotFound' })
+    assert.ok(await restoreThread(pool, { ownerId: owner.id, workspaceId: owner.ws.id, runId: run.runId }))
+    assert.equal((await sendThreadMessage(owner.id, run.runId, 'Go on.')).continued, true)
+  })
 })

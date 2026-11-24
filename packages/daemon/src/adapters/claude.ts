@@ -73,7 +73,7 @@ import { mailboxInputs } from '@mikka/protocol/mailbox'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
 import { mailboxToolResult, type RunMailbox } from '../run-mailbox'
 import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
-import type { RunChunk } from "../chunks"
+import { toolOutputTail, type RunChunk } from "../chunks"
 import { CLI_EXITED_EARLY, redactDiagnostic, resultDiagnostics, subscriptionFailureCategory } from "./claude-failure"
 import {
   claudePermissionRules,
@@ -216,9 +216,10 @@ export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[
   } else if (message.type === "user") {
     const content = message.message.content
     if (!Array.isArray(content)) return chunks
+    const planTask = createdTask(message, content)
     for (const block of content) {
       if (block.type !== "tool_result") continue
-      const output = toolResultText(block.content)
+      const { text: output, truncated } = toolResultText(block.content)
       chunks.push(
         block.is_error
           ? {
@@ -230,6 +231,8 @@ export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[
               type: "tool-output-available",
               toolCallId: block.tool_use_id,
               output,
+              ...(truncated ? { outputTruncated: true as const } : {}),
+              ...(planTask ? { planTask } : {}),
             },
       )
     }
@@ -313,11 +316,23 @@ function claudeProviderException(error: unknown): ProviderFailure | undefined {
   return classifyProviderFailure(error)
 }
 
-function toolResultText(content: unknown): string {
-  if (typeof content === "string") return content.slice(-4000)
+/**
+ * The id TaskCreate gave its task (`tool_use_result.task.id`, the structured result the CLI keeps beside the text the
+ * model reads): only the id is kept, and only when the message answers one call, so it is that call's.
+ */
+function createdTask(message: { tool_use_result?: unknown }, content: readonly { type: string }[]): { id: string } | undefined {
+  if (content.filter(block => block.type === "tool_result").length !== 1) return undefined
+  const result = message.tool_use_result
+  const task = result && typeof result === "object" ? (result as { task?: unknown }).task : undefined
+  const id = task && typeof task === "object" ? (task as { id?: unknown }).id : undefined
+  return typeof id === "string" && id.length > 0 && id.length <= 64 ? { id } : undefined
+}
+
+function toolResultText(content: unknown): { text: string; truncated: boolean } {
+  if (typeof content === "string") return toolOutputTail(content)
   if (Array.isArray(content)) {
     // ToolSearch answers with tool_reference parts only: show the tools it loaded.
-    return content
+    return toolOutputTail(content
       .map((part: { type?: unknown; text?: unknown; tool_name?: unknown }) =>
         typeof part?.text === "string"
           ? part.text
@@ -325,10 +340,9 @@ function toolResultText(content: unknown): string {
             ? part.tool_name
             : "",
       )
-      .join("\n")
-      .slice(-4000)
+      .join("\n"))
   }
-  return ""
+  return { text: "", truncated: false }
 }
 
 /** Normalize only failed SDK results, before their diagnostics become display strings. */

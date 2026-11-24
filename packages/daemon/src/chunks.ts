@@ -63,6 +63,18 @@ export type MikkaDataTypes = {
 export type RunChunk = UIMessageChunk<unknown, MikkaDataTypes> & {
   /** Tool input-available to result, measured by the daemon's monotonic clock before batching. */
   toolDurationMs?: number
+  /** The adapter kept only the end of a tool's output (the last TOOL_OUTPUT_TAIL_CHARS characters). */
+  outputTruncated?: true
+  /** Claude Code's TaskCreate: the id its result gave the new task, so a later TaskUpdate finds it in the plan. */
+  planTask?: { id: string }
+}
+
+/** How much of a tool's output the adapters keep: its end, where a command's result and errors are. */
+export const TOOL_OUTPUT_TAIL_CHARS = 4000
+
+/** A tool's output as the adapters store it: the end of the text, marked when the start was cut. */
+export function toolOutputTail(text: string): { text: string; truncated: boolean } {
+  return text.length > TOOL_OUTPUT_TAIL_CHARS ? { text: text.slice(-TOOL_OUTPUT_TAIL_CHARS), truncated: true } : { text, truncated: false }
 }
 
 /** A start-up stage's outcome (stored, unlike `run-state`). */

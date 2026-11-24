@@ -369,6 +369,25 @@ export type PullReview = {
   state:
     "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
   submittedAt: string | null;
+  body?: string | null;
+};
+export type PullCommit = {
+  oid: string;
+  shortOid: string;
+  message: string;
+  author: string | null;
+  committedAt: string | null;
+  url: string | null;
+};
+export type PullReviewComment = {
+  id: string;
+  author: string | null;
+  body: string;
+  path: string | null;
+  line: number | null;
+  resolved: boolean;
+  createdAt: string | null;
+  state: string | null;
 };
 export type PullDetail = Omit<PullDirectoryRow, "threads"> & {
   changedFiles: number;
@@ -377,6 +396,9 @@ export type PullDetail = Omit<PullDirectoryRow, "threads"> & {
   /** GitHub stopped listing at the read's cap. */
   moreChecks: boolean;
   reviews: PullReview[];
+  commits?: PullCommit[];
+  commitCount?: number;
+  comments?: PullReviewComment[];
 };
 
 /** The query for one pull request's page and its merge: the same admitted repository as the directory. */

@@ -1,8 +1,10 @@
 import { parts, calls, turn, type SessionView, type TurnOutcome } from 'eve/events'
 import type { sessions } from 'eve/server'
 import type { EveScope } from './scope'
+import { eveStreamId } from './stream-id'
+import { subscriptionRefusal } from '../subscription-refusal'
 
-export const eveStreamId = (sessionId:string,turnId:string) => `eve:${sessionId}:${turnId}`
+export { eveStreamId }
 
 const FAILURE_CODE = /^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}(?: · ref [A-Za-z0-9_-]{1,128})?$/
 
@@ -13,11 +15,13 @@ export function projectEveTurn(view:SessionView,sessionId:string,turnId:string,o
   const content = parts(view,{turnId}).flatMap(part => (part.kind === 'text' || part.kind === 'reasoning') && typeof part.value === 'string' ? [{type:part.kind,text:part.value}] : [])
   const tools = calls(view,{turnId,kind:'tool'})
   // Only the closed preparation refusal, before any tool ran, establishes that no task started.
-  // Both missing-model codes share the modelRequired refusal (#3028).
-  const modelRequired=code==='HOOK_FAILED' && !tools.length && typeof error?.message==='string' ? /^Hook "[^"\r\n]{1,128}" failed: (executionModelUnknown|subscription_model_unavailable)$/.exec(error.message)?.[1] : undefined
+  // Its own refusal code survives so the chat names the recovery: a missing model reads
+  // modelRequired, a borrowed subscription unavailable (#3028, #3057).
+  const hookCode=code==='HOOK_FAILED' && !tools.length && typeof error?.message==='string' ? /^Hook "[^"\r\n]{1,128}" failed: ([a-zA-Z][a-zA-Z0-9_.]{0,127})(?: \([a-z][a-z0-9_]*\))?$/.exec(error.message)?.[1] : undefined
+  const refused=hookCode && subscriptionRefusal(hookCode) ? hookCode : undefined
   // Eve's committed facts map its internal details.errorId to ErrorInfo.id.
   const reference=error?.id
-  const failure=typeof modelRequired==='string' ? modelRequired : code+(typeof reference==='string' && reference===reference.trim() && /^[A-Za-z0-9_-]{1,128}$/.test(reference) ? ` · ref ${reference}` : '')
+  const failure=typeof refused==='string' ? refused : code+(typeof reference==='string' && reference===reference.trim() && /^[A-Za-z0-9_-]{1,128}$/.test(reference) ? ` · ref ${reference}` : '')
   const toolCalls = tools.map(call => ({ type:'tool-call',toolCallId:call.callId,toolName:call.name,input:call.input ?? {} }))
   const stopped = outcome === 'cancelled' ? { mikkaStopped:true, ...(stoppedText ? {mikkaDisplay:{version:1, kind:'reply', text:stoppedText}} : {}) } : {}
   const output = tools.filter(call => ['completed','failed','cancelled','rejected'].includes(call.state)).map(call => ({type:'tool-result',toolCallId:call.callId,toolName:call.name,output:{type:'json',value:call.output ?? {error:call.error?.code ?? call.state}}}))

@@ -81,6 +81,12 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
   const store = new HostedUsageStore(pool)
   await pool.query(readFileSync('drizzle/20261121043334_add_hosted_usage_message_attribution.sql', 'utf8'))
   await pool.query(readFileSync('drizzle/20261122084255_hosted_usage_turn_ref.sql', 'utf8'))
+  // A receipt settled before the funding column existed: who paid it is unknown, never zero.
+  const settledBefore = randomUUID()
+  await pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","unpaidMicroUsd") VALUES ($1,$2,'fixture/model','settled',23,23)`, [settledBefore, old])
+  const platformFunded = readFileSync('drizzle/20261123210000_hosted_usage_platform_funded.sql', 'utf8')
+  await pool.query(platformFunded)
+  await pool.query(platformFunded)
   await t.test('a scripted LiteLLM BYOK receipt keeps its usage and does not consume the workspace budget', async t => {
     const { createServer } = await import('node:http')
     const { drizzle } = await import('drizzle-orm/node-postgres')
@@ -246,6 +252,41 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     assert.equal((await store.balance(funded)).free, 999_000)
     await pool.query('UPDATE hosted_allowances SET remaining=0 WHERE "workspaceId"=$1', [funded])
     await assert.rejects(store.canUseMikkaPaid(funded), /points_exhausted/)
+  })
+  await t.test('settlement records the part of the cost the platform funded', async () => {
+    const funding = async (call: string) => (await pool.query(`SELECT "costMicroUsd"::int AS cost,"platformMicroUsd"::int AS platform,
+      "freeMicroUsd"::int AS free,"planMicroUsd"::int AS plan,"purchasedMicroUsd"::int AS purchased,"unpaidMicroUsd"::int AS unpaid
+      FROM hosted_usage WHERE id=$1`, [call])).rows[0]
+    assert.equal((await funding(settledBefore)).platform, null, 'a receipt settled before the column keeps NULL, never zero')
+    // A free-message turn: no card, nothing bought. The platform pays all of it; nothing is debited.
+    const unverified = randomUUID(), turn = randomUUID()
+    await pool.query('INSERT INTO hosted_allowances ("workspaceId",remaining) VALUES ($1,1000000)', [unverified])
+    assert.equal((await store.balance(unverified)).verified, false)
+    await store.reserve(unverified, 'fixture-free-turn', turn)
+    await store.settle(turn, 7_000, 3, 3)
+    assert.deepEqual(await funding(turn), { cost: 7_000, platform: 7_000, free: 0, plan: 0, purchased: 0, unpaid: 7_000 })
+    assert.equal((await store.balance(unverified)).free, 1_000_000)
+    // A verified workspace: its legacy free credit is the platform's, purchased credit is charged.
+    const mixed = await verified(), split = randomUUID()
+    await pool.query('UPDATE hosted_allowances SET remaining=1000 WHERE "workspaceId"=$1', [mixed])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,1,'purchased')", [randomUUID(), mixed])
+    await store.reserve(mixed, 'fixture-split', split)
+    await store.settle(split, 5_000)
+    assert.deepEqual(await funding(split), { cost: 5_000, platform: 1_000, free: 1_000, plan: 0, purchased: 4_000, unpaid: 1_000 })
+    // Debt is the workspace's own: an overrun past purchased credit is charged, not covered, though it is also unpaid.
+    const owing = await verified(), overrun = randomUUID()
+    await pool.query('UPDATE hosted_allowances SET remaining=0 WHERE "workspaceId"=$1', [owing])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,1,'purchased')", [randomUUID(), owing])
+    await store.reserve(owing, 'fixture-debt', overrun)
+    await store.settle(overrun, 25_000)
+    assert.deepEqual(await funding(overrun), { cost: 25_000, platform: 0, free: 0, plan: 0, purchased: 25_000, unpaid: 15_000 })
+    // An unknown cost records no funding until it is reconciled.
+    const later = randomUUID()
+    await store.reserve(unverified, 'fixture-free-turn', later)
+    await store.settle(later, null)
+    assert.equal((await funding(later)).platform, null)
+    await store.settle(later, 2_000)
+    assert.equal((await funding(later)).platform, 2_000)
   })
   await t.test(
     'legacy snapshot contains existing workspaces only',

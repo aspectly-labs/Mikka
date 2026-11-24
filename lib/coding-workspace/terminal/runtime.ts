@@ -21,12 +21,13 @@ async function options(ownerId: string, signal?: AbortSignal) {
     proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy, requestTimeoutMs: 15_000, retries: 0, signal }
 }
 
-function cloud(scope: TaskReviewAuthority): asserts scope is TaskReviewAuthority & { sandboxId: string } {
+function cloud(scope: TaskReviewAuthority & { threadTerminal?: boolean }): asserts scope is TaskReviewAuthority & { sandboxId: string; threadTerminal?: boolean } {
   if (scope.machineKind !== 'cloud') throw new TerminalError('terminal_unsupported', { detail: 'local_device' })
   if (!scope.sandboxId) throw new TerminalError('terminal_binding_changed')
   // A DB pause flag is never a native-exit receipt. The gateway additionally
   // checks the exact idle daemon receipt while holding its execution flock.
-  if (!scope.nativeExitedProof) throw new TerminalError('terminal_already_controlled')
+  // Thread-owned terminals carry no review fence: the owner keeps the shell.
+  if (!scope.nativeExitedProof && !scope.threadTerminal) throw new TerminalError('terminal_already_controlled')
 }
 
 /** getInfo is read-only. Input and revocation never call Sandbox.connect,
@@ -115,11 +116,19 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
     const version = createHash('sha256').update(source).digest('hex')
     const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
     let current = await health(origin, key, signal)
-    if (current && current.version !== version) throw new TerminalError('terminal_unsupported', { detail: 'runtime_version' })
     // Only opening/reconnecting performs this root check. Input/resize/close
     // keep the existing data plane and never issue a per-command SDK RPC.
     const sandbox = await withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...config, timeoutMs: 5 * 60_000 }))
-    await verifyRuntime(sandbox, signal)
+    // The review egress guard is a task-review runtime; thread machines are
+    // not required to carry it.
+    if (!scope.threadTerminal) await verifyRuntime(sandbox, signal)
+    if (current && current.version !== version) {
+      // A gateway from an older source hash keeps the socket and the service
+      // lock for the VM's life; ending it frees both so the install below
+      // takes over instead of refusing the terminal for good.
+      await sandbox.commands.run(`pkill -f '${INSTALL}/gateway-' ; sleep 1`, { user: 'root', timeoutMs: 10_000, signal }).catch(() => undefined)
+      current = null
+    }
     if (!current) {
       // resumeReviewMachine has already acquired the dedicated review lease.
       // The same running sandbox is the only target; never create a VM here.

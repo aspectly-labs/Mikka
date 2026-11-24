@@ -39,3 +39,17 @@ it("shows the tools a ToolSearch loaded instead of an empty output", () => {
     { type: "tool-output-available", toolCallId: "toolu_01", output: "mcp__mikka__submit\nmcp__mikka__report_blocked" },
   ])
 })
+
+it("keeps the end of a long tool result and marks that its start was cut (#2937)", () => {
+  const message = (content: unknown) => ({
+    type: "user",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_02", content }] },
+    parent_tool_use_id: null,
+    session_id: "s",
+  }) as unknown as SDKMessage
+  const long = `HEAD${"x".repeat(5000)}TAIL`
+  const [cut] = claudeChunks(message(long))
+  expect(cut).toEqual({ type: "tool-output-available", toolCallId: "toolu_02", output: long.slice(-4000), outputTruncated: true })
+  expect(claudeChunks(message([{ type: "text", text: long }]))[0]).toMatchObject({ outputTruncated: true })
+  expect(claudeChunks(message("short"))).toEqual([{ type: "tool-output-available", toolCallId: "toolu_02", output: "short" }])
+})

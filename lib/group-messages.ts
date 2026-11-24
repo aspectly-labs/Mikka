@@ -21,7 +21,7 @@ export type GroupMessage = {
 /** An `agent_exchange` timeline marker: two members had a private exchange anchored at a group message's position. The bounded transcript is readable through the link. */
 export type GroupExchange = { type: 'agent_exchange'; linkId: string; anchorPosition: string; count: string; participants: GroupParticipant[] }
 /** `timeline` interleaves each page's messages with the exchange markers anchored on them. */
-export type GroupMessagePage = { readRevision?: number; messages: GroupMessage[]; timeline?: ({ type: 'message'; id: string; position: string } | GroupExchange)[]; nextBefore: string | null; agentStatus?: { status: string } | null; routingError?: { code: string } | null; stopped?: boolean; unchanged?: boolean; appended?: boolean; /** The group_chat key's revision, read before this newest page. */ revision?: number }
+export type GroupMessagePage = { readRevision?: number; messages: GroupMessage[]; timeline?: ({ type: 'message'; id: string; position: string } | GroupExchange)[]; nextBefore: string | null; agentStatus?: { status: string } | null; /** Who is writing a reply now, in the order they started. */ answering?: { memberType: 'bot' | 'agent'; id: string }[]; routingError?: { code: string } | null; stopped?: boolean; unchanged?: boolean; appended?: boolean; /** The group_chat key's revision, read before this newest page. */ revision?: number }
 export type GroupMessagesError = 'unauthorized' | 'not_found' | 'unavailable'
 
 export class GroupMessagesRequestError extends Error {
@@ -72,8 +72,12 @@ export async function stopGroupReply(id: string, fetcher: typeof fetch = fetch):
   if (!response.ok) throw new GroupMessagesRequestError(response.status === 401 ? 'unauthorized' : response.status === 404 ? 'not_found' : 'unavailable', response.status)
 }
 
-/** A poll that already shows the latest message keeps that page. New messages are prepended; a full page replaces it. */
-export function mergeGroupPoll(previous: GroupMessagePage | null, next: GroupMessagePage): GroupMessagePage {
+/**
+ * A cursor read of the newest page merged into the page held (no timer reads a group: the group's live key triggers
+ * the read, hooks/use-live-key.tsx). A read with nothing new keeps the held page; new messages are prepended; a full
+ * page replaces it.
+ */
+export function mergeGroupRead(previous: GroupMessagePage | null, next: GroupMessagePage): GroupMessagePage {
   if (!previous) return next
   // Nothing new since the shown page: it is current at this read's revision.
   // A fresh exchange may still arrive without a new message — carry unseen markers forward.
@@ -81,7 +85,7 @@ export function mergeGroupPoll(previous: GroupMessagePage | null, next: GroupMes
     const seenLinks = new Set((previous.timeline ?? []).map(item => item.type === 'agent_exchange' ? item.linkId : item.id))
     const addedItems = (next.timeline ?? []).filter(item => item.type === 'agent_exchange' && !seenLinks.has(item.linkId))
     const timeline = addedItems.length ? [...addedItems, ...(previous.timeline ?? [])] : previous.timeline
-    return { ...previous, agentStatus: next.agentStatus ?? null, routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision, timeline }
+    return { ...previous, agentStatus: next.agentStatus ?? null, answering: next.answering ?? [], routingError: next.routingError ?? null, stopped: next.stopped, ...(next.readRevision !== undefined ? { readRevision: next.readRevision } : {}), revision: next.revision, timeline }
   }
   if (next.appended) {
     const seen = new Set(previous.messages.map(message => message.id))
@@ -138,7 +142,7 @@ const listIn = <T>(key: string) => (body: unknown) => {
 }
 
 /** A group chat the person is in, with its latest message (GET /api/conversations). */
-export type GroupSummary = { creationPurpose?: 'group' | 'conversation'; unreadCount?: string; markedUnread?: boolean; /** Who created it (conversations.createdBy); its owner, who cannot leave. */ createdBy?: string; /** The person's own 置顶 / 隐藏 for it (lib/chat-preferences.ts). */ pinned?: boolean; hidden?: boolean; pinOrder?: number | null; id: string; workspaceId: string; title: string; createdAt: string; lastMessage: GroupMessage | null }
+export type GroupSummary = { creationPurpose?: 'group' | 'conversation'; unreadCount?: string; markedUnread?: boolean; /** Who created it (conversations.createdBy); its owner, who cannot leave. */ createdBy?: string; /** The person's own 置顶 / 隐藏 for it (lib/chat-preferences.ts). */ pinned?: boolean; hidden?: boolean; pinOrder?: number | null; id: string; workspaceId: string; title: string; createdAt: string; lastMessage: GroupMessage | null; /** Its first Bot members' faces, for its avatar in the chat list (R-36); absent from an older server. */ bots?: { id: string; color: string | null; shape: string | null; coordinator?: boolean }[] }
 
 /** The person's group chats in one workspace, for the bot list (R-01). */
 export function fetchGroups(workspaceId: string, fetcher: typeof fetch = fetch): Promise<GroupSummary[]> {

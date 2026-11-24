@@ -78,14 +78,14 @@ const RUN_COLUMNS = `r.id,r."userId",r."issueId",r."deviceId",r."deviceRepoId",r
 const RUN_JOINS = `LEFT JOIN bots b ON b.id=r."botId" LEFT JOIN computer_run_bindings c ON c."runId"=r.id`
 const MACHINE_COLUMNS = '"runId","ownerId","workspaceId","issueId","deviceId","repoId","sandboxId","snapshotId",epoch,"operationId",state,lifecycle'
 
-function credentialOf(session: ApiSession): ReviewCredential {
+export function credentialOf(session: ApiSession): ReviewCredential {
   if (!session.user.id || !session.session.id) throw new ReviewAuthorityError('review_auth_required')
   const pat = session.session.id.startsWith('pat:')
   if (pat && (!session.tokenWorkspaceId || session.user[tokenWorkspace] !== session.tokenWorkspaceId)) throw denied()
   return { kind: pat ? 'pat' : 'session', id: pat ? session.session.id.slice(4) : session.session.id }
 }
 
-async function lockCredential(client: PoolClient, session: ApiSession, credential: ReviewCredential): Promise<string | null> {
+export async function lockCredential(client: PoolClient, session: ApiSession, credential: ReviewCredential): Promise<string | null> {
   const found = credential.kind === 'session'
     ? await client.query<{ expiresAt: Date | null }>('SELECT "expiresAt" FROM "session" WHERE id=$1 AND "userId"=$2 AND "expiresAt">clock_timestamp() FOR SHARE', [credential.id, session.user.id])
     : await client.query<{ expiresAt: Date | null }>(`SELECT "expiresAt" FROM personal_access_tokens WHERE id=$1 AND "userId"=$2 AND "workspaceId"=$3

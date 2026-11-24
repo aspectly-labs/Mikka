@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test, { before, mock } from 'node:test'
+import { WorkspaceError } from '../workspace-error'
 
 // Goes through the real app/api/threads/[runId]/machine/route.ts. The session,
 // workspace and machine actions are stubbed, so no database or E2B is reached.
@@ -15,7 +16,7 @@ before(async () => {
   })
   mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: { pool: {}, db: null } })
   mock.module(new URL('../workspace-access.ts', import.meta.url).href, {
-    namedExports: { loadWorkspaceContext: async () => ({ workspace: { id: 'workspace-a' } }) },
+    namedExports: { loadWorkspaceContext: async () => ({ workspace: { id: 'workspace-a' } }), requireWorkspace: async () => undefined, WorkspaceError },
   })
   mock.module(new URL('./thread-machines.ts', import.meta.url).href, {
     namedExports: { threadMachineAction: async (_pool: unknown, _actor: unknown, runId: string, action: string) => { calls.push(action); return { runId, state: action } } },

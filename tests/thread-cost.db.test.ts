@@ -26,11 +26,19 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
 
   let chunk = 0
   // Machine prepayments carry machineChunkId's id format; model receipts do not.
-  const receipt = (run: string, model: string, state: string, cost: number | null, source: string | null, tokens = [0, 0]) =>
-    pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","billingSource","usageRunId","usageThreadId","inputTokens","outputTokens")
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [model.startsWith('machine/') && source === null ? `machine:${run}:${randomUUID()}:${chunk++}` : randomUUID(),
-      workspace.id, model, state, cost, source, run, root, tokens[0], tokens[1]])
-  await receipt(root, 'claude-sonnet', 'settled', 1_200, 'credits', [1000, 200])
+  // Settlement records the platform-funded part of a Mikka 额度 receipt; by default these were charged in full.
+  const credit = (state: string, cost: number | null, source: string | null) =>
+    state === 'settled' && cost !== null && source !== 'api_key' && source !== 'subscription'
+  const receipt = (run: string, model: string, state: string, cost: number | null, source: string | null, tokens = [0, 0],
+    platform: number | null = credit(state, cost, source) ? 0 : null) =>
+    pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","billingSource","usageRunId","usageThreadId","inputTokens","outputTokens","platformMicroUsd")
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [model.startsWith('machine/') && source === null ? `machine:${run}:${randomUUID()}:${chunk++}` : randomUUID(),
+      workspace.id, model, state, cost, source, run, root, tokens[0], tokens[1], platform])
+  await receipt(root, 'claude-sonnet', 'settled', 1_200, 'credits', [1000, 200]) // purchased credit: charged
+  await receipt(root, 'claude-haiku', 'settled', 4_000, 'credits', [10, 10], 4_000) // a free-message turn: the platform paid it all
+  await receipt(next, 'claude-haiku', 'settled', 3_000, 'credits', [20, 20], 1_000) // legacy free credit paid part, purchased the rest
+  await receipt(root, 'claude-sonnet', 'settled', 900, 'credits', [0, 0], null) // settled before funding was recorded: unknown
+  await receipt(root, 'machine/cloudflare-standard-1', 'settled', 8_333, null, [0, 0], null) // a chunk of unknown funding
   await receipt(root, 'claude-sonnet', 'settled', 800, null, [500, 100]) // legacy receipt: no source means credits
   await receipt(next, 'claude-sonnet', 'unknown', null, 'credits') // provider outcome unknown: held, not free
   await receipt(next, 'claude-sonnet', 'settled', null, 'credits') // settled without a cost figure
@@ -45,8 +53,8 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
   // A custom API-key provider may name a model like a machine label; it is still a model call.
   await receipt(next, 'machine/cloudflare-standard-1', 'settled', 300, 'api_key', [5, 5])
   // A credits receipt under that label but without a chunk id is a model call too: only the id marks a prepayment.
-  await pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","billingSource","usageRunId","inputTokens","outputTokens")
-    VALUES ($1,$2,'machine/cloudflare-standard-1','settled',50,'credits',$3,2,2)`, [randomUUID(), workspace.id, next])
+  await pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","billingSource","usageRunId","inputTokens","outputTokens","platformMicroUsd")
+    VALUES ($1,$2,'machine/cloudflare-standard-1','settled',50,'credits',$3,2,2,0)`, [randomUUID(), workspace.id, next])
   await pool.query(`INSERT INTO thread_machine_sessions ("runId","ownerId","workspaceId","sandboxId","startedAt","endedAt",reason,source)
     VALUES ($1,$2,$3,'vm-1',now()-interval '600 seconds',now(),'paused','running_since'),
       ($4,$2,$3,'vm-2',now()-interval '120 seconds',NULL,NULL,'running_since'),
@@ -56,18 +64,38 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
     const cost = await readThreadCost(pool, { ownerId: owner, workspaceId: workspace.id, runId: next, groupBy: 'thread' })
     assert.ok(cost)
     assert.equal(cost.threadId, root)
-    assert.deepEqual(cost.totals.credits, { microUsd: 1_200 + 800 + 50 + 8_334 + 12_500, unpricedReceipts: 3 })
+    assert.deepEqual(cost.totals.credits, { microUsd: 1_200 + 800 + 2_000 + 50 + 8_334 + 12_500, unpricedReceipts: 3 })
     assert.deepEqual(cost.totals.included, { microUsd: 600, unpricedReceipts: 1,
       bySource: { api_key: { microUsd: 600, unpricedReceipts: 0 }, subscription: { microUsd: 0, unpricedReceipts: 1 } } })
+    assert.deepEqual(cost.totals.covered, { microUsd: 4_000 + 1_000, receipts: 2 })
+    assert.deepEqual(cost.totals.fundingUnknown, { microUsd: 900 + 8_333, receipts: 2 })
     assert.equal(cost.models, undefined)
     assert.equal(cost.machines, undefined)
+  })
+
+  await t.test('a free-message turn is covered, purchased credit is charged, unrecorded funding is unknown', async () => {
+    const solo = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: workspace.id })
+    await receipt(solo, 'claude-haiku', 'settled', 4_000, 'credits', [10, 10], 4_000)
+    await receipt(solo, 'claude-haiku', 'settled', 1_500, 'credits', [10, 10], 0)
+    await receipt(solo, 'claude-haiku', 'settled', 700, 'credits', [10, 10], null)
+    const cost = await readThreadCost(pool, { ownerId: owner, workspaceId: workspace.id, runId: solo, groupBy: 'thread' })
+    assert.deepEqual(cost?.totals.credits, { microUsd: 1_500, unpricedReceipts: 0 }, 'only what was charged')
+    assert.deepEqual(cost?.totals.covered, { microUsd: 4_000, receipts: 1 })
+    assert.deepEqual(cost?.totals.fundingUnknown, { microUsd: 700, receipts: 1 }, 'neither charged nor covered')
   })
 
   await t.test('grouped by model, machine chunks are not models', async () => {
     const cost = await readThreadCost(pool, { ownerId: owner, workspaceId: workspace.id, runId: root, groupBy: 'model' })
     assert.deepEqual(cost?.models?.map(row => [row.model, row.calls, row.inputTokens, row.outputTokens, row.bySource.credits.microUsd]),
-      [['claude-sonnet', 4, 1500, 300, 2_000], ['machine/cloudflare-standard-1', 2, 7, 7, 50], ['claude-opus', 1, 70, 30, 0], ['gpt-5', 1, 40, 10, 0]])
+      [['claude-sonnet', 5, 1500, 300, 2_000], ['claude-haiku', 2, 30, 30, 2_000], ['machine/cloudflare-standard-1', 2, 7, 7, 50],
+        ['claude-opus', 1, 70, 30, 0], ['gpt-5', 1, 40, 10, 0]])
     assert.equal(cost?.models?.[0].bySource.credits.unpricedReceipts, 2)
+    assert.deepEqual(cost?.models?.map(row => [row.model, row.covered, row.fundingUnknown]), [
+      ['claude-sonnet', { microUsd: 0, receipts: 0 }, { microUsd: 900, receipts: 1 }],
+      ['claude-haiku', { microUsd: 5_000, receipts: 2 }, { microUsd: 0, receipts: 0 }],
+      ['machine/cloudflare-standard-1', { microUsd: 0, receipts: 0 }, { microUsd: 0, receipts: 0 }],
+      ['claude-opus', { microUsd: 0, receipts: 0 }, { microUsd: 0, receipts: 0 }],
+      ['gpt-5', { microUsd: 0, receipts: 0 }, { microUsd: 0, receipts: 0 }]])
   })
 
   await t.test('grouped by machine: one size is metered at its rate, no rate is guessed otherwise', async () => {
@@ -78,6 +106,7 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
     assert.ok(small.seconds >= 600 && small.seconds <= 601, `seconds ${small.seconds}`)
     assert.equal(small.meteredMicroUsd, Math.round(small.seconds * 100_000 / 3600)) // 4 GiB × 25_000 per GiB-hour
     assert.equal(small.chargedMicroUsd, 8_334)
+    assert.deepEqual([small.coveredMicroUsd, small.fundingUnknownMicroUsd], [0, 8_333])
     const open = rows.get('unbilled')!
     assert.ok(open.seconds >= 120 && open.seconds <= 122, 'an open interval counts up to now')
     assert.equal(open.meteredMicroUsd, null)
