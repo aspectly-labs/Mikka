@@ -67,10 +67,11 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
     } catch (firstFailure) {
       // The cached principal can point at a payer that ran dry inside this
       // batch; drop it once and let withSharedCredits pick a funded sharer.
-      // Same payer reselected — the refusal is real, not staleness.
+      // Same principal reselected — the refusal is real, not staleness. The
+      // organization is part of it: a payer under a new org still retries.
       forget(principalKey)
       const retryPrincipal = await gate(principalKey, loadPrincipal)
-      if (retryPrincipal.payer === billingPrincipal.payer) throw firstFailure
+      if (retryPrincipal.payer === billingPrincipal.payer && retryPrincipal.organizationId === billingPrincipal.organizationId) throw firstFailure
       await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), retryPrincipal)
     }
   }
