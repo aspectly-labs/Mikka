@@ -8,6 +8,7 @@ import { withReadOnlyPolicyObservation } from '@/lib/desktop-rpc/read-batch-cont
 import type { ListLiveRead } from '@/lib/live/list-read'
 
 import { cookies, headers } from '@/lib/server-runtime/headers'
+import { storedLocale } from '@/i18n/locale-cookie.mjs'
 import { afterJob } from '@/lib/background'
 import { z } from 'zod'
 import { ActionFailureError, runAction } from '@/lib/action-error'
@@ -258,7 +259,8 @@ export async function welcomeCoordinator(botId: string | null = null): Promise<A
     const scope = { ownerId: session.user.id, workspaceId: bot.workspaceId }
     const choice = await resolveBotModelChoice(pool, new ExecutionSettings(pool), scope, bot.id, await botModelPreference(pool, scope, bot.id))
     if (choice.kind === 'none') return { queued: false, reason: 'modelRequired' }
-    const locale = (await cookies()).get('NEXT_LOCALE')?.value ?? 'zh-CN'
+    const jar = await cookies()
+    const locale = storedLocale((name) => jar.get(name)?.value) ?? 'zh-CN'
     const event = userMessageEvent(session.user.id, coordinatorWelcome(session.user.name ?? '', locale, bot.coordinator ? undefined : bot.name), { botId: bot.id })
     await recordCoordinatorEvent(db, { ...event, payload: { ...event.payload, source: 'coordinator_welcome' } })
     return { queued: true }
