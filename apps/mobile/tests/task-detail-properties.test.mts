@@ -20,7 +20,7 @@ const pressable = ({ children, onPress, accessibilityLabel }: { children?: React
 mock.module('react-native', { namedExports: { View: box, ScrollView: box, StyleSheet: { create: (styles: unknown) => styles }, Pressable: pressable, Linking: { openURL: (url: string) => routes.push(url) } } })
 mock.module('expo-router', { namedExports: { useRouter: () => ({ push: (path: string) => routes.push(path) }), useLocalSearchParams: () => ({ id: 'task' }) } })
 mock.module('react-native-safe-area-context', { namedExports: { useSafeAreaInsets: () => ({ bottom: 0 }) } })
-const icons = { namedExports: Object.fromEntries(['ChartNoAxesColumn', 'ChevronRight', 'Circle', 'CircleUserRound', 'Flag', 'GitBranch', 'GitMerge', 'GitPullRequest',
+const icons = { namedExports: Object.fromEntries(['ArrowUpRight', 'ChartNoAxesColumn', 'ChevronRight', 'Circle', 'CircleUserRound', 'Flag', 'GitBranch', 'GitMerge', 'GitPullRequest',
   'GitPullRequestClosed', 'GitPullRequestDraft', 'Link', 'ListTree', 'MessageSquare', 'MessagesSquare', 'Sparkles', 'UserRound'].map(name => [name, ({ color }: { color?: string }) => createElement('i', { 'data-icon': name, 'data-color': color })])) }
 mock.module('lucide-react-native', icons)
 // The screen is loaded through require, which picks the package's CommonJS entry; where that differs from the ESM one, mock it too.

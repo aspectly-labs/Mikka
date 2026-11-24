@@ -1,7 +1,7 @@
 import { ReadNotice } from '@/components/ReadNotice'
 import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
 import { useCallback, useRef } from 'react'
-import { useFocusEffect, useRouter } from 'expo-router'
+import { useFocusEffect, usePathname, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Puzzle, Sparkles } from 'lucide-react-native'
 import { SourceIcon } from '@/components/icons'
@@ -32,6 +32,8 @@ const counted = (count: number) => (count === 1 ? mobileMessages.MobileCore.item
  */
 export default function SuggestionsScreen() {
   const router = useRouter()
+  // Opened from the sidebar trial as /browse/suggestions: its pages stay on that stack (the tab is hidden there).
+  const browsing = usePathname().startsWith('/browse')
   const insets = useSafeAreaInsets()
   const { data, error, loading, reload, setData } = useApi<Suggestions>(`/api/suggestions?tz=${encodeURIComponent(timeZone)}`)
   const refresh = useRefresh(reload)
@@ -63,7 +65,7 @@ export default function SuggestionsScreen() {
   return (
     <View style={styles.screen}>
       <NavBar title={mobileMessages.Nav.suggestions} topTitle
-        right={{ icon: 'puzzlepiece.extension', label: mobileMessages.Nav.plugins, web: <Puzzle size={20} color={colors.ink} strokeWidth={2} />, onPress: () => router.push('/suggestions/plugins') }} />
+        right={{ icon: 'puzzlepiece.extension', label: mobileMessages.Nav.plugins, web: <Puzzle size={20} color={colors.ink} strokeWidth={2} />, onPress: () => router.push(browsing ? '/browse/plugins' : '/suggestions/plugins') }} />
       <FlatList
         data={items}
         keyExtractor={item => item.id}
@@ -95,7 +97,7 @@ export default function SuggestionsScreen() {
           const disabled = anyPending || state.status === 'unavailable' || state.status === 'accepted'
           const errorText = 'error' in state ? mobileMessages.Errors[state.error as keyof typeof mobileMessages.Errors] : null
           const message = typeof errorText === 'string' ? errorText : 'error' in state ? mobileMessages.Errors.generic : null
-          return <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ busy: pending, disabled }} onPress={() => { void arrange(item) }} style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }]}>
+          return <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ busy: pending, disabled }} onPress={() => { void arrange(item) }} style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }, disabled && !pending && { opacity: 0.45 }]}>
             <View style={styles.badge}><SourceIcon source={item.source} size={16} /></View>
             <View style={styles.body}>
               <Text style={styles.title} numberOfLines={2}>{VERB[item.action] ? <Text style={styles.verb}>{VERB[item.action]} </Text> : null}{item.title}</Text>

@@ -17,6 +17,7 @@ import { setSidebarBot, useSidebarTrial } from '@/lib/sidebar-trial'
 import { colors } from '@/lib/theme'
 import { mobileMessages } from '@/lib/messages'
 import { useHomeChats } from '@/features/home/model/use-home-chats'
+import { SidebarOpener } from '../model/sidebar-opener'
 import { directoryConversationKey, type ConversationDirectoryPage } from '../../../../../lib/conversation-directory-input'
 
 /** The tab roots: only there does a swipe to the right open the sidebar; on a pushed page it stays the back swipe. */
@@ -41,6 +42,7 @@ function SidebarShell({ children }: { children: ReactNode }) {
   const { width } = useWindowDimensions()
   const close = useCallback(() => drawer.current?.closeDrawer(), [])
   const go = useCallback((href: Href) => { drawer.current?.closeDrawer(); router.push(href) }, [router])
+  const open = useCallback(() => { tap(); drawer.current?.openDrawer() }, [])
   const renderNavigationView = useCallback(() => <SidebarContent go={go} close={close} />, [close, go])
   return (
     <DrawerLayout
@@ -51,9 +53,11 @@ function SidebarShell({ children }: { children: ReactNode }) {
       drawerBackgroundColor={colors.grouped}
       overlayColor="rgba(0, 0, 0, 0.08)"
       edgeWidth={width}
-      minSwipeDistance={5}
+      // 12 pt, past the system's tap slop: at 5 pt a tap that drifted right started the drawer and the tap was lost,
+      // so rows and buttons on the 任务 tab seemed not to respond (Alex 2026-11-24, 「很多地方是点不动的」).
+      minSwipeDistance={12}
       drawerLockMode={atRoot ? DrawerLockMode.UNLOCKED : DrawerLockMode.LOCKED_CLOSED}>
-      {children}
+      <SidebarOpener.Provider value={atRoot ? open : null}>{children}</SidebarOpener.Provider>
     </DrawerLayout>
   )
 }
@@ -83,6 +87,10 @@ function SidebarContent({ go, close }: { go: (href: Href) => void; close: () => 
       <View style={styles.gap} />
       <Place label={mobileMessages.Nav.newBot} onPress={() => go('/new-bot')} icon={<Symbol name="plus" size={17} color={colors.accent} />} accent />
       <Place label={mobileMessages.Nav.newGroup} onPress={() => go('/new-group')} icon={<Symbol name="person.2" size={17} color={colors.accent} />} accent />
+      <View style={styles.gap} />
+      {/* 搜索 and 建议 are hidden tabs in the trial (the bar is Chat and Issues): they open from here, on the root stack. */}
+      <Place label={mobileMessages.Common.search} onPress={() => go('/browse/search')} icon={<Symbol name="magnifyingglass" size={17} color={colors.secondary} />} />
+      <Place label={mobileMessages.Nav.suggestions} onPress={() => go('/browse/suggestions')} icon={<Symbol name="lightbulb" size={17} color={colors.secondary} />} />
       <View style={styles.gap} />
       {/* 设置 is not a tab in the trial (Alex: the bar is Chat and Issues): it opens from here, under the person's own name,
          as /account on the root stack, because a hidden tab cannot be opened. */}
@@ -124,6 +132,7 @@ function BotThreadList({ botId, workspaceId, go }: { botId: string; workspaceId?
   if (!page && read.error) return <View style={styles.threads}><ReadNotice error={read.error} hasData={false} label={mobileMessages.ConversationDirectory.title} onRetry={read.reload} /></View>
   if (!page) return <View style={styles.threadsLoading}><Spinner /></View>
   const items = page.items
+  if (!items.length) return <View style={styles.threads}><Text style={[styles.threadTitle, styles.threadsEmpty]}>{mobileMessages.ConversationDirectory.emptyTitle}</Text></View>
   return (
     <View style={styles.threads}>
       {items.map(item => (
@@ -167,6 +176,7 @@ const styles = StyleSheet.create({
   chevron: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   threads: { paddingLeft: 54, paddingBottom: 6 },
   threadsLoading: { paddingLeft: 54, paddingVertical: 10, alignItems: 'flex-start' },
-  thread: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 10, borderCurve: 'continuous' },
+  threadsEmpty: { paddingHorizontal: 10, paddingVertical: 10, color: colors.tertiary },
+  thread: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 10, borderCurve: 'continuous' },
   threadTitle: { fontSize: 15, lineHeight: 20, color: colors.secondary },
 })

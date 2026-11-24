@@ -36,13 +36,14 @@ test('the fade under the bar is drawn only on iOS before 26', () => {
   assert.equal(needsTopFade('web', '18'), false)
 })
 
-test('every tab root uses topTitle and nothing on the left', () => {
+// The one exception (2026-11-24, sidebar trial): the sidebar's own button, present only while the trial's drawer is.
+test('every tab root uses topTitle and nothing on the left but the sidebar trial\'s opener', () => {
   const roots = ['features/home/screens/home-screen.tsx', 'features/tasks/screens/tasks-screen.tsx', 'app/(tabs)/suggestions/index.tsx', 'app/(tabs)/settings/index.tsx', 'features/search/screens/search-screen.tsx']
   for (const file of roots) {
     const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
     const bar = source.slice(source.indexOf('<NavBar'), source.indexOf('/>', source.indexOf('<NavBar')))
     assert.match(bar, /\btopTitle\b/, file)
-    assert.doesNotMatch(bar, /\bleft=/, file)
+    assert.doesNotMatch(bar.replace(/\bleft=\{openSidebar \? \{ icon: 'sidebar\.left'[^}]*\} : undefined\}/, ''), /\bleft=/, file)
     assert.doesNotMatch(bar, /\blarge\b/, file)
   }
 })

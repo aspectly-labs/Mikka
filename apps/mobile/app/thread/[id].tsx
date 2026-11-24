@@ -3,7 +3,7 @@ import { useThreadReadEnd } from '@/features/chat/model/use-thread-read-end'
 import { MobileReplyVersions } from '@/features/chat/components/thread-reply-versions'
 import { useThreadDeliveryControls } from '@/features/chat/components/thread-delivery-controls'
 import { conversationAccessDenied, useConversationDelivery } from '@/features/chat/components/conversation-delivery'
-import { StyleSheet, View } from 'react-native'
+import { StyleSheet, useWindowDimensions, View } from 'react-native'
 import { KeyboardChatScrollView } from 'react-native-keyboard-controller'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -44,6 +44,8 @@ export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const router = useRouter()
   const insets = useSafeAreaInsets()
+  // The title takes the bar's width less the back and stop buttons on each side, not a fixed 260 pt.
+  const titleWidth = useWindowDimensions().width - 128
   const bar = useScrolledUnderBar()
   // Read again when one of its runs writes text or changes state (the web's thread and run keys); an
   // ended thread changes only when it runs again. Each read is the whole conversation.
@@ -71,7 +73,7 @@ export default function ThreadScreen() {
         scrolled={bar.scrolled}
         back={() => (router.canGoBack() ? router.back() : router.replace('/tasks'))}
         titleView={thread && toggled ? <ThreadSegments value={segment} onChange={setSegment} /> : thread ? (
-          <View style={styles.titleRow}>
+          <View style={[styles.titleRow, { maxWidth: titleWidth }]}>
             <StatusIcon status={thread.status} size={18} />
             <View style={{ flexShrink: 1 }}>
               <Text style={styles.title} numberOfLines={1}>{thread.name}</Text>
@@ -95,7 +97,7 @@ export default function ThreadScreen() {
               return <ThreadSteps key={item.id} steps={item.steps} count={item.count} live={data.active && index === data.items.length - 1} />
             case 'agent': return <View key={item.id} style={{ marginVertical: 4 }}><BotBubble><Markdown text={item.text} /></BotBubble><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} /></View>
             case 'error': return <Text key={item.id} style={styles.error}>{item.text}</Text>
-            case 'person': return <View key={item.id} style={{ marginVertical: 4 }}><MyBubble text={item.text} threadReferences /><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} /></View>
+            case 'person': return <View key={item.id} style={{ marginVertical: 4 }}><MyBubble text={item.text} threadReferences /><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} side="end" /></View>
           }
         })}
         {delivery.bubbles}
@@ -113,10 +115,10 @@ export default function ThreadScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.page },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: 260 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   title: { fontSize: 16, fontWeight: '600' },
   subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
-  subtitle: { fontSize: 11, color: colors.secondary, flexShrink: 1 },
+  subtitle: { fontSize: 12, color: colors.secondary, flexShrink: 1 },
   body: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24, gap: 4 },
   error: { fontSize: 14, color: colors.danger, marginVertical: 4 },
 })

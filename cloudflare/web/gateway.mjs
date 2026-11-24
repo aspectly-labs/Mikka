@@ -1,6 +1,7 @@
 // Only the deployment-owned binding map selects origins. Each retained entry
 // names a private, immutable Worker with its own API, cloud and static assets.
 import { releaseRoutePath, versionPath } from './route-path.mjs'
+import { legacyDaemonEdgeResponse } from '../../lib/daemon-edge-cutoff.mjs'
 
 const versionHeader = 'x-mikka-gateway-version-sha256'
 const nativeVersion = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
@@ -32,6 +33,10 @@ export default {
       url.pathname = path
       return forward(request, env.GITHUB_WEBHOOK, url)
     }
+    // Reject retired legacy desktop daemons and removed heartbeats at the
+    // public gateway edge before invoking any release or BusinessApi Worker.
+    const cutoff = legacyDaemonEdgeResponse(request)
+    if (cutoff) return cutoff
     const api = path.startsWith('/mikka/api/')
     const pinnedAsset = url.pathname.startsWith('/mikka/') && /\/[^/]+\.[^/]+$/.test(path) && !api
     let id = env.CURRENT_RELEASE

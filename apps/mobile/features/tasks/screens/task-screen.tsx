@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native'
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { ChartNoAxesColumn, ChevronRight, Circle, CircleUserRound, Flag, GitBranch, GitPullRequest, Link, ListTree, MessageSquare, MessagesSquare, Sparkles, UserRound } from 'lucide-react-native'
+import { ArrowUpRight, ChartNoAxesColumn, ChevronRight, Circle, CircleUserRound, Flag, GitBranch, GitPullRequest, Link, ListTree, MessageSquare, MessagesSquare, Sparkles, UserRound } from 'lucide-react-native'
 import { Spinner } from '@/components/icons'
 import { Segmented } from '@/components/Segmented'
 import { TaskDescription } from '../components/task-description'
@@ -13,7 +13,6 @@ import { useScrolledUnderBar } from '@/components/BarBackdrop'
 import { ReadNotice } from '@/components/ReadNotice'
 import { Text } from '@/components/Text'
 import { GlassButton } from '@/components/GlassButton'
-import { Row } from '@/components/settings'
 import { useHome } from '@/lib/home'
 import { taskLinkAttempt } from '@/lib/push-route'
 import { readPushedTask } from '@/lib/task-push-app'
@@ -106,15 +105,16 @@ export function TaskScreen() {
             {task.review ? <View style={styles.review}><ReviewSummaryRow short summary={task.review} onPress={() => router.push(reviewHref(task.id))} /></View> : null}
             <View style={styles.properties}>
               {properties.map(item => <Property key={item.id} item={item} task={task} shown={shown} progress={progress}
-                onTask={taskId => router.push(`/task/${taskId}`)} onThread={runId => router.push(`/thread/${runId}`)} onChat={chatId => router.push(`/groups/${chatId}`)} />)}
+                onTask={taskId => router.push(`/task/${taskId}`)} onThread={runId => router.push(`/thread/${runId}`)} onChat={chatId => router.push(`/groups/${chatId}`)} onWeb={openTaskOnWeb} />)}
             </View>
-            <Row label={mobileMessages.MobileCore.taskPropertiesOnWeb} onPress={openTaskOnWeb} />
             {task.description ? <View style={styles.description}><TaskDescription key={task.id} body={task.description} /></View> : null}
             {activity.length ? <Text accessibilityRole="header" style={styles.section}>{mobileMessages.MobileCore.activity}</Text> : null}
             {activity.length && conversations ? <Segmented value={filter} onChange={value => { setFilter(value); setShownRows(50) }} options={[
               { value: 'all', label: filterLabels.filterAll }, { value: 'comments', label: filterLabels.filterComments }, { value: 'agents', label: filterLabels.filterAgents },
             ]} /> : null}
-            {earlier > 0 ? <Row label={filterLabels.showEarlier.replace('{count}', String(Math.min(50, earlier)))} onPress={() => setShownRows(n => n + 50)} /> : null}
+            {earlier > 0 ? <Pressable accessibilityRole="button" onPress={() => setShownRows(n => n + 50)} style={({ pressed }) => [styles.more, pressed && { backgroundColor: colors.pressed }]}>
+              <Text style={styles.moreText}>{filterLabels.showEarlier.replace('{count}', String(Math.min(50, earlier)))}</Text>
+            </Pressable> : null}
             {visibleActivity.map((item, index) => <ActivityRow key={activityEntryId(item)} item={item} first={index === 0} last={index === visibleActivity.length - 1}
               taskId={task.id} code={task.identifier} stretches={stretches}
               onOpen={item.kind === 'agent' ? () => router.push(conversationHref(task.id, item.run.attempts[0]!.runId, workspace)) : undefined} />)}
@@ -124,7 +124,7 @@ export function TaskScreen() {
       {task ? (
         <View pointerEvents="box-none" style={[styles.commentWrap, { bottom: insets.bottom + 12 }]}>
           {/* Comments are written on the web for now: the app has no comment route yet (#1671). */}
-          <GlassButton label={mobileMessages.MobileCore.comment} onPress={openTaskOnWeb} />
+          <GlassButton label={mobileMessages.MobileCore.commentOnWeb} onPress={openTaskOnWeb} />
         </View>
       ) : null}
     </View>
@@ -152,11 +152,11 @@ function propertyLabel(id: TaskProperty['id'], count: number) {
 
 type PropertyProps = {
   item: TaskProperty; task: TaskDetail['task']; shown: ReturnType<typeof rowState> | null; progress: ReadonlyMap<string, Parameters<typeof nativeActivityLabel>[0]>
-  onTask: (id: string) => void; onThread: (id: string) => void; onChat: (id: string) => void
+  onTask: (id: string) => void; onThread: (id: string) => void; onChat: (id: string) => void; onWeb: () => void
 }
 
 /** One property: its icon and label, then its value or, for pull requests, threads and relations, one line each. */
-function Property({ item, task, shown, progress, onTask, onThread, onChat }: PropertyProps) {
+function Property({ item, task, shown, progress, onTask, onThread, onChat, onWeb }: PropertyProps) {
   const count = 'pulls' in item ? item.pulls.length : 'threads' in item ? item.chats.length + item.threads.length : 'tasks' in item ? item.tasks.length : 1
   const Icon = PROPERTY_ICON[item.id]
   return (
@@ -166,11 +166,11 @@ function Property({ item, task, shown, progress, onTask, onThread, onChat }: Pro
         <Text style={styles.propertyLabelText} numberOfLines={1}>{propertyLabel(item.id, count)}</Text>
       </View>
       <View style={styles.propertyValue}>
-        {item.id === 'status' ? <Line mark={<TaskStateIcon state={shown?.state ?? null} status={task.status} size={15} />} text={BOARD_LABEL[task.status] ?? task.status} />
-          : item.id === 'priority' ? <Line mark={<PriorityIcon priority={task.priority} size={15} />} text={priorityLabel(task.priority)} />
+        {item.id === 'status' ? <Line mark={<TaskStateIcon state={shown?.state ?? null} status={task.status} size={15} />} text={BOARD_LABEL[task.status] ?? task.status} onPress={onWeb} web />
+          : item.id === 'priority' ? <Line mark={<PriorityIcon priority={task.priority} size={15} />} text={priorityLabel(task.priority)} onPress={onWeb} web />
           : item.id === 'assignee' ? item.owner
-            ? <Line mark={item.owner.kind === 'member' ? <UserRound size={15} color={colors.secondary} strokeWidth={1.9} /> : <Sparkles size={15} color={colors.secondary} strokeWidth={1.9} />} text={item.owner.name} />
-            : <Line mark={<UserRound size={15} color={colors.tertiary} strokeWidth={1.9} />} text={mobileMessages.Metadata.assignee.unassignedLabel} muted />
+            ? <Line mark={item.owner.kind === 'member' ? <UserRound size={15} color={colors.secondary} strokeWidth={1.9} /> : <Sparkles size={15} color={colors.secondary} strokeWidth={1.9} />} text={item.owner.name} onPress={onWeb} web />
+            : <Line mark={<UserRound size={15} color={colors.tertiary} strokeWidth={1.9} />} text={mobileMessages.Metadata.assignee.unassignedLabel} muted onPress={onWeb} web />
           : item.id === 'createdBy' ? <Line mark={<CircleUserRound size={15} color={colors.secondary} strokeWidth={1.9} />} text={item.name} />
           : 'pulls' in item ? item.pulls.map(pull => <PullLine key={pull.url} pull={pull} />)
           : 'threads' in item ? <>
@@ -189,17 +189,23 @@ function Property({ item, task, shown, progress, onTask, onThread, onChat }: Pro
   )
 }
 
-/** A property's value line: its mark, a quiet code, the text and a quiet detail; it opens what it names when it can. */
-function Line({ mark, quiet, text, detail, muted, onPress }: { mark: ReactNode; quiet?: string | null; text: string; detail?: string; muted?: boolean; onPress?: () => void }) {
+/**
+ * A property's value line: its mark, a quiet code, the text and a quiet detail. A line that opens something says so
+ * at its end (HIG: a row that navigates shows a chevron; one that leaves the app, ↗), so tappable and plain lines
+ * no longer look alike; a plain line has no end mark.
+ */
+function Line({ mark, quiet, text, detail, muted, onPress, web }: { mark: ReactNode; quiet?: string | null; text: string; detail?: string; muted?: boolean; onPress?: () => void; web?: boolean }) {
   const body = <>
     <View style={styles.lineMark}>{mark}</View>
     <Text style={[styles.lineText, muted && { color: colors.tertiary }]} numberOfLines={1}>
       {quiet ? <Text style={styles.lineQuiet}>{quiet + ' '}</Text> : null}{text}
     </Text>
     {detail ? <Text style={styles.lineDetail} numberOfLines={1}>{detail}</Text> : null}
+    {onPress ? <View style={[styles.lineEnd, !detail && { marginLeft: 'auto' }]}>{web ? <ArrowUpRight size={14} color={colors.tertiary} strokeWidth={2} /> : <ChevronRight size={16} color={colors.tertiary} strokeWidth={2} />}</View> : null}
   </>
   if (!onPress) return <View style={styles.line}>{body}</View>
-  return <Pressable accessibilityRole="link" onPress={onPress} style={({ pressed }) => [styles.line, pressed && { opacity: 0.5 }]}>{body}</Pressable>
+  return <Pressable accessibilityRole="link" accessibilityHint={web ? mobileMessages.MobileCore.opensOnWeb : undefined} onPress={onPress}
+    style={({ pressed }) => [styles.line, styles.linePressable, pressed && { backgroundColor: colors.pressed }]}>{body}</Pressable>
 }
 
 /**
@@ -210,6 +216,7 @@ function Line({ mark, quiet, text, detail, muted, onPress }: { mark: ReactNode; 
  */
 function ActivityRow({ item, first, last, onOpen, taskId, code, stretches }: { item: ActivityEntry; first: boolean; last: boolean; onOpen?: () => void; taskId: string; code: string | null; stretches: Parameters<typeof nativeHistoryPieces>[2] }) {
   const router = useRouter()
+  const [whole, setWhole] = useState(false)
   const latest = item.kind === 'agent' ? item.run.attempts.at(-1)! : null
   // Its own run's result, never the task's reason: a run that finished and opened a PR is 完成; only the task waits.
   const result = latest ? attemptState(latest) : null
@@ -242,7 +249,8 @@ function ActivityRow({ item, first, last, onOpen, taskId, code, stretches }: { i
           </Text>
         </> : comment ? <>
           <Text style={styles.activitySentence} numberOfLines={1}><Text style={styles.activityName}>{comment.author}</Text>{ago}</Text>
-          <Text style={styles.activityBody} numberOfLines={4}>{comment.body}</Text>
+          {/* A long comment opens in place on a tap (#3 user control): no comment is cut off with no way to read it. */}
+          <Text style={styles.activityBody} numberOfLines={whole ? undefined : 4} selectable={whole} accessibilityState={{ expanded: whole }} onPress={() => setWhole(value => !value)}>{comment.body}</Text>
         </> : <Text style={styles.activitySentence} numberOfLines={3}>
           {event ? nativeHistoryPieces(event, { taskId, code }, stretches).map((piece, index) => {
             if (piece.kind === 'text') return piece.name ? <Text key={index} style={styles.activityName}>{piece.text}</Text> : piece.text
@@ -264,7 +272,7 @@ function ActivityRow({ item, first, last, onOpen, taskId, code, stretches }: { i
 }
 
 const styles = StyleSheet.create({
-  activityLink: { color: colors.text, textDecorationLine: 'underline' },
+  activityLink: { color: colors.accent },
   screen: { flex: 1, backgroundColor: colors.page },
   body: { paddingHorizontal: LIST_INSET, paddingTop: 8, gap: 0 },
   center: { paddingTop: 40, alignItems: 'center' },
@@ -273,10 +281,15 @@ const styles = StyleSheet.create({
   /** One column on the page, no box around it (Alex 2026-11-08: no grey slabs): label on the left, value on the right. */
   properties: { gap: 2, marginBottom: 4 },
   property: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  propertyLabel: { width: 112, minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  propertyLabel: { width: 112, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
   propertyLabelText: { flexShrink: 1, fontSize: 15, color: colors.secondary },
   propertyValue: { flex: 1, minWidth: 0 },
-  line: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  line: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // The pressed fill reaches past the text, as a list row's does, without moving it.
+  linePressable: { marginHorizontal: -8, paddingHorizontal: 8, borderRadius: 10, borderCurve: 'continuous' },
+  lineEnd: { width: 16, alignItems: 'center' },
+  more: { minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 10, borderCurve: 'continuous' },
+  moreText: { fontSize: 15, color: colors.accent },
   lineMark: { width: 16, alignItems: 'center' },
   lineText: { flexShrink: 1, fontSize: 15, color: colors.text },
   lineQuiet: { color: colors.secondary, fontVariant: ['tabular-nums'] },

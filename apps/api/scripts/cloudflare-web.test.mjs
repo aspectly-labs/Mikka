@@ -530,3 +530,54 @@ test('a cold version HEAD returns the backend status while its body cancellation
     await Promise.all(cleanup)
   }
 })
+
+test('gateway rejects retired legacy desktop daemon requests and removed heartbeats at the edge without invoking any release Worker', async () => {
+  const deviceId = '00000000-0000-4000-8000-000000000001'
+  const forwarded = []
+  const env = {
+    CURRENT_RELEASE: 'new',
+    RELEASES: { old: 'OLD', new: 'NEW' },
+    OLD: { fetch: req => { forwarded.push(['OLD', req.method, new URL(req.url).pathname]); return new Response('old') } },
+    NEW: { fetch: req => { forwarded.push(['NEW', req.method, new URL(req.url).pathname]); return new Response('new') } },
+    GITHUB_WEBHOOK: { fetch: req => { forwarded.push(['GH', req.method, new URL(req.url).pathname]); return new Response('gh', { status: 202 }) } },
+  }
+
+  for (const [method, path, headers] of [
+    ['GET', `/mikka/v1/devices/${deviceId}/commands`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.524' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/runs`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.357' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/gateway`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.701' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/heartbeat`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.701' }],
+    ['POST', `/mikka/v1/runs/${deviceId}/events`, { authorization: 'Bearer legacy' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/report`, { authorization: 'Bearer legacy', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.455' }],
+  ]) {
+    const res = await gateway.fetch(request(path, { method, headers }), env)
+    assert.equal(res.status, 426, `${method} ${path}`)
+    assert.equal(res.headers.get('cache-control'), 'private, no-store')
+    assert.equal((await res.json()).code, 'daemonUpgradeRequired')
+  }
+
+  const gone = await gateway.fetch(request(`/mikka/v1/devices/${deviceId}/heartbeat`, {
+    method: 'POST',
+    headers: { 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.800' },
+  }), env)
+  assert.equal(gone.status, 410)
+  assert.equal((await gone.json()).code, 'heartbeatRetired')
+  assert.equal(forwarded.length, 0, 'no release or API Worker may be invoked for retired legacy daemons')
+
+  const allowed = [
+    ['POST', '/mikka/v1/devices/register', { 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.456' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/report`, { 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.800' }],
+    ['POST', '/mikka/v1/devices/enroll', { authorization: 'Bearer orv_fixture' }],
+    ['POST', `/mikka/v1/internal/device-sessions/${deviceId}`, { authorization: 'Bearer push-secret' }],
+    ['OPTIONS', `/mikka/v1/devices/${deviceId}/commands`, {}],
+    ['GET', '/mikka/api/auth/get-session', {}],
+    ['POST', '/mikka/api/rpc', {}],
+    ['POST', '/mikka/api/webhooks/github', {}],
+    ['GET', '/mikka/en/sign-in', {}],
+  ]
+  for (const [method, path, headers] of allowed) {
+    const res = await gateway.fetch(request(path, { method, headers }), env)
+    assert.ok(res.status === 200 || res.status === 202, `${method} ${path} -> ${res.status}`)
+  }
+  assert.equal(forwarded.length, allowed.length)
+})

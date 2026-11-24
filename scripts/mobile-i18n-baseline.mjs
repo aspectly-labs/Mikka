@@ -15,7 +15,6 @@ const BASELINE = {
   'apps/mobile/app/(tabs)/settings/workspace.tsx': 1,
   'apps/mobile/app/attach.tsx': 6,
   'apps/mobile/app/bots/[id]/info.tsx': 29,
-  'apps/mobile/app/bots/[id]/tasks.tsx': 1,
   'apps/mobile/app/groups/[id].tsx': 12,
   'apps/mobile/app/message-text.tsx': 1,
   'apps/mobile/app/message.tsx': 4,
