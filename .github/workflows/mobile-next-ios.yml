@@ -92,12 +92,21 @@ jobs:
           ref: ${{ env.OVERLAY_SHA }}
           ssh-key: ${{ env.HOSTED_UI_READ_KEY }}
           path: .hosted-ui
-          fetch-depth: 0
           persist-credentials: false
-      # Only reviewed code is signed: the revision must already be on mikka-hosted-ui main.
+      # Only reviewed code is signed: the revision must already be on mikka-hosted-ui main. Fetches
+      # main quietly (no ref names in this public log), with the pinned GitHub host key.
       - name: Require the private revision to be on main
         run: |
-          git -C .hosted-ui merge-base --is-ancestor "$OVERLAY_SHA" refs/remotes/origin/main || {
+          set -euo pipefail
+          umask 077
+          key_dir=$(mktemp -d)
+          trap 'rm -rf -- "$key_dir"' EXIT
+          printf '%s\n' "$HOSTED_UI_READ_KEY" > "$key_dir/key"
+          known_hosts="$PWD/scripts/acceptance/desktop-delivery/github-known-hosts"
+          test -r "$known_hosts"
+          printf -v GIT_SSH_COMMAND 'ssh -F /dev/null -i %q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=%q' "$key_dir/key" "$known_hosts"
+          export GIT_SSH_COMMAND
+          node --input-type=module -e "import { verifyOverlayMain } from './scripts/cloudflare-native-oci.mjs'; try { verifyOverlayMain('.hosted-ui', process.env.OVERLAY_SHA) } catch { process.exitCode = 1 }" || {
             echo "::error::overlay_sha is not on mikka-hosted-ui main; merge its PR first."
             exit 1
           }
