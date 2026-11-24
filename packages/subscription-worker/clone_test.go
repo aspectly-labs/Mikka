@@ -12,6 +12,12 @@ func TestCloneRebindsTheCredentialAndCopiesTheCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A catalogue past revision 1 — the clone resets epoch to 1 and must rebase
+	// it, or keyOnlyModel's revision=epoch check would miss the connection.
+	if _, err = w.Repo.DB.Exec(`update byos_connections set "modelCatalog"=$2 where id=$1`,
+		w.Scope.ConnectionID, `{"revision":"7","models":["fixture-model"]}`); err != nil {
+		t.Fatal(err)
+	}
 	target := Scope{OwnerID: "bob", WorkspaceID: newID(), ConnectionID: newID(), Provider: w.Scope.Provider}
 	t.Cleanup(func() {
 		_, _ = w.Repo.DB.Exec(`delete from byos_bindings where "connectionId"=$1`, target.ConnectionID)
