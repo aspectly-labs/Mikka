@@ -8,7 +8,7 @@ const credential = (n: number, accessInMs = HOUR, userId = 'u1'): RefreshCredent
   userId, refreshToken: `mkmr_${String(n).padStart(43, '0')}`, refreshExpiresAt: new Date(Date.now() + 60 * 24 * HOUR).toISOString(), accessExpiresAt: new Date(Date.now() + accessInMs).toISOString(),
 })
 
-function fixture(stored: Record<string, RefreshCredential | null> = {}) {
+function fixture(stored: Record<string, RefreshCredential | null> = {}, owner?: string) {
   const store = new Map(Object.entries(stored))
   const calls = { rotate: [] as string[], exchange: 0, revoke: [] as string[] }
   let answers: (() => Promise<RotateResult>)[] = []
@@ -20,6 +20,7 @@ function fixture(stored: Record<string, RefreshCredential | null> = {}) {
     rotate: (_account, token) => { calls.rotate.push(token); return (answers.shift() ?? (async () => ({ status: 'unavailable' as const })))() },
     exchange: () => { calls.exchange++; return exchangeAnswer() },
     revoke: async (_account, token) => { calls.revoke.push(token) },
+    ...(owner ? { owner: () => owner } : {}),
     now: () => Date.now(),
   }
   return {
@@ -102,6 +103,11 @@ test('a credential for another person in the slot is dropped, never rotated', as
   g.exchangeWith(async () => ({ status: 'ok', credential: credential(3, HOUR, 'intruder') }))
   await g.keeper.ensureExchanged('b', 'u1', 's1')
   assert.equal(g.store.has('b'), false, 'an answer for another person is not stored')
+  // The slot is signed in as someone else now: the old credential is dropped, not rotated.
+  const h = fixture({ c: credential(4, HOUR, 'previous') }, 'u1')
+  assert.equal(await h.keeper.recover('c', 0), 'rejected')
+  assert.equal(h.calls.rotate.length, 0)
+  assert.equal(h.store.has('c'), false)
 })
 
 test('signing out revokes on the server and forgets it here; a rotation answer after that is dropped', async () => {

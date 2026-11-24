@@ -57,6 +57,7 @@ export const accessKeeper = createAccessKeeper({
     return credential ? { status: 'ok', credential } : { status: 'unavailable' }
   },
   revoke: async (account, refreshToken) => { await post(account, '/mobile-refresh/revoke', { refreshToken }) },
+  owner: account => currentAccount().id === account ? currentAccount().user?.id ?? null : null,
   now: () => Date.now(),
 })
 

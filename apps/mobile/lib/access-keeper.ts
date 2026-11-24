@@ -29,6 +29,8 @@ export type AccessKeeperDeps = {
   exchange(account: string): Promise<ExchangeResult>
   rotate(account: string, refreshToken: string): Promise<RotateResult>
   revoke(account: string, refreshToken: string): Promise<void>
+  /** The person this account slot is signed in as, when known. */
+  owner?(account: string): string | null
   now(): number
 }
 
@@ -70,6 +72,9 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
     const running = rotating.get(account)
     if (running) return running
     const work = (async (): Promise<RotateResult> => {
+      // A credential left by someone else in this slot is never used to sign in as them.
+      const owner = deps.owner?.(account) ?? null
+      if (owner !== null && owner !== credential.userId) { await store(account, null); return { status: 'rejected' } }
       let result = await deps.rotate(account, credential.refreshToken).catch((): RotateResult => ({ status: 'unavailable' }))
       if (result.status === 'unavailable') result = await deps.rotate(account, credential.refreshToken).catch((): RotateResult => ({ status: 'unavailable' }))
       // A sign-out or a new sign-in meanwhile owns the slot now.
