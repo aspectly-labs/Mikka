@@ -103,7 +103,10 @@ test('request attribution records only registry-owned RPC actions without argume
     { request: request('fixture.read', [], {}, 99), status: 426 },
   ]
   for (const value of cases) {
-    assert.equal((await handler(value.request)).status, value.status)
+    const response = await handler(value.request)
+    assert.equal(response.status, value.status)
+    // Only an unknown action tells the page it is older than the server (lib/app-build.ts).
+    assert.equal(response.headers.get('x-mikka-action-not-found'), value.status === 404 ? '1' : null)
     const entry = JSON.parse(lines.at(-1)!)
     assert.equal(entry.rpcAction, value.action)
     assert.equal(Object.hasOwn(entry, 'rpcAction'), value.action !== undefined)
