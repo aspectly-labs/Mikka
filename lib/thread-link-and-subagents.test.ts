@@ -114,11 +114,13 @@ function fakeQuery(sql: string, params: unknown[] = []) {
     if (!run || (normalized.includes('"deletedAt" IS NULL') && run.deletedAt)) return { rows: [] }
     return { rows: [{ ...run }] }
   }
-  // patchThread root metadata + independentCheck
-  if (normalized.includes('AS "independentCheck" FROM agent_runs r WHERE r.id=$1')) {
+  // patchThread root metadata + lockedFactoryRun
+  if (normalized.includes('AS "lockedFactoryRun" FROM agent_runs r WHERE r.id=$1')) {
+    assert.match(normalized, /a\.stage IN \('review','verify','monitor'\)/)
+    assert.match(normalized, /a\.status IN \('pending','running','waiting'\)/)
     const run = state.runs.get(String(params[0]))
     if (!run || run.userId !== params[1] || run.deletedAt) return { rows: [] }
-    return { rows: [{ id: run.id, issueId: run.issueId, workspaceId: run.workspaceId, threadRelation: run.threadRelation, kind: run.kind, independentCheck: Boolean(run.independentCheck) }] }
+    return { rows: [{ id: run.id, issueId: run.issueId, workspaceId: run.workspaceId, threadRelation: run.threadRelation, kind: run.kind, lockedFactoryRun: Boolean(run.independentCheck) }] }
   }
   // patchThread task validation (workspace + bound + not deleted + canSteer ACL)
   if (normalized.startsWith('SELECT id FROM issues WHERE id=$1 AND "workspaceId"=$2')) {
@@ -128,19 +130,27 @@ function fakeQuery(sql: string, params: unknown[] = []) {
     const key = `${params[1]}:${params[0]}`
     return { rows: state.allowedTasks.has(key) ? [{ id: params[0] }] : [] }
   }
-  // patchThread atomic chain + root ACL parent update
-  if (normalized.startsWith('WITH moved AS ( UPDATE agent_runs SET "issueId"=$2 WHERE id=ANY($1::uuid[])')) {
+  // patchThread atomic recursive chain + Factory lock + root ACL parent update
+  if (normalized.startsWith('WITH RECURSIVE chain AS ( SELECT id FROM agent_runs WHERE id=$1')) {
+    assert.match(normalized, /r\."continuesRunId"=chain\.id OR r\."retryOf"=chain\.id/)
+    assert.match(normalized, /a\.status IN \('pending','running','waiting'\)/)
     assert.match(normalized, /UPDATE resource_access_policies SET "parentKind"=\$5,"parentId"=\$2::uuid/)
-    const chainIds = params[0] as string[]
+    const rootId = String(params[0])
     const nextIssueId = params[1] as string | null
+    const ownerId = String(params[2])
+    const workspaceId = params[3] as string | null
+    const previousIssueId = params[5] as string | null
     assert.equal(params[4], nextIssueId ? 'task' : null)
-    assert.equal(params[5], ROOT_RUN)
+    const chain = state.chains.get(rootId)
+    const chainIds = chain ? chain.attempts.map(a => a.runId) : [rootId]
+    const root = state.runs.get(rootId)
+    if (!root || root.issueId !== previousIssueId || root.independentCheck) return { rows: [{ moved: false }] }
     state.updatedChains.push({ chainIds, issueId: nextIssueId })
     for (const id of chainIds) {
       const run = state.runs.get(id)
-      if (run && run.userId === params[2] && run.workspaceId === params[3]) run.issueId = nextIssueId
+      if (run && run.userId === ownerId && run.workspaceId === workspaceId && run.issueId === previousIssueId) run.issueId = nextIssueId
     }
-    return { rows: [], rowCount: 1 }
+    return { rows: [{ moved: true }], rowCount: 1 }
   }
   // patchThread tags update
   if (normalized.startsWith('UPDATE agent_runs SET tags=$2::jsonb WHERE id=$1')) {
@@ -268,13 +278,20 @@ test('updateThread supports unlinking (taskId: null) and notifies previous task'
   assert.deepEqual(state.liveEvents, [`runList:${ROOT_RUN}`, `run:${ROOT_RUN}`, `issueThreads:${OLD_TASK}`])
 })
 
-test('patchThread refuses unauthorized, deleted, unbound or cross-workspace target tasks', async () => {
+test('patchThread refuses unauthorized, deleted, unbound or cross-workspace target tasks and revoked source tasks', async () => {
   // Task in another workspace is refused even if owned by the same user.
   state.allowedTasks.add(`${OTHER_WORKSPACE}:${FORBIDDEN_TASK}`)
   const res = await taskRunsActions.updateThread(ROOT_RUN, { taskId: FORBIDDEN_TASK })
   assert.deepEqual(res, { error: 'taskNotFound' })
   assert.equal(state.runs.get(ROOT_RUN)?.issueId, OLD_TASK)
   assert.deepEqual(state.liveEvents, [])
+
+  // Revoking access to the source task blocks both unlinking and moving away (cannot resurrect transcript).
+  state.allowedTasks.delete(`${WORKSPACE}:${OLD_TASK}`)
+  assert.deepEqual(await taskRunsActions.updateThread(ROOT_RUN, { taskId: null }), { error: 'taskNotFound' })
+  assert.deepEqual(await taskRunsActions.updateThread(ROOT_RUN, { taskId: NEW_TASK }), { error: 'taskNotFound' })
+  assert.equal(state.runs.get(ROOT_RUN)?.issueId, OLD_TASK)
+  assert.deepEqual(state.updatedChains, [])
 })
 
 test('patchThread refuses retargeting subagents and independent checks', async () => {

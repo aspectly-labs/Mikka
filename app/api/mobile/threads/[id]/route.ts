@@ -63,7 +63,7 @@ async function handleGET(request: Request, { params }: Params) {
   ])
   const readOnlyForHuman = Boolean(control.rows[0]?.independentCheck || control.rows[0]?.subagent || (control.rows[0]?.kind && !isThreadRun({ kind: control.rows[0].kind })))
   const sourceRuns=[...new Set(rawChunks.map(row=>row.runId))]
-  const versionAnchors=Object.fromEntries(items.flatMap(item => {
+  const versionAnchors=readOnlyForHuman ? {} : Object.fromEntries(items.flatMap(item => {
     if (!chain || !detail.run.issueId) return []
     if (item.kind==='person') {
       const source=messages.find(row=>row.id===item.id && row.editable)

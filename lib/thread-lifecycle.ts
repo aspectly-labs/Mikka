@@ -170,15 +170,31 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
   if (!chain) return null
   const root = String(chain.rootRunId)
   const chainIds = chain.attempts.map(attempt => String(attempt.runId))
-  const { rows: [rootRow] } = await pool.query<{ id: string; issueId: string | null; workspaceId: string | null; threadRelation: string | null; kind: string; independentCheck: boolean }>(
+  const { rows: [rootRow] } = await pool.query<{ id: string; issueId: string | null; workspaceId: string | null; threadRelation: string | null; kind: string; lockedFactoryRun: boolean }>(
     `SELECT r.id,r."issueId",r."workspaceId",r."threadRelation",r.kind,EXISTS (
-       SELECT 1 FROM factory_attempts a WHERE a."runId"=ANY($3::uuid[]) AND a.stage IN ('review','verify','monitor')
-     ) AS "independentCheck" FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 AND r."deletedAt" IS NULL`,
+       SELECT 1 FROM factory_attempts a LEFT JOIN factory_tasks t ON t.id=a."taskId"
+       WHERE a."runId"=ANY($3::uuid[])
+         AND (a.stage IN ('review','verify','monitor')
+           OR a.status IN ('pending','running','waiting')
+           OR (t."attemptId"=a.id AND t.status IN ('pending','running','waiting')))
+     ) AS "lockedFactoryRun" FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 AND r."deletedAt" IS NULL`,
     [root, user.id, chainIds])
   if (!rootRow) return null
+  const previousIssueId = rootRow.issueId ?? null
   if (input.taskId !== undefined) {
-    // Subagents and independent checks belong to their dispatching run/stage and cannot be retargeted independently.
-    if (rootRow.threadRelation === 'subagent' || !isThreadRun({ kind: rootRow.kind }) || rootRow.independentCheck) return null
+    // Subagents, independent checks, and active Factory attempts belong to their dispatching run/stage and cannot be retargeted independently.
+    if (rootRow.threadRelation === 'subagent' || !isThreadRun({ kind: rootRow.kind }) || rootRow.lockedFactoryRun) return null
+    if (previousIssueId && previousIssueId !== input.taskId) {
+      // Unlinking or moving off a task whose ACL was revoked must not resurrect access to a task-scoped thread.
+      if (!rootRow.workspaceId) return 'forbidden'
+      const { rows: [sourceIssue] } = await pool.query(
+        `SELECT id FROM issues
+         WHERE id=$1 AND "workspaceId"=$2 AND "ownershipState"='bound'
+           AND coalesce(content->'attrs'->'mikka',content->'attrs'->'orvilo')->>'deletedAt' IS NULL
+           AND mikka_resource_acl_allowed('account',$3,"workspaceId",'task',id,'canSteer')`,
+        [previousIssueId, rootRow.workspaceId, user.id])
+      if (!sourceIssue) return 'forbidden'
+    }
     if (input.taskId !== null) {
       if (!isRunId(input.taskId)) return null
       if (!rootRow.workspaceId) return 'forbidden'
@@ -193,23 +209,44 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
   }
   if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 20 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 60))) return null
   if (input.taskId === undefined && input.tags === undefined) return source
-  const previousIssueId = rootRow.issueId ?? null
-  // Task retarget spans the whole chain — continuations join on "issueId", so a
-  // root-only move would split the thread. Keep the root thread's ACL ancestry
-  // synchronized in the same statement so unlinking/relinking never leaves stale
-  // parent task policies. Tags live on the root the lists read.
-  if (input.taskId !== undefined)
-    await pool.query(
-      `WITH moved AS (
+  // Task retarget discovers the scoped chain inside the mutation statement so
+  // concurrent retries/continuations move with the root instead of splitting.
+  // Re-check Factory lock atomically and keep the root thread's ACL ancestry
+  // synchronized in the same statement. Tags live on the root the lists read.
+  if (input.taskId !== undefined) {
+    const { rows: [move] } = await pool.query<{ moved: boolean }>(
+      `WITH RECURSIVE chain AS (
+         SELECT id FROM agent_runs
+         WHERE id=$1 AND "userId"=$3 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
+           AND "issueId" IS NOT DISTINCT FROM $6::uuid AND "deletedAt" IS NULL
+         UNION
+         SELECT r.id FROM agent_runs r JOIN chain ON r."continuesRunId"=chain.id OR r."retryOf"=chain.id
+         WHERE r."userId"=$3 AND r."workspaceId" IS NOT DISTINCT FROM $4::uuid
+           AND r."issueId" IS NOT DISTINCT FROM $6::uuid AND r."deletedAt" IS NULL
+       ), eligible AS (
+         SELECT id FROM chain
+         WHERE NOT EXISTS (
+           SELECT 1 FROM factory_attempts a LEFT JOIN factory_tasks t ON t.id=a."taskId"
+           WHERE a."runId" IN (SELECT id FROM chain)
+             AND (a.stage IN ('review','verify','monitor')
+               OR a.status IN ('pending','running','waiting')
+               OR (t."attemptId"=a.id AND t.status IN ('pending','running','waiting')))
+         )
+       ), moved AS (
          UPDATE agent_runs SET "issueId"=$2
-         WHERE id=ANY($1::uuid[]) AND "userId"=$3 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
+         WHERE id IN (SELECT id FROM eligible) AND "userId"=$3 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
+         RETURNING id
+       ), synced_policy AS (
+         UPDATE resource_access_policies SET "parentKind"=$5,"parentId"=$2::uuid
+         WHERE kind='thread' AND id=$1 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
+           AND ("parentKind" IS NULL OR "parentKind"='task')
+           AND EXISTS (SELECT 1 FROM moved WHERE id=$1)
          RETURNING id
        )
-       UPDATE resource_access_policies SET "parentKind"=$5,"parentId"=$2::uuid
-       WHERE kind='thread' AND id=$6 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
-         AND ("parentKind" IS NULL OR "parentKind"='task')
-         AND EXISTS (SELECT 1 FROM moved WHERE id=$6)`,
-      [chainIds, input.taskId, user.id, rootRow.workspaceId, input.taskId ? 'task' : null, root])
+       SELECT EXISTS (SELECT 1 FROM moved WHERE id=$1) AS moved`,
+      [root, input.taskId, user.id, rootRow.workspaceId, input.taskId ? 'task' : null, previousIssueId])
+    if (!move?.moved) return null
+  }
   if (input.tags !== undefined)
     await pool.query(`UPDATE agent_runs SET tags=$2::jsonb WHERE id=$1 AND "userId"=$3`, [root, JSON.stringify(input.tags), user.id])
   await runListChanged(pool, root); await runChanged(pool, root)
