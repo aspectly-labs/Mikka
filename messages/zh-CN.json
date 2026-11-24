@@ -9793,6 +9793,7 @@
     "linksCreated": "已创建 {count} 个邀请链接"
   },
   "Common": {
+    "undo": "撤销",
     "resize": {
       "groupPanel": "调整右栏宽度",
       "boardSidebar": "调整 Coordinator 侧栏宽度",

@@ -9793,6 +9793,7 @@
     "linksCreated": "{count, plural, =1 {1 invite link created} other {# invite links created}}"
   },
   "Common": {
+    "undo": "Undo",
     "resize": {
       "groupPanel": "Resize right panel",
       "boardSidebar": "Resize Coordinator sidebar",
