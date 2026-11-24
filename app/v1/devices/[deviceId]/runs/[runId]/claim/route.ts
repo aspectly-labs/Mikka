@@ -6,7 +6,7 @@ import { serverRunFailure } from '@/lib/run-failure-details'
 import { cloudComputerTasksEnabled } from '@/lib/cloud-computer-flag'
 import { withDeviceRoute } from '@/lib/device-route'
 import { runListChanged } from '@/lib/live/lists'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { and, eq, isNull } from 'drizzle-orm'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
@@ -93,32 +93,32 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ devi
 async function claimRun(request: Request, { params }: { params: Promise<{ deviceId: string; runId: string }> }, timings: ReturnType<typeof cloudStartupPhases>) {
   timings.next('authorize')
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { deviceId, runId } = await params
-  if (caller.scopeDeviceId && caller.scopeDeviceId !== deviceId) return NextResponse.json({ error: 'Unknown device.' }, { status: 404 })
+  if (caller.scopeDeviceId && caller.scopeDeviceId !== deviceId) return RouteResponse.json({ error: 'Unknown device.' }, { status: 404 })
   const device = await ownedDeviceWithReport(deviceId, caller.userId)
-  if (!device) return NextResponse.json({ error: 'Unknown device.' }, { status: 404 })
+  if (!device) return RouteResponse.json({ error: 'Unknown device.' }, { status: 404 })
   if ((device.kind === 'local' && (device.protocolVersion ?? 0) < DAEMON_PROTOCOL_VERSION) || daemonTooOld(device)) {
     await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
-    return NextResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
+    return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
   }
-  if (!device.enabled) return NextResponse.json({ error: 'Scheduling is off for this device.' }, { status: 409 })
+  if (!device.enabled) return RouteResponse.json({ error: 'Scheduling is off for this device.' }, { status: 409 })
   // A run is leased for as long as the session that claims it (decision
   // 2026-11-17-2215); without an open session there is nothing to lease it to.
   // The claim transaction checks again under the device row lock (beforeClaim).
-  if (!isDeviceOnline(device)) return NextResponse.json({ error: 'Open the device session before claiming.', code: 'deviceSessionRequired' }, { status: 409 })
+  if (!isDeviceOnline(device)) return RouteResponse.json({ error: 'Open the device session before claiming.', code: 'deviceSessionRequired' }, { status: 409 })
   timings.next('identity')
   const [run] = await db
     .select()
     .from(agentRuns)
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'queued'), eq(agentRuns.userId, caller.userId), isNull(agentRuns.stopRequestedAt)))
     .limit(1)
-  if (!run) return NextResponse.json({ error: 'Run is not queued for this device.' }, { status: 409 })
+  if (!run) return RouteResponse.json({ error: 'Run is not queued for this device.' }, { status: 409 })
   const taskMcpVersion = request.headers.get(TASK_MCP_HEADER)
   const previewToolFilters = taskMcpVersion === '2'
   if (run.agentDefinition?.customMcp?.servers.length && taskMcpVersion !== TASK_MCP_VERSION && !previewToolFilters) {
     await failRunForDaemonUpgrade(runId,deviceId,caller.userId)
-    return NextResponse.json({error:'Upgrade the Mikka daemon before using native MCP servers.',code:'daemonUpgradeRequired',protocolVersion:DAEMON_PROTOCOL_VERSION,minVersion:MIN_DAEMON_VERSION,daemonVersions:await daemonVersions()},{status:409})
+    return RouteResponse.json({error:'Upgrade the Mikka daemon before using native MCP servers.',code:'daemonUpgradeRequired',protocolVersion:DAEMON_PROTOCOL_VERSION,minVersion:MIN_DAEMON_VERSION,daemonVersions:await daemonVersions()},{status:409})
   }
 
   const [agent] = await db.select().from(agents).where(eq(agents.id, run.agentId)).limit(1)
@@ -126,22 +126,22 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ? await db.select().from(deviceRepos).where(eq(deviceRepos.id, run.deviceRepoId)).limit(1)
     : []
   if ((agent && agent.userId !== caller.userId) || (repo && (repo.userId !== caller.userId || repo.deviceId !== deviceId)))
-    return NextResponse.json({ error: 'Run ownership unavailable.' }, { status: 409 })
+    return RouteResponse.json({ error: 'Run ownership unavailable.' }, { status: 409 })
   if (!agent || !repo || !run.issueId) {
     const failed = await db.update(agentRuns)
       .set({ status: 'failed', stopReason: 'error', failureDetails: serverRunFailure(runId, new Date()), error: 'Run is missing its agent, repository or issue.', finishedAt: new Date(), updatedAt: new Date() })
       .where(eq(agentRuns.id, runId)).returning({ id: agentRuns.id })
     if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId) }
     await afterRunEnded(caller.userId, runId)
-    return NextResponse.json({ error: 'Run is missing its agent, repository or issue.' }, { status: 409 })
+    return RouteResponse.json({ error: 'Run is missing its agent, repository or issue.' }, { status: 409 })
   }
-  if (run.userId !== caller.userId || agent.userId !== caller.userId || repo.userId !== caller.userId || repo.deviceId !== deviceId) return NextResponse.json({ error: 'Run owner mismatch.' }, { status: 409 })
-  if (device.kind === 'local' && !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(process.env) })) return NextResponse.json({ error: 'Repository identity must be confirmed before scheduling a new thread.' }, { status: 409 })
-  if (repo.remoteUrl && request.headers.get(REPO_ORIGIN_HEADER) !== '1') return NextResponse.json({ error: 'Device update required for repository verification.' }, { status: 409 })
+  if (run.userId !== caller.userId || agent.userId !== caller.userId || repo.userId !== caller.userId || repo.deviceId !== deviceId) return RouteResponse.json({ error: 'Run owner mismatch.' }, { status: 409 })
+  if (device.kind === 'local' && !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(process.env) })) return RouteResponse.json({ error: 'Repository identity must be confirmed before scheduling a new thread.' }, { status: 409 })
+  if (repo.remoteUrl && request.headers.get(REPO_ORIGIN_HEADER) !== '1') return RouteResponse.json({ error: 'Device update required for repository verification.' }, { status: 409 })
   const issueId = run.issueId
   const claimAuthorizedProject = async () => {
   const projectEnvironment = run.agentDefinition?.projectExecution?.environment
-  if (projectEnvironment && request.headers.get(PROJECT_ENVIRONMENT_HEADER) !== '1') return NextResponse.json({ error: 'Device update required for the selected environment.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
+  if (projectEnvironment && request.headers.get(PROJECT_ENVIRONMENT_HEADER) !== '1') return RouteResponse.json({ error: 'Device update required for the selected environment.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
   const rejectProfile = async (error: AgentProfileAdmissionError) => {
     logCodedError(error, { runId })
     const summary = 'The selected Agent Profile changed or is no longer available. Select an available Profile for a new run.'
@@ -152,13 +152,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, caller.userId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'queued'), isNull(agentRuns.stopRequestedAt)))
       .returning({ id: agentRuns.id })
     if (rejected.length) await afterRunEnded(caller.userId, runId)
-    return NextResponse.json({ error: summary, code: 'agentProfileUnavailable' }, { status: 409 })
+    return RouteResponse.json({ error: summary, code: 'agentProfileUnavailable' }, { status: 409 })
   }
   const rejectPublication = async (error: PublicationError) => {
     const { persistRunCompletion } = await import('@/lib/run-publications')
     await persistRunCompletion(caller.userId, runId, { stopReason: 'error', report: { summary: error.message, filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } })
     afterJob('after:coordinator-wake', async () => { const { wakeCoordinator } = await import('@/lib/coordinator/wake'); await wakeCoordinator(caller.userId) })
-    return NextResponse.json({ error: error.message, code: error.code }, { status: 409 })
+    return RouteResponse.json({ error: error.message, code: error.code }, { status: 409 })
   }
   // Preserve the task-access denial before narrower policy parsing or any
   // claim preparation. Publication and the final response recheck it later.
@@ -170,10 +170,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   if (!run.workspaceId || claimIssue.ownershipState !== 'bound' || claimIssue.workspaceId !== run.workspaceId
     || caller.scopeWorkspaceId && caller.scopeWorkspaceId !== run.workspaceId
     || run.agentDefinition?.executionIdentity !== undefined && run.agentDefinition.executionIdentity?.workspaceId !== run.workspaceId)
-    return NextResponse.json({ error: 'Run ownership unavailable.' }, { status: 409 })
+    return RouteResponse.json({ error: 'Run ownership unavailable.' }, { status: 409 })
   // Historical generic retries cannot turn an original-session answer into
   // a fresh execution, even when their Factory attempt is no longer present.
-  if (run.retryOf && await blockQuestionRetry(pool, caller.userId, issueId, runId) && (await afterRunEnded(caller.userId, runId), true)) return NextResponse.json({ error: 'Generic retry cannot replay an original-session question answer; explicit recovery required.' }, { status: 409 })
+  if (run.retryOf && await blockQuestionRetry(pool, caller.userId, issueId, runId) && (await afterRunEnded(caller.userId, runId), true)) return RouteResponse.json({ error: 'Generic retry cannot replay an original-session question answer; explicit recovery required.' }, { status: 409 })
   const [lost] = run.retryOf
     ? await db.select({ sessionId: agentRuns.sessionId, deviceId: agentRuns.deviceId, agentId: agentRuns.agentId, stopReason: agentRuns.stopReason, agentDefinition: agentRuns.agentDefinition, report: agentRuns.report }).from(agentRuns)
       .where(and(eq(agentRuns.id, run.retryOf), eq(agentRuns.userId, caller.userId), issueId === null ? isNull(agentRuns.issueId) : eq(agentRuns.issueId, issueId))).limit(1)
@@ -191,14 +191,14 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     const { persistRunCompletion } = await import('@/lib/run-publications')
     await persistRunCompletion(caller.userId, runId, { stopReason: 'blocked', report: { summary: recoveryError, filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
     afterJob('after:coordinator-wake', async () => { const { wakeCoordinator } = await import('@/lib/coordinator/wake'); await wakeCoordinator(caller.userId) })
-    return NextResponse.json({ error: recoveryError, code: 'checkpointRecoveryUnavailable' }, { status: 409 })
+    return RouteResponse.json({ error: recoveryError, code: 'checkpointRecoveryUnavailable' }, { status: 409 })
   }
   const supportsSkillArtifacts = request.headers.get(SKILL_ARTIFACT_HEADER) === '1'
   const supportsTeamSkills = request.headers.get(TEAM_SKILL_HEADER) === '1'
   const receivesRunCredentials = request.headers.get(RUN_CREDENTIALS_HEADER) === '1'
   try { await skillAssignments.preflight(caller.userId, runId, supportsSkillArtifacts, supportsTeamSkills) } catch (error) {
     if (!(error instanceof ImprovementError)) throw error
-    return NextResponse.json({ error: error.code }, { status: error.code === 'notFound' ? 404 : 409 })
+    return RouteResponse.json({ error: error.code }, { status: error.code === 'notFound' ? 404 : 409 })
   }
   const harness = run.agentDefinition?.harness ?? agent.harness
   const pinned = run.agentDefinition?.subscription
@@ -207,19 +207,19 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ? run.agentDefinition && !pinned ? null : device.kind === 'cloud'
       ? await nativeRunBinding(pool, caller.userId, agent.id, harness, caller.scopeWorkspaceId, pinned?.bindingId)
       : pinned ? await nativeRunBinding(pool, caller.userId, agent.id, harness, undefined, pinned.bindingId) : await localRunBinding(caller.userId, agent.id, harness) : null
-  } catch { return NextResponse.json({ error:'Subscription unavailable.' },{ status:409 }) }
-  if (pinned && (!subscription || subscription.id !== pinned.bindingId || subscription.modelId !== pinned.modelId || subscription.route !== pinned.route || subscription.consumerId !== agent.id)) return NextResponse.json({ error:'Pinned subscription unavailable.' },{ status:409 })
+  } catch { return RouteResponse.json({ error:'Subscription unavailable.' },{ status:409 }) }
+  if (pinned && (!subscription || subscription.id !== pinned.bindingId || subscription.modelId !== pinned.modelId || subscription.route !== pinned.route || subscription.consumerId !== agent.id)) return RouteResponse.json({ error:'Pinned subscription unavailable.' },{ status:409 })
   if (subscription && !device.harnesses.some(info => info.harness === harness && info.installed && info.toolApproval && info.subscriptionBroker && !info.subscriptionPreflight)) {
     if (device.kind === 'local' && (harness === 'codex' || harness === 'claude_code')) {
       const info = device.harnesses.find(info => info.harness === harness)
       const detail = subscriptionPreflightSchema.safeParse(info?.subscriptionPreflight).data ?? (!info?.installed ? 'cli_missing' : 'adapter_start_failed')
       await failQueuedSubscriptionRuntime(runId, deviceId, caller.userId, { harness, bindingId: subscription.id })
-      return NextResponse.json({ error: messages.RunErrors.subscription_local_runtime_unavailable[detail ?? 'default'], code: 'subscription_local_runtime_unavailable', ...(detail ? { detail } : {}) }, { status: 409 })
+      return RouteResponse.json({ error: messages.RunErrors.subscription_local_runtime_unavailable[detail ?? 'default'], code: 'subscription_local_runtime_unavailable', ...(detail ? { detail } : {}) }, { status: 409 })
     }
-    return NextResponse.json({ error: 'Subscription requires a broker-enabled hosted runner.' }, { status: 409 })
+    return RouteResponse.json({ error: 'Subscription requires a broker-enabled hosted runner.' }, { status: 409 })
   }
-  if (device.kind === 'local' && (!repo.remoteUrl || !localExecutionHarnesses(device.harnesses).includes(harness))) return NextResponse.json({ error: 'Repository or execution harness unavailable.' }, { status: 409 })
-  if ((harness === 'codex' || harness === 'claude_code') && !device.harnesses.some(info => info.harness === harness && info.installed && info.toolApproval === true)) return NextResponse.json({ error: 'Run approval capability unavailable.' }, { status: 409 })
+  if (device.kind === 'local' && (!repo.remoteUrl || !localExecutionHarnesses(device.harnesses).includes(harness))) return RouteResponse.json({ error: 'Repository or execution harness unavailable.' }, { status: 409 })
+  if ((harness === 'codex' || harness === 'claude_code') && !device.harnesses.some(info => info.harness === harness && info.installed && info.toolApproval === true)) return RouteResponse.json({ error: 'Run approval capability unavailable.' }, { status: 409 })
   // A run frozen on the person's API key goes only to a daemon that injects it; nothing is opened yet.
   const frozenKey = run.agentDefinition?.apiKey
   // Paid by Mikka 额度: the CLI reaches the model only through the Mikka model gateway (decision 2026-11-15-2000).
@@ -227,9 +227,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const requestUrl = new URL(request.url)
   const loopbackGateway = requestUrl.protocol === 'http:' && isLoopbackHost(requestUrl.hostname)
     && device.kind === 'local' && requestUrl.origin === resolveAppOrigin(process.env)
-  if ((frozenKey || frozenCredits) && (subscription || pinned)) return NextResponse.json({ error: 'Run credential unavailable.' }, { status: 409 })
+  if ((frozenKey || frozenCredits) && (subscription || pinned)) return RouteResponse.json({ error: 'Run credential unavailable.' }, { status: 409 })
   if ((frozenKey || frozenCredits) && (request.headers.get(MODEL_CREDENTIAL_HEADER) !== '1'
-    || loopbackGateway && request.headers.get(MODEL_GATEWAY_LOOPBACK_HEADER) !== '1')) return NextResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
+    || loopbackGateway && request.headers.get(MODEL_GATEWAY_LOOPBACK_HEADER) !== '1')) return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
   let cliPolicy: Awaited<ReturnType<typeof readCliRunPolicy>>
   try {
     cliPolicy = await readCliRunPolicy(pool, runId, caller.userId, undefined, { includeGitIdentity: true })
@@ -244,13 +244,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       } else await assertUnmanagedModelTransport(scope, model, request.signal)
     }
   }
-  catch (error) { return NextResponse.json({ error: error instanceof ModelAdmissionError ? error.code : 'Agent policy unavailable.' }, { status: 409 }) }
+  catch (error) { return RouteResponse.json({ error: error instanceof ModelAdmissionError ? error.code : 'Agent policy unavailable.' }, { status: 409 }) }
   const snapshotCapability = request.headers.get(POLICY_SNAPSHOT_HEADER)
-  if ((snapshotCapability !== null && snapshotCapability !== POLICY_SNAPSHOT_VERSION) || (cliPolicy.policySnapshotRequired && snapshotCapability !== POLICY_SNAPSHOT_VERSION)) return NextResponse.json({error:'Signed policy consumer required.',code:'policyConsumerUpgradeRequired'},{status:409})
+  if ((snapshotCapability !== null && snapshotCapability !== POLICY_SNAPSHOT_VERSION) || (cliPolicy.policySnapshotRequired && snapshotCapability !== POLICY_SNAPSHOT_VERSION)) return RouteResponse.json({error:'Signed policy consumer required.',code:'policyConsumerUpgradeRequired'},{status:409})
   let distribution: ReturnType<typeof policyDistributionContext> | undefined
   if (snapshotCapability === POLICY_SNAPSHOT_VERSION) {
     try { distribution = policyDistributionContext(await requestDevicePolicyIssuer(request,caller,deviceId,runId),caller.userId,deviceId,runId,cliPolicy) }
-    catch { return NextResponse.json({error:'Policy signing unavailable.'},{status:503}) }
+    catch { return RouteResponse.json({error:'Policy signing unavailable.'},{status:503}) }
   }
   timings.next('acquire_lease')
   // Upper bound only: `disconnected` ends the lease (lib/device-session.ts).
@@ -279,14 +279,14 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   // The gateway token is minted at claim for this run only. Key validation records the run so
   // withdrawing the key stops it. The provider key stays on the server.
   let modelCredential: RunModelCredential | undefined
-  const openRunKey = async (): Promise<NextResponse | null> => {
+  const openRunKey = async (): Promise<RouteResponse | null> => {
     if (!frozenKey && !frozenCredits) return null
     const [{ validateRunApiKey }, { WorkspaceError }] = await Promise.all([import('@/lib/model-api-keys'), import('@/lib/workspace-error')])
     const refuse = async () => {
       const { persistRunCompletion } = await import('@/lib/run-publications')
       await persistRunCompletion(caller.userId, runId, { stopReason: 'blocked', report: { summary: 'API key unavailable.', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
       afterJob('after:coordinator-wake', async () => { const { wakeCoordinator } = await import('@/lib/coordinator/wake'); await wakeCoordinator(caller.userId) })
-      return NextResponse.json({ error: 'API key unavailable.', code: 'apiKeyUnavailable' }, { status: 409 })
+      return RouteResponse.json({ error: 'API key unavailable.', code: 'apiKeyUnavailable' }, { status: 409 })
     }
     if (harness !== 'claude_code' && harness !== 'codex') return refuse()
     // HTTP is only for a local runner on this server's configured loopback origin.
@@ -296,7 +296,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (frozenKey) {
       try { await validateRunApiKey(pool, runId, frozenKey.keyId) }
       catch (error) {
-        if (!(error instanceof WorkspaceError) || error.code !== 'apiKeyNotFound') return NextResponse.json({ error: 'API key unavailable.' }, { status: 409 })
+        if (!(error instanceof WorkspaceError) || error.code !== 'apiKeyNotFound') return RouteResponse.json({ error: 'API key unavailable.' }, { status: 409 })
         return refuse()
       }
     }
@@ -316,11 +316,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const taskWorkspaceId = run.workspaceId
   const taskRepository = remoteRepositoryRef(repo.remoteUrl)
   if (projectEnvironment && (!taskWorkspaceId || taskWorkspaceId !== run.workspaceId
-    || run.agentDefinition?.projectExecution?.workspaceId !== taskWorkspaceId)) return NextResponse.json({ error: 'Environment workspace unavailable.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
+    || run.agentDefinition?.projectExecution?.workspaceId !== taskWorkspaceId)) return RouteResponse.json({ error: 'Environment workspace unavailable.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
   const cloudDesktop = device.kind === 'cloud' && device.harnesses.some(info => info.harness === harness && info.computerBroker)
   if (device.kind === 'cloud' && (!cloudComputerTasksEnabled() || !caller.scopeWorkspaceId || caller.scopeDeviceId !== deviceId
     || !(subscription ? subscription.workspaceId === caller.scopeWorkspaceId : frozenKey || frozenCredits) || !cloudDesktop && !repo.remoteUrl
-    || taskWorkspaceId && taskWorkspaceId !== caller.scopeWorkspaceId)) return NextResponse.json({ error: 'Cloud computer worker unavailable.' }, { status: 409 })
+    || taskWorkspaceId && taskWorkspaceId !== caller.scopeWorkspaceId)) return RouteResponse.json({ error: 'Cloud computer worker unavailable.' }, { status: 409 })
   let taskInjection: TaskSecretInjection
   const threadScopeRunId = (await readRunChain(pool, run.userId, run.id))?.rootRunId ?? run.id
   try {
@@ -329,11 +329,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       : await taskSecretInjection(taskWorkspaceId, taskRepository, process.env, undefined, run.userId, threadScopeRunId)
     taskEnv = taskInjection.env
     taskSecretNames = taskInjection.secretNames
-  } catch { return NextResponse.json({ code: 'task_secret_unavailable', detail: 'configuration' }, { status: 409 }) }
+  } catch { return RouteResponse.json({ code: 'task_secret_unavailable', detail: 'configuration' }, { status: 409 }) }
   if ((taskInjection.protectedSecrets.length || taskInjection.unavailable.length)
     && request.headers.get(TASK_SECRETS_HEADER) !== TASK_SECRETS_VERSION) {
     await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
-    return NextResponse.json({ error: 'Upgrade the Mikka daemon before using protected task Secrets.', code: 'daemonUpgradeRequired', daemonVersions: await daemonVersions() }, { status: 409 })
+    return RouteResponse.json({ error: 'Upgrade the Mikka daemon before using protected task Secrets.', code: 'daemonUpgradeRequired', daemonVersions: await daemonVersions() }, { status: 409 })
   }
   let servers: TaskMcpServer[] = []
   let mcpAuthority: McpAuthority | undefined
@@ -353,12 +353,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         await Promise.all([runListChanged(db,run.id),runChanged(db,run.id)])
         await afterRunEnded(caller.userId,run.id)
       }
-      return NextResponse.json({error:'MCP configuration unavailable.',code:'mcpUnavailable'},{status:409})
+      return RouteResponse.json({error:'MCP configuration unavailable.',code:'mcpUnavailable'},{status:409})
     }
     const compatible = taskMcpForDaemon(servers, previewToolFilters || request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1')
     if (compatible.length !== servers.length) {
       await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
-      return NextResponse.json({ error: 'Upgrade the Mikka daemon before using MCP tool filters.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
+      return RouteResponse.json({ error: 'Upgrade the Mikka daemon before using MCP tool filters.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
     }
     servers = compatible
   }
@@ -384,7 +384,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     let claimed: Awaited<ReturnType<typeof claimCloudRun>>
     try { claimed = await claimCloudRun(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId! }, runId, deviceId, new Date(leaseExpiresAt), subscription?.id ?? null, beforeClaim, afterClaim, useComputer) }
     catch (error) { if (error instanceof AgentProfileAdmissionError) return rejectProfile(error); throw error }
-    if (!claimed) return NextResponse.json({ error: 'Cloud computer run unavailable.' }, { status: 409 })
+    if (!claimed) return RouteResponse.json({ error: 'Cloud computer run unavailable.' }, { status: 409 })
     // Without a desktop the run gets none (the daemon refuses a `computer` it cannot serve).
     computer = useComputer ? claimed : null
   } else {
@@ -404,7 +404,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     let claim: Awaited<ReturnType<typeof claimLocalRun>>
     try { claim = await claimLocalRun(pool, runId, deviceId, new Date(leaseExpiresAt), subscription?.id, beforeClaim, afterClaim) }
     catch (error) { if (error instanceof AgentProfileAdmissionError) return rejectProfile(error); throw error }
-    if (claim !== 'claimed') return NextResponse.json({ error: claim === 'cloud-required' ? 'Cloud computer worker required.' : 'Run is no longer queued for this device.' }, { status: 409 })
+    if (claim !== 'claimed') return RouteResponse.json({ error: claim === 'cloud-required' ? 'Cloud computer worker required.' : 'Run is no longer queued for this device.' }, { status: 409 })
   }
   if (device.kind !== 'cloud' && device.computerUseEnabled !== false && device.computerUse?.installed) {
     const current = await localComputerAuthority(pool, caller.userId, deviceId, runId)
@@ -422,7 +422,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId) }
     await afterRunEnded(caller.userId, runId)
     if (!(error instanceof ImprovementError)) throw error
-    return NextResponse.json({ error: error.code }, { status: 409 })
+    return RouteResponse.json({ error: error.code }, { status: 409 })
   }
   // A task machine receives its credentials once during preparation (#1505).
   // These existing credential lookups overlap the remaining claim setup. The
@@ -531,7 +531,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   catch {
     const { persistRunCompletion } = await import('@/lib/run-publications')
     await persistRunCompletion(caller.userId, runId, { stopReason: 'error', report: { summary: 'Frozen execution policy no longer fits the current owner policy.', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
-    return NextResponse.json({ error: 'Frozen execution policy is no longer permitted.' }, { status: 409 })
+    return RouteResponse.json({ error: 'Frozen execution policy is no longer permitted.' }, { status: 409 })
   }
   const failPreparingClaim = async (failure: CodedError, message: string, diagnostic = failure,
     terminal: { stopReason: 'blocked' | 'error'; error: string } = { stopReason: 'blocked', error: message }) => {
@@ -539,7 +539,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     const failed = await db.update(agentRuns).set({ status: 'failed', ...terminal, failureDetails: serverRunFailure(runId, now, diagnostic), finishedAt: now, updatedAt: now })
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, caller.userId), eq(agentRuns.deviceId, deviceId), eq(agentRuns.status, 'preparing'), eq(agentRuns.leaseExpiresAt, new Date(leaseExpiresAt)), isNull(agentRuns.stopRequestedAt))).returning({ id: agentRuns.id })
     if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId); await afterRunEnded(caller.userId, runId) }
-    return NextResponse.json({ error: message, code: failure.code, ...(failure.detail ? { detail: failure.detail } : {}) }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
+    return RouteResponse.json({ error: message, code: failure.code, ...(failure.detail ? { detail: failure.detail } : {}) }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
   }
   let subscriptionLease: NativeLease | undefined
   let githubCredential: { token: string; expiresAt: string | null } | undefined
@@ -579,7 +579,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         name: repo.repoPath.split('/').filter(Boolean).pop() ?? repo.repoPath, remoteUrl: repo.remoteUrl,
         ...(settings?.setup ? { setup: settings.setup } : {}),
         ...(settings?.networkAllow ? { networkAllow: settings.networkAllow } : {}) }).data : undefined
-    return NextResponse.json({
+    return RouteResponse.json({
     ...(publication?.pushBranch ? { pushBranch: publication.pushBranch } : {}),
     acceptsModelObservations: true,
     ...(initialRepository ? { repo: initialRepository } : {}),
@@ -675,10 +675,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     }
     throw error
   })
-  return response ?? NextResponse.json({ error: 'Run access changed before claim response.' }, { status: 409 })
+  return response ?? RouteResponse.json({ error: 'Run access changed before claim response.' }, { status: 409 })
   }
   if (!run.workspaceId) {
-    return NextResponse.json({ error: 'Run ownership unavailable.' }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
+    return RouteResponse.json({ error: 'Run ownership unavailable.' }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
   }
   try {
     return await withRunProjectExecution({ userId: caller.userId, workspaceId: run.workspaceId, issueId: run.issueId,
@@ -690,9 +690,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       // Resource admission runs before the existing task read. Preserve that
       // read's public denial while issuing no lease, token or completion.
       const unavailable = new PublicationError('issue_unavailable')
-      return NextResponse.json({ error: unavailable.message, code: unavailable.code }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
+      return RouteResponse.json({ error: unavailable.message, code: unavailable.code }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
     }
-    return NextResponse.json({ error: error.code, code: error.code }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
+    return RouteResponse.json({ error: error.code, code: error.code }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
   }
 }
 

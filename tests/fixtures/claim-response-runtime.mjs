@@ -391,7 +391,7 @@ registerHooks({
   },
   load(url,context,next){
     if(url==='claim-fixture:empty')return {format:'module',source:'export {}',shortCircuit:true}
-    if(url==='claim-fixture:server-runtime')return {format:'module',source:`export {NextResponse,NextRequest} from ${JSON.stringify(nextServer)};export function after(work){const p=globalThis.claimResponseProbe;if(!p)throw new Error('Claim scheduling requires its fixture');(p.scheduledAfter??=[]).push(work)}`,shortCircuit:true}
+    if(url==='claim-fixture:server-runtime')return {format:'module',source:`export {RouteResponse,RouteRequest} from ${JSON.stringify(nextServer)};export function after(work){const p=globalThis.claimResponseProbe;if(!p)throw new Error('Claim scheduling requires its fixture');(p.scheduledAfter??=[]).push(work)}`,shortCircuit:true}
     if(url.startsWith('claim-fixture:'))return {format:'module',source:decodeURIComponent(url.slice('claim-fixture:'.length)),shortCircuit:true}
     return next(url,context)
   },

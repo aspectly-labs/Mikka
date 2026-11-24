@@ -16,7 +16,7 @@ const repository = fileURLToPath(new URL('../../../', import.meta.url))
 const frontendRequire = createRequire(join(repository, 'apps/frontend/package.json'))
 const { createServer } = await import(pathToFileURL(frontendRequire.resolve('vite')).href)
 
-// Real TCP, Vite proxy, Nitro worker/runner proxy, H3/NextRequest and installed
+// Real TCP, Vite proxy, Nitro worker/runner proxy, H3/RouteRequest and installed
 // MCP SDK. Only the route's catalogue and verifier are synthetic. No database,
 // application business route, provider, stored credential or task is loaded.
 test('the real Vite and Nitro proxies preserve the mailbox handshake for persistent and closing clients', { timeout: 60_000 }, async () => {

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { withRequestLog } from '@/lib/request-log'
@@ -19,7 +19,7 @@ import {
 
 const route = '/api/integrations/slack'
 const reply = (value: unknown, status = 200) =>
-  NextResponse.json(value, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  RouteResponse.json(value, { status, headers: { 'Cache-Control': 'private, no-store' } })
 const coordinates = { workspaceId: z.uuid(), viewerId: z.string().min(1).max(256) }
 const body = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('connect'), ...coordinates }).strict(),

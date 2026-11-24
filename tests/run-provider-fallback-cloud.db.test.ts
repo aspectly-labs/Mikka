@@ -24,7 +24,7 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
   let networkAttempts = 0
   t.mock.method(globalThis, 'fetch', async () => { networkAttempts++; throw new Error('Unexpected network request in cloud provider fixture') })
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   const lifecycleStarts: { actor: { userId: string; workspaceId: string }; previousRunId: string | null; runId: string; providerContinuation: boolean }[] = []
   mock.module('workflow/api', { namedExports: { start: async (_workflow: unknown, args: [{ userId: string; workspaceId: string }, string | null, string, boolean]) => {
     lifecycleStarts.push({ actor: args[0], previousRunId: args[1], runId: args[2], providerContinuation: args[3] })

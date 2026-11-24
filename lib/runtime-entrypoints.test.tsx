@@ -138,13 +138,13 @@ test('server translations read the locale of the request in scope', async () => 
 test('the server request URL drops the deployment prefix exactly once', () => {
   // Handlers read `url.pathname` as the application path; the prefix belongs to
   // the browser bar, not to routing.
-  const prefixed = new serverRuntime.NextURL('http://localhost/mikka/dashboard')
+  const prefixed = new serverRuntime.RouteURL('http://localhost/mikka/dashboard')
   assert.equal(prefixed.pathname, '/dashboard')
   assert.equal(prefixed.basePath, '/mikka', 'the prefix is remembered so a redirect can put it back')
-  const bare = new serverRuntime.NextURL('http://localhost/dashboard')
+  const bare = new serverRuntime.RouteURL('http://localhost/dashboard')
   assert.equal(bare.pathname, '/dashboard')
   assert.equal(bare.basePath, '', 'an unprefixed deployment is left alone')
-  assert.equal(new serverRuntime.NextURL('http://localhost/mikka').pathname, '/', 'the bare prefix is the root')
+  assert.equal(new serverRuntime.RouteURL('http://localhost/mikka').pathname, '/', 'the bare prefix is the root')
 })
 
 test('server redirects prefix the locale and keep the query', () => {

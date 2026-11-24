@@ -103,3 +103,8 @@ test('no type reference, compatibility shim or Turbopack configuration remains',
   const owners = await readIfPresent('.github/CODEOWNERS')
   assert.doesNotMatch(owners, /next\.config|next-env/, 'CODEOWNERS must not own files that no longer exist')
 })
+
+test('the server runtime names its request and response types after the product, not the framework', () => {
+  // lib/server-runtime/server.ts exports RouteRequest, RouteResponse and RouteURL.
+  assert.deepEqual(grep('\\bNext(Request|Response|URL)\\b|\\.nextUrl\\b|\\bnextConfig\\b', [':!**/*.md']), [])
+})

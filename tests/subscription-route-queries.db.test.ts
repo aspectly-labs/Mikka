@@ -46,7 +46,7 @@ test('a cloud run\'s subscription context read stays within its statement budget
   } }) as typeof query
   t.after(() => { pg.Client.prototype.query = query })
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   const pool = new pg.Pool({ connectionString: dbUrl, max: 5 })
   const { pool: appPool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')

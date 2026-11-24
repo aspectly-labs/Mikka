@@ -25,7 +25,7 @@ if (process.env.DATABASE_URL !== database || process.env.MIKKA_DATABASE_URL !== 
 const origin = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000'
 const hostname = new URL(origin).hostname
 const port = Number(new URL(origin).port || 3000)
-// NextRequest normalizes 127.x.x.x to localhost. The descriptor must name the
+// The test server is addressed as localhost. The descriptor must name the
 // actual request origin; never relax attestation to accept a different origin.
 if (hostname !== 'localhost' || new URL(origin).origin !== origin) throw new Error('DESKTOP_TEST_REQUIRES_CANONICAL_LOCALHOST_ORIGIN')
 const secret = randomBytes(32).toString('hex')

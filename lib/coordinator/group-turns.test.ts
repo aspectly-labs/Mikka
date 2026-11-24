@@ -25,7 +25,7 @@ test('group history reads do not start a worker; only a successful send schedule
   const source = await readFile(new URL('../group-conversations-route.ts', import.meta.url), 'utf8')
   const start = source.indexOf("if (resource === 'messages' && id")
   assert.notEqual(start, -1)
-  const after = source.slice(start, source.indexOf('return NextResponse.json(result.body', start))
+  const after = source.slice(start, source.indexOf('return RouteResponse.json(result.body', start))
   assert.match(after, /request\.method === 'POST'/)
   assert.match(after, /afterJob\('after:group-turn'/)
   assert.doesNotMatch(after, /request\.method === 'GET'|hasPendingGroupTurn/)

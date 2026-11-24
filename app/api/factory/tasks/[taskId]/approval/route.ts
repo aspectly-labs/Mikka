@@ -1,5 +1,5 @@
 import { factoryHumanWorkspaceResponse } from '@/lib/factory/workspace-http';
-import { NextResponse } from "@/lib/server-runtime/server";
+import { RouteResponse } from "@/lib/server-runtime/server";
 import { auth } from "@/lib/api-auth";
 import { factoryApprovals, factoryMerges } from "@/lib/factory/server";
 import { GitHubAccessError, githubUserToken } from "@/lib/github/user-access";
@@ -17,7 +17,7 @@ async function respond(
     auth.api.getSession({ headers, query: { disableCookieCache: true } }),
   );
   const expectedOwner = request.headers.get('x-mikka-expected-owner');
-  if (expectedOwner && expectedOwner !== session?.user.id) return NextResponse.json({ error: 'authRequired' }, { status: 401 });
+  if (expectedOwner && expectedOwner !== session?.user.id) return RouteResponse.json({ error: 'authRequired' }, { status: 401 });
   const actor = session ? { userId: session.user.id, sessionId: session.session.id } : null;
   return factoryHumanWorkspaceResponse(session?.user, async () => {
     const { taskId } = await context.params;
@@ -45,7 +45,7 @@ async function respond(
         }
       },
     }, factoryMerges);
-    return NextResponse.json(result.body, {
+    return RouteResponse.json(result.body, {
       status: result.status,
       headers: { "Cache-Control": "private, no-store" },
     });

@@ -79,11 +79,11 @@ test('provider policy preserves task tenancy and independent membership gates on
     try { await callback() } finally { linearRequestTimeout.ms = 12_000 }
   }
   const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
-  const { NextRequest } = await import('../lib/server-runtime/server')
+  const { RouteRequest } = await import('../lib/server-runtime/server')
   // Run the request scope and its after queue the way the API dispatcher does,
   // so a deferred effect that fails fails this test too.
   async function withRequestContext<T>(fn: () => Promise<T>, beforeClose?: () => Promise<void>) {
-    const scope = createRequestScope(new NextRequest('http://127.0.0.1/mikka'))
+    const scope = createRequestScope(new RouteRequest('http://127.0.0.1/mikka'))
     return runRequestScope(scope, async () => {
       try { const result = await fn(); await beforeClose?.(); return result }
       finally { await scope.after.finish() }

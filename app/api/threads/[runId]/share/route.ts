@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { createThreadShare, revokeThreadShares } from '@/lib/thread-lifecycle'
@@ -6,7 +6,7 @@ import { createThreadShare, revokeThreadShares } from '@/lib/thread-lifecycle'
 export const maxDuration = 60
 
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return respond({ error: 'authRequired' }, 401)
@@ -22,7 +22,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ run
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return respond({ error: 'authRequired' }, 401)

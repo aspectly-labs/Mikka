@@ -33,7 +33,7 @@ test('provider failure continues the same task through its own Agent\'s authoriz
   delete process.env.MIKKA_FACTORY_ROUTING_ENABLED
   const next = await import('@/lib/server-runtime/server')
   let captureAfter: (() => Promise<void>)[] | undefined
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse,
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse,
     after: (work: () => Promise<void>) => { captureAfter?.push(work) },
   } })
   const coordinator = await isolateCoordinatorWakes(t)

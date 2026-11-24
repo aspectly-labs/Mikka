@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
 import { withRequestLog } from '@/lib/request-log'
@@ -24,20 +24,20 @@ async function handleGET(request: Request) {
     if (reason) back.searchParams.set('github', 'link-failed')
     if (reason && reason !== 'failed') back.searchParams.set('reason', reason)
     if (reason === 'browser-account' && intent) back.searchParams.set('intent', intent)
-    return NextResponse.redirect(back)
+    return RouteResponse.redirect(back)
   }
   // A desktop app that takes the return on its loopback: the link is for the app's
   // account whatever this browser is signed in as, so it goes straight to GitHub.
   if (intent !== null && configured) {
     const loopback = await startLoopbackIntent(pool, intent, { authorizeURL: githubAuthorizeURL, seal: sealGitHubSecret })
-    if (loopback?.kind === 'github') return NextResponse.redirect(loopback.url)
+    if (loopback?.kind === 'github') return RouteResponse.redirect(loopback.url)
     if (loopback?.kind === 'expired') return plugin('expired')
   }
   // The desktop opens this in the system browser, which may not be signed in yet:
   // sign in there and come back to the GitHub page, which offers to go on.
   if (!session?.user) {
     const next = '/?section=plugins&app=github' + (isIntentToken(intent) ? `&intent=${intent}` : '')
-    return NextResponse.redirect(new URL(withBasePath(`/sign-in?next=${encodeURIComponent(next)}`), request.url))
+    return RouteResponse.redirect(new URL(withBasePath(`/sign-in?next=${encodeURIComponent(next)}`), request.url))
   }
   if (!configured) return plugin('failed')
   if (intent !== null) {
@@ -46,7 +46,7 @@ async function handleGET(request: Request) {
     if (claim.kind === 'otherAccount') return plugin('browser-account')
   }
   const { url, cookie } = await startGitHubConnect(session.user.id)
-  const response = NextResponse.redirect(url)
+  const response = RouteResponse.redirect(url)
   response.cookies.set(cookie.name, cookie.value, cookie.options)
   return response
 }

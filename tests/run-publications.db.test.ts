@@ -341,7 +341,7 @@ test('run result publication commits one owner-scoped result through retries and
 
     await t.test('local completion wakes the same device after the slot is released', async t => {
       const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
-      const { NextRequest } = await import('../lib/server-runtime/server')
+      const { RouteRequest } = await import('../lib/server-runtime/server')
       const f = await fixture()
       const previousUrl = process.env.DEVICE_GATEWAY_URL, previousSecret = process.env.DEVICE_GATEWAY_PUSH_SECRET
       process.env.DEVICE_GATEWAY_URL = 'http://127.0.0.1:9'
@@ -355,7 +355,7 @@ test('run result publication commits one owner-scoped result through retries and
         return new Response(null, { status: 204 })
       })
       try {
-        const scope = createRequestScope(new NextRequest('http://127.0.0.1/mikka/v1/runs/complete'))
+        const scope = createRequestScope(new RouteRequest('http://127.0.0.1/mikka/v1/runs/complete'))
         await runRequestScope(scope, async () => {
           assert.ok(await persistRunCompletion(f.userId, f.runId, { stopReason: 'timeout' }))
           await scope.after.finish()
@@ -371,11 +371,11 @@ test('run result publication commits one owner-scoped result through retries and
       const { completeRunForDevice } = await import('../lib/run-completion')
       const { failRunForDaemonUpgrade } = await import('../lib/run-leases')
       const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
-      const { NextRequest } = await import('../lib/server-runtime/server')
+      const { RouteRequest } = await import('../lib/server-runtime/server')
       // Like issue-scope-detachment.db.test.ts, run the real request scope and
       // drain its after queue without replacing any database writer.
       async function failFromRequest(...args: Parameters<typeof failRunForDaemonUpgrade>) {
-        const scope = createRequestScope(new NextRequest(`http://127.0.0.1/mikka/v1/runs/${args[0]}/complete`))
+        const scope = createRequestScope(new RouteRequest(`http://127.0.0.1/mikka/v1/runs/${args[0]}/complete`))
         return runRequestScope(scope, async () => {
           try { return await failRunForDaemonUpgrade(...args) }
           finally { await scope.after.finish() }

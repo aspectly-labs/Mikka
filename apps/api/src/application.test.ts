@@ -12,7 +12,7 @@ import { createApiHandler } from './application'
 import { createRequestScope, currentRequestScope, requestCache, runRequestScope } from './context'
 import { cookies, headers } from '@/lib/server-runtime/headers'
 // oxlint-disable-next-line no-restricted-imports -- this spec exercises the request lifetime itself
-import { after, NextRequest, NextResponse, NextURL } from '@/lib/server-runtime/server'
+import { after, RouteRequest, RouteResponse, RouteURL } from '@/lib/server-runtime/server'
 import { getLocale, getTranslations } from '../../../lib/intl/i18n-server'
 import { getPathname } from '../../../lib/server-runtime/localized-navigation'
 import type { ApiRoute } from './routes'
@@ -77,7 +77,7 @@ test('request cookies match the installed SDK for duplicates and malformed encod
   ])
   for (const [cookie, expected] of frozen) {
     const input = request('one', { headers: { cookie } })
-    const adapted = new NextRequest(input)
+    const adapted = new RouteRequest(input)
     assert.deepEqual(adapted.cookies.getAll(), expected)
     assert.equal(adapted.headers.get('cookie'), input.headers.get('cookie'))
     await runRequestScope(createRequestScope(input), async () => {
@@ -159,7 +159,7 @@ test('multiple raw Set-Cookie fields retain Expires, chunks and deletion attribu
     const jar = await cookies()
     jar.set('proof.1', 'second', { httpOnly: true, secure: true, sameSite: 'none', path: '/mikka' })
     jar.delete({ name: 'old', path: '/mikka' })
-    const response = new NextResponse('okay')
+    const response = new RouteResponse('okay')
     response.headers.append('set-cookie', existing)
     response.cookies.set('selector', 'new', { maxAge: 10, path: '/mikka' })
     return response
@@ -192,13 +192,13 @@ for (const outcome of ['complete', 'cancel', 'error'] as const) test(`real Web s
 test('native Request facade retains URL, query, clone, body and cancellation without global patch', async () => {
   const controller = new AbortController()
   const original = new Request('https://example.test/mikka/api/check?q=1', { method: 'POST', body: 'payload', signal: controller.signal, headers: { cookie: 'a=1' } })
-  const adapted = new NextRequest(original)
+  const adapted = new RouteRequest(original)
   assert.equal(adapted.method, 'POST'); assert.equal(await adapted.clone().text(), 'payload')
-  assert.equal(adapted.nextUrl.pathname, '/api/check'); assert.equal(adapted.nextUrl.basePath, '/mikka')
-  assert.equal(adapted.nextUrl.clone().href, original.url)
+  assert.equal(adapted.routeUrl.pathname, '/api/check'); assert.equal(adapted.routeUrl.basePath, '/mikka')
+  assert.equal(adapted.routeUrl.clone().href, original.url)
   adapted.cookies.set('b', '2'); assert.equal(adapted.headers.get('cookie'), 'a=1; b=2')
   controller.abort(); assert.equal(adapted.signal.aborted, true)
-  const url = new NextURL('https://example.test/mikka?x=1'); url.pathname = '/settings'
+  const url = new RouteURL('https://example.test/mikka?x=1'); url.pathname = '/settings'
   assert.equal(url.href, 'https://example.test/mikka/settings?x=1')
 })
 
@@ -210,11 +210,11 @@ test('actual srvx NodeRequest backing preserves POST and rejects stale canonical
   const response = new ServerResponse(incoming)
   const original = new NodeRequest({ req: incoming, res: response, trustProxy: false })
   original._url = new URL('https://example.test/mikka/api/check?q=1')
-  const adapted = new NextRequest(original)
+  const adapted = new RouteRequest(original)
   assert.equal(adapted.url, original.url); assert.equal(adapted.method, 'POST'); assert.equal(await adapted.text(), 'body')
   assert.equal(original.runtime?.node?.req, incoming)
   original._url = new URL('https://other.test/mikka/api/check?q=1')
-  assert.throws(() => new NextRequest(original), /API_REQUEST_BODY_USED|API_REQUEST_URL_MISMATCH/)
+  assert.throws(() => new RouteRequest(original), /API_REQUEST_BODY_USED|API_REQUEST_URL_MISMATCH/)
   socket.destroy()
 })
 
@@ -228,7 +228,7 @@ test('locale and translations use actual ICU formatter; localized URL keeps quer
   })
   assert.equal(getPathname({ locale: 'en', href: { pathname: '/settings', query: { tab: 'a b' }, hash: 'details' } }), '/en/settings?tab=a+b#details')
   assert.equal(getPathname({ locale: 'zh-CN', href: '/settings?tab=x#details' }), '/settings?tab=x#details')
-  assert.equal(NextResponse.redirect('https://example.test/a', { status: 303, headers: { 'cache-control': 'no-store' } }).status, 303)
+  assert.equal(RouteResponse.redirect('https://example.test/a', { status: 303, headers: { 'cache-control': 'no-store' } }).status, 303)
 })
 
 for (const outcome of ['accepted', 'expired', 'unavailable', 'disabled', 'preflight'] as const) test(`web transport ${outcome} belongs to the original request trace before any business scope`, async () => {

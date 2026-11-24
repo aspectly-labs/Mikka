@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { runEvidence } from '@/lib/captures/store'
@@ -14,10 +14,10 @@ import { runOutsideToken } from '@/lib/tokens/scope'
 export async function GET(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const session = await auth.api.getSession({ headers: request.headers })
   const headers = { 'cache-control': 'private, no-store' }
-  if (!session?.user) return NextResponse.json({ error: 'Sign in required' }, { status: 401, headers })
+  if (!session?.user) return RouteResponse.json({ error: 'Sign in required' }, { status: 401, headers })
   const { runId } = await params
   const found = z.uuid().safeParse(runId).success && !await runOutsideToken(session.user, runId) ? await runEvidence(session.user.id, runId) : null
-  if (!found) return NextResponse.json({ error: 'Not found' }, { status: 404, headers })
+  if (!found) return RouteResponse.json({ error: 'Not found' }, { status: 404, headers })
   // This opt-in view is for a real candidate's one-use bootstrap. Ordinary
   // evidence retains its original query and response, without loading this path.
   let bootstrap: unknown
@@ -26,12 +26,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ runI
     const { bootstrapEvidenceQuery, readRunBootstrapEvidence } = await import('@/lib/captures/bootstrap-evidence')
     const parsed = bootstrapEvidenceQuery.safeParse(Object.fromEntries(query))
     if (!parsed.success || [...query.keys()].length !== Object.keys(parsed.data).length)
-      return NextResponse.json({ error: 'Invalid bootstrap evidence request' }, { status: 400, headers })
+      return RouteResponse.json({ error: 'Invalid bootstrap evidence request' }, { status: 400, headers })
     const { pool } = await import('@/lib/db')
     bootstrap = await readRunBootstrapEvidence(pool, session.user.id, runId, parsed.data)
-    if (!bootstrap) return NextResponse.json({ error: 'Not found' }, { status: 404, headers })
+    if (!bootstrap) return RouteResponse.json({ error: 'Not found' }, { status: 404, headers })
   }
-  return NextResponse.json({
+  return RouteResponse.json({
     ...found,
     ...(bootstrap ? { bootstrap } : {}),
     captures: found.captures.map(capture => ({ ...capture, url: withBasePath(`/api/captures/${capture.id}`) })),

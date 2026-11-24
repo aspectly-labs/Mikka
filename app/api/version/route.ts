@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { withRequestLog } from '@/lib/request-log'
 
 import { APP_BUILD, minDesktopVersion } from '@/lib/app-build'
@@ -16,7 +16,7 @@ export const GET = withRequestLog('/api/version', (request: Request) => {
   // Released Web Workers require the original five-field document. New readers
   // opt into the additional metadata using the same compatibility header.
   const compatibility = request.headers.has(HOSTED_API_VERSION_HEADER) && hostedApiUpgradeRequired(request.headers, 1) === null
-  return NextResponse.json(
+  return RouteResponse.json(
     { build: APP_BUILD, overlaySha: process.env.MIKKA_UI_OVERLAY_SHA || null, minMobileBuild: MIN_MOBILE_BUILD, mobileUpdateUrl: MOBILE_UPDATE_URL, minDesktopVersion: minDesktopVersion(process.env.MIN_CLIENT_VERSION),
       ...(compatibility ? { apiVersion: HOSTED_API_VERSION, minApiVersion: HOSTED_API_FLOOR } : {}) },
     { headers: { 'Cache-Control': 'no-store, max-age=0' } },

@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
@@ -11,7 +11,7 @@ export const maxDuration = 300
 /** The Setup tab's machine detail: state, provider specs, metrics, uptime,
  * snapshot and the environment's setup recipe (#2940). */
 export async function GET(request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return respond({ error: 'authRequired' }, 401)
@@ -31,7 +31,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ runI
   }
 }
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return respond({ error: 'authRequired' }, 401)

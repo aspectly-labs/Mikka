@@ -1,5 +1,5 @@
 import 'server-only'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
 import { WorkspaceError } from '@/lib/workspace-access'
@@ -16,7 +16,7 @@ export function instructionStatusForCode(code: string | undefined): number {
 }
 
 export function instructionJson(body: unknown, status = 200) {
-  return NextResponse.json(body, { status, headers: PRIVATE_HEADERS })
+  return RouteResponse.json(body, { status, headers: PRIVATE_HEADERS })
 }
 
 export function validSameOriginWrite(request: Request): boolean {

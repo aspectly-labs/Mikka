@@ -1,5 +1,5 @@
 import { cookies } from '@/lib/server-runtime/headers'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { pool } from '@/lib/db'
 import { withRequestLog } from '@/lib/request-log'
@@ -12,7 +12,7 @@ async function handle(request: Request) {
     platform = installPlatform()
   const back = new URL(SLACK_INSTALL_RETURN_PATH, url.origin)
   const redirect = () => {
-    const response = NextResponse.redirect(back)
+    const response = RouteResponse.redirect(back)
     response.cookies.set(SLACK_STATE_COOKIE, '', {
       httpOnly: true,
       sameSite: 'lax',

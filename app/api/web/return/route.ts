@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, gt, isNull } from 'drizzle-orm'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   const fail = () => {
     const target = new URL(state && callback ? webAuthSignInPath({ state, callback }) : withBasePath('/sign-in'), url.origin)
     target.searchParams.set('oauth', 'failed')
-    return NextResponse.redirect(target, { status: 303, headers: webAuthHeaders })
+    return RouteResponse.redirect(target, { status: 303, headers: webAuthHeaders })
   }
   if (!state || !callback || !webAuthConfirmedNavigation(request)) return fail()
   try {
@@ -37,6 +37,6 @@ export async function GET(request: Request) {
     if (!bound.length) return fail()
     const target = new URL(callback)
     target.hash = new URLSearchParams({ state, code }).toString()
-    return NextResponse.redirect(target, { status: 303, headers: webAuthHeaders })
+    return RouteResponse.redirect(target, { status: 303, headers: webAuthHeaders })
   } catch { return fail() }
 }
