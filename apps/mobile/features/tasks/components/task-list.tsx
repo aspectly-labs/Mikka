@@ -59,7 +59,7 @@ export function useTasks(enabled = true, botId?: string | null) {
  * 待办 · 已完成, each under a grey rounded bar with its count that folds it; 已完成 starts folded. `bot` keeps one
  * bot's tasks (its 资料 page).
  */
-export function TaskList({ filter = 'all', bot, bottom = 24, onClearFilter }: { filter?: TaskFilter; bot?: string | null; bottom?: number; onClearFilter?: () => void }) {
+export function TaskList({ filter = 'all', bot, bottom = 24, onClearFilter, onNewTask }: { filter?: TaskFilter; bot?: string | null; bottom?: number; onClearFilter?: () => void; onNewTask?: () => void }) {
   const insets = useSafeAreaInsets()
   const { data, error, loading, reload, paging } = useTasks(true, bot)
   const refresh = useRefresh(reload)
@@ -88,7 +88,9 @@ export function TaskList({ filter = 'all', bot, bottom = 24, onClearFilter }: { 
         : filter !== 'all' && tasks.length ? <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />}
           title={mobileMessages.MobileCore.filteredEmpty.replace('{group}', GROUP_LABEL[filter])}
           action={onClearFilter ? <Pressable accessibilityRole="button" onPress={onClearFilter} hitSlop={6} style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}><Text style={styles.actionText}>{mobileMessages.MobileCore.showAllTasks}</Text></Pressable> : undefined} />
-        : <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />} title={mobileMessages.MobileCore.noTasks} />}
+        // No tasks at all: the empty list offers the first one (#7), as the bar's + does.
+        : <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />} title={mobileMessages.MobileCore.noTasks}
+          action={onNewTask ? <Pressable accessibilityRole="button" onPress={onNewTask} hitSlop={6} style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}><Text style={styles.actionText}>{mobileMessages.Nav.newTask}</Text></Pressable> : undefined} />}
       renderItem={({ item }) => item.kind === 'section'
         // A filtered group is shown open and cannot fold: its header is a plain label, so a tap never changes 全部's folds.
         ? <TaskGroupBar id={item.id} count={item.count} folded={item.folded} onToggle={filter === 'all' ? () => toggle(item.id) : undefined} />

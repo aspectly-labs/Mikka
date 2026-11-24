@@ -5052,7 +5052,8 @@
       "empty": "暂时没有要看的消息",
       "noneToday": "今天还没有新的建议。",
       "title": "建议",
-      "routine": "例行事项"
+      "routine": "例行事项",
+      "filterHint": "只看这个应用的建议，再点一次显示全部"
     },
     "newTask": "新建任务",
     "createConversation": {

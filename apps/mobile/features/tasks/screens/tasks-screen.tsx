@@ -31,7 +31,7 @@ export function TasksScreen() {
           { icon: 'plus', label: mobileMessages.Nav.newTask, web: <Plus size={22} color={colors.ink} strokeWidth={2} />, onPress: () => router.push('/new-task') },
         ]}
       />
-      <TaskList filter={filter} onClearFilter={() => setFilter('all')} />
+      <TaskList filter={filter} onClearFilter={() => setFilter('all')} onNewTask={() => router.push('/new-task')} />
     </View>
   )
 }

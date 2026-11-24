@@ -75,9 +75,10 @@ export function Row({ icon, label, detail, value, onPress, onLongPress, trailing
   )
 }
 
-export function ToggleRow({ label, value, onChange, disabled = false }: { label: string; value: boolean; onChange: (next: boolean) => void; disabled?: boolean }) {
+export function ToggleRow({ icon, label, value, onChange, disabled = false }: { icon?: ReactNode; label: string; value: boolean; onChange: (next: boolean) => void; disabled?: boolean }) {
   return (
     <View style={styles.row}>
+      {icon ? <View style={styles.icon}>{icon}</View> : null}
       <Text style={[styles.label, { flex: 1 }]}>{label}</Text>
       <Switch accessibilityLabel={label} accessibilityState={{ checked: value, disabled }} value={value} disabled={disabled} onValueChange={onChange} trackColor={{ true: colors.success, false: colors.chip }} thumbColor="#fff" {...{ activeThumbColor: '#fff' }} />
     </View>

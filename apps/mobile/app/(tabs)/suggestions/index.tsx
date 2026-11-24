@@ -1,6 +1,6 @@
 import { ReadNotice } from '@/components/ReadNotice'
 import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useFocusEffect, usePathname, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Puzzle, Sparkles } from 'lucide-react-native'
@@ -29,6 +29,8 @@ const counted = (count: number) => (count === 1 ? mobileMessages.MobileCore.item
 /**
  * 建议 (Comma design 16): a row of cards, one per app with today's count, then today's items, each led by its app's
  * icon and a verb (R-21, R-45). Tapping one hands it to the Coordinator, as on the web. 插件 is the bar button.
+ * An app's card filters the list to that app (tap again for all), as Mail's and Linear's filter chips do; before, the
+ * cards looked tappable but did nothing (usability audit C2).
  */
 export default function SuggestionsScreen() {
   const router = useRouter()
@@ -46,6 +48,10 @@ export default function SuggestionsScreen() {
   }, []))
   const groups = (data?.groups ?? []).filter(group => group.items.length)
   const items = groups.flatMap(group => group.items).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+  const [source, setSource] = useState<string | null>(null)
+  // A filter on an app that has nothing left today falls back to every app.
+  const filter = source && groups.some(group => group.source === source) ? source : null
+  const shown = filter ? items.filter(item => item.source === filter) : items
   const key = (id: string) => `${context}:${id}`
   const submitting = () => items.some(item => delivery.state(key(item.id)).status === 'submitting')
   const anyPending = submitting()
@@ -67,7 +73,7 @@ export default function SuggestionsScreen() {
       <NavBar title={mobileMessages.Nav.suggestions} topTitle
         right={{ icon: 'puzzlepiece.extension', label: mobileMessages.Nav.plugins, web: <Puzzle size={20} color={colors.ink} strokeWidth={2} />, onPress: () => router.push(browsing ? '/browse/plugins' : '/suggestions/plugins') }} />
       <FlatList
-        data={items}
+        data={shown}
         keyExtractor={item => item.id}
         {...underBar}
         refreshControl={<RefreshControl {...refresh} />}
@@ -77,13 +83,17 @@ export default function SuggestionsScreen() {
           {groups.length ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cards}>
               {groups.map(group => (
-                <View key={group.source} style={styles.card} accessible accessibilityLabel={mobileMessages.Common.propertyValue.replace('{label}', APP[group.source] ?? group.source).replace('{value}', counted(group.items.length))}>
+                <Pressable key={group.source} accessibilityRole="button" accessibilityState={{ selected: filter === group.source }}
+                  accessibilityHint={mobileMessages.Shell.suggestions.filterHint}
+                  accessibilityLabel={mobileMessages.Common.propertyValue.replace('{label}', APP[group.source] ?? group.source).replace('{value}', counted(group.items.length))}
+                  onPress={() => setSource(current => current === group.source ? null : group.source)}
+                  style={({ pressed }) => [styles.card, filter === group.source && styles.cardOn, pressed && { opacity: 0.7 }]}>
                   <View style={styles.cardHead}>
                     <View style={styles.badge}><SourceIcon source={group.source} size={16} /></View>
                     <Text style={styles.cardName} numberOfLines={1}>{APP[group.source] ?? group.source}</Text>
                   </View>
                   <Text style={styles.cardCount}>{counted(group.items.length)}</Text>
-                </View>
+                </Pressable>
               ))}
             </ScrollView>
           ) : null}
@@ -115,7 +125,8 @@ export default function SuggestionsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.page },
   cards: { paddingHorizontal: LIST_INSET, paddingTop: 4, paddingBottom: 4, gap: 10 },
-  card: { width: 168, gap: 10, padding: 12, borderRadius: 16, borderCurve: 'continuous', backgroundColor: colors.bubble },
+  card: { width: 168, gap: 10, padding: 12, borderRadius: 16, borderCurve: 'continuous', backgroundColor: colors.bubble, borderWidth: 1.5, borderColor: 'transparent' },
+  cardOn: { borderColor: colors.accent },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cardName: { flexShrink: 1, fontSize: 15, fontWeight: '600' },
   cardCount: { fontSize: 13, color: colors.secondary },

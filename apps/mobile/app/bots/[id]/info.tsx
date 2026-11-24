@@ -1,6 +1,7 @@
 import { ReadNotice } from '@/components/ReadNotice'
 import { useRef, useState } from 'react'
-import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { Trash2 } from 'lucide-react-native'
 import * as WebBrowser from 'expo-web-browser'
@@ -15,7 +16,7 @@ import { BotConversations } from '@/features/chat/components/bot-conversations'
 import { menuTasks } from '@/features/chat/model/chat-header-menu'
 import { rowState } from '@/features/tasks/model/task-groups'
 import { displayTitle } from '@/lib/display-title'
-import { Group, RoundButton } from '@/components/ui'
+import { Group } from '@/components/ui'
 import { confirmDestructiveAction, showSystemAlert } from '@/lib/system-alert'
 import { api } from '@/lib/api'
 import { saveOptimistic } from '@/lib/optimistic'
@@ -26,6 +27,7 @@ import { useLiveApi, useRefresh } from '@/lib/useApi'
 import { botPageLive, computerLive } from '@/lib/live-keys'
 import { openOnWeb, webChatPath } from '@/lib/web'
 import { colors } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 const SHOWN = 5
 const PR_GROUP = { review: '等待审查', running: '进行中', merged: '已合并' } as const
@@ -152,24 +154,33 @@ export default function BotInfo() {
           </Group>
         ) : null}
         {library.length ? (
-          <Group label="资料库">
+          <Group label={mobileMessages.Shell.panel.library}>
             {library.map(item => (
-              <View key={item.id} style={styles.libraryRow}>
-                <View style={styles.libraryFile}>
-                  <Row icon={<Symbol name={item.kind === 'html' ? 'globe' : 'doc.text'} size={19} />} label={item.title} value={shortWhen(item.updatedAt)} onPress={() => openArtifact(item)} onLongPress={() => requestDelete(item)} />
+              // Delete is a swipe to the left (and a long press, and a VoiceOver action), as in Files and Mail; a red
+              // button on every row invited mistakes (usability audit C6). Each way still asks first.
+              <Swipeable key={item.id} friction={2} rightThreshold={40} overshootRight={false} enabled={deletingId === null}
+                renderRightActions={(_progress, _translation, swipe) => (
+                  <Pressable accessibilityRole="button" accessibilityLabel={`${mobileMessages.Common.delete} ${item.title}`} onPress={() => { swipe.close(); requestDelete(item) }}
+                    style={({ pressed }) => [styles.swipeDelete, pressed && { opacity: 0.8 }]}>
+                    <Trash2 size={18} color={colors.onAccent} />
+                    <Text style={styles.swipeDeleteText}>{mobileMessages.Common.delete}</Text>
+                  </Pressable>
+                )}>
+                <View style={styles.libraryRow} accessibilityActions={[{ name: 'delete', label: mobileMessages.Common.delete }]}
+                  onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'delete') requestDelete(item) }}>
+                  <Row icon={<Symbol name={item.kind === 'html' ? 'globe' : 'doc.text'} size={19} />} label={item.title}
+                    value={deletingId === item.id ? undefined : shortWhen(item.updatedAt)} trailing={deletingId === item.id ? <Spinner /> : undefined}
+                    onPress={() => openArtifact(item)} onLongPress={() => requestDelete(item)} />
                 </View>
-                <RoundButton label={`删除「${item.title}」`} disabled={deletingId !== null} busy={deletingId === item.id} onPress={() => requestDelete(item)}>
-                  <Trash2 size={17} color={colors.danger} />
-                </RoundButton>
-              </View>
+              </Swipeable>
             ))}
           </Group>
         ) : null}
         {schedules.length ? (
-          <Group label="例行">
+          <Group label={mobileMessages.Shell.panel.routines}>
             {schedules.map(schedule => (
               <Row key={schedule.id} icon={<Symbol name="clock" size={19} />} label={schedule.title}
-                value={schedule.status === 'paused' ? '已暂停' : schedule.nextAt ? nextWhen(schedule.nextAt) : undefined} />
+                value={schedule.status === 'paused' ? mobileMessages.Automations.status.paused : schedule.nextAt ? nextWhen(schedule.nextAt) : undefined} />
             ))}
           </Group>
         ) : null}
@@ -180,8 +191,9 @@ export default function BotInfo() {
 
 const styles = StyleSheet.create({
   body: { padding: 16 },
-  libraryRow: { flexDirection: 'row', alignItems: 'center', paddingRight: 8 },
-  libraryFile: { flex: 1, minWidth: 0 },
+  libraryRow: { backgroundColor: colors.surface },
+  swipeDelete: { width: 84, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  swipeDeleteText: { color: colors.onAccent, fontSize: 13, fontWeight: '600' },
   hero: { alignItems: 'center', gap: 12, marginTop: 8, marginBottom: 28 },
   name: { fontSize: 26, fontWeight: '700' },
   center: { paddingVertical: 24, alignItems: 'center' },
