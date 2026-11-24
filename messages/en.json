@@ -4844,7 +4844,8 @@
       "title": "Board",
       "filter": "Filter",
       "me": "Me",
-      "showEmpty": "Show empty columns"
+      "showEmpty": "Show empty columns",
+      "showSubtasks": "Show sub-tasks"
     },
     "groups": {
       "groupChats": "Group chats",
@@ -6771,7 +6772,8 @@
     "notSent": "Not sent",
     "composer": "Message {name}",
     "untitled": "Untitled group chat",
-    "you": "You"
+    "you": "You",
+    "emptyHint": "Mention a member with @ to hand it to them, or write to the whole group."
   },
   "Members": {
     "noMatchTitle": "No matching members",
@@ -8686,7 +8688,9 @@
       "workedNoTime": "Worked",
       "stopped": "stopped",
       "failed": "failed"
-    }
+    },
+    "olderFailed": "Couldn't load. Retry",
+    "readFullOptions": "Read full options"
   },
   "Board": {
     "scrollRight": "Scroll board right",
@@ -10167,7 +10171,10 @@
     "empty": "No tasks",
     "created": "Created {date}",
     "root": "Tasks",
-    "due": "Due {date}"
+    "due": "Due {date}",
+    "emptyFiltered": "No tasks match these filters",
+    "loadFailed": "Couldn't load tasks",
+    "sortBy": "Sort: {order}"
   },
   "Computer": {
     "card": "Computer task",
