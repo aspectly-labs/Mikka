@@ -3,7 +3,7 @@ import { ReadNotice } from '@/components/ReadNotice'
 import { ActionSheetIOS, Linking, Platform, ScrollView, View } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { ArrowUpRight, Bell, BookOpen, Blocks, BriefcaseBusiness, Building2, CreditCard, Folder, Globe, Hand, Info, PanelLeft, Users } from 'lucide-react-native'
+import { Bell, BookOpen, Blocks, BriefcaseBusiness, Building2, CreditCard, Folder, Globe, Hand, Info, PanelLeft, Users } from 'lucide-react-native'
 import { CardButton } from '@/components/cards'
 import { Spinner } from '@/components/icons'
 import { NavBar, underBar } from '@/components/NavBar'
@@ -88,20 +88,20 @@ export default function SettingsScreen() {
           </Group>
           <Group>
             <Row icon={icon('briefcase.fill', BriefcaseBusiness, '#8E8E93')} label={messages.Settings.groups.workspace} value={data.workspace.name} onPress={() => router.push(settingsPath('workspaces'))} />
-            {data.organizationSettingsAvailable && <Row icon={icon('building.2.fill', Building2, '#8E8E93')} label={messages.MobileCore.organizationOnWeb} onPress={() => void openOnWeb(mobileOrganizationPath(data.workspace.id), { confirmAccount: true })} />}
-            {data.personalFilesAvailable && <Row icon={icon('folder.fill', Folder, '#007AFF')} label={messages.MobileCore.personalFilesOnWeb} onPress={() => void openOnWeb(mobileFilesPath(data.workspace.id), { confirmAccount: true })} />}
+            {data.organizationSettingsAvailable && <Row icon={icon('building.2.fill', Building2, '#8E8E93')} label={messages.MobileCore.organizationOnWeb} external onPress={() => void openOnWeb(mobileOrganizationPath(data.workspace.id), { confirmAccount: true })} />}
+            {data.personalFilesAvailable && <Row icon={icon('folder.fill', Folder, '#007AFF')} label={messages.MobileCore.personalFilesOnWeb} external onPress={() => void openOnWeb(mobileFilesPath(data.workspace.id), { confirmAccount: true })} />}
             {data.billingScope && <Row icon={icon('creditcard.fill', CreditCard, '#34C759')} label={messages.Billing.management.billingEntry} onPress={() => router.push(settingsPath('billing'))} />}
           </Group>
           <Group>
             <Row icon={icon('bell.fill', Bell, '#FF3B30')} label={messages.Settings.sections.notifications.title} value={data.preferences.proactive ? messages.MobileCore.notifications.on : messages.MobileCore.notifications.off} onPress={() => router.push(settingsPath('notifications'))} />
             <Row icon={icon('book.fill', BookOpen, '#AF52DE')} label={messages.Settings.sections.memory.title} onPress={() => router.push(settingsPath('memory'))} />
-            <Row icon={icon('puzzlepiece.extension.fill', Blocks, '#34C759')} label={messages.MobileCore.settings.connectedApps} value={connections.error ? messages.Plugins.state.statusUnknown : connections.snapshot ? String(connections.snapshot.toolkits.length) : undefined} onPress={() => router.push(settingsPath('plugins'))} />
+            <Row icon={icon('puzzlepiece.extension.fill', Blocks, '#34C759')} label={messages.Plugins.title} value={connections.error ? messages.Plugins.state.statusUnknown : connections.snapshot ? String(connections.snapshot.toolkits.length) : undefined} onPress={() => router.push(settingsPath('plugins'))} />
           </Group>
           <Group>
-            <Row icon={icon('globe', Globe, '#5856D6')} label={messages.MobileCore.settings.language} value={messages.MobileCore.currentLanguage} trailing={Platform.OS === 'web' ? null : <Symbol name="arrow.up.right" size={13} color={colors.tertiary} web={<ArrowUpRight size={16} color={colors.tertiary} strokeWidth={2} />} />}
+            <Row icon={icon('globe', Globe, '#5856D6')} label={messages.MobileCore.settings.language} value={messages.MobileCore.currentLanguage} external
               onPress={Platform.OS === 'web' ? undefined : () => { void Linking.openSettings() }} />
             <Row icon={icon('info.circle.fill', Info, '#8E8E93')} label={messages.ServerStatus.version} value={versionLabel()} trailing={null} />
-            <Row icon={icon('hand.raised.fill', Hand, '#5856D6')} label={messages.Common.privacyPolicy} onPress={() => void openPrivacyPolicy()} />
+            <Row icon={icon('hand.raised.fill', Hand, '#5856D6')} label={messages.Common.privacyPolicy} external onPress={() => void openPrivacyPolicy()} />
           </Group>
           {Platform.OS !== 'ios' ? null : <Group>
             <ToggleRow icon={icon('sidebar.left', PanelLeft, '#007AFF')} label={messages.MobileCore.sidebarTrial} value={sidebarTrial} onChange={setSidebarTrial} />

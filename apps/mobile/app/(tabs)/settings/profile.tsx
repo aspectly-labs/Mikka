@@ -47,14 +47,14 @@ export default function ProfileScreen() {
       <Group>
         <View style={styles.row}>
           <Text style={styles.label}>{messages.Onboarding.nameLabel}</Text>
-          <TextInput accessibilityLabel={messages.Onboarding.nameLabel} accessibilityState={{ busy, disabled: busy }} editable={!busy} value={name} onChangeText={value => { dirty.current = true; setName(value); setProblem(null) }} onBlur={() => void save()} onSubmitEditing={() => void save()} returnKeyType="done" style={styles.input} />
+          <TextInput accessibilityLabel={messages.Onboarding.nameLabel} accessibilityState={{ busy, disabled: busy }} editable={!busy} value={name} onChangeText={value => { dirty.current = true; setName(value); setProblem(null) }} onBlur={() => void save()} onSubmitEditing={() => void save()} returnKeyType="done" clearButtonMode="while-editing" autoCapitalize="words" style={styles.input} />
         </View>
         <Row label={messages.Auth.email} value={data.user.email} trailing={null} />
       </Group>
       {busy ? <Text accessibilityLiveRegion="polite">{messages.MobileCore.profile.savingName}</Text> : null}
       {problem ? <View accessibilityRole="alert" style={{ gap: 10 }}><Text style={{ color: colors.danger }}>{problem}</Text><CardButton label={messages.MobileCore.notifications.retrySave} onPress={() => void save()} /></View> : null}
       <Group>
-        <Row label={messages.Settings.profile.deleteAccount} destructive onPress={() => void openAccountDeletion()} />
+        <Row label={messages.Settings.profile.deleteAccount} destructive external onPress={() => void openAccountDeletion()} />
       </Group>
     </SettingsPage>
   )
@@ -63,6 +63,6 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   hero: { alignItems: 'center', marginBottom: 20 },
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingHorizontal: 16, gap: 12, backgroundColor: colors.surface },
-  label: { fontSize: 16 },
-  input: { flex: 1, minWidth: 0, textAlign: 'right', fontSize: 15, color: colors.secondary, fontFamily: font, outlineStyle: 'none' } as never,
+  label: { fontSize: 17 },
+  input: { flex: 1, minWidth: 0, textAlign: 'right', fontSize: 17, color: colors.text, fontFamily: font, outlineStyle: 'none' } as never,
 })

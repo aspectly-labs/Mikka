@@ -6,7 +6,7 @@ import { Image, Platform, Pressable, ScrollView, StyleSheet, Switch, View } from
 import { useRouter } from 'expo-router'
 import { useSettingsPath } from '@/lib/sidebar-trial'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Check, ChevronRight } from 'lucide-react-native'
+import { ArrowUpRight, Check, ChevronRight } from 'lucide-react-native'
 import { KeyboardStickyView } from 'react-native-keyboard-controller'
 import { Spinner } from '@/components/icons'
 import { Symbol } from '@/components/Symbol'
@@ -52,8 +52,10 @@ export function SettingsPage({ title, children, footer }: { title: string; child
   )
 }
 
-export function Row({ icon, label, detail, value, onPress, onLongPress, trailing, destructive, expanded, disabled = false, actions }: {
+export function Row({ icon, label, detail, value, onPress, onLongPress, trailing, destructive, expanded, external = false, disabled = false, actions }: {
   icon?: ReactNode; label: string; detail?: string; value?: string; onPress?: () => void; onLongPress?: () => void; trailing?: ReactNode; destructive?: boolean; expanded?: boolean; disabled?: boolean
+  /** The row leaves the app (the web, iOS Settings): ↗ in place of ›, and VoiceOver says so (usability audit, settings). */
+  external?: boolean
   /** VoiceOver's Actions menu on the row itself (the element that takes focus), e.g. 删除 beside opening it. */
   actions?: { name: string; label: string; run: () => void }[]
 }) {
@@ -65,13 +67,14 @@ export function Row({ icon, label, detail, value, onPress, onLongPress, trailing
         {detail ? <Text style={styles.detail}>{detail}</Text> : null}
       </View>
       {value ? <Text style={styles.value} numberOfLines={1}>{value}</Text> : null}
-      {trailing !== undefined ? trailing : onPress && !destructive ? <Symbol name="chevron.right" size={13} color={colors.tertiary} web={<ChevronRight size={18} color={colors.tertiary} strokeWidth={2} />} /> : null}
+      {trailing !== undefined ? trailing : onPress && external ? <Symbol name="arrow.up.right" size={13} color={colors.tertiary} web={<ArrowUpRight size={16} color={colors.tertiary} strokeWidth={2} />} />
+        : onPress && !destructive ? <Symbol name="chevron.right" size={13} color={colors.tertiary} web={<ChevronRight size={18} color={colors.tertiary} strokeWidth={2} />} /> : null}
     </>
   )
   // A row without its own action stays a View, so a button in `trailing` is not nested in another button.
   if (!onPress) return <View style={styles.row}>{content}</View>
   return (
-    <Pressable accessibilityRole="button" accessibilityState={{ disabled, expanded }} aria-disabled={Platform.OS === 'web' ? disabled : undefined} disabled={disabled} onPress={onPress} onLongPress={onLongPress}
+    <Pressable accessibilityRole="button" accessibilityHint={external ? messages.MobileCore.opensOnWeb : undefined} accessibilityState={{ disabled, expanded }} aria-disabled={Platform.OS === 'web' ? disabled : undefined} disabled={disabled} onPress={onPress} onLongPress={onLongPress}
       accessibilityActions={actions?.map(({ name, label }) => ({ name, label }))}
       onAccessibilityAction={actions ? event => actions.find(action => action.name === event.nativeEvent.actionName)?.run() : undefined}
       style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }, disabled && { opacity: 0.5 }]}>
