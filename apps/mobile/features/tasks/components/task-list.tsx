@@ -59,7 +59,7 @@ export function useTasks(enabled = true, botId?: string | null) {
  * 待办 · 已完成, each under a grey rounded bar with its count that folds it; 已完成 starts folded. `bot` keeps one
  * bot's tasks (its 资料 page).
  */
-export function TaskList({ filter = 'all', bot, bottom = 24 }: { filter?: TaskFilter; bot?: string | null; bottom?: number }) {
+export function TaskList({ filter = 'all', bot, bottom = 24, onClearFilter }: { filter?: TaskFilter; bot?: string | null; bottom?: number; onClearFilter?: () => void }) {
   const insets = useSafeAreaInsets()
   const { data, error, loading, reload, paging } = useTasks(true, bot)
   const refresh = useRefresh(reload)
@@ -81,7 +81,12 @@ export function TaskList({ filter = 'all', bot, bottom = 24 }: { filter?: TaskFi
       contentContainerStyle={{ paddingBottom: insets.bottom + bottom }}
       ListHeaderComponent={<ReadNotice error={error} hasData={Boolean(data)} label={mobileMessages.Nav.tasks} onRetry={reload} />}
       ListFooterComponent={<TaskListContinuation paging={paging} />}
-      ListEmptyComponent={loading && !data ? <ListLoading /> : error ? undefined : <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />} title={mobileMessages.MobileCore.noTasks} />}
+      ListEmptyComponent={loading && !data ? <ListLoading /> : error ? undefined
+        // Tasks hidden by a filter: say which filter, and offer the way back (#1, #3), not 「没有任务」.
+        : filter !== 'all' && tasks.length ? <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />}
+          title={mobileMessages.MobileCore.filteredEmpty.replace('{group}', GROUP_LABEL[filter])}
+          action={onClearFilter ? <Pressable accessibilityRole="button" onPress={onClearFilter} hitSlop={6} style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}><Text style={styles.actionText}>{mobileMessages.MobileCore.showAllTasks}</Text></Pressable> : undefined} />
+        : <EmptyState icon={<ListTodo size={20} color={colors.secondary} strokeWidth={1.8} />} title={mobileMessages.MobileCore.noTasks} />}
       renderItem={({ item }) => item.kind === 'section'
         ? <TaskGroupBar id={item.id} count={item.count} folded={item.folded} onToggle={() => toggle(item.id)} />
         : <TaskRowView task={item.task} />}
@@ -92,9 +97,10 @@ export function TaskList({ filter = 'all', bot, bottom = 24 }: { filter?: TaskFi
 /** Tasks and Search continue the same authorized collection on an explicit tap. */
 export function TaskListContinuation({ paging }: { paging: ReturnType<typeof useTasks>['paging'] }) {
   if (!paging.hasMore) return null
+  // A button that reads as one: the accent, a 44 pt target and a pressed state (it was plain body text).
   return <Pressable accessibilityRole="button" accessibilityState={{ busy: paging.loading, disabled: paging.loading }}
-    disabled={paging.loading} onPress={() => void paging.loadMore()} style={styles.center}>
-    <Text>{paging.loading ? mobileMessages.Shell.search.loadingMore : paging.failed ? mobileMessages.Common.retry : mobileMessages.HostedTasks.loadMore}</Text>
+    disabled={paging.loading} onPress={() => void paging.loadMore()} style={({ pressed }) => [styles.more, pressed && { backgroundColor: colors.pressed }]}>
+    <Text style={[styles.actionText, paging.loading && { color: colors.secondary }]}>{paging.loading ? mobileMessages.Shell.search.loadingMore : paging.failed ? mobileMessages.Common.retry : mobileMessages.HostedTasks.loadMore}</Text>
   </Pressable>
 }
 
@@ -142,8 +148,10 @@ export function TaskRowView({ task }: { task: Task }) {
 /** A group bar adds only what the rows' own 15 pt padding leaves: 30 pt from the last row's text to the next bar, and
  * the first row's padding alone (about 12–15 pt) under the bar. */
 const styles = StyleSheet.create({
-  center: { paddingTop: 40, alignItems: 'center' },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, marginHorizontal: ROW_SURFACE_INSET, marginTop: SPACE.section - SPACE.rowY, marginBottom: 0, paddingHorizontal: LIST_INSET - ROW_SURFACE_INSET, borderRadius: 10, borderCurve: 'continuous' },
+  more: { minHeight: 44, marginTop: SPACE.section - SPACE.rowY, marginHorizontal: ROW_SURFACE_INSET, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderCurve: 'continuous' },
+  action: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 },
+  actionText: { fontSize: 15, fontWeight: '600', color: colors.accent },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginHorizontal: ROW_SURFACE_INSET, marginTop: SPACE.section - SPACE.rowY, marginBottom: 0, paddingHorizontal: LIST_INSET - ROW_SURFACE_INSET, borderRadius: 10, borderCurve: 'continuous' },
   barTitle: { fontSize: 15, lineHeight: 20, fontWeight: '600', color: colors.secondary },
   barCount: { fontSize: 15, lineHeight: 20, color: colors.secondary, fontVariant: ['tabular-nums'] },
   fill: { flex: 1 },

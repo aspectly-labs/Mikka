@@ -3,6 +3,8 @@ import { useLocalSearchParams } from 'expo-router'
 import { NavBar } from '@/components/NavBar'
 import { TaskList } from '@/features/tasks/components/task-list'
 import { useHome } from '@/lib/home'
+import { mobileMessages } from '@/lib/messages'
+import { ListLoading } from '@/shared/components/empty-state'
 import { colors } from '@/lib/theme'
 
 /** One bot's tasks, pushed over its chat (back returns to it); its threads are inside each task (2026-11-07). */
@@ -13,8 +15,9 @@ export default function BotTasks() {
   const bot = id === 'coordinator' ? bots?.find(item => item.coordinator) : bots?.find(item => item.id === id)
   return (
     <View style={styles.screen}>
-      <NavBar title={`${id === 'coordinator' ? 'Coordinator' : bot?.name ?? ''} 的任务`} />
-      <TaskList bot={bot?.id ?? null} />
+      <NavBar title={mobileMessages.MobileCore.botTasks.replace('{name}', id === 'coordinator' ? 'Coordinator' : bot?.name ?? '')} />
+      {/* Until the bots are read the list cannot know whose tasks to show: a spinner, not 「没有任务」 (#1). */}
+      {bots ? <TaskList bot={bot?.id ?? null} /> : <ListLoading />}
     </View>
   )
 }

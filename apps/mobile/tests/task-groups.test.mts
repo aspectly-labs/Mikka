@@ -36,6 +36,12 @@ test('groups come in order with counts; 已完成 starts folded and opens when t
     ['pending', 'running', 'c', 'todo', 'b', 'done', 'a', 'e'])
 })
 
+test('filtering to 已完成 shows its tasks open, not one folded bar', () => {
+  const rows = taskListRows([{ status: 'done' }, { status: 'done' }, { status: 'todo' }], new Set(), 'done')
+  assert.deepEqual(rows.map(row => row.kind), ['section', 'task', 'task'])
+  assert.equal(rows[0]?.kind === 'section' && rows[0].folded, false)
+})
+
 test('a filter shows its group alone; an empty group has no header', () => {
   const rows = taskListRows([{ status: 'doing' }, { status: 'todo' }], new Set(), 'running')
   assert.deepEqual(rows.map(row => row.kind), ['section', 'task'])
