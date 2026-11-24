@@ -1,5 +1,7 @@
 # Linear two-way sync
 
+> Retired on 2026-11-24 (Alex): Mikka no longer syncs issues with Linear. The Cloudflare Worker `mikka-linear-sync`, its Hyperdrive configurations and its Infisical secret syncs were deleted in production and staging, and its source was removed. The in-app code below remains behind the `mikka-linear-sync` flag until it is removed separately; the deployment notes in this page describe the retired setup.
+
 The integration maps one Linear team to one Mikka workspace. The team sync (`linear_team_syncs.workspaceId`) belongs to the workspace; a member's personal Linear connection is only the credential that establishes it and never authorizes another workspace's sync. Every sync, dispatch and issue write is scoped to that team's workspace, and the same team cannot be enabled in another workspace. New issues and changes to already linked issues sync in both directions. The Neon inbox records signed webhook deliveries before responding; an outbox trigger captures app edits in the same transaction as the issue or collaboration write. The Mikka app and OAuth callback remain on Vercel; a Cloudflare Worker receives Linear webhooks and drains the durable inbox and outbox through Hyperdrive.
 
 The settings page reads, enables and pauses team sync in the workspace displayed in that window, including when another tab changes the account’s selected workspace.

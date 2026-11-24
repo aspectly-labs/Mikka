@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-// The cron Worker in cloudflare/linear-sync imports the bearer check from here.
+// The cron route uses the bearer check from here.
 export { verifyBearer } from '../cron-auth'
 
 const MAX_BODY_BYTES = 1_000_000
