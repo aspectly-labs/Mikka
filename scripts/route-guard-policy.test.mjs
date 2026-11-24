@@ -218,6 +218,63 @@ test('CLI ratchet blocks new unguarded routes, allows new guarded routes, and en
   assert.match(ratcheted.stdout, /2 guarded, 0 legacy unguarded \(ceiling 0\)/)
 })
 
+test('shallow synthetic PR merge checkouts still enforce the ratchet against pull_request.base.sha and fail closed when unresolvable', t => {
+  // Simulate an upstream repo with an enrolled baseline on `main`, and a PR branch adding a new unguarded route + bumping baseline.
+  const remote = fixture(t)
+  remote.write('app/api/legacy/route.ts', UNGUARDED_SAMPLE)
+  remote.write(
+    BASELINE_PATH,
+    JSON.stringify({ version: 1, maxUnguardedRoutes: 1, legacyRoutes: ['app/api/legacy/route.ts'] }, null, 2) + '\n',
+  )
+  remote.commit('base')
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: remote.root })
+  const baseSha = execFileSync('git', ['rev-parse', 'main'], { cwd: remote.root, encoding: 'utf8' }).trim()
+
+  execFileSync('git', ['checkout', '-q', '-b', 'pr-cheat'], { cwd: remote.root })
+  remote.write('app/api/sneaky/route.ts', UNGUARDED_SAMPLE)
+  remote.write(
+    BASELINE_PATH,
+    JSON.stringify(
+      { version: 1, maxUnguardedRoutes: 2, legacyRoutes: ['app/api/legacy/route.ts', 'app/api/sneaky/route.ts'] },
+      null,
+      2,
+    ) + '\n',
+  )
+  remote.commit('pr adds unguarded route and bumps baseline')
+  const prSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: remote.root, encoding: 'utf8' }).trim()
+
+  // Create a depth=1 shallow clone of ONLY the PR commit (disconnected from main, mirroring shallow PR checkouts).
+  const shallow = mkdtempSync(join(tmpdir(), 'mikka-route-guard-shallow-'))
+  t.after(() => rmSync(shallow, { recursive: true, force: true }))
+  execFileSync('git', ['init', '-q'], { cwd: shallow })
+  execFileSync('git', ['remote', 'add', 'origin', remote.root], { cwd: shallow })
+  execFileSync('git', ['fetch', '--depth=1', 'origin', prSha], { cwd: shallow, stdio: 'ignore' })
+  execFileSync('git', ['checkout', '-q', 'FETCH_HEAD'], { cwd: shallow })
+
+  const eventFile = join(shallow, '.git', 'event.json')
+  writeFileSync(eventFile, JSON.stringify({ pull_request: { base: { sha: baseSha } } }))
+  const blocked = spawnSync(process.execPath, [policyScript], {
+    cwd: shallow,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventFile },
+  })
+  assert.equal(blocked.status, 1)
+  assert.match(blocked.stderr, /maxUnguardedRoutes increased from 1 to 2/)
+  assert.match(blocked.stderr, /cannot add app\/api\/sneaky\/route\.ts to legacyRoutes/)
+
+  // If the PR base commit cannot be resolved at all, fail closed instead of comparing baseline to itself.
+  const badEventFile = join(shallow, '.git', 'bad-event.json')
+  writeFileSync(badEventFile, JSON.stringify({ pull_request: { base: { sha: 'deadbeef'.repeat(5) } } }))
+  execFileSync('git', ['remote', 'remove', 'origin'], { cwd: shallow })
+  const failClosed = spawnSync(process.execPath, [policyScript], {
+    cwd: shallow,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: badEventFile },
+  })
+  assert.equal(failClosed.status, 1)
+  assert.match(failClosed.stderr, /cannot resolve trusted base commit for pull_request event/)
+})
+
 test('the route-guard policy is wired into package.json and the required source-checks CI job', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(
@@ -227,5 +284,6 @@ test('the route-guard policy is wired into package.json and the required source-
   assert.ok(pkg.scripts.check.split(' && ').includes('pnpm check:route-guard'))
   const workflow = readFileSync(new URL('../.github/workflows/ui-policy.yml', import.meta.url), 'utf8')
   const sourceChecks = workflow.slice(workflow.indexOf('\n  source-checks:'), workflow.indexOf('\n  daemon-checks:'))
+  assert.match(sourceChecks, /fetch-depth:\s*0/)
   assert.match(sourceChecks, /run: pnpm check:route-guard/)
 })

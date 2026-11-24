@@ -160,6 +160,8 @@ jobs:
       MIKKA_DATABASE_URL: postgres://mikka:mikka@127.0.0.1:5432/mikka
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/pnpm-install
         with:
           ffmpeg-github-token: ${{ github.token }}

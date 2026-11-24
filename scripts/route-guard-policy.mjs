@@ -391,9 +391,59 @@ export function auditApiRoutes(scan, baseline, previous = baseline) {
   return problems
 }
 
-export function runRouteGuardPolicy(root = process.cwd()) {
+export function resolveRatchetBase(root = process.cwd(), env = process.env) {
+  const git = (...args) =>
+    execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  const hasCommit = ref => {
+    try {
+      git('rev-parse', '--verify', `${ref}^{commit}`)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const eventName = env.GITHUB_EVENT_NAME ?? ''
+  let eventBase = ''
+  if (env.GITHUB_EVENT_PATH) {
+    try {
+      const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))
+      if (eventName === 'pull_request') eventBase = event.pull_request?.base?.sha ?? ''
+      else if (eventName === 'merge_group') eventBase = event.merge_group?.base_sha ?? ''
+      else if (eventName === 'push' && event.before && !/^0+$/.test(event.before)) eventBase = event.before
+    } catch {}
+  }
+
+  const requiresEventBase = eventName === 'pull_request' || eventName === 'merge_group'
+  if (eventBase) {
+    if (!hasCommit(eventBase)) {
+      try {
+        execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', eventBase], {
+          cwd: root,
+          stdio: 'ignore',
+        })
+      } catch {}
+    }
+    if (hasCommit(eventBase)) return { base: eventBase, missingRequiredBase: false }
+  }
+
+  const fallback = trustedPolicyBase(root)
+  if (fallback && hasCommit(fallback)) return { base: fallback, missingRequiredBase: false }
+  return { base: '', missingRequiredBase: requiresEventBase }
+}
+
+export function runRouteGuardPolicy(root = process.cwd(), env = process.env) {
   const baseline = JSON.parse(readFileSync(resolve(root, BASELINE_PATH), 'utf8'))
-  const base = trustedPolicyBase(root)
+  const scan = scanApiRoutes(root)
+  const { base, missingRequiredBase } = resolveRatchetBase(root, env)
+  if (missingRequiredBase) {
+    return {
+      scan,
+      baseline,
+      problems: [
+        `${BASELINE_PATH}: cannot resolve trusted base commit for ${env.GITHUB_EVENT_NAME} event; failing closed so the route-guard ratchet cannot be bypassed`,
+      ],
+    }
+  }
   const existsInBase = base
     && execFileSync('git', ['ls-tree', '--name-only', base, '--', BASELINE_PATH], {
       cwd: root,
@@ -409,7 +459,6 @@ export function runRouteGuardPolicy(root = process.cwd()) {
         }),
       )
     : baseline
-  const scan = scanApiRoutes(root)
   const problems = auditApiRoutes(scan, baseline, previous)
   return { scan, baseline, problems }
 }
