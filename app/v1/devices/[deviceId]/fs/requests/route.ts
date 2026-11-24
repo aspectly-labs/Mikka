@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { authenticateDevice, ownsDevice } from '@/lib/device-link'
 import { noteLogOutcome, withRequestLog } from '@/lib/request-log'
 
@@ -11,11 +11,11 @@ import { noteLogOutcome, withRequestLog } from '@/lib/request-log'
  */
 async function handleGET(request: Request, { params }: { params: Promise<{ deviceId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { deviceId } = await params
-  if (!await ownsDevice(deviceId, caller.userId)) return NextResponse.json({ error: 'Unknown device.' }, { status: 404 })
+  if (!await ownsDevice(deviceId, caller.userId)) return RouteResponse.json({ error: 'Unknown device.' }, { status: 404 })
   noteLogOutcome('empty')
-  return NextResponse.json({ requests: [] })
+  return RouteResponse.json({ requests: [] })
 }
 
 export const GET = withRequestLog('/v1/devices/[deviceId]/fs/requests', withDeviceRoute(handleGET))

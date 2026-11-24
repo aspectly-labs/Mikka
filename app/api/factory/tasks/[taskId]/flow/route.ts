@@ -1,5 +1,5 @@
 import { factoryHumanWorkspaceResponse } from '@/lib/factory/workspace-http';
-import { NextResponse } from '@/lib/server-runtime/server';
+import { RouteResponse } from '@/lib/server-runtime/server';
 import { auth } from '@/lib/api-auth';
 import { pool } from '@/lib/db';
 import { withRequestLog, noteLogUser } from '@/lib/request-log';
@@ -19,7 +19,7 @@ const respond = withRequestLog('/api/factory/tasks/[taskId]/flow', async (reques
       origin: request.headers.get('origin'), url: request.url,
       ...(request.method === 'POST' ? { body: await request.json().catch(() => null) } : {}),
     });
-    return NextResponse.json(result.body,{ status: result.status, headers: { 'Cache-Control': 'private, no-store' } });
+    return RouteResponse.json(result.body,{ status: result.status, headers: { 'Cache-Control': 'private, no-store' } });
   });
 
 });

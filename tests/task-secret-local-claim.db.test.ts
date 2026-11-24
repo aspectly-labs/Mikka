@@ -78,7 +78,7 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.BETTER_AUTH_SECRET = randomBytes(32).toString('hex')
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   // Use the same request adapters as the standalone API. Neither session nor
   // workspace/object authorization readers are replaced with fixture values.
   const requestHeaders = await import('../lib/server-runtime/headers')

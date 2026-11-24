@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { workspacePool } from '@/lib/workspace-db'
@@ -22,7 +22,7 @@ export const GET = withRequestLog('/api/factory/tasks/[taskId]/execution', async
       try { liveWorkspaceId = (await factoryLiveScopes(pool, workspacePool, taskId, session.user.id))?.task.workspaceId ?? null }
       catch { console.warn('[live] Factory task scope unavailable') }
     }
-    return NextResponse.json(result.status === 200 ? { ...result.body, liveWorkspaceId } : result.body,
+    return RouteResponse.json(result.status === 200 ? { ...result.body, liveWorkspaceId } : result.body,
       { status: result.status, headers: { 'Cache-Control': 'private, no-store' } })
   }
   return factoryHumanWorkspaceResponse(session?.user, respond)

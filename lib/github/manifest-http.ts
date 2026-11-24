@@ -1,5 +1,5 @@
 import 'server-only'
-import { NextRequest, NextResponse } from '@/lib/server-runtime/server'
+import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 import { logCodedError } from '@mikka/protocol/coded-error'
 import { resolveAppOrigin } from '@/lib/auth-config'
 import { isServerAdmin } from '@/lib/server-admin'
@@ -82,7 +82,7 @@ export function githubManifestHandlers({ query, session, config, save, template,
       const organization = githubManifestOrganization((input as { organization?: unknown }).organization)
       const manifest = githubAppManifest({ origin, template })
       const state = await startGitHubAppManifest(query, { userId: viewerId, sessionId: current.session.id, origin }, { env })
-      const response = NextResponse.json({ viewerId, manifest, action: githubManifestAction(state, organization) }, { headers })
+      const response = RouteResponse.json({ viewerId, manifest, action: githubManifestAction(state, organization) }, { headers })
       response.cookies.set(GITHUB_MANIFEST_COOKIE, state, { httpOnly: true, secure: origin.startsWith('https:'), sameSite: 'lax', path: GITHUB_MANIFEST_CALLBACK, maxAge: GITHUB_MANIFEST_TTL_MS / 1_000 })
       return response
     } catch (error) { return failed(error, viewerId) }
@@ -99,7 +99,7 @@ export function githubManifestHandlers({ query, session, config, save, template,
       if (!current || !isServerAdmin(current.user.id, env)) throw new GitHubAppSetupError('admin', 403)
       const search = new URL(request.url).searchParams
       const state = search.get('state')
-      const cookie = new NextRequest(request).cookies.get(GITHUB_MANIFEST_COOKIE)?.value
+      const cookie = new RouteRequest(request).cookies.get(GITHUB_MANIFEST_COOKIE)?.value
       if (!githubManifestStateMatches(state, cookie)
         || !await consumeGitHubAppManifest(query, { state, userId: current.user.id, sessionId: current.session.id, origin })) throw new GitHubAppSetupError('state', 400)
       if (configured(await config())) throw new GitHubAppSetupError('configured', 409)
@@ -112,7 +112,7 @@ export function githubManifestHandlers({ query, session, config, save, template,
     }
     const back = new URL(GITHUB_MANIFEST_SETTINGS, origin)
     back.searchParams.set('github-app', result)
-    const response = NextResponse.redirect(back, { status: 303, headers })
+    const response = RouteResponse.redirect(back, { status: 303, headers })
     response.cookies.set(GITHUB_MANIFEST_COOKIE, '', { httpOnly: true, secure: origin.startsWith('https:'), sameSite: 'lax', path: GITHUB_MANIFEST_CALLBACK, maxAge: 0 })
     return response
   }

@@ -1,5 +1,5 @@
 import { freshSessionRoute } from '@/lib/fresh-session'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/api-auth'
 import { auth as browserAuth } from '@/lib/auth'
 import { mintDeviceEnrollment } from '@/lib/device-enrollment'
@@ -14,9 +14,9 @@ export async function GET(request: Request) {
   if (!session?.user) return new Response(null, { status: 401 })
   // Starting local setup only needs its fresh account identity. Device
   // ownership is read separately when main verifies the resulting daemon.
-  if (views[0] === 'owner') return NextResponse.json({ ownerId: session.user.id }, { headers: { 'Cache-Control': 'private, no-store' } })
+  if (views[0] === 'owner') return RouteResponse.json({ ownerId: session.user.id }, { headers: { 'Cache-Control': 'private, no-store' } })
   const { rows } = await pool.query<{ id: string }>('SELECT id::text AS id FROM devices WHERE "ownerId"=$1 AND kind=\'local\' AND "removedAt" IS NULL', [session.user.id])
-  return NextResponse.json({ ownerId: session.user.id, deviceIds: rows.map(row => row.id) }, { headers: { 'Cache-Control': 'private, no-store' } })
+  return RouteResponse.json({ ownerId: session.user.id, deviceIds: rows.map(row => row.id) }, { headers: { 'Cache-Control': 'private, no-store' } })
 }
 
 async function POSTBody(request: Request) {
@@ -24,7 +24,7 @@ async function POSTBody(request: Request) {
   if (request.headers.get('origin') !== new URL(request.url).origin) return new Response(null, { status: 403 })
   const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
   if (!session?.user) return new Response(null, { status: 401 })
-  return NextResponse.json({ token: await mintDeviceEnrollment(session.user.id) }, { headers: { 'Cache-Control': 'no-store' } })
+  return RouteResponse.json({ token: await mintDeviceEnrollment(session.user.id) }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 // Credentials, permissions, money and deletion: the session is read from the database, not the cookie cache.

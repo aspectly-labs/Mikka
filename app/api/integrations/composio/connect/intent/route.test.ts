@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { before, mock, test } from 'node:test'
-import { NextRequest, NextResponse } from '@/lib/server-runtime/server'
+import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 import { composioLoopback } from '@/lib/composio-connect-intent'
 
 let sessionUser: string | null = 'app-user'
@@ -11,7 +11,7 @@ const catalogChecks: string[] = []
 const intents: Record<string, unknown>[] = []
 
 const stub = (path: string, exports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports: exports })
-mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest, NextResponse, after: () => {} } })
+mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest, RouteResponse, after: () => {} } })
 stub('../../../../../../lib/request-log.ts', { noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
 stub('../../../../../../lib/fresh-session.ts', { freshSessionRoute: (handler: unknown) => handler })
 stub('../../../../../../lib/auth.ts', { auth: { api: { getSession: async () => sessionUser ? { user: { id: sessionUser } } : null } }, authBaseURL: 'https://example.test' })
@@ -31,7 +31,7 @@ const loopback = { returnTo: 'http://127.0.0.1:43123/return', returnState: 's'.r
 function post(body: unknown, origin = 'https://example.test') {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (origin) headers.origin = origin
-  return POST(new NextRequest('https://example.test/api/integrations/composio/connect/intent', { method: 'POST', headers, body: JSON.stringify(body) }))
+  return POST(new RouteRequest('https://example.test/api/integrations/composio/connect/intent', { method: 'POST', headers, body: JSON.stringify(body) }))
 }
 function setup() {
   sessionUser = 'app-user'; composio = {}; verifierConfigured = true

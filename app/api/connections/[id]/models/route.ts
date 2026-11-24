@@ -1,10 +1,10 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { ActionFailureError } from '@/lib/action-error'
 import { connectionModels, setConnectionModels } from '@/lib/connection-models'
 
-const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
 const fail = (error: unknown) => respond({ error: error instanceof ActionFailureError ? error.code : 'connectionModelsUnavailable' }, error instanceof ActionFailureError ? 404 : 503)
 
 // #2938 (1): the connection's model list — [{id, known, enabled}].

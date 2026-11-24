@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { COMMANDS_DAEMON_LATEST_PARAM, COMMANDS_MAX_SKIP, COMMANDS_MAX_SKIP_DEVICE_COMMANDS, COMMANDS_SKIP_DEVICE_COMMANDS_PARAM, COMMANDS_SKIP_PARAM, ACTIVE_TURN_STEER_HEADER, MAILBOX_NOTICE_HEADER } from '@mikka/protocol/device'
 import { daemonVersions } from '@/lib/daemon-release'
 import { authenticateDevice, deviceMayHaveWork, deviceWork, ownsDevice, tokenActsAsDevice } from '@/lib/device-link'
@@ -24,10 +24,10 @@ import { MCP_CHECK_HEADER } from '@mikka/protocol/mcp-check'
  */
 async function handleGET(request: Request, { params }: { params: Promise<{ deviceId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { deviceId } = await params
   const device = await ownsDevice(deviceId, caller.userId)
-  if (!device) return NextResponse.json({ error: 'Unknown device.' }, { status: 404 })
+  if (!device) return RouteResponse.json({ error: 'Unknown device.' }, { status: 404 })
   const search = new URL(request.url).searchParams
   const list = (name: string, max: number) => (search.get(name) ?? '').split(',').filter(Boolean).slice(0, max)
   const skip = list(COMMANDS_SKIP_PARAM, COMMANDS_MAX_SKIP)
@@ -47,7 +47,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
   const mcpChecks = request.headers.get(MCP_CHECK_HEADER) === '1' && await tokenActsAsDevice(caller, deviceId)
     ? await (await import('@/lib/plugins/runtime')).mcpDeviceChecks.pending(caller.userId, deviceId) : []
   noteLogOutcome(commands.length > 0 || queued.length > 0 || workspaceRequests.length > 0 || mcpChecks.length > 0 || check.deviceCommand !== null ? 'work' : 'empty')
-  return NextResponse.json({
+  return RouteResponse.json({
     commands,
     ...(workspaceRequests.length ? { workspaceRequests } : {}),
     ...(queued.length > 0 ? { queuedRuns: queued } : {}),

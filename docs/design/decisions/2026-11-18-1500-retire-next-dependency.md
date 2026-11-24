@@ -12,7 +12,7 @@
 
 | 原来 | 现在 | 说明 |
 | --- | --- | --- |
-| `next/server` | `@/lib/server-runtime/server` | `NextRequest`/`NextResponse`/`NextURL`/`after`，名字保留是因为所有 handler 和测试都在用；它描述形状，不是依赖 |
+| `next/server` | `@/lib/server-runtime/server` | `RouteRequest`/`RouteResponse`/`RouteURL`/`after`（2026-11-24 由 `NextRequest`/`NextResponse`/`NextURL` 改名，`nextUrl` 改为 `routeUrl`） |
 | `next/headers` | `@/lib/server-runtime/headers` | `headers()` 只读；`cookies()` 返回请求的 cookie journal |
 | `next/navigation` | `@/lib/server-runtime/navigation` | `redirect`/`notFound` 抛 `NavigationResponse`，由 `application.ts` 转成响应 |
 | `next/navigation`、`next/link`、`next/dynamic`、`next/script`（客户端） | `@/lib/client-runtime/*` | Web 与桌面共用一份；桌面的 `location.ts` 只是转发 |
