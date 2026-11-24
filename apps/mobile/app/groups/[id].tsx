@@ -9,7 +9,7 @@ import { useReducedMotionPreference } from '@/lib/reduced-motion'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { BotAvatar, Spinner } from '@/components/icons'
-import { BotBubble, MessageActions, MessageRow, MyBubble, Reactions, TimeSeparator } from '@/components/chat'
+import { BotText, MessageActions, MessageRow, MyBubble, Reactions, TimeSeparator } from '@/components/chat'
 import { Markdown } from '@/components/Markdown'
 import { ListTopFade, NavBar } from '@/components/NavBar'
 import { useScrolledUnderBar } from '@/components/BarBackdrop'
@@ -233,7 +233,7 @@ export default function GroupChat() {
             <Text style={styles.authorName}>{author?.name ?? (message.authorType === 'user' ? mobileMessages.GroupChat.member : 'Bot')}</Text>
           </View>
         ) : null}
-        <BotBubble><Markdown text={message.body} /></BotBubble>
+        <BotText><Markdown text={message.body} /></BotText>
         {chips(message.id)}
         <MessageActions message={held(message.body, message.id)} copy={message.authorType !== 'user'} />
       </MessageRow>

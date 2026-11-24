@@ -9,7 +9,7 @@ import { KeyboardChatScrollView } from 'react-native-keyboard-controller'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ChevronDown, ChevronRight, ScanSearch } from 'lucide-react-native'
-import { BotBubble, MyBubble } from '@/components/chat'
+import { BotText, MyBubble } from '@/components/chat'
 import { Spinner } from '@/components/icons'
 import { Markdown } from '@/components/Markdown'
 import { NavBar, underBar } from '@/components/NavBar'
@@ -168,7 +168,7 @@ function Item({ item, live }: { item: ThreadItem; live: boolean }) {
   switch (item.kind) {
     case 'steps':
       return <ThreadSteps steps={item.steps} count={item.count} live={live} />
-    case 'agent': return <View style={styles.message}><BotBubble><Markdown text={item.text} /></BotBubble></View>
+    case 'agent': return <View style={styles.message}><BotText><Markdown text={item.text} /></BotText></View>
     case 'error': return <AttemptError raw={item.text} />
     case 'person': return <View style={styles.message}><MyBubble text={item.text} threadReferences /></View>
   }

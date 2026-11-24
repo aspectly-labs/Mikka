@@ -39,7 +39,7 @@ function fixture() {
 
 test('RPC never authenticates a cookie-only, revoked, invalid or delegated token', async () => {
   const f = fixture()
-  for (const authorization of ['', 'Basic invalid', 'Bearer missing_12345678901234567890', `Bearer mkp_${'a'.repeat(43)}`, `Bearer mka_${'a'.repeat(43)}`, `Bearer mkr_${'a'.repeat(43)}`]) {
+  for (const authorization of ['', 'Basic invalid', 'Bearer missing_12345678901234567890', `Bearer mkp_${'a'.repeat(43)}`, `Bearer mka_${'a'.repeat(43)}`, `Bearer mkr_${'a'.repeat(43)}`, `Bearer mkmr_${'a'.repeat(43)}`]) {
     const response = await f.handle(request('fixture.read', [], { authorization, cookie: 'better-auth.session_token=valid-other-account' }))
     assert.equal(response.status, 401)
   }

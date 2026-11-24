@@ -8,7 +8,7 @@ import { KeyboardChatScrollView } from 'react-native-keyboard-controller'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Square } from 'lucide-react-native'
-import { BotBubble, MyBubble } from '@/components/chat'
+import { BotText, MyBubble } from '@/components/chat'
 import { Spinner, StatusIcon } from '@/components/icons'
 import { ThreadPlace } from '@/components/ThreadPlace'
 import { Markdown } from '@/components/Markdown'
@@ -95,7 +95,7 @@ export default function ThreadScreen() {
           switch (item.kind) {
             case 'steps':
               return <ThreadSteps key={item.id} steps={item.steps} count={item.count} live={data.active && index === data.items.length - 1} />
-            case 'agent': return <View key={item.id} style={{ marginVertical: 4 }}><BotBubble><Markdown text={item.text} /></BotBubble><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} /></View>
+            case 'agent': return <View key={item.id} style={{ marginVertical: 4 }}><BotText><Markdown text={item.text} /></BotText><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} /></View>
             case 'error': return <Text key={item.id} style={styles.error}>{item.text}</Text>
             case 'person': return <View key={item.id} style={{ marginVertical: 4 }}><MyBubble text={item.text} threadReferences /><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} side="end" /></View>
           }

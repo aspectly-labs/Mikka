@@ -2,7 +2,7 @@ import { createDecisionSubmission } from '../../../lib/decision-submission'
 import { createContext, Fragment, useContext, useReducer, useState } from 'react'
 import { Image, Linking, Pressable, StyleSheet, TextInput, View } from 'react-native'
 import { ArrowUpRight, Check } from 'lucide-react-native'
-import { BotBubble } from '@/components/chat'
+import { BotText } from '@/components/chat'
 import { CardButton, ChatCard, cardText } from '@/components/cards'
 import { Markdown } from '@/components/Markdown'
 import { Text } from '@/components/Text'
@@ -91,7 +91,7 @@ function Node({ value, path }: { value: Value | undefined; path: string }) {
 function Words({ text }: { text: string }) {
   const { sources, onOpen } = useCard()
   if (!text.trim()) return null
-  return <BotBubble><Markdown text={text} sources={sources} onOpen={onOpen} /></BotBubble>
+  return <BotText><Markdown text={text} sources={sources} onOpen={onOpen} /></BotText>
 }
 
 function Card({ value, path }: { value: Component; path: string }) {

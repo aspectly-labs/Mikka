@@ -14,7 +14,7 @@ const stub = (path: string, exports: Record<string, unknown>) => mock.module(new
 mock.module('react-native', { namedExports: { View, Image, Pressable: View, TextInput: View, Linking: { openURL: async () => {} }, StyleSheet: { create: (s: unknown) => s } } })
 mock.module(require.resolve('lucide-react-native'), { namedExports: { ArrowUpRight: () => null, Check: () => null } })
 stub('../components/Text.tsx', { Text })
-stub('../components/chat.tsx', { BotBubble: View })
+stub('../components/chat.tsx', { BotText: View })
 stub('../components/Markdown.tsx', { Markdown: ({ text }: { text: string }) => createElement('p', null, text) })
 stub('../components/cards.tsx', { ChatCard: View, CardButton: ({ label }: { label: string }) => createElement('button', null, label), cardText: {} })
 stub('../lib/web.ts', { openOnWeb: async () => {} })

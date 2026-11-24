@@ -18,13 +18,18 @@ import { mobileMessages } from '@/lib/messages'
 import { press, tap } from '@/lib/haptics'
 import { splitQuoted } from '@/lib/quote'
 import { apiConnection, authHeaders } from '@/lib/api'
+import { useAccessGeneration } from '@/lib/refresh'
 import type { Reaction, ThreadStatus } from '@/lib/types'
 import { colors } from '@/lib/theme'
 import { useReducedMotionPreference } from '@/lib/reduced-motion'
 
-/** The bot's words sit in the grey bubble (R-14). */
-export function BotBubble({ children }: { children: ReactNode }) {
-  return <View style={styles.botBubble}>{children}</View>
+/**
+ * A bot's or Agent's words: full-width body text with no bubble, as ChatGPT, Claude, Codex and Cursor draw an
+ * assistant's reply (Alex, 2026-11-24, 「确认去掉气泡」; docs/design/decisions/2026-11-24-0520-ios-agent-replies-full-width.md).
+ * Only the person's own words keep a bubble.
+ */
+export function BotText({ children }: { children: ReactNode }) {
+  return <View style={styles.botText}>{children}</View>
 }
 
 /** The person's words sit in the blue bubble (R-14); photos they sent sit above it, as in Messages. */
@@ -86,7 +91,9 @@ export function FoldedWords({ text, color, children }: { text: string; color: st
 export function useChatPhotos(): (messageId: string | undefined, count: number | undefined) => ImageURISource[] {
   const [connection] = useState(apiConnection)
   const [headers, setHeaders] = useState<Record<string, string> | null>(null)
-  useEffect(() => { void authHeaders(connection).then(setHeaders) }, [connection])
+  // A renewed session cookie (lib/refresh.ts) replaces the one these photos were requested with.
+  const renewed = useAccessGeneration(connection.account.id)
+  useEffect(() => { void authHeaders(connection).then(setHeaders) }, [connection, renewed])
   return (messageId, count) => {
     if (!count) return []
     // Still in the inbox (no message row yet): grey stand-ins until the next poll.
@@ -287,7 +294,8 @@ const styles = StyleSheet.create({
   body: { fontSize: 16, lineHeight: 25 },
   foldToggle: { alignSelf: 'flex-start', marginTop: 4 },
   foldLabel: { fontSize: 15, fontWeight: '600', opacity: 0.85 },
-  botBubble: { alignSelf: 'flex-start', maxWidth: '86%', backgroundColor: colors.bubble, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 11 },
+  // Full width, aligned with the list's own gutter; long text and code get the whole line.
+  botText: { alignSelf: 'stretch', paddingVertical: 4 },
   myBubble: { alignSelf: 'flex-end', maxWidth: '78%', backgroundColor: colors.accentFill, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10 },
   quoted: { fontSize: 14, lineHeight: 20, color: 'rgba(255,255,255,0.75)', borderLeftWidth: 2, borderLeftColor: 'rgba(255,255,255,0.6)', paddingLeft: 8, marginBottom: 6 },
   mine: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '78%', gap: 4 },

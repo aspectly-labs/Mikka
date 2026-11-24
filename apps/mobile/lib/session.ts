@@ -24,6 +24,8 @@ export function endLostSession(stillLost: () => Promise<boolean> = async () => t
     apiCache.clear()
     if (Platform.OS !== 'web') await (await import('@/lib/push')).forgetPushToken(account.id).catch(() => undefined)
     if (!await lost()) return
+    // The refresh credential ends with the session it kept (lib/refresh.ts).
+    if (Platform.OS !== 'web') await (await import('./refresh')).forgetAccess(account.id).catch(() => undefined)
     await client.signOut().catch(() => undefined)
     client.$store.notify('$sessionSignal')
     await servers.signedOut(account.id).catch(() => undefined)

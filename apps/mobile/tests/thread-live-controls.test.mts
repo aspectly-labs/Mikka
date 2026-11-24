@@ -21,7 +21,7 @@ const lucideMain = pathToFileURL(createRequire(new URL('../package.json', import
 if (lucideMain !== import.meta.resolve('lucide-react-native')) mock.module(lucideMain, lucide)
 mock.module('expo-router', { namedExports: { useRouter: () => ({}), useLocalSearchParams: () => ({ id: original }) } })
 for (const [file, names] of Object.entries({
-  'components/chat.tsx':['BotBubble','MyBubble'], 'components/icons.tsx':['Spinner','StatusIcon'],
+  'components/chat.tsx':['BotText','MyBubble'], 'components/icons.tsx':['Spinner','StatusIcon'],
   'components/ThreadPlace.tsx':['ThreadPlace'], 'components/Markdown.tsx':['Markdown'], 'components/OfflineBanner.tsx':['OfflineBanner'],
   'components/ReadNotice.tsx':['ReadNotice'],'components/Text.tsx':['Text'],'components/StopFailed.tsx':['StopFailed'],
   'components/ThreadQuotaPaused.tsx':['ThreadQuotaPaused'],'features/chat/components/thread-reply-versions.tsx':['MobileReplyVersions'],

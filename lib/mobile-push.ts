@@ -24,6 +24,7 @@ import { BASE_PATH } from '@/lib/base-path'
 
 import { deliverPhonePush } from '@/lib/mobile-push-delivery'
 import { CloudServiceError } from '@/lib/cloud-services/errors'
+import { PHONE_SESSION_SIGNED_IN } from '@/lib/auth-mobile-refresh'
 const BODY_MAX = 180
 const MESSAGES = {
   'zh-CN': () => import('@/messages/zh-CN.json'),
@@ -95,7 +96,7 @@ export async function pushReply(userId: string, botId: string, text: string | nu
                 // session row/FK lock after these advisory locks.
                 if (organizationId) await lockLiveRegistration(client, organizationId, sessionId)
                 const session = await client.query(
-                  'SELECT id FROM "session" WHERE id=$1 AND "userId"=$2 AND "expiresAt">clock_timestamp()' + (organizationId ? '' : ' FOR SHARE'),
+                  `SELECT id FROM "session" WHERE id=$1 AND "userId"=$2 AND ${PHONE_SESSION_SIGNED_IN}` + (organizationId ? '' : ' FOR SHARE'),
                   [sessionId, userId])
                 if (!session.rowCount) return
                 // The Workspace transaction still holds its attachment lock. Recheck the live policy under the APP barrier.
@@ -128,7 +129,7 @@ export async function pushReply(userId: string, botId: string, text: string | nu
                 }
                 // Expiry is wall-clock time, including target reads and token-lock waits.
                 const fresh = await client.query(
-                  'SELECT id FROM "session" WHERE id=$1 AND "userId"=$2 AND "expiresAt">clock_timestamp()', [sessionId, userId])
+                  `SELECT id FROM "session" WHERE id=$1 AND "userId"=$2 AND ${PHONE_SESSION_SIGNED_IN}`, [sessionId, userId])
                 if (!fresh.rowCount) return
                 try {
                   await deliverPhonePush(userId, { to: destinations.rows.map(row => row.token), title: bot.coordinator ? 'Coordinator' : bot.name, body,
