@@ -9415,7 +9415,7 @@
       "connectedApps": "已连接的 App",
       "language": "语言",
       "signingOut": "正在退出登录",
-      "signOutFailed": "退出登录未完成，请重试。",
+      "signOutFailed": "退出登录未完成。",
       "retrySignOut": "重试退出登录"
     },
     "memory": {
@@ -9485,7 +9485,7 @@
       "updateRequired": "请更新到最新版",
       "opening": "正在打开",
       "update": "更新",
-      "openFailed": "更新页面未打开，请重试。",
+      "openFailed": "更新页面未打开。",
       "updating": "正在更新"
     },
     "threadPlace": "运行在哪台机器",
@@ -9524,6 +9524,7 @@
       "translatePrompt": "翻译这段：中文译成英文，其他语言译成中文。",
       "addToThread": "添加到线程"
     },
+    "refine": "继续细化",
     "botProfileLabel": "{name}，资料",
     "chat": {
       "empty": "有什么要我做的，直接说。",

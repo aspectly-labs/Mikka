@@ -16,7 +16,8 @@ import { mobileMessages } from '@/lib/messages'
 const A = mobileMessages.AgentCopy
 const M = mobileMessages.MobileCore
 // i18n-ignore: the label an agent writes for a prompt button (its own words, compared, never shown)
-const FILL_QUESTION = '填入提问'
+/** BeButton's fixed labels (lib/agent-ui-catalog.ts), shown in the reader's language; 填入提问 is a legacy label that now asks directly. */
+const PROMPT_LABELS: Record<string, string> = { 直接提问: A.askNow, 填入提问: A.askNow, 继续细化: M.refine }
 
 /** Fills {name} placeholders in one pass, so text the person wrote is never read as a placeholder. */
 const fill = (template: string, values: Record<string, string>) => template.replace(/\{(\w+)\}/g, (match, key: string) => values[key] ?? match)
@@ -291,7 +292,7 @@ function PromptButton({ value, path }: { value: Component; path: string }) {
   const label = str(value.props.label)
   return (
     <View style={{ alignItems: 'flex-start', gap: 6 }}>
-      <CardButton label={label === FILL_QUESTION ? A.askNow : label} disabled={!open} busy={state === 'sending'} onPress={() => void send(str(value.props.action) || label)} />
+      <CardButton label={PROMPT_LABELS[label] ?? label} disabled={!open} busy={state === 'sending'} onPress={() => void send(str(value.props.action) || label)} />
       <Failed state={state} />
     </View>
   )
