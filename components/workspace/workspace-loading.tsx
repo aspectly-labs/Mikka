@@ -129,35 +129,24 @@ export function SettingsPageLoading() {
   </LoadingPage>
 }
 
-/** A reply as the thread draws it: plain text lines on the left, no bubble (UI review 2026-11-23 #5). */
-function ReplyLines() {
-  return <div className="flex flex-col gap-2">
-    <Skeleton className="h-3 w-[90%] rounded-md" />
-    <Skeleton className="h-3 w-3/4 rounded-md" />
-    <Skeleton className="h-3 w-[55%] rounded-md" />
-  </div>
-}
-
 /**
- * A conversation: the messages at the end of it, and the composer waiting under them, in the thread screen's
- * column (928px and its 16px gutters in the official build's LobeHub look): the person's 12px-radius bubble on the
- * right, each reply as lines of text, so the switch to the real thread does not jump. A bot's chat, a group chat and
- * a thread all open the same way, so this one placeholder stands for each of them from the app's first paint to the
- * chat's first read (UX audit 2026-11-22 #3). It shows only once the wait passes 200ms, and at once when it takes over
- * from another skeleton (`useDelayedVisible`). `composer={false}` is the messages alone, for a transcript whose
- * composer already stands.
+ * A conversation: the bubbles at the end of it, and the composer waiting under them, in the thread screen's
+ * 680px column. A bot's chat, a group chat and a thread all open the same way, so this one placeholder stands
+ * for each of them from the app's first paint to the chat's first read (UX audit 2026-11-22 #3). It shows only
+ * once the wait passes 200ms, and at once when it takes over from another skeleton (`useDelayedVisible`).
+ * `composer={false}` is the bubbles alone, for a transcript whose composer already stands.
  */
 export function ConversationPageLoading({ composer = true }: { composer?: boolean } = {}) {
   const t = useTranslations('Workspace')
   const shown = useDelayedVisible()
   return <LoadingPage label={t('loading')} bar={false}>
     {shown && <div data-chat-skeleton="" className="flex min-h-0 flex-1 flex-col">
-      <div className="mx-auto flex w-full max-w-[960px] flex-1 flex-col justify-end gap-6 px-4 pb-4">
-        <ReplyLines />
-        <Skeleton className="ml-auto h-10 w-2/5 rounded-xl" />
-        <ReplyLines />
+      <div className="mx-auto flex w-full max-w-[728px] flex-1 flex-col justify-end gap-4 px-6 pb-4">
+        <Skeleton className="h-16 w-3/5 rounded-2xl" />
+        <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
+        <Skeleton className="h-24 w-4/5 rounded-2xl" />
       </div>
-      {composer && <div className="mx-auto w-full max-w-[960px] px-4 pb-5"><Skeleton className="h-24 w-full rounded-2xl" /></div>}
+      {composer && <div className="mx-auto w-full max-w-[728px] px-6 pb-5"><Skeleton className="h-24 w-full rounded-2xl" /></div>}
     </div>}
   </LoadingPage>
 }
