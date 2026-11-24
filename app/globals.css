@@ -411,6 +411,8 @@ html {
   font-weight: var(--font-weight-normal);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  /* No grey box over a tapped control on iOS: every control draws its own pressed and focus states. */
+  -webkit-tap-highlight-color: transparent;
 }
 body {
   @apply bg-background text-foreground;
