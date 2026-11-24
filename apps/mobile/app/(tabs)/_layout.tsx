@@ -5,28 +5,38 @@ import { NativeTabs } from 'expo-router/native-tabs'
 import { Bot, Lightbulb, ListChecks, Search, UserCircle } from 'lucide-react-native'
 import { colors } from '@/lib/theme'
 import { SidebarDrawer } from '@/features/shell/components/sidebar'
+import { useSidebarTrial } from '@/lib/sidebar-trial'
 
 /**
  * The app's places, as the system's tab bar with Liquid Glass: Bot, 任务, 建议 and 设置, then the system search tab
  * (decisions/2026-11-07-2045-tasks-only-threads-inside.md; no 线程 tab, threads open inside their task). A chat, a
  * task and a thread open over the tabs, so the tab bar goes away there. The tabs carry no badges (Alex 2026-11-06).
- * With 设置 › 试用侧边栏 on, the bot sidebar wraps the tabs (features/shell/components/sidebar.tsx); off, nothing changes.
+ * With 设置 › 试用侧边栏 on (iOS), the bot sidebar wraps the tabs (features/shell/components/sidebar.tsx) and the bar is
+ * 聊天 · 任务 · 设置: the first tab shows the chat of the bot picked in the sidebar. Off, nothing changes.
  */
 export default function TabsLayout() {
+  const trial = useSidebarTrial() && Platform.OS === 'ios'
   if (Platform.OS === 'web') return <WebTabs />
   return (
     <SidebarDrawer>
     <NativeTabs>
-      <NativeTabs.Trigger name="(chats)">
-        {/* SF Symbols has no robot: lucide's bot as a template image, so the system tints it like the others. */}
-        <NativeTabs.Trigger.Icon src={{ default: require('@/assets/tabs/bot.png'), selected: require('@/assets/tabs/bot-fill.png') }} renderingMode="template" />
-        <NativeTabs.Trigger.Label>Bot</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
+      {trial ? (
+        <NativeTabs.Trigger name="(chats)">
+          <NativeTabs.Trigger.Icon sf={{ default: 'bubble.left', selected: 'bubble.left.fill' }} />
+          <NativeTabs.Trigger.Label>{mobileMessages.MobileCore.sidebarChat}</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+      ) : (
+        <NativeTabs.Trigger name="(chats)">
+          {/* SF Symbols has no robot: lucide's bot as a template image, so the system tints it like the others. */}
+          <NativeTabs.Trigger.Icon src={{ default: require('@/assets/tabs/bot.png'), selected: require('@/assets/tabs/bot-fill.png') }} renderingMode="template" />
+          <NativeTabs.Trigger.Label>Bot</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+      )}
       <NativeTabs.Trigger name="tasks">
         <NativeTabs.Trigger.Icon sf="checklist" />
         <NativeTabs.Trigger.Label>{mobileMessages.Nav.tasks}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="suggestions">
+      <NativeTabs.Trigger name="suggestions" hidden={trial}>
         <NativeTabs.Trigger.Icon sf={{ default: 'lightbulb', selected: 'lightbulb.fill' }} />
         <NativeTabs.Trigger.Label>{mobileMessages.Nav.suggestions}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
@@ -34,7 +44,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf={{ default: 'person.crop.circle', selected: 'person.crop.circle.fill' }} />
         <NativeTabs.Trigger.Label>{mobileMessages.Nav.settings}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="search" role="search">
+      <NativeTabs.Trigger name="search" role="search" hidden={trial}>
         <NativeTabs.Trigger.Label>{mobileMessages.Common.search}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>

@@ -5,7 +5,7 @@
 - Rule: —
 - Builds on: [2026-11-06-1200](2026-11-06-1200-ios-drop-drawer-comma-redesign.md) (no drawer) and [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md) (the tabs), which stay in force while the switch is off.
 
-- 设置 has a 试用侧边栏 switch, off by default and kept on the phone. Off, the app is exactly as before. This flag is Alex's explicit decision (AGENTS.md, 「Ship features on」).
+- 设置 has a 试用侧边栏 switch (iOS only), off by default and kept on the phone. Off, the app is exactly as before. This flag is Alex's explicit decision (AGENTS.md, 「Ship features on」).
 - On, Gesture Handler's own `ReanimatedDrawerLayout` (already in the app, so no new dependency and no native change) wraps the tabs, set up as Bluesky's app sets its drawer on the same React Native, Gesture Handler and Reanimated versions: on iOS the content slides right with the drawer and only a transform moves; a swipe to the right anywhere on a tab root opens it after 5 points; pushed pages keep the system back swipe because the drawer is locked there.
-- The sidebar lists 全部 (opens 任务), the bots with the Coordinator first, the group chats, then 新建 Bot and 新建群聊.
+- Structure (Alex, 2026-11-24: 「直接侧边栏怎么做，bot，然后折叠thread，主页放chat，issues」): the sidebar lists the bots with the Coordinator first; a bot's row opens its chat and its chevron folds its threads in and out (the Bot info page's `botChildren` read, only while unfolded). Group chats and 新建 Bot / 新建群聊 follow. The tab bar becomes 聊天 · 任务 · 设置: 聊天 is the picked bot's chat (the Coordinator's until one is picked) and 任务 is the existing task list. 建议 and 搜索 are hidden; 设置 stays so the switch can be turned off.
 - This is a trial of the feel, not the accepted navigation. Whether the sidebar replaces the tab structure is decided after Alex has tried it.

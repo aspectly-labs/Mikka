@@ -46,3 +46,17 @@ export function setSidebarTrial(next: boolean) {
 export function useSidebarTrial(): boolean {
   return useSyncExternalStore(subscribe, () => enabled, () => false)
 }
+
+/** The bot whose chat the trial's 聊天 tab shows: null is the Coordinator. Kept for this launch only. */
+let sidebarBot: string | null = null
+const botListeners = new Set<() => void>()
+
+export function setSidebarBot(id: string | null) {
+  if (sidebarBot === id) return
+  sidebarBot = id
+  for (const listener of botListeners) listener()
+}
+
+export function useSidebarBot(): string | null {
+  return useSyncExternalStore(listener => { botListeners.add(listener); return () => { botListeners.delete(listener) } }, () => sidebarBot, () => null)
+}
