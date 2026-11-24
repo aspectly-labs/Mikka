@@ -111,10 +111,10 @@ test('provider policy preserves task tenancy and independent membership gates on
   const issue = randomUUID(), memberRun = randomUUID(), ownerRun = randomUUID()
   const fixtureIds: string[] = [issue]
   const noExternalFetch = globalThis.fetch
-  const originalFlagKey = process.env.NEXT_PUBLIC_POSTHOG_KEY
+  const originalFlagKey = process.env.MIKKA_PUBLIC_POSTHOG_KEY
   const flagKey = `synthetic-scope-flag-${randomUUID()}`
-  process.env.NEXT_PUBLIC_POSTHOG_KEY = flagKey
-  t.after(() => { if(originalFlagKey===undefined) delete process.env.NEXT_PUBLIC_POSTHOG_KEY;else process.env.NEXT_PUBLIC_POSTHOG_KEY=originalFlagKey })
+  process.env.MIKKA_PUBLIC_POSTHOG_KEY = flagKey
+  t.after(() => { if(originalFlagKey===undefined) delete process.env.MIKKA_PUBLIC_POSTHOG_KEY;else process.env.MIKKA_PUBLIC_POSTHOG_KEY=originalFlagKey })
   let rejectedExternalRequests = 0
   let linearLoopbackOrigin: string | undefined
   globalThis.fetch = (async (input, init) => {

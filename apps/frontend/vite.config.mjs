@@ -8,17 +8,18 @@ import { configuredDeploymentId } from '../../lib/deployment-id.mjs'
 import { deploymentStage } from '../../lib/deployment-stage.mjs'
 import { installationBuild } from '../../scripts/build-installation.mjs'
 import { sharedStylePlugins } from './scripts/shared-styles.mjs'
+import { publicEnv, withLegacyPublicDefines } from '../../lib/public-env.mjs'
 
 // One process describes one revision. Resolving this per call means an
 // intermittent `git` spawn failure lands in the `catch` below and silently turns
 // a later build of the same process into a different application: every module
-// that reads NEXT_PUBLIC_MIKKA_BUILD is emitted with a different constant, which
+// that reads MIKKA_PUBLIC_BUILD is emitted with a different constant, which
 // renames and rewrites every chunk that transitively imports one.
 let resolvedApplicationBuild
 
 function applicationBuild() {
   if (resolvedApplicationBuild !== undefined) return resolvedApplicationBuild
-  const configured = process.env.NEXT_PUBLIC_MIKKA_BUILD ?? process.env.MIKKA_BUILD_REVISION
+  const configured = publicEnv('MIKKA_PUBLIC_BUILD') ?? process.env.MIKKA_BUILD_REVISION
   if (configured !== undefined) resolvedApplicationBuild = configured
   else {
     try { resolvedApplicationBuild = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { resolvedApplicationBuild = '' }
@@ -50,23 +51,27 @@ export async function frontendConfig({ target = 'web', command = 'build', outdir
     envDir: false,
     envPrefix: [],
     logLevel: 'warn',
+    // Public settings take their new MIKKA_PUBLIC_* name first and their
+    // legacy NEXT_PUBLIC_* name second (lib/public-env.mjs); each is also
+    // inlined under the legacy name until phase 2 of the rename.
     define: {
-      'process.env.NODE_ENV': JSON.stringify(development ? 'development' : 'production'),
-      'process.env.MIKKA_BASE_PATH': '"/mikka"',
-      'process.env.NEXT_PUBLIC_MIKKA_BUILD': JSON.stringify(target === 'web' && !development ? applicationBuild() : ''),
-      'process.env.MIKKA_DEPLOYMENT_ID': JSON.stringify(deploymentId),
-      // This is the existing explicitly public anti-bot widget key. Desktop
-      // never imports its browser auth forms or third-party script loader.
-      'process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? '' : ''),
-      'process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '' : ''),
-      'process.env.POSTHOG_HOST': JSON.stringify(target === 'web' ? process.env.POSTHOG_HOST ?? '' : ''),
-      'process.env.NEXT_PUBLIC_POSTHOG_HOST': JSON.stringify(target === 'web' ? process.env.POSTHOG_HOST ?? process.env.NEXT_PUBLIC_POSTHOG_HOST ?? '' : ''),
-      'process.env.NEXT_PUBLIC_POSTHOG_KEY': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_POSTHOG_KEY ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_ACCEPTANCE': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_COMPUTER_ACCEPTANCE ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT': JSON.stringify(target === 'web' ? stage ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_ENABLED': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_COMPUTER_ENABLED ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_MOCK': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_COMPUTER_MOCK ?? '' : ''),
-      'process.env.NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME ?? '@aspectlylabs/mikka' : ''),
+      ...withLegacyPublicDefines({
+        'process.env.NODE_ENV': JSON.stringify(development ? 'development' : 'production'),
+        'process.env.MIKKA_BASE_PATH': '"/mikka"',
+        'process.env.MIKKA_PUBLIC_BUILD': JSON.stringify(target === 'web' && !development ? applicationBuild() : ''),
+        'process.env.MIKKA_DEPLOYMENT_ID': JSON.stringify(deploymentId),
+        // This is the existing explicitly public anti-bot widget key. Desktop
+        // never imports its browser auth forms or third-party script loader.
+        'process.env.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', process.env, '') : ''),
+        'process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_TURNSTILE_SITE_KEY', process.env, '') : ''),
+        'process.env.POSTHOG_HOST': JSON.stringify(target === 'web' ? publicEnv('POSTHOG_HOST', process.env, '') : ''),
+        'process.env.MIKKA_PUBLIC_POSTHOG_KEY': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', process.env, '') : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_ACCEPTANCE': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_COMPUTER_ACCEPTANCE', process.env, '') : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT': JSON.stringify(target === 'web' ? stage ?? '' : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_ENABLED': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_COMPUTER_ENABLED', process.env, '') : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_MOCK': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_COMPUTER_MOCK', process.env, '') : ''),
+        'process.env.MIKKA_DAEMON_PACKAGE_NAME': JSON.stringify(target === 'web' ? publicEnv('MIKKA_DAEMON_PACKAGE_NAME', process.env, '@aspectlylabs/mikka') : ''),
+      }),
       'process.env': '{}',
     },
     plugins: [await applicationPlugin(target, { deploymentId, serverPages, publicTestFixture }), react(), await deploymentPlugin({ repository, deploymentId })],

@@ -47,7 +47,7 @@ export function childEnvironment(env, publicSha, privateSha) {
     // oxlint-disable-next-line no-control-regex -- Restrict Docker access to a local socket without control bytes.
     ...(/^unix:\/\/\/[^\s\x00-\x1f\x7f]+$/.test(env.DOCKER_HOST ?? '') ? { DOCKER_HOST: env.DOCKER_HOST } : {}),
     CI: 'true', NODE_OPTIONS: '--max-old-space-size=6144', ELECTRON_SKIP_BINARY_DOWNLOAD: '1',
-    MIKKA_BUILD_REVISION: publicSha, NEXT_PUBLIC_MIKKA_BUILD: publicSha,
+    MIKKA_BUILD_REVISION: publicSha, MIKKA_PUBLIC_BUILD: publicSha,
     MIKKA_UI_OVERLAY_SHA: privateSha, MIKKA_UI_OVERLAY_DIR: join(root, '.hosted-ui'),
   }
 }

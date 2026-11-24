@@ -21,8 +21,9 @@ flag with a 100% rollout and no person, group or runtime-only targeting when
 enabling; leave it inactive to pause all sync. The settings page reads this
 same server decision, so browser SDK overrides cannot enable backend work.
 
-Both Vercel and each Linear Worker must have `NEXT_PUBLIC_POSTHOG_KEY` from
-that same existing project. It is the public ingestion token already used by
+Both Vercel and each Linear Worker must have `MIKKA_PUBLIC_POSTHOG_KEY` from
+that same existing project (the old `NEXT_PUBLIC_POSTHOG_KEY` is still accepted,
+see [the rename](operations/public-env-rename.md)). It is the public ingestion token already used by
 the app, not a management credential. Do not add a personal API key to the
 app or Worker. Missing configuration/flag, non-boolean variants, HTTP errors,
 evaluation errors, quota limits and a two-second timeout all read off. Values
@@ -128,7 +129,7 @@ Set these server-only environment variables in the Mikka app and the Linear sync
 | `CRON_SECRET` | Authenticates HTTP calls to `/mikka/api/cron/linear-sync`. Cloudflare Cron Triggers invoke `scheduled()` directly. |
 | `LINEAR_REDIRECT_URL` | Optional exact callback URL override; required on any non-production deployment so its OAuth state is not stored in Production (Mikka's branches have no Vercel Preview) |
 | `HYPERDRIVE` binding | Cloudflare Hyperdrive connection to the same Neon branch used by the app |
-| `NEXT_PUBLIC_POSTHOG_KEY` | Existing public PostHog project token; set in both deployments; missing means sync stays off |
+| `MIKKA_PUBLIC_POSTHOG_KEY` | Existing public PostHog project token; set in both deployments; missing means sync stays off. The old `NEXT_PUBLIC_POSTHOG_KEY` is still accepted |
 
 Generate an encryption key with `openssl rand -hex 32`. Never commit the generated value. Environments sharing the same Neon branch must share the same `LINEAR_TOKEN_ENCRYPTION_KEY`; production can use its own key because it uses a separate Neon branch.
 

@@ -19,7 +19,7 @@ const subject = () => import('./run-trace-benchmark')
 const revision = 'a'.repeat(40)
 const env = { NODE_ENV: 'test' as const, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'alexj11324/Mikka',
   GITHUB_REF: 'refs/heads/main', GITHUB_SHA: revision, MIKKA_EXPECTED_DEPLOYMENT_SHA: revision,
-  NEXT_PUBLIC_POSTHOG_KEY: 'phc_UNIT_PRIVATE_CANARY', E2E_DATABASE_URL: 'postgresql://e2e:local-only@127.0.0.1:5432/mikka_e2e' }
+  MIKKA_PUBLIC_POSTHOG_KEY: 'phc_UNIT_PRIVATE_CANARY', E2E_DATABASE_URL: 'postgresql://e2e:local-only@127.0.0.1:5432/mikka_e2e' }
 const flag = ['--export-controlled-failures']
 const require = createRequire(import.meta.url)
 const workflow = require('js-yaml').load(readFileSync(new URL('../../.github/workflows/run-trace-acceptance.yml', import.meta.url), 'utf8'))
@@ -43,6 +43,7 @@ test('controlled-failure workflow mode has one isolated job and preserves every 
   assert.equal(job.permissions.issues, undefined)
   const secretSteps = job.steps.filter((step: { uses?: string }) => step.uses?.startsWith('Infisical/'))
   assert.equal(secretSteps.length, 1)
+  // The Infisical key keeps its legacy name until phase 2 (docs/operations/public-env-rename.md).
   assert.equal(secretSteps[0].with['secret-name'], 'NEXT_PUBLIC_POSTHOG_KEY')
   assert.equal(secretSteps[0].with['secret-path'], '/vercel')
   assert.equal(secretSteps[0].with['identity-id'], '2cf9fa19-b9db-4c08-8ca0-b31859f2cbac')
@@ -98,13 +99,16 @@ test('export opt-in is finite, source bound and uses only the official project-t
   assert.equal(settings.endpoint, 'https://us.i.posthog.com/i/v1/traces')
   assert.equal(settings.environment, 'dev')
   assert.equal(settings.version, revision)
-  assert.equal(settings.token, env.NEXT_PUBLIC_POSTHOG_KEY)
+  assert.equal(settings.token, env.MIKKA_PUBLIC_POSTHOG_KEY)
+  // The workflow's Infisical step still exports the legacy name.
+  const { MIKKA_PUBLIC_POSTHOG_KEY: token, ...legacyEnv } = env
+  assert.equal(controlledFailureSettings(flag, { ...legacyEnv, NEXT_PUBLIC_POSTHOG_KEY: token })!.token, token)
   assert.equal(controlledFailureSettings(flag, { ...env, TRACE_BENCHMARK_REQUESTS: '5000', OTEL_EXPORTER_OTLP_ENDPOINT: 'https://foreign.test' })!.endpoint, settings.endpoint)
   for (const args of [['--export-controlled-failures', '--export-controlled-failures'], ['--endpoint=https://foreign.test'], ['--export-controlled-failures=1']]) {
     assert.throws(() => controlledFailureSettings(args, env), /invalid_trace_benchmark_mode/)
   }
-  for (const patch of [{ NEXT_PUBLIC_POSTHOG_KEY: '' }, { NEXT_PUBLIC_POSTHOG_KEY: 'phx_PRIVATE_CANARY' },
-    { NEXT_PUBLIC_POSTHOG_KEY: 'phc_PRIVATE\nCANARY' }, { GITHUB_SHA: 'moving-branch' },
+  for (const patch of [{ MIKKA_PUBLIC_POSTHOG_KEY: '' }, { MIKKA_PUBLIC_POSTHOG_KEY: 'phx_PRIVATE_CANARY' },
+    { MIKKA_PUBLIC_POSTHOG_KEY: 'phc_PRIVATE\nCANARY' }, { GITHUB_SHA: 'moving-branch' },
     { MIKKA_EXPECTED_DEPLOYMENT_SHA: 'b'.repeat(40) }, { GITHUB_REF: 'refs/heads/unreviewed' },
     { GITHUB_REPOSITORY: 'foreign/repo' }, { GITHUB_ACTIONS: 'false' }, { GITHUB_EVENT_NAME: 'push' },
     { E2E_DATABASE_URL: 'postgresql://e2e:PRIVATE_CANARY@foreign.test/production' }]) {

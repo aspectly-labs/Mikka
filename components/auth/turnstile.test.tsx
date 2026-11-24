@@ -51,8 +51,8 @@ const browser = new Window({ url: 'https://app.example/mikka/en/sign-up' })
 after(() => browser.close())
 
 test('signup blocks missing/expired tokens and recovers from refusal with retained fields and fresh verification', async () => {
-  const originalSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
-  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = '1x00000000000000000000AA'
+  const originalSiteKey = process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY
+  process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY = '1x00000000000000000000AA'
   for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, location: browser.location, history: browser.history, sessionStorage: browser.sessionStorage, FormData: browser.FormData, IS_REACT_ACT_ENVIRONMENT: true, Element: browser.Element, HTMLElement: browser.HTMLElement, Node: browser.Node, ShadowRoot: browser.ShadowRoot, getComputedStyle: browser.getComputedStyle.bind(browser), requestAnimationFrame: browser.requestAnimationFrame.bind(browser), cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser) })) {
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value })
   }
@@ -113,14 +113,14 @@ test('signup blocks missing/expired tokens and recovers from refusal with retain
     assert.deepEqual(requests[1], { ...values, fetchOptions: { headers: { 'x-turnstile-token': 'fresh-token' } } })
     assert.equal(navigations.length, 1, 'a successful resubmit continues to the application')
 
-    delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
+    delete process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY
     await act(async () => { root.render(translated(<AuthForm key="without-turnstile" mode="sign-up" />)) })
     assert.equal(container.querySelector('[data-slot="turnstile"]'), null)
     assert.equal((container.querySelector('button[type="submit"]') as HTMLButtonElement).disabled, false, 'local signup without a configured site key stays available')
   } finally {
     await act(async () => root.unmount())
     container.remove()
-    if (originalSiteKey === undefined) delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
-    else process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = originalSiteKey
+    if (originalSiteKey === undefined) delete process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY
+    else process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY = originalSiteKey
   }
 })

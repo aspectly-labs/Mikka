@@ -1,5 +1,6 @@
 /** One global switch: never evaluate this flag against a person or team. */
 import { posthogConfig } from '../posthog-config'
+import { publicEnv } from '../public-env.mjs'
 export const LINEAR_SYNC_FLAG = 'mikka-linear-sync'
 export const LINEAR_SYNC_DISTINCT_ID = 'mikka-linear-sync-service'
 export const LINEAR_SYNC_FLAG_CACHE_MS = 30_000
@@ -70,12 +71,12 @@ export function createLinearSyncGate({
 
 const gate = createLinearSyncGate()
 
-export function linearSyncState(token = process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+export function linearSyncState(token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY')) {
   return gate(token)
 }
 
 /** Missing configuration, flag, network, quota or evaluation result means off. */
-export async function linearSyncEnabled(token = process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+export async function linearSyncEnabled(token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY')) {
   return await linearSyncState(token) === 'enabled'
 }
 

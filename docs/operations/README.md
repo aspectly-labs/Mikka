@@ -12,5 +12,6 @@ Public deployment verification contracts:
 
 - [Service manifest deployment contract](deploy-pipeline.md): public build provenance, service selection, verification evidence and recovery inputs.
 - [API route registration probe](route-probe.md)
+- [Public configuration rename](public-env-rename.md): NEXT_PUBLIC_* to MIKKA_PUBLIC_*, phase 2 checklist.
 - [Zero-residency baseline](zero-residency-baseline.md): container compute inventory, ownership matrix and contract check for epic #3076.
 - [Epic #3076 real E2E acceptance plan](epic3076-e2e-acceptance.md): issue #3085 zero-residency, wake, harness, failure, billing and retirement evidence mapping.

@@ -1,6 +1,7 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { publicEnv } from '../../lib/public-env.mjs'
 
 export const NEON_PROJECT = 'autumn-fire-21908520'
 export const NEON_ORG = 'org-sweet-lab-80289846'
@@ -184,7 +185,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if(process.argv.length!==2 && !providerOnly) fail('invalid_collector_mode')
   const report = await run({neonToken:process.env.NEON_API_KEY,providerOnly})
   if(providerOnly) report.collectorSource='github_runtime_collector'
-  try { await publish(report, process.env.NEXT_PUBLIC_POSTHOG_KEY) } catch(e) {report.reasons.push(safeError(e)); report.status='insufficient'}
+  try { await publish(report, publicEnv('MIKKA_PUBLIC_POSTHOG_KEY')) } catch(e) {report.reasons.push(safeError(e)); report.status='insufficient'}
   await mkdir('egress-monitor-report',{recursive:true})
   await writeFile('egress-monitor-report/report.json', JSON.stringify(report,null,2))
   const summary = `Database egress monitor: ${report.status}. Samples: ${report.runtime?.samples ?? 0}. Provider bytes: ${report.neon?.periodBytes ?? 'unavailable'}. Reasons: ${report.reasons.join(', ') || 'none'}.\n`

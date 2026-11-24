@@ -12,6 +12,7 @@ import { load as loadYaml } from 'js-yaml'
 import { POSTER_BINARY_ARCHIVE, POSTER_BINARY_MANIFEST, POSTER_BINARY_MAX_BYTES,
   POSTER_LICENSE_FILES, POSTER_RUNTIME_DIRECTORY } from '../lib/captures/poster-binary.mjs'
 import { readCompiledBuild } from './start-app.mjs'
+import { publicEnv } from '../lib/public-env.mjs'
 
 export const analyticsKey = 'phc_synthetic_ssr_regression'
 export const analyticsPaths = ['/mikka', '/mikka/sign-in', '/mikka/en/sign-in']
@@ -27,7 +28,7 @@ const posterResources = new Set([POSTER_BINARY_ARCHIVE, POSTER_BINARY_MANIFEST,
 
 export function analyticsEnvironment(env = process.env) {
   assert.equal(env.CI, 'true', 'Requires an isolated CI environment')
-  assert.equal(env.NEXT_PUBLIC_POSTHOG_KEY, analyticsKey, 'Only the synthetic analytics project is allowed')
+  assert.equal(publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', env), analyticsKey, 'Only the synthetic analytics project is allowed')
   const database = new URL(env.E2E_DATABASE_URL)
   assert.ok(['postgres:', 'postgresql:'].includes(database.protocol))
   assert.ok(['127.0.0.1', 'localhost'].includes(database.hostname))
@@ -202,7 +203,7 @@ export async function checkAnalytics({ root = process.cwd(), env = process.env }
     E2E_DATABASE_URL: database, DATABASE_URL: database, MIKKA_DATABASE_URL: database,
     // The browser key is already proven in the compiled assets. Disabling the
     // server token prevents anonymous flag lookups from contacting PostHog.
-    NEXT_PUBLIC_POSTHOG_KEY: '' }
+    MIKKA_PUBLIC_POSTHOG_KEY: '' }
   const child = spawn(process.execPath, ['scripts/start-app.mjs', '--hostname', 'localhost', '--port', String(port)], {
     cwd: root, env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'],
   })

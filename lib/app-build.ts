@@ -6,8 +6,8 @@ import { withBasePath } from '@/lib/base-path'
 // server actions; once the new one has removed them they fail. The page
 // compares its build with the server's and offers a reload instead.
 
-/** Inlined at build time (apps/frontend/vite.config.mjs); empty without one. */
-export const APP_BUILD = process.env.NEXT_PUBLIC_MIKKA_BUILD ?? ''
+/** Inlined at build time (apps/frontend/vite.config.mjs, apps/api/nitro.config.ts); empty without one. */
+export const APP_BUILD = process.env.MIKKA_PUBLIC_BUILD ?? ''
 
 const refreshAbort = new AbortController()
 export const pageRefreshSignal = () => refreshAbort.signal

@@ -759,7 +759,8 @@
     "mode": "built-in",
     "environment": [
       "MIKKA_UI_OVERLAY_DIR",
-      "MIKKA_LOCAL_TEST_ACCOUNTS"
+      "MIKKA_LOCAL_TEST_ACCOUNTS",
+      "MIKKA_PUBLIC_BUILD"
     ],
     "behavior": "The development server uses Nitro’s native drain during worker replacement so admitted requests can finish with their original worker, and before it listens it prepares a loopback database, the official UI overlay’s dependencies and one local development account.",
     "test": "apps/api/runtime/dev-tracing.test.mjs"
@@ -768,7 +769,7 @@
     "mode": "built-in",
     "environment": [
       "MIKKA_BUILD_BYOS_WORKER",
-      "NEXT_PUBLIC_MIKKA_BUILD",
+      "MIKKA_PUBLIC_BUILD",
       "VERCEL_DEPLOYMENT_ID",
       "MIKKA_TEST_DEPLOYMENT_SHA",
       "VERCEL_ENV",
@@ -4448,5 +4449,61 @@
     "behavior": "Locates a bound task the native caller may read and pins its stored workspace for the task detail and edits, using the local application and workspace databases.",
     "test": "tests/mobile-tasks.db.test.ts",
     "suite": "test:workspace-admin-db"
+  },
+  "lib/public-env.mjs": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Read a public build or runtime setting under its MIKKA_PUBLIC_* name first and its legacy NEXT_PUBLIC_* name second, so an installation configured with either name keeps the same behavior. It requires no external service.",
+    "test": "lib/public-env.test.mjs"
+  },
+  "apps/api/nitro.config.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_BUILD_REVISION",
+      "MIKKA_PUBLIC_BUILD",
+      "MIKKA_UI_OVERLAY_SHA",
+      "MIKKA_BASE_PATH",
+      "MIKKA_TEST_BUILD_SHA",
+      "MIKKA_TEST_DEPLOYMENT_SHA",
+      "MIKKA_PUBLIC_COMPUTER_DEPLOYMENT"
+    ],
+    "behavior": "The server build inlines its revision, application build and deployment stage as constants; an unset application build uses the source revision. It requires no external service.",
+    "test": "apps/api/build-contract.test.mjs"
+  },
+  "lib/app-build.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_PUBLIC_BUILD"
+    ],
+    "behavior": "A page compares the application build inlined at build time with the server's and offers a reload after a deploy; without a build constant it never asks. It requires no external service.",
+    "test": "lib/app-build.test.ts",
+    "suite": "test:platform"
+  },
+  "lib/computer/client.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_PUBLIC_COMPUTER_MOCK"
+    ],
+    "behavior": "The computer client calls the installation's authenticated computer routes; MIKKA_PUBLIC_COMPUTER_MOCK=1 plays the in-page demo instead. It requires no external service.",
+    "test": "lib/computer/client-deadline.test.ts",
+    "suite": "test:unattended"
+  },
+  "lib/platform/client-config.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_DAEMON_PACKAGE_NAME"
+    ],
+    "behavior": "Clients build their daemon install commands with the configured package name, or the official package name when it is unset. It requires no external service.",
+    "test": "apps/desktop/scripts/renderer.test.mjs"
+  },
+  "lib/posthog-config.ts": {
+    "mode": "operator-configured",
+    "environment": [
+      "MIKKA_PUBLIC_POSTHOG_KEY",
+      "POSTHOG_HOST"
+    ],
+    "behavior": "PostHog analytics and flags use the operator's project token and ingestion host; without a token no client is created and nothing is sent.",
+    "test": "lib/posthog-server.test.ts",
+    "suite": "test:service-config"
   }
 }

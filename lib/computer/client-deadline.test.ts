@@ -5,8 +5,8 @@ import { computerReadDeadline } from './state-deadline'
 
 test('a slow actual state fetch caches its request-start clock for expiry and remount calculations', async () => {
   const original = globalThis.fetch
-  const mockFlag = process.env.NEXT_PUBLIC_COMPUTER_MOCK
-  delete process.env.NEXT_PUBLIC_COMPUTER_MOCK
+  const mockFlag = process.env.MIKKA_PUBLIC_COMPUTER_MOCK
+  delete process.env.MIKKA_PUBLIC_COMPUTER_MOCK
   let now = 1_000, resolve!: (response: Response) => void
   const clock = mock.method(performance, 'now', () => now)
   const botId = '40000000-0000-4000-8000-000000000001', workspaceId = '50000000-0000-4000-8000-000000000001'
@@ -33,6 +33,6 @@ test('a slow actual state fetch caches its request-start clock for expiry and re
   } finally {
     clock.mock.restore()
     globalThis.fetch = original
-    if (mockFlag === undefined) delete process.env.NEXT_PUBLIC_COMPUTER_MOCK; else process.env.NEXT_PUBLIC_COMPUTER_MOCK = mockFlag
+    if (mockFlag === undefined) delete process.env.MIKKA_PUBLIC_COMPUTER_MOCK; else process.env.MIKKA_PUBLIC_COMPUTER_MOCK = mockFlag
   }
 })

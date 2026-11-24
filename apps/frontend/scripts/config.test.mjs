@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { frontendConfig } from '../vite.config.mjs'
 import { browserModule } from './test-module.mjs'
+import { LEGACY_PUBLIC_ENV } from '../../../lib/public-env.mjs'
 
 const checkout = process.cwd()
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -31,62 +32,78 @@ async function environment(values, run) {
   finally { for (const [key, value] of saved) { if (value === undefined) delete process.env[key]; else process.env[key] = value } }
 }
 
-test('only the existing explicit public configuration is defined for the web graph', async () => environment({ PRIVATE_SOURCE_CANARY: 'not-public', NEXT_PUBLIC_UNLISTED_CANARY: 'not-public', MIKKA_DEPLOYMENT_ID: 'release-1', NEXT_PUBLIC_MIKKA_BUILD: 'a'.repeat(40) }, async () => {
+const PUBLIC_KEYS = [
+  'MIKKA_PUBLIC_BUILD',
+  'MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY',
+  'MIKKA_PUBLIC_TURNSTILE_SITE_KEY',
+  'POSTHOG_HOST',
+  'MIKKA_PUBLIC_POSTHOG_KEY',
+  'MIKKA_PUBLIC_COMPUTER_ACCEPTANCE',
+  'MIKKA_PUBLIC_COMPUTER_DEPLOYMENT',
+  'MIKKA_PUBLIC_COMPUTER_ENABLED',
+  'MIKKA_PUBLIC_COMPUTER_MOCK',
+  'MIKKA_DAEMON_PACKAGE_NAME',
+]
+
+test('only the existing explicit public configuration is defined for the web graph', async () => environment({ PRIVATE_SOURCE_CANARY: 'not-public', NEXT_PUBLIC_UNLISTED_CANARY: 'not-public', MIKKA_DEPLOYMENT_ID: 'release-1', MIKKA_PUBLIC_BUILD: 'a'.repeat(40) }, async () => {
   const config = await frontendConfig()
   assert.equal(config.envDir, false)
   assert.deepEqual(config.envPrefix, [])
   assert.equal(config.define['process.env'], '{}')
-  assert.equal(config.define['process.env.NEXT_PUBLIC_MIKKA_BUILD'], JSON.stringify('a'.repeat(40)))
+  assert.equal(config.define['process.env.MIKKA_PUBLIC_BUILD'], JSON.stringify('a'.repeat(40)))
   assert.equal(config.define['process.env.MIKKA_DEPLOYMENT_ID'], '"release-1"')
   assert.equal(JSON.stringify(config.define).includes('not-public'), false)
-  assert.deepEqual(Object.keys(config.define).filter(key => key.startsWith('process.env.NEXT_PUBLIC_')).sort(), [
-    'NEXT_PUBLIC_MIKKA_BUILD',
-    'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
-    'NEXT_PUBLIC_TURNSTILE_SITE_KEY',
-    'NEXT_PUBLIC_POSTHOG_HOST',
-    'NEXT_PUBLIC_POSTHOG_KEY',
-    'NEXT_PUBLIC_COMPUTER_ACCEPTANCE',
-    'NEXT_PUBLIC_COMPUTER_DEPLOYMENT',
-    'NEXT_PUBLIC_COMPUTER_ENABLED',
-    'NEXT_PUBLIC_COMPUTER_MOCK',
-    'NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME',
-  ].map(key => `process.env.${key}`).sort())
+  // Every public setting is the table's new name, and only the legacy aliases of
+  // those names are inlined, each with the same value, until phase 2.
+  assert.deepEqual(Object.keys(LEGACY_PUBLIC_ENV).sort(), [...PUBLIC_KEYS].sort())
+  for (const key of PUBLIC_KEYS) assert.equal(typeof config.define[`process.env.${key}`], 'string', key)
+  const legacy = Object.keys(config.define).filter(key => key.startsWith('process.env.NEXT_PUBLIC_'))
+  assert.deepEqual(legacy.sort(), PUBLIC_KEYS.map(key => `process.env.${LEGACY_PUBLIC_ENV[key]}`).sort())
+  for (const key of PUBLIC_KEYS) assert.equal(config.define[`process.env.${LEGACY_PUBLIC_ENV[key]}`], config.define[`process.env.${key}`], key)
 }))
 
-test('public build identity uses the explicit project revision instead of legacy deployment metadata', async () => environment({ NEXT_PUBLIC_MIKKA_BUILD: undefined }, async () => {
+test('the web graph still takes a public setting from its legacy name, and the new name wins', async () => environment({ ...Object.fromEntries(PUBLIC_KEYS.flatMap(key => [[key, undefined], [LEGACY_PUBLIC_ENV[key], undefined]])), [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_POSTHOG_KEY]: 'legacy-analytics', [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_TURNSTILE_SITE_KEY]: 'legacy-widget', MIKKA_PUBLIC_TURNSTILE_SITE_KEY: 'current-widget' }, async () => {
+  const config = await frontendConfig()
+  assert.equal(config.define['process.env.MIKKA_PUBLIC_POSTHOG_KEY'], '"legacy-analytics"')
+  assert.equal(config.define['process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY'], '"current-widget"')
+  assert.equal(config.define[`process.env.${LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_TURNSTILE_SITE_KEY}`], '"current-widget"')
+  assert.equal(config.define['process.env.MIKKA_DAEMON_PACKAGE_NAME'], '"@aspectlylabs/mikka"')
+}))
+
+test('public build identity uses the explicit project revision instead of legacy deployment metadata', async () => environment({ MIKKA_PUBLIC_BUILD: undefined, [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_BUILD]: undefined }, async () => {
   // applicationBuild() is cached per process; observe a fresh one.
   const output = execFileSync(process.execPath, ['--input-type=module', '-e',
     `import { frontendConfig } from ${JSON.stringify(fileURLToPath(new URL('../vite.config.mjs', import.meta.url)))};` +
-    `const c = await frontendConfig(); console.log(c.define['process.env.NEXT_PUBLIC_MIKKA_BUILD'])`],
+    `const c = await frontendConfig(); console.log(c.define['process.env.MIKKA_PUBLIC_BUILD'])`],
     { encoding: 'utf8', env: { ...process.env, MIKKA_BUILD_REVISION: 'b'.repeat(40), VERCEL_DEPLOYMENT_ID: 'dpl_old', VERCEL_GIT_COMMIT_SHA: 'c'.repeat(40) } }).trim()
   assert.equal(output, JSON.stringify('b'.repeat(40)))
 }))
 
-test('the production explicit computer rollout follows the app deployment stage without requiring PostHog', async () => overlayFixture(({ dir, sha }) => environment({ MIKKA_DEPLOYMENT_STAGE: 'production', MIKKA_UI_OVERLAY_DIR: dir, MIKKA_UI_OVERLAY_SHA: sha, NEXT_PUBLIC_COMPUTER_DEPLOYMENT: undefined, NEXT_PUBLIC_COMPUTER_ENABLED: '1', NEXT_PUBLIC_POSTHOG_KEY: undefined }, async () => {
+test('the production explicit computer rollout follows the app deployment stage without requiring PostHog', async () => overlayFixture(({ dir, sha }) => environment({ MIKKA_DEPLOYMENT_STAGE: 'production', MIKKA_UI_OVERLAY_DIR: dir, MIKKA_UI_OVERLAY_SHA: sha, MIKKA_PUBLIC_COMPUTER_DEPLOYMENT: undefined, MIKKA_PUBLIC_COMPUTER_ENABLED: '1', MIKKA_PUBLIC_POSTHOG_KEY: undefined }, async () => {
   const config = await frontendConfig()
   const flags = await browserModule('export { computerProductionEnabled } from "./lib/feature-flags.ts"', config.define)
-  assert.equal(JSON.parse(config.define['process.env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT']), 'production')
-  assert.equal(flags.computerProductionEnabled(JSON.parse(config.define['process.env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT']), JSON.parse(config.define['process.env.NEXT_PUBLIC_COMPUTER_ENABLED'])), true)
-  assert.equal(JSON.parse(config.define['process.env.NEXT_PUBLIC_POSTHOG_KEY']), '')
+  assert.equal(JSON.parse(config.define['process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT']), 'production')
+  assert.equal(flags.computerProductionEnabled(JSON.parse(config.define['process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT']), JSON.parse(config.define['process.env.MIKKA_PUBLIC_COMPUTER_ENABLED'])), true)
+  assert.equal(JSON.parse(config.define['process.env.MIKKA_PUBLIC_POSTHOG_KEY']), '')
 })))
 
-test('desktop remains unpinned and does not initialize browser analytics or browser auth configuration', async () => environment({ MIKKA_DEPLOYMENT_ID: 'release-1', NEXT_PUBLIC_MIKKA_BUILD: 'a'.repeat(40), NEXT_PUBLIC_POSTHOG_KEY: 'public-canary', NEXT_PUBLIC_TURNSTILE_SITE_KEY: 'public-widget' }, async () => {
+test('desktop remains unpinned and does not initialize browser analytics or browser auth configuration', async () => environment({ MIKKA_DEPLOYMENT_ID: 'release-1', MIKKA_PUBLIC_BUILD: 'a'.repeat(40), MIKKA_PUBLIC_POSTHOG_KEY: 'public-canary', MIKKA_PUBLIC_TURNSTILE_SITE_KEY: 'public-widget' }, async () => {
   const config = await frontendConfig({ target: 'desktop', publicTestFixture: true })
-  for (const key of ['MIKKA_DEPLOYMENT_ID', 'NEXT_PUBLIC_MIKKA_BUILD', 'NEXT_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_TURNSTILE_SITE_KEY']) assert.equal(config.define[`process.env.${key}`], '""')
+  for (const key of ['MIKKA_DEPLOYMENT_ID', 'MIKKA_PUBLIC_BUILD', 'MIKKA_PUBLIC_POSTHOG_KEY', 'MIKKA_PUBLIC_TURNSTILE_SITE_KEY']) assert.equal(config.define[`process.env.${key}`], '""')
   assert.deepEqual(config.experimental, {})
 }))
 
 test('the actual web flag graph follows the explicit deployment stage while desktop remains server-owned', async () => overlayFixture(async ({ dir, sha }) => {
-  for (const stage of ['production', 'preview', 'development']) await environment({ MIKKA_DEPLOYMENT_STAGE: stage, MIKKA_UI_OVERLAY_DIR: dir, MIKKA_UI_OVERLAY_SHA: sha, NEXT_PUBLIC_COMPUTER_ENABLED: '1' }, async () => {
+  for (const stage of ['production', 'preview', 'development']) await environment({ MIKKA_DEPLOYMENT_STAGE: stage, MIKKA_UI_OVERLAY_DIR: dir, MIKKA_UI_OVERLAY_SHA: sha, MIKKA_PUBLIC_COMPUTER_ENABLED: '1' }, async () => {
     const web = await frontendConfig()
-    const deployment = JSON.parse(web.define['process.env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT'])
+    const deployment = JSON.parse(web.define['process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT'])
     assert.equal(deployment, stage)
     const flags = await browserModule('export { computerProductionEnabled } from "./lib/feature-flags.ts"', web.define)
     assert.equal(flags.computerProductionEnabled(deployment, '1'), stage === 'production')
     // Exercise the public test renderer without representing a release with a
     // missing private checkout. The explicit application stage remains set.
     const desktop = await environment({ MIKKA_DEPLOYMENT_STAGE: undefined, MIKKA_UI_OVERLAY_DIR: undefined, MIKKA_UI_OVERLAY_SHA: undefined }, () => frontendConfig({ target: 'desktop', publicTestFixture: true }))
-    assert.equal(desktop.define['process.env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT'], '""')
+    assert.equal(desktop.define['process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT'], '""')
   })
   await environment({ MIKKA_DEPLOYMENT_STAGE: 'prod' }, async () => assert.rejects(frontendConfig(), /MIKKA_DEPLOYMENT_STAGE_INVALID/))
 }))
