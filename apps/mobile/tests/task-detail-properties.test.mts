@@ -17,7 +17,7 @@ const text = ({ children, onPress }: { children: ReactNode; onPress?: () => void
   createElement(onPress ? 'button' : 'span', { onClick: onPress }, children)
 const pressable = ({ children, onPress, accessibilityLabel }: { children?: ReactNode; onPress?: () => void; accessibilityLabel?: string }) =>
   createElement('button', { onClick: onPress, 'aria-label': accessibilityLabel }, children)
-mock.module('react-native', { namedExports: { View: box, ScrollView: box, StyleSheet: { create: (styles: unknown) => styles }, Pressable: pressable, Linking: { openURL: (url: string) => routes.push(url) } } })
+mock.module('react-native', { namedExports: { View: box, ScrollView: box, StyleSheet: { create: (styles: unknown) => styles }, Pressable: pressable, RefreshControl: box, Linking: { openURL: (url: string) => routes.push(url) } } })
 mock.module('expo-router', { namedExports: { useRouter: () => ({ push: (path: string) => routes.push(path) }), useLocalSearchParams: () => ({ id: 'task' }) } })
 mock.module('react-native-safe-area-context', { namedExports: { useSafeAreaInsets: () => ({ bottom: 0 }) } })
 const icons = { namedExports: Object.fromEntries(['ArrowUpRight', 'ChartNoAxesColumn', 'ChevronRight', 'Circle', 'CircleUserRound', 'Flag', 'GitBranch', 'GitMerge', 'GitPullRequest',
@@ -70,7 +70,7 @@ const data = {
       { id: 'hidden', detail: null, ownerName: 'Private peer' }],
     pullRequests: [{ url: 'https://github.com/acme/test/pull/7', title: 'Proposed change', state: 'merged' }, { url: 'https://github.com/acme/test/pull/8', title: 'Follow-up', state: 'open' }] },
 }
-stub('lib/useApi.ts', { useLiveApi: (path: string) => { requests.push(path); return { data } } })
+stub('lib/useApi.ts', { useLiveApi: (path: string) => { requests.push(path); return { data } }, useRefresh: () => ({ refreshing: false, onRefresh: () => {} }) })
 
 test('the Native task lists Capy\'s properties in one column and its activity as one actor-first sentence per event', async () => {
   const browser = new Window()

@@ -56,6 +56,13 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
   const exchanged = new Set<string>()
   /** A signed-in session whose exchange got no answer, tried again before the account's next request. */
   const unanswered = new Map<string, { userId: string; session: string }>()
+  /**
+   * Bumped the moment a sign-out starts. An exchange started before it may
+   * still answer, but it no longer owns the slot: its credential was revoked
+   * with the sign-in, so it is neither saved nor asked for again.
+   */
+  const slots = new Map<string, number>()
+  const slot = (account: string) => slots.get(account) ?? 0
   /** Bumped by every successful rotation, so a 401 for a request sent before it just replays. */
   const generations = new Map<string, number>()
   const listeners = new Set<() => void>()
@@ -117,16 +124,19 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
     const running = exchanging.get(account)
     if (running) return running
     unanswered.delete(account)
-    const work = (async () => {
+    const owner = slot(account)
+    const owns = () => slot(account) === owner
+    const work: Promise<void> = (async () => {
       const current = await load(account)
-      if (current?.userId === userId) return
+      if (!owns() || current?.userId === userId) return
       // A credential for someone else in this slot is stale; never use it.
       if (current) await store(account, null)
       const result = await deps.exchange(account).catch((): ExchangeResult => ({ status: 'unavailable' }))
-      if (credentials.get(account)) return
+      // Signed out meanwhile: the answer belongs to a sign-in that is over.
+      if (!owns() || credentials.get(account)) return
       if (result.status === 'unavailable') unanswered.set(account, { userId, session })
       else if (result.status === 'ok' && result.credential.userId === userId) await store(account, { ...result.credential, bindingSessionId: result.credential.sessionId })
-    })().finally(() => { exchanging.delete(account) })
+    })().finally(() => { if (exchanging.get(account) === work) exchanging.delete(account) })
     exchanging.set(account, work)
     return work
   }
@@ -193,7 +203,11 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
 
     /** Signing out: the server ends the family (best effort) and the keychain forgets it. */
     async forget(account: string): Promise<void> {
+      // Before anything awaits: an exchange in flight loses the slot, and the next sign-in starts its own.
+      slots.set(account, slot(account) + 1)
       unanswered.delete(account)
+      exchanging.delete(account)
+      for (const key of exchanged) if (key.startsWith(`${account}:`)) exchanged.delete(key)
       const credential = await load(account)
       await store(account, null)
       if (credential) await deps.revoke(account, credential.refreshToken).catch(() => undefined)

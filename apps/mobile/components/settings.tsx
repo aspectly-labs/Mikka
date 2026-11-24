@@ -52,8 +52,10 @@ export function SettingsPage({ title, children, footer }: { title: string; child
   )
 }
 
-export function Row({ icon, label, detail, value, onPress, onLongPress, trailing, destructive, expanded, disabled = false }: {
+export function Row({ icon, label, detail, value, onPress, onLongPress, trailing, destructive, expanded, disabled = false, actions }: {
   icon?: ReactNode; label: string; detail?: string; value?: string; onPress?: () => void; onLongPress?: () => void; trailing?: ReactNode; destructive?: boolean; expanded?: boolean; disabled?: boolean
+  /** VoiceOver's Actions menu on the row itself (the element that takes focus), e.g. 删除 beside opening it. */
+  actions?: { name: string; label: string; run: () => void }[]
 }) {
   const content = (
     <>
@@ -69,15 +71,19 @@ export function Row({ icon, label, detail, value, onPress, onLongPress, trailing
   // A row without its own action stays a View, so a button in `trailing` is not nested in another button.
   if (!onPress) return <View style={styles.row}>{content}</View>
   return (
-    <Pressable accessibilityRole="button" accessibilityState={{ disabled, expanded }} aria-disabled={Platform.OS === 'web' ? disabled : undefined} disabled={disabled} onPress={onPress} onLongPress={onLongPress} style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }, disabled && { opacity: 0.5 }]}>
+    <Pressable accessibilityRole="button" accessibilityState={{ disabled, expanded }} aria-disabled={Platform.OS === 'web' ? disabled : undefined} disabled={disabled} onPress={onPress} onLongPress={onLongPress}
+      accessibilityActions={actions?.map(({ name, label }) => ({ name, label }))}
+      onAccessibilityAction={actions ? event => actions.find(action => action.name === event.nativeEvent.actionName)?.run() : undefined}
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }, disabled && { opacity: 0.5 }]}>
       {content}
     </Pressable>
   )
 }
 
-export function ToggleRow({ label, value, onChange, disabled = false }: { label: string; value: boolean; onChange: (next: boolean) => void; disabled?: boolean }) {
+export function ToggleRow({ icon, label, value, onChange, disabled = false }: { icon?: ReactNode; label: string; value: boolean; onChange: (next: boolean) => void; disabled?: boolean }) {
   return (
     <View style={styles.row}>
+      {icon ? <View style={styles.icon}>{icon}</View> : null}
       <Text style={[styles.label, { flex: 1 }]}>{label}</Text>
       <Switch accessibilityLabel={label} accessibilityState={{ checked: value, disabled }} value={value} disabled={disabled} onValueChange={onChange} trackColor={{ true: colors.success, false: colors.chip }} thumbColor="#fff" {...{ activeThumbColor: '#fff' }} />
     </View>

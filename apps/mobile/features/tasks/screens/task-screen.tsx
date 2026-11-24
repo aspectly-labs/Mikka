@@ -1,7 +1,7 @@
 import { presentedFactoryEvents, taskFactoryProgress } from '../../../../../lib/task-factory-events'
 import { mobileMessages } from '@/lib/messages'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native'
+import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ArrowUpRight, ChartNoAxesColumn, ChevronRight, Circle, CircleUserRound, Flag, GitBranch, GitPullRequest, Link, ListTree, MessageSquare, MessagesSquare, Sparkles, UserRound } from 'lucide-react-native'
@@ -19,7 +19,7 @@ import { readPushedTask } from '@/lib/task-push-app'
 import { taskDetailLive } from '@/lib/live-keys'
 import { readPresentedTask } from '../model/task-presentation-read'
 import type { TaskDetail } from '@/lib/types'
-import { useLiveApi } from '@/lib/useApi'
+import { useLiveApi, useRefresh } from '@/lib/useApi'
 import { openOnWeb } from '@/lib/web'
 import { agoWhen, shortWhen } from '@/lib/clock'
 import { colors, LIST_INSET, SPACE } from '@/lib/theme'
@@ -54,6 +54,7 @@ export function TaskScreen() {
   const read = useCallback((path: string) => workspace ? readPushedTask(id, workspace) : readPresentedTask(path), [id, workspace])
   const { data, error, loading, reload } = useLiveApi<TaskDetail>(workspace ? `/api/mobile/tasks/${id}?workspace=${workspace}` : `/api/mobile/tasks/${id}`,
     detail => taskDetailLive(id, detail?.live?.workspaceId, home?.live?.workspaceId, home?.workspace.id, detail?.task.factoryTaskId, detail?.live?.factoryActivityVersion, Array.isArray(detail?.work?.connections)), read)
+  const refresh = useRefresh(reload)
   const task = data?.task
   const openTaskOnWeb = () => { if (task) void openOnWeb(`/?issue=${encodeURIComponent(task.id)}`) }
   // The task's own state: its current attempt's in 等待你 and 进行中, else its board status (2026-11-07-2230).
@@ -93,7 +94,8 @@ export function TaskScreen() {
   return (
     <View style={styles.screen}>
       <NavBar scrolled={bar.scrolled} />
-      <ScrollView {...underBar} onScroll={bar.onScroll} scrollEventThrottle={16} contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 96 }]}>
+      {/* Pull to refresh (#7), as every list in the app has; the live key still refreshes on its own. */}
+      <ScrollView {...underBar} onScroll={bar.onScroll} scrollEventThrottle={16} refreshControl={<RefreshControl {...refresh} />} contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 96 }]}>
         <ReadNotice error={error} hasData={Boolean(data)} label={mobileMessages.Nav.tasks} onRetry={reload} />
         {target === null && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.activityMeta}>{mobileMessages.AgentCopy.conversationNotFound}</Text>}
         {loading && !data ? <View style={styles.center}><Spinner /></View> : null}
