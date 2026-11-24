@@ -1239,12 +1239,14 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     await pool.query(`UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1`, [initial.runId, JSON.stringify(seeded.def)])
     // Still on the cloud path: the pre-flight must let an own-account continuation
     // through. With no bot computer seeded the dispatch itself answers one of these
-    // refusals — either proves the send reached it past the guard.
+    // refusals — any of them proves the send reached it past the guard. runInvalid
+    // is thrown only on or after the dispatch result (thread-continue.ts:256,351).
     const recovery = await sendThreadMessage(member.id, initial.runId, 'Now on my own subscription.')
       .then(result => ({ ok: result.continued }), (error: unknown) => ({ code: (error as { code?: string })?.code }))
     assert.ok((recovery as { ok?: boolean }).ok === true
       || (recovery as { code?: string }).code === 'cloudComputerUnavailable'
-      || (recovery as { code?: string }).code === 'factoryLifecycleUnavailable',
+      || (recovery as { code?: string }).code === 'factoryLifecycleUnavailable'
+      || (recovery as { code?: string }).code === 'runInvalid',
       `the pre-flight let the own-account send reach the cloud dispatch: ${JSON.stringify(recovery)}`)
     await pool.query('DELETE FROM computer_run_bindings WHERE "runId"=$1', [initial.runId])
   })
