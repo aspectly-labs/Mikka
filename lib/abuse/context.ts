@@ -26,18 +26,27 @@ export const hostedBillingScope = new AsyncLocalStorage<{
  * questions within seconds; this scope memoizes those loads for the batch's
  * lifetime. Writes (reserve/settle) still run per call.
  */
-export const decisionBatchCache = new AsyncLocalStorage<Map<string, Promise<unknown>>>()
+interface GateEntry { at: number; promise: Promise<unknown> }
+export const decisionBatchCache = new AsyncLocalStorage<Map<string, GateEntry>>()
+/** Even inside a long batch an admission/payer snapshot may not be reused for
+ * more than a minute; a revoked policy or drained payer is picked up again. */
+export const DECISION_GATE_TTL_MS = 60_000
 
 /** Run `load` once per batch for `key`; outside a batch every call loads. A
- * rejection is evicted so a later call in the same batch still retries. */
+ * rejection or an entry older than DECISION_GATE_TTL_MS is evicted so a later
+ * call in the same batch still retries. */
 export function cachedDecisionGate<T>(key: string, load: () => Promise<T>): Promise<T> {
   const store = decisionBatchCache.getStore()
   if (!store) return load()
-  let hit = store.get(key) as Promise<T> | undefined
-  if (!hit) {
-    hit = load()
-    store.set(key, hit)
-    hit.catch(() => { if (store.get(key) === hit) store.delete(key) })
-  }
-  return hit
+  const hit = store.get(key)
+  if (hit && Date.now() - hit.at <= DECISION_GATE_TTL_MS) return hit.promise as Promise<T>
+  const promise = load()
+  store.set(key, { at: Date.now(), promise })
+  promise.catch(() => { if (store.get(key)?.promise === promise) store.delete(key) })
+  return promise
+}
+
+/** Drop a cached gate inside the current batch (e.g. a payer that ran dry). */
+export function forgetDecisionGate(key: string): void {
+  decisionBatchCache.getStore()?.delete(key)
 }

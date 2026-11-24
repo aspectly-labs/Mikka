@@ -190,9 +190,7 @@ export async function fireGitHubAutomations(deliveryKey:string,event:string,payl
   const {githubAutomationEvents}=await import('./github-events')
   const events=githubAutomationEvents(event,payload)
   if(!events.length)return 0
-  // The runWhen judgments one delivery makes share their admission/billing reads (decisionBatchCache).
-  const {decisionBatchCache}=await import('@/lib/abuse/context')
-  const queued=await decisionBatchCache.run(new Map(),()=>schedules().fireEvents(deliveryKey,events))
+  const queued=await schedules().fireEvents(deliveryKey,events)
   if(queued)armDueTimerSoon('schedules')
   return queued
 }
@@ -214,8 +212,7 @@ export async function fireLinearAutomations(deliveryId:string,payload:Record<str
   const {linearAutomationEvents}=await import('./linear-events')
   const events=linearAutomationEvents(payload)
   if(!events.length)return 0
-  const {decisionBatchCache}=await import('@/lib/abuse/context')
-  const queued=await decisionBatchCache.run(new Map(),()=>schedules().fireLinearEvents(`linear:${deliveryId}`,events))
+  const queued=await schedules().fireLinearEvents(`linear:${deliveryId}`,events)
   if(queued)armDueTimerSoon('schedules')
   return queued
 }
@@ -224,8 +221,7 @@ export async function fireSlackAutomations(payload:Record<string,unknown>){
   const {slackAutomationEvents}=await import('./slack-events')
   const events=slackAutomationEvents(payload)
   if(!events.length||typeof payload.event_id!=='string')return 0
-  const {decisionBatchCache}=await import('@/lib/abuse/context')
-  const queued=await decisionBatchCache.run(new Map(),()=>schedules().fireSlackEvents(`slack:${events[0]!.teamId}:${payload.event_id}`,events))
+  const queued=await schedules().fireSlackEvents(`slack:${events[0]!.teamId}:${payload.event_id}`,events)
   if(queued)armDueTimerSoon('schedules')
   return queued
 }

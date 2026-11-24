@@ -32,13 +32,14 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   let preparation: DecisionFailureReason = 'preparation_failed'
   try {
   if (signal?.aborted) return recordDecisionFailure(purpose, 'cancelled')
-  const { hostedBillingScope, cachedDecisionGate } = await import('@/lib/abuse/context')
+  const { hostedBillingScope, cachedDecisionGate, forgetDecisionGate } = await import('@/lib/abuse/context')
   const scope = hostedBillingScope.getStore()
   // Tests mock the context module without the batch helper; degrade to direct
   // loads there while production batches share the read-only gates.
   const gate: typeof cachedDecisionGate = typeof cachedDecisionGate === 'function'
     ? cachedDecisionGate
     : <T,>(_key: string, load: () => Promise<T>) => load()
+  const forget = typeof forgetDecisionGate === 'function' ? forgetDecisionGate : () => {}
   if (!scope) return recordDecisionFailure(purpose, 'billing_scope_missing')
   const proxy = gatewayLiteLlm()
   const baseUrl = liteLLMBaseUrl(proxy?.url)
@@ -55,12 +56,21 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   // Like every hosted call (lib/abuse/model.ts): the workspace's own balance first, then shared credits.
   if (store && store.metered !== false) {
     const { withSharedCredits } = await import('@/lib/credit-shares')
-    const billingPrincipal = await gate(`principal:${scope.workspaceId}:${billingAdapter?.admit ? 'adapter' : 'usage'}`,
-      () => withSharedCredits(scope.workspaceId, async payer => {
-        await (billingAdapter?.admit ?? usage.canUseMikkaPaid)(payer)
-        return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
-      }))
-    await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
+    const principalKey = `principal:${scope.workspaceId}:${billingAdapter?.admit ? 'adapter' : 'usage'}`
+    const loadPrincipal = () => withSharedCredits(scope.workspaceId, async payer => {
+      await (billingAdapter?.admit ?? usage.canUseMikkaPaid)(payer)
+      return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
+    })
+    let billingPrincipal = await gate(principalKey, loadPrincipal)
+    try {
+      await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
+    } catch {
+      // The cached principal can point at a payer that ran dry inside this
+      // batch; drop it once and let withSharedCredits pick a funded sharer.
+      forget(principalKey)
+      billingPrincipal = await gate(principalKey, loadPrincipal)
+      await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
+    }
   }
   let requestStarted = false
   preparation = 'preparation_failed'
