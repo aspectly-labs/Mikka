@@ -51,7 +51,7 @@ async function call(path: string, options: { jar?: Jar; body?: unknown; origin?:
   return response
 }
 
-type Issued = { refreshToken: string; refreshExpiresAt: string; accessExpiresAt: string }
+type Issued = { userId: string; refreshToken: string; refreshExpiresAt: string; accessExpiresAt: string }
 async function issued(response: Response): Promise<Issued> {
   assert.equal(response.status, 200, await response.clone().text())
   assert.equal(response.headers.get('cache-control'), 'no-store')
@@ -74,6 +74,7 @@ async function phone() {
   const signedIn = await call('/sign-in/email', { jar, body: { email, password } })
   assert.equal(signedIn.status, 200)
   const session = await sessionOf(jar)
+  assert.ok(session, 'the phone is signed in')
   return { id, email, password, jar, session }
 }
 async function sessionOf(jar: Jar) {
@@ -109,6 +110,7 @@ test('exchange starts a family bound to the signed-in session, only for the nati
   assert.equal((await call('/mobile-refresh/exchange')).status, 401, 'no session, no refresh token')
   const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
   assert.match(first.refreshToken, /^mkmr_[A-Za-z0-9_-]{43}$/)
+  assert.equal(first.userId, person.id, 'the app binds the credential to the person it signed in')
   assert.equal(first.accessExpiresAt, new Date(person.session.session.expiresAt).toISOString(), 'the exchanged session keeps its own lifetime')
   const stored = await rows(person.id)
   assert.equal(stored.length, 1)

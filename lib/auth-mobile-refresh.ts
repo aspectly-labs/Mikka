@@ -213,7 +213,7 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
     if (issued === 'enterprise') throw new APIError('CONFLICT', { code: REFRESH_UNAVAILABLE, message: 'Refresh unavailable' })
     if (!issued) throw new APIError('UNAUTHORIZED', { code: 'UNAUTHORIZED', message: 'Unauthorized' })
     noStore(ctx)
-    return ctx.json({ refreshToken: token, refreshExpiresAt: issued.refreshExpiresAt.toISOString(), accessExpiresAt: issued.accessExpiresAt.toISOString() })
+    return ctx.json({ userId: current.user.id, refreshToken: token, refreshExpiresAt: issued.refreshExpiresAt.toISOString(), accessExpiresAt: issued.accessExpiresAt.toISOString() })
   })
 
   const rotate = createAuthEndpoint('/mobile-refresh/rotate', { method: 'POST', body, requireHeaders: true }, async ctx => {
@@ -272,7 +272,7 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
       await setSessionCookie(ctx, renewed as never, false, { maxAge: Math.max(1, Math.floor((accessExpiresAt.getTime() - Date.now()) / 1000)) })
       minted = null
       noStore(ctx)
-      return ctx.json({ refreshToken: token, refreshExpiresAt: refreshExpiresAt.toISOString(), accessExpiresAt: accessExpiresAt.toISOString() })
+      return ctx.json({ userId: row.user_id, refreshToken: token, refreshExpiresAt: refreshExpiresAt.toISOString(), accessExpiresAt: accessExpiresAt.toISOString() })
     } finally {
       if (minted) await endpoint.context.internalAdapter.deleteSession(minted.token).catch(() => undefined)
     }
