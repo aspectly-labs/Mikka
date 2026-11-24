@@ -125,7 +125,12 @@ test("pending Factory questions list by task and by run in AskUserQuestion shape
       assert.equal(res.status, 200);
       const [item] = (res.body as { questions: { reference: { binding: { issueId: string } } }[] }).questions;
       assert.equal(item.reference.binding.issueId, a.issueId);
-      assert.deepEqual((res.body as { questions: unknown[] }).questions.map((q) => { const { reference: _r, ...rest } = q as Record<string, unknown>; return rest; }), [{
+      assert.deepEqual((res.body as { questions: unknown[] }).questions.map((q) => {
+        const { reference: _r, createdAt, ...rest } = q as Record<string, unknown>;
+        // When it was asked, as an ISO time, so the Inbox can order and date it.
+        assert.equal(new Date(String(createdAt)).toISOString(), createdAt);
+        return rest;
+      }), [{
         questionId: a.questionId, taskId: a.taskId, runId: a.runId, status: "open", type: "decision",
         originalText: "Which API should we keep?", question: "Which API should we keep?", header: "Decision",
         options: [{ label: "REST", description: "", value: "REST" }, { label: "GraphQL", description: "", value: "GraphQL" }], multiSelect: false,
