@@ -7,9 +7,12 @@ framework's `NEXT_PUBLIC_*` prefix. The rename has two phases.
   back to the legacy one (`lib/public-env.mjs`). An empty value counts as
   unset under either name: an empty new name falls back to a non-empty legacy
   name, then to the default. The Cloudflare API ingress applies the same rule,
-  because it drops empty bindings. **To turn a setting off during phase 1,
-  unset both names** (or leave both empty); emptying only the new name keeps
-  the legacy value in effect. Vite and Nitro inline each
+  because it drops empty bindings. Where a setting is optional, **turn it off
+  during phase 1 by unsetting both names** (or leaving both empty); emptying
+  only the new name keeps the legacy value in effect. The official cloud image
+  build (`scripts/cloudflare-native-oci.mjs`) requires the PostHog, Stripe and
+  Turnstile keys and fails without them, so those three cannot be turned off
+  there. Vite and Nitro inline each
   public constant under both names. The Cloudflare API ingress forwards both
   names. The `API_PUBLIC_BUILD_SETTINGS` secret may use either key for each
   setting. Production keeps working with its current configuration.
