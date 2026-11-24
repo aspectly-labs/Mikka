@@ -262,6 +262,7 @@ test('searchMobileMessages binds contiguous SQL parameters for every scope and t
       conversationId: variant.conversationId,
       limit: 20,
       cursor: null,
+      binding: '0'.repeat(64),
     })
     assert.equal(poolQueries.length, 1, `expected 1 SQL query for ${JSON.stringify(variant)}`)
     assertContiguousSqlParams(poolQueries[0].sql, poolQueries[0].params)
@@ -279,6 +280,7 @@ test('searchMobileMessages binds contiguous SQL parameters for every scope and t
       conversationId: null,
       limit: 20,
       cursor: null,
+      binding: '0'.repeat(64),
     }),
     searchMod.MobileMessageSearchAccessError,
   )
