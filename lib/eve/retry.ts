@@ -1,4 +1,5 @@
 import 'server-only'
+import {z} from 'zod'
 import {createHash} from 'node:crypto'
 import {Client,type ClientSession} from 'eve/client'
 import {emptySessionView,foldEvents,idle,turns} from 'eve/events'
@@ -45,6 +46,12 @@ export async function retryEveTurn(ownerId:string,botId:string,requestHeaders:He
   const {pool}=await import('../db')
   const bot=(await pool.query<{workspaceId:string}>('SELECT "workspaceId" FROM bots WHERE id=$1 AND "ownerId"=$2',[botId,ownerId])).rows[0]
   if(!bot)return {queued:false as const,reason:'nothingToRetry' as const}
+  // A resend frozen on another owner's binding would only refuse at
+  // turn.started (#3057): answer up front, like the thread send path does.
+  const settings=new (await import('../execution-settings')).ExecutionSettings(pool)
+  const selected=await settings.botModel({ownerId,workspaceId:bot.workspaceId},botId)
+  if(selected&&z.uuid().safeParse(selected).success&&await settings.bindingHeldElsewhere({ownerId,workspaceId:bot.workspaceId},selected))
+    return {queued:false as const,reason:'accountUnavailable' as const}
   const scope=await assertEveScope({ownerId,botId,workspaceId:bot.workspaceId,surface:'web'})
   const headers=eveRetryHeaders(requestHeaders)
   // Credentials are the current request's. A host service token would lose

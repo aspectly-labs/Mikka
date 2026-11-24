@@ -405,6 +405,20 @@ test('host settlement receipts preserve product publication across native RPC re
       await commitEveIngress(repeated)
       assert.equal((await pool.query('SELECT count(*)::int count FROM coordinator_events WHERE "userId"=$1 AND payload->>\'taskRequestSourceEventId\'=$2',[ownerId,first.eventId])).rows[0].count,1)
     })
+    await t.test('user retry on a borrowed subscription refuses before a turn queues',async()=>{
+      const {retryEveTurn}=await import('./retry')
+      const payer='eve-payer-'+randomUUID(),payerWs=randomUUID(),connection=randomUUID(),binding=randomUUID()
+      await pool.query(`INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt")VALUES($1,'Eve payer fixture',$2,true,now(),now())`,[payer,payer+'@example.invalid'])
+      await pool.query(`INSERT INTO mikka_workspaces(id,"userId",name)VALUES($1,$2,'Eve payer fixture')`,[payerWs,payer])
+      await pool.query(`INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role)VALUES($1,$2,'Payer',$3,'admin')`,[payerWs,payer,payer+'@example.invalid'])
+      await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog",quota) VALUES ($1,$2,$3,'codex','connected',1,$4,$5,'payer-subject',$6,$7)`,
+        [connection,payer,payerWs,`payer-${connection}`,'b'.repeat(64),JSON.stringify({revision:'1',models:['gpt-5']}),JSON.stringify({vendor:'codex',source:'official',status:'ok',plan:'Pro',observedAt:new Date().toISOString(),windows:[{kind:'five_hour',used:.1,resetsAt:null}]})])
+      await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId") VALUES ($1,$2,$3,'catalogue',$4,1,'codex_cpa','gpt-5')`,[binding,payer,payerWs,connection])
+      await pool.query(`INSERT INTO bot_model_choices("ownerId","workspaceId","botKey","bindingId") VALUES($1,$2,$3,$4)`,[ownerId,workspaceId,botId,binding])
+      const services:import('./retry').EveRetryServices={async open(){throw new Error('retry must refuse before a session opens')}}
+      const credentials=new Headers({cookie:'current-fixture=session',origin:'https://app.test'})
+      assert.deepEqual(await retryEveTurn(ownerId,botId,credentials,services),{queued:false,reason:'accountUnavailable'})
+    })
   } finally {
     await pool.query('DELETE FROM user_schedules WHERE id=ANY($1::uuid[])',[scheduleIds])
     await pool.query('DELETE FROM bots WHERE id=$1',[botId])
