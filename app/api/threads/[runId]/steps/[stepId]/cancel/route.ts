@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { cancelStepCall } from '@/lib/thread-steps'
@@ -8,7 +8,7 @@ export const maxDuration = 60
 // Cancel one tool call (#2937): a harness that supports per-call cancel would
 // honour it here; today every harness answers the explicit unsupported error.
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string; stepId: string }> }) {
-  const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return respond({ error: 'authRequired' }, 401)

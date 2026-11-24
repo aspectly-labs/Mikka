@@ -1,5 +1,5 @@
 import { withRequestLog } from '@/lib/request-log'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { cookies } from '@/lib/server-runtime/headers'
 import { requireUser } from '@/lib/issue-access'
@@ -15,7 +15,7 @@ async function handleGET(request: Request) {
   const failure = new URL(withBasePath('/?linear=error'), url.origin)
   const cookieStore = await cookies()
   const redirect = (destination: URL) => {
-    const response = NextResponse.redirect(destination)
+    const response = RouteResponse.redirect(destination)
     response.cookies.set(LINEAR_OAUTH_STATE_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure: true, path: LINEAR_OAUTH_CALLBACK_PATH, maxAge: 0 })
     return response
   }

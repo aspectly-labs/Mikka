@@ -1,6 +1,6 @@
 import { factoryWorkspaceResponse } from '@/lib/factory/workspace-http';
 import { actAs } from "@/lib/acting-user";
-import { NextResponse } from "@/lib/server-runtime/server";
+import { RouteResponse } from "@/lib/server-runtime/server";
 import { auth } from "@/lib/api-auth";
 import { factoryRouteEnabled, handleFactoryRoute } from "@/lib/factory/route-http";
 import { issueMutationsEnabled } from "@/lib/coordinator/issue-tools-enabled";
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
         enabled: factoryRouteEnabled(issueMutationsEnabled()),
       },
     );
-    return NextResponse.json(result.body, { status: result.status, headers: { "Cache-Control": "private, no-store" } });
+    return RouteResponse.json(result.body, { status: result.status, headers: { "Cache-Control": "private, no-store" } });
   });
   return session?.user ? actAs(session.user, scoped) : scoped();
 }

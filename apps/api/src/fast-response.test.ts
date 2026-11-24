@@ -14,15 +14,15 @@ const cases = [
 
 // Node runs this file in its own test process. Load the compatibility layer
 // after installing the actual Nitro Node response class, then restore it.
-test('NextResponse JSON preserves HTTP status after FastResponse headers and body materialize', { timeout: 15_000 }, async () => {
+test('RouteResponse JSON preserves HTTP status after FastResponse headers and body materialize', { timeout: 15_000 }, async () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'Response')!
   const NativeResponse = globalThis.Response
   Object.defineProperty(globalThis, 'Response', { configurable: true, writable: true, value: FastResponse })
   try {
-    const { NextResponse } = await import('@/lib/server-runtime/server')
+    const { RouteResponse } = await import('@/lib/server-runtime/server')
     const { createApiHandler } = await import('./application')
-    assert.equal(Object.getPrototypeOf(NextResponse), FastResponse)
-    const makeResponse = (entry: typeof cases[number]) => NextResponse.json(entry.body, {
+    assert.equal(Object.getPrototypeOf(RouteResponse), FastResponse)
+    const makeResponse = (entry: typeof cases[number]) => RouteResponse.json(entry.body, {
       status: entry.status, statusText: `Fixture ${entry.status}`,
       headers: { 'cache-control': 'private, no-store', 'x-response-contract': 'preserved' },
     })

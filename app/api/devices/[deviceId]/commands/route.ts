@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { pool } from '@/lib/db'
 import { auth } from '@/lib/api-auth'
@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ dev
   const parsed = z.object({ kind: z.enum(['redetect', 'restart', 'update']) }).safeParse(await request.json().catch(() => null))
   if (!parsed.success || !z.uuid().safeParse(deviceId).success) return new Response(null, { status: 400 })
   const id = await enqueueDeviceCommand(session.user.id, deviceId, parsed.data.kind)
-  return id ? NextResponse.json({ id }, { status: 202 }) : new Response(null, { status: 404 })
+  return id ? RouteResponse.json({ id }, { status: 202 }) : new Response(null, { status: 404 })
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ deviceId: string }> }) {
@@ -21,5 +21,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ devi
   const { deviceId } = await params
   if (!z.uuid().safeParse(deviceId).success) return new Response(null, { status: 400 })
   const result = await pool.query(`SELECT c.id,c.kind,c."createdAt",c."completedAt",c.error FROM device_management_commands c JOIN devices d ON d.id=c."deviceId" WHERE d.id=$1 AND d."ownerId"=$2 ORDER BY c."createdAt" DESC LIMIT 20`, [deviceId, session.user.id])
-  return NextResponse.json({ commands: result.rows }, { headers: { 'Cache-Control': 'no-store' } })
+  return RouteResponse.json({ commands: result.rows }, { headers: { 'Cache-Control': 'no-store' } })
 }

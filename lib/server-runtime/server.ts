@@ -3,18 +3,16 @@
  * carries the real Request, its cookies, its locale and its `after` queue.
  *
  * Application route handlers import this module instead of a framework package.
- * `NextResponse`/`NextRequest` keep their names because every handler and test
- * already uses them; they describe the shape, not the dependency.
  */
 import { bindRequestCallback, requireRequestScope } from '../../apps/api/src/context'
 import { CookieJar } from '../../apps/api/src/cookies'
 
-type NextConfig = { basePath?: string }
-export class NextURL extends URL {
+type RouteConfig = { basePath?: string }
+export class RouteURL extends URL {
   basePath: string
-  constructor(input: string | URL, options: { nextConfig?: NextConfig } = {}) {
+  constructor(input: string | URL, options: { routeConfig?: RouteConfig } = {}) {
     super(input)
-    const prefix = options.nextConfig?.basePath ?? '/mikka'
+    const prefix = options.routeConfig?.basePath ?? '/mikka'
     this.basePath = prefix && (super.pathname === prefix || super.pathname.startsWith(`${prefix}/`)) ? prefix : ''
     if (this.basePath) super.pathname = super.pathname.slice(this.basePath.length) || '/'
   }
@@ -26,15 +24,15 @@ export class NextURL extends URL {
   override set href(value: string) { super.href = value }
   override toString(): string { return this.href }
   override toJSON(): string { return this.href }
-  clone(): NextURL { return new NextURL(this.href, { nextConfig: { basePath: this.basePath } }) }
+  clone(): RouteURL { return new RouteURL(this.href, { routeConfig: { basePath: this.basePath } }) }
 }
 
-export class NextRequest extends Request {
-  readonly nextUrl: NextURL
+export class RouteRequest extends Request {
+  readonly routeUrl: RouteURL
   readonly cookies: CookieJar
-  constructor(input: RequestInfo | URL, options: RequestInit & { nextConfig?: NextConfig; duplex?: 'half' } = {}) {
+  constructor(input: RequestInfo | URL, options: RequestInit & { routeConfig?: RouteConfig; duplex?: 'half' } = {}) {
     const url = input instanceof Request ? input.url : String(input)
-    const { nextConfig, ...init } = options
+    const { routeConfig, ...init } = options
     let source = input
     // srvx NodeRequest is a Request-compatible adapter, but its private Undici
     // state belongs to the SDK's documented native backing request. Leave the
@@ -47,12 +45,12 @@ export class NextRequest extends Request {
       if (source instanceof Request && source.url !== url) throw new TypeError('API_REQUEST_URL_MISMATCH')
     }
     super(source, { duplex: 'half', ...init } as RequestInit)
-    this.nextUrl = new NextURL(url, { nextConfig })
+    this.routeUrl = new RouteURL(url, { routeConfig })
     this.cookies = new CookieJar(this.headers.get('cookie'), value => this.headers.set('cookie', value))
   }
 }
 
-export class NextResponse<_Body = unknown> extends Response {
+export class RouteResponse<_Body = unknown> extends Response {
   private jar?: CookieJar
   get cookies(): CookieJar {
     if (!this.jar) {
@@ -65,29 +63,21 @@ export class NextResponse<_Body = unknown> extends Response {
     }
     return this.jar
   }
-  static override json<Body>(body: Body, init?: ResponseInit): NextResponse<Body> {
+  static override json<Body>(body: Body, init?: ResponseInit): RouteResponse<Body> {
     const response = Response.json(body, init)
     // srvx materializes a response after headers are accessed by spreading its
     // init. Response getters are not own properties, so copy the HTTP fields.
-    return new NextResponse<Body>(response.body, {
+    return new RouteResponse<Body>(response.body, {
       status: response.status, statusText: response.statusText, headers: response.headers,
     })
   }
-  static override redirect(url: string | URL, init: number | ResponseInit = 307): NextResponse {
+  static override redirect(url: string | URL, init: number | ResponseInit = 307): RouteResponse {
     const options = typeof init === 'number' ? { status: init } : init
     const status = options.status ?? 307
     if (![301, 302, 303, 307, 308].includes(status)) throw new RangeError('Invalid redirect status code')
     const headers = new Headers(options.headers)
     headers.set('location', new URL(String(url)).toString())
-    return new NextResponse(null, { ...options, status, headers })
-  }
-  static next(init?: ResponseInit): NextResponse {
-    const headers = new Headers(init?.headers); headers.set('x-middleware-next', '1')
-    return new NextResponse(null, { ...init, headers })
-  }
-  static rewrite(url: string | URL, init?: ResponseInit): NextResponse {
-    const headers = new Headers(init?.headers); headers.set('x-middleware-rewrite', new URL(String(url)).toString())
-    return new NextResponse(null, { ...init, headers })
+    return new RouteResponse(null, { ...options, status, headers })
   }
 }
 export function after(task: (() => unknown) | PromiseLike<unknown>): void {

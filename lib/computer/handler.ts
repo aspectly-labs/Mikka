@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { createBotSchema, viewerRequestSchema } from '@mikka/protocol/computer'
 import { ComputerError, type ComputerStore } from './store'
@@ -7,7 +7,7 @@ import { E2BKeyError } from '@/lib/secrets/flag'
 
 export function createComputerHandler(store: Pick<ComputerStore, 'listBots' | 'createBot' | 'state' | 'operate'>, authenticate: (request: Request) => Promise<{ userId: string; workspaceId: string } | null>, wakeWorker?: (actor: { userId: string; workspaceId: string }, botId: string) => Promise<void>) {
   return async function computerRoute(request: Request, botId?: string, action?: 'wake' | 'viewer' | 'takeover' | 'handback') {
-    const response = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+    const response = (body: unknown, status = 200) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
     try {
       const actor = await authenticate(request)
       if (!actor) return response({ error: 'Sign in required' }, 401)

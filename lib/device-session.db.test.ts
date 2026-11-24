@@ -34,7 +34,7 @@ let nextMocked = false
 async function mockNextServer() {
   if (nextMocked) return
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   nextMocked = true
 }
 

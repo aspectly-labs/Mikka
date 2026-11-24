@@ -1,5 +1,5 @@
 import { headers } from '@/lib/server-runtime/headers'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, gt, isNull } from 'drizzle-orm'
 
 import { auth } from '@/lib/auth'
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
       query.set('desktop_next', next)
     }
     if (callback) query.set('desktop_callback', callback)
-    return NextResponse.redirect(new URL(withBasePath(`/sign-in?${query}`), url.origin), { status: 303, headers: safeHeaders })
+    return RouteResponse.redirect(new URL(withBasePath(`/sign-in?${query}`), url.origin), { status: 303, headers: safeHeaders })
   }
 
   if (!state || !callback) return fail()
@@ -72,7 +72,7 @@ export async function GET(request: Request) {
     target.searchParams.set('code', code)
     target.searchParams.set('state', state)
     target.searchParams.set('next', next)
-    return NextResponse.redirect(target, { status: 303, headers: safeHeaders })
+    return RouteResponse.redirect(target, { status: 303, headers: safeHeaders })
   } catch {
     return fail()
   }
