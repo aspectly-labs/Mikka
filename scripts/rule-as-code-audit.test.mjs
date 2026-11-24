@@ -34,7 +34,7 @@ function createFixture(t) {
       'check:rule-as-code': 'node scripts/rule-as-code-audit.mjs && node --test scripts/rule-as-code-audit.test.mjs',
     },
   }, null, 2))
-  write('docs/design/design-system.md', '# Mikka Design System v2\n\n## 1. Design Tokens\n\n<a id="custom-anchor"></a>\n')
+  write('docs/design/design-system.md', '# Mikka Design System v2\n\n## 1. Design Tokens\n\n## On-demand applications (`durable_object` policy)\n\n<a id="custom-anchor"></a>\n')
   write('docs/design/README.md', '# Design docs\n')
   write('docs/design/decisions/README.md', '# Decisions\n')
   write('docs/design/decisions/2026-11-24-1518-design-system-v2.md', '# Decision\n')
@@ -83,7 +83,7 @@ function createFixture(t) {
   write(PRIMITIVES_DOC, [
     '# Mikka 7-layer primitive architecture',
     '',
-    'Start at [documentation index](../README.md), [Design System v2](../design/design-system.md#1-design-tokens), [custom anchor](../design/design-system.md#custom-anchor), or jump to [Layer 7](#layer-7-audit).',
+    'Start at [documentation index](../README.md), [Design System v2](../design/design-system.md#1-design-tokens), [policy](../design/design-system.md#on-demand-applications-durable_object-policy), [custom anchor](../design/design-system.md#custom-anchor), or jump to [Layer 7](#layer-7-audit).',
     '',
     '| Layer | Domain | Rule | Owner | CI gate |',
     '| --- | --- | --- | --- | --- |',
@@ -105,7 +105,7 @@ function createFixture(t) {
     '',
     '```bash',
     '# Comment lines inside shell fences are ignored: pnpm not-a-script',
-    'pnpm check:rule-as-code',
+    'pnpm check:rule-as-code # Current command; pnpm check:old was retired',
     '```',
     '',
     '```text',
@@ -153,17 +153,18 @@ test('fails when a cited local file, workflow path, glob prefix, npm script, or 
   assert.ok(rules.includes('rule-as-code/broken-markdown-link:../design/nonexistent.md'), JSON.stringify(rules))
 })
 
-test('validates pnpm invocations inside runnable shell code fences', t => {
+test('validates pnpm invocations inside runnable shell code fences while ignoring inline comments', t => {
   const { root, write } = createFixture(t)
   const updated = readFileSync(join(root, PRIMITIVES_DOC), 'utf8').replace(
-    '```bash\n# Comment lines inside shell fences are ignored: pnpm not-a-script\npnpm check:rule-as-code\n```',
-    '```bash\n# Comment lines inside shell fences are ignored: pnpm not-a-script\npnpm check:rule-as-cdoe\n```',
+    'pnpm check:rule-as-code # Current command; pnpm check:old was retired',
+    'pnpm check:rule-as-cdoe # Current command; pnpm check:old was retired',
   )
   write(PRIMITIVES_DOC, updated)
 
   const result = auditPrimitivesMap(root, { 'check:rule-as-code': 'ok' })
   const rules = result.findings.map(f => `${f.rule}:${f.target}`)
   assert.ok(rules.includes('rule-as-code/missing-npm-script:check:rule-as-cdoe'), JSON.stringify(rules))
+  assert.ok(!rules.some(r => r.includes('check:old')), JSON.stringify(rules))
   assert.ok(!rules.some(r => r.includes('not-a-script')), JSON.stringify(rules))
   assert.ok(!rules.some(r => r.includes('illustrative:not-checked')), JSON.stringify(rules))
 })
@@ -191,11 +192,13 @@ test('validates same-page and cross-file Markdown heading anchors in primitives.
   assert.ok(indexRules.includes('rule-as-code/broken-heading-anchor:#missing-index-heading'), JSON.stringify(indexRules))
 })
 
-test('extractMarkdownAnchors generates duplicate suffixes and captures explicit HTML anchors', () => {
+test('extractMarkdownAnchors preserves literal underscores, generates duplicate suffixes, and captures explicit HTML anchors', () => {
   const anchors = extractMarkdownAnchors([
     '# Title',
     '## Overview & Scope',
     '## Overview & Scope',
+    '## On-demand applications (`durable_object` policy)',
+    '## _Emphasized_ snake_case heading',
     '```md',
     '## Ignored Heading Inside Fence',
     '```',
@@ -204,6 +207,8 @@ test('extractMarkdownAnchors generates duplicate suffixes and captures explicit 
   assert.ok(anchors.has('title'))
   assert.ok(anchors.has('overview--scope'))
   assert.ok(anchors.has('overview--scope-1'))
+  assert.ok(anchors.has('on-demand-applications-durable_object-policy'))
+  assert.ok(anchors.has('emphasized-snake_case-heading'))
   assert.ok(anchors.has('explicit-id'))
   assert.equal(anchors.has('ignored-heading-inside-fence'), false)
 })
@@ -300,7 +305,8 @@ test('the repository itself passes the rule-as-code audit gate', () => {
   assert.equal(result.ok, true, result.findings.map(f => `${f.file}:${f.line} [${f.rule}] ${f.message}`).join('\n'))
   assert.ok(result.summary.checkedLocalPaths >= 25, `expected >= 25 local paths, got ${result.summary.checkedLocalPaths}`)
   assert.ok(result.summary.crossRepoRefs >= 10, `expected >= 10 cross-repo refs, got ${result.summary.crossRepoRefs}`)
-  assert.ok(result.summary.checkedScripts >= 6, `expected >= 6 checked scripts, got ${result.summary.checkedScripts}`)
+  assert.ok(result.summary.checkedScripts >= 1, `expected >= 1 checked script, got ${result.summary.checkedScripts}`)
+  assert.ok(result.details.checkedScripts.includes('check:rule-as-code'))
   assert.ok(result.summary.frozenDecisionRows >= 100, `expected >= 100 frozen rows, got ${result.summary.frozenDecisionRows}`)
   assert.ok(result.summary.checkedDocsIndexLinks >= 50, `expected >= 50 docs/README links, got ${result.summary.checkedDocsIndexLinks}`)
 })

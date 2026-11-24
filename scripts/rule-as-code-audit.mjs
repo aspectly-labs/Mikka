@@ -118,6 +118,35 @@ function stripFencedCodeBlocks(markdown) {
   }).join('\n')
 }
 
+function stripShellInlineComment(line) {
+  let inSingle = false
+  let inDouble = false
+  let escaped = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (ch === '\\' && !inSingle) {
+      escaped = true
+      continue
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle
+      continue
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble
+      continue
+    }
+    if (ch === '#' && !inSingle && !inDouble && (i === 0 || /\s/.test(line[i - 1]))) {
+      return line.slice(0, i)
+    }
+  }
+  return line
+}
+
 function extractFencedShellScripts(markdown) {
   const lines = markdown.split('\n')
   const scripts = []
@@ -149,13 +178,13 @@ function extractFencedShellScripts(markdown) {
     }
 
     if (!inFence || !isShellFence) continue
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
+    const runnable = stripShellInlineComment(line).trim()
+    if (!runnable) continue
 
-    for (const cmdMatch of trimmed.matchAll(/(?:^|[;&|]\s*)(?:\$\s*)?pnpm\s+(?:--silent\s+)?([a-z0-9][a-z0-9:_-]*)(?=\s|$)/gi)) {
+    for (const cmdMatch of runnable.matchAll(/(?:^|[;&|]\s*)(?:\$\s*)?pnpm\s+(?:--silent\s+)?([a-z0-9][a-z0-9:_-]*)(?=\s|$)/gi)) {
       const script = cmdMatch[1]
       if (!PNPM_BUILTINS.has(script)) {
-        scripts.push({ line: i + 1, script, raw: trimmed })
+        scripts.push({ line: i + 1, script, raw: runnable })
       }
     }
   }
@@ -184,17 +213,29 @@ function isWithinRoot(root, resolvedTarget) {
 }
 
 export function slugifyGithubHeading(rawHeading) {
-  const plain = rawHeading
+  // Preserve literal characters inside inline code spans (such as underscores in `durable_object`).
+  const codeSpans = []
+  const withPlaceholders = rawHeading.replace(/`([^`]+)`/g, (_, code) => {
+    const token = `\uE000CODE${codeSpans.length}\uE001`
+    codeSpans.push(code)
+    return token
+  })
+
+  const plain = withPlaceholders
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/`([^`]*)`/g, '$1')
     .replace(/<[^>]+>/g, '')
-    .replace(/[*_~]/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/(^|[\s([{"'])__([^_\n]+)__(?=$|[\s)\]}"'.,!?:;])/g, '$1$2')
+    .replace(/(^|[\s([{"'])_([^_\n]+)_(?=$|[\s)\]}"'.,!?:;])/g, '$1$2')
+    .replace(/\uE000CODE(\d+)\uE001/g, (_, index) => codeSpans[Number(index)])
     .trim()
     .toLowerCase()
 
   return plain
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
     .replace(/\s/g, '-')
 }
 
