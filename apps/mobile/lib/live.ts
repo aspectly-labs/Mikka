@@ -4,6 +4,7 @@ import { apiConnection, authHeaders } from '@/lib/api'
 import { onServerChange } from '@/lib/config'
 import { createLiveClient, type LiveRef, type LiveSpecOptions } from './live-client'
 import { presenceScope } from './presence-scope'
+import { accessGeneration, prepareAccess, recoverAccess } from './refresh'
 import type { PresenceProof } from '../../../lib/live/presence'
 
 export { UNRESOLVED_LIVE_ID, type LiveRef } from './live-client'
@@ -20,12 +21,17 @@ async function ticket(workspaceId: string, signal: AbortSignal): Promise<unknown
   const timer = setTimeout(abort, TICKET_TIMEOUT_MS)
   signal.addEventListener('abort', abort)
   try {
-    const response = await fetch(`${connection.account.server.url}/api/live/ticket?workspace=${encodeURIComponent(workspaceId)}`, {
+    await prepareAccess(connection.account.id).catch(() => undefined)
+    const generation = accessGeneration(connection.account.id)
+    const send = async () => fetch(`${connection.account.server.url}/api/live/ticket?workspace=${encodeURIComponent(workspaceId)}`, {
       headers: { accept: 'application/json', ...await authHeaders(connection) },
       credentials: Platform.OS === 'web' ? 'include' : 'omit',
       redirect: 'error',
       signal: controller.signal,
     })
+    let response = await send()
+    // The access session ran out: renew it once (shared with every other 401) and ask again.
+    if (response.status === 401 && await recoverAccess(connection.account.id, generation).catch(() => 'unavailable') === 'rotated') response = await send()
     const value = response.ok ? await response.json() : null
     if (!controller.signal.aborted && !signal.aborted) presenceScope.remember(workspaceId, value, request)
     return value

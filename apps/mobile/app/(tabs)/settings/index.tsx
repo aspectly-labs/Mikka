@@ -54,6 +54,8 @@ export default function SettingsScreen() {
     const account = currentAccount(), client = authClient
     try {
       if (Platform.OS !== 'web') await (await import('@/lib/push')).unregisterPush().catch(() => undefined)
+      // End this phone's refresh credential on the server too, even if its access session already expired.
+      if (Platform.OS !== 'web') await (await import('@/lib/refresh')).forgetAccess(account.id).catch(() => undefined)
       const result = await client.signOut()
       if (result.error) throw new Error('signout_failed')
       if (currentAccount().id === account.id) clearApiCache()

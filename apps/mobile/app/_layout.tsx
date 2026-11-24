@@ -1,6 +1,6 @@
 import '../global.css'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Platform, useColorScheme, View } from 'react-native'
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
@@ -22,6 +22,8 @@ import { openPush } from '@/lib/navigate'
 import { colors, screenOptions } from '@/lib/theme'
 import { newSheetOptions, reviewSheetOptions } from '@/lib/sheet-options'
 import { conversationJournal, currentAccount, servers } from '@/lib/config'
+import { accessGeneration, keepSignedIn, recoverAccess, signInBinding, useAccessHeld } from '@/lib/refresh'
+import { sessionRefused } from '@/lib/session'
 import { serverCopy as copy } from '@/lib/server-copy'
 
 /** HeroUI Native draws product content (DESIGN.md). Mikka has no toasts: a state shows in place. */
@@ -47,34 +49,65 @@ export default function RootLayout() {
   )
 }
 
-/** Signed out: the sign-in screen. Signed in: the app, and this phone's pushes (PushSetup). */
+/**
+ * Signed out: the sign-in screen. Signed in: the app, and this phone's pushes (PushSetup).
+ * On iOS a person stays signed in while the phone holds a refresh credential
+ * (lib/refresh.ts) even when its one-hour session cookie has run out: the app
+ * shows their saved account and renews the session, offline included.
+ */
 function SessionGate() {
   const { data, isPending } = authClient.useSession()
   const account = currentAccount()
+  const held = useAccessHeld(account.id)
   const [saveFailed, setSaveFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  const lastSession = useRef<string | null>(null)
+  if (data?.session?.id) lastSession.current = data.session.id
+  const kept = !data?.user && held === 'held' && account.user ? account.user : null
+  const user = data?.user ?? kept
+  const sessionId = data?.session?.id ?? (kept ? lastSession.current : null)
+  // The outbox and the cache belong to one sign-in. While the refresh credential keeps it, that is the session it
+  // started with: a session renewed in place, replaced after Better Auth deleted it, or not read yet on a cold
+  // launch, is the same sign-in and keeps its unsent messages and loaded screens.
+  const binding = user ? signInBinding(account.id, user.id, data?.session?.id ?? null) ?? sessionId : null
   useEffect(() => {
-    if (data?.user) return watchAppleCredential(account.id)
-  }, [account.id, data?.user?.id])
+    if (user) return watchAppleCredential(account.id)
+  }, [account.id, user?.id])
   useEffect(() => {
     let live = true
     setSaveFailed(false)
     if (data?.user) void servers.remember(account.id, { id: data.user.id, name: data.user.name, email: data.user.email }).catch(() => { if (live) setSaveFailed(true) })
     return () => { live = false }
   }, [account.id, data?.user?.id, data?.user?.name, data?.user?.email, attempt])
+  // Signed in: get this phone a refresh credential once per launch (one that got no answer, offline, is asked
+  // for again before the next request). Renewal itself runs before the next request
+  // (lib/api.ts), never on a foreground listener: coming back re-reads nothing (scripts/focus-refetch-policy.mjs).
+  useEffect(() => {
+    if (data?.user && data.session) void keepSignedIn(account.id, data.user.id, data.session.id).catch(() => undefined)
+  }, [account.id, data?.user?.id, data?.session?.id])
+  // The session cookie ran out while the app was away: renew it. The auth client stores the cookie and reads the session again.
+  useEffect(() => {
+    if (!kept || isPending) return
+    void recoverAccess(account.id, accessGeneration(account.id)).then(result => {
+      // The server ended this sign-in: sign out with the usual "session expired" notice.
+      if (result === 'rejected' && currentAccount().id === account.id) return sessionRefused(null)
+    }).catch(() => undefined)
+  }, [account.id, kept?.id, isPending])
   // Establish the identity boundary before any child can read a cached answer.
-  if (!isPending || data?.session) {
-    try { conversationJournal.bind(account.id, data?.session?.id ?? null) } catch { /* The send control reports unavailable storage before writing. */ }
+  // Until the keychain has answered, the sign-in's binding is unknown: bind nothing and draw nothing yet.
+  const credentialUnknown = held === 'unknown' && Platform.OS !== 'web'
+  if (!credentialUnknown && (binding || (!isPending && !user))) {
+    try { conversationJournal.bind(account.id, binding) } catch { /* The send control reports unavailable storage before writing. */ }
   }
-  apiCache.setIdentity(data?.user ? `${account.id}:${data.user.id}` : null, data?.user?.id ?? null, data?.session?.id ?? null)
-  if (isPending && !data) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.page }}><Spinner size={22} /></View>
-  if (!data?.user) return <SignIn />
-  if (account.user?.id !== data.user.id) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: colors.page }}>
+  if (!credentialUnknown) apiCache.setIdentity(user ? `${account.id}:${user.id}` : null, user?.id ?? null, binding)
+  if ((isPending && !data) || credentialUnknown) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.page }}><Spinner size={22} /></View>
+  if (!user) return <SignIn />
+  if (account.user?.id !== user.id) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: colors.page }}>
     {saveFailed ? <><Text accessibilityRole="alert">{copy.saveFailed}</Text><CardButton label={copy.retry} onPress={() => setAttempt(value => value + 1)} /></> : <Spinner size={22} />}
   </View>
   return (
-    <HomeProvider key={data.user.id}>
-      <PushSetup session={data.session?.id ?? null} />
+    <HomeProvider key={user.id}>
+      <PushSetup session={sessionId} />
       {/* The tabs (docs/design/mobile-comma-redesign.md); a chat, a thread and the rest are pushed over them, so the
           tab bar goes away there. */}
       <Stack screenOptions={screenOptions(colors.page)}>

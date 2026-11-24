@@ -25,3 +25,8 @@ test('malformed bearer tokens never fall back to a cookie', async () => {
   for (const audience of ['legacy', 'v1'] as const)
     assert.equal(await getApiSession({ headers: new Headers({ authorization: 'Bearer mkp_invalid', cookie: 'session=1' }), audience }), null)
 })
+
+test('a mobile refresh token is never an access credential, even beside a valid cookie', async () => {
+  for (const audience of ['legacy', 'v1'] as const)
+    assert.equal(await getApiSession({ headers: new Headers({ authorization: `Bearer mkmr_${'a'.repeat(43)}`, cookie: 'session=1' }), audience }), null)
+})

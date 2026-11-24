@@ -11,6 +11,7 @@ import { appOrigin, MCP_SCOPE, mcpResourceURL } from '@/lib/mcp/resource'
 import { authOAuthProxyOptions, authEffectiveTrustedOrigins, authSignInMethods, authAppleOptions, requireAppleSignInNonce } from '@/lib/auth-config'
 import { createAuthEmail, type AuthMailContext } from '@/lib/auth-email'
 import { mikkaCookies } from '@/lib/auth-cookies'
+import { mobileRefresh } from '@/lib/auth-mobile-refresh'
 import { afterJob } from '@/lib/background'
 import { githubVerifiedProfile } from '@/lib/auth-github-profile'
 import { githubSignInClient } from '@/lib/github/app-config'
@@ -222,6 +223,8 @@ export const auth = betterAuth({
       disableJwtPlugin: true,
       prefix: { opaqueAccessToken: 'mka_', refreshToken: 'mkr_' },
     }),
+    // The iOS app's refresh credentials (/mobile-refresh/*): a short access session, rotated by a single-use refresh token.
+    mobileRefresh({ database: pool }),
     // Authentication may still revoke/replace cookies; publish the final journal last.
     mikkaCookies(),
   ],
