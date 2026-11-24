@@ -8,6 +8,7 @@ import { readRunChain } from '@/lib/run-chain'
 import { sendOwnedRunMessage } from '@/lib/run-control'
 import { continuationNote } from '@/lib/thread-continuation'
 import { withTaskDispatchLock } from '@/lib/task-dispatch-lock'
+import { jsonbFlagIsTrueSql } from './primitives/jsonb-predicates'
 export { continuationNote } from '@/lib/thread-continuation'
 
 // One task, one thread (decision 2026-11-01-1330-one-thread-per-task, R-81).
@@ -49,7 +50,7 @@ type Query = Pick<PoolClient, 'query'>
 export async function latestTaskRun(query: Query, userId: string, issueId: string): Promise<TaskThreadRun | null> {
   const { rows: [run] } = await query.query(`SELECT r.id,r.status,r."stopRequestedAt",r."agentId",r."deviceRepoId",r."botId",r."stopReason",r.error,
       r.report->>'summary' AS summary,r."lastReply",d."remoteUrl",
-      coalesce(r."agentDefinition"->>'harness',a.harness) AS harness,coalesce((r."agentDefinition"->>'readOnly')::boolean,false) AS "readOnly",
+      coalesce(r."agentDefinition"->>'harness',a.harness) AS harness,${jsonbFlagIsTrueSql('r."agentDefinition"', 'readOnly')} AS "readOnly",
       (r."agentDefinition"->>'allowLocalRecovery')='true' AS "allowLocalRecovery",
       b."workspaceId" AS "cloudWorkspaceId",b."botId" AS "cloudBotId"
     FROM agent_runs r JOIN agents a ON a.id=r."agentId"

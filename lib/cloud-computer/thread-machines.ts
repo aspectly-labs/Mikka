@@ -3,6 +3,7 @@ import { runChanged } from '../live/panels'
 import { connectForCommitEffects } from '../db/commit-effects'
 import { DEVICE_REGISTRATION_CHANNEL, subscribeShared } from '../db/listen'
 import { taskActivityChanged } from '../factory/activity-live'
+import { jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
 import { recordCancelledThreadSessionEnd } from './thread-machine-sessions'
 import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from '@/lib/computer/startup-tracing'
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
@@ -484,7 +485,7 @@ async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string,
     WHERE m."snapshotId"<>'cloudflare-task-v1' AND m."ownerId"=$1 AND m."workspaceId"=$2 AND m."issueId"=$3 AND m."runId"<>$4
       AND (m.state='paused' OR (m.state='running' AND m.lifecycle->>'phase'='handoff' AND m.lifecycle->>'handoffRunId'=$4::text
         AND (r."leaseExpiresAt" IS NULL OR r."leaseExpiresAt"<=now())
-        AND COALESCE((m.lifecycle->>'reconcileUntil')::double precision,0)<=extract(epoch FROM clock_timestamp())*1000))
+        AND COALESCE(${jsonbSafeDoubleSql('m.lifecycle', 'reconcileUntil')},0)<=extract(epoch FROM clock_timestamp())*1000))
       AND (m."workerLeaseUntil" IS NULL OR m."workerLeaseUntil"<=now()) AND m."sandboxId" IS NOT NULL AND m."deviceId" IS NOT NULL
       AND r.status IN ('succeeded','failed','stopped','cancelled')
       AND NOT ${unconfirmedNativeExitSql}
@@ -537,7 +538,7 @@ async function retainThreadMachineForHandoffLocked(client: PoolClient, actor: Ac
     const { rows: [machine] } = await client.query(`SELECT * FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3
       AND "snapshotId"<>'cloudflare-task-v1' AND state='running' AND "sandboxId" IS NOT NULL AND ("workerLeaseUntil" IS NULL OR "workerLeaseUntil"<=now())
       AND COALESCE(lifecycle->>'phase','') IN ('','created','resumed','active','handoff')
-      AND COALESCE((lifecycle->>'reconcileUntil')::double precision,0)<=extract(epoch FROM clock_timestamp())*1000
+      AND COALESCE(${jsonbSafeDoubleSql('lifecycle', 'reconcileUntil')},0)<=extract(epoch FROM clock_timestamp())*1000
       AND (lifecycle->>'phase' IS DISTINCT FROM 'handoff' OR lifecycle->>'handoffRunId'=$4::text)
       FOR UPDATE`, [runId, actor.userId, actor.workspaceId, nextRunId])
     if (!machine) return false
@@ -686,7 +687,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
       "workerLeaseId"=NULL,"workerLeaseUntil"=NULL,
       lifecycle=lifecycle||jsonb_build_object('phase','paused','owner','run-recovery','failures',0,'pausedAt',COALESCE(lifecycle->'pausedAt',to_jsonb(floor(extract(epoch FROM clock_timestamp())*1000)::bigint)))
         ||CASE WHEN $4::boolean THEN '{"requiresNativeExit":true}'::jsonb ELSE '{}'::jsonb END,
-      "lifecycleAt"=COALESCE(to_timestamp((lifecycle->>'pausedAt')::double precision/1000),now())+interval '7 days'
+      "lifecycleAt"=COALESCE(to_timestamp((${jsonbSafeDoubleSql('lifecycle', 'pausedAt')})/1000),now())+interval '7 days'
       WHERE "runId"=$1 AND "sandboxId"=$2 AND epoch=$3 AND state<>'ended' RETURNING "computeSeconds","lifecycleAt"`, [runId, intent.sandboxId, intent.epoch, machine.requiresNativeExit])
     if (parked.rowCount) taskActivityChanged(client, runId)
     await client.query('UPDATE device_tokens SET "revokedAt"=COALESCE("revokedAt",now()) WHERE "boundDeviceId"=$1', [machine.deviceId])

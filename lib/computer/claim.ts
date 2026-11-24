@@ -5,6 +5,7 @@ import { assertLockedRunProfileClaim, assertRunProfileClaim, refreshCloudRunProf
 import { executionIdentityForRun, ExecutionIdentityError } from '../execution-identity'
 import type { Pool, PoolClient } from 'pg'
 import { computerPermission, type ComputerPermission } from './permission'
+import { jsonbFlagIsNotFalseSql } from '../primitives/jsonb-predicates'
 import { runMayUseCredentialSql } from '@/lib/personal-policy'
 import { runListChanged } from '@/lib/live/lists'
 import { armDueTimerAfterCommit } from '@/lib/due-timer'
@@ -89,7 +90,7 @@ export async function claimCloudRun(pool: Pool, actor: { userId: string; workspa
     const binding = (await client.query(`SELECT b."botId",1 AS display FROM computer_run_bindings b
       JOIN thread_machines m ON m."runId"=b."runId" AND m."workspaceId"=b."workspaceId" AND m."ownerId"=b."ownerId" AND m."deviceId"=$2
       JOIN devices dev ON dev.id=m."deviceId" AND dev."ownerId"=b."ownerId" AND dev.kind='cloud' AND dev.enabled=true
-        AND (NOT $5::boolean OR coalesce((to_jsonb(dev)->>'computerUseEnabled')::boolean, true)=true)
+        AND (NOT $5::boolean OR ${jsonbFlagIsNotFalseSql('to_jsonb(dev)', 'computerUseEnabled')})
       WHERE b."runId"=$1 AND b."workspaceId"=$3 AND b."ownerId"=$4 AND m.state IN ('starting','running')`, [runId, deviceId, actor.workspaceId, actor.userId, desktop])).rows[0]
     if (!binding) { await client.query('COMMIT'); return null }
     // The run uses its own thread machine's desktop, never the Bot's: a person holding the Bot's desktop does not hold it.

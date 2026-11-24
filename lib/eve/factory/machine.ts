@@ -6,6 +6,7 @@ import { hostedSnapshot, type TaskMachineActor } from '../../cloud-computer/spon
 import { fundMachineChunk } from '../../cloud-computer/machine-billing'
 import { DEFAULT_MACHINE_SIZE, isMachineSize, MACHINE_CHUNK_MS } from '../../cloud-computer/machine-pricing'
 import { openOwnedCloudflareTaskMachine, releaseOwnedCloudflareTaskMachine } from '../cloudflare-task-bridge'
+import { jsonbSafeIntSql } from '../../primitives/jsonb-predicates'
 import { eveFactoryRefusal } from './contract'
 import type { SandboxConnection } from 'eve/sandbox/provider'
 
@@ -31,7 +32,7 @@ export async function openEveFactoryMachine(
       sponsoredSize: string | null; operationId: string
     }>(
       `SELECT m.state,m."sandboxId",(m.lifecycle->>'sponsoredUntil')::timestamptz AS "sponsoredUntil",
-        (m.lifecycle->>'sponsoredChunks')::int AS "sponsoredChunks",m.lifecycle->>'sponsoredSize' AS "sponsoredSize",
+        ${jsonbSafeIntSql('m.lifecycle', 'sponsoredChunks')} AS "sponsoredChunks",m.lifecycle->>'sponsoredSize' AS "sponsoredSize",
         m."operationId"
        FROM thread_machines m
        JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."ownerId" AND r."workspaceId"=m."workspaceId" AND r."issueId"=m."issueId"

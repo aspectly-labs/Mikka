@@ -6,6 +6,7 @@ import { runChanged } from './live/panels'
 import { readRunChain, type RunChain } from './run-chain'
 import { UNFINISHED_RUN_STATUSES } from './agent-run-statuses'
 import { withFactoryBackgroundWorkspace } from './factory/background-workspace'
+import { jsonbSafeUuidSql } from './primitives/jsonb-predicates'
 
 type QueueRow = {
   id: string
@@ -95,7 +96,7 @@ export async function threadDeliveryView(pool: Pool, ownerId: string, rootRunId:
        UNION ALL
        SELECT m.id,e.payload->>'text',CASE WHEN m.failure IS NOT NULL OR r.status NOT IN ('running','preparing','waiting_input','finishing') THEN 'failed' ELSE 'delivering' END,
          CASE WHEN m.failure IS NOT NULL OR r.status NOT IN ('running','preparing','waiting_input','finishing') THEN 'threadDeliveryUnavailable' END,
-         (e.payload#>>'{threadSubmission,requestId}')::uuid,m."createdAt"
+         ${jsonbSafeUuidSql(`e.payload->'threadSubmission'`, 'requestId')},m."createdAt"
        FROM coordinator_events e JOIN run_messages m ON m.id=e.id AND m."userId"=e."userId"
        JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."userId" AND r."workspaceId"=$2
        WHERE e."userId"=$1 AND e.payload#>>'{threadSubmission,rootRunId}'=$3::uuid::text

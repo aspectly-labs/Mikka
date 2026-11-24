@@ -4,6 +4,7 @@ import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import type { WorkerDefinitionSnapshot } from '@/lib/agent-kit/worker'
 import type { TaskMachineGrant } from '@/lib/eve/cloudflare-task-connection'
 import { isMachineSize, provisionableMachineSize } from './machine-pricing'
+import { jsonbFlagIsTrueSql } from '../primitives/jsonb-predicates'
 
 export type SponsoredTaskPlacement = Readonly<{
   provider: 'cloudflare'
@@ -76,14 +77,14 @@ export async function verifySponsoredChoice(query: Query, placement: SponsoredTa
 const bindingSql = `SELECT r.id,r."userId",r."workspaceId",r."issueId",r."botId",r."agentId",r."deviceId",
       r."deviceRepoId",r."baseBranch",r."agentDefinition",m."operationId",m.lifecycle->'sponsoredRestore' AS "requiredCheckpoint",
       m.lifecycle->>'sponsoredSize' AS "sponsoredSize",
-      COALESCE((m.lifecycle->>'sponsoredUntil')::timestamptz+CASE WHEN (m.lifecycle->>'sponsoredUnfunded')::boolean IS TRUE THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil") AS until,repo."repoPath",repo."remoteUrl"
+      COALESCE((m.lifecycle->>'sponsoredUntil')::timestamptz+CASE WHEN ${jsonbFlagIsTrueSql('m.lifecycle', 'sponsoredUnfunded')} THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil") AS until,repo."repoPath",repo."remoteUrl"
     FROM agent_runs r
     JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId" AND b."workspaceId"=r."workspaceId" AND b."botId"=r."botId"
     JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=b."ownerId" AND m."workspaceId"=b."workspaceId" AND m."botId"=b."botId" AND m."issueId"=r."issueId"
     JOIN device_repos repo ON repo.id=r."deviceRepoId" AND repo."userId"=r."userId" AND repo."deviceId"=r."deviceId"
     WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3 AND m."snapshotId"=$4`
 const activeSql = ` AND m.state IN ('starting','running')
-    AND COALESCE((m.lifecycle->>'sponsoredUntil')::timestamptz+CASE WHEN (m.lifecycle->>'sponsoredUnfunded')::boolean IS TRUE THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil")>clock_timestamp()
+    AND COALESCE((m.lifecycle->>'sponsoredUntil')::timestamptz+CASE WHEN ${jsonbFlagIsTrueSql('m.lifecycle', 'sponsoredUnfunded')} THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil")>clock_timestamp()
     AND r.status IN ('queued','preparing','running','waiting_input') AND r."stopRequestedAt" IS NULL
     AND (r.status='queued' OR r."leaseExpiresAt">clock_timestamp())`
 

@@ -5,6 +5,7 @@ import type { ThreadMachineFence } from './thread-machines'
 import { threadLifecycleProvider, type ThreadProviderInfo } from './thread-lifecycle-provider'
 import { logThreadLifecycle, threadLifecycleErrorKind } from './thread-lifecycle-log'
 import { taskActivityChanged } from '../factory/activity-live'
+import { jsonbSafeBigIntSql, jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
 
 export const THREAD_MACHINE_IDLE_MS = 2 * 60_000
 export const THREAD_MACHINE_PROVIDER_MS = 15 * 60_000
@@ -230,12 +231,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
   }
   const token = randomUUID(), claimUntil = now + CLAIM_MS
   const claimed = await pool.query(`UPDATE thread_machines SET lifecycle=lifecycle||jsonb_build_object('owner','run-recovery','reconcileId',$6::text,'reconcileUntil',$7::double precision,
-        'reconcileVersion',COALESCE((lifecycle->>'reconcileVersion')::bigint,0)+1),
+        'reconcileVersion',COALESCE(${jsonbSafeBigIntSql('lifecycle', 'reconcileVersion')},0)+1),
       "lifecycleAt"=to_timestamp($7::double precision/1000)
     WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND "sandboxId" IS NOT DISTINCT FROM $5::text
-      AND COALESCE((lifecycle->>'reconcileUntil')::double precision,0)<=$8::double precision
+      AND COALESCE(${jsonbSafeDoubleSql('lifecycle', 'reconcileUntil')},0)<=$8::double precision
       AND "lifecycleAt" IS NOT DISTINCT FROM $9::timestamptz
-      AND COALESCE((lifecycle->>'reconcileVersion')::bigint,0)=$10::bigint RETURNING "runId"`,
+      AND COALESCE(${jsonbSafeBigIntSql('lifecycle', 'reconcileVersion')},0)=$10::bigint RETURNING "runId"`,
   [runId, actor.userId, actor.workspaceId, row.epoch, row.sandboxId, token, claimUntil, now, row.lifecycleAtVersion, row.lifecycle.reconcileVersion ?? 0])
   if (!claimed.rowCount) return row.lifecycle.reconcileUntil && row.lifecycle.reconcileUntil > now ? row.lifecycle.reconcileUntil : now + 1
 
