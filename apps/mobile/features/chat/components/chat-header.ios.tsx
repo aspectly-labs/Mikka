@@ -6,6 +6,7 @@ import { colors } from '@/lib/theme'
 import { displayTitle } from '@/lib/display-title'
 import { taskSymbol } from '@/features/chat/model/chat-header-menu'
 import { ChatTitlePill } from './chat-title-pill'
+import { useOpenSidebar } from '@/features/shell/model/sidebar-opener'
 import type { ChatHeaderProps } from './chat-header.types'
 
 /**
@@ -14,8 +15,11 @@ import type { ChatHeaderProps } from './chat-header.types'
  * tasks, 全部任务 and 资料. Back and its edge swipe are the system's (decision 0120: one title, buttons on the right).
  */
 export function ChatHeader({ name, color, shape, botId, coordinator, tasks, onTask, onAllTasks, onInfo, scrolled }: ChatHeaderProps) {
+  // The sidebar trial's tab root: a visible button opens the sidebar, so the swipe is never the only way in (HIG).
+  const openSidebar = useOpenSidebar()
   return (
-    <NavBar title={name} scrolled={scrolled} titleView={<ChatTitlePill name={name} color={color} shape={shape} botId={botId} coordinator={coordinator} onPress={onInfo} />}
+    <NavBar title={name} scrolled={scrolled}
+      left={openSidebar ? { icon: 'sidebar.left', label: mobileMessages.Nav.sidebarTitle, web: null, onPress: openSidebar } : undefined} titleView={<ChatTitlePill name={name} color={color} shape={shape} botId={botId} coordinator={coordinator} onPress={onInfo} />}
       right={name ? {
         icon: 'ellipsis', label: mobileMessages.Nav.more, web: <Symbol name="ellipsis" size={18} color={colors.ink} />, onOpen: () => {},
         items: [

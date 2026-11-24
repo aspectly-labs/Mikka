@@ -6,6 +6,7 @@ import { NavBar } from '@/components/NavBar'
 import { useRouter } from 'expo-router'
 import { colors } from '@/lib/theme'
 import { TaskList } from '../components/task-list'
+import { useOpenSidebar } from '@/features/shell/model/sidebar-opener'
 import { TASK_GROUPS, type TaskFilter } from '../model/task-groups'
 
 /**
@@ -15,11 +16,14 @@ import { TASK_GROUPS, type TaskFilter } from '../model/task-groups'
 export function TasksScreen() {
   const router = useRouter()
   const [filter, setFilter] = useState<TaskFilter>('all')
+  const openSidebar = useOpenSidebar()
   return (
     <View style={styles.screen}>
       <NavBar
         title={mobileMessages.Nav.tasks}
         topTitle
+        // The sidebar trial: a visible button beside the swipe (HIG: a gesture is never the only way in).
+        left={openSidebar ? { icon: 'sidebar.left', label: mobileMessages.Nav.sidebarTitle, web: null, onPress: openSidebar } : undefined}
         right={[
           // Filled while a filter applies, as Mail and Reminders mark theirs (#1 visibility of system status).
           { icon: filter === 'all' ? 'line.3.horizontal.decrease' : 'line.3.horizontal.decrease.circle.fill', label: mobileMessages.MobileCore.filter, web: <ListFilter size={20} color={colors.ink} strokeWidth={2} />, onOpen: () => {},
