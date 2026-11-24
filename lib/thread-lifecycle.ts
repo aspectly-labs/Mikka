@@ -21,6 +21,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const SHARE_PREFIX = 'mkt_'
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
 export const THREAD_RECOVERY_DAYS = 30
+export const SPAWN_MESSAGE_COPY_LIMIT = 500
+export const SPAWN_CHUNK_COPY_LIMIT = 5_000
+
+export class ThreadSpawnConflictError extends Error {
+  readonly code = 'idempotencyKeyConflict'
+  constructor() { super('idempotencyKeyConflict'); this.name = 'ThreadSpawnConflictError' }
+}
 
 type ApiUser = RequestWorkspaceUser
 type Run = Record<string, any>
@@ -60,15 +67,21 @@ async function transcriptExcerpt(sourceRootId: string, limit = 20, cutoff?: stri
 
 /** Spawn a child thread off a run. `fork` seeds the prompt with the transcript
  * (full) or a condensed excerpt (summary); `side` anchors to one message and
- * keeps the excerpt small. Either way the child is queued to run. */
+ * keeps the excerpt small. The run insert and bounded history copy commit in
+ * one transaction so workers never claim a half-copied thread. */
 export async function spawnThread(user: ApiUser, runId: string, input: {
-  relation: Exclude<ThreadRelation, 'subagent'>, mode?: 'full' | 'summary', fromMessageId?: string | null,
+  relation: Exclude<ThreadRelation, 'subagent'>, mode?: 'full' | 'summary', fromMessageId?: string | null, idempotencyKey?: string | null,
 }): Promise<Run | null> {
   const source = await ownedRun(user, runId)
   if (!source) return null
   const root = await rootRunId(user, runId)
   if (!root) return null
   const relation = input.relation
+  const normalizedKey = input.idempotencyKey?.trim() || null
+  const dispatchKey = normalizedKey ? `thread_spawn:${relation}:${normalizedKey}` : null
+  const dispatchFingerprint = dispatchKey
+    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null })).digest('hex')
+    : null
   // `fromMessageId` is the branch point: nothing after it joins the copy or the prompt.
   let cutoff: string | null = null
   if (input.fromMessageId) {
@@ -82,32 +95,86 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
     ? `${source.prompt}${replay ? `\n\n${replay}` : ''}`
     : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20, cutoff)).slice(0, 6000)}`
   const id = randomUUID()
-  const { rows: [run] } = await pool.query(
-    `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin)
-     SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web' FROM agent_runs WHERE id=$2 RETURNING *`,
-    [id, root, prompt, root, relation, input.fromMessageId ?? null])
-  if (!run) return null
-  // A full fork replays the transcript up to `fromMessageId` (or all of it);
-  // the owner keeps their run_messages as the copied conversation state.
-  if (relation === 'fork' && input.mode !== 'summary') {
-    await pool.query(
-      `${CHAIN_SQL} INSERT INTO run_messages(id,"runId","userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt")
-       SELECT gen_random_uuid(),$2,"userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
-       WHERE "runId" IN (SELECT id FROM chain)
-         AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
-       ORDER BY "createdAt"`,
-      [root, id, cutoff])
-    // The agent's own answers and tool calls live in the chunk stream; copy it
-    // too. Negative seqs keep history ordered without colliding with the
-    // sequence numbers the child's own writer assigns (onConflictDoNothing
-    // would silently drop new replies at copied seqs). `cutoff` bounds history
-    // at the selected message.
-    await pool.query(
-      `${CHAIN_SQL} INSERT INTO run_chunks(id,"runId",seq,chunk,"createdAt")
-       SELECT gen_random_uuid(),$2,-ROW_NUMBER() OVER (ORDER BY "createdAt" DESC,seq DESC),chunk,"createdAt" FROM run_chunks
-       WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt",seq`,
-      [root, id, cutoff])
+  let run: Run | undefined
+  let replayed = false
+  let inTx = false
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    inTx = true
+    if (dispatchKey) {
+      const { rows: [inserted] } = await client.query(
+        `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin,"dispatchKey","dispatchFingerprint")
+         SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web',$7,$8 FROM agent_runs WHERE id=$2
+         ON CONFLICT ("userId", "dispatchKey") WHERE "dispatchKey" IS NOT NULL DO NOTHING
+         RETURNING *`,
+        [id, root, prompt, root, relation, input.fromMessageId ?? null, dispatchKey, dispatchFingerprint])
+      if (inserted) {
+        run = inserted
+      } else {
+        const { rows: [existing] } = await client.query(
+          `SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2 LIMIT 1`,
+          [user.id, dispatchKey])
+        if (existing) {
+          if (existing.dispatchFingerprint !== dispatchFingerprint) {
+            throw new ThreadSpawnConflictError()
+          }
+          run = existing
+          replayed = true
+        }
+      }
+    } else {
+      const { rows: [inserted] } = await client.query(
+        `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin)
+         SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web' FROM agent_runs WHERE id=$2 RETURNING *`,
+        [id, root, prompt, root, relation, input.fromMessageId ?? null])
+      run = inserted
+    }
+    if (!run) {
+      await client.query('ROLLBACK')
+      inTx = false
+      return null
+    }
+    // A full fork replays the bounded newest transcript up to `fromMessageId`
+    // (or all of it) inside the same transaction so workers never claim a
+    // half-copied run.
+    if (!replayed && relation === 'fork' && input.mode !== 'summary') {
+      await client.query(
+        `${CHAIN_SQL}, picked AS (
+           SELECT "userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
+           WHERE "runId" IN (SELECT id FROM chain)
+             AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
+           ORDER BY "createdAt" DESC LIMIT $4
+         )
+         INSERT INTO run_messages(id,"runId","userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt")
+         SELECT gen_random_uuid(),$2,"userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt"
+         FROM picked ORDER BY "createdAt"`,
+        [root, id, cutoff, SPAWN_MESSAGE_COPY_LIMIT])
+      // The agent's own answers and tool calls live in the chunk stream; copy it
+      // too. Negative seqs keep history ordered without colliding with the
+      // sequence numbers the child's own writer assigns (onConflictDoNothing
+      // would silently drop new replies at copied seqs). `cutoff` bounds history
+      // at the selected message.
+      await client.query(
+        `${CHAIN_SQL}, picked AS (
+           SELECT seq,chunk,"createdAt" FROM run_chunks
+           WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
+           ORDER BY "createdAt" DESC,seq DESC LIMIT $4
+         )
+         INSERT INTO run_chunks(id,"runId",seq,chunk,"createdAt")
+         SELECT gen_random_uuid(),$2,-ROW_NUMBER() OVER (ORDER BY "createdAt" DESC,seq DESC),chunk,"createdAt"
+         FROM picked ORDER BY "createdAt",seq`,
+        [root, id, cutoff, SPAWN_CHUNK_COPY_LIMIT])
+    }
+    await client.query('COMMIT')
+    inTx = false
+  } catch (error) {
+    if (inTx) await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
   }
+  if (replayed) return run
   // Wake the child's execution: a device run pings its device; a cloud run gets a machine claim.
   if (run.deviceId) notifyDeviceWork(String(run.deviceId))
   else if (run.workspaceId) {

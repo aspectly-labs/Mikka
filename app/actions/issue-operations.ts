@@ -138,15 +138,38 @@ export async function updateIssueRelation(input: z.input<typeof relationSchema>)
         }
         if (!patches.has(current.id)) update(current.id, {})
         if ([...patches.values()].some(patch => patch.metadata.blockedByIds.length > 100 || patch.metadata.relatedIds.length > 100)) return { error: 'issueRelationLimit' }
+        const patchEntries = [...patches.entries()].map(([id, patch]) => {
+          const row = rows.find(item => item.id === id)!
+          return { id, row, content: withIssueMetadata(row.content, patch.metadata), status: patch.status ?? row.status, revision: row.revision + 1 }
+        })
+        const now = new Date()
+        const savedRows = patchEntries.length === 1
+          ? await tx.update(issues)
+              .set({ content: patchEntries[0].content, status: patchEntries[0].status, revision: patchEntries[0].revision, updatedAt: now })
+              .where(and(eq(issues.id, patchEntries[0].id), eq(issues.userId, issue.userId)))
+              .returning()
+          : await tx.update(issues)
+              .set({
+                content: sql`case ${sql.join(patchEntries.map(entry => sql`when ${issues.id} = ${entry.id}::uuid then ${JSON.stringify(entry.content)}::jsonb`), sql` `)} else ${issues.content} end`,
+                status: sql`case ${sql.join(patchEntries.map(entry => sql`when ${issues.id} = ${entry.id}::uuid then ${entry.status}`), sql` `)} else ${issues.status} end`,
+                revision: sql`${issues.revision} + 1`,
+                updatedAt: now,
+              })
+              .where(and(inArray(issues.id, patchEntries.map(entry => entry.id)), eq(issues.userId, issue.userId)))
+              .returning()
+        const rowsById = new Map(rows.map(row => [row.id, row]))
         let savedCurrent = current
-        for (const [id, patch] of patches) {
-          const row = rows.find(row => row.id === id)!
-          const [saved] = await tx.update(issues).set({ content: withIssueMetadata(row.content, patch.metadata), status: patch.status ?? row.status, revision: row.revision + 1, updatedAt: new Date() }).where(and(eq(issues.id, id), eq(issues.userId, issue.userId))).returning()
-          reviewTaskChanged(tx, row, saved)
-          await tx.insert(issueVersions).values({ id: crypto.randomUUID(), issueId: id, userId: issue.userId, revision: saved.revision, title: saved.title, content: saved.content, status: saved.status, priority: saved.priority, ...activityActor(user.id) })
-          await issueListChanged(tx, saved.id)
-          if (id === current.id) savedCurrent = saved
+        for (const saved of savedRows) {
+          reviewTaskChanged(tx, rowsById.get(saved.id)!, saved)
+          if (saved.id === current.id) savedCurrent = saved
         }
+        if (savedRows.length) {
+          await tx.insert(issueVersions).values(savedRows.map(saved => ({
+            id: crypto.randomUUID(), issueId: saved.id, userId: issue.userId, revision: saved.revision,
+            title: saved.title, content: saved.content, status: saved.status, priority: saved.priority, ...activityActor(user.id),
+          })))
+        }
+        for (const saved of savedRows) await issueListChanged(tx, saved.id)
         // Both ends, and any task an edit disconnected (its old parent): their lists change.
         await issueRelationsChanged(tx, [...patches.keys()].flatMap(id => [id, ...relationIds(rows.find(row => row.id === id)!.content)]))
         return { issue: await issueView(savedCurrent, tx) }
@@ -215,21 +238,25 @@ export async function createLinkedIssue(input: { id: string; revision: number; k
         if (child) {
           const members = await tx.select({ memberId: issueMembers.memberId }).from(issueMembers).where(and(eq(issueMembers.issueId, source.id), eq(issueMembers.userId, source.userId)))
           if (members.length) await tx.insert(issueMembers).values(members.map(member => ({ issueId: created.id, userId: ownerId, memberId: member.memberId })))
-        } else if (input.includeSubissues) {
+        } else if (input.includeSubissues && originals.length) {
           const mapping = new Map([[source.id, created.id]])
+          const copyValues: Array<typeof issues.$inferInsert> = []
           for (const [index, original] of originals.entries()) {
             const currentMetadata = readIssueMetadata(original.content)
             const parentId = currentMetadata.parentId!
             const id = crypto.randomUUID()
-            const copyMetadata = { ...currentMetadata, number: number + index + 1, parentId: mapping.get(parentId)!, blockedByIds: [], relatedIds: [], duplicateOfId: null, favoriteUserIds: [], subscriberUserIds: [], deletedAt: null, assignee: source.userId === user.id ? currentMetadata.assignee : null, delegate: source.userId === user.id ? currentMetadata.delegate : null }
-            // The child copy is consumed only by its version snapshot and invalidation.
-            // Read the stored values after triggers without returning unused task columns.
-            const [copy] = await tx.insert(issues).values({ id, userId: ownerId, ...ownership, title: original.title, content: withIssueMetadata(original.content, copyMetadata), status: 'todo', priority: original.priority, revision: 1 })
-              .returning({ id: issues.id, title: issues.title, content: issues.content, status: issues.status, priority: issues.priority })
-            policies.push({ id, parentId: mapping.get(parentId)! })
-            versions.push({ id: crypto.randomUUID(), issueId: id, userId: ownerId, revision: 1, title: copy.title, content: copy.content, status: copy.status, priority: copy.priority, ...activityActor(user.id) })
-            await issueListChanged(tx, copy.id)
+            const mappedParentId = mapping.get(parentId)!
+            const copyMetadata = { ...currentMetadata, number: number + index + 1, parentId: mappedParentId, blockedByIds: [], relatedIds: [], duplicateOfId: null, favoriteUserIds: [], subscriberUserIds: [], deletedAt: null, assignee: source.userId === user.id ? currentMetadata.assignee : null, delegate: source.userId === user.id ? currentMetadata.delegate : null }
+            copyValues.push({ id, userId: ownerId, ...ownership, title: original.title, content: withIssueMetadata(original.content, copyMetadata), status: 'todo', priority: original.priority, revision: 1 })
+            policies.push({ id, parentId: mappedParentId })
             mapping.set(original.id, id)
+          }
+          // Batch subtree inserts in one statement; triggers populate stored values returned for versions.
+          const copies = await tx.insert(issues).values(copyValues)
+            .returning({ id: issues.id, title: issues.title, content: issues.content, status: issues.status, priority: issues.priority })
+          for (const copy of copies) {
+            versions.push({ id: crypto.randomUUID(), issueId: copy.id, userId: ownerId, revision: 1, title: copy.title, content: copy.content, status: copy.status, priority: copy.priority, ...activityActor(user.id) })
+            await issueListChanged(tx, copy.id)
           }
         }
         // All copies become private before this transaction can commit. A new

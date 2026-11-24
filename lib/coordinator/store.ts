@@ -156,14 +156,21 @@ export async function sendRetryOf<T>(userId: string, botId: string, position: nu
 /** The summary so far, the memory, and every message after the summary, oldest first. */
 type LoadedConversation = { summary: string | null; memory: string; messages: StoredMessage[] }
 
+/** Hard tail cap on post-summary rows read into a single Coordinator turn if folding lags. */
+export const COORDINATOR_CONVERSATION_ROW_LIMIT = 500
+
 async function readConversationRows(userId: string, botId: string) {
   const [session] = await db.select().from(coordinatorSessions).where(sessionOf(userId, botId)).limit(1)
   const through = session?.summaryThrough ?? 0
-  const rows = await db.select({ position: coordinatorMessages.position, message: coordinatorMessages.message })
+  const recent = await db.select({ position: coordinatorMessages.position, message: coordinatorMessages.message })
     .from(coordinatorMessages)
     .where(and(messagesOf(userId, botId), gt(coordinatorMessages.position, through)))
-    .orderBy(asc(coordinatorMessages.position))
-  return { session, rows }
+    .orderBy(desc(coordinatorMessages.position))
+    .limit(COORDINATOR_CONVERSATION_ROW_LIMIT)
+  if (recent.length === COORDINATOR_CONVERSATION_ROW_LIMIT) {
+    console.warn('coordinator_conversation_rows_capped', { botId, limit: COORDINATOR_CONVERSATION_ROW_LIMIT })
+  }
+  return { session, rows: [...recent].sort((left, right) => left.position - right.position) }
 }
 
 function conversationWithMemory({ session, rows }: Awaited<ReturnType<typeof readConversationRows>>, memoryEnabled: boolean): LoadedConversation {
