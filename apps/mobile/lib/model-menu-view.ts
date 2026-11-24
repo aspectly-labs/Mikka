@@ -1,4 +1,4 @@
-import { mobileMessages } from '@/lib/messages'
+import { mobileLocale, mobileMessages } from '@/lib/messages'
 import { HOSTED_CHOICE, type BotModelCurrent, type BotModelMenu, type BotModelMenuGroup, type BotModelMenuOption } from '../../../lib/bot-model-menu-view'
 const messages = mobileMessages
 
@@ -79,7 +79,7 @@ export function modelStatusLine(current: BotModelCurrent): ModelStatus | null {
       return { line: S.nextKey.replace('{key}', () => key).replace('{exhausted}', () => exhausted), change: false }
     }
     const reset = quota.resetsAt ? new Date(quota.resetsAt) : null
-    return { line: reset && Number.isFinite(reset.getTime()) ? S.resets.replace('{time}', reset.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })).replace('{exhausted}', () => exhausted) : exhausted, change: true }
+    return { line: reset && Number.isFinite(reset.getTime()) ? S.resets.replace('{time}', reset.toLocaleString(mobileLocale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })).replace('{exhausted}', () => exhausted) : exhausted, change: true }
   }
   if (current.availability === 'checking') return null
   if (!current.available) return { line: S.unavailable, change: true }
