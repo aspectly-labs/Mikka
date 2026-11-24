@@ -5,21 +5,26 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { useDelayedVisible } from '@/lib/hooks/use-delayed-visible'
 
 /**
  * S-Q: a section that is still loading keeps its shape instead of rendering nothing.
  * `bare` is for rows inside a card or dialog that already has a surface: only the rows, no second card.
  */
 export function SettingsLoading({ label, rows = 3, bare = false }: { label: string; rows?: number; bare?: boolean }) {
-  const skeletonRows = Array.from({ length: rows }, (_, i) => <div key={i} className="flex items-center justify-between gap-3 px-4 py-3"><Skeleton className="h-4 w-40" /><Skeleton className="h-6 w-12" /></div>)
+  // A read that answers within the delay never flashes a skeleton (audit 3 G1); the space stays reserved, and the
+  // status is announced at once.
+  const shown = useDelayedVisible()
+  const hidden = shown ? undefined : 'invisible'
+  const skeletonRows = Array.from({ length: rows }, (_, i) => <div key={i} className={cn('flex items-center justify-between gap-3 px-4 py-3', hidden)}><Skeleton className="h-4 w-40" /><Skeleton className="h-6 w-12" /></div>)
   if (bare) return <div role="status" aria-label={label} data-loading-placeholder="" className="flex flex-col divide-y divide-border">
     <span className="sr-only">{label}</span>
     {skeletonRows}
   </div>
   return <div role="status" aria-label={label} data-loading-placeholder="" className="flex flex-col gap-1">
     <span className="sr-only">{label}</span>
-    <Skeleton className="mx-1 h-4 w-24" />
-    <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border bg-card">
+    <Skeleton className={cn('mx-1 h-4 w-24', hidden)} />
+    <div className={cn('flex flex-col divide-y divide-border overflow-hidden rounded-lg border bg-card', hidden)}>
       {skeletonRows}
     </div>
   </div>
