@@ -8,6 +8,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { applicationPlugin } from '../apps/frontend/scripts/application-plugin.mjs'
+import { uiFixture } from '../apps/frontend/scripts/application-test-build.mjs'
+import { needsOfficialUi, readUi, uiExists } from '../scripts/official-ui-tree.mjs'
 import { analyticsPath, sanitizeAnalyticsEvent } from '../lib/analytics-policy.ts'
 import { computerAcceptancePreview, computerProductionEnabled, featureAvailability, gatedFeatureEnabled, gatedFeatures, killSwitches, proactiveFeatures, upcomingFeatures } from '../lib/feature-flags.ts'
 import { analyticsEnvironment, analyticsKey, analyticsPaths, inspectAnalyticsBuild, localAnalyticsRequest, requiredRuntimeResources, syntheticPostHogRequest, verifyRuntimeResources } from '../scripts/check-analytics-ssr.mjs'
@@ -191,32 +193,41 @@ test('the 电脑 tab has its own kill switch, apart from the cloud computer roll
 
 test('the active Vite web entry initializes PostHog and the shared application mounts its pageview tracker', async () => {
   const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
-  assert.match(source('apps/frontend/src/index.tsx'), /import 'mikka:frontend-runtime'[\s\S]*await import\('\.\.\/\.\.\/desktop\/src\/renderer\/index'\)/)
-  const plugin = await applicationPlugin('web')
-  const runtimeId = await plugin.resolveId('mikka:frontend-runtime')
-  const entry = fileURLToPath(new URL('../apps/frontend/src/web/runtime.ts', import.meta.url))
-  for (const development of [false, true]) {
-    plugin.configResolved({ command: development ? 'serve' : 'build' })
-    const code = await plugin.load(runtimeId)
-    assert.ok(code.split('\n').includes(`import ${JSON.stringify(entry)};`))
-    assert.equal(code.includes('globalThis[Symbol.for("openui.devtools.autoMount")] = true;'), development)
+  assert.match(source('apps/frontend/src/index.ts'), /import 'mikka:frontend-runtime'[\s\S]*await import\('mikka:application'\)/)
+  // The runtime module is the same for any checkout; a stand-in one is enough to load it.
+  const fixture = await uiFixture()
+  try {
+    const plugin = await applicationPlugin('web', { overlay: fixture.overlay() })
+    const runtimeId = await plugin.resolveId('mikka:frontend-runtime')
+    const entry = fileURLToPath(new URL('../apps/frontend/src/web/runtime.ts', import.meta.url))
+    for (const development of [false, true]) {
+      plugin.configResolved({ command: development ? 'serve' : 'build' })
+      const code = await plugin.load(runtimeId)
+      assert.ok(code.split('\n').includes(`import ${JSON.stringify(entry)};`))
+      assert.equal(code.includes('globalThis[Symbol.for("openui.devtools.autoMount")] = true;'), development)
+    }
+  } finally {
+    await fixture.cleanup()
   }
   assert.match(source('apps/frontend/src/web/runtime.ts'), /import '@\/instrumentation-client'/)
   // PostHog starts after first paint: the runtime only schedules it, and posthog-js is never a static client import.
   assert.match(source('instrumentation-client.ts'), /if \(posthogConfig\.token\) loadPostHogAfterIdle\(window\)/)
   assert.match(source('lib/analytics/posthog.ts'), /import\('posthog-js'\), import\('\.\/posthog-init'\)/)
-  // The UI moved to the private layer (decision 2026-11-22-2205): check its copy when it is checked out.
-  for (const file of ['instrumentation-client.ts', 'components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'hooks/use-approval-live.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
-    const path = [file, `.hosted-ui/web/${file}`].find(candidate => existsSync(new URL(`../${candidate}`, import.meta.url)))
-    if (path) assert.doesNotMatch(source(path), /from 'posthog-js'/, file)
-  }
   assert.match(source('lib/analytics/posthog-init.ts'), /posthog\.init\(posthogConfig\.token/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_pageview: false/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_unhandled_errors: true/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_unhandled_rejections: true/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_console_errors: false/)
-  assert.match(source('apps/desktop/src/renderer/app.tsx'), /<PlatformExtras \/>/)
-  assert.match(source('apps/frontend/src/web/platform.tsx'), /posthogConfig\.token && <PostHogAnalytics \/>/)
+})
+
+test('the official interface never imports posthog-js statically and mounts the pageview tracker', { skip: needsOfficialUi }, () => {
+  // The interface lives in the official UI checkout (core/ and web/, decision 2026-11-24-1000-all-ui-in-hosted).
+  for (const file of ['components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'hooks/use-approval-live.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
+    const path = [file, `.hosted-ui/web/${file}`].find(uiExists)
+    if (path) assert.doesNotMatch(readUi(path), /from 'posthog-js'/, file)
+  }
+  assert.match(readUi('renderer/app.tsx'), /<PlatformExtras \/>/)
+  assert.match(readUi('renderer/web/platform.tsx'), /posthogConfig\.token && <PostHogAnalytics \/>/)
 })
 
 test('analytics acceptance preserves the three real anonymous routes and isolated database restriction', () => {
@@ -279,6 +290,24 @@ test('analytics build proof checks actual packaged bytes, public Vite entry and 
   await assert.rejects(verifyRuntimeResources(root, { ...built, resources: [...built.resources, built.resources[0]] }))
   await write(`.output/${requiredRuntimeResources[0]}`, 'changed packaged resource')
   await assert.rejects(verifyRuntimeResources(root, built))
+})
+
+test('headless public builds still prove runtime resources and asset byte identity without private UI analytics', async t => {
+  const { root, write } = await analyticsBuildFixture(t)
+  const headlessScript = 'document.documentElement.dataset.mikkaHeadless = "true";\n'
+  await write('apps/frontend/dist/web/assets/index-real.js', headlessScript)
+  await write('.output/public/mikka/assets/index-real.js', headlessScript)
+  // Without an explicit matching headless manifest, missing analytics config must still fail.
+  await assert.rejects(inspectAnalyticsBuild(root), /Synthetic analytics configuration/)
+  const manifest = JSON.stringify({ version: 1, target: 'web', headless: true, usedActions: [] })
+  await write('apps/frontend/dist/web/renderer-manifest.json', manifest)
+  await write('.output/public/mikka/renderer-manifest.json', manifest)
+  const result = await inspectAnalyticsBuild(root)
+  assert.equal(result.headless, true)
+  assert.equal(result.assets.size, 1)
+  assert.equal(result.configuredAssets.size, 0)
+  await write('.output/public/mikka/renderer-manifest.json', '{"headless":false}')
+  await assert.rejects(inspectAnalyticsBuild(root), /served renderer manifest/)
 })
 
 test('artifact verification rejects escaping and symlinked files instead of accepting their filenames', async t => {

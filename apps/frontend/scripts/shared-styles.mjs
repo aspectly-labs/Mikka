@@ -6,7 +6,8 @@ import { uiOverlay } from '../../../lib/ui-overlay.mjs'
 import { sharedCssTargets } from './css-targets.mjs'
 
 const slash = value => value.split(sep).join('/')
-const OVERLAY_CSS_DIRECTORIES = ['web', 'slots', 'lib']
+// Tailwind skips git-ignored paths, so the official UI checkout's sources are named explicitly.
+const OVERLAY_CSS_DIRECTORIES = ['core', 'web', 'slots', 'lib']
 
 /** Use the same Tailwind and build-only Lightning CSS pass the application
  * shipped with. Vite must not perform a second, different color conversion.
@@ -16,20 +17,15 @@ const OVERLAY_CSS_DIRECTORIES = ['web', 'slots', 'lib']
  * a Lightning CSS pass that ran first would parse a nested `@apply` differently
  * in 1.30 and 1.32 and drop the surrounding selector. See css-targets.mjs for
  * the targets. */
-export function sharedStylePlugins(repository, { development = false, env = process.env, serverPages = false } = {}) {
-  const entryStylesheets = new Set([
-    resolve(repository, 'app/globals.css'),
-    resolve(repository, 'apps/desktop/src/renderer/styles.css'),
-  ])
+export function sharedStylePlugins(repository, { development = false, overlay = uiOverlay(repository) } = {}) {
+  const { dir } = overlay
+  const entryStylesheets = new Set(dir ? [resolve(dir, 'core/app/globals.css'), overlay.application.styles] : [])
   return [{
     postcssPlugin: 'mikka-ui-overlay-sources',
     async Once(root, { result }) {
-      if (serverPages) return
       const from = result.opts.from ? resolve(repository, result.opts.from) : null
-      if (!from || !entryStylesheets.has(from)) return
+      if (!dir || !from || !entryStylesheets.has(from)) return
       result.opts.from = from
-      const { dir } = uiOverlay(repository, env)
-      if (!dir) return
       const sources = OVERLAY_CSS_DIRECTORIES
         .map(directory => resolve(dir, directory))
         .filter(directory => existsSync(directory))

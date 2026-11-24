@@ -76,7 +76,6 @@
     "app/actions/issues.ts",
     "app/actions/task-runs.ts",
     "app/api/settings/**",
-    "components/swr-defaults.tsx",
     "package.json",
     "pnpm-lock.yaml"
   ],

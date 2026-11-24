@@ -209,6 +209,16 @@ test('discovery before selecting an existing task uses only the main and setting
   await assert.rejects(discoverReadActions(async () => new Response('<html></html>'), environment), { code: 'read_action_reference_missing' })
 })
 
+test('headless public builds are accepted only by opt-in local acceptance and never by default discovery', async () => {
+  const headlessManifest = { version: 1, target: 'web', headless: true, usedActions: [] }
+  const fetchHeadless = async path => path.endsWith('/renderer-manifest.json') ? Response.json(headlessManifest) : new Response(page)
+  await assert.rejects(discoverReadActions(fetchHeadless, environment), { code: 'read_action_reference_missing' })
+  const local = await discoverReadActions(fetchHeadless, environment, undefined, { allowHeadless: true })
+  assert.deepEqual(local.refs, refs)
+  const incompleteUi = { version: 1, target: 'web', usedActions: [] }
+  await assert.rejects(discoverReadActions(async path => path.endsWith('/renderer-manifest.json') ? Response.json(incompleteUi) : new Response(page), environment, undefined, { allowHeadless: true }), { code: 'read_action_reference_missing' })
+})
+
 test('once discovery names the release, reads are pinned to it and the version check is not', async () => {
   const pin = '370cc898-local-prebuilt-1', seen = []
   const discovered = await discoverReadActions(async path => path.startsWith('/mikka/renderer-manifest.json')

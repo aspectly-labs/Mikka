@@ -2,7 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Window } from 'happy-dom'
 import { localizePage } from '../../api/runtime/http-policy.mjs'
+import { relative } from 'node:path'
 import { browserModule } from './test-module.mjs'
+import { needsOfficialUi, officialUi } from './application-test-build.mjs'
+import { repository } from './application-plugin.mjs'
+
+// The localized router is the official UI's (core/lib/client-runtime in its checkout); these tests skip without one.
+const localizedNavigation = officialUi.dir && `./${relative(repository, officialUi.dir)}/core/lib/client-runtime/localized-navigation.tsx`
 
 async function navigation(url, callback) {
   const window = new Window({ url })
@@ -16,7 +22,7 @@ async function navigation(url, callback) {
     export { createRoot } from 'react-dom/client'
     export { flushSync } from 'react-dom'
     export { NextIntlClientProvider } from '@/lib/intl/i18n-client'
-    export { useRouter } from './apps/desktop/src/renderer/i18n-navigation.tsx'
+    export { useRouter } from '${localizedNavigation}'
     export { isClientRoute } from './apps/desktop/src/renderer/location.ts'
   `)
   const root = api.createRoot(window.document.body.appendChild(window.document.createElement('div')))
@@ -53,7 +59,7 @@ const request = (window, url = window.location.href) => new Request(url, {
   headers: { cookie: window.document.cookie, 'accept-language': 'en', 'sec-fetch-dest': 'document' },
 })
 
-test('only backend authentication documents force business navigation back to the HTTP server entry', () => navigation('https://server.example/mikka/sign-in', async ({ window, isClientRoute }) => {
+test('only backend authentication documents force business navigation back to the HTTP server entry', { skip: needsOfficialUi }, () => navigation('https://server.example/mikka/sign-in', async ({ window, isClientRoute }) => {
   const url = path => new URL(`/mikka${path}`, window.location.origin)
   assert.equal(isClientRoute(url('/settings')), true)
   window.document.documentElement.dataset.mikkaServerPage = 'authentication'
@@ -63,7 +69,7 @@ test('only backend authentication documents force business navigation back to th
   assert.equal(isClientRoute(url('/settings')), true, 'remote server configuration cannot restrict the official app document')
 }))
 
-test('explicit en-to-zh web navigation retains the chosen language through server refresh and reentry', () => navigation('https://app.example/mikka/en/settings?section=general&workspace=team', async ({ window, render, writes }) => {
+test('explicit en-to-zh web navigation retains the chosen language through server refresh and reentry', { skip: needsOfficialUi }, () => navigation('https://app.example/mikka/en/settings?section=general&workspace=team', async ({ window, render, writes }) => {
   window.document.cookie = 'mikka-locale=en; Path=/mikka'
   window.document.cookie = 'other-preference=retained; Path=/mikka'
   writes.length = 0
@@ -80,7 +86,7 @@ test('explicit en-to-zh web navigation retains the chosen language through serve
   assert.equal(window.document.cookie, '')
 }))
 
-test('explicit zh-to-en web navigation retains the language and query on a fresh unprefixed entry', () => navigation('https://app.example/mikka/settings?section=general&workspace=team', async ({ window, render, writes }) => {
+test('explicit zh-to-en web navigation retains the language and query on a fresh unprefixed entry', { skip: needsOfficialUi }, () => navigation('https://app.example/mikka/settings?section=general&workspace=team', async ({ window, render, writes }) => {
   window.document.cookie = 'mikka-locale=zh-CN; Path=/mikka'
   writes.length = 0
   render('zh-CN').push('/settings?section=general&workspace=team', { locale: 'en' })
@@ -92,7 +98,7 @@ test('explicit zh-to-en web navigation retains the language and query on a fresh
   assert.equal(result.redirect.headers.get('location'), window.location.href)
 }))
 
-test('a choice still stored under the legacy name survives a switch, which writes both names so a rollback keeps it', () => navigation('https://app.example/mikka/en/settings?section=general', async ({ window, render, writes }) => {
+test('a choice still stored under the legacy name survives a switch, which writes both names so a rollback keeps it', { skip: needsOfficialUi }, () => navigation('https://app.example/mikka/en/settings?section=general', async ({ window, render, writes }) => {
   window.document.cookie = 'NEXT_LOCALE=en; Path=/mikka'
   writes.length = 0
   assert.equal(localizePage(request(window, 'https://app.example/mikka/settings')).locale, 'en')
@@ -106,7 +112,7 @@ test('a choice still stored under the legacy name survives a switch, which write
   assert.equal(result.cookies, undefined, 'both cookies already match, so the document sends no Set-Cookie')
 }))
 
-test('ordinary navigation and the native custom scheme do not write a web locale cookie', async () => {
+test('ordinary navigation and the native custom scheme do not write a web locale cookie', { skip: needsOfficialUi }, async () => {
   await navigation('https://app.example/mikka/en/settings', async ({ window, render, writes }) => {
     window.document.cookie = 'mikka-locale=en; Path=/mikka'
     writes.length = 0

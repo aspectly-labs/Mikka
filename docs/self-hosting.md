@@ -4,7 +4,7 @@ Self-hosting is community-maintained. Mikka ended dedicated compatibility testin
 
 Deploy the community server, then connect the official app to that server. It runs on your own database and does not need a Mikka account, Stripe, Vercel, Cloudflare, or a Mikka-owned API key. Your subscriptions and API keys belong to you. Hosted Mikka billing is disabled in the community edition.
 
-The image provides the server: API, realtime, daemon gateway, scheduling, migrations and BYOK. **Mikka has one official UI**, whose Web, Desktop and iOS clients connect to this server ([active One UI decision](design/decisions/2026-11-08-2133-one-ui.md)). The old built-in community workspace was retired; `MIKKA_COMMUNITY_UI=1` no longer re-enables it. The public image still serves server status, sign-in and account handoff pages, not a second workbench. Official UI screenshots are not copied into the public server image.
+The image provides the server: API, realtime, daemon gateway, scheduling, migrations and BYOK. **Mikka has one official UI**, whose Web, Desktop and iOS clients connect to this server ([active One UI decision](design/decisions/2026-11-08-2133-one-ui.md)). The old built-in community workspace was retired; `MIKKA_COMMUNITY_UI=1` no longer re-enables it. An image built from this repository alone has no browser pages: it answers a browser with a page that says the server has no web interface ([decision 2026-11-24-1000](design/decisions/2026-11-24-1000-all-ui-in-hosted.md)), and people sign in from the official clients. Official UI screenshots are not copied into the public server image.
 
 ## Start the server
 
@@ -127,15 +127,13 @@ WebSocket updates and daemon work on your own origin.
 
 `GET /mikka/api/server` is the public server-info contract. Opening the server in a browser shows its status, server address, and official client links. JSON clients receive the same public installation information. It includes the configured name/address, running version, client entry links, initial-account state and login-method configuration. A healthy response means the configured origin is valid and the auth-user existence query succeeded; it does not claim to have checked external providers, workers or every subsystem. A failed query returns HTTP 503 and `setup.state: unavailable`, never an empty-installation state.
 
-On an empty database, `setup.state` is `required`. Configure SMTP/Resend or your own OAuth client, then use `setup.signUpUrl` to create the initial account. Registration uses the existing authentication flow and creates that person's workspace with the `admin` membership. There is no installation-wide administrator role and no special access to other people's workspaces. Existing installations report `ready`; upgrading does not assign a new administrator or alter existing accounts. Email/password being enabled is separate from the `emailDeliveryConfigured` flag, which reports configuration presence rather than a successful delivery test.
-
-The server retains sign-in, sign-up, verification/reset, device authorization, OAuth consent, invitations and app handoff pages. GitHub linking keeps its existing account-confirmation surface. Ordinary navigation from these pages returns to the server entry.
+On an empty database, `setup.state` is `required`. Configure SMTP/Resend or your own OAuth client, then create the initial account from an official client connected to this server (below). The server itself serves no pages: `setup.signUpUrl` is where an official client sends that person to sign up. Registration uses the existing authentication flow and creates that person's workspace with the `admin` membership. There is no installation-wide administrator role and no special access to other people's workspaces. Existing installations report `ready`; upgrading does not assign a new administrator or alter existing accounts. Email/password being enabled is separate from the `emailDeliveryConfigured` flag, which reports configuration presence rather than a successful delivery test.
 
 ### Connect an official client
 
 Open the official Web app and choose **Change** on the sign-in screen or under account settings. Select **Self-hosted server**, enter the HTTPS address from `/mikka/api/server`, and continue to sign in on your server. The app lists saved accounts with their server addresses. Choose **Mikka Cloud** to return to the Cloud account. Official Desktop and iOS clients also accept a server address.
 
-The public image contains the API, daemon integration, and the pages needed for sign-in, password recovery, invitations, consent, and app handoffs. Upgrading uses the existing database and installation keys. Remove `MIKKA_COMMUNITY_UI` from older Compose configurations.
+The public image contains the API and daemon integration; sign-in, password recovery, invitations and consent are pages of the official UI. Upgrading uses the existing database and installation keys. Remove `MIKKA_COMMUNITY_UI` from older Compose configurations.
 
 ## Installation secrets and backups
 
@@ -413,4 +411,4 @@ The server works without a Mikka account. For optional official GitHub, iOS push
 
 See [BYOK services](self-hosting-byok.md) for SMTP, S3, local vault and default-model configuration, and [builtin realtime](self-hosting-realtime.md) for multi-instance operation.
 
-A public checkout selects the server-only renderer for `pnpm build`, `pnpm build:app` and `pnpm --filter @mikka/frontend build`. Official Web and Desktop builds require a separate private Git checkout and its matching revision. Public CI explicitly requests `--public-test-fixture` for the unlicensed renderer used by the existing loopback and package tests. Its manifest identifies it as a test fixture.
+A public checkout builds the server with a page that only says where to get an official client, for `pnpm build`, `pnpm build:app` and `pnpm --filter @mikka/frontend build`; its manifest marks it `headless`. Official Web and Desktop builds compile the interface from a separate private Git checkout at its matching revision ([UI overlay](ui-overlay.md)), and a production Desktop build refuses to run without one.

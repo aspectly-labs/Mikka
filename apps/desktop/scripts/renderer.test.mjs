@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { actionReferences, actionSignatures } from './renderer-transforms.mjs'
 import { compileApplication } from '../../frontend/scripts/application-test-build.mjs'
+import { needsOfficialUi, officialRenderer, officialUiResolution } from './official-ui.mjs'
 
 const repository = fileURLToPath(new URL('../../..', import.meta.url))
 const renderer = join(repository, 'apps/desktop/src/renderer')
@@ -325,7 +326,7 @@ test('viewer HTTP seam retains shared response errors and routes ordinary reques
   assert.equal(calls[1].path, '/mikka/api/bots/bot-id/computer')
 }))
 
-test('desktop tabs restore once at launch without overwriting later Settings navigation', () => browser(async window => {
+test('desktop tabs restore once at launch without overwriting later Settings navigation', { skip: needsOfficialUi }, () => browser(async window => {
   const saved = { items: [{ entries: ['/mikka/en/dashboard'], index: 0 }], active: 0 }
   window.localStorage.setItem('mikka:desktop:saved-tabs:v1', JSON.stringify(saved))
   window.document.documentElement.dataset.desktopWindow = 'main'
@@ -335,7 +336,7 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
     source: `
       import React from 'react'
       import { createRoot } from 'react-dom/client'
-      import { DesktopTabs } from ${JSON.stringify(join(renderer, 'desktop-tabs.tsx'))}
+      import { DesktopTabs } from ${JSON.stringify(join(officialRenderer, 'desktop-tabs.tsx'))}
       let testWindow
       export function setWindow(value) { globalThis.__mikkaDesktopTabsWindow = value }
       export async function mount(container) {
@@ -357,7 +358,7 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
       setup(build) {
         build.onResolve({ filter: /^mikka:platform$/ }, () => ({ path: 'platform', namespace: 'desktop-tabs-fixture' }))
         build.onResolve({ filter: /^(?:next-intl|@\/lib\/intl\/i18n-client)$/ }, () => ({ path: 'next-intl', namespace: 'desktop-tabs-fixture' }))
-        build.onResolve({ filter: /^\.\/location$/ }, args => args.importer.endsWith('/desktop-tabs.tsx') ? ({ path: 'location', namespace: 'desktop-tabs-fixture' }) : undefined)
+        build.onResolve({ filter: /^@\/apps\/desktop\/src\/renderer\/location$/ }, args => args.importer.endsWith('/desktop-tabs.tsx') ? ({ path: 'location', namespace: 'desktop-tabs-fixture' }) : undefined)
         build.onLoad({ filter: /.*/, namespace: 'desktop-tabs-fixture' }, args => ({
           loader: 'js',
           resolveDir: repository,
@@ -372,7 +373,7 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
                  export function navigate(href, replace = false) { globalThis.__mikkaDesktopTabsWindow.history[replace ? 'replaceState' : 'pushState'](globalThis.__mikkaDesktopTabsWindow.history.state, '', href); globalThis.__mikkaDesktopTabsWindow.dispatchEvent(new globalThis.__mikkaDesktopTabsWindow.Event('mikka:test-location')) }`,
         }))
       },
-    }],
+    }, officialUiResolution],
   })
   try {
     fixture.setWindow(window)

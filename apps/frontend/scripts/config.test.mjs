@@ -1,29 +1,22 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { execFileSync } from 'node:child_process'
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { frontendConfig } from '../vite.config.mjs'
 import { browserModule } from './test-module.mjs'
+import { uiFixture } from './application-test-build.mjs'
 import { LEGACY_PUBLIC_ENV } from '../../../lib/public-env.mjs'
 
-const checkout = process.cwd()
-const repoRoot = fileURLToPath(new URL('../../../', import.meta.url))
-
+/** A pinned stand-in UI checkout: a git commit of the application files the build requires. */
 async function overlayFixture(run) {
-  await mkdir(join(checkout, 'node_modules/.cache'), { recursive: true })
-  const fixture = await mkdtemp(join(checkout, 'node_modules/.cache/mikka-ui-overlay-fixture-'))
+  const fixture = await uiFixture()
   try {
-    await cp(join(repoRoot, 'components/slots'), join(fixture, 'slots'), { recursive: true })
-    execFileSync('git', ['init', '-q'], { cwd: fixture })
-    execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: fixture })
-    execFileSync('git', ['config', 'user.name', 'Overlay Fixture'], { cwd: fixture })
-    execFileSync('git', ['add', '.'], { cwd: fixture })
-    execFileSync('git', ['commit', '-qm', 'test fixture'], { cwd: fixture })
-    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture, encoding: 'utf8' }).trim()
-    return await run({ dir: fixture, sha })
-  } finally { await rm(fixture, { recursive: true, force: true }) }
+    const git = (...args) => execFileSync('git', ['-c', 'user.email=fixture@example.invalid', '-c', 'user.name=Overlay Fixture', '-c', 'commit.gpgsign=false', ...args], { cwd: fixture.dir, encoding: 'utf8' })
+    git('init', '-q')
+    git('add', '.')
+    git('commit', '-qm', 'test fixture')
+    return await run({ dir: fixture.dir, sha: git('rev-parse', 'HEAD').trim() })
+  } finally { await fixture.cleanup() }
 }
 
 async function environment(values, run) {
@@ -100,11 +93,11 @@ test('the production explicit computer rollout follows the app deployment stage 
   assert.equal(JSON.parse(config.define['process.env.MIKKA_PUBLIC_POSTHOG_KEY']), '')
 })))
 
-test('desktop remains unpinned and does not initialize browser analytics or browser auth configuration', async () => environment({ MIKKA_DEPLOYMENT_ID: 'release-1', MIKKA_PUBLIC_BUILD: 'a'.repeat(40), MIKKA_PUBLIC_POSTHOG_KEY: 'public-canary', MIKKA_PUBLIC_TURNSTILE_SITE_KEY: 'public-widget' }, async () => {
-  const config = await frontendConfig({ target: 'desktop', publicTestFixture: true })
+test('desktop remains unpinned and does not initialize browser analytics or browser auth configuration', async () => overlayFixture(({ dir, sha }) => environment({ MIKKA_UI_OVERLAY_DIR: dir, MIKKA_UI_OVERLAY_SHA: sha, MIKKA_DEPLOYMENT_ID: 'release-1', MIKKA_PUBLIC_BUILD: 'a'.repeat(40), MIKKA_PUBLIC_POSTHOG_KEY: 'public-canary', MIKKA_PUBLIC_TURNSTILE_SITE_KEY: 'public-widget' }, async () => {
+  const config = await frontendConfig({ target: 'desktop' })
   for (const key of ['MIKKA_DEPLOYMENT_ID', 'MIKKA_PUBLIC_BUILD', 'MIKKA_PUBLIC_POSTHOG_KEY', 'MIKKA_PUBLIC_TURNSTILE_SITE_KEY']) assert.equal(config.define[`process.env.${key}`], '""')
   assert.deepEqual(config.experimental, {})
-}))
+})))
 
 test('the actual web flag graph follows the explicit deployment stage while desktop remains server-owned', async () => overlayFixture(async ({ dir, sha }) => {
   for (const stage of ['production', 'preview', 'development']) await environment({ MIKKA_DEPLOYMENT_STAGE: stage, MIKKA_UI_OVERLAY_DIR: dir, MIKKA_UI_OVERLAY_SHA: sha, MIKKA_PUBLIC_COMPUTER_ENABLED: '1' }, async () => {
@@ -113,9 +106,7 @@ test('the actual web flag graph follows the explicit deployment stage while desk
     assert.equal(deployment, stage)
     const flags = await browserModule('export { computerProductionEnabled } from "./lib/feature-flags.ts"', web.define)
     assert.equal(flags.computerProductionEnabled(deployment, '1'), stage === 'production')
-    // Exercise the public test renderer without representing a release with a
-    // missing private checkout. The explicit application stage remains set.
-    const desktop = await environment({ MIKKA_DEPLOYMENT_STAGE: undefined, MIKKA_UI_OVERLAY_DIR: undefined, MIKKA_UI_OVERLAY_SHA: undefined }, () => frontendConfig({ target: 'desktop', publicTestFixture: true }))
+    const desktop = await frontendConfig({ target: 'desktop' })
     assert.equal(desktop.define['process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT'], '""')
   })
   await environment({ MIKKA_DEPLOYMENT_STAGE: 'prod' }, async () => assert.rejects(frontendConfig(), /MIKKA_DEPLOYMENT_STAGE_INVALID/))
@@ -129,26 +120,21 @@ test('Vite development keeps the actual development React runtime and Fast Refre
   await assert.rejects(frontendConfig({ target: 'server' }), /FRONTEND_TARGET_INVALID/)
 })
 
-test('a server-pages build cannot package a private release or a desktop renderer', async () => {
-  await assert.rejects(frontendConfig({ target: 'desktop', serverPages: true }), /SERVER_PAGES_REQUIRE_PUBLIC_WEB_BUILD/)
-  for (const key of ['MIKKA_UI_OVERLAY_DIR', 'MIKKA_UI_OVERLAY_SHA']) {
-    await environment({ [key]: 'configured' }, async () => {
-      await assert.rejects(frontendConfig({ serverPages: true }), /SERVER_PAGES_REQUIRE_PUBLIC_WEB_BUILD/)
-    })
-  }
-})
-
-test('standalone package entry points require a private revision for official Desktop and Web', async () => {
+test('without the official UI checkout the headless page builds for web and desktop; production refuses', async () => {
   await environment({ MIKKA_UI_OVERLAY_DIR: undefined, MIKKA_UI_OVERLAY_SHA: undefined, MIKKA_DEPLOYMENT_STAGE: undefined }, async () => {
-    await assert.rejects(frontendConfig({ target: 'desktop' }), /OFFICIAL_DESKTOP_UI_CHECKOUT_REQUIRED/)
-    await frontendConfig({ target: 'desktop', publicTestFixture: true })
+    assert.ok((await frontendConfig({ target: 'desktop' })).plugins.find(plugin => plugin?.name === 'mikka-shared-application'))
+    const web = await frontendConfig()
+    const application = web.plugins.find(plugin => plugin?.name === 'mikka-shared-application')
+    assert.ok(application)
     await environment({ MIKKA_DEPLOYMENT_STAGE: 'production' }, async () => {
       await assert.rejects(frontendConfig(), /OFFICIAL_UI_CHECKOUT_AND_REVISION_REQUIRED/)
-      await assert.rejects(frontendConfig({ publicTestFixture: true }), /PUBLIC_FIXTURE_REQUIRES_NON_RELEASE_BUILD/)
     })
     await environment({ MIKKA_UI_OVERLAY_DIR: '.missing-official-checkout' }, async () => {
       await assert.rejects(frontendConfig({ target: 'desktop' }), /OFFICIAL_UI_CHECKOUT_AND_REVISION_REQUIRED/)
-      await assert.rejects(frontendConfig({ publicTestFixture: true }), /PUBLIC_FIXTURE_REQUIRES_NON_RELEASE_BUILD/)
+      await assert.rejects(frontendConfig(), /OFFICIAL_UI_CHECKOUT_AND_REVISION_REQUIRED/)
+    })
+    await environment({ MIKKA_UI_OVERLAY_SHA: 'a'.repeat(40) }, async () => {
+      await assert.rejects(frontendConfig(), /OFFICIAL_UI_CHECKOUT_AND_REVISION_REQUIRED|UI_OVERLAY_DIR_REQUIRED_FOR_RELEASE/)
     })
   })
 })

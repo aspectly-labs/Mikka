@@ -3499,13 +3499,6 @@
     "test": "lib/onboarding.db.test.ts",
     "suite": "test:onboarding-db"
   },
-  "lib/platform/use-agent-logins.ts": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Desktop only: reads this computer's Claude Code / Codex sign-in kind and plan through the desktop bridge; no server input.",
-    "test": "lib/platform/use-agent-logins.test.ts",
-    "suite": "test:platform"
-  },
   "lib/run-credential-source.ts": {
     "mode": "built-in",
     "environment": [],

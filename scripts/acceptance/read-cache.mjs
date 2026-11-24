@@ -106,7 +106,7 @@ export function requestAllowed(path, init, environment, refs = {}) {
 /** Read the public documents and the release's published action list, without
  * evaluating JavaScript or inspecting private server manifests. deploymentId
  * names that release ('' when the document is unpinned). */
-export async function discoverReadActions(request, environment, issueId) {
+export async function discoverReadActions(request, environment, issueId, { allowHeadless = false } = {}) {
   const vitePins = new Set()
   const diagnostics = { pagesRead: 0, found: [] }
   // Match normal account initialization and API reads. Switching to another
@@ -129,7 +129,7 @@ export async function discoverReadActions(request, environment, issueId) {
   const source = await response.text()
   check(Buffer.byteLength(source) <= 8_000_000, 'public_asset_too_large')
   let published
-  try { published = publishedReadActions(JSON.parse(source)) }
+  try { published = publishedReadActions(JSON.parse(source), { allowHeadless }) }
   catch (error) { throw new ReadCacheAcceptanceError('read_action_reference_missing', { cause: error }) }
   return { refs: published, deploymentId: pin, diagnostics: { ...diagnostics, transport: 'rpc', manifestsRead: 1, found: [...READ_ACTIONS] } }
 }
@@ -318,7 +318,7 @@ export async function runReadCacheAcceptance() {
             evidence.fixtureCleanup = 'pending'
             await fixture.setup()
             evidence.stage = 'action-discovery'
-            discovery = await discoverReadActions(owner.request, environment, fixture.issueIds[0])
+            discovery = await discoverReadActions(owner.request, environment, fixture.issueIds[0], { allowHeadless: true })
             Object.assign(refs, discovery.refs)
             release.deploymentId = discovery.deploymentId
             evidence.stage = 'read-cases'

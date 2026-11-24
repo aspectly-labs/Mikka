@@ -31,7 +31,15 @@ const define = {
 
 await rm(outdir, { recursive: true, force: true })
 await mkdir(outdir, { recursive: true })
-await buildRenderer({ outdir: resolve(outdir, 'renderer'), publicTestFixture: process.argv.includes('--public-test-fixture') })
+// The renderer is the official UI (lib/ui-overlay.mjs) and needs its checkout.
+// Without one, a dev-flavour test build shows the page that says so
+// (apps/frontend/src/headless.ts) so the native shell can still be accepted; a
+// production build refuses. `--without-renderer` compiles only this
+// repository's main and preload (SSH acceptance, public type and lint checks).
+if (process.argv.slice(2).some(flag => flag !== '--without-renderer')) throw new Error('DESKTOP_BUILD_ARGUMENTS_INVALID')
+const withRenderer = !process.argv.includes('--without-renderer')
+if (withRenderer && flavor === 'prod' && !process.env.MIKKA_UI_OVERLAY_DIR?.trim()) throw new Error('DESKTOP_PRODUCTION_BUILD_REQUIRES_OFFICIAL_UI')
+if (withRenderer) await buildRenderer({ outdir: resolve(outdir, 'renderer') })
 
 const common = {
   bundle: true,

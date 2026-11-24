@@ -16,8 +16,9 @@ test('the chat reads on its live key, never on a timer', t => {
 test('migrated lists use shared invalidation while the fallback interval remains one minute', t => {
   // Lists read on push only; the one-minute read is the live layer's fallback while its socket is down.
   assert.match(readFileSync('lib/live/channel.ts', 'utf8'), /export const LIVE_FALLBACK_MS = 60_000/)
-  assert.doesNotMatch(readFileSync('components/swr-defaults.tsx', 'utf8'), /POLL_MS|refreshInterval/)
   if (!existsSync(hostedWeb)) { t.skip('.hosted-ui not checked out'); return }
+  // The site's SWR defaults moved to the official UI checkout's core/ (decision 2026-11-24-1000).
+  assert.doesNotMatch(readFileSync(resolve(hostedWeb, '../core/components/swr-defaults.tsx'), 'utf8'), /POLL_MS|refreshInterval/)
   // Actual React + SWR tests in .hosted-ui/web/tests/scripts/use-live-lists.live.test.tsx cover
   // healthy silence beyond 60 s, push, foreground catch-up and owner changes.
   for (const [rel, hooks] of [

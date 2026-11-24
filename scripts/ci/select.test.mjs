@@ -33,7 +33,6 @@ for (const [file, primary] of [
   ['lib/agent-kit/registry-compat.test.ts', 'ci-core-29'],
   ['lib/agent-kit/tool-defaults-compat.test.ts', 'ci-core-29'],
   ['lib/coordinator/issue-tools.test.ts', 'ci-core-43'],
-  ['components/workspace/workspace-navigation.test.ts', 'ci-integration-26'],
   ['lib/search/search.test.ts', 'ci-integration-9'],
 ]) test(`same-environment shared regression has one selected owner: ${file}`, async () => {
   const result = await pick(file)
@@ -63,8 +62,9 @@ test('approved-write policy, provider and UI regressions have one selected prima
   }
 })
 
-test('web component edits select their consumers without server DB or Docker', async () => {
-  const result = await pick('components/plugins/github-settings.tsx')
+test('web client edits select their consumers without server DB or Docker', async () => {
+  // The interface itself is the official UI checkout; the page a build without it serves is the public web client.
+  const result = await pick('apps/frontend/src/headless.ts')
   assert.equal(result.full, false)
   assert.equal(result.daemon, false)
   assert.deepEqual(result.db_suites, [])

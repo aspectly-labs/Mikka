@@ -12,7 +12,16 @@ export const readRpcActions = Object.freeze({
   pollIssueActivityPage: 'issues.pollIssueActivityPage',
   loadEarlierIssueActivity: 'issues.loadEarlierIssueActivity',
 })
-export function publishedReadActions(manifest) {
+export function publishedReadActions(manifest, { allowHeadless = false } = {}) {
+  // Public-repository CI builds without the private UI overlay emit a headless
+  // placeholder with zero UI actions (decision 2026-11-24-1000). Local/CI
+  // acceptance may exercise the compiled server's six read-cache RPC endpoints
+  // directly only when the build explicitly marks itself headless; production
+  // callers leave allowHeadless=false and always require UI publication.
+  if (allowHeadless && manifest?.version === 1 && manifest.target === 'web' && manifest.headless === true
+    && Array.isArray(manifest.usedActions) && manifest.usedActions.length === 0) {
+    return { ...readRpcActions }
+  }
   const published = publishedActions(manifest)
   assert.ok(Object.values(readRpcActions).every(name => published.has(name)), 'Every measured read must be used by this real web build')
   return { ...readRpcActions }

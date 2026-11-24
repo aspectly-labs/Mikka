@@ -4,11 +4,12 @@
 import { context } from 'esbuild'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { watch } from 'node:fs'
+import { existsSync, readdirSync, watch } from 'node:fs'
 import { cp, mkdir, readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildRenderer } from './build-renderer.mjs'
+import { uiOverlay } from '../../../lib/ui-overlay.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'))
@@ -83,8 +84,15 @@ async function rebuildRenderer() {
   }
 }
 const repository = resolve(root, '../..')
-const paths = ['app', 'components', 'hooks', 'lib', 'messages', 'i18n', 'public', 'packages/protocol/src', 'apps/desktop/src/renderer']
-const watchers = paths.map(path => watch(resolve(repository, path), { recursive: true }, (_event, filename) => {
+// The interface lives in the checkout buildRenderer compiles (lib/ui-overlay.mjs: MIKKA_UI_OVERLAY_DIR); without one
+// the renderer is headless and only the public runtime's folders change what it builds.
+const checkout = uiOverlay(repository).dir
+const checkoutFolders = checkout
+  ? readdirSync(checkout, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules').map(entry => resolve(checkout, entry.name))
+  : []
+const paths = [...['app', 'lib', 'messages', 'i18n', 'public', 'packages/protocol/src', 'apps/desktop/src/renderer'].map(path => resolve(repository, path)), ...checkoutFolders]
+  .filter(path => existsSync(path))
+const watchers = paths.map(path => watch(path, { recursive: true }, (_event, filename) => {
   if (!filename || /(?:\.test\.[cm]?[jt]sx?|\.db\.test\.[cm]?[jt]s)$/.test(String(filename))) return
   clearTimeout(rendererTimer)
   rendererTimer = setTimeout(() => { void rebuildRenderer() }, 150)
