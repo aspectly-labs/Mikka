@@ -87,7 +87,7 @@ function conversationQuery() {
           ORDER BY p."pullRequest"->>'url',p."updatedAt" DESC,p."runId" DESC
         ) by_url
       ) delivered
-    WHERE root."deletedAt" IS NULL AND (root."issueId" IS NULL OR i.id IS NOT NULL)
+    WHERE root."deletedAt" IS NULL AND root."threadRelation" IS DISTINCT FROM 'subagent' AND (root."issueId" IS NULL OR i.id IS NOT NULL)
   ), visible AS (
     SELECT *,to_char(touched AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,
       (manual IS NOT NULL OR (days>0 AND NOT (pinned AND "keepPins") AND state='idle'
@@ -199,7 +199,7 @@ async function directoryPage(database: RunChainQueryable, userId: string, worksp
     AND (${project}::uuid[] IS NULL OR "issueId"=ANY(${project}::uuid[]))
     AND (${since}::timestamptz IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(pulls) pull WHERE (pull->>'createdAt')::timestamptz>=${since}::timestamptz))
     AND (${automation}::uuid IS NULL OR (kind='run' AND EXISTS (SELECT 1 FROM issues made WHERE made.id=candidates."issueId" AND made.source_schedule_id=${automation}::uuid)))
-    AND (${search}='' OR strpos(lower(coalesce(title,nullif(trim(asked),''),"taskTitle","agentName")),lower(${search}))>0)
+    AND (${search}='' OR strpos(lower(coalesce(title,nullif(trim(asked),''),"taskTitle","agentName")),lower(${search}))>0 OR strpos(lower(coalesce(identifier,'')),lower(${search}))>0)
     AND (${id}::uuid IS NULL OR (pinned,touched,candidates.id,kind)<(${pinned}::boolean,${at}::timestamptz,${id}::uuid,coalesce(${kind}::text,'')))
     ORDER BY pinned DESC,touched DESC,candidates.id DESC,kind DESC LIMIT 101`
   const rows = (await database.query(statement,[...facts.params,userId,workspaceId,RUN_CHAIN_MAX_DEPTH,input.archived === 'any' ? null : input.archived,input.botId ?? null,
@@ -207,7 +207,8 @@ async function directoryPage(database: RunChainQueryable, userId: string, worksp
     scope?.projectIssueIds ?? null,input.since ?? null,input.automationId ?? null])).rows as Row[]
   const page = rows.slice(0,100), last = page.at(-1)
   const linked = await linkedTasksForChats(database, userId, workspaceId, page.filter(row => row.kind === 'chat').map(row => row.id))
-  return { items: page.map(row => item(row, row.kind === 'chat' ? linked.get(row.id) : undefined)).filter(row=>!input.search || row.title.toLowerCase().includes(input.search.toLowerCase())),
+  const needle = input.search.toLowerCase()
+  return { items: page.map(row => item(row, row.kind === 'chat' ? linked.get(row.id) : undefined)).filter(row => !needle || row.title.toLowerCase().includes(needle) || (row.identifier ?? '').toLowerCase().includes(needle)),
     cursor: rows.length>page.length && last ? {id:last.id,at:last.at,pinned:last.pinned,kind:last.kind} : null }
 }
 

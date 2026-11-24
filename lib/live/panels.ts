@@ -153,7 +153,7 @@ export async function runChangeTargets(database: Database, workspaceDatabase: Da
   return [...merged.values()]
 }
 
-async function changed(executor: object, kind: 'issue_document' | 'run' | 'thread', id: string) {
+async function changed(executor: object, kind: 'issue_document' | 'issue_threads' | 'run' | 'thread', id: string) {
   if (!liveGatewayConfig(process.env)) return
   const { scheduleLive } = await import('./notify')
   const databaseScope = databaseCommitScope(executor)
@@ -162,6 +162,7 @@ async function changed(executor: object, kind: 'issue_document' | 'run' | 'threa
     const { workspacePool } = await import('../workspace-db')
     await withoutDatabaseClient(async () => {
       const targets = kind === 'issue_document' ? await documentLiveTargets(pool, workspacePool, id)
+        : kind === 'issue_threads' ? await issueThreadTargets(pool, workspacePool, id)
         : kind === 'run' ? await runChangeTargets(pool, workspacePool, id)
         : await runLiveTargets(pool, workspacePool, id, kind)
       await (await import('./publish')).sendLiveTargets(pool, targets)
@@ -176,6 +177,8 @@ export const documentChanged = (executor: object, issueId: string) => {
   armDueTimerAfterCommit(executor, 'run-recovery')
   return changed(executor, 'issue_document', issueId)
 }
+/** An issue's thread list changed (for example, a thread was linked, moved or unlinked). */
+export const issueThreadsChanged = (executor: object, issueId: string) => changed(executor, 'issue_threads', issueId)
 /** A semantic run write also wakes the already mounted immediate parent of a new continuation,
  * and its issue's thread list for every member who can see the issue. */
 export const runChanged = (executor: object, runId: string) => {

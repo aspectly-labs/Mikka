@@ -82,16 +82,36 @@ test('share links read only the transcript and revoking ends access', async () =
   assert.equal(await createThreadShare(outsider, rootId), null)
 })
 
-test('patch moves task binding and tags on the root; foreign tasks are refused', async () => {
-  const { rootId, workspace } = await fixture()
+test('patch moves task binding and tags on the root; foreign, cross-workspace and subagent targets are refused', async () => {
+  const { rootId, workspace, agentId } = await fixture()
   const otherIssue = await seedIssue(pool, outsider.id)
   const run = await patchThread(owner, rootId, { taskId: otherIssue, tags: ['review'] })
   assert.equal(run, 'forbidden')
+  // Cross-workspace linking is refused even for the same owner.
+  const otherWorkspace = await seedWorkspace(pool, owner.id, [{ userId: owner.id, role: 'admin' }])
+  const crossWorkspaceIssue = await seedIssue(pool, owner.id, otherWorkspace.id)
+  assert.equal(await patchThread(owner, rootId, { taskId: crossWorkspaceIssue }), 'forbidden')
   const next = await seedIssue(pool, owner.id, workspace.id)
   const patched = await patchThread(owner, rootId, { taskId: next, tags: ['a', 'b'] })
   assert.ok(patched && patched !== 'forbidden')
   assert.equal(patched.issueId, next)
   assert.deepEqual(patched.tags, ['a', 'b'])
+  assert.deepEqual((await pool.query(`SELECT "parentKind","parentId" FROM resource_access_policies WHERE kind='thread' AND id=$1`, [rootId])).rows[0], { parentKind: 'task', parentId: next })
+  // Unlinking sets issueId to null and clears the root thread's task ACL parent.
+  const unlinked = await patchThread(owner, rootId, { taskId: null })
+  assert.ok(unlinked && unlinked !== 'forbidden')
+  assert.equal(unlinked.issueId, null)
+  assert.deepEqual((await pool.query(`SELECT "parentKind","parentId" FROM resource_access_policies WHERE kind='thread' AND id=$1`, [rootId])).rows[0], { parentKind: null, parentId: null })
+  // Re-link back to next.
+  const relinked = await patchThread(owner, rootId, { taskId: next })
+  assert.ok(relinked && relinked !== 'forbidden')
+  assert.equal(relinked.issueId, next)
+  assert.deepEqual((await pool.query(`SELECT "parentKind","parentId" FROM resource_access_policies WHERE kind='thread' AND id=$1`, [rootId])).rows[0], { parentKind: 'task', parentId: next })
+  // Subagent runs cannot be retargeted independently.
+  const subagentId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId: next, status: 'succeeded' })
+  kept.push(subagentId)
+  await pool.query(`UPDATE agent_runs SET "parentRunId"=$2,"threadRelation"='subagent' WHERE id=$1`, [subagentId, rootId])
+  assert.equal(await patchThread(owner, subagentId, { taskId: null }), null)
   assert.equal(await patchThread(outsider, rootId, { tags: [] }), null)
 })
 

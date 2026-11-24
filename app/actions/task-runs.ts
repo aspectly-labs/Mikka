@@ -30,6 +30,8 @@ import { beginWorkspaceListRead } from '@/lib/live/revision-read'
 import { threadTitle } from '@/lib/short-title'
 import { threadName } from '@/lib/issue-threads'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
+import { tokenWorkspace } from '@/lib/tokens/principal'
+import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { joinThreadRead, threadUnread } from '@/lib/thread-reads'
 import { issueVisibility } from '@/lib/issue-visibility'
 
@@ -225,7 +227,13 @@ async function conversationActor() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) throw new ActionFailureError('authRequired')
   const context = await loadWorkspaceContext(undefined, session.user)
-  return { ownerId: session.user.id, reader: session.user, workspaceId: context.workspace.id }
+  const principal = (session.user as { [enterprisePrincipal]?: EnterprisePrincipal })[enterprisePrincipal]
+  const reader = {
+    ...session.user,
+    [tokenWorkspace]: context.workspace.id,
+    ...(principal ? { [enterprisePrincipal]: principal } : {}),
+  }
+  return { ownerId: session.user.id, reader, workspaceId: context.workspace.id }
 }
 
 /**

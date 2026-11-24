@@ -10,6 +10,7 @@ import { readRunChain } from '@/lib/run-chain'
 import { sendThreadMessage } from '@/lib/thread-continue'
 import { ActionFailureError } from '@/lib/action-error'
 import { chainChunks, runIsActive, runIsWorking, threadItems } from '@/lib/issue-run-conversation'
+import { isThreadRun } from '@/lib/issue-threads'
 import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
 import { mobileThread } from '@/lib/mobile-threads'
 import { runOutsideToken } from '@/lib/tokens/scope'
@@ -47,14 +48,20 @@ async function handleGET(request: Request, { params }: Params) {
   )
   // A run paused on its subscription's quota: when it resets and whether a key can take over (the web's ThreadQuotaPausedCard).
   const liveRunId = chain?.latestRunId ?? detail.run.id
-  const [model, { paused }, runs, delivery] = await Promise.all([
+  const [model, { paused }, runs, delivery, control] = await Promise.all([
     pool.query<{ selectedModel: string | null; servedModel: string | null }>(
       `SELECT ${threadModelProjection} FROM agent_runs latest WHERE latest.id=$1 AND latest."userId"=$2`, [liveRunId, user.id]),
     live === 'paused' ? threadQuotaView(user.id, [liveRunId], liveRunId) : { paused: null },
     // Where each run's thread and run keys arrive (the web's thread panel listens to the same).
     threadLiveReferences(pool, workspacePool, runIds, user.id),
     chain ? (await import('@/lib/thread-delivery-queue')).threadDeliveryView(pool, user.id, chain.rootRunId, liveRunId) : undefined,
+    pool.query<{ independentCheck: boolean; subagent: boolean; kind: string | null; threadRelation: string | null }>(
+      `SELECT EXISTS (SELECT 1 FROM factory_attempts a WHERE a."runId"=r.id AND a.stage IN ('review','verify','monitor')) AS "independentCheck",
+        (r."threadRelation"='subagent' OR EXISTS (SELECT 1 FROM agent_runs root WHERE root.id=$3 AND root."userId"=$2 AND root."threadRelation"='subagent')) AS subagent,
+        r.kind, coalesce(r."threadRelation", (SELECT root."threadRelation" FROM agent_runs root WHERE root.id=$3 AND root."userId"=$2)) AS "threadRelation"
+       FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2`, [liveRunId, user.id, chain?.rootRunId ?? liveRunId]),
   ])
+  const readOnlyForHuman = Boolean(control.rows[0]?.independentCheck || control.rows[0]?.subagent || (control.rows[0]?.kind && !isThreadRun({ kind: control.rows[0].kind })))
   const sourceRuns=[...new Set(rawChunks.map(row=>row.runId))]
   const versionAnchors=Object.fromEntries(items.flatMap(item => {
     if (!chain || !detail.run.issueId) return []
@@ -68,7 +75,7 @@ async function handleGET(request: Request, { params }: Params) {
     const source=sourceRuns.find(id=>part.startsWith(id+':'))
     return source ? [[item.id,{runId:source,key:part.slice(source.length+1),operation:'rerun'}]] : []
   }))
-  return json({ liveRunId, composerModel: model.rows[0] ?? null, readReceipts, versionAnchors, delivery, issueId: detail.run.issueId, canReply: Boolean(detail.run.agentId), confirmedSubmissionIds: messages.flatMap(message => message.submissionId ? [message.submissionId] : []), live: { runs }, thread, active: runIsActive(live), working: runIsWorking(live), paused, summary: detail.run.report && typeof detail.run.report.summary === 'string' ? detail.run.report.summary : null, error: detail.run.error, items })
+  return json({ liveRunId, composerModel: model.rows[0] ?? null, readReceipts, versionAnchors, delivery, issueId: detail.run.issueId, threadRelation: control.rows[0]?.threadRelation ?? null, canReply: Boolean(detail.run.agentId) && !readOnlyForHuman, confirmedSubmissionIds: messages.flatMap(message => message.submissionId ? [message.submissionId] : []), live: { runs }, thread, active: runIsActive(live), working: runIsWorking(live), paused, summary: detail.run.report && typeof detail.run.report.summary === 'string' ? detail.run.report.summary : null, error: detail.run.error, items })
 }
 
 /** `POST /api/mobile/threads/:id` with `{ text }`: a message to the thread; the daemon delivers it, or an ended thread runs again. */
@@ -81,6 +88,18 @@ async function handlePOST(request: Request, { params }: Params) {
   if (!body.success) return json({ error: 'messageRequired' }, 400)
   const id = (await params).id
   if (z.uuid().safeParse(id).success && await runOutsideToken(user, id)) return json({ error: 'runNotFound' }, 404)
+  if (z.uuid().safeParse(id).success) {
+    const chain = await readRunChain(pool, user.id, id)
+    const targetRunId = chain?.latestRunId ?? id
+    const rootRunId = chain?.rootRunId ?? targetRunId
+    const { rows: [target] } = await pool.query<{ independentCheck: boolean; subagent: boolean; kind: string | null }>(
+      `SELECT EXISTS (SELECT 1 FROM factory_attempts a WHERE a."runId"=r.id AND a.stage IN ('review','verify','monitor')) AS "independentCheck",
+        (r."threadRelation"='subagent' OR EXISTS (SELECT 1 FROM agent_runs root WHERE root.id=$3 AND root."userId"=$2 AND root."threadRelation"='subagent')) AS subagent,
+        r.kind FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2`, [targetRunId, user.id, rootRunId])
+    if (target && (target.independentCheck || target.subagent || (target.kind && !isThreadRun({ kind: target.kind })))) {
+      return json({ error: 'threadCannotContinue' }, 400)
+    }
+  }
   try {
     // A working thread gets it as a message; an ended one runs again in the same thread (R-81).
     await sendThreadMessage(user.id, id, body.data.text)

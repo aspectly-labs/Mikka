@@ -96,6 +96,7 @@ export type SubagentRun = {
   outcome: string | null
   stopReason: string | null
   createdAt: string
+  finishedAt: string | null
   subagent: SubagentFacts
 }
 
@@ -109,7 +110,7 @@ export async function readSubagentRuns(q: RunChainQueryable, input: { ownerId: s
   if (!parent || parent.workspaceId !== input.workspaceId) return null
   const { rows } = await q.query(`
     SELECT c.id, latest.id AS "latestRunId", c."issueId", c.title, coalesce(a.harness, latest."agentDefinition"->>'harness', '') AS harness,
-      latest.status, latest.outcome, latest."stopReason", c."createdAt", ${SUBAGENT_FACTS_SQL('latest')} AS facts, c.brief AS "rootBrief"
+      latest.status, latest.outcome, latest."stopReason", c."createdAt", latest."finishedAt", ${SUBAGENT_FACTS_SQL('latest')} AS facts, c.brief AS "rootBrief"
     FROM agent_runs c
     CROSS JOIN LATERAL (
       WITH RECURSIVE chain AS (
@@ -120,7 +121,7 @@ export async function readSubagentRuns(q: RunChainQueryable, input: { ownerId: s
       ) SELECT r.* FROM chain JOIN agent_runs r ON r.id=chain.id ORDER BY chain."createdAt" DESC, chain.id DESC LIMIT 1
     ) latest
     LEFT JOIN agents a ON a.id=latest."agentId"
-    WHERE c."parentRunId"=$1 AND c."userId"=$2 AND c."workspaceId"=$3
+    WHERE c."parentRunId"=$1 AND c."userId"=$2 AND c."workspaceId"=$3 AND c."deletedAt" IS NULL
     ORDER BY c."createdAt", c.id LIMIT $4`,
   [input.runId, input.ownerId, input.workspaceId, SUBAGENT_LIST_LIMIT])
   return rows.map(row => {
@@ -129,6 +130,7 @@ export async function readSubagentRuns(q: RunChainQueryable, input: { ownerId: s
       id: String(row.id), latestRunId: String(row.latestRunId), issueId: (row.issueId as string | null) ?? null, title: (row.title as string | null) ?? null, harness: String(row.harness),
       status: String(row.status), outcome: (row.outcome as string | null) ?? null, stopReason: (row.stopReason as string | null) ?? null,
       createdAt: new Date(row.createdAt as string | Date).toISOString(),
+      finishedAt: row.finishedAt ? new Date(row.finishedAt as string | Date).toISOString() : null,
       // The brief belongs to the dispatch: a continuation keeps the line its first run was handed.
       subagent: { ...facts, brief: normalizeBrief(row.rootBrief as string | null) ?? facts.brief },
     }

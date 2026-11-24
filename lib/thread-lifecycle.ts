@@ -4,7 +4,8 @@ import { pool } from '@/lib/db'
 import { readRunChain } from '@/lib/run-chain'
 import { runOutsideToken } from '@/lib/tokens/scope'
 import { runListChanged } from '@/lib/live/lists'
-import { runChanged } from '@/lib/live/panels'
+import { issueThreadsChanged, runChanged } from '@/lib/live/panels'
+import { isThreadRun } from '@/lib/issue-threads'
 import { notifyDeviceWork } from '@/lib/device-gateway-notify'
 import { ensureDeviceRepository } from '@/lib/device-repositories'
 import { rebindExecutionDevice, ExecutionIdentityError } from '@/lib/execution-identity'
@@ -124,7 +125,7 @@ export async function listThreadChildren(user: ApiUser, runId: string): Promise<
   const root = await rootRunId(user, runId)
   if (!root) return null
   const { rows } = await pool.query(
-    `SELECT id,"threadRelation",kind,status,outcome,title,"sourceMessageId","createdAt" FROM agent_runs WHERE "parentRunId"=$1 AND "deletedAt" IS NULL ORDER BY "createdAt"`, [root])
+    `SELECT id,"threadRelation",kind,status,outcome,title,"sourceMessageId","createdAt","finishedAt" FROM agent_runs WHERE "parentRunId"=$1 AND "deletedAt" IS NULL ORDER BY "createdAt"`, [root])
   return rows
 }
 
@@ -165,23 +166,55 @@ export async function sharedThread(token: string): Promise<Run | null> {
 export async function patchThread(user: ApiUser, runId: string, input: { taskId?: string | null, tags?: string[] }): Promise<Run | null | 'forbidden'> {
   const source = await ownedRun(user, runId)
   if (!source) return null
-  const root = await rootRunId(user, runId)
-  if (!root) return null
-  if (input.taskId !== undefined && input.taskId !== null) {
-    if (!isRunId(input.taskId)) return null
-    const { rows: [issue] } = await pool.query(`SELECT id,"userId","workspaceId" FROM issues WHERE id=$1`, [input.taskId])
-    if (!issue || (issue.userId !== user.id && issue.workspaceId !== source.workspaceId)) return 'forbidden'
+  const chain = await readRunChain(pool, user.id, runId)
+  if (!chain) return null
+  const root = String(chain.rootRunId)
+  const chainIds = chain.attempts.map(attempt => String(attempt.runId))
+  const { rows: [rootRow] } = await pool.query<{ id: string; issueId: string | null; workspaceId: string | null; threadRelation: string | null; kind: string; independentCheck: boolean }>(
+    `SELECT r.id,r."issueId",r."workspaceId",r."threadRelation",r.kind,EXISTS (
+       SELECT 1 FROM factory_attempts a WHERE a."runId"=ANY($3::uuid[]) AND a.stage IN ('review','verify','monitor')
+     ) AS "independentCheck" FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 AND r."deletedAt" IS NULL`,
+    [root, user.id, chainIds])
+  if (!rootRow) return null
+  if (input.taskId !== undefined) {
+    // Subagents and independent checks belong to their dispatching run/stage and cannot be retargeted independently.
+    if (rootRow.threadRelation === 'subagent' || !isThreadRun({ kind: rootRow.kind }) || rootRow.independentCheck) return null
+    if (input.taskId !== null) {
+      if (!isRunId(input.taskId)) return null
+      if (!rootRow.workspaceId) return 'forbidden'
+      const { rows: [issue] } = await pool.query(
+        `SELECT id FROM issues
+         WHERE id=$1 AND "workspaceId"=$2 AND "ownershipState"='bound'
+           AND coalesce(content->'attrs'->'mikka',content->'attrs'->'orvilo')->>'deletedAt' IS NULL
+           AND mikka_resource_acl_allowed('account',$3,"workspaceId",'task',id,'canSteer')`,
+        [input.taskId, rootRow.workspaceId, user.id])
+      if (!issue) return 'forbidden'
+    }
   }
-  // Task retarget spans the whole chain — continuations join on "issueId", so a
-  // root-only move would split the thread. Tags live on the root the lists read.
-  if (input.taskId !== undefined)
-    await pool.query(`${CHAIN_SQL} UPDATE agent_runs SET "issueId"=$2 WHERE id IN (SELECT id FROM chain)`, [root, input.taskId])
-  if (input.tags !== undefined) {
-    if (!Array.isArray(input.tags) || input.tags.length > 20 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 60)) return null
-    await pool.query(`UPDATE agent_runs SET tags=$2::jsonb WHERE id=$1`, [root, JSON.stringify(input.tags)])
-  }
+  if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 20 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 60))) return null
   if (input.taskId === undefined && input.tags === undefined) return source
+  const previousIssueId = rootRow.issueId ?? null
+  // Task retarget spans the whole chain — continuations join on "issueId", so a
+  // root-only move would split the thread. Keep the root thread's ACL ancestry
+  // synchronized in the same statement so unlinking/relinking never leaves stale
+  // parent task policies. Tags live on the root the lists read.
+  if (input.taskId !== undefined)
+    await pool.query(
+      `WITH moved AS (
+         UPDATE agent_runs SET "issueId"=$2
+         WHERE id=ANY($1::uuid[]) AND "userId"=$3 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
+         RETURNING id
+       )
+       UPDATE resource_access_policies SET "parentKind"=$5,"parentId"=$2::uuid
+       WHERE kind='thread' AND id=$6 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
+         AND ("parentKind" IS NULL OR "parentKind"='task')
+         AND EXISTS (SELECT 1 FROM moved WHERE id=$6)`,
+      [chainIds, input.taskId, user.id, rootRow.workspaceId, input.taskId ? 'task' : null, root])
+  if (input.tags !== undefined)
+    await pool.query(`UPDATE agent_runs SET tags=$2::jsonb WHERE id=$1 AND "userId"=$3`, [root, JSON.stringify(input.tags), user.id])
   await runListChanged(pool, root); await runChanged(pool, root)
+  if (input.taskId !== undefined && previousIssueId && previousIssueId !== input.taskId)
+    await issueThreadsChanged(pool, previousIssueId)
   const { rows: [run] } = await pool.query(`SELECT * FROM agent_runs WHERE id=$1`, [root])
   return run ?? null
 }

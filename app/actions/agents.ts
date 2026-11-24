@@ -44,7 +44,7 @@ import { executionBotName, runBotId, runBotName, threadNameLines } from '@/lib/r
 import { requireIssueAccessWithoutBody } from '@/lib/issue-access'
 import { workspaceDb } from '@/lib/workspace-db'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
-import { ISSUE_THREAD_LIMIT, canReadThread, projectIssueThreads, threadQuestionRunId, withRunChain, type IssueThread } from '@/lib/issue-threads'
+import { ISSUE_THREAD_LIMIT, canReadThread, isThreadRun, projectIssueThreads, threadQuestionRunId, withRunChain, type IssueThread } from '@/lib/issue-threads'
 import { readThreadQuestionState, type ThreadQuestionDeadline } from '@/lib/issue-thread-questions'
 import { runIsActive } from '@/lib/issue-run-conversation'
 import { issueThreadListText } from '@/lib/issue-thread-list-projection'
@@ -233,7 +233,7 @@ const threadColumns = {
   id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
   // Only the report's summary: runSummaryText reads nothing else of it.
   sessionId: agentRuns.sessionId, deviceRepoId: agentRuns.deviceRepoId, failureDetails: agentRuns.failureDetails, report: sql<Record<string, unknown> | null>`case when jsonb_typeof(${agentRuns.report}) = 'object' then jsonb_build_object('summary', ${agentRuns.report}->'summary') end`, error: agentRuns.error, createdAt: agentRuns.createdAt, finishedAt: agentRuns.finishedAt,
-  agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind,
+  agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind, threadRelation: agentRuns.threadRelation,
   botId: sql<string | null>`(select b.id from bots b where b.id = ${runBotId})`, startedAt: agentRuns.startedAt,
   botColor: sql<string | null>`(select b.color from bots b where b.id = ${runBotId})`, botShape: sql<string | null>`(select b.shape from bots b where b.id = ${runBotId})`,
   // Who did the stretch (lib/issue-threads.ts threadProfile): the frozen Profile's public summary and its current mark.
@@ -645,21 +645,19 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
   const questionWake = thread.questionWake ?? null
   if (questionWake) error = questionWake.error
   const liveStatus = live?.status ?? row.status
-  let replyAvailable = true
-  let retryAvailable = !!questionWake || liveStatus === 'failed'
-  if (!runIsActive(liveStatus)) {
-    // Independent checks cannot enter ordinary continuation (latestTaskRun).
-    // Read the latest run's host binding, never a report or the root's stage.
-    const { rows: [target] } = await pool.query<{ independentCheck: boolean }>(`SELECT EXISTS (
-      SELECT 1 FROM factory_attempts a WHERE a."runId"=r.id AND a.stage IN ('review','verify','monitor')
-      ) AS "independentCheck" FROM agent_runs r
-      WHERE r.id=$1 AND r."userId"=$2 AND r."issueId" IS NOT DISTINCT FROM $3::uuid`, [thread.latestRunId, user.id, row.issueId])
-    replyAvailable = !!target && (!target.independentCheck || thread.question === 'waiting')
-    if (!target) retryAvailable = false
-    else if (target.independentCheck) {
-      const recovery = liveStatus === 'failed' && row.issueId
-        ? await originalSessionRetry(user.id, thread.latestRunId, row.issueId) : null
-      retryAvailable = originalSessionRetryAvailable(recovery?.question, thread.latestRunId)
+  let replyAvailable = row.userId === user.id
+  let retryAvailable = row.userId === user.id && (!!questionWake || liveStatus === 'failed')
+  let threadRelation = thread.threadRelation ?? null
+  // Independent checks (review/verify/monitor) and subagents are strictly read-only for humans (Alex, 2026-11-24, superseding R-10):
+  // no human composer or human retry whether active, waiting or ended. Agent-to-agent messaging stays on peer paths.
+  if (row.userId === user.id) {
+    const target = await readHumanControlTarget(thread.latestRunId, user.id, row.issueId)
+    const inheritedSubagent = !threadRelation && chain && chain.rootRunId !== row.id ? await isSubagentRoot(chain.rootRunId, user.id) : false
+    if (inheritedSubagent) threadRelation = 'subagent'
+    const nonInteractive = inheritedSubagent || isReadOnlyForHuman(target, row)
+    if (nonInteractive || (!runIsActive(liveStatus) && !target)) {
+      replyAvailable = false
+      retryAvailable = false
     }
   }
   const [{ threadLiveReferences, documentLiveWorkspace }, { workspacePool }] = await Promise.all([import('@/lib/live/panels'), import('@/lib/workspace-db')])
@@ -682,7 +680,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
     readReceipts,
     delivery,
     live: { viewerId: user.id, runs, issueWorkspaceId, questionDeadline, ...(Object.keys(revisions).length ? { revisions } : {}) },
-    thread: { ...thread, failureDetails, questionWake, prompt: promptOmitted ? '' : prompt, ...(!promptOmitted && hasInstructions ? { hasInstructions: true as const } : {}), stopRequestedAt, replyAvailable, retryAvailable, quota: quota ?? null, modelFallback: modelFallback?.notices ?? null, modelFallbackPending: modelFallback?.pending ?? false, error, feedbackEligible: row.userId===user.id && ['succeeded','failed'].includes(row.status) && !!row.finishedAt && !!row.sessionId && !!row.deviceRepoId },
+    thread: { ...thread, threadRelation, failureDetails, questionWake, prompt: promptOmitted ? '' : prompt, ...(!promptOmitted && hasInstructions ? { hasInstructions: true as const } : {}), stopRequestedAt, replyAvailable, retryAvailable, quota: quota ?? null, modelFallback: modelFallback?.notices ?? null, modelFallbackPending: modelFallback?.pending ?? false, error, feedbackEligible: row.userId===user.id && ['succeeded','failed'].includes(row.status) && !!row.finishedAt && !!row.sessionId && !!row.deviceRepoId },
     chunks,
     messages,
     chunkCursor: transcript.cursor,
@@ -755,6 +753,39 @@ export async function getThreadTurnChanges(issueId: string | null, runId: string
   })
 }
 
+type HumanControlTarget = { independentCheck: boolean; subagent?: boolean; kind?: string | null }
+
+/** Host binding check for human composer/write actions: independent checks and subagents are strictly read-only for humans (Alex, 2026-11-24). */
+async function readHumanControlTarget(runId: string, userId: string, issueId: string | null): Promise<HumanControlTarget | null> {
+  const { rows: [target] } = await pool.query<HumanControlTarget>(`SELECT EXISTS (
+    SELECT 1 FROM factory_attempts a WHERE a."runId"=r.id AND a.stage IN ('review','verify','monitor')
+    ) AS "independentCheck", (r."threadRelation"='subagent') AS subagent, r.kind FROM agent_runs r
+    WHERE r.id=$1 AND r."userId"=$2 AND r."issueId" IS NOT DISTINCT FROM $3::uuid`, [runId, userId, issueId])
+  return target ?? null
+}
+
+function isReadOnlyForHuman(target: HumanControlTarget | null, row: { kind?: string | null; threadRelation?: string | null }) {
+  if (row.threadRelation === 'subagent' || (row.kind && !isThreadRun({ kind: row.kind }))) return true
+  if (!target) return false
+  return Boolean(target.independentCheck || target.subagent || (target.kind && !isThreadRun({ kind: target.kind })))
+}
+
+async function isSubagentRoot(rootRunId: string, userId: string): Promise<boolean> {
+  const { rows: [root] } = await pool.query<{ subagent: boolean }>(
+    `SELECT ("threadRelation"='subagent') AS subagent FROM agent_runs WHERE id=$1 AND "userId"=$2`,
+    [rootRunId, userId])
+  return Boolean(root?.subagent)
+}
+
+async function assertHumanWritableThread(userId: string, row: { id: string; issueId: string | null; kind?: string | null; threadRelation?: string | null }) {
+  if (isReadOnlyForHuman(null, row)) throw new ActionFailureError('threadCannotContinue')
+  const chain = await readRunChain(pool, userId, row.id)
+  if (chain && chain.rootRunId !== row.id && await isSubagentRoot(chain.rootRunId, userId)) throw new ActionFailureError('threadCannotContinue')
+  const targetRunId = chain?.latestRunId ?? row.id
+  const target = await readHumanControlTarget(targetRunId, userId, row.issueId)
+  if (isReadOnlyForHuman(target, row)) throw new ActionFailureError('threadCannotContinue')
+}
+
 function safeHttpUrl(value: string) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.toString() : null } catch { return null }
 }
@@ -777,6 +808,7 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
   if(input.modelChoice !== undefined && (input.retryOriginalSession || !input.requestId || !threadModelChoice.safeParse(input.modelChoice).success))throw new ActionFailureError('validationGeneric')
   if(input.requestId!==undefined && input.retryOriginalSession)throw new ActionFailureError('validationGeneric')
   if(input.questionWakeGeneration!==undefined && (!input.retryOriginalSession || !z.uuid().safeParse(input.questionWakeGeneration).success))throw new ActionFailureError('validationGeneric')
+  await assertHumanWritableThread(user.id, row)
   if(input.questionWakeGeneration!==undefined) {
     if(!row.issueId)throw new ActionFailureError('threadCannotContinue')
     try {
@@ -835,6 +867,7 @@ export async function btwIssueThreadMessage(input: { issueId: string | null; run
   if (!text.success) throw new ActionFailureError('messageRequired')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  await assertHumanWritableThread(user.id, row)
   const { db } = await import('@/lib/db')
   const { runMessages } = await import('@/lib/db/schema')
   const { MAILBOX_NOTIFICATION_LIMIT } = await import('@/lib/mailbox-notification-budget')
@@ -861,6 +894,7 @@ export async function getThreadContextStats(input: { issueId: string | null; run
 export async function compactThread(input: { issueId: string | null; runId: string }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  await assertHumanWritableThread(user.id, row)
   const { addRunMessage } = await import('@/lib/agent-runs')
   await addRunMessage(user.id, { runId: row.id, text: '/compact — fold the working context now.' }, 'peer')
   return { requested: true }
@@ -953,6 +987,7 @@ export async function createThreadReplyVersion(input: { issueId: string | null; 
     if (!desktopHumanSessionId() && (requestHeaders.has('authorization') || !requestHeaders.get('cookie'))) throw new ActionFailureError('authRequired')
     const session = await auth.api.getSession({headers:requestHeaders,query:{disableCookieCache:true}})
     if (!session?.session?.id || session.user.id !== user.id || row.userId !== user.id) throw new ActionFailureError('runNotFound')
+    await assertHumanWritableThread(user.id, row)
     return (await import('@/lib/thread-reply-versions')).createReplyVersion(pool,user.id,row.id,input.change)
   })
 }
