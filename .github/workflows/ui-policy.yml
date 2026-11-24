@@ -160,6 +160,8 @@ jobs:
       MIKKA_DATABASE_URL: postgres://mikka:mikka@127.0.0.1:5432/mikka
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/pnpm-install
         with:
           ffmpeg-github-token: ${{ github.token }}
@@ -169,6 +171,8 @@ jobs:
         run: node scripts/ci/shadow.mjs
       - run: pnpm check:cloud-boundary
       - run: pnpm check:sql-safety
+      - run: pnpm check:route-guard
+        if: always()
       - name: Verify all production release credentials use existing Infisical OIDC
         run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs scripts/release/ios-app-store-signing.test.mjs
         if: always()

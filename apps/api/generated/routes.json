@@ -1354,7 +1354,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "e5c4e361ba7b3de6f12e7e36f07b422b7b3b32e815cdc785cef8818252ce3cba"
+      "sourceHash": "8d15fb25886f6ed5f673d3e2fc2dc646cb88df8f5068fa725de4d072435fca35"
     },
     {
       "path": "/mikka/api/inbox",
@@ -1870,7 +1870,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "893e4d902502f59bd44c5f7329981547d09b98c5e0b90ebc0b19664c21da2065"
+      "sourceHash": "a75f36b4bcf69807da9e3c27d3a6c733329e3dd0ba7c1c1bdd00481556b469ad"
     },
     {
       "path": "/mikka/api/mobile/bots/[id]",
@@ -1899,7 +1899,7 @@
       "methods": [
         "PUT"
       ],
-      "sourceHash": "9a6a39ad6c0188d26fd6b956d09df8fdaf0861e3a2f3fd2800aeb53b3d9d1d72"
+      "sourceHash": "a77d36ac5418e052f80c296cfbcfa745919e65557b028ceb94e03e2465ab7da9"
     },
     {
       "path": "/mikka/api/mobile/chat/image",
@@ -1993,7 +1993,7 @@
         "GET",
         "PATCH"
       ],
-      "sourceHash": "b92f24c45a4a3284a6232b0f482a45dda4a2f821ce158b1ef42a6ac5946fd160"
+      "sourceHash": "91e9892cb2bf59c20f21ac36a6e7f5989ee9bb048efcb2f69a406a0919f1bc44"
     },
     {
       "path": "/mikka/api/mobile/proactive-cards",
