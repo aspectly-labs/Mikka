@@ -35,7 +35,7 @@
 
 ## 明确保留
 
-- **`NEXT_LOCALE`**：一年有效期的业务 cookie，改名会让所有用户的界面语言选择静默丢失。
+- **`NEXT_LOCALE` 只读不写**（2026-11-24 更新）：这个一年有效期的业务 cookie 已改名为 `mikka-locale`（与 `mikka-workspace` 同一命名）。直接改名会让所有用户的界面语言选择静默丢失，所以按标准迁移做：先读 `mikka-locale`，没有合法值时回退读 `NEXT_LOCALE`；所有写入只写新名；页面文档请求只带旧 cookie 时，响应写入同值的 `mikka-locale` 并以 `NEXT_LOCALE=; Max-Age=0; Path=/mikka; SameSite=Lax` 让旧 cookie 过期，访问一次即完成迁移。旧名只留在 `i18n/locale-cookie.mjs` 的 `LEGACY_LOCALE_COOKIE` 一个常量里，`scripts/next-free-locale.test.mjs` 守住这一点。**2027-11-24 起可删除**这个常量和回退读取（旧 cookie 的一年有效期届满）。
 - **`NEXT_PUBLIC_*`**：Vite `define` 白名单的构建期约定，改名牵动 Cloudflare release 的 `publicBuildSettings` 与 receipts。留作独立任务。
 - **`next-themes`**：只有 react peer，与 Next 无关。
 - **`import 'server-only'`**：仓库自己的编译期标记（`lib/server-only.ts`），不是 npm 包——官方包带 react-server 条件副作用。

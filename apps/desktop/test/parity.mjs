@@ -228,7 +228,7 @@ async function authenticateHosted(hosted) {
       sameSite: cookie.sameSite === 'None' ? 'no_restriction' : cookie.sameSite?.toLowerCase(),
       ...(cookie.expires > 0 ? { expirationDate: cookie.expires } : {}),
     })
-    await partition.cookies.set({ url: origin, name: 'NEXT_LOCALE', value: 'en', path: '/' })
+    await partition.cookies.set({ url: origin, name: 'mikka-locale', value: 'en', path: '/' })
     await partition.cookies.flushStore()
   }, { cookies: state.cookies, origin: environment.origin })
   await selectFixtureWorkspace(hosted)

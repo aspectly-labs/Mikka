@@ -63,10 +63,10 @@ test('request cookies match the installed SDK for duplicates and malformed encod
   // a later duplicate name replaces the earlier one, an undecodable pair is
   // dropped, a bare name is `true`, and surrounding spaces stay in the name.
   const frozen = new Map([
-    ['NEXT_LOCALE=en; NEXT_LOCALE=zh-CN; mikka-workspace=old; mikka-workspace=new',
-      [{ name: 'NEXT_LOCALE', value: 'zh-CN' }, { name: 'mikka-workspace', value: 'new' }]],
-    ['NEXT_LOCALE=en; NEXT_LOCALE=%E0%A4%A; bad=%; invalid=%FF; valid=%E4%B8%AD',
-      [{ name: 'NEXT_LOCALE', value: 'en' }, { name: 'valid', value: '中' }]],
+    ['mikka-locale=en; mikka-locale=zh-CN; mikka-workspace=old; mikka-workspace=new',
+      [{ name: 'mikka-locale', value: 'zh-CN' }, { name: 'mikka-workspace', value: 'new' }]],
+    ['mikka-locale=en; mikka-locale=%E0%A4%A; bad=%; invalid=%FF; valid=%E4%B8%AD',
+      [{ name: 'mikka-locale', value: 'en' }, { name: 'valid', value: '中' }]],
     ['bad=%; bad=okay; empty=; flag; quoted="value"; plus=a+b; equals=a=b; encoded=%3D',
       [{ name: 'bad', value: 'okay' }, { name: 'empty', value: '' }, { name: 'flag', value: 'true' },
         { name: 'quoted', value: '"value"' }, { name: 'plus', value: 'a+b' }, { name: 'equals', value: 'a=b' },

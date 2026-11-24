@@ -56,7 +56,7 @@ test('official pages preserve localization, credential referrer policy, raw-inde
   const env = services()
   const localized = await release.fetch(request('/mikka/en/sign-in', { headers: { 'sec-fetch-dest': 'document' } }), env)
   assert.match(await localized.text(), /lang="en"/)
-  assert.match(localized.headers.get('set-cookie'), /NEXT_LOCALE=en/)
+  assert.match(localized.headers.get('set-cookie'), /mikka-locale=en/)
   assert.equal(localized.headers.get('cache-control'), 'no-store')
   assert.equal((await release.fetch(request('/mikka/device'), env)).headers.get('referrer-policy'), 'no-referrer')
   for (const path of ['/mikka/index.html', '/mikka/%69ndex.html', '/mikka/.vite/manifest.json', '/mikka/renderer-manifest.json', '/mikka/_headers', '/outside/logo.svg']) {

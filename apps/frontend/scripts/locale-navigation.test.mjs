@@ -61,12 +61,12 @@ test('only backend authentication documents force business navigation back to th
 }))
 
 test('explicit en-to-zh web navigation retains the chosen language through server refresh and reentry', () => navigation('https://app.example/mikka/en/settings?section=general&workspace=team', async ({ window, render, writes }) => {
-  window.document.cookie = 'NEXT_LOCALE=en; Path=/mikka'
+  window.document.cookie = 'mikka-locale=en; Path=/mikka'
   window.document.cookie = 'other-preference=retained; Path=/mikka'
   writes.length = 0
   render('en').replace({ pathname: '/settings', query: { section: 'general', workspace: 'team' } }, { locale: 'zh-CN' })
   assert.equal(window.location.href, 'https://app.example/mikka/settings?section=general&workspace=team')
-  assert.deepEqual(writes, ['NEXT_LOCALE=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
+  assert.deepEqual(writes, ['mikka-locale=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
   assert.match(window.document.cookie, /other-preference=retained/)
   for (const url of [window.location.href, 'https://app.example/mikka/settings?section=general']) {
     const result = localizePage(request(window, url))
@@ -78,20 +78,32 @@ test('explicit en-to-zh web navigation retains the chosen language through serve
 }))
 
 test('explicit zh-to-en web navigation retains the language and query on a fresh unprefixed entry', () => navigation('https://app.example/mikka/settings?section=general&workspace=team', async ({ window, render, writes }) => {
-  window.document.cookie = 'NEXT_LOCALE=zh-CN; Path=/mikka'
+  window.document.cookie = 'mikka-locale=zh-CN; Path=/mikka'
   writes.length = 0
   render('zh-CN').push('/settings?section=general&workspace=team', { locale: 'en' })
   assert.equal(window.location.href, 'https://app.example/mikka/en/settings?section=general&workspace=team')
-  assert.deepEqual(writes, ['NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
+  assert.deepEqual(writes, ['mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
   assert.equal(localizePage(request(window)).redirect, undefined)
   const result = localizePage(request(window, 'https://app.example/mikka/settings?section=general&workspace=team'))
   assert.equal(result.locale, 'en')
   assert.equal(result.redirect.headers.get('location'), window.location.href)
 }))
 
+test('a choice still stored under the legacy name survives a switch, which writes only the new name', () => navigation('https://app.example/mikka/en/settings?section=general', async ({ window, render, writes }) => {
+  window.document.cookie = 'NEXT_LOCALE=en; Path=/mikka'
+  writes.length = 0
+  assert.equal(localizePage(request(window, 'https://app.example/mikka/settings')).locale, 'en')
+  render('en').replace('/settings?section=general', { locale: 'zh-CN' })
+  assert.deepEqual(writes, ['mikka-locale=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
+  const result = localizePage(request(window))
+  assert.equal(result.locale, 'zh-CN', 'the new cookie wins over the legacy one')
+  assert.equal(result.redirect, undefined)
+  assert.deepEqual(result.cookies, ['NEXT_LOCALE=; Max-Age=0; Path=/mikka; SameSite=Lax'])
+}))
+
 test('ordinary navigation and the native custom scheme do not write a web locale cookie', async () => {
   await navigation('https://app.example/mikka/en/settings', async ({ window, render, writes }) => {
-    window.document.cookie = 'NEXT_LOCALE=en; Path=/mikka'
+    window.document.cookie = 'mikka-locale=en; Path=/mikka'
     writes.length = 0
     const router = render('en')
     router.push('/settings?section=privacy')

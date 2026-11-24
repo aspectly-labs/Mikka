@@ -32,7 +32,7 @@ CSS 继续经过共享 Tailwind 与 Lightning CSS 的构建期处理及冻结的
 
 Wire 使用 `{version, action, args}`；结果为 `{version, ok, result}` 或 `{version, ok: false, error: {code}}`。版本接受范围由现有协议常量控制。共享组件的 server action 调用通过这个边界转发，普通 REST handler 的方法、鉴权、Origin 检查和错误语义继续有效。
 
-Web 的请求内会话复用绑定同一 Cookie 身份；敏感操作仍通过原 fresh-session 路径升级验证。Better Auth 的响应 Cookie 由 `mikkaCookies`（`lib/auth-cookies.ts`）写进请求 Cookie journal，再由传输边界提交到响应，不能把 `Set-Cookie` 当普通逗号分隔列表。Web 的 SDK 会话仍是身份权威；bootstrap 只提供安全投影。账号切换递增请求代次，旧账号迟到的 401 或响应不得清掉新账号界面。明确切换语言时，Web 恢复原 `NEXT_LOCALE` 的一年有效期、`Path=/mikka`、`SameSite=Lax`；桌面不写这个浏览器 Cookie。
+Web 的请求内会话复用绑定同一 Cookie 身份；敏感操作仍通过原 fresh-session 路径升级验证。Better Auth 的响应 Cookie 由 `mikkaCookies`（`lib/auth-cookies.ts`）写进请求 Cookie journal，再由传输边界提交到响应，不能把 `Set-Cookie` 当普通逗号分隔列表。Web 的 SDK 会话仍是身份权威；bootstrap 只提供安全投影。账号切换递增请求代次，旧账号迟到的 401 或响应不得清掉新账号界面。明确切换语言时，Web 写 `mikka-locale`（一年有效期、`Path=/mikka`、`SameSite=Lax`）；桌面不写这个浏览器 Cookie。旧名 `NEXT_LOCALE` 只为迁移而读：页面文档响应把其中的选择改写成 `mikka-locale` 并让旧 Cookie 过期（`i18n/locale-cookie.mjs`，2027-11-24 起可删）。
 
 生产构建同时固定源提交、应用 build 和 deployment ID。Web HTML/资源使用同一 deployment ID，静态资源 URL 带 `dpl`，同源 API 自定义请求带 `x-deployment-id`；`/api/version` 保持不绑定旧部署，以供 VersionGuard 检测更新。没有新增全页面 `__vdpl` Cookie。桌面继续使用自身 API 兼容协议，不固定到某个 Web deployment。
 
