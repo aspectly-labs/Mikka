@@ -6,6 +6,7 @@ import type { MachineKind, Source, ThreadStatus } from '@/lib/types'
 import { colors } from '@/lib/theme'
 import { threadDot } from '@/lib/thread-icon'
 import { useReducedMotionPreference } from '@/lib/reduced-motion'
+import { mobileMessages } from '@/lib/messages'
 
 /** The two-line menu mark from the frames (ChatGPT iOS). */
 export function MenuIcon({ size = 22, color = colors.ink }: { size?: number; color?: string }) {
@@ -28,10 +29,10 @@ export function Spinner({ size = 18, color = colors.secondary }: { size?: number
     return () => { loop.stop(); turn.setValue(0) }
   }, [reduceMotion, turn])
   // iOS has its own (UIActivityIndicatorView, 20 pt); the drawn ring is for the web build only (native first, #1386).
-  if (Platform.OS === 'ios') return <ActivityIndicator accessibilityLabel="正在加载" size="small" color={color} style={size === 20 ? null : { transform: [{ scale: size / 20 }], width: size, height: size }} />
+  if (Platform.OS === 'ios') return <ActivityIndicator accessibilityLabel={mobileMessages.MobileCore.loading} size="small" color={color} style={size === 20 ? null : { transform: [{ scale: size / 20 }], width: size, height: size }} />
   const rotate = turn.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
   return (
-    <Animated.View accessible accessibilityRole="progressbar" accessibilityLabel="正在加载" accessibilityState={{ busy: true }} style={{ width: size, height: size, transform: [{ rotate }] }}>
+    <Animated.View accessible accessibilityRole="progressbar" accessibilityLabel={mobileMessages.MobileCore.loading} accessibilityState={{ busy: true }} style={{ width: size, height: size, transform: [{ rotate }] }}>
       <LoaderCircle size={size} color={color} strokeWidth={2} />
     </Animated.View>
   )

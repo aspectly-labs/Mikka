@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ModelMenuWrite } from '../lib/model-menu-write.ts'
 import { modelStatusLine, type ModelMenu } from '../lib/model-menu-view.ts'
+import { mobileLocale } from '../lib/messages.ts'
 
 test('a pending model choice prevents another choice or refresh from racing the saved response', async () => {
   const writer = new ModelMenuWrite()
@@ -28,5 +29,5 @@ test('a refused write releases the guard so an explicit retry can save', async (
 test('unknown quota and unavailable selections have distinct truthful feedback', () => {
   const current: ModelMenu['current'] = { id: 'fixture', modelId: 'fixture-model', provider: 'claude', kind: 'subscription', available: false, chosen: true }
   assert.equal(modelStatusLine({ ...current, availability: 'checking' }), null)
-  assert.deepEqual(modelStatusLine(current), { line: '这个模型现在用不了', change: true })
+  assert.deepEqual(modelStatusLine(current), { line: mobileLocale === 'zh-CN' ? '这个模型现在用不了' : 'This model can’t be used right now', change: true })
 })

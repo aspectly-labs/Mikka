@@ -5,6 +5,7 @@ import { accessibilityLabel, buttonStyle } from '@expo/ui/swift-ui/modifiers'
 import { tap } from '@/lib/haptics'
 import { REACTIONS, type HeldMessage } from '@/lib/message-actions'
 import { colors } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * ⋯ under a message (Alex 2026-11-08) as the system pull-down menu: the reactions first, as two compact rows of three,
@@ -20,12 +21,12 @@ export function MessageMenu({ message }: { message: HeldMessage }) {
   )
   return (
     <Host style={styles.button}>
-      <Menu label={<Image systemName="ellipsis" size={14} color={colors.secondary} />} modifiers={[buttonStyle('plain'), accessibilityLabel('更多')]}>
+      <Menu label={<Image systemName="ellipsis" size={14} color={colors.secondary} />} modifiers={[buttonStyle('plain'), accessibilityLabel(mobileMessages.AiElements.message.more)]}>
         {react ? <ControlGroup>{REACTIONS.slice(0, 3).map(reaction)}</ControlGroup> : null}
         {react ? <ControlGroup>{REACTIONS.slice(3).map(reaction)}</ControlGroup> : null}
-        <Button label="回复" systemImage="arrowshape.turn.up.left" onPress={() => { tap(); message.onQuote() }} />
-        <Button label="复制" systemImage="doc.on.doc" onPress={() => { void Clipboard.setStringAsync(message.text); tap() }} />
-        {message.onSelect ? <Button label="选择文本" systemImage="character.cursor.ibeam" onPress={() => message.onSelect?.()} /> : null}
+        <Button label={mobileMessages.AiElements.message.reply} systemImage="arrowshape.turn.up.left" onPress={() => { tap(); message.onQuote() }} />
+        <Button label={mobileMessages.AiElements.message.copy} systemImage="doc.on.doc" onPress={() => { void Clipboard.setStringAsync(message.text); tap() }} />
+        {message.onSelect ? <Button label={mobileMessages.MobileCore.selectText} systemImage="character.cursor.ibeam" onPress={() => message.onSelect?.()} /> : null}
       </Menu>
     </Host>
   )

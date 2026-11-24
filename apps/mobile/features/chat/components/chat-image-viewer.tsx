@@ -13,6 +13,9 @@ import { useReducedMotionPreference } from '@/lib/reduced-motion'
 import { colors } from '@/lib/theme'
 import { clampZoom, dismisses, DOUBLE_TAP_ZOOM, fittedRect, galleryRows, loadedAspect, MAX_ZOOM, PAGE_GAP, pageTurn, panBounds, type Rect } from '@/features/chat/model/chat-image-geometry'
 import { ChatGlass } from './chat-glass-capsule'
+import { mobileMessages } from '@/lib/messages'
+
+const I = mobileMessages.MobileCore.images
 
 const OPEN = { damping: 30, stiffness: 260, mass: 1 }
 const CLOSE = { damping: 32, stiffness: 300, mass: 1, overshootClamping: true }
@@ -159,7 +162,7 @@ export function ChatImageViewer({ images, request, onClose }: { images: ImageURI
     try {
       const file = await File.downloadFileAsync(source.uri, new File(Paths.cache, `mikka-image-${Date.now()}.jpg`), { headers: (source.headers ?? {}) as Record<string, string>, idempotent: true })
       await Share.share({ url: file.uri })
-    } catch { await Share.share({ message: '图片暂时无法分享，请重试。' }) }
+    } catch { await Share.share({ message: I.shareFailed }) }
   }
 
   return (
@@ -173,7 +176,7 @@ export function ChatImageViewer({ images, request, onClose }: { images: ImageURI
         ) : (
           <>
             <GestureDetector gesture={gesture}>
-              <View accessibilityViewIsModal accessible accessibilityRole={many ? 'adjustable' : 'image'} accessibilityLabel="图片" accessibilityValue={many ? { text: `第 ${page + 1} 张，共 ${images.length} 张` } : undefined}
+              <View accessibilityViewIsModal accessible accessibilityRole={many ? 'adjustable' : 'image'} accessibilityLabel={mobileMessages.AgentCopy.image} accessibilityValue={many ? { text: I.position.replace('{index}', String(page + 1)).replace('{count}', String(images.length)) } : undefined}
                 accessibilityActions={[{ name: 'escape' }, { name: 'magicTap' }, ...(many ? [{ name: 'increment' as const }, { name: 'decrement' as const }] : [])]}
                 onAccessibilityAction={event => {
                   const name = event.nativeEvent.actionName
@@ -238,16 +241,16 @@ function Chrome({ visible, insets, page, count, images, onClose, onShare, onJump
     <>
       <View pointerEvents={hidden ? 'none' : 'box-none'} style={[styles.top, { top: insets.top + 8 }]}>
         <View style={styles.side}>
-          <GlassIcon label="关闭" hidden={hidden} onPress={onClose}><Symbol name="xmark" size={18} color={colors.ink} web={<X size={22} color={colors.ink} strokeWidth={2.2} />} /></GlassIcon>
+          <GlassIcon label={mobileMessages.Common.close} hidden={hidden} onPress={onClose}><Symbol name="xmark" size={18} color={colors.ink} web={<X size={22} color={colors.ink} strokeWidth={2.2} />} /></GlassIcon>
           {count > 1 ? <ChatGlass hidden={hidden} style={styles.count}><Text style={[styles.countText, hidden && styles.gone]}>{page + 1} / {count}</Text></ChatGlass> : null}
         </View>
-        <GlassIcon label="分享" hidden={hidden} onPress={onShare}><Symbol name="square.and.arrow.up" size={18} color={colors.ink} web={<ShareIcon size={20} color={colors.ink} strokeWidth={2} />} /></GlassIcon>
+        <GlassIcon label={mobileMessages.Artifact.share} hidden={hidden} onPress={onShare}><Symbol name="square.and.arrow.up" size={18} color={colors.ink} web={<ShareIcon size={20} color={colors.ink} strokeWidth={2} />} /></GlassIcon>
       </View>
       {count > 1 ? (
         <View pointerEvents={hidden ? 'none' : 'box-none'} style={[styles.thumbs, { bottom: insets.bottom + 8 }, hidden && styles.gone]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.thumbRow}>
             {images.map((source, index) => (
-              <Pressable key={index} accessibilityRole="button" accessibilityLabel={`第 ${index + 1} 张`} accessibilityState={{ selected: index === page }} onPress={() => onJump(index)}
+              <Pressable key={index} accessibilityRole="button" accessibilityLabel={I.nth.replace('{index}', String(index + 1))} accessibilityState={{ selected: index === page }} onPress={() => onJump(index)}
                 style={[styles.thumb, index !== page && styles.thumbOther]}>
                 <Image source={source} resizeMode="cover" style={styles.fill} />
               </Pressable>
@@ -277,7 +280,7 @@ function Gallery({ images, insets, width, onClose, onOpen }: { images: ImageURIS
         {galleryRows(images.length).map(row => (
           <View key={row[0]} style={styles.galleryRow}>
             {row.map(index => (
-              <Pressable key={index} accessibilityRole="button" accessibilityLabel={`第 ${index + 1} 张`} onPress={() => { tap(); onOpen(index) }}
+              <Pressable key={index} accessibilityRole="button" accessibilityLabel={I.nth.replace('{index}', String(index + 1))} onPress={() => { tap(); onOpen(index) }}
                 style={({ pressed }) => [{ width: row.length === 1 ? width - 32 : column, height: column }, styles.tile, pressed && { opacity: 0.7 }]}>
                 <Image source={images[index]!} resizeMode="cover" style={styles.fill} />
               </Pressable>
@@ -286,8 +289,8 @@ function Gallery({ images, insets, width, onClose, onOpen }: { images: ImageURIS
         ))}
       </ScrollView>
       <View style={[styles.top, { top: insets.top + 8 }]}>
-        <GlassIcon label="返回" hidden={false} onPress={() => { tap(); onClose() }}><Symbol name="chevron.backward" size={18} color={colors.ink} web={<ArrowLeft size={22} color={colors.ink} strokeWidth={2} />} /></GlassIcon>
-        <ChatGlass style={styles.count}><Text accessibilityRole="header" style={styles.countText}>{images.length} 张图片</Text></ChatGlass>
+        <GlassIcon label={mobileMessages.Shell.panel.back} hidden={false} onPress={() => { tap(); onClose() }}><Symbol name="chevron.backward" size={18} color={colors.ink} web={<ArrowLeft size={22} color={colors.ink} strokeWidth={2} />} /></GlassIcon>
+        <ChatGlass style={styles.count}><Text accessibilityRole="header" style={styles.countText}>{I.count.replace('{count}', String(images.length))}</Text></ChatGlass>
         <View style={styles.iconSpace} />
       </View>
     </View>

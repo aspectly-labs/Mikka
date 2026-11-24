@@ -32,25 +32,27 @@ beforeEach(() => { calls.length = 0; opened.length = 0; continued = ''; next = a
 afterEach(async () => { await act(async () => root.unmount()); container.remove() })
 after(() => browser.happyDOM.close())
 const render = async (keyReady = true, resetsAt: string | null = null) => { await act(async () => root.render(createElement(ThreadQuotaPaused, { paused: { runId: RUN, subscription: 'claude', plan: 'Max', resetsAt, keyReady }, onContinued: (runId: string) => { continued = runId } }))) }
+const { mobileMessages } = await import('../lib/messages.ts')
+const Q = mobileMessages.Coordinator.quota
 const button = (label: string) => [...container.querySelectorAll('button')].find(item => item.textContent === label)!
 
 test('quota recovery names cost and never starts a paid continuation until the key button is tapped', async () => {
   await render(true, new Date(Date.now() + 60_000).toISOString())
-  assert.match(container.textContent ?? '', /Claude Max.*额度已用完/)
-  assert.match(container.textContent ?? '', /按 token 计费/)
+  assert.ok(container.textContent?.includes(Q.used.replace('{name}', 'Claude Max')))
+  assert.ok(container.textContent?.includes(Q.keyBilling))
   assert.equal(calls.length, 0)
-  assert.equal(button('重置后重试').disabled, true)
-  await act(async () => button('用 API Key 继续').click())
+  assert.equal(button(Q.retryAfterReset).disabled, true)
+  await act(async () => button(Q.useKey).click())
   assert.deepEqual(calls, [{ path: `/api/mobile/threads/${RUN}/continue`, body: { via: 'key' } }])
   assert.equal(continued, RUN)
 })
 
 test('after reset the original subscription can retry; no key opens the exact workspace settings', async () => {
   await render(false, new Date(Date.now() - 1_000).toISOString())
-  await act(async () => button('添加 API Key 继续').click())
+  await act(async () => button(Q.addKey).click())
   assert.deepEqual(opened, [`/settings?section=models&workspace=${WORKSPACE}`])
   assert.equal(calls.length, 0)
-  await act(async () => button('重置后重试').click())
+  await act(async () => button(Q.retryAfterReset).click())
   assert.equal((calls[0].body as { via: string }).via, 'retry')
 })
 
@@ -58,10 +60,10 @@ test('duplicate taps stay one request and a lost response reports unconfirmed wi
   let reject!: (error: unknown) => void
   next = () => new Promise((_resolve, fail) => { reject = fail })
   await render()
-  await act(async () => { button('用 API Key 继续').click(); button('用 API Key 继续').click() })
+  await act(async () => { button(Q.useKey).click(); button(Q.useKey).click() })
   assert.equal(calls.length, 1)
   await act(async () => reject(new Error('fixture-private-provider-text')))
-  assert.match(container.textContent ?? '', /继续未确认/)
+  assert.ok(container.textContent?.includes(Q.continueUnconfirmed))
   assert.doesNotMatch(container.textContent ?? '', /fixture-private/)
   assert.equal(continued, '')
 })

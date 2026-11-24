@@ -2,6 +2,7 @@ import { StyleSheet, View } from 'react-native'
 import { Text } from '@/components/Text'
 import { colors } from '@/lib/theme'
 import { badgeOf, type ListChat } from '../model/home-list'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * A chat's mark: an orange dot when one of its threads waits on the person, else the unread count, else a dot for a
@@ -12,10 +13,10 @@ export function ChatBadge({ chat, avatar = false }: { chat: ListChat; avatar?: b
   const badge = badgeOf(chat)
   if (!badge) return null
   const place = avatar ? styles.corner : null
-  if (badge.kind === 'waiting') return <View style={[styles.dot, styles.waiting, place]} accessibilityLabel="等你回复" />
-  if (badge.kind === 'dot') return <View style={[styles.dot, place]} accessibilityLabel="未读" />
+  if (badge.kind === 'waiting') return <View style={[styles.dot, styles.waiting, place]} accessibilityLabel={mobileMessages.MobileCore.waitingReply} />
+  if (badge.kind === 'dot') return <View style={[styles.dot, place]} accessibilityLabel={mobileMessages.MobileCore.unread} />
   return (
-    <View style={[styles.count, place]} accessibilityLabel={`${badge.count} 条未读`}>
+    <View style={[styles.count, place]} accessibilityLabel={mobileMessages.MobileCore.unreadCount.replace('{count}', String(badge.count))}>
       <Text style={styles.number}>{badge.count > 99 ? '99+' : badge.count}</Text>
     </View>
   )

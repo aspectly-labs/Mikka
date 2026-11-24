@@ -10,6 +10,9 @@ import { colors } from '@/lib/theme'
 import type { ChatItem } from '@/lib/types'
 import { queuePreview } from '@/features/chat/model/chat-queue'
 import { ChatGlass } from './chat-glass-capsule'
+import { mobileMessages } from '@/lib/messages'
+
+const Q = mobileMessages.MobileCore.queue
 
 const EASE = cubicBezier(0.23, 1, 0.32, 1)
 const ROW = 44
@@ -32,30 +35,30 @@ export function ChatQueueCard({ items, onSendNow, busy }: { items: ChatItem[]; o
     <Reanimated.View style={[styles.wrap, { height }, { transitionProperty: 'height', transitionDuration: reduceMotion ? 0 : 280, transitionTimingFunction: EASE }]}>
       <ChatGlass style={styles.card}>
         <View style={styles.row}>
-          <View accessible accessibilityLabel={`排队中：${queuePreview(next!)}`} style={styles.preview}>
+          <View accessible accessibilityLabel={Q.queued.replace('{text}', () => queuePreview(next!))} style={styles.preview}>
             <Symbol name="clock" size={14} color={colors.secondary} web={<Clock size={16} color={colors.secondary} strokeWidth={2} />} />
             <Text numberOfLines={1} style={styles.text}>{queuePreview(next!)}</Text>
           </View>
           {onSendNow ? (
-            <Pressable accessibilityRole="button" accessibilityLabel="现在发" accessibilityHint="停止当前回复，先处理排队的消息" accessibilityState={{ disabled: busy, busy }}
+            <Pressable accessibilityRole="button" accessibilityLabel={Q.sendNow} accessibilityHint={Q.sendNowHint} accessibilityState={{ disabled: busy, busy }}
               aria-disabled={Platform.OS === 'web' ? busy : undefined} disabled={busy} hitSlop={4} onPress={() => { tap(); onSendNow() }}
               style={({ pressed }) => [styles.action, busy && { opacity: 0.45 }, pressed && { opacity: 0.55 }]}>
               <Symbol name="arrow.turn.down.right" size={15} color={colors.ink} web={<CornerDownRight size={18} color={colors.ink} strokeWidth={2} />} />
-              <Text style={styles.actionLabel}>现在发</Text>
+              <Text style={styles.actionLabel}>{Q.sendNow}</Text>
             </Pressable>
           ) : null}
         </View>
         {rest.length ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={open ? '收起排队消息' : `还有 ${rest.length} 条排队消息`} accessibilityState={{ expanded }}
+          <Pressable accessibilityRole="button" accessibilityLabel={open ? Q.collapse : (rest.length === 1 ? Q.moreQueuedOne : Q.moreQueued).replace('{count}', String(rest.length))} accessibilityState={{ expanded }}
             onPress={() => { tap(); setOpen(value => !value) }} style={({ pressed }) => [styles.more, pressed && { opacity: 0.55 }]}>
-            <Text style={styles.moreText}>{open ? '收起' : `还有 ${rest.length} 条`}</Text>
+            <Text style={styles.moreText}>{open ? mobileMessages.Common.showLess : Q.more.replace('{count}', String(rest.length))}</Text>
             {open
               ? <Symbol name="chevron.down" size={11} color={colors.secondary} web={<ChevronDown size={14} color={colors.secondary} strokeWidth={2.4} />} />
               : <Symbol name="chevron.up" size={11} color={colors.secondary} web={<ChevronUp size={14} color={colors.secondary} strokeWidth={2.4} />} />}
           </Pressable>
         ) : null}
         {rest.map((item, index) => (
-          <View key={`${item.position}`} accessible accessibilityLabel={`第 ${index + 2} 条：${queuePreview(item)}`} style={styles.line}>
+          <View key={`${item.position}`} accessible accessibilityLabel={Q.item.replace('{index}', String(index + 2)).replace('{text}', () => queuePreview(item))} style={styles.line}>
             <Text style={styles.position}>{index + 2}</Text>
             <Text numberOfLines={1} style={styles.text}>{queuePreview(item)}</Text>
           </View>

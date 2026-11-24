@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Platform, StyleSheet, TextInput, type TextInputInstance } from 'react-native'
 import { selectedPart, type Rect } from '@/features/chat/model/chat-selection'
 import { colors, font } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * A message's words while the person selects part of them (选择文本): a read-only field that reports the selected
@@ -14,7 +15,7 @@ export function ChatSelectableText({ text, color = colors.text, onSelect, onRect
   useEffect(() => { onSelect(text) }, [onSelect, text])
   const measure = () => field.current?.measureInWindow((x, y, width, height) => onRect({ x, y, width, height }))
   return (
-    <TextInput ref={field} accessibilityLabel="选择文本" value={text} onChangeText={() => {}} multiline scrollEnabled={false}
+    <TextInput ref={field} accessibilityLabel={mobileMessages.MobileCore.selectText} value={text} onChangeText={() => {}} multiline scrollEnabled={false}
       showSoftInputOnFocus={false} caretHidden autoFocus selectTextOnFocus contextMenuHidden={false}
       onLayout={() => {
         measure()

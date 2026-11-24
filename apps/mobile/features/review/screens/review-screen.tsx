@@ -16,6 +16,10 @@ import { ReviewBar } from '../components/review-bar'
 import { useReview } from '../components/use-review'
 import { CANNOT_MERGE, CANNOT_SEND, VERSIONED_READ_ONLY, usesVersionedReview, checksLine, denial, sourceLine, toggleCheck, type ReviewCheck, type ReviewRead } from '../model/review'
 import { batchHref, fileHref, noteHref } from '../model/routes'
+import { mobileMessages } from '@/lib/messages'
+
+const C = mobileMessages.ReviewCopy
+const V = mobileMessages.MobileCore.review
 
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' })
 
@@ -37,9 +41,9 @@ export function ReviewScreen() {
 
   return (
     <View style={styles.screen}>
-      <NavBar title="审阅" />
+      <NavBar title={C.review} />
       <ScrollView {...underBar} refreshControl={<RefreshControl {...refresh} />} contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 96 }]}>
-        <ReadNotice error={r.error} hasData={Boolean(review)} label="审阅" onRetry={r.reload} />
+        <ReadNotice error={r.error} hasData={Boolean(review)} label={C.review} onRetry={r.reload} />
         {r.loading && !review ? <View style={styles.center}><Spinner /></View> : null}
         {review ? (
           <>
@@ -89,21 +93,21 @@ function Top({ review, checks: list, open, onToggle, attached, onAttach, merged,
                 {check.logExcerpt ? <Text style={styles.log} numberOfLines={6} selectable>{check.logExcerpt}</Text> : null}
                 {!versioned && permissions.canSend && <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => { tap(); onAttach(check) }} hitSlop={6} style={({ pressed }) => [styles.attach, pressed && { opacity: 0.6 }]}>
                   <Paperclip size={15} color={colors.accent} strokeWidth={2} />
-                  <Text style={styles.attachText}>{on ? '已附到评论' : '附到评论'}</Text>
+                  <Text style={styles.attachText}>{on ? C.attached : C.attachToComment}</Text>
                 </Pressable>}
               </View>
             )
           })}
-          {others.length ? <Text style={styles.passed}>{others.map(check => check.status === 'neutral' ? `${check.name}（中性）` : check.name).join(' · ')}</Text> : null}
+          {others.length ? <Text style={styles.passed}>{others.map(check => check.status === 'neutral' ? V.neutralCheck.replace('{name}', () => check.name) : check.name).join(' · ')}</Text> : null}
         </View>
       ) : null}
       {merged ? (
-        <View style={styles.state}><GitMerge size={18} color={colors.merged} strokeWidth={2} /><Text style={styles.stateText}>已合并</Text></View>
+        <View style={styles.state}><GitMerge size={18} color={colors.merged} strokeWidth={2} /><Text style={styles.stateText}>{C.merged}</Text></View>
       ) : review.diff.empty ? null : !review.summary.pr ? (
-        <View style={styles.state}><CircleDot size={18} color={colors.orange} strokeWidth={2} /><Text style={styles.stateText}>{review.summary.running ? '运行中 · 还没开 PR' : '还没开 PR'}</Text>{review.diff.live ? <Text style={styles.live}>实时</Text> : null}</View>
+        <View style={styles.state}><CircleDot size={18} color={colors.orange} strokeWidth={2} /><Text style={styles.stateText}>{review.summary.running ? C.runningNoPr : C.noPr}</Text>{review.diff.live ? <Text style={styles.live}>{C.live}</Text> : null}</View>
       ) : (
         <View style={{ gap: 6 }}>
-          <CardButton label="批准合并" primary hollow busy={merging} disabled={versioned || !permissions.canMerge} onPress={onMerge}
+          <CardButton label={C.approveMerge} primary hollow busy={merging} disabled={versioned || !permissions.canMerge} onPress={onMerge}
             icon={<GitPullRequest size={17} color={permissions.canMerge ? colors.onInk : colors.ink} strokeWidth={2} />} />
           {!permissions.canMerge || versioned ? <Text style={styles.reason}>{permissions.canMerge ? VERSIONED_READ_ONLY : denial(permissions.reasons.merge, CANNOT_MERGE)}</Text> : null}
         </View>
@@ -115,12 +119,12 @@ function Top({ review, checks: list, open, onToggle, attached, onAttach, merged,
 /** The changed files: name, folder and comment count, +/−; a file too big to send at once loads on its own page. */
 function Files({ review, onOpen }: { review: ReviewRead; onOpen: (path: string) => void }) {
   const { summary } = review
-  if (review.diff.availability === 'unavailable') return <Text style={styles.empty}>当前改动不可用</Text>
-  if (review.diff.empty || !review.diff.files.length) return <Text style={styles.empty}>没有改动</Text>
+  if (review.diff.availability === 'unavailable') return <Text style={styles.empty}>{V.unavailable}</Text>
+  if (review.diff.empty || !review.diff.files.length) return <Text style={styles.empty}>{C.emptyTitle}</Text>
   return (
     <View>
       <View style={styles.filesHead}>
-        {summary.files !== null && <Text style={styles.filesHeadText}>{summary.files} 个文件</Text>}
+        {summary.files !== null && <Text style={styles.filesHeadText}>{(summary.files === 1 ? V.filesOne : V.files).replace('{count}', String(summary.files))}</Text>}
         {summary.additions !== null && <Text style={[styles.filesHeadText, { color: colors.success }]}>+{summary.additions}</Text>}
         {summary.deletions !== null && <Text style={[styles.filesHeadText, { color: colors.danger }]}>−{summary.deletions}</Text>}
       </View>
@@ -128,15 +132,15 @@ function Files({ review, onOpen }: { review: ReviewRead; onOpen: (path: string) 
         const slash = file.path.lastIndexOf('/')
         const name = file.path.slice(slash + 1)
         const folder = slash > 0 ? file.path.slice(0, slash) : ''
-        const meta = [folder, file.comments ? `${file.comments} 条评论` : null].filter(Boolean).join(' · ')
+        const meta = [folder, file.comments ? (file.comments === 1 ? V.commentOne : C.commentsCount).replace('{count}', String(file.comments)) : null].filter(Boolean).join(' · ')
         return (
-          <Pressable key={file.path} accessibilityRole="button" accessibilityLabel={`${file.path}${file.additions !== null && file.deletions !== null ? `，+${file.additions} −${file.deletions}` : ''}${file.tooLarge ? '，改动太大，点开加载' : ''}`} onPress={() => onOpen(file.path)}
+          <Pressable key={file.path} accessibilityRole="button" accessibilityLabel={[file.path, file.additions !== null && file.deletions !== null ? `+${file.additions} −${file.deletions}` : null, file.tooLarge ? V.tooLargeOpen : null].filter(Boolean).join(V.separator)} onPress={() => onOpen(file.path)}
             style={({ pressed }) => [styles.file, pressed && { backgroundColor: colors.pressed }]}>
             <FileCode2 size={20} color={colors.secondary} strokeWidth={1.8} />
             <View style={styles.fileText}>
               <Text style={styles.fileName} numberOfLines={1}>{name}</Text>
               {meta ? <Text style={styles.fileMeta} numberOfLines={1}>{meta}</Text> : null}
-              {file.tooLarge ? <Text style={styles.fileMeta}>改动太大，点开加载</Text> : null}
+              {file.tooLarge ? <Text style={styles.fileMeta}>{V.tooLargeOpen}</Text> : null}
             </View>
             {file.additions ? <Text style={[styles.count, { color: colors.success }]}>+{file.additions}</Text> : null}
             {file.deletions ? <Text style={[styles.count, { color: colors.danger }]}>−{file.deletions}</Text> : null}

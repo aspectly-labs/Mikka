@@ -4,6 +4,10 @@ import { ChevronRight, MessageSquare } from 'lucide-react-native'
 import { Spinner } from '@/components/icons'
 import { Text } from '@/components/Text'
 import { colors, LIST_INSET, lift } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
+
+const C = mobileMessages.ReviewCopy
+const V = mobileMessages.MobileCore.review
 
 /**
  * The floating batch bar on R2 and R3 (decisions/2026-11-08-1230 4). With something in the batch, 「2 条评论 · ios-unit
@@ -21,21 +25,21 @@ export function ReviewBar({ line, note, onOpenBatch, onOpenNote, onSend, canSend
     <View pointerEvents="box-none" style={[styles.wrap, { bottom: insets.bottom + 8 }]}>
       <View style={styles.bar}>
         {line && !blocked ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={`待发送：${line}`} onPress={onOpenBatch} style={({ pressed }) => [styles.batch, pressed && { opacity: 0.6 }]}>
+          <Pressable accessibilityRole="button" accessibilityLabel={V.pendingLabel.replace('{line}', () => line)} onPress={onOpenBatch} style={({ pressed }) => [styles.batch, pressed && { opacity: 0.6 }]}>
             <Text style={styles.batchText} numberOfLines={1}>{line}</Text>
             <ChevronRight size={16} color={colors.tertiary} strokeWidth={2} />
           </Pressable>
         ) : null}
         <View style={styles.row}>
-          <Pressable accessibilityRole="button" accessibilityLabel={blocked || (written ? `修改意见：${written}` : '写修改意见')} onPress={onOpenNote} disabled={Boolean(blocked)}
+          <Pressable accessibilityRole="button" accessibilityLabel={blocked || (written ? V.noteValue.replace('{note}', () => written) : V.writeNote)} onPress={onOpenNote} disabled={Boolean(blocked)}
             style={({ pressed }) => [styles.words, pressed && { opacity: 0.6 }]}>
             <MessageSquare size={18} color={colors.secondary} strokeWidth={2} />
-            <Text style={[styles.note, !written && { color: colors.secondary }, blocked && styles.blocked]} numberOfLines={blocked ? 2 : 1}>{blocked || written || '写修改意见…'}</Text>
+            <Text style={[styles.note, !written && { color: colors.secondary }, blocked && styles.blocked]} numberOfLines={blocked ? 2 : 1}>{blocked || written || C.notePlaceholder}</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="发给 Agent" accessibilityState={{ disabled: off, busy }} disabled={off} onPress={onSend}
+          <Pressable accessibilityRole="button" accessibilityLabel={C.sendToAgent} accessibilityState={{ disabled: off, busy }} disabled={off} onPress={onSend}
             style={({ pressed }) => [styles.send, off && !busy ? styles.sendOff : null, busy && { opacity: 0.6 }, pressed && { opacity: 0.8 }]}>
             {busy ? <Spinner size={14} color={colors.onAccent} /> : null}
-            <Text style={[styles.sendText, off && !busy ? { color: colors.ink } : null]}>发给 Agent</Text>
+            <Text style={[styles.sendText, off && !busy ? { color: colors.ink } : null]}>{C.sendToAgent}</Text>
           </Pressable>
         </View>
       </View>

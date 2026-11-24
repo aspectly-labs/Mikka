@@ -25,6 +25,8 @@ let lookup: (query: string) => Promise<unknown> = async () => { throw new Error(
 stub('../lib/api.ts', { api: (path: string) => { const query = new URL(path, 'http://x').searchParams.get('q') ?? ''; asked.push(query); return lookup(query) }, ApiError: class extends Error {} })
 
 const { OpenUIReply } = await import('../components/OpenUI')
+const { mobileMessages } = await import('../lib/messages.ts')
+const copy = mobileMessages.AgentCopy
 const { findImage } = await import('../lib/images')
 
 const image = (title: string) => ({ src: `https://upload.wikimedia.org/${title}.jpg`, width: 500, height: 281, title: `${title}.jpg`, source: `https://commons.wikimedia.org/wiki/File:${title}.jpg`, author: 'Someone', license: 'CC BY-SA 4.0' })
@@ -49,7 +51,7 @@ test('a recommendation grid draws each card: picture, title, description, tags, 
   assert.ok(!html.includes('在网页上打开'))
   assert.ok(html.includes('<img src="https://upload.wikimedia.org/Palace.jpg" alt="故宫"/>'))
   assert.ok(html.includes('<img src="https://upload.wikimedia.org/Wall.jpg" alt="八达岭长城"/>'))
-  const order = ['Palace.jpg', '图片来源与许可', '故宫', '明清两代皇宫', '历史', '建筑', '<button>继续了解</button>', 'Wall.jpg', '八达岭长城']
+  const order = ['Palace.jpg', copy.imageSourceAndLicense, '故宫', '明清两代皇宫', '历史', '建筑', `<button>${copy.learnMore}</button>`, 'Wall.jpg', '八达岭长城']
   order.reduce((at, part) => { const next = html.indexOf(part, at); assert.ok(next > at, `${part} after ${at}`); return next }, -1)
   // The second card has no prompt, so only one button.
   assert.equal(html.match(/<button>/g)?.length, 1)
@@ -69,7 +71,7 @@ test('a failed lookup leaves the card without a picture', async () => {
   const html = reply('root = BeImageCard("天坛", "Temple of Heaven", "明清祭天建筑群。")')
   assert.ok(!html.includes('<img'))
   assert.ok(!html.includes('aria-busy'))
-  assert.ok(!html.includes('图片来源与许可'))
+  assert.ok(!html.includes(copy.imageSourceAndLicense))
   assert.ok(html.includes('天坛') && html.includes('明清祭天建筑群。'))
 })
 

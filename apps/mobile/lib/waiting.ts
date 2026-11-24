@@ -1,3 +1,5 @@
+import { mobileMessages } from './messages'
+
 /** How long the chat waits before the spinner says what it is waiting for (Figma 843:2 #1). */
 export const WAIT_NOTICE_MS = 30_000
 
@@ -6,5 +8,7 @@ export function waitingLabel(since: number, now: number): string | null {
   const seconds = Math.floor((now - since) / 1000)
   if (seconds * 1000 < WAIT_NOTICE_MS) return null
   const minutes = Math.floor(seconds / 60)
-  return `等待回复 · ${minutes ? `${minutes} 分 ${seconds % 60} 秒` : `${seconds} 秒`}`
+  const steps = mobileMessages.MobileCore.threadSteps
+  const duration = minutes ? steps.minutes.replace('{minutes}', String(minutes)).replace('{seconds}', String(seconds % 60)) : steps.seconds.replace('{count}', String(seconds))
+  return mobileMessages.MobileCore.waitingFor.replace('{duration}', duration)
 }

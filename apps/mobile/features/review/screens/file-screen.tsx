@@ -13,6 +13,10 @@ import { useReview } from '../components/use-review'
 import { CANNOT_SEND, VERSIONED_READ_ONLY, denial, lineNumber, lineSide, parsePatch, type DiffLine, type PendingComment, type ReviewFileRead, type ReviewSentComment } from '../model/review'
 import { filePath, readFilePath } from '../model/review-api'
 import { batchHref, noteHref } from '../model/routes'
+import { mobileMessages } from '@/lib/messages'
+
+const C = mobileMessages.ReviewCopy
+const V = mobileMessages.MobileCore.review
 
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' })
 
@@ -45,7 +49,7 @@ export function FileScreen() {
       <NavBar title={name} />
       <ScrollView {...underBar} contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}>
         {file ? <Text style={styles.counts}>{file.additions !== null && <Text style={{ color: colors.success }}>+{file.additions}  </Text>}{file.deletions !== null && <Text style={{ color: colors.danger }}>−{file.deletions}  </Text>}  <Text style={{ color: colors.secondary }}>{path}</Text></Text> : null}
-        <ReadNotice error={read.error} hasData={Boolean(read.data)} label="改动" onRetry={read.reload} />
+        <ReadNotice error={read.error} hasData={Boolean(read.data)} label={C.changes} onRetry={read.reload} />
         {read.loading && !read.data ? <View style={styles.center}><Spinner /></View> : null}
         {hunks.map((hunk, h) => (
           <View key={h}>
@@ -56,7 +60,7 @@ export function FileScreen() {
               const mine = pending.filter(comment => comment.line === n && comment.side === side)
               return (
                 <View key={index}>
-                  <Pressable accessibilityRole={canComment ? 'button' : undefined} accessibilityLabel={`第 ${n} 行，${line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : ''}${line.text}`}
+                  <Pressable accessibilityRole={canComment ? 'button' : undefined} accessibilityLabel={V.lineLabel.replace('{line}', String(n)).replace('{kind}', line.kind === 'add' ? V.lineAdded : line.kind === 'del' ? V.lineDeleted : '').replace('{text}', () => line.text)}
                     onPress={() => openLine(line)} style={({ pressed }) => [styles.line, line.kind === 'add' && styles.add, line.kind === 'del' && styles.del, pressed && canComment && { opacity: 0.6 }]}>
                     <Text style={styles.number}>{n}</Text>
                     <Text style={styles.mark}>{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}</Text>
@@ -69,7 +73,7 @@ export function FileScreen() {
             })}
           </View>
         ))}
-        {read.data && !hunks.length ? <Text style={styles.empty}>{read.data.file.tooLarge ? '改动太大，没法在手机上显示' : '没有改动'}</Text> : null}
+        {read.data && !hunks.length ? <Text style={styles.empty}>{read.data.file.tooLarge ? V.tooLarge : C.emptyTitle}</Text> : null}
       </ScrollView>
       {r.review && !r.merged ? <ReviewBar line={r.line} note={r.batch.note} canSend={r.canSend} busy={r.sending}
         blocked={r.permissions && !r.permissions.canSend ? denial(r.permissions.reasons.send, CANNOT_SEND) : r.versioned ? VERSIONED_READ_ONLY : undefined}
@@ -84,14 +88,14 @@ function CommentCard({ comment, onPress }: { comment: ReviewSentComment | Pendin
   const body = (
     <>
       <View style={styles.cardHead}>
-        <Text style={styles.who}>{sent ? comment.author : '你'}</Text>
-        <Text style={styles.cardMeta}>第 {comment.line} 行{sent ? '' : ' · 待发送'}</Text>
+        <Text style={styles.who}>{sent ? comment.author : C.you}</Text>
+        <Text style={styles.cardMeta}>{C.line.replace('{line}', String(comment.line))}{sent ? '' : ` · ${C.pendingTag}`}</Text>
       </View>
       <Text style={styles.cardBody}>{comment.body}</Text>
     </>
   )
   return onPress
-    ? <Pressable accessibilityRole="button" accessibilityLabel={`待发送的评论，第 ${comment.line} 行：${comment.body}`} onPress={onPress} style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}>{body}</Pressable>
+    ? <Pressable accessibilityRole="button" accessibilityLabel={V.pendingComment.replace('{line}', String(comment.line)).replace('{body}', () => comment.body)} onPress={onPress} style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}>{body}</Pressable>
     : <View style={styles.card}>{body}</View>
 }
 

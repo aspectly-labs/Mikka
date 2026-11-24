@@ -5,6 +5,7 @@ import { useLiquidGlass } from '@/lib/glass'
 import { ArrowDown } from 'lucide-react-native'
 import { Symbol } from '@/components/Symbol'
 import { colors, lift } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /** expo-animation: a state change with no finger on it is a CSS transition, strong ease-out, under 300 ms. */
 const FADE = { transitionProperty: 'opacity' as const, transitionDuration: 200, transitionTimingFunction: cubicBezier(0.23, 1, 0.32, 1) }
@@ -24,7 +25,7 @@ export function ChatScrollToLatest({ visible, bottom, onPress }: { visible: bool
     </Reanimated.View>
   )
   const button = (
-    <Pressable accessibilityRole="button" accessibilityLabel="回到最新消息" accessibilityElementsHidden={hidden} importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+    <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.MobileCore.scrollToLatest} accessibilityElementsHidden={hidden} importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
       aria-hidden={hidden} disabled={hidden} hitSlop={4} onPress={onPress} style={({ pressed }) => [styles.fill, pressed && { opacity: 0.55 }]}>{arrow}</Pressable>
   )
   return (

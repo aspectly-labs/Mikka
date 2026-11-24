@@ -9,6 +9,9 @@ import { API_URL } from '@/lib/config'
 import { mobileTraceHeaders } from '@/lib/tracing'
 import { buildTooOld, CHECK_MS, DOWNLOAD_MS, onMobileUpdateRequired, within } from '@/lib/startup'
 import { colors } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
+
+const S = mobileMessages.MobileCore.startup
 
 type Launch = { kind: 'checking' | 'updating' | 'ready' } | { kind: 'tooOld'; url: string }
 
@@ -77,18 +80,18 @@ export function StartupGate({ children }: { children: ReactNode }) {
     }
     return (
       <View style={styles.screen}>
-        <Text style={styles.title}>请更新到最新版</Text>
+        <Text style={styles.title}>{S.updateRequired}</Text>
         <Pressable accessibilityRole="button" accessibilityState={{ busy: openingUpdate, disabled: openingUpdate }} disabled={openingUpdate} onPress={() => void openUpdate()} style={({ pressed }) => [styles.button, pressed && { opacity: 0.7 }]}>
-          <Text style={styles.buttonText}>{openingUpdate ? '正在打开' : '更新'}</Text>
+          <Text style={styles.buttonText}>{openingUpdate ? S.opening : S.update}</Text>
         </Pressable>
-        {openFailed ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.status}>更新页面未打开，请重试。</Text> : null}
+        {openFailed ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.status}>{S.openFailed}</Text> : null}
       </View>
     )
   }
   return (
     <View style={styles.screen}>
       <Spinner size={22} />
-      {launch.kind === 'updating' ? <Text style={styles.status}>正在更新</Text> : null}
+      {launch.kind === 'updating' ? <Text style={styles.status}>{S.updating}</Text> : null}
     </View>
   )
 }

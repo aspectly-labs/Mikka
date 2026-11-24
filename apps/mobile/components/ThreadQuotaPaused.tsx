@@ -8,6 +8,9 @@ import { failureSettingsPath } from '@/lib/chat-failure'
 import { useHome } from '@/lib/home'
 import type { ThreadPaused } from '@/lib/types'
 import { openOnWeb } from '@/lib/web'
+import { mobileMessages } from '@/lib/messages'
+
+const Q = mobileMessages.Coordinator.quota
 
 /** A quota pause keeps the original credential. Using a paid key requires
  * this explicit action; retrying after reset still uses the subscription. */
@@ -32,23 +35,23 @@ export function ThreadQuotaPaused({ paused, onContinued }: { paused: ThreadPause
     try {
       const result = await api<{ runId: string }>(`/api/mobile/threads/${paused.runId}/continue`, { method: 'POST', body: { via } })
       if (!mounted.current) return
-      setFeedback('继续已排队')
+      setFeedback(Q.continueQueued)
       try { await onContinued(result.runId) } catch { /* a refresh cannot undo the confirmed continuation */ }
     } catch (error) {
-      if (mounted.current) setFeedback(error instanceof ApiError && error.status >= 400 && error.status < 500 ? '未能继续' : '继续未确认')
+      if (mounted.current) setFeedback(error instanceof ApiError && error.status >= 400 && error.status < 500 ? Q.continueFailed : Q.continueUnconfirmed)
     } finally { inFlight.current = false; if (mounted.current) setPending(null) }
   }
   const name = `${paused.subscription === 'claude' ? 'Claude' : 'ChatGPT'}${paused.plan ? ` ${paused.plan}` : ''}`
   const settings = failureSettingsPath('models', workspaceId)!
   return <ChatCard>
-    <Text style={cardText.title}>{name} 额度已用完</Text>
-    {paused.resetsAt && !reset ? <Text style={cardText.meta}>{nextWhen(paused.resetsAt)} 重置</Text> : null}
-    <Text style={cardText.meta}>API Key 按 token 计费</Text>
+    <Text style={cardText.title}>{Q.used.replace('{name}', () => name)}</Text>
+    {paused.resetsAt && !reset ? <Text style={cardText.meta}>{Q.resets.replace('{time}', nextWhen(paused.resetsAt))}</Text> : null}
+    <Text style={cardText.meta}>{Q.keyBilling}</Text>
     <View style={styles.actions}>
       {paused.keyReady
-        ? <CardButton label="用 API Key 继续" busy={pending === 'key'} disabled={pending !== null} onPress={() => void run('key')} />
-        : <CardButton label="添加 API Key 继续" disabled={pending !== null} onPress={() => void openOnWeb(settings)} />}
-      <CardButton label="重置后重试" busy={pending === 'retry'} disabled={!reset || pending !== null} onPress={() => void run('retry')} />
+        ? <CardButton label={Q.useKey} busy={pending === 'key'} disabled={pending !== null} onPress={() => void run('key')} />
+        : <CardButton label={Q.addKey} disabled={pending !== null} onPress={() => void openOnWeb(settings)} />}
+      <CardButton label={Q.retryAfterReset} busy={pending === 'retry'} disabled={!reset || pending !== null} onPress={() => void run('retry')} />
     </View>
     {feedback ? <Text accessibilityLiveRegion="polite" style={cardText.meta}>{feedback}</Text> : null}
   </ChatCard>

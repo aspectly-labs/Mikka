@@ -11,6 +11,7 @@ import { splitChatFiles } from '@mikka/protocol/chat-attachments'
 import { ChatFiles } from './ChatFiles'
 import { ChatImages } from '@/features/chat/components/chat-images'
 import { isImageFile, useImageFiles } from '@/features/chat/model/chat-image-source'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * The Markdown the Coordinator and agents write, as the app shows it:
@@ -128,7 +129,7 @@ function inline(text: string, sources: Record<string, CitationSource>, onOpen: (
 export function MentionChip({ source, onPress }: { source: CitationSource; onPress?: () => void }) {
   const label = source.kind === 'issue' ? source.title : runName(source)
   return (
-    <Text accessibilityRole="link" accessibilityLabel={`${source.kind === 'issue' ? '任务' : '线程'}：${label}`} onPress={onPress} style={styles.mention}>
+    <Text accessibilityRole="link" accessibilityLabel={(source.kind === 'issue' ? mobileMessages.MobileCore.mention.task : mobileMessages.MobileCore.mention.thread).replace('{title}', () => label)} onPress={onPress} style={styles.mention}>
       <View style={styles.mentionIcon}>{source.kind === 'run' ? <StatusIcon status={runIcon(source)} size={12} /> : <CircleDot size={12} color={colors.accent} strokeWidth={2.2} />}</View>
       {`\u2009${label}`}
     </Text>

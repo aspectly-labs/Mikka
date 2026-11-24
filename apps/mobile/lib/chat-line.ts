@@ -1,8 +1,9 @@
 // The web's bot list reads rows through the same function (components/nav/bot-list.tsx).
 import { chatPreview } from '../../../lib/agent-history'
+import { mobileMessages } from './messages'
 
 /** What a row shows for a card that has no words. */
-export const CARD_LINE = '[卡片]'
+export const CARD_LINE = mobileMessages.MobileCore.cardLine
 
 /**
  * A chat row's one plain line. A bot's line is already plain text from the

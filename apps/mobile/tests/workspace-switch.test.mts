@@ -4,6 +4,9 @@ import { after, mock, test } from 'node:test'
 import { act, createElement } from 'react'
 import { Window } from 'happy-dom'
 import { switchWorkspace } from '../lib/workspace-switch.ts'
+import { mobileLocale } from '../lib/messages.ts'
+
+const zh = mobileLocale === 'zh-CN'
 
 const target = { id: 'acme', name: 'Acme 团队' }
 
@@ -15,13 +18,13 @@ test('a switch the server takes shows nothing', async () => {
 
 test('a workspace the server does not take goes back to the old one', async () => {
   const saved: string[] = []
-  assert.equal(await switchWorkspace(target, 'mikka', { save: async id => { saved.push(id) }, current: async () => 'mikka' }), '没切到 Acme 团队：你不在这个工作区')
+  assert.equal(await switchWorkspace(target, 'mikka', { save: async id => { saved.push(id) }, current: async () => 'mikka' }), zh ? '没切到 Acme 团队：你不在这个工作区' : 'Couldn’t switch to Acme 团队: you’re not in this workspace')
   assert.deepEqual(saved, ['acme', 'mikka'])
 })
 
 test('no connection goes back to the old one', async () => {
   const saved: string[] = []
-  assert.equal(await switchWorkspace(target, 'mikka', { save: async id => { saved.push(id) }, current: async () => { throw new Error('timeout') } }), '没切到 Acme 团队：连不上 Mikka')
+  assert.equal(await switchWorkspace(target, 'mikka', { save: async id => { saved.push(id) }, current: async () => { throw new Error('timeout') } }), zh ? '没切到 Acme 团队：连不上 Mikka' : 'Couldn’t switch to Acme 团队: can’t reach Mikka')
   assert.deepEqual(saved, ['acme', 'mikka'])
 })
 

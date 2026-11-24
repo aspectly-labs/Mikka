@@ -41,7 +41,7 @@ export function BackButton({ onPress }: { onPress: () => void }) {
 }
 
 export function CloseButton({ onPress }: { onPress: () => void }) {
-  return <RoundButton label="关闭" onPress={onPress}><X size={20} color={colors.ink} strokeWidth={2.2} /></RoundButton>
+  return <RoundButton label={messages.Common.close} onPress={onPress}><X size={20} color={colors.ink} strokeWidth={2.2} /></RoundButton>
 }
 
 /** Top bar: left button, centred title (or a pill), right button. Floats over the content, no bar background. */

@@ -3,6 +3,7 @@ import { BotAvatar, Spinner } from '@/components/icons'
 import { Text } from '@/components/Text'
 import { colors } from '@/lib/theme'
 import { ChatGlass } from './chat-glass-capsule'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * The chat's title (Alex 2026-11-08, after Grok's header): the bot's avatar and its name in one frosted-glass pill,
@@ -15,7 +16,7 @@ export function ChatTitlePill({ name, color, shape, botId, coordinator, onPress 
 }) {
   if (!name) return <Spinner size={14} />
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`${name}，资料`} hitSlop={4} onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.7 }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.MobileCore.botProfileLabel.replace('{name}', () => name)} hitSlop={4} onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.7 }}>
       <ChatGlass interactive style={styles.pill}>
         <BotAvatar color={color} shape={shape} id={botId} coordinator={coordinator} size={26} />
         <Text style={styles.name} numberOfLines={1}>{name}</Text>

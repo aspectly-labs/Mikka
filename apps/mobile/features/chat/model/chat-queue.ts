@@ -1,6 +1,7 @@
 import type { ChatItem } from '@/lib/types'
 import { splitChatFiles } from '@mikka/protocol/chat-attachments'
 import { splitQuoted } from '@/lib/quote'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * A message the person sent waits in the bot's inbox (a `pending` item) until a turn takes it. A bot that is idle
@@ -25,8 +26,8 @@ export function queuePreview(item: Pick<ChatItem, 'text' | 'images'>) {
   const words = splitQuoted(text).words || text
   const line = words.replace(/\s+/g, ' ').trim()
   if (line) return line
-  if (files.length) return files.map(file => file.name).join('、')
-  return item.images ? '照片' : ''
+  if (files.length) return files.map(file => file.name).join(mobileMessages.MobileCore.listSeparator)
+  return item.images ? mobileMessages.MobileCore.photo : ''
 }
 
 /** When the oldest pending message turns queued, so the screen can look again then (a UI timer, not a read). */

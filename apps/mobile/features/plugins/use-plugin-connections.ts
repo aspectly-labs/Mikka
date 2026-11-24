@@ -3,6 +3,7 @@ import { useFocusEffect } from 'expo-router'
 import { useApi } from '@/lib/useApi'
 import type { ComposioAccounts, Settings } from '@/lib/types'
 import { legacyPluginConnections, type PluginConnections } from '@/lib/plugin-connections'
+import { mobileMessages } from '@/lib/messages'
 
 /** Both native routes use the same account-scoped reader, including the plugin
  * list reached from Suggestions outside SettingsProvider. */
@@ -22,7 +23,9 @@ export function usePluginConnections() {
   }, [directory.data, legacy, accounts.data, linear.data])
   const providerNames = { composio: 'Composio', github: 'GitHub', linear: 'Linear', telegram: 'Telegram' }
   const failedProviders = snapshot?.failed.map(failure => providerNames[failure.source]) ?? []
-  const noticeLabel = failedProviders.length ? `${failedProviders.join('、')} 连接状态` : '连接状态'
+  const noticeLabel = failedProviders.length
+    ? mobileMessages.MobileCore.plugins.statusOf.replace('{providers}', failedProviders.join(mobileMessages.MobileCore.listSeparator))
+    : mobileMessages.Settings.mcpIntegrations.connectionStatusLabel
   const hasRetainedData = Boolean((directory.error || accounts.error) && snapshot)
   return { snapshot, noticeLabel, hasRetainedData, error: directory.error || accounts.error || Boolean(snapshot?.failed.length),
     reload: async () => { await Promise.all([directory.reload(), accounts.reload(), linear.reload()]) } }

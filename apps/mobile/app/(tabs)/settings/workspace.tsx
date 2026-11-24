@@ -9,6 +9,7 @@ import { useSettings } from '@/lib/settings'
 import type { Settings } from '@/lib/types'
 import { switchWorkspace } from '@/lib/workspace-switch'
 import { colors } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * 工作区 picker (Comma iOS, ChatGPT 工作空间). The choice travels as the web's
@@ -32,7 +33,7 @@ export default function WorkspaceScreen() {
     setSwitching(null)
   }
   return (
-    <SettingsPage title="工作区">
+    <SettingsPage title={mobileMessages.Settings.groups.workspace}>
       <Group>{(data?.workspaces ?? []).map(w => <ChoiceRow key={w.id} label={w.name} selected={w.id === data?.workspace.id} busy={switching === w.id} disabled={Boolean(switching)} onPress={() => void pick(w)} />)}</Group>
       {problem ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.problem}>{problem}</Text> : null}
     </SettingsPage>

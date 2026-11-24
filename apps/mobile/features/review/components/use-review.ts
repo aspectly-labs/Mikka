@@ -7,6 +7,7 @@ import { tap, warn } from '@/lib/haptics'
 import { batchKey, clearBatch, useBatch } from '../model/batch-store'
 import { batchIsEmpty, batchLine, denial, EMPTY_BATCH, isMerged, usesVersionedReview, type ReviewCheck, type ReviewRead } from '../model/review'
 import { checksPath, merge, readChecksPath, readReviewPath, reviewPath, sendToAgent, type ActionResult } from '../model/review-api'
+import { mobileMessages } from '@/lib/messages'
 
 /** A refusal (403) in the person's words, from the contract's reason code (R11). */
 function refused(result: ActionResult, fallback: string) {
@@ -48,13 +49,13 @@ export function useReview(taskId: string) {
     setSending(true)
     try {
       const result = await sendToAgent(taskId, batch, batchKey(batchScope))
-      if (refused(result, '没能发给 Agent')) return
+      if (refused(result, mobileMessages.MobileCore.review.sendFailed)) return
       tap()
       clearBatch(batchScope)
       void reloadAll()
     } catch {
       warn()
-      showSystemAlert('没能发给 Agent')
+      showSystemAlert(mobileMessages.MobileCore.review.sendFailed)
     } finally {
       setSending(false)
     }
@@ -64,19 +65,19 @@ export function useReview(taskId: string) {
     if (!review || versioned || !permissions?.canMerge || merging) return
     const failed = review.summary.checks?.failed
     const confirm = (run: () => void) => confirmDestructiveAction(
-      failed ? `还有 ${failed} 项检查失败，确定合并？` : '检查未通过，确定合并？', '仍然合并', run,
+      failed ? mobileMessages.ReviewCopy.mergeConfirm.replace('{count}', String(failed)) : mobileMessages.MobileCore.review.mergeConfirmGeneric, mobileMessages.ReviewCopy.mergeAnyway, run,
     )
     const run = async (confirmed: boolean) => {
       setMerging(true)
       try {
         const result = await merge(taskId, confirmed)
         if (result.kind === 'needs_confirm') return confirm(() => void run(true))
-        if (refused(result, '没能合并')) return
+        if (refused(result, mobileMessages.MobileCore.review.mergeFailed)) return
         tap()
         void reloadAll()
       } catch {
         warn()
-        showSystemAlert('没能合并')
+        showSystemAlert(mobileMessages.MobileCore.review.mergeFailed)
       } finally {
         setMerging(false)
       }

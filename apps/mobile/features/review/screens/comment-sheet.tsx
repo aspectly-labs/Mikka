@@ -9,6 +9,9 @@ import { tap } from '@/lib/haptics'
 import { colors, font, LIST_INSET } from '@/lib/theme'
 import { useBatch } from '../model/batch-store'
 import { addComment, removeComment } from '../model/review'
+import { mobileMessages } from '@/lib/messages'
+
+const C = mobileMessages.ReviewCopy
 
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' })
 
@@ -31,13 +34,13 @@ export function CommentSheet() {
   const remove = () => { if (existing) { tap(); setBatch(current => removeComment(current, existing.id)) } router.back() }
   return (
     <>
-      <NavBar sheet fade={false} title={`第 ${params.line} 行`} right={{ icon: 'xmark', label: '关闭', web: <X size={20} color={colors.ink} />, onPress: () => router.back() }} />
+      <NavBar sheet fade={false} title={C.line.replace('{line}', String(params.line))} right={{ icon: 'xmark', label: C.close, web: <X size={20} color={colors.ink} />, onPress: () => router.back() }} />
       <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.body}>
         <Text style={styles.quote} numberOfLines={3}>{params.quote}</Text>
-        <TextInput editable={!!scope} value={body} onChangeText={setBody} placeholder="写评论" placeholderTextColor={colors.secondary} multiline autoFocus
-          accessibilityLabel={`第 ${params.line} 行的评论`} style={styles.input} />
-        <CardButton label={existing ? '保存' : '加入评论'} primary disabled={!scope || !body.trim()} onPress={save} />
-        {existing ? <View style={styles.delete}><CardButton label="删除" destructive onPress={remove} /></View> : null}
+        <TextInput editable={!!scope} value={body} onChangeText={setBody} placeholder={mobileMessages.MobileCore.review.commentPlaceholder} placeholderTextColor={colors.secondary} multiline autoFocus
+          accessibilityLabel={mobileMessages.MobileCore.review.commentOnLine.replace('{line}', String(params.line))} style={styles.input} />
+        <CardButton label={existing ? C.saveComment : C.addComment} primary disabled={!scope || !body.trim()} onPress={save} />
+        {existing ? <View style={styles.delete}><CardButton label={C.delete} destructive onPress={remove} /></View> : null}
       </ScrollView>
     </>
   )

@@ -4,6 +4,7 @@ import { Symbol } from '@/components/Symbol'
 import { Text } from '@/components/Text'
 import { colors, LIST_INSET, SPACE } from '@/lib/theme'
 import type { HomeItem } from '../model/home-list'
+import { mobileMessages } from '@/lib/messages'
 
 /** A section's header: its name (Comma design 01) and a chevron in both states, so it reads as foldable; a tap folds it, and a folded section shows its unread count. */
 export function SectionHeader({ section, onToggle }: { section: Extract<HomeItem<unknown>, { kind: 'section' }>; onToggle: () => void }) {
@@ -15,7 +16,7 @@ export function SectionHeader({ section, onToggle }: { section: Extract<HomeItem
         : <Symbol name="chevron.down" size={11} color={colors.tertiary} web={<ChevronDown size={14} color={colors.tertiary} strokeWidth={2.4} />} />}
       <View style={styles.fill} />
       {section.collapsed && section.unread > 0 ? (
-        <View style={styles.unread} accessibilityLabel={`${section.unread} 条未读`}><Text style={styles.unreadText}>{section.unread > 99 ? '99+' : section.unread}</Text></View>
+        <View style={styles.unread} accessibilityLabel={mobileMessages.MobileCore.unreadCount.replace('{count}', String(section.unread))}><Text style={styles.unreadText}>{section.unread > 99 ? '99+' : section.unread}</Text></View>
       ) : null}
     </Pressable>
   )

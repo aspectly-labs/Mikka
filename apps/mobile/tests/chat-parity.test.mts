@@ -6,6 +6,7 @@ import { cardAnchor, cardHeight, rowWindow } from '../features/chat/model/chat-a
 import { dismisses, fittedRect, frameSize, galleryRows, layerPose, loadedAspect, pageTurn, stackCard, throwsCard } from '../features/chat/model/chat-image-geometry.ts'
 import { menuTasks } from '../features/chat/model/chat-header-menu.ts'
 import type { ChatItem, Task } from '../lib/types.ts'
+import { mobileLocale } from '../lib/messages.ts'
 
 test('a selection capsule sends a Markdown quote of the selection, then its instruction', () => {
   assert.equal(quotedMessage('第一行\n第二行', '解释这段。'), '> 第一行\n> 第二行\n\n解释这段。')
@@ -43,7 +44,7 @@ test('a pending message is queued while the bot works, once an idle bot would ha
 test('a queued message previews its words without the quote, or its files', () => {
   assert.equal(queuePreview({ text: '> 引用\n\n回答  这个' }), '回答 这个')
   assert.equal(queuePreview({ text: '[mikka-file:0e8a1c52-6f1b-4c1f-9a51-3b0f8a3c2d10:a.pdf]' }), 'a.pdf')
-  assert.equal(queuePreview({ text: '', images: 2 }), '照片')
+  assert.equal(queuePreview({ text: '', images: 2 }), mobileLocale === 'zh-CN' ? '照片' : 'Photo')
 })
 
 test('the attachment card grows from the plus corner and its rows come in from the bottom', () => {

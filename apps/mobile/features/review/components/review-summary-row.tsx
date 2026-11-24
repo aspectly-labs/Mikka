@@ -3,6 +3,7 @@ import { ChevronRight, GitPullRequest, GitMerge, TriangleAlert } from 'lucide-re
 import { Text } from '@/components/Text'
 import { colors } from '@/lib/theme'
 import { isMerged, summaryLabel, summaryParts, type ReviewSummary } from '../model/review'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * A code task's one-line summary (R0, R2a): 「PR #1471 · 3 个文件 +42 −7 · ⚠ 1 项检查失败 ›」, or 「3 个文件 +42 −7 ·
@@ -14,11 +15,11 @@ export function ReviewSummaryRow({ summary, onPress, compact, short }: { summary
   const p = summaryParts(summary, short)
   const merged = isMerged(summary)
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`审阅，${summaryLabel(summary)}`} onPress={onPress} hitSlop={4}
+    <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.MobileCore.review.rowLabel.replace('{summary}', () => summaryLabel(summary))} onPress={onPress} hitSlop={4}
       style={({ pressed }) => [styles.row, compact && styles.compact, pressed && { opacity: 0.6 }]}>
       {summary.pr ? (merged ? <GitMerge size={16} color={colors.merged} strokeWidth={2} /> : <GitPullRequest size={16} color={colors.prOpen} strokeWidth={2} />) : null}
       <View style={styles.words}>
-        {!p.pr && !p.files && !p.additions && !p.status && <Text style={styles.text}>审阅</Text>}
+        {!p.pr && !p.files && !p.additions && !p.status && <Text style={styles.text}>{mobileMessages.ReviewCopy.review}</Text>}
         {p.pr ? <><Text style={styles.text}>{p.pr}</Text><Text style={styles.dot}>·</Text></> : null}
         {p.files ? <Text style={styles.text}>{p.files}</Text> : null}
         {p.additions !== null && <Text style={[styles.text, { color: colors.success }]}>{p.additions}</Text>}

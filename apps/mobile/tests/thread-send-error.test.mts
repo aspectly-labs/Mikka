@@ -2,15 +2,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { threadSendErrorLine } from '../lib/thread-send-error.ts'
+import { mobileLocale } from '../lib/messages.ts'
+
+const zh = mobileLocale === 'zh-CN'
 
 test('a refusal the person can act on is named', () => {
-  assert.equal(threadSendErrorLine('threadReplaced'), '这个任务已经换到新的线程，请在那里发送。')
-  assert.equal(threadSendErrorLine('threadCannotContinue'), '这个线程没有关联任务，无法再次运行。')
+  assert.equal(threadSendErrorLine('threadReplaced'), zh ? '这个任务已经换到新的线程，请在那里发送。' : 'A newer thread took this task over. Send it there.')
+  assert.equal(threadSendErrorLine('threadCannotContinue'), zh ? '这个线程没有关联任务，无法再次运行。' : 'This thread works on no task, so it can’t run again.')
 })
 
 test('no code, or one the app does not know, keeps the retry line', () => {
-  assert.equal(threadSendErrorLine(null), '没发出去，再试一次。')
-  assert.equal(threadSendErrorLine('somethingNew'), '没发出去，再试一次。')
+  assert.equal(threadSendErrorLine(null), zh ? '没发出去，再试一次。' : 'Didn’t send. Try again.')
+  assert.equal(threadSendErrorLine('somethingNew'), zh ? '没发出去，再试一次。' : 'Didn’t send. Try again.')
 })
 
 import { createConversationJournal } from '../lib/conversation-journal'

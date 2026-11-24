@@ -1,7 +1,9 @@
-import { mobileMessages } from '../lib/messages.ts'
+import { mobileLocale, mobileMessages } from '../lib/messages.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { groupTag, groupTitle, modelDisplayName, modelMenuLabel, modelSourceLabel, modelStatusLine, type ModelMenu } from '../lib/model-menu-view.ts'
+
+const zh = mobileLocale === 'zh-CN'
 
 const current: ModelMenu['current'] = { id: 'fixture', modelId: 'fixture-model', provider: 'claude', kind: 'subscription', chosen: true, available: false, availability: 'checking', credentialLabel: 'owner@example.test' }
 
@@ -17,7 +19,7 @@ test('model ids read as people write them', () => {
   }
 })
 test('a model that cannot run says so and offers 换模型', () => {
-  assert.deepEqual(modelStatusLine({ ...current, availability: undefined }), { line: '这个模型现在用不了', change: true })
+  assert.deepEqual(modelStatusLine({ ...current, availability: undefined }), { line: zh ? '这个模型现在用不了' : 'This model can’t be used right now', change: true })
 })
 test('same-plan accounts and API keys have distinguishable headings', () => {
   const first = groupTitle({ kind: 'subscription', provider: 'claude', plan: 'Max', credentialLabel: 'first@example.test', options: [] })
@@ -28,18 +30,18 @@ test('same-plan accounts and API keys have distinguishable headings', () => {
 test('a quota fallback names the selected key and its metered billing before sending', () => {
   const fallback: ModelMenu['current'] = { ...current, kind: 'apiKey', available: true, availability: 'available', credentialLabel: 'DeepSeek · ••••799e', fallback: 'quota', quota: { subscription: 'claude', plan: 'Max', resetsAt: null, fallback: { keyProvider: 'deepseek', keyName: 'DeepSeek', model: 'deepseek-chat' } } }
   assert.equal(modelMenuLabel(fallback), 'Fixture Model')
-  assert.match(modelStatusLine(fallback)?.line ?? '', /Claude Max.*额度用完.*799e.*API Key.*按 token 计费/)
+  assert.match(modelStatusLine(fallback)?.line ?? '', zh ? /Claude Max.*额度用完.*799e.*API Key.*按 token 计费/ : /Claude Max.*limit reached.*799e.*API key.*billed per token/)
   assert.equal(modelStatusLine(fallback)?.change, false)
 })
 test('a preference fallback keeps its credential and metered billing in the notice', () => {
   const fallback: ModelMenu['current'] = { ...current, kind: 'apiKey', available: true, availability: 'available', credentialLabel: 'DeepSeek · ••••799e', fallback: 'preference' }
   assert.equal(modelMenuLabel(fallback), 'Fixture Model')
-  assert.match(modelStatusLine(fallback)?.line ?? '', /下一条改用 Fixture Model.*799e.*按量/)
+  assert.match(modelStatusLine(fallback)?.line ?? '', zh ? /下一条改用 Fixture Model.*799e.*按量/ : /Next message uses Fixture Model.*799e.*Pay as you go/)
 })
 test('a used-up subscription without a fallback never claims it switched to a paid key', () => {
   const exhausted: ModelMenu['current'] = { ...current, availability: 'exhausted', quota: { subscription: 'claude', plan: 'Max', resetsAt: null, fallback: null } }
-  assert.match(modelStatusLine(exhausted)?.line ?? '', /额度用完/)
-  assert.doesNotMatch(modelStatusLine(exhausted)?.line ?? '', /按 token 计费|改用/)
+  assert.match(modelStatusLine(exhausted)?.line ?? '', zh ? /额度用完/ : /limit reached/)
+  assert.doesNotMatch(modelStatusLine(exhausted)?.line ?? '', zh ? /按 token 计费|改用/ : /billed per token|uses/)
   assert.equal(modelStatusLine(exhausted)?.change, true)
 })
 

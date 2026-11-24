@@ -4,6 +4,7 @@ import { WifiOff } from 'lucide-react-native'
 import { Symbol } from '@/components/Symbol'
 import { Text } from '@/components/Text'
 import { colors, lift } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /** The phone has no connection (iMessage, Slack): what is sent now will not arrive. Unknown counts as online. */
 export function useOffline(): boolean {
@@ -19,7 +20,7 @@ export function OfflineBanner({ top }: { top: number }) {
     <View pointerEvents="none" style={[styles.wrap, { top }]} accessibilityRole="alert" accessibilityLiveRegion="polite">
       <View style={styles.pill}>
         <Symbol name="wifi.slash" size={13} color={colors.secondary} web={<WifiOff size={14} color={colors.secondary} strokeWidth={2.2} />} />
-        <Text style={styles.text}>没有网络</Text>
+        <Text style={styles.text}>{mobileMessages.DesktopRenderer.networkUnavailable}</Text>
       </View>
     </View>
   )

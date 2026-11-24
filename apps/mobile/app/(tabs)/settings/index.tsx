@@ -64,7 +64,7 @@ export default function SettingsScreen() {
   // Signing out asks first, as the system's action sheet (usability review #6).
   const confirmSignOut = () => {
     if (Platform.OS !== 'ios') return void signOut()
-    ActionSheetIOS.showActionSheetWithOptions({ options: ['退出登录', '取消'], destructiveButtonIndex: 0, cancelButtonIndex: 1 }, index => { if (index === 0) void signOut() })
+    ActionSheetIOS.showActionSheetWithOptions({ options: [messages.Nav.signOut, messages.Common.cancel], destructiveButtonIndex: 0, cancelButtonIndex: 1 }, index => { if (index === 0) void signOut() })
   }
   return (
     <View style={{ flex: 1, backgroundColor: colors.grouped }}>
@@ -85,29 +85,29 @@ export default function SettingsScreen() {
             <Row label={serverCopy.accounts} value={currentAccount().server.name} onPress={() => router.push(settingsPath('accounts'))} />
           </Group>
           <Group>
-            <Row icon={icon('briefcase.fill', BriefcaseBusiness, '#8E8E93')} label="工作区" value={data.workspace.name} onPress={() => router.push(settingsPath('workspaces'))} />
+            <Row icon={icon('briefcase.fill', BriefcaseBusiness, '#8E8E93')} label={messages.Settings.groups.workspace} value={data.workspace.name} onPress={() => router.push(settingsPath('workspaces'))} />
             {data.organizationSettingsAvailable && <Row label={messages.MobileCore.organizationOnWeb} onPress={() => void openOnWeb(mobileOrganizationPath(data.workspace.id), { confirmAccount: true })} />}
             {data.personalFilesAvailable && <Row icon={icon('folder.fill', Folder, '#007AFF')} label={messages.MobileCore.personalFilesOnWeb} onPress={() => void openOnWeb(mobileFilesPath(data.workspace.id), { confirmAccount: true })} />}
             {data.billingScope && <Row label={messages.Billing.management.billingEntry} onPress={() => router.push(settingsPath('billing'))} />}
           </Group>
           <Group>
             <Row icon={icon('bell.fill', Bell, '#FF3B30')} label={messages.Settings.sections.notifications.title} value={data.preferences.proactive ? messages.MobileCore.notifications.on : messages.MobileCore.notifications.off} onPress={() => router.push(settingsPath('notifications'))} />
-            <Row icon={icon('book.fill', BookOpen, '#AF52DE')} label="记忆" onPress={() => router.push(settingsPath('memory'))} />
-            <Row icon={icon('puzzlepiece.extension.fill', Blocks, '#34C759')} label="已连接的 App" value={connections.error ? '连接状态未知' : connections.snapshot ? String(connections.snapshot.toolkits.length) : undefined} onPress={() => router.push(settingsPath('plugins'))} />
+            <Row icon={icon('book.fill', BookOpen, '#AF52DE')} label={messages.Settings.sections.memory.title} onPress={() => router.push(settingsPath('memory'))} />
+            <Row icon={icon('puzzlepiece.extension.fill', Blocks, '#34C759')} label={messages.MobileCore.settings.connectedApps} value={connections.error ? messages.Plugins.state.statusUnknown : connections.snapshot ? String(connections.snapshot.toolkits.length) : undefined} onPress={() => router.push(settingsPath('plugins'))} />
           </Group>
           <Group>
-            <Row icon={icon('globe', Globe, '#5856D6')} label="语言" value={messages.MobileCore.currentLanguage} trailing={Platform.OS === 'web' ? null : <Symbol name="arrow.up.right" size={13} color={colors.tertiary} web={<ArrowUpRight size={16} color={colors.tertiary} strokeWidth={2} />} />}
+            <Row icon={icon('globe', Globe, '#5856D6')} label={messages.MobileCore.settings.language} value={messages.MobileCore.currentLanguage} trailing={Platform.OS === 'web' ? null : <Symbol name="arrow.up.right" size={13} color={colors.tertiary} web={<ArrowUpRight size={16} color={colors.tertiary} strokeWidth={2} />} />}
               onPress={Platform.OS === 'web' ? undefined : () => { void Linking.openSettings() }} />
-            <Row icon={icon('info.circle.fill', Info, '#8E8E93')} label="版本" value={versionLabel()} trailing={null} />
+            <Row icon={icon('info.circle.fill', Info, '#8E8E93')} label={messages.ServerStatus.version} value={versionLabel()} trailing={null} />
             <Row icon={icon('hand.raised.fill', Hand, '#5856D6')} label={messages.Common.privacyPolicy} onPress={() => void openPrivacyPolicy()} />
           </Group>
           {Platform.OS !== 'ios' ? null : <Group>
             <ToggleRow label={messages.MobileCore.sidebarTrial} value={sidebarTrial} onChange={setSidebarTrial} />
           </Group>}
           <Group>
-            <Row label={signingOut ? "正在退出登录" : "退出登录"} disabled={signingOut} destructive onPress={confirmSignOut} />
+            <Row label={signingOut ? messages.MobileCore.settings.signingOut : messages.Nav.signOut} disabled={signingOut} destructive onPress={confirmSignOut} />
           </Group>
-          {signOutFailed ? <View accessibilityRole="alert" style={{ gap: 10 }}><Text style={{ color: colors.danger }}>退出登录未完成，请重试。</Text><CardButton label="重试退出登录" busy={signingOut} onPress={() => void signOut()} /></View> : null}
+          {signOutFailed ? <View accessibilityRole="alert" style={{ gap: 10 }}><Text style={{ color: colors.danger }}>{messages.MobileCore.settings.signOutFailed}</Text><CardButton label={messages.MobileCore.settings.retrySignOut} busy={signingOut} onPress={() => void signOut()} /></View> : null}
         </ScrollView>
       )}
     </View>
