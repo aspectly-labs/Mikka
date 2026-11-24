@@ -207,6 +207,12 @@ product regression. Main pushes and merge groups continue normal full coverage.
   reruns cannot overwrite an existing immutable source artifact. Malformed
   provenance fails closed even on manual dispatch. Tests verify this contract;
   they do not prove that an Expo production update or a device install occurred.
+- `mobile-next-ios.yml` (dispatch only, from main) builds the new iOS app from
+  `mikka-hosted-ui` `mobile-next` at an exact `overlay_sha` on `macos-26`, signs it
+  with Xcode's automatic signing and the existing App Store Connect key, and uploads
+  it to TestFlight. It uses no EAS build and no new secret; its runtime version
+  (`mikka-next-*`) and update channel (`next`) keep it apart from today's app and
+  `mobile-update.yml`.
 
 ## Cloud worker template release
 
@@ -401,7 +407,7 @@ Public and fork PRs build without the private repository, and that build only
 has to compile; no workflow screenshots it. (`community-settings-ui.yml`,
 which captured that build's settings pages, was removed on 2026-11-08.)
 
-`cloudflare-api-image.yml` and `desktop-release.yml` alone read the private UI, with the
+`cloudflare-api-image.yml`, `desktop-release.yml` and `mobile-next-ios.yml` alone read the private UI, with the
 GitHub read-only deploy key `HOSTED_UI_READ_KEY` on `alexj11324/mikka-hosted-ui` only. They set
 `MIKKA_UI_OVERLAY_DIR` and record `MIKKA_UI_OVERLAY_SHA`; public and fork PRs still build with the
 default slots without either variable or any private secret.
