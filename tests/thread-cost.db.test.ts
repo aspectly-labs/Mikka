@@ -126,16 +126,16 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
   })
 
   await t.test('the summary RPC returns the totals to the owner only', async () => {
-    const { getThreadSummary } = await import('../app/actions/agents')
+    // The fixture's module hooks install at its own import — after them, not before.
     const { withActivitySession } = await import('./fixtures/activity-runtime.mjs')
+    const { getThreadSummary } = await import('../app/actions/agents')
     const { seedIssue } = await import('./support/workspace-admin-db')
     const issue = await seedIssue(pool, owner, workspace.id)
     await pool.query('UPDATE agent_runs SET "issueId"=$2 WHERE id=$1', [root, issue])
     const as = <T>(user: string, work: () => Promise<T>) => withActivitySession(user, work, workspace.id) as Promise<T>
     const summary = await as(owner, () => getThreadSummary(issue, root))
     assert.deepEqual(summary?.cost?.credits, { microUsd: 1_200 + 800 + 2_000 + 50 + 8_334 + 12_500, unpricedReceipts: 3 })
-    // A teammate reaches no totals: a read refusal and an unreadable thread are both a miss.
-    const theirs = await as(teammate, () => getThreadSummary(issue, root)).catch((error: unknown) => ({ error: (error as { code?: string })?.code }))
-    assert.ok(theirs === null || (theirs as { error?: string }).error !== undefined, 'a teammate reads no thread cost')
+    // The thread's userId fence answers null to a workspace teammate.
+    assert.equal(await as(teammate, () => getThreadSummary(issue, root)), null)
   })
 })
