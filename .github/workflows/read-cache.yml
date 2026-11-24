@@ -19,6 +19,10 @@ jobs:
   read-cache:
     name: Read cache API and CLI
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      # Only to read a queued pull request's branch name, to pick its paired private UI branch.
+      pull-requests: read
     timeout-minutes: 20
     services:
       postgres:
@@ -68,9 +72,12 @@ jobs:
           branch="$PR_REF"
           number=$(printf '%s' "$QUEUE_REF" | sed -n 's#^refs/heads/gh-readonly-queue/[^/]*/pr-\([0-9][0-9]*\)-.*#\1#p')
           if [ -z "$branch" ] && [ -n "$number" ]; then
-            branch=$(curl -fsS --max-time 20 -H "authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/$REPOSITORY/pulls/$number" | jq -r '.head.ref // empty') || branch=
+            # A queued PR whose branch cannot be read fails here, rather than being accepted against the wrong UI.
+            branch=$(curl -fsS --retry 3 --max-time 20 -H "authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/$REPOSITORY/pulls/$number" | jq -r '.head.ref // empty')
+            [ -n "$branch" ] || { echo "::error::Could not read the queued pull request's branch"; exit 1; }
           fi
-          if ! printf '%s' "$branch" | grep -Eq '^[A-Za-z0-9._/-]{1,200}$'; then branch=main; fi
+          [ -n "$branch" ] || branch=main
+          printf '%s' "$branch" | grep -Eq '^[A-Za-z0-9._/-]{1,200}$' || { echo "::error::Unexpected branch name"; exit 1; }
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "Private UI branch: $branch (main if no such branch)"
       - name: Check out the paired private UI branch
@@ -98,6 +105,7 @@ jobs:
           ffmpeg-github-token: ${{ github.token }}
       - name: Install private UI runtime dependencies without license scripts
         run: |
+          echo "Accepted against private UI revision $(git -C .hosted-ui rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
           if ! pnpm --dir .hosted-ui install --ignore-workspace --prod --ignore-scripts --frozen-lockfile > "$RUNNER_TEMP/private-ui-install.log" 2>&1; then
             echo "::error::Private UI dependency installation failed; private diagnostics withheld."
             exit 1

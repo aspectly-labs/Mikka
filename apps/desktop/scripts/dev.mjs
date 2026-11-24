@@ -9,6 +9,7 @@ import { cp, mkdir, readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildRenderer } from './build-renderer.mjs'
+import { uiOverlay } from '../../../lib/ui-overlay.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'))
@@ -83,10 +84,10 @@ async function rebuildRenderer() {
   }
 }
 const repository = resolve(root, '../..')
-// The interface lives in the hosted checkout (.hosted-ui/, docs/ui-overlay.md); without it the renderer is headless and
-// only the public runtime's folders change what it builds.
-const checkout = resolve(repository, '.hosted-ui')
-const checkoutFolders = existsSync(checkout)
+// The interface lives in the checkout buildRenderer compiles (lib/ui-overlay.mjs: MIKKA_UI_OVERLAY_DIR); without one
+// the renderer is headless and only the public runtime's folders change what it builds.
+const checkout = uiOverlay(repository).dir
+const checkoutFolders = checkout
   ? readdirSync(checkout, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules').map(entry => resolve(checkout, entry.name))
   : []
 const paths = [...['app', 'lib', 'messages', 'i18n', 'public', 'packages/protocol/src', 'apps/desktop/src/renderer'].map(path => resolve(repository, path)), ...checkoutFolders]
