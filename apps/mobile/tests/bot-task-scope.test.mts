@@ -16,7 +16,7 @@ const none = () => null
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL('../' + path, import.meta.url).href, { namedExports })
 mock.module('expo-router', { namedExports: { useLocalSearchParams: () => ({ id: route }), useRouter: () => ({}) } })
 mock.module('react-native', { namedExports: {
-  StyleSheet: { create: (styles: unknown) => styles }, View: 'div', Pressable: none, RefreshControl: none,
+  StyleSheet: { create: (styles: unknown) => styles }, View: 'div', ScrollView: 'div', Pressable: none, RefreshControl: none,
   FlatList: ({ data }: { data: { kind: string; task?: { id: string } }[] }) => data.flatMap(row => row.task ? [row.task.id + ' '] : []).join(''),
 } })
 mock.module('react-native-safe-area-context', { namedExports: { useSafeAreaInsets: () => ({ bottom: 0 }) } })

@@ -9408,7 +9408,8 @@
     "openedPullRequest": "Opened PR #{number}",
     "allTasks": "All tasks",
     "lastThreadStatus": "Last status: {status}",
-    "messageThread": "Message this thread"
+    "messageThread": "Message this thread",
+    "currentLanguage": "English"
   },
   "HostedInbox": {
     "writeError": "Could not confirm the inbox change. Refresh and try again.",
