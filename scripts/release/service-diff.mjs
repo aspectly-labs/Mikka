@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { migrationIdentityVersion } from './migration-inputs.mjs'
 import { validateHistoricalReleaseManifest, validateReleaseManifest } from './service-builds.mjs'
 
 // Deploy dependencies before their callers. Migrations are a separate step
@@ -48,7 +49,7 @@ function compareServices(current, next) {
     deploymentOrder: changedServices,
     services,
     migrations: {
-      changed: !current || current.migrations.version !== 2 || current.migrations.contextDigest !== next.migrations.contextDigest,
+      changed: !current || current.migrations.version !== migrationIdentityVersion || current.migrations.contextDigest !== next.migrations.contextDigest,
       before: current?.migrations ?? null,
       after: next.migrations,
     },

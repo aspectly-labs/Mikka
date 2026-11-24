@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { assertInputCoverage, buildContexts, readBuildInputs, releaseManifest, serviceDigest, serviceNames, validateHistoricalReleaseManifest, validateReleaseManifest } from './service-builds.mjs'
-import { migrationRoots, migrationToolchain } from './migration-inputs.mjs'
+import { buildMigrationContext, migrationRoots, readLockfile, validateHistoricalMigrations } from './migration-inputs.mjs'
 import { planServiceRelease } from './service-diff.mjs'
 
 const firstSource = 'a'.repeat(40), secondSource = 'b'.repeat(40)
@@ -39,11 +40,126 @@ async function fixture(t) {
   return { directory, put, git, inputs }
 }
 
+const runtime = { imports: [], lockfileVersion: '9.0', nodeMajor: 24, packages: [] }
 function plan(contexts = {}) {
   return { version: 1, sourceCommit: firstSource, overlayCommit: firstSource,
     services: Object.fromEntries(serviceNames.map(name => [name, { kind: ['web', 'world'].includes(name) ? 'worker' : 'container', contextDigest: contexts[name] ?? digest('1') }])),
-    migrations: { version: 2, contextDigest: digest('2'), files: ['drizzle/202611200001_add_column.sql'],
-      execution: { entrypoint: 'scripts/migrate.mjs', contextDigest: digest('6'), files: [...migrationRoots, ...migrationToolchain].sort() } } }
+    migrations: { version: 3, contextDigest: digest('2'), files: ['drizzle/202611200001_add_column.sql'],
+      execution: { entrypoint: 'scripts/migrate.mjs', contextDigest: digest('6'), files: [...migrationRoots].sort(), runtime } } }
+}
+
+// The same lockfile and module fixture is in the private verifier's tests;
+// both implementations must produce the expected digests below byte for byte.
+const integrity = key => 'sha512-' + createHash('sha512').update(key).digest('base64')
+function lockfile({ pg = '8.23.1', pgRef = pg, protocol = '1.16.1', frontend = '', packages = '', snapshots = '', integrities = {} } = {}) {
+  const sum = key => integrities[key] ?? integrity(key)
+  return `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      pg:
+        specifier: ${pg}
+        version: ${pgRef}
+
+  apps/frontend:
+    dependencies:
+      react:
+        specifier: 19.3.1
+        version: 19.3.1
+${frontend}
+packages:
+
+  pg-cloudflare@1.4.1:
+    resolution: {integrity: ${sum('pg-cloudflare@1.4.1')}}
+
+  pg-pool@3.14.0:
+    resolution: {integrity: ${sum('pg-pool@3.14.0')}}
+    peerDependencies:
+      pg: '>=8.0'
+
+  pg-protocol@${protocol}:
+    resolution: {integrity: ${sum('pg-protocol@' + protocol)}}
+
+  pg@${pg}:
+    resolution: {integrity: ${sum('pg@' + pg)}}
+    engines: {node: '>= 16.0.0'}
+
+  react@19.3.1:
+    resolution: {integrity: ${sum('react@19.3.1')}}
+    engines: {node: '>=0.10.0'}
+${packages}
+snapshots:
+
+  pg-cloudflare@1.4.1:
+    optional: true
+
+  pg-pool@3.14.0(pg@${pgRef}):
+    dependencies:
+      pg: ${pgRef}
+
+  pg-protocol@${protocol}: {}
+
+  pg@${pgRef}:
+    dependencies:
+      pg-pool: 3.14.0(pg@${pgRef})
+      pg-protocol: ${protocol}
+    optionalDependencies:
+      pg-cloudflare: 1.4.1
+
+  react@19.3.1: {}
+${snapshots}`
+}
+const unrelatedDependency = {
+  frontend: `      virtua:
+        specifier: 0.48.6
+        version: 0.48.6(react@19.3.1)
+`,
+  packages: `
+  virtua@0.48.6:
+    resolution: {integrity: ${integrity('virtua@0.48.6')}}
+    peerDependencies:
+      react: '>=16.14.0'
+`,
+  snapshots: `
+  virtua@0.48.6(react@19.3.1):
+    dependencies:
+      react: 19.3.1
+`,
+}
+const runtimeFixture = {
+  '.node-version': '24\n',
+  'package.json': '{"type":"module","packageManager":"pnpm@10.34.3","dependencies":{"pg":"8.23.1"}}\n',
+  'pnpm-lock.yaml': lockfile(),
+  'pnpm-workspace.yaml': 'packages: []\n',
+  'scripts/migrate.mjs': "import { writeFileSync } from 'node:fs';\nimport './migration-helper.mjs';\nwriteFileSync(new URL('../executed', import.meta.url), 'candidate evaluated');\n",
+  // Built from parts so scripts/run-db-tests.mjs does not take this fixture text for a real pg import.
+  'scripts/migration-helper.mjs': ['import pg from', "'pg';", '\nexport const pool = pg.Pool;\n'].join(' ').replace("'pg'; \n", "'pg';\n"),
+  'scripts/check-migrations.mjs': 'export const checkMigrations = () => [];\n',
+  'scripts/migration-steps.mjs': 'export const headerLines = () => [];\n',
+  'drizzle/0001_base.sql': 'CREATE TABLE example (id integer);\n',
+}
+const crossCheck = {
+  execution: 'sha256:cc6f0a2a62f60f41d07d36486bebf4d7857627f48a42596fa4c6259d57387e17',
+  migrations: 'sha256:2312bd5ed77c23a110ce43d9ca68bd18c1e895e8e576f1a9d3c9ae9b73d8a696',
+}
+
+async function runtimeContext(t) {
+  const directory = await mkdtemp(join(tmpdir(), 'mikka-migration-runtime-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const put = async (path, value) => { await mkdir(dirname(join(directory, path)), { recursive: true }); await writeFile(join(directory, path), value) }
+  for (const [path, value] of Object.entries(runtimeFixture)) await put(path, value)
+  const context = async () => {
+    const files = execFileSync('git', ['ls-files', '-z', '--cached', '--others'], { cwd: directory, encoding: 'utf8' }).split('\0').filter(Boolean)
+    return buildMigrationContext({ directory, files, sqlFiles: files.filter(file => file.endsWith('.sql')).sort() })
+  }
+  execFileSync('git', ['init', '--quiet'], { cwd: directory })
+  return { directory, put, context }
 }
 
 function publications(context) {
@@ -119,21 +235,17 @@ test('helper-only changes bind static and literal dynamic migration code without
   }
 })
 
-test('migration identity includes dependency declarations, patches, package-manager configuration and executable modes', async t => {
+test('migration identity includes package-manager configuration, install hooks, the Node major and executable modes', async t => {
   const { directory, put, git } = await fixture(t)
-  await put('patches/pg.patch', 'reviewed patch\n')
   await put('.npmrc', 'ignore-scripts=true\n')
-  await put('packages/runtime/package.json', '{"private":true}\n')
   await put('.pnpmfile.mjs', "import './scripts/migration-hook.mjs'\n")
   await put('scripts/migration-hook.mjs', 'export const hook = 1\n')
   git(['add', '.'])
   let before = await buildContexts({ directory, overlayCommit: firstSource })
-  for (const file of [...migrationToolchain, 'patches/pg.patch', '.npmrc', 'packages/runtime/package.json', '.pnpmfile.mjs', 'scripts/migration-hook.mjs']) {
-    assert.ok(before.migrations.execution.files.includes(file), file)
+  for (const file of ['.npmrc', '.pnpmfile.mjs', 'scripts/migration-hook.mjs']) assert.ok(before.migrations.execution.files.includes(file), file)
+  for (const file of ['.npmrc', '.pnpmfile.mjs', 'scripts/migration-hook.mjs', '.node-version']) {
     const original = await readFile(join(directory, file), 'utf8')
-    await put(file, file === '.node-version' ? '26\n' : file.endsWith('.json')
-      ? JSON.stringify({ ...JSON.parse(original), version: '2.0.0' }) + '\n'
-      : original + (file.endsWith('.mjs') ? '// changed execution input\n' : '# changed toolchain input\n'))
+    await put(file, file === '.node-version' ? '26\n' : original + (file.endsWith('.mjs') ? '// changed execution input\n' : '# changed toolchain input\n'))
     const after = await buildContexts({ directory, overlayCommit: firstSource })
     assert.notEqual(after.migrations.execution.contextDigest, before.migrations.execution.contextDigest, file)
     assert.notEqual(after.migrations.contextDigest, before.migrations.contextDigest, file)
@@ -144,6 +256,99 @@ test('migration identity includes dependency declarations, patches, package-mana
   const executable = await buildContexts({ directory, overlayCommit: firstSource })
   assert.notEqual(executable.migrations.execution.contextDigest, before.migrations.execution.contextDigest)
   assert.notEqual(executable.migrations.contextDigest, before.migrations.contextDigest)
+})
+
+test('whole manifests, the workspace file, patches and unrelated lockfile entries are not migration inputs', async t => {
+  const { directory, put, git } = await fixture(t)
+  const before = await buildContexts({ directory, overlayCommit: firstSource })
+  assert.deepEqual(before.migrations.execution.files, [...migrationRoots, 'scripts/migration-backfill.mjs',
+    'scripts/migration-helper.mjs', 'scripts/migration-nested.mjs'].sort())
+  await put('package.json', '{"private":true,"dependencies":{"virtua":"0.48.6"}}\n')
+  await put('pnpm-workspace.yaml', "packages: ['apps/*']\n")
+  await put('apps/frontend/package.json', '{"name":"frontend","dependencies":{"virtua":"0.48.6"}}\n')
+  await put('patches/virtua@0.48.6.patch', 'reviewed UI patch\n')
+  await put('pnpm-lock.yaml', 'lockfileVersion: 9.0\n\npatchedDependencies:\n  virtua@0.48.6:\n    hash: abc\n    path: patches/virtua@0.48.6.patch\n')
+  await put('.node-version', '24.11.1\n')
+  git(['add', '.'])
+  const after = await buildContexts({ directory, overlayCommit: firstSource })
+  assert.deepEqual(after.migrations, before.migrations)
+})
+
+test('an unrelated UI dependency keeps the identity while any change to what pg installs changes it', async t => {
+  const { put, context } = await runtimeContext(t)
+  const before = await context()
+  assert.deepEqual(before.execution.runtime.imports, [{ importer: '.', key: 'pg@8.23.1', name: 'pg' }])
+  assert.deepEqual(before.execution.runtime.packages.map(entry => entry.key),
+    ['pg-cloudflare@1.4.1', 'pg-pool@3.14.0(pg@8.23.1)', 'pg-protocol@1.16.1', 'pg@8.23.1'])
+  assert.equal(before.execution.runtime.nodeMajor, 24)
+  assert.equal(before.execution.contextDigest, crossCheck.execution)
+  assert.equal(before.contextDigest, crossCheck.migrations)
+
+  await put('pnpm-lock.yaml', lockfile(unrelatedDependency))
+  await put('apps/frontend/package.json', '{"name":"frontend","dependencies":{"react":"19.3.1","virtua":"0.48.6"}}\n')
+  await put('package.json', '{"type":"module","dependencies":{"pg":"8.23.1"},"devDependencies":{"@pierre/trees":"1.0.0"}}\n')
+  await put('.node-version', '24.11.1\n')
+  assert.deepEqual(await context(), before)
+
+  for (const [label, text] of [
+    ['pg version', lockfile({ pg: '8.23.2' })],
+    ['pg patch', lockfile({ pgRef: '8.23.1(patch_hash=4f2a)' })],
+    ['pg integrity', lockfile({ integrities: { 'pg@8.23.1': integrity('a different pg tarball') } })],
+    ['transitive version', lockfile({ protocol: '1.16.2' })],
+    ['transitive integrity', lockfile({ integrities: { 'pg-protocol@1.16.1': integrity('a different protocol tarball') } })],
+    ['optional transitive integrity', lockfile({ integrities: { 'pg-cloudflare@1.4.1': integrity('another') } })],
+  ]) {
+    await put('pnpm-lock.yaml', text)
+    const after = await context()
+    assert.notEqual(after.execution.contextDigest, before.execution.contextDigest, label)
+    assert.notEqual(after.contextDigest, before.contextDigest, label)
+  }
+  await put('pnpm-lock.yaml', lockfile())
+  await put('.node-version', '26\n')
+  assert.notEqual((await context()).execution.contextDigest, before.execution.contextDigest)
+  await put('.node-version', '24\n')
+  await put('scripts/migration-helper.mjs', runtimeFixture['scripts/migration-helper.mjs'] + 'export const changed = 1;\n')
+  assert.notEqual((await context()).execution.contextDigest, before.execution.contextDigest)
+})
+
+test('a migration package outside the registry, without integrity or outside the reviewed lockfile subset fails closed', async t => {
+  const { put, context } = await runtimeContext(t)
+  const base = lockfile()
+  for (const [label, text] of [
+    ['missing importer entry', base.replace('      pg:\n        specifier: 8.23.1\n        version: 8.23.1\n', '')],
+    ['workspace link', base.replace('version: 8.23.1\n\n  apps', 'version: link:packages/pg\n\n  apps')],
+    ['file dependency', base.replace('version: 8.23.1\n\n  apps', 'version: file:vendor/pg\n\n  apps')],
+    ['git dependency', base.replace('version: 8.23.1\n\n  apps', 'version: git+https://example.invalid/pg.git#abc\n\n  apps')],
+    ['tarball dependency', base.replace('version: 8.23.1\n\n  apps', 'version: https://example.invalid/pg.tgz\n\n  apps')],
+    ['tarball resolution', base.replace(`{integrity: ${integrity('pg@8.23.1')}}`, `{integrity: ${integrity('pg@8.23.1')}, tarball: https://example.invalid/pg.tgz}`)],
+    ['missing integrity', base.replace(`{integrity: ${integrity('pg-protocol@1.16.1')}}`, '{directory: vendor/pg-protocol}')],
+    ['weak integrity', base.replace(integrity('pg-protocol@1.16.1'), 'sha1-' + createHash('sha1').update('x').digest('base64'))],
+    ['missing transitive snapshot', base.replace('  pg-protocol@1.16.1: {}\n', '')],
+    ['missing transitive package', base.replace(`  pg-protocol@1.16.1:\n    resolution: {integrity: ${integrity('pg-protocol@1.16.1')}}\n`, '')],
+    ['unknown snapshot field', base.replace('  pg-protocol@1.16.1: {}', '  pg-protocol@1.16.1:\n    id: unreviewed')],
+    ['older lockfile', base.replace("lockfileVersion: '9.0'", "lockfileVersion: '6.0'")],
+    ['comment', base.replace('  pg-protocol@1.16.1: {}', '  pg-protocol@1.16.1: {} # note')],
+    ['anchor', base.replace('  pg-protocol@1.16.1: {}', '  pg-protocol@1.16.1: &protocol {}')],
+    ['tab', base.replace('  pg-protocol@1.16.1: {}', '\tpg-protocol@1.16.1: {}')],
+    ['duplicate key', base + '\n  pg-protocol@1.16.1: {}\n'],
+    ['double quotes', base.replace("lockfileVersion: '9.0'", 'lockfileVersion: "9.0"')],
+    ['carriage return', base.replaceAll('\n', '\r\n')],
+  ]) {
+    await put('pnpm-lock.yaml', text)
+    await assert.rejects(context(), /registry package|pnpm lockfile v9/, label)
+  }
+  await put('pnpm-lock.yaml', base)
+  await put('.node-version', 'lts/jod\n')
+  await assert.rejects(context(), /Node declaration/)
+})
+
+test('the lockfile reader returns YAML failsafe values and refuses constructs it does not model', () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(readLockfile(lockfile(unrelatedDependency)).snapshots['pg@8.23.1'])),
+    { dependencies: { 'pg-pool': '3.14.0(pg@8.23.1)', 'pg-protocol': '1.16.1' }, optionalDependencies: { 'pg-cloudflare': '1.4.1' } })
+  assert.deepEqual(JSON.parse(JSON.stringify(readLockfile("a:\n  - 'b'\n  - c\nd: [e, 'f, g']\n'h''i': {j: 'k: l', m: true}\n"))),
+    { a: ['b', 'c'], d: ['e', 'f, g'], "h'i": { j: 'k: l', m: 'true' } })
+  for (const text of ['a: |\n  b\n', 'a: *b\n', 'a: !tag b\n', 'a:\n', 'a: b\n   c: d\n', '- a\n', '---\na: b\n', 'a: {b: {c: d}}\n', 'a: b \n'])
+    assert.throws(() => readLockfile(text), /pnpm lockfile v9 subset/, JSON.stringify(text))
 })
 
 test('computed migration imports, missing files, undeclared external modules and import escapes fail closed', async t => {
@@ -213,14 +418,21 @@ test('migration execution inputs reject file and parent symlinks and an incomple
   await assert.rejects(buildContexts({ directory, inputs }), /complete source snapshot/)
 })
 
-test('the checked-in migration execution identity contains the actual runner, checker, helper closure and declared toolchain', async () => {
+test('the checked-in migration execution identity contains the actual runner, checker, helper closure and pg runtime', async () => {
   const context = await buildContexts()
-  for (const file of [...migrationRoots, ...migrationToolchain,
+  for (const file of [...migrationRoots,
     'scripts/bot-environment-backfill.mjs', 'scripts/task-workspace-evidence.mjs', 'scripts/preview-database-url.mjs',
-    'scripts/integration-migration-history.mjs', 'patches/@workflow__world-postgres@5.4.1.patch']) {
+    'scripts/integration-migration-history.mjs']) {
     assert.ok(context.migrations.execution.files.includes(file), file)
   }
-  assert.equal(context.migrations.version, 2)
+  for (const file of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.node-version', 'patches/@workflow__world-postgres@5.4.1.patch'])
+    assert.ok(!context.migrations.execution.files.includes(file), file)
+  assert.equal(context.migrations.version, 3)
+  const { runtime } = context.migrations.execution
+  assert.deepEqual(runtime.imports.map(entry => [entry.importer, entry.name]), [['.', 'pg']])
+  assert.ok(runtime.packages.some(entry => entry.key === runtime.imports[0].key))
+  assert.ok(!runtime.packages.some(entry => /^(?:virtua|react|next|@tiptap\/|@pierre\/)/.test(entry.key)))
+  assert.equal(runtime.nodeMajor, Number((await readFile(new URL('../../.node-version', import.meta.url), 'utf8')).trim().split('.')[0]))
   assert.deepEqual(context.migrations.execution.files, [...new Set(context.migrations.execution.files)].sort())
 })
 
@@ -289,31 +501,55 @@ test('a manifest rejects mutable image references, traversal, and forged artifac
   }
 })
 
-test('new releases require complete v2 migration identity while historical receipts remain unchanged', () => {
+test('new releases require complete v3 migration identity while v2 and older receipts remain readable', () => {
   const initial = plan(), release = releaseManifest(initial, publications(initial))
   const old = structuredClone(release)
   delete old.migrations.version
   delete old.migrations.execution
-  const original = structuredClone(old)
-  assert.equal(validateHistoricalReleaseManifest(old), old)
-  assert.throws(() => validateReleaseManifest(old), /execution identity v2/)
-  assert.throws(() => releaseManifest({ ...initial, migrations: old.migrations }, publications(initial)), /execution identity v2/)
-  const next = releaseManifest({ ...initial, sourceCommit: secondSource }, {}, old)
-  assert.equal(next.migrations.version, 2)
-  assert.deepEqual(old, original)
+  const v2 = structuredClone(release)
+  v2.migrations.version = 2
+  delete v2.migrations.execution.runtime
+  v2.migrations.execution.files = [...migrationRoots, '.node-version', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'].sort()
+  for (const historical of [old, v2]) {
+    const original = structuredClone(historical)
+    assert.equal(validateHistoricalReleaseManifest(historical), historical)
+    assert.throws(() => validateReleaseManifest(historical), /execution identity v3/)
+    assert.throws(() => releaseManifest({ ...initial, migrations: historical.migrations }, publications(initial)), /execution identity v3/)
+    const next = releaseManifest({ ...initial, sourceCommit: secondSource }, {}, historical)
+    assert.equal(next.migrations.version, 3)
+    assert.equal(planServiceRelease(historical, next).migrations.changed, true)
+    assert.deepEqual(historical, original)
+  }
+  assert.throws(() => validateHistoricalMigrations({ ...v2.migrations, execution: { ...v2.migrations.execution, files: [...migrationRoots].sort() } }))
+  const withPackages = structuredClone(release)
+  withPackages.migrations.execution.runtime = { imports: [{ importer: '.', key: 'pg@8.23.1', name: 'pg' }], lockfileVersion: '9.0', nodeMajor: 24,
+    packages: [{ dependencies: [['pg-protocol', 'pg-protocol@1.16.1']], integrity: integrity('pg@8.23.1'), key: 'pg@8.23.1', optionalDependencies: [] },
+      { dependencies: [], integrity: integrity('pg-protocol@1.16.1'), key: 'pg-protocol@1.16.1', optionalDependencies: [] }].sort((a, b) => a.key < b.key ? -1 : 1) }
+  assert.equal(validateReleaseManifest(withPackages), withPackages)
   for (const mutate of [
     value => { delete value.migrations.execution },
-    value => { value.migrations.version = 1 },
+    value => { value.migrations.version = 2 },
     value => { value.migrations.unknown = true },
     value => { value.migrations.execution.entrypoint = 'scripts/other.mjs' },
     value => { value.migrations.execution.files = [] },
     value => { value.migrations.execution.files.push('scripts/migrate.mjs') },
     value => { value.migrations.execution.files.reverse() },
-    value => { value.migrations.execution.files = value.migrations.execution.files.filter(file => file !== '.node-version') },
+    value => { value.migrations.execution.files = value.migrations.execution.files.filter(file => file !== 'scripts/migrate.mjs') },
     value => { value.migrations.execution.files.push('../private/token') },
+    value => { value.migrations.execution.files.push('pnpm-lock.yaml'); value.migrations.execution.files.sort() },
+    value => { delete value.migrations.execution.runtime },
+    value => { value.migrations.execution.runtime.nodeMajor = '24' },
+    value => { value.migrations.execution.runtime.lockfileVersion = '6.0' },
+    value => { value.migrations.execution.runtime.extra = true },
+    value => { value.migrations.execution.runtime.packages[0].integrity = 'sha1-abc=' },
+    value => { value.migrations.execution.runtime.packages.reverse() },
+    value => { value.migrations.execution.runtime.packages[0].dependencies.push(['ghost', 'ghost@1.0.0']) },
+    value => { value.migrations.execution.runtime.packages.push({ dependencies: [], integrity: integrity('virtua@0.48.6'), key: 'virtua@0.48.6', optionalDependencies: [] }) },
+    value => { value.migrations.execution.runtime.imports[0].name = 'virtua' },
+    value => { value.migrations.execution.runtime.imports[0].key = 'pg@9.0.0' },
     value => { value.migrations.files.push(value.migrations.files[0]) },
   ]) {
-    const altered = structuredClone(release); mutate(altered)
-    assert.throws(() => validateReleaseManifest(altered))
+    const altered = structuredClone(withPackages); mutate(altered)
+    assert.throws(() => validateReleaseManifest(altered), undefined, mutate.toString())
   }
 })
