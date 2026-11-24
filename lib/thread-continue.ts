@@ -232,6 +232,18 @@ async function continueThread(userId: string, text: string, source: Source,
     'SELECT "executionNote" FROM thread_reply_versions WHERE "sourceEventId"=$1 AND "userId"=$2 AND "workspaceId"=$3 AND "admissionRunId"=$4 AND text=$5',
     [sourceEventId,userId,run.workspaceId,run.id,text])).rows[0] : undefined
   if (delivery === 'version' && !version) throw new ActionFailureError('submissionConflict')
+  // A member whose saved choice names another owner's binding would queue a
+  // run that can only refuse at freeze (#3057): refuse the send up front with
+  // the same account-unavailable surface instead of a doomed attempt.
+  {
+    const settings = new (await import('@/lib/execution-settings')).ExecutionSettings(pool)
+    const settingsScope = { ownerId: userId, workspaceId: run.workspaceId }
+    const storedChoice = await settings.botModel(settingsScope, run.botId)
+    if (storedChoice && z.uuid().safeParse(storedChoice).success
+      && await settings.bindingHeldElsewhere(settingsScope, storedChoice)) {
+      throw new ActionFailureError('executionAccountUnavailable')
+    }
+  }
   const result = await dispatchToTask(userId, issueId, {
     note: text, requireContinuation: Boolean(modelChoice),
     ...(sourceEventId ? { expectedRunId: run.id } : {}),

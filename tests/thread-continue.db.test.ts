@@ -47,6 +47,7 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM model_order_entries WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM model_order_settings WHERE "ownerId" = ANY($1)', [users])
+    await pool.query('DELETE FROM bot_model_choices WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM repository_settings WHERE "userId" = ANY($1)', [users])
@@ -1219,6 +1220,19 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     // The source is history now: forking it again, or sending to it, is refused.
     await assert.rejects(forkThread(owner.id, owner.ws.id, { ...input, requestId: randomUUID() }), { code: 'threadReplaced' })
     await assert.rejects(sendThreadMessage(owner.id, source.runId, 'Again.'), { code: 'threadReplaced' })
+  })
+
+  await t.test('a member whose saved choice names another owner\'s binding is refused before a run queues', async () => {
+    const member = await person()
+    const initial = await steps.dispatchRun(member.id, { model: { harness: 'codex' as const }, issueId: member.issueId, repo: 'octo/repo', requestKey: `dispatch:${randomUUID()}` }, undefined, member.botId) as unknown as { runId: string }
+    await end(initial.runId, 'succeeded')
+    const { rows: [foreign] } = await pool.query('SELECT id FROM byos_bindings WHERE "ownerId"=$1', [a.id])
+    await pool.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId") VALUES ($1,$2,$3,$4)`, [member.id, member.ws.id, member.botId, foreign.id])
+    await assert.rejects(sendThreadMessage(member.id, initial.runId, 'Send it again.'), { code: 'executionAccountUnavailable' })
+    const { rows: [{ count }] } = await pool.query<{ count: string }>('SELECT count(*)::text AS count FROM agent_runs WHERE "userId"=$1', [member.id])
+    assert.equal(count, '1', 'the refusal happens before any continuation run is created')
+    await pool.query('DELETE FROM bot_model_choices WHERE "ownerId"=$1', [member.id])
+    assert.equal((await sendThreadMessage(member.id, initial.runId, 'Now on my own subscription.')).continued, true)
   })
 
   await t.test('a deleted thread takes no more messages until it is restored', async () => {
