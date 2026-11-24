@@ -6,6 +6,7 @@ import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution
 import { matchesRepositoryAdmission } from '../repository-admission'
 import { ComputerError } from '../computer/store'
 import { runChanged } from '../live/panels'
+import { jsonbSafeIntSql } from '../primitives/jsonb-predicates'
 import { openOwnedCloudflareTaskMachine, releaseOwnedCloudflareTaskMachine } from '../eve/cloudflare-task-bridge'
 import { finishThreadRegistration, prepareThreadRegistration } from './thread-registration'
 import { hostedSnapshot, verifiedMachineQuota, type TaskMachineActor } from './sponsored-task'
@@ -417,7 +418,7 @@ async function renewSponsoredMachine(pool: Pool, actor: TaskMachineActor, runId:
         'sponsoredUntil',((lifecycle->>'sponsoredUntil')::timestamptz+make_interval(secs=>$6::double precision/1000)),
         'sponsoredChunks',$7::int+1)
       WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND "operationId"=$5
-        AND COALESCE((lifecycle->>'sponsoredChunks')::int,1)=$7::int
+        AND COALESCE(${jsonbSafeIntSql('lifecycle', 'sponsoredChunks')},1)=$7::int
       RETURNING lifecycle->>'sponsoredUntil' AS until`,
     [runId, actor.userId, actor.workspaceId, row.epoch, row.operationId, MACHINE_CHUNK_MS, index],
   )

@@ -1,6 +1,7 @@
 import 'server-only'
 import { createHash, randomBytes } from 'node:crypto'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { jsonbSafeInt } from '../primitives/jsonb-predicates'
 import { db, pool, withDatabaseTransaction } from '@/lib/db'
 import type { CreatedArtifactShare } from '@mikka/protocol/artifact-share'
 import type { ShareVisibility } from '@mikka/protocol/settings'
@@ -176,7 +177,7 @@ const listColumns = { id: artifacts.id, kind: artifacts.kind, title: artifacts.t
 const madeBy = and(eq(agentRuns.id, artifacts.runId), eq(agentRuns.userId, artifacts.userId))
 const latestVersion = and(eq(artifactVersions.artifactId, artifacts.id), eq(artifactVersions.version, artifacts.latestVersion))
 /** The issue number as stored in its document; null when it has none. */
-const issueNumber = sql<number | null>`(coalesce(${issues.content}->'attrs'->'mikka', ${issues.content}->'attrs'->'orvilo')->>'number')::int`
+const issueNumber = jsonbSafeInt(sql`coalesce(${issues.content}->'attrs'->'mikka', ${issues.content}->'attrs'->'orvilo')`, 'number')
 
 /** Rows with their task key: only for tasks the person can still see. */
 async function withIssueKeys(reader: ArtifactReader, rows: (Omit<ArtifactListItem, 'issueKey' | 'updatedAt'> & { updatedAt: Date })[], access?: Awaited<ReturnType<typeof artifactReadAccess>>): Promise<ArtifactListItem[]> {

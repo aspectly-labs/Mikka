@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { WorkspaceError } from './workspace-error'
 import { reconcileSubscriptionModels, type ModelSettings } from './enabled-models-policy'
 import { modelDisplayName } from './model-display-name'
+import { jsonbFlagIsNotFalseSql } from './primitives/jsonb-predicates'
 
 type Scope = { ownerId: string; workspaceId: string }
 export type ModelSourceKind = 'subscription' | 'api_key' | 'hosted'
@@ -101,6 +102,6 @@ export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: st
 }
 
 export async function hostedModelEnabled(query: Pick<Pool | PoolClient, 'query'>, ownerId: string) {
-  const { rows: [row] } = await query.query<{ enabled: boolean }>(`SELECT COALESCE((to_jsonb(u)->>'hostedModelEnabled')::boolean,true) AS enabled FROM "user" u WHERE id=$1`, [ownerId])
+  const { rows: [row] } = await query.query<{ enabled: boolean }>(`SELECT ${jsonbFlagIsNotFalseSql('to_jsonb(u)', 'hostedModelEnabled')} AS enabled FROM "user" u WHERE id=$1`, [ownerId])
   return row?.enabled ?? true
 }

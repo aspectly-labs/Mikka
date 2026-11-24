@@ -1,6 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { sql } from 'drizzle-orm'
+import { jsonbSafeInt } from '../primitives/jsonb-predicates'
 import { db, pool, withDatabaseClient, withDatabaseTransaction } from '@/lib/db'
 import { inDatabaseTransaction } from '@/lib/db/request-scope'
 import { connectForCommitEffects } from '@/lib/db/commit-effects'
@@ -49,7 +50,7 @@ async function withReviewAuthority<T>(userId: string, source: Source | null, wor
   return workspaceDb.transaction(async workspace => {
     await requireWorkspace(workspace, hint.workspace_id, userId, true)
     const run = () => db.transaction(database => withDatabaseTransaction(database, async () => {
-      const { rows: [row] } = await database.execute<{ repository: string; pullNumber: number }>(sql`SELECT r.repository,(o.trigger->'event'->>'number')::integer AS "pullNumber"
+      const { rows: [row] } = await database.execute<{ repository: string; pullNumber: number | null }>(sql`SELECT r.repository,${jsonbSafeInt(sql.raw(`o.trigger->'event'`), 'number')} AS "pullNumber"
         FROM workspace_code_review_repositories r JOIN user_schedules s ON s.id=r."scheduleId"
         JOIN schedule_occurrences o ON o.schedule_id=s.id AND o.id=${stored.occurrenceId}::uuid
         JOIN coordinator_events e ON e.id=${source.id}::uuid AND e."userId"=${userId} AND e.kind='user_message'
@@ -61,7 +62,7 @@ async function withReviewAuthority<T>(userId: string, source: Source | null, wor
           AND e.payload->'schedule'->>'codeReview'='true' AND e.payload->>'submissionId'=o.id::text
           AND o.trigger->'event'->>'source'='github' AND o.trigger->'event'->>'repository'=r.repository
         FOR SHARE OF r,s,o,e,b`)
-      if (!row || !Number.isSafeInteger(row.pullNumber) || row.pullNumber <= 0) throw unavailable()
+      if (!row || typeof row.pullNumber !== 'number' || !Number.isSafeInteger(row.pullNumber) || row.pullNumber <= 0) throw unavailable()
       const { repositoryAvailable } = await import('@/lib/workspace-admin/bots')
       if (!await repositoryAvailable(hint.workspace_id, row.repository)) throw unavailable()
       const config = await codeReviewConfiguration(hint.workspace_id, database)

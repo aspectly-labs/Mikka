@@ -6,6 +6,7 @@ import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { diffSnapshot, reviewAnchor, taskReviewRef, WorkspaceReviewError, type DiffSnapshot } from '@mikka/protocol/coding-workspace-review'
 import { UNFINISHED_RUN_STATUSES } from '../../agent-run-statuses'
 import { reviewMasks } from '../diff/batch-store'
+import { jsonbSafeUuidSql } from '../../primitives/jsonb-predicates'
 import { associatedGitHubPull } from '../diff/github'
 import { captureDiffSnapshot, diffFile } from '../diff/service'
 import { latestDiffSnapshot, readDiffFilePage, readDiffSnapshot, readStoredDiffFile } from '../diff/store'
@@ -169,7 +170,7 @@ export async function readTaskReviewFile(input: TaskReviewHttpInput): Promise<Ta
     const snapshot = await readDiffSnapshot(tx, scope, context.snapshot.id), masks = await reviewMasks(actor, scope)
     const stored = await readStoredDiffFile(tx, scope, snapshot, query.path, masks[0]!)
     const { rows } = await tx.query<{ id: string; anchor: unknown; body: string; author: string; sentAt: Date }>(`SELECT * FROM (
-      SELECT DISTINCT ON (c->>'id') (c->>'id')::uuid AS id,c->'anchor' AS anchor,c->>'body' AS body,
+      SELECT DISTINCT ON (c->>'id') ${jsonbSafeUuidSql('c', 'id')} AS id,c->'anchor' AS anchor,c->>'body' AS body,
         coalesce(u.name,b."userId") AS author,b."updatedAt" AS "sentAt"
       FROM coding_workspace_review_batches b CROSS JOIN LATERAL jsonb_array_elements(b.input->'agent'->'comments') c
       LEFT JOIN "user" u ON u.id=b."userId"

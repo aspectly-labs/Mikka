@@ -6,6 +6,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { agentRuns } from '../../db/schema';
 import { retryWorkerDefinition } from '../../agent-kit/worker';
 import { runMayUseCredentialSql } from '../../personal-policy';
+import { jsonbSafeUuidSql } from '../../primitives/jsonb-predicates';
 import { FactoryError } from '../contract';
 import type { FactoryQueue } from '../dispatch';
 import { factoryRunBotMatches } from '../run-scope';
@@ -42,7 +43,7 @@ export async function admitCloudQuestionContinuation(
       AND m."issueId"=r."issueId" AND m."deviceId"=r."deviceId" AND m."repoId"=r."deviceRepoId"
     CROSS JOIN LATERAL (SELECT COALESCE(m."sandboxId", CASE WHEN m."snapshotId"=$13 AND m.state IN ('paused','error')
       THEN m.lifecycle->>'sponsoredInstanceId' END) AS id) kept
-    JOIN byos_bindings credential ON credential.id=(r."agentDefinition"->'subscription'->>'bindingId')::uuid
+    JOIN byos_bindings credential ON credential.id=${jsonbSafeUuidSql(`r."agentDefinition"->'subscription'`, 'bindingId')}
       AND ${runMayUseCredentialSql('credential."ownerId"', 'r."userId"', 'b."workspaceId"')}
       AND credential."workspaceId"=b."workspaceId"::text AND credential."consumerId"=r."agentId"::text
       AND credential."modelId"=r."agentDefinition"->>'model' AND credential.route=r."agentDefinition"->'subscription'->>'route'

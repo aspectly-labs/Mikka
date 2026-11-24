@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
 
 /** Shared by the singleton recovery timer and its bounded sweep. Semantic
  * changes wake immediately; heartbeat/updatedAt writes never become a clock. */
@@ -7,8 +8,8 @@ export const THREAD_MACHINE_CLOSED_SQL = `(m."issueId" IS NOT NULL AND
 
 export const THREAD_MACHINE_DUE_AT_SQL = `CASE
   WHEN m.state='ended' AND m."sandboxId" IS NULL AND m."workerLeaseId" IS NULL AND m."workerLeaseUntil" IS NULL THEN NULL
-  WHEN COALESCE((m.lifecycle->>'reconcileUntil')::double precision,0)>extract(epoch FROM clock_timestamp())*1000
-    THEN to_timestamp((m.lifecycle->>'reconcileUntil')::double precision/1000)
+  WHEN COALESCE(${jsonbSafeDoubleSql('m.lifecycle', 'reconcileUntil')},0)>extract(epoch FROM clock_timestamp())*1000
+    THEN to_timestamp((${jsonbSafeDoubleSql('m.lifecycle', 'reconcileUntil')})/1000)
   WHEN m.lifecycle->>'observedStatus' IS DISTINCT FROM r.status
     OR m.lifecycle->>'observedStop' IS DISTINCT FROM (r."stopRequestedAt" IS NOT NULL)::text
     OR m.lifecycle->>'observedClosed' IS DISTINCT FROM (${THREAD_MACHINE_CLOSED_SQL})::text

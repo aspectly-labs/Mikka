@@ -168,6 +168,7 @@ jobs:
       - name: Shadow selection against full baseline scenarios
         run: node scripts/ci/shadow.mjs
       - run: pnpm check:cloud-boundary
+      - run: pnpm check:sql-safety
       - name: Verify all production release credentials use existing Infisical OIDC
         run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs
         if: always()

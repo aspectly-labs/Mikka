@@ -13,6 +13,7 @@ import { gatewayKeyHarnesses } from './model-api-key-providers'
 import { catalogIdFor, type CatalogModel } from './model-catalog'
 import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS, resolveSpeedModesFromEvidence, type ModelRoutingEffort, type ModelServiceTier, type ModelSpeedMode } from './model-routing'
 import { hasStaleOfficialAllowance, shownSubscriptionAvailability, subscriptionAvailability } from './subscription-quota'
+import { jsonbFlagIsNotFalseSql } from './primitives/jsonb-predicates'
 import { providerHealthStates, providerSourceKey } from './model-provider-health'
 import {
   agentsByOffer, defaultOrderByAgent, deviceModel, dispatchOrder, entryKey, latestDefaultCandidates, offerKey, placeStage, planDispatch, sourceId as entrySourceId, whyNoDevice,
@@ -315,7 +316,7 @@ export async function readOrder(query: Query, scope: OrderScope, candidates?: (O
       LEFT JOIN byos_connections c ON e."sourceKind"='subscription' AND c.id=e."sourceId"
       LEFT JOIN model_api_keys k ON e."sourceKind"='api_key' AND k.id=e."sourceId"
       WHERE e."ownerId"=$1 AND e."workspaceId"=$2
-      AND COALESCE((COALESCE(to_jsonb(c)->'modelSettings',to_jsonb(k)->'modelSettings')->'models'->e.model->>'enabled')::boolean,true)
+      AND ${jsonbFlagIsNotFalseSql(`COALESCE(to_jsonb(c)->'modelSettings',to_jsonb(k)->'modelSettings')->'models'->e.model`, 'enabled')}
       ORDER BY e.position,e.id`,
     [scope.ownerId, scope.workspaceId])
   return { ...settings, entries: rows.map(toEntry) }

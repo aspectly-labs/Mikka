@@ -6,6 +6,7 @@ import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { githubReviewMutation, reviewBatchRequest, taskReviewSubmission, WorkspaceReviewError,
   type DiffSnapshot, type TaskReviewSubmission } from '@mikka/protocol/coding-workspace-review'
 import { factoryEventId } from '../../factory/event-id'
+import { jsonbSafeUuidSql } from '../../primitives/jsonb-predicates'
 import { readRunChain } from '../../run-chain'
 import { runChanged } from '../../live/panels'
 import { withReviewTransaction, type ReviewActor, type ReviewScope } from '../diff/authority'
@@ -90,8 +91,8 @@ export async function sendTaskReview(input: TaskReviewHttpInput): Promise<TaskRe
       const replay = await priorPlan(tx, actor, scope, requestId, fingerprint)
       if (replay) return replay
       const { rows: [duplicate] } = await tx.query<{ response: unknown }>(`SELECT r.response FROM coding_workspace_review_receipts r
-        JOIN coding_workspace_review_batches a ON a.id=(r.response->'agent'->>'batchId')::uuid
-        LEFT JOIN coding_workspace_review_batches g ON g.id=(r.response->'github'->>'batchId')::uuid
+        JOIN coding_workspace_review_batches a ON a.id=${jsonbSafeUuidSql(`r.response->'agent'`, 'batchId')}
+        LEFT JOIN coding_workspace_review_batches g ON g.id=${jsonbSafeUuidSql(`r.response->'github'`, 'batchId')}
         WHERE r."boardId"=$1 AND r."userId"=$2 AND r.action='task_send' AND r.response->>'submissionDigest'=$3
           AND (g.state IS DISTINCT FROM 'rejected') AND (g.id IS NOT NULL OR a.state<>'rejected')
         ORDER BY r."createdAt",r."requestId" LIMIT 1`, [scope.boardId, actor.userId, submissionDigest])
