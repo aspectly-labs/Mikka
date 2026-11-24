@@ -4728,7 +4728,8 @@
       "membersError": "成员加载失败",
       "allThreadsWaiting": "全部线程，{count} 条等你",
       "addMembers": "添加成员到 {group}",
-      "deleteFileFailed": "「{name}」未删除"
+      "deleteFileFailed": "「{name}」未删除",
+      "botTasks": "{name} · 任务"
     },
     "board": {
       "card": {
@@ -4844,7 +4845,8 @@
       "title": "看板",
       "filter": "筛选",
       "me": "我",
-      "showEmpty": "显示空列"
+      "showEmpty": "显示空列",
+      "showSubtasks": "显示子任务"
     },
     "groups": {
       "groupChats": "群聊",
@@ -6771,7 +6773,8 @@
     "notSent": "未发送",
     "composer": "给 {name} 发消息",
     "untitled": "未命名群聊",
-    "you": "你"
+    "you": "你",
+    "emptyHint": "用 @ 提到一位成员交给它，或直接发给全组。"
   },
   "Members": {
     "noMatchTitle": "未找到匹配的成员",
@@ -7855,7 +7858,9 @@
     "deselect": "取消选择",
     "diffPartial": "改动文件数超过本次读取的上限",
     "diffPatchUnavailable": "{count} 个文件没有补丁（二进制或被截断）",
-    "reviewSelf": "不能在自己的 PR 上请求修改"
+    "reviewSelf": "不能在自己的 PR 上请求修改",
+    "noneSelected": "选择一个 PR，在这里查看",
+    "changesTab": "变更"
   },
   "HostedConnections": {
     "state": {
@@ -8686,7 +8691,9 @@
       "workedNoTime": "工作过程",
       "stopped": "已停止",
       "failed": "失败"
-    }
+    },
+    "olderFailed": "加载失败，重试",
+    "readFullOptions": "查看完整选项"
   },
   "Board": {
     "scrollRight": "向右滚动看板",
@@ -10167,7 +10174,10 @@
     "empty": "没有任务",
     "created": "创建于 {date}",
     "root": "任务",
-    "due": "截止 {date}"
+    "due": "截止 {date}",
+    "emptyFiltered": "没有符合筛选条件的任务",
+    "loadFailed": "无法加载任务",
+    "sortBy": "排序：{order}"
   },
   "Computer": {
     "card": "电脑任务",
@@ -10927,5 +10937,52 @@
     "question": "{name} 提了问题",
     "openChat": "打开 {name} 的聊天",
     "openThread": "打开线程"
+  },
+  "PullPreview": {
+    "changesTab": "变更",
+    "overviewTab": "概览",
+    "issuesTab": "问题",
+    "commitsTab": "提交",
+    "allCommits": "所有提交",
+    "viewed": "已阅",
+    "collapseAll": "收起全部",
+    "expandAll": "展开全部",
+    "diffSettings": "Diff 设置",
+    "wrap": "自动换行",
+    "scroll": "横向滚动",
+    "filesCount": "{count} 个文件",
+    "changedFilesHeading": "{count} 个改动文件",
+    "viewedProgress": "已阅 {done}/{total}",
+    "loadingChanges": "正在加载文件改动…",
+    "loadChangesFailed": "改动加载失败。",
+    "noChangedFiles": "没有文件改动。",
+    "binaryOrTruncated": "二进制文件或补丁已截断，请在 GitHub 查看。",
+    "mergePr": "合并 PR",
+    "mergeMethods": {
+      "merge": "合并提交",
+      "squash": "压缩并合并",
+      "rebase": "变基并合并"
+    },
+    "confirmMerge": "确认{method}",
+    "selectMergeMethod": "选择合并方式",
+    "submitting": "提交中…",
+    "allPassed": "全部检查与审批已通过",
+    "checksPassed": "全部检查已通过",
+    "checksFailing": "{count} 项检查失败",
+    "checksPending": "检查进行中",
+    "hasConflicts": "存在合并冲突",
+    "changesRequested": "审阅者要求修改",
+    "reviewRequired": "等待审阅批准",
+    "draftStatus": "草稿 PR，暂不可合并",
+    "mergedStatus": "此 PR 已合并",
+    "closedStatus": "此 PR 已关闭",
+    "noIssues": "暂无未解决的评审问题。",
+    "resolved": "已解决",
+    "unresolved": "待处理",
+    "addReviewComment": "提交审阅意见",
+    "noCommits": "暂无提交记录。",
+    "summaryHeading": "PR 摘要",
+    "openBrowser": "在浏览器打开",
+    "quoteRef": "复制 PR 引用"
   }
 }

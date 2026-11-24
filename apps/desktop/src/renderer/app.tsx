@@ -37,6 +37,10 @@ import { mobileTaskLaunch } from '@/lib/mobile-task-handoff'
 import { DesktopTabs } from './desktop-tabs'
 import { serverDocumentKind, serverPageKind } from '@/lib/server-pages'
 
+// One toast host for the app, at the top centre 12px under the 48px top bar, so a toast never covers the composer or
+// its send button on a phone (UI review 2026-11-23 #1).
+const TOAST_OFFSET = { top: 60 }
+
 const MobileTaskHandoff = lazy(() => import('@/components/mobile-task-handoff'))
 const ServerStatus = lazy(() => import('@/components/server-status'))
 const Workspace = lazy(loadWorkspace)
@@ -64,7 +68,7 @@ export function App() {
           ? <RendererBoundary><Suspense fallback={<WorkspaceLoading />}><MobileTaskHandoff key={location.href} launch={mobileTask} /></Suspense></RendererBoundary>
           : status
             ? <RendererBoundary><Suspense fallback={<WorkspaceLoading />}><ServerStatus /></Suspense></RendererBoundary>
-            : <><PlatformExtras /><SWRDefaults><RendererBoundary><SessionApplication /></RendererBoundary></SWRDefaults><Toaster /></>}
+            : <><PlatformExtras /><SWRDefaults><RendererBoundary><SessionApplication /></RendererBoundary></SWRDefaults><Toaster position="top-center" offset={TOAST_OFFSET} mobileOffset={TOAST_OFFSET} /></>}
       </>
     </ThemeProvider>
   </IntlProvider>
