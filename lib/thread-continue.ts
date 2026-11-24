@@ -232,18 +232,6 @@ async function continueThread(userId: string, text: string, source: Source,
     'SELECT "executionNote" FROM thread_reply_versions WHERE "sourceEventId"=$1 AND "userId"=$2 AND "workspaceId"=$3 AND "admissionRunId"=$4 AND text=$5',
     [sourceEventId,userId,run.workspaceId,run.id,text])).rows[0] : undefined
   if (delivery === 'version' && !version) throw new ActionFailureError('submissionConflict')
-  // A member whose saved choice names another owner's binding would queue a
-  // run that can only refuse at freeze (#3057): refuse the send up front with
-  // the same account-unavailable surface instead of a doomed attempt.
-  {
-    const settings = new (await import('@/lib/execution-settings')).ExecutionSettings(pool)
-    const settingsScope = { ownerId: userId, workspaceId: run.workspaceId }
-    const storedChoice = await settings.botModel(settingsScope, run.botId)
-    if (storedChoice && z.uuid().safeParse(storedChoice).success
-      && await settings.bindingHeldElsewhere(settingsScope, storedChoice)) {
-      throw new ActionFailureError('executionAccountUnavailable')
-    }
-  }
   const result = await dispatchToTask(userId, issueId, {
     note: text, requireContinuation: Boolean(modelChoice),
     ...(sourceEventId ? { expectedRunId: run.id } : {}),
@@ -314,6 +302,13 @@ async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, 
       ...(prior?.policyCeiling ? { policyCeiling: prior.policyCeiling } : {}) }
   }
   if (!runModel) throw new ActionFailureError('threadModelUnavailable')
+  // A continuation frozen on another owner's binding would only refuse at
+  // turn.started (#3057): refuse the send up front with the account surface.
+  if (runModel.subscriptionBindingId
+    && await new (await import('@/lib/execution-settings')).ExecutionSettings(pool)
+      .bindingHeldElsewhere({ ownerId: userId, workspaceId: run.workspaceId ?? '' }, runModel.subscriptionBindingId)) {
+    throw new ActionFailureError('executionAccountUnavailable')
+  }
   const readOnly = previous.readOnly ? { readOnly: true } : {}
   if (previous.cloud) {
     if (previous.harness !== 'codex' && previous.harness !== 'claude_code') throw new ActionFailureError('threadCannotContinue')

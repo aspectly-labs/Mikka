@@ -1222,16 +1222,18 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     await assert.rejects(sendThreadMessage(owner.id, source.runId, 'Again.'), { code: 'threadReplaced' })
   })
 
-  await t.test('a member whose saved choice names another owner\'s binding is refused before a run queues', async () => {
+  await t.test('a send whose continuation is frozen on another owner\'s binding is refused before a run queues', async () => {
     const member = await person()
     const initial = await steps.dispatchRun(member.id, { model: { harness: 'codex' as const }, issueId: member.issueId, repo: 'octo/repo', requestKey: `dispatch:${randomUUID()}` }, undefined, member.botId) as unknown as { runId: string }
     await end(initial.runId, 'succeeded')
     const { rows: [foreign] } = await pool.query('SELECT id FROM byos_bindings WHERE "ownerId"=$1', [a.id])
-    await pool.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId") VALUES ($1,$2,$3,$4)`, [member.id, member.ws.id, member.botId, foreign.id])
+    const { rows: [frozen] } = await pool.query<{ bindingId: string }>(`UPDATE agent_runs SET "agentDefinition"=jsonb_set(jsonb_set("agentDefinition",'{subscription,bindingId}',to_jsonb($2::text)),'{apiKey}','null'::jsonb) WHERE id=$1 RETURNING "agentDefinition"->'subscription'->>'bindingId' AS "bindingId"`, [initial.runId, foreign.id])
+    assert.equal(frozen.bindingId, foreign.id, 'the seeded run froze on a subscription the update rewrote')
     await assert.rejects(sendThreadMessage(member.id, initial.runId, 'Send it again.'), { code: 'executionAccountUnavailable' })
     const { rows: [{ count }] } = await pool.query<{ count: string }>('SELECT count(*)::text AS count FROM agent_runs WHERE "userId"=$1', [member.id])
     assert.equal(count, '1', 'the refusal happens before any continuation run is created')
-    await pool.query('DELETE FROM bot_model_choices WHERE "ownerId"=$1', [member.id])
+    const { rows: [own] } = await pool.query('SELECT id FROM byos_bindings WHERE "ownerId"=$1', [member.id])
+    await pool.query(`UPDATE agent_runs SET "agentDefinition"=jsonb_set(jsonb_set("agentDefinition",'{subscription,bindingId}',to_jsonb($2::text)),'{apiKey}','null'::jsonb) WHERE id=$1`, [initial.runId, own.id])
     assert.equal((await sendThreadMessage(member.id, initial.runId, 'Now on my own subscription.')).continued, true)
   })
 
