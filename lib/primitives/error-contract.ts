@@ -1585,19 +1585,21 @@ function classifyKnownCode(
 
     case 'INVALID_TOKEN':
     case 'invalid_token':
-      return ctx.status === 401
-        ? classifyCanonicalCode('AUTH_REQUIRED', ctx, code)
-        : withOptionalFields(
-            {
-              code: 'VALIDATION_ERROR',
-              category: 'validation',
-              httpStatus: 400,
-              retryable: false,
-              primaryAction: makeAction('sign_in', '/sign-in'),
-            },
-            null,
-            code,
-          )
+      if (ctx.status === 401) return classifyCanonicalCode('AUTH_REQUIRED', ctx, code)
+      return withOptionalFields(
+        {
+          code: 'VALIDATION_ERROR',
+          category: 'validation',
+          httpStatus: 400,
+          retryable: false,
+          primaryAction:
+            detail === 'password_reset'
+              ? makeAction('retry', '/forgot-password')
+              : makeAction('none'),
+        },
+        null,
+        code,
+      )
 
     // --- Turnstile / Signup verification ---
     case 'turnstileUnavailable':
@@ -1854,6 +1856,10 @@ function extractCodexErrorInfo(value: unknown, ctx: ResolvedContext): MikkaError
     const inner = own(value, variant)
     if (inner !== undefined) {
       const innerStatus = safeNumber(own(inner, 'httpStatusCode'))
+      if (variant !== 'activeTurnNotSteerable' && innerStatus !== undefined) {
+        const byStatus = classifyHttpStatus(innerStatus, { ...ctx, status: innerStatus }, variant)
+        if (byStatus) return byStatus
+      }
       return classifyKnownCode(variant, undefined, { ...ctx, status: innerStatus ?? ctx.status })
     }
   }
@@ -2016,6 +2022,8 @@ function cloneValidContract(
   } as MikkaErrorContract
 }
 
+const MAX_ENVELOPE_DEPTH = 6
+
 /**
  * Normalize an existing Mikka or Codex refusal payload onto `MikkaErrorContract`.
  * Returns `null` when the input is not a recognized refusal (e.g. `null`,
@@ -2025,7 +2033,16 @@ export function normalizeLegacyRefusal(
   input: unknown,
   options: MikkaErrorContractOptions = {},
 ): MikkaErrorContract | null {
-  if (input === null || input === undefined) return null
+  return normalizeLegacyRefusalInternal(input, options, 0, new Set())
+}
+
+function normalizeLegacyRefusalInternal(
+  input: unknown,
+  options: MikkaErrorContractOptions,
+  depth: number,
+  seen: Set<object>,
+): MikkaErrorContract | null {
+  if (input === null || input === undefined || depth > MAX_ENVELOPE_DEPTH) return null
 
   const ctx = resolveContext(input, options)
 
@@ -2043,6 +2060,8 @@ export function normalizeLegacyRefusal(
   }
 
   if (typeof input !== 'object' || Array.isArray(input)) return null
+  if (seen.has(input)) return null
+  seen.add(input)
 
   // Working / healthy states are never refusals
   if (own(input, 'working') === true || own(input, 'ok') === true) return null
@@ -2060,11 +2079,16 @@ export function normalizeLegacyRefusal(
     if (isMikkaErrorContract(bodyContract)) {
       return cloneValidContract(bodyContract, ctx.resetAt)
     }
-    const fromBody = normalizeLegacyRefusal(body, {
-      ...options,
-      status: ctx.status,
-      resetAt: ctx.resetAt ?? options.resetAt,
-    })
+    const fromBody = normalizeLegacyRefusalInternal(
+      body,
+      {
+        ...options,
+        status: ctx.status,
+        resetAt: ctx.resetAt ?? options.resetAt,
+      },
+      depth + 1,
+      seen,
+    )
     if (fromBody) return fromBody
   }
 
@@ -2116,11 +2140,16 @@ export function normalizeLegacyRefusal(
   // Nested `{ error: { ... } }` envelope (e.g. ErrorNotification / API JSON error)
   const nestedError = own(input, 'error')
   if (nestedError && typeof nestedError === 'object' && !Array.isArray(nestedError)) {
-    const fromNested = normalizeLegacyRefusal(nestedError, {
-      ...options,
-      status: ctx.status,
-      resetAt: ctx.resetAt ?? options.resetAt,
-    })
+    const fromNested = normalizeLegacyRefusalInternal(
+      nestedError,
+      {
+        ...options,
+        status: ctx.status,
+        resetAt: ctx.resetAt ?? options.resetAt,
+      },
+      depth + 1,
+      seen,
+    )
     if (fromNested) return fromNested
   }
 
@@ -2145,37 +2174,41 @@ export function normalizeLegacyRefusal(
   return null
 }
 
-function classifyHttpStatus(status: number, ctx: ResolvedContext): MikkaErrorContract | null {
+function classifyHttpStatus(
+  status: number,
+  ctx: ResolvedContext,
+  sourceCode?: string,
+): MikkaErrorContract | null {
   switch (status) {
     case 400:
     case 422:
-      return classifyCanonicalCode('VALIDATION_ERROR', ctx)
+      return classifyCanonicalCode('VALIDATION_ERROR', ctx, sourceCode)
     case 401:
-      return classifyCanonicalCode('AUTH_REQUIRED', ctx)
+      return classifyCanonicalCode('AUTH_REQUIRED', ctx, sourceCode)
     case 402:
-      return classifyCanonicalCode('CREDITS_EXHAUSTED', ctx)
+      return classifyCanonicalCode('CREDITS_EXHAUSTED', ctx, sourceCode)
     case 403:
-      return classifyCanonicalCode('WORKSPACE_ACCESS_DENIED', ctx)
+      return classifyCanonicalCode('WORKSPACE_ACCESS_DENIED', ctx, sourceCode)
     case 404:
-      return classifyCanonicalCode('RESOURCE_NOT_FOUND', ctx)
+      return classifyCanonicalCode('RESOURCE_NOT_FOUND', ctx, sourceCode)
     case 408:
     case 504:
-      return classifyCanonicalCode('UPSTREAM_UNAVAILABLE', { ...ctx, status: 503 })
+      return classifyCanonicalCode('UPSTREAM_UNAVAILABLE', { ...ctx, status: 503 }, sourceCode)
     case 409:
-      return classifyCanonicalCode('RESOURCE_CONFLICT', ctx)
+      return classifyCanonicalCode('RESOURCE_CONFLICT', ctx, sourceCode)
     case 413:
-      return classifyCanonicalCode('MESSAGE_TOO_LONG', ctx)
+      return classifyCanonicalCode('MESSAGE_TOO_LONG', ctx, sourceCode)
     case 429:
-      return classifyCanonicalCode('RATE_LIMITED', ctx)
+      return classifyCanonicalCode('RATE_LIMITED', ctx, sourceCode)
     case 502:
-      return classifyCanonicalCode('UPSTREAM_UNAVAILABLE', { ...ctx, status: 502 })
+      return classifyCanonicalCode('UPSTREAM_UNAVAILABLE', { ...ctx, status: 502 }, sourceCode)
     case 503:
-      return classifyCanonicalCode('UPSTREAM_UNAVAILABLE', { ...ctx, status: 503 })
+      return classifyCanonicalCode('UPSTREAM_UNAVAILABLE', { ...ctx, status: 503 }, sourceCode)
     case 500:
-      return classifyCanonicalCode('INTERNAL_ERROR', ctx)
+      return classifyCanonicalCode('INTERNAL_ERROR', ctx, sourceCode)
     default:
       if (status >= 500 && status <= 599) {
-        return classifyCanonicalCode('INTERNAL_ERROR', ctx)
+        return classifyCanonicalCode('INTERNAL_ERROR', ctx, sourceCode)
       }
       return null
   }
@@ -2191,19 +2224,26 @@ export function toMikkaErrorContract(
   input: unknown,
   options: MikkaErrorContractOptions = {},
 ): MikkaErrorContract {
-  const recognized = normalizeLegacyRefusal(input, options)
+  const seen = new Set<object>()
+  const recognized = normalizeLegacyRefusalInternal(input, options, 0, seen)
   if (recognized) return recognized
 
   const ctx = resolveContext(input, options)
 
-  // Check error cause chain (bounded depth = 4) before falling back to HTTP status.
+  // Check error cause chain (bounded depth + cycle protection) before HTTP status fallback.
   let cursor: unknown = own(input, 'cause')
   for (let depth = 0; depth < 4 && cursor !== undefined && cursor !== null; depth++) {
-    const fromCause = normalizeLegacyRefusal(cursor, {
-      ...options,
-      resetAt: ctx.resetAt ?? options.resetAt,
-      status: ctx.status,
-    })
+    if (typeof cursor === 'object' && seen.has(cursor)) break
+    const fromCause = normalizeLegacyRefusalInternal(
+      cursor,
+      {
+        ...options,
+        resetAt: ctx.resetAt ?? options.resetAt,
+        status: ctx.status,
+      },
+      depth + 1,
+      seen,
+    )
     if (fromCause) return fromCause
     cursor = own(cursor, 'cause')
   }

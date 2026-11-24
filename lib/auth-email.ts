@@ -25,10 +25,11 @@ type Delivery = { kind: MailKind; outcome: 'accepted_by_provider' | 'failed' | '
 function digest(value: string) { return createHash('sha256').update(value).digest('hex') }
 function invalidLink(stage = 'validation'): never {
   console.warn('auth_email_verification_rejected', { stage })
+  const detail = stage.startsWith('reset_') ? 'password_reset' : undefined
   throw new APIError('BAD_REQUEST', {
     code: 'INVALID_TOKEN',
     message: 'Invalid or expired link',
-    errorContract: toMikkaErrorContract({ code: 'INVALID_TOKEN', status: 400 }),
+    errorContract: toMikkaErrorContract({ code: 'INVALID_TOKEN', detail, status: 400 }),
   })
 }
 function unavailable(): never {

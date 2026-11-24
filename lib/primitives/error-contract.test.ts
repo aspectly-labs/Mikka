@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { APIError } from 'better-auth'
+import { APIError, betterAuth } from 'better-auth'
+import { createAuthMiddleware } from 'better-auth/api'
 import { CodedError } from '@mikka/protocol/coded-error'
 import { captureRunFailure } from '@mikka/protocol/run-failure'
 import {
@@ -17,6 +18,7 @@ import {
 } from './error-contract'
 import { verifyTurnstile } from '../abuse/signup'
 import { createAuthEmail, type AuthMailContext } from '../auth-email'
+import { verificationNavigationResponse } from '../auth-verification-response'
 import { authRecoveryErrorContract } from '../auth-recovery'
 import { HOSTED_STATES, hostedRefusalErrorContract, type HostedUsage } from '../billing/hosted-usage'
 import { chatFailure, chatFailureErrorContract } from '../chat-failure'
@@ -218,9 +220,17 @@ test('zero raw stack traces, secrets, PII, URLs, or hostile getter payloads leak
     ['array', secrets[0]],
   ]
 
-  // Circular object & throwing getter
-  const circular: Record<string, unknown> = { code: 'RATE_LIMITED' }
-  circular.self = circular
+  // Circular objects (self, body, error, cross-nested, cause) & throwing getters
+  const circularSelf: Record<string, unknown> = { code: 'RATE_LIMITED' }
+  circularSelf.self = circularSelf
+  const circularBody: Record<string, unknown> = {}
+  circularBody.body = circularBody
+  const circularError: Record<string, unknown> = {}
+  circularError.error = circularError
+  const circularNested: Record<string, unknown> = {}
+  circularNested.error = { body: circularNested }
+  const circularCause = new Error('unknown') as Error & { cause?: unknown }
+  circularCause.cause = circularCause
   const hostile: Record<string, unknown> = {}
   Object.defineProperty(hostile, 'code', {
     get() {
@@ -232,7 +242,7 @@ test('zero raw stack traces, secrets, PII, URLs, or hostile getter payloads leak
       throw new Error(`getter-msg ${secrets[2]}`)
     },
   })
-  leakyInputs.push(circular, hostile)
+  leakyInputs.push(circularSelf, circularBody, circularError, circularNested, circularCause, hostile)
 
   for (const [index, input] of leakyInputs.entries()) {
     const contract = toMikkaErrorContract(input)
@@ -472,6 +482,31 @@ test('maps Codex protocol enums (CodexErrorInfo, TurnError, RateLimitSnapshot, M
   assert.equal(streamFailed.code, 'UPSTREAM_UNAVAILABLE')
   assert.equal(streamFailed.httpStatus, 502)
 
+  // Explicit provider statuses on Codex connection errors are preserved, never flattened to 502
+  const connAuth = toMikkaErrorContract({
+    codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+  })
+  assert.equal(connAuth.code, 'AUTH_REQUIRED')
+  assert.equal(connAuth.httpStatus, 401)
+  assert.equal(connAuth.retryable, false)
+  assert.equal(connAuth.primaryAction.kind, 'sign_in')
+
+  const connRate = toMikkaErrorContract({
+    codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 429 } },
+    resetAt: '2026-11-24T23:00:00Z',
+  })
+  assert.equal(connRate.code, 'RATE_LIMITED')
+  assert.equal(connRate.httpStatus, 429)
+  assert.equal(connRate.retryable, true)
+  assert.equal(connRate.resetAt, '2026-11-24T23:00:00.000Z')
+
+  const connUnavailable = toMikkaErrorContract({
+    codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 503 } },
+  })
+  assert.equal(connUnavailable.code, 'UPSTREAM_UNAVAILABLE')
+  assert.equal(connUnavailable.httpStatus, 503)
+  assert.equal(connUnavailable.retryable, true)
+
   const ownerDepleted = toMikkaErrorContract({
     rateLimitReachedType: 'workspace_owner_credits_depleted',
     primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: resetEpochSec },
@@ -585,6 +620,79 @@ test('signup, sign-in, auth-recovery, lib/abuse/signup.ts, and lib/auth-email.ts
         return true
       },
     )
+
+    // Expired/invalid password reset links point to /forgot-password rather than /sign-in
+    await assert.rejects(
+      authEmail.before({
+        path: '/reset-password',
+        body: { token: '' },
+        context: { ...dummyContext, adapter: {} as never },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof APIError)
+        assert.equal(error.statusCode, 400)
+        assert.equal(error.body?.code, 'INVALID_TOKEN')
+        assert.equal(isMikkaErrorContract(error.body?.errorContract), true)
+        assert.equal(error.body?.errorContract.code, 'VALIDATION_ERROR')
+        assert.deepEqual(error.body?.errorContract.primaryAction, {
+          kind: 'retry',
+          target: '/forgot-password',
+        })
+        return true
+      },
+    )
+
+    // Real Better Auth HTTP handler serialization & verification redirect compatibility
+    const auth = betterAuth({
+      baseURL: 'https://auth.example.test',
+      basePath: '/mikka/api/auth',
+      secret: 'synthetic-http-error-contract-secret-0123456789',
+      trustedOrigins: ['https://auth.example.test'],
+      emailAndPassword: authEmail.emailAndPassword,
+      emailVerification: authEmail.emailVerification,
+      logger: { disabled: true },
+      hooks: {
+        before: createAuthMiddleware(async (ctx) => authEmail.before(ctx as never)),
+      },
+    })
+    const unavailableRes = await auth.handler(
+      new Request('https://auth.example.test/mikka/api/auth/request-password-reset', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'https://auth.example.test' },
+        body: JSON.stringify({ email: 'user@example.test' }),
+      }),
+    )
+    assert.equal(unavailableRes.status, 503)
+    const unavailableJson = (await unavailableRes.json()) as { code?: string; errorContract?: unknown }
+    assert.equal(unavailableJson.code, 'AUTH_EMAIL_DELIVERY_UNAVAILABLE')
+    assert.equal(isMikkaErrorContract(unavailableJson.errorContract), true)
+    assert.equal(toMikkaErrorContract(unavailableJson).code, 'AUTH_EMAIL_DELIVERY_UNAVAILABLE')
+
+    const resetBadRes = await auth.handler(
+      new Request('https://auth.example.test/mikka/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'https://auth.example.test' },
+        body: JSON.stringify({ token: '', newPassword: 'synthetic-password-123' }),
+      }),
+    )
+    assert.equal(resetBadRes.status, 400)
+    const resetBadJson = (await resetBadRes.json()) as { code?: string; errorContract?: unknown }
+    assert.equal(resetBadJson.code, 'INVALID_TOKEN')
+    assert.equal(isMikkaErrorContract(resetBadJson.errorContract), true)
+    assert.deepEqual(toMikkaErrorContract(resetBadJson).primaryAction, {
+      kind: 'retry',
+      target: '/forgot-password',
+    })
+
+    const verifyReq = new Request(
+      'https://auth.example.test/mikka/api/auth/verify-email?token=bad&nonce=short&callbackURL=https%3A%2F%2Fauth.example.test%2Fmikka%2Fsign-in',
+    )
+    const verifyRawRes = await auth.handler(verifyReq)
+    assert.equal(verifyRawRes.status, 400)
+    const verifyNavRes = verificationNavigationResponse(verifyReq, verifyRawRes, 'https://auth.example.test')
+    assert.equal(verifyNavRes.status, 302)
+    assert.equal(verifyNavRes.headers.get('location'), 'https://auth.example.test/mikka/verify-email?error=INVALID_TOKEN')
+    assert.equal(await verifyNavRes.text(), '')
   } finally {
     if (savedSmtp !== undefined) process.env.SMTP_URL = savedSmtp
     if (savedResend !== undefined) process.env.RESEND_API_KEY = savedResend
