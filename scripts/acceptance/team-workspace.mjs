@@ -1,6 +1,8 @@
 /** Normal same-account team selection for the shared production acceptance account.
  * The policy identity is established by AGENTS.md and the owner's public comment
  * https://github.com/alexj11324/Mikka/issues/1504#issuecomment-6691409495.
+ * Staging has its own smoke identities: its pipeline passes the SHA-256 of its
+ * own team admin's address (never the address itself) as policyAdminEmailSha256.
  * The API proves active admin membership, not workspace creator/owner identity. */
 import { createHash } from 'node:crypto'
 import { decode, DESKTOP_RPC_VERSION } from '../../lib/desktop-rpc/wire.ts'
@@ -40,21 +42,24 @@ export function isTeamWorkspaceSwitchRequest(body) {
     && body.args.length === 1 && canonicalUuid(body.args[0])
 }
 
-function policyAdmins(settings, ownerId, detail) {
+const SHA256 = /^[a-f0-9]{64}$/
+
+function policyAdmins(settings, ownerId, detail, policy = POLICY_ADMIN_EMAIL_SHA256) {
   check(Array.isArray(settings.members) && settings.members.every(member =>
     member && typeof member.userId === 'string' && member.userId.length > 0 &&
     typeof member.email === 'string' && member.email.trim().length > 0 &&
     ['member', 'admin'].includes(member.role) && ['active', 'suspended'].includes(member.status)) &&
     new Set(settings.members.map(member => member.userId)).size === settings.members.length, detail)
   return settings.members.filter(member => member.userId !== ownerId && member.role === 'admin' &&
-    member.status === 'active' && createHash('sha256').update(member.email.trim().toLowerCase()).digest('hex') === POLICY_ADMIN_EMAIL_SHA256)
+    member.status === 'active' && createHash('sha256').update(member.email.trim().toLowerCase()).digest('hex') === policy)
 }
 
 /** json uses the caller's existing origin, credentials, time budget and cookie handling.
  * It returns the HTTP JSON value. No cookie is fabricated or copied by this helper.
  * Candidate query UUIDs come only from this request's authorized choices list. */
-export async function selectTeamWorkspace({ ownerId, json, onSelected }) {
+export async function selectTeamWorkspace({ ownerId, json, onSelected, policyAdminEmailSha256 = POLICY_ADMIN_EMAIL_SHA256 }) {
   check(typeof ownerId === 'string' && ownerId.length > 0 && typeof json === 'function', 'owner_identity')
+  check(typeof policyAdminEmailSha256 === 'string' && SHA256.test(policyAdminEmailSha256), 'owner_identity')
   check(onSelected === undefined || typeof onSelected === 'function', 'owner_identity')
   const request = async (path, body, detail) => {
     try { return await json(path, body) }
@@ -72,7 +77,7 @@ export async function selectTeamWorkspace({ ownerId, json, onSelected }) {
     const candidate = await request('/mikka/api/workspace?workspace=' + id, undefined, 'candidate_read')
     check(candidate?.currentUserId === ownerId && candidate.workspace?.id === id &&
       candidate.workspace.kind === 'team' && ['member', 'admin'].includes(candidate.role), 'candidate_identity')
-    const admins = policyAdmins(candidate, ownerId, 'candidate_identity')
+    const admins = policyAdmins(candidate, ownerId, 'candidate_identity', policyAdminEmailSha256)
     for (const admin of admins) matches.push({ workspaceId: id, adminId: admin.userId })
   }
   check(matches.length > 0, 'team_admin_missing')
@@ -92,7 +97,7 @@ export async function selectTeamWorkspace({ ownerId, json, onSelected }) {
     Array.isArray(selected.choices) &&
     JSON.stringify(selected.choices.filter(choice => choice?.kind === 'team').map(choice => choice.id).sort()) === JSON.stringify(teamIds),
   'workspace_changed')
-  const selectedAdmins = policyAdmins(selected, ownerId, 'workspace_changed')
+  const selectedAdmins = policyAdmins(selected, ownerId, 'workspace_changed', policyAdminEmailSha256)
   check(selectedAdmins.length === 1 && selectedAdmins[0].userId === adminId, 'workspace_changed')
   const session = await request('/mikka/api/auth/get-session', undefined, 'session_read')
   check(session?.user?.id === ownerId, 'session_changed')
@@ -103,7 +108,9 @@ export async function selectTeamWorkspace({ ownerId, json, onSelected }) {
     teamWorkspaceConfirmed: true,
     teamWorkspaceHash: createHash('sha256').update('team-workspace\0' + workspaceId).digest('hex'),
     teamSelectionBasis: 'unique-active-admin-identity-match',
-    teamOwnerAttribution: 'AGENTS.md-and-owner-comment-1504-6691409495',
+    // Only the production policy identity is attributed to the owner's comment.
+    teamOwnerAttribution: policyAdminEmailSha256 === POLICY_ADMIN_EMAIL_SHA256
+      ? 'AGENTS.md-and-owner-comment-1504-6691409495' : 'configured-policy-admin-digest',
     teamAdminMembershipVerified: true,
   }
 }
