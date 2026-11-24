@@ -1,22 +1,26 @@
+import { mobileMessages } from '@/lib/messages'
+
 /**
  * Text selected in one message (#1408 Phase 3): the capsules above the composer each send a reply that quotes the
  * selection with a short instruction, at once. The quote is Markdown, as a swipe-to-quote reply is.
  */
 export type SelectionAction = { key: string; label: string; instruction: string }
 
+const S = mobileMessages.MobileCore.selection
+
 export const SELECTION_ACTIONS: readonly SelectionAction[] = [
-  { key: 'explain', label: '解释', instruction: '解释这段。' },
-  { key: 'expand', label: '展开', instruction: '展开说说这段。' },
-  { key: 'shorten', label: '缩短', instruction: '把这段改短。' },
-  { key: 'rewrite', label: '改写', instruction: '换个说法重写这段。' },
-  { key: 'translate', label: '翻译', instruction: '翻译这段：中文译成英文，其他语言译成中文。' },
+  { key: 'explain', label: S.explain, instruction: S.explainPrompt },
+  { key: 'expand', label: S.expand, instruction: S.expandPrompt },
+  { key: 'shorten', label: S.shorten, instruction: S.shortenPrompt },
+  { key: 'rewrite', label: S.rewrite, instruction: S.rewritePrompt },
+  { key: 'translate', label: S.translate, instruction: S.translatePrompt },
 ]
 
 /**
  * 添加到线程 (Alex 2026-11-08), first in the row: the selection goes into the composer as its quote, as Codex adds a
  * selection to the conversation; nothing is sent. It replaces swipe-to-quote.
  */
-export const ADD_TO_CHAT: SelectionAction = { key: 'add', label: '添加到线程', instruction: '' }
+export const ADD_TO_CHAT: SelectionAction = { key: 'add', label: S.addToThread, instruction: '' }
 
 /** The capsules above the composer while words are selected. */
 export const SELECTION_BAR: readonly SelectionAction[] = [ADD_TO_CHAT, ...SELECTION_ACTIONS]

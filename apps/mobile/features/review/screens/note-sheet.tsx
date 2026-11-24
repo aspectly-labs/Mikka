@@ -4,6 +4,7 @@ import { Check } from 'lucide-react-native'
 import { NavBar } from '@/components/NavBar'
 import { colors, font, LIST_INSET } from '@/lib/theme'
 import { useBatch } from '../model/batch-store'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * R2b, 修改意见: the overall note 发给 Agent sends with the line comments, from the floating bar's 「写修改意见…」.
@@ -15,10 +16,10 @@ export function NoteSheet() {
   const [batch, setBatch, scope] = useBatch(id)
   return (
     <>
-      <NavBar sheet fade={false} title="修改意见" right={{ icon: 'checkmark', label: '完成', web: <Check size={20} color={colors.ink} />, onPress: () => router.back() }} />
+      <NavBar sheet fade={false} title={mobileMessages.ReviewCopy.noteLabel} right={{ icon: 'checkmark', label: mobileMessages.MobileCore.done, web: <Check size={20} color={colors.ink} />, onPress: () => router.back() }} />
       <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.body}>
-        <TextInput editable={!!scope} value={batch.note} onChangeText={note => setBatch(current => ({ ...current, note }))} placeholder="写修改意见…" placeholderTextColor={colors.secondary}
-          multiline autoFocus accessibilityLabel="修改意见" style={styles.input} />
+        <TextInput editable={!!scope} value={batch.note} onChangeText={note => setBatch(current => ({ ...current, note }))} placeholder={mobileMessages.ReviewCopy.notePlaceholder} placeholderTextColor={colors.secondary}
+          multiline autoFocus accessibilityLabel={mobileMessages.ReviewCopy.noteLabel} style={styles.input} />
       </ScrollView>
     </>
   )

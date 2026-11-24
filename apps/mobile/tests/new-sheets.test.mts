@@ -88,9 +88,10 @@ test('the standalone conversation sheet keeps the first selected Bot as lead and
 
 test('新建 Bot draws its name field, shapes and colours', () => {
   const html = renderToStaticMarkup(createElement(NewBot))
-  assert.match(html, /placeholder="名字"/)
-  assert.match(html, /形状/)
-  assert.match(html, /颜色/)
+  const copy = mobileMessages.Shell.newBot
+  assert.ok(html.includes(`placeholder="${copy.namePlaceholder}"`))
+  assert.ok(html.includes(copy.shape))
+  assert.ok(html.includes(copy.color))
 })
 
 test('both sheets are full-height form sheets under an opaque header', () => {

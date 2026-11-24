@@ -68,16 +68,20 @@ export const modelMenuReadLabel = (busy: boolean) => busy ? messages.Common.load
  * failure says why on that message. The model's name is in the chip beside the composer, not here again.
  */
 export type ModelStatus = { line: string; change: boolean }
+const S = messages.MobileCore.modelStatus
 export function modelStatusLine(current: BotModelCurrent): ModelStatus | null {
   const quota = current.quota
   if (quota) {
     const subscription = [providerName(quota.subscription), quota.plan].filter(Boolean).join(' ')
-    const exhausted = `${subscription} 订阅额度用完`
-    if (quota.fallback) return { line: `${exhausted}，下一条改用 ${current.credentialLabel || quota.fallback.keyName || quota.fallback.keyProvider} API Key（按 token 计费）`, change: false }
+    const exhausted = S.exhausted.replace('{subscription}', () => subscription)
+    if (quota.fallback) {
+      const key = current.credentialLabel || quota.fallback.keyName || quota.fallback.keyProvider
+      return { line: S.nextKey.replace('{key}', () => key).replace('{exhausted}', () => exhausted), change: false }
+    }
     const reset = quota.resetsAt ? new Date(quota.resetsAt) : null
-    return { line: reset && Number.isFinite(reset.getTime()) ? `${exhausted}，${reset.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 恢复` : exhausted, change: true }
+    return { line: reset && Number.isFinite(reset.getTime()) ? S.resets.replace('{time}', reset.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })).replace('{exhausted}', () => exhausted) : exhausted, change: true }
   }
   if (current.availability === 'checking') return null
-  if (!current.available) return { line: '这个模型现在用不了', change: true }
-  return current.fallback ? { line: `下一条改用 ${[optionName(current), current.credentialLabel, current.kind === 'apiKey' || current.kind === 'shared' ? '按量' : null].filter(Boolean).join(' · ')}`, change: false } : null
+  if (!current.available) return { line: S.unavailable, change: true }
+  return current.fallback ? { line: S.next.replace('{model}', () => [optionName(current), current.credentialLabel, current.kind === 'apiKey' || current.kind === 'shared' ? messages.Coordinator.modelPicker.metered : null].filter(Boolean).join(' · ')), change: false } : null
 }

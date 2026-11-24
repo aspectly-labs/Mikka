@@ -6,6 +6,7 @@ import { useReducedMotionPreference } from '@/lib/reduced-motion'
 import { colors } from '@/lib/theme'
 import { SELECTION_BAR, type SelectionAction } from '@/features/chat/model/chat-selection'
 import { ChatGlassCapsule } from './chat-glass-capsule'
+import { mobileMessages } from '@/lib/messages'
 
 const EASE = cubicBezier(0.23, 1, 0.32, 1)
 const DURATION = 200
@@ -32,7 +33,7 @@ export function ChatSelectionBar({ visible, disabled, onAction }: { visible: boo
   }, [visible])
   if (!mounted) return null
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" accessibilityLabel="选中文字的操作"
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" accessibilityLabel={mobileMessages.MobileCore.selection.actions}
       accessibilityElementsHidden={!shown} importantForAccessibility={shown ? 'auto' : 'no-hide-descendants'}
       contentContainerStyle={styles.row} style={styles.bar}>
       {SELECTION_BAR.map((action, index) => (

@@ -292,7 +292,7 @@ function ChatScreenSession({ botId, name, color, shape, draft, focus, compose, c
     return (
       <Arrival animate={arrived(item.position)}>
         {separator ? <TimeSeparator label={separator} /> : null}
-        {question ? <ThreadCard title={question.title} status="waiting" info="在等你回答" action="去回答" onPress={() => {
+        {question ? <ThreadCard title={question.title} status="waiting" info={mobileMessages.MobileCore.event.runQuestion} action={mobileMessages.FactoryFlow.card.answer} onPress={() => {
           // A question about a task's thread opens the task at that attempt (2026-11-07).
           const run = sources[question.runId]
           router.push(run?.kind === 'run' && run.issue ? `/task/${run.issue.id}?attempt=${question.runId}` : `/thread/${question.runId}`)
@@ -315,7 +315,7 @@ function ChatScreenSession({ botId, name, color, shape, draft, focus, compose, c
             {selected ? null : <MessageActions message={message(item.text, item.id, item.position)} copy={index === latestReply && !working} />}
           </MessageRow>
         ) : null}
-        {item.from === 'coordinator' && item.stopped ? <Text style={styles.stopped}>已停止</Text> : null}
+        {item.from === 'coordinator' && item.stopped ? <Text style={styles.stopped}>{mobileMessages.Coordinator.stopped}</Text> : null}
         {item.threads.map(id => {
           const run = sources[id]
           if (run?.kind !== 'run') return null
@@ -361,9 +361,9 @@ function ChatScreenSession({ botId, name, color, shape, draft, focus, compose, c
         {working ? <WaitingLine since={outbox.length ? null : waitingSince(items)} /> : null}
         {stopper.stuck ? <StopFailed busy={stopper.sending} onRetry={() => void stopper.stop()} /> : null}
         {!data && !error ? <View style={styles.loading}><Spinner /></View> : null}
-        {data && data.enabled !== false && !items.length && !outbox.length && !working ? <Text style={styles.empty}>有什么要我做的，直接说。</Text> : null}
+        {data && data.enabled !== false && !items.length && !outbox.length && !working ? <Text style={styles.empty}>{mobileMessages.MobileCore.chat.empty}</Text> : null}
         <ReadNotice error={error ?? agent.error} hasData={Boolean(data)} label={mobileMessages.Coordinator.conversation} onRetry={reload} />
-        <ReadNotice error={pending.error} hasData={Boolean(pending.data)} label="待处理事项" onRetry={pending.reload} />
+        <ReadNotice error={pending.error} hasData={Boolean(pending.data)} label={mobileMessages.MobileCore.chat.pendingActions} onRetry={pending.reload} />
         {data?.failure && !working ? <FailedReply key={`${botId}:${JSON.stringify(data.failure)}`} failure={data.failure} botId={botId} onQueued={reload} modelChoice={typeof composerAccessory === 'function' ? composerAccessory(false) : composerAccessory} /> : null}
         {pending.data ? <PendingActions items={pending.data} focus={focus} reload={pending.reload} onFocusLayout={focus ? showFocus : undefined} /> : null}
           </>} />
@@ -372,7 +372,7 @@ function ChatScreenSession({ botId, name, color, shape, draft, focus, compose, c
       <ChatScrollToLatest visible={!atLatest} bottom={composerHeight + 12} onPress={() => list.current?.toLatest()} />
       <OfflineBanner top={insets.top + 66} />
       <Composer value={text} sendDisabled={!canSend} onChangeText={setText} placeholder={selection ? mobileMessages.MobileCore.replySelection : name ? mobileMessages.Nav.messageBot.replace('{name}', name) : mobileMessages.MobileCore.message} onSend={send} attach attachmentScope={data?.botId ? { kind: 'bot', id: data.botId } : botId ? { kind: 'bot', id: botId } : undefined} overlay onHeight={setComposerHeight} autoFocus={compose || Boolean(draft)}
-        quote={quote} onClearQuote={() => setQuote(null)} accessory={typeof composerAccessory === 'function' ? composerAccessory(working) : composerAccessory} notice={<>{serviceUnavailable ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.serviceNotice}><Text style={styles.serviceMessage}>线程服务尚未启用，暂时无法回复。</Text><GlassButton label="重试" busy={serviceRefresh.refreshing} onPress={() => void serviceRefresh.onRefresh()} /></View> : null}{composerNotice}<EveInteractions agent={agent} />{reactionFailure ? <View accessibilityRole="alert" style={styles.reactionNotice}><Text style={styles.error}>回应没保存。</Text><GlassButton label="重试" onPress={() => void react(reactionFailure.id, reactionFailure.emoji)} /></View> : null}
+        quote={quote} onClearQuote={() => setQuote(null)} accessory={typeof composerAccessory === 'function' ? composerAccessory(working) : composerAccessory} notice={<>{serviceUnavailable ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.serviceNotice}><Text style={styles.serviceMessage}>{mobileMessages.MobileCore.chat.serviceUnavailable}</Text><GlassButton label={mobileMessages.Common.retry} busy={serviceRefresh.refreshing} onPress={() => void serviceRefresh.onRefresh()} /></View> : null}{composerNotice}<EveInteractions agent={agent} />{reactionFailure ? <View accessibilityRole="alert" style={styles.reactionNotice}><Text style={styles.error}>{mobileMessages.MobileCore.reactionNotSaved}</Text><GlassButton label={mobileMessages.Common.retry} onPress={() => void react(reactionFailure.id, reactionFailure.emoji)} /></View> : null}
           {agent.status === 'busy' && <Segmented value={turnPolicy} onChange={setTurnPolicy} options={[
             { value: 'queue', label: mobileMessages.IssueThreads.deliveryModes.queue },
             { value: 'steer', label: mobileMessages.IssueThreads.deliveryModes.steer },

@@ -40,25 +40,25 @@ export default function NewBot() {
       await home.reload()
       openChat(chatPath(bot.id))
     } catch (error) {
-      setProblem(error instanceof ApiError && error.status === 409 ? '已有同名 Bot' : '没能创建')
+      setProblem(error instanceof ApiError && error.status === 409 ? mobileMessages.MobileCore.newBot.nameTaken : mobileMessages.MobileCore.newBot.failed)
     } finally {
       setBusy(false)
     }
   }
   return (
     <>
-      <NavBar fade={false} title="新建 Bot"
-        left={{ icon: 'xmark', label: '取消', disabled: busy, web: <X size={20} color={colors.ink} />, onPress: () => router.back() }}
-        right={{ icon: 'checkmark', label: busy ? '创建中' : '创建', disabled: !name.trim() || busy, busy, prominent: true, web: <Check size={20} color={colors.accent} strokeWidth={2.4} />, onPress: () => void create() }} />
+      <NavBar fade={false} title={mobileMessages.Shell.newBot.title}
+        left={{ icon: 'xmark', label: mobileMessages.Common.cancel, disabled: busy, web: <X size={20} color={colors.ink} />, onPress: () => router.back() }}
+        right={{ icon: 'checkmark', label: busy ? mobileMessages.MobileCore.newBot.creating : mobileMessages.Shell.newBot.create, disabled: !name.trim() || busy, busy, prominent: true, web: <Check size={20} color={colors.accent} strokeWidth={2.4} />, onPress: () => void create() }} />
       <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled" {...underBar} contentContainerStyle={styles.body}>
         <View style={styles.hero}><BotAvatar color={color} shape={shape} size={96} /></View>
         <Field style={styles.field}>
-          <TextInput editable={!busy} value={name} onChangeText={setName} placeholder="名字" placeholderTextColor={colors.secondary} maxLength={60} autoFocus
-            returnKeyType="done" onSubmitEditing={() => void create()} style={styles.input} accessibilityLabel="名字" />
+          <TextInput editable={!busy} value={name} onChangeText={setName} placeholder={mobileMessages.Shell.newBot.namePlaceholder} placeholderTextColor={colors.secondary} maxLength={60} autoFocus
+            returnKeyType="done" onSubmitEditing={() => void create()} style={styles.input} accessibilityLabel={mobileMessages.Shell.newBot.name} />
         </Field>
         {problem ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.problem}>{problem}</Text> : null}
-        <Text style={styles.label}>形状</Text>
-        <View accessibilityRole="radiogroup" accessibilityLabel="形状" style={styles.panel}>
+        <Text style={styles.label}>{mobileMessages.Shell.newBot.shape}</Text>
+        <View accessibilityRole="radiogroup" accessibilityLabel={mobileMessages.Shell.newBot.shape} style={styles.panel}>
           {BOT_PICKER_SHAPES.map(item => (
             <Pressable key={item} accessibilityRole="radio" accessibilityState={{ checked: shape === item, disabled: busy }} aria-checked={Platform.OS === 'web' ? shape === item : undefined} aria-disabled={Platform.OS === 'web' ? busy : undefined} accessibilityLabel={shapeLabels[item]} disabled={busy} onPress={() => { tap(); setShape(item) }}
               style={[styles.choice, shape === item && styles.chosen]}>
@@ -66,8 +66,8 @@ export default function NewBot() {
             </Pressable>
           ))}
         </View>
-        <Text style={styles.label}>颜色</Text>
-        <View accessibilityRole="radiogroup" accessibilityLabel="颜色" style={styles.panel}>
+        <Text style={styles.label}>{mobileMessages.Shell.newBot.color}</Text>
+        <View accessibilityRole="radiogroup" accessibilityLabel={mobileMessages.Shell.newBot.color} style={styles.panel}>
           {Object.entries(BOT_COLORS).map(([id, hex]) => (
             <Pressable key={id} accessibilityRole="radio" accessibilityState={{ checked: color === id, disabled: busy }} aria-checked={Platform.OS === 'web' ? color === id : undefined} aria-disabled={Platform.OS === 'web' ? busy : undefined} accessibilityLabel={colorLabels[id]} disabled={busy} onPress={() => { tap(); setColor(id) }}
               style={[styles.swatchRing, color === id && { borderColor: colors.accent }]}>

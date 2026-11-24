@@ -4,7 +4,8 @@ import { mobileLocale, mobileMessages } from './messages'
 /** A new time separator when this long has passed since the message before it (Alex 2026-11-08). */
 export const SEPARATOR_GAP_MS = 15 * 60_000
 
-const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+const T = mobileMessages.MobileCore.time
+const WEEKDAYS = [T.weekdays.sun, T.weekdays.mon, T.weekdays.tue, T.weekdays.wed, T.weekdays.thu, T.weekdays.fri, T.weekdays.sat]
 const weekdayFormat = new Intl.DateTimeFormat('en', { weekday: 'long' })
 const dateFormat = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' })
 const yearFormat = new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' })
@@ -22,8 +23,9 @@ export function separatorLabel(iso: string, now = new Date()) {
   if (days === 1) return `${mobileMessages.MobileCore.yesterday} ${time}`
   if (days < 7) return `${mobileLocale === 'zh-CN' ? WEEKDAYS[d.getDay()] : weekdayFormat.format(d)} ${time}`
   if (mobileLocale !== 'zh-CN') return `${(d.getFullYear() === now.getFullYear() ? dateFormat : yearFormat).format(d)} ${time}`
-  const year = d.getFullYear() === now.getFullYear() ? '' : `${d.getFullYear()}年`
-  return `${year}${d.getMonth() + 1}月${d.getDate()}日 ${time}`
+  const date = (d.getFullYear() === now.getFullYear() ? T.monthDay : T.yearMonthDay.replace('{year}', String(d.getFullYear())))
+    .replace('{month}', String(d.getMonth() + 1)).replace('{day}', String(d.getDate()))
+  return `${date} ${time}`
 }
 
 /**

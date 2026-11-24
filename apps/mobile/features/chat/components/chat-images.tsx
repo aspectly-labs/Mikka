@@ -12,6 +12,9 @@ import { useReducedMotionPreference } from '@/lib/reduced-motion'
 import { colors } from '@/lib/theme'
 import { FRAME_RADIUS, frameSize, layerPose, loadedAspect, STACK_LIFT, STACK_SPREAD, stackCard, throwsCard } from '@/features/chat/model/chat-image-geometry'
 import { ChatImageViewer, type ViewerRequest } from './chat-image-viewer'
+import { mobileMessages } from '@/lib/messages'
+
+const I = mobileMessages.MobileCore.images
 
 const THROW = { damping: 30, stiffness: 260, mass: 1, overshootClamping: true }
 
@@ -39,7 +42,7 @@ function Frame({ source, onOpen }: { source: ImageURISource; onOpen: (request: V
   const box = useRef<ViewInstance>(null)
   const size = frameSize(aspect, screen.width * 0.78)
   return (
-    <Pressable ref={box} accessibilityRole="imagebutton" accessibilityLabel="图片" disabled={!source.uri}
+    <Pressable ref={box} accessibilityRole="imagebutton" accessibilityLabel={mobileMessages.AgentCopy.image} disabled={!source.uri}
       onPress={() => box.current?.measureInWindow((x, y, width, height) => onOpen({ index: 0, origin: { x, y, width, height }, radius: FRAME_RADIUS }))}
       style={({ pressed }) => [styles.frame, size, pressed && { opacity: 0.85 }]}>
       {source.uri ? <Image source={source} resizeMode="cover" style={styles.fill}
@@ -89,7 +92,7 @@ function Stack({ images, mirror, onOpen }: { images: ImageURISource[]; mirror: b
   return (
     <View>
       <GestureDetector gesture={Gesture.Exclusive(pan, tapGesture)}>
-        <View accessible accessibilityRole="adjustable" accessibilityLabel={`${images.length} 张图片`} accessibilityValue={{ text: `第 1 张，共 ${images.length} 张` }}
+        <View accessible accessibilityRole="adjustable" accessibilityLabel={I.count.replace('{count}', String(images.length))} accessibilityValue={{ text: I.position.replace('{index}', '1').replace('{count}', String(images.length)) }}
           accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }, { name: 'activate' }]}
           onAccessibilityAction={event => {
             const name = event.nativeEvent.actionName
@@ -111,10 +114,10 @@ function Stack({ images, mirror, onOpen }: { images: ImageURISource[]; mirror: b
           })}
         </View>
       </GestureDetector>
-      <Pressable accessibilityRole="button" accessibilityLabel={`查看全部 ${images.length} 张图片`} hitSlop={8} onPress={() => { tap(); onOpen({ index: 0, origin: null, radius: 10, grid: true }) }}
+      <Pressable accessibilityRole="button" accessibilityLabel={I.viewAll.replace('{count}', String(images.length))} hitSlop={8} onPress={() => { tap(); onOpen({ index: 0, origin: null, radius: 10, grid: true }) }}
         style={({ pressed }) => [styles.count, { alignSelf: mirror ? 'flex-end' : 'flex-start' }, pressed && { opacity: 0.55 }]}>
         <Symbol name="photo.on.rectangle" size={12} color={colors.secondary} web={<Images size={14} color={colors.secondary} strokeWidth={2} />} />
-        <Text style={styles.countText}>{images.length} 张图片</Text>
+        <Text style={styles.countText}>{I.count.replace('{count}', String(images.length))}</Text>
       </Pressable>
     </View>
   )

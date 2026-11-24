@@ -31,12 +31,12 @@ export function SearchScreen() {
   const complete = !loading && !chats.error && !tasks.error && !tasks.paging.hasMore
   const sections: Section[] = needle ? [
     { title: 'Bot', data: chats.rows.filter(row => row.kind === 'bot').map(row => ({ kind: 'chat' as const, row })) },
-    { title: '群聊', data: chats.rows.filter(row => row.kind === 'group').map(row => ({ kind: 'chat' as const, row })) },
-    { title: '任务', data: tasks.paging.items.filter(task => `${task.identifier ?? ''} ${task.title}`.toLowerCase().includes(needle)).map(task => ({ kind: 'task' as const, task })) },
+    { title: mobileMessages.MobileCore.groupChats, data: chats.rows.filter(row => row.kind === 'group').map(row => ({ kind: 'chat' as const, row })) },
+    { title: mobileMessages.Nav.tasks, data: tasks.paging.items.filter(task => `${task.identifier ?? ''} ${task.title}`.toLowerCase().includes(needle)).map(task => ({ kind: 'task' as const, task })) },
   ].filter(section => section.data.length) : []
   return (
     <View style={styles.screen}>
-      <NavBar title="搜索" topTitle search={{ placeholder: 'Bot、群聊、任务', onChange: setQuery }} />
+      <NavBar title={mobileMessages.Common.search} topTitle search={{ placeholder: mobileMessages.MobileCore.searchPlaceholder, onChange: setQuery }} />
       <SectionList
         sections={sections}
         keyExtractor={item => item.kind === 'chat' ? rowKey(item.row) : item.task.id}

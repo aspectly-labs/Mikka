@@ -30,12 +30,13 @@ import { colors } from '@/lib/theme'
 import { mobileMessages } from '@/lib/messages'
 
 const SHOWN = 5
-const PR_GROUP = { review: '等待审查', running: '进行中', merged: '已合并' } as const
+const M = mobileMessages.MobileCore
+const PR_GROUP = { review: M.botInfo.prReview, running: M.board.doing, merged: mobileMessages.ReviewCopy.merged }
 
 /** 电脑's state in the web's words (messages Computer.status). */
 function computerLabel(state: ComputerStatus) {
-  if (state.machine === 'running') return state.control === 'user' ? '你在操作' : state.control === 'agent' ? 'Bot 操作中' : '运行中'
-  return { sleeping: '休眠中', waking: '唤醒中', error: '出错' }[state.machine]
+  if (state.machine === 'running') return state.control === 'user' ? mobileMessages.Computer.status.user : state.control === 'agent' ? mobileMessages.Computer.status.working : mobileMessages.Computer.status.running
+  return { sleeping: mobileMessages.Computer.status.sleeping, waking: mobileMessages.Computer.status.waking, error: mobileMessages.Computer.status.failed }[state.machine]
 }
 
 /**
@@ -70,7 +71,7 @@ export default function BotInfo() {
   // 置顶 and 通知 change at once, then save; a save that fails puts the switch back and says so.
   const saving = useRef(false)
   const [busy, setBusy] = useState(false)
-  const [unsaved, setUnsaved] = useState<'置顶' | '通知' | null>(null)
+  const [unsaved, setUnsaved] = useState<string | null>(null)
   const setPreference = async (change: { pinned?: boolean; muted?: boolean }) => {
     if (saving.current) return
     saving.current = true; setBusy(true)
@@ -81,7 +82,7 @@ export default function BotInfo() {
       () => api(`/api/mobile/bots/${id}`, { method: 'PATCH', body: change }),
       () => page.setData(current => current && before ? { ...current, ...before } : current),
     )
-    if (!saved) setUnsaved(change.pinned !== undefined ? '置顶' : '通知')
+    if (!saved) setUnsaved(change.pinned !== undefined ? M.pin : mobileMessages.Settings.sections.notifications.title)
     else {
       // A poll started during the PATCH may still contain the old preference.
       // Confirm the saved fields and invalidate that older read.
@@ -94,7 +95,7 @@ export default function BotInfo() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const requestDelete = (item: BotPage['library'][number]) => {
     if (deleting.current) return
-    confirmDestructiveAction(`删除「${item.title}」？`, '删除', async () => {
+    confirmDestructiveAction(M.botInfo.deleteConfirm.replace('{title}', () => item.title), mobileMessages.Common.delete, async () => {
       if (deleting.current) return
       deleting.current = true
       setDeletingId(item.id)
@@ -102,7 +103,7 @@ export default function BotInfo() {
         await api(`/api/mobile/artifacts/${item.id}`, { method: 'DELETE' })
         page.setData(current => current && { ...current, library: current.library.filter(file => file.id !== item.id) })
       } catch {
-        showSystemAlert(`「${item.title}」未删除`)
+        showSystemAlert(M.botInfo.deleteFailed.replace('{title}', () => item.title))
       } finally {
         deleting.current = false
         setDeletingId(null)
@@ -122,27 +123,27 @@ export default function BotInfo() {
           <BotAvatar id={id} coordinator={bot?.coordinator} color={bot?.color} shape={bot?.shape} size={96} />
           {name ? <Text style={styles.name}>{name}</Text> : <Spinner />}
         </View>
-        <ReadNotice error={page.error} hasData={Boolean(page.data)} label="Bot 资料" onRetry={page.reload} />
-        <ReadNotice error={computer.error} hasData={Boolean(computer.data)} label="电脑状态" onRetry={computer.reload} />
+        <ReadNotice error={page.error} hasData={Boolean(page.data)} label={mobileMessages.Nav.botMenu.profile} onRetry={page.reload} />
+        <ReadNotice error={computer.error} hasData={Boolean(computer.data)} label={M.botInfo.computerStatus} onRetry={computer.reload} />
         {page.loading && !page.data ? <View style={styles.center}><Spinner /></View> : null}
         {page.data ? (
           <Group>
-            <ToggleRow label="置顶" value={page.data.pinned} disabled={busy} onChange={pinned => void setPreference({ pinned })} />
-            <ToggleRow label="通知" value={!page.data.muted} disabled={busy} onChange={on => void setPreference({ muted: !on })} />
+            <ToggleRow label={M.pin} value={page.data.pinned} disabled={busy} onChange={pinned => void setPreference({ pinned })} />
+            <ToggleRow label={mobileMessages.Settings.sections.notifications.title} value={!page.data.muted} disabled={busy} onChange={on => void setPreference({ muted: !on })} />
           </Group>
         ) : null}
-        {busy ? <Text accessibilityLiveRegion="polite" style={{ color: colors.secondary, marginBottom: 16 }}>正在保存</Text> : null}
-        {unsaved ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.unsaved}>{unsaved}没保存，请稍后重试</Text> : null}
+        {busy ? <Text accessibilityLiveRegion="polite" style={{ color: colors.secondary, marginBottom: 16 }}>{mobileMessages.MobileServer.saving}</Text> : null}
+        {unsaved ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.unsaved}>{M.botInfo.notSaved.replace('{setting}', unsaved)}</Text> : null}
         <BotConversations workspaceId={homeData?.workspace.id} botId={computerBot} />
         {tasks.length ? (
-          <Group label="任务">
+          <Group label={mobileMessages.Nav.tasks}>
             {tasks.map(task => <Row key={task.id} icon={<TaskStateIcon state={rowState(task).state} status={task.status} />} label={displayTitle(task.title)} value={task.identifier ?? undefined} onPress={() => router.push(`/task/${task.id}`)} />)}
-            {ownTasks.length > SHOWN ? <Row label="全部任务" value={String(ownTasks.length)} onPress={() => router.push(`/bots/${id}/tasks`)} /> : null}
+            {ownTasks.length > SHOWN ? <Row label={M.allTasks} value={String(ownTasks.length)} onPress={() => router.push(`/bots/${id}/tasks`)} /> : null}
           </Group>
         ) : null}
         {computer.data ? (
           <Group>
-            <Row icon={<Symbol name="desktopcomputer" size={19} />} label="电脑" value={computerLabel(computer.data)} onPress={() => { const target = webChatPath(id === 'coordinator' ? null : id, home.data?.workspace.id); if (target) void openOnWeb(target) }} />
+            <Row icon={<Symbol name="desktopcomputer" size={19} />} label={mobileMessages.Computer.cardTitle} value={computerLabel(computer.data)} onPress={() => { const target = webChatPath(id === 'coordinator' ? null : id, home.data?.workspace.id); if (target) void openOnWeb(target) }} />
           </Group>
         ) : null}
         {pullRequests.length ? (

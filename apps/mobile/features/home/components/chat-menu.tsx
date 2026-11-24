@@ -1,6 +1,7 @@
 import { Link, type useRouter } from 'expo-router'
 import type { HomeChat, useHomeChats } from '../model/use-home-chats'
 import { unreadOf } from '../model/home-list'
+import { mobileMessages } from '@/lib/messages'
 
 type Router = ReturnType<typeof useRouter>
 
@@ -18,17 +19,17 @@ export function chatMenu(chat: HomeChat, actions: Actions, router: Router) {
   return (
     <Link.Menu>
       <Link.MenuAction icon={unread ? 'envelope.open' : 'envelope.badge'} onPress={() => void actions.setUnread(chat, !unread)}>
-        {unread ? '标为已读' : '标为未读'}
+        {unread ? mobileMessages.Shell.board.card.markRead : mobileMessages.Shell.board.card.markUnread}
       </Link.MenuAction>
       <Link.MenuAction icon={chat.pinned ? 'pin.slash' : 'pin'} disabled={!chat.pinned && actions.pinsFull} onPress={() => void actions.togglePin(chat, false)}>
-        {chat.pinned ? '取消置顶' : '置顶'}
+        {chat.pinned ? mobileMessages.MobileCore.unpin : mobileMessages.MobileCore.pin}
       </Link.MenuAction>
-      <Link.MenuAction icon="eye.slash" onPress={() => void actions.setHidden(chat, true)}>隐藏</Link.MenuAction>
+      <Link.MenuAction icon="eye.slash" onPress={() => void actions.setHidden(chat, true)}>{mobileMessages.MobileCore.hide}</Link.MenuAction>
       {chat.row.kind === 'bot' ? (
-        <Link.MenuAction icon="info.circle" onPress={() => router.push({ pathname: '/bots/[id]/info', params: { id: chat.row.kind === 'bot' && chat.row.bot.coordinator ? 'coordinator' : chat.key } })}>信息</Link.MenuAction>
+        <Link.MenuAction icon="info.circle" onPress={() => router.push({ pathname: '/bots/[id]/info', params: { id: chat.row.kind === 'bot' && chat.row.bot.coordinator ? 'coordinator' : chat.key } })}>{mobileMessages.MobileCore.chatInfo}</Link.MenuAction>
       ) : null}
-      <Link.Menu icon="ellipsis" title="更多">
-        <Link.MenuAction icon="doc.on.doc" onPress={() => actions.copyId(chat)}>复制 ID</Link.MenuAction>
+      <Link.Menu icon="ellipsis" title={mobileMessages.Nav.more}>
+        <Link.MenuAction icon="doc.on.doc" onPress={() => actions.copyId(chat)}>{mobileMessages.ThreadRunPlace.copyId}</Link.MenuAction>
       </Link.Menu>
     </Link.Menu>
   )

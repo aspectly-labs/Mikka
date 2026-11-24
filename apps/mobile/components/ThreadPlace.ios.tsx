@@ -43,7 +43,7 @@ export function ThreadPlace({ threadId, kind }: { threadId: string; kind: Thread
                 </HStack>
               ))}
               {machine?.cloud ? <Button label={mobileMessages.ThreadRunPlace.copyId} systemImage="doc.on.doc" onPress={() => { void Clipboard.setStringAsync(machine.cloud!.sandboxId) }} /> : null}
-            </> : <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>{machine === null ? '读取失败' : '读取中'}</Text>}
+            </> : <Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>{machine === null ? mobileMessages.ReviewCopy.loadFailed : mobileMessages.MobileCore.loading}</Text>}
           </VStack>
         </Popover.Content>
       </Popover>

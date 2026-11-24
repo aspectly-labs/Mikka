@@ -5,6 +5,9 @@ import { act, createElement, useEffect, type ReactNode } from 'react'
 import type { Root } from 'react-dom/client'
 import { Window } from 'happy-dom'
 import { CHAT_FILE_MAX_BYTES } from '@mikka/protocol/chat-attachments'
+import { mobileMessages } from '../lib/messages.ts'
+
+const A = mobileMessages.MobileCore.attach
 
 // TSX components load Lucide's require export; keep native SVG outside this DOM behavior fixture.
 const require = createRequire(import.meta.url)
@@ -62,7 +65,7 @@ test('one picker runs at a time and closes only the sheet that is still focused'
   let finish!: () => void
   pick = () => new Promise(resolve => { finish = resolve })
   await render()
-  const choose = presses.get('照片')!
+  const choose = presses.get(A.photos)!
   await act(async () => { choose(); choose() })
   assert.equal(picks, 1)
   assert.ok([...container.querySelectorAll('button')].every(button => button.disabled))
@@ -74,7 +77,7 @@ for (const leave of ['blur', 'unmount'] as const) test(`a late picker result can
   let finish!: () => void
   pick = () => new Promise(resolve => { finish = resolve })
   await render()
-  await act(async () => presses.get('照片')!())
+  await act(async () => presses.get(A.photos)!())
   await act(async () => { if (leave === 'blur') blur(); else root.render(null) })
   await act(async () => finish())
   assert.equal(backCalls, 0)
@@ -83,12 +86,12 @@ for (const leave of ['blur', 'unmount'] as const) test(`a late picker result can
 test('a picker exception keeps the sheet open with visible recovery and releases the busy guard', async () => {
   pick = async () => { throw new Error('picker unavailable') }
   await render()
-  await act(async () => presses.get('文件')!())
+  await act(async () => presses.get(A.files)!())
   assert.equal(backCalls, 0)
-  assert.match(container.textContent ?? '', /无法添加附件，请重新选择/)
+  assert.ok(container.textContent?.includes(A.failed))
   assert.ok([...container.querySelectorAll('button')].every(button => !button.disabled))
   pick = async () => {}
-  await act(async () => presses.get('文件')!())
+  await act(async () => presses.get(A.files)!())
   assert.equal(picks, 2)
   assert.equal(backCalls, 1)
 })
@@ -99,10 +102,10 @@ test('Web has an explicit close action and a later picker completion cannot navi
   let finish!: () => void
   pick = () => new Promise(resolve => { finish = resolve })
   await render()
-  assert.match(container.textContent ?? '', /添加附件/)
+  assert.ok(container.textContent?.includes(A.title))
   const close = container.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')
   assert.ok(close, 'Web has no native form-sheet dismissal gesture')
-  await act(async () => presses.get('照片')!())
+  await act(async () => presses.get(A.photos)!())
   assert.equal(close.disabled, false, 'cancel remains available during image processing')
   await act(async () => close.click())
   assert.equal(backCalls, 1)

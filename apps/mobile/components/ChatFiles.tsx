@@ -5,6 +5,7 @@ import { Text } from './Text'
 import { api, apiConnection, authHeaders } from '@/lib/api'
 import { colors } from '@/lib/theme'
 import type { ChatFile } from '@mikka/protocol/chat-attachments'
+import { mobileMessages } from '@/lib/messages'
 
 export function ChatFiles({ files }: { files: Pick<ChatFile, 'id' | 'name'>[] }) {
   if (!files.length) return null
@@ -37,10 +38,10 @@ export function ChatFiles({ files }: { files: Pick<ChatFile, 'id' | 'name'>[] })
         <Pressable
           key={file.id}
           accessibilityRole="button"
-          accessibilityLabel={`打开 ${file.name}`}
+          accessibilityLabel={mobileMessages.MobileCore.openFile.replace('{name}', () => file.name)}
           style={styles.file}
           onPress={() => {
-            void open(file).catch(() => Share.share({ message: '文件暂时无法打开，请重试。' }))
+            void open(file).catch(() => Share.share({ message: mobileMessages.MobileCore.fileOpenFailed }))
           }}
         >
           <FileText size={18} color={colors.secondary} />

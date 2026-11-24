@@ -9411,6 +9411,211 @@
     "lastThreadStatus": "上次状态：{status}",
     "messageThread": "给这个线程发消息",
     "currentLanguage": "简体中文",
+    "settings": {
+      "connectedApps": "已连接的 App",
+      "language": "语言",
+      "signingOut": "正在退出登录",
+      "signOutFailed": "退出登录未完成，请重试。",
+      "retrySignOut": "重试退出登录"
+    },
+    "memory": {
+      "askPrompt": "关于你记住的事：{value}",
+      "summary": "记忆摘要",
+      "sendUnconfirmed": "发送未确认，内容已保留，请重试。",
+      "askLabel": "提问或更新记忆",
+      "askPlaceholder": "提问或更新",
+      "sending": "正在发送",
+      "empty": "还没有记住什么。"
+    },
+    "profile": {
+      "nameRequired": "请输入名字",
+      "nameNotSaved": "名字未保存，修改已保留。",
+      "savingName": "正在保存名字"
+    },
+    "attach": {
+      "camera": "相机",
+      "photos": "照片",
+      "files": "文件",
+      "failed": "无法添加附件，请重新选择。",
+      "title": "添加附件",
+      "processing": "正在处理附件…",
+      "add": "添加"
+    },
+    "botInfo": {
+      "prReview": "等待审查",
+      "deleteConfirm": "删除「{title}」？",
+      "deleteFailed": "「{title}」未删除",
+      "computerStatus": "电脑状态",
+      "notSaved": "{setting}没保存，请稍后重试"
+    },
+    "group": {
+      "title": "群聊",
+      "reactions": "回应",
+      "members": "群成员",
+      "earlier": "更早消息",
+      "empty": "@ 一个 Bot，或直接说",
+      "sendTo": "发到 {title}"
+    },
+    "reactionNotSaved": "回应没保存。",
+    "messageActions": "消息操作",
+    "newBot": {
+      "nameTaken": "已有同名 Bot",
+      "failed": "没能创建",
+      "creating": "创建中"
+    },
+    "openFile": "打开 {name}",
+    "fileOpenFailed": "文件暂时无法打开，请重试。",
+    "scrollToLatest": "回到最新消息",
+    "chatModel": "聊天模型",
+    "mention": {
+      "task": "任务：{title}",
+      "thread": "线程：{title}"
+    },
+    "model": {
+      "switching": "正在切换模型…"
+    },
+    "retrying": "正在重试",
+    "notSentRetry": "没发出去，再试一次。",
+    "openUI": {
+      "submitted": "已提交",
+      "answerPrompt": "任务背景：{context}\n我的回答：\n{response}\n请根据以上信息继续提供建议，不要执行工作区操作。",
+      "decisionPrompt": "任务背景：{context}\n待确认建议：{title}\n方案说明：{description}\n我的意见：{decision}。请据此继续提供建议，不要执行工作区操作。"
+    },
+    "startup": {
+      "updateRequired": "请更新到最新版",
+      "opening": "正在打开",
+      "update": "更新",
+      "openFailed": "更新页面未打开，请重试。",
+      "updating": "正在更新"
+    },
+    "threadPlace": "运行在哪台机器",
+    "reaction": {
+      "remove": "移除回应",
+      "add": "添加回应"
+    },
+    "images": {
+      "shareFailed": "图片暂时无法分享，请重试。",
+      "position": "第 {index} 张，共 {count} 张",
+      "nth": "第 {index} 张",
+      "count": "{count} 张图片",
+      "viewAll": "查看全部 {count} 张图片"
+    },
+    "queue": {
+      "queued": "排队中：{text}",
+      "sendNow": "现在发",
+      "sendNowHint": "停止当前回复，先处理排队的消息",
+      "collapse": "收起排队消息",
+      "moreQueued": "还有 {count} 条排队消息",
+      "moreQueuedOne": "还有 {count} 条排队消息",
+      "more": "还有 {count} 条",
+      "item": "第 {index} 条：{text}"
+    },
+    "selection": {
+      "actions": "选中文字的操作",
+      "explain": "解释",
+      "explainPrompt": "解释这段。",
+      "expand": "展开",
+      "expandPrompt": "展开说说这段。",
+      "shorten": "缩短",
+      "shortenPrompt": "把这段改短。",
+      "rewrite": "改写",
+      "rewritePrompt": "换个说法重写这段。",
+      "translate": "翻译",
+      "translatePrompt": "翻译这段：中文译成英文，其他语言译成中文。",
+      "addToThread": "添加到线程"
+    },
+    "botProfileLabel": "{name}，资料",
+    "chat": {
+      "empty": "有什么要我做的，直接说。",
+      "pendingActions": "待处理事项",
+      "serviceUnavailable": "线程服务尚未启用，暂时无法回复。"
+    },
+    "unreadCount": "{count} 条未读",
+    "chatInfo": "信息",
+    "plugins": {
+      "statusOf": "{providers} 连接状态"
+    },
+    "listSeparator": "、",
+    "review": {
+      "githubPermission": "GitHub 权限不足，没能合并",
+      "files": "{count} 个文件",
+      "filesOne": "{count} 个文件",
+      "failedShort": "{count} 项失败",
+      "checking": "检查中",
+      "checksPassed": "检查通过",
+      "separator": "，",
+      "noCheckData": "尚无检查数据",
+      "checksNeutral": "{count} 项中性",
+      "noChecks": "没有检查",
+      "reclaimed": "机器已回收，显示的是{source}的改动 · {time}",
+      "sources": {
+        "pr": " PR ",
+        "commit": "提交",
+        "machine": "工作树",
+        "checkpoint": "最后一次检查点"
+      },
+      "commentOne": "{count} 条评论",
+      "sendFailed": "没能发给 Agent",
+      "mergeConfirmGeneric": "检查未通过，确定合并？",
+      "mergeFailed": "没能合并",
+      "pendingLabel": "待发送：{line}",
+      "noteValue": "修改意见：{note}",
+      "writeNote": "写修改意见",
+      "rowLabel": "审阅，{summary}",
+      "editComment": "编辑 {path} 第 {line} 行的评论",
+      "commentPlaceholder": "写评论",
+      "commentOnLine": "第 {line} 行的评论",
+      "lineLabel": "第 {line} 行，{kind}{text}",
+      "lineAdded": "新增",
+      "lineDeleted": "删除",
+      "tooLarge": "改动太大，没法在手机上显示",
+      "pendingComment": "待发送的评论，第 {line} 行：{body}",
+      "neutralCheck": "{name}（中性）",
+      "unavailable": "当前改动不可用",
+      "tooLargeOpen": "改动太大，点开加载"
+    },
+    "done": "完成",
+    "searchPlaceholder": "Bot、群聊、任务",
+    "workspaces": "工作区",
+    "edit": "编辑",
+    "reorder": "拖动 {name}",
+    "time": {
+      "weekdays": {
+        "sun": "星期日",
+        "mon": "星期一",
+        "tue": "星期二",
+        "wed": "星期三",
+        "thu": "星期四",
+        "fri": "星期五",
+        "sat": "星期六"
+      },
+      "monthDay": "{month}月{day}日",
+      "yearMonthDay": "{year}年{month}月{day}日"
+    },
+    "cardLine": "[卡片]",
+    "modelChoice": {
+      "modelUnavailable": "这个模型现在不可用",
+      "botNotFound": "找不到这个 bot",
+      "updateApp": "需要更新 App",
+      "failed": "没换成 {name}：{reason}"
+    },
+    "unreachable": "连不上 Mikka",
+    "modelStatus": {
+      "exhausted": "{subscription} 订阅额度用完",
+      "nextKey": "{exhausted}，下一条改用 {key} API Key（按 token 计费）",
+      "resets": "{exhausted}，{time} 恢复",
+      "unavailable": "这个模型现在用不了",
+      "next": "下一条改用 {model}"
+    },
+    "runInfo": {
+      "payer": "{owner} 的 {plan}",
+      "moved": "已换到 {machine} 继续"
+    },
+    "waitingFor": "等待回复 · {duration}",
+    "workspaceSwitch": {
+      "notMember": "没切到 {name}：你不在这个工作区",
+      "unreachable": "没切到 {name}：连不上 Mikka"
+    },
     "groupInfo": {
       "bot": "Bot"
     }

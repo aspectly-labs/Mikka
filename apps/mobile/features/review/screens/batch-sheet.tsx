@@ -7,6 +7,9 @@ import { tap } from '@/lib/haptics'
 import { colors, LIST_INSET } from '@/lib/theme'
 import { useReview } from '../components/use-review'
 import { removeComment, toggleCheck } from '../model/review'
+import { mobileMessages } from '@/lib/messages'
+
+const C = mobileMessages.ReviewCopy
 
 /**
  * The pending batch, from the floating bar's 「N 条评论 · 失败检查 ›」: each line comment (tap to edit in R3b, or
@@ -18,16 +21,16 @@ export function BatchSheet() {
   const { batch, setBatch, checks } = useReview(id)
   return (
     <>
-      <NavBar sheet fade={false} title="待发送" right={{ icon: 'checkmark', label: '完成', web: <Check size={20} color={colors.ink} />, onPress: () => router.back() }} />
+      <NavBar sheet fade={false} title={C.pendingTag} right={{ icon: 'checkmark', label: mobileMessages.MobileCore.done, web: <Check size={20} color={colors.ink} />, onPress: () => router.back() }} />
       <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.body}>
         {batch.comments.map(comment => (
           <View key={comment.id} style={styles.row}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`编辑 ${comment.path} 第 ${comment.line} 行的评论`} style={styles.rowText}
+            <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.MobileCore.review.editComment.replace('{line}', String(comment.line)).replace('{path}', () => comment.path)} style={styles.rowText}
               onPress={() => router.push({ pathname: '/task/[id]/comment', params: { id, path: comment.path, line: String(comment.line), side: comment.side, quote: comment.quote, comment: comment.id } })}>
               <Text style={styles.where} numberOfLines={1}>{comment.path.slice(comment.path.lastIndexOf('/') + 1)}:{comment.line}</Text>
               <Text style={styles.text} numberOfLines={3}>{comment.body}</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="删除" hitSlop={8} onPress={() => { tap(); setBatch(current => removeComment(current, comment.id)) }}>
+            <Pressable accessibilityRole="button" accessibilityLabel={C.delete} hitSlop={8} onPress={() => { tap(); setBatch(current => removeComment(current, comment.id)) }}>
               <Trash2 size={18} color={colors.danger} strokeWidth={2} />
             </Pressable>
           </View>
@@ -35,8 +38,8 @@ export function BatchSheet() {
         {batch.checks.map(check => (
           <View key={check} style={styles.row}>
             <Paperclip size={16} color={colors.secondary} strokeWidth={2} />
-            <Text style={[styles.text, { flex: 1 }]} numberOfLines={1}>{`${checks.find(item => item.id === check)?.name ?? check} 失败`}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="移除" hitSlop={8} onPress={() => { tap(); setBatch(current => toggleCheck(current, check)) }}>
+            <Text style={[styles.text, { flex: 1 }]} numberOfLines={1}>{C.checkFailed.replace('{name}', () => checks.find(item => item.id === check)?.name ?? check)}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.Common.remove} hitSlop={8} onPress={() => { tap(); setBatch(current => toggleCheck(current, check)) }}>
               <Trash2 size={18} color={colors.danger} strokeWidth={2} />
             </Pressable>
           </View>

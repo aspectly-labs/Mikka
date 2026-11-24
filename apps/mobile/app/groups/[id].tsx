@@ -231,7 +231,7 @@ export default function GroupChat() {
         {first || separator ? (
           <View style={styles.author}>
             {message.authorType === 'user' ? null : <BotAvatar color={author?.color} shape={author?.shape} size={20} />}
-            <Text style={styles.authorName}>{author?.name ?? (message.authorType === 'user' ? '成员' : 'Bot')}</Text>
+            <Text style={styles.authorName}>{author?.name ?? (message.authorType === 'user' ? mobileMessages.GroupChat.member : 'Bot')}</Text>
           </View>
         ) : null}
         <BotText><Markdown text={message.body} /></BotText>
@@ -254,17 +254,17 @@ export default function GroupChat() {
           onStartReached={before ? () => void loadEarlier() : undefined}
           header={<>
             {!page.data && !page.error ? <View style={styles.loading}><Spinner /></View> : null}
-            <ReadNotice error={page.error} hasData={Boolean(page.data)} label="群聊" onRetry={page.reload} />
-            <ReadNotice error={reactionState.error} hasData={reactionSnapshot?.identity === identity} label="回应" onRetry={reactionState.reload} />
-            <ReadNotice error={members.error} hasData={Boolean(members.data)} label="群成员" onRetry={members.reload} />
+            <ReadNotice error={page.error} hasData={Boolean(page.data)} label={mobileMessages.MobileCore.group.title} onRetry={page.reload} />
+            <ReadNotice error={reactionState.error} hasData={reactionSnapshot?.identity === identity} label={mobileMessages.MobileCore.group.reactions} onRetry={reactionState.reload} />
+            <ReadNotice error={members.error} hasData={Boolean(members.data)} label={mobileMessages.MobileCore.group.members} onRetry={members.reload} />
             {loadingHistory ? <View style={styles.history}><Spinner size={16} /></View> : null}
-            <ReadNotice error={historyError} label="更早消息" onRetry={loadEarlier} />
+            <ReadNotice error={historyError} label={mobileMessages.MobileCore.group.earlier} onRetry={loadEarlier} />
           </>}
           footer={<>
         {working ? <View style={styles.working}><Spinner size={16} /></View> : null}
-        {!accessDenied && page.data && !messages.length && !delivery.bubbles.length ? <Text style={styles.empty}>@ 一个 Bot，或直接说</Text> : null}
-        {!accessDenied && page.data?.routingError && !working ? <Text style={styles.error}>没有 Bot 接这条，@ 它的名字</Text> : null}
-        {!accessDenied && page.data?.stopped && !working ? <Text style={styles.stopped}>已停止</Text> : null}
+        {!accessDenied && page.data && !messages.length && !delivery.bubbles.length ? <Text style={styles.empty}>{mobileMessages.MobileCore.group.empty}</Text> : null}
+        {!accessDenied && page.data?.routingError && !working ? <Text style={styles.error}>{mobileMessages.GroupChat.noTaker}</Text> : null}
+        {!accessDenied && page.data?.stopped && !working ? <Text style={styles.stopped}>{mobileMessages.GroupChat.stopped}</Text> : null}
         {delivery.bubbles}
         {stopFailed ? <StopFailed busy={stopping} onRetry={() => void stop()} /> : null}
           </>} />
@@ -272,9 +272,9 @@ export default function GroupChat() {
       </View>
       <ChatScrollToLatest visible={!accessDenied && !atLatest} bottom={composerHeight + 12} onPress={() => list.current?.toLatest()} />
       <OfflineBanner top={insets.top + 66} />
-      {!accessDenied ? <Composer value={text} key={identity} workspaceId={referenceWorkspace} onChangeText={setText} placeholder={`发到 ${title || '群聊'}`} onSend={words => send(words)} sendDisabled={!canSend} attach attachmentScope={{ kind: 'group', id }} overlay onHeight={setComposerHeight}
+      {!accessDenied ? <Composer value={text} key={identity} workspaceId={referenceWorkspace} onChangeText={setText} placeholder={mobileMessages.MobileCore.group.sendTo.replace('{title}', () => title || mobileMessages.MobileCore.group.title)} onSend={words => send(words)} sendDisabled={!canSend} attach attachmentScope={{ kind: 'group', id }} overlay onHeight={setComposerHeight}
         accessory={modelBot && <NamedBotModel key={modelBot} botId={modelBot} running={working} />}
-        notice={reactionFailure ? <View accessibilityRole="alert" style={styles.reactionNotice}><Text style={styles.error}>回应没保存。</Text><GlassButton label="重试" onPress={() => void react(reactionFailure.id, reactionFailure.emoji)} /></View> : undefined}
+        notice={reactionFailure ? <View accessibilityRole="alert" style={styles.reactionNotice}><Text style={styles.error}>{mobileMessages.MobileCore.reactionNotSaved}</Text><GlassButton label={mobileMessages.Common.retry} onPress={() => void react(reactionFailure.id, reactionFailure.emoji)} /></View> : undefined}
         quote={quote} onClearQuote={() => setQuote(null)} onStop={working && !stopping ? () => void stop() : undefined} /> : null}
     </View>
   )

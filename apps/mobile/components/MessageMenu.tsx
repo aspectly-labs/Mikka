@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router'
 import { Ellipsis } from 'lucide-react-native'
 import { holdMessage, type HeldMessage } from '@/lib/message-actions'
 import { colors } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * ⋯ under a message (Alex 2026-11-08): its reactions, 回复, 复制 and 选择文本. Elsewhere than iOS (the web build) it
@@ -11,7 +12,7 @@ import { colors } from '@/lib/theme'
 export function MessageMenu({ message }: { message: HeldMessage }) {
   const router = useRouter()
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="更多" hitSlop={6} onPress={() => { holdMessage(message); router.push('/message') }}
+    <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.AiElements.message.more} hitSlop={6} onPress={() => { holdMessage(message); router.push('/message') }}
       style={({ pressed }) => [styles.button, pressed && { backgroundColor: colors.pressed }]}>
       <Ellipsis size={14} color={colors.secondary} />
     </Pressable>

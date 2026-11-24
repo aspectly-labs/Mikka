@@ -15,6 +15,9 @@ import type { Workspace } from '@/lib/types'
 import { colors, GROUP_INSET } from '@/lib/theme'
 import { useWorkspaces } from '../model/use-workspaces'
 import { dragSlot, moveTo } from '../model/workspace-order'
+import { mobileMessages } from '@/lib/messages'
+
+const M = mobileMessages.MobileCore
 
 const ROW = 52
 
@@ -29,8 +32,8 @@ export function WorkspacesScreen() {
   const drag = { from: useSharedValue(-1), travel: useSharedValue(0) }
   return (
     <View style={styles.screen}>
-      <NavBar title="工作区" large
-        right={{ icon: 'checkmark', label: sorting ? '完成' : '编辑', text: sorting ? '完成' : '编辑', web: <Text style={styles.word}>{sorting ? '完成' : '编辑'}</Text>, onPress: () => setSorting(on => !on) }} />
+      <NavBar title={mobileMessages.MobileCore.workspaces} large
+        right={{ icon: 'checkmark', label: sorting ? M.done : M.edit, text: sorting ? M.done : M.edit, web: <Text style={styles.word}>{sorting ? M.done : M.edit}</Text>, onPress: () => setSorting(on => !on) }} />
       <ScrollView {...underBar} contentContainerStyle={styles.content}>
         <View style={styles.group}>
           {workspaces.map((workspace, index) => (
@@ -77,7 +80,7 @@ function WorkspaceRow({ workspace, index, count, selected, busy, disabled, sorti
       </Pressable>
       {sorting ? (
         <GestureDetector gesture={pan}>
-          <View accessibilityLabel={`拖动 ${workspace.name}`} style={styles.handle}>
+          <View accessibilityLabel={M.reorder.replace('{name}', () => workspace.name)} style={styles.handle}>
             <Symbol name="line.3.horizontal" size={16} color={colors.secondary} web={<GripVertical size={18} color={colors.secondary} strokeWidth={2} />} />
           </View>
         </GestureDetector>

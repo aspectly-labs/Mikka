@@ -62,25 +62,28 @@ const render = async (allowCustom: boolean, answer: (words: string) => Promise<b
   const value = `root = BeQuestions("测试背景", [{id:"start", title:"先做什么？", options:[{value:"a", label:"整理收件箱"}, {value:"b", label:"查看日程"}], allowCustom:${allowCustom}}])`
   await act(async () => root.render(createElement(OpenUIReply, { text: value, live: true, answer, sources: {}, onOpen: () => {} })))
 }
+const { mobileMessages } = await import('../lib/messages.ts')
+const submit = mobileMessages.AgentCopy.submitAnswersAndContinue
+const notSent = mobileMessages.MobileCore.notSentRetry
 const button = (label: string) => [...container.querySelectorAll('button')].find(button => button.textContent === label)!
 
 test('one question with options and allowCustom accepts custom-only input and preserves it after a failed answer', async () => {
   await render(true)
   assert.ok(container.querySelector('input'), 'the custom answer field is rendered even for one single-choice question')
-  assert.equal(button('提交回答并继续').disabled, true)
+  assert.equal(button(submit).disabled, true)
   await act(async () => edit('先准备会议材料'))
-  assert.equal(button('提交回答并继续').disabled, false)
+  assert.equal(button(submit).disabled, false)
   accepted = false
-  await act(async () => button('提交回答并继续').click())
+  await act(async () => button(submit).click())
   assert.match(answers[0], /先做什么？：先准备会议材料/)
-  assert.match(container.textContent ?? '', /没发出去，再试一次/)
+  assert.ok(container.textContent?.includes(notSent))
   assert.equal(container.querySelector('input')?.value, '先准备会议材料')
-  assert.equal(button('提交回答并继续').disabled, false)
+  assert.equal(button(submit).disabled, false)
   accepted = true
-  await act(async () => button('提交回答并继续').click())
+  await act(async () => button(submit).click())
   assert.equal(answers.length, 2)
   assert.equal(answers[1], answers[0])
-  assert.equal(button('已提交').disabled, true)
+  assert.equal(button(mobileMessages.MobileCore.openUI.submitted).disabled, true)
 })
 
 test('an option and custom context are submitted together instead of prematurely sending on option selection', async () => {
@@ -88,7 +91,7 @@ test('an option and custom context are submitted together instead of prematurely
   await act(async () => button('整理收件箱').click())
   assert.equal(answers.length, 0)
   await act(async () => edit('先处理客户邮件'))
-  await act(async () => button('提交回答并继续').click())
+  await act(async () => button(submit).click())
   assert.match(answers[0], /先做什么？：整理收件箱；先处理客户邮件/)
 })
 
@@ -113,7 +116,7 @@ test('a slow native reply choice rejects simultaneous taps and permits retry aft
   assert.deepEqual(attempted, ['查看日程'])
   assert.equal(option.disabled, true)
   await act(async () => reject(new Error('connection lost')))
-  assert.match(container.textContent ?? '', /没发出去/)
+  assert.ok(container.textContent?.includes(notSent))
   assert.equal(option.disabled, false)
   await act(async () => option.click())
   assert.deepEqual(attempted, ['查看日程', '查看日程'])
@@ -196,13 +199,13 @@ test('an unconfirmed custom answer keeps its editor when the live document settl
   }
   await show(stream)
   await act(async () => edit('original answer'))
-  await act(async () => button('提交回答并继续').click())
+  await act(async () => button(submit).click())
   const editor = container.querySelector('input')
   await show(saved)
   assert.equal(container.querySelector('input'), editor)
   await act(async () => refuse())
   assert.equal(editor?.value, 'original answer')
-  assert.match(container.textContent ?? '', /没发出去/)
+  assert.ok(container.textContent?.includes(notSent))
 })
 
 test('both chat lists refresh the existing answer row after a refusal without repainting it on composer input', async t => {

@@ -3,6 +3,7 @@ import { StyleSheet, TextInput, View } from 'react-native'
 import { NavBar, underBar } from '@/components/NavBar'
 import { heldMessage, subscribeHeldMessage } from '@/lib/message-actions'
 import { colors, font } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * 选择文本: the message's words, where the system's own selection handles pick
@@ -13,7 +14,7 @@ export default function MessageText() {
   const text = useSyncExternalStore(subscribeHeldMessage, heldMessage, heldMessage)?.text ?? ''
   return (
     <View style={styles.screen}>
-      <NavBar title="选择文本" />
+      <NavBar title={mobileMessages.MobileCore.selectText} />
       <TextInput value={text} onChangeText={() => {}} multiline showSoftInputOnFocus={false} autoFocus
         scrollEnabled contextMenuHidden={false} {...(underBar as object)} style={styles.text} />
     </View>

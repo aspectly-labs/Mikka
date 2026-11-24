@@ -11,6 +11,15 @@ import { arr, inlineMarkdown, isComponent, obj, openUIText, parseOpenUI, splitOp
 import type { CitationSource } from '@/lib/types'
 import { openOnWeb } from '@/lib/web'
 import { colors, font } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
+
+const A = mobileMessages.AgentCopy
+const M = mobileMessages.MobileCore
+// i18n-ignore: the label an agent writes for a prompt button (its own words, compared, never shown)
+const FILL_QUESTION = '填入提问'
+
+/** Fills {name} placeholders in one pass, so text the person wrote is never read as a placeholder. */
+const fill = (template: string, values: Record<string, string>) => template.replace(/\{(\w+)\}/g, (match, key: string) => values[key] ?? match)
 
 /**
  * What a card can do in its chat. `live` is false once the person has written
@@ -78,7 +87,7 @@ function Node({ value, path }: { value: Value | undefined; path: string }) {
   }
 }
 
-/** The bot's words keep the grey bubble (R-14); only cards go without. */
+/** The bot's words are full-width text with no bubble (R-14 on iOS since 2026-11-24); cards draw their own surface. */
 function Words({ text }: { text: string }) {
   const { sources, onOpen } = useCard()
   if (!text.trim()) return null
@@ -121,7 +130,7 @@ function useAnswer(path: string) {
   return { send, state, open: live && state !== 'sent' && state !== 'sending' }
 }
 
-const Failed = ({ state }: { state: string }) => state === 'failed' ? <Text style={cardText.error}>没发出去，再试一次。</Text> : null
+const Failed = ({ state }: { state: string }) => state === 'failed' ? <Text style={cardText.error}>{M.notSentRetry}</Text> : null
 
 interface Question { id: string; title: string; description: string; options: { value: string; label: string; action: string }[]; multiple: boolean; allowCustom: boolean }
 
@@ -197,7 +206,7 @@ function Questions({ value, path }: { value: Component; path: string }) {
       const labels = question.options.filter(option => picked[question.id]?.includes(option.value)).map(option => option.label)
       return `${question.title}：${[...labels, custom[question.id]?.trim()].filter(Boolean).join('；')}`
     }).join('\n')
-    void send(`任务背景：${str(value.props.context)}\n我的回答：\n${response}\n请根据以上信息继续提供建议，不要执行工作区操作。`)
+    void send(fill(M.openUI.answerPrompt, { context: str(value.props.context), response }))
   }
   return (
     <ChatCard>
@@ -218,12 +227,12 @@ function Questions({ value, path }: { value: Component; path: string }) {
           })}
           {question.allowCustom ? (
             <TextInput value={custom[question.id] ?? ''} onChangeText={text => setCustom(current => ({ ...current, [question.id]: text }))} editable={open}
-              placeholder="补充其他回答…" placeholderTextColor={colors.secondary} style={styles.input} />
+              placeholder={M.customAnswer} placeholderTextColor={colors.secondary} style={styles.input} />
           ) : null}
         </View>
       ))}
       <View style={styles.actions}>
-        <CardButton primary label={state === 'sent' ? '已提交' : '提交回答并继续'} disabled={!open || !answered} busy={state === 'sending'} onPress={submit} />
+        <CardButton primary label={state === 'sent' ? M.openUI.submitted : A.submitAnswersAndContinue} disabled={!open || !answered} busy={state === 'sending'} onPress={submit} />
       </View>
       <Failed state={state} />
     </ChatCard>
@@ -238,7 +247,7 @@ function Approval({ value, path }: { value: Component; path: string }) {
   const description = str(value.props.description)
   const choose = (label: string, words: string) => {
     setDecision(label)
-    void send(`任务背景：${str(value.props.context)}\n待确认建议：${title}\n方案说明：${description}\n我的意见：${words}。请据此继续提供建议，不要执行工作区操作。`)
+    void send(fill(M.openUI.decisionPrompt, { context: str(value.props.context), title, description, decision: words }))
   }
   return (
     <ChatCard>
@@ -246,9 +255,9 @@ function Approval({ value, path }: { value: Component; path: string }) {
       {description ? <Text style={cardText.body}>{description}</Text> : null}
       {state === 'sent' && decision ? <Text style={cardText.meta}>{decision}</Text> : (
         <View style={styles.actions}>
-          <CardButton label="不同意" disabled={!open} onPress={() => choose('已拒绝', '不同意这个建议方案')} />
-          <CardButton label="修改方案" disabled={!open} onPress={() => choose('需要修改', '请修改这个建议方案')} />
-          <CardButton primary label="同意" disabled={!open} busy={state === 'sending'} onPress={() => choose('已同意', '同意这个建议方案')} />
+          <CardButton label={A.reject} disabled={!open} onPress={() => choose(A.rejected, A.iRejectThisProposal)} />
+          <CardButton label={A.requestChanges} disabled={!open} onPress={() => choose(A.changesRequested, A.pleaseReviseThisProposal)} />
+          <CardButton primary label={A.approve} disabled={!open} busy={state === 'sending'} onPress={() => choose(A.approved, A.iApproveThisProposal)} />
         </View>
       )}
       <Failed state={state} />
@@ -282,7 +291,7 @@ function PromptButton({ value, path }: { value: Component; path: string }) {
   const label = str(value.props.label)
   return (
     <View style={{ alignItems: 'flex-start', gap: 6 }}>
-      <CardButton label={label === '填入提问' ? '直接提问' : label} disabled={!open} busy={state === 'sending'} onPress={() => void send(str(value.props.action) || label)} />
+      <CardButton label={label === FILL_QUESTION ? A.askNow : label} disabled={!open} busy={state === 'sending'} onPress={() => void send(str(value.props.action) || label)} />
       <Failed state={state} />
     </View>
   )
@@ -327,7 +336,7 @@ function ImageCard({ value, path }: { value: Component; path: string }) {
           <Picture image={image} alt={title} />
           {image ? (
             <Pressable accessibilityRole="button" accessibilityState={{ expanded: credit }} onPress={() => setCredit(!credit)} hitSlop={4} style={{ alignSelf: 'flex-start' }}>
-              <Text style={cardText.meta}>图片来源与许可</Text>
+              <Text style={cardText.meta}>{A.imageSourceAndLicense}</Text>
             </Pressable>
           ) : null}
           {image && credit ? <Credit image={image} /> : null}
@@ -340,7 +349,7 @@ function ImageCard({ value, path }: { value: Component; path: string }) {
       {tags.length ? <View style={styles.tags}>{tags.map((tag, index) => <Text key={index} style={styles.tag}>{tag}</Text>)}</View> : null}
       {prompt ? (
         <View style={{ alignItems: 'flex-start', gap: 6 }}>
-          <CardButton label={state === 'sent' ? '已提问' : '继续了解'} disabled={!open} busy={state === 'sending'} onPress={() => void send(prompt)} />
+          <CardButton label={state === 'sent' ? A.asked : A.learnMore} disabled={!open} busy={state === 'sending'} onPress={() => void send(prompt)} />
           <Failed state={state} />
         </View>
       ) : null}

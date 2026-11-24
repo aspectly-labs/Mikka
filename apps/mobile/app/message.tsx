@@ -10,6 +10,7 @@ import { CloseButton, Group } from '@/components/ui'
 import { tap } from '@/lib/haptics'
 import { heldMessage, REACTIONS, subscribeHeldMessage } from '@/lib/message-actions'
 import { colors } from '@/lib/theme'
+import { mobileMessages } from '@/lib/messages'
 
 /**
  * What ⋯ under a message offers on the web build, as a sheet (iOS draws the system menu, MessageMenu.ios.tsx): a row
@@ -27,7 +28,7 @@ export default function MessageActions() {
   return (
     <View style={styles.sheet}>
       {Platform.OS === 'web' ? <View style={styles.webHeader}>
-        <Text accessibilityRole="header" style={styles.title}>消息操作</Text>
+        <Text accessibilityRole="header" style={styles.title}>{mobileMessages.MobileCore.messageActions}</Text>
         <CloseButton onPress={() => close()} />
       </View> : null}
       {react ? (
@@ -42,13 +43,13 @@ export default function MessageActions() {
         </View>
       ) : null}
       <Group>
-        <Row icon={<Symbol name="arrowshape.turn.up.left" size={18} web={<Reply size={20} color={colors.ink} />} />} label="回复" trailing={null}
+        <Row icon={<Symbol name="arrowshape.turn.up.left" size={18} web={<Reply size={20} color={colors.ink} />} />} label={mobileMessages.AiElements.message.reply} trailing={null}
           onPress={() => close(message.onQuote)} />
       </Group>
       <Group>
-        <Row icon={<Symbol name="doc.on.doc" size={18} web={<Copy size={20} color={colors.ink} />} />} label="复制" trailing={null}
+        <Row icon={<Symbol name="doc.on.doc" size={18} web={<Copy size={20} color={colors.ink} />} />} label={mobileMessages.AiElements.message.copy} trailing={null}
           onPress={() => close(() => { void Clipboard.setStringAsync(message.text); tap() })} />
-        <Row icon={<Symbol name="character.cursor.ibeam" size={18} web={<TextSelect size={20} color={colors.ink} />} />} label="选择文本" trailing={null}
+        <Row icon={<Symbol name="character.cursor.ibeam" size={18} web={<TextSelect size={20} color={colors.ink} />} />} label={mobileMessages.MobileCore.selectText} trailing={null}
           onPress={() => {
             // In the chat, the words become selectable in place once this sheet has gone (it would take the focus).
             if (message.onSelect) { afterClose.current = message.onSelect; router.back() }

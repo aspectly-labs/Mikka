@@ -9,11 +9,12 @@ import { CloseButton } from '@/components/ui'
 import { heldComposer } from '@/lib/attach-sheet'
 import { colors } from '@/lib/theme'
 import { ClipboardPasteButton, isPasteButtonAvailable } from 'expo-clipboard'
+import { mobileMessages } from '@/lib/messages'
 
 const TILES: { source: AttachSource; label: string; symbol: 'camera' | 'photo.on.rectangle' | 'doc'; web: typeof Camera; image: boolean }[] = [
-  { source: 'camera', label: '相机', symbol: 'camera', web: Camera, image: true },
-  { source: 'library', label: '照片', symbol: 'photo.on.rectangle', web: ImageIcon, image: true },
-  { source: 'file', label: '文件', symbol: 'doc', web: FileText, image: false },
+  { source: 'camera', label: mobileMessages.MobileCore.attach.camera, symbol: 'camera', web: Camera, image: true },
+  { source: 'library', label: mobileMessages.MobileCore.attach.photos, symbol: 'photo.on.rectangle', web: ImageIcon, image: true },
+  { source: 'file', label: mobileMessages.MobileCore.attach.files, symbol: 'doc', web: FileText, image: false },
 ]
 
 /**
@@ -47,7 +48,7 @@ export default function AttachSheet() {
       // A slow picker or image conversion must not pop a screen opened after this sheet.
       if (mounted.current && focused.current && version === focusVersion.current && router.canGoBack()) router.back()
     } catch {
-      if (mounted.current) setProblem('无法添加附件，请重新选择。')
+      if (mounted.current) setProblem(mobileMessages.MobileCore.attach.failed)
     } finally {
       inFlight.current = false
       if (mounted.current) setBusy(false)
@@ -56,7 +57,7 @@ export default function AttachSheet() {
   return (
     <View style={styles.sheet}>
       {Platform.OS === 'web' ? <View style={styles.webHeader}>
-        <Text accessibilityRole="header" style={styles.title}>添加附件</Text>
+        <Text accessibilityRole="header" style={styles.title}>{mobileMessages.MobileCore.attach.title}</Text>
         <CloseButton onPress={dismiss} />
       </View> : null}
       <View style={styles.tiles}>
@@ -74,7 +75,7 @@ export default function AttachSheet() {
           <ClipboardPasteButton style={{ width: 84, height: 92 }} acceptedContentTypes={['image']} displayMode="iconAndLabel" onPress={image => { if (image.type === 'image') void run(() => composer.pasteImage!(image)) }} />
         </View> : null}
       </View>
-      {busy ? <Text accessibilityLiveRegion="polite" style={styles.status}>正在处理附件…</Text> : null}
+      {busy ? <Text accessibilityLiveRegion="polite" style={styles.status}>{mobileMessages.MobileCore.attach.processing}</Text> : null}
       {problem ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.problem}>{problem}</Text> : null}
     </View>
   )

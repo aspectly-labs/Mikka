@@ -9411,6 +9411,211 @@
     "lastThreadStatus": "Last status: {status}",
     "messageThread": "Message this thread",
     "currentLanguage": "English",
+    "settings": {
+      "connectedApps": "Connected apps",
+      "language": "Language",
+      "signingOut": "Signing out…",
+      "signOutFailed": "Couldn’t sign out. Try again.",
+      "retrySignOut": "Retry sign-out"
+    },
+    "memory": {
+      "askPrompt": "About what you remember: {value}",
+      "summary": "Memory summary",
+      "sendUnconfirmed": "Couldn’t confirm it was sent. Your text is kept; try again.",
+      "askLabel": "Ask about or update memory",
+      "askPlaceholder": "Ask or update",
+      "sending": "Sending",
+      "empty": "Nothing remembered yet."
+    },
+    "profile": {
+      "nameRequired": "Enter a name",
+      "nameNotSaved": "Couldn’t save the name. Your change is kept.",
+      "savingName": "Saving name"
+    },
+    "attach": {
+      "camera": "Camera",
+      "photos": "Photos",
+      "files": "Files",
+      "failed": "Couldn’t add the attachment. Choose it again.",
+      "title": "Add attachment",
+      "processing": "Processing attachment…",
+      "add": "Add"
+    },
+    "botInfo": {
+      "prReview": "Awaiting review",
+      "deleteConfirm": "Delete “{title}”?",
+      "deleteFailed": "“{title}” wasn’t deleted",
+      "computerStatus": "Computer status",
+      "notSaved": "{setting} wasn’t saved. Try again later."
+    },
+    "group": {
+      "title": "Group chat",
+      "reactions": "Reactions",
+      "members": "Group members",
+      "earlier": "Earlier messages",
+      "empty": "@ a bot, or just say it",
+      "sendTo": "Message {title}"
+    },
+    "reactionNotSaved": "Reaction wasn’t saved.",
+    "messageActions": "Message actions",
+    "newBot": {
+      "nameTaken": "A bot with this name already exists",
+      "failed": "Couldn’t create",
+      "creating": "Creating"
+    },
+    "openFile": "Open {name}",
+    "fileOpenFailed": "Couldn’t open the file right now. Try again.",
+    "scrollToLatest": "Jump to latest message",
+    "chatModel": "Chat model",
+    "mention": {
+      "task": "Task: {title}",
+      "thread": "Thread: {title}"
+    },
+    "model": {
+      "switching": "Switching model…"
+    },
+    "retrying": "Retrying",
+    "notSentRetry": "Didn’t send. Try again.",
+    "openUI": {
+      "submitted": "Submitted",
+      "answerPrompt": "Task context: {context}\nMy answers:\n{response}\nContinue advising based on this information, without performing workspace operations.",
+      "decisionPrompt": "Task context: {context}\nProposal: {title}\nDescription: {description}\nMy decision: {decision}. Continue advising based on this, without performing workspace operations."
+    },
+    "startup": {
+      "updateRequired": "Update to the latest version",
+      "opening": "Opening",
+      "update": "Update",
+      "openFailed": "Couldn’t open the update page. Try again.",
+      "updating": "Updating"
+    },
+    "threadPlace": "Which machine it runs on",
+    "reaction": {
+      "remove": "Remove reaction",
+      "add": "Add reaction"
+    },
+    "images": {
+      "shareFailed": "Couldn’t share the image right now. Try again.",
+      "position": "{index} of {count}",
+      "nth": "Image {index}",
+      "count": "{count} images",
+      "viewAll": "View all {count} images"
+    },
+    "queue": {
+      "queued": "Queued: {text}",
+      "sendNow": "Send now",
+      "sendNowHint": "Stops the current reply and sends the queued message first",
+      "collapse": "Hide queued messages",
+      "moreQueued": "{count} more queued messages",
+      "moreQueuedOne": "{count} more queued message",
+      "more": "{count} more",
+      "item": "Message {index}: {text}"
+    },
+    "selection": {
+      "actions": "Actions for selected text",
+      "explain": "Explain",
+      "explainPrompt": "Explain this.",
+      "expand": "Expand",
+      "expandPrompt": "Say more about this.",
+      "shorten": "Shorten",
+      "shortenPrompt": "Make this shorter.",
+      "rewrite": "Rewrite",
+      "rewritePrompt": "Rewrite this a different way.",
+      "translate": "Translate",
+      "translatePrompt": "Translate this: Chinese into English, other languages into Chinese.",
+      "addToThread": "Add to thread"
+    },
+    "botProfileLabel": "{name}, profile",
+    "chat": {
+      "empty": "Tell me what you need.",
+      "pendingActions": "Pending items",
+      "serviceUnavailable": "The thread service isn’t on yet, so replies are unavailable for now."
+    },
+    "unreadCount": "{count} unread",
+    "chatInfo": "Info",
+    "plugins": {
+      "statusOf": "{providers} connection status"
+    },
+    "listSeparator": ", ",
+    "review": {
+      "githubPermission": "GitHub permission isn’t enough to merge",
+      "files": "{count} files",
+      "filesOne": "{count} file",
+      "failedShort": "{count} failed",
+      "checking": "Checks running",
+      "checksPassed": "Checks passed",
+      "separator": ", ",
+      "noCheckData": "No check data yet",
+      "checksNeutral": "{count} neutral",
+      "noChecks": "No checks",
+      "reclaimed": "The machine was reclaimed. Showing changes from {source} · {time}",
+      "sources": {
+        "pr": "the PR",
+        "commit": "the commit",
+        "machine": "the working tree",
+        "checkpoint": "the last checkpoint"
+      },
+      "commentOne": "{count} comment",
+      "sendFailed": "Couldn’t send to the agent",
+      "mergeConfirmGeneric": "Checks didn’t pass. Merge anyway?",
+      "mergeFailed": "Couldn’t merge",
+      "pendingLabel": "Pending: {line}",
+      "noteValue": "Change note: {note}",
+      "writeNote": "Write a change note",
+      "rowLabel": "Review, {summary}",
+      "editComment": "Edit comment on {path}, line {line}",
+      "commentPlaceholder": "Write a comment",
+      "commentOnLine": "Comment on line {line}",
+      "lineLabel": "Line {line}, {kind}{text}",
+      "lineAdded": "added: ",
+      "lineDeleted": "deleted: ",
+      "tooLarge": "Too large to show on a phone",
+      "pendingComment": "Pending comment, line {line}: {body}",
+      "neutralCheck": "{name} (neutral)",
+      "unavailable": "Changes are unavailable right now",
+      "tooLargeOpen": "Too large; open to load"
+    },
+    "done": "Done",
+    "searchPlaceholder": "Bots, group chats, tasks",
+    "workspaces": "Workspaces",
+    "edit": "Edit",
+    "reorder": "Reorder {name}",
+    "time": {
+      "weekdays": {
+        "sun": "Sunday",
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday"
+      },
+      "monthDay": "{month}/{day}",
+      "yearMonthDay": "{month}/{day}/{year}"
+    },
+    "cardLine": "[Card]",
+    "modelChoice": {
+      "modelUnavailable": "This model isn’t available right now",
+      "botNotFound": "Can’t find this bot",
+      "updateApp": "Update the app",
+      "failed": "Couldn’t switch to {name}: {reason}"
+    },
+    "unreachable": "Can’t reach Mikka",
+    "modelStatus": {
+      "exhausted": "{subscription} subscription limit reached",
+      "nextKey": "{exhausted}. Next message uses your {key} API key, billed per token",
+      "resets": "{exhausted}. Back {time}",
+      "unavailable": "This model can’t be used right now",
+      "next": "Next message uses {model}"
+    },
+    "runInfo": {
+      "payer": "{owner}’s {plan}",
+      "moved": "Continued on {machine}"
+    },
+    "waitingFor": "Waiting for a reply · {duration}",
+    "workspaceSwitch": {
+      "notMember": "Couldn’t switch to {name}: you’re not in this workspace",
+      "unreachable": "Couldn’t switch to {name}: can’t reach Mikka"
+    },
     "groupInfo": {
       "bot": "Bot"
     }

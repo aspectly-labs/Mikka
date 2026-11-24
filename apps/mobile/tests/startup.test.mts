@@ -2,6 +2,10 @@
 import assert from 'node:assert/strict'
 import test, { mock } from 'node:test'
 import { buildTooOld, requireMobileUpdate, within } from '../lib/startup.ts'
+import { mobileMessages } from '../lib/messages.ts'
+
+const copy = mobileMessages.MobileCore.startup
+const tooOld = `${copy.updateRequired}${copy.update}`
 
 test('a build older than the minimum is stopped; an unknown one is let in', () => {
   assert.equal(buildTooOld('6', 7), true)
@@ -54,11 +58,11 @@ test('startup recovers an API floor with OTA but preserves native and runtime up
     await act(async () => root.render(createElement(StartupGate, null, createElement('span', null, 'signed-in app'))))
     assert.equal(document.body.textContent, 'signed-in app')
     for (const scenario of [
-      { name: 'floor with OTA', available: true, fetchFails: false, reloadFails: false, minMobileBuild: 0, downloads: 1, reloads: 1, text: 'checking正在更新' },
-      { name: 'floor without OTA', available: false, fetchFails: false, reloadFails: false, minMobileBuild: 0, downloads: 0, reloads: 0, text: '请更新到最新版更新' },
-      { name: 'floor with failed download', available: true, fetchFails: true, reloadFails: false, minMobileBuild: 0, downloads: 1, reloads: 0, text: '请更新到最新版更新' },
-      { name: 'floor with failed reload', available: true, fetchFails: false, reloadFails: true, minMobileBuild: 0, downloads: 1, reloads: 1, text: '请更新到最新版更新' },
-      { name: 'native build too old', available: true, fetchFails: false, reloadFails: false, minMobileBuild: 200, downloads: 0, reloads: 0, text: '请更新到最新版更新' },
+      { name: 'floor with OTA', available: true, fetchFails: false, reloadFails: false, minMobileBuild: 0, downloads: 1, reloads: 1, text: `checking${copy.updating}` },
+      { name: 'floor without OTA', available: false, fetchFails: false, reloadFails: false, minMobileBuild: 0, downloads: 0, reloads: 0, text: tooOld },
+      { name: 'floor with failed download', available: true, fetchFails: true, reloadFails: false, minMobileBuild: 0, downloads: 1, reloads: 0, text: tooOld },
+      { name: 'floor with failed reload', available: true, fetchFails: false, reloadFails: true, minMobileBuild: 0, downloads: 1, reloads: 1, text: tooOld },
+      { name: 'native build too old', available: true, fetchFails: false, reloadFails: false, minMobileBuild: 200, downloads: 0, reloads: 0, text: tooOld },
     ]) {
       ;({ available, fetchFails, reloadFails, minMobileBuild } = scenario)
       minApiVersion = 2
@@ -73,7 +77,7 @@ test('startup recovers an API floor with OTA but preserves native and runtime up
     await act(async () => requireMobileUpdate('https://other.example.test/mikka'))
     assert.equal(document.body.textContent, 'signed-in app')
     await act(async () => requireMobileUpdate(base))
-    assert.equal(document.body.textContent, '请更新到最新版更新')
+    assert.equal(document.body.textContent, tooOld)
     await act(async () => document.querySelector('button')!.click())
     assert.deepEqual(opened, [update])
   } finally {

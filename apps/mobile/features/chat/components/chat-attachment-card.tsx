@@ -12,6 +12,7 @@ import { useReducedMotionPreference } from '@/lib/reduced-motion'
 import { colors } from '@/lib/theme'
 import { CARD_PADDING, CARD_RADIUS, CARD_ROW, CARD_WIDTH, cardHeight, PLUS_FADE_END, PLUS_SIZE, rowWindow } from '@/features/chat/model/chat-attachment-card'
 import { ChatGlass } from './chat-glass-capsule'
+import { mobileMessages } from '@/lib/messages'
 
 /** One spring for the card, open and closed: 320 ms, no overshoot. */
 const SPRING = { duration: 320, dampingRatio: 1 }
@@ -21,7 +22,7 @@ export const ChatAttachmentPlus = forwardRef<ViewInstance, { progress: ReturnTyp
   const glyph = useAnimatedStyle(() => ({ opacity: interpolate(progress.get(), [0, PLUS_FADE_END], [1, 0], Extrapolation.CLAMP) }))
   return (
     <View ref={ref} collapsable={false}>
-      <Pressable accessibilityRole="button" accessibilityLabel="添加" accessibilityState={{ disabled }} disabled={disabled} hitSlop={4}
+      <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.MobileCore.attach.add} accessibilityState={{ disabled }} disabled={disabled} hitSlop={4}
         onPress={() => { tap(); onPress() }} style={({ pressed }) => [styles.plus, disabled && { opacity: 0.45 }, pressed && { opacity: 0.55 }]}>
         <Reanimated.View style={glyph}>
           <Symbol name="plus" size={19} color={colors.ink} web={<Plus size={22} color={colors.ink} strokeWidth={1.9} />} />
@@ -34,9 +35,9 @@ export const ChatAttachmentPlus = forwardRef<ViewInstance, { progress: ReturnTyp
 type Option = { source: AttachSource; label: string; symbol: SymbolName; web: typeof Camera; image: boolean }
 /** Bottom to top, the camera nearest the thumb. */
 const OPTIONS: Option[] = [
-  { source: 'camera', label: '相机', symbol: 'camera', web: Camera, image: true },
-  { source: 'library', label: '照片', symbol: 'photo.on.rectangle', web: ImageIcon, image: true },
-  { source: 'file', label: '文件', symbol: 'doc', web: FileText, image: false },
+  { source: 'camera', label: mobileMessages.MobileCore.attach.camera, symbol: 'camera', web: Camera, image: true },
+  { source: 'library', label: mobileMessages.MobileCore.attach.photos, symbol: 'photo.on.rectangle', web: ImageIcon, image: true },
+  { source: 'file', label: mobileMessages.MobileCore.attach.files, symbol: 'doc', web: FileText, image: false },
 ]
 
 /**

@@ -22,11 +22,11 @@ export default function ProfileScreen() {
   const [problem, setProblem] = useState<string | null>(null)
   const saving = useRef(false), dirty = useRef(false)
   useEffect(() => { if (!dirty.current && !saving.current) setName(data?.user.name ?? '') }, [data?.user.name])
-  if (!data) return <SettingsPage title="个人资料"><View /></SettingsPage>
+  if (!data) return <SettingsPage title={messages.Settings.sections.account.title}><View /></SettingsPage>
   const save = async () => {
     if (saving.current) return
     const next = name.trim()
-    if (!next) { setProblem('请输入名字'); return }
+    if (!next) { setProblem(messages.MobileCore.profile.nameRequired); return }
     if (next === data.user.name) { dirty.current = false; setName(next); setProblem(null); return }
     saving.current = true; setBusy(true); setProblem(null)
     try {
@@ -38,21 +38,21 @@ export default function ProfileScreen() {
         dirty.current = false; setName(saved)
         void refetch({ query: { disableCookieCache: true } })
       })
-    } catch { setProblem('名字未保存，修改已保留。') }
+    } catch { setProblem(messages.MobileCore.profile.nameNotSaved) }
     finally { saving.current = false; setBusy(false) }
   }
   return (
-    <SettingsPage title="个人资料">
+    <SettingsPage title={messages.Settings.sections.account.title}>
       <View style={styles.hero}><Avatar name={data.user.name || data.user.email} image={data.user.image} size={88} /></View>
       <Group>
         <View style={styles.row}>
-          <Text style={styles.label}>名字</Text>
-          <TextInput accessibilityLabel="名字" accessibilityState={{ busy, disabled: busy }} editable={!busy} value={name} onChangeText={value => { dirty.current = true; setName(value); setProblem(null) }} onBlur={() => void save()} onSubmitEditing={() => void save()} returnKeyType="done" style={styles.input} />
+          <Text style={styles.label}>{messages.Onboarding.nameLabel}</Text>
+          <TextInput accessibilityLabel={messages.Onboarding.nameLabel} accessibilityState={{ busy, disabled: busy }} editable={!busy} value={name} onChangeText={value => { dirty.current = true; setName(value); setProblem(null) }} onBlur={() => void save()} onSubmitEditing={() => void save()} returnKeyType="done" style={styles.input} />
         </View>
-        <Row label="邮箱" value={data.user.email} trailing={null} />
+        <Row label={messages.Auth.email} value={data.user.email} trailing={null} />
       </Group>
-      {busy ? <Text accessibilityLiveRegion="polite">正在保存名字</Text> : null}
-      {problem ? <View accessibilityRole="alert" style={{ gap: 10 }}><Text style={{ color: colors.danger }}>{problem}</Text><CardButton label="重试保存" onPress={() => void save()} /></View> : null}
+      {busy ? <Text accessibilityLiveRegion="polite">{messages.MobileCore.profile.savingName}</Text> : null}
+      {problem ? <View accessibilityRole="alert" style={{ gap: 10 }}><Text style={{ color: colors.danger }}>{problem}</Text><CardButton label={messages.MobileCore.notifications.retrySave} onPress={() => void save()} /></View> : null}
       <Group>
         <Row label={messages.Settings.profile.deleteAccount} destructive onPress={() => void openAccountDeletion()} />
       </Group>

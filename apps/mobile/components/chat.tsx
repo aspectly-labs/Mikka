@@ -80,7 +80,7 @@ export function FoldedWords({ text, color, children }: { text: string; color: st
         onLayout={event => { if (!long && event.nativeEvent.layout.height > FOLD_AFTER * styles.body.lineHeight) setLong(true) }}>{children ?? text}</Text>
       {long ? (
         <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} hitSlop={8} onPress={() => { tap(); setOpen(value => !value) }} style={styles.foldToggle}>
-          <Text style={[styles.foldLabel, { color }]}>{open ? '收起' : '显示更多'}</Text>
+          <Text style={[styles.foldLabel, { color }]}>{open ? mobileMessages.Common.showLess : mobileMessages.Common.showMore}</Text>
         </Pressable>
       ) : null}
     </>
@@ -212,7 +212,7 @@ export function MessageRow({ children, align = 'left', onSelect }: { children: R
         <Reanimated.View style={[scaled, { alignItems: align === 'right' ? 'flex-end' : 'stretch' }]}>{children}</Reanimated.View>
       </GestureDetector>
       {onSelect ? (
-        <Pressable accessibilityRole="button" accessibilityLabel="选择文本" focusable onPress={held}
+        <Pressable accessibilityRole="button" accessibilityLabel={mobileMessages.MobileCore.selectText} focusable onPress={held}
           // No button of its own on screen: touch goes to the message (long press); VoiceOver and the keyboard reach
           // the same action on this frame over it.
           pointerEvents="none" style={StyleSheet.absoluteFill} />
@@ -261,7 +261,7 @@ export function CopyButton({ text }: { text: string }) {
     setTimeout(() => setCopied(false), 1500)
   }
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={copied ? '已复制' : '复制'} hitSlop={6} onPress={() => void copy()} style={({ pressed }) => [styles.copy, pressed && { backgroundColor: colors.pressed }]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={copied ? mobileMessages.AiElements.message.copied : mobileMessages.AiElements.message.copy} hitSlop={6} onPress={() => void copy()} style={({ pressed }) => [styles.copy, pressed && { backgroundColor: colors.pressed }]}>
       <Symbol name={copied ? 'checkmark' : 'doc.on.doc'} size={14} color={colors.secondary} web={copied ? <Check size={14} color={colors.secondary} /> : <Copy size={14} color={colors.secondary} />} />
     </Pressable>
   )
@@ -274,7 +274,7 @@ export function Reactions({ reactions, align = 'left', onToggle }: { reactions?:
     <View style={[styles.reactions, align === 'right' && { alignSelf: 'flex-end' }]}>
       {reactions.map(reaction => (
         <Pressable key={reaction.emoji} accessibilityRole="button" accessibilityState={{ selected: reaction.mine }} accessibilityLabel={`${reaction.emoji} ${reaction.count}`}
-          accessibilityHint={reaction.mine ? '移除回应' : '添加回应'}
+          accessibilityHint={reaction.mine ? mobileMessages.MobileCore.reaction.remove : mobileMessages.MobileCore.reaction.add}
           onPress={() => { tap(); onToggle(reaction.emoji) }} style={({ pressed }) => [styles.reactionTarget, pressed && { opacity: 0.6 }]}>
           <View style={[styles.reaction, reaction.mine && styles.reactionMine]}>
           <Text style={styles.reactionText}>{reaction.emoji}{reaction.count > 1 ? ` ${reaction.count}` : ''}</Text>

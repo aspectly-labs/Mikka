@@ -23,10 +23,10 @@ export default function GroupInfoScreen() {
   const { id, title, workspace } = useLocalSearchParams<{ id: string; title?: string; workspace?: string }>()
   const router = useRouter()
   const home = useHome().data
-  // The group's workspace, read here as the chat reads it (cached), so the live key holds even when the page was opened
-  // before the chat had it.
-  const groups = useApi<{ conversations: GroupSummary[] }>(home ? `/api/conversations?workspaceId=${home.workspace.id}` : null)
-  const workspaceId = groups.data?.conversations.find(group => group.id === id)?.workspaceId ?? workspace
+  // The chat passes its workspace in; only when it couldn't yet is the group's workspace read here, as the chat reads it
+  // (cached), so the live key still holds.
+  const groups = useApi<{ conversations: GroupSummary[] }>(!workspace && home ? `/api/conversations?workspaceId=${home.workspace.id}` : null)
+  const workspaceId = workspace ?? groups.data?.conversations.find(group => group.id === id)?.workspaceId
   // The group's own live key, as the chat reads its members: a rename or a new member shows here too.
   const { data, error, loading, reload } = useLiveApi<{ members: GroupMember[] }>(`/api/conversations/${id}/members`, () => groupChatLive(id, workspaceId))
   // Only a Bot of the viewer's own opens a chat (a guest sees the owner's Bots read-only); the Coordinator opens by its

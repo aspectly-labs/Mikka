@@ -55,12 +55,12 @@ export function FailedReply({ failure, botId, onQueued, modelChoice }: { failure
     <View style={styles.failed}>
       <Text style={styles.error}>{line.text}</Text>
       {outcome ? <Text accessibilityLiveRegion="polite" style={styles.retryResult}>{replyRetryLine(outcome)}</Text> : null}
-      {failure.raw ? <Pressable accessibilityRole="button" accessibilityState={{ expanded: details }} onPress={() => setDetails(open => !open)}><Text style={styles.detailsToggle}>详情</Text></Pressable> : null}
+      {failure.raw ? <Pressable accessibilityRole="button" accessibilityState={{ expanded: details }} onPress={() => setDetails(open => !open)}><Text style={styles.detailsToggle}>{mobileMessages.IssueThreads.errorDetails}</Text></Pressable> : null}
       {failure.raw && details ? <Text selectable style={styles.details}>{failure.raw}</Text> : null}
       <View style={styles.failedActions}>
-        {line.retry ? <GlassButton label="重试" busy={busy} onPress={() => void retry()} /> : null}
+        {line.retry ? <GlassButton label={mobileMessages.Common.retry} busy={busy} onPress={() => void retry()} /> : null}
         {line.recovery === 'cloudBilling' ? <GlassButton label={mobileMessages.Settings.cloud.topUp} busy={busy} onPress={() => void cloudBilling()} /> : null}
-        {line.recovery === 'model' ? Platform.OS === 'ios' && modelChoice ? modelChoice : <GlassButton label="聊天模型" disabled={!modelPath} onPress={() => { if (modelPath) void openOnWeb(modelPath) }} /> : null}
+        {line.recovery === 'model' ? Platform.OS === 'ios' && modelChoice ? modelChoice : <GlassButton label={mobileMessages.MobileCore.chatModel} disabled={!modelPath} onPress={() => { if (modelPath) void openOnWeb(modelPath) }} /> : null}
         {line.recovery === 'models' || line.recovery === 'billing' ? <GlassButton label={line.recovery === 'models' ? mobileMessages.Coordinator.subscriptionRefusal.open : mobileMessages.Settings.sections.billing.title} disabled={!settingsPath} onPress={() => { if (settingsPath) void openOnWeb(settingsPath) }} /> : null}
       </View>
     </View>
