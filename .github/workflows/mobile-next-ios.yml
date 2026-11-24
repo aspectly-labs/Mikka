@@ -29,10 +29,6 @@ on:
         description: Upload the build to App Store Connect (TestFlight)
         type: boolean
         default: true
-      keep_ipa:
-        description: Keep the .ipa as a workflow artifact for 3 days
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -53,7 +49,8 @@ jobs:
     name: Build, sign and upload (macOS)
     if: >-
       (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main'
-    runs-on: macos-26
+    # The app needs the iOS 27 SDK, which only the xcode-27 image carries (macos-26 has Xcode 26).
+    runs-on: xcode-27
     timeout-minutes: 120
     permissions:
       contents: read
@@ -95,7 +92,15 @@ jobs:
           ref: ${{ env.OVERLAY_SHA }}
           ssh-key: ${{ env.HOSTED_UI_READ_KEY }}
           path: .hosted-ui
+          fetch-depth: 0
           persist-credentials: false
+      # Only reviewed code is signed: the revision must already be on mikka-hosted-ui main.
+      - name: Require the private revision to be on main
+        run: |
+          git -C .hosted-ui merge-base --is-ancestor "$OVERLAY_SHA" refs/remotes/origin/main || {
+            echo "::error::overlay_sha is not on mikka-hosted-ui main; merge its PR first."
+            exit 1
+          }
       # Checks the checkout is that exact revision and clears the read key from later steps.
       - name: Pin the private UI revision
         run: node scripts/release/hosted-ui.mjs record .hosted-ui
@@ -105,6 +110,16 @@ jobs:
             echo "::error::The selected mikka-hosted-ui revision has no mobile-next app."
             exit 1
           }
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode_version }}
+        run: |
+          [[ "$XCODE_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo "::error::xcode_version must look like 27.1"; exit 1; }
+          app="/Applications/Xcode_${XCODE_VERSION}.app"
+          test -d "$app" || { echo "::error::Xcode $XCODE_VERSION is not installed on this runner:"; ls -d /Applications/Xcode*.app; exit 1; }
+          sudo xcode-select -s "$app/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -q 'iphoneos27' || { echo "::error::Xcode $XCODE_VERSION has no iOS 27 SDK."; exit 1; }
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -117,15 +132,6 @@ jobs:
             echo "::error::mobile-next dependency installation failed; private diagnostics withheld."
             exit 1
           fi
-      - name: Select Xcode
-        env:
-          XCODE_VERSION: ${{ inputs.xcode_version }}
-        run: |
-          [[ "$XCODE_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo "::error::xcode_version must look like 27.1"; exit 1; }
-          app="/Applications/Xcode_${XCODE_VERSION}.app"
-          test -d "$app" || { echo "::error::Xcode $XCODE_VERSION is not installed on this runner:"; ls -d /Applications/Xcode*.app; exit 1; }
-          sudo xcode-select -s "$app/Contents/Developer"
-          xcodebuild -version
       - name: Read existing APPLE_TEAM_ID through OIDC
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
@@ -263,14 +269,6 @@ jobs:
             exit 1
           fi
           echo "::notice title=Uploaded::Mikka build $BUILD_NUMBER from mikka-hosted-ui $OVERLAY_SHA is processing in App Store Connect."
-      - name: Keep the .ipa
-        if: inputs.keep_ipa
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: mikka-next-ios-${{ env.BUILD_NUMBER }}
-          path: ${{ runner.temp }}/export/*.ipa
-          retention-days: 3
-          if-no-files-found: error
       - name: Remove the App Store Connect key
         if: always()
         run: rm -f "$HOME/.appstoreconnect/private_keys/"AuthKey_*.p8
