@@ -12,13 +12,17 @@ import { useSidebarBot } from '@/lib/sidebar-trial'
  */
 export function SidebarChat() {
   const id = useSidebarBot()
-  const bot = useHome().data?.bots.find(item => item.id === id)
-  const model = useModelMenu(id)
+  const bots = useHome().data?.bots
+  // Only a bot that is still on the home list counts; otherwise this is the Coordinator's chat, and its model picker
+  // must change the Coordinator, not the bot that was picked.
+  const bot = (id && bots?.find(item => item.id === id)) || null
+  const model = useModelMenu(bot?.id ?? null)
   const composer = { composerAccessory: (running: boolean) => <ModelMenu model={model} running={running} />, composerNotice: <ModelNotice model={model} /> }
   return (
     <SafeAreaProvider>
-      {id && bot ? <ChatScreen botId={id} name={bot.name} color={bot.color} shape={bot.shape} {...composer} />
-        : <ChatScreen botId={null} name="Coordinator" {...composer} />}
+      {/* Keyed by bot, so a half-written message never carries over into another bot's composer. */}
+      {bot ? <ChatScreen key={bot.id} botId={bot.id} name={bot.name} color={bot.color} shape={bot.shape} {...composer} />
+        : <ChatScreen key="coordinator" botId={null} name="Coordinator" {...composer} />}
     </SafeAreaProvider>
   )
 }

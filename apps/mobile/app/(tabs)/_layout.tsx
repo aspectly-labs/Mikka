@@ -12,7 +12,8 @@ import { useSidebarTrial } from '@/lib/sidebar-trial'
  * (decisions/2026-11-07-2045-tasks-only-threads-inside.md; no 线程 tab, threads open inside their task). A chat, a
  * task and a thread open over the tabs, so the tab bar goes away there. The tabs carry no badges (Alex 2026-11-06).
  * With 设置 › 试用侧边栏 on (iOS), the bot sidebar wraps the tabs (features/shell/components/sidebar.tsx) and the bar is
- * 聊天 · 任务 · 设置: the first tab shows the chat of the bot picked in the sidebar. Off, nothing changes.
+ * 聊天 · 任务 (Alex: Chat and Issues): the first tab shows the chat of the bot picked in the sidebar, and 设置 opens from
+ * the foot of the sidebar. Off, nothing changes.
  */
 export default function TabsLayout() {
   const trial = useSidebarTrial() && Platform.OS === 'ios'
@@ -40,7 +41,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Icon sf={{ default: 'lightbulb', selected: 'lightbulb.fill' }} />
         <NativeTabs.Trigger.Label>{mobileMessages.Nav.suggestions}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="settings">
+      <NativeTabs.Trigger name="settings" hidden={trial}>
         <NativeTabs.Trigger.Icon sf={{ default: 'person.crop.circle', selected: 'person.crop.circle.fill' }} />
         <NativeTabs.Trigger.Label>{mobileMessages.Nav.settings}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>

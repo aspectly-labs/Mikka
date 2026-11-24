@@ -4,6 +4,8 @@ import { type Href, usePathname, useRouter } from 'expo-router'
 import DrawerLayout, { DrawerLockMode, DrawerType, type DrawerLayoutMethods } from 'react-native-gesture-handler/ReanimatedDrawerLayout'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { BotAvatar, Spinner } from '@/components/icons'
+import { ReadNotice } from '@/components/ReadNotice'
+import { Avatar } from '@/components/settings'
 import { Symbol } from '@/components/Symbol'
 import { Text } from '@/components/Text'
 import { tap } from '@/lib/haptics'
@@ -64,7 +66,8 @@ function SidebarContent({ go, close }: { go: (href: Href) => void; close: () => 
   const insets = useSafeAreaInsets()
   const router = useRouter()
   const { chats } = useHomeChats()
-  const workspaceId = useHome().data?.workspace.id
+  const home = useHome().data
+  const workspaceId = home?.workspace.id
   const shown = chats.filter(chat => !chat.hidden)
   const bots = shown.filter(chat => chat.row.kind === 'bot').sort((a, b) => Number(b.coordinator) - Number(a.coordinator))
   const groups = shown.filter(chat => chat.row.kind === 'group')
@@ -80,6 +83,11 @@ function SidebarContent({ go, close }: { go: (href: Href) => void; close: () => 
       <View style={styles.gap} />
       <Place label={mobileMessages.Nav.newBot} onPress={() => go('/new-bot')} icon={<Symbol name="plus" size={17} color={colors.accent} />} accent />
       <Place label={mobileMessages.Nav.newGroup} onPress={() => go('/new-group')} icon={<Symbol name="person.2" size={17} color={colors.accent} />} accent />
+      <View style={styles.gap} />
+      {/* 设置 is not a tab in the trial (Alex: the bar is Chat and Issues): it sits here, under the person's own name. */}
+      <Place label={home?.user.name || mobileMessages.Nav.settings} detail={home?.user.name ? mobileMessages.Nav.settings : undefined}
+        icon={home ? <Avatar name={home.user.name || '?'} image={home.user.image} size={32} /> : <Symbol name="person.crop.circle" size={22} color={colors.secondary} />}
+        onPress={() => { close(); router.navigate('/settings') }} />
     </ScrollView>
   )
 }
@@ -111,8 +119,10 @@ function BotPlace({ bot, workspaceId, onOpen, go }: { bot: HomeBot; workspaceId?
 function BotThreadList({ botId, workspaceId, go }: { botId: string; workspaceId?: string; go: (href: Href) => void }) {
   const path = workspaceId ? '/api/mobile/conversations?' + new URLSearchParams({ view: 'botChildren', workspaceId, botId }) : null
   const read = useLiveApi<BotThreads>(path, () => ({ refs: [listRef('thread_list', workspaceId), listRef('group_list', workspaceId)], minIntervalMs: 2_000 }))
-  const items = read.data && read.data.botId === botId ? read.data.items : null
-  if (!items) return <View style={styles.threadsLoading}><Spinner /></View>
+  const page = read.data && read.data.botId === botId ? read.data : null
+  if (!page && read.error) return <View style={styles.threads}><ReadNotice error={read.error} hasData={false} label={mobileMessages.ConversationDirectory.title} onRetry={read.reload} /></View>
+  if (!page) return <View style={styles.threadsLoading}><Spinner /></View>
+  const items = page.items
   return (
     <View style={styles.threads}>
       {items.map(item => (
@@ -121,6 +131,12 @@ function BotThreadList({ botId, workspaceId, go }: { botId: string; workspaceId?
           <Text style={styles.threadTitle} numberOfLines={1}>{item.title || mobileMessages.Nav.untitledConversation}</Text>
         </Pressable>
       ))}
+      {page.more && workspaceId ? (
+        <Pressable accessibilityRole="button" onPress={() => go({ pathname: '/conversations', params: { workspaceId, botId } })}
+          style={({ pressed }) => [styles.thread, pressed && { backgroundColor: colors.pressed }]}>
+          <Text style={[styles.threadTitle, { color: colors.accent }]} numberOfLines={1}>{mobileMessages.ConversationDirectory.viewAll}</Text>
+        </Pressable>
+      ) : null}
     </View>
   )
 }
