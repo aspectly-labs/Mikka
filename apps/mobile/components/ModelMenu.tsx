@@ -6,7 +6,7 @@ import { colors } from '@/lib/theme'
 import { mobileMessages as copy } from '@/lib/messages'
 
 /** Expo Web exposes the same saved choices and source groups as the native menu. */
-export function ModelMenu({ model, running = false, label }: { model: ModelMenuControls; running?: boolean; label?: string }) {
+export function ModelMenu({ model, running = false, label, highlight = label !== undefined }: { model: ModelMenuControls; running?: boolean; label?: string; highlight?: boolean }) {
   const { menu, loading, retryRead, busy, choosing, choose, refresh, refreshing, refreshFailed } = model
   const [open, setOpen] = useState(false)
   const trigger = useRef<ComponentRef<typeof View>>(null)
@@ -16,8 +16,8 @@ export function ModelMenu({ model, running = false, label }: { model: ModelMenuC
     onPress={() => { void retryRead().catch(() => undefined) }} style={styles.chip}><Text style={styles.label}>{modelMenuReadLabel(loading)}</Text></Pressable>
   const { current, groups } = menu
   return <>
-    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={copy.Coordinator.modelPicker.label.replace('{name}', modelSourceLabel(current))} accessibilityState={{ expanded: open, busy }} aria-expanded={open} aria-busy={busy} aria-disabled={false} onPress={() => setOpen(true)} style={styles.chip}>
-      <Text style={[styles.label, label ? { color: colors.accent } : null]}>{label ?? `${modelMenuLabel(current, running)} ▾`}</Text>
+    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={copy.Coordinator.modelPicker.label.replace('{name}', !current.id && label ? label.replace(/\s*▾$/, '') : modelSourceLabel(current))} accessibilityState={{ expanded: open, busy }} aria-expanded={open} aria-busy={busy} aria-disabled={false} onPress={() => setOpen(true)} style={styles.chip}>
+      <Text numberOfLines={1} style={[styles.label, highlight ? { color: colors.accent } : null]}>{label ?? `${modelMenuLabel(current, running)} ▾`}</Text>
     </Pressable>
     <Modal visible={open} transparent animationType="none" onRequestClose={close} onShow={() => closeButton.current?.focus()}>
       <View style={styles.overlay}>

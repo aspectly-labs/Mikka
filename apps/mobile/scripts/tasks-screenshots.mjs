@@ -7,7 +7,7 @@
 // Serves the exported apps/mobile web bundle, answers its API with the fixtures below, and writes light and dark
 // frames of the Bot tab, the 任务 tab, a task's detail and an attempt's thread at 393 × 852.
 import assert from 'node:assert/strict'
-import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname, join } from 'node:path'
 import { chromium } from '@playwright/test'
@@ -139,6 +139,7 @@ function apiResponse(url) {
   return null
 }
 
+const STATUS_LINK = JSON.parse(readFileSync(new URL('../../../messages/zh-CN.json', import.meta.url), 'utf8')).MobileCore.board.review
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.ico': 'image/x-icon' }
 
 function serve(directory, listenPort) {
@@ -197,7 +198,8 @@ async function run() {
       await page.getByText('活动').waitFor({ timeout: 20_000 })
       await page.waitForTimeout(500)
       await page.screenshot({ path: join(outDir, `${theme}-3-task.png`) })
-      const properties = page.getByRole('button', { name: '状态和优先级（网页版）', exact: true })
+      // 状态 opens the task on the web itself now (it ends in ↗); the separate 「状态和优先级（网页版）」 row is gone.
+      const properties = page.getByRole('link', { name: STATUS_LINK, exact: true })
       await properties.focus()
       const [webTask] = await Promise.all([context.waitForEvent('page'), properties.press('Enter')])
       await webTask.waitForURL(url => url.origin === origin && url.pathname === '/api/mobile/open')

@@ -21,12 +21,13 @@ export function TasksScreen() {
         title={mobileMessages.Nav.tasks}
         topTitle
         right={[
-          { icon: 'line.3.horizontal.decrease', label: mobileMessages.MobileCore.filter, web: <ListFilter size={20} color={colors.ink} strokeWidth={2} />, onOpen: () => {},
+          // Filled while a filter applies, as Mail and Reminders mark theirs (#1 visibility of system status).
+          { icon: filter === 'all' ? 'line.3.horizontal.decrease' : 'line.3.horizontal.decrease.circle.fill', label: mobileMessages.MobileCore.filter, web: <ListFilter size={20} color={colors.ink} strokeWidth={2} />, onOpen: () => {},
             items: [{ id: 'all' as const, title: mobileMessages.MobileCore.all }, ...TASK_GROUPS].map(group => ({ label: group.title, on: filter === group.id, onPress: () => setFilter(group.id) })) },
           { icon: 'plus', label: mobileMessages.Nav.newTask, web: <Plus size={22} color={colors.ink} strokeWidth={2} />, onPress: () => router.push('/new-task') },
         ]}
       />
-      <TaskList filter={filter} />
+      <TaskList filter={filter} onClearFilter={() => setFilter('all')} />
     </View>
   )
 }
