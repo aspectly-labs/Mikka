@@ -132,7 +132,7 @@ jobs:
         with:
           app-id: ${{ env.GITHUB_APP_ID }}
           private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
-          owner: alexj11324
+          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
           repositories: |
             Mikka
             mikka-cloud
@@ -149,12 +149,14 @@ jobs:
         id: operations
         env:
           GH_TOKEN: ${{ steps.source-token.outputs.token }}
+          PRIVATE_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
         run: |
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict'
           import { appendFile } from 'node:fs/promises'
           import { execFileSync } from 'node:child_process'
-          const source = execFileSync('gh', ['api', 'repos/alexj11324/mikka-cloud/git/ref/heads/main', '--jq', '.object.sha'],
+          assert.ok(['alexj11324', 'aspectly-labs'].includes(process.env.PRIVATE_OWNER))
+          const source = execFileSync('gh', ['api', `repos/${process.env.PRIVATE_OWNER}/mikka-cloud/git/ref/heads/main`, '--jq', '.object.sha'],
             { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
           assert.match(source, /^[a-f0-9]{40}$/)
           await appendFile(process.env.GITHUB_OUTPUT, 'source=' + source + '\n')
@@ -163,7 +165,7 @@ jobs:
         if: steps.candidate.outputs.source != ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          repository: alexj11324/mikka-cloud
+          repository: ${{ format('{0}/mikka-cloud', vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324') }}
           ref: ${{ steps.operations.outputs.source }}
           token: ${{ steps.source-token.outputs.token }}
           path: .mikka-cloud
