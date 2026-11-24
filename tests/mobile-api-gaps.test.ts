@@ -54,7 +54,10 @@ mock.module(new URL('../lib/request-log.ts', import.meta.url).href, {
 })
 
 mock.module(new URL('../lib/fresh-session.ts', import.meta.url).href, {
-  namedExports: { freshSessionRoute: (handler: unknown) => handler },
+  namedExports: {
+    freshSessionRoute: (handler: unknown) => handler,
+    withFreshSession: (fn: () => unknown) => fn(),
+  },
 })
 
 mock.module(new URL('../lib/background.ts', import.meta.url).href, {

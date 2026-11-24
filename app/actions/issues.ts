@@ -261,36 +261,12 @@ async function readIssueSnapshot(workspaceId?: string, known?: string, previous?
     const knownVersion = buildVersion(await queryVersion(signature))
     if (known === knownVersion) return { ...unchangedList(knownVersion), live }
   }
-  // Cold loads and full refreshes compute rows + row signatures in a single CTE pass (1x instead of 3x).
-  // Delta polls (`previous` present) read only the compact id/signature manifest, then fetch only `changedIds` by primary key.
-  type CandidateRow = {
-    id: string; ownerId: string; issuedIdentifier: string | null; ownerName: string | null; ownerImage: string | null
-    title: string; content: JSONContent; checklistTotal: number; checklistChecked: number; status: string
-    stateId: string | null; priority: string; scope: IssueRow['scope']; revision: number; createdAt: Date; updatedAt: Date
-  }
-  let manifest: { id: string; scope: IssueRow['scope']; signature: string }[]
-  let prefetchedRows: CandidateRow[] | null = null
-  if (!previous) {
-    const taskListCte = db.$with('task_list').as(candidateQuery)
-    const taskSignaturesCte = db.$with('task_signatures').as(
-      db.select({ id: taskListCte.id, scope: taskListCte.scope, updatedAt: taskListCte.updatedAt, item: sql`to_jsonb(task_list)`.as('item'), identifiers: assigneeIdentifiers }).from(taskListCte),
-    )
-    const fetched = await db.with(taskListCte, taskSignaturesCte).select({
-      id: taskListCte.id, ownerId: taskListCte.ownerId, issuedIdentifier: taskListCte.issuedIdentifier,
-      ownerName: taskListCte.ownerName, ownerImage: taskListCte.ownerImage, title: taskListCte.title,
-      content: taskListCte.content, checklistTotal: taskListCte.checklistTotal, checklistChecked: taskListCte.checklistChecked,
-      status: taskListCte.status, stateId: taskListCte.stateId, priority: taskListCte.priority,
-      scope: taskListCte.scope, revision: taskListCte.revision, createdAt: taskListCte.createdAt, updatedAt: taskListCte.updatedAt,
-      signature: sql<string>`md5(to_jsonb(task_signatures)::text)`,
-    }).from(taskListCte).innerJoin(taskSignaturesCte, eq(taskSignaturesCte.id, taskListCte.id))
-      .orderBy(desc(taskListCte.updatedAt), desc(taskListCte.id))
-    manifest = fetched.map(({ id, scope, signature: rowSig }) => ({ id, scope, signature: rowSig }))
-    prefetchedRows = fetched.map(({ signature: _signature, ...row }) => row)
-  } else {
-    const signed = signature.as('task_signatures')
-    manifest = await db.select({ id: signed.id, scope: signed.scope, signature: sql<string>`md5(to_jsonb(task_signatures)::text)` })
-      .from(signed).orderBy(desc(signed.updatedAt), desc(signed.id))
-  }
+  // Cold loads skip the extra queryVersion() pass and derive `version` directly
+  // from the compact id/signature manifest; full row payloads still load inside
+  // `singleFlight` so overlapping authorized readers share one payload query.
+  const signed = signature.as('task_signatures')
+  const manifest = await db.select({ id: signed.id, scope: signed.scope, signature: sql<string>`md5(to_jsonb(task_signatures)::text)` })
+    .from(signed).orderBy(desc(signed.updatedAt), desc(signed.id))
   const version = buildVersion(queryVersionFromRowSignatures(manifest.map(row => row.signature)))
   if (known === version) return { ...unchangedList(version), live }
   const knownLinks = new Map(visibility.links.map(link => [link.issueId, link]))
@@ -317,15 +293,18 @@ async function readIssueSnapshot(workspaceId?: string, known?: string, previous?
     actingContext.getStore()?.tokenWorkspaceId ?? null, allTeams.map(team => `${team.id}:${team.workspaceId}`).sort().join(','),
     teamId ?? null, version, known ?? null, listPositionKey(previous), JSON.stringify(positions)], async () => {
     const changedIds = changedListIds(positions, previous)
-    const changedSet = new Set(changedIds)
-    const rows = !changedIds.length
-      ? []
-      : prefetchedRows
-        ? prefetchedRows.filter(row => changedSet.has(row.id))
-        : await db.select(candidateSelect).from(issues).leftJoin(users, eq(users.id, issues.userId))
-            .leftJoin(issueMembers, and(eq(issueMembers.issueId, issues.id), eq(issueMembers.memberId, userId)))
-            .where(and(inArray(issues.id, changedIds), visibility.predicate, notDeleted))
-            .orderBy(desc(issues.updatedAt), desc(issues.id))
+    // Fetch only changedIds using the primary key index instead of re-running
+    // the full top-100 workspace candidate scan inside singleFlight.
+    const payloadTaskList = changedIds.length
+      ? db.select(candidateSelect).from(issues).leftJoin(users, eq(users.id, issues.userId))
+          .leftJoin(issueMembers, and(eq(issueMembers.issueId, issues.id), eq(issueMembers.memberId, userId)))
+          .where(and(inArray(issues.id, changedIds), visibility.predicate, notDeleted))
+          .as('task_list')
+      : null
+    const rows = payloadTaskList
+      ? await db.select().from(payloadTaskList).where(inArray(payloadTaskList.id, changedIds))
+          .orderBy(desc(payloadTaskList.updatedAt), desc(payloadTaskList.id))
+      : []
     const liveRows = rows.filter(row => !readIssueMetadata(row.content).deletedAt).map(row => ({ ...row, workspaceId: context.workspace.id }))
     // Reuse this request's authorized APP rows; only an unissued historical
     // Task needs the legacy reconciliation path and its additional queries.
