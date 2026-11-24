@@ -482,8 +482,8 @@ export async function getThreadMachine(issueId: string | null, runId: string): P
 
 /**
  * The thread summary header read (#2935): machine {kind,size,state}, repository,
- * branch, and context used with its real model-catalog limit. Owner-only like
- * getThreadMachine; cost waits on its source (A) and returns null until it lands.
+ * branch, context used with its real model-catalog limit, and cost from
+ * readThreadCost's two-column totals. Owner-only like getThreadMachine.
  */
 export async function getThreadSummary(issueId: string | null, runId: string) {
   return withDatabaseOperation('/actions/threads/summary', async () => {
@@ -492,12 +492,13 @@ export async function getThreadSummary(issueId: string | null, runId: string) {
     const chain = await readRunChain(pool, row.userId, row.id)
     const latestRunId = chain?.latestRunId ?? row.id
     const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
-    const [{ readThreadMachine }, { readThreadLocation }] = await Promise.all([
-      import('@/lib/thread-machine-view'), import('@/lib/thread-summary')])
-    const [machine, context, location] = await Promise.all([
+    const [{ readThreadMachine }, { readThreadLocation }, { readThreadCost }] = await Promise.all([
+      import('@/lib/thread-machine-view'), import('@/lib/thread-summary'), import('@/lib/thread-cost')])
+    const [machine, context, location, threadCost] = await Promise.all([
       readThreadMachine(pool, user.id, runIds),
       readContextUsage(runIds, row.id, latestRunId),
-      readThreadLocation(pool, user.id, latestRunId)])
+      readThreadLocation(pool, user.id, latestRunId),
+      row.workspaceId === null ? Promise.resolve(null) : readThreadCost(pool, { ownerId: user.id, workspaceId: row.workspaceId, runId: row.id, groupBy: 'thread' })])
     const { catalogIdFor, catalogModel } = await import('@/lib/model-catalog')
     // The current attempt's model decides the window: after a continuation
     // changes models, context.model is still the frozen original's.
@@ -506,7 +507,7 @@ export async function getThreadSummary(issueId: string | null, runId: string) {
       ? catalogModel(catalogIdFor(windowModel) ?? windowModel)?.contextWindow ?? null
       : null
     return {
-      cost: null,
+      cost: threadCost?.totals ?? null,
       machine: machine ? { kind: machine.kind, size: location.machineSize, state: machine.state } : null,
       repository: location.repository,
       branch: location.branch,

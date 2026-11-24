@@ -124,4 +124,22 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
     assert.equal(await readThreadCost(pool, { ownerId: owner, workspaceId: workspace.id, runId: 'not-a-uuid', groupBy: 'thread' }), null)
     assert.equal(await readThreadCost(pool, { ownerId: owner, workspaceId: workspace.id, runId: root, groupBy: 'everything' as 'thread' }), null)
   })
+
+  await t.test('the summary RPC returns the totals to the owner only', async () => {
+    // The fixture's module hooks install at its own import — after them, not before.
+    const { withActivitySession } = await import('./fixtures/activity-runtime.mjs')
+    const { getThreadSummary } = await import('../app/actions/agents')
+    const { seedIssue } = await import('./support/workspace-admin-db')
+    const issue = await seedIssue(pool, owner, workspace.id)
+    // Chain edges require parent.issueId IS NOT DISTINCT FROM child.issueId —
+    // the issue links the whole chain, not just the run the summary opens on.
+    await pool.query('UPDATE agent_runs SET "issueId"=$2 WHERE id=ANY($1::uuid[])', [[root, next, last], issue])
+    const as = <T>(user: string, work: () => Promise<T>) => withActivitySession(user, work, workspace.id) as Promise<T>
+    const summary = await as(owner, () => getThreadSummary(issue, root))
+    assert.deepEqual(summary?.cost?.credits, { microUsd: 1_200 + 800 + 2_000 + 50 + 8_334 + 12_500, unpricedReceipts: 3 })
+    // A teammate reaches no totals: the readable-thread fence refuses with
+    // runNotFound, and a thread they may read still answers null on ownership.
+    const theirs = await as(teammate, () => getThreadSummary(issue, root)).catch((error: unknown) => ({ code: (error as { code?: string })?.code }))
+    assert.ok(theirs === null || (theirs as { code?: string }).code === 'runNotFound', `a teammate reads no thread cost: ${JSON.stringify(theirs)}`)
+  })
 })
