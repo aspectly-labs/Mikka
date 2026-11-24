@@ -84,6 +84,10 @@ function SidebarContent({ go, close }: { go: (href: Href) => void; close: () => 
       <Place label={mobileMessages.Nav.newBot} onPress={() => go('/new-bot')} icon={<Symbol name="plus" size={17} color={colors.accent} />} accent />
       <Place label={mobileMessages.Nav.newGroup} onPress={() => go('/new-group')} icon={<Symbol name="person.2" size={17} color={colors.accent} />} accent />
       <View style={styles.gap} />
+      {/* 搜索 and 建议 are hidden tabs in the trial (the bar is Chat and Issues): they open from here, on the root stack. */}
+      <Place label={mobileMessages.Common.search} onPress={() => go('/browse/search')} icon={<Symbol name="magnifyingglass" size={17} color={colors.secondary} />} />
+      <Place label={mobileMessages.Nav.suggestions} onPress={() => go('/browse/suggestions')} icon={<Symbol name="lightbulb" size={17} color={colors.secondary} />} />
+      <View style={styles.gap} />
       {/* 设置 is not a tab in the trial (Alex: the bar is Chat and Issues): it opens from here, under the person's own name,
          as /account on the root stack, because a hidden tab cannot be opened. */}
       <Place label={home?.user.name || mobileMessages.Nav.settings} detail={home?.user.name ? mobileMessages.Nav.settings : undefined}
