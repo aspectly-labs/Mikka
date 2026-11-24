@@ -1,15 +1,16 @@
 // Verifies Mikka's 7-layer primitive architecture map (docs/architecture/primitives.md):
-// every local repo path, markdown link, and pnpm script cited as an active primitive or
-// CI gate must exist on disk; cross-repo markers (mikka-hosted-ui/, mikka-cloud/) are
-// validated syntactically without requiring local checkouts; frozen historical snapshots
-// (docs/design/decisions.md) retain their non-authoritative warning and stay frozen; and
-// docs/README.md stays free of broken links and undated/unlinked rule contradictions.
+// every local repo path, markdown link (including heading fragments), and pnpm script
+// (inline or in runnable shell blocks) cited as an active primitive or CI gate must exist;
+// cross-repo markers (mikka-hosted-ui/, mikka-cloud/) are validated syntactically without
+// requiring local checkouts; frozen historical snapshots (docs/design/decisions.md) retain
+// their non-authoritative warning and stay frozen; and docs/README.md stays free of broken
+// links, broken anchors, and undated/unlinked rule contradictions.
 //
 //   node scripts/rule-as-code-audit.mjs
 //   node scripts/rule-as-code-audit.mjs --json
 //   node scripts/rule-as-code-audit.mjs --root <path>
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -20,9 +21,50 @@ export const FROZEN_DECISIONS_CUTOFF = '2026-10-31'
 export const REQUIRED_LAYERS = [1, 2, 3, 4, 5, 6, 7]
 export const CROSS_REPO_PREFIXES = ['mikka-hosted-ui/', 'mikka-cloud/']
 
-const LOCAL_DIR_PREFIX = /^(?:lib|scripts|\.github|docs|apps|packages|app|cloudflare|services|tests|drizzle|messages)\//
+const DEFAULT_LOCAL_DIRS = new Set([
+  '.agents',
+  '.claude',
+  '.github',
+  'agents',
+  'app',
+  'apps',
+  'cloudflare',
+  'components',
+  'config',
+  'deploy',
+  'docs',
+  'drizzle',
+  'hooks',
+  'i18n',
+  'lib',
+  'messages',
+  'packages',
+  'patches',
+  'plans',
+  'public',
+  'scripts',
+  'services',
+  'tasks',
+  'tests',
+  'types',
+  'workflows',
+])
+
+const IGNORED_TOP_LEVEL_DIRS = new Set([
+  '.git',
+  '.hosted-ui',
+  '.next',
+  '.output',
+  '.vercel',
+  'build',
+  'dist',
+  'node_modules',
+  'out',
+])
+
 const LOCAL_ROOT_FILES = new Set(['AGENTS.md', 'CONTRIBUTING.md', 'package.json', 'ui-policy.json'])
 const PNPM_BUILTINS = new Set(['install', 'i', 'exec', 'run', 'test', 'add', 'remove', 'dlx', 'up', 'update'])
+const SHELL_FENCE_LANGS = new Set(['bash', 'sh', 'shell', 'zsh', 'console'])
 
 const RETIRED_AUTHORITY_PATTERNS = [
   { name: 'Comma visual standard', pattern: /\bComma\b/ },
@@ -34,6 +76,21 @@ const RETIRED_AUTHORITY_PATTERNS = [
 ]
 
 const NEGATIVE_OR_RETIRED_CONTEXT = /\b(?:retired|superseded|legacy|historical|removed|replaced|deprecated|not\s+active|not\s+a\s+|never|no\s+longer|do\s+not|former)\b/i
+
+function discoverLocalDirPrefixes(root) {
+  const dirs = new Set(DEFAULT_LOCAL_DIRS)
+  if (!root || !existsSync(root)) return dirs
+  try {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      if (IGNORED_TOP_LEVEL_DIRS.has(entry.name) || entry.name.startsWith('.wt')) continue
+      dirs.add(entry.name)
+    }
+  } catch {
+    // Fall back to default directory list if readdirSync is unavailable.
+  }
+  return dirs
+}
 
 function stripFencedCodeBlocks(markdown) {
   const lines = markdown.split('\n')
@@ -61,6 +118,51 @@ function stripFencedCodeBlocks(markdown) {
   }).join('\n')
 }
 
+function extractFencedShellScripts(markdown) {
+  const lines = markdown.split('\n')
+  const scripts = []
+  let inFence = false
+  let fenceChar = ''
+  let fenceLen = 0
+  let isShellFence = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const match = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
+    if (match) {
+      const marker = match[1]
+      const info = match[2].trim().split(/\s+/)[0]?.toLowerCase() ?? ''
+      if (!inFence) {
+        inFence = true
+        fenceChar = marker[0]
+        fenceLen = marker.length
+        isShellFence = SHELL_FENCE_LANGS.has(info)
+        continue
+      }
+      if (marker[0] === fenceChar && marker.length >= fenceLen && match[2].trim() === '') {
+        inFence = false
+        fenceChar = ''
+        fenceLen = 0
+        isShellFence = false
+        continue
+      }
+    }
+
+    if (!inFence || !isShellFence) continue
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+
+    for (const cmdMatch of trimmed.matchAll(/(?:^|[;&|]\s*)(?:\$\s*)?pnpm\s+(?:--silent\s+)?([a-z0-9][a-z0-9:_-]*)(?=\s|$)/gi)) {
+      const script = cmdMatch[1]
+      if (!PNPM_BUILTINS.has(script)) {
+        scripts.push({ line: i + 1, script, raw: trimmed })
+      }
+    }
+  }
+
+  return scripts
+}
+
 function stripInlineCode(line) {
   return line.replace(/`[^`\n]*`/g, match => ' '.repeat(match.length))
 }
@@ -81,6 +183,52 @@ function isWithinRoot(root, resolvedTarget) {
   return rel !== '' && !rel.startsWith('..') && !rel.startsWith('/')
 }
 
+export function slugifyGithubHeading(rawHeading) {
+  const plain = rawHeading
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/[*_~]/g, '')
+    .trim()
+    .toLowerCase()
+
+  return plain
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/\s/g, '-')
+}
+
+export function extractMarkdownAnchors(markdown) {
+  const stripped = stripFencedCodeBlocks(markdown)
+  const anchors = new Set()
+  const counts = new Map()
+
+  for (const line of stripped.split('\n')) {
+    const heading = /^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line)
+    if (heading) {
+      const base = slugifyGithubHeading(heading[1])
+      if (base) {
+        const seen = counts.get(base) ?? 0
+        counts.set(base, seen + 1)
+        anchors.add(seen === 0 ? base : `${base}-${seen}`)
+      }
+    }
+    for (const idMatch of line.matchAll(/<a\b[^>]*\b(?:id|name)=["']([^"']+)["']/gi)) {
+      anchors.add(idMatch[1].trim().toLowerCase())
+    }
+  }
+
+  return anchors
+}
+
+function decodeFragment(fragment) {
+  try {
+    return decodeURIComponent(fragment).trim().toLowerCase()
+  } catch {
+    return fragment.trim().toLowerCase()
+  }
+}
+
 export function extractMarkdownLinks(markdown) {
   const stripped = stripFencedCodeBlocks(markdown)
   const links = []
@@ -94,12 +242,13 @@ export function extractMarkdownLinks(markdown) {
   return links
 }
 
-export function extractPrimitivesCitations(markdown) {
+export function extractPrimitivesCitations(markdown, root = null) {
   const stripped = stripFencedCodeBlocks(markdown)
+  const localDirs = discoverLocalDirPrefixes(root)
   const localPaths = []
   const globPaths = []
   const crossRepoRefs = []
-  const npmScripts = []
+  const npmScripts = extractFencedShellScripts(markdown)
   const invalidRefs = []
 
   const lines = stripped.split('\n')
@@ -109,12 +258,11 @@ export function extractPrimitivesCitations(markdown) {
       const rawSpan = spanMatch[1].trim()
       if (!rawSpan) continue
 
-      const pnpmMatch = /^pnpm\s+(?:--silent\s+)?([a-z0-9:_-]+)(?:\s|$)/i.exec(rawSpan)
+      const pnpmMatch = /^pnpm\s+(?:--silent\s+)?([a-z0-9][a-z0-9:_-]*)(?:\s|$)/i.exec(rawSpan)
       if (pnpmMatch && !PNPM_BUILTINS.has(pnpmMatch[1])) {
         npmScripts.push({ line: lineNum, script: pnpmMatch[1], raw: rawSpan })
       }
 
-      // Skip code expressions / SQL snippets / prose tokens that clearly are not paths or CLI invocations.
       const tokens = rawSpan.split(/\s+/)
       for (const rawToken of tokens) {
         const token = cleanToken(rawToken)
@@ -134,8 +282,10 @@ export function extractPrimitivesCitations(markdown) {
         }
 
         const candidate = stripAnchorAndLine(token)
+        const firstSlash = candidate.indexOf('/')
+        const topSegment = firstSlash > 0 ? candidate.slice(0, firstSlash) : ''
         const isLocalRootFile = LOCAL_ROOT_FILES.has(candidate)
-        const isLocalDirPath = LOCAL_DIR_PREFIX.test(candidate)
+        const isLocalDirPath = firstSlash > 0 && localDirs.has(topSegment)
         if (!isLocalRootFile && !isLocalDirPath) continue
 
         if (candidate.split('/').includes('..')) {
@@ -201,6 +351,72 @@ function checkRetiredAuthorityLines(file, markdown, findings) {
   }
 }
 
+function validateMarkdownLinks(root, docRelPath, content, brokenLinkRule, findings) {
+  const filePath = resolve(root, docRelPath)
+  const docDir = dirname(filePath)
+  const checkedLinks = new Set()
+  const anchorCache = new Map([[filePath, extractMarkdownAnchors(content)]])
+
+  const getAnchors = targetPath => {
+    if (!anchorCache.has(targetPath)) {
+      anchorCache.set(targetPath, extractMarkdownAnchors(readFileSync(targetPath, 'utf8')))
+    }
+    return anchorCache.get(targetPath)
+  }
+
+  for (const link of extractMarkdownLinks(content)) {
+    if (/^(?:https?:\/\/|mailto:)/.test(link.target)) continue
+
+    const hashIndex = link.target.indexOf('#')
+    const rawPath = hashIndex === -1 ? link.target : link.target.slice(0, hashIndex)
+    const rawFragment = hashIndex === -1 ? '' : link.target.slice(hashIndex + 1)
+
+    if (!rawPath) {
+      if (!rawFragment) continue
+      const slug = decodeFragment(rawFragment)
+      if (!getAnchors(filePath).has(slug)) {
+        findings.push({
+          file: docRelPath,
+          line: link.line,
+          rule: 'rule-as-code/broken-heading-anchor',
+          target: link.target,
+          message: `Heading anchor "#${rawFragment}" does not exist in ${docRelPath}.`,
+        })
+      }
+      continue
+    }
+
+    const resolvedTarget = resolve(docDir, rawPath)
+    if (!isWithinRoot(root, resolvedTarget) || !existsSync(resolvedTarget)) {
+      findings.push({
+        file: docRelPath,
+        line: link.line,
+        rule: brokenLinkRule,
+        target: link.target,
+        message: `Broken relative link "${link.target}" in ${docRelPath}.`,
+      })
+      continue
+    }
+
+    checkedLinks.add(relative(root, resolvedTarget))
+
+    if (rawFragment && /\.mdx?$/i.test(resolvedTarget)) {
+      const slug = decodeFragment(rawFragment)
+      if (!getAnchors(resolvedTarget).has(slug)) {
+        findings.push({
+          file: docRelPath,
+          line: link.line,
+          rule: 'rule-as-code/broken-heading-anchor',
+          target: link.target,
+          message: `Heading anchor "#${rawFragment}" does not exist in ${relative(root, resolvedTarget)}.`,
+        })
+      }
+    }
+  }
+
+  return [...checkedLinks].sort()
+}
+
 export function auditPrimitivesMap(root, pkgScripts = null) {
   const findings = []
   const filePath = resolve(root, PRIMITIVES_DOC)
@@ -233,7 +449,7 @@ export function auditPrimitivesMap(root, pkgScripts = null) {
     }
   }
 
-  const citations = extractPrimitivesCitations(content)
+  const citations = extractPrimitivesCitations(content, root)
 
   for (const bad of citations.invalidRefs) {
     findings.push({
@@ -296,25 +512,7 @@ export function auditPrimitivesMap(root, pkgScripts = null) {
     }
   }
 
-  const checkedLinks = new Set()
-  const docDir = dirname(filePath)
-  for (const link of extractMarkdownLinks(content)) {
-    if (/^(?:https?:\/\/|mailto:|#)/.test(link.target)) continue
-    const cleanTarget = link.target.split('#')[0]
-    if (!cleanTarget) continue
-    const resolvedTarget = resolve(docDir, cleanTarget)
-    if (!isWithinRoot(root, resolvedTarget) || !existsSync(resolvedTarget)) {
-      findings.push({
-        file: PRIMITIVES_DOC,
-        line: link.line,
-        rule: 'rule-as-code/broken-markdown-link',
-        target: link.target,
-        message: `Broken relative link "${link.target}" in ${PRIMITIVES_DOC}.`,
-      })
-    } else {
-      checkedLinks.add(relative(root, resolvedTarget))
-    }
-  }
+  const checkedLinks = validateMarkdownLinks(root, PRIMITIVES_DOC, content, 'rule-as-code/broken-markdown-link', findings)
 
   if (checkedLocalPaths.size === 0) {
     findings.push({
@@ -340,7 +538,7 @@ export function auditPrimitivesMap(root, pkgScripts = null) {
     findings,
     checkedLocalPaths: [...checkedLocalPaths].sort(),
     checkedGlobPaths: [...checkedGlobPaths].sort(),
-    checkedLinks: [...checkedLinks].sort(),
+    checkedLinks,
     checkedScripts: [...checkedScripts].sort(),
     crossRepoRefs: [...new Set(citations.crossRepoRefs.map(ref => ref.target))].sort(),
   }
@@ -412,30 +610,8 @@ export function auditDocsIndex(root) {
   }
 
   const content = readFileSync(filePath, 'utf8')
-  const links = extractMarkdownLinks(content)
-  const docDir = dirname(filePath)
-  const checkedLinks = new Set()
-
-  let linksPrimitives = false
-  for (const link of links) {
-    if (/^(?:https?:\/\/|mailto:|#)/.test(link.target)) continue
-    const cleanTarget = link.target.split('#')[0]
-    if (!cleanTarget) continue
-    const resolvedTarget = resolve(docDir, cleanTarget)
-    if (!isWithinRoot(root, resolvedTarget) || !existsSync(resolvedTarget)) {
-      findings.push({
-        file: DOCS_INDEX,
-        line: link.line,
-        rule: 'rule-as-code/broken-docs-index-link',
-        target: link.target,
-        message: `Broken relative link "${link.target}" in ${DOCS_INDEX}.`,
-      })
-    } else {
-      const repoRel = relative(root, resolvedTarget)
-      checkedLinks.add(repoRel)
-      if (repoRel === PRIMITIVES_DOC) linksPrimitives = true
-    }
-  }
+  const checkedLinks = validateMarkdownLinks(root, DOCS_INDEX, content, 'rule-as-code/broken-docs-index-link', findings)
+  const linksPrimitives = checkedLinks.includes(PRIMITIVES_DOC)
 
   if (!linksPrimitives) {
     findings.push({
@@ -523,7 +699,7 @@ export function auditDocsIndex(root) {
 
   checkRetiredAuthorityLines(DOCS_INDEX, content, findings)
 
-  return { findings, checkedLinks: [...checkedLinks].sort() }
+  return { findings, checkedLinks }
 }
 
 export function auditRuleAsCodeRepository(root = process.cwd()) {

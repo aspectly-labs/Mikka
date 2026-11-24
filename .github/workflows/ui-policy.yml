@@ -173,8 +173,6 @@ jobs:
       - run: pnpm check:sql-safety
       - run: pnpm check:route-guard
         if: always()
-      - run: pnpm check:rule-as-code
-        if: always()
       - name: Verify all production release credentials use existing Infisical OIDC
         run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs scripts/release/ios-app-store-signing.test.mjs
         if: always()
@@ -380,6 +378,13 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: always()
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        with:
+          node-version: 24
+      - name: Verify rule-as-code architecture map and snapshot guards
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        run: node scripts/rule-as-code-audit.mjs && node --test scripts/rule-as-code-audit.test.mjs
       - name: Record actual completed job timings
         if: always()
         run: node scripts/ci/summary.mjs

@@ -13,6 +13,7 @@ import {
   auditFrozenDecisions,
   auditPrimitivesMap,
   auditRuleAsCodeRepository,
+  extractMarkdownAnchors,
   extractPrimitivesCitations,
 } from './rule-as-code-audit.mjs'
 
@@ -33,7 +34,7 @@ function createFixture(t) {
       'check:rule-as-code': 'node scripts/rule-as-code-audit.mjs && node --test scripts/rule-as-code-audit.test.mjs',
     },
   }, null, 2))
-  write('docs/design/design-system.md', '# Mikka Design System v2\n')
+  write('docs/design/design-system.md', '# Mikka Design System v2\n\n## 1. Design Tokens\n\n<a id="custom-anchor"></a>\n')
   write('docs/design/README.md', '# Design docs\n')
   write('docs/design/decisions/README.md', '# Decisions\n')
   write('docs/design/decisions/2026-11-24-1518-design-system-v2.md', '# Decision\n')
@@ -46,6 +47,7 @@ function createFixture(t) {
   write('scripts/sql-safety-policy.mjs', '// gate\n')
   write('scripts/rule-as-code-audit.mjs', '// self\n')
   write('scripts/rule-as-code-audit.test.mjs', '// test\n')
+  write('workflows/thread-machine/steps.ts', 'export const step = () => {}\n')
   write('app/api/health/route.ts', 'export const GET = () => {}\n')
   write('.github/workflows/ui-policy.yml', 'name: CI\n')
 
@@ -67,10 +69,10 @@ function createFixture(t) {
     '## Understand the product and design',
     '',
     '- [Design entry point](design/README.md) defines source priority.',
-    '- [Design System v2](design/design-system.md) is the visual standard.',
+    '- [Design System v2](design/design-system.md#1-design-tokens) is the visual standard.',
     '- Dated [decision records](design/decisions/README.md) explain provenance; superseded entries and the [legacy decision log](design/decisions.md) are not active instructions.',
     '- [Linear sync](linear-sync.md) is retired (2026-11-24) and kept for reference.',
-    '- [7-layer primitive architecture](architecture/primitives.md) maps executable primitives to CI gates.',
+    '- [7-layer primitive architecture](architecture/primitives.md#layer-7-audit) maps executable primitives to CI gates.',
     '',
     '## Update documentation',
     '',
@@ -81,14 +83,14 @@ function createFixture(t) {
   write(PRIMITIVES_DOC, [
     '# Mikka 7-layer primitive architecture',
     '',
-    'Start at [documentation index](../README.md) and [Design System v2](../design/design-system.md).',
+    'Start at [documentation index](../README.md), [Design System v2](../design/design-system.md#1-design-tokens), [custom anchor](../design/design-system.md#custom-anchor), or jump to [Layer 7](#layer-7-audit).',
     '',
     '| Layer | Domain | Rule | Owner | CI gate |',
     '| --- | --- | --- | --- | --- |',
     '| **1** | UI | Tokens | `docs/design/design-system.md`, `mikka-hosted-ui/styles/palette.css`, `/preview/design-system` | `mikka-hosted-ui/scripts/paid-overrides.mjs`, `.github/workflows/ui-policy.yml` |',
     '| **2** | Error | Single CTA | `lib/primitives/error-contract.ts` | `.github/workflows/ui-policy.yml` |',
     '| **3** | Route | Guard | `lib/primitives/define-route.ts`, `app/api/**/route.ts` | `scripts/route-guard-policy.mjs` |',
-    '| **4** | Protocol | Unified | `lib/primitives/conversation-protocol.ts` | `.github/workflows/ui-policy.yml` |',
+    '| **4** | Protocol | Unified | `lib/primitives/conversation-protocol.ts`, `workflows/thread-machine/steps.ts` | `.github/workflows/ui-policy.yml` |',
     '| **5** | SQL | Safe JSONB | `lib/primitives/jsonb-predicates.ts` | `scripts/sql-safety-policy.mjs` |',
     '| **6** | Ops | Probes | `mikka-cloud/operations/primitives/rollout-probe.mjs` | `mikka-cloud/.github/workflows/zero-residency-guard.yml` |',
     '| **7** | Audit | Rule-as-code | `scripts/rule-as-code-audit.mjs` | `pnpm check:rule-as-code`, `scripts/rule-as-code-audit.test.mjs` |',
@@ -102,8 +104,12 @@ function createFixture(t) {
     '### Layer 7: Audit',
     '',
     '```bash',
-    '# Example path inside fenced block is ignored:',
-    'node scripts/not-a-real-example-script.mjs',
+    '# Comment lines inside shell fences are ignored: pnpm not-a-script',
+    'pnpm check:rule-as-code',
+    '```',
+    '',
+    '```text',
+    'Illustrative non-shell fence: pnpm illustrative:not-checked',
     '```',
     '',
   ].join('\n'))
@@ -111,12 +117,13 @@ function createFixture(t) {
   return { root, write }
 }
 
-test('valid 7-layer repository fixture passes with cross-repo markers and glob prefixes', t => {
+test('valid 7-layer repository fixture passes with cross-repo markers, workflow paths, anchors, and glob prefixes', t => {
   const { root } = createFixture(t)
   const result = auditRuleAsCodeRepository(root)
   assert.equal(result.ok, true, JSON.stringify(result.findings, null, 2))
   assert.deepEqual(result.findings, [])
   assert.ok(result.details.checkedLocalPaths.includes('lib/primitives/error-contract.ts'))
+  assert.ok(result.details.checkedLocalPaths.includes('workflows/thread-machine/steps.ts'))
   assert.ok(result.details.checkedLocalPaths.includes('scripts/rule-as-code-audit.mjs'))
   assert.deepEqual(result.details.checkedGlobPaths, ['app/api/**/route.ts'])
   assert.deepEqual(result.details.checkedScripts, ['check:rule-as-code'])
@@ -129,20 +136,76 @@ test('valid 7-layer repository fixture passes with cross-repo markers and glob p
   assert.equal(result.summary.frozenDecisionRows, 2)
 })
 
-test('fails when a cited local file, glob prefix, npm script, or markdown link is missing', t => {
+test('fails when a cited local file, workflow path, glob prefix, npm script, or markdown link is missing', t => {
   const { root, write } = createFixture(t)
   const original = readFileSync(join(root, PRIMITIVES_DOC), 'utf8')
   write(
     PRIMITIVES_DOC,
-    original + '\nMissing refs: `lib/primitives/ghost.ts`, `scripts/missing-dir/*.mjs`, `pnpm missing:gate`, [broken](../design/nonexistent.md).\n',
+    original + '\nMissing refs: `lib/primitives/ghost.ts`, `workflows/thread-machine/stepz.ts`, `scripts/missing-dir/*.mjs`, `pnpm missing:gate`, [broken](../design/nonexistent.md).\n',
   )
 
   const result = auditPrimitivesMap(root, { 'check:rule-as-code': 'ok' })
   const rules = result.findings.map(f => `${f.rule}:${f.target}`)
   assert.ok(rules.includes('rule-as-code/missing-local-path:lib/primitives/ghost.ts'), JSON.stringify(rules))
+  assert.ok(rules.includes('rule-as-code/missing-local-path:workflows/thread-machine/stepz.ts'), JSON.stringify(rules))
   assert.ok(rules.includes('rule-as-code/missing-local-path:scripts/missing-dir/*.mjs'), JSON.stringify(rules))
   assert.ok(rules.includes('rule-as-code/missing-npm-script:missing:gate'), JSON.stringify(rules))
   assert.ok(rules.includes('rule-as-code/broken-markdown-link:../design/nonexistent.md'), JSON.stringify(rules))
+})
+
+test('validates pnpm invocations inside runnable shell code fences', t => {
+  const { root, write } = createFixture(t)
+  const updated = readFileSync(join(root, PRIMITIVES_DOC), 'utf8').replace(
+    '```bash\n# Comment lines inside shell fences are ignored: pnpm not-a-script\npnpm check:rule-as-code\n```',
+    '```bash\n# Comment lines inside shell fences are ignored: pnpm not-a-script\npnpm check:rule-as-cdoe\n```',
+  )
+  write(PRIMITIVES_DOC, updated)
+
+  const result = auditPrimitivesMap(root, { 'check:rule-as-code': 'ok' })
+  const rules = result.findings.map(f => `${f.rule}:${f.target}`)
+  assert.ok(rules.includes('rule-as-code/missing-npm-script:check:rule-as-cdoe'), JSON.stringify(rules))
+  assert.ok(!rules.some(r => r.includes('not-a-script')), JSON.stringify(rules))
+  assert.ok(!rules.some(r => r.includes('illustrative:not-checked')), JSON.stringify(rules))
+})
+
+test('validates same-page and cross-file Markdown heading anchors in primitives.md and docs/README.md', t => {
+  const { root, write } = createFixture(t)
+  const prim = readFileSync(join(root, PRIMITIVES_DOC), 'utf8')
+  write(
+    PRIMITIVES_DOC,
+    prim + '\nBad anchors: [same](#missing-local-heading) and [cross](../design/design-system.md#heading-does-not-exist).\n',
+  )
+  const primResult = auditPrimitivesMap(root, { 'check:rule-as-code': 'ok' })
+  const primRules = primResult.findings.map(f => `${f.rule}:${f.target}`)
+  assert.ok(primRules.includes('rule-as-code/broken-heading-anchor:#missing-local-heading'), JSON.stringify(primRules))
+  assert.ok(primRules.includes('rule-as-code/broken-heading-anchor:../design/design-system.md#heading-does-not-exist'), JSON.stringify(primRules))
+
+  const index = readFileSync(join(root, DOCS_INDEX), 'utf8')
+  write(
+    DOCS_INDEX,
+    index + '- [Bad anchor](design/design-system.md#nonexistent-section) and [same](#missing-index-heading).\n',
+  )
+  const indexResult = auditDocsIndex(root)
+  const indexRules = indexResult.findings.map(f => `${f.rule}:${f.target}`)
+  assert.ok(indexRules.includes('rule-as-code/broken-heading-anchor:design/design-system.md#nonexistent-section'), JSON.stringify(indexRules))
+  assert.ok(indexRules.includes('rule-as-code/broken-heading-anchor:#missing-index-heading'), JSON.stringify(indexRules))
+})
+
+test('extractMarkdownAnchors generates duplicate suffixes and captures explicit HTML anchors', () => {
+  const anchors = extractMarkdownAnchors([
+    '# Title',
+    '## Overview & Scope',
+    '## Overview & Scope',
+    '```md',
+    '## Ignored Heading Inside Fence',
+    '```',
+    '<a id="explicit-id"></a>',
+  ].join('\n'))
+  assert.ok(anchors.has('title'))
+  assert.ok(anchors.has('overview--scope'))
+  assert.ok(anchors.has('overview--scope-1'))
+  assert.ok(anchors.has('explicit-id'))
+  assert.equal(anchors.has('ignored-heading-inside-fence'), false)
 })
 
 test('rejects invalid cross-repo refs and missing primitive layers', t => {
@@ -237,21 +300,36 @@ test('the repository itself passes the rule-as-code audit gate', () => {
   assert.equal(result.ok, true, result.findings.map(f => `${f.file}:${f.line} [${f.rule}] ${f.message}`).join('\n'))
   assert.ok(result.summary.checkedLocalPaths >= 25, `expected >= 25 local paths, got ${result.summary.checkedLocalPaths}`)
   assert.ok(result.summary.crossRepoRefs >= 10, `expected >= 10 cross-repo refs, got ${result.summary.crossRepoRefs}`)
-  assert.ok(result.summary.checkedScripts >= 1, `expected >= 1 checked script, got ${result.summary.checkedScripts}`)
+  assert.ok(result.summary.checkedScripts >= 6, `expected >= 6 checked scripts, got ${result.summary.checkedScripts}`)
   assert.ok(result.summary.frozenDecisionRows >= 100, `expected >= 100 frozen rows, got ${result.summary.frozenDecisionRows}`)
   assert.ok(result.summary.checkedDocsIndexLinks >= 50, `expected >= 50 docs/README links, got ${result.summary.checkedDocsIndexLinks}`)
 })
 
-test('rule-as-code audit is wired into package.json and required source CI checks', () => {
+test('rule-as-code audit runs once on every non-draft candidate including docs-only PRs and conversation-protocol test is CI-wired', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(
     pkg.scripts['check:rule-as-code'],
     'node scripts/rule-as-code-audit.mjs && node --test scripts/rule-as-code-audit.test.mjs',
   )
   assert.ok(pkg.scripts.check.split(' && ').includes('pnpm check:rule-as-code'))
-  assert.ok(pkg.scripts['test:ui-policy'].includes('scripts/rule-as-code-audit.test.mjs'))
+  assert.equal(
+    pkg.scripts['test:ui-policy'].includes('scripts/rule-as-code-audit.test.mjs'),
+    false,
+    'rule-as-code tests must not duplicate between test:ui-policy and check:rule-as-code',
+  )
+  assert.ok(
+    pkg.scripts['test:coordinator-stream'].includes('lib/primitives/conversation-protocol.test.ts'),
+    'Layer 4 conversation-protocol test must be wired into a registered CI test script',
+  )
 
   const workflow = readFileSync(new URL('../.github/workflows/ui-policy.yml', import.meta.url), 'utf8')
   const sourceChecks = workflow.slice(workflow.indexOf('\n  source-checks:'), workflow.indexOf('\n  daemon-checks:'))
-  assert.match(sourceChecks, /run: pnpm check:rule-as-code/)
+  assert.equal(sourceChecks.includes('rule-as-code'), false, 'source-checks must not duplicate the rule-as-code gate')
+
+  const uiPolicyJob = workflow.slice(workflow.indexOf('\n  ui-policy:\n'), workflow.indexOf('\n  browser-tests-full:\n'))
+  assert.match(uiPolicyJob, /node scripts\/rule-as-code-audit\.mjs && node --test scripts\/rule-as-code-audit\.test\.mjs/)
+  assert.match(uiPolicyJob, /github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.draft != true/)
+
+  const browserTestsJob = workflow.slice(workflow.indexOf('\n  browser-tests:\n'))
+  assert.equal(browserTestsJob.includes('rule-as-code'), false, 'browser-tests must not duplicate the rule-as-code gate')
 })
