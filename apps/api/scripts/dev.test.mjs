@@ -105,7 +105,7 @@ test('HEAD does not transform a document; unknown APIs/assets and writes never g
   const head = await developmentDocument(request('/mikka', { method: 'HEAD' }), never)
   assert.equal(head.status, 200)
   assert.equal(head.body, null)
-  for (const path of ['/mikka/api/missing', '/mikka/%61pi/missing', '/.well-known/workflow/missing', '/mikka/assets/missing.js', '/mikka/_next/missing', '/outside']) {
+  for (const path of ['/mikka/api/missing', '/mikka/%61pi/missing', '/.well-known/workflow/missing', '/mikka/assets/missing.js', '/outside']) {
     const response = await developmentDocument(request(path), never)
     assert.equal(response.status, 404, path)
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff')

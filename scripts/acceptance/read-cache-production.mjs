@@ -12,6 +12,7 @@ import { attestReadiness, ReadinessError, triggerGuard } from './production-read
 import { createReadClient, discoverReadActions, requestAllowed as readRequestAllowed } from './read-cache.mjs'
 import { DeployedTargetError, deployedTargetGuard, attestDeployedTarget, publicTargetFailure } from './deployed-target.mjs'
 import { responseCookieJar } from './response-cookie-jar.mjs'
+import { releaseHeaders, releaseVersionGuard } from './rpc-actions.mjs'
 
 export { responseCookieJar }
 
@@ -106,7 +107,8 @@ export async function attestProductionReadCache({ env = process.env, event, fetc
       check(ref.ref === 'refs/heads/main' && ref.object?.type === 'commit' && ref.object.sha === guard.applicationSha, 'build_mismatch')
     }
     await currentMain()
-    const pin = async () => check((await read(`${ORIGIN}/mikka/api/version`)).build === guard.applicationSha, 'build_mismatch')
+    const sameRelease = releaseVersionGuard(guard.applicationSha)
+    const pin = async () => check(sameRelease(await read(`${ORIGIN}/mikka/api/version`)), 'build_mismatch')
     await pin()
     await currentMain()
     return { ...base, status: 'ready', metadataReadAuthorized: true, readable: true, checkedAt: new Date(now()).toISOString() }
@@ -211,7 +213,7 @@ export async function runProductionReadCache({ env = process.env, event, attesta
   // Credentials are not even read until the immutable deployment proof passed.
   const email = env.SMOKE_OWNER_EMAIL, password = env.SMOKE_OWNER_PASSWORD
   check(isSmokeAccountEmail(email) && typeof password === 'string' && password.length > 0, 'account_required')
-  const measurements = [], refs = {}, deadline = now() + 300_000
+  const measurements = [], refs = {}, release = { deploymentId: '' }, deadline = now() + 300_000
   const report = { version: 1, issue: issueNumber, purpose, ...guard,
     status: 'running', startedAt: now(), normalSessionObserved: false, sessionClosed: false,
     browserCacheVerified: false, businessMutationRequests: 0, modelCalls: 0, fixturesCreated: 0, backendMaintenanceWritesMeasured: false,
@@ -233,9 +235,11 @@ export async function runProductionReadCache({ env = process.env, event, attesta
     cookies.receive(url, response.headers)
     return response
   }
+  // After discovery every business read goes to the release that published the reads.
   const request = (path, init = {}) => {
     check(productionRequestAllowed(path, init, refs), 'request_denied')
-    return fetchBound(path, init)
+    const pinned = releaseHeaders(path, release.deploymentId)
+    return fetchBound(path, Object.keys(pinned).length ? { ...init, headers: { ...init.headers, ...pinned } } : init)
   }
   // This private auth path is used only for one normal sign-in and its own
   // current-cookie sign-out; business callers have no auth mutation capability.
@@ -251,7 +255,8 @@ export async function runProductionReadCache({ env = process.env, event, attesta
     return value
   }
   const client = createReadClient({ request }, environment, 'owner', measurements, refs)
-  const pin = async () => check((await json('/mikka/api/version')).build === guard.applicationSha, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.applicationSha)
+  const pin = async () => check(sameRelease(await json('/mikka/api/version')), 'build_mismatch')
   const session = async () => {
     const value = await json('/mikka/api/auth/get-session')
     check(value?.user?.email?.toLowerCase() === email.toLowerCase()
@@ -284,7 +289,8 @@ export async function runProductionReadCache({ env = process.env, event, attesta
     try { discovered = await discoverReadActions(request, environment) }
     catch (error) { throw new ProductionReadCacheError('action_discovery_failed', { cause: error }) }
     Object.assign(refs, discovered.refs)
-    report.discovery = { pagesRead: discovered.diagnostics.pagesRead, chunksRead: discovered.diagnostics.chunksRead, readActions: discovered.diagnostics.found.length }
+    release.deploymentId = discovered.deploymentId
+    report.discovery = { pagesRead: discovered.diagnostics.pagesRead, manifestsRead: discovered.diagnostics.manifestsRead, readActions: discovered.diagnostics.found.length }
     const first = (await action('syncIssueList', [], 'task-list', 'cold')).snapshot
     listScope(first, true); measureResult(first)
     let held = { issues: mergeReadList(undefined, first, 100) }

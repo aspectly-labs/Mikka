@@ -11,12 +11,12 @@ const id = n => `11111111-2222-4333-8444-${String(n).padStart(12, '0')}`
 const OWNER = 'fixture-smoke-owner', WORKSPACE = id(1)
 const EMAIL = 'fixture+mikka-smoke-owner@example.invalid', PASSWORD = 'SYNTHETIC-PASSWORD-DO-NOT-REPORT'
 const COOKIE = 'SYNTHETIC-COOKIE-DO-NOT-REPORT'
-const env = () => ({ GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_SHA: DRIVER,
+const env = () => ({ GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_SHA: DRIVER,
   GITHUB_REF: ACCEPTANCE_BRANCH, GITHUB_EVENT_NAME: 'push', GH_TOKEN: 'SYNTHETIC-GITHUB-TOKEN',
   SMOKE_OWNER_EMAIL: EMAIL, SMOKE_OWNER_PASSWORD: PASSWORD })
-const event = () => ({ repository: { full_name: 'alexj11324/Mikka' }, ref: ACCEPTANCE_BRANCH, after: DRIVER, deleted: false })
+const event = () => ({ repository: { full_name: 'aspectly-labs/Mikka' }, ref: ACCEPTANCE_BRANCH, after: DRIVER, deleted: false })
 const plan = () => ({ purpose: 'production-readiness', mode: 'readonly', applicationSha: APP })
-const attestation = () => ({ purpose: 'production-readiness', status: 'ready', repository: 'alexj11324/Mikka',
+const attestation = () => ({ purpose: 'production-readiness', status: 'ready', repository: 'aspectly-labs/Mikka',
   applicationSha: APP, driverRevision: DRIVER, mode: 'readonly',
   metadataReadAuthorized: true, executionReady: false,
   runtime: { status: 'published', runId: 11, sourceCommit: APP, workerSha: null,
@@ -24,7 +24,6 @@ const attestation = () => ({ purpose: 'production-readiness', status: 'ready', r
 const response = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status, headers: { 'content-type': 'application/json', ...headers },
 })
-const reference = name => `createServerReference("${'1'.repeat(40)}", callServer, void 0, findSourceMapURL, "${name}")`
 const readinessRpc = { saveIssue: 'issues.saveIssue', getIssueThread: 'agents.getIssueThread', changeModelOrder: 'model-order.changeModelOrder' }
 // The public shape emitted by the real Vite application plugin/build script.
 const viteManifest = () => ({ version: 1, target: 'web', rendererBuild: 'a'.repeat(64),
@@ -36,7 +35,7 @@ const viteDocument = (pin = VITE_PIN) => '<script type="module" crossorigin src=
   + (pin ? '?dpl=' + pin : '') + '"></script>'
 const release = () => ({ id: 11, name: 'E2B official instance runtime',
   path: '.github/workflows/e2b-official-runtime.yml', event: 'push',
-  head_branch: 'main', head_sha: APP, head_repository: { full_name: 'alexj11324/Mikka' }, status: 'completed', conclusion: 'success' })
+  head_branch: 'main', head_sha: APP, head_repository: { full_name: 'aspectly-labs/Mikka' }, status: 'completed', conclusion: 'success' })
 const publishedJobs = () => [
   { id: 110, run_id: 11, name: 'validate', status: 'completed', conclusion: 'success',
     steps: [{ name: 'Validate new official instances without template mutation', status: 'completed', conclusion: 'success' }] },
@@ -61,7 +60,8 @@ function fixture(options = {}) {
     assert.equal(url.origin, 'https://app.aspectlylabs.com')
     assert.equal(init.redirect, 'error')
     assert.equal(init.headers.authorization, undefined)
-    if (url.pathname === '/mikka/api/version') return response({ build: ++versionReads >= (options.buildChangeAt ?? Infinity) ? 'c'.repeat(40) : APP })
+    if (url.pathname === '/mikka/api/version') return response({ build: ++versionReads >= (options.buildChangeAt ?? Infinity) ? 'c'.repeat(40) : APP,
+      apiBuild: versionReads >= (options.apiChangeAt ?? Infinity) ? 'e'.repeat(40) : 'd'.repeat(40) })
     if (url.pathname === '/mikka/api/auth/sign-in/email') {
       assert.deepEqual(JSON.parse(init.body), { email: EMAIL, password: PASSWORD })
       return response({}, options.loginStatus ?? 200, { 'set-cookie': 'better-auth.session_token=' + COOKIE + '; HttpOnly; Secure' })
@@ -86,17 +86,13 @@ function fixture(options = {}) {
     if (url.pathname === '/mikka/api/settings/workspace-bots') return response({ bots: [{ id: id(5), ownerId: OWNER,
       status: options.busy ? 'running' : 'idle', runningThreads: options.busy ? 1 : 0, name: 'PRIVATE BOT NAME' }] })
     if (url.pathname === '/mikka/api/mobile/threads') return response({ threads: options.busy ? [{ id: id(6), status: 'running', title: 'PRIVATE TASK TITLE' }] : [] })
-    if (url.pathname === '/mikka/en' || url.pathname === '/mikka/en/settings') return new Response(options.vite
-      ? viteDocument() : '<script src="/mikka/_next/static/chunks/fixture.js"></script>')
+    if (url.pathname === '/mikka/en' || url.pathname === '/mikka/en/settings') return new Response(viteDocument())
     if (url.pathname === '/mikka/renderer-manifest.json') {
       assert.equal(url.search, '?dpl=' + VITE_PIN)
       const manifest = viteManifest()
       options.manifest?.(manifest)
       return response(manifest, options.manifestStatus ?? 200, options.manifestHeaders)
     }
-    if (url.pathname === '/mikka/_next/static/chunks/fixture.js') return new Response(
-      READINESS_ACTIONS.filter(name => name !== options.missingAction).map(reference).join(';')
-      + ';' + reference('saveProject') + ';"https://foreign.invalid/mikka/_next/static/chunks/secret.js"')
     assert.fail('Unexpected readiness request ' + method + ' ' + url.pathname)
   }
   return { calls, order, fetchImpl, run: args => runReadiness({ env: env(), event: event(), plan: plan(), attestation: attestation(),
@@ -108,8 +104,10 @@ test('only the existing acceptance push or a main manual readonly request is aut
   const manualEnv = { ...env(), GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main' }
   assert.equal(triggerGuard(manualEnv, { repository: event().repository, inputs: { application_sha: APP } }, plan()).applicationSha, APP)
   for (const change of [{ GITHUB_REF: 'refs/heads/other' }, { GITHUB_EVENT_NAME: 'pull_request' },
-    { GITHUB_REPOSITORY: 'foreign/repo' }, { GITHUB_SHA: 'not-a-sha' }])
+    { GITHUB_REPOSITORY: 'foreign/repo' }, { GITHUB_REPOSITORY: 'alexj11324/Mikka' }, { GITHUB_SHA: 'not-a-sha' }])
     assert.throws(() => triggerGuard({ ...env(), ...change }, event(), plan()), /trigger_rejected/)
+  // The repository moved; the old name is not the canonical repository.
+  assert.throws(() => triggerGuard(env(), { ...event(), repository: { full_name: 'alexj11324/Mikka' } }, plan()), /trigger_rejected/)
   assert.throws(() => triggerGuard(env(), { ...event(), deleted: true }, plan()), /trigger_rejected/)
   assert.throws(() => triggerGuard(env(), { ...event(), after: APP }, plan()), /trigger_rejected/)
   assert.throws(() => triggerGuard(env(), event(), { ...plan(), mode: 'active' }), /plan_invalid/)
@@ -190,7 +188,7 @@ test('the HTTP boundary permits only the normal auth lifecycle and allowlisted r
     assert.equal(requestAllowed(url(path), 'POST'), false)
   for (const method of ['PUT', 'PATCH', 'DELETE']) assert.equal(requestAllowed(url('/mikka/api/mobile/model'), method), false)
   for (const value of ['https://foreign.invalid/mikka/api/version', 'https://user@api.github.com/mikka/api/version',
-    'https://app.aspectlylabs.com/mikka/_next/static/chunks/%2e%2e/secret.js',
+    'https://app.aspectlylabs.com/mikka/assets/%2e%2e/secret.js',
     'https://app.aspectlylabs.com/mikka/api/settings/model-order?workspace=' + WORKSPACE + '&extra=1'])
     assert.equal(requestAllowed(new URL(value), 'GET'), false)
 })
@@ -283,34 +281,11 @@ test('a concurrent preference change is detected and never restored or overwritt
   assert.equal(report.sessionClosed, true)
 })
 
-test('published discovery requires only the three task actions and never the project actions', async () => {
-  const f = fixture(), report = await f.run()
-  assert.deepEqual(report.actionDiscovery.required, READINESS_ACTIONS)
-  assert.deepEqual(report.actionDiscovery.found, READINESS_ACTIONS)
-  assert.deepEqual(report.actionDiscovery.missing, [])
-  assert.equal(report.actionDiscovery.chunksRead, 1)
-  assert.equal(f.calls.some(call => call.path.includes('section=projects')), false)
-  assert.equal(f.calls.some(call => call.path.includes('secret.js')), false)
-  const missing = await fixture({ missingAction: 'changeModelOrder' }).run()
-  assert.equal(missing.status, 'partial')
-  assert.deepEqual(missing.actionDiscovery.missing, ['changeModelOrder'])
-})
-
-test('the real Next direct, bracket and member reference forms are recognized with five arguments', async () => {
-  const sources = [reference('saveIssue'),
-    `(0, imported["createServerReference"])("${'2'.repeat(40)}", imported.callServer, void 0, source["findSourceMapURL"], "getIssueThread")`,
-    `imported.createServerReference("${'3'.repeat(40)}", callServer, undefined, findSourceMapURL, "changeModelOrder")`].join(';')
-  const result = await discoverReadinessActions(async path => new Response(path.endsWith('.js') ? sources
-    : '<script src="/mikka/_next/static/chunks/real.js"></script>'))
-  assert.deepEqual(result.found, READINESS_ACTIONS)
-})
-
 test('the Vite production document publishes the same three readiness actions without dispatching one', async () => {
-  const f = fixture({ vite: true }), report = await f.run()
+  const f = fixture(), report = await f.run()
   assert.equal(report.status, 'ready')
   assert.equal(report.actionDiscovery.transport, 'rpc')
   assert.equal(report.actionDiscovery.manifestsRead, 1)
-  assert.equal(report.actionDiscovery.chunksRead, 0)
   assert.equal(report.actionDiscovery.rpcVersion, 1)
   assert.deepEqual(report.actionDiscovery.required, READINESS_ACTIONS)
   assert.deepEqual(report.actionDiscovery.found, READINESS_ACTIONS)
@@ -320,7 +295,21 @@ test('the Vite production document publishes the same three readiness actions wi
   assert.equal(report.preferenceMutationRequests, 0)
   assert.equal(report.sessionClosed, true)
   assert.deepEqual(f.calls.filter(call => call.method !== 'GET').map(call => call.path), ['/mikka/api/auth/sign-in/email', '/mikka/api/auth/sign-out'])
-  assert.equal(f.calls.some(call => call.path.includes('/_next/') || call.path.endsWith('/api/rpc')), false)
+  assert.equal(f.calls.some(call => call.path.includes('/assets/') || call.path.endsWith('/api/rpc')), false)
+  assert.equal(f.calls.some(call => call.path.includes('section=projects')), false)
+})
+
+test('closing reads after discovery are pinned to the release that published the action list', async () => {
+  const f = fixture(), report = await f.run()
+  assert.equal(report.status, 'ready')
+  assert.equal(report.actionDiscovery.deploymentId, VITE_PIN)
+  const listed = f.calls.findIndex(call => call.path.startsWith('/mikka/renderer-manifest.json'))
+  const later = f.calls.slice(listed + 1), header = call => call.headers['x-deployment-id']
+  const scoped = later.filter(call => call.path.startsWith('/mikka/api/') && !call.path.startsWith('/mikka/api/version') && !call.path.startsWith('/mikka/api/auth/'))
+  assert.ok(scoped.some(call => call.path.startsWith('/mikka/api/settings/model-order')) && scoped.some(call => call.path === '/mikka/api/bots'))
+  assert.ok(scoped.every(call => header(call) === VITE_PIN))
+  assert.ok(f.calls.filter(call => call.path.startsWith('/mikka/api/version') || call.path.startsWith('/mikka/api/auth/')).every(call => header(call) === undefined))
+  assert.ok(f.calls.slice(0, listed).every(call => header(call) === undefined))
 })
 
 test('Vite readiness requires the actual web used-action inventory and matching module exports', async () => {
@@ -331,13 +320,13 @@ test('Vite readiness requires the actual web used-action inventory and matching 
     manifest => { manifest.usedActions.push('issues.saveIssue') },
     manifest => { manifest.modules.agents = ['getCoordinatorChat'] },
   ]) {
-    const report = await fixture({ vite: true, manifest: mutate }).run()
+    const report = await fixture({ manifest: mutate }).run()
     assert.equal(report.status, 'partial')
     assert.equal(report.actionDiscovery.manifestsFailed, 1)
     assert.deepEqual(report.actionDiscovery.found, [])
     assert.equal(report.sessionClosed, true)
   }
-  const absent = await fixture({ vite: true, manifest: manifest => {
+  const absent = await fixture({ manifest: manifest => {
     manifest.usedActions = manifest.usedActions.filter(action => action !== 'model-order.changeModelOrder')
   } }).run()
   assert.equal(absent.status, 'partial')
@@ -345,19 +334,14 @@ test('Vite readiness requires the actual web used-action inventory and matching 
   assert.deepEqual(absent.actionDiscovery.found, ['saveIssue', 'getIssueThread'])
 })
 
-test('failed Vite manifest reads never fall back to a successful Next reference scan', async () => {
+test('failed Vite manifest reads report every action missing', async () => {
   for (const options of [{ manifestStatus: 503 }, { manifestHeaders: { 'content-type': 'text/html' } }]) {
-    const f = fixture({ vite: true, ...options }), report = await f.run()
+    const f = fixture(options), report = await f.run()
     assert.equal(report.status, 'partial')
     assert.equal(report.actionDiscovery.manifestsFailed, 1)
     assert.deepEqual(report.actionDiscovery.missing, READINESS_ACTIONS)
-    assert.equal(report.actionDiscovery.chunksRead, 0)
     assert.equal(report.sessionClosed, true)
   }
-  const result = await discoverReadinessActions(async path => path.includes('renderer-manifest.json')
-    ? response({ ...viteManifest(), target: 'desktop' })
-    : new Response(viteDocument() + READINESS_ACTIONS.map(reference).join(';')))
-  assert.deepEqual(result.found, [], 'Flight references cannot rescue a refused Vite manifest')
 })
 
 test('Vite readiness permits only the same-origin manifest and one valid public deployment pin', async () => {
@@ -365,7 +349,7 @@ test('Vite readiness permits only the same-origin manifest and one valid public 
   for (const path of ['/mikka/renderer-manifest.json', '/mikka/renderer-manifest.json?dpl=' + VITE_PIN])
     assert.equal(requestAllowed(url(path), 'GET'), true)
   for (const path of ['/mikka/renderer-manifest.json?dpl=', '/mikka/renderer-manifest.json?dpl=a&dpl=b',
-    '/mikka/renderer-manifest.json?dpl=' + VITE_PIN + '&extra=1', '/mikka/renderer-manifest.json?dpl=dpl_untrusted',
+    '/mikka/renderer-manifest.json?dpl=' + VITE_PIN + '&extra=1', '/mikka/renderer-manifest.json?dpl=not.a.pin', '/mikka/renderer-manifest.json?dpl=' + 'a'.repeat(33),
     '/mikka/assets/arbitrary.js', '/mikka/api/rpc', '/mikka/api/desktop/rpc']) {
     assert.equal(requestAllowed(url(path), 'GET'), false)
     assert.equal(requestAllowed(url(path), 'POST'), false)
@@ -401,6 +385,9 @@ test('unpinned local Vite and deployment-changing documents keep their own disco
 })
 
 test('deployment movement and sign-out failure cannot produce ready', async () => {
+  const api = await fixture({ apiChangeAt: 3 }).run()
+  assert.equal(api.status, 'blocked'); assert.equal(api.code, 'build_mismatch', 'an API binding updated in place is a different deployment')
+  assert.equal(api.sessionClosed, true)
   const changed = await fixture({ buildChangeAt: 3 }).run()
   assert.equal(changed.status, 'blocked'); assert.equal(changed.code, 'build_mismatch')
   assert.equal(changed.sessionClosed, true)
@@ -419,7 +406,7 @@ test('the candidate workflow keeps OIDC after attestation, two named secrets, an
   assert.match(workflow, /cancel-in-progress: false/)
   assert.doesNotMatch(workflow, /run-proactive-acceptance|group-policy-preflight\.mjs|VERCEL_DEPLOY_TOKEN|mode:\s*active/)
   assert.match(workflow, /production-readiness-report\/attestation\.json\s+production-readiness-report\/report\.json/)
-  for (const path of ['project-decisions-acceptance.yml', 'model-provider-fallback-acceptance.yml']) {
+  for (const path of ['project-decisions-acceptance.yml']) {
     const other = await readFile(new URL('.github/workflows/' + path, root), 'utf8')
     assert.match(other, /group: production-smoke-owner-acceptance\n  cancel-in-progress: false/)
   }

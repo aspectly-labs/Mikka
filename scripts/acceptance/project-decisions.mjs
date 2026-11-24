@@ -13,17 +13,19 @@ import { assertFlashTestModel } from '../test-model-policy.mjs'
 import {
   AcceptanceError as ProviderAcceptanceError, assertRunEvidence, assertWorkspaceIdle,
   caseOrderPlan, orderFingerprint, ownedSource, providerReceipt, verifyCheckRuns,
-} from './model-provider-fallback.mjs'
+} from './model-order-cases.mjs'
+import { discoverRpcActions, releaseHeaders, releaseVersionGuard, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
-export const REPOSITORY = 'alexj11324/Mikka'
+export const REPOSITORY = 'aspectly-labs/Mikka'
 export const MARKER = '[project-map-acceptance]'
 export const CASES = Object.freeze([
   { id: 'api_deepseek', model: 'deepseek-flash', provider: 'deepseek', harness: 'claude_code', kind: 'api_key' },
   { id: 'official_claude', model: 'claude-haiku-5-5', provider: 'claude', harness: 'claude_code', kind: 'subscription' },
   { id: 'official_codex', model: 'gpt-6-luna', provider: 'codex', harness: 'codex', kind: 'subscription' },
 ])
-const ACTIONS = new Set(['saveProject', 'listProjects', 'saveIssue', 'setProjectIssues', 'getIssueThread', 'changeModelOrder'])
+const ACTIONS = Object.freeze({ saveProject: 'projects.saveProject', listProjects: 'projects.listProjects', saveIssue: 'issues.saveIssue',
+  setProjectIssues: 'projects.setProjectIssues', getIssueThread: 'agents.getIssueThread', changeModelOrder: 'model-order.changeModelOrder' })
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value)
 const digest = value => createHash('sha256').update(value).digest('hex')
@@ -129,7 +131,8 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
     check(body !== null, 'deployment_proof')
     return body
   }
-  const pin = async () => check((await read(ORIGIN + '/mikka/api/version')).build === guard.revision, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.revision)
+  const pin = async () => check(sameRelease(await read(ORIGIN + '/mikka/api/version')), 'build_mismatch')
   const runs = async workflow => read('https://api.github.com/repos/' + REPOSITORY + '/actions/workflows/' + workflow
     + '/runs?head_sha=' + guard.revision + '&per_page=100', true)
   await pin()
@@ -148,127 +151,19 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
 }
 
 const ACTION_PAGES = ['/en', '/en?section=projects', '/en/settings?section=models']
-const CHUNK_PREFIX = '/mikka/_next/static/chunks/'
-// Next's compiler emits five arguments. Turbopack may use long bracket-member
-// imports; production minification may use direct or dot-member references.
-const identifier = String.raw`[$A-Z_a-z][$\w]*`
-const member = identifier + String.raw`(?:\s*(?:\.\s*` + identifier
-  + String.raw`|\[\s*(?:"` + identifier + String.raw`"|'` + identifier + String.raw`')\s*\]))*`
-const referenceCall = new RegExp(
-  String.raw`(?:\bcreateServerReference|\[\s*(?:"createServerReference"|'createServerReference')\s*\])\s*\)?\s*\(\s*(["'])([a-f0-9]{40,64})\1\s*,\s*`
-  + member + String.raw`\s*,\s*(?:void\s+0|undefined)\s*,\s*` + member
-  + String.raw`\s*,\s*(["'])([A-Za-z]+)\3\s*\)`, 'g')
 
-function publicChunk(value) {
-  try {
-    const raw = value.startsWith('static/chunks/') ? '/mikka/_next/' + value : value
-    const url = new URL(raw, ORIGIN)
-    if (url.origin !== ORIGIN || url.username || url.password || !url.pathname.startsWith(CHUNK_PREFIX)) return null
-    const path = raw.split(/[?#]/, 1)[0]
-    const parts = /(?:^|\/)static\/chunks\/(.+\.js)$/.exec(path)?.[1].split('/').map(decodeURIComponent)
-    if (!parts?.length || parts.some(part => !part || part === '.' || part === '..' || /[/\\]/.test(part))) return null
-    return CHUNK_PREFIX + parts.map(encodeURIComponent).join('/') + url.search
-  } catch { return null }
-}
-
-// Public Turbopack loader factories associate .A(moduleId) with literal chunks.
-// Decode that generated shape without evaluating downloaded JavaScript.
-const loaderModule = /(?:^|,)\s*(\d+)\s*,\s*([$A-Z_a-z][$\w]*)\s*=>\s*\{\s*\2\.v\(\s*([$A-Z_a-z][$\w]*)\s*=>\s*Promise\.all\(\s*(\[\s*(?:"[^"\\\r\n]*"\s*,?\s*)*\])\s*\.map\(\s*([$A-Z_a-z][$\w]*)\s*=>\s*\2\.l\(\s*\5\s*\)\s*\)\s*\)\s*\.then\(\s*\(\s*\)\s*=>\s*\3\(\s*\d+\s*\)\s*\)\s*\)\s*\}/g
-const lazyImport = /[$A-Z_a-z][$\w]*\s*\.\s*A\s*\(\s*(\d+)\s*\)/g
-const literalChunk = /(["'])((?:static\/chunks\/|\/mikka\/_next\/static\/chunks\/)[^"'\\\r\n]+\.js(?:\?[^"'\\\r\n]*)?)\1/g
-
-/** Only deployment-published named UI Server Actions; no manifest or private server access. */
+/** Only actions this deployment's web UI publishes, named as its RPC registry names them.
+ * diagnostics.deploymentId names the release that published them. */
 export async function discoverActions(request, diagnostics = {}) {
-  const pending = new Map(), seen = new Set(), refs = {}
-  const loaders = new Map(), imports = new Map()
-  Object.assign(diagnostics, { required: [...ACTIONS], found: [], missing: [...ACTIONS],
-    pagesRead: 0, pagesFailed: 0, chunksRead: 0, chunksFailed: 0, chunksRemaining: 0 })
-  const enqueue = (value, priority) => {
-    const path = publicChunk(value)
-    if (!path || seen.has(path)) return
-    const previous = pending.get(path)
-    // A component can promote a path first queued by the whole-app table.
-    if (previous !== undefined) {
-      if (priority < previous) pending.set(path, priority)
-    } else if (pending.size < 3000) pending.set(path, priority)
-  }
-  const resolveImport = id => {
-    const priority = imports.get(id), paths = loaders.get(id)
-    if (priority === undefined || !paths) return
-    for (const path of paths) enqueue(path, Math.max(priority, paths.length))
-  }
-  try {
-    for (const path of ACTION_PAGES) {
-      const response = await request(path).catch(() => null)
-      if (!response?.ok) { diagnostics.pagesFailed++; continue }
-      const html = await response.text()
-      diagnostics.pagesRead++
-      check(html.length <= 8_000_000, 'response_invalid')
-      for (const match of html.matchAll(/(?:src|href)\s*=\s*(["'])([^"']+\.js(?:\?[^"']*)?)\1/g))
-        enqueue(match[2].replaceAll('&amp;', '&'), 0)
-    }
-    while (pending.size && seen.size < 200 && Object.keys(refs).length < ACTIONS.size) {
-      // Page seeds first, then small component branches. A whole-app loader
-      // table remains a bounded fallback, rather than consuming the scan budget.
-      const batch = [...pending].sort((left, right) => left[1] - right[1]).slice(0, Math.min(20, 200 - seen.size))
-      for (const [path] of batch) { pending.delete(path); seen.add(path) }
-      const reads = await Promise.allSettled(batch.map(async ([path, priority]) => {
-        const response = await request(path).catch(() => null)
-        if (!response?.ok) { diagnostics.chunksFailed++; return }
-        const source = await response.text()
-        diagnostics.chunksRead++
-        check(source.length <= 8_000_000, 'response_invalid')
-        for (const match of source.matchAll(referenceCall))
-          if (ACTIONS.has(match[4])) refs[match[4]] = match[2]
-        for (const match of source.matchAll(loaderModule)) {
-          if (!loaders.has(match[1]) && loaders.size >= 3000) continue
-          let paths
-          try { paths = JSON.parse(match[4]) } catch { continue }
-          loaders.set(match[1], [...new Set(paths.map(publicChunk).filter(Boolean))])
-          // Imports can arrive before their table in concurrent chunk reads.
-          resolveImport(match[1])
-        }
-        const ids = new Set([...source.matchAll(lazyImport)].map(match => match[1]))
-        const importPriority = Math.max(priority, ids.size)
-        for (const id of ids) {
-          if (!imports.has(id) && imports.size >= 3000) continue
-          imports.set(id, Math.min(imports.get(id) ?? Infinity, importPriority))
-          resolveImport(id)
-        }
-        const paths = [...new Set([...source.matchAll(literalChunk)].map(match => publicChunk(match[2])).filter(Boolean))]
-        for (const dependency of paths) enqueue(dependency, Math.max(priority, paths.length))
-      }))
-      for (const read of reads) if (read.status === 'rejected') throw read.reason
-    }
-    return refs
-  } finally {
-    diagnostics.found = [...ACTIONS].filter(name => refs[name])
-    diagnostics.missing = [...ACTIONS].filter(name => !refs[name])
-    diagnostics.chunksRemaining = pending.size
-  }
+  const { refs, diagnostics: found } = await discoverRpcActions(request, { origin: ORIGIN, pages: ACTION_PAGES, actions: ACTIONS })
+  Object.assign(diagnostics, found)
+  return refs
 }
 
-export function actionResult(text, name) {
-  check(ACTIONS.has(name), 'action_not_allowed')
-  const rows = new Map()
-  for (const line of text.split('\n')) {
-    const match = /^([a-f0-9]+):(.*)$/.exec(line)
-    if (!match) continue
-    try { rows.set(match[1], JSON.parse(match[2])) } catch { /* Flight imports are not results. */ }
-  }
-  let result = rows.get('0')?.a
-  for (let i = 0; i < 8 && typeof result === 'string' && /^\$@?[a-f0-9]+$/.test(result); i++)
-    result = rows.get(result.replace(/^\$@?/, ''))
-  if (result === undefined) {
-    const shape = value => value && typeof value === 'object' && (value.error
-      || (name === 'listProjects' && Array.isArray(value))
-      || (['saveProject', 'setProjectIssues'].includes(name) && value.project)
-      || (name === 'saveIssue' && value.issue)
-      || (name === 'getIssueThread' && value.thread && Array.isArray(value.chunks))
-      || (name === 'changeModelOrder' && Array.isArray(value.entries) && typeof value.customized === 'boolean'))
-    result = [...rows.values()].find(shape)
-  }
-  check(result !== undefined && !result?.error, 'action_refused')
+export function actionResult(data, name) {
+  check(Object.hasOwn(ACTIONS, name), 'action_not_allowed')
+  const { result, failure } = rpcResult(data)
+  check(!failure && result !== undefined && !result?.error, 'action_refused')
   return result
 }
 
@@ -366,14 +261,14 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
   const report = { issue: 1245, revision: guard.revision, mode: guard.mode, status: 'running',
     workerReleaseRunId: attestation.workerReleaseRunId,
     startedAt: new Date(now()).toISOString(), cases: [], botRecord: null }
-  let cookie = '', ownerId, workspaceId, refs = {}, safeWorkspace = true
+  let cookie = '', ownerId, workspaceId, refs = {}, safeWorkspace = true, deploymentId = ''
   async function request(path, body, method = body === undefined ? 'GET' : 'POST', extra = {}) {
     const url = new URL(path.startsWith('/mikka/') ? path : '/mikka' + path, ORIGIN)
     check(url.origin === ORIGIN && url.pathname.startsWith('/mikka/') && !url.username && !url.password, 'origin_rejected')
     try {
       return await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(30000),
         headers: { origin: ORIGIN, 'cache-control': 'no-store', ...(cookie ? { cookie } : {}),
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...extra },
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...releaseHeaders(url.pathname, deploymentId), ...extra },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     } catch { throw new AcceptanceError('request_failed') }
   }
@@ -383,13 +278,14 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     check(response.ok && value !== null && !value?.error, 'http_refused', 'blocked', { httpStatus: response.status })
     return value
   }
-  const pin = async () => check((await json('/api/version')).build === guard.revision, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.revision)
+  const pin = async () => check(sameRelease(await json('/api/version')), 'build_mismatch')
   async function action(name, args) {
-    check(ACTIONS.has(name), 'action_not_allowed')
-    check(typeof refs[name] === 'string', 'action_missing')
-    const response = await request('/en', args, 'POST', { 'next-action': refs[name], accept: 'text/x-component' })
-    check(response.ok, 'action_refused')
-    return actionResult(await response.text(), name)
+    check(Object.hasOwn(ACTIONS, name), 'action_not_allowed')
+    check(refs[name] === ACTIONS[name], 'action_missing')
+    const response = await request('/api/rpc', rpcBody(refs[name], args), 'POST', RPC_HEADERS)
+    check(response.ok, 'action_refused', 'blocked', { httpStatus: response.status })
+    return actionResult(await response.json().catch(() => null), name)
   }
   const readOrder = () => json('/api/settings/model-order?workspace=' + workspaceId)
   async function installOrder(current, wanted, remember) {
@@ -445,7 +341,7 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     try {
       check(safeWorkspace, 'cleanup_incomplete')
       await pin()
-      check([...ACTIONS].every(name => refs[name]), 'action_missing')
+      check(Object.keys(ACTIONS).every(name => refs[name]), 'action_missing')
       originalOrder = await readOrder()
       const keys = item.kind === 'api_key' ? await json('/api/settings/api-keys?workspace=' + workspaceId) : { keys: [] }
       source = ownedSource(item, { order: originalOrder, keys, connections: await json('/api/subscriptions?workspace=' + workspaceId), ownerId })
@@ -693,6 +589,8 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     workspaceId = bots[0].workspaceId
     report.actionDiscovery = {}
     refs = await discoverActions(request, report.actionDiscovery)
+    // Every later fixture read and write goes to the release that published these actions.
+    deploymentId = report.actionDiscovery.deploymentId ?? ''
     // A refused API path does not gate or substitute either official subscription path.
     for (const item of CASES) report.cases.push(await runCase(item))
     await pin()
@@ -720,7 +618,7 @@ async function output(name, report) {
       'Actions found: ' + (report.actionDiscovery.found.join(', ') || 'none'),
       'Actions missing: ' + (report.actionDiscovery.missing.join(', ') || 'none'),
       'Public pages read/failed: ' + report.actionDiscovery.pagesRead + '/' + report.actionDiscovery.pagesFailed,
-      'Public chunks read/failed/remaining: ' + report.actionDiscovery.chunksRead + '/' + report.actionDiscovery.chunksFailed + '/' + report.actionDiscovery.chunksRemaining] : []),
+      'Public action lists read/failed: ' + report.actionDiscovery.manifestsRead + '/' + report.actionDiscovery.manifestsFailed] : []),
     '', 'Only fixed metadata, IDs and hashes are reported. A blocked path is not a pass.',
     'Synthetic project, Bot and decision evidence is retained; owned live work is stopped.', ''].join('\n')
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary)

@@ -6,7 +6,6 @@ on:
     branches: [main, acceptance/proactive-1157-1163]
     paths:
       - '.github/workflows/production-readiness.yml'
-      - '.github/workflows/model-provider-fallback-acceptance.yml'
       - '.github/workflows/project-decisions-acceptance.yml'
       - 'scripts/acceptance/production-readiness*'
   workflow_dispatch:
@@ -35,7 +34,7 @@ jobs:
       - run: node --test scripts/acceptance/production-readiness.test.mjs
   readiness:
     needs: guards
-    if: github.repository == 'alexj11324/Mikka' && ((github.event_name == 'push' && github.ref == 'refs/heads/acceptance/proactive-1157-1163') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && ((github.event_name == 'push' && github.ref == 'refs/heads/acceptance/proactive-1157-1163') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
