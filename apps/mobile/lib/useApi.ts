@@ -5,6 +5,7 @@ import { apiCache as cache } from './api-cache'
 import { needsForegroundRead, withholdsCachedRead } from './api-read-state'
 import { live, useLive, type LiveSpec } from './live'
 import { presenceScope } from './presence-scope'
+import { isTransientReadFailure, readFailureOutcome, readWithRetry, type ReadMode } from './read-retry'
 
 /** Subscribe to the native foreground transition. Callers decide whether
  * an already-loaded result needs a receipt or a stale result needs a read. */
@@ -12,6 +13,13 @@ export function onAppForeground(entered: () => void) {
   const subscription = AppState.addEventListener('change', state => { if (state === 'active') entered() })
   return () => subscription.remove()
 }
+
+// Counts trips to the background: a read that saw it change was cut off by
+// iOS, not refused by the server (lib/read-retry.ts).
+let backgroundTrips = 0
+AppState.addEventListener('change', state => { if (state === 'background') backgroundTrips++ })
+const inForeground = () => AppState.currentState === 'active'
+const pause = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
 
 // The last answer per path, so a screen opened again draws at once and refreshes behind (a chat is not blank while it loads).
 // Another workspace's answers are dropped.
@@ -44,7 +52,7 @@ export function useApi<T>(path: string | null, options?: { read: (path: string) 
  */
 export function useLiveApi<T>(path: string | null, spec: (data: T | null) => LiveSpec, read: (path: string) => Promise<T> = api) {
   const state = useApiRead<T>(path, read, true)
-  useLive(path ? spec(state.data) : { refs: [] }, state.reload, state.requestedAt)
+  useLive(path ? spec(state.data) : { refs: [] }, state.refresh, state.requestedAt)
   return state
 }
 
@@ -77,45 +85,68 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
   // When the last successful read started (performance clock): a pushed deadline counts from it.
   const [requestedAt, setRequestedAt] = useState<number | null>(null)
   const failed = useRef(false)
-  const pending = useRef<{ context: number; path: string; ticket: number; promise: Promise<void> } | null>(null)
+  const pending = useRef<{ context: number; path: string; ticket: number; promise: Promise<void>; mode: ReadMode } | null>(null)
+  const hasData = useRef(data !== null)
+  hasData.current = data !== null
 
-  const load = useCallback((): Promise<void> => {
+  /**
+   * One read of `path`. A transient failure is retried with backoff first; a
+   * `quiet` read (the app's own refresh) that still fails keeps the content
+   * on screen, and a read iOS cut off by suspending the app is redone in the
+   * foreground instead of shown as an error (lib/read-retry.ts).
+   */
+  const load = useCallback((mode: ReadMode = 'shown'): Promise<void> => {
     if (!path || activePath.current !== path) return Promise.resolve()
     const context = cache.context()
-    if (pending.current?.context === context && pending.current.path === path) return pending.current.promise
+    if (pending.current?.context === context && pending.current.path === path) {
+      // The person asked while the app was refreshing on its own: this read's failure is theirs to see.
+      if (mode === 'shown') pending.current.mode = 'shown'
+      return pending.current.promise
+    }
     const readRevision = cache.revision(path)
     const ticket = ++request.current
-    const accept = (apply: () => void) => cache.commit(context, () => { if (activePath.current === path && ticket === request.current && cache.revision(path) === readRevision) apply() })
+    const trips = backgroundTrips
+    const current = () => activePath.current === path && ticket === request.current && cache.context() === context && cache.revision(path) === readRevision
+    const accept = (apply: () => void) => cache.commit(context, () => { if (current()) apply() })
     accept(() => setLoading(true))
     const started = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()
-    const promise = (async () => {
+    const entry = { context, path, ticket, promise: Promise.resolve(), mode }
+    let again = false
+    entry.promise = (async () => {
       try {
-        const next = await read(path)
+        const next = await readWithRetry(() => read(path), { canRetry: () => current() && inForeground() && trips === backgroundTrips, wait: pause })
         accept(() => { cache.storeRead(path, next, context); setStored(next); setError(null); failed.current = false; loadedAt.current = Date.now(); setRequestedAt(started) })
       } catch (failure) {
         accept(() => {
           if (failure instanceof ApiError && withholdsCachedRead(failure.status)) {
             cache.revoke(path, context, failure)
-          } else {
-            setError(failure as Error)
-            failed.current = true
+            return
           }
+          failed.current = true
+          const interrupted = trips !== backgroundTrips || !inForeground()
+          const outcome = readFailureOutcome({ transient: isTransientReadFailure(failure), interrupted, mode: entry.mode, hasData: hasData.current })
+          if (outcome === 'show') setError(failure as Error)
+          // Back in the foreground before this read gave up: its own foreground read joined it, so read once more now.
+          else again = interrupted && inForeground()
         })
       } finally {
         accept(() => setLoading(false))
         if (pending.current?.ticket === ticket) pending.current = null
       }
+      if (again) await load('quiet')
     })()
-    pending.current = { context, path, ticket, promise }
-    return promise
+    pending.current = entry
+    return entry.promise
   }, [path, read])
+  const reload = useCallback(() => load('shown'), [load])
+  const refresh = useCallback(() => load('quiet'), [load])
 
   // A post-write read must start after the acknowledgement, even when a previous snapshot is in flight.
   const reloadAfterWrite = useCallback(async () => {
     if (!path) return
     const reading = pending.current
     if (reading?.path === path && reading.context === context) await reading.promise
-    if (activePath.current === path && context === cache.context() && revision === cache.revision(path)) await load()
+    if (activePath.current === path && context === cache.context() && revision === cache.revision(path)) await load('shown')
   }, [context, load, path, revision])
 
   useEffect(() => {
@@ -154,13 +185,13 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
     return onAppForeground(() => {
       // Pushed screens catch up on their live channel. Only a failed or stale
       // read needs an additional request on returning to the foreground.
-      if (pushed ? failed.current || loadedAt.current === 0 : needsForegroundRead(loadedAt.current, failed.current, Date.now(), FRESH_FOR_MS)) void load()
+      if (pushed ? failed.current || loadedAt.current === 0 : needsForegroundRead(loadedAt.current, failed.current, Date.now(), FRESH_FOR_MS)) void load('quiet')
     })
   }, [load, path, pushed])
 
   const sameSource = source.path === path && source.context === context
   const denial = path ? cache.denial(path) : null
-  return { data: denial ? null : sameSource ? data : path ? cache.get<T>(path) : null, error: denial ?? (sameSource ? error : null), loading: sameSource ? loading : Boolean(path), reload: load, reloadAfterWrite, setData, requestedAt: sameSource ? requestedAt : null }
+  return { data: denial ? null : sameSource ? data : path ? cache.get<T>(path) : null, error: denial ?? (sameSource ? error : null), loading: sameSource ? loading : Boolean(path), reload, refresh, reloadAfterWrite, setData, requestedAt: sameSource ? requestedAt : null }
 }
 
 /** Pull to refresh for a list (the system's RefreshControl): reloads and shows the spinner until the data is back. */
