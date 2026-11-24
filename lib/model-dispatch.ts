@@ -6,8 +6,9 @@ import { defaultAgentCopy } from './agent-copy'
 import messages from '@/messages/zh-CN.json'
 import type { SubscriptionPreflightFailure } from '@mikka/protocol/harness'
 import { cloudReady } from './rule-dispatch'
-import { credentialStates, dispatchOrder, orderCandidates, selectedOrderCandidates, poolDevices, readOrder, type OrderScope, type RefreshOrderQuota } from './model-order'
+import { credentialStates, creditsModelSpeedModes, dispatchOrder, orderCandidates, selectedOrderCandidates, poolDevices, readOrder, type OrderScope, type RefreshOrderQuota } from './model-order'
 import { entryKey, planDispatch, whyNoDevice, type NoDeviceWhy, type NothingReason, type OrderEntry, type RunLocation, type SkippedEntry } from './model-order-plan'
+import type { ModelSpeedMode } from './model-routing'
 
 /**
  * Where a new run goes and on which model (decision 2026-11-02-1400): the
@@ -26,8 +27,8 @@ import { entryKey, planDispatch, whyNoDevice, type NoDeviceWhy, type NothingReas
 /** Why nothing runs: the list's reasons, or the model the thread named (decision 2026-11-02-1400). */
 export type DispatchNothingReason = NothingReason | 'cloudTemporarilyUnavailable' | 'notOffered' | 'namedDevice' | 'pickedNoDevice' | 'pickedUnavailable'
 export type ModelDispatch =
-  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; subscriptionBindingId?: string; quotaCheckPending?: true }
-  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; quotaCheckPending?: true }
+  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; serviceTier?: ModelSpeedMode; subscriptionBindingId?: string; quotaCheckPending?: true }
+  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; serviceTier?: ModelSpeedMode; quotaCheckPending?: true }
   | { kind: 'none'; reason: DispatchNothingReason; card: ReturnType<typeof modelUnavailableCard>; skipped?: SkippedEntry[] }
 
 /**
@@ -134,12 +135,18 @@ export async function resolveModelDispatch(pool: Pool, scope: OrderScope & { bot
   }
   if (plan.kind === 'none') return { kind: 'none', reason: plan.reason, card: modelUnavailableCard(plan.reason), skipped: plan.skipped }
   const quotaCheckPending = deferStaleQuota && states.get(plan.entry.id)?.quotaCheckPending ? { quotaCheckPending: true as const } : {}
-  if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...quotaCheckPending }
+  const resolvedSpeedModes = plan.entry.source.kind === 'credits'
+    ? (stored.defaultServiceTier !== 'standard' ? await creditsModelSpeedModes(plan.model) : [])
+    : (candidates.find(candidate => entryKey(candidate) === entryKey(plan.entry))?.speedModes ?? [])
+  const serviceTier = stored.defaultServiceTier !== 'standard' && resolvedSpeedModes.includes(stored.defaultServiceTier)
+    ? { serviceTier: stored.defaultServiceTier as ModelSpeedMode }
+    : {}
+  if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...serviceTier, ...quotaCheckPending }
   const { rows: [agent] } = await pool.query<{ id: string }>('SELECT id FROM agents WHERE "userId"=$1 AND "deviceId"=$2 AND harness=$3 AND ($4::text IS NULL OR id::text=$4) ORDER BY "createdAt",id LIMIT 1',
     [scope.ownerId, plan.deviceId, plan.entry.harness, dependencies.agentId ?? null])
   if (!agent) return { kind: 'none', reason: 'noDevice', card: modelUnavailableCard('noDevice') }
   const subscriptionBindingId = dependencies.bindSubscription !== false && plan.entry.source.kind === 'subscription' ? await bindAgentToConnection(pool, scope, agent.id, plan.entry.harness, plan.entry.source.connectionId, plan.entry.model) : undefined
-  return { kind: 'device', deviceId: plan.deviceId, agentId: agent.id, model: plan.model, entry: plan.entry, ...(subscriptionBindingId ? { subscriptionBindingId } : {}), ...quotaCheckPending }
+  return { kind: 'device', deviceId: plan.deviceId, agentId: agent.id, model: plan.model, entry: plan.entry, ...serviceTier, ...(subscriptionBindingId ? { subscriptionBindingId } : {}), ...quotaCheckPending }
 }
 
 /**

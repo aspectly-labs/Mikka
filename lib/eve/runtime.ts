@@ -32,17 +32,29 @@ export async function modelForSession(ctx: DynamicModelContext) {
   const scope = scopeFromAuth(ctx.session.auth.current)
   const runtime = turnModel.get()
   if (!runtime || runtime.harness !== 'ai_sdk' || !runtime.model) throw new Error('subscription_model_unavailable')
-  const { withModelEffort } = await import('../model-effort')
+  const { withModelEffort, withModelServiceTier } = await import('../model-effort')
   if (!runtime.modelSelection) {
     const [{ HostedWorkflowModel }, { eveTurnRef }] = await Promise.all([import('../abuse/workflow-model'), import('../usage-turn-ref')])
     // The receipt names the turn the saved reply carries as mikkaStreamId (lib/eve/projection.ts).
     const turnRef = ctx.turn ? eveTurnRef(ctx.session.id, ctx.turn.id) : null
-    return withModelEffort(new HostedWorkflowModel(scope.ownerId, scope.botId, runtime.model, turnRef), runtime.effort)
+    let hostedModel = withModelEffort(new HostedWorkflowModel(scope.ownerId, scope.botId, runtime.model, turnRef), runtime.effort)
+    if (runtime.serviceTier) {
+      const { creditsModelSpeedModes } = await import('../model-order')
+      const supported = await creditsModelSpeedModes(runtime.model)
+      if (supported.includes(runtime.serviceTier)) hostedModel = withModelServiceTier(hostedModel, runtime.serviceTier)
+    }
+    return hostedModel
   }
   const [{ SubscriptionWorkflowModel }, { streamingModel }] = await Promise.all([
     import('../subscription-workflow-model'), import('./streaming-model'),
   ])
-  const requestPolicy = ctx.session.parent || turnRequest.get().scheduledRead ? undefined : { codexServiceTier: 'priority' as const }
+  const requestPolicy = ctx.session.parent || turnRequest.get().scheduledRead
+    ? undefined
+    : runtime.serviceTier === 'ultrafast'
+      ? { codexServiceTier: 'ultrafast' as const }
+      : runtime.serviceTier === 'fast'
+        ? { codexServiceTier: 'priority' as const, claudeSpeed: 'fast' as const }
+        : { codexServiceTier: 'priority' as const }
   return withModelEffort(streamingModel(new SubscriptionWorkflowModel(runtime.modelSelection, requestPolicy)), runtime.effort)
 }
 

@@ -1,5 +1,5 @@
 import type { LanguageModel } from 'ai'
-import { supportedModelEfforts, type ModelRoutingEffort } from './model-routing'
+import { supportedModelEfforts, type ModelRoutingEffort, type ModelSpeedMode } from './model-routing'
 
 type Model = Extract<LanguageModel, { specificationVersion: 'v4' }>
 type CallOptions = Parameters<Model['doStream']>[0]
@@ -23,6 +23,31 @@ export function withModelEffort(model: Model, effort: ModelRoutingEffort | null 
   const id = model.modelId.split('/').pop() ?? model.modelId
   if (!effort || !supportedModelEfforts(id, familyOf(id)).includes(effort)) return model
   const extra = effortProviderOptions(effort)
+  const merge = (options: CallOptions): CallOptions => {
+    const providerOptions = { ...options.providerOptions }
+    for (const [key, value] of Object.entries(extra)) providerOptions[key] = { ...value, ...providerOptions[key] }
+    return { ...options, providerOptions }
+  }
+  return {
+    specificationVersion: 'v4', provider: model.provider, modelId: model.modelId, supportedUrls: model.supportedUrls,
+    doStream: options => model.doStream(merge(options)),
+    doGenerate: options => model.doGenerate(merge(options)),
+  }
+}
+
+/**
+ * Applies a server-verified serving speed tier (`fast` / `ultrafast`) to a
+ * hosted/gateway language model's providerOptions. Callers must verify support
+ * against real server capability metadata before calling this.
+ */
+export function withModelServiceTier(model: Model, serviceTier: ModelSpeedMode | null | undefined): Model {
+  if (!serviceTier) return model
+  const codexTier = serviceTier === 'ultrafast' ? 'ultrafast' : 'priority'
+  const extra: NonNullable<CallOptions['providerOptions']> = {
+    openai: { serviceTier: codexTier },
+    openaiCompatible: { service_tier: codexTier },
+    ...(serviceTier === 'fast' ? { anthropic: { speed: 'fast' } } : {}),
+  }
   const merge = (options: CallOptions): CallOptions => {
     const providerOptions = { ...options.providerOptions }
     for (const [key, value] of Object.entries(extra)) providerOptions[key] = { ...value, ...providerOptions[key] }

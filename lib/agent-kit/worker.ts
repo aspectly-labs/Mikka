@@ -25,6 +25,8 @@ export interface WorkerModelDispatch {
   followed?: true
   /** The reasoning effort the request asked for (an automation's), host-checked against the model. */
   effort?: import('../model-routing').ModelRoutingEffort
+  /** The serving speed tier (fast / ultrafast), server-verified against real model capabilities before dispatch. */
+  serviceTier?: import('../model-routing').ModelSpeedMode
 }
 
 export interface WorkerDefinitionSnapshot {

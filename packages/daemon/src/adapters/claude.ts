@@ -491,9 +491,9 @@ function spawnBinary(binary?: string, oauthToken?: string) {
 
 function claudePrewarmOptionsKey(options: SessionOptions) {
   const { cwd, env, credential, github, apps, mcp, mcpHttpObservationUrl, machineEnvironment,
-    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, runId, requireSessionResume } = options
+    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, serviceTier, runId, requireSessionResume } = options
   return JSON.stringify({ cwd, env, credential, github, apps, mcp, mcpHttpObservationUrl, machineEnvironment,
-    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, runId, requireSessionResume,
+    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, serviceTier, runId, requireSessionResume,
     mailbox: options.mailbox?.tools })
 }
 
@@ -740,7 +740,8 @@ export class ClaudeAdapter implements AgentAdapter {
         settingSources: options.machineEnvironment ? ["user", "project", "local"] : [],
         settings: {
           ...claudeSettings(options.policy),
-          ...(externalAuth ? { forceLoginMethod: "claudeai" as const } : {})
+          ...(externalAuth ? { forceLoginMethod: "claudeai" as const } : {}),
+          ...(options.serviceTier === "fast" ? { fastMode: true } : {}),
         },
         mcpServers: {
           ...(options.mailbox ? { mikka_mailbox: claudeMailboxServer(options.mailbox) } : {}),

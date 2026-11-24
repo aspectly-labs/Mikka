@@ -10,7 +10,8 @@ import { deviceSchedulingView, type SchedulingNode } from './device-scheduling'
 import type { HarnessInfo } from '@mikka/protocol/harness'
 import { ActionFailureError } from './action-error'
 import { gatewayKeyHarnesses } from './model-api-key-providers'
-import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS, supportedModelSpeedModes, type ModelRoutingEffort, type ModelServiceTier, type ModelSpeedMode } from './model-routing'
+import { catalogIdFor, type CatalogModel } from './model-catalog'
+import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS, resolveSpeedModesFromEvidence, type ModelRoutingEffort, type ModelServiceTier, type ModelSpeedMode } from './model-routing'
 import { hasStaleOfficialAllowance, shownSubscriptionAvailability, subscriptionAvailability } from './subscription-quota'
 import { providerHealthStates, providerSourceKey } from './model-provider-health'
 import {
@@ -92,24 +93,74 @@ export interface ModelCandidateSnapshot {
   keys?: UsableApiKey[]
 }
 
+function jsonBoolMap(value: unknown): Record<string, boolean> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const out: Record<string, boolean> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'boolean') out[k] = v
+  }
+  return Object.keys(out).length ? out : null
+}
+
+async function liveCatalogIndex(requireConfigured = true): Promise<Map<string, CatalogModel>> {
+  try {
+    if (requireConfigured) {
+      const { gatewayLiteLlm } = await import('./model-gateway/config')
+      if (!gatewayLiteLlm()) return new Map()
+    }
+    const { modelCatalog } = await import('./model-catalog-server')
+    const list = await modelCatalog()
+    return new Map(list.map(model => [model.id, model]))
+  } catch {
+    return new Map()
+  }
+}
+
+function gatewayEntryFor(catalog: ReadonlyMap<string, CatalogModel>, model: string, provider: string): CatalogModel | undefined {
+  const id = catalogIdFor(model)
+  if (!id) return undefined
+  const entry = catalog.get(id)
+  if (!entry) return undefined
+  const directMatch = (provider === 'openai' && entry.vendor === 'openai')
+    || ((provider === 'anthropic' || provider === 'claude') && entry.vendor === 'anthropic')
+    || (provider === 'custom' && model.includes('/'))
+  return directMatch ? entry : undefined
+}
+
+/** Server-verified speed modes for a Mikka Credits (`vendor/model`) catalogue model. */
+export async function creditsModelSpeedModes(model: string): Promise<readonly ModelSpeedMode[]> {
+  const catalog = await liveCatalogIndex(false)
+  const entry = catalog.get(model) ?? (catalogIdFor(model) ? catalog.get(catalogIdFor(model)!) : undefined)
+  return resolveSpeedModesFromEvidence({ catalogSpeedModes: entry?.speedModes, catalogTags: entry?.tags })
+}
+
 /** What the person can add here: their usable subscriptions' models and their usable keys' models. */
 export async function orderCandidates(query: Query, scope: OrderScope, cached: ModelCandidateSnapshot = {}): Promise<(OrderCandidate & { provider: string; credentialOwnerId: string; speedModes?: readonly ModelSpeedMode[] })[]> {
   const { ExecutionSettings } = await import('./execution-settings')
   const { usableApiKeys } = await import('./model-api-keys')
   const settings = new ExecutionSettings(query as Pool)
+  const gatewayCatalogPromise = liveCatalogIndex()
   const rows = cached.rows ?? await settings.modelCandidates(scope, query)
   // A subscription serves its owner only (decision 2026-11-17): no teammate's account is a candidate.
   // Each account's models in the order the account listed them (its catalogue): the default takes the first Codex model.
   const connectionIds = [...new Set(rows.map(row => String(row.connectionId)))]
-  const catalogRows = connectionIds.length ? (await query.query<{ id: string; models: unknown; prioritySupport: unknown }>(
-    `SELECT id::text AS id,"modelCatalog"->'models' AS models,"modelCatalog"->'prioritySupport' AS "prioritySupport" FROM byos_connections WHERE id::text = ANY($1) AND "ownerId"=ANY($2::text[])`,
+  const catalogRows = connectionIds.length ? (await query.query<{
+    id: string; models: unknown; epoch: string; revision: string | null
+    prioritySupport: unknown; ultrafastSupport: unknown; fastSupport: unknown
+  }>(
+    `SELECT id::text AS id,"modelCatalog"->'models' AS models,epoch::text AS epoch,"modelCatalog"->>'revision' AS revision,"modelCatalog"->'prioritySupport' AS "prioritySupport","modelCatalog"->'ultrafastSupport' AS "ultrafastSupport","modelCatalog"->'fastSupport' AS "fastSupport" FROM byos_connections WHERE id::text = ANY($1) AND "ownerId"=ANY($2::text[])`,
     [connectionIds, [...new Set(rows.map(row => String(row.ownerId)))]])).rows : []
+  const usableKeys = cached.keys ?? await usableApiKeys(query, scope.ownerId, scope.workspaceId)
+  const gatewayCatalog = await gatewayCatalogPromise
   const listed = new Map(catalogRows.map(row => [row.id, Array.isArray(row.models) ? row.models.map(String) : []]))
-  const priorityByConn = new Map(catalogRows.map(row => [
+  const currentEpochCatalog = new Map(catalogRows.map(row => [
     row.id,
-    row.prioritySupport && typeof row.prioritySupport === 'object' && !Array.isArray(row.prioritySupport)
-      ? row.prioritySupport as Record<string, unknown>
-      : null,
+    {
+      current: row.revision !== null && row.revision === row.epoch,
+      priority: jsonBoolMap(row.prioritySupport),
+      ultrafast: jsonBoolMap(row.ultrafastSupport),
+      fast: jsonBoolMap(row.fastSupport),
+    },
   ]))
   const rank = (connectionId: string, model: string) => { const at = listed.get(connectionId)?.indexOf(model) ?? -1; return at < 0 ? Number.MAX_SAFE_INTEGER : at }
   const subscriptions = rows.map(row => {
@@ -117,9 +168,20 @@ export async function orderCandidates(query: Query, scope: OrderScope, cached: M
     const model = String(row.modelId)
     const connId = String(row.connectionId)
     const provider = String(row.provider)
-    const rawPriority = priorityByConn.get(connId)?.[model]
-    const prioritySupported = typeof rawPriority === 'boolean' ? rawPriority : undefined
-    const speedModes = supportedModelSpeedModes(model, harness, { provider, prioritySupported })
+    const cap = currentEpochCatalog.get(connId)
+    const speedModes = provider === 'codex'
+      // Codex subscriptions read speed tiers strictly from the account's current-epoch /backend-api/codex/models service_tiers.
+      ? resolveSpeedModesFromEvidence(cap?.current ? {
+          prioritySupported: cap.priority?.[model],
+          ultrafastSupported: cap.ultrafast?.[model],
+        } : {})
+      // Claude subscriptions prefer explicit Anthropic /v1/models capability flags, falling back to live server Gateway catalogue only when absent.
+      : resolveSpeedModesFromEvidence({
+          fastSupported: cap?.current ? cap.fast?.[model] : undefined,
+          ultrafastSupported: cap?.current ? cap.ultrafast?.[model] : undefined,
+          catalogSpeedModes: gatewayEntryFor(gatewayCatalog, model, provider)?.speedModes,
+          catalogTags: gatewayEntryFor(gatewayCatalog, model, provider)?.tags,
+        })
     return {
       harness, model, name: model,
       source: { kind: 'subscription' as const, connectionId: connId }, provider, credentialOwnerId: String(row.ownerId),
@@ -129,8 +191,14 @@ export async function orderCandidates(query: Query, scope: OrderScope, cached: M
     ? rank(a.item.source.connectionId, a.item.model) - rank(b.item.source.connectionId, b.item.model) || a.at - b.at
     : a.at - b.at).map(({ item }) => item)
   // Through LiteLLM, any OpenAI-compatible key serves both Claude Code and Codex; Anthropic-protocol keys serve Claude Code.
-  const keys = (cached.keys ?? await usableApiKeys(query, scope.ownerId, scope.workspaceId)).flatMap(key => key.models.flatMap(model => gatewayKeyHarnesses(key).map(harness => {
-    const speedModes = supportedModelSpeedModes(model, harness as OrderHarness, { provider: key.provider })
+  const keys = usableKeys.flatMap(key => key.models.flatMap(model => gatewayKeyHarnesses(key).map(harness => {
+    const advertised = key.modelSpeedModes && Object.hasOwn(key.modelSpeedModes, model) ? key.modelSpeedModes[model] : undefined
+    const gatewayMatch = advertised === undefined ? gatewayEntryFor(gatewayCatalog, model, key.provider) : undefined
+    const speedModes = resolveSpeedModesFromEvidence({
+      advertised,
+      catalogSpeedModes: gatewayMatch?.speedModes,
+      catalogTags: gatewayMatch?.tags,
+    })
     return {
       harness: harness as OrderHarness, model, name: model,
       source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId,
@@ -150,18 +218,38 @@ export async function selectedOrderCandidates(query: Query, scope: OrderScope, e
   // Mikka 额度 is no connected credential; it has no candidates to select.
   if (entry.source.kind === 'credits') return []
   if (!z.uuid().safeParse(sourceId(entry)).success) return []
+  const gatewayCatalog = await liveCatalogIndex()
   if (entry.source.kind === 'api_key') {
     const { usableApiKeys } = await import('./model-api-keys')
     return (await usableApiKeys(query, scope.ownerId, scope.workspaceId, entry.source.keyId))
       .filter(key => key.models.includes(entry.model) && gatewayKeyHarnesses(key).includes(entry.harness))
-      .map(key => ({ harness: entry.harness, model: entry.model, name: entry.model,
-        source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId }))
+      .map(key => {
+        const advertised = key.modelSpeedModes && Object.hasOwn(key.modelSpeedModes, entry.model) ? key.modelSpeedModes[entry.model] : undefined
+        const gatewayMatch = advertised === undefined ? gatewayEntryFor(gatewayCatalog, entry.model, key.provider) : undefined
+        const speedModes = resolveSpeedModesFromEvidence({
+          advertised,
+          catalogSpeedModes: gatewayMatch?.speedModes,
+          catalogTags: gatewayMatch?.tags,
+        })
+        return {
+          harness: entry.harness, model: entry.model, name: entry.model,
+          source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId,
+          ...(speedModes.length ? { speedModes } : {}),
+        }
+      })
   }
   const { runMayUseCredentialSql } = await import('./personal-policy')
   // Derive the payor only from the exact source and its current workspace share.
   // The source owner's active membership is still checked before its catalogue.
-  const { rows: [source] } = await query.query<{ ownerId: string }>(`SELECT c."ownerId" FROM byos_connections c
-    WHERE c.id=$1 AND ${runMayUseCredentialSql('c."ownerId"', '$2', '$3')}`,
+  const { rows: [source] } = await query.query<{
+    ownerId: string; epoch: string; revision: string | null
+    prioritySupport: unknown; ultrafastSupport: unknown; fastSupport: unknown
+  }>(`SELECT c."ownerId", c.epoch::text AS epoch, c."modelCatalog"->>'revision' AS revision,
+       c."modelCatalog"->'prioritySupport' AS "prioritySupport",
+       c."modelCatalog"->'ultrafastSupport' AS "ultrafastSupport",
+       c."modelCatalog"->'fastSupport' AS "fastSupport"
+     FROM byos_connections c
+     WHERE c.id=$1 AND ${runMayUseCredentialSql('c."ownerId"', '$2', '$3')}`,
   [entry.source.connectionId, scope.ownerId, scope.workspaceId])
   if (!source) return []
   if (source.ownerId !== scope.ownerId) {
@@ -169,11 +257,30 @@ export async function selectedOrderCandidates(query: Query, scope: OrderScope, e
     try { await authorizeSubscriptionWorkspace(source.ownerId, scope.workspaceId) } catch { return [] }
   }
   const { executionModelOptions } = await import('./execution-model-options')
+  const currentEpoch = source.revision !== null && source.revision === source.epoch
+  const priority = jsonBoolMap(source.prioritySupport)
+  const ultrafast = jsonBoolMap(source.ultrafastSupport)
+  const fast = jsonBoolMap(source.fastSupport)
   return (await executionModelOptions(query, { ...scope, ownerId: source.ownerId }, true,
     { connectionId: entry.source.connectionId, model: entry.model }))
-    .map(row => ({ harness: (row.provider === 'codex' ? 'codex' : 'claude_code') as OrderHarness,
-      model: String(row.modelId), name: String(row.modelId), source: { kind: 'subscription' as const, connectionId: String(row.connectionId) },
-      provider: String(row.provider), credentialOwnerId: String(row.ownerId) }))
+    .map(row => {
+      const provider = String(row.provider)
+      const model = String(row.modelId)
+      const speedModes = provider === 'codex'
+        ? resolveSpeedModesFromEvidence(currentEpoch ? { prioritySupported: priority?.[model], ultrafastSupported: ultrafast?.[model] } : {})
+        : resolveSpeedModesFromEvidence({
+            fastSupported: currentEpoch ? fast?.[model] : undefined,
+            ultrafastSupported: currentEpoch ? ultrafast?.[model] : undefined,
+            catalogSpeedModes: gatewayEntryFor(gatewayCatalog, model, provider)?.speedModes,
+            catalogTags: gatewayEntryFor(gatewayCatalog, model, provider)?.tags,
+          })
+      return {
+        harness: (row.provider === 'codex' ? 'codex' : 'claude_code') as OrderHarness,
+        model, name: model, source: { kind: 'subscription' as const, connectionId: String(row.connectionId) },
+        provider, credentialOwnerId: String(row.ownerId),
+        ...(speedModes.length ? { speedModes } : {}),
+      }
+    })
     .filter(candidate => entryKey(candidate) === entryKey(entry))
 }
 

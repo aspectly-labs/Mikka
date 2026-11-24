@@ -79,29 +79,131 @@ export function supportedModelEfforts(model: string, harness: OrderHarness): rea
 }
 
 const NO_SPEEDS = Object.freeze<ModelSpeedMode[]>([])
-const FAST_ONLY = Object.freeze<ModelSpeedMode[]>(['fast'])
-const FAST_AND_ULTRAFAST = Object.freeze<ModelSpeedMode[]>(['fast', 'ultrafast'])
+
+function normalizeSpeedModes(modes: Iterable<ModelSpeedMode>): readonly ModelSpeedMode[] {
+  const seen = new Set<ModelSpeedMode>()
+  for (const mode of modes) {
+    if (mode === 'fast' || mode === 'ultrafast') seen.add(mode)
+  }
+  const ordered: ModelSpeedMode[] = []
+  if (seen.has('fast')) ordered.push('fast')
+  if (seen.has('ultrafast')) ordered.push('ultrafast')
+  return ordered.length ? ordered : NO_SPEEDS
+}
 
 /**
- * Serving speed modes a candidate model can offer in the ModelPicker (Capy
- * Fast mode / Ultrafast). When an account catalogue explicitly advertises
- * `prioritySupported === false`, no speed tier is offered.
+ * Extracts real server-advertised speed capabilities from a provider/gateway
+ * model descriptor (`/models`, `/backend-api/codex/models`, or LiteLLM
+ * `/v1/mikka/catalog`). Returns `undefined` when the endpoint reported no
+ * speed-capability fields at all (distinct from an explicit empty array `[]`).
+ * Never infers capabilities from model names.
  */
-export function supportedModelSpeedModes(
-  model: string,
-  harness: OrderHarness,
-  options: { provider?: string; prioritySupported?: boolean } = {},
-): readonly ModelSpeedMode[] {
-  if (options.prioritySupported === false) return NO_SPEEDS
-  const lower = model.trim().toLowerCase()
-  const bare = lower.includes('/') ? lower.slice(lower.indexOf('/') + 1) : lower
-  const isOpenAiFamily = options.provider === 'codex' || options.provider === 'openai'
-    || lower.startsWith('openai/') || /^gpt-(?:5|6)|^o[345]/.test(bare)
-  if (harness === 'codex' && (options.prioritySupported === true || isOpenAiFamily)) {
-    return FAST_AND_ULTRAFAST
+export function extractProviderSpeedModes(raw: unknown): readonly ModelSpeedMode[] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const entry = raw as Record<string, unknown>
+  const found: ModelSpeedMode[] = []
+  let hasSignal = false
+
+  // 1. Codex / OpenAI-style `service_tiers` (`[{"id":"priority"},{"id":"ultrafast"}]` or string[])
+  const tiers = entry.service_tiers ?? entry.serviceTiers
+  if (Array.isArray(tiers)) {
+    let valid = true
+    for (const tier of tiers) {
+      if (typeof tier === 'string' && tier.trim()) {
+        if (tier === 'priority' || tier === 'fast') found.push('fast')
+        else if (tier === 'ultrafast') found.push('ultrafast')
+      } else if (tier && typeof tier === 'object' && !Array.isArray(tier) && typeof (tier as { id?: unknown }).id === 'string' && (tier as { id: string }).id) {
+        const id = (tier as { id: string }).id
+        if (id === 'priority' || id === 'fast') found.push('fast')
+        else if (id === 'ultrafast') found.push('ultrafast')
+      } else {
+        valid = false
+        break
+      }
+    }
+    if (valid) hasSignal = true
   }
-  if (harness === 'claude_code' && (bare.startsWith('claude-opus-') || bare.startsWith('claude-fable-'))) {
-    return FAST_ONLY
+
+  // 2. Explicit `speed_modes` / `speedModes` array
+  const speedList = entry.speed_modes ?? entry.speedModes
+  if (Array.isArray(speedList)) {
+    hasSignal = true
+    for (const item of speedList) {
+      if (item === 'fast' || item === 'priority') found.push('fast')
+      else if (item === 'ultrafast') found.push('ultrafast')
+    }
+  }
+
+  // 3. Explicit boolean flags (`supports_fast_mode`, `supportsFastMode`, `supports_ultrafast`, `capabilities.fast_mode.supported`)
+  const supportsFast = entry.supports_fast_mode ?? entry.supportsFastMode
+  if (typeof supportsFast === 'boolean') {
+    hasSignal = true
+    if (supportsFast) found.push('fast')
+  }
+  const supportsUltrafast = entry.supports_ultrafast ?? entry.supportsUltrafast
+  if (typeof supportsUltrafast === 'boolean') {
+    hasSignal = true
+    if (supportsUltrafast) found.push('ultrafast')
+  }
+  if (entry.capabilities && typeof entry.capabilities === 'object' && !Array.isArray(entry.capabilities)) {
+    const caps = entry.capabilities as Record<string, unknown>
+    const fm = caps.fast_mode
+    if (fm && typeof fm === 'object' && typeof (fm as { supported?: unknown }).supported === 'boolean') {
+      hasSignal = true
+      if ((fm as { supported: boolean }).supported) found.push('fast')
+    }
+    const uf = caps.ultrafast
+    if (uf && typeof uf === 'object' && typeof (uf as { supported?: unknown }).supported === 'boolean') {
+      hasSignal = true
+      if ((uf as { supported: boolean }).supported) found.push('ultrafast')
+    }
+  }
+
+  // 4. Gateway / LiteLLM catalogue `tags` (`"fast"`, `"ultrafast"`)
+  if (Array.isArray(entry.tags)) {
+    hasSignal = true
+    for (const tag of entry.tags) {
+      if (tag === 'fast') found.push('fast')
+      else if (tag === 'ultrafast') found.push('ultrafast')
+    }
+  }
+
+  return hasSignal ? normalizeSpeedModes(found) : undefined
+}
+
+/**
+ * Resolves speed modes strictly from server-reported evidence (subscription
+ * `modelCatalog`, API-key `/models` capabilities, or live Gateway catalogue).
+ * Never hardcodes or guesses capabilities from model names.
+ */
+export function resolveSpeedModesFromEvidence(evidence: {
+  advertised?: readonly ModelSpeedMode[] | null
+  prioritySupported?: boolean
+  ultrafastSupported?: boolean
+  fastSupported?: boolean
+  catalogSpeedModes?: readonly ModelSpeedMode[] | null
+  catalogTags?: readonly string[] | null
+}): readonly ModelSpeedMode[] {
+  if (evidence.advertised !== undefined && evidence.advertised !== null) {
+    return normalizeSpeedModes(evidence.advertised)
+  }
+  const hasExplicitFlags = typeof evidence.prioritySupported === 'boolean'
+    || typeof evidence.ultrafastSupported === 'boolean'
+    || typeof evidence.fastSupported === 'boolean'
+  if (hasExplicitFlags) {
+    const modes: ModelSpeedMode[] = []
+    if (evidence.prioritySupported === true || evidence.fastSupported === true) modes.push('fast')
+    if (evidence.ultrafastSupported === true) modes.push('ultrafast')
+    return normalizeSpeedModes(modes)
+  }
+  if (evidence.catalogSpeedModes && evidence.catalogSpeedModes.length) {
+    return normalizeSpeedModes(evidence.catalogSpeedModes)
+  }
+  if (evidence.catalogTags && evidence.catalogTags.length) {
+    const modes: ModelSpeedMode[] = []
+    if (evidence.catalogTags.includes('fast')) modes.push('fast')
+    if (evidence.catalogTags.includes('ultrafast')) modes.push('ultrafast')
+    return normalizeSpeedModes(modes)
   }
   return NO_SPEEDS
 }

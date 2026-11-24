@@ -898,6 +898,7 @@ export class CodexAdapter implements AgentAdapter {
         threadId: sessionId,
         input: text(message),
         ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       })
       const response = result.catch((error: unknown) => {
         failureDetails = capture(error)
@@ -983,6 +984,7 @@ export class CodexAdapter implements AgentAdapter {
         sandbox: "danger-full-access",
         developerInstructions: ctx.instructions(),
         ...(options.model ? { model: options.model } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       }
       const newThread = () =>
         ready(

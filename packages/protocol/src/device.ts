@@ -498,6 +498,8 @@ export const runAssignmentSchema = z.object({
   model: modelNameSchema.optional(),
   /** Frozen Profile effort, passed to the native harness unchanged. */
   effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  /** Server-verified serving speed tier (fast / ultrafast), passed to the native harness. */
+  serviceTier: z.enum(['fast', 'ultrafast']).optional(),
   /** Owner-bound subscription selection; the optional lease below is prepared once at claim. */
   subscriptionBinding: z.object({
     bindingId: z.uuid(), ownerId: z.string().min(1).max(128), workspaceId: z.uuid(),

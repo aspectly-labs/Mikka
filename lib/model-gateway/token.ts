@@ -19,6 +19,8 @@ export interface GatewayGrant {
   /** The model the run was frozen on: a catalogue id for Mikka 额度, the provider's id for a key. */
   model: string
   source: GatewaySource
+  /** Server-verified speed tier frozen on the run's modelDispatch, if any. */
+  serviceTier?: 'fast' | 'ultrafast'
 }
 
 const PREFIX = 'mkg_'
@@ -51,14 +53,17 @@ export async function mintGatewayToken(query: Query, grant: GatewayGrant, now = 
  */
 export async function verifyGatewayToken(query: Query, token: string, now = new Date()): Promise<GatewayGrant | null> {
   if (!tokenShape.test(token)) return null
-  const { rows: [row] } = await query.query<{ runId: string; ownerId: string; workspaceId: string | null; harness: GatewayGrant['harness']; model: string; sourceKind: 'credits' | 'api_key'; keyId: string | null }>(
-    `SELECT t."runId"::text AS "runId",t."ownerId",t."workspaceId"::text AS "workspaceId",t.harness,t.model,t."sourceKind",t."keyId"::text AS "keyId"
+  const { rows: [row] } = await query.query<{ runId: string; ownerId: string; workspaceId: string | null; harness: GatewayGrant['harness']; model: string; sourceKind: 'credits' | 'api_key'; keyId: string | null; serviceTier: string | null }>(
+    `SELECT t."runId"::text AS "runId",t."ownerId",t."workspaceId"::text AS "workspaceId",t.harness,t.model,t."sourceKind",t."keyId"::text AS "keyId",
+       r."agentDefinition"->'modelDispatch'->>'serviceTier' AS "serviceTier"
      FROM model_gateway_tokens t JOIN agent_runs r ON r.id=t."runId" AND r."userId"=t."ownerId"
      WHERE t."tokenHash"=$1 AND t."expiresAt">$2 AND r.status=ANY($3::text[]) AND r."stopRequestedAt" IS NULL`,
     [hashGatewayToken(token), now, ACTIVE_RUN])
   if (!row) return null
+  const serviceTier = row.serviceTier === 'fast' || row.serviceTier === 'ultrafast' ? row.serviceTier : undefined
   return { runId: row.runId, ownerId: row.ownerId, workspaceId: row.workspaceId, harness: row.harness, model: row.model,
-    source: row.sourceKind === 'api_key' && row.keyId ? { kind: 'api_key', keyId: row.keyId } : { kind: 'credits' } }
+    source: row.sourceKind === 'api_key' && row.keyId ? { kind: 'api_key', keyId: row.keyId } : { kind: 'credits' },
+    ...(serviceTier ? { serviceTier } : {}) }
 }
 
 /** The token a request carries: Claude Code sends `x-api-key`, Codex `Authorization: Bearer`. */

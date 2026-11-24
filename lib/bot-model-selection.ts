@@ -21,9 +21,22 @@ export async function freezeBotModel(
 ): Promise<HostedRuntimeSnapshot> {
   const workspaceId = scope.workspaceId ?? (await executionWorkspace(scope.ownerId, scope.botId));
   const snapshot = await freezeBotModelChoice({ ...scope, workspaceId }, dependencies);
-  // The Bot's reasoning effort is frozen with the turn's model (lib/model-effort.ts applies it per call).
-  const effort = await botModelEffort(pool, { ownerId: scope.ownerId, workspaceId }, scope.botId);
-  return effort ? { ...snapshot, effort } : snapshot;
+  // The Bot's reasoning effort and serving speed tier are frozen with the turn's model.
+  const [effort, serviceTierRow] = await Promise.all([
+    botModelEffort(pool, { ownerId: scope.ownerId, workspaceId }, scope.botId),
+    pool
+      ? pool.query<{ tier: string | null }>(
+          `SELECT to_jsonb(model_order_settings)->>'defaultServiceTier' AS tier FROM model_order_settings WHERE "ownerId"=$1 AND "workspaceId"=$2`,
+          [scope.ownerId, workspaceId],
+        ).then(result => result.rows[0]?.tier ?? null, () => null)
+      : Promise.resolve(null),
+  ]);
+  const serviceTier = serviceTierRow === "fast" || serviceTierRow === "ultrafast" ? serviceTierRow : undefined;
+  return {
+    ...snapshot,
+    ...(effort ? { effort } : {}),
+    ...(serviceTier ? { serviceTier } : {}),
+  };
 }
 
 async function freezeBotModelChoice(

@@ -610,6 +610,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(run.agentDefinition?.model ? {model:run.agentDefinition.model} : {}),
     ...((run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort)
       ? { effort: run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort } : {}),
+    ...(run.agentDefinition?.modelDispatch?.serviceTier ? { serviceTier: run.agentDefinition.modelDispatch.serviceTier } : {}),
     ...(modelCredential ? { modelCredential } : {}),
     ...(subscription ? { ...(run.agentDefinition?.cliModelSelection ? {} : {model:subscription.modelId}), subscriptionBinding: { bindingId: subscription.id, ownerId: subscription.ownerId, workspaceId: subscription.workspaceId, consumerId: subscription.consumerId, route: subscription.route } } : {}),
     ...(subscriptionLease ? { subscriptionLease } : {}),

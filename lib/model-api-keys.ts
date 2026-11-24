@@ -1,5 +1,6 @@
 import { modelEnabled, type ModelSettings } from './enabled-models-policy'
 import 'server-only'
+import { extractProviderSpeedModes, type ModelSpeedMode } from './model-routing'
 import { executionMembersActive, revalidateExecutionIdentity, ExecutionIdentityError } from './execution-identity'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
 import { randomUUID } from 'node:crypto'
@@ -62,7 +63,9 @@ export const updateApiKeyInput = z.strictObject({
 })
 export type UpdateApiKeyInput = z.infer<typeof updateApiKeyInput>
 
-export type ApiKeyVerifyResult = { ok: true; models: string[] } | { ok: false; code: 'invalid' | 'unavailable' }
+export type ApiKeyVerifyResult =
+  | { ok: true; models: string[]; speedModes?: Record<string, readonly ModelSpeedMode[]> }
+  | { ok: false; code: 'invalid' | 'unavailable' }
 
 /** Binds a ciphertext to its row and owner: copied onto another row it will not open. */
 const keyAad = (id: string, ownerId: string) => ['model_api_key', id.toLowerCase(), ownerId].join('\u0000')
@@ -100,11 +103,21 @@ export async function verifyApiKey(target: { modelsUrl: string; auth: ApiKeyProt
     if (text.length > MAX_BODY) return { ok: false, code: 'unavailable' }
     const body = JSON.parse(text) as { data?: unknown }
     if (!Array.isArray(body.data)) return { ok: false, code: 'unavailable' }
-    const models = [...new Set(body.data.flatMap(item => {
+    const seen = new Set<string>()
+    const models: string[] = []
+    const speedModes: Record<string, readonly ModelSpeedMode[]> = {}
+    for (const item of body.data) {
       const id = item && typeof item === 'object' ? (item as { id?: unknown }).id : undefined
-      return typeof id === 'string' && modelId.safeParse(id).success ? [id.trim()] : []
-    }))].slice(0, MAX_MODELS)
-    return { ok: true, models }
+      if (typeof id !== 'string' || !modelId.safeParse(id).success) continue
+      const trimmed = id.trim()
+      if (seen.has(trimmed)) continue
+      seen.add(trimmed)
+      models.push(trimmed)
+      const advertised = extractProviderSpeedModes(item)
+      if (advertised !== undefined) speedModes[trimmed] = advertised
+      if (models.length >= MAX_MODELS) break
+    }
+    return Object.keys(speedModes).length ? { ok: true, models, speedModes } : { ok: true, models }
   } catch { return { ok: false, code: 'unavailable' } }
 }
 
@@ -140,6 +153,29 @@ export async function listApiKeys(query: Query, ownerId: string, workspace: { id
   return { keys: keys.rows.map(row => ({ ...view(row), shared: shared.has(row.id) })), canShare: allowed, apiKeyAfterQuota: fallback }
 }
 
+function mergeApiKeySpeedModes(
+  existing: ModelSettings | null | undefined,
+  discovered: Record<string, readonly ModelSpeedMode[]> | undefined,
+): ModelSettings | null {
+  if (!discovered || !Object.keys(discovered).length) return existing ?? null
+  return {
+    ...(existing ?? { autoEnable: true, models: {} }),
+    speedModes: { ...discovered },
+  }
+}
+
+function parseStoredSpeedModes(settings: ModelSettings | null | undefined): Record<string, readonly ModelSpeedMode[]> | undefined {
+  const raw = settings?.speedModes
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: Record<string, readonly ModelSpeedMode[]> = {}
+  for (const [id, list] of Object.entries(raw)) {
+    if (!Array.isArray(list)) continue
+    const modes = list.filter((m): m is ModelSpeedMode => m === 'fast' || m === 'ultrafast')
+    out[id] = modes
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 /**
  * Checks the key with the provider, then saves it sealed. Multiple keys per
  * preset or custom provider are supported (decision 2026-11-23); pass
@@ -156,10 +192,12 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   const protocol: ApiKeyProtocol = custom ? custom.protocol : apiKeyProtocols({ provider: parsed.provider, protocol: 'anthropic' })[0]
   const target = modelsTarget({ provider: parsed.provider, baseUrl, protocol })
   let id: string
+  let existingSettings: ModelSettings | null = null
   if (parsed.replaceId) {
-    const existing = (await query.query<{ id: string; provider: ApiKeyProvider }>('SELECT id,provider FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [parsed.replaceId, ownerId])).rows[0]
+    const existing = (await query.query<{ id: string; provider: ApiKeyProvider; modelSettings: ModelSettings | null }>('SELECT id,provider,"modelSettings" FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [parsed.replaceId, ownerId])).rows[0]
     if (!existing || existing.provider !== parsed.provider) throw new WorkspaceError('apiKeyNotFound')
     id = existing.id
+    existingSettings = existing.modelSettings ?? null
   } else {
     id = randomUUID()
   }
@@ -172,14 +210,15 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   if (!result.ok) throw new WorkspaceError(result.code === 'invalid' ? 'apiKeyInvalid' : 'apiKeyUnverifiable')
   // A custom provider's own list, when given, is what its models are; otherwise what the provider listed.
   const models = custom?.models?.length ? [...new Set(custom.models)] : result.models
+  const nextSettings = mergeApiKeySpeedModes(existingSettings, result.speedModes)
   // LiteLLM converts Chat Completions to Responses; no native inference probe.
   const responsesApi = true
   const name = parsed.name ?? null
-  const { rows: [row] } = await query.query<Row>(`INSERT INTO model_api_keys (id,"ownerId",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi")
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
-    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","updatedAt"=now()
+  const { rows: [row] } = await query.query<Row>(`INSERT INTO model_api_keys (id,"ownerId",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi","modelSettings")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=COALESCE(EXCLUDED."modelSettings",model_api_keys."modelSettings"),"updatedAt"=now()
     RETURNING ${COLUMNS}`,
-  [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi])
+  [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, nextSettings ? JSON.stringify(nextSettings) : null])
   return view(row)
 }
 
@@ -192,7 +231,7 @@ export async function updateApiKey(query: Query, ownerId: string, id: string, in
   z.uuid().parse(id)
   const parsed = updateApiKeyInput.parse(input)
   const env = options.env ?? process.env
-  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`, [id, ownerId])
+  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`, [id, ownerId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
   const isCustom = row.provider === 'custom'
   if (!isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined || parsed.models !== undefined)) {
@@ -205,12 +244,14 @@ export async function updateApiKey(query: Query, ownerId: string, id: string, in
   const needsVerify = parsed.apiKey !== undefined || (isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined))
   let nextModels = row.models
   let nextModelsError = row.modelsError ?? null
+  let nextSettings = row.modelSettings ?? null
   if (needsVerify) {
     const secretToVerify = parsed.apiKey ?? (await openKey(query, id, env)).apiKey
     const result = await verifyApiKey(modelsTarget({ provider: row.provider, baseUrl: nextBaseUrl, protocol: nextProtocol }), secretToVerify, options.fetch)
     if (!result.ok) throw new WorkspaceError(result.code === 'invalid' ? 'apiKeyInvalid' : 'apiKeyUnverifiable')
     nextModels = isCustom && parsed.models?.length ? [...new Set(parsed.models)] : (result.models.length || !isCustom ? result.models : row.models)
     nextModelsError = null
+    nextSettings = mergeApiKeySpeedModes(row.modelSettings, result.speedModes)
   } else if (isCustom && parsed.models !== undefined) {
     nextModels = [...new Set(parsed.models)]
   }
@@ -221,16 +262,16 @@ export async function updateApiKey(query: Query, ownerId: string, id: string, in
       throw error
     }
     const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
-      SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"updatedAt"=now()
+      SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"modelSettings"=$12::jsonb,"updatedAt"=now()
       WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-    [id, ownerId, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError])
+    [id, ownerId, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError, nextSettings ? JSON.stringify(nextSettings) : null])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
   }
   const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
-    SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"updatedAt"=now()
+    SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"modelSettings"=$8::jsonb,"updatedAt"=now()
     WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-  [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError])
+  [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError, nextSettings ? JSON.stringify(nextSettings) : null])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
 }
@@ -252,8 +293,9 @@ export async function refreshApiKeyModels(query: Query, ownerId: string, id: str
   const result: ApiKeyVerifyResult = reachable ? await verifyApiKey(modelsTarget(row), apiKey, options.fetch) : { ok: false, code: 'unavailable' }
   const models = result.ok ? (result.models.length || row.provider !== 'custom' ? result.models : row.models) : row.models
   const responsesApi = result.ok ? true : row.responsesApi
-  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-    [id, ownerId, JSON.stringify(models), result.ok ? null : result.code, responsesApi])
+  const nextSettings = result.ok ? mergeApiKeySpeedModes(row.modelSettings, result.speedModes) : (row.modelSettings ?? null)
+  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"modelSettings"=COALESCE($6::jsonb,"modelSettings"),"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
+    [id, ownerId, JSON.stringify(models), result.ok ? null : result.code, responsesApi, nextSettings ? JSON.stringify(nextSettings) : null])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
 }
@@ -307,6 +349,8 @@ export interface UsableApiKey extends ApiKeyView {
   ownerId: string
   /** The person's own key, or a teammate's shared with 分享给团队成员. */
   mine: boolean
+  /** Server-discovered speed modes per model id (from the provider's /models capability response). */
+  modelSpeedModes?: Record<string, readonly ModelSpeedMode[]>
 }
 
 /**
@@ -325,13 +369,19 @@ export async function usableApiKeys(query: Query, userId: string, workspaceId: s
   // their original policy; every actual borrowed key still gets fresh gates.
   const others = shared.length && await memberSubscriptionsAllowed(query, workspaceId) ? shared : []
   const grants = await Promise.all(others.map(row => organizationResourceAllowed(workspaceId, 'api_key', row.id, row.ownerId)))
-  const usable = (row: Row, mine: boolean) => ({ ...view(row), ownerId: row.ownerId, mine,
-    models: row.models.filter(id => modelEnabled(row.modelSettings, id)) })
+  const usable = (row: Row, mine: boolean) => {
+    const modelSpeedModes = parseStoredSpeedModes(row.modelSettings)
+    return {
+      ...view(row), ownerId: row.ownerId, mine,
+      models: row.models.filter(id => modelEnabled(row.modelSettings, id)),
+      ...(modelSpeedModes ? { modelSpeedModes } : {}),
+    }
+  }
   return [...mine.map(row => usable(row, true)), ...others.filter((_, index) => grants[index]).map(row => usable(row, false))]
 }
 
 async function openKey(query: Query, keyId: string, env: Env) {
-  const { rows: [row] } = await query.query<Row & { ciphertext: string; iv: string; keyVersion: number }>(`SELECT ${COLUMNS},ciphertext,iv,"keyVersion" FROM model_api_keys WHERE id=$1`, [keyId])
+  const { rows: [row] } = await query.query<Row & { ciphertext: string; iv: string; keyVersion: number }>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",ciphertext,iv,"keyVersion" FROM model_api_keys WHERE id=$1`, [keyId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
   try { return { row, apiKey: openSecret(row, keyAad(row.id, row.ownerId), env) } } catch (error) {
     if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })

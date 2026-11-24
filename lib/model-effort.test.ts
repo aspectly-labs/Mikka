@@ -1,7 +1,8 @@
 // A Bot's saved reasoning effort reaches every chat model call (lib/model-effort.ts).
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { withModelEffort } from './model-effort'
+import { withModelEffort, withModelServiceTier } from './model-effort'
+import { extractProviderSpeedModes, resolveSpeedModesFromEvidence } from './model-routing'
 
 type Model = Parameters<typeof withModelEffort>[0]
 function recorder(modelId: string) {
@@ -35,4 +36,24 @@ test('no effort, or one the model does not list, leaves the model as it is', () 
   assert.equal(withModelEffort(gpt55, 'max'), gpt55, 'gpt-5.5 has no max effort')
   const unknown = recorder('some-new-model').model
   assert.equal(withModelEffort(unknown, 'low'), unknown)
+})
+
+test('speed capabilities come strictly from server evidence and withModelServiceTier maps fast/ultrafast', async () => {
+  assert.deepEqual(extractProviderSpeedModes({ service_tiers: [{ id: 'priority' }, { id: 'ultrafast' }] }), ['fast', 'ultrafast'])
+  assert.deepEqual(extractProviderSpeedModes({ service_tiers: [{ id: 'priority' }] }), ['fast'])
+  assert.deepEqual(extractProviderSpeedModes({ service_tiers: [] }), [])
+  assert.deepEqual(extractProviderSpeedModes({ supports_fast_mode: true }), ['fast'])
+  assert.deepEqual(extractProviderSpeedModes({ tags: ['fast', 'reasoning'] }), ['fast'])
+  assert.equal(extractProviderSpeedModes({ id: 'gpt-6-astra' }), undefined)
+  assert.deepEqual(resolveSpeedModesFromEvidence({}), [])
+  assert.deepEqual(resolveSpeedModesFromEvidence({ prioritySupported: true, ultrafastSupported: false }), ['fast'])
+  assert.deepEqual(resolveSpeedModesFromEvidence({ prioritySupported: true, ultrafastSupported: true }), ['fast', 'ultrafast'])
+  assert.deepEqual(resolveSpeedModesFromEvidence({ advertised: [] }), [])
+
+  const { model, calls } = recorder('openai/gpt-6-astra')
+  await withModelServiceTier(model, 'ultrafast').doStream({ prompt: [] } as never)
+  assert.deepEqual(calls[0], { openai: { serviceTier: 'ultrafast' }, openaiCompatible: { service_tier: 'ultrafast' } })
+  const fastRec = recorder('anthropic/claude-opus-5.5')
+  await withModelServiceTier(fastRec.model, 'fast').doStream({ prompt: [] } as never)
+  assert.deepEqual(fastRec.calls[0], { openai: { serviceTier: 'priority' }, openaiCompatible: { service_tier: 'priority' }, anthropic: { speed: 'fast' } })
 })

@@ -15,9 +15,11 @@ import (
 // ModelOption is the only provider catalogue data sent to the web process.
 // Credentials, descriptions, other capabilities and provider error bodies stay here.
 type ModelOption struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	PrioritySupported *bool  `json:"prioritySupported,omitempty"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	PrioritySupported  *bool  `json:"prioritySupported,omitempty"`
+	UltrafastSupported *bool  `json:"ultrafastSupported,omitempty"`
+	FastSupported      *bool  `json:"fastSupported,omitempty"`
 }
 
 var modelIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
@@ -83,8 +85,10 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 				ServiceTiers json.RawMessage `json:"service_tiers"`
 			} `json:"models"`
 			Data []struct {
-				ID   string `json:"id"`
-				Name string `json:"display_name"`
+				ID               string          `json:"id"`
+				Name             string          `json:"display_name"`
+				SupportsFastMode *bool           `json:"supports_fast_mode"`
+				Capabilities     json.RawMessage `json:"capabilities"`
 			} `json:"data"`
 			HasMore bool   `json:"has_more"`
 			LastID  string `json:"last_id"`
@@ -99,7 +103,12 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 			}
 			for _, m := range body.Models {
 				if m.Visibility == "" || m.Visibility == "list" {
-					entries = append(entries, ModelOption{ID: m.Slug, Name: m.Name, PrioritySupported: codexPrioritySupported(m.ServiceTiers)})
+					entries = append(entries, ModelOption{
+						ID:                 m.Slug,
+						Name:               m.Name,
+						PrioritySupported:  codexPrioritySupported(m.ServiceTiers),
+						UltrafastSupported: codexUltrafastSupported(m.ServiceTiers),
+					})
 				}
 			}
 		} else {
@@ -107,7 +116,11 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 				return nil, ErrProvider
 			}
 			for _, m := range body.Data {
-				entries = append(entries, ModelOption{ID: m.ID, Name: m.Name})
+				entries = append(entries, ModelOption{
+					ID:            m.ID,
+					Name:          m.Name,
+					FastSupported: claudeFastSupported(m.SupportsFastMode, m.Capabilities),
+				})
 			}
 		}
 		if len(entries) > 500 {
@@ -148,9 +161,9 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 	return options, nil
 }
 
-// codexPrioritySupported projects only the account's current model catalogue.
+// codexServiceTierSupported projects only the account's current model catalogue.
 // Missing or malformed capability data is unknown, never evidence of support.
-func codexPrioritySupported(raw json.RawMessage) *bool {
+func codexServiceTierSupported(raw json.RawMessage, target string) *bool {
 	var tiers []map[string]json.RawMessage
 	if json.Unmarshal(raw, &tiers) != nil || tiers == nil {
 		return nil
@@ -161,7 +174,37 @@ func codexPrioritySupported(raw json.RawMessage) *bool {
 		if json.Unmarshal(tier["id"], &id) != nil || id == "" {
 			return nil
 		}
-		supported = supported || id == "priority"
+		supported = supported || id == target
 	}
 	return &supported
+}
+
+func codexPrioritySupported(raw json.RawMessage) *bool {
+	return codexServiceTierSupported(raw, "priority")
+}
+
+func codexUltrafastSupported(raw json.RawMessage) *bool {
+	return codexServiceTierSupported(raw, "ultrafast")
+}
+
+// claudeFastSupported projects explicit Anthropic fast-mode capability from /v1/models
+// without reading Codex service_tiers or legacy speed aliases.
+func claudeFastSupported(explicit *bool, capabilities json.RawMessage) *bool {
+	if explicit != nil {
+		v := *explicit
+		return &v
+	}
+	if len(capabilities) == 0 {
+		return nil
+	}
+	var parsed struct {
+		FastMode *struct {
+			Supported *bool `json:"supported"`
+		} `json:"fast_mode"`
+	}
+	if json.Unmarshal(capabilities, &parsed) != nil || parsed.FastMode == nil || parsed.FastMode.Supported == nil {
+		return nil
+	}
+	v := *parsed.FastMode.Supported
+	return &v
 }

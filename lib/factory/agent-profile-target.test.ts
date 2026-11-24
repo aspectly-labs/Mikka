@@ -65,7 +65,7 @@ function fixture() {
       rows = connections.filter(row => row.ownerId === params[0] && row.state === 'connected' && !row.paused && !row.removed && row.epoch === row.bindingEpoch)
         .flatMap(row => row.models.map(model => ({ ownerId: row.ownerId, modelId: model, connectionId: row.id, provider: row.provider, _preferred: true, _at: new Date().toISOString(), _id: randomUUID() })))
         .filter(row => params.length === 6 || (row.connectionId === params[6] && row.modelId === params[7]))
-    } else if (sql.startsWith('SELECT c."ownerId" FROM byos_connections c')) {
+    } else if (sql.startsWith('SELECT c."ownerId"') && sql.includes('FROM byos_connections c')) {
       kind = 'selected_owner'
       rows = connections.filter(row => row.id === params[0] && mayUse(row.ownerId)).map(row => ({ ownerId: row.ownerId }))
     } else if (sql.includes('"modelCatalog"->\'models\' AS models')) {

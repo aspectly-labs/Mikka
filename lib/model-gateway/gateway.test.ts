@@ -165,3 +165,19 @@ test('Codex streaming through LiteLLM retains usage and settles the same credit 
   assert.equal(response.headers.get('x-litellm-model-api-base'), null, 'internal provider metadata stays behind the gateway')
   assert.deepEqual(calls.settled.map(([id, cost]) => [id, cost]), [[calls.reserved[0], 120]])
 })
+
+test('frozen run serviceTier injects OpenAI priority/ultrafast and Anthropic fast speed + beta header', async () => {
+  const fastCodex = harness({ verify: async () => grant({ harness: 'codex', serviceTier: 'fast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi' }), 'openai', 'responses', fastCodex.dependencies)
+  assert.equal(JSON.parse(String(fastCodex.calls.fetched[0].init.body)).service_tier, 'priority')
+
+  const ultraCodex = harness({ verify: async () => grant({ harness: 'codex', serviceTier: 'ultrafast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi' }), 'openai', 'responses', ultraCodex.dependencies)
+  assert.equal(JSON.parse(String(ultraCodex.calls.fetched[0].init.body)).service_tier, 'ultrafast')
+
+  const fastClaude = harness({ verify: async () => grant({ harness: 'claude_code', serviceTier: 'fast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ messages: [] }), 'anthropic', 'messages', fastClaude.dependencies)
+  const claudeReq = fastClaude.calls.fetched[0].init
+  assert.equal(JSON.parse(String(claudeReq.body)).speed, 'fast')
+  assert.match(String((claudeReq.headers as Record<string, string>)['anthropic-beta']), /fast-mode-2026-02-01/)
+})

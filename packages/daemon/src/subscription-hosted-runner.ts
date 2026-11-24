@@ -117,6 +117,7 @@ export async function createHostedBotRunner(host: {
     const candidate = assignment.harness === 'codex' ? host.anonymousCodexCandidate : host.anonymousClaudeCandidate
     const offered = candidate?.runId === assignment.runId ? candidate : undefined
     const anonymous = offered && offered.state !== 'closed' && offered.matchesFresh(fresh) &&
+      !options.serviceTier && !assignment.serviceTier &&
       !assignment.requireSessionResume && !assignment.continuesRunId && !assignment.resumeSessionId && !options.continueSession &&
       Object.entries(assignment.taskEnv ?? {}).every(([key, value]) => key === 'CLOUD_STARTUP_TIMING' && value === '1') &&
       !options.apps?.apps.length && !assignment.computer && !options.factoryCheck ? offered : undefined
@@ -144,6 +145,7 @@ export async function createHostedBotRunner(host: {
           (!continuation && source.questionResumeState !== 'accepted') ||
           source.assignment.harness !== kind || source.assignment.model !== assignment.model || options.model !== assignment.model ||
           source.assignment.effort !== assignment.effort || options.effort !== assignment.effort ||
+          source.assignment.serviceTier !== assignment.serviceTier || options.serviceTier !== assignment.serviceTier ||
           source.assignment.deviceId !== assignment.deviceId || source.assignment.issueId !== assignment.issueId ||
           source.assignment.repoId !== assignment.repoId || realpathSync(source.worktree) !== realpathSync(options.cwd) ||
           !binding || binding.bindingId !== selected.bindingId || binding.ownerId !== selected.ownerId ||

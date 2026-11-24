@@ -25,6 +25,8 @@ export function upstreamRequest(input: {
   body: Record<string, unknown>
   clientHeaders: Headers
   upstream: GatewayUpstream
+  /** Server-verified serving speed tier frozen on the run, if any. */
+  serviceTier?: 'fast' | 'ultrafast'
 }): UpstreamRequest {
   if ((input.protocol === 'anthropic') !== (input.operation !== 'responses')) throw new Error('model_gateway_operation_mismatch')
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-litellm-api-key': `Bearer ${input.upstream.masterKey}` }
@@ -34,6 +36,16 @@ export function upstreamRequest(input: {
   }
   if (input.protocol === 'anthropic' && !headers['anthropic-version']) headers['anthropic-version'] = '2023-06-01'
   const body = modelGatewayProtocolBody(input.protocol, input.body)
+  if (input.serviceTier && input.operation !== 'count_tokens') {
+    if (input.protocol === 'openai') {
+      if (body.service_tier === undefined) body.service_tier = input.serviceTier === 'ultrafast' ? 'ultrafast' : 'priority'
+    } else if (input.serviceTier === 'fast') {
+      if (body.speed === undefined) body.speed = 'fast'
+      const beta = headers['anthropic-beta']
+      if (!beta) headers['anthropic-beta'] = 'fast-mode-2026-02-01'
+      else if (!beta.split(',').map(part => part.trim()).includes('fast-mode-2026-02-01')) headers['anthropic-beta'] = `${beta},fast-mode-2026-02-01`
+    }
+  }
   body.model = managedLiteLlmModel(input.model)
   const credential = input.upstream.credential
   if (credential) Object.assign(body, {

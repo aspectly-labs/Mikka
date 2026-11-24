@@ -114,7 +114,12 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
       throw new Error('model_gateway_reserve_failed', { cause: error })
     }
   }
-  const outgoing = upstreamRequest({ protocol, operation, model: grant.model, body: withoutDisabledFeatures(body, resolved.features ?? {}), clientHeaders: request.headers, upstream: resolved.upstream })
+  const outgoing = upstreamRequest({
+    protocol, operation, model: grant.model,
+    body: withoutDisabledFeatures(body, resolved.features ?? {}),
+    clientHeaders: request.headers, upstream: resolved.upstream,
+    ...(grant.serviceTier ? { serviceTier: grant.serviceTier } : {}),
+  })
   let response: Response
   try {
     response = await dependencies.fetch(outgoing.url, { method: 'POST', headers: outgoing.headers, body: JSON.stringify(outgoing.body), redirect: 'error', signal: request.signal })
