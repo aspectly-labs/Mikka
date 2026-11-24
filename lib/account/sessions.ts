@@ -21,12 +21,23 @@ export interface SignedInDevice {
 
 interface SessionRow { id: string; userAgent: string | null; createdAt: Date; updatedAt: Date }
 
-/** The person's unexpired sessions, the current one first, then the most recently active. */
+/**
+ * The person's signed-in devices, the current one first, then the most recently
+ * active: unexpired sessions, and an iPhone's short access session that expired
+ * while its refresh credential (lib/auth-mobile-refresh.ts) still keeps it
+ * signed in. Revoking that row ends the refresh credential too. An iPhone shows
+ * when its sign-in started, not its latest hourly access session.
+ */
 export async function listSignedInDevices(userId: string, currentSessionId: string): Promise<SignedInDevice[]> {
   const { rows } = await pool.query<SessionRow>(
-    `select id, "userAgent", "createdAt", "updatedAt" from session
-     where "userId" = $1 and "expiresAt" > now()
-     order by (id = $2) desc, "updatedAt" desc`,
+    `select s.id, s."userAgent", coalesce(refresh.started, s."createdAt") as "createdAt", s."updatedAt" from session s
+     left join lateral (
+       select (select min(f.created_at) from mobile_refresh_tokens f where f.family_id = r.family_id) as started
+       from mobile_refresh_tokens r
+       where r.session_id = s.id and r.revoked_at is null and r.expires_at > now() limit 1
+     ) refresh on true
+     where s."userId" = $1 and (s."expiresAt" > now() or refresh.started is not null)
+     order by (s.id = $2) desc, s."updatedAt" desc`,
     [userId, currentSessionId],
   )
   return rows.map(row => {

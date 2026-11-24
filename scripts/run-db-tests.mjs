@@ -64,6 +64,7 @@ export const REQUIRED_SUITES = [
   { marker: 'app/api/runs/[runId]/workspace/files/route.ts', file: 'lib/coding-workspace/http-daemon.db.test.ts', script: 'test:coding-workspace-db' },
   { marker: 'packages/daemon/src/main.ts', file: 'lib/coding-workspace/http-daemon.db.test.ts', script: 'test:coding-workspace-db' },
   { marker: 'app/api/web/exchange/route.ts', file: 'tests/web-auth-handoff.db.test.ts', script: 'test:web-auth-db' },
+  { marker: 'lib/auth-mobile-refresh.ts', file: 'tests/mobile-refresh.db.test.ts', script: 'test:desktop-auth' },
   { marker: 'lib/workspace-selection.ts', file: 'tests/web-workspace-selection.db.test.ts', script: 'test:web-auth-db' },
   { marker: 'lib/project-map/decisions.ts', file: 'lib/project-map/decisions.db.test.ts', script: 'test:project-decisions-db' },
   { marker: 'lib/chat-attachments/store.ts', file: 'lib/chat-attachments/store.db.test.ts', script: 'test:chat-attachments-db' },
