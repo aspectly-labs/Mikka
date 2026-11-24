@@ -14,10 +14,14 @@ export function onAppForeground(entered: () => void) {
   return () => subscription.remove()
 }
 
-// Counts trips to the background: a read that saw it change was cut off by
-// iOS, not refused by the server (lib/read-retry.ts).
-let backgroundTrips = 0
-AppState.addEventListener('change', state => { if (state === 'background') backgroundTrips++ })
+// Counts trips to the background while any read is mounted: a read that saw
+// it change was cut off by iOS, not refused by the server (lib/read-retry.ts).
+let backgroundTrips = 0, trackers = 0
+let backgroundSubscription: { remove: () => void } | null = null
+function trackBackground() {
+  if (trackers++ === 0) backgroundSubscription = AppState.addEventListener('change', state => { if (state === 'background') backgroundTrips++ })
+  return () => { if (--trackers === 0) { backgroundSubscription?.remove(); backgroundSubscription = null } }
+}
 const inForeground = () => AppState.currentState === 'active'
 const pause = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
 
@@ -179,6 +183,8 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
     setStored(null); setError(null); loadedAt.current = 0; failed.current = false; pending.current = null; setRequestedAt(null); setLoading(Boolean(path))
     void load()
   }), [load, path])
+
+  useEffect(() => trackBackground(), [])
 
   useEffect(() => {
     if (!path) return
