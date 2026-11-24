@@ -2,6 +2,11 @@ name: Read cache API acceptance
 
 on:
   workflow_call:
+    secrets:
+      HOSTED_UI_READ_KEY:
+        # Read-only deploy key for the private UI (docs/ui-overlay.md): the client actions this acceptance reads are
+        # published by the official interface, which only that checkout holds.
+        required: true
 
 permissions:
   contents: read
@@ -50,9 +55,53 @@ jobs:
       MIKKA_VERIFICATION_GLOBAL_HOURLY: '10000'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # A paired change (public PR first, then the private UI PR of the same branch name) is accepted against that
+      # branch while it exists; otherwise against the private UI's main, as a release build pairs them.
+      - name: Pick the paired private UI branch
+        id: hosted
+        env:
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          PR_REF: ${{ github.head_ref }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          branch="$PR_REF"
+          number=$(printf '%s' "$QUEUE_REF" | sed -n 's#^refs/heads/gh-readonly-queue/[^/]*/pr-\([0-9][0-9]*\)-.*#\1#p')
+          if [ -z "$branch" ] && [ -n "$number" ]; then
+            branch=$(curl -fsS --max-time 20 -H "authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/$REPOSITORY/pulls/$number" | jq -r '.head.ref // empty') || branch=
+          fi
+          if ! printf '%s' "$branch" | grep -Eq '^[A-Za-z0-9._/-]{1,200}$'; then branch=main; fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "Private UI branch: $branch (main if no such branch)"
+      - name: Check out the paired private UI branch
+        id: paired
+        if: steps.hosted.outputs.branch != 'main'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ format('{0}/mikka-hosted-ui', vars.MIKKA_HOSTED_UI_GITHUB_OWNER || vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324') }}
+          ref: ${{ steps.hosted.outputs.branch }}
+          ssh-key: ${{ secrets.HOSTED_UI_READ_KEY }}
+          path: .hosted-ui
+          persist-credentials: false
+      - name: Check out the private UI's main
+        if: steps.paired.outcome != 'success'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ format('{0}/mikka-hosted-ui', vars.MIKKA_HOSTED_UI_GITHUB_OWNER || vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324') }}
+          ref: main
+          ssh-key: ${{ secrets.HOSTED_UI_READ_KEY }}
+          path: .hosted-ui
+          persist-credentials: false
       - uses: ./.github/actions/pnpm-install
         with:
           ffmpeg-github-token: ${{ github.token }}
+      - name: Install private UI runtime dependencies without license scripts
+        run: |
+          if ! pnpm --dir .hosted-ui install --ignore-workspace --prod --ignore-scripts --frozen-lockfile > "$RUNNER_TEMP/private-ui-install.log" 2>&1; then
+            echo "::error::Private UI dependency installation failed; private diagnostics withheld."
+            exit 1
+          fi
       - name: Verify the bounded read-only driver
         run: node --import tsx --test scripts/acceptance/read-cache.test.mjs scripts/acceptance/run-read-cache.test.mjs
       - name: Generate ephemeral test-only authentication secret
@@ -67,6 +116,8 @@ jobs:
       - name: Bind the isolated database and application to this checkout
         run: node scripts/test-accounts/bootstrap.mjs --output .cache/e2e/environment.json
       - name: Build this isolated application for production-mode acceptance
+        env:
+          MIKKA_UI_OVERLAY_DIR: .hosted-ui
         run: pnpm build:app
       - name: Accept real incremental Server Actions and Settings GET
         run: node scripts/acceptance/run-read-cache.mjs

@@ -1,6 +1,9 @@
 name: Merge candidate acceptance
 on:
   workflow_call:
+    secrets:
+      HOSTED_UI_READ_KEY:
+        required: true
 permissions:
   contents: read
 jobs:
@@ -74,6 +77,8 @@ jobs:
     needs: paths
     if: needs.paths.outputs.full == 'true' || needs.paths.outputs.read-cache == 'true'
     uses: ./.github/workflows/read-cache.yml
+    secrets:
+      HOSTED_UI_READ_KEY: ${{ secrets.HOSTED_UI_READ_KEY }}
 
   site-search:
     needs: paths

@@ -16,13 +16,13 @@ if (root) {
   const heading = document.createElement('h1')
   heading.style.cssText = 'font-size: 1.25rem; font-weight: 600; margin: 0 0 .5rem'
   heading.textContent = desktop
-    ? chinese ? '这个 Mikka 测试版没有界面' : 'This Mikka test build has no interface'
-    : chinese ? '这台 Mikka 服务器没有网页界面' : 'This Mikka server has no web interface'
+    ? chinese ? '这个测试版没有界面' : 'This test build has no interface'
+    : chinese ? '这台服务器没有网页界面' : 'This server has no web interface'
   const body = document.createElement('p')
   body.style.margin = '0'
   body.textContent = desktop
-    ? chinese ? '它是从公开仓库单独构建的，只用来检查桌面外壳。正式版请从 Mikka 官网下载。' : 'It was built from the public repository alone to check the desktop shell. Download Mikka from its website for the full app.'
-    : chinese ? '请用 Mikka 桌面版或手机 App 连接它。' : 'Connect to it from the Mikka desktop or mobile app.'
+    ? chinese ? '请从 Mikka 官网下载正式版。' : 'Download Mikka from its website.'
+    : chinese ? '请在 Mikka App 里连接这台服务器。' : 'Connect to it from the Mikka app.'
   root.replaceChildren(heading, body)
 }
 export {}
