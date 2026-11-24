@@ -24,6 +24,10 @@ for the part of Mikka you are changing. Development and acceptance rules live in
 
 - [Design entry point](design/README.md) defines source priority and which
   document owns each kind of rule.
+- [Design System v2](design/design-system.md) is the executable visual and
+  interaction standard (tokens, restricted primitives, viewport budgets, the
+  7-state contract, copy density and automated enforcement) across Web, Desktop
+  and iOS.
 - [Glossary](design/glossary.md) defines bots, chats, threads and Agents.
 - [Rules](design/rules.md), [components](design/components.md) and
   [copy](design/copy.md) guide product and UI changes.

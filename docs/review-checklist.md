@@ -11,14 +11,32 @@ ask to restyle one ([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-bloc
 
 ## Before showing UI
 
-### Reuse (R-90)
+### Reuse (R-90) & Design System v2
 
 - [ ] Every part of the screen names the existing component it uses
-      (`docs/design/components.md`, the live screen for the same job, or a
-      library in `components/reui/`, `components/ui/`, `components/motion/`,
-      the OpenUI catalog), drawn or coded as that component renders it.
+      (`docs/design/components.md`, `docs/design/design-system.md` §2, the live
+      screen for the same job, or a library in `components/reui/`,
+      `components/ui/`, `components/motion/`, the OpenUI catalog), drawn or
+      coded as that component renders it.
 - [ ] Any new component says why none of those fit and is added to
       `components.md` in the same PR.
+- [ ] **Viewport budget (`design-system.md` §3):** scrollable chat keeps
+      `>= 55%` on desktop (`1280×760`) and `>= 50%` on compact (`960×720`);
+      at most one bottom `TakeoverCard` (`<= min(42dvh, 320px)`, mobile
+      `min(40dvh, 260px)`) with `Later` / `Esc` collapse; `TodoList` defaults
+      collapsed and `composer-ground-strip <= 104px`; zero stream↔bottom
+      duplication; zero unbounded approval cards outside `ThreadScreen`;
+      non-blocking quota/model/offline warnings use 1-line single-CTA
+      `ChatStatusStrip` without hijacking the composer.
+- [ ] **Mandatory 7-state contract (`design-system.md` §4):** Loading
+      (shape-matched skeleton), Empty (first-use vs 0-match with Clear), Error
+      (inline Retry preserving drafts, never behind open modals), Pending
+      (synchronous double-submit lock + targeted button spinner + dismiss guard),
+      Dirty & destructive guard (dirty forms, one-time secrets, R-102 confirm),
+      Keyboard/Focus/IME/Esc isolation (ignoring `[hidden]`/`[inert]` and open
+      modals, no nested interactive controls), and Touch/Hover
+      (`@media (hover: hover)`, `pointer-coarse:opacity-100`, `44px` hit target,
+      `320px` reflow).
 
 ### Usability (first, before anything visual)
 
@@ -99,11 +117,13 @@ more than once.
 
 ### Look
 
-- [ ] No white hairlines in dark mode (R-31). Check inputs, dialogs,
-      popovers and column edges.
-- [ ] Greys are pure neutral; no slate, zinc or teal tint (R-30, R-38).
-- [ ] Only the allowed text styles and radii (R-32, R-33).
-- [ ] Status colours from the StatusBadge set (R-34).
+- [ ] No white hairlines in dark mode (R-31); card/notice rules use translucent
+      `--rule` and `8px`/`12px` radii (`design-system.md` §1, T2). Check inputs,
+      dialogs, popovers, notice strips and column edges.
+- [ ] Greys are pure neutral; no slate, zinc or teal tint (R-30, R-38); primary
+      and secondary text clear WCAG AA `>= 4.5:1` in Light and Dark (`design-system.md` §1.1, T1).
+- [ ] Only the allowed text styles, radii and quiet status washes (`design-system.md` §1.2–§1.3, R-32, R-33); zero card-in-card error nesting (R-39).
+- [ ] Status colours from the StatusBadge / `state-mark.ts` set (R-34, R-52).
 - [ ] Every device, agent, model, app and account name has its icon in
       front of it; brand marks are bare colored logos, not in a white
       circle (R-74).
@@ -173,7 +193,7 @@ more than once.
 ## Common-sense check (every PR)
 
 Every PR review goes through these one by one, UI or not. For each, compare
-with what Slack, Notion, Cursor and ChatGPT do.
+with what ChatGPT / Codex, Claude Code, Capy, Linear and Slack do.
 
 - [ ] A person can always use, delete and manage their own things:
       subscriptions, keys, computers, bots, files, settings. Switches and
