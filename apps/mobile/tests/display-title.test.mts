@@ -47,3 +47,8 @@ test('words and versions that look like hex stay', () => {
   assert.equal(displayTitle('发布 v1.2.3 到 1146 台设备'), '发布 v1.2.3 到 1146 台设备')
   assert.equal(displayTitle('c3f72167'), 'c3f72167')
 })
+
+test('a stamp with its time zone is not shown', () => {
+  assert.equal(displayTitle('订阅验收 2026-11-02 21:02 UTC'), '订阅验收')
+  assert.equal(displayTitle('云端订阅验收 2026-11-02 22:32 UTC'), '云端订阅验收')
+})
