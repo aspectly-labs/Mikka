@@ -3,7 +3,9 @@ import { withLegacyPublicNames } from '../../../lib/public-env.mjs'
 // These bindings belong to the hosted business API. Deployment credentials,
 // broker decryption authority and managed GitHub App signing stay outside it.
 // Public settings are forwarded under their legacy NEXT_PUBLIC_* names too
-// until phase 2 of the rename (lib/public-env.mjs).
+// until phase 2 of the rename (lib/public-env.mjs). An empty binding is not
+// forwarded, which is the same rule publicEnv() applies: an empty new name
+// falls back to a non-empty legacy one.
 const applicationBindings = withLegacyPublicNames([
   'BETTER_AUTH_SECRET', 'TURNSTILE_SECRET_KEY', 'DATABASE_URL', 'MIKKA_DATABASE_URL', 'MIN_CLIENT_VERSION',
   'MIKKA_EVE_ORIGIN', 'WORKFLOW_TARGET_WORLD', 'MIKKA_WORKFLOW_QUEUE_PUBLIC_KEY',
@@ -37,6 +39,7 @@ export function applicationEnvironment(bindings) {
   const environment = { BETTER_AUTH_URL: bindings.PUBLIC_ORIGIN, MIKKA_API_INGRESS: 'cloudflare' }
   for (const name of applicationBindings) {
     const value = bindings[name]
+    // Empty counts as unset, for public settings as for every other binding.
     if (typeof value === 'string' && value.length) environment[name] = value
   }
   return environment

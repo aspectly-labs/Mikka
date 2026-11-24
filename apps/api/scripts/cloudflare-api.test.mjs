@@ -200,6 +200,23 @@ test('the private API receives its sign-in and product bindings without inheriti
   for (const log of logs) assert.equal(log.mock.callCount(), 0)
 })
 
+test('an empty public binding is not forwarded, so the API falls back to the legacy name as publicEnv does', async () => {
+  const { applicationEnvironment } = await import('../../../cloudflare/api/ingress/environment.mjs')
+  const { LEGACY_PUBLIC_ENV, publicEnv } = await import('../../../lib/public-env.mjs')
+  for (const name of ['MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'MIKKA_PUBLIC_POSTHOG_KEY']) {
+    const legacy = LEGACY_PUBLIC_ENV[name]
+    const forwarded = applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', [name]: '', [legacy]: 'legacy-fixture' })
+    assert.equal(Object.hasOwn(forwarded, name), false)
+    assert.equal(forwarded[legacy], 'legacy-fixture')
+    assert.equal(publicEnv(name, forwarded), 'legacy-fixture')
+    // Unsetting both names turns the setting off at the edge and in the runtime.
+    const off = applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', [name]: '', [legacy]: '' })
+    assert.equal(publicEnv(name, off), undefined)
+    const current = applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', [name]: 'current-fixture', [legacy]: 'legacy-fixture' })
+    assert.equal(publicEnv(name, current), 'current-fixture')
+  }
+})
+
 test('private World calls require the instance capability and forward only WDK payload and media headers', async () => {
   const { businessWorldRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
   const token = 'instance-token'

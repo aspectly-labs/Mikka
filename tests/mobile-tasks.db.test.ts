@@ -25,9 +25,9 @@ test('mobile task endpoints with real task ACL, current workspace membership and
   const previous = { app: globals.mikkaPool, workspace: globals.workspacePool }
   const environment = { MIKKA_EDITION: process.env.MIKKA_EDITION, BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET, WORKSPACE_SECRETS_KEY: process.env.WORKSPACE_SECRETS_KEY,
-    MIKKA_PUBLIC_POSTHOG_KEY: process.env.MIKKA_PUBLIC_POSTHOG_KEY }
+    MIKKA_PUBLIC_POSTHOG_KEY: process.env.MIKKA_PUBLIC_POSTHOG_KEY, NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY }
   const origin = 'http://localhost:3100'
-  Object.assign(process.env, { MIKKA_EDITION: 'cloud', BETTER_AUTH_URL: origin, MIKKA_PUBLIC_POSTHOG_KEY: '',
+  Object.assign(process.env, { MIKKA_EDITION: 'cloud', BETTER_AUTH_URL: origin, MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '',
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
   globals.mikkaPool = app; globals.workspacePool = workspace
   const users: string[] = []

@@ -16,6 +16,7 @@ const root = fileURLToPath(new URL('../..', import.meta.url))
 const stage = deploymentStage()
 const revision = process.env.MIKKA_BUILD_REVISION || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('API_BUILD_SHA_REQUIRED')
+// An empty value counts as unset, under either name (lib/public-env.mjs).
 const build = publicEnv('MIKKA_PUBLIC_BUILD') || revision
 const assets = await publicAssetConfiguration(root)
 

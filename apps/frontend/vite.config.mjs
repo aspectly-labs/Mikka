@@ -52,8 +52,9 @@ export async function frontendConfig({ target = 'web', command = 'build', outdir
     envPrefix: [],
     logLevel: 'warn',
     // Public settings take their new MIKKA_PUBLIC_* name first and their
-    // legacy NEXT_PUBLIC_* name second (lib/public-env.mjs); each is also
-    // inlined under the legacy name until phase 2 of the rename.
+    // legacy NEXT_PUBLIC_* name second (lib/public-env.mjs); an empty value
+    // counts as unset. Each is also inlined under the legacy name until
+    // phase 2 of the rename.
     define: {
       ...withLegacyPublicDefines({
         'process.env.NODE_ENV': JSON.stringify(development ? 'development' : 'production'),

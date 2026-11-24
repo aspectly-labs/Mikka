@@ -4,7 +4,12 @@ Mikka no longer uses Next.js, but its public build settings kept the
 framework's `NEXT_PUBLIC_*` prefix. The rename has two phases.
 
 - **Phase 1 (done in code).** Every reader takes the new name first and falls
-  back to the legacy one (`lib/public-env.mjs`). Vite and Nitro inline each
+  back to the legacy one (`lib/public-env.mjs`). An empty value counts as
+  unset under either name: an empty new name falls back to a non-empty legacy
+  name, then to the default. The Cloudflare API ingress applies the same rule,
+  because it drops empty bindings. **To turn a setting off during phase 1,
+  unset both names** (or leave both empty); emptying only the new name keeps
+  the legacy value in effect. Vite and Nitro inline each
   public constant under both names. The Cloudflare API ingress forwards both
   names. The `API_PUBLIC_BUILD_SETTINGS` secret may use either key for each
   setting. Production keeps working with its current configuration.
@@ -18,7 +23,7 @@ copy values inside the secret manager.
 
 | New name | Legacy name | Where the repository shows it is set |
 | --- | --- | --- |
-| `MIKKA_PUBLIC_POSTHOG_KEY` | `NEXT_PUBLIC_POSTHOG_KEY` | Key in the GitHub secret `API_PUBLIC_BUILD_SETTINGS`; Infisical `prod:/vercel` (read by `production-smoke.yml` and `run-trace-acceptance.yml`); Cloudflare API runtime binding; each Linear Worker |
+| `MIKKA_PUBLIC_POSTHOG_KEY` | `NEXT_PUBLIC_POSTHOG_KEY` | Key in the GitHub secret `API_PUBLIC_BUILD_SETTINGS`; Infisical `prod:/vercel` (read by `production-smoke.yml` and `run-trace-acceptance.yml`); Cloudflare API runtime binding |
 | `MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Key in `API_PUBLIC_BUILD_SETTINGS`; Cloudflare API runtime binding |
 | `MIKKA_PUBLIC_TURNSTILE_SITE_KEY` | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Key in `API_PUBLIC_BUILD_SETTINGS` |
 | `MIKKA_PUBLIC_COMPUTER_ENABLED` | `NEXT_PUBLIC_COMPUTER_ENABLED` | Key in `API_PUBLIC_BUILD_SETTINGS` |
@@ -49,8 +54,7 @@ there for any other copy of a legacy name.
          never both keys for one setting.
    - [ ] Cloudflare API Worker secrets: add `MIKKA_PUBLIC_POSTHOG_KEY` and
          `MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
-   - [ ] Each Linear Worker (and any Vercel project still serving): add
-         `MIKKA_PUBLIC_POSTHOG_KEY`.
+   - [ ] Any Vercel project still serving: add `MIKKA_PUBLIC_POSTHOG_KEY`.
    - [ ] Workflows: change `secret-name: NEXT_PUBLIC_POSTHOG_KEY` to
          `MIKKA_PUBLIC_POSTHOG_KEY` in `production-smoke.yml` and
          `run-trace-acceptance.yml`, and the pin in
@@ -67,13 +71,12 @@ there for any other copy of a legacy name.
    - [ ] `production-smoke.yml` passes, including the egress monitor's
          PostHog publish, and a controlled-failure run of
          `run-trace-acceptance.yml` exports its traces.
-   - [ ] Linear sync still reads its flag (it stays off without the token).
 3. **Delete the old names.**
    - [ ] Infisical `prod:/vercel`: delete `NEXT_PUBLIC_POSTHOG_KEY` and any
          other `NEXT_PUBLIC_*` key copied in step 1.
    - [ ] Cloudflare API Worker secrets: delete `NEXT_PUBLIC_POSTHOG_KEY` and
          `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
-   - [ ] Linear Workers and any Vercel project: delete `NEXT_PUBLIC_POSTHOG_KEY`.
+   - [ ] Any Vercel project: delete `NEXT_PUBLIC_POSTHOG_KEY`.
 4. **Delete the fallback** in one PR:
    - [ ] Remove `LEGACY_PUBLIC_ENV` and the legacy branches from
          `lib/public-env.mjs`, its `withLegacyPublicDefines` and

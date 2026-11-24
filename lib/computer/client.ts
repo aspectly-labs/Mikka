@@ -8,7 +8,7 @@ import type { ComputerEvent, ComputerState, KnownHost, SetupStep, SetupStepState
 import { publicEnv } from '@/lib/public-env.mjs'
 
 /** Explicit demo mode; real Bot IDs use the authenticated E2B routes by default. */
-export const computerMock = (process.env.MIKKA_PUBLIC_COMPUTER_MOCK ?? publicEnv('MIKKA_PUBLIC_COMPUTER_MOCK')) === '1'
+export const computerMock = (process.env.MIKKA_PUBLIC_COMPUTER_MOCK || publicEnv('MIKKA_PUBLIC_COMPUTER_MOCK')) === '1'
 /** The component library's demo bots (ids start with "demo-") always play the mock. */
 export const isMockedComputer = (botId: string) => computerMock || botId.startsWith('demo-')
 

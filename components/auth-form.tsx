@@ -214,7 +214,7 @@ export function AuthForm({ mode, addAccount = false, googleEnabled = false, gith
   const [hasToken, setHasToken] = useState(false)
   const tokenRef = useRef<string | null>(null)
   const [verificationFailed, setVerificationFailed] = useState(false)
-  const verificationRequired = registering && Boolean(process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY ?? publicEnv('MIKKA_PUBLIC_TURNSTILE_SITE_KEY'))
+  const verificationRequired = registering && Boolean(process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY || publicEnv('MIKKA_PUBLIC_TURNSTILE_SITE_KEY'))
   const receiveToken = useCallback((token: string | null) => {
     tokenRef.current = token
     setHasToken(Boolean(token))

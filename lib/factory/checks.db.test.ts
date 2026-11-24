@@ -3341,12 +3341,13 @@ test(
       );
       await t.test('first-use cloud single-review flow keeps its task VM without waking or installing a parent', async () => {
         const { beginFactoryTransaction, commitFactoryTransaction, rollbackFactoryTransaction } = await import('./transaction');
-        const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY'] as const;
+        const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const;
         const saved = new Map(names.map(name => [name, process.env[name]]));
         process.env.WORKSPACE_SECRETS_KEY = createHash('sha256').update(randomUUID()).digest('hex');
         process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1';
         process.env.MIKKA_BYOS_ENABLED = '1';
         delete process.env.MIKKA_PUBLIC_POSTHOG_KEY;
+        delete process.env.NEXT_PUBLIC_POSTHOG_KEY;
         const { fakeThreadMachines } = await import('../../tests/support/thread-machine-fake');
         const machines = await fakeThreadMachines(db, [{ harness: 'codex', installed: true, toolApproval: true }]);
         const { factoryAutomaticRuntime, automaticFactoryDispatch } = await import('./automatic-dispatch');

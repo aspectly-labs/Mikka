@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
-import { computerApi } from './client'
 import { computerReadDeadline } from './state-deadline'
+
+// The mock flag is read when ./client loads: clear both of its names first, so
+// a legacy NEXT_PUBLIC_COMPUTER_MOCK in the environment cannot leak in.
+const MOCK_NAMES = ['MIKKA_PUBLIC_COMPUTER_MOCK', 'NEXT_PUBLIC_COMPUTER_MOCK'] as const
 
 test('a slow actual state fetch caches its request-start clock for expiry and remount calculations', async () => {
   const original = globalThis.fetch
-  const mockFlag = process.env.MIKKA_PUBLIC_COMPUTER_MOCK
-  delete process.env.MIKKA_PUBLIC_COMPUTER_MOCK
+  const mockFlags = MOCK_NAMES.map(name => process.env[name])
+  for (const name of MOCK_NAMES) delete process.env[name]
+  const { computerApi } = await import('./client')
   let now = 1_000, resolve!: (response: Response) => void
   const clock = mock.method(performance, 'now', () => now)
   const botId = '40000000-0000-4000-8000-000000000001', workspaceId = '50000000-0000-4000-8000-000000000001'
@@ -33,6 +37,6 @@ test('a slow actual state fetch caches its request-start clock for expiry and re
   } finally {
     clock.mock.restore()
     globalThis.fetch = original
-    if (mockFlag === undefined) delete process.env.MIKKA_PUBLIC_COMPUTER_MOCK; else process.env.MIKKA_PUBLIC_COMPUTER_MOCK = mockFlag
+    MOCK_NAMES.forEach((name, index) => { const value = mockFlags[index]; if (value === undefined) delete process.env[name]; else process.env[name] = value })
   }
 })

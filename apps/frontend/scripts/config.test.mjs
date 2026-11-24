@@ -70,6 +70,19 @@ test('the web graph still takes a public setting from its legacy name, and the n
   assert.equal(config.define['process.env.MIKKA_DAEMON_PACKAGE_NAME'], '"@aspectlylabs/mikka"')
 }))
 
+test('an empty new name counts as unset in the web graph, so the legacy host and Stripe key still apply', async () => environment({ POSTHOG_HOST: '', [LEGACY_PUBLIC_ENV.POSTHOG_HOST]: 'https://eu.i.posthog.com', MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: '', [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY]: 'pk_test_legacy' }, async () => {
+  const config = await frontendConfig()
+  assert.equal(config.define['process.env.POSTHOG_HOST'], '"https://eu.i.posthog.com"')
+  assert.equal(config.define['process.env.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY'], '"pk_test_legacy"')
+  const posthog = await browserModule('export { posthogConfig } from "./lib/posthog-config.ts"', config.define)
+  assert.equal(posthog.posthogConfig.apiHost, 'https://eu.i.posthog.com')
+  await environment({ [LEGACY_PUBLIC_ENV.POSTHOG_HOST]: '', [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY]: undefined }, async () => {
+    const off = await frontendConfig()
+    assert.equal(off.define['process.env.POSTHOG_HOST'], '""')
+    assert.equal(off.define['process.env.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY'], '""')
+  })
+}))
+
 test('public build identity uses the explicit project revision instead of legacy deployment metadata', async () => environment({ MIKKA_PUBLIC_BUILD: undefined, [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_BUILD]: undefined }, async () => {
   // applicationBuild() is cached per process; observe a fresh one.
   const output = execFileSync(process.execPath, ['--input-type=module', '-e',

@@ -147,6 +147,8 @@ test('from a chat: a dialog session with a publishable key, else a hosted page; 
   assert.deepEqual([back.pathname, back.searchParams.has('bot')], [`${BASE_PATH}/en/`, false])
   // With the key: an embedded session for the dialog; Stripe returns to the chat only when a payment method must leave the page.
   assert.deepEqual(await pointsPurchase('actor', workspaceId, 25, 'zh-CN', { chat: { botId: bot } }, fake, { ...env, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { clientSecret: 'cs_fixture_secret' })
+  // An empty new name counts as unset and falls back to the legacy key (lib/public-env.mjs).
+  assert.deepEqual(await pointsPurchase('actor', workspaceId, 25, 'zh-CN', { chat: { botId: bot } }, fake, { ...env, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: '', NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { clientSecret: 'cs_fixture_secret' })
   const { body } = requests.at(-1)!
   assert.deepEqual([body.get('ui_mode'), body.has('success_url'), body.has('cancel_url'), new URL(body.get('return_url')!).searchParams.get('bot')], ['embedded_page', false, false, bot])
   assert.equal(body.get('metadata[points]'), '2500')
