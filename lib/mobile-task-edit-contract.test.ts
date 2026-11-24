@@ -4,13 +4,14 @@ import { MOBILE_COMMENT_MAX, mobileTaskCommentInput, mobileTaskEditInput, mobile
 
 const STATE = '6b0f2c8e-2d5c-4a1e-9a7b-0d6f3c1e2a4b'
 
-test('an edit names its revision and at least one change; a chosen state needs its category', () => {
+test('an edit names its revision and exactly one change; a chosen state needs its category', () => {
   for (const body of [{ revision: 3, status: 'doing' }, { revision: 3, status: 'review', stateId: STATE }, { revision: 3, priority: 'urgent' },
-    { revision: 3, assigneeId: 'user-1' }, { revision: 3, assigneeId: null }, { revision: 3, status: 'done', priority: 'low', assigneeId: 'user-1' }])
+    { revision: 3, assigneeId: 'user-1' }, { revision: 3, assigneeId: null }])
     assert.ok(mobileTaskEditInput.safeParse(body).success, JSON.stringify(body))
   for (const body of [null, {}, { revision: 3 }, { status: 'doing' }, { revision: 0, status: 'doing' }, { revision: 1.5, status: 'doing' },
     { revision: 3, stateId: STATE }, { revision: 3, status: 'started' }, { revision: 3, priority: 'p0' }, { revision: 3, assigneeId: '  ' },
-    { revision: 3, status: 'doing', title: 'Renamed' }])
+    { revision: 3, status: 'doing', title: 'Renamed' }, { revision: 3, status: 'done', priority: 'low' }, { revision: 3, priority: 'low', assigneeId: null },
+    { revision: 3, status: 'done', stateId: STATE, assigneeId: 'user-1' }])
     assert.equal(mobileTaskEditInput.safeParse(body).success, false, JSON.stringify(body))
 })
 

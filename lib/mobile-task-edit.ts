@@ -10,6 +10,8 @@ import type { IssueReader } from '@/lib/issue-visibility'
 import { resourceAccessPredicate } from '@/lib/resource-access/predicate'
 import { addThread, THREADS_FIELD } from '@/lib/rich-text/comments-model'
 import { mobileTask, mobileTaskReader } from '@/lib/mobile-tasks'
+import { issueDocumentSeed } from '@/lib/issue-document-seed'
+import { serverIssueSchema } from '@/lib/issue-editor-schema-snapshot'
 import type { MobileTaskComment, MobileTaskEdit } from '@/lib/mobile-task-edit-contract'
 
 type Reader = Exclude<IssueReader, string>
@@ -26,38 +28,34 @@ type Failure = { error: ActionErrorCode }
 const failed = (result: ActionResult<unknown>): result is Failure => result.error !== undefined
 
 /**
- * Applies each requested change through the web's own server actions, acting
- * as the phone's user: they hold the task ACL (`canSteer`), the workspace
- * membership, revision fence, history, live and Linear effects. Changes apply
- * in order (status, priority, assignee); each takes the revision the previous
- * one wrote, so only the phone's own revision can be stale.
+ * Applies one change through the web's own server action, acting as the
+ * phone's user: it holds the task ACL (`canSteer`), the workspace membership,
+ * revision fence, history, live and Linear effects. One request carries one
+ * change, so a refused change never leaves another one saved.
  */
 export async function editMobileTask(user: Reader, id: string, input: MobileTaskEdit, explicitWorkspaceId?: string): Promise<Failure | { detail: Detail }> {
   const located = await mobileTaskReader(user, id, explicitWorkspaceId)
   if (!located) return { error: 'issueNotFound' }
   const outcome = await actAs(located.reader, async (): Promise<Failure | null> => {
-    const { moveIssue, changeIssuePriority } = await import('@/app/actions/issues')
-    const { updateIssueMetadata } = await import('@/app/actions/issue-metadata')
-    let revision = input.revision
+    const { revision } = input
     if (input.status !== undefined) {
+      const { moveIssue } = await import('@/app/actions/issues')
       const result = await moveIssue({ id, status: input.status, ...(input.stateId ? { stateId: input.stateId } : {}), revision })
-      if (failed(result)) return result
-      revision = result.issue.revision
+      return failed(result) ? result : null
     }
     if (input.priority !== undefined) {
+      const { changeIssuePriority } = await import('@/app/actions/issues')
       const result = await changeIssuePriority({ id, priority: input.priority, revision })
-      if (failed(result)) return result
-      revision = result.issue.revision
+      return failed(result) ? result : null
     }
-    if (input.assigneeId !== undefined) {
-      const result = await updateIssueMetadata({ id, revision, patch: { assignee: input.assigneeId === null ? null : { kind: 'member', id: input.assigneeId } } })
-      // The action holds the assignee's membership inside the task's own access
-      // check, so a person who is not an active member reads as a missing task.
-      // While this caller may still steer the task, it was the assignee.
-      if (failed(result) && result.error === 'issueNotFound' && input.assigneeId !== null && await mayEdit(user.id, located.workspaceId, id)) return { error: 'memberNotJoined' }
-      if (failed(result)) return { error: result.error }
-    }
-    return null
+    if (input.assigneeId === undefined) return { error: 'validationGeneric' }
+    const { updateIssueMetadata } = await import('@/app/actions/issue-metadata')
+    const result = await updateIssueMetadata({ id, revision, patch: { assignee: input.assigneeId === null ? null : { kind: 'member', id: input.assigneeId } } })
+    // The action holds the assignee's membership inside the task's own access
+    // check, so a person who is not an active member reads as a missing task.
+    // While this caller may still steer the task, it was the assignee.
+    if (failed(result) && result.error === 'issueNotFound' && input.assigneeId !== null && await mayEdit(user.id, located.workspaceId, id)) return { error: 'memberNotJoined' }
+    return failed(result) ? { error: result.error } : null
   })
   if (outcome) return outcome
   const detail = await mobileTask(user, id, explicitWorkspaceId)
@@ -91,15 +89,39 @@ export async function mobileTaskOptions(user: Reader, id: string, explicitWorksp
   })
 }
 
+/** What one phone comment sends through the document exchange: the thread as
+ * a Yjs update written by a client of its own, which depends on no earlier
+ * document state, and, for a task whose document was never opened, the
+ * canonical editor seed (the web editor's schema, mentions and tables
+ * included). If another writer initializes the document first, the exchange
+ * keeps that document and the comment still integrates into it. Null when the
+ * description fails the editor schema: the web opens such a task read-only. */
+export function mobileCommentExchange(input: { id: string; content: unknown; initialized: boolean; threadId: string; authorUserId: string; body: string; at: string }) {
+  let seed: string | undefined
+  if (!input.initialized) {
+    const state = issueDocumentSeed(serverIssueSchema(), input.content, input.id)
+    if (!state) return null
+    seed = Buffer.from(state).toString('base64')
+  }
+  const doc = new Y.Doc()
+  try {
+    // The exchange replaces both names with the signed-in account's.
+    addThread(doc, { id: input.threadId, author: '', authorUserId: input.authorUserId, createdAt: input.at,
+      messages: [{ author: '', authorUserId: input.authorUserId, body: input.body, at: input.at }] }, 'mobile-comment')
+    return { id: input.id, update: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64'), ...(seed ? { seed } : {}) }
+  } finally { doc.destroy() }
+}
+
 /**
  * Adds a task-level discussion (an unanchored comment thread, as a Linear
  * comment arrives) through the web editor's document exchange, acting as the
  * phone's user. That write checks `canSteer`, binds the author to the signed-in
- * account whatever the update says, wakes a Bot the comment concerns and
- * schedules Linear sync. The change is a new key in the document's thread map,
- * so it merges with any concurrent edit.
+ * account whatever the update says (so another account cannot replace this
+ * thread), wakes a Bot the comment concerns and schedules Linear sync. Success
+ * is answered only once the saved document holds the comment; otherwise the
+ * phone gets `issueStale` and may retry with the same `clientId`.
  */
-export async function postMobileTaskComment(user: Reader, id: string, input: MobileTaskComment, explicitWorkspaceId?: string): Promise<Failure | { detail: Detail; comment: Detail['timeline'][number] | null }> {
+export async function postMobileTaskComment(user: Reader, id: string, input: MobileTaskComment, explicitWorkspaceId?: string): Promise<Failure | { detail: Detail; comment: Detail['timeline'][number] }> {
   const located = await mobileTaskReader(user, id, explicitWorkspaceId)
   if (!located) return { error: 'issueNotFound' }
   const threadId = `discussion-${input.clientId ?? crypto.randomUUID()}`
@@ -108,25 +130,24 @@ export async function postMobileTaskComment(user: Reader, id: string, input: Mob
       .leftJoin(issueDocuments, and(eq(issueDocuments.issueId, issues.id), eq(issueDocuments.userId, issues.userId)))
       .where(and(eq(issues.id, id), eq(issues.workspaceId, located.workspaceId))).limit(1)
     if (!row) return { error: 'issueNotFound' }
-    const { loadIssueDocument } = await import('@/lib/linear-sync/document')
-    const doc = loadIssueDocument(row.state, row.content)
-    try {
-      const existing = doc.getMap<Y.Map<unknown>>(THREADS_FIELD).get(threadId)
-      // A retry of a post that already landed: nothing to write.
-      if (existing) return existing.get('authorUserId') === user.id ? null : { error: 'validationGeneric' }
-      const seed = row.state ? undefined : Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64')
-      const before = Y.encodeStateVector(doc)
-      const at = new Date().toISOString()
-      // The exchange replaces both names with the signed-in account's.
-      addThread(doc, { id: threadId, author: '', authorUserId: user.id, createdAt: at, messages: [{ author: '', authorUserId: user.id, body: input.body, at }] }, 'mobile-comment')
-      const update = Buffer.from(Y.encodeStateAsUpdate(doc, before)).toString('base64')
-      const { exchangeDocument } = await import('@/app/actions/collaboration')
-      await exchangeDocument({ id, update, ...(seed ? { seed } : {}) })
-      return null
-    } finally { doc.destroy() }
+    if (row.state) {
+      const doc = new Y.Doc()
+      try {
+        Y.applyUpdate(doc, Buffer.from(row.state, 'base64'))
+        const existing = doc.getMap<Y.Map<unknown>>(THREADS_FIELD).get(threadId)
+        // A retry of a post that already landed: nothing to write.
+        if (existing) return existing.get('authorUserId') === user.id ? null : { error: 'validationGeneric' }
+      } finally { doc.destroy() }
+    }
+    const exchange = mobileCommentExchange({ id, content: row.content, initialized: Boolean(row.state), threadId, authorUserId: user.id, body: input.body, at: new Date().toISOString() })
+    if (!exchange) return { error: 'validationDocument' }
+    const { exchangeDocument } = await import('@/app/actions/collaboration')
+    await exchangeDocument(exchange)
+    return null
   })
   if (written) return written
   const detail = await mobileTask(user, id, explicitWorkspaceId)
   if (!detail) return { error: 'issueNotFound' }
-  return { detail, comment: detail.timeline.find(row => row.kind === 'comment' && row.threadId === threadId) ?? null }
+  const comment = detail.timeline.find(row => row.kind === 'comment' && row.threadId === threadId)
+  return comment ? { detail, comment } : { error: 'issueStale' }
 }

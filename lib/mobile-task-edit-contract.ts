@@ -6,9 +6,11 @@ import { ISSUE_PRIORITY_CODES, ISSUE_STATUS_CODES } from '@/lib/issue-meta'
 
 /**
  * `PATCH /api/mobile/tasks/:id`. `revision` is the task's revision the phone
- * last read. A status change names the category (`status`) and, optionally, one
- * of the workspace's states of that category (`stateId`), as the web's picker
- * does. `assigneeId` is an active workspace member, or null to unassign.
+ * last read. Exactly one change per request: a status, a priority or an
+ * assignee, since the web's actions each commit on their own. A status change
+ * names the category (`status`) and, optionally, one of the workspace's states
+ * of that category (`stateId`), as the web's picker does. `assigneeId` is an
+ * active workspace member, or null to unassign.
  */
 export const mobileTaskEditInput = z.strictObject({
   revision: z.number().int().positive(),
@@ -16,7 +18,7 @@ export const mobileTaskEditInput = z.strictObject({
   stateId: z.uuid().optional(),
   priority: z.enum(ISSUE_PRIORITY_CODES).optional(),
   assigneeId: z.string().trim().min(1).max(128).nullable().optional(),
-}).refine(input => input.status !== undefined || input.priority !== undefined || input.assigneeId !== undefined)
+}).refine(input => [input.status, input.priority, input.assigneeId].filter(value => value !== undefined).length === 1)
   .refine(input => input.stateId === undefined || input.status !== undefined)
 export type MobileTaskEdit = z.infer<typeof mobileTaskEditInput>
 

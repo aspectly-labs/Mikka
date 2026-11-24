@@ -123,6 +123,12 @@ test('mobile task endpoints with real task ACL, current workspace membership and
     try { return await context.runRequestScope(scope, () => handler(req)) }
     finally { await scope.after.finish() }
   }
+  // Web actions called directly (a web editor, task creation) need the same request-local adapters.
+  const scoped = async <T>(fn: () => Promise<T>) => {
+    const scope = context.createRequestScope(new Request(origin + '/mikka/', { headers: { 'x-mikka-locale': 'en' } }))
+    try { return await context.runRequestScope(scope, fn) }
+    finally { await scope.after.finish() }
+  }
   const request = (id: string, options?: ReadOptions) => run('/api/mobile/tasks/' + id, req => GET(req, { params: Promise.resolve({ id }) }), options)
   const listRequest = (options?: ReadOptions) => run('/api/mobile/tasks', list, options)
   const { GET: readThreadArtifacts } = await import('../app/api/mobile/threads/[id]/artifacts/route')
@@ -940,7 +946,11 @@ test('mobile task endpoints with real task ACL, current workspace membership and
       assert.deepEqual([(await edit({ revision: 1, priority: 'urgent' })).status, (await stored()).revision], [409, 2])
       assert.deepEqual(await (await edit({ revision: 1, priority: 'urgent' })).json(), { error: 'issueStale' })
 
-      const both = await (await edit({ revision: 2, priority: 'urgent', assigneeId: other })).json()
+      // One change per request: a combined body is refused before anything is saved.
+      assert.deepEqual([(await edit({ revision: 2, priority: 'urgent', assigneeId: other })).status, (await stored()).revision, (await stored()).priority], [400, 2, 'normal'])
+      assert.deepEqual([(await edit({ revision: 2, status: 'done', priority: 'urgent' })).status, (await stored()).revision, (await stored()).status], [400, 2, 'doing'])
+      assert.equal((await (await edit({ revision: 2, priority: 'urgent' })).json()).task.priority, 'urgent')
+      const both = await (await edit({ revision: 3, assigneeId: other })).json()
       assert.deepEqual([both.task.priority, both.task.assignee?.id, both.task.revision], ['urgent', other, 4])
       assert.deepEqual((await stored()).content.attrs.mikka.assignee, { kind: 'member', id: other, name: 'other', image: null })
 
@@ -1010,6 +1020,59 @@ test('mobile task endpoints with real task ACL, current workspace membership and
       assert.equal((await post({ body: 'Hi' }, { bearer: null })).status, 401)
       assert.equal((await post({ body: 'Hi' }, { bearer: peer.token, workspaceId: secondWorkspace.id })).status, 404)
       assert.equal(discussions((await (await request(task)).json()).timeline).length, 2)
+    } finally {
+      await pool.query('DELETE FROM issues WHERE id=$1', [task])
+    }
+  })
+
+  await t.test('a first native comment on a task created with a mention keeps the editor description', async () => {
+    const { actAs } = await import('../lib/acting-user')
+    const { saveIssue } = await import('../app/actions/issues')
+    const description = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Ask ' },
+      { type: 'mention', attrs: { id: other, label: 'other' } }, { type: 'text', text: ' to review' }] }] }
+    const created = await scoped(() => actAs(owner, () => saveIssue({ workspaceId: teamWorkspace.id, title: 'Mention task', content: description, status: 'todo', priority: 'normal' })))
+    assert.ok('issue' in created && created.issue, JSON.stringify(created))
+    const task = created.issue.id
+    try {
+      assert.equal((await pool.query('select count(*)::int as n from issue_documents where "issueId"=$1', [task])).rows[0].n, 0, 'creation stores no collaboration document')
+      const response = await run('/api/mobile/tasks/' + task + '/comments', req => comment(req, { params: Promise.resolve({ id: task }) }), { ...teamSelection, method: 'POST', body: { body: 'First from the phone' } })
+      assert.equal(response.status, 201)
+      const body = await response.json()
+      assert.equal(body.comment.body, 'First from the phone')
+      assert.match(body.task.description, /Ask .*other.* to review/)
+      const saved = (await pool.query('select content from issues where id=$1', [task])).rows[0].content
+      assert.deepEqual(saved.content[0].content.map((node: { type: string }) => node.type), ['text', 'mention', 'text'])
+    } finally {
+      await pool.query('DELETE FROM issues WHERE id=$1', [task])
+    }
+  })
+
+  await t.test('a native comment survives another writer initializing the document first', async () => {
+    const { actAs } = await import('../lib/acting-user')
+    const { exchangeDocument } = await import('../app/actions/collaboration')
+    const { mobileCommentExchange } = await import('../lib/mobile-task-edit')
+    const { issueDocumentSeed } = await import('../lib/issue-document-seed')
+    const { serverIssueSchema } = await import('../lib/issue-editor-schema-snapshot')
+    const task = await workspaceTask()
+    const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Raced description' }] }] }
+    await pool.query('update issues set content=$2 where id=$1', [task, content])
+    try {
+      // The phone prepares its write against an uninitialized document...
+      const phone = mobileCommentExchange({ id: task, content, initialized: false, threadId: 'discussion-raced', authorUserId: owner, body: 'Raced comment', at: new Date().toISOString() })
+      assert.ok(phone?.seed)
+      // ...then a web editor's first exchange initializes it with its own seed before the phone's exchange locks the task.
+      const web = issueDocumentSeed(serverIssueSchema(), content, task)
+      assert.ok(web)
+      const { mobileTaskReader } = await import('../lib/mobile-tasks')
+      const pinned = async (id: string) => (await mobileTaskReader({ id }, task))!.reader
+      const [teammate, author] = [await pinned(other), await pinned(owner)]
+      await scoped(() => actAs(teammate, () => exchangeDocument({ id: task, seed: Buffer.from(web).toString('base64') })))
+      assert.equal((await pool.query('select count(*)::int as n from issue_documents where "issueId"=$1', [task])).rows[0].n, 1)
+      await scoped(() => actAs(author, () => exchangeDocument(phone)))
+      const detail = await (await request(task)).json()
+      const raced = detail.timeline.filter((row: { kind: string; threadId?: string }) => row.kind === 'comment' && row.threadId === 'discussion-raced')
+      assert.deepEqual(raced.map((row: { body: string; authorId: string }) => [row.body, row.authorId]), [['Raced comment', owner]])
+      assert.equal(detail.task.description, 'Raced description')
     } finally {
       await pool.query('DELETE FROM issues WHERE id=$1', [task])
     }
