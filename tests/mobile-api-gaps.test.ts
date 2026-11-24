@@ -170,6 +170,7 @@ mock.module(new URL('../lib/issue-run-conversation.ts', import.meta.url).href, {
     chainChunks: (rows: unknown[]) => rows,
     runIsActive: () => false,
     runIsWorking: () => false,
+    runSummaryView: () => ({}),
     threadItems: async () => fakeThreadItems,
   },
 })
