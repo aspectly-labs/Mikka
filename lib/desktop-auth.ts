@@ -23,7 +23,7 @@ export function desktopLoopbackCallback(value: unknown): string | null {
     const url = new URL(value)
     if (url.protocol !== 'http:' || (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') || !url.port) return null
     if (url.username || url.password || url.search || url.hash || url.pathname !== '/auth/callback') return null
-    // NextURL normalizes 127.0.0.1 to localhost inside query values too.
+    // RouteURL normalizes 127.0.0.1 to localhost inside query values too.
     url.hostname = '127.0.0.1'
     return `${url.origin}${url.pathname}`
   } catch {

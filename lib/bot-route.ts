@@ -1,11 +1,11 @@
 import 'server-only'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth, apiWorkspaceAllowed } from '@/lib/api-auth'
 import { ActionFailureError } from '@/lib/action-error'
 import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
 
-export const botResponse = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+export const botResponse = (body: unknown, status = 200) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
 
 const notFound = new Set(['botNotFound'])
 const forbidden = new Set(['workspaceAccessDenied'])

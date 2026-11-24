@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { channel } from 'node:diagnostics_channel'
 import { readFile } from 'node:fs/promises'
 import { mock, test } from 'node:test'
-import { NextRequest } from '../../lib/server-runtime/server.ts'
+import { RouteRequest } from '../../lib/server-runtime/server.ts'
 import { TestAccountError } from '../test-accounts/pool.mjs'
 import { ReadCacheDiagnosticError } from './read-cache.mjs'
 import { createOwnedRuntimeObserver, loadOwnedDiagnosticSources, observeOwnedRequests, prepareAttestationRoute, prepareLandingRoute, publicOwnedFailure } from './run-read-cache.mjs'
@@ -218,17 +218,17 @@ test('request observations are bounded, ignore foreign and query paths, retain s
   } finally { observed.close() }
 })
 
-test('the workflow binds the canonical NextRequest origin before signing the environment descriptor', async () => {
+test('the workflow binds the canonical RouteRequest origin before signing the environment descriptor', async () => {
   const workflow = await readFile(new URL('../../.github/workflows/read-cache.yml', import.meta.url), 'utf8')
   const authOrigin = /^\s+BETTER_AUTH_URL: (\S+)$/m.exec(workflow)?.[1]
   const baseOrigin = /^\s+E2E_BASE_URL: (\S+)$/m.exec(workflow)?.[1]
   assert.ok(authOrigin); assert.equal(authOrigin, baseOrigin)
-  const route = new NextRequest(`${authOrigin}/mikka/api/test-environment?challenge=${'a'.repeat(64)}`)
+  const route = new RouteRequest(`${authOrigin}/mikka/api/test-environment?challenge=${'a'.repeat(64)}`)
   assert.equal(new URL(route.url).origin, authOrigin, 'the route checks an exact origin before it reads the HMAC key')
-  // Next's NextRequest rewrote IPv4 loopback to `localhost`; the runtime this
+  // Next's RouteRequest rewrote IPv4 loopback to `localhost`; the runtime this
   // repository owns keeps the host it was handed. Database identity therefore
   // stays separate from the HTTP origin by configuration, not by URL rewriting.
-  assert.equal(new URL(new NextRequest('http://127.0.0.1:3137/mikka/api/test-environment').url).hostname, '127.0.0.1')
+  assert.equal(new URL(new RouteRequest('http://127.0.0.1:3137/mikka/api/test-environment').url).hostname, '127.0.0.1')
   for (const name of ['E2E_DATABASE_URL', 'MIKKA_DATABASE_URL', 'DATABASE_URL']) {
     const value = new RegExp(`^\\s+${name}: (\\S+)$`, 'm').exec(workflow)?.[1]
     assert.ok(value); assert.equal(new URL(value).hostname, '127.0.0.1')

@@ -2,7 +2,7 @@ import { METHOD_NAME_ALL } from 'hono/router'
 import { TrieRouter } from 'hono/router/trie-router'
 import { H3, onDispose } from 'h3'
 import { hostedApiUpgradeRequired, UPDATE_REQUIRED_STATUS } from '@mikka/protocol/version'
-import { NextRequest } from '@/lib/server-runtime/server'
+import { RouteRequest } from '@/lib/server-runtime/server'
 import { NavigationResponse } from '../../../lib/server-runtime/navigation'
 import { allowedMethods, routeMatcher, routerPath, type ApiRoute, type RouteMatch } from './routes'
 import { createRequestScope, requireRequestScope, runRequestScope } from './context'
@@ -33,7 +33,7 @@ async function dispatchRoute(original: Request, matched: RouteMatch | undefined)
   const module = await route.load()
   const handler = module[selected]
   if (typeof handler !== 'function') throw new Error('API_ROUTE_EXPORT_MISSING')
-  const response: unknown = await handler(new NextRequest(original), { params: Promise.resolve(params) })
+  const response: unknown = await handler(new RouteRequest(original), { params: Promise.resolve(params) })
   if (!(response instanceof Response)) throw new TypeError('API_ROUTE_RESPONSE_REQUIRED')
   if (method !== 'HEAD') return response
   await response.body?.cancel()

@@ -2,7 +2,7 @@ import { factoryWorkspaceReader } from '@/lib/factory/workspace-reader';
 import { taskReaderScope } from '@/lib/task-workspace';
 import { factoryMembershipResponse, factoryWorkspaceResponse } from '@/lib/factory/workspace-http';
 import { actAs } from "@/lib/acting-user";
-import { NextResponse } from "@/lib/server-runtime/server";
+import { RouteResponse } from "@/lib/server-runtime/server";
 import { z } from "zod";
 import { issueForUser } from "@/lib/issue-access";
 import { singleFlight } from "@/lib/single-flight";
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     // A successful store read reauthorized the bound issue inside this exact
     // Workspace lease. Its live channel uses that same immutable tenant.
     const liveWorkspaceId = result.status === 200 ? workspaceId ?? null : null;
-    return NextResponse.json(result.status === 200 ? { ...(result.body as Record<string, unknown>), liveWorkspaceId } : result.body, {
+    return RouteResponse.json(result.status === 200 ? { ...(result.body as Record<string, unknown>), liveWorkspaceId } : result.body, {
       status: result.status,
       headers: { "Cache-Control": "private, no-store" },
     });
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
         enabled: factoryDispatchEnabled(issueMutationsEnabled()),
       },
     );
-    return NextResponse.json(result.body, {
+    return RouteResponse.json(result.body, {
       status: result.status,
       headers: { "Cache-Control": "private, no-store" },
     });

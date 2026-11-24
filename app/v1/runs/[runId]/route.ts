@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { runPatchSchema } from '@mikka/protocol/device'
 import { db } from '@/lib/db'
@@ -26,11 +26,11 @@ async function ownedRun(runId: string, userId: string): Promise<boolean> {
 /** `PATCH /v1/runs/:runId`: the run's live state, session and worktree. */
 async function handlePATCH(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { runId } = await params
-  if (!await ownedRun(runId, caller.userId)) return NextResponse.json({ error: 'Unknown run.' }, { status: 404 })
+  if (!await ownedRun(runId, caller.userId)) return RouteResponse.json({ error: 'Unknown run.' }, { status: 404 })
   const parsed = runPatchSchema.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid patch.' }, { status: 400 })
+  if (!parsed.success) return RouteResponse.json({ error: 'Invalid patch.' }, { status: 400 })
   if (parsed.data.observedModel !== undefined && parsed.data.sessionId) {
     // A retried observation never sets session, state or worktree. The claim and
     // the established session must still belong to the reporting device.
@@ -59,7 +59,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ run
         .returning({ id: agentRuns.id })
       if (changed.length) { await runListChanged(db, runId); await runChanged(db, runId) }
     }
-    return new NextResponse(null, { status: 204 })
+    return new RouteResponse(null, { status: 204 })
   }
   const changed = await db.update(agentRuns)
     .set({
@@ -79,7 +79,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ run
   // Supervisor state transitions use this route. Its periodic device lease
   // heartbeat and streaming chunks have separate writers and send no list key.
   if (changed.length) { await runListChanged(db, runId); await runChanged(db, runId) }
-  return new NextResponse(null, { status: 204 })
+  return new RouteResponse(null, { status: 204 })
 }
 
 export const PATCH = withDeviceRoute(handlePATCH)

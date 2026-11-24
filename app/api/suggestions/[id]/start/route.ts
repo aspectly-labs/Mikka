@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
@@ -8,7 +8,7 @@ import { startSuggestion } from '@/lib/cloud-computer/suggestions'
 import { ComputerError } from '@/lib/computer/store'
 import { wakeCoordinator } from '@/lib/coordinator/wake'
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const respond = (value: unknown, status: number) => NextResponse.json(value, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  const respond = (value: unknown, status: number) => RouteResponse.json(value, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return respond({ error: 'authRequired' }, 401)

@@ -37,7 +37,7 @@ jobs:
       MIKKA_DATABASE_URL: postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e
       DATABASE_URL: postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e
       MIKKA_TEST_DB_PORT: '5432'
-      # NextRequest canonicalizes loopback IPs to localhost; bind that exact origin.
+      # RouteRequest canonicalizes loopback IPs to localhost; bind that exact origin.
       BETTER_AUTH_URL: http://localhost:3137
       E2E_BASE_URL: http://localhost:3137
       MIKKA_TEST_DEPLOYMENT_SHA: ${{ github.sha }}

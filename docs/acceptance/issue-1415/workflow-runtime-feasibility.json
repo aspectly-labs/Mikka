@@ -250,7 +250,7 @@
       "destructuredHttpExports": 0,
       "serverFrameworkCalls": {
         "next/server": {
-          "NextResponse": 335,
+          "RouteResponse": 335,
           "after": 3
         },
         "next/headers": {

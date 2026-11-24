@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/api-auth'
 import { activeTaskWorkspaces } from '@/lib/task-workspace'
 import { withRequestLog } from '@/lib/request-log'
@@ -14,23 +14,23 @@ async function ticket(request: Request) {
   // A native session grants the same owner channel as its browser session. PATs
   // remain workspace-scoped and never grant this ambient owner capability.
   const bearerHeaders = request.headers.has('authorization') ? desktopBearerHeaders(request) : null
-  if (request.headers.has('authorization') && !bearerHeaders) return NextResponse.json({ error: 'authRequired' }, { status: 401, headers })
+  if (request.headers.has('authorization') && !bearerHeaders) return RouteResponse.json({ error: 'authRequired' }, { status: 401, headers })
   // A new capability must not extend a revoked session through its cached cookie.
   const session = await auth.api.getSession({ headers: bearerHeaders ?? request.headers, query: { disableCookieCache: true } })
-  if (!session?.user) return NextResponse.json({ error: 'authRequired' }, { status: 401, headers })
+  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401, headers })
   const workspaceId = (new URL(request.url).searchParams.get('workspace') ?? '').toLowerCase()
-  if (!LIVE_ID.test(workspaceId)) return NextResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
+  if (!LIVE_ID.test(workspaceId)) return RouteResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
   const [workspace] = await activeTaskWorkspaces(session.user, workspaceId)
-  if (!workspace) return NextResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
+  if (!workspace) return RouteResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
   const config = liveGatewayConfig(process.env)
-  if (!config) return NextResponse.json({ url: null, protocol: null, expiresAt: null }, { headers })
+  if (!config) return RouteResponse.json({ url: null, protocol: null, expiresAt: null }, { headers })
   const scope = { ownerId: session.user.id, workspaceId }
   const result = await workspaceLiveTicket(scope, session.session?.id ?? '', config)
-  if (result.status === 'denied') return NextResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
-  if (result.status === 'pending') return NextResponse.json({ url: null, protocol: null, expiresAt: null }, { headers })
+  if (result.status === 'denied') return RouteResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
+  if (result.status === 'pending') return RouteResponse.json({ url: null, protocol: null, expiresAt: null }, { headers })
   const issued = result.ticket
   const homeScope = workspace.kind === 'personal' ? homeScopeProof(scope, issued.expiresAt, config.secret) : null
-  return NextResponse.json({ ...issued, ...(homeScope ? { homeScope } : {}) }, { headers })
+  return RouteResponse.json({ ...issued, ...(homeScope ? { homeScope } : {}) }, { headers })
 }
 
 export const GET = withRequestLog('/api/live/ticket', ticket)

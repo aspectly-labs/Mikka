@@ -96,7 +96,7 @@ The verified AST inventory is anchored to **`ec9c76a33c605d6b2b4dd7cf9181943cb29
 | Structural bindings with Next defaults | 638 | Automatic HEAD still passes a HEAD Request into the GET handler; its SDK may refuse it. This count does not promise 638 successful responses. |
 | Locale pages / Server Action modules | 21 / 37 | Preserve auth recovery, invitations, device approval, sharing, metadata, deep links and the actual client import manifest. |
 | Framework usage | 166 Next imports; 506 classified calls | Separate client navigation from server context/control flow. |
-| Direct server context calls | `headers` 55, `cookies` 19, `NextResponse` 335, `after` 3, `redirect` 11, `notFound` 6 | Replace ambient context and control-flow behavior, not just import names. |
+| Direct server context calls | `headers` 55, `cookies` 19, `RouteResponse` 335, `after` 3, `redirect` 11, `notFound` 6 | Replace ambient context and control-flow behavior, not just import names. |
 | Direct Better Auth calls | 151 calls across 15 methods | Cookie-producing reads and direct writes both require response propagation. |
 
 There were zero AST parse errors, unresolved HTTP exports or duplicate route patterns. Generated Workflow handlers are additional: the pinned builder declares flow GET/HEAD/OPTIONS/POST, webhook handlers for all seven supported HTTP methods, and a conditional public manifest. Their final paths and output rules require build verification.
