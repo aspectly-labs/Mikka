@@ -199,6 +199,27 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       assert.equal(run.run_attempt, attempt, 'pipeline_deployment_attempt_mismatch')
       assert.ok(['workflow_run', 'workflow_dispatch'].includes(run.event), 'pipeline_deployment_event_invalid')
       const jobs = await pages(api, `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, 'jobs')
+      // A completed stage-all re-bootstraps staging onto a new reviewed
+      // hosted-api-staging.json release with fresh unmarked Workers, so older
+      // staging pipeline runs no longer describe the live staging baseline.
+      // Production is untouched, and pipeline-release.mjs still requires every
+      // live staging Worker to have no pipeline marker before allowing bootstrap.
+      if (target === 'staging' && !selectedRun && run.event === 'workflow_dispatch') {
+        const stageAll = jobs.find(item => item.name === 'deploy-application' && item.status === 'completed'
+          && item.conclusion === 'success'
+          && item.steps?.some(step => step.name === 'Deploy the reviewed public artifacts and verify the selected phase' && step.conclusion === 'success'))
+        if (stageAll) {
+          const log = (await api(`${repository}/actions/jobs/${stageAll.id}/logs`, { bytes: true })).toString('utf8')
+          const phases = log.split(/\r?\n/).flatMap(line => {
+            const match = /\bMIKKA_PUBLIC_DEPLOYMENT_PHASE=(\{.*\})\s*$/.exec(line)
+            if (!match) return []
+            try { return [JSON.parse(match[1])] } catch { return [] }
+          })
+          if (phases.length === 1 && phases[0].version === 1 && phases[0].phase === 'stage-all'
+              && phases[0].status === 'completed' && phases[0].operator?.runId === String(run.id)
+              && phases[0].operator?.runAttempt === String(run.run_attempt)) return null
+        }
+      }
       const jobName = target === 'production' ? 'pipeline-production' : 'pipeline'
       const job = jobs.find(job => job.name === jobName)
       if (!job || job.conclusion === 'skipped') continue

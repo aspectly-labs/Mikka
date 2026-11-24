@@ -376,6 +376,39 @@ test('canonical GitHub reads keep the Actions and private operations token scope
   ])
 })
 
+test('a completed stage-all resets the staging baseline to bootstrap without affecting production or other phases', async () => {
+  const stageAllRun = { ...run(), id: 250, run_attempt: 1, path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_dispatch' }
+  const olderStage = { ...run(), id: 240, run_attempt: 1, path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_run' }
+  const applyStep = { name: 'Deploy the reviewed public artifacts and verify the selected phase', conclusion: 'success' }
+  const receiptLine = phase => Buffer.from(
+    `2026-11-24T18:00:00Z MIKKA_PUBLIC_DEPLOYMENT_PHASE=${JSON.stringify({ version: 1, phase, status: 'completed', operator: { runId: '250', runAttempt: '1' } })}\n`,
+  )
+  const makeApi = phase => async path => {
+    if (path.includes('workflows/cloudflare-app-deploy.yml/runs?')) return { total_count: 2, workflow_runs: [stageAllRun, olderStage] }
+    if (path.includes('/runs/250/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 9001, name: 'deploy-application', status: 'completed', conclusion: 'success', steps: [applyStep] }] }
+    if (path.endsWith('/jobs/9001/logs')) return receiptLine(phase)
+    if (path.includes('/runs/240/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 9000, name: 'pipeline', status: 'completed', conclusion: 'skipped' }] }
+    assert.fail('Unexpected request: ' + path)
+  }
+  assert.equal(await priorDeployment(makeApi('stage-all'), '260', undefined, 'staging'), null)
+  // Production never reads stage-all logs or resets its baseline on stage-all.
+  let readLog = false
+  const prodApi = async path => {
+    if (path.endsWith('/jobs/9001/logs')) { readLog = true; return receiptLine('stage-all') }
+    return makeApi('stage-all')(path)
+  }
+  assert.equal(await priorDeployment(prodApi, '260', undefined, 'production'), null)
+  assert.equal(readLog, false)
+  // Non-stage-all deploy-application phases (for example stage-verify or production-web) keep scanning past.
+  let scannedOlder = false
+  const otherPhaseApi = async path => {
+    if (path.includes('/runs/240/attempts/1/jobs?')) { scannedOlder = true }
+    return makeApi('stage-verify')(path)
+  }
+  assert.equal(await priorDeployment(otherPhaseApi, '260', undefined, 'staging'), null)
+  assert.equal(scannedOlder, true)
+})
+
 test('selection failures report their pipeline code even when assert appends a diff', () => {
   const failure = (() => { try { baselineOrigin({ version: 1, target: 'staging', status: 'failed' }) } catch (error) { return error } })()
   assert.equal(selectionError(failure), 'pipeline_previous_release_requires_recovery')
