@@ -461,7 +461,15 @@ export function resolveRatchetBase(root = process.cwd(), env = process.env, expl
     if (!hasCommit(explicitBase)) {
       return { base: '', missingRequiredBase: true, reason: `cannot resolve --base ref "${explicitBase}"` }
     }
-    return { base: git('rev-parse', '--verify', `${explicitBase}^{commit}`), missingRequiredBase: false }
+    const resolved = git('rev-parse', '--verify', `${explicitBase}^{commit}`)
+    // Use the common ancestor with HEAD so diverged target branches that migrated unrelated
+    // legacy routes do not trigger false baseline-addition errors on local `--base` checks.
+    let common = resolved
+    try {
+      const mergeBase = git('merge-base', 'HEAD', resolved)
+      if (mergeBase) common = mergeBase
+    } catch {}
+    return { base: common, missingRequiredBase: false }
   }
   const eventName = env.GITHUB_EVENT_NAME ?? ''
   let eventBase = ''

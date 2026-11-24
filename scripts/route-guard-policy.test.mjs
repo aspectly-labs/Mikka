@@ -314,6 +314,60 @@ test('diff-aware Boy Scout rule blocks edits to legacy unguarded routes unless m
   assert.match(badBase.stderr, /cannot resolve --base ref/)
 })
 
+test('diverged branches do not false-fail --base origin/main when main migrates an unrelated route, and CI pull_request events catch edits to legacy routes', t => {
+  const f = fixture(t)
+  f.write('app/api/legacy-a/route.ts', UNGUARDED_SAMPLE)
+  f.write('app/api/legacy-b/route.ts', UNGUARDED_SAMPLE)
+  f.write(
+    BASELINE_PATH,
+    JSON.stringify(
+      {
+        version: 1,
+        maxUnguardedRoutes: 2,
+        legacyRoutes: ['app/api/legacy-a/route.ts', 'app/api/legacy-b/route.ts'],
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+  f.commit('base')
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: f.root })
+  const forkSha = execFileSync('git', ['rev-parse', 'main'], { cwd: f.root, encoding: 'utf8' }).trim()
+
+  // Main moves ahead and migrates legacy-b (removing it from main's baseline).
+  f.write('app/api/legacy-b/route.ts', GUARDED_SAMPLE)
+  f.write(
+    BASELINE_PATH,
+    JSON.stringify({ version: 1, maxUnguardedRoutes: 1, legacyRoutes: ['app/api/legacy-a/route.ts'] }, null, 2) + '\n',
+  )
+  f.commit('main migrates legacy-b')
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'main'], { cwd: f.root })
+
+  // Feature branch forked from forkSha adds a brand-new guarded route without rebasing yet.
+  execFileSync('git', ['checkout', '-q', '-b', 'feature-diverged', forkSha], { cwd: f.root })
+  f.write('app/api/new-guarded/route.ts', GUARDED_SAMPLE)
+  f.commit('add guarded route')
+
+  const divergedOk = spawnSync(process.execPath, [policyScript, '--base', 'origin/main'], {
+    cwd: f.root,
+    encoding: 'utf8',
+  })
+  assert.equal(divergedOk.status, 0, divergedOk.stderr)
+
+  // Editing an existing legacy route on a PR event (without --base) is rejected by CI event metadata.
+  f.write('app/api/legacy-a/route.ts', `${UNGUARDED_SAMPLE}\n// legacy edit\n`)
+  f.commit('edit legacy-a without migrating')
+  const eventFile = join(f.root, '.git', 'pr-event.json')
+  writeFileSync(eventFile, JSON.stringify({ pull_request: { base: { sha: forkSha } } }))
+  const blockedPr = spawnSync(process.execPath, [policyScript], {
+    cwd: f.root,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventFile },
+  })
+  assert.equal(blockedPr.status, 1)
+  assert.match(blockedPr.stderr, /app\/api\/legacy-a\/route\.ts: modified legacy unguarded API route/)
+})
+
 test('shallow synthetic PR merge checkouts still enforce the ratchet against pull_request.base.sha and fail closed when unresolvable', t => {
   // Simulate an upstream repo with an enrolled baseline on `main`, and a PR branch adding a new unguarded route + bumping baseline.
   const remote = fixture(t)
