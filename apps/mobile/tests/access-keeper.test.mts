@@ -1,21 +1,22 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createAccessKeeper, ROTATE_BEFORE_MS, type AccessKeeperDeps, type RefreshCredential, type RotateResult } from '../lib/access-keeper.ts'
+import { createAccessKeeper, ROTATE_BEFORE_MS, type AccessKeeperDeps, type IssuedCredential, type RefreshCredential, type RotateResult } from '../lib/access-keeper.ts'
 
 const HOUR = 3_600_000
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
-const credential = (n: number, accessInMs = HOUR, userId = 'u1'): RefreshCredential => ({
-  userId, refreshToken: `mkmr_${String(n).padStart(43, '0')}`, refreshExpiresAt: new Date(Date.now() + 60 * 24 * HOUR).toISOString(), accessExpiresAt: new Date(Date.now() + accessInMs).toISOString(),
+const credential = (n: number, accessInMs = HOUR, userId = 'u1', sessionId = 's1'): RefreshCredential => ({
+  userId, sessionId, bindingSessionId: sessionId, refreshToken: `mkmr_${String(n).padStart(43, '0')}`, refreshExpiresAt: new Date(Date.now() + 60 * 24 * HOUR).toISOString(), accessExpiresAt: new Date(Date.now() + accessInMs).toISOString(),
 })
 
 function fixture(stored: Record<string, RefreshCredential | null> = {}, owner?: string) {
   const store = new Map(Object.entries(stored))
+  let failWrites = 0
   const calls = { rotate: [] as string[], exchange: 0, revoke: [] as string[] }
   let answers: (() => Promise<RotateResult>)[] = []
-  let exchangeAnswer: () => Promise<{ status: 'ok'; credential: RefreshCredential } | { status: 'unavailable' }> = async () => ({ status: 'unavailable' })
+  let exchangeAnswer: () => Promise<{ status: 'ok'; credential: IssuedCredential } | { status: 'unavailable' }> = async () => ({ status: 'unavailable' })
   const deps: AccessKeeperDeps = {
     read: async account => store.get(account) ?? null,
-    write: async (account, value) => { store.set(account, value) },
+    write: async (account, value) => { if (failWrites > 0) { failWrites--; throw new Error('errSecInteractionNotAllowed') } store.set(account, value) },
     clear: async account => { store.delete(account) },
     rotate: (_account, token) => { calls.rotate.push(token); return (answers.shift() ?? (async () => ({ status: 'unavailable' as const })))() },
     exchange: () => { calls.exchange++; return exchangeAnswer() },
@@ -27,6 +28,7 @@ function fixture(stored: Record<string, RefreshCredential | null> = {}, owner?: 
     keeper: createAccessKeeper(deps), store, calls,
     answer(...next: (() => Promise<RotateResult>)[]) { answers = next },
     exchangeWith(next: typeof exchangeAnswer) { exchangeAnswer = next },
+    failNextWrites(count: number) { failWrites = count },
   }
 }
 
@@ -122,4 +124,51 @@ test('signing out revokes on the server and forgets it here; a rotation answer a
   assert.equal(f.store.has('a'), false, 'the signed-out slot stays empty')
   assert.deepEqual(f.calls.revoke, [credential(1).refreshToken])
   assert.equal(f.keeper.held('a'), 'none')
+})
+
+test('a session replaced in the same sign-in keeps the binding the outbox and cache use', async () => {
+  const f = fixture()
+  f.exchangeWith(async () => ({ status: 'ok', credential: credential(1, HOUR, 'u1', 's1') }))
+  await f.keeper.ensureExchanged('a', 'u1', 's1')
+  assert.equal(f.keeper.binding('a', 'u1', 's1'), 's1')
+  // Renewed in place: the same session.
+  f.answer(async () => ({ status: 'ok', credential: credential(2, HOUR, 'u1', 's1') }))
+  await f.keeper.recover('a', 0)
+  assert.equal(f.keeper.binding('a', 'u1', 's1'), 's1')
+  // Better Auth had deleted the row: rotation minted s2, still the same sign-in.
+  f.answer(async () => ({ status: 'ok', credential: credential(3, HOUR, 'u1', 's2') }))
+  await f.keeper.recover('a', f.keeper.generation('a'))
+  assert.equal(f.keeper.binding('a', 'u1', 's2'), 's1', 'the outbox is not erased')
+  assert.equal(f.keeper.binding('a', 'u1', null), 's1', 'a cold launch before the session is read binds the same')
+  assert.equal(f.store.get('a')?.bindingSessionId, 's1', 'and it survives a restart')
+  assert.equal(f.keeper.binding('a', 'u1', 'other'), null, 'another sign-in is its own binding')
+  assert.equal(f.keeper.binding('a', 'u2', 's2'), null)
+})
+
+test('a renewal is announced, so screens holding sign-in headers take the new cookie', async () => {
+  const f = fixture({ a: credential(1) })
+  assert.equal(f.keeper.held('a'), 'unknown')
+  await f.keeper.prepare('a')
+  let notified = 0
+  const stop = f.keeper.subscribe(() => { notified++ })
+  f.answer(async () => ({ status: 'ok', credential: credential(2) }))
+  const before = f.keeper.generation('a')
+  await f.keeper.recover('a', before)
+  stop()
+  assert.equal(f.keeper.generation('a'), before + 1)
+  assert.ok(notified > 0)
+})
+
+test('a keychain write that fails is retried, and written again before the next use', async () => {
+  const f = fixture({ a: credential(1) })
+  f.failNextWrites(1)
+  f.answer(async () => ({ status: 'ok', credential: credential(2) }))
+  await f.keeper.recover('a', 0)
+  assert.equal(f.store.get('a')?.refreshToken, credential(2).refreshToken, 'the immediate retry kept it')
+  f.failNextWrites(2)
+  f.answer(async () => ({ status: 'ok', credential: credential(3) }))
+  await f.keeper.recover('a', f.keeper.generation('a'))
+  assert.equal(f.store.get('a')?.refreshToken, credential(2).refreshToken, 'the locked keychain still holds the previous token')
+  await f.keeper.prepare('a')
+  assert.equal(f.store.get('a')?.refreshToken, credential(3).refreshToken, 'written before the next request')
 })

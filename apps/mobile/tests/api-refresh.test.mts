@@ -15,7 +15,7 @@ const client = {
   $fetch: async (path: string, init: { body?: Record<string, string> }) => {
     authCalls.push(path)
     if (path === '/mobile-refresh/rotate') return rotateAnswer()
-    if (path === '/mobile-refresh/exchange') return { data: { userId: 'u1', refreshToken: `mkmr_${'e'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(60) }, error: null }
+    if (path === '/mobile-refresh/exchange') return { data: { userId: 'u1', sessionId: 's1', refreshToken: `mkmr_${'e'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(60) }, error: null }
     if (path === '/mobile-refresh/revoke') return { data: { status: !!init.body }, error: null }
     return { data: null, error: { status: 404 } }
   },
@@ -42,9 +42,9 @@ function signedIn(account: string, accessMinutes = 60) {
   apiCache.setIdentity(`${account}:u1`)
   cookie = 'better-auth.session_token=old'
   refused = 0; authCalls.length = 0
-  keychain.set(accountStorageKey(account, 'refresh'), JSON.stringify({ userId: 'u1', refreshToken: `mkmr_${'a'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(accessMinutes) }))
+  keychain.set(accountStorageKey(account, 'refresh'), JSON.stringify({ userId: 'u1', sessionId: 's1', refreshToken: `mkmr_${'a'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(accessMinutes) }))
 }
-const renewed = { data: { userId: 'u1', refreshToken: `mkmr_${'b'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(60) }, error: null }
+const renewed = { data: { userId: 'u1', sessionId: 's1', refreshToken: `mkmr_${'b'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(60) }, error: null }
 /** The API: the old cookie is refused, the renewed one works. */
 function serve(t: { mock: { method: typeof mock.method } }) {
   const sent: string[] = []
@@ -130,4 +130,18 @@ test('signed in without a credential, the app exchanges once', async () => {
   await keepSignedIn('18', 'u1', 's1')
   assert.deepEqual(authCalls, ['/mobile-refresh/exchange'])
   assert.equal(JSON.parse(keychain.get(accountStorageKey('18', 'refresh'))!).userId, 'u1')
+})
+
+test('a replay keeps the workspace its request was made in, even after a switch during renewal', async t => {
+  signedIn('19')
+  keychain.set(accountStorageKey('19', 'workspace'), 'design')
+  const sent = serve(t)
+  rotateAnswer = async () => {
+    // The person switches workspace while the session renews.
+    keychain.set(accountStorageKey('19', 'workspace'), 'engineering')
+    cookie = 'better-auth.session_token=new'
+    return renewed
+  }
+  assert.deepEqual(await api('/api/conversations/read-state', { method: 'POST', body: { all: true } }), { ok: true })
+  assert.deepEqual(sent, ['better-auth.session_token=old; mikka-workspace=design', 'better-auth.session_token=new; mikka-workspace=design'])
 })

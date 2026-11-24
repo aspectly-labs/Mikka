@@ -15,9 +15,16 @@
  * the foreground. Pure, with its storage and server calls injected, so it runs
  * under node:test.
  */
-export type RefreshCredential = { userId: string; refreshToken: string; refreshExpiresAt: string; accessExpiresAt: string }
-export type RotateResult = { status: 'ok'; credential: RefreshCredential } | { status: 'rejected' } | { status: 'unavailable' }
-export type ExchangeResult = { status: 'ok'; credential: RefreshCredential } | { status: 'unavailable' }
+/** What the server issues: the person, the access session it renewed and the next refresh token. */
+export type IssuedCredential = { userId: string; sessionId: string; refreshToken: string; refreshExpiresAt: string; accessExpiresAt: string }
+/**
+ * `bindingSessionId` is the session the sign-in started with. It stays when a
+ * rotation has to mint a replacement session, so the app's outbox and cache,
+ * bound to it, survive (app/_layout.tsx).
+ */
+export type RefreshCredential = IssuedCredential & { bindingSessionId: string }
+export type RotateResult = { status: 'ok'; credential: IssuedCredential } | { status: 'rejected' } | { status: 'unavailable' }
+export type ExchangeResult = { status: 'ok'; credential: IssuedCredential } | { status: 'unavailable' }
 /** After a 401: `rotated` replays the request; `rejected` and `none` leave the 401 to the session check; `unavailable` keeps the person signed in. */
 export type Recovery = 'rotated' | 'rejected' | 'none' | 'unavailable'
 export type HeldState = 'unknown' | 'held' | 'none'
@@ -59,12 +66,24 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
     return pending
   }
 
+  /** Credentials the keychain has not taken yet (locked phone, storage error); written again before the next use. */
+  const unsaved = new Set<string>()
+  async function persist(account: string) {
+    const credential = credentials.get(account)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (credential) await deps.write(account, credential); else await deps.clear(account)
+        if (credentials.get(account) === credential) unsaved.delete(account)
+        return
+      } catch { /* tried again below, then before the next use */ }
+    }
+    if (credentials.get(account) === credential) unsaved.add(account)
+  }
   async function store(account: string, credential: RefreshCredential | null) {
     credentials.set(account, credential)
     loading.delete(account)
     publish()
-    if (credential) await deps.write(account, credential).catch(() => undefined)
-    else await deps.clear(account).catch(() => undefined)
+    await persist(account)
   }
 
   /** One rotation per account at a time; a lost answer is retried once at once, inside the server's grace window. */
@@ -81,7 +100,7 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
       if (credentials.get(account)?.refreshToken !== credential.refreshToken) return result.status === 'ok' ? { status: 'unavailable' } : result
       if (result.status === 'ok') {
         generations.set(account, (generations.get(account) ?? 0) + 1)
-        await store(account, result.credential)
+        await store(account, { ...result.credential, bindingSessionId: credential.bindingSessionId })
       } else if (result.status === 'rejected') await store(account, null)
       return result
     })().finally(() => { rotating.delete(account) })
@@ -99,9 +118,16 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
     /** The user the credential belongs to, so a slot never rotates into another person's session. */
     async userOf(account: string) { return (await load(account))?.userId ?? null },
     generation(account: string) { return generations.get(account) ?? 0 },
+    /** The session this account's sign-in is bound to while the credential renews `session`, else null. */
+    binding(account: string, user: string, session: string | null): string | null {
+      const credential = credentials.get(account)
+      if (!credential || credential.userId !== user) return null
+      return session === null || session === credential.sessionId || session === credential.bindingSessionId ? credential.bindingSessionId : null
+    },
 
     /** Before a request: renew an access session that is about to end. Never throws, never signs out. */
     async prepare(account: string): Promise<void> {
+      if (unsaved.has(account)) await persist(account)
       const credential = await load(account)
       if (!credential || Date.parse(credential.accessExpiresAt) - deps.now() > ROTATE_BEFORE_MS) return
       await rotate(account, credential)
@@ -130,7 +156,7 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
         // A credential for someone else in this slot is stale; never use it.
         if (current) await store(account, null)
         const result = await deps.exchange(account).catch((): ExchangeResult => ({ status: 'unavailable' }))
-        if (result.status === 'ok' && result.credential.userId === userId && !credentials.get(account)) await store(account, result.credential)
+        if (result.status === 'ok' && result.credential.userId === userId && !credentials.get(account)) await store(account, { ...result.credential, bindingSessionId: result.credential.sessionId })
       })().finally(() => { exchanging.delete(account) })
       exchanging.set(account, work)
       return work

@@ -14,7 +14,7 @@ import { appOrigin } from '@/lib/mcp/resource'
 import { withBasePath } from '@/lib/base-path'
 import { AVATAR_MAX_BYTES, checkAvatarFile } from '@/lib/account/avatar-file'
 import { saveAvatar } from '@/lib/account/avatar'
-import { listSignedInDevices, sessionTokenFor, type SignedInDevice } from '@/lib/account/sessions'
+import { endSignedInDevice, listSignedInDevices, sessionTokenFor, type SignedInDevice } from '@/lib/account/sessions'
 import { EXPORT_LINK_TTL_MS, releaseExport, reserveExport } from '@/lib/account/export'
 import { accountMailConfigured, sendAccountMail } from '@/lib/account/mail'
 import { listSharedArtifacts, type SharedArtifactLink } from '@/lib/account/shared-links'
@@ -162,9 +162,10 @@ async function revokeSessionBody(sessionId: string): Promise<ActionResult<{ revo
     if (!parsed.success) throw new ActionFailureError('sessionNotFound')
     const { user, session, headers: requestHeaders } = await requireSession()
     if (parsed.data === session.id) throw new ActionFailureError('sessionIsCurrent')
-    const token = await sessionTokenFor(user.id, parsed.data)
-    if (!token) throw new ActionFailureError('sessionNotFound')
-    await auth.api.revokeSession({ body: { token }, headers: requestHeaders })
+    if (!await sessionTokenFor(user.id, parsed.data)) throw new ActionFailureError('sessionNotFound')
+    // A phone may rotate its session token at any moment: end its refresh credential first, then revoke the token it has now.
+    const token = await endSignedInDevice(user.id, parsed.data)
+    if (token) await auth.api.revokeSession({ body: { token }, headers: requestHeaders })
     return { revoked: true as const }
   })
 }

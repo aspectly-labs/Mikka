@@ -72,10 +72,10 @@ export async function saveWorkspace(id: string, owner?: WorkspaceOwner): Promise
  * the session is gone.
  */
 /** The headers that sign a request as the person (iOS: the session and workspace cookies; the web's browser sends its own). */
-export async function authHeaders(connection: ApiConnection = apiConnection()): Promise<Record<string, string>> {
+export async function authHeaders(connection: ApiConnection = apiConnection(), workspace?: string | null): Promise<Record<string, string>> {
   const tracing = mobileTraceHeaders()
   if (Platform.OS === 'web') return tracing
-  const workspace = await savedWorkspace(connection.account)
+  if (workspace === undefined) workspace = await savedWorkspace(connection.account)
   return { ...tracing, cookie: [await connection.client.getCookie(), workspace ? `mikka-workspace=${workspace}` : ''].filter(Boolean).join('; ') }
 }
 
@@ -89,8 +89,13 @@ export async function api<T>(path: string, init: ApiRequest = {}, connection: Ap
   // An access session about to end is renewed first (lib/refresh.ts); a failure there changes nothing.
   await prepareAccess(account).catch(() => undefined)
   const generation = accessGeneration(account)
+  // The workspace this request was made in: a replay after a renewed session keeps it, even if the person switched since.
+  let workspace: string | null | undefined
   const sign = async () => {
-    try { return await authHeaders(connection) }
+    try {
+      if (workspace === undefined && Platform.OS !== 'web') workspace = await savedWorkspace(connection.account)
+      return await authHeaders(connection, workspace)
+    }
     catch (error) {
       if (init.diagnostics) throw new ApiTransportError('credentials', error)
       throw error

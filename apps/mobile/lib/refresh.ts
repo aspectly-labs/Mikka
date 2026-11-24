@@ -4,7 +4,7 @@ import { secureStorage as SecureStore } from './secure-storage'
 import { authClient } from '@/lib/auth'
 import { currentAccount } from '@/lib/config'
 import { accountStorageKey } from './server-store'
-import { createAccessKeeper, type HeldState, type RefreshCredential, type RotateResult } from './access-keeper'
+import { createAccessKeeper, type HeldState, type IssuedCredential, type RefreshCredential, type RotateResult } from './access-keeper'
 
 /**
  * Wires the refresh credential (lib/access-keeper.ts) to the keychain and to
@@ -15,12 +15,16 @@ import { createAccessKeeper, type HeldState, type RefreshCredential, type Rotate
 const REQUEST_TIMEOUT_MS = 15_000
 const key = (account: string) => accountStorageKey(account, 'refresh')
 
-function parse(value: unknown): RefreshCredential | null {
-  const credential = value as Partial<RefreshCredential> | null
-  return credential && typeof credential.userId === 'string' && typeof credential.refreshToken === 'string'
+function issued(value: unknown): IssuedCredential | null {
+  const credential = value as Partial<IssuedCredential> | null
+  return credential && typeof credential.userId === 'string' && typeof credential.sessionId === 'string' && typeof credential.refreshToken === 'string'
     && typeof credential.refreshExpiresAt === 'string' && typeof credential.accessExpiresAt === 'string'
-    ? { userId: credential.userId, refreshToken: credential.refreshToken, refreshExpiresAt: credential.refreshExpiresAt, accessExpiresAt: credential.accessExpiresAt }
+    ? { userId: credential.userId, sessionId: credential.sessionId, refreshToken: credential.refreshToken, refreshExpiresAt: credential.refreshExpiresAt, accessExpiresAt: credential.accessExpiresAt }
     : null
+}
+function parse(value: unknown): RefreshCredential | null {
+  const credential = issued(value), binding = (value as { bindingSessionId?: unknown } | null)?.bindingSessionId
+  return credential ? { ...credential, bindingSessionId: typeof binding === 'string' ? binding : credential.sessionId } : null
 }
 
 type Answer = { status: number; code?: string; data?: unknown }
@@ -47,13 +51,13 @@ export const accessKeeper = createAccessKeeper({
   clear: account => SecureStore.deleteItemAsync(key(account)),
   exchange: async account => {
     const answer = await post(account, '/mobile-refresh/exchange', {})
-    const credential = answer?.status === 200 ? parse(answer.data) : null
+    const credential = answer?.status === 200 ? issued(answer.data) : null
     return credential ? { status: 'ok', credential } : { status: 'unavailable' }
   },
   rotate: async (account, refreshToken): Promise<RotateResult> => {
     const answer = await post(account, '/mobile-refresh/rotate', { refreshToken })
     if (answer?.status === 401 && answer.code === 'refreshRejected') return { status: 'rejected' }
-    const credential = answer?.status === 200 ? parse(answer.data) : null
+    const credential = answer?.status === 200 ? issued(answer.data) : null
     return credential ? { status: 'ok', credential } : { status: 'unavailable' }
   },
   revoke: async (account, refreshToken) => { await post(account, '/mobile-refresh/revoke', { refreshToken }) },
@@ -68,12 +72,19 @@ export const prepareAccess = (account: string) => native() ? accessKeeper.prepar
 /** After a 401 on a request sent at `generation` (see accessGeneration). */
 export const recoverAccess = (account: string, generation: number) => native() ? accessKeeper.recover(account, generation) : Promise.resolve('none' as const)
 export const accessGeneration = (account: string) => accessKeeper.generation(account)
-/** Signed in on this phone: get a refresh credential once per session per launch or foreground. */
+/** Signed in on this phone: get a refresh credential once per session per launch. */
 export const keepSignedIn = (account: string, userId: string, session: string) => native() ? accessKeeper.ensureExchanged(account, userId, session) : Promise.resolve()
-/** The app came back to the foreground. */
-export const accessForeground = (account: string) => native() ? accessKeeper.foreground(account) : Promise.resolve()
 /** Signing out or losing the session: end the refresh credential too. */
 export const forgetAccess = (account: string) => native() ? accessKeeper.forget(account) : Promise.resolve()
+
+/** The session the outbox and cache stay bound to while the refresh credential renews `session` (see access-keeper). */
+export const signInBinding = (account: string, user: string, session: string | null) => native() ? accessKeeper.binding(account, user, session) : null
+
+/** Bumps whenever the session cookie was renewed, so a screen holding sign-in headers takes the new ones. */
+export function useAccessGeneration(account: string): number {
+  const generation = () => accessKeeper.generation(account)
+  return useSyncExternalStore(accessKeeper.subscribe, generation, generation)
+}
 
 /** Whether this account still holds a refresh credential, for the sign-in gate. */
 export function useAccessHeld(account: string): HeldState {

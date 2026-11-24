@@ -1,5 +1,6 @@
 import 'server-only'
 import { pool } from '@/lib/db'
+import { endMobileRefreshForSession } from '@/lib/auth-mobile-refresh'
 import { describeUserAgent } from './user-agent'
 
 /** One signed-in device in 「登录设备」. The session token never leaves the server. */
@@ -53,4 +54,14 @@ export async function listSignedInDevices(userId: string, currentSessionId: stri
 export async function sessionTokenFor(userId: string, sessionId: string): Promise<string | null> {
   const { rows } = await pool.query<{ token: string }>('select token from session where id = $1 and "userId" = $2 limit 1', [sessionId, userId])
   return rows[0]?.token ?? null
+}
+
+/**
+ * Before one device is signed out: ends the iPhone refresh credential that
+ * keeps it signed in, so no rotation can renew it again, and returns the
+ * session's token as it is now (a rotation may have replaced the one read
+ * when the list was drawn). Null when the session is gone.
+ */
+export async function endSignedInDevice(userId: string, sessionId: string): Promise<string | null> {
+  return endMobileRefreshForSession(pool, userId, sessionId)
 }

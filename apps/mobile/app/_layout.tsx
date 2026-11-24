@@ -1,7 +1,7 @@
 import '../global.css'
 
 import { useEffect, useRef, useState } from 'react'
-import { AppState, Platform, useColorScheme, View } from 'react-native'
+import { Platform, useColorScheme, View } from 'react-native'
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { HeroUINativeProvider } from 'heroui-native/provider'
@@ -22,7 +22,7 @@ import { openPush } from '@/lib/navigate'
 import { colors, screenOptions } from '@/lib/theme'
 import { newSheetOptions, reviewSheetOptions } from '@/lib/sheet-options'
 import { conversationJournal, currentAccount, servers } from '@/lib/config'
-import { accessForeground, accessGeneration, keepSignedIn, recoverAccess, useAccessHeld } from '@/lib/refresh'
+import { accessGeneration, keepSignedIn, recoverAccess, signInBinding, useAccessHeld } from '@/lib/refresh'
 import { sessionRefused } from '@/lib/session'
 import { serverCopy as copy } from '@/lib/server-copy'
 
@@ -66,6 +66,10 @@ function SessionGate() {
   const kept = !data?.user && held === 'held' && account.user ? account.user : null
   const user = data?.user ?? kept
   const sessionId = data?.session?.id ?? (kept ? lastSession.current : null)
+  // The outbox and the cache belong to one sign-in. While the refresh credential keeps it, that is the session it
+  // started with: a session renewed in place, replaced after Better Auth deleted it, or not read yet on a cold
+  // launch, is the same sign-in and keeps its unsent messages and loaded screens.
+  const binding = user ? signInBinding(account.id, user.id, data?.session?.id ?? null) ?? sessionId : null
   useEffect(() => {
     if (user) return watchAppleCredential(account.id)
   }, [account.id, user?.id])
@@ -75,23 +79,11 @@ function SessionGate() {
     if (data?.user) void servers.remember(account.id, { id: data.user.id, name: data.user.name, email: data.user.email }).catch(() => { if (live) setSaveFailed(true) })
     return () => { live = false }
   }, [account.id, data?.user?.id, data?.user?.name, data?.user?.email, attempt])
-  // Signed in: get this phone a refresh credential once, and renew the session whenever the app comes back.
+  // Signed in: get this phone a refresh credential once per launch. Renewal itself runs before the next request
+  // (lib/api.ts), never on a foreground listener: coming back re-reads nothing (scripts/focus-refetch-policy.mjs).
   useEffect(() => {
     if (data?.user && data.session) void keepSignedIn(account.id, data.user.id, data.session.id).catch(() => undefined)
   }, [account.id, data?.user?.id, data?.session?.id])
-  const signedIn = useRef<{ user: string; session: string } | null>(null)
-  signedIn.current = data?.user && data.session ? { user: data.user.id, session: data.session.id } : null
-  useEffect(() => {
-    if (Platform.OS === 'web') return
-    const foreground = AppState.addEventListener('change', state => {
-      if (state !== 'active') return
-      void accessForeground(account.id).then(() => {
-        const current = signedIn.current
-        if (current) return keepSignedIn(account.id, current.user, current.session)
-      }).catch(() => undefined)
-    })
-    return () => foreground.remove()
-  }, [account.id])
   // The session cookie ran out while the app was away: renew it. The auth client stores the cookie and reads the session again.
   useEffect(() => {
     if (!kept || isPending) return
@@ -101,14 +93,13 @@ function SessionGate() {
     }).catch(() => undefined)
   }, [account.id, kept?.id, isPending])
   // Establish the identity boundary before any child can read a cached answer.
-  if (data?.session || (!isPending && !kept)) {
-    try { conversationJournal.bind(account.id, data?.session?.id ?? null) } catch { /* The send control reports unavailable storage before writing. */ }
-  } else if (kept && lastSession.current) {
-    try { conversationJournal.bind(account.id, lastSession.current) } catch { /* As above. */ }
+  // Until the keychain has answered, the sign-in's binding is unknown: bind nothing and draw nothing yet.
+  const credentialUnknown = held === 'unknown' && Platform.OS !== 'web'
+  if (!credentialUnknown && (binding || (!isPending && !user))) {
+    try { conversationJournal.bind(account.id, binding) } catch { /* The send control reports unavailable storage before writing. */ }
   }
-  apiCache.setIdentity(user ? `${account.id}:${user.id}` : null, user?.id ?? null, sessionId)
-  if (isPending && !data) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.page }}><Spinner size={22} /></View>
-  if (!user && held === 'unknown' && Platform.OS !== 'web') return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.page }}><Spinner size={22} /></View>
+  if (!credentialUnknown) apiCache.setIdentity(user ? `${account.id}:${user.id}` : null, user?.id ?? null, binding)
+  if ((isPending && !data) || credentialUnknown) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.page }}><Spinner size={22} /></View>
   if (!user) return <SignIn />
   if (account.user?.id !== user.id) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: colors.page }}>
     {saveFailed ? <><Text accessibilityRole="alert">{copy.saveFailed}</Text><CardButton label={copy.retry} onPress={() => setAttempt(value => value + 1)} /></> : <Spinner size={22} />}

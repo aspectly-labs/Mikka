@@ -7,6 +7,7 @@ import { Segmented } from '@/components/Segmented'
 import { underBar } from '@/components/NavBar'
 import { ChatImageViewer, type ViewerRequest } from '@/features/chat/components/chat-image-viewer'
 import { apiConnection, authHeaders } from '@/lib/api'
+import { useAccessGeneration } from '@/lib/refresh'
 import { API_URL } from '@/lib/config'
 import { mobileMessages } from '@/lib/messages'
 import { colors } from '@/lib/theme'
@@ -88,11 +89,13 @@ const captureUrl = (captureId: string) => `${API_URL}/api/captures/${captureId}`
 /** The headers that sign a capture's picture request as the person (the session cookie on iOS; the web sends its own). */
 function useAuthHeaders() {
   const [headers, setHeaders] = useState<Record<string, string> | null>(null)
+  // A renewed session cookie (lib/refresh.ts) replaces the one these pictures were requested with.
+  const renewed = useAccessGeneration(apiConnection().account.id)
   useEffect(() => {
     let live = true
     void authHeaders(apiConnection()).then(value => { if (live) setHeaders(value) }).catch(() => { if (live) setHeaders({}) })
     return () => { live = false }
-  }, [])
+  }, [renewed])
   return headers
 }
 

@@ -18,6 +18,7 @@ import { mobileMessages } from '@/lib/messages'
 import { press, tap } from '@/lib/haptics'
 import { splitQuoted } from '@/lib/quote'
 import { apiConnection, authHeaders } from '@/lib/api'
+import { useAccessGeneration } from '@/lib/refresh'
 import type { Reaction, ThreadStatus } from '@/lib/types'
 import { colors } from '@/lib/theme'
 import { useReducedMotionPreference } from '@/lib/reduced-motion'
@@ -86,7 +87,9 @@ export function FoldedWords({ text, color, children }: { text: string; color: st
 export function useChatPhotos(): (messageId: string | undefined, count: number | undefined) => ImageURISource[] {
   const [connection] = useState(apiConnection)
   const [headers, setHeaders] = useState<Record<string, string> | null>(null)
-  useEffect(() => { void authHeaders(connection).then(setHeaders) }, [connection])
+  // A renewed session cookie (lib/refresh.ts) replaces the one these photos were requested with.
+  const renewed = useAccessGeneration(connection.account.id)
+  useEffect(() => { void authHeaders(connection).then(setHeaders) }, [connection, renewed])
   return (messageId, count) => {
     if (!count) return []
     // Still in the inbox (no message row yet): grey stand-ins until the next poll.

@@ -1,7 +1,8 @@
 // Real PostgreSQL + the production Better Auth instance (lib/auth.ts) with the
 // mobile refresh plugin (lib/auth-mobile-refresh.ts). Isolated *_e2e database only.
 import assert from 'node:assert/strict'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import { after, before, test } from 'node:test'
 import { isE2eTarget } from './helpers/e2e-target.mjs'
 import { withBasePath } from '../lib/base-path'
@@ -51,7 +52,7 @@ async function call(path: string, options: { jar?: Jar; body?: unknown; origin?:
   return response
 }
 
-type Issued = { userId: string; refreshToken: string; refreshExpiresAt: string; accessExpiresAt: string }
+type Issued = { userId: string; sessionId: string; refreshToken: string; refreshExpiresAt: string; accessExpiresAt: string }
 async function issued(response: Response): Promise<Issued> {
   assert.equal(response.status, 200, await response.clone().text())
   assert.equal(response.headers.get('cache-control'), 'no-store')
@@ -128,7 +129,12 @@ test('rotate renews the access session in place as a one-hour cookie and keeps t
   const person = await phone()
   const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
   const stale = new Jar(); stale.cookies = new Map(person.jar.cookies); stale.ip = person.jar.ip
-  const second = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } }))
+  const rotation = await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } })
+  const sessionCookie = rotation.headers.getSetCookie().find(line => /session_token=/.test(line) && !/_multi-/.test(line))
+  const maxAge = Number(/max-age=(\d+)/i.exec(sessionCookie ?? '')?.[1])
+  assert.ok(maxAge > 3500 && maxAge <= 3600, `the cookie ends with the access session, so the app's jar drops it on time (Max-Age ${maxAge})`)
+  const second = await issued(rotation)
+  assert.equal(second.sessionId, person.session.session.id)
   assert.notEqual(person.jar.header(), stale.header(), 'the response set the renewed session cookie')
   assert.notEqual(second.refreshToken, first.refreshToken)
   const minutes = (Date.parse(second.accessExpiresAt) - Date.now()) / 60_000
@@ -322,4 +328,46 @@ test('a refresh token is never an access credential', { skip }, async () => {
   assert.equal(await auth.api.getSession({ headers: new Headers({ authorization: `Bearer ${refreshToken}` }) }), null)
   assert.equal((await call('/get-session', { jar: Object.assign(new Jar(), { cookies: new Map([['better-auth.session_token', refreshToken]]) }) })).status, 200)
   assert.equal(await sessionOf(Object.assign(new Jar(), { cookies: new Map([['better-auth.session_token', refreshToken]]) })), null)
+})
+
+test('a revocation that waits on a rotation in flight still ends the token that rotation issued', { skip }, async () => {
+  const person = await phone()
+  const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
+  const [row] = await rows(person.id)
+  const rotation = await pool.connect()
+  try {
+    // A rotation holding its family lock has inserted the next token and not committed yet.
+    await rotation.query('begin')
+    await rotation.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`mobile-refresh:${row.family_id}`])
+    const next = randomUUID()
+    await rotation.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_rotated, token_hash, expires_at, family_expires_at)
+      select $1, family_id, user_id, session_id, true, $2, expires_at, family_expires_at from mobile_refresh_tokens where id = $3`, [next, randomBytes(32).toString('hex'), row.id])
+    await rotation.query('update mobile_refresh_tokens set session_id = null, used_at = now(), replaced_by = $2 where id = $1', [row.id, next])
+    const revoking = call('/mobile-refresh/revoke', { body: { refreshToken: first.refreshToken } })
+    await delay(300)
+    await rotation.query('commit')
+    assert.equal((await revoking).status, 200)
+    const family = await rows(person.id)
+    assert.equal(family.find(token => token.id === next)?.revoked_reason, 'signed_out', 'the token committed while the revocation waited is revoked too')
+  } finally { rotation.release() }
+})
+
+test('signing a phone out from 登录设备 holds even when the phone rotated after the list was read', { skip }, async () => {
+  const person = await phone()
+  const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
+  const web = new Jar(); web.ip = person.jar.ip
+  assert.equal((await call('/sign-in/email', { jar: web, origin, body: { email: person.email, password: person.password } })).status, 200)
+  const { listSignedInDevices, sessionTokenFor, endSignedInDevice } = await import('../lib/account/sessions')
+  const listed = (await listSignedInDevices(person.id, (await sessionOf(web))!.session.id)).find(device => device.id === person.session.session.id)
+  assert.ok(listed)
+  const tokenWhenListed = await sessionTokenFor(person.id, listed.id)
+  // The phone renews its session between the list and the tap.
+  const second = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } }))
+  assert.equal(await (await auth.$context).internalAdapter.findSession(tokenWhenListed!), null, 'the token read with the list no longer names the session')
+  const token = await endSignedInDevice(person.id, listed.id)
+  assert.ok(token)
+  await auth.api.revokeSession({ body: { token }, headers: new Headers({ cookie: web.header(), origin }) })
+  assert.equal(await sessionOf(person.jar), null, 'the phone is signed out')
+  await refusal(await call('/mobile-refresh/rotate', { body: { refreshToken: second.refreshToken } }))
+  assert.ok(await sessionOf(web))
 })

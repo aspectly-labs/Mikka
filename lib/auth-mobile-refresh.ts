@@ -86,15 +86,48 @@ async function transaction<T>(database: Database, work: (tx: PoolClient) => Prom
   } finally { tx.release() }
 }
 
+/**
+ * Every writer of a family's rows holds this transaction lock first: revoking,
+ * claiming and rotating. A rotation that inserts the next token therefore
+ * either commits before a revocation reads the family, or sees it revoked.
+ */
+async function lockFamilies(tx: Pick<PoolClient, 'query'>, families: string[]) {
+  for (const family of [...new Set(families)].sort()) await tx.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`mobile-refresh:${family}`])
+}
+
 /** Ends every unrevoked row of these families. Returns the access sessions they backed, for the caller to delete. */
 async function revokeFamilies(tx: Pick<PoolClient, 'query'>, where: string, values: unknown[], reason: string): Promise<string[]> {
+  const { rows: found } = await tx.query<{ family_id: string }>(`select distinct family_id from mobile_refresh_tokens where ${where}`, values)
+  if (!found.length) return []
+  const families = found.map(row => row.family_id)
+  await lockFamilies(tx, families)
+  // A new statement after the lock: it sees a token a rotation committed meanwhile.
   const { rows } = await tx.query<{ session_id: string }>(`with target as (
-      select id, session_id from mobile_refresh_tokens
-      where revoked_at is null and family_id in (select family_id from mobile_refresh_tokens where ${where}) for update),
-    ended as (update mobile_refresh_tokens r set revoked_at = now(), revoked_reason = $${values.length + 1}, session_id = null
+      select id, session_id from mobile_refresh_tokens where family_id = any($1::uuid[]) and revoked_at is null for update),
+    ended as (update mobile_refresh_tokens r set revoked_at = now(), revoked_reason = $2, session_id = null
       from target where r.id = target.id returning target.session_id)
-    select session_id from ended where session_id is not null`, [...values, reason])
+    select session_id from ended where session_id is not null`, [families, reason])
   return rows.map(row => row.session_id)
+}
+
+/**
+ * Signs one device out from 登录设备 even while its phone is rotating: its
+ * refresh family ends first (so no rotation can renew the session again), then
+ * the caller ends the session by the token it has now. Returns that token, or
+ * null when the session is gone.
+ */
+export async function endMobileRefreshForSession(database: Database, userId: string, sessionId: string): Promise<string | null> {
+  const tx = await database.connect()
+  try {
+    await tx.query('begin')
+    await revokeFamilies(tx, 'session_id = $1 and user_id = $2', [sessionId, userId], 'session_ended')
+    await tx.query('commit')
+  } catch (error) {
+    await tx.query('rollback').catch(() => undefined)
+    throw error
+  } finally { tx.release() }
+  const { rows: [session] } = await database.query<{ token: string }>('select token from session where id = $1 and "userId" = $2', [sessionId, userId])
+  return session?.token ?? null
 }
 
 type EndpointContext = {
@@ -133,7 +166,7 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
     return { verifiedAt: row.two_factor_verified_at, method: row.two_factor_method }
   }
 
-  type Linked = { sessionToken: string; retiredTokens: string[] }
+  type Linked = { sessionId: string; sessionToken: string; retiredTokens: string[] }
   /**
    * In one transaction: retire the claimed token (and, in the grace case, the
    * child whose answer was lost), renew the access session or adopt the minted
@@ -142,17 +175,24 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
    */
   async function link(row: Row, token: string, refreshExpiresAt: Date, accessExpiresAt: Date, userAgent: string | null, minted: { id: string; token: string } | null): Promise<Linked | 'gone' | null> {
     return transaction(database, async tx => {
-      const { rows: [parent] } = await tx.query<Row>('select * from mobile_refresh_tokens where id = $1 for update', [row.id])
-      if (!parent || parent.revoked_at) return null
-      // The grace case: the child whose response was lost is superseded below.
-      const { rows: [child] } = parent.replaced_by
-        ? await tx.query<Row>('select * from mobile_refresh_tokens where id = $1 for update', [parent.replaced_by])
-        : { rows: [] as Row[] }
-      if (child?.used_at || child?.revoked_at) return null
-      const backing = parent.session_id ?? child?.session_id ?? null
-      const { rows: [old] } = backing
-        ? await tx.query<{ token: string }>('select token from session where id = $1 and "userId" = $2 for update', [backing, parent.user_id])
+      // Lock order, shared with a session's deletion and its trigger: the session row, then the family.
+      const backingOf = async (lock: string) => {
+        const { rows: [parent] } = await tx.query<Row>(`select * from mobile_refresh_tokens where id = $1 ${lock}`, [row.id])
+        const { rows: [child] } = parent?.replaced_by
+          ? await tx.query<Row>(`select * from mobile_refresh_tokens where id = $1 ${lock}`, [parent.replaced_by])
+          : { rows: [] as Row[] }
+        return { parent, child, backing: parent?.session_id ?? child?.session_id ?? null }
+      }
+      const seen = await backingOf('')
+      const { rows: [old] } = seen.backing
+        ? await tx.query<{ token: string }>('select token from session where id = $1 and "userId" = $2 for update', [seen.backing, row.user_id])
         : { rows: [] as { token: string }[] }
+      await lockFamilies(tx, [row.family_id])
+      const { parent, child, backing } = await backingOf('for update')
+      if (!parent || parent.revoked_at) return null
+      if (child?.used_at || child?.revoked_at) return null
+      // Another rotation of this token moved the family meanwhile; this one gives way.
+      if (backing !== seen.backing) return null
       if (!minted && !old) return 'gone'
       if (child) await tx.query(`update mobile_refresh_tokens set revoked_at = now(), revoked_reason = 'superseded', session_id = null where id = $1`, [child.id])
       // Nothing backs the session while it is renewed, so the no-slide trigger lets this extension through.
@@ -174,7 +214,7 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
       [id, parent.family_id, parent.user_id, sessionId, hash(token), refreshExpiresAt, parent.family_expires_at,
         userAgent, assured?.verifiedAt ?? null, assured?.method ?? null])
       await tx.query('update mobile_refresh_tokens set replaced_by = $2 where id = $1', [parent.id, id])
-      return { sessionToken, retiredTokens: old ? [old.token] : [] }
+      return { sessionId, sessionToken, retiredTokens: old ? [old.token] : [] }
     })
   }
 
@@ -208,12 +248,12 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
           family_expires_at, user_agent, two_factor_verified_at, two_factor_method) values ($1, $2, $3, $4, $11, $5, $6, $7, $8, $9, $10)`,
       [randomUUID(), randomUUID(), current.user.id, session.id, hash(token), expiresAt, familyExpiresAt,
         ctx.headers?.get('user-agent')?.slice(0, 512) ?? null, session.verifiedAt, session.method, rotated])
-      return { refreshExpiresAt: expiresAt, accessExpiresAt: session.expiresAt }
+      return { sessionId: session.id, refreshExpiresAt: expiresAt, accessExpiresAt: session.expiresAt }
     })
     if (issued === 'enterprise') throw new APIError('CONFLICT', { code: REFRESH_UNAVAILABLE, message: 'Refresh unavailable' })
     if (!issued) throw new APIError('UNAUTHORIZED', { code: 'UNAUTHORIZED', message: 'Unauthorized' })
     noStore(ctx)
-    return ctx.json({ userId: current.user.id, refreshToken: token, refreshExpiresAt: issued.refreshExpiresAt.toISOString(), accessExpiresAt: issued.accessExpiresAt.toISOString() })
+    return ctx.json({ userId: current.user.id, sessionId: issued.sessionId, refreshToken: token, refreshExpiresAt: issued.refreshExpiresAt.toISOString(), accessExpiresAt: issued.accessExpiresAt.toISOString() })
   })
 
   const rotate = createAuthEndpoint('/mobile-refresh/rotate', { method: 'POST', body, requireHeaders: true }, async ctx => {
@@ -222,6 +262,8 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
     const endpoint = ctx as unknown as EndpointContext
     // 1. Claim the presented token, or recognise a replay.
     const claim = await transaction(database, async tx => {
+      const { rows: [found] } = await tx.query<{ family_id: string }>('select family_id from mobile_refresh_tokens where token_hash = $1', [hash(presented)])
+      if (found) await lockFamilies(tx, [found.family_id])
       const { rows: [row] } = await tx.query<Row>('select * from mobile_refresh_tokens where token_hash = $1 for update', [hash(presented)])
       if (!row || row.revoked_at || row.expires_at <= new Date()) return { kind: 'rejected' as const }
       if (!row.used_at) {
@@ -272,7 +314,7 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
       await setSessionCookie(ctx, renewed as never, false, { maxAge: Math.max(1, Math.floor((accessExpiresAt.getTime() - Date.now()) / 1000)) })
       minted = null
       noStore(ctx)
-      return ctx.json({ userId: row.user_id, refreshToken: token, refreshExpiresAt: refreshExpiresAt.toISOString(), accessExpiresAt: accessExpiresAt.toISOString() })
+      return ctx.json({ userId: row.user_id, sessionId: linked.sessionId, refreshToken: token, refreshExpiresAt: refreshExpiresAt.toISOString(), accessExpiresAt: accessExpiresAt.toISOString() })
     } finally {
       if (minted) await endpoint.context.internalAdapter.deleteSession(minted.token).catch(() => undefined)
     }
