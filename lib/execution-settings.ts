@@ -52,6 +52,17 @@ export class ExecutionSettings {
   async botBinding(scope: ExecutionSettingsScope, bindingId: string) {
     return (await this.connectedBindings(scope, bindingId))[0];
   }
+  /** The binding exists but under another owner — a stored borrow, not a
+   * missing model. A gone binding answers false so callers keep their fallback. */
+  async bindingHeldElsewhere(
+    scope: ExecutionSettingsScope,
+    bindingId: string,
+    query: Pick<PoolClient, "query"> = this.pool,
+  ): Promise<boolean> {
+    const { rows: [held] } = await query.query<{ ownerId: string }>(
+      'SELECT b."ownerId" FROM byos_bindings b WHERE b.id=$1', [bindingId]);
+    return Boolean(held && held.ownerId !== scope.ownerId);
+  }
   /** A bot chat's subscription options: `botModels` on a route that answers chats for its owner (`subscriptionRouteReady`). */
   async chatModels(scope: ExecutionSettingsScope, query: Pick<PoolClient, "query"> = this.pool, rows?: Awaited<ReturnType<ExecutionSettings["botModels"]>>) {
     return chatReady(rows ?? await this.botModels(scope, query));
@@ -221,7 +232,16 @@ export class ExecutionSettings {
     const source = (await this.connectedBindings(scope, bindingId, query)).find(
       (row) => row.bindingId === bindingId,
     );
-    if (!source) throw new ActionFailureError("executionModelUnknown");
+    if (!source) {
+      // A member re-sending an owner's subscription-bound run holds someone
+      // else's binding: refuse it as theirs-not-yours, not an unknown model
+      // (issue #3057 — turn.started must not report executionModelUnknown).
+      if (await this.bindingHeldElsewhere(scope, bindingId, query)) {
+        const { SubscriptionRefusal } = await import("@mikka/protocol/subscription");
+        throw new SubscriptionRefusal("account_unavailable");
+      }
+      throw new ActionFailureError("executionModelUnknown");
+    }
     if (source.workspaceId === scope.workspaceId && (botId === null || source.consumerId === botId)) return bindingId;
     const hash = createHash("sha256")
       .update(
