@@ -290,6 +290,39 @@ To add a database migration:
 3. Run `pnpm check:migrations` and `pnpm test:migrations`. Verify the SQL against
    an isolated database, covering both a fresh replay and an upgrade from the
    preceding deployed schema.
+4. If the migration changes existing data or is otherwise outside the deploy
+   pipeline's automatic subset, mark it in the file header (see below).
+
+### Data-changing migrations: mark them in the PR
+
+The deploy pipeline runs a migration automatically when it is additive: new
+tables, nullable or constant-default columns, plain column indexes, enum values,
+`SET LOCAL` lock budgets, and unique/partial indexes or triggers on a table the
+same file creates. Anything else — a backfill, `UPDATE`/`DELETE`/`INSERT`,
+`DROP INDEX`, `DO`/`EXECUTE`/`CALL`, an expression index, a unique or partial
+index on an existing table, a type change — is reviewed in its pull request and
+must say so in its leading comments (Alex, 2026-11-24):
+
+```sql
+-- target: MIKKA_DATABASE_URL
+-- migrate: reviewed-data #3300 backfill sample.flag for rows created before #3290
+```
+
+The number is the PR that reviews the migration (a positive integer); the reason
+is required. After that PR merges, the pipeline runs the file automatically:
+staging, smoke tests, then production. Describe in the PR what rows change and
+how to recover; split larger changes into add, migrate, remove steps. Contract
+migrations (`-- migrate: contract`) keep the owner window.
+
+`pnpm check:migrations` (CI: `Source checks`) runs
+`scripts/check-reviewed-data-migrations.mjs`, which fails a pull request that
+adds or edits such a migration without a valid marker, or with a malformed one.
+Migrations already on `main` are not re-checked. Its rule,
+`scripts/automatic-migration-sql.mjs`, is a copy of the deploy side's
+`assertAutomaticSql` in the private operations repository; change both
+together. Neither file may be imported by `check-migrations.mjs`, `migrate.mjs`
+or `migration-steps.mjs`, whose bytes are part of the migration execution
+identity.
 
 The generator takes the later of the current UTC second and the latest local
 migration ID plus one second. It reserves IDs atomically across this clone's

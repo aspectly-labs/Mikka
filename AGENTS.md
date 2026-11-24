@@ -92,6 +92,12 @@ then switch all code and backfill, then contract in a separate later migration.
 comment and review of that evidence. The marker is a reviewed exception,
 not permission to remove a live reader's column. Preserve executed migration
 names and bytes; deployment rollback restores code/artifacts, not deleted data.
+A new or changed migration outside the pipeline's automatic (additive) subset —
+a backfill, `UPDATE`/`DELETE`/`INSERT`, `DROP INDEX`, `DO`/`EXECUTE`/`CALL`, a
+unique or partial index on an existing table — needs a leading
+`-- migrate: reviewed-data #<PR> <what it changes>` comment (Alex, 2026-11-24).
+The pipeline then runs it after merge like any other migration;
+`scripts/check-reviewed-data-migrations.mjs` fails the PR without it.
 
 ## Cursor Cloud runtime
 

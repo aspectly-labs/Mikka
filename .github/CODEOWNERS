@@ -30,6 +30,8 @@
 /drizzle/                 @alexj11324
 /scripts/migrate.mjs      @alexj11324
 /scripts/check-migrations*.mjs @alexj11324
+/scripts/check-reviewed-data-migrations*.mjs @alexj11324
+/scripts/automatic-migration-sql*.mjs @alexj11324
 /.github/workflows/       @alexj11324
 /next.config.mjs          @alexj11324
 /package.json             @alexj11324

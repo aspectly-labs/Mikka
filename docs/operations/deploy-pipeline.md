@@ -25,8 +25,10 @@ receipt stops the run; the reviewed qualification workflow must be run again.
 
 The service diff compares deployment digests, then deploys changed services in
 dependency order: World, Task, LiteLLM, Eve, API, Web. Unchanged services retain
-their original source and artifacts. Additive migrations are checked separately
-and run before service updates. A first release uses an explicit null baseline;
+their original source and artifacts. Additive migrations, and data migrations
+marked `-- migrate: reviewed-data #<PR> <reason>` by their reviewed pull request
+([development workflow § 6](../dev-workflow.md#data-changing-migrations-mark-them-in-the-pr)),
+are checked separately and run before service updates. A first release uses an explicit null baseline;
 the publisher must capture real existing versions and images before that first
 write. A partial or completed pipeline marker prevents a second bootstrap.
 
