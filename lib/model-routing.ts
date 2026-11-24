@@ -7,11 +7,15 @@ export const MODEL_ROUTING_TIERS = ['light', 'standard', 'strongest'] as const
 /** Version-1 snapshots only: frozen runs from before the tier judgement. */
 export const MODEL_ROUTING_DIFFICULTIES = ['easy', 'medium', 'hard'] as const
 export const MODEL_ROUTING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+export const MODEL_SERVICE_TIERS = ['standard', 'fast', 'ultrafast'] as const
+export const MODEL_SPEED_MODES = ['fast', 'ultrafast'] as const
 /** difficulty_fit keeps its frozen ID: in version 2 it means "fits the judged tier". */
 export const MODEL_ROUTING_REASONS = ['difficulty_fit', 'list_order', 'low_confidence', 'decision_unavailable', 'invalid_answer', 'no_selection', 'escalated'] as const
 export type ModelRoutingTier = typeof MODEL_ROUTING_TIERS[number]
 export type ModelRoutingDifficulty = typeof MODEL_ROUTING_DIFFICULTIES[number]
 export type ModelRoutingEffort = typeof MODEL_ROUTING_EFFORTS[number]
+export type ModelServiceTier = typeof MODEL_SERVICE_TIERS[number]
+export type ModelSpeedMode = typeof MODEL_SPEED_MODES[number]
 export type RoutingReason = typeof MODEL_ROUTING_REASONS[number]
 export type ModelRoutingReason = RoutingReason
 
@@ -72,4 +76,32 @@ const EFFORT_MODELS: Readonly<Record<OrderHarness, Readonly<Record<string, reado
 export function supportedModelEfforts(model: string, harness: OrderHarness): readonly ModelRoutingEffort[] {
   const models = EFFORT_MODELS[harness]
   return Object.hasOwn(models, model) ? models[model] : NO_EFFORTS
+}
+
+const NO_SPEEDS = Object.freeze<ModelSpeedMode[]>([])
+const FAST_ONLY = Object.freeze<ModelSpeedMode[]>(['fast'])
+const FAST_AND_ULTRAFAST = Object.freeze<ModelSpeedMode[]>(['fast', 'ultrafast'])
+
+/**
+ * Serving speed modes a candidate model can offer in the ModelPicker (Capy
+ * Fast mode / Ultrafast). When an account catalogue explicitly advertises
+ * `prioritySupported === false`, no speed tier is offered.
+ */
+export function supportedModelSpeedModes(
+  model: string,
+  harness: OrderHarness,
+  options: { provider?: string; prioritySupported?: boolean } = {},
+): readonly ModelSpeedMode[] {
+  if (options.prioritySupported === false) return NO_SPEEDS
+  const lower = model.trim().toLowerCase()
+  const bare = lower.includes('/') ? lower.slice(lower.indexOf('/') + 1) : lower
+  const isOpenAiFamily = options.provider === 'codex' || options.provider === 'openai'
+    || lower.startsWith('openai/') || /^gpt-(?:5|6)|^o[345]/.test(bare)
+  if (harness === 'codex' && (options.prioritySupported === true || isOpenAiFamily)) {
+    return FAST_AND_ULTRAFAST
+  }
+  if (harness === 'claude_code' && (bare.startsWith('claude-opus-') || bare.startsWith('claude-fable-'))) {
+    return FAST_ONLY
+  }
+  return NO_SPEEDS
 }

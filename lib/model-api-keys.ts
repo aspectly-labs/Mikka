@@ -16,7 +16,7 @@ import { stopRunsUsingApiKeys } from '@/lib/model-api-key-runs'
 import { openSecret, sealSecret, SecretsKeyMissingError } from '@/lib/secrets/crypto'
 import { WorkspaceError } from '@/lib/workspace-error'
 import {
-  API_KEY_PRESET_ENDPOINTS, API_KEY_PRESETS, apiKeyChatBaseUrl, apiKeyHarnesses, apiKeyProtocols, customModelsUrl,
+  API_KEY_PRESET_ENDPOINTS, API_KEY_PRESETS, apiKeyChatBaseUrl, apiKeyProtocols, customModelsUrl, gatewayKeyHarnesses,
   type ApiKeyHarness, type ApiKeyProtocol, type ApiKeyProvider, type ApiKeyView,
 } from '@/lib/model-api-key-providers'
 
@@ -35,7 +35,12 @@ const MAX_BODY = 2 * 1024 * 1024
 const modelId = z.string().trim().min(1).max(128)
 
 export const addApiKeyInput = z.discriminatedUnion('provider', [
-  z.strictObject({ provider: z.enum(API_KEY_PRESETS), apiKey: z.string().trim().min(8).max(512) }),
+  z.strictObject({
+    provider: z.enum(API_KEY_PRESETS),
+    name: z.string().trim().min(1).max(60).optional(),
+    apiKey: z.string().trim().min(8).max(512),
+    replaceId: z.uuid().optional(),
+  }),
   z.strictObject({
     provider: z.literal('custom'),
     name: z.string().trim().min(1).max(60),
@@ -43,9 +48,19 @@ export const addApiKeyInput = z.discriminatedUnion('provider', [
     protocol: z.enum(['anthropic', 'openai']),
     apiKey: z.string().trim().min(8).max(512),
     models: z.array(modelId).max(MAX_MODELS).optional(),
+    replaceId: z.uuid().optional(),
   }),
 ])
 export type AddApiKeyInput = z.infer<typeof addApiKeyInput>
+
+export const updateApiKeyInput = z.strictObject({
+  name: z.string().trim().max(60).nullable().optional(),
+  baseUrl: z.string().trim().min(1).max(500).optional(),
+  protocol: z.enum(['anthropic', 'openai']).optional(),
+  apiKey: z.string().trim().min(8).max(512).optional(),
+  models: z.array(modelId).max(MAX_MODELS).optional(),
+})
+export type UpdateApiKeyInput = z.infer<typeof updateApiKeyInput>
 
 export type ApiKeyVerifyResult = { ok: true; models: string[] } | { ok: false; code: 'invalid' | 'unavailable' }
 
@@ -104,9 +119,11 @@ function modelsTarget(row: Pick<Row, 'provider' | 'baseUrl' | 'protocol'>): { mo
   return { modelsUrl: preset.modelsUrl, auth: preset.modelsAuth }
 }
 
-/** The page's list: the owner's keys, each with whether it is shared in this workspace. */
+/** The page's list: the owner's keys, teammates' workspace-shared keys, and whether keys can be shared here. */
 export interface ApiKeysPage {
   keys: (ApiKeyView & { shared: boolean })[]
+  /** Teammates' keys shared into this workspace (read-only for borrowers, populated by workspace-aware callers). */
+  sharedKeys?: (UsableApiKey & { ownerName: string })[]
   /** A team workspace where the admin allows members' credentials: the 分享给团队成员 switch shows. */
   canShare: boolean
   apiKeyAfterQuota: boolean
@@ -124,10 +141,11 @@ export async function listApiKeys(query: Query, ownerId: string, workspace: { id
 }
 
 /**
- * Checks the key with the provider, then saves it sealed. A preset provider
- * has one key per person: adding another replaces it (its shares stay).
+ * Checks the key with the provider, then saves it sealed. Multiple keys per
+ * preset or custom provider are supported (decision 2026-11-23); pass
+ * `replaceId` to rotate an owned key in place while keeping its shares.
  * Errors: apiKeyInvalid (401/403), apiKeyUnverifiable (anything else),
- * apiKeyBaseUrlInvalid, secretsUnavailable. The key is never logged.
+ * apiKeyBaseUrlInvalid, apiKeyNotFound, secretsUnavailable. The key is never logged.
  */
 export async function addApiKey(query: Query, ownerId: string, input: unknown, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
   const parsed = addApiKeyInput.parse(input)
@@ -137,8 +155,14 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   // A preset's own protocols are its endpoints (apiKeyProtocols); the column keeps its first, for older readers.
   const protocol: ApiKeyProtocol = custom ? custom.protocol : apiKeyProtocols({ provider: parsed.provider, protocol: 'anthropic' })[0]
   const target = modelsTarget({ provider: parsed.provider, baseUrl, protocol })
-  const existing = custom ? undefined : (await query.query<{ id: string }>('SELECT id FROM model_api_keys WHERE "ownerId"=$1 AND provider=$2', [ownerId, parsed.provider])).rows[0]
-  const id = existing?.id ?? randomUUID()
+  let id: string
+  if (parsed.replaceId) {
+    const existing = (await query.query<{ id: string; provider: ApiKeyProvider }>('SELECT id,provider FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [parsed.replaceId, ownerId])).rows[0]
+    if (!existing || existing.provider !== parsed.provider) throw new WorkspaceError('apiKeyNotFound')
+    id = existing.id
+  } else {
+    id = randomUUID()
+  }
   let sealed: ReturnType<typeof sealSecret>
   try { sealed = sealSecret(parsed.apiKey, keyAad(id, ownerId), env) } catch (error) {
     if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
@@ -150,12 +174,65 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   const models = custom?.models?.length ? [...new Set(custom.models)] : result.models
   // LiteLLM converts Chat Completions to Responses; no native inference probe.
   const responsesApi = true
+  const name = parsed.name ?? null
   const { rows: [row] } = await query.query<Row>(`INSERT INTO model_api_keys (id,"ownerId",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi")
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
-    ON CONFLICT (id) DO UPDATE SET ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","updatedAt"=now()
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","updatedAt"=now()
     RETURNING ${COLUMNS}`,
-  [id, ownerId, parsed.provider, custom?.name ?? null, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi])
+  [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi])
   return view(row)
+}
+
+/**
+ * Updates an owned key's label, custom endpoint settings, or secret key in place.
+ * Preserves existing workspace shares and enabled-model flags. When rotating the
+ * key or changing a custom endpoint/protocol, re-verifies against the provider.
+ */
+export async function updateApiKey(query: Query, ownerId: string, id: string, input: unknown, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
+  z.uuid().parse(id)
+  const parsed = updateApiKeyInput.parse(input)
+  const env = options.env ?? process.env
+  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`, [id, ownerId])
+  if (!row) throw new WorkspaceError('apiKeyNotFound')
+  const isCustom = row.provider === 'custom'
+  if (!isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined || parsed.models !== undefined)) {
+    throw new WorkspaceError('validationGeneric')
+  }
+  const nextName = parsed.name === undefined ? row.name : (parsed.name && parsed.name.trim() ? parsed.name.trim() : isCustom ? row.name : null)
+  if (isCustom && !nextName) throw new WorkspaceError('validationGeneric')
+  const nextBaseUrl = isCustom && parsed.baseUrl !== undefined ? await checkBaseUrl(parsed.baseUrl, env, options.resolve) : row.baseUrl
+  const nextProtocol: ApiKeyProtocol = isCustom && parsed.protocol !== undefined ? parsed.protocol : row.protocol
+  const needsVerify = parsed.apiKey !== undefined || (isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined))
+  let nextModels = row.models
+  let nextModelsError = row.modelsError ?? null
+  if (needsVerify) {
+    const secretToVerify = parsed.apiKey ?? (await openKey(query, id, env)).apiKey
+    const result = await verifyApiKey(modelsTarget({ provider: row.provider, baseUrl: nextBaseUrl, protocol: nextProtocol }), secretToVerify, options.fetch)
+    if (!result.ok) throw new WorkspaceError(result.code === 'invalid' ? 'apiKeyInvalid' : 'apiKeyUnverifiable')
+    nextModels = isCustom && parsed.models?.length ? [...new Set(parsed.models)] : (result.models.length || !isCustom ? result.models : row.models)
+    nextModelsError = null
+  } else if (isCustom && parsed.models !== undefined) {
+    nextModels = [...new Set(parsed.models)]
+  }
+  if (parsed.apiKey !== undefined) {
+    let sealed: ReturnType<typeof sealSecret>
+    try { sealed = sealSecret(parsed.apiKey, keyAad(id, ownerId), env) } catch (error) {
+      if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
+      throw error
+    }
+    const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
+      SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"updatedAt"=now()
+      WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
+    [id, ownerId, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError])
+    if (!saved) throw new WorkspaceError('apiKeyNotFound')
+    return view(saved)
+  }
+  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
+    SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"updatedAt"=now()
+    WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
+  [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError])
+  if (!saved) throw new WorkspaceError('apiKeyNotFound')
+  return view(saved)
 }
 
 /**
@@ -288,10 +365,10 @@ export async function setApiKeyFeatures(query: Query, ownerId: string, id: strin
 export interface BotApiKeyChoice { keyId: string; model: string; harnesses: ApiKeyHarness[] }
 
 export async function botApiKeyChoice(query: Query, scope: { ownerId: string; workspaceId: string }, botId: string | null): Promise<BotApiKeyChoice | undefined> {
-  const { rows: [row] } = await query.query<{ apiKeyId: string; apiKeyModel: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; responsesApi: boolean }>(
-    `SELECT c."apiKeyId",c."apiKeyModel",k.provider,k.protocol,k."responsesApi" FROM bot_model_choices c JOIN model_api_keys k ON k.id=c."apiKeyId"
+  const { rows: [row] } = await query.query<{ apiKeyId: string; apiKeyModel: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; responsesApi: boolean; baseUrl: string | null }>(
+    `SELECT c."apiKeyId",c."apiKeyModel",k.provider,k.protocol,k."responsesApi",k."baseUrl" FROM bot_model_choices c JOIN model_api_keys k ON k.id=c."apiKeyId"
     WHERE c."ownerId"=$1 AND c."workspaceId"=$2 AND c."botKey"=$3`, [scope.ownerId, scope.workspaceId, botId ?? 'coordinator'])
-  return row && { keyId: row.apiKeyId, model: row.apiKeyModel, harnesses: apiKeyHarnesses(row) }
+  return row && { keyId: row.apiKeyId, model: row.apiKeyModel, harnesses: gatewayKeyHarnesses(row) }
 }
 
 /**
@@ -311,7 +388,7 @@ export async function setBotApiKeyChoice(query: Query, scope: { ownerId: string;
   await query.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId","apiKeyId","apiKeyModel") VALUES ($1,$2,$3,NULL,$4,$5)
     ON CONFLICT ("ownerId","workspaceId","botKey") DO UPDATE SET "bindingId"=NULL,"apiKeyId"=EXCLUDED."apiKeyId","apiKeyModel"=EXCLUDED."apiKeyModel","creditsModel"=NULL`,
   [scope.ownerId, scope.workspaceId, botId ?? 'coordinator', keyId, modelName])
-  return { keyId, model: modelName, harnesses: apiKeyHarnesses(key) }
+  return { keyId, model: modelName, harnesses: gatewayKeyHarnesses(key) }
 }
 
 /**

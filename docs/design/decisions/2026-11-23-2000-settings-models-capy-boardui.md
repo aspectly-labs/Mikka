@@ -1,0 +1,26 @@
+# Settings › Models redesign: Capy personal/workspace connections + Default Harness/Model + Fast/Ultrafast + LiteLLM unification
+
+**Date:** 2026-11-23  
+**Decider:** Alex  
+**Status:** Accepted
+
+## Context
+
+The previous `Settings › Models` screen suffered from three structural defects:
+
+1. **Broken ownership hierarchy & duplicate model toggles:** Personal subscriptions, personal API keys, and shared workspace credentials were flattened into a single list alongside a separate bottom "Model catalogue" table and an extra modal (`ApiKeyModelsDialog`), obscuring personal vs. workspace ownership and duplicating model enablement.
+2. **Inconsistent defaults & missing speed-tier controls:** Default model selection and reasoning effort were split across separate non-standard controls without reusing the shipped BoardUI Pro `ModelPicker` (provider rail on left, models on right, matching the chat composer picker) or exposing Capy-style mutually exclusive `Fast mode` / `Ultrafast` serving tiers on capable models (such as Codex).
+3. **Stale pre-LiteLLM harness filtering & single-key preset restriction:** `orderCandidates` and `botApiKeyChoice` still filtered API keys with direct-protocol `apiKeyHarnesses`, excluding OpenAI-compatible keys (`openai`, OpenRouter, custom OpenAI-compatible endpoints) from Claude Code even though Mikka's unified LiteLLM model gateway translates `/v1/messages` and `/v1/responses` onto OpenAI-compatible upstreams (`2026-11-15-2000`, `2026-11-20-0530`). Adding a preset API key also overwrote any prior key for that provider instead of allowing multiple keys.
+
+## Decisions
+
+1. **Capy personal vs. workspace hierarchy:** `Settings › Models` has four cards: `默认` (Defaults), `你的连接` (Your connections: personal subscriptions with Tembo horizontal 5-hour/weekly usage bars + personal API keys), `工作区连接` (Workspace connections: shared team API keys + `Mikka 额度`), and `额度用完时` (same-model fallback policy, never cross-Agent). Subscriptions remain strictly owner-only (`2026-11-17-1400`) and never appear in workspace connections.
+2. **Inline per-connection model selection:** Model enablement lives inside each expandable connection row (subscription, personal API key, workspace API key, and `Mikka 额度`) using `useEnabledModels`. The duplicate bottom "Model catalogue" table, `OrderSection`, and `ApiKeyModelsDialog` are deleted.
+3. **Two-row `默认` card (`默认 Harness` + `默认模型`) with BoardUI Pro `ModelPicker` + Capy Fast/Ultrafast toggles:**
+   - Row 1 (`默认 Harness`): `SegmentedControl` switching between `Claude Code` and `Codex` (persisted in `model_order_settings.preferredHarness`).
+   - Row 2 (`默认模型`): Standard shipped BoardUI Pro `ModelPicker` with **Provider rail on the left** (`常用` + `Anthropic`, `OpenAI`, `DeepSeek`, `Google`, `Moonshot`, …) and **Models on the right** (consistent with chat composer `slots/model-picker.tsx`), automatically filtered to models compatible with the selected Harness.
+   - Inside the selected model's Effort popover (below the shipped 6-stop `EffortSlider`, persisted to `model_order_settings.defaultEffort`), capable models expose Capy's mutually exclusive **Fast mode** and **Ultrafast** toggles (persisted to `model_order_settings.defaultServiceTier`), with the active effort and speed reflected concisely on the picker trigger.
+4. **Capy `ModelRouteMark` everywhere:** Subscription rows use the subscription service mark with no badge or price; BYOK API key rows use the vendor mark with the bottom-right `KeyRound` cutout (`ModelRouteMark`) and no price; `Mikka 额度` rows use the bare vendor mark with list price only on Mikka Credits rows. The obsolete `ModelSourceBadge` is removed.
+5. **Unlimited multi-key Add Connection:** Adding an API key never hides, disables, or marks a provider card as connected in the Add Connection drawer. `model_api_keys_owner_provider_key` is dropped so users can hold multiple keys per preset provider (e.g., personal + workspace-shared DeepSeek keys), while `updateApiKey` / `replaceId` supports editing or rotating an existing key in place.
+6. **Unified LiteLLM gateway harness eligibility:** `gatewayKeyHarnesses` admits any OpenAI-compatible API key (`openai`, `deepseek`, `kimi`, and `custom` with `protocol: 'openai'`) on both `claude_code` and `codex`; Anthropic-protocol keys serve `claude_code`.
+7. **Reachable placement of moved settings:** `LocationSection` (cloud/local run location & E2B key) moves to `Settings › Run environments`, and `ProfilesSection` (Agent profiles) moves to `Settings › Instructions` so no setting is orphaned.

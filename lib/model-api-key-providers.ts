@@ -51,8 +51,22 @@ export type ApiKeyAgentFields = Pick<ApiKeyView, 'provider' | 'protocol' | 'resp
  */
 const agentProtocols = (key: ApiKeyAgentFields) => apiKeyProtocols(key).filter(protocol => protocol !== 'openai' || key.responsesApi)
 
-/** The Agents that can run a key's models (Claude Code first). */
+/** The Agents that can run a key's models natively (Claude Code first). */
 export const apiKeyHarnesses = (key: ApiKeyAgentFields): ApiKeyHarness[] => agentProtocols(key).map(protocolHarness)
+
+/**
+ * The Agents that can run a key's models through Mikka's unified LiteLLM model
+ * gateway (decisions 2026-11-15-2000 & 2026-11-20-0530): LiteLLM translates
+ * Anthropic Messages (Claude Code) and OpenAI Responses (Codex) onto any
+ * OpenAI-compatible key (OpenAI, DeepSeek, Kimi, OpenRouter, custom OpenAI-compatible).
+ * Anthropic-protocol keys serve Claude Code.
+ */
+export function gatewayKeyHarnesses(key: Pick<ApiKeyView, 'provider' | 'protocol' | 'responsesApi' | 'baseUrl'>): ApiKeyHarness[] {
+  const openaiCompatible = key.provider === 'openai' || key.provider === 'deepseek' || key.provider === 'kimi'
+    || (key.provider === 'custom' && key.protocol === 'openai')
+  if (!openaiCompatible) return ['claude_code']
+  return key.responsesApi ? ['claude_code', 'codex'] : ['claude_code']
+}
 
 /** What one Agent talks to with this key, or null when the key does not serve that Agent. */
 export function apiKeyEndpoint(key: ApiKeyAgentFields & Pick<ApiKeyView, 'baseUrl'>, harness: ApiKeyHarness): { protocol: ApiKeyProtocol; baseUrl: string } | null {

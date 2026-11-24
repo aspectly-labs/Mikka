@@ -1,9 +1,8 @@
 import 'server-only'
 import type { Pool, PoolClient } from 'pg'
 import { apiKeyAfterQuota, botApiKeyChoice, usableApiKeys } from '@/lib/model-api-keys'
-import { apiKeyChatBaseUrl, apiKeyHarnesses, type ApiKeyView } from '@/lib/model-api-key-providers'
+import { gatewayKeyHarnesses, type ApiKeyView } from '@/lib/model-api-key-providers'
 import { isCatalogId, vendorOf } from '@/lib/model-catalog'
-import { gatewayLiteLlm } from '@/lib/model-gateway/config'
 import { subscriptionAvailability } from './subscription-quota'
 
 type Query = Pick<Pool | PoolClient, 'query'>
@@ -25,13 +24,12 @@ async function runKeys(query: Query, ownerId: string, botWorkspaceId: string | n
 }
 
 /**
- * The Agents a key can run through the Mikka model gateway: with LiteLLM
- * converting protocols (decision 2026-11-15-2000), any key whose provider
- * speaks Chat Completions serves both Claude Code and Codex.
+ * The Agents a key can run through the Mikka model gateway: every Mikka-managed
+ * API-key run routes through LiteLLM (decisions 2026-11-15-2000 & 2026-11-20-0530),
+ * so any OpenAI-compatible key serves both Claude Code and Codex.
  */
-export function runKeyHarnesses(key: Pick<ApiKeyView, 'provider' | 'protocol' | 'responsesApi' | 'baseUrl'>, env: Record<string, string | undefined> = process.env): string[] {
-  const native = apiKeyHarnesses(key)
-  return gatewayLiteLlm(env) && apiKeyChatBaseUrl(key) ? Array.from(new Set([...native, 'claude_code', 'codex'])) : native
+export function runKeyHarnesses(key: Pick<ApiKeyView, 'provider' | 'protocol' | 'responsesApi' | 'baseUrl'>): string[] {
+  return gatewayKeyHarnesses(key)
 }
 
 /** The presets that sell a catalogue vendor's models under their own ids. */

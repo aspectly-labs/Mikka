@@ -20,7 +20,7 @@ import { ISSUE_STATUS_CODES, ISSUE_PRIORITY_CODES } from '@/lib/issue-meta'
 import { createIssueStateInput, deleteIssueStateInput, reorderIssueStatesInput, setDefaultIssueStateInput, updateIssueStateInput } from '@/lib/issue-states'
 import { taskDestinationSchema } from '@/lib/task-destination'
 import { BOT_DEFAULT_AGENTS, botRunsOnSchema } from '@/lib/bot-settings'
-import { MODEL_ROUTING_EFFORTS } from '@/lib/model-routing'
+import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS } from '@/lib/model-routing'
 import { API_KEY_PRESETS } from '@/lib/model-api-key-providers'
 import { gatewayFeaturesSchema } from '@/lib/model-gateway/features'
 import { setAppPolicyInput } from '@/lib/app-policy/apps'
@@ -85,11 +85,20 @@ const orderChange = z.discriminatedUnion('kind', [
   object({ kind: z.literal('remove'), id }), object({ kind: z.literal('reorder'), ids: z.array(id).max(400) }),
   object({ kind: z.literal('location'), location: z.enum(['cloud', 'local']) }), object({ kind: z.literal('autoRouting'), enabled: bool }),
   object({ kind: z.literal('preferred'), harness }), object({ kind: z.literal('harness'), id, harness }),
+  object({ kind: z.literal('effort'), effort: z.enum(MODEL_ROUTING_EFFORTS) }),
+  object({ kind: z.literal('serviceTier'), serviceTier: z.enum(MODEL_SERVICE_TIERS) }),
 ])
 const apiKey = z.discriminatedUnion('provider', [
-  object({ provider: z.enum(API_KEY_PRESETS), apiKey: text(512).trim().min(8) }),
-  object({ provider: z.literal('custom'), name: text(60).trim().min(1), baseUrl: text(500).trim().min(1), protocol: z.enum(['anthropic', 'openai']), apiKey: text(512).trim().min(8), models: z.array(text(128).trim().min(1)).max(200).optional() }),
+  object({ provider: z.enum(API_KEY_PRESETS), apiKey: text(512).trim().min(8), name: text(60).trim().optional(), replaceId: uuid.optional() }),
+  object({ provider: z.literal('custom'), name: text(60).trim().min(1), baseUrl: text(500).trim().min(1), protocol: z.enum(['anthropic', 'openai']), apiKey: text(512).trim().min(8), models: z.array(text(128).trim().min(1)).max(200).optional(), replaceId: uuid.optional() }),
 ])
+const updateApiKeyInput = object({
+  name: text(60).trim().nullable().optional(),
+  apiKey: text(512).trim().min(8).optional(),
+  baseUrl: text(500).trim().min(1).optional(),
+  protocol: z.enum(['anthropic', 'openai']).optional(),
+  models: z.array(text(128).trim().min(1)).max(200).optional(),
+})
 const preferences = object({
   archiveIdleAfterDays: z.literal(archiveIdleDays).optional(),
   proactive: bool, pushDecide: bool, pushReview: bool, pushFinished: bool, pushBriefing: bool,
@@ -397,7 +406,8 @@ export const desktopActionSchemas = {
   'model-api-keys.getApiKeys': inWorkspace,
   'model-api-keys.refetchApiKeyModels': tuple(uuid, workspace),
   'model-api-keys.updateApiKeyAfterQuota': tuple(bool, workspace),
-  'model-api-keys.createApiKey': tuple(apiKey, workspace),
+  'model-api-keys.createApiKey': tuple(apiKey, workspace, object({ share: bool.optional() }).optional()),
+  'model-api-keys.updateApiKey': tuple(uuid, updateApiKeyInput, workspace),
   'model-api-keys.deleteApiKey': tuple(uuid, workspace),
   'model-api-keys.updateApiKeyShare': tuple(object({ id: uuid, shared: bool }), workspace),
   'model-api-keys.updateApiKeyFeatures': tuple(uuid, gatewayFeaturesSchema, workspace),

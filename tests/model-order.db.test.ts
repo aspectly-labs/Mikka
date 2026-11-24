@@ -719,4 +719,33 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     assert.equal(sub.kind === 'device' && sub.entry.source.kind, 'subscription')
   })
 
+  await t.test('OpenAI-compatible API keys appear on both Claude Code and Codex and defaultEffort + defaultServiceTier persist', async () => {
+    const scope = await person('gateway-openai-compat-effort')
+    const codexSub = await subscribe(scope, 'codex', ['gpt-5.3-codex', 'gpt-no-priority'])
+    await pool.query(
+      `UPDATE byos_connections SET "modelCatalog"=jsonb_build_object('revision','1','models',jsonb_build_array('gpt-5.3-codex','gpt-no-priority'),'priorityVersion',1,'prioritySupport',jsonb_build_object('gpt-5.3-codex',true,'gpt-no-priority',false)) WHERE id=$1`,
+      [codexSub],
+    )
+    const openaiKey = await keys.addApiKey(pool, scope.ownerId, { provider: 'openai', apiKey: `sk-${randomBytes(12).toString('hex')}` }, { fetch: (async () => Response.json({ data: [{ id: 'gpt-5-compat' }] })) as unknown as typeof fetch })
+    const customOpenAi = await keys.addApiKey(pool, scope.ownerId, { provider: 'custom', name: 'OpenRouter Proxy', baseUrl: 'https://openrouter.example.com/api/v1', protocol: 'openai', apiKey: `sk-${randomBytes(12).toString('hex')}` }, { fetch: (async () => Response.json({ data: [{ id: 'google/gemini-2.5-pro' }] })) as unknown as typeof fetch, resolve: async () => ['93.184.216.34'] })
+    let view = await order.orderView(pool, scope)
+    assert.equal(view.defaultEffort, 'medium')
+    assert.equal(view.defaultServiceTier, 'standard')
+    const openaiHarnesses = view.candidates.filter(c => c.source.kind === 'api_key' && c.source.keyId === openaiKey.id).map(c => c.harness).sort()
+    const customHarnesses = view.candidates.filter(c => c.source.kind === 'api_key' && c.source.keyId === customOpenAi.id).map(c => c.harness).sort()
+    assert.deepEqual(openaiHarnesses, ['claude_code', 'codex'])
+    assert.deepEqual(customHarnesses, ['claude_code', 'codex'])
+    const codexFast = view.candidates.find(c => c.source.kind === 'subscription' && c.model === 'gpt-5.3-codex')
+    const codexNoPriority = view.candidates.find(c => c.source.kind === 'subscription' && c.model === 'gpt-no-priority')
+    assert.deepEqual(codexFast?.speedModes, ['fast', 'ultrafast'])
+    assert.equal(codexNoPriority?.speedModes, undefined)
+    await order.changeOrder(pool, scope, { kind: 'effort', effort: 'xhigh' })
+    await order.changeOrder(pool, scope, { kind: 'serviceTier', serviceTier: 'ultrafast' })
+    view = await order.orderView(pool, scope)
+    assert.equal(view.defaultEffort, 'xhigh')
+    assert.equal(view.defaultServiceTier, 'ultrafast')
+    await order.changeOrder(pool, scope, { kind: 'serviceTier', serviceTier: 'standard' })
+    assert.equal((await order.orderView(pool, scope)).defaultServiceTier, 'standard')
+  })
+
 })
