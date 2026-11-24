@@ -498,7 +498,7 @@ export async function getThreadSummary(issueId: string | null, runId: string) {
       readThreadMachine(pool, user.id, runIds),
       readContextUsage(runIds, row.id, latestRunId),
       readThreadLocation(pool, user.id, latestRunId),
-      readThreadCost(pool, { ownerId: user.id, workspaceId: row.workspaceId, runId: row.id, groupBy: 'thread' })])
+      row.workspaceId === null ? Promise.resolve(null) : readThreadCost(pool, { ownerId: user.id, workspaceId: row.workspaceId, runId: row.id, groupBy: 'thread' })])
     const { catalogIdFor, catalogModel } = await import('@/lib/model-catalog')
     // The current attempt's model decides the window: after a continuation
     // changes models, context.model is still the frozen original's.
