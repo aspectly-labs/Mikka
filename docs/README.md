@@ -38,6 +38,9 @@ for the part of Mikka you are changing. Development and acceptance rules live in
   structure for a feature specification.
 - [Execution rules](execution-rules.md) describe model and machine selection.
 - [Settings](settings.md) maps personal and workspace settings.
+- [7-layer primitive architecture](architecture/primitives.md) maps Mikka's
+  executable UI, error, route-guard, conversation-protocol, SQL-safety, ops and
+  rule-as-code primitives to their owning modules and CI gates.
 
 ## Connect and run Mikka
 
