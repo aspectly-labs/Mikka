@@ -5,7 +5,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { isSmokeAccountEmail } from '../../lib/smoke-account.ts'
 import {
-  CASES, ORIGIN, REPOSITORY, successfulRelease, publicFailure as acceptanceFailure,
+  CASES, ORIGIN, REPOSITORY, successfulRelease, workerReleaseProof, publicFailure as acceptanceFailure,
 } from './project-decisions.mjs'
 import { assertWorkspaceIdle, caseOrderPlan, orderFingerprint, ownedSource } from './model-order-cases.mjs'
 import { discoverRpcActions, releaseHeaders, releaseVersionGuard } from './rpc-actions.mjs'
@@ -51,26 +51,16 @@ export function triggerGuard(env, event, plan) {
 
 /** A successful hash-comparison workflow may have skipped both publication jobs. */
 export function runtimePublicationProof(worker, jobs, applicationSha) {
-  if (!worker) return { status: 'unproven', code: 'release_missing', sourceCommit: null, workerSha: null }
-  const base = { runId: worker.id, sourceCommit: null, workerSha: null }
-  if (!Array.isArray(jobs)) return { ...base, status: 'unproven', code: 'jobs_unavailable' }
-  const matching = name => jobs.filter(job => job?.name === name && job.run_id === worker.id)
-  const [validate] = matching('validate'), [publish] = matching('publish')
-  if (matching('validate').length !== 1 || matching('publish').length !== 1)
-    return { ...base, status: 'unproven', code: 'jobs_unavailable' }
-  if (validate.conclusion === 'skipped' || publish.conclusion === 'skipped')
-    return { ...base, status: 'not_published', code: 'publish_skipped' }
-  const completed = (job, stepName) => job.status === 'completed' && job.conclusion === 'success'
-    && Number.isSafeInteger(job.id) && job.id > 0 && job.steps?.filter(step => step.name === stepName
-      && step.status === 'completed' && step.conclusion === 'success').length === 1
-  if (!completed(validate, 'Validate new official instances without template mutation')
-    || !completed(publish, 'Publish the verified official runtime pair'))
-    return { ...base, status: 'unproven', code: 'publish_unproven' }
-  // This workflow verifies sourceCommit==GITHUB_SHA before publish and passes
-  // that SHA as MIKKA_CLOUD_WORKER_SOURCE_COMMIT. The content hash is different;
-  // it is not exposed by the jobs API and must never be invented from app SHA.
-  return { ...base, status: 'published', sourceCommit: applicationSha, sourceEvidence: 'verified_publish_step',
-    validateJobId: validate.id, publishJobId: publish.id }
+  const proof = workerReleaseProof(worker, jobs)
+  const base = { ...(worker ? { runId: worker.id } : {}), sourceCommit: null, workerSha: null }
+  if (proof.status === 'published') {
+    // The release workflow verifies sourceCommit against the promoted Web commit.
+    // The content hash is different; it is not exposed by the jobs API and must never be invented from app SHA.
+    return { ...base, status: 'published', sourceCommit: applicationSha, sourceEvidence: 'verified_publish_step',
+      validateJobId: proof.validateJobId, publishJobId: proof.publishJobId }
+  }
+  if (proof.status === 'unchanged') return { ...base, status: 'not_published', code: 'publish_skipped' }
+  return { ...base, status: 'unproven', code: proof.code }
 }
 
 /** Public Web identity is required before credentials. Runtime proof stays separate from read-only metadata. */

@@ -107,13 +107,70 @@ export function triggerGuard(env, event) {
     && (event?.inputs?.mode ?? 'preflight') === mode, 'trigger_rejected')
   return { revision, mode }
 }
-export function successfulRelease(runs, revision, kind) {
-  const name = kind === 'web' ? 'Web deploy' : 'E2B official instance runtime'
-  const path = kind === 'web' ? '.github/workflows/web-deploy.yml' : '.github/workflows/e2b-official-runtime.yml'
-  return (Array.isArray(runs) ? runs : []).find(run => Number.isSafeInteger(run?.id) && run.id > 0
-    && run.name === name && run.path === path && ['push', 'workflow_dispatch'].includes(run.event)
+const WORKER_RELEASE_NAME = 'E2B additive runtime release'
+const WORKER_RELEASE_PATH = '.github/workflows/e2b-official-runtime.yml'
+const WORKER_INPUTS_STEP = 'Compare canonical worker inputs across this push and check failed attempts'
+const WORKER_VALIDATE_STEP = 'Build private versioned candidates and require official file conservation'
+const WORKER_PUBLISH_STEP = 'Make only fully accepted candidates public'
+const WORKER_REPORT_STEP = 'Preserve the complete public release report'
+
+function matchingReleases(runs, revision, kind) {
+  const name = kind === 'web' ? 'Web deploy' : WORKER_RELEASE_NAME
+  const path = kind === 'web' ? '.github/workflows/web-deploy.yml' : WORKER_RELEASE_PATH
+  // E2B additive runtime release never publishes on push (github.event_name != 'push');
+  // it evaluates or publishes only on workflow_run (Cloudflare promotion) or workflow_dispatch.
+  const events = kind === 'web' ? ['push', 'workflow_dispatch'] : ['workflow_run', 'workflow_dispatch']
+  return (Array.isArray(runs) ? runs : []).filter(run => Number.isSafeInteger(run?.id) && run.id > 0
+    && run.name === name && run.path === path && events.includes(run.event)
     && run.head_branch === 'main' && run.head_sha === revision && run.head_repository?.full_name === REPOSITORY
-    && run.status === 'completed' && run.conclusion === 'success') ?? null
+    && run.status === 'completed' && run.conclusion === 'success')
+}
+
+export function successfulRelease(runs, revision, kind) {
+  return matchingReleases(runs, revision, kind)[0] ?? null
+}
+
+/** Verify that an E2B additive runtime release run actually evaluated worker
+ * inputs after a promoted Cloudflare deployment (not a failed-deploy no-op)
+ * and either published new templates or confirmed inputs were unchanged. */
+export function workerReleaseProof(worker, jobs) {
+  if (!worker) return { status: 'unproven', code: 'release_missing' }
+  if (!Array.isArray(jobs)) return { status: 'unproven', code: 'jobs_unavailable', runId: worker.id }
+  const byName = name => jobs.filter(job => job?.name === name && job.run_id === worker.id)
+  const one = (name, conclusion) => {
+    const matches = byName(name)
+    return matches.length === 1 && matches[0].status === 'completed' && matches[0].conclusion === conclusion ? matches[0] : null
+  }
+  const stepDone = (job, name) => {
+    const matches = (Array.isArray(job?.steps) ? job.steps : []).filter(step => step?.name === name
+      && step.status === 'completed' && step.conclusion === 'success')
+    return matches.length === 1 ? matches[0] : null
+  }
+  const testJob = one('test', 'success'), checkJob = one('check', 'success')
+  if (!testJob || !checkJob) return { status: 'unproven', code: 'jobs_unavailable', runId: worker.id }
+  // On workflow_run after a failed Cloudflare deploy, trigger.outputs.ready is false
+  // and this step is skipped; such a run never proved the runtime for this revision.
+  if (!stepDone(checkJob, WORKER_INPUTS_STEP)) return { status: 'unproven', code: 'trigger_not_ready', runId: worker.id }
+  const webReady = one('web-ready', 'success')
+  const validate = one('release / validate / build', 'success')
+  const templates = one('release / templates', 'success')
+  if (webReady && validate && templates) {
+    const built = stepDone(validate, WORKER_VALIDATE_STEP)
+    const published = stepDone(templates, WORKER_PUBLISH_STEP)
+    const reported = stepDone(templates, WORKER_REPORT_STEP)
+    const ordered = !Number.isSafeInteger(published?.number) || !Number.isSafeInteger(reported?.number) || published.number < reported.number
+    if (!built || !published || !reported || !ordered || !Number.isSafeInteger(validate.id) || validate.id <= 0
+      || !Number.isSafeInteger(templates.id) || templates.id <= 0) {
+      return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
+    }
+    return { status: 'published', runId: worker.id, validateJobId: validate.id, publishJobId: templates.id }
+  }
+  const skippedWebReady = one('web-ready', 'skipped'), skippedRelease = one('release', 'skipped')
+  const hasNested = jobs.some(job => job?.run_id === worker.id && typeof job.name === 'string' && job.name.startsWith('release / '))
+  if (skippedWebReady && skippedRelease && !hasNested) {
+    return { status: 'unchanged', code: 'publish_skipped', runId: worker.id }
+  }
+  return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
 }
 
 /** Runs before the Infisical action, with no smoke-account environment access. */
@@ -135,19 +192,28 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
   const pin = async () => check(sameRelease(await read(ORIGIN + '/mikka/api/version')), 'build_mismatch')
   const runs = async workflow => read('https://api.github.com/repos/' + REPOSITORY + '/actions/workflows/' + workflow
     + '/runs?head_sha=' + guard.revision + '&per_page=100', true)
+  const runJobs = async runId => read('https://api.github.com/repos/' + REPOSITORY + '/actions/runs/' + runId
+    + '/jobs?filter=latest&per_page=100', true)
   await pin()
   const deadline = now() + (guard.mode === 'active' ? 900000 : 0)
-  let worker
+  let worker, proof
   do {
     await pin()
-    worker = successfulRelease((await runs('e2b-official-runtime.yml')).workflow_runs, guard.revision, 'worker')
+    const candidates = matchingReleases((await runs('e2b-official-runtime.yml')).workflow_runs, guard.revision, 'worker')
+    for (const candidate of candidates) {
+      const evaluated = workerReleaseProof(candidate, (await runJobs(candidate.id)).jobs)
+      if (evaluated.status === 'published' || evaluated.status === 'unchanged') {
+        worker = candidate; proof = evaluated; break
+      }
+    }
     if (worker || now() >= deadline) break
     await wait(30000)
   } while (!worker && now() <= deadline)
   check(worker, 'worker_release')
   await pin()
   return { status: 'ready', issue: 1245, repository: REPOSITORY, ...guard,
-    workerReleaseRunId: worker.id, workerReleaseSha: guard.revision, checkedAt: new Date(now()).toISOString() }
+    workerReleaseRunId: worker.id, workerReleaseSha: guard.revision, workerReleaseStatus: proof.status,
+    checkedAt: new Date(now()).toISOString() }
 }
 
 const ACTION_PAGES = ['/en', '/en?section=projects', '/en/settings?section=models']

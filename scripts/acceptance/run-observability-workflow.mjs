@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { CASES, fixtureTask } from './run-observability.mjs'
 
 const READY = 'mikka_observability_browser_ready'
-const COMMENTS = 'https://api.github.com/repos/alexj11324/Mikka/issues/1512/comments'
+const COMMENTS = 'https://api.github.com/repos/aspectly-labs/Mikka/issues/1512/comments'
 const TOKEN_ENV = 'MIKKA_ACCEPTANCE_PROGRESS_TOKEN'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const codes = new Set(['configuration_required', 'driver_start_failed', 'driver_stream_failed', 'progress_invalid', 'progress_duplicate', 'progress_failed', 'browser_start_failed', 'browser_cleanup_failed', 'interrupted'])
@@ -27,7 +27,7 @@ function settings(args, env) {
   if (browser) check(typeof token === 'string' && token.length > 0 && token.length <= 4096 && !/[\r\n]/.test(token)
     && /^[0-9a-f]{40}$/.test(revision ?? '') && item && Number.isSafeInteger(timeoutMs) && timeoutMs >= 60_000 && timeoutMs <= 600_000, 'configuration_required')
   if (runner) check(env.GITHUB_ACTIONS === 'true' && env.GITHUB_EVENT_NAME === 'workflow_dispatch'
-    && env.GITHUB_REPOSITORY === 'alexj11324/Mikka' && env.GITHUB_REF === 'refs/heads/main'
+    && env.GITHUB_REPOSITORY === 'aspectly-labs/Mikka' && env.GITHUB_REF === 'refs/heads/main'
     && env.GITHUB_SHA === revision, 'configuration_required')
   return { browser, runner, token, revision, item, timeoutMs }
 }
@@ -132,7 +132,7 @@ export async function runObservabilityWorkflow({ args = process.argv.slice(2), e
           // Never read, print or republish GitHub's response body, even on error.
           await response.body?.cancel().catch(() => {})
           check(response.status === 201, 'progress_failed')
-          output('Browser acceptance readiness posted to alexj11324/Mikka#1512.\n')
+          output('Browser acceptance readiness posted to aspectly-labs/Mikka#1512.\n')
           if (config.runner) {
             // Keep draining the driver: duplicate readiness or its exit must
             // abort an actor that is still preparing the real UI submission.

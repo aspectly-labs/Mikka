@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import {
   AcceptanceError, CASES, MARKER, ORIGIN, REPOSITORY, actionResult, attestDeployment, buildTaskPrompt,
-  decisionProof, discoverActions, publicFailure, readChatState, runProjectDecisionsAcceptance, smallArtifactBytes, successfulRelease, triggerGuard,
+  decisionProof, discoverActions, publicFailure, readChatState, runProjectDecisionsAcceptance, smallArtifactBytes, successfulRelease, triggerGuard, workerReleaseProof,
 } from './project-decisions.mjs'
 import { decode, encode } from '../../lib/desktop-rpc/wire.ts'
 import { releaseVersionGuard } from './rpc-actions.mjs'
@@ -25,11 +25,31 @@ const attestation = (mode = 'preflight') => ({
   workerReleaseRunId: 12, checkedAt: new Date(EPOCH).toISOString(),
 })
 const release = kind => ({
-  id: kind === 'web' ? 11 : 12, name: kind === 'web' ? 'Web deploy' : 'E2B official instance runtime',
+  id: kind === 'web' ? 11 : 12, name: kind === 'web' ? 'Web deploy' : 'E2B additive runtime release',
   path: kind === 'web' ? '.github/workflows/web-deploy.yml' : '.github/workflows/e2b-official-runtime.yml',
   head_sha: SHA, head_branch: 'main', head_repository: { full_name: REPOSITORY },
-  event: 'push', status: 'completed', conclusion: 'success', head_commit: { message: 'Add project decisions ' + MARKER },
+  event: kind === 'web' ? 'push' : 'workflow_run', status: 'completed', conclusion: 'success', head_commit: { message: 'Add project decisions ' + MARKER },
 })
+const workerJobs = ({ runId = 12, published = true, inputsEvaluated = true } = {}) => [
+  { id: 101, run_id: runId, name: 'test', status: 'completed', conclusion: 'success', steps: [] },
+  { id: 102, run_id: runId, name: 'check', status: 'completed', conclusion: 'success', steps: [
+    { number: 4, name: 'Use a Cloudflare gateway observation that serves current main', status: 'completed', conclusion: 'success' },
+    { number: 5, name: 'Compare canonical worker inputs across this push and check failed attempts', status: 'completed', conclusion: inputsEvaluated ? 'success' : 'skipped' },
+  ] },
+  ...(published ? [
+    { id: 103, run_id: runId, name: 'web-ready', status: 'completed', conclusion: 'success', steps: [] },
+    { id: 104, run_id: runId, name: 'release / validate / build', status: 'completed', conclusion: 'success', steps: [
+      { number: 6, name: 'Build private versioned candidates and require official file conservation', status: 'completed', conclusion: 'success' },
+    ] },
+    { id: 105, run_id: runId, name: 'release / templates', status: 'completed', conclusion: 'success', steps: [
+      { number: 11, name: 'Make only fully accepted candidates public', status: 'completed', conclusion: 'success' },
+      { number: 12, name: 'Preserve the complete public release report', status: 'completed', conclusion: 'success' },
+    ] },
+  ] : [
+    { id: 103, run_id: runId, name: 'web-ready', status: 'completed', conclusion: 'skipped', steps: [] },
+    { id: 104, run_id: runId, name: 'release', status: 'completed', conclusion: 'skipped', steps: [] },
+  ]),
+]
 
 test('trigger gate binds manual main SHA and explicitly marked successful main Web deploy only', () => {
   assert.deepEqual(triggerGuard(env(), event()), { revision: SHA, mode: 'preflight' })
@@ -53,8 +73,10 @@ test('a canonical aspectly-labs/Mikka dispatch attests against its own receipts;
   const fetchImpl = async (url, init) => {
     urls.push(String(url))
     assert.equal(init.redirect, 'error')
-    return new URL(url).origin === ORIGIN ? Response.json({ build: SHA })
-      : Response.json({ workflow_runs: [{ ...release('worker'), head_repository: { full_name: 'aspectly-labs/Mikka' } }] })
+    const parsed = new URL(url)
+    if (parsed.origin === ORIGIN) return Response.json({ build: SHA })
+    if (parsed.pathname.endsWith('/actions/runs/12/jobs')) return Response.json({ jobs: workerJobs({ runId: 12, published: true }) })
+    return Response.json({ workflow_runs: [{ ...release('worker'), head_repository: { full_name: 'aspectly-labs/Mikka' } }] })
   }
   const proof = await attestDeployment({ env: canonical, event: event(), fetchImpl, now: () => EPOCH })
   assert.equal(proof.status, 'ready')
@@ -70,14 +92,25 @@ test('a canonical aspectly-labs/Mikka dispatch attests against its own receipts;
     fetchImpl: () => assert.fail('network before attestation') }), /attestation_required/)
 })
 
-test('runtime release must be exact SHA/repository/workflow/main; legitimate manual releases are accepted', () => {
+test('runtime release must be exact SHA/repository/workflow/main on workflow_run or workflow_dispatch; push and legacy names are rejected', () => {
   assert.equal(successfulRelease([release('worker')], SHA, 'worker').id, 12)
   assert.equal(successfulRelease([{ ...release('worker'), event: 'workflow_dispatch' }], SHA, 'worker').id, 12)
   for (const changed of [
-    { head_sha: 'b'.repeat(40) }, { id: 0 }, { event: 'pull_request' }, { head_branch: 'feature' },
-    { path: '.github/workflows/e2b-byos.yml' }, { name: 'Unrelated' }, { conclusion: 'failure' },
+    { head_sha: 'b'.repeat(40) }, { id: 0 }, { event: 'push' }, { event: 'pull_request' }, { head_branch: 'feature' },
+    { path: '.github/workflows/e2b-byos.yml' }, { name: 'E2B official instance runtime' }, { name: 'Unrelated' }, { conclusion: 'failure' },
     { head_repository: { full_name: 'fork/Mikka' } }, { status: 'in_progress' },
   ]) assert.equal(successfulRelease([{ ...release('worker'), ...changed }], SHA, 'worker'), null)
+  assert.equal(workerReleaseProof(release('worker'), workerJobs()).status, 'published')
+  assert.equal(workerReleaseProof(release('worker'), workerJobs({ published: false })).status, 'unchanged')
+  // A workflow_run triggered by a failed Cloudflare deploy skips the worker-inputs check step.
+  assert.deepEqual(workerReleaseProof(release('worker'), workerJobs({ published: false, inputsEvaluated: false })),
+    { status: 'unproven', code: 'trigger_not_ready', runId: 12 })
+  // A nested release whose validate/templates did not complete is unproven.
+  const abortedNested = [...workerJobs({ published: false }).slice(0, 2),
+    { id: 103, run_id: 12, name: 'web-ready', status: 'completed', conclusion: 'success', steps: [] },
+    { id: 104, run_id: 12, name: 'release / recheck', status: 'completed', conclusion: 'success', steps: [] },
+    { id: 105, run_id: 12, name: 'release / validate', status: 'completed', conclusion: 'skipped', steps: [] }]
+  assert.equal(workerReleaseProof(release('worker'), abortedNested).status, 'unproven')
 })
 
 test('attestation never reads account credentials or forwards the GitHub token to production', async () => {
@@ -97,16 +130,32 @@ test('attestation never reads account credentials or forwards the GitHub token t
     }
     assert.equal(parsed.origin, 'https://api.github.com')
     assert.equal(init.headers.authorization, 'Bearer private-github-token')
-    assert.equal(parsed.searchParams.get('head_sha'), SHA)
-    assert.ok(parsed.pathname.endsWith('/e2b-official-runtime.yml/runs'))
-    return Response.json({ workflow_runs: [release('worker')] })
+    if (parsed.pathname.endsWith('/e2b-official-runtime.yml/runs')) {
+      assert.equal(parsed.searchParams.get('head_sha'), SHA)
+      // Include a non-promoted workflow_run first to verify attestation skips it and accepts the real promoted run.
+      return Response.json({ workflow_runs: [{ ...release('worker'), id: 13 }, release('worker')] })
+    }
+    if (parsed.pathname.endsWith('/actions/runs/13/jobs')) return Response.json({ jobs: workerJobs({ runId: 13, published: false, inputsEvaluated: false }) })
+    if (parsed.pathname.endsWith('/actions/runs/12/jobs')) return Response.json({ jobs: workerJobs({ runId: 12, published: true }) })
+    assert.fail('unexpected attestation URL: ' + parsed.href)
   }
-  assert.equal((await attestDeployment({ env: input, event: event(), fetchImpl, now: () => EPOCH })).status, 'ready')
-  assert.ok(calls.length >= 4)
+  const attested = await attestDeployment({ env: input, event: event(), fetchImpl, now: () => EPOCH })
+  assert.equal(attested.status, 'ready')
+  assert.equal(attested.workerReleaseRunId, 12)
+  assert.equal(attested.workerReleaseStatus, 'published')
+  assert.ok(calls.length >= 6)
   await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
     fetchImpl: async () => Response.json({ build: 'b'.repeat(40) }) }), /build_mismatch/)
   await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
     fetchImpl: async url => new URL(url).origin === ORIGIN ? Response.json({ build: SHA }) : Response.json({ workflow_runs: [] }) }), /worker_release/)
+  // A failed-deploy workflow_run alone cannot satisfy worker_release.
+  await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
+    fetchImpl: async url => {
+      const parsed = new URL(url)
+      if (parsed.origin === ORIGIN) return Response.json({ build: SHA })
+      if (parsed.pathname.endsWith('/runs')) return Response.json({ workflow_runs: [{ ...release('worker'), id: 13 }] })
+      return Response.json({ jobs: workerJobs({ runId: 13, published: false, inputsEvaluated: false }) })
+    } }), /worker_release/)
 })
 
 test('decision proof rejects forged identity, substituted models, reconstructed records and ungrounded changes', () => {

@@ -7,7 +7,7 @@ import { assertCurrentMain, waitForWebDeployment } from '../release/web-deploy.m
 import { actionsMikkaRepository, officialMikkaRepository, publicRepositoryId } from '../cloudflare-source.mjs'
 import { assertReportIdentity, downloadReleaseReport, readReleaseArtifact, reportDigest, TEMPLATE_KINDS } from '../e2b/runtime-report.mjs'
 
-export const REPOSITORY = 'alexj11324/Mikka'
+export const REPOSITORY = 'aspectly-labs/Mikka'
 export const RELEASE_WORKFLOW = '.github/workflows/e2b-official-runtime.yml'
 export const RELEASE_NAME = 'E2B additive runtime release'
 const ROOT = resolve(import.meta.dirname, '../..')

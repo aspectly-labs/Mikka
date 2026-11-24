@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks'
 import type { Request } from '@playwright/test'
 import type { PoolClient } from 'pg'
 import { test, expect } from './test-account-fixtures'
-import { app, rail } from './fixtures'
+import { app, rail, parseBrowserRpc } from './fixtures'
 
 test('workspace idle reads stay within budget across settings, return and page departure', async ({ page, testAccounts }, testInfo) => {
   test.setTimeout(180_000)
@@ -33,8 +33,8 @@ test('workspace idle reads stay within budget across settings, return and page d
     const inFlight = new Set<Request>()
     let lastActivity = performance.now()
     page.on('request', request => {
-      const action = request.headers()['next-action']
-      if (request.method() === 'POST' && action) { actions.push(action); inFlight.add(request); lastActivity = performance.now() }
+      const action = parseBrowserRpc(request)?.action
+      if (action) { actions.push(action); inFlight.add(request); lastActivity = performance.now() }
     })
     const settled = (request: Request) => { if (inFlight.delete(request)) lastActivity = performance.now() }
     page.on('requestfinished', settled)

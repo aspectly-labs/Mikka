@@ -5,7 +5,7 @@ import { inboxBindingJournal, inboxJournalEnvelope, INBOX_JOURNAL_PREFIX, readIn
 
 const NOW = Date.parse('2026-11-09T22:00:00Z'), SHA = 'a'.repeat(40), HEAD = 'b'.repeat(40)
 const UUID = index => '10000000-0000-4000-8000-' + String(index).padStart(12, '0')
-const API = 'https://api.github.com/repos/alexj11324/Mikka'
+const API = 'https://api.github.com/repos/aspectly-labs/Mikka'
 const TOKEN = 'private-github-token-canary', SIGNED = 'https://resultsa.blob.core.windows.net/logs/job.txt?sig=private-signed-url-canary'
 const journal = (patch = {}) => inboxBindingJournal({ schema: 1, purpose: 'mikka1820-exact-suggestion', applicationSha: SHA,
   headSha: HEAD, driverRunId: 123, driverAttempt: 1, window: { commentId: 45, markerSha256: 'c'.repeat(64) },
@@ -20,7 +20,7 @@ function fixture(options = {}) {
   const reference = { schema: 1, purpose: 'mikka1820-journal-recovery', runId: 123, attempt: 1, jobId: 71, journalSha256: bound.sha256 }
   const selected = { selected: true, driverRunId: 123, driverRunAttempt: 2, applicationSha: SHA, headSha: HEAD, window: { phase: 'cleanup' } }
   const run = { id: 123, run_attempt: 1, status: 'completed', conclusion: 'cancelled', event: 'workflow_dispatch', head_branch: 'main',
-    head_sha: SHA, path: CORE_WORKFLOW, repository: { full_name: 'alexj11324/Mikka' }, head_repository: { full_name: 'alexj11324/Mikka' }, ...options.run }
+    head_sha: SHA, path: CORE_WORKFLOW, repository: { full_name: 'aspectly-labs/Mikka' }, head_repository: { full_name: 'aspectly-labs/Mikka' }, ...options.run }
   const job = { id: 71, run_id: 123, run_attempt: 1, head_sha: SHA, head_branch: 'main', name: 'Core production API and gateway acceptance',
     run_url: API + '/actions/runs/123', status: 'completed', started_at: new Date(NOW - 120_000).toISOString(),
     completed_at: new Date(NOW - 30_000).toISOString(), steps: [{ name: 'Verify the exact Inbox fixture or inventory under its current release window',

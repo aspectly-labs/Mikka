@@ -33,14 +33,26 @@ const viteManifest = () => ({ version: 1, target: 'web', rendererBuild: 'a'.repe
 const VITE_PIN = '370cc898-local-prebuilt-1'
 const viteDocument = (pin = VITE_PIN) => '<script type="module" crossorigin src="/mikka/assets/index-aBc123.js'
   + (pin ? '?dpl=' + pin : '') + '"></script>'
-const release = () => ({ id: 11, name: 'E2B official instance runtime',
-  path: '.github/workflows/e2b-official-runtime.yml', event: 'push',
+const release = () => ({ id: 11, name: 'E2B additive runtime release',
+  path: '.github/workflows/e2b-official-runtime.yml', event: 'workflow_run',
   head_branch: 'main', head_sha: APP, head_repository: { full_name: 'aspectly-labs/Mikka' }, status: 'completed', conclusion: 'success' })
 const publishedJobs = () => [
-  { id: 110, run_id: 11, name: 'validate', status: 'completed', conclusion: 'success',
-    steps: [{ name: 'Validate new official instances without template mutation', status: 'completed', conclusion: 'success' }] },
-  { id: 111, run_id: 11, name: 'publish', status: 'completed', conclusion: 'success',
-    steps: [{ name: 'Publish the verified official runtime pair', status: 'completed', conclusion: 'success' }] },
+  { id: 108, run_id: 11, name: 'test', status: 'completed', conclusion: 'success', steps: [] },
+  { id: 109, run_id: 11, name: 'check', status: 'completed', conclusion: 'success',
+    steps: [{ number: 5, name: 'Compare canonical worker inputs across this push and check failed attempts', status: 'completed', conclusion: 'success' }] },
+  { id: 107, run_id: 11, name: 'web-ready', status: 'completed', conclusion: 'success', steps: [] },
+  { id: 110, run_id: 11, name: 'release / validate / build', status: 'completed', conclusion: 'success',
+    steps: [{ number: 6, name: 'Build private versioned candidates and require official file conservation', status: 'completed', conclusion: 'success' }] },
+  { id: 111, run_id: 11, name: 'release / templates', status: 'completed', conclusion: 'success',
+    steps: [
+      { number: 11, name: 'Make only fully accepted candidates public', status: 'completed', conclusion: 'success' },
+      { number: 12, name: 'Preserve the complete public release report', status: 'completed', conclusion: 'success' },
+    ] },
+]
+const skippedJobs = () => [
+  ...publishedJobs().slice(0, 2),
+  { id: 107, run_id: 11, name: 'web-ready', status: 'completed', conclusion: 'skipped', steps: [] },
+  { id: 112, run_id: 11, name: 'release', status: 'completed', conclusion: 'skipped', steps: [] },
 ]
 
 function fixture(options = {}) {
@@ -146,8 +158,7 @@ test('a missing, pending, foreign or wrong-SHA worker is unproven rather than a 
 })
 
 test('a successful hash-unchanged workflow with skipped validate/publish cannot prove a worker release', async () => {
-  const skipped = publishedJobs().map(job => ({ ...job, conclusion: 'skipped', steps: [] }))
-  const runtime = runtimePublicationProof(release('worker'), skipped, APP)
+  const runtime = runtimePublicationProof(release('worker'), skippedJobs(), APP)
   assert.deepEqual(runtime, { runId: 11, sourceCommit: null, workerSha: null, status: 'not_published', code: 'publish_skipped' })
   const metadata = await fixture().run({ attestation: { ...attestation(), status: 'partial', runtime } })
   assert.equal(metadata.status, 'partial')
@@ -161,8 +172,9 @@ test('a successful hash-unchanged workflow with skipped validate/publish cannot 
 
 test('publish proof requires both exact successful jobs and the actual publish step', () => {
   for (const jobs of [[], publishedJobs().map(job => ({ ...job, run_id: 99 })),
-    publishedJobs().map(job => job.name === 'publish' ? { ...job, steps: [] } : job),
-    publishedJobs().map(job => job.name === 'publish' ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job)])
+    publishedJobs().map(job => job.name === 'release / templates' ? { ...job, steps: [] } : job),
+    publishedJobs().map(job => job.name === 'release / templates' ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job),
+    skippedJobs().map(job => job.name === 'check' ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job)])
     assert.equal(runtimePublicationProof(release('worker'), jobs, APP).status, 'unproven')
   const proof = runtimePublicationProof(release('worker'), publishedJobs(), APP)
   assert.equal(proof.status, 'published')

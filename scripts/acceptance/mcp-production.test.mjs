@@ -16,8 +16,8 @@ const SECOND_TEAM = '40000000-0000-4000-8000-000000000003'
 // Public Owner identity from comment #1504/6691409495; fixture data, never a login.
 const POLICY_ADMIN_EMAIL = 'alex@acme.aspectlylabs.com', POLICY_ADMIN_ID = 'policy-admin'
 const ACCESS = 'mka_SYNTHETIC_PRIVATE_ACCESS_TOKEN'
-const event = { ref: OPS_REF, after: SOURCE, repository: { full_name: 'alexj11324/Mikka' } }
-const environment = () => ({ GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_EVENT_NAME: 'push',
+const event = { ref: OPS_REF, after: SOURCE, repository: { full_name: 'aspectly-labs/Mikka' } }
+const environment = () => ({ GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_EVENT_NAME: 'push',
   GITHUB_REF: OPS_REF, GITHUB_SHA: SOURCE, APPLICATION_SHA: APP, GH_TOKEN: 'SYNTHETIC_GH_TOKEN',
   SMOKE_OWNER_EMAIL: EMAIL, SMOKE_OWNER_PASSWORD: PASSWORD })
 const json = (value, status = 200, headers = {}) => Response.json(value, { status, headers })

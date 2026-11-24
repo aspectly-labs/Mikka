@@ -4,8 +4,8 @@
 import { createHash } from 'node:crypto'
 import { CORE_WORKFLOW } from './self-hosted-production-target.mjs'
 
-const API = 'https://api.github.com/repos/alexj11324/Mikka'
-const REPOSITORY = 'alexj11324/Mikka'
+const API = 'https://api.github.com/repos/aspectly-labs/Mikka'
+const REPOSITORY = 'aspectly-labs/Mikka'
 const JOB = 'Core production API and gateway acceptance'
 const STEP = 'Verify the exact Inbox fixture or inventory under its current release window'
 export const INBOX_JOURNAL_PREFIX = 'MIKKA_INBOX_BINDING_RECEIPT='

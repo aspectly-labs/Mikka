@@ -73,7 +73,7 @@ test.describe('a share request that throws', () => {
     await openSharePopover(page)
     await page.route('**/*', route => {
       const request = route.request()
-      if (request.method() === 'POST' && request.headers()['next-action']) return route.fulfill({ status: 200, contentType: 'text/x-component', body: '' })
+      if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') return route.fulfill({ status: 200, contentType: 'application/json', body: '' })
       return route.fallback()
     })
     await page.getByRole('button', { name: '创建链接', exact: true }).click()
@@ -94,7 +94,7 @@ test.describe('a share request that throws', () => {
     await expect(stop).toBeVisible()
     await page.route('**/*', route => {
       const request = route.request()
-      if (request.method() === 'POST' && request.headers()['next-action']) return route.fulfill({ status: 200, contentType: 'text/x-component', body: '' })
+      if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') return route.fulfill({ status: 200, contentType: 'application/json', body: '' })
       return route.fallback()
     })
     await stop.click()
