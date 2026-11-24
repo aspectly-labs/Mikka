@@ -204,13 +204,18 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       if (!applied || applied.conclusion === 'skipped') continue
       const packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
       const summary = packet.files['pipeline-summary.json']
-      assert.equal(summary?.deployment?.runId, String(run.id), 'pipeline_deployment_summary_run_mismatch')
-      assert.equal(summary.deployment.runAttempt, String(run.run_attempt), 'pipeline_deployment_summary_attempt_mismatch')
       const log = (await api(`${repository}/actions/jobs/${job.id}/logs`, { bytes: true })).toString('utf8')
       // Private deployment independently validates all manifests. This also
       // rejects an artifact name supplied by a different job in the same run.
       assert.ok(log.includes(`Artifact ${packet.artifact.name}.zip successfully finalized.`)
         && log.includes(`Artifact ID ${packet.artifact.id}`), 'pipeline_summary_upload_evidence_required')
+      // The staging publisher saves its receipt and this summary together, before
+      // its first writer and again on every failure. An uploaded packet that holds
+      // the selected manifest but no summary therefore stopped before any writer
+      // (for example a GitHub read failing while it re-authenticated the candidate).
+      if (summary === undefined && target === 'staging' && packet.files['release-manifest.json']) continue
+      assert.equal(summary?.deployment?.runId, String(run.id), 'pipeline_deployment_summary_run_mismatch')
+      assert.equal(summary.deployment.runAttempt, String(run.run_attempt), 'pipeline_deployment_summary_attempt_mismatch')
       // Only the separate preflight can prove rejection before any writer; its
       // failed run has a skipped Deploy step and was handled above. Once this
       // step ran, an admission label cannot hide a possibly partial deployment.

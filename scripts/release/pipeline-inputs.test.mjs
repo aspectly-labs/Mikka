@@ -190,6 +190,36 @@ test('an executed deployment cannot use a forged admission report to hide a part
   }
 })
 
+test('a staging publisher that stopped before its first receipt is skipped; production and summaries stay strict', async () => {
+  const zip = members => execFileSync('python3', ['-c',
+    'import io,sys,zipfile,json\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z:\n for k,v in json.loads(sys.argv[1]).items(): z.writestr(k,json.dumps(v))\nsys.stdout.buffer.write(b.getvalue())', JSON.stringify(members)])
+  const passed = { version: 1, target: 'staging', status: 'passed', deployment: { runId: '199', runAttempt: '1' },
+    origin: { runId: '100', runAttempt: '1', artifactId: '299' } }
+  for (const target of ['staging', 'production']) {
+    const prefix = target === 'production' ? 'deploy-production' : 'deploy-pipeline'
+    const runs = [201, 199].map(id => ({ ...run(), id, path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_run',
+      conclusion: id === 201 ? 'failure' : 'success', run_attempt: 1 }))
+    const packets = { 201: zip({ 'release-manifest.json': { version: 1 } }), 199: zip({ 'pipeline-summary.json': { ...passed, target } }) }
+    const api = async path => {
+      if (path.includes('actions/workflows/')) return { total_count: 2, workflow_runs: runs }
+      const id = path.match(/\/runs\/(\d+)\//)?.[1] ?? path.match(/\/(?:artifacts|jobs)\/(\d)(\d+)\/(?:zip|logs)$/)?.slice(1).join('')
+      if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: Number('4' + id), name: target === 'production' ? 'pipeline-production' : 'pipeline',
+        status: 'completed', conclusion: 'failure', steps: [{ name: target === 'production' ? 'Promote and verify the staged service manifest'
+          : 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'failure' }] }] }
+      if (path.includes('/artifacts?')) return { total_count: 1, artifacts: [{ id: Number('3' + id), name: `${prefix}-${id}-1`, expired: false,
+        size_in_bytes: packets[id].length, digest: 'sha256:' + createHash('sha256').update(packets[id]).digest('hex'),
+        workflow_run: { id: Number(id), head_sha: source, head_branch: 'main', repository_id: repo.id, head_repository_id: repo.id } }] }
+      const zipped = path.match(/\/artifacts\/3(\d+)\/zip$/)
+      if (zipped) return packets[zipped[1]]
+      const logged = path.match(/\/jobs\/4(\d+)\/logs$/)
+      if (logged) return Buffer.from(`Artifact ${prefix}-${logged[1]}-1.zip successfully finalized.\nArtifact ID 3${logged[1]}`)
+      assert.fail('Unexpected request: ' + path)
+    }
+    if (target === 'staging') assert.equal((await priorDeployment(api, '300', undefined, target)).run.id, 199)
+    else await assert.rejects(priorDeployment(api, '300', undefined, target), /summary_run_mismatch/)
+  }
+})
+
 test('archive bytes are authenticated and traversal, duplicate members and unexpected private files are rejected', () => {
   const zip = names => execFileSync('python3', ['-c',
     'import io,sys,zipfile,json\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z:\n for name in json.loads(sys.argv[1]): z.writestr(name,"{\\"version\\":1}")\nsys.stdout.buffer.write(b.getvalue())', JSON.stringify(names)], { stdio: ['ignore', 'pipe', 'pipe'] })
