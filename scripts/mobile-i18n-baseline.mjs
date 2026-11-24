@@ -8,7 +8,7 @@
 // `node scripts/check-i18n.mjs`; it names each frozen file whose count no longer matches
 // the tree, and each migrated file to drop.
 const BASELINE = {
-  'apps/mobile/app/(tabs)/settings/index.tsx': 13,
+  'apps/mobile/app/(tabs)/settings/index.tsx': 12,
   'apps/mobile/app/(tabs)/settings/memory-summary.tsx': 8,
   'apps/mobile/app/(tabs)/settings/memory.tsx': 4,
   'apps/mobile/app/(tabs)/settings/profile.tsx': 9,

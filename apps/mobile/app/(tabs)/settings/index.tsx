@@ -24,7 +24,7 @@ import { currentAccount, servers } from '@/lib/config'
 import { serverCopy } from '@/lib/server-copy'
 import { openOnWeb, openPrivacyPolicy } from '@/lib/web'
 import { mobileFilesPath, mobileOrganizationPath } from '../../../../../lib/mobile-web-target'
-import { mobileMessages as messages, mobileLocale } from '@/lib/messages'
+import { mobileMessages as messages } from '@/lib/messages'
 
 /** A row's icon (Comma design 18): a white glyph on a colored rounded square, as in the system Settings app. */
 const icon = (name: SymbolName, Icon: typeof Bell, background: string) => (
@@ -96,7 +96,7 @@ export default function SettingsScreen() {
             <Row icon={icon('puzzlepiece.extension.fill', Blocks, '#34C759')} label="已连接的 App" value={connections.error ? '连接状态未知' : connections.snapshot ? String(connections.snapshot.toolkits.length) : undefined} onPress={() => router.push(settingsPath('plugins'))} />
           </Group>
           <Group>
-            <Row icon={icon('globe', Globe, '#5856D6')} label="语言" value={mobileLocale === 'zh-CN' ? '简体中文' : 'English'} trailing={Platform.OS === 'web' ? null : <Symbol name="arrow.up.right" size={13} color={colors.tertiary} web={<ArrowUpRight size={16} color={colors.tertiary} strokeWidth={2} />} />}
+            <Row icon={icon('globe', Globe, '#5856D6')} label="语言" value={messages.MobileCore.currentLanguage} trailing={Platform.OS === 'web' ? null : <Symbol name="arrow.up.right" size={13} color={colors.tertiary} web={<ArrowUpRight size={16} color={colors.tertiary} strokeWidth={2} />} />}
               onPress={Platform.OS === 'web' ? undefined : () => { void Linking.openSettings() }} />
             <Row icon={icon('info.circle.fill', Info, '#8E8E93')} label="版本" value={versionLabel()} trailing={null} />
             <Row icon={icon('hand.raised.fill', Hand, '#5856D6')} label={messages.Common.privacyPolicy} onPress={() => void openPrivacyPolicy()} />
