@@ -48,29 +48,32 @@ func (w *Worker) Clone(ctx context.Context, target Scope) (map[string]any, error
 		accessName = "mikka-byos-" + newID()
 	}
 	custodyName := "mikka-byos-" + newID()
+	// A failed Create may still have stored the secret (lost response), so every
+	// bail-out deletes both names — Delete of an absent name is harmless.
+	scrub := func() {
+		_ = w.Secrets.Delete(context.WithoutCancel(ctx), custodyName)
+		if accessName != "" {
+			_ = w.AccessSecrets.Delete(context.WithoutCancel(ctx), accessName)
+		}
+	}
 	if err := w.Secrets.Create(ctx, custodyName, custodyRaw); err != nil {
+		scrub()
 		return nil, err
 	}
 	if accessName != "" {
 		if err := w.AccessSecrets.Create(ctx, accessName, accessRaw); err != nil {
-			_ = w.Secrets.Delete(context.WithoutCancel(ctx), custodyName)
+			scrub()
 			return nil, err
 		}
 	}
 	tx, err := w.Repo.DB.BeginTx(ctx, nil)
 	if err != nil {
-		_ = w.Secrets.Delete(context.WithoutCancel(ctx), custodyName)
-		if accessName != "" {
-			_ = w.AccessSecrets.Delete(context.WithoutCancel(ctx), accessName)
-		}
+		scrub()
 		return nil, ErrDatabase
 	}
 	fail := func(err error) (map[string]any, error) {
 		_ = tx.Rollback()
-		_ = w.Secrets.Delete(context.WithoutCancel(ctx), custodyName)
-		if accessName != "" {
-			_ = w.AccessSecrets.Delete(context.WithoutCancel(ctx), accessName)
-		}
+		scrub()
 		return nil, err
 	}
 	result, err := tx.ExecContext(ctx, `insert into byos_connections
@@ -84,7 +87,7 @@ func (w *Worker) Clone(ctx context.Context, target Scope) (map[string]any, error
 	if n, _ := result.RowsAffected(); n != 1 {
 		return fail(ErrUnavailable)
 	}
-	for _, artifact := range []struct{ name, kind string }{{custodyName, "credential"}, {accessName, "access"}} {
+	for _, artifact := range []struct{ name, kind string }{{custodyName, "grant"}, {accessName, "access"}} {
 		if artifact.name == "" {
 			continue
 		}

@@ -134,6 +134,7 @@ export function subscriptionHTTP(deps: SubscriptionHTTPDependencies) {
         await deps.workspace(body.ownerId, body.workspaceId)
         const connectionId = randomUUID()
         result = await worker.call('clone', { target: { ownerId: body.ownerId, workspaceId: body.workspaceId, connectionId, provider: row.provider } }, acquisitionSignal())
+        if (body.workspaceId !== row.workspaceId) await ownerSettingsChanged(body.workspaceId)
       }
       else if (body.action === 'remove') {
         // 移除: fence and clean up like 断开连接 first, then hide the row for good.
