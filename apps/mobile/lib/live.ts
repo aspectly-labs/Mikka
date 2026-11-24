@@ -4,6 +4,7 @@ import { apiConnection, authHeaders } from '@/lib/api'
 import { onServerChange } from '@/lib/config'
 import { createLiveClient, type LiveRef, type LiveSpecOptions } from './live-client'
 import { presenceScope } from './presence-scope'
+import { keepRenewedSession } from './session'
 import type { PresenceProof } from '../../../lib/live/presence'
 
 export { UNRESOLVED_LIVE_ID, type LiveRef } from './live-client'
@@ -26,6 +27,7 @@ async function ticket(workspaceId: string, signal: AbortSignal): Promise<unknown
       redirect: 'error',
       signal: controller.signal,
     })
+    void keepRenewedSession(connection.account.id, response)
     const value = response.ok ? await response.json() : null
     if (!controller.signal.aborted && !signal.aborted) presenceScope.remember(workspaceId, value, request)
     return value

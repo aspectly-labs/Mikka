@@ -26,6 +26,31 @@ export function endLostSession(): Promise<void> {
   return ending
 }
 
+let confirming: Promise<void> | null = null
+
+/**
+ * A Mikka API request answered 401. Signs out only when the auth server, asked
+ * once for this account's session, says there is none; several 401s at once
+ * share that one check. A check that fails (no network, a server error) keeps
+ * the person signed in, and so does a session the server still knows, so one
+ * request's 401 never ends a working session.
+ */
+export function sessionRefused(): Promise<void> {
+  if (ending) return ending
+  if (confirming) return confirming
+  const client = authClient, account = currentAccount()
+  confirming = (async () => {
+    const result = await client.getSession({ query: { disableCookieCache: true } }).catch(() => null)
+    if (!result || currentAccount().id !== account.id || authClient !== client) return
+    if (result.data?.user) return
+    if (result.error && result.error.status !== 401) return
+    await endLostSession()
+  })().finally(() => { confirming = null })
+  return confirming
+}
+
+export { keepRenewedSession } from './session-cookie'
+
 /** Whether the app signed out because the session was lost, so the sign-in screen can say so. */
 export const sessionExpired = () => expired
 
