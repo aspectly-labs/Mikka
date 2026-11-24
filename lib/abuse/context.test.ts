@@ -47,13 +47,14 @@ test('forgetDecisionGate drops the entry inside the batch and is a no-op outside
   assert.equal(loads, 2)
 })
 
-test('an entry older than the TTL is reloaded inside the same batch', async () => {
+test('an entry older than the TTL is reloaded inside the same batch', async t => {
   let loads = 0
+  let now = 1_000
   const load = async () => ++loads
+  t.mock.method(Date, 'now', () => now)
   const seen = await decisionBatchCache.run(new Map(), async () => {
     await cachedDecisionGate('k', load)
-    const entry = decisionBatchCache.getStore()!.get('k')!
-    entry.at = Date.now() - DECISION_GATE_TTL_MS - 1
+    now += DECISION_GATE_TTL_MS + 1
     return cachedDecisionGate('k', load)
   })
   assert.equal(seen, 2)
