@@ -131,7 +131,9 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
     const { getThreadSummary } = await import('../app/actions/agents')
     const { seedIssue } = await import('./support/workspace-admin-db')
     const issue = await seedIssue(pool, owner, workspace.id)
-    await pool.query('UPDATE agent_runs SET "issueId"=$2 WHERE id=$1', [root, issue])
+    // Chain edges require parent.issueId IS NOT DISTINCT FROM child.issueId —
+    // the issue links the whole chain, not just the run the summary opens on.
+    await pool.query('UPDATE agent_runs SET "issueId"=$2 WHERE id=ANY($1::uuid[])', [[root, next, last], issue])
     const as = <T>(user: string, work: () => Promise<T>) => withActivitySession(user, work, workspace.id) as Promise<T>
     const summary = await as(owner, () => getThreadSummary(issue, root))
     assert.deepEqual(summary?.cost?.credits, { microUsd: 1_200 + 800 + 2_000 + 50 + 8_334 + 12_500, unpricedReceipts: 3 })
