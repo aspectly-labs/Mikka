@@ -69,7 +69,7 @@ function fixture(options = {}) {
   }
   const respond = async (input, init = {}) => {
     const url = new URL(input), headers = new Headers(init.headers), method = init.method ?? 'GET'
-    calls.push({ path: url.pathname + url.search, method, cookie: headers.get('cookie'), body: init.body })
+    calls.push({ path: url.pathname + url.search, method, cookie: headers.get('cookie'), body: init.body, release: headers.get('x-deployment-id') })
     assert.equal(url.origin, ORIGIN)
     assert.equal(init.redirect, 'error')
     assert.equal(headers.get('authorization'), null, 'a GitHub token never reaches the application')
@@ -135,7 +135,8 @@ function fixture(options = {}) {
         ] } } : {}),
         ...(previous ? { after, baseCursor: previous.cursor, metadataRefresh: true } : {}) } })
     }
-    if (url.pathname === '/mikka' || url.pathname === '/mikka/settings') return new Response('<script type="module" src="/mikka/assets/index-realbuild.js"></script>')
+    if (url.pathname === '/mikka' || url.pathname === '/mikka/settings') return new Response('<script type="module" src="/mikka/assets/index-realbuild.js'
+      + (options.pin ? '?dpl=' + options.pin : '') + '"></script>')
     if (url.pathname === '/mikka/renderer-manifest.json') return json(manifest)
     assert.fail('unexpected request')
   }
@@ -302,6 +303,17 @@ test('stable production cursors cover four HTTP scenarios with only a normal own
   const evidence = JSON.stringify(report)
   for (const secret of [EMAIL, PASSWORD, COOKIE, PRIVATE, OWNER, WORKSPACE, BOT, TASK, refs.pollIssue]) assert.equal(evidence.includes(secret), false)
   assert.deepEqual(publicFailure(new Error(PASSWORD + COOKIE)), { status: 'fail', code: 'acceptance_failed' })
+})
+
+test('after discovery the business reads are pinned to the release that published them', async () => {
+  const pin = '370cc898-local-prebuilt-1', f = fixture({ pin }), report = await f.run()
+  assert.equal(report.status, 'pass')
+  const listed = f.calls.findIndex(call => call.path.startsWith('/mikka/renderer-manifest.json'))
+  const scoped = f.calls.slice(listed + 1).filter(call => call.path.startsWith('/mikka/api/') && call.path !== '/mikka/api/version' && !call.path.startsWith('/mikka/api/auth/'))
+  assert.ok(scoped.some(call => call.path === '/mikka/api/rpc') && scoped.some(call => call.path === '/mikka/api/settings/issue-prefix'))
+  assert.ok(scoped.every(call => call.release === pin))
+  assert.ok(f.calls.filter(call => call.path === '/mikka/api/version' || call.path.startsWith('/mikka/api/auth/')).every(call => call.release === null))
+  assert.ok(f.calls.slice(0, listed).every(call => call.release === null))
 })
 
 test('page discovery cookies accompany later chunks, actions, Settings and sign-out', async () => {

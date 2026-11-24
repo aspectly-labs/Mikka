@@ -209,6 +209,24 @@ test('discovery before selecting an existing task uses only the main and setting
   await assert.rejects(discoverReadActions(async () => new Response('<html></html>'), environment), { code: 'read_action_reference_missing' })
 })
 
+test('once discovery names the release, reads are pinned to it and the version check is not', async () => {
+  const pin = '370cc898-local-prebuilt-1', seen = []
+  const discovered = await discoverReadActions(async path => path.startsWith('/mikka/renderer-manifest.json')
+    ? Response.json(manifest) : new Response('<script type="module" src="/mikka/assets/index-realbuild.js?dpl=' + pin + '"></script>'), environment)
+  assert.equal(discovered.deploymentId, pin)
+  const release = {}
+  const client = createReadClient({ request: async (path, init) => {
+    seen.push({ path, header: init.headers?.['x-deployment-id'] })
+    return path.endsWith('/api/rpc') ? Response.json({ version: 1, ok: true, result: { issue: {} } }) : Response.json({ build: 'a' })
+  } }, environment, 'owner', [], readRpcActions, release)
+  await client.json('/mikka/api/settings/issue-prefix', 'settings', 'cold')
+  release.deploymentId = discovered.deploymentId
+  await client.action('pollIssue', [id(1)], 'task-detail', 'cold')
+  await client.json('/mikka/api/settings/issue-prefix', 'settings', 'warm')
+  await client.json('/mikka/api/version', 'environment', 'after')
+  assert.deepEqual(seen.map(call => call.header), [undefined, pin, pin, undefined])
+})
+
 test('transport rejects writes before request and reports only byte counts and trace IDs', async () => {
   let calls = 0
   const records = [], privateText = 'sensitive fixture text must stay in memory'

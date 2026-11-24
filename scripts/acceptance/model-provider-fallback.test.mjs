@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import {
   AcceptanceError, ACCEPTANCE_PULL_REQUEST, CASES, FEATURE_PULL_REQUEST, ORIGIN, REPOSITORY,
@@ -10,6 +11,8 @@ import {
 const SHA = 'a'.repeat(40)
 const FEATURE_SHA = 'b'.repeat(40)
 const GUARD_SHA = 'c'.repeat(40)
+// The workflow's own main commit, which holds the current driver.
+const DRIVER_SHA = 'e'.repeat(40)
 const OWNER = 'acceptance-owner'
 const WS = '10000000-0000-4000-8000-000000000001'
 const BOT = '10000000-0000-4000-8000-000000000002'
@@ -36,9 +39,9 @@ const deployed = () => ({ id: 100, name: 'Web deploy', path: '.github/workflows/
   status: 'completed', conclusion: 'success', head_branch: 'main', head_sha: GUARD_SHA,
   head_repository: { full_name: REPOSITORY }, head_commit: { message: `Bind provider acceptance (#${ACCEPTANCE_PULL_REQUEST})` } })
 const guard = () => ({ repository: REPOSITORY, ref: 'refs/heads/main', eventName: 'workflow_run',
-  event: { workflow_run: deployed() }, pr: pr(), acceptancePr: acceptancePr() })
+  event: { workflow_run: deployed() }, pr: pr(), acceptancePr: acceptancePr(), driverRevision: DRIVER_SHA })
 const boundGuard = () => ({ featureMergeSha: FEATURE_SHA, guardPullRequest: ACCEPTANCE_PULL_REQUEST,
-  guardMergeSha: GUARD_SHA, driverRevision: GUARD_SHA, mode: 'active' })
+  guardMergeSha: GUARD_SHA, acceptanceMergeSha: GUARD_SHA, driverRevision: DRIVER_SHA, mode: 'active' })
 
 test('only the two exact merged issue PR deploys authorize automatic active acceptance', () => {
   assert.deepEqual(mergeGuard(guard()), boundGuard())
@@ -61,10 +64,11 @@ test('only the two exact merged issue PR deploys authorize automatic active acce
     { event: { workflow_run: { ...deployed(), head_commit: { message: 'Other issue (#1233)' }, pull_requests: [{ number: 1233 }] } } },
     { eventName: 'workflow_dispatch', event: { inputs: { guard_pr: '1233', mode: 'active' } } },
     { eventName: 'workflow_dispatch', event: { inputs: { guard_pr: '0', mode: 'active' } } },
+    { driverRevision: undefined }, { driverRevision: 'main' }, { driverRevision: 'E'.repeat(40) },
   ]) assert.throws(() => mergeGuard({ ...guard(), ...changed }), /merge_scope_rejected/)
 })
 
-function deploymentFetch({ build = SHA, after = build, compared } = {}) {
+function deploymentFetch({ build = SHA, after = build, compared, driverCompared } = {}) {
   const calls = []
   let versions = 0
   return { calls, fetchImpl: async (input, init) => {
@@ -81,8 +85,9 @@ function deploymentFetch({ build = SHA, after = build, compared } = {}) {
     assert.equal(init.headers.authorization, 'Bearer private-github-token')
     assert.ok(url.pathname.includes('/compare/'))
     const [base, head] = url.pathname.split('/compare/')[1].split('...')
-    assert.equal(head, build)
-    return Response.json(compared?.(base) ?? { status: 'ahead', base_commit: { sha: base }, merge_base_commit: { sha: base } })
+    assert.ok([build, DRIVER_SHA].includes(head))
+    const result = head === DRIVER_SHA ? driverCompared?.(base) : compared?.(base)
+    return Response.json(result ?? { status: 'ahead', base_commit: { sha: base }, merge_base_commit: { sha: base } })
   } }
 }
 
@@ -90,7 +95,8 @@ test('the real production revision is bound to both authorized ancestors', async
   const fixture = deploymentFetch()
   const result = await resolveAcceptanceDeployment({ guard: boundGuard(), githubToken: 'private-github-token', fetchImpl: fixture.fetchImpl })
   assert.deepEqual(result, { ...boundGuard(), revision: SHA })
-  assert.equal(fixture.calls.filter(call => call.url.includes('/compare/')).length, 2)
+  assert.equal(fixture.calls.filter(call => call.url.endsWith('...' + SHA)).length, 3)
+  assert.equal(fixture.calls.filter(call => call.url.endsWith('...' + DRIVER_SHA)).length, 2)
   assert.equal(fixture.calls.filter(call => call.url.includes('/mikka/api/version')).length, 2)
   assert.ok(!JSON.stringify(result).includes('private-github-token'))
 })
@@ -111,17 +117,49 @@ test('unrelated, behind, or unproved application ancestry blocks before any acco
   for (const build of ['main', 'dpl_unmapped', 'A'.repeat(40)]) {
     const fixture = deploymentFetch({ build })
     await assert.rejects(resolveAcceptanceDeployment({ guard: boundGuard(), githubToken: 'private-github-token', fetchImpl: fixture.fetchImpl }), /build_mismatch|build_mapping_required/)
-    assert.equal(fixture.calls.length, 1)
+    assert.equal(fixture.calls.filter(call => !call.url.endsWith('...' + DRIVER_SHA)).length, 1)
   }
 })
 
-test('selecting the original feature guard still requires production to contain the reviewed supplemental driver', async () => {
-  const fixture = deploymentFetch({ compared: base => ({ status: base === GUARD_SHA ? 'diverged' : 'ahead',
-    base_commit: { sha: base }, merge_base_commit: { sha: base } }) })
+test('selecting the original feature guard still requires the reviewed supplemental #1249 merge before the driver', async () => {
+  const fixture = deploymentFetch({ driverCompared: base => base === GUARD_SHA
+    ? { status: 'diverged', base_commit: { sha: base }, merge_base_commit: { sha: base } } : undefined })
   const originalGuard = { ...boundGuard(), guardPullRequest: FEATURE_PULL_REQUEST, guardMergeSha: FEATURE_SHA }
-  await assert.rejects(resolveAcceptanceDeployment({ guard: originalGuard, githubToken: 'private-github-token', fetchImpl: fixture.fetchImpl }), /application_ancestry/)
-  assert.equal(fixture.calls.filter(call => call.url.includes('/compare/')).length, 2)
-  assert.ok(!fixture.calls.some(call => call.url.includes('/actions/')))
+  await assert.rejects(resolveAcceptanceDeployment({ guard: originalGuard, githubToken: 'private-github-token', fetchImpl: fixture.fetchImpl }), /driver_ancestry/)
+  assert.ok(!fixture.calls.some(call => call.url.includes('/actions/') || call.url.includes('/mikka/api/version')))
+  const accepted = await resolveAcceptanceDeployment({ guard: originalGuard, githubToken: 'private-github-token', fetchImpl: deploymentFetch().fetchImpl })
+  assert.equal(accepted.revision, SHA)
+})
+
+test('a driver that predates either authorized issue merge is refused before the application is read', async () => {
+  for (const missing of [FEATURE_SHA, GUARD_SHA]) {
+    const fixture = deploymentFetch({ driverCompared: base => base === missing
+      ? { status: 'behind', base_commit: { sha: base }, merge_base_commit: { sha: DRIVER_SHA } } : undefined })
+    await assert.rejects(resolveAcceptanceDeployment({ guard: boundGuard(), githubToken: 'private-github-token', fetchImpl: fixture.fetchImpl }), /driver_ancestry/)
+    assert.ok(!fixture.calls.some(call => call.url.includes('/mikka/api/version')))
+  }
+})
+
+test('the workflow runs the driver from its own main commit, and that driver is the RPC one', async () => {
+  const root = new URL('../../', import.meta.url)
+  const workflow = await readFile(new URL('.github/workflows/model-provider-fallback-acceptance.yml', root), 'utf8')
+  // The resolved driver is the workflow's own commit, never the historical #1249 merge.
+  assert.match(workflow, /const driver = process\.env\.GITHUB_SHA/)
+  assert.match(workflow, /driver-sha=\$\{driver\}/)
+  assert.doesNotMatch(workflow, /driver-sha=\$\{acceptance\.merge_commit_sha\}/)
+  assert.match(workflow, /ref: \$\{\{ steps\.merge\.outputs\.driver-sha \}\}/)
+  assert.match(workflow, /driverRevision: process\.env\.GITHUB_SHA \}\)/)
+  assert.match(workflow, /MIKKA_ACCEPTANCE_DRIVER_SHA: \$\{\{ steps\.merge\.outputs\.driver-sha \}\}/)
+  // The authorization and the live-model limits stay.
+  assert.match(workflow, /valid\(feature, 1232\) \|\| !valid\(acceptance, 1249\)/)
+  assert.match(workflow, /resolveAcceptanceDeployment\(/)
+  assert.match(workflow, /node scripts\/assert-test-model\.mjs deepseek-flash/)
+  assert.match(workflow, /steps\.worker\.outputs\.proof == 'same_sha_official_runtime'/)
+  // This test runs in the workflow at that checkout: the checked-out driver must be the migrated one.
+  const driver = await readFile(new URL('scripts/acceptance/model-provider-fallback.mjs', root), 'utf8')
+  assert.match(driver, /discoverRpcActions/)
+  assert.match(driver, /'\/api\/rpc'/)
+  assert.doesNotMatch(driver, /_next\/|createServerReference|next-action/)
 })
 
 test('a mid-attestation promotion fails closed', async () => {
@@ -327,12 +365,13 @@ test('discovery reads the release-pinned Vite action list and returns only publi
     if (path === '/mikka/renderer-actions.json?dpl=' + PIN) return Response.json(actionManifest(['getArtifact']))
     throw new Error('Unexpected discovery request ' + path)
   })
-  assert.deepEqual(Object.keys(found), actionNames.filter(name => name !== 'getArtifact'))
-  assert.equal(found.changeModelOrder, 'model-order.changeModelOrder')
+  assert.deepEqual(Object.keys(found.refs), actionNames.filter(name => name !== 'getArtifact'))
+  assert.equal(found.refs.changeModelOrder, 'model-order.changeModelOrder')
+  assert.equal(found.deploymentId, PIN)
   for (const document of ['<script src="https://foreign.invalid/mikka/assets/index.js"></script>',
     '<script src="/mikka/assets/a.js?dpl=one"></script><script src="/mikka/assets/b.js?dpl=two"></script>']) {
     const reads = []
-    assert.deepEqual(await discoverActions(async path => { reads.push(path); return new Response(document) }), {})
+    assert.deepEqual(await discoverActions(async path => { reads.push(path); return new Response(document) }), { refs: {}, deploymentId: '' })
     assert.deepEqual(reads, ['/en'], 'no action list is read without exactly one same-origin release entry')
   }
 })
@@ -381,7 +420,7 @@ function preflightFetch({ missingDeepseek = false, codexOnlyDefault = false,
 const env = () => ({ SMOKE_OWNER_EMAIL: 'test+mikka-smoke-provider@example.invalid', SMOKE_OWNER_PASSWORD: 'private-password',
   MIKKA_EXPECTED_DEPLOYMENT_SHA: SHA, MIKKA_FEATURE_MERGE_SHA: FEATURE_SHA,
   MIKKA_ACCEPTANCE_GUARD_PR: String(ACCEPTANCE_PULL_REQUEST), MIKKA_ACCEPTANCE_GUARD_MERGE_SHA: GUARD_SHA,
-  MIKKA_ACCEPTANCE_DRIVER_SHA: GUARD_SHA,
+  MIKKA_ACCEPTANCE_DRIVER_SHA: DRIVER_SHA,
   MIKKA_WORKER_RELEASE_PROOF: 'same_sha_official_runtime', MIKKA_WORKER_RELEASE_SHA: SHA, MIKKA_WORKER_RELEASE_RUN_ID: '101' })
 
 test('real HTTP preflight creates no task, Bot, key, binding or order and still checks both subscriptions when DeepSeek is missing', async () => {
@@ -391,7 +430,7 @@ test('real HTTP preflight creates no task, Bot, key, binding or order and still 
   assert.equal(report.featureMergeSha, FEATURE_SHA)
   assert.equal(report.guardPullRequest, ACCEPTANCE_PULL_REQUEST)
   assert.equal(report.guardMergeSha, GUARD_SHA)
-  assert.equal(report.driverRevision, GUARD_SHA)
+  assert.equal(report.driverRevision, DRIVER_SHA)
   assert.equal(report.revision, SHA)
   assert.deepEqual(report.workerRelease, { ready: true, kind: 'same_sha_official_runtime', sha: SHA, runId: 101 })
   assert.deepEqual(report.cases.map(item => item.status), ['blocked', 'ready', 'ready'])
@@ -402,6 +441,23 @@ test('real HTTP preflight creates no task, Bot, key, binding or order and still 
   assert.equal(calls.filter(call => call.path === '/mikka/api/settings/workspace-bots').length, 2)
   const output = JSON.stringify(report)
   for (const value of ['private-password', 'private-cookie', 'example.invalid', OWNER, KEY, CLAUDE, CODEX]) assert.ok(!output.includes(value), value)
+})
+
+test('after discovery every release-scoped call is pinned to the release that published the actions', async () => {
+  const { fetchImpl } = preflightFetch(), seen = []
+  let listed = false
+  const report = await runModelProviderAcceptance({ env: env(), fetchImpl: async (url, init = {}) => {
+    const path = new URL(url).pathname
+    seen.push({ path, listed, header: init.headers?.['x-deployment-id'] })
+    if (path === '/mikka/renderer-actions.json') listed = true
+    return fetchImpl(url, init)
+  } })
+  assert.equal(report.status, 'ready')
+  const scoped = seen.filter(call => call.listed && call.path.startsWith('/mikka/api/') && call.path !== '/mikka/api/version' && !call.path.startsWith('/mikka/api/auth/'))
+  assert.ok(scoped.some(call => call.path === '/mikka/api/settings/model-order'))
+  assert.deepEqual([...new Set(scoped.map(call => call.header))], [PIN])
+  assert.ok(seen.filter(call => call.path === '/mikka/api/version' || call.path.startsWith('/mikka/api/auth/')).every(call => call.header === undefined))
+  assert.ok(seen.filter(call => !call.listed).every(call => call.header === undefined), 'nothing is pinned before the release is known')
 })
 
 test('a busy workspace Bot or waiting own thread blocks every paid case before order or task writes', async () => {

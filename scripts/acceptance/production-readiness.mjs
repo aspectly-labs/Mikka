@@ -8,7 +8,7 @@ import {
   CASES, ORIGIN, REPOSITORY, successfulRelease, publicFailure as acceptanceFailure,
 } from './project-decisions.mjs'
 import { assertWorkspaceIdle, caseOrderPlan, orderFingerprint, ownedSource } from './model-provider-fallback.mjs'
-import { discoverRpcActions } from './rpc-actions.mjs'
+import { discoverRpcActions, releaseHeaders } from './rpc-actions.mjs'
 import { isValidDeploymentId } from '../../lib/deployment-id.mjs'
 
 export const ACCEPTANCE_BRANCH = 'refs/heads/acceptance/proactive-1157-1163'
@@ -166,7 +166,7 @@ export async function runReadiness({ env = process.env, event, plan, attestation
     taskState: 'not_requested', taskCreationRequests: 0, preferenceMutationRequests: 0, modelCalls: 0,
     backendMaintenanceWritesMeasured: false, paidExecutionVerified: false, executionReady: false,
     cases: [], normalSessionObserved: false, sessionClosed: false }
-  let cookie = '', ownerId, workspaceId
+  let cookie = '', ownerId, workspaceId, deploymentId = ''
   const deadline = now() + 300000
   async function request(path, body) {
     const url = new URL(path.startsWith('/mikka/') ? path : '/mikka' + path, ORIGIN)
@@ -176,7 +176,7 @@ export async function runReadiness({ env = process.env, event, plan, attestation
     check(logout || now() < deadline, 'readiness_timeout')
     try { return await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(logout ? 30000 : Math.max(1, Math.min(30000, deadline - now()))),
       headers: { origin: ORIGIN, 'cache-control': 'no-store', ...(cookie ? { cookie } : {}),
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...releaseHeaders(url.pathname, deploymentId) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) }) }
     catch { throw new ReadinessError('request_failed') }
   }
@@ -232,6 +232,8 @@ export async function runReadiness({ env = process.env, event, plan, attestation
       report.activity.status = 'idle'
     } catch (error) { Object.assign(report.activity, publicFailure(error)) }
     report.actionDiscovery = await discoverReadinessActions(request)
+    // The closing reads go to the release whose action list was just read.
+    deploymentId = report.actionDiscovery.deploymentId ?? ''
     const current = await json('/api/settings/model-order?workspace=' + workspaceId)
     const after = orderFingerprint(current)
     Object.assign(report.order, { afterSha256: digest(after), unchanged: after === before })

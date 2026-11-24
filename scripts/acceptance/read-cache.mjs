@@ -7,6 +7,7 @@ import { assertDatabaseIdentity, EnvironmentError, loadEnvironment } from '../te
 import { TestAccountError } from '../test-accounts/pool.mjs'
 import { withTestAccounts } from '../test-accounts/session.mjs'
 import { publishedReadActions, readRpcActions, rpcReadAllowed, rpcReadRequest, rpcReadResult } from './read-action-transport.mjs'
+import { releaseHeaders } from './rpc-actions.mjs'
 
 export const READ_ACTIONS = Object.freeze(['syncCoordinatorChat', 'syncIssueList', 'syncThreadList', 'pollIssue', 'pollIssueActivityPage', 'loadEarlierIssueActivity'])
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
@@ -103,7 +104,8 @@ export function requestAllowed(path, init, environment, refs = {}) {
 }
 
 /** Read the public documents and the release's published action list, without
- * evaluating JavaScript or inspecting private server manifests. */
+ * evaluating JavaScript or inspecting private server manifests. deploymentId
+ * names that release ('' when the document is unpinned). */
 export async function discoverReadActions(request, environment, issueId) {
   const vitePins = new Set()
   const diagnostics = { pagesRead: 0, found: [] }
@@ -129,13 +131,15 @@ export async function discoverReadActions(request, environment, issueId) {
   let published
   try { published = publishedReadActions(JSON.parse(source)) }
   catch (error) { throw new ReadCacheAcceptanceError('read_action_reference_missing', { cause: error }) }
-  return { refs: published, diagnostics: { ...diagnostics, transport: 'rpc', manifestsRead: 1, found: [...READ_ACTIONS] } }
+  return { refs: published, deploymentId: pin, diagnostics: { ...diagnostics, transport: 'rpc', manifestsRead: 1, found: [...READ_ACTIONS] } }
 }
 
-export function createReadClient(account, environment, actor, reads, refs = {}) {
+/** release.deploymentId, once discovery sets it, pins every later API read to the release that published the reads. */
+export function createReadClient(account, environment, actor, reads, refs = {}, release = {}) {
   const request = async (path, init = {}) => {
     check(requestAllowed(path, init, environment, refs), 'business_request_forbidden')
-    return account.request(path, { ...init, cache: 'no-store' })
+    const pinned = releaseHeaders(path, release.deploymentId, environment.basePath)
+    return account.request(path, { ...init, ...(Object.keys(pinned).length ? { headers: { ...init.headers, ...pinned } } : {}), cache: 'no-store' })
   }
   const read = async (surface, scenario, operation, path, init, decode) => {
     const traceId = randomBytes(16).toString('hex'), spanId = randomBytes(8).toString('hex')
@@ -298,8 +302,8 @@ export async function runReadCacheAcceptance() {
       evidence.stage = 'accounts'
       const result = await withTestAccounts({ environment, database, runId, workerId: 'read-cache', requestId: randomUUID() }, async scope => {
         try {
-          const refs = {}, owner = createReadClient(scope.owner, environment, 'owner', reads, refs)
-          const peer = createReadClient(scope.peer, environment, 'peer', reads, refs)
+          const refs = {}, release = {}, owner = createReadClient(scope.owner, environment, 'owner', reads, refs, release)
+          const peer = createReadClient(scope.peer, environment, 'peer', reads, refs, release)
           const pin = async scenario => check((await owner.json(`${environment.basePath}/api/version`, 'environment', scenario)).build === environment.deploymentSha, 'application_build_changed')
           evidence.stage = 'version-before'
           await pin('before')
@@ -315,6 +319,7 @@ export async function runReadCacheAcceptance() {
             evidence.stage = 'action-discovery'
             discovery = await discoverReadActions(owner.request, environment, fixture.issueIds[0])
             Object.assign(refs, discovery.refs)
+            release.deploymentId = discovery.deploymentId
             evidence.stage = 'read-cases'
             await exerciseReadCases({ owner, peer, fixture, environment })
             evidence.stage = 'version-after'

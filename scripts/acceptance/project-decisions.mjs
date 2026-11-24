@@ -14,7 +14,7 @@ import {
   AcceptanceError as ProviderAcceptanceError, assertRunEvidence, assertWorkspaceIdle,
   caseOrderPlan, orderFingerprint, ownedSource, providerReceipt, verifyCheckRuns,
 } from './model-provider-fallback.mjs'
-import { discoverRpcActions, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
+import { discoverRpcActions, releaseHeaders, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
 export const REPOSITORY = 'alexj11324/Mikka'
@@ -151,7 +151,8 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
 
 const ACTION_PAGES = ['/en', '/en?section=projects', '/en/settings?section=models']
 
-/** Only actions this deployment's web UI publishes, named as its RPC registry names them. */
+/** Only actions this deployment's web UI publishes, named as its RPC registry names them.
+ * diagnostics.deploymentId names the release that published them. */
 export async function discoverActions(request, diagnostics = {}) {
   const { refs, diagnostics: found } = await discoverRpcActions(request, { origin: ORIGIN, pages: ACTION_PAGES, actions: ACTIONS })
   Object.assign(diagnostics, found)
@@ -259,14 +260,14 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
   const report = { issue: 1245, revision: guard.revision, mode: guard.mode, status: 'running',
     workerReleaseRunId: attestation.workerReleaseRunId,
     startedAt: new Date(now()).toISOString(), cases: [], botRecord: null }
-  let cookie = '', ownerId, workspaceId, refs = {}, safeWorkspace = true
+  let cookie = '', ownerId, workspaceId, refs = {}, safeWorkspace = true, deploymentId = ''
   async function request(path, body, method = body === undefined ? 'GET' : 'POST', extra = {}) {
     const url = new URL(path.startsWith('/mikka/') ? path : '/mikka' + path, ORIGIN)
     check(url.origin === ORIGIN && url.pathname.startsWith('/mikka/') && !url.username && !url.password, 'origin_rejected')
     try {
       return await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(30000),
         headers: { origin: ORIGIN, 'cache-control': 'no-store', ...(cookie ? { cookie } : {}),
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...extra },
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...releaseHeaders(url.pathname, deploymentId), ...extra },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     } catch { throw new AcceptanceError('request_failed') }
   }
@@ -586,6 +587,8 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     workspaceId = bots[0].workspaceId
     report.actionDiscovery = {}
     refs = await discoverActions(request, report.actionDiscovery)
+    // Every later fixture read and write goes to the release that published these actions.
+    deploymentId = report.actionDiscovery.deploymentId ?? ''
     // A refused API path does not gate or substitute either official subscription path.
     for (const item of CASES) report.cases.push(await runCase(item))
     await pin()

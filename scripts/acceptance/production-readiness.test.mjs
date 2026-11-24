@@ -296,6 +296,19 @@ test('the Vite production document publishes the same three readiness actions wi
   assert.equal(f.calls.some(call => call.path.includes('section=projects')), false)
 })
 
+test('closing reads after discovery are pinned to the release that published the action list', async () => {
+  const f = fixture(), report = await f.run()
+  assert.equal(report.status, 'ready')
+  assert.equal(report.actionDiscovery.deploymentId, VITE_PIN)
+  const listed = f.calls.findIndex(call => call.path.startsWith('/mikka/renderer-manifest.json'))
+  const later = f.calls.slice(listed + 1), header = call => call.headers['x-deployment-id']
+  const scoped = later.filter(call => call.path.startsWith('/mikka/api/') && !call.path.startsWith('/mikka/api/version') && !call.path.startsWith('/mikka/api/auth/'))
+  assert.ok(scoped.some(call => call.path.startsWith('/mikka/api/settings/model-order')) && scoped.some(call => call.path === '/mikka/api/bots'))
+  assert.ok(scoped.every(call => header(call) === VITE_PIN))
+  assert.ok(f.calls.filter(call => call.path.startsWith('/mikka/api/version') || call.path.startsWith('/mikka/api/auth/')).every(call => header(call) === undefined))
+  assert.ok(f.calls.slice(0, listed).every(call => header(call) === undefined))
+})
+
 test('Vite readiness requires the actual web used-action inventory and matching module exports', async () => {
   for (const mutate of [
     manifest => { manifest.target = 'desktop' },

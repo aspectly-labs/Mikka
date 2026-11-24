@@ -22,10 +22,12 @@ export function webEntryPin(value, origin, basePath = '/mikka') {
 }
 
 /** Which of the wanted actions ({ name: 'module.export' }) this release's web UI
- * publishes. Reads public documents and the public action list only; it never
- * evaluates JavaScript or calls an action. */
+ * publishes, and that release's deployment id ('' when the document is
+ * unpinned, null when no action list was read). Reads public documents and the
+ * public action list only; it never evaluates JavaScript or calls an action. */
 export async function discoverRpcActions(request, { origin, pages, actions, basePath = '/mikka', maxBytes = 8_000_000 }) {
   const names = Object.keys(actions), refs = {}, pins = new Set()
+  let deploymentId = null
   const diagnostics = { transport: 'rpc', rpcVersion: DESKTOP_RPC_VERSION, required: names, found: [], missing: [...names],
     pagesRead: 0, pagesFailed: 0, manifestsRead: 0, manifestsFailed: 0 }
   for (const page of pages) {
@@ -57,6 +59,7 @@ export async function discoverRpcActions(request, { origin, pages, actions, base
         found[name] = action
       }
       Object.assign(refs, found)
+      deploymentId = [...pins][0]
       diagnostics.manifestsRead++
       diagnostics.rendererBuild = manifest.rendererBuild
       diagnostics.manifestSha256 = createHash('sha256').update(text).digest('hex')
@@ -64,7 +67,23 @@ export async function discoverRpcActions(request, { origin, pages, actions, base
   } else if (pins.size > 1) diagnostics.manifestsFailed++
   diagnostics.found = names.filter(name => refs[name])
   diagnostics.missing = names.filter(name => !refs[name])
-  return { refs, diagnostics }
+  if (deploymentId) diagnostics.deploymentId = deploymentId
+  return { refs, diagnostics, deploymentId }
+}
+
+/** The browser pins every call to its own API to the release that served the
+ * page (apps/frontend/src/web/deployment-fetch.ts), so a promotion mid-session
+ * cannot send its reads and writes to another release
+ * (cloudflare/web/gateway.mjs). The version check stays unpinned: it must see
+ * the current release. Sign-in and sign-out stay unpinned too: the session
+ * belongs to the account, not a release, and must close even when the pinned
+ * release has expired. */
+export function releaseHeaders(path, deploymentId, basePath = '/mikka') {
+  if (!deploymentId) return {}
+  const pathname = new URL(path, 'http://release.invalid').pathname
+  if (!pathname.startsWith(basePath + '/api/') || pathname === basePath + '/api/version'
+    || pathname.startsWith(basePath + '/api/auth/')) return {}
+  return { 'x-deployment-id': deploymentId }
 }
 
 /** The browser's own RPC request headers; the session cookie is added by the caller. */

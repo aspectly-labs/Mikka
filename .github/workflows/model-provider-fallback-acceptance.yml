@@ -30,7 +30,8 @@ jobs:
       actions: read
       id-token: write
     steps:
-      # Authorize the issue and the reviewed driver before executing checkout code.
+      # Authorize the issue merges before executing checkout code. The driver is
+      # this run's own main commit, so the reviewed current driver runs.
       - name: Resolve the two authorized issue merges
         id: merge
         env:
@@ -54,13 +55,14 @@ jobs:
             && /(?:refs?|fix(?:es)?|clos(?:e[sd]?|ing)|resolv(?:e[sd]?|ing))\s+(?:https:\/\/github\.com\/alexj11324\/Mikka\/issues\/)?#?1225\b/i.test(pr.body ?? '')
           const guard = [feature, acceptance].find(pr => pr.number === Number(event.inputs?.guard_pr ?? 1249))
           const trigger = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
-          if (!valid(feature, 1232) || !valid(acceptance, 1249) || !guard || !trigger) {
+          const driver = process.env.GITHUB_SHA
+          if (!valid(feature, 1232) || !valid(acceptance, 1249) || !guard || !trigger || !/^[a-f0-9]{40}$/.test(driver ?? '')) {
             appendFileSync(process.env.GITHUB_OUTPUT, 'eligible=false\n')
             console.log('merge_scope_rejected: no authorized issue deployment; no acceptance or smoke secret read.')
           } else {
             const mode = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' ? event.inputs?.mode ?? 'preflight' : 'active'
             if (!['preflight', 'active'].includes(mode)) throw Error('acceptance_mode_rejected')
-            appendFileSync(process.env.GITHUB_OUTPUT, `eligible=true\ndriver-sha=${acceptance.merge_commit_sha}\nmode=${mode}\n`)
+            appendFileSync(process.env.GITHUB_OUTPUT, `eligible=true\ndriver-sha=${driver}\nmode=${mode}\n`)
           }
           JS
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -99,7 +101,7 @@ jobs:
             }
             const guard = mergeGuard({ repository: process.env.GITHUB_REPOSITORY, ref: process.env.GITHUB_REF,
               eventName: process.env.GITHUB_EVENT_NAME, event: JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')),
-              pr: await readPr(1232), acceptancePr: await readPr(1249) })
+              pr: await readPr(1232), acceptancePr: await readPr(1249), driverRevision: process.env.GITHUB_SHA })
             if (guard.driverRevision !== process.env.EXPECTED_DRIVER_SHA) throw new AcceptanceError('merge_changed')
             const bound = await resolveAcceptanceDeployment({ guard, githubToken: process.env.GH_TOKEN })
             writeFileSync('model-provider-fallback-report/attestation.json', JSON.stringify({ issue: 1225, ...bound, status: 'awaiting_runtime' }, null, 2) + '\n')

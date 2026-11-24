@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isSmokeAccountEmail } from '../../lib/smoke-account.ts'
 import { assertFlashTestModel } from '../test-model-policy.mjs'
-import { discoverRpcActions, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
+import { discoverRpcActions, releaseHeaders, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
 export const REPOSITORY = 'alexj11324/Mikka'
@@ -31,7 +31,7 @@ const rpcActions = Object.freeze({ getIssueThread: 'agents.getIssueThread', chan
 const serverCodes = new Set(['authRequired', 'workspaceAccessDenied', 'executionModelUnknown', 'executionAccountUnavailable', 'executionRuleOrderInvalid', 'modelUnavailable', 'botNotFound', 'factoryStale', 'factoryStopped', 'factoryNotFound', 'factoryLifecycleUnavailable', 'factoryUnavailable', 'issueOutdated', 'runChainEnded', 'runNotFound', 'subscription_unavailable', 'backend_unavailable', 'validationGeneric'])
 const codes = new Set([
   'configuration_required', 'origin_rejected', 'merge_scope_rejected', 'build_mismatch', 'build_mapping_required',
-  'deployment_proof', 'application_ancestry', 'merge_read_failed', 'merge_changed',
+  'deployment_proof', 'application_ancestry', 'driver_ancestry', 'merge_read_failed', 'merge_changed',
   'account_required', 'sign_in_failed', 'session_missing', 'session_identity', 'workspace_missing',
   'request_failed', 'http_refused', 'response_invalid', 'action_missing', 'action_not_allowed', 'action_refused',
   'source_missing', 'source_ambiguous', 'source_blocked', 'cloud_unavailable', 'worker_release',
@@ -63,12 +63,15 @@ export function publicFailure(error) {
   }
 }
 
-export function mergeGuard({ repository, ref, eventName, event, pr, acceptancePr }) {
+/** The two merged issue PRs authorize the acceptance. The driver is the
+ * workflow's own main commit (driverRevision, GITHUB_SHA): the one that holds
+ * the current driver, never a fixed historical one. */
+export function mergeGuard({ repository, ref, eventName, event, pr, acceptancePr, driverRevision }) {
   const valid = (value, number) => value?.number === number && value.merged === true
     && value.base?.ref === 'main' && value.base?.repo?.full_name === REPOSITORY && sha(value.merge_commit_sha)
     && /(?:refs?|fix(?:es)?|clos(?:e[sd]?|ing)|resolv(?:e[sd]?|ing))\s+(?:https:\/\/github\.com\/alexj11324\/Mikka\/issues\/)?#?1225\b/i.test(value.body ?? '')
   check(repository === REPOSITORY && ref === 'refs/heads/main' && valid(pr, FEATURE_PULL_REQUEST)
-    && valid(acceptancePr, ACCEPTANCE_PULL_REQUEST), 'merge_scope_rejected')
+    && valid(acceptancePr, ACCEPTANCE_PULL_REQUEST) && sha(driverRevision), 'merge_scope_rejected')
   let guardPr, mode
   if (eventName === 'workflow_run') {
     const run = event?.workflow_run
@@ -84,7 +87,7 @@ export function mergeGuard({ repository, ref, eventName, event, pr, acceptancePr
     check(eventName === 'workflow_dispatch' && guardPr && ['preflight', 'active'].includes(mode), 'merge_scope_rejected')
   }
   return Object.freeze({ featureMergeSha: pr.merge_commit_sha, guardPullRequest: guardPr.number,
-    guardMergeSha: guardPr.merge_commit_sha, driverRevision: acceptancePr.merge_commit_sha, mode })
+    guardMergeSha: guardPr.merge_commit_sha, acceptanceMergeSha: acceptancePr.merge_commit_sha, driverRevision, mode })
 }
 
 function successfulRun(runs, revision, name, path) {
@@ -94,10 +97,11 @@ function successfulRun(runs, revision, name, path) {
 }
 
 /** Read the live application before any smoke credential is loaded. A newer
- * main release is eligible only when it contains the authorized issue merge. */
+ * main release is eligible only when it contains the authorized issue merges
+ * and the driver, and the driver itself contains both issue merges. */
 export async function resolveAcceptanceDeployment({ guard, githubToken, fetchImpl = fetch }) {
   check(guard && [FEATURE_PULL_REQUEST, ACCEPTANCE_PULL_REQUEST].includes(guard.guardPullRequest)
-    && [guard.featureMergeSha, guard.guardMergeSha, guard.driverRevision].every(sha)
+    && [guard.featureMergeSha, guard.guardMergeSha, guard.acceptanceMergeSha, guard.driverRevision].every(sha)
     && ['preflight', 'active'].includes(guard.mode), 'merge_scope_rejected')
   async function read(url, github = false) {
     let response
@@ -110,6 +114,13 @@ export async function resolveAcceptanceDeployment({ guard, githubToken, fetchImp
     const value = await response.json().catch(() => null)
     check(value !== null, 'deployment_proof')
     return value
+  }
+  // Both reviewed issue merges, whichever one guards this run, precede the driver.
+  for (const base of new Set([guard.featureMergeSha, guard.guardMergeSha, guard.acceptanceMergeSha])) {
+    if (base === guard.driverRevision) continue
+    const compared = await read(`https://api.github.com/repos/${REPOSITORY}/compare/${base}...${guard.driverRevision}`, true)
+    check(['ahead', 'identical'].includes(compared.status) && compared.base_commit?.sha === base
+      && compared.merge_base_commit?.sha === base, 'driver_ancestry')
   }
   const versionUrl = `${ORIGIN}/mikka/api/version`
   const revision = (await read(versionUrl)).build
@@ -244,9 +255,11 @@ function deterministicId(text) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`
 }
 
-/** Only actions this exact deployment's web UI publishes, named as its RPC registry names them. */
+/** Only actions this exact deployment's web UI publishes, named as its RPC
+ * registry names them, and the id of the release that published them. */
 export async function discoverActions(request) {
-  return (await discoverRpcActions(request, { origin: ORIGIN, pages: ['/en'], actions: rpcActions })).refs
+  const { refs, deploymentId } = await discoverRpcActions(request, { origin: ORIGIN, pages: ['/en'], actions: rpcActions })
+  return { refs, deploymentId: deploymentId ?? '' }
 }
 
 export function actionResult(data, name) {
@@ -291,14 +304,14 @@ export async function runModelProviderAcceptance({ env = process.env, fetchImpl 
     driverRevision, revision: expectedSha, origin: ORIGIN, mode,
     startedAt: new Date(now()).toISOString(), workerRelease: { ready: workerReady,
       kind: 'same_sha_official_runtime', sha: expectedSha, runId: workerRunId }, cases: [], status: 'running' }
-  let cookie = '', ownerId, workspaceId, actionRefs = {}
+  let cookie = '', ownerId, workspaceId, actionRefs = {}, deploymentId = ''
   async function request(path, body, method = body === undefined ? 'GET' : 'POST', headers = {}) {
     const url = new URL(path.startsWith('/mikka/') ? path : '/mikka' + path, ORIGIN)
     check(url.origin === ORIGIN && url.pathname.startsWith('/mikka/') && !url.username && !url.password, 'origin_rejected')
     try {
       return await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(30_000),
         headers: { origin: ORIGIN, 'cache-control': 'no-store', ...(cookie ? { cookie } : {}),
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...releaseHeaders(url.pathname, deploymentId), ...headers },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     } catch { throw new AcceptanceError('request_failed') }
   }
@@ -695,7 +708,8 @@ export async function runModelProviderAcceptance({ env = process.env, fetchImpl 
     check(Array.isArray(bots) && bots.length > 0 && bots.every(bot => bot.ownerId === ownerId && bot.workspaceId === bots[0].workspaceId)
       && uuid(bots[0].workspaceId), 'workspace_missing')
     workspaceId = bots[0].workspaceId
-    actionRefs = await discoverActions(request)
+    // Every later fixture read and write goes to the release that published these actions.
+    ;({ refs: actionRefs, deploymentId } = await discoverActions(request))
     report.cases = await independently(CASES, runCase)
     await pin()
     report.status = report.cases.every(item => item.status === (mode === 'preflight' ? 'ready' : 'pass')) ? (mode === 'preflight' ? 'ready' : 'pass') : 'partial'

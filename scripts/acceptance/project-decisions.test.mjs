@@ -161,7 +161,7 @@ test('discovery visits real UI routes and reads one release-pinned public action
   assert.equal(diagnostics.manifestSha256.length, 64)
   delete diagnostics.manifestSha256
   assert.deepEqual(diagnostics, { transport: 'rpc', rpcVersion: 1, required: names, found: names, missing: [],
-    pagesRead: 3, pagesFailed: 0, manifestsRead: 1, manifestsFailed: 0, rendererBuild: 'a'.repeat(64) })
+    pagesRead: 3, pagesFailed: 0, manifestsRead: 1, manifestsFailed: 0, rendererBuild: 'a'.repeat(64), deploymentId: PIN })
 })
 
 test('mixed releases, foreign entries and a refused or foreign action list publish no action', async () => {
@@ -455,6 +455,41 @@ test('active subscriptions need working-time steering, same-run decisions, one B
 })
 
 
+
+test('a promotion after the version check cannot move fixture reads or writes to another release', async () => {
+  // Two releases of the same commit publish the same action names (a rerun gets
+  // a new deployment id). The public gateway (cloudflare/web/gateway.mjs) sends
+  // an API call to its x-deployment-id, else to the current release; the
+  // version check always reads the current release.
+  const OLD = PIN, NEW = 'b0b0b0b0-2-1', f = fixture({ active: true })
+  let current = OLD, listed = false, promotedAt = -1
+  const traffic = []
+  const fetchImpl = async (input, init) => {
+    const url = new URL(input), path = url.pathname, method = init.method ?? 'GET'
+    const header = init.headers['x-deployment-id'], version = path === '/mikka/api/version'
+    const routed = path.startsWith('/mikka/api/') || /\.[^/]+$/.test(path)
+    const release = version || !routed ? current : header ?? url.searchParams.get('dpl') ?? current
+    traffic.push({ path, method, header, release })
+    if (path === '/mikka/renderer-actions.json') listed = true
+    const response = await f.fetchImpl(input, init)
+    // The promotion lands right after a version check that the old release passed.
+    if (version && listed && current === OLD) { current = NEW; promotedAt = traffic.length }
+    return response
+  }
+  const report = await runProjectDecisionsAcceptance({ env: env('active'), event: event('active'), attestation: attestation('active'),
+    ...f, fetchImpl, newId: () => DIRECTION })
+  assert.deepEqual(report.cases.map(item => [item.status, item.code]), [['blocked', 'source_blocked'], ['pass', undefined], ['pass', undefined]])
+  assert.equal(report.actionDiscovery.deploymentId, OLD)
+  assert.ok(promotedAt > 0, 'the current release changed during the run')
+  const scoped = call => call.path.startsWith('/mikka/api/') && call.path !== '/mikka/api/version' && !call.path.startsWith('/mikka/api/auth/')
+  const after = traffic.slice(promotedAt).filter(scoped), writes = after.filter(call => call.method !== 'GET')
+  assert.ok(writes.some(call => call.path === '/mikka/api/rpc') && writes.some(call => call.path === '/mikka/api/bots'))
+  assert.deepEqual([...new Set(after.map(call => call.release))], [OLD], 'every later read and write stays on the discovered release')
+  assert.deepEqual([...new Set(after.map(call => call.header))], [OLD])
+  // The version check stays unpinned, so a later build change is still seen.
+  assert.ok(traffic.filter(call => call.path === '/mikka/api/version').every(call => call.header === undefined))
+  assert.ok(traffic.filter(call => call.path.startsWith('/mikka/api/auth/')).every(call => call.header === undefined))
+})
 
 test('chat reader accepts only its normal route and shape while preserving live control state', async () => {
   const view = { items: [{ text: 'private-chat-body' }], working: false, error: 'private-chat-error', failure: { kind: 'failed' },
