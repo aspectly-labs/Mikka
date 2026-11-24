@@ -870,3 +870,96 @@ test('normalizes status helpers and standalone approval/question items consisten
   assert.equal(flatCardShell.preview, 'Site timed out')
   assert.doesNotThrow(() => assertConversationShellInvariants(flatCardShell))
 })
+
+test('interleaves subagent summaries chronologically and keeps parent max turn completion timestamp', () => {
+  const convId = threadConversationId(UUID_3)
+  const page = normalizeThreadHistoryPage(UUID_3, {
+    active: false,
+    items: [
+      { kind: 'person', id: 'u1', text: 'Audit and fix', mine: true, at: '2026-11-24T10:00:00.000Z' },
+      { kind: 'agent', id: 'a1', text: 'Final synthesis', at: '2026-11-24T10:02:00.000Z' },
+    ],
+    subagents: [
+      {
+        id: UUID_4,
+        harness: 'codex',
+        status: 'succeeded',
+        createdAt: '2026-11-24T10:00:10.000Z',
+        finishedAt: '2026-11-24T10:01:00.000Z',
+        brief: 'Inspect edge cases',
+      },
+    ],
+  })
+
+  // Subagent started at 10:00:10 is interleaved before the 10:02:00 final reply.
+  assert.deepEqual(
+    page.items.map((item) => item.type),
+    ['message', 'subagent_summary', 'message'],
+  )
+
+  const turns = groupItemsIntoTurns(convId, page.items, { rootTurnId: UUID_3 })
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0]?.startedAt, '2026-11-24T10:00:00.000Z')
+  assert.equal(turns[0]?.completedAt, '2026-11-24T10:02:00.000Z')
+  assert.equal(turns[0]?.durationMs, 120_000)
+
+  // Even when a child item sits last in a turn with an earlier completedAt, turn uses max timestamp.
+  const reorderedTurns = groupItemsIntoTurns(
+    convId,
+    [page.items[0]!, page.items[2]!, page.items[1]!],
+    { rootTurnId: UUID_3 },
+  )
+  assert.equal(reorderedTurns[0]?.completedAt, '2026-11-24T10:02:00.000Z')
+  assert.equal(reorderedTurns[0]?.durationMs, 120_000)
+})
+
+test('mergeHistoryPages preserves anchored placement for updated group exchange markers on delta reads', () => {
+  const older = normalizeGroupHistoryPage(UUID_2, {
+    nextBefore: '10',
+    messages: [
+      {
+        id: 'gm-2',
+        position: '12',
+        authorType: 'bot',
+        authorId: UUID_1,
+        body: 'Working on it',
+        createdAt: '2026-11-24T12:02:00.000Z',
+      },
+      {
+        id: 'gm-1',
+        position: '11',
+        authorType: 'user',
+        authorId: 'u-1',
+        body: 'Start',
+        createdAt: '2026-11-24T12:01:00.000Z',
+      },
+    ],
+    exchanges: [{ type: 'agent_exchange', linkId: 'link-1', anchorPosition: '11', count: '2' }],
+  })
+
+  // Delta read appends gm-3 and resends updated link-1 (now count=5) anchored to gm-1.
+  const delta = normalizeGroupHistoryPage(UUID_2, {
+    messages: [
+      {
+        id: 'gm-3',
+        position: '13',
+        authorType: 'bot',
+        authorId: UUID_1,
+        body: 'Finished',
+        createdAt: '2026-11-24T12:05:00.000Z',
+      },
+    ],
+    exchanges: [{ type: 'agent_exchange', linkId: 'link-1', anchorPosition: '11', count: '5' }],
+  })
+
+  const merged = mergeHistoryPages(older, delta)
+  assert.deepEqual(
+    merged.items.map((item) => item.id),
+    ['gm-1', 'exchange:link-1', 'gm-2', 'gm-3'],
+  )
+  const updatedExchange = merged.items[1]
+  assert.equal(updatedExchange?.type, 'status_notice')
+  if (updatedExchange?.type === 'status_notice') {
+    assert.equal(updatedExchange.meta?.count, '5')
+  }
+})

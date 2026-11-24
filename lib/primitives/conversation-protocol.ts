@@ -459,37 +459,39 @@ export function isReadOnlyConversation(shell: Pick<MikkaConversationShell, 'kind
  * malformed `parentThreadId`, or invalid timestamps are detected.
  */
 export function assertConversationShellInvariants(shell: MikkaConversationShell): void {
-  const parsed = parseConversationId(shell.id)
+  const shellId: string = shell.id
+  const parsed = parseConversationId(shellId)
   if (!parsed) {
-    throw new Error(`Shell id is not a valid canonical MikkaConversationId: ${JSON.stringify(shell.id)}`)
+    throw new Error(`Shell id is not a valid canonical MikkaConversationId: ${JSON.stringify(shellId)}`)
   }
   if (parsed.kind !== shell.kind || parsed.rawId !== shell.rawId) {
     throw new Error(
-      `Shell id "${shell.id}" disagrees with kind="${shell.kind}" rawId="${shell.rawId}"`,
+      `Shell id "${shellId}" disagrees with kind="${shell.kind}" rawId="${shell.rawId}"`,
     )
   }
   if (shell.kind === 'subagent') {
-    if (shell.readOnly !== true || shell.canReply !== false || shell.canRetry !== false) {
+    const flags: { readonly readOnly: boolean; readonly canReply: boolean; readonly canRetry: boolean } = shell
+    if (flags.readOnly !== true || flags.canReply !== false || flags.canRetry !== false) {
       throw new Error(
-        `Subagent shell "${shell.id}" violated Decision 1 / R-10 read-only invariant`,
+        `Subagent shell "${shellId}" violated Decision 1 / R-10 read-only invariant`,
       )
     }
   }
   if (shell.readOnly && shell.canReply) {
-    throw new Error(`Shell "${shell.id}" cannot have both readOnly=true and canReply=true`)
+    throw new Error(`Shell "${shellId}" cannot have both readOnly=true and canReply=true`)
   }
   if (shell.parentThreadId !== undefined && shell.parentThreadId !== null) {
     if (!isConversationId(shell.parentThreadId)) {
       throw new Error(
-        `Shell "${shell.id}" has invalid canonical parentThreadId: ${JSON.stringify(shell.parentThreadId)}`,
+        `Shell "${shellId}" has invalid canonical parentThreadId: ${JSON.stringify(shell.parentThreadId)}`,
       )
     }
   }
   if (!normalizeIsoTimestamp(shell.updatedAt)) {
-    throw new Error(`Shell "${shell.id}" has invalid updatedAt: ${JSON.stringify(shell.updatedAt)}`)
+    throw new Error(`Shell "${shellId}" has invalid updatedAt: ${JSON.stringify(shell.updatedAt)}`)
   }
   if (shell.finishedAt !== undefined && shell.finishedAt !== null && !normalizeIsoTimestamp(shell.finishedAt)) {
-    throw new Error(`Shell "${shell.id}" has invalid finishedAt: ${JSON.stringify(shell.finishedAt)}`)
+    throw new Error(`Shell "${shellId}" has invalid finishedAt: ${JSON.stringify(shell.finishedAt)}`)
   }
 }
 
@@ -824,11 +826,23 @@ export function groupItemsIntoTurns(
       status = 'completed'
     }
 
-    const startedAt = normalizeIsoTimestamp(first.startedAtMs ?? first.createdAt)
+    let minStartMs: number | null = null
+    let maxEndMs: number | null = null
+    for (const item of bucket) {
+      const itemStart = toTimestampMs(item.startedAtMs ?? item.createdAt)
+      if (itemStart !== null && itemStart > 0 && (minStartMs === null || itemStart < minStartMs)) {
+        minStartMs = itemStart
+      }
+      const itemEnd = toTimestampMs(item.completedAtMs ?? item.createdAt)
+      if (itemEnd !== null && itemEnd > 0 && (maxEndMs === null || itemEnd > maxEndMs)) {
+        maxEndMs = itemEnd
+      }
+    }
+    const startedAt = normalizeIsoTimestamp(minStartMs ?? first.startedAtMs ?? first.createdAt)
     const completedAt =
       status === 'in_progress'
         ? null
-        : normalizeIsoTimestamp(last.completedAtMs ?? last.createdAt)
+        : normalizeIsoTimestamp(maxEndMs ?? last.completedAtMs ?? last.createdAt)
     const durationMs = computeDurationMs(startedAt, completedAt)
 
     return [
@@ -937,7 +951,8 @@ export function assertHistoryPageInvariants<T>(page: MikkaHistoryPage<T>): void 
 
 /**
  * Merges an older page before a newer page in chronological order, deduplicating by `item.id`
- * (preferring the newer copy on overlap) and keeping `older`'s `nextBefore` / `hasMore` boundary.
+ * (replacing duplicates in place so anchored markers like group `agent_exchange` stay at their
+ * anchor while receiving fresher data) and keeping `older`'s `nextBefore` / `hasMore` boundary.
  */
 export function mergeHistoryPages<T extends { readonly id: string }>(
   older: MikkaHistoryPage<T>,
@@ -946,8 +961,21 @@ export function mergeHistoryPages<T extends { readonly id: string }>(
   assertHistoryPageInvariants(older)
   assertHistoryPageInvariants(newer)
 
-  const newerIds = new Set(newer.items.map((item) => item.id))
-  const combined = [...older.items.filter((item) => !newerIds.has(item.id)), ...newer.items]
+  const newerById = new Map(newer.items.map((item) => [item.id, item]))
+  const replacedIds = new Set<string>()
+  const combined: T[] = older.items.map((item) => {
+    const fresher = newerById.get(item.id)
+    if (fresher !== undefined) {
+      replacedIds.add(item.id)
+      return fresher
+    }
+    return item
+  })
+  for (const item of newer.items) {
+    if (!replacedIds.has(item.id)) {
+      combined.push(item)
+    }
+  }
   const totalCandidates = [older.totalItems, newer.totalItems].filter(
     (value): value is number => typeof value === 'number' && Number.isFinite(value),
   )
@@ -1996,14 +2024,27 @@ function projectThreadRows(
     }
   }
 
-  for (const subagent of input.subagents ?? []) {
-    items.push({
+  const subagentItems: MikkaSubagentSummaryItem[] = (input.subagents ?? [])
+    .map((subagent) => ({
       ...normalizeSubagentSummaryItem({
         ...subagent,
         parentThreadId: subagent.parentThreadId ?? conversationId,
       }),
       conversationId,
-    })
+    }))
+    .sort((a, b) => (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0))
+
+  for (const child of subagentItems) {
+    const childAt = child.startedAtMs ?? 0
+    const insertIndex =
+      childAt > 0
+        ? items.findIndex(
+            (entry) =>
+              entry.type !== 'subagent_summary' &&
+              (entry.startedAtMs ?? toTimestampMs(entry.createdAt) ?? 0) > childAt,
+          )
+        : -1
+    items.splice(insertIndex === -1 ? items.length : insertIndex, 0, child)
   }
   for (const approval of input.approvals ?? []) {
     items.push(normalizeApprovalItem({ ...approval, conversationId }))
