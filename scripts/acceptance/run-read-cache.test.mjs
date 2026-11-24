@@ -271,7 +271,7 @@ test('landing compilation makes one bounded anonymous request and never follows 
   const abort = new AbortController()
   const timeout = mock.method(AbortSignal, 'timeout', duration => { assert.equal(duration, 120_000); return abort.signal })
   try {
-    for (const response of [new Response('<html>streamed redirect</html>'), new Response(null, { status: 307, headers: { location: '/api/acceptance' } }), new Response(null, { status: 307, headers: { location: `${environment.origin}/mikka/api/acceptance`, 'set-cookie': 'mikka-locale=zh-CN; Path=/mikka; SameSite=Lax' } })]) {
+    for (const response of [new Response('<html>streamed redirect</html>'), new Response(null, { status: 307, headers: { location: '/api/acceptance' } }), new Response(null, { status: 307, headers: { location: `${environment.origin}/mikka/api/acceptance`, 'set-cookie': 'mikka-locale=zh-CN; Path=/mikka; SameSite=Lax' } }), new Response(null, { headers: [['set-cookie', 'mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'], ['set-cookie', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax']] })]) {
       let calls = 0
       await prepareLandingRoute(environment, async (url, options) => {
         calls++
@@ -293,7 +293,7 @@ test('landing compilation makes one bounded anonymous request and never follows 
 test('landing preparation refuses unexpected status, redirect and auth cookies without a second request', async () => {
   for (const response of [new Response(null, { status: 500 }), new Response(null, { status: 404 }), new Response(null, { status: 307 }),
     ...['https://foreign.example/api/acceptance', '//foreign.example/api/acceptance', '/api/acceptance?next=private', '/mikka/api/auth/sign-up/email'].map(location => new Response(null, { status: 307, headers: { location } })),
-    ...['better-auth.session_token=private; HttpOnly', 'mikka-locale=private', 'mikka-locale=en, better-auth.session_token=private', 'NEXT_LOCALE=en'].map(cookie => new Response(null, { headers: { 'set-cookie': cookie } })),
+    ...['better-auth.session_token=private; HttpOnly', 'mikka-locale=private', 'mikka-locale=en, better-auth.session_token=private', 'NEXT_LOCALE=private'].map(cookie => new Response(null, { headers: { 'set-cookie': cookie } })),
   ]) {
     let calls = 0
     await assert.rejects(prepareLandingRoute(environment, async () => { calls++; return response }), { code: 'owned_landing_prepare_refused' })

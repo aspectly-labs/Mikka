@@ -56,7 +56,14 @@ test('official pages preserve localization, credential referrer policy, raw-inde
   const env = services()
   const localized = await release.fetch(request('/mikka/en/sign-in', { headers: { 'sec-fetch-dest': 'document' } }), env)
   assert.match(await localized.text(), /lang="en"/)
-  assert.match(localized.headers.get('set-cookie'), /mikka-locale=en/)
+  // Two Set-Cookie headers survive the release Worker as two (phase 1 of the
+  // locale cookie rename writes both names alike, i18n/locale-cookie.mjs).
+  assert.deepEqual(localized.headers.getSetCookie(), ['mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
+  const legacy = await release.fetch(request('/mikka/sign-in', { headers: { 'sec-fetch-dest': 'document', cookie: 'NEXT_LOCALE=en' } }), env)
+  assert.equal(new URL(legacy.headers.get('location')).pathname, '/mikka/en/sign-in', 'a choice stored under the old name is kept')
+  assert.deepEqual(legacy.headers.getSetCookie(), ['mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
+  const current = await release.fetch(request('/mikka/en/sign-in', { headers: { 'sec-fetch-dest': 'document', cookie: 'mikka-locale=en; NEXT_LOCALE=en' } }), env)
+  assert.deepEqual(current.headers.getSetCookie(), [], 'a browser holding both cookies gets no Set-Cookie')
   assert.equal(localized.headers.get('cache-control'), 'no-store')
   assert.equal((await release.fetch(request('/mikka/device'), env)).headers.get('referrer-policy'), 'no-referrer')
   for (const path of ['/mikka/index.html', '/mikka/%69ndex.html', '/mikka/.vite/manifest.json', '/mikka/renderer-manifest.json', '/mikka/_headers', '/outside/logo.svg']) {

@@ -1,7 +1,7 @@
 import Negotiator from 'negotiator'
 import { match } from '@formatjs/intl-localematcher'
 import { parseRequestCookies } from '../src/request-cookies.mjs'
-import { EXPIRED_LEGACY_LOCALE_COOKIE, LEGACY_LOCALE_COOKIE, LOCALE_COOKIE, localeCookie, storedLocale } from '../../../i18n/locale-cookie.mjs'
+import { localeCookies, localeCookiesCurrent, storedLocale } from '../../../i18n/locale-cookie.mjs'
 
 export const baseSecurityHeaders = {
   'x-content-type-options': 'nosniff',
@@ -91,10 +91,10 @@ export function pageRedirect(request, { production = process.env.NODE_ENV === 'p
   }
 }
 
-/** A document response keeps the locale cookie in step with the page it
- * serves, and sends Set-Cookie only when the browser's cookies differ: the
- * current cookie when it is missing or holds another value, and an expiry for
- * the legacy cookie while the browser still sends one (i18n/locale-cookie.mjs).
+/** A document response keeps the locale cookies in step with the page it
+ * serves, and sends Set-Cookie only when one of them is missing or holds
+ * another value. Which names are written is the migration phase's choice
+ * (i18n/locale-cookie.mjs).
  * @returns {{locale:'en'|'zh-CN', redirect?:Response, cookies?:string[]}} */
 export function localizePage(request) {
   const url = new URL(request.url), explicit = /^\/mikka\/(en|zh-CN)(?=\/|$)/.exec(url.pathname)?.[1]
@@ -108,11 +108,8 @@ export function localizePage(request) {
   let destination
   if (explicit === 'zh-CN') destination = url.pathname.replace(/^\/mikka\/zh-CN/, '/mikka')
   else if (!explicit && locale === 'en') destination = url.pathname.replace(/^\/mikka/, '/mikka/en')
-  const updates = request.headers.get('sec-fetch-dest') !== 'document' ? [] : [
-    ...(cookies.get(LOCALE_COOKIE) !== locale ? [localeCookie(locale)] : []),
-    ...(cookies.has(LEGACY_LOCALE_COOKIE) ? [EXPIRED_LEGACY_LOCALE_COOKIE] : []),
-  ]
-  const result = { locale, ...(updates.length ? { cookies: updates } : {}) }
+  const update = request.headers.get('sec-fetch-dest') === 'document' && !localeCookiesCurrent(name => cookies.get(name), locale)
+  const result = { locale, ...(update ? { cookies: localeCookies(locale) } : {}) }
   if (destination) { url.pathname = destination; return { ...result, redirect: new Response(null, { status: 307, headers: { location: url.href } }) } }
   return result
 }

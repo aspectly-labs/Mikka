@@ -2,7 +2,7 @@ import { forwardRef, useMemo } from 'react'
 import { useLocale } from '@/lib/intl/i18n-client'
 import { BASE_PATH } from '@/lib/base-path'
 import { routing } from '@/i18n/routing'
-import { localeCookie } from '@/i18n/locale-cookie.mjs'
+import { localeCookies } from '@/i18n/locale-cookie.mjs'
 import NextLink, { type LinkProps } from './link'
 import { localeHref, navigate, refresh, useLocation, withoutLocale, type Href } from './location'
 
@@ -15,7 +15,8 @@ export const redirect = ({ href, locale }: { href: Href; locale: string }) => na
 function syncLocaleCookie(locale: string, nextLocale: string | undefined) {
   if (!nextLocale || nextLocale === locale || !routing.locales.some(value => value === nextLocale)) return
   if (window.location.protocol !== 'https:' && window.location.protocol !== 'http:') return
-  document.cookie = localeCookie(nextLocale, BASE_PATH)
+  // One assignment stores one cookie; the migration phase decides how many.
+  for (const cookie of localeCookies(nextLocale, BASE_PATH)) document.cookie = cookie
 }
 
 export function useRouter() {

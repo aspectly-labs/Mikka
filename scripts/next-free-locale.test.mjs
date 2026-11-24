@@ -6,11 +6,12 @@ import test from 'node:test'
 
 /**
  * The locale cookie is `mikka-locale`. Its pre-rename name stays in exactly one
- * constant, `LEGACY_LOCALE_COOKIE` in i18n/locale-cookie.mjs, which is read only
- * to migrate people who chose a language before the rename
+ * constant, `LEGACY_LOCALE_COOKIE` in i18n/locale-cookie.mjs, which retires in
+ * release phases: expand (read both, write both), stop writing, stop reading
  * (docs/design/decisions/2026-11-18-1500-retire-next-dependency.md). This test
- * keeps it that way: a new reader or writer of the old name elsewhere would
- * otherwise pass CI silently and outlive the migration.
+ * keeps the name in that one module: a reader or writer of the old name
+ * elsewhere would otherwise pass CI silently and outlive the migration, and
+ * each phase would have to find every use again.
  *
  * Tests may name the old cookie, because they exercise the migration. This
  * file names it too, so it excludes itself.
@@ -19,8 +20,6 @@ const root = resolve(import.meta.dirname, '..')
 const SELF = 'scripts/next-free-locale.test.mjs'
 const CONSTANT_FILE = 'i18n/locale-cookie.mjs'
 const LEGACY = 'NEXT_LOCALE'
-/** One cookie lifetime (Max-Age one year) after the rename on 2026-11-24. */
-const EARLIEST_REMOVAL = '2027-11-24'
 
 /** Docs may tell the history; tests drive the migration. */
 const NOT_SOURCE = [':!*.md', ':!**/*.md', ':!**/*.test.*', ':!**/test/**', ':!tests/**', ':!.claude/**']
@@ -38,22 +37,22 @@ function grep(pattern, extra = []) {
 
 test(`no source file outside ${CONSTANT_FILE} names the legacy locale cookie`, () => {
   assert.deepEqual(grep(LEGACY, [`:!${CONSTANT_FILE}`]), [],
-    'import LEGACY_LOCALE_COOKIE from i18n/locale-cookie.mjs, or use LOCALE_COOKIE to read or write the choice')
+    'read with storedLocale and write with localeCookies from i18n/locale-cookie.mjs instead')
 })
 
-test('the legacy name is one named constant with a removal date at least one cookie lifetime away', async () => {
+test('the legacy name is one named constant whose comment names the retirement phases', async () => {
   const source = await readFile(join(root, CONSTANT_FILE), 'utf8')
   assert.equal(source.split(LEGACY).length - 1, 1, `${CONSTANT_FILE} names the legacy cookie exactly once`)
   assert.match(source, new RegExp(`^export const LEGACY_LOCALE_COOKIE = '${LEGACY}'$`, 'm'))
   assert.match(source, /^export const LOCALE_COOKIE = 'mikka-locale'$/m)
-  const removal = /on or after (\d{4}-\d\d-\d\d)/.exec(source)?.[1]
-  assert.ok(removal, 'the constant says on or after which date it can be deleted')
-  assert.ok(removal >= EARLIEST_REMOVAL, `${removal} is earlier than ${EARLIEST_REMOVAL}`)
-  // The only Set-Cookie the module builds for the old name expires it.
-  for (const match of source.matchAll(/\$\{LEGACY_LOCALE_COOKIE\}=([^`]*)`/g)) assert.match(match[1], /^; Max-Age=0;/)
+  // No calendar date: self-hosted servers upgrade late and keep writing the old
+  // name, so retirement follows releases, and the comment must say which.
+  assert.match(source, /Phase 1 \(expand[^]*every writer writes both names/)
+  assert.match(source, /Phase 2 \(stop writing\)[^]*rollback window/)
+  assert.match(source, /Phase 3 \(stop reading\)[^]*oldest supported self-hosted release[^]*one cookie lifetime/)
 })
 
-test('only the locale readers use the legacy constant, so deleting it is a small change', () => {
+test('only the locale-cookie module uses the legacy constant; readers and writers call its helpers', () => {
   const users = new Set(grep('\\bLEGACY_LOCALE_COOKIE\\b').map(hit => hit.slice(0, hit.indexOf(':'))))
-  assert.deepEqual([...users].sort(), [CONSTANT_FILE, 'apps/api/runtime/http-policy.mjs'].sort())
+  assert.deepEqual([...users], [CONSTANT_FILE])
 })

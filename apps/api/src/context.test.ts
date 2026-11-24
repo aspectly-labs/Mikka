@@ -35,7 +35,7 @@ test('a stored value that is neither locale does not pin the visitor', () => {
   assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'mikka-locale=fr' }), 'zh-CN')
 })
 
-test('a choice stored under the legacy cookie name still counts until the page migrates it', () => {
+test('a choice stored under the legacy cookie name still counts while the rename is in progress', () => {
   assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'NEXT_LOCALE=en' }), 'en')
   assert.equal(localeFor({ 'accept-language': 'en-US', cookie: 'NEXT_LOCALE=zh-CN' }), 'zh-CN')
   assert.equal(localeFor({ 'accept-language': 'en-US', cookie: 'NEXT_LOCALE=fr' }), 'en')

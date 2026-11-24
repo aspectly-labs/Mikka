@@ -3,22 +3,33 @@ import { basePath } from '../lib/base-path-config.mjs'
 /**
  * The cookie that remembers a person's explicit language choice. It follows
  * the product's other cookie, `mikka-workspace`: lower case, `mikka-` prefix.
- * Every writer (the page response and the client locale switch) writes only
- * this name, with the attributes `localeCookie` gives.
+ * Readers go through `storedLocale`; writers (the page response and the client
+ * locale switch) go through `localeCookies`.
  */
 export const LOCALE_COOKIE = 'mikka-locale'
 
 /**
  * The same cookie's name from before Next.js was retired
- * (docs/design/decisions/2026-11-18-1500-retire-next-dependency.md).
+ * (docs/design/decisions/2026-11-18-1500-retire-next-dependency.md). The rename
+ * is an expand/contract migration in three release phases, so that a rollback
+ * or a self-hosted server that upgrades late never loses anyone's language:
  *
- * Read only to migrate people who chose a language before the rename: a page
- * document re-issues their choice as `LOCALE_COOKIE` and expires this one, so
- * one visit migrates them. Nothing writes it. The old cookie lived for one
- * year (Max-Age 31536000), so on or after 2027-11-24 no browser can still
- * hold one: delete this constant, `EXPIRED_LEGACY_LOCALE_COOKIE` and the
- * legacy fallback in `storedLocale` then, and drop the exception in
- * scripts/next-free-locale.test.mjs.
+ * Phase 1 (expand, this release): read `LOCALE_COOKIE` first and fall back to
+ * this name; every writer writes both names with the same value and
+ * attributes; nothing expires this cookie. A rollback to a release that knows
+ * only this name still finds the choice.
+ *
+ * Phase 2 (stop writing), in a later release once phase 1 has been in
+ * production past its rollback window: `localeCookies` writes only
+ * `LOCALE_COOKIE`, and a page document that still carries this cookie expires
+ * it (empty value, `Max-Age=0; Path=/mikka; SameSite=Lax`). Reading stays.
+ *
+ * Phase 3 (stop reading), once the oldest supported self-hosted release writes
+ * `LOCALE_COOKIE` and at least one cookie lifetime (Max-Age one year) has
+ * passed since phase 2 shipped: delete this constant and the fallback in
+ * `storedLocale`, and drop the exception in scripts/next-free-locale.test.mjs.
+ *
+ * Only this module may use this constant; readers and writers call its helpers.
  */
 export const LEGACY_LOCALE_COOKIE = 'NEXT_LOCALE'
 
@@ -44,14 +55,27 @@ export function storedLocale(read) {
   return supported(legacy) ? legacy : undefined
 }
 
+/** The names every writer writes in this phase (phase 1: both). */
+export const WRITTEN_LOCALE_COOKIES = Object.freeze([LOCALE_COOKIE, LEGACY_LOCALE_COOKIE])
+
 /**
- * The Set-Cookie value (or `document.cookie` assignment) for a choice.
+ * The Set-Cookie values (or `document.cookie` assignments, one each) that
+ * store a choice under every name written in this phase, with one set of
+ * attributes.
  * @param {string} locale
  * @param {string} [path]
+ * @returns {string[]}
  */
-export function localeCookie(locale, path = basePath) {
-  return `${LOCALE_COOKIE}=${locale}; Max-Age=${LOCALE_COOKIE_MAX_AGE}; Path=${path || '/'}; SameSite=Lax`
+export function localeCookies(locale, path = basePath) {
+  return WRITTEN_LOCALE_COOKIES.map(name => `${name}=${locale}; Max-Age=${LOCALE_COOKIE_MAX_AGE}; Path=${path || '/'}; SameSite=Lax`)
 }
 
-/** Expires the legacy cookie with the attributes it was written with. */
-export const EXPIRED_LEGACY_LOCALE_COOKIE = `${LEGACY_LOCALE_COOKIE}=; Max-Age=0; Path=${basePath}; SameSite=Lax`
+/**
+ * True when the browser already holds `locale` under every written name, so a
+ * response needs no Set-Cookie.
+ * @param {(name: string) => string | undefined} read
+ * @param {string} locale
+ */
+export function localeCookiesCurrent(read, locale) {
+  return WRITTEN_LOCALE_COOKIES.every(name => read(name) === locale)
+}

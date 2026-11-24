@@ -56,46 +56,54 @@ test('page locale uses the same last valid cookie as the installed SDK', async (
   }
 })
 
-const NEW_EN = 'mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'
-const NEW_ZH = 'mikka-locale=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax'
-const EXPIRE_LEGACY = 'NEXT_LOCALE=; Max-Age=0; Path=/mikka; SameSite=Lax'
+// Phase 1 of the rename (i18n/locale-cookie.mjs): every write stores both
+// names with one value and one set of attributes, and nothing expires the old
+// cookie, so a rollback to a release that reads only the old name keeps it.
+const BOTH_EN = ['mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax']
+const BOTH_ZH = ['mikka-locale=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax']
 const page = (path, cookie, dest = 'document') => pageResponse(request(path, { headers: { cookie, 'accept-language': 'zh-CN', ...(dest ? { 'sec-fetch-dest': dest } : {}) } }), render)
 
-test('a document with only the legacy cookie keeps the choice, sets the new cookie and expires the old one', async () => {
+test('a document with only the legacy cookie keeps the choice and writes it under both names', async () => {
   const english = await page('/mikka/settings?section=general', 'NEXT_LOCALE=en; other=kept')
   assert.equal(english.status, 307)
   assert.equal(english.headers.get('location'), 'https://example.test/mikka/en/settings?section=general')
-  assert.deepEqual(english.headers.getSetCookie(), [NEW_EN, EXPIRE_LEGACY])
+  assert.deepEqual(english.headers.getSetCookie(), BOTH_EN)
   const chinese = await page('/mikka/settings', 'NEXT_LOCALE=zh-CN')
   assert.equal(chinese.status, 200)
   assert.match(await chinese.text(), /lang="zh-CN"/)
-  assert.deepEqual(chinese.headers.getSetCookie(), [NEW_ZH, EXPIRE_LEGACY])
+  assert.deepEqual(chinese.headers.getSetCookie(), BOTH_ZH)
   // The browser stores both before following the redirect, so the next document is quiet.
-  assert.deepEqual((await page('/mikka/en/settings?section=general', 'other=kept; mikka-locale=en')).headers.getSetCookie(), [])
-  // A legacy value that names no locale is ignored, as before, and still expired.
-  assert.deepEqual((await page('/mikka/settings', 'NEXT_LOCALE=fr')).headers.getSetCookie(), [NEW_ZH, EXPIRE_LEGACY])
+  assert.deepEqual((await page('/mikka/en/settings?section=general', 'other=kept; mikka-locale=en; NEXT_LOCALE=en')).headers.getSetCookie(), [])
+  // A legacy value that names no locale is ignored, as before, and overwritten.
+  assert.deepEqual((await page('/mikka/settings', 'NEXT_LOCALE=fr')).headers.getSetCookie(), BOTH_ZH)
+  // No response in this phase expires the legacy cookie.
+  for (const cookie of ['NEXT_LOCALE=en', 'NEXT_LOCALE=zh-CN; mikka-locale=en', 'mikka-locale=en']) {
+    for (const value of (await page('/mikka/en', cookie)).headers.getSetCookie()) assert.doesNotMatch(value, /Max-Age=0|Expires=/, cookie)
+  }
 })
 
-test('the new cookie wins over the legacy one, and a migrated browser gets no Set-Cookie', async () => {
+test('the new cookie wins over the legacy one, and Set-Cookie goes out only while either differs', async () => {
   for (const cookie of ['mikka-locale=en; NEXT_LOCALE=zh-CN', 'NEXT_LOCALE=zh-CN; mikka-locale=en']) {
     const input = request('/mikka/settings', { headers: { cookie, 'accept-language': 'zh-CN', 'sec-fetch-dest': 'document' } })
     assert.equal(localizePage(input).locale, 'en', cookie)
     const response = await pageResponse(input, render)
     assert.equal(response.headers.get('location'), 'https://example.test/mikka/en/settings')
-    assert.deepEqual(response.headers.getSetCookie(), [EXPIRE_LEGACY], cookie)
+    assert.deepEqual(response.headers.getSetCookie(), BOTH_EN, cookie)
   }
-  // A new cookie that names no locale falls back to the legacy choice and is rewritten.
-  assert.deepEqual((await page('/mikka/en', 'mikka-locale=fr; NEXT_LOCALE=en')).headers.getSetCookie(), [NEW_EN, EXPIRE_LEGACY])
-  for (const [path, cookie] of [['/mikka/en/settings', 'mikka-locale=en'], ['/mikka/settings', 'mikka-locale=zh-CN']]) {
+  // A new cookie that names no locale falls back to the legacy choice and both are rewritten.
+  assert.deepEqual((await page('/mikka/en', 'mikka-locale=fr; NEXT_LOCALE=en')).headers.getSetCookie(), BOTH_EN)
+  // A browser that holds only the new cookie (after a rollback from phase 2) gets the old one back.
+  assert.deepEqual((await page('/mikka/en/settings', 'mikka-locale=en')).headers.getSetCookie(), BOTH_EN)
+  for (const [path, cookie] of [['/mikka/en/settings', 'mikka-locale=en; NEXT_LOCALE=en'], ['/mikka/settings', 'NEXT_LOCALE=zh-CN; mikka-locale=zh-CN']]) {
     const response = await page(path, cookie)
     assert.equal(response.status, 200)
     assert.deepEqual(response.headers.getSetCookie(), [], cookie)
   }
-  // An explicit language in the path replaces the stored one, once.
-  assert.deepEqual((await page('/mikka/en', 'mikka-locale=zh-CN')).headers.getSetCookie(), [NEW_EN])
+  // An explicit language in the path replaces the stored one under both names, once.
+  assert.deepEqual((await page('/mikka/en', 'mikka-locale=zh-CN; NEXT_LOCALE=zh-CN')).headers.getSetCookie(), BOTH_EN)
 })
 
-test('only document requests migrate; other requests still read the legacy choice', async () => {
+test('only document requests write; other requests still read the legacy choice', async () => {
   for (const dest of ['empty', null]) {
     const response = await page('/mikka/settings', 'NEXT_LOCALE=en', dest)
     assert.equal(response.headers.get('location'), 'https://example.test/mikka/en/settings')
@@ -139,7 +147,7 @@ test('token pages keep private headers in both locales; document requests alone 
     assert.equal(response.headers.get('cache-control'), 'no-store')
   }
   const document = await pageResponse(request('/mikka/en', { headers: { 'sec-fetch-dest': 'document' } }), render)
-  assert.equal(document.headers.get('set-cookie'), 'mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax')
+  assert.deepEqual(document.headers.getSetCookie(), BOTH_EN)
   assert.equal((await pageResponse(request('/mikka/en'), render)).headers.get('set-cookie'), null)
 })
 

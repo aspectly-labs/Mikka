@@ -81,7 +81,8 @@ test('development applies real locale, document cookie and private-link policies
   assert.equal(localized.headers.get('referrer-policy'), 'no-referrer')
   assert.equal(localized.headers.get('cache-control'), 'no-store')
   assert.equal(localized.headers.get('vary'), 'Accept-Language, Cookie')
-  assert.match(localized.headers.get('set-cookie'), /^mikka-locale=en; Max-Age=31536000; Path=\/mikka; SameSite=Lax$/)
+  // Phase 1 of the cookie rename writes both names alike (i18n/locale-cookie.mjs).
+  assert.deepEqual(localized.headers.getSetCookie(), ['mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
   assert.equal(transformed, 1)
   const nonDocument = await developmentDocument(request('/mikka/en', { headers: { Cookie: 'mikka-locale=zh-CN', 'Sec-Fetch-Dest': 'empty' } }), render)
   assert.equal(nonDocument.headers.get('set-cookie'), null)
