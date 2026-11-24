@@ -233,9 +233,9 @@ test('the official interface never imports posthog-js statically and mounts the 
 test('analytics acceptance preserves the three real anonymous routes and isolated database restriction', () => {
   assert.deepEqual(analyticsPaths, ['/mikka', '/mikka/sign-in', '/mikka/en/sign-in'])
   const database = 'postgresql://e2e:disposable@127.0.0.1:5432/mikka_e2e'
-  const env = { CI: 'true', NEXT_PUBLIC_POSTHOG_KEY: analyticsKey, E2E_DATABASE_URL: database, DATABASE_URL: database, MIKKA_DATABASE_URL: database }
+  const env = { CI: 'true', MIKKA_PUBLIC_POSTHOG_KEY: analyticsKey, E2E_DATABASE_URL: database, DATABASE_URL: database, MIKKA_DATABASE_URL: database }
   assert.equal(analyticsEnvironment(env), database)
-  for (const change of [{ CI: 'false' }, { NEXT_PUBLIC_POSTHOG_KEY: 'another-project' }, { DATABASE_URL: database + '?options=other' },
+  for (const change of [{ CI: 'false' }, { MIKKA_PUBLIC_POSTHOG_KEY: 'another-project' }, { DATABASE_URL: database + '?options=other' },
     { E2E_DATABASE_URL: database.replace('127.0.0.1', 'remote.example') }, { E2E_DATABASE_URL: database.replace('/mikka_e2e', '/mikka') }]) {
     assert.throws(() => analyticsEnvironment({ ...env, ...change }))
   }

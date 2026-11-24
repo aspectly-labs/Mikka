@@ -225,7 +225,7 @@ async function prepare(env, workload) {
       }
     } finally { command('docker', ['rm', container], { env: tools, stage: 'RUNTIME_API_REMOVE' }) }
   }
-  await githubEnvironment(env, { MIKKA_BUILD_REVISION: receipt.publicSha, NEXT_PUBLIC_MIKKA_BUILD: receipt.publicSha,
+  await githubEnvironment(env, { MIKKA_BUILD_REVISION: receipt.publicSha, MIKKA_PUBLIC_BUILD: receipt.publicSha,
     MIKKA_UI_OVERLAY_SHA: receipt.overlaySha, MIKKA_DEPLOYMENT_ID: receipt.release,
     MIKKA_RUNTIME_RELEASE: receipt.runtimeRelease ?? '', RUNTIME_IMAGE_TAG: runtimeImageIdentity(receipt).tag,
     MIKKA_EDITION: 'cloud', MIKKA_DEPLOYMENT_STAGE: 'production', MIKKA_DEPLOYMENT_ENVIRONMENT: 'production', NITRO_PRESET: 'node-server' })

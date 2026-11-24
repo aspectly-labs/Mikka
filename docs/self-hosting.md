@@ -385,6 +385,8 @@ The image acceptance check executes both packaged binaries and verifies their bu
 
 Official Mikka Cloud production must explicitly set the non-secret `MIKKA_EDITION=cloud` selector in the trusted release build and deployed runtime. The legacy Vercel deployment retains the corresponding Vercel Production value while it still serves; the target Cloudflare release uses its own verified container and secret bindings instead. The release job declares its build value and verifies the matching Vercel value; credentials still come from Infisical. Its Stripe checks, trial limits, reservation/settlement, and existing providers remain enabled. The previous domain redirect is separately configured with `MIKKA_LEGACY_APP_HOST`; it grants no authenticated access through the old host.
 
+Public build settings use `MIKKA_PUBLIC_*` names: `MIKKA_PUBLIC_POSTHOG_KEY`, `MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `MIKKA_PUBLIC_TURNSTILE_SITE_KEY`, `MIKKA_PUBLIC_COMPUTER_ENABLED`, `MIKKA_PUBLIC_COMPUTER_MOCK`, `MIKKA_PUBLIC_COMPUTER_ACCEPTANCE` and `MIKKA_PUBLIC_BUILD`; the PostHog host is `POSTHOG_HOST` and the daemon package name `MIKKA_DAEMON_PACKAGE_NAME`. The old `NEXT_PUBLIC_*` names are still accepted for now ([rename](operations/public-env-rename.md)).
+
 Optional Mikka cloud services are a separate connection. The community edition remains usable without connecting them. The hosted-compute resale option is not included; its pricing decision is tracked separately in #1569.
 
 ## Build, verify, and upgrade

@@ -30,6 +30,7 @@
 
 type Env = Record<string, string | undefined>
 import { deploymentStage } from './deployment-stage.mjs'
+import { publicEnv } from './public-env.mjs'
 import { posthogConfig } from './posthog-config'
 import { isCloudEdition } from './edition'
 
@@ -143,7 +144,7 @@ export function deploymentSwitch(name: DeploymentSwitch, env: Env = process.env,
   const entry: Switch = DEPLOYMENT_SWITCHES[name]
   if (env === process.env) scheduleRefresh(now)
   return testOverrides()?.get(name) ?? answered(entry, state.answers) ?? entry.legacy?.(env)
-    ?? (!isCloudEdition(env) && !env.NEXT_PUBLIC_POSTHOG_KEY ? PRODUCTION_SWITCH_DEFAULTS[name] : entry.fallback)
+    ?? (!isCloudEdition(env) && !publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', env) ? PRODUCTION_SWITCH_DEFAULTS[name] : entry.fallback)
 }
 
 /** Kept on globalThis so every copy of this module a test loads sees the same overrides. */
@@ -167,7 +168,7 @@ export function overrideDeploymentSwitch(name: DeploymentSwitch, value: boolean 
 
 function scheduleRefresh(now: number) {
   if (state.pending || now - state.at < SWITCH_REFRESH_MS) return
-  const token = process.env.NEXT_PUBLIC_POSTHOG_KEY
+  const token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY')
   if (!token || typeof fetch !== 'function') return
   state.at = now
   state.pending = refreshDeploymentSwitches(token).catch(() => undefined).finally(() => { state.pending = null })
@@ -203,7 +204,7 @@ async function evaluate(token: string, distinctId: string, flags: readonly strin
  * an outage never flips a switch. Exported for tests and for callers that want
  * the answers before their first read.
  */
-export async function refreshDeploymentSwitches(token: string | undefined = process.env.NEXT_PUBLIC_POSTHOG_KEY, fetcher: typeof fetch = fetch, timeoutMs = SWITCH_TIMEOUT_MS): Promise<void> {
+export async function refreshDeploymentSwitches(token: string | undefined = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY'), fetcher: typeof fetch = fetch, timeoutMs = SWITCH_TIMEOUT_MS): Promise<void> {
   if (!token) return
   const answers = await evaluate(token, DEPLOYMENT_DISTINCT_ID, Object.values(DEPLOYMENT_SWITCHES).map(entry => entry.flag), fetcher, timeoutMs, { deployment: deploymentName() })
   if (answers) state.answers = answers
@@ -230,7 +231,7 @@ export async function personSwitch(name: PersonSwitch, userId: string, options: 
 export interface SwitchLookup { env?: Env; token?: string; fetcher?: typeof fetch; now?: number; timeoutMs?: number }
 
 /** The lookup behind personSwitch, for any switch entry; exported for tests. */
-export async function switchForPerson(entry: Switch, userId: string, { env = process.env, token = process.env.NEXT_PUBLIC_POSTHOG_KEY, fetcher = fetch, now = Date.now(), timeoutMs = SWITCH_TIMEOUT_MS }: SwitchLookup = {}): Promise<boolean> {
+export async function switchForPerson(entry: Switch, userId: string, { env = process.env, token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY'), fetcher = fetch, now = Date.now(), timeoutMs = SWITCH_TIMEOUT_MS }: SwitchLookup = {}): Promise<boolean> {
   const key = `${entry.flag}|${userId}`
   let cached = personAnswers.get(key)
   if (!cached || now - cached.at >= SWITCH_REFRESH_MS) {

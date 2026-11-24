@@ -58,7 +58,7 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 
 ## PostHog 与功能缺省值
 
-`POSTHOG_HOST` 配置完整的 ingestion URL，默认 `https://us.i.posthog.com`。项目 token 仍为 `NEXT_PUBLIC_POSTHOG_KEY`；本地求值使用的 secret 仍为 `POSTHOG_SECRET_KEY`。不设置项目 token 时，不创建客户端、不发送统计。Web 前端的公开 token 和 host 属于前端构建配置；桌面客户端使用连接服务器的功能快照。
+`POSTHOG_HOST` 配置完整的 ingestion URL，默认 `https://us.i.posthog.com`。项目 token 为 `MIKKA_PUBLIC_POSTHOG_KEY`（旧名 `NEXT_PUBLIC_POSTHOG_KEY` 和 `NEXT_PUBLIC_POSTHOG_HOST` 仍可使用，见[改名说明](operations/public-env-rename.md)）；本地求值使用的 secret 仍为 `POSTHOG_SECRET_KEY`。不设置项目 token 时，不创建客户端、不发送统计。Web 前端的公开 token 和 host 属于前端构建配置；桌面客户端使用连接服务器的功能快照。
 
 以下是没有 PostHog 时的社区版默认行为。明确设置的管理员旧环境变量仍优先；连接了 PostHog 后，明确的远程布尔值优先。云版 deployment switch 保持原有远程/旧变量回退顺序。
 

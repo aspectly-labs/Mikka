@@ -56,7 +56,7 @@ test('real frontend builds retain incremental files without fingerprinting them 
     // the same modules differently" — two causes a bare fingerprint cannot tell apart.
     const firstConfig = await frontendConfig({ target: 'web', outdir: directory, clean: false })
     const secondConfig = await frontendConfig({ target: 'web', outdir: directory })
-    assert.equal(firstConfig.define['process.env.NEXT_PUBLIC_MIKKA_BUILD'], secondConfig.define['process.env.NEXT_PUBLIC_MIKKA_BUILD'],
+    assert.equal(firstConfig.define['process.env.MIKKA_PUBLIC_BUILD'], secondConfig.define['process.env.MIKKA_PUBLIC_BUILD'],
       'two builds of one process inject one application revision')
     // A failure here has to say *which* kind of drift happened: an asset only one
     // run emitted, or the same name carrying different bytes. Those are different

@@ -35,7 +35,7 @@ test('real development workers instrument pg before application imports, includi
   })
   await new Promise((resolve, reject) => { collector.once('error', reject); collector.listen(0, '127.0.0.1', resolve) })
   const endpoint = `http://127.0.0.1:${collector.address().port}/i/v1/traces`
-  const values = { NODE_ENV: 'development', CI: '', NEXT_PUBLIC_POSTHOG_KEY: 'phc_development_runtime_fixture',
+  const values = { NODE_ENV: 'development', CI: '', MIKKA_PUBLIC_POSTHOG_KEY: 'phc_development_runtime_fixture',
     MIKKA_TRACE_SAMPLE_RATE: '1', MIKKA_TRACE_ENDPOINT: endpoint }
   const previous = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]))
   Object.assign(process.env, values)
