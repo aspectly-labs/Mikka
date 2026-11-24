@@ -56,8 +56,11 @@ source wins in a conflict is in [`README.md`](README.md).
   and a bot's computer screen send instructions through the centre composer.
   An open thread is a conversation with the agent running it, so its detail
   uses that composer in the task page, thread column and Artifact window.
-  It sends to the current authorized run. An independent review or verification
-  waiting for an answer uses the same composer. Send follows the run's reply
+  It sends to the current authorized run. Subagents and independent checks
+  (review, verification, monitor — 独立审查/验证/观察) are strictly read-only
+  for humans and never show a human composer or accept human messages
+  (Alex, 2026-11-24; Agent↔Agent, Bot↔Subagent, Thread↔Subagent and
+  Subagent↔Subagent messaging stay intact). Send follows the run's reply
   permission, and the legacy Agent archive is read-only
   ([decision](decisions/2026-11-02-0220-every-thread-ends-in-the-composer.md)).
 - **R-11** A bot's composer, the Coordinator's included, has one model chip

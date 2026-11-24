@@ -4546,7 +4546,8 @@
     "scope": "Run your threads",
     "title": "Connect this computer",
     "approved": "Approved",
-    "retry": "Retry"
+    "retry": "Retry",
+    "back": "Back to Devices"
   },
   "Shell": {
     "searchEmptyFor": "Nothing matches “{query}”",
@@ -8909,7 +8910,8 @@
     "breadcrumb": "Current location",
     "loadingCreate": "Loading new task…",
     "signOutFailed": "Sign out failed. Please try again.",
-    "documentTitle": "{name} · Mikka"
+    "documentTitle": "{name} · Mikka",
+    "nameRequired": "Workspace name is required"
   },
   "MobileTaskSchedule": {
     "interval": "Every {minutes, plural, one {1 minute} other {# minutes}}",
@@ -9883,7 +9885,8 @@
     "browserUpdateRequired": "Update Mikka before using Google or GitHub sign-in.",
     "forgotPassword": "Forgot password?",
     "mobileProviderUnavailable": "This sign-in method is unavailable.",
-    "switchAccount": "Use another account"
+    "switchAccount": "Use another account",
+    "verificationPending": "Complete human verification to continue."
   },
   "DesktopServer": {
     "cancel": "Cancel",
@@ -10048,7 +10051,8 @@
     "loadMore": "Earlier messages",
     "selected": "Selected",
     "refresh": "Refresh",
-    "retry": "Retry"
+    "retry": "Retry",
+    "later": "Later"
   },
   "Overview": {
     "viewsTitle": "Workspace views",
@@ -10732,7 +10736,9 @@
     "newTab": "New tab",
     "closeTab": "Close {title}",
     "tabHome": "Home",
-    "tabSettings": "Settings"
+    "tabSettings": "Settings",
+    "reloadPage": "Reload page",
+    "reopenClosedTab": "Reopen closed tab"
   },
   "ConversationDirectory": {
     "loading": "Loading threads…",

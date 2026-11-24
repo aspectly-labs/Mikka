@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { agentRuns } from '@/lib/db/schema'
 import { ActionFailureError } from '@/lib/action-error'
@@ -20,6 +20,7 @@ export type SubagentRunCard = {
   botId: string | null
   lastReply: string | null
   createdAt: string
+  finishedAt: string | null
 }
 
 type ScopedUser = { id: string } & Record<symbol, unknown>
@@ -33,15 +34,16 @@ async function ownedRun(user: ScopedUser, runId: string) {
 
 /** The parent's direct children, creation order. Every live-status change already
  * invalidates the parent's panel via `runLiveTargets` (parentRunId is part of its
- * parent fan-out); once C's soft delete lands, filter `deletedAt` here too. */
+ * parent fan-out). */
 export async function listSubagentRuns(user: ScopedUser, runId: string): Promise<SubagentRunCard[]> {
   await ownedRun(user, runId)
   const rows = await db.select({
     id: agentRuns.id, name: agentRuns.name, profile: agentRuns.profile, brief: agentRuns.brief,
     status: agentRuns.status, outcome: agentRuns.outcome, model: agentRuns.observedModel,
     botId: agentRuns.botId, lastReply: agentRuns.lastReply, createdAt: agentRuns.createdAt,
+    finishedAt: agentRuns.finishedAt,
   }).from(agentRuns)
-    .where(and(eq(agentRuns.parentRunId, runId), eq(agentRuns.threadRelation, 'subagent')))
+    .where(and(eq(agentRuns.parentRunId, runId), eq(agentRuns.threadRelation, 'subagent'), isNull(agentRuns.deletedAt)))
     .orderBy(asc(agentRuns.createdAt))
   const outside = await runsOutsideToken(user as never, rows.map(row => row.id))
   return rows
@@ -52,5 +54,6 @@ export async function listSubagentRuns(user: ScopedUser, runId: string): Promise
       mark: profileMarkStateOf({ status: row.status, outcome: row.outcome }),
       model: row.model, botId: row.botId, lastReply: row.lastReply,
       createdAt: row.createdAt.toISOString(),
+      finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
     }))
 }

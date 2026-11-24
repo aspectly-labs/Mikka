@@ -82,16 +82,77 @@ test('share links read only the transcript and revoking ends access', async () =
   assert.equal(await createThreadShare(outsider, rootId), null)
 })
 
-test('patch moves task binding and tags on the root; foreign tasks are refused', async () => {
-  const { rootId, workspace } = await fixture()
+test('patch moves task binding and tags on the root; foreign, cross-workspace and subagent targets are refused', async () => {
+  const { rootId, workspace, agentId } = await fixture()
   const otherIssue = await seedIssue(pool, outsider.id)
   const run = await patchThread(owner, rootId, { taskId: otherIssue, tags: ['review'] })
   assert.equal(run, 'forbidden')
+  // Cross-workspace linking is refused even for the same owner.
+  const otherWorkspace = await seedWorkspace(pool, owner.id, [{ userId: owner.id, role: 'admin' }])
+  const crossWorkspaceIssue = await seedIssue(pool, owner.id, otherWorkspace.id)
+  assert.equal(await patchThread(owner, rootId, { taskId: crossWorkspaceIssue }), 'forbidden')
   const next = await seedIssue(pool, owner.id, workspace.id)
   const patched = await patchThread(owner, rootId, { taskId: next, tags: ['a', 'b'] })
   assert.ok(patched && patched !== 'forbidden')
   assert.equal(patched.issueId, next)
   assert.deepEqual(patched.tags, ['a', 'b'])
+  assert.deepEqual((await pool.query(`SELECT "parentKind","parentId" FROM resource_access_policies WHERE kind='thread' AND id=$1`, [rootId])).rows[0], { parentKind: 'task', parentId: next })
+  // Unlinking sets issueId to null and clears the root thread's task ACL parent.
+  const unlinked = await patchThread(owner, rootId, { taskId: null })
+  assert.ok(unlinked && unlinked !== 'forbidden')
+  assert.equal(unlinked.issueId, null)
+  assert.deepEqual((await pool.query(`SELECT "parentKind","parentId" FROM resource_access_policies WHERE kind='thread' AND id=$1`, [rootId])).rows[0], { parentKind: null, parentId: null })
+  // Re-link back to next alongside a retry descendant; the recursive UPDATE moves both.
+  const retryId = randomUUID()
+  await pool.query(`INSERT INTO agent_runs (id,"userId","agentId","workspaceId","issueId",status,"retryOf") SELECT $1,"userId","agentId","workspaceId","issueId",'succeeded',$2 FROM agent_runs WHERE id=$2`, [retryId, rootId])
+  kept.push(retryId)
+  const relinked = await patchThread(owner, rootId, { taskId: next })
+  assert.ok(relinked && relinked !== 'forbidden')
+  assert.equal(relinked.issueId, next)
+  assert.equal((await pool.query(`SELECT "issueId" FROM agent_runs WHERE id=$1`, [retryId])).rows[0]?.issueId, next)
+  assert.deepEqual((await pool.query(`SELECT "parentKind","parentId" FROM resource_access_policies WHERE kind='thread' AND id=$1`, [rootId])).rows[0], { parentKind: 'task', parentId: next })
+  // Active Factory execute attempts cannot be moved or unlinked off their task,
+  // while a completed task with a superseded earlier waiting attempt can be moved again.
+  const factoryTaskId = randomUUID(), attemptId = randomUUID(), resumedAttemptId = randomUUID(), sourceEventId = randomUUID()
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `INSERT INTO factory_tasks (id,"userId","workspaceId","issueId","sourceEventId",route,stage,status,"attemptId",reason)
+       VALUES ($1,$2,$3,$4,$5,'{}'::jsonb,'execute','running',$6,'active test')`,
+      [factoryTaskId, owner.id, workspace.id, next, sourceEventId, attemptId])
+    await client.query(
+      `INSERT INTO factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
+       VALUES ($1,$2,'execute',1,1,'waiting',$3,'waiting question')`,
+      [attemptId, factoryTaskId, rootId])
+    await client.query('COMMIT')
+  } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+  assert.equal(await patchThread(owner, rootId, { taskId: null }), null)
+  // Once a resumed attempt finishes and becomes current, the superseded waiting attempt no longer locks the thread.
+  const finishClient = await pool.connect()
+  try {
+    await finishClient.query('BEGIN')
+    await finishClient.query(
+      `INSERT INTO factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
+       VALUES ($1,$2,'execute',2,2,'passed',$3,'resumed done')`,
+      [resumedAttemptId, factoryTaskId, retryId])
+    await finishClient.query(
+      `UPDATE factory_tasks SET status='passed',"attemptId"=$2 WHERE id=$1`,
+      [factoryTaskId, resumedAttemptId])
+    await finishClient.query('COMMIT')
+  } catch (error) { await finishClient.query('ROLLBACK'); throw error } finally { finishClient.release() }
+  const afterFactoryDone = await patchThread(owner, rootId, { taskId: null })
+  assert.ok(afterFactoryDone && afterFactoryDone !== 'forbidden')
+  assert.equal(afterFactoryDone.issueId, null)
+  const relinkAfterFactory = await patchThread(owner, rootId, { taskId: next })
+  assert.ok(relinkAfterFactory && relinkAfterFactory !== 'forbidden')
+  assert.equal(relinkAfterFactory.issueId, next)
+  await pool.query(`DELETE FROM factory_tasks WHERE id=$1`, [factoryTaskId])
+  // Subagent runs cannot be retargeted independently.
+  const subagentId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId: next, status: 'succeeded' })
+  kept.push(subagentId)
+  await pool.query(`UPDATE agent_runs SET "parentRunId"=$2,"threadRelation"='subagent' WHERE id=$1`, [subagentId, rootId])
+  assert.equal(await patchThread(owner, subagentId, { taskId: null }), null)
   assert.equal(await patchThread(outsider, rootId, { tags: [] }), null)
 })
 
