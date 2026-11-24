@@ -77,7 +77,7 @@ before(async () => {
     currentAccount: () => ({ id: 'fixture-server', user: { id: owner }, server: { url: origin } }),
     onServerChange: () => () => {},
   } })
-  mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => {} } })
+  mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => {}, sessionRefused: async () => {} } })
   mock.module(new URL('../lib/tracing.ts', import.meta.url).href, { namedExports: { mobileTraceHeaders: () => ({}) } })
   mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input)), proof = new Headers(init?.headers).get('x-mikka-presence-scope')
