@@ -133,7 +133,9 @@ test('the main OTA path reaches the shared private policy before either producti
   assert.deepEqual(Object.fromEntries(Object.entries(token.with).filter(([key]) => key.startsWith('permission-'))), {
     'permission-contents': 'read', 'permission-actions': 'read', 'permission-issues': 'read',
   })
-  const checkout = steps.find(step => step.with?.repository === 'alexj11324/mikka-cloud')
+  const checkout = steps.find(step => step.with?.path === '.mikka-cloud')
+  assert.equal(checkout.with.repository, "${{ format('{0}/mikka-cloud', vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324') }}")
+  assert.equal(token.with.owner, "${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}")
   assert.equal(checkout.with.ref, '${{ steps.operations.outputs.source }}')
   assert.equal(checkout.with['persist-credentials'], false)
   assert.ok(steps.indexOf(steps.find(step => step.name === 'Remove source App credentials')) < steps.indexOf(checkout))
