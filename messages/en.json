@@ -8678,6 +8678,14 @@
       "pending": "Pending",
       "inProgress": "In progress",
       "completed": "Done"
+    },
+    "turnFold": {
+      "working": "Working for {duration}",
+      "workingNow": "Working",
+      "worked": "Worked for {duration}",
+      "workedNoTime": "Worked",
+      "stopped": "stopped",
+      "failed": "failed"
     }
   },
   "Board": {

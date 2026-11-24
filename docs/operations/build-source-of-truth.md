@@ -59,7 +59,7 @@ deployment credentials.
 type, executable permission and declared build parameters. A new Git commit or
 run ID alone does not change a context. Import-closure checks reject omitted
 public source dependencies. Database migrations have a separate identity covering
-both SQL and the code and toolchain that check and execute it.
+both SQL and the code and runtime that check and execute it.
 
 | Service | Actual input boundary | Output |
 | --- | --- | --- |
@@ -149,19 +149,56 @@ Build success alone does not authorize production promotion.
 
 ### Migration identity and admission
 
-New release candidates require `migrations.version: 2`. `migrations.files` stays
+New release candidates require `migrations.version: 3`. `migrations.files` stays
 the complete, sorted SQL snapshot under `drizzle/`. The separate
-`migrations.execution` object contains exactly `entrypoint`, `files` and
-`contextDigest`; its entrypoint is `scripts/migrate.mjs`.
+`migrations.execution` object contains exactly `entrypoint`, `files`, `runtime`
+and `contextDigest`; its entrypoint is `scripts/migrate.mjs`.
 
 `scripts/release/migration-inputs.mjs` follows the existing migrator's static
 imports, re-exports and literal dynamic imports. The fixed roots also include
 `scripts/check-migrations.mjs` and `scripts/migration-steps.mjs`, which the private
-publisher imports during admission. Inputs include Node's checked-in version,
-the root and workspace package manifests, the pnpm lock/workspace files, patches,
-and tracked npm configuration or pnpm hooks. Hook module dependencies follow the
-same closure rules. A helper or toolchain change changes both the execution digest
-and the aggregate migration digest even when every SQL file is unchanged.
+publisher imports during admission, and every tracked pnpm hook
+(`pnpmfile.cjs|mjs|js`, with or without a leading dot). Hook module dependencies
+follow the same closure rules. A module may import Node builtins, exact tracked
+relative `.mjs`/`.js` files and the bare package `pg`; anything else stops
+planning. `execution.files` is that module closure plus every tracked `.npmrc`.
+
+The identity is narrowed to the migrator's own runtime. It does not hash
+`package.json` files, `pnpm-workspace.yaml`, `patches/` or `pnpm-lock.yaml` as
+whole files, so adding an unrelated UI dependency leaves it unchanged.
+`execution.runtime` records instead, with keys in this order:
+
+- `imports`: for each bare package the closure imports, `{importer, key, name}`.
+  The importer is the module's nearest ancestor directory listed in the
+  lockfile's `importers` (the repository root is `.`), which must declare the
+  package exactly once among `dependencies`, `devDependencies` and
+  `optionalDependencies`. `key` is pnpm's resolved snapshot key, so a version,
+  peer or `(patch_hash=…)` change changes it. Sorted by importer, then name.
+- `lockfileVersion`: `'9.0'`; any other lockfile format stops planning.
+- `nodeMajor`: the major of `.node-version` (`24`, `v24`, `24.11` and `24.11.1`
+  are all `24`). A minor or patch change keeps the identity.
+- `packages`: the transitive closure of those keys through each snapshot's
+  `dependencies` and `optionalDependencies`, one
+  `{dependencies, integrity, key, optionalDependencies}` per snapshot key, sorted
+  by key. Edges are `[name, key]` pairs sorted by name. `integrity` is the
+  package's `resolution.integrity`, which must be the resolution's only field
+  and a SHA-512 SRI value.
+
+A reference is resolved by pnpm's rule: a bare version belongs to the
+dependency's own name, and a reference carrying its own name is an npm alias.
+Any reference with a protocol (`link:`, `workspace:`, `file:`, git or tarball
+URLs), a missing snapshot or package entry, a resolution other than integrity
+alone, a non-SHA-512 integrity or an unknown snapshot field stops planning, as
+does a closure of more than 256 packages.
+
+The builder runs in credential-bearing release jobs without installing
+dependencies, so it reads the lockfile with a dependency-free reader of the exact
+subset pnpm writes for lockfile v9: two-space block mappings, one-line block
+sequence items and one-line flow collections of plain or single-quoted scalars,
+every value a string as in YAML's failsafe schema. Anchors, aliases, tags,
+comments, multi-line or double-quoted scalars, tabs, carriage returns and
+duplicate keys stop planning. The private verifier parses the same Git bytes with
+a full YAML parser, so a misreading here can only make the two identities differ.
 
 The scanner parses source without linking or evaluating it. Computed imports,
 import attributes, alternate module loaders, missing dependencies, file symlinks
@@ -175,13 +212,24 @@ Git bytes and file modes. Files are sorted and unique. SHA-256 starts with UTF-8
 `JSON.stringify([path, 'file', executable, byteLength])`, a NUL byte and its exact
 bytes. Git mode `100644` maps to executable `0`, and `100755` maps to `73`.
 Execution parameters, in that property order, are
-`{version: 2, kind: 'migration-execution', entrypoint: 'scripts/migrate.mjs'}`.
-The aggregate applies the same algorithm to the SQL files with
-`{version: 2, kind: 'migrations', execution: execution.contextDigest}`.
+`{version: 3, kind: 'migration-execution', entrypoint: 'scripts/migrate.mjs', runtime}`
+with `runtime` as above. The aggregate applies the same algorithm to the SQL
+files with `{version: 3, kind: 'migrations', execution: execution.contextDigest}`.
 
-Every forward candidate path requires the complete v2 contract. The historical
-reader retains an old SQL-only receipt for baseline evidence or rollback without
-rewriting it or treating it as execution authorization. A private publisher must
+Identity format versions: a change to what the identity covers or how it is
+hashed gets a new `version`. Only the newest version admits a new candidate.
+Older receipts stay readable as recorded: version 2 (which hashed `.node-version`,
+`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, workspace manifests,
+`patches/`, `.npmrc` and hooks whole beside the module closure, with parameters
+`{version: 2, kind, entrypoint}`) and the SQL-only receipt without a version. The
+service plan treats a previous manifest of an older version as a migration
+change. The private publisher recomputes the authenticated baseline in the new
+version from that baseline's own source, so a format change alone is not an
+executor change.
+
+Every forward candidate path requires the complete v3 contract. The historical
+reader retains older receipts for baseline evidence or rollback without
+rewriting them or treating them as execution authorization. A private publisher must
 independently reconstruct the baseline from its authenticated source and compare
 the execution inputs before importing candidate checkers, planning or obtaining
 deployment/database credentials. Execution changes require independent review;
@@ -189,7 +237,7 @@ unchanged execution still must pass the original SQL admission rules. Neither a
 changed digest nor an already-applied database ledger grants migration permission.
 
 For development diagnosis, keep five different facts separate: the committed
-SQL snapshot, the migration executor and its import/toolchain inputs, backfills,
+SQL snapshot, the migration executor and its import/runtime inputs, backfills,
 the database's historical migration ledger, and that database's actual pending
 set. A source-only comparison can detect executor incompatibility and pin SQL,
 executor and backfill code identities. It does not prove backfill business safety

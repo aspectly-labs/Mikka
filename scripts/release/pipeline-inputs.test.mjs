@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { artifactFor, baselineOrigin, checkedRun, github, priorDeployment, readArtifactMembers, selectAutomaticCandidate, selectPipeline, selectPromotion, selectionError } from './pipeline-inputs.mjs'
-import { migrationRoots, migrationToolchain } from './migration-inputs.mjs'
+import { migrationRoots } from './migration-inputs.mjs'
 import { serviceDigest, serviceNames } from './service-builds.mjs'
 
 const source = 'a'.repeat(40)
@@ -29,8 +29,9 @@ function manifestFixture(commit = source, legacy = false) {
         ...(!worker ? { image: 'registry.cloudflare.com/' + 'c'.repeat(32) + '/mikka-' + name + '@' + digest,
           imageDigest: digest, localImageId: digest } : {}) }
       return [name, { ...service, digest: serviceDigest(service) }]
-    })), migrations: { version: 2, contextDigest: digest, files: ['drizzle/20261120000000_initial.sql'],
-      execution: { entrypoint: 'scripts/migrate.mjs', contextDigest: digest, files: [...migrationRoots, ...migrationToolchain].sort() } } }
+    })), migrations: { version: 3, contextDigest: digest, files: ['drizzle/20261120000000_initial.sql'],
+      execution: { entrypoint: 'scripts/migrate.mjs', contextDigest: digest, files: [...migrationRoots].sort(),
+        runtime: { imports: [], lockfileVersion: '9.0', nodeMajor: 24, packages: [] } } } }
   if (legacy) { delete manifest.migrations.version; delete manifest.migrations.execution }
   return manifest
 }
@@ -202,7 +203,7 @@ test('archive bytes are authenticated and traversal, duplicate members and unexp
   }
 })
 
-test('automatic, manual staging and production candidate selection require migration execution v2 before further requests', async t => {
+test('automatic, manual staging and production candidate selection require migration execution v3 before further requests', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'mikka-migration-candidate-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const env = { GITHUB_REPOSITORY: repo.full_name, GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963', GITHUB_REF: 'refs/heads/main', GITHUB_ACTOR_ID: '183887963',
