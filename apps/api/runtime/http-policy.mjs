@@ -15,7 +15,7 @@ function decodedPath(pathname) { try { return decodeURIComponent(pathname) } cat
 export function isMachinePath(pathname) {
   const path = decodedPath(pathname)
   // Invalid encoding and encoded machine names must never receive a SPA 200.
-  return path === null || /^\/(?:mikka\/)?(?:api|v1|trpc|_next|_vercel|__nextjs|\.well-known|w)(?:\/|$)/.test(path)
+  return path === null || /^\/(?:mikka\/)?(?:api|v1|trpc|\.well-known|w)(?:\/|$)/.test(path)
 }
 export function prefersServerHtml(request) {
   return new Negotiator({ headers: { accept: request.headers.get('accept') ?? '*/*' } })
@@ -44,8 +44,8 @@ export function applySecurityHeaders(request, response) {
   return secured
 }
 
-/** Next's default trailingSlash:false redirect runs before every route. Work
- * on the literal URL path: an encoded slash must never become a separator. */
+/** Strip a trailing slash before every route. Work on the literal URL path:
+ * an encoded slash must never become a separator. */
 export function trailingSlashRedirect(request) {
   const url = new URL(request.url)
   if (url.pathname.length <= 1 || !url.pathname.endsWith('/')) return undefined

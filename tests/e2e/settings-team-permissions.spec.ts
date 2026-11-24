@@ -65,7 +65,7 @@ test('非管理员成员没有团队权限的允许/禁止，直接调用写接�
   await page.goto(app(`/settings?section=permissions&workspace=${workspace}`))
   const slack = page.getByRole('group', { name: 'Slack', exact: true })
   const sharing = page.getByRole('group', { name: '成员把自己的订阅和 API Key 分享给队友', exact: true })
-  const isAction = (request: Request) => request.method() === 'POST' && Boolean(request.headers()['next-action'])
+  const isAction = (request: Request) => request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1'
 
   // The admin's real writes, kept to replay as the member; then both back to 允许.
   const [appWrite] = await Promise.all([page.waitForRequest(isAction), slack.getByRole('button', { name: '禁止', exact: true }).click()])
@@ -99,7 +99,7 @@ test('非管理员成员没有团队权限的允许/禁止，直接调用写接�
     for (const write of [appWrite, shareWrite]) {
       const headers = write.headers()
       const response = await memberPage.request.post(write.url(), {
-        headers: { 'next-action': headers['next-action'], 'content-type': headers['content-type'], accept: headers.accept ?? 'text/x-component', origin: new URL(write.url()).origin },
+        headers: { 'x-mikka-rpc': headers['x-mikka-rpc'], 'content-type': headers['content-type'], accept: headers.accept ?? 'application/json', origin: new URL(write.url()).origin },
         data: write.postDataBuffer() ?? undefined,
       })
       expect(response.status()).toBe(200)

@@ -220,7 +220,7 @@ test('a required refresh stops same-origin application traffic while the public 
   await target.fetch('/mikka/api/workspace')
   markPageNeedsRefresh()
   await assert.rejects(target.fetch('/mikka/api/workspace'), /App refresh required/)
-  await assert.rejects(target.fetch('/mikka/en', { method: 'POST', headers: { 'next-action': 'old-action' } }), /App refresh required/)
+  await assert.rejects(target.fetch('/mikka/api/rpc', { method: 'POST', headers: { 'x-mikka-rpc': '1' } }), /App refresh required/)
   assert.equal(reads, 1)
   await target.fetch(withBasePath('/api/version'))
   assert.equal(reads, 2)

@@ -23,7 +23,7 @@ test('paused Linear settings do not poll state or start OAuth', async ({ page })
   await page.waitForLoadState('networkidle')
   const stateActions: string[] = []
   page.on('request', request => {
-    if (request.method() === 'POST' && request.headers()['next-action']) stateActions.push(request.url())
+    if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') stateActions.push(request.url())
   })
   // Two minutes of visible idle must produce no settings action or flag poll.
   await page.clock.runFor(120_000)

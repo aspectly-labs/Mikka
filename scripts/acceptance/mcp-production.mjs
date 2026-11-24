@@ -15,7 +15,7 @@ export const ORIGIN = 'https://app.aspectlylabs.com'
 export const OPS_REF = 'refs/heads/ops/issue1415-production-functional'
 const BASE = '/mikka', AUTH = BASE + '/api/auth', MCP = BASE + '/api/mcp'
 const CALLBACK = 'http://127.0.0.1:45123/callback'
-const REPOSITORY = 'alexj11324/Mikka', SHA = /^[a-f0-9]{40}$/
+const REPOSITORY = 'aspectly-labs/Mikka', SHA = /^[a-f0-9]{40}$/
 const clientIdValid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(value)
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const codes = new Set(['trigger_rejected', 'application_binding', 'account_required', 'request_denied',

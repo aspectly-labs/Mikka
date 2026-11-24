@@ -188,7 +188,7 @@ test('设备：列表读到之前显示加载，读到空列表才说还没有�
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
   await page.route('**/*', async route => {
-    if (route.request().method() === 'POST' && route.request().headers()['next-action']) await held
+    if (route.request().method() === 'POST' && route.request().headers()['x-mikka-rpc'] === '1') await held
     await route.fallback()
   })
   try {

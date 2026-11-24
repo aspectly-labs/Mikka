@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
@@ -33,14 +35,36 @@ const viteManifest = () => ({ version: 1, target: 'web', rendererBuild: 'a'.repe
 const VITE_PIN = '370cc898-local-prebuilt-1'
 const viteDocument = (pin = VITE_PIN) => '<script type="module" crossorigin src="/mikka/assets/index-aBc123.js'
   + (pin ? '?dpl=' + pin : '') + '"></script>'
-const release = () => ({ id: 11, name: 'E2B official instance runtime',
-  path: '.github/workflows/e2b-official-runtime.yml', event: 'push',
+const release = () => ({ id: 11, name: 'E2B additive runtime release',
+  path: '.github/workflows/e2b-official-runtime.yml', event: 'workflow_run',
   head_branch: 'main', head_sha: APP, head_repository: { full_name: 'aspectly-labs/Mikka' }, status: 'completed', conclusion: 'success' })
-const publishedJobs = () => [
-  { id: 110, run_id: 11, name: 'validate', status: 'completed', conclusion: 'success',
-    steps: [{ name: 'Validate new official instances without template mutation', status: 'completed', conclusion: 'success' }] },
-  { id: 111, run_id: 11, name: 'publish', status: 'completed', conclusion: 'success',
-    steps: [{ name: 'Publish the verified official runtime pair', status: 'completed', conclusion: 'success' }] },
+const publishedJobs = ({ runId = 11, runAttempt = 1, headSha = APP } = {}) => [
+  { id: 108, run_id: runId, run_attempt: runAttempt, head_sha: headSha, name: 'test', status: 'completed', conclusion: 'success', steps: [] },
+  { id: 109, run_id: runId, run_attempt: runAttempt, head_sha: headSha, name: 'check', status: 'completed', conclusion: 'success',
+    steps: [{ number: 5, name: 'Compare canonical worker inputs across this push and check failed attempts', status: 'completed', conclusion: 'success' }] },
+  { id: 107, run_id: runId, run_attempt: runAttempt, head_sha: headSha, name: 'web-ready', status: 'completed', conclusion: 'success',
+    steps: [{ number: 4, name: 'Verify the promoted Cloudflare Web before allocating template builders', status: 'completed', conclusion: 'success' }] },
+  { id: 110, run_id: runId, run_attempt: runAttempt, head_sha: headSha, name: 'release / validate / build', status: 'completed', conclusion: 'success',
+    steps: [{ number: 6, name: 'Build private versioned candidates and require official file conservation', status: 'completed', conclusion: 'success' }] },
+  { id: 111, run_id: runId, run_attempt: runAttempt, head_sha: headSha, name: 'release / templates', status: 'completed', conclusion: 'success',
+    steps: [
+      { number: 11, name: 'Make only fully accepted candidates public', status: 'completed', conclusion: 'success' },
+      { number: 12, name: 'Preserve the complete public release report', status: 'completed', conclusion: 'success' },
+    ] },
+]
+const dispatchReleaseZip = (sourceCommit, runId = 15, runAttempt = 2) => execFileSync('python3', ['-c',
+  "import io, sys, zipfile\nbuf = io.BytesIO()\nwith zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:\n    z.writestr('release.json', sys.stdin.buffer.read())\nsys.stdout.buffer.write(buf.getvalue())\n",
+], { input: Buffer.from(JSON.stringify({
+  sourceCommit, workerSha: 'c'.repeat(40),
+  templates: Object.fromEntries(['desktop', 'claude', 'codex'].map(kind => [kind, {
+    name: `mikka-${sourceCommit.slice(0, 12)}-${runId}-${runAttempt}-${kind}`, baseTemplate: kind,
+    templateId: `tpl-${kind}`, buildId: `bld-${kind}`, preinstalled: true, public: true, buildStatus: 'ready',
+  }])),
+})) })
+const skippedJobs = () => [
+  ...publishedJobs().slice(0, 2),
+  { id: 107, run_id: 11, name: 'web-ready', status: 'completed', conclusion: 'skipped', steps: [] },
+  { id: 112, run_id: 11, name: 'release', status: 'completed', conclusion: 'skipped', steps: [] },
 ]
 
 function fixture(options = {}) {
@@ -146,8 +170,7 @@ test('a missing, pending, foreign or wrong-SHA worker is unproven rather than a 
 })
 
 test('a successful hash-unchanged workflow with skipped validate/publish cannot prove a worker release', async () => {
-  const skipped = publishedJobs().map(job => ({ ...job, conclusion: 'skipped', steps: [] }))
-  const runtime = runtimePublicationProof(release('worker'), skipped, APP)
+  const runtime = runtimePublicationProof(release('worker'), skippedJobs(), APP)
   assert.deepEqual(runtime, { runId: 11, sourceCommit: null, workerSha: null, status: 'not_published', code: 'publish_skipped' })
   const metadata = await fixture().run({ attestation: { ...attestation(), status: 'partial', runtime } })
   assert.equal(metadata.status, 'partial')
@@ -161,13 +184,55 @@ test('a successful hash-unchanged workflow with skipped validate/publish cannot 
 
 test('publish proof requires both exact successful jobs and the actual publish step', () => {
   for (const jobs of [[], publishedJobs().map(job => ({ ...job, run_id: 99 })),
-    publishedJobs().map(job => job.name === 'publish' ? { ...job, steps: [] } : job),
-    publishedJobs().map(job => job.name === 'publish' ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job)])
+    publishedJobs().map(job => job.name === 'release / templates' ? { ...job, steps: [] } : job),
+    publishedJobs().map(job => job.name === 'release / templates' ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job),
+    skippedJobs().map(job => job.name === 'check' ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job)])
     assert.equal(runtimePublicationProof(release('worker'), jobs, APP).status, 'unproven')
   const proof = runtimePublicationProof(release('worker'), publishedJobs(), APP)
   assert.equal(proof.status, 'published')
   assert.equal(proof.sourceCommit, APP)
   assert.equal(proof.workerSha, null, 'application commit is not the worker content hash')
+  // A manual workflow_dispatch cannot rely on run.head_sha alone; it requires a verified release report.
+  assert.equal(runtimePublicationProof({ ...release('worker'), event: 'workflow_dispatch', run_attempt: 2 },
+    publishedJobs({ runId: 11, runAttempt: 2 }), APP).status, 'unproven')
+})
+
+test('a manual workflow_dispatch proves readiness only when its verified release report matches applicationSha', async () => {
+  const runDispatch = async sourceCommit => {
+    const run = { ...release('worker'), id: 15, run_attempt: 2, event: 'workflow_dispatch',
+      run_started_at: new Date(NOW - 60_000).toISOString(),
+      repository: { id: 1427517699, full_name: 'aspectly-labs/Mikka' },
+      head_repository: { id: 1427517699, full_name: 'aspectly-labs/Mikka' } }
+    const zip = dispatchReleaseZip(sourceCommit, 15, 2)
+    const api = 'https://api.github.com/repos/aspectly-labs/Mikka'
+    const artifact = { id: 515, name: 'e2b-release-evidence-15-2', expired: false, size_in_bytes: zip.length,
+      digest: 'sha256:' + createHash('sha256').update(zip).digest('hex'),
+      created_at: new Date(NOW - 10_000).toISOString(), expires_at: new Date(NOW + 3_600_000).toISOString(),
+      url: `${api}/actions/artifacts/515`, archive_download_url: `${api}/actions/artifacts/515/zip`,
+      workflow_run: { id: 15, repository_id: 1427517699, head_repository_id: 1427517699, head_branch: 'main', head_sha: APP } }
+    const blobUrl = 'https://pipelines.actions.githubusercontent.com/artifact-515.zip'
+    return attestReadiness({ env: env(), event: event(), plan: plan(), now: () => NOW,
+      fetchImpl: async url => {
+        const parsed = new URL(url)
+        if (parsed.origin === 'https://app.aspectlylabs.com') return response({ build: APP })
+        if (parsed.href === blobUrl) return new Response(zip, { status: 200, headers: { 'content-length': String(zip.length) } })
+        if (parsed.pathname === '/repositories/1427517699/actions/artifacts/515/zip') return new Response(null, { status: 302, headers: { location: blobUrl } })
+        if (parsed.pathname.endsWith('/actions/runs')) return response({ workflow_runs: [run] })
+        if (parsed.pathname.endsWith('/actions/runs/15/attempts/2/jobs')) return response({ jobs: publishedJobs({ runId: 15, runAttempt: 2 }) })
+        if (parsed.pathname.endsWith('/actions/runs/15')) return response(run)
+        if (parsed.pathname.endsWith('/actions/runs/15/artifacts')) return response({ total_count: 1, artifacts: [artifact] })
+        if (parsed.pathname.endsWith('/actions/artifacts/515')) return response(artifact)
+        assert.fail('Unexpected URL: ' + parsed.href)
+      } })
+  }
+  const older = await runDispatch(DRIVER)
+  assert.equal(older.status, 'partial')
+  assert.deepEqual(older.runtime, { runId: 15, sourceCommit: null, workerSha: null, status: 'unproven', code: 'publish_unproven' })
+  const exact = await runDispatch(APP)
+  assert.equal(exact.status, 'ready')
+  assert.equal(exact.runtime.status, 'published')
+  assert.equal(exact.runtime.runId, 15)
+  assert.equal(exact.runtime.sourceCommit, APP)
 })
 
 test('wrong or stale attestations reject before either account value is accessed', async () => {

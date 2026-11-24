@@ -57,10 +57,14 @@ source wins in a conflict is in [`README.md`](README.md).
   computer screen send instructions through the centre composer. An open thread
   is a conversation with the agent running it, so its detail uses that composer
   in the task page, thread column and Artifact window, sending to the current
-  authorized run. Blocking permissions, questions and logins take the single
-  bottom slot (`TakeoverCard`) with `Later` / `Esc` collapse (`design-system.md`
-  §3.2); non-blocking quota, model and offline warnings sit above the intact
-  composer as a 1-line `ChatStatusStrip`. Send follows the run's reply
+  authorized run. Subagents and independent checks (review, verification,
+  monitor — 独立审查/验证/观察) are strictly read-only for humans and never show
+  a human composer or accept human messages (Alex, 2026-11-24; Agent↔Agent,
+  Bot↔Subagent, Thread↔Subagent and Subagent↔Subagent messaging stay intact).
+  Blocking permissions, questions and logins take the single bottom slot
+  (`TakeoverCard`) with `Later` / `Esc` collapse (`design-system.md` §3.2);
+  non-blocking quota, model and offline warnings sit above the intact composer
+  as a 1-line `ChatStatusStrip`. Send follows the run's reply
   permission, and the legacy Agent archive is read-only
   ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md);
   retires the old Grok composer and independent-review composer clauses).

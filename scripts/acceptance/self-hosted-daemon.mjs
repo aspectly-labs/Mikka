@@ -14,7 +14,7 @@ const ORIGIN = 'http://localhost:3000'
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const check = (condition, code) => { if (!condition) throw new Error(`SELF_HOSTED_DAEMON_${code}`) }
 function checkRunner(env) {
-  check(env.GITHUB_ACTIONS === 'true' && env.GITHUB_REPOSITORY === 'alexj11324/Mikka'
+  check(env.GITHUB_ACTIONS === 'true' && env.GITHUB_REPOSITORY === 'aspectly-labs/Mikka'
     && /^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') && Boolean(env.RUNNER_TEMP) && Boolean(env.GITHUB_WORKSPACE), 'CI_TARGET')
 }
 export function checkSessionTarget(session, env) {

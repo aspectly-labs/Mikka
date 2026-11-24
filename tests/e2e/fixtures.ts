@@ -12,6 +12,24 @@ export function app(path: string) {
   return `${BASE_PATH}${path}`
 }
 
+export type BrowserRpcRequest = { version: number; action: string; args: unknown[] }
+
+/** True when a Playwright request is a Mikka browser RPC action (`POST .../api/rpc` with `x-mikka-rpc: 1`). */
+export function isBrowserRpc(request: { method(): string; headers(): Record<string, string>; url(): string }) {
+  if (request.method() !== 'POST' || request.headers()['x-mikka-rpc'] !== '1') return false
+  try { return new URL(request.url()).pathname.endsWith('/api/rpc') } catch { return false }
+}
+
+/** Parses a Mikka browser RPC request envelope (`{ version, action, args }`), or returns null. */
+export function parseBrowserRpc(request: { method(): string; headers(): Record<string, string>; url(): string; postData(): string | null }): BrowserRpcRequest | null {
+  if (!isBrowserRpc(request)) return null
+  try {
+    const body = JSON.parse(request.postData() ?? '') as Partial<BrowserRpcRequest>
+    if (typeof body?.version !== 'number' || typeof body.action !== 'string' || !Array.isArray(body.args)) return null
+    return { version: body.version, action: body.action, args: body.args }
+  } catch { return null }
+}
+
 /** Buttons on the left icon rail (主页 / 建议 / 看板 / 插件 / Artifact). Phones have no rail. */
 export function rail(page: Page, name: '主页' | '建议' | '任务' | '插件' | 'Artifact') {
   return page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name, exact: true })

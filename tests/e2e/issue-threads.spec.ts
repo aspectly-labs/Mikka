@@ -204,7 +204,7 @@ test(`The owner stops a working thread from its composer; one waiting for an ans
     await expect(panel.getByRole('button', { name: '重试停止', exact: true })).toBeEnabled()
     await testInfo.attach(`thread-stop-timeout-${view.name}-dark`, { body: await page.screenshot(), contentType: 'image/png' })
     await testInfo.attach(`thread-stop-${view.name}-bounds.json`, { body: JSON.stringify({ frame: '372:4786', viewport: { width: view.width, height: view.height }, bounds: await panel.boundingBox(), boundary: 'UI fixture with no daemon acknowledgement; the real stop action and 30-second timeout execute. Terminal acknowledgement below is seeded separately.' }, null, 2), contentType: 'application/json' })
-    const retryRequest = page.waitForRequest(request => request.method() === 'POST' && !!request.headers()['next-action'] && request.postData()?.includes(runs.running) === true)
+    const retryRequest = page.waitForRequest(request => request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1' && request.postData()?.includes(runs.running) === true)
     await panel.getByRole('button', { name: '重试停止', exact: true }).click()
     await expect(panel.getByRole('alert')).toHaveCount(0)
     await expect(composer).toHaveValue('Keep this draft while stopping')
@@ -257,7 +257,7 @@ test('A failed thread offers 重试 beside its error', async ({ page }, testInfo
   }
   await page.emulateMedia({ colorScheme: 'light' })
   // 重试 is a message to the thread, as typing one would be.
-  const request = page.waitForRequest(request => request.method() === 'POST' && !!request.headers()['next-action'] && request.postData()?.includes(runId) === true && request.postData()?.includes('重试') === true)
+  const request = page.waitForRequest(request => request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1' && request.postData()?.includes(runId) === true && request.postData()?.includes('重试') === true)
   await retry.click()
   await request
 })

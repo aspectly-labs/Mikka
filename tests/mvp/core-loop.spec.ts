@@ -266,10 +266,14 @@ test('Stopping a thread reaches the real daemon and keeps the draft editable whi
     let releaseResponse!: () => void
     const released = new Promise<void>(resolve => { releaseResponse = resolve })
     let held = false
-    const path = new URL(page.url()).pathname
-    const matcher = (url: URL) => url.pathname === path
+    const matcher = (url: URL) => url.pathname.endsWith('/api/rpc')
     const holdStop = async (route: Route) => {
-      if (!held && route.request().method() === 'POST' && route.request().headers()['next-action']) {
+      const request = route.request()
+      let isStop = false
+      if (!held && request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') {
+        try { isStop = (JSON.parse(request.postData() ?? '') as { action?: string }).action === 'agents.stopRun' } catch { isStop = false }
+      }
+      if (isStop) {
         held = true
         const actual = await route.fetch()
         await released
