@@ -302,6 +302,13 @@ async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, 
       ...(prior?.policyCeiling ? { policyCeiling: prior.policyCeiling } : {}) }
   }
   if (!runModel) throw new ActionFailureError('threadModelUnavailable')
+  // A continuation frozen on another owner's binding would only refuse at
+  // turn.started (#3057): refuse the send up front with the account surface.
+  if (runModel.subscriptionBindingId
+    && await new (await import('@/lib/execution-settings')).ExecutionSettings(pool)
+      .bindingHeldElsewhere({ ownerId: userId, workspaceId: run.workspaceId ?? '' }, runModel.subscriptionBindingId)) {
+    throw new ActionFailureError('executionAccountUnavailable')
+  }
   const readOnly = previous.readOnly ? { readOnly: true } : {}
   if (previous.cloud) {
     if (previous.harness !== 'codex' && previous.harness !== 'claude_code') throw new ActionFailureError('threadCannotContinue')
