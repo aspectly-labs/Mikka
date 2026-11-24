@@ -14,6 +14,7 @@ import { api, ApiError } from '@/lib/api'
 import { apiCache } from '@/lib/api-cache'
 import { mobileMessages as messages, mobileLocale } from '@/lib/messages'
 import { colors } from '@/lib/theme'
+import { confirmDestructiveAction } from '@/lib/system-alert'
 import { billingManagementPath } from '../../../../../lib/billing/management-path'
 import { budgetDraft, budgetInput, wholeNumber } from '../../../../../lib/billing/budget-draft'
 import { POINTS_PURCHASE_AMOUNTS } from '../../../../../lib/billing/points'
@@ -208,7 +209,7 @@ function BudgetForm({ state, existing }: { state: State; existing?: ResourceBudg
     {!data.resourceTargetsAvailable ? <NativeText>{copy.resourceUnavailable}</NativeText> : null}
     {invalid ? <NativeText textStyle={{ color: colors.danger }}>{copy.invalid}</NativeText> : null}
     <Button label={state.pending === 'budget' ? copy.saving : copy.budgetSave} disabled={busy} onPress={() => void save()} />
-    {existing ? <Button label={copy.budgetRemove} variant="outlined" disabled={busy} onPress={() => void save(true)} /> : null}
+    {existing ? <Button label={copy.budgetRemove} variant="outlined" disabled={busy} onPress={() => confirmDestructiveAction(messages.MobileCore.removeLimitConfirm, copy.budgetRemove, () => void save(true))} /> : null}
     {existing ? <NativeText>{copy.removeLimitHelp}</NativeText> : null}
     {saved ? <NativeText>{copy.saved}</NativeText> : null}
   </>
