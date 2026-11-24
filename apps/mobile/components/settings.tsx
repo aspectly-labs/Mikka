@@ -4,6 +4,7 @@ import { useSettings } from '@/lib/settings'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native'
 import { useRouter } from 'expo-router'
+import { useSettingsPath } from '@/lib/sidebar-trial'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Check, ChevronRight } from 'lucide-react-native'
 import { KeyboardStickyView } from 'react-native-keyboard-controller'
@@ -35,11 +36,12 @@ export function Avatar({ name, image, size }: { name: string; image: string | nu
 /** A settings sub-page: the system bar with back and the title, grouped rows (R-70). */
 export function SettingsPage({ title, children, footer }: { title: string; children: ReactNode; footer?: ReactNode }) {
   const router = useRouter()
+  const settingsPath = useSettingsPath()
   const insets = useSafeAreaInsets()
   const { data, error, loading, reload } = useSettings()
   return (
     <View style={{ flex: 1, backgroundColor: colors.grouped }}>
-      <NavBar back={() => router.canGoBack() ? router.back() : router.replace('/settings')} title={title} />
+      <NavBar back={() => router.canGoBack() ? router.back() : router.replace(settingsPath())} title={title} />
       <ScrollView {...underBar} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, paddingBottom: footer ? 16 : insets.bottom + 24 }}>
         <ReadNotice error={error} hasData={Boolean(data)} label={messages.Settings.title} onRetry={reload} />
         {!data && loading ? <View style={{ padding: 24, alignItems: 'center' }}><Spinner /></View> : null}

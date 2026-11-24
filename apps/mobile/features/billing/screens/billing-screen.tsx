@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Linking, View } from 'react-native'
 import { useRouter } from 'expo-router'
+import { useSettingsPath } from '@/lib/sidebar-trial'
 import { Button, FieldGroup, Host, ListItem, Picker, Text as NativeText, TextInput, useNativeState } from '@expo/ui'
 import { NavBar } from '@/components/NavBar'
 import { ReadNotice } from '@/components/ReadNotice'
@@ -28,10 +29,10 @@ const errorText = (failure: unknown) => failure instanceof ApiError && failure.c
   ? messages.Errors[failure.code as keyof typeof messages.Errors] : messages.Errors.generic
 
 export default function BillingScreen() {
-  const settings = useSettings(), router = useRouter()
+  const settings = useSettings(), router = useRouter(), settingsPath = useSettingsPath()
   const scope = settings.data?.billingScope
   return <View style={{ flex: 1, backgroundColor: colors.grouped }}>
-    <NavBar title={copy.billingEntry} background={colors.grouped} back={() => router.canGoBack() ? router.back() : router.replace('/settings')} />
+    <NavBar title={copy.billingEntry} background={colors.grouped} back={() => router.canGoBack() ? router.back() : router.replace(settingsPath())} />
     {scope ? <BillingContext key={`${scope.kind}:${scope.id}`} initial={scope} /> : <View style={{ padding: 16, gap: 12 }}>
       <ReadNotice error={settings.error} hasData={Boolean(settings.data)} label={copy.billingEntry} onRetry={settings.reload} />
       {settings.loading ? <Spinner /> : <Text>{messages.Errors.workspaceAccessDenied}</Text>}

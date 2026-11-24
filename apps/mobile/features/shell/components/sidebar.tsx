@@ -84,10 +84,11 @@ function SidebarContent({ go, close }: { go: (href: Href) => void; close: () => 
       <Place label={mobileMessages.Nav.newBot} onPress={() => go('/new-bot')} icon={<Symbol name="plus" size={17} color={colors.accent} />} accent />
       <Place label={mobileMessages.Nav.newGroup} onPress={() => go('/new-group')} icon={<Symbol name="person.2" size={17} color={colors.accent} />} accent />
       <View style={styles.gap} />
-      {/* 设置 is not a tab in the trial (Alex: the bar is Chat and Issues): it sits here, under the person's own name. */}
+      {/* 设置 is not a tab in the trial (Alex: the bar is Chat and Issues): it opens from here, under the person's own name,
+         as /account on the root stack, because a hidden tab cannot be opened. */}
       <Place label={home?.user.name || mobileMessages.Nav.settings} detail={home?.user.name ? mobileMessages.Nav.settings : undefined}
         icon={home ? <Avatar name={home.user.name || '?'} image={home.user.image} size={32} /> : <Symbol name="person.crop.circle" size={22} color={colors.secondary} />}
-        onPress={() => { close(); router.navigate('/settings') }} />
+        onPress={() => go('/account')} />
     </ScrollView>
   )
 }

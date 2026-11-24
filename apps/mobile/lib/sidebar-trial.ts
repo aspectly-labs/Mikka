@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { usePathname } from 'expo-router'
 import { Platform } from 'react-native'
 import { secureStorage as SecureStore } from './secure-storage'
 
@@ -59,4 +60,14 @@ export function setSidebarBot(id: string | null) {
 
 export function useSidebarBot(): string | null {
   return useSyncExternalStore(listener => { botListeners.add(listener); return () => { botListeners.delete(listener) } }, () => sidebarBot, () => null)
+}
+
+/**
+ * Where 设置 lives: inside its tab, or, opened from the sidebar trial's foot, as /account on the root stack (a hidden
+ * tab cannot be opened, so the trial cannot use /settings). Settings screens link through this so a pushed page stays
+ * in the same place.
+ */
+export function useSettingsPath(): (sub?: string) => '/settings' | '/account' | `/settings/${string}` | `/account/${string}` {
+  const base = usePathname().startsWith('/account') ? '/account' : '/settings'
+  return (sub?: string) => (sub ? `${base}/${sub}` : base) as never
 }
