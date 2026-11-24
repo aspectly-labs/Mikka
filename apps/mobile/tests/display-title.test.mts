@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { displayTitle } = await import('../lib/display-title.ts')
+const { displayTitle, withoutMachineIds } = await import('../lib/display-title.ts')
 
 test('a leading issue key is not shown', () => {
   assert.equal(displayTitle('ALEX-12: 修复 iOS 登录回调'), '修复 iOS 登录回调')
@@ -31,4 +31,19 @@ test('the rest of the title is untouched', () => {
 test('a title that is only a key or a stamp keeps its text', () => {
   assert.equal(displayTitle('ALEX-12'), 'ALEX-12')
   assert.equal(displayTitle('2026-11-06'), '2026-11-06')
+})
+
+test('UUIDs and hashes are not shown (Alex 2026-11-24)', () => {
+  assert.equal(displayTitle('Local native subscription acceptance codex 1243312c-6517-4386-a39d-3f56cdb1d0ff'), 'Local native subscription acceptance codex')
+  assert.equal(displayTitle('codex-d8f3d3f2 artifact delivery'), 'codex artifact delivery')
+  assert.equal(displayTitle('c38e7e 官方订阅真实复验：主机'), '官方订阅真实复验：主机')
+  assert.equal(displayTitle('a84557：创建并验证纯文本'), '创建并验证纯文本')
+  assert.equal(displayTitle('Official codex smoke c3f72167'), 'Official codex smoke')
+  assert.equal(withoutMachineIds('Official 1146 codex delivery d8f3d3f2'), 'Official 1146 codex delivery')
+})
+
+test('words and versions that look like hex stay', () => {
+  assert.equal(displayTitle('decade facade review'), 'decade facade review')
+  assert.equal(displayTitle('发布 v1.2.3 到 1146 台设备'), '发布 v1.2.3 到 1146 台设备')
+  assert.equal(displayTitle('c3f72167'), 'c3f72167')
 })
