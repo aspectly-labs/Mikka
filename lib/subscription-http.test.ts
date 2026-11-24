@@ -235,6 +235,26 @@ test('explicit Cancel disconnects the pending revision without starting another 
   assert.equal(fixture.acquisitions(), 0)
 })
 
+test('clone hands the worker a minted target scope after membership checks on both sides', async () => {
+  const fixture = lifecycle()
+  fixture.row.state = 'connected'
+  const workspaces: string[][] = []
+  fixture.deps.workspace = async (userId: string, ws: string) => { workspaces.push([userId, ws]) }
+  const targetWorkspace = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+  const response = await fixture.send({ action: 'clone', connectionId, ownerId: 'bob', workspaceId: targetWorkspace })
+  assert.equal(response.status, 200)
+  assert.deepEqual(workspaces, [['alice', targetWorkspace], ['bob', targetWorkspace]])
+  const [call] = fixture.calls
+  assert.equal(call.method, 'clone')
+  const target = call.params.target as Record<string, string>
+  assert.equal(target.ownerId, 'bob')
+  assert.equal(target.workspaceId, targetWorkspace)
+  assert.equal(target.provider, 'codex')
+  assert.match(target.connectionId, /^[a-f0-9-]{36}$/)
+  // The caller's own scope stays the source side of the copy.
+  assert.notEqual(target.connectionId, connectionId)
+})
+
 test('the web asks for Claude Code\'s code page; the worker gets that, and nothing else', async () => {
   const fixture = lifecycle()
   const response = await fixture.send({ action: 'reconnect', connectionId, revision: 2, redirect: 'code' })

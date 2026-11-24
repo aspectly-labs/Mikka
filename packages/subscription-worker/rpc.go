@@ -46,6 +46,7 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			CallbackURL string          `json:"callbackUrl,omitempty"`
 			Code        string          `json:"code,omitempty"`
 			Redirect    string          `json:"redirect,omitempty"`
+			Target      *Scope          `json:"target,omitempty"`
 		}
 		decoder := json.NewDecoder(bytes.NewReader(frame))
 		decoder.DisallowUnknownFields()
@@ -143,6 +144,12 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 				result, err = w.Recover(callCtx)
 			case "disconnect":
 				result, err = w.Disconnect(callCtx, request.Revision)
+			case "clone":
+				if request.Target == nil {
+					err = ErrUnsupported
+				} else {
+					result, err = w.Clone(callCtx, *request.Target)
+				}
 			case "execute":
 				var response []byte
 				response, err = w.Execute(callCtx, request.Revision, request.Model, request.Payload)
