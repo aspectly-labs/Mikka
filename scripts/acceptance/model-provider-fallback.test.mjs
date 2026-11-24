@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   AcceptanceError, ACCEPTANCE_PULL_REQUEST, CASES, FEATURE_PULL_REQUEST, ORIGIN, REPOSITORY,
-  actionResult, assertRunEvidence, assertVersion, caseOrderPlan, deleteFixtureArtifact,
+  actionResult, assertRunEvidence, discoverActions, assertVersion, caseOrderPlan, deleteFixtureArtifact,
   independently, mergeGuard, officialRuntimeProof, orderFingerprint, ownedSource, providerReceipt, publicFailure,
   resolveAcceptanceDeployment, runModelProviderAcceptance, verifyCheckRuns,
 } from './model-provider-fallback.mjs'
@@ -20,7 +20,16 @@ const CLAUDE = '10000000-0000-4000-8000-000000000006'
 const CODEX = '10000000-0000-4000-8000-000000000007'
 const BINDING = '10000000-0000-4000-8000-000000000008'
 const actionNames = ['getIssueThread', 'changeModelOrder', 'getIssue', 'setIssueDeleted', 'getDeletedIssue', 'getArtifact']
-const refs = Object.fromEntries(actionNames.map((name, index) => [name, String(index + 1).repeat(40)]))
+const rpcNames = { getIssueThread: 'agents.getIssueThread', changeModelOrder: 'model-order.changeModelOrder', getIssue: 'issues.getIssue',
+  setIssueDeleted: 'issue-operations.setIssueDeleted', getDeletedIssue: 'issue-operations.getDeletedIssue', getArtifact: 'artifacts.getArtifact' }
+const PIN = '370cc898-local-prebuilt-1'
+// The public action list of a Vite web release (apps/frontend/scripts/build.mjs, lib/renderer-actions.mjs).
+const actionManifest = (omit = []) => {
+  const used = actionNames.filter(name => !omit.includes(name)).map(name => rpcNames[name])
+  const modules = {}
+  for (const action of used) { const [module, exported] = action.split('.'); (modules[module] ??= []).push(exported) }
+  return { version: 1, target: 'web', rendererBuild: 'a'.repeat(64), usedActions: used, modules }
+}
 const pr = () => ({ number: FEATURE_PULL_REQUEST, merged: true, merge_commit_sha: FEATURE_SHA, body: 'Refs #1225', base: { ref: 'main', repo: { full_name: REPOSITORY } } })
 const acceptancePr = () => ({ ...pr(), number: ACCEPTANCE_PULL_REQUEST, merge_commit_sha: GUARD_SHA })
 const deployed = () => ({ id: 100, name: 'Web deploy', path: '.github/workflows/web-deploy.yml', event: 'push',
@@ -297,13 +306,35 @@ test('error reporting drops raw messages, causes, account labels, cookies and no
   assert.deepEqual(publicFailure(controlled), { status: 'blocked', code: 'http_refused', httpStatus: 403 })
 })
 
-test('RSC result decoding follows the action return reference and rejects unapproved actions', () => {
+test('RPC result decoding returns the action value and rejects refusals and unapproved actions', () => {
   const value = { thread: { rootRunId: RUN }, chunks: [] }
-  assert.deepEqual(actionResult(`0:{"a":"$@1","f":[],"b":"build"}\n1:${JSON.stringify(value)}\n`, 'getIssueThread'), value)
-  assert.throws(() => actionResult('0:{"a":"$@1"}\n1:{"error":"executionModelUnknown"}', 'changeModelOrder'),
+  assert.deepEqual(actionResult({ version: 1, ok: true, result: value }, 'getIssueThread'), value)
+  assert.throws(() => actionResult({ version: 1, ok: true, result: { error: 'executionModelUnknown' } }, 'changeModelOrder'),
     error => publicFailure(error).serverCode === 'executionModelUnknown')
-  assert.throws(() => actionResult('1:{"id":"key"}', 'createApiKey'), /action_not_allowed/)
-  assert.throws(() => actionResult('1:{"bots":[]}', 'listWorkspaceBots'), /action_not_allowed/)
+  assert.throws(() => actionResult({ version: 1, ok: false, error: { code: 'workspaceAccessDenied' } }, 'changeModelOrder'),
+    error => publicFailure(error).serverCode === 'workspaceAccessDenied')
+  assert.throws(() => actionResult({ version: 0, ok: true, result: value }, 'getIssueThread'), /action_refused/)
+  assert.throws(() => actionResult({ version: 1, ok: true, result: { id: 'key' } }, 'createApiKey'), /action_not_allowed/)
+  assert.throws(() => actionResult({ version: 1, ok: true, result: { bots: [] } }, 'listWorkspaceBots'), /action_not_allowed/)
+})
+
+test('discovery reads the release-pinned Vite action list and returns only published RPC names', async () => {
+  const paths = []
+  const found = await discoverActions(async path => {
+    paths.push(path)
+    if (path === '/en') return new Response('<script type="module" src="/mikka/assets/index-aBc123.js?dpl=' + PIN + '"></script>')
+    if (path === '/mikka/renderer-manifest.json?dpl=' + PIN) return new Response(null, { status: 404 })
+    if (path === '/mikka/renderer-actions.json?dpl=' + PIN) return Response.json(actionManifest(['getArtifact']))
+    throw new Error('Unexpected discovery request ' + path)
+  })
+  assert.deepEqual(Object.keys(found), actionNames.filter(name => name !== 'getArtifact'))
+  assert.equal(found.changeModelOrder, 'model-order.changeModelOrder')
+  for (const document of ['<script src="https://foreign.invalid/mikka/assets/index.js"></script>',
+    '<script src="/mikka/assets/a.js?dpl=one"></script><script src="/mikka/assets/b.js?dpl=two"></script>']) {
+    const reads = []
+    assert.deepEqual(await discoverActions(async path => { reads.push(path); return new Response(document) }), {})
+    assert.deepEqual(reads, ['/en'], 'no action list is read without exactly one same-origin release entry')
+  }
 })
 
 function preflightFetch({ missingDeepseek = false, codexOnlyDefault = false,
@@ -329,9 +360,10 @@ function preflightFetch({ missingDeepseek = false, codexOnlyDefault = false,
       assert.equal(method, 'GET', 'preflight creates no Bot')
       return respond([{ id: BOT, name: 'Smoke Bot', ownerId: OWNER, workspaceId: WS }])
     }
-    if (path === '/mikka/en' && method === 'GET') return new Response('<script src="/mikka/_next/static/chunks/actions.js"></script>')
-    if (path === '/mikka/_next/static/chunks/actions.js') return new Response(actionNames.map(name => `createServerReference)("${refs[name]}",x,"${name}")`).join(';'))
-    if (path === '/mikka/en') throw new Error('preflight must not invoke a server action')
+    if (path === '/mikka/en' && method === 'GET') return new Response('<script type="module" src="/mikka/assets/index-aBc123.js?dpl=' + PIN + '"></script>')
+    if (path === '/mikka/renderer-manifest.json') return new Response(null, { status: 404 })
+    if (path === '/mikka/renderer-actions.json') return Response.json(actionManifest())
+    if (path === '/mikka/api/rpc') throw new Error('preflight must not invoke a server action')
     if (path === '/mikka/api/settings/api-keys') return respond(state.keys)
     if (path === '/mikka/api/settings/model-order') return respond(state.order)
     if (path === '/mikka/api/settings/workspace-bots') {

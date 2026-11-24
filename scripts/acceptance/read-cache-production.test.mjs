@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { READ_ACTIONS } from './read-cache.mjs'
+import { readRpcActions, rpcReadRequest } from './read-action-transport.mjs'
+import { decode, encode } from '../../lib/desktop-rpc/wire.ts'
 import { SCENARIOS, attestProductionReadCache, mergeReadChat, mergeReadList, productionGuard, productionOutcome,
   productionRequestAllowed, publicFailure, runProductionReadCache } from './read-cache-production.mjs'
 
@@ -11,7 +13,7 @@ const OWNER = 'synthetic-smoke-owner', WORKSPACE = id(1), BOT = id(2), TASK = id
 const EMAIL = 'fixture+mikka-smoke-owner@example.invalid', PASSWORD = 'SYNTHETIC-PASSWORD-NOT-EVIDENCE'
 const COOKIE = 'SYNTHETIC-COOKIE-NOT-EVIDENCE', PRIVATE = 'PRIVATE-CONTENT-NOT-EVIDENCE'
 const V1 = '1'.repeat(32), V2 = '2'.repeat(32), PREFIX = '3'.repeat(32)
-const refs = Object.fromEntries(READ_ACTIONS.map((name, index) => [name, String(index + 1).repeat(40)]))
+const refs = readRpcActions
 const env = () => ({ GITHUB_REPOSITORY: REPOSITORY, GITHUB_SHA: APP, GITHUB_REF: 'refs/heads/main',
   GITHUB_EVENT_NAME: 'workflow_dispatch', GH_TOKEN: 'SYNTHETIC-GH-TOKEN', SMOKE_OWNER_EMAIL: EMAIL, SMOKE_OWNER_PASSWORD: PASSWORD })
 const event = () => ({ repository: { full_name: REPOSITORY }, inputs: { application_sha: APP } })
@@ -31,7 +33,9 @@ const attestation = () => ({ purpose: 'production-readiness', status: 'partial',
   runtime: { status: 'unproven', code: 'release_missing', sourceCommit: null, workerSha: null },
   checkedAt: new Date(NOW).toISOString() })
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', ...headers } })
-const flight = value => new Response(`0:{"a":"$@1"}\n1:${JSON.stringify(value)}\n`, { headers: { 'content-type': 'text/x-component' } })
+const rpc = value => json({ version: 1, ok: true, result: encode(value) })
+// The public action list of the Vite web release (apps/frontend/scripts/build.mjs).
+const manifest = { version: 1, target: 'web', usedActions: Object.values(readRpcActions) }
 const row = value => ({ id: value, title: PRIVATE })
 const position = (value, revision = V1) => ({ id: value, version: revision })
 const live = () => ({ ownerId: OWNER, workspaceId: WORKSPACE, selectedWorkspaceId: WORKSPACE })
@@ -85,39 +89,40 @@ function fixture(options = {}) {
       return json(options.noBot ? [] : [{ id: BOT, ownerId: options.foreignBot ? 'other-owner' : OWNER, workspaceId: WORKSPACE, name: PRIVATE }])
     }
     if (url.pathname === '/mikka/api/settings/issue-prefix') return json({ suggested: PRIVATE, teamKeys: [PRIVATE] })
-    if (url.pathname === '/mikka' && method === 'POST') {
-      const name = READ_ACTIONS.find(value => refs[value] === headers.get('next-action'))
-      assert.ok(name, 'only a discovered read reference can be invoked')
-      const args = JSON.parse(init.body), read = (counts.get(name) ?? 0) + 1
+    if (url.pathname === '/mikka/api/rpc' && method === 'POST') {
+      const body = JSON.parse(init.body), name = READ_ACTIONS.find(value => refs[value] === body.action)
+      assert.ok(name, 'only a published read action can be invoked')
+      assert.equal(headers.get('x-mikka-rpc'), '1')
+      const args = decode(body.args), read = (counts.get(name) ?? 0) + 1
       counts.set(name, read); actions.push({ name, args, read })
       assert.match(headers.get('traceparent'), /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
-      if (options.accessLost && name === 'pollIssue') return flight({ error: 'issueNotFound' })
-      if (name === 'syncIssueList' || name === 'syncThreadList') return flight({ snapshot: options.noTask && name === 'syncIssueList'
+      if (options.accessLost && name === 'pollIssue') return rpc({ error: 'issueNotFound' })
+      if (name === 'syncIssueList' || name === 'syncThreadList') return rpc({ snapshot: options.noTask && name === 'syncIssueList'
         ? { version: V1, items: [], positions: [], live: live() } : list(name, read, args) })
       if (name === 'pollIssueActivityPage') {
         const current = options.changed && read >= 2 ? V2 : V1
-        if (args[1] === current) return flight({ viewerId: OWNER, snapshot: { version: current, unchanged: true } })
-        return flight({ viewerId: OWNER, snapshot: { version: current, hasMore: false, predecessor: null,
+        if (args[1] === current) return rpc({ viewerId: OWNER, snapshot: { version: current, unchanged: true } })
+        return rpc({ viewerId: OWNER, snapshot: { version: current, hasMore: false, predecessor: null,
           items: [id(7), id(8)].map((value, index) => ({ id: value, revision: index + 1,
             ...(options.rejectedNonChat ? { credential: PRIVATE } : {}) })), live: live() } })
       }
       if (name === 'loadEarlierIssueActivity') {
         assert.deepEqual(args, [TASK, 2, id(8)])
-        return flight({ viewerId: OWNER, page: { items: [], hasMore: false, predecessor: null, cursor: null } })
+        return rpc({ viewerId: OWNER, page: { items: [], hasMore: false, predecessor: null, cursor: null } })
       }
       if (name === 'pollIssue') {
         const current = options.changed && read >= 2 ? V2 : V1
-        return flight({ viewerId: options.foreignViewer ? 'foreign' : OWNER, version: current,
+        return rpc({ viewerId: options.foreignViewer ? 'foreign' : OWNER, version: current,
           ...(args[1] === current ? { unchanged: true } : { issue: { id: TASK, title: PRIVATE, content: {
             type: 'doc', content: PRIVATE, ...(options.rejectedNonChat ? { attrs: { integrationPayload: PRIVATE } } : {}),
           } } }) })
       }
       const current = options.changed && read >= 2 ? V2 : V1
       const cursor = (options.toolMetadata ? 4 : 2) + (options.changed && read >= 2 ? 1 : 0), previous = args[2]
-      if (args[1] === current) return flight({ chat: { botId: BOT, version: current, cursor, unchanged: true, live: live() } })
+      if (args[1] === current) return rpc({ chat: { botId: BOT, version: current, cursor, unchanged: true, live: live() } })
       const after = previous?.after ?? -1
       const failedTool = ['errorCode', 'errorDetail'].includes(options.toolMetadata)
-      return flight({ chat: { botId: BOT, version: current, cursor, live: live(), sources: {}, artifacts: {},
+      return rpc({ chat: { botId: BOT, version: current, cursor, live: live(), sources: {}, artifacts: {},
         items: Array.from({ length: cursor }, (_, index) => ({ position: index + 1, from: index === 2 ? 'person' : 'coordinator', text: PRIVATE,
           ...(options.toolMetadata && index === 0 ? { activity: { tools: [{ call: 'tool-call', name: 'github_call', state: failedTool ? 'error' : 'done', at: 1, [options.toolMetadata]: PRIVATE }] } } : {}),
         })).filter(item => item.position > after && !(options.toolMetadata && item.position === 2)),
@@ -130,9 +135,8 @@ function fixture(options = {}) {
         ] } } : {}),
         ...(previous ? { after, baseCursor: previous.cursor, metadataRefresh: true } : {}) } })
     }
-    if (url.pathname === '/mikka' || url.pathname === '/mikka/settings') return new Response('<script src="/mikka/_next/static/chunks/read.js"></script>')
-    if (url.pathname === '/mikka/_next/static/chunks/read.js') return new Response(READ_ACTIONS.map(name =>
-      `createServerReference("${refs[name]}",callServer,void 0,findSourceMapURL,"${name}")`).join(';'))
+    if (url.pathname === '/mikka' || url.pathname === '/mikka/settings') return new Response('<script type="module" src="/mikka/assets/index-realbuild.js"></script>')
+    if (url.pathname === '/mikka/renderer-manifest.json') return json(manifest)
     assert.fail('unexpected request')
   }
   const fetchImpl = async (input, init = {}) => {
@@ -252,17 +256,18 @@ test('wrong or stale proof fails before credentials or application requests', as
 })
 
 test('business allowlist rejects auth writes, data writers, arbitrary actions, redirects and credential overrides', () => {
-  const init = { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/x-component', 'next-action': refs.pollIssue }, body: '[]' }
-  assert.equal(productionRequestAllowed('/mikka', init, refs), true)
+  const { init } = rpcReadRequest('pollIssue', [], { origin: ORIGIN, basePath: '/mikka' }, refs)
+  assert.equal(productionRequestAllowed('/mikka/api/rpc', init, refs), true)
+  assert.equal(productionRequestAllowed('/mikka', init, refs), false)
   assert.equal(productionRequestAllowed('/mikka/api/bots'), true)
   assert.equal(productionRequestAllowed('/mikka/en'), false)
   assert.equal(productionRequestAllowed('/mikka/en', init, refs), false)
   for (const path of ['/mikka/api/auth/sign-in/email', '/mikka/api/auth/sign-out', '/mikka/api/bots', '/mikka/api/coordinator/messages', '/mikka/api/settings/issue-prefix'])
     assert.equal(productionRequestAllowed(path, init, refs), false)
-  assert.equal(productionRequestAllowed('/mikka', { ...init, headers: { ...init.headers, 'next-action': 'f'.repeat(40) } }, refs), false)
-  assert.equal(productionRequestAllowed('/mikka', init), false)
+  assert.equal(productionRequestAllowed('/mikka/api/rpc', { ...init, body: init.body.replace('issues.pollIssue', 'issues.deleteIssue') }, refs), false)
+  assert.equal(productionRequestAllowed('/mikka/api/rpc', init), false)
   for (const path of ['https://foreign.invalid/mikka/api/version', 'https://user@app.aspectlylabs.com/mikka/api/version',
-    '/mikka/api/bots?workspace=' + WORKSPACE, '/mikka/_next/static/chunks/%2e%2e/private.js', '/mikka/api/settings/secrets'])
+    '/mikka/api/bots?workspace=' + WORKSPACE, '/mikka/assets/%2e%2e/private.js', '/mikka/api/settings/secrets'])
     assert.equal(productionRequestAllowed(path), false)
   for (const header of ['authorization', 'cookie', 'host']) assert.equal(productionRequestAllowed('/mikka/api/bots', { headers: { [header]: PRIVATE } }), false)
   for (const method of ['PUT', 'PATCH', 'DELETE']) assert.equal(productionRequestAllowed('/mikka/api/bots', { method }), false)
@@ -291,7 +296,7 @@ test('stable production cursors cover four HTTP scenarios with only a normal own
   }
   const chats = f.actions.filter(action => action.name === 'syncCoordinatorChat')
   assert.equal(chats[1].args[1], V1)
-  for (const read of chats.slice(2, 4)) { assert.equal(read.args[1], null); assert.equal(read.args[2].cursor, 2) }
+  for (const read of chats.slice(2, 4)) { assert.equal(read.args[1], undefined); assert.equal(read.args[2].cursor, 2) }
   assert.equal(f.calls.filter(call => call.path === '/mikka/api/auth/sign-out').length, 1)
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 26)
   const evidence = JSON.stringify(report)
@@ -307,7 +312,7 @@ test('page discovery cookies accompany later chunks, actions, Settings and sign-
   const landing = f.calls.findIndex(call => call.path === '/mikka' && call.method === 'GET')
   assert.ok(landing > 0)
   const later = f.calls.slice(landing + 1)
-  for (const path of ['/mikka/settings?section=preferences', '/mikka/_next/static/chunks/read.js', '/mikka',
+  for (const path of ['/mikka/settings?section=preferences', '/mikka/renderer-manifest.json', '/mikka/api/rpc',
     '/mikka/api/settings/issue-prefix', '/mikka/api/auth/sign-out']) assert.ok(later.some(call => call.path === path), path)
   for (const call of later) {
     assert.equal(requestCookies(call.cookie).get('NEXT_LOCALE'), 'zh-CN', call.path)
@@ -378,10 +383,13 @@ test('response cookies obey domains, default paths and path boundaries without m
   assert.ok(settings.includes('scope=NARROW-SECRET')); assert.ok(settings.includes('scope=WIDE-SECRET'))
   assert.ok(settings.indexOf('scope=NARROW-SECRET') < settings.indexOf('scope=WIDE-SECRET'))
   assert.equal(requestCookies(settings).get('api'), 'API-SECRET')
-  for (const call of f.calls.filter(call => call.path === '/mikka' && call.method === 'POST' || call.path.includes('/_next/'))) {
+  const actionList = f.calls.filter(call => call.path === '/mikka/renderer-manifest.json')
+  const actions = f.calls.filter(call => call.path === '/mikka/api/rpc')
+  assert.ok(actionList.length > 0 && actions.length > 0)
+  for (const call of [...actionList, ...actions]) {
     assert.equal(requestCookies(call.cookie).get('scope'), 'WIDE-SECRET')
     assert.equal(requestCookies(call.cookie).get('default-path'), 'DEFAULT-PATH-SECRET')
-    assert.equal(requestCookies(call.cookie).has('api'), false)
+    assert.equal(requestCookies(call.cookie).has('api'), actions.includes(call), call.path)
     assert.equal(call.cookie.includes('NARROW-SECRET'), false)
   }
   for (const call of f.calls) for (const name of ['boundary', 'foreign', 'suffix']) assert.equal(requestCookies(call.cookie).has(name), false, name)
@@ -421,10 +429,10 @@ test('one-item repairs drop only client-held data and reuse genuine row and chat
   ])
   for (const name of ['syncIssueList', 'syncThreadList']) {
     const reads = f.actions.filter(action => action.name === name)
-    assert.deepEqual(reads[4].args, [null, reads[3].args[1].slice(0, 1)])
+    assert.deepEqual(reads[4].args, [undefined, reads[3].args[1].slice(0, 1)])
   }
   const chats = f.actions.filter(action => action.name === 'syncCoordinatorChat')
-  assert.deepEqual(chats[4].args, [BOT, null, { after: 1, cursor: 1, prefix: PREFIX, sourceIds: [], artifactIds: [] }])
+  assert.deepEqual(chats[4].args, [BOT, undefined, { after: 1, cursor: 1, prefix: PREFIX, sourceIds: [], artifactIds: [] }])
   assert.equal(report.businessMutationRequests, 0)
   assert.equal(report.fixturesCreated, 0)
 })
@@ -439,7 +447,7 @@ test('live deltas update restored proofs, remove absent rows and do not require 
     assert.deepEqual(replay.args[1].map(item => item.version), [V2, V2])
   }
   const replay = f.actions.find(action => action.name === 'syncCoordinatorChat' && action.read === 3)
-  assert.equal(replay.args[1], null)
+  assert.equal(replay.args[1], undefined)
   assert.equal(replay.args[2].cursor, 3)
   const previous = { version: V1, items: [row(TASK), row(id(4))], positions: [position(TASK), position(id(4))] }
   const next = { version: V2, delta: true, positions: [position(TASK, V2)], items: [{ id: TASK, title: 'changed' }] }
@@ -453,7 +461,7 @@ test('plain chat persistence retains its continuation and measures an incrementa
   assert.equal(report.status, 'pass')
   assert.equal(report.browserCacheVerified, false)
   const replay = f.actions.find(action => action.name === 'syncCoordinatorChat' && action.read === 3)
-  assert.equal(replay.args[1], null)
+  assert.equal(replay.args[1], undefined)
   assert.deepEqual(replay.args[2], { after: 1, cursor: 2, prefix: PREFIX, sourceIds: [], artifactIds: [] })
   const measure = report.reads.find(read => read.action === 'syncCoordinatorChat' && read.scenario === 'reload-restored')
   assert.equal(measure.responseMode, 'delta')
@@ -467,9 +475,9 @@ test('projected tool metadata is measured as a prefix overlay without retransmit
     assert.equal(report.browserCacheVerified, false)
     const chats = f.actions.filter(action => action.name === 'syncCoordinatorChat')
     assert.equal(chats[1].args[1], V1, 'the preceding warm read still has its complete in-memory snapshot')
-    assert.equal(chats[2].args[1], null, 'the restored view is reauthorized before known-version reads')
+    assert.equal(chats[2].args[1], undefined, 'the restored view is reauthorized before known-version reads')
     assert.deepEqual(chats[2].args[2], { after: 3, cursor: 4, prefix: PREFIX, restoreToolMetadata: true, sourceIds: [], artifactIds: [] })
-    assert.equal(chats[3].args[1], null)
+    assert.equal(chats[3].args[1], undefined)
     assert.equal(chats[3].args[2].cursor, 4, 'the repair response supplies the next incremental continuation')
     assert.equal(chats[3].args[2].restoreToolMetadata, undefined, 'the successful repair consumes its hint')
     const reads = report.reads.filter(read => read.action === 'syncCoordinatorChat')

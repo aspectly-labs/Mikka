@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 /** Normal production sign-in and metadata reads only. No task, model or Settings writes. */
-import { readRendererActions } from '../../lib/renderer-actions.mjs'
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
@@ -9,8 +8,7 @@ import {
   CASES, ORIGIN, REPOSITORY, successfulRelease, publicFailure as acceptanceFailure,
 } from './project-decisions.mjs'
 import { assertWorkspaceIdle, caseOrderPlan, orderFingerprint, ownedSource } from './model-provider-fallback.mjs'
-import { publishedActions } from './read-action-transport.mjs'
-import { DESKTOP_RPC_VERSION } from '../../lib/desktop-rpc/wire.ts'
+import { discoverRpcActions } from './rpc-actions.mjs'
 import { isValidDeploymentId } from '../../lib/deployment-id.mjs'
 
 export const ACCEPTANCE_BRANCH = 'refs/heads/acceptance/proactive-1157-1163'
@@ -106,43 +104,12 @@ export async function attestReadiness({ env = process.env, event, plan, fetchImp
     checkedAt: new Date(now()).toISOString() }
 }
 
-const prefix = '/mikka/_next/static/chunks/'
-// The same five-argument Next reference grammar as the production project driver;
-// this runner has its own three-name allowlist and never invokes an action.
-const identifier = String.raw`[$A-Z_a-z][$\w]*`
-const member = identifier + String.raw`(?:\s*(?:\.\s*` + identifier
-  + String.raw`|\[\s*(?:"` + identifier + String.raw`"|'` + identifier + String.raw`')\s*\]))*`
-const referenceCall = new RegExp(
-  String.raw`(?:\bcreateServerReference|\[\s*(?:"createServerReference"|'createServerReference')\s*\])\s*\)?\s*\(\s*(["'])([a-f0-9]{40,64})\1\s*,\s*`
-  + member + String.raw`\s*,\s*(?:void\s+0|undefined)\s*,\s*` + member
-  + String.raw`\s*,\s*(["'])([A-Za-z]+)\3\s*\)`, 'g')
-function publicChunk(value) {
-  try {
-    const raw = value.startsWith('static/chunks/') ? '/mikka/_next/' + value : value
-    const url = new URL(raw, ORIGIN)
-    if (url.origin !== ORIGIN || url.username || url.password || url.hash || !url.pathname.startsWith(prefix)) return null
-    const path = raw.split(/[?#]/, 1)[0]
-    const parts = /(?:^|\/)static\/chunks\/(.+\.js)$/.exec(path)?.[1].split('/').map(decodeURIComponent)
-    if (!parts?.length || parts.some(part => !part || part === '.' || part === '..' || /[/\\]/.test(part))) return null
-    return prefix + parts.map(encodeURIComponent).join('/') + url.search
-  } catch { return null }
-}
-
 /** Only the public production skew pin is understood; never arbitrary query data. */
 function webDeploymentPin(url) {
   if (!url.search) return ''
   const entries = [...url.searchParams]
   return entries.length === 1 && entries[0][0] === 'dpl' && isValidDeploymentId(entries[0][1]) ? entries[0][1] : null
 }
-function publicWebEntry(value) {
-  try {
-    const url = new URL(value, ORIGIN)
-    if (value.includes('\\') || url.origin !== ORIGIN || url.username || url.password || url.hash
-      || !/^\/mikka\/assets\/[A-Za-z0-9_-]+\.js$/.test(url.pathname)) return null
-    return webDeploymentPin(url)
-  } catch { return null }
-}
-
 /** A strict HTTP allowlist makes this runner incapable of dispatching or changing preferences. */
 export function requestAllowed(url, method) {
   if (url.origin !== ORIGIN || url.username || url.password || url.hash) return false
@@ -155,70 +122,12 @@ export function requestAllowed(url, method) {
   if (['/mikka/renderer-manifest.json', '/mikka/renderer-actions.json'].includes(path)) return webDeploymentPin(url) !== null
   if (['/mikka/api/settings/model-order', '/mikka/api/settings/api-keys', '/mikka/api/subscriptions'].includes(path))
     return [...url.searchParams.keys()].length === 1 && url.searchParams.has('workspace') && uuid(url.searchParams.get('workspace'))
-  return publicChunk(url.toString()) !== null
+  return false
 }
 
 /** Discover three already-published prospective task actions; never invoke them. */
 export async function discoverReadinessActions(request) {
-  const found = {}, queued = new Set(), visited = new Set(), queue = [], vitePins = new Set()
-  const diagnostics = { required: [...READINESS_ACTIONS], found: [], missing: [], pagesRead: 0, pagesFailed: 0,
-    chunksRead: 0, chunksFailed: 0, chunksRemaining: 0 }
-  const add = value => { const path = publicChunk(value); if (path && !queued.has(path) && queued.size < 3000) { queued.add(path); queue.push(path) } }
-  const scan = text => {
-    for (const match of text.matchAll(referenceCall)) if (READINESS_ACTIONS.includes(match[4])) found[match[4]] = match[2]
-    for (const match of text.matchAll(/(?:src|href)\s*=\s*(["'])([^"']+\.js(?:\?[^"']*)?)\1/g)) {
-      const path = match[2].replaceAll('&amp;', '&'), pin = publicWebEntry(path)
-      if (pin !== null) vitePins.add(pin)
-      add(path)
-    }
-    for (const match of text.matchAll(/(["'])((?:static\/chunks\/|\/mikka\/_next\/static\/chunks\/)[^"'\\\r\n]+\.js(?:\?[^"'\\\r\n]*)?)\1/g)) add(match[2])
-  }
-  const read = async (path, kind) => {
-    try {
-      const response = await request(path)
-      check(response.ok, 'http_refused')
-      const text = await response.text()
-      check(text.length <= 8_000_000, 'response_invalid')
-      diagnostics[kind + 'Read']++; scan(text)
-    } catch { diagnostics[kind + 'Failed']++ }
-  }
-  for (const page of PAGES) await read(page, 'pages')
-  if (vitePins.size) {
-    // A Vite document uses the published RPC inventory, never old Flight
-    // references that happen to be present in an asset or a failed response.
-    for (const name of READINESS_ACTIONS) delete found[name]
-    Object.assign(diagnostics, { transport: 'rpc', rpcVersion: DESKTOP_RPC_VERSION, manifestsRead: 0, manifestsFailed: 0 })
-    try {
-      check(vitePins.size === 1, 'response_invalid')
-      const [pin] = vitePins
-      const response = await readRendererActions(request, '/mikka', pin)
-      check(response.ok && response.headers.get('content-type')?.includes('application/json'), 'http_refused')
-      const text = await response.text()
-      check(Buffer.byteLength(text) <= 8_000_000, 'response_invalid')
-      const manifest = JSON.parse(text), published = publishedActions(manifest), discovered = {}
-      check(/^[a-f0-9]{64}$/.test(manifest.rendererBuild ?? '')
-        && manifest.modules && typeof manifest.modules === 'object' && !Array.isArray(manifest.modules), 'response_invalid')
-      for (const [name, action] of Object.entries(readinessRpcActions)) {
-        if (!published.has(action)) continue
-        const [module, exported] = action.split('.')
-        check(Object.hasOwn(manifest.modules, module) && Array.isArray(manifest.modules[module])
-          && manifest.modules[module].filter(value => value === exported).length === 1, 'response_invalid')
-        discovered[name] = action
-      }
-      Object.assign(found, discovered)
-      diagnostics.manifestsRead++
-      diagnostics.rendererBuild = manifest.rendererBuild
-      diagnostics.manifestSha256 = digest(text)
-    } catch { diagnostics.manifestsFailed++ }
-  } else while (queue.length && visited.size < 200 && READINESS_ACTIONS.some(name => !found[name])) {
-    const batch = queue.splice(0, Math.min(20, 200 - visited.size))
-    for (const path of batch) visited.add(path)
-    await Promise.all(batch.map(path => read(path, 'chunks')))
-  }
-  diagnostics.found = READINESS_ACTIONS.filter(name => found[name])
-  diagnostics.missing = READINESS_ACTIONS.filter(name => !found[name])
-  diagnostics.chunksRemaining = queue.length
-  return diagnostics
+  return (await discoverRpcActions(request, { origin: ORIGIN, pages: PAGES, actions: readinessRpcActions })).diagnostics
 }
 
 function activityView(workspace, own) {

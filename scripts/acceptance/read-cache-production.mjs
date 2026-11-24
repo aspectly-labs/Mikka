@@ -284,7 +284,7 @@ export async function runProductionReadCache({ env = process.env, event, attesta
     try { discovered = await discoverReadActions(request, environment) }
     catch (error) { throw new ProductionReadCacheError('action_discovery_failed', { cause: error }) }
     Object.assign(refs, discovered.refs)
-    report.discovery = { pagesRead: discovered.diagnostics.pagesRead, chunksRead: discovered.diagnostics.chunksRead, readActions: discovered.diagnostics.found.length }
+    report.discovery = { pagesRead: discovered.diagnostics.pagesRead, manifestsRead: discovered.diagnostics.manifestsRead, readActions: discovered.diagnostics.found.length }
     const first = (await action('syncIssueList', [], 'task-list', 'cold')).snapshot
     listScope(first, true); measureResult(first)
     let held = { issues: mergeReadList(undefined, first, 100) }

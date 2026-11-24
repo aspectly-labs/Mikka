@@ -4,7 +4,7 @@ import { tsImport } from 'tsx/esm/api'
 import { EnvironmentError } from '../test-accounts/environment.mjs'
 import { TestAccountError } from '../test-accounts/pool.mjs'
 import { decode } from '../../lib/desktop-rpc/wire.ts'
-import { READ_ACTIONS, ReadCacheAcceptanceError, ReadCacheDiagnosticError, actionResult, createReadClient, discoverReadActions, exerciseReadCases, publicFailure, requestAllowed } from './read-cache.mjs'
+import { READ_ACTIONS, ReadCacheAcceptanceError, ReadCacheDiagnosticError, createReadClient, discoverReadActions, exerciseReadCases, publicFailure, requestAllowed } from './read-cache.mjs'
 import { observedAction, publishedReadActions, readRpcActions, rpcReadRequest } from './read-action-transport.mjs'
 
 // The CI entry is plain node --test; scope TypeScript alias resolution to this
@@ -13,8 +13,10 @@ const { desktopActionSchemas } = await tsImport('../../lib/desktop-rpc/schemas.t
 
 const environment = { origin: 'http://127.0.0.1:3110', basePath: '/mikka' }
 const id = number => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`
-const refs = Object.fromEntries(READ_ACTIONS.map((name, index) => [name, String(index + 1).repeat(40)]))
-const actionInit = name => ({ method: 'POST', headers: { 'next-action': refs[name], 'content-type': 'application/json', accept: 'text/x-component' }, body: '[]' })
+const refs = readRpcActions
+const actionInit = name => rpcReadRequest(name, [], environment, refs).init
+const page = '<script type="module" src="/mikka/assets/index-realbuild.js"></script>'
+const manifest = { version: 1, target: 'web', usedActions: [...Object.values(readRpcActions), 'coordinator.sendCoordinatorMessage'] }
 
 test('failure evidence preserves registered account and environment codes without private diagnostics', () => {
   const privateText = 'private account, response and SQL parameter'
@@ -47,14 +49,14 @@ test('driver stage evidence retains the original cause and never claims an unobs
 })
 
 test('the request allowlist admits only scoped GETs and published read actions', () => {
-  for (const path of ['/mikka/api/version', '/mikka/api/auth/get-session', '/mikka/api/workspace/switcher', '/mikka/api/settings/issue-prefix', '/mikka', '/mikka/settings?section=preferences', `/mikka?issue=${id(1)}`, '/mikka/_next/static/chunks/read.js?v=2'])
+  for (const path of ['/mikka/api/version', '/mikka/api/auth/get-session', '/mikka/api/workspace/switcher', '/mikka/api/settings/issue-prefix', '/mikka', '/mikka/settings?section=preferences', `/mikka?issue=${id(1)}`, '/mikka/assets/index-realbuild.js'])
     assert.equal(requestAllowed(path, {}, environment, refs), true, path)
-  for (const name of READ_ACTIONS) assert.equal(requestAllowed('/mikka', actionInit(name), environment, refs), true)
-  for (const path of ['https://other.example/mikka', '/api/settings/issue-prefix', '/mikka/api/coordinator/messages', '/mikka/api/mobile/chat', '/mikka/api/bots', '/mikka/api/acceptance', '/mikka?acceptance=1', '/mikka/settings?section=secrets', '/mikka/_next/static/chunks/%2e%2e/private.js', '/mikka/_next/static/chunks/a%2fb.js'])
+  for (const name of READ_ACTIONS) assert.equal(requestAllowed('/mikka/api/rpc', actionInit(name), environment, refs), true)
+  for (const path of ['https://other.example/mikka', '/api/settings/issue-prefix', '/mikka/api/coordinator/messages', '/mikka/api/mobile/chat', '/mikka/api/bots', '/mikka/api/acceptance', '/mikka?acceptance=1', '/mikka/settings?section=secrets', '/mikka/assets/%2e%2e/private.js', '/mikka/assets/a%2fb.js'])
     assert.equal(requestAllowed(path, {}, environment, refs), false, path)
-  assert.equal(requestAllowed('/mikka', { ...actionInit('pollIssue'), method: 'DELETE' }, environment, refs), false)
-  assert.equal(requestAllowed('/mikka', { ...actionInit('pollIssue'), headers: { ...actionInit('pollIssue').headers, 'next-action': 'f'.repeat(40) } }, environment, refs), false)
-  assert.equal(requestAllowed('/mikka', actionInit('pollIssue'), environment, {}), false)
+  assert.equal(requestAllowed('/mikka/api/rpc', { ...actionInit('pollIssue'), method: 'DELETE' }, environment, refs), false)
+  assert.equal(requestAllowed('/mikka', actionInit('pollIssue'), environment, refs), false)
+  assert.equal(requestAllowed('/mikka/api/rpc', actionInit('pollIssue'), environment, {}), false)
   assert.equal(requestAllowed('/mikka/api/version', { headers: { cookie: 'private' } }, environment), false)
   assert.equal(requestAllowed('/mikka/api/version', { body: 'data' }, environment), false)
   // A read must not switch locale and persistently rename the baseline workspace.
@@ -64,40 +66,18 @@ test('the request allowlist admits only scoped GETs and published read actions',
   }
 })
 
-test('action discovery handles Next dev bracket imports, minified calls and lazy public chunks without evaluating them', async () => {
-  const calls = []
-  const source = name => name === 'pollIssue'
-    ? `(0, imported["createServerReference"])("${refs[name]}", imported["callServer"], void 0, imported["findSourceMapURL"], "${name}")`
-    : `createServerReference("${refs[name]}",callServer,undefined,findSourceMapURL,"${name}")`
-  const chunks = {
-    '/mikka/_next/static/chunks/page.js': `${source(READ_ACTIONS[0])};const lazy="static/chunks/read.js";const ignored="https://foreign.example/mikka/_next/static/chunks/bad.js";throw Error('must never evaluate')`,
-    '/mikka/_next/static/chunks/read.js': READ_ACTIONS.slice(1).map(source).join(';') + ';createServerReference("' + 'f'.repeat(40) + '",callServer,void 0,findSourceMapURL,"sendCoordinatorMessage")',
-  }
-  const { refs: found, diagnostics } = await discoverReadActions(async path => {
-    calls.push(path)
-    assert.equal(requestAllowed(path, {}, environment), true)
-    return new Response((path === '/mikka' || path.startsWith('/mikka?') || path.startsWith('/mikka/settings?')) ? '<script src="/mikka/_next/static/chunks/page.js"></script>' : chunks[path], { status: 200 })
-  }, environment, id(1))
-  assert.deepEqual(found, refs)
-  assert.equal(diagnostics.pagesRead, 3)
-  assert.equal(diagnostics.chunksRead, 2)
-  assert.equal(calls.some(path => path.includes('foreign')), false)
-  assert.equal(Object.hasOwn(found, 'sendCoordinatorMessage'), false)
-})
-
 test('missing named references fail closed instead of guessing action IDs', async () => {
   await assert.rejects(discoverReadActions(async () => new Response('<html></html>'), environment, id(1)), { code: 'read_action_reference_missing' })
 })
 
 test('Vite discovery uses the actual published used-actions manifest and never widens the five-read boundary', async () => {
-  const manifest = { version: 1, target: 'web', usedActions: [...Object.values(readRpcActions), 'coordinator.sendCoordinatorMessage'] }
   const calls = []
   const discovered = await discoverReadActions(async path => {
     calls.push(path)
     assert.equal(requestAllowed(path, {}, environment), true)
     return path.endsWith('/renderer-manifest.json')
       ? Response.json(manifest)
-      : new Response('<script type="module" src="/mikka/assets/index-realbuild.js"></script>')
+      : new Response(page)
   }, environment, id(1))
   assert.deepEqual(discovered.refs, readRpcActions)
   assert.equal(discovered.diagnostics.transport, 'rpc')
@@ -115,7 +95,6 @@ test('Vite discovery uses the actual published used-actions manifest and never w
 test('Vite discovery follows the production deployment pin to the same published read manifest', async () => {
   const pin = '370cc898-local-prebuilt-1'
   const manifestPath = '/mikka/renderer-manifest.json?dpl=' + pin
-  const manifest = { version: 1, target: 'web', usedActions: [...Object.values(readRpcActions), 'coordinator.sendCoordinatorMessage'] }
   const calls = []
   const discovered = await discoverReadActions(async path => {
     calls.push(path)
@@ -221,36 +200,23 @@ test('response observation identifies browser RPC only by its actual request env
 test('discovery before selecting an existing task uses only the main and settings pages and still requires every read action', async () => {
   const pages = []
   const found = await discoverReadActions(async path => {
-    if (path === '/mikka' || path.startsWith('/mikka?') || path.startsWith('/mikka/settings?')) {
-      pages.push(path)
-      return new Response('<script src="/mikka/_next/static/chunks/read.js"></script>')
-    }
-    return new Response(READ_ACTIONS.map(name => `createServerReference("${refs[name]}",callServer,void 0,findSourceMapURL,"${name}")`).join(';'))
+    if (path.endsWith('/renderer-manifest.json')) return Response.json(manifest)
+    pages.push(path)
+    return new Response(page)
   }, environment)
   assert.deepEqual(pages, ['/mikka', '/mikka/settings?section=preferences'])
   assert.deepEqual(found.refs, refs)
   await assert.rejects(discoverReadActions(async () => new Response('<html></html>'), environment), { code: 'read_action_reference_missing' })
 })
 
-test('Flight decoder preserves large UTF-8 text rows and resolves only the action result', () => {
-  const body = '任务正文\n'.repeat(300), bytes = Buffer.byteLength(body)
-  const text = `0:{"a":"$@1","f":"","b":"development"}\n1:{"issue":{"content":"$2","at":"$D2026-11-05T00:00:00.000Z","literal":"$$not_a_ref"}}\n2:T${bytes.toString(16)},${body}`
-  assert.deepEqual(actionResult(text), { issue: { content: body, at: '2026-11-05T00:00:00.000Z', literal: '$not_a_ref' } })
-  assert.deepEqual(actionResult('0:{"a":"$@1"}\n1:{"error":"issueNotFound"}\n'), { error: 'issueNotFound' })
-  assert.throws(() => actionResult('0:{"a":"$@1"}\n1:E{"digest":"private"}\n'), { code: 'action_server_error' })
-  assert.throws(() => actionResult('0:{"a":"$@1"}\n1:{"nested":"$1"}\n'), { code: 'action_reference_invalid' })
-  assert.throws(() => actionResult('0:{"a":"$@1"}\n1:Tff,short'), { code: 'action_text_invalid' })
-  assert.throws(() => actionResult('1:{"issue":{}}\n'), { code: 'action_result_missing' })
-})
-
 test('transport rejects writes before request and reports only byte counts and trace IDs', async () => {
   let calls = 0
   const records = [], privateText = 'sensitive fixture text must stay in memory'
   const client = createReadClient({ request: async (path, init) => {
-    assert.equal(path, environment.basePath)
+    assert.equal(path, '/mikka/api/rpc')
     calls++
     assert.match(init.headers.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
-    return new Response(`0:{"a":"$@1"}\n1:${JSON.stringify({ issue: { text: privateText } })}\n`, { status: 200 })
+    return Response.json({ version: 1, ok: true, result: { issue: { text: privateText } } })
   } }, environment, 'owner', records, refs)
   await assert.rejects(client.request('/mikka/api/coordinator/messages', { method: 'POST', body: '{}' }), { code: 'business_request_forbidden' })
   assert.throws(() => client.action('sendCoordinatorMessage', ['hello'], 'chat', 'bad'), { code: 'read_action_forbidden' })

@@ -24,7 +24,6 @@ const attestation = () => ({ purpose: 'production-readiness', status: 'ready', r
 const response = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status, headers: { 'content-type': 'application/json', ...headers },
 })
-const reference = name => `createServerReference("${'1'.repeat(40)}", callServer, void 0, findSourceMapURL, "${name}")`
 const readinessRpc = { saveIssue: 'issues.saveIssue', getIssueThread: 'agents.getIssueThread', changeModelOrder: 'model-order.changeModelOrder' }
 // The public shape emitted by the real Vite application plugin/build script.
 const viteManifest = () => ({ version: 1, target: 'web', rendererBuild: 'a'.repeat(64),
@@ -86,17 +85,13 @@ function fixture(options = {}) {
     if (url.pathname === '/mikka/api/settings/workspace-bots') return response({ bots: [{ id: id(5), ownerId: OWNER,
       status: options.busy ? 'running' : 'idle', runningThreads: options.busy ? 1 : 0, name: 'PRIVATE BOT NAME' }] })
     if (url.pathname === '/mikka/api/mobile/threads') return response({ threads: options.busy ? [{ id: id(6), status: 'running', title: 'PRIVATE TASK TITLE' }] : [] })
-    if (url.pathname === '/mikka/en' || url.pathname === '/mikka/en/settings') return new Response(options.vite
-      ? viteDocument() : '<script src="/mikka/_next/static/chunks/fixture.js"></script>')
+    if (url.pathname === '/mikka/en' || url.pathname === '/mikka/en/settings') return new Response(viteDocument())
     if (url.pathname === '/mikka/renderer-manifest.json') {
       assert.equal(url.search, '?dpl=' + VITE_PIN)
       const manifest = viteManifest()
       options.manifest?.(manifest)
       return response(manifest, options.manifestStatus ?? 200, options.manifestHeaders)
     }
-    if (url.pathname === '/mikka/_next/static/chunks/fixture.js') return new Response(
-      READINESS_ACTIONS.filter(name => name !== options.missingAction).map(reference).join(';')
-      + ';' + reference('saveProject') + ';"https://foreign.invalid/mikka/_next/static/chunks/secret.js"')
     assert.fail('Unexpected readiness request ' + method + ' ' + url.pathname)
   }
   return { calls, order, fetchImpl, run: args => runReadiness({ env: env(), event: event(), plan: plan(), attestation: attestation(),
@@ -190,7 +185,7 @@ test('the HTTP boundary permits only the normal auth lifecycle and allowlisted r
     assert.equal(requestAllowed(url(path), 'POST'), false)
   for (const method of ['PUT', 'PATCH', 'DELETE']) assert.equal(requestAllowed(url('/mikka/api/mobile/model'), method), false)
   for (const value of ['https://foreign.invalid/mikka/api/version', 'https://user@api.github.com/mikka/api/version',
-    'https://app.aspectlylabs.com/mikka/_next/static/chunks/%2e%2e/secret.js',
+    'https://app.aspectlylabs.com/mikka/assets/%2e%2e/secret.js',
     'https://app.aspectlylabs.com/mikka/api/settings/model-order?workspace=' + WORKSPACE + '&extra=1'])
     assert.equal(requestAllowed(new URL(value), 'GET'), false)
 })
@@ -283,34 +278,11 @@ test('a concurrent preference change is detected and never restored or overwritt
   assert.equal(report.sessionClosed, true)
 })
 
-test('published discovery requires only the three task actions and never the project actions', async () => {
-  const f = fixture(), report = await f.run()
-  assert.deepEqual(report.actionDiscovery.required, READINESS_ACTIONS)
-  assert.deepEqual(report.actionDiscovery.found, READINESS_ACTIONS)
-  assert.deepEqual(report.actionDiscovery.missing, [])
-  assert.equal(report.actionDiscovery.chunksRead, 1)
-  assert.equal(f.calls.some(call => call.path.includes('section=projects')), false)
-  assert.equal(f.calls.some(call => call.path.includes('secret.js')), false)
-  const missing = await fixture({ missingAction: 'changeModelOrder' }).run()
-  assert.equal(missing.status, 'partial')
-  assert.deepEqual(missing.actionDiscovery.missing, ['changeModelOrder'])
-})
-
-test('the real Next direct, bracket and member reference forms are recognized with five arguments', async () => {
-  const sources = [reference('saveIssue'),
-    `(0, imported["createServerReference"])("${'2'.repeat(40)}", imported.callServer, void 0, source["findSourceMapURL"], "getIssueThread")`,
-    `imported.createServerReference("${'3'.repeat(40)}", callServer, undefined, findSourceMapURL, "changeModelOrder")`].join(';')
-  const result = await discoverReadinessActions(async path => new Response(path.endsWith('.js') ? sources
-    : '<script src="/mikka/_next/static/chunks/real.js"></script>'))
-  assert.deepEqual(result.found, READINESS_ACTIONS)
-})
-
 test('the Vite production document publishes the same three readiness actions without dispatching one', async () => {
-  const f = fixture({ vite: true }), report = await f.run()
+  const f = fixture(), report = await f.run()
   assert.equal(report.status, 'ready')
   assert.equal(report.actionDiscovery.transport, 'rpc')
   assert.equal(report.actionDiscovery.manifestsRead, 1)
-  assert.equal(report.actionDiscovery.chunksRead, 0)
   assert.equal(report.actionDiscovery.rpcVersion, 1)
   assert.deepEqual(report.actionDiscovery.required, READINESS_ACTIONS)
   assert.deepEqual(report.actionDiscovery.found, READINESS_ACTIONS)
@@ -320,7 +292,8 @@ test('the Vite production document publishes the same three readiness actions wi
   assert.equal(report.preferenceMutationRequests, 0)
   assert.equal(report.sessionClosed, true)
   assert.deepEqual(f.calls.filter(call => call.method !== 'GET').map(call => call.path), ['/mikka/api/auth/sign-in/email', '/mikka/api/auth/sign-out'])
-  assert.equal(f.calls.some(call => call.path.includes('/_next/') || call.path.endsWith('/api/rpc')), false)
+  assert.equal(f.calls.some(call => call.path.includes('/assets/') || call.path.endsWith('/api/rpc')), false)
+  assert.equal(f.calls.some(call => call.path.includes('section=projects')), false)
 })
 
 test('Vite readiness requires the actual web used-action inventory and matching module exports', async () => {
@@ -331,13 +304,13 @@ test('Vite readiness requires the actual web used-action inventory and matching 
     manifest => { manifest.usedActions.push('issues.saveIssue') },
     manifest => { manifest.modules.agents = ['getCoordinatorChat'] },
   ]) {
-    const report = await fixture({ vite: true, manifest: mutate }).run()
+    const report = await fixture({ manifest: mutate }).run()
     assert.equal(report.status, 'partial')
     assert.equal(report.actionDiscovery.manifestsFailed, 1)
     assert.deepEqual(report.actionDiscovery.found, [])
     assert.equal(report.sessionClosed, true)
   }
-  const absent = await fixture({ vite: true, manifest: manifest => {
+  const absent = await fixture({ manifest: manifest => {
     manifest.usedActions = manifest.usedActions.filter(action => action !== 'model-order.changeModelOrder')
   } }).run()
   assert.equal(absent.status, 'partial')
@@ -345,19 +318,14 @@ test('Vite readiness requires the actual web used-action inventory and matching 
   assert.deepEqual(absent.actionDiscovery.found, ['saveIssue', 'getIssueThread'])
 })
 
-test('failed Vite manifest reads never fall back to a successful Next reference scan', async () => {
+test('failed Vite manifest reads report every action missing', async () => {
   for (const options of [{ manifestStatus: 503 }, { manifestHeaders: { 'content-type': 'text/html' } }]) {
-    const f = fixture({ vite: true, ...options }), report = await f.run()
+    const f = fixture(options), report = await f.run()
     assert.equal(report.status, 'partial')
     assert.equal(report.actionDiscovery.manifestsFailed, 1)
     assert.deepEqual(report.actionDiscovery.missing, READINESS_ACTIONS)
-    assert.equal(report.actionDiscovery.chunksRead, 0)
     assert.equal(report.sessionClosed, true)
   }
-  const result = await discoverReadinessActions(async path => path.includes('renderer-manifest.json')
-    ? response({ ...viteManifest(), target: 'desktop' })
-    : new Response(viteDocument() + READINESS_ACTIONS.map(reference).join(';')))
-  assert.deepEqual(result.found, [], 'Flight references cannot rescue a refused Vite manifest')
 })
 
 test('Vite readiness permits only the same-origin manifest and one valid public deployment pin', async () => {

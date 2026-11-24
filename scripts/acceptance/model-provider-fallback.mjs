@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isSmokeAccountEmail } from '../../lib/smoke-account.ts'
 import { assertFlashTestModel } from '../test-model-policy.mjs'
+import { discoverRpcActions, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
 export const REPOSITORY = 'alexj11324/Mikka'
@@ -24,7 +25,9 @@ const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value)
 const hash = value => createHash('sha256').update(value).digest('hex')
 const runStatuses = new Set(['queued', 'preparing', 'running', 'waiting_input', 'paused', 'finishing', 'succeeded', 'failed', 'stopped', 'cancelled'])
 const terminalTask = new Set(['cancelled', 'revoked', 'failed', 'blocked', 'completed', 'succeeded'])
-const actionsAllowed = new Set(['getIssueThread', 'changeModelOrder', 'getIssue', 'setIssueDeleted', 'getDeletedIssue', 'getArtifact'])
+const rpcActions = Object.freeze({ getIssueThread: 'agents.getIssueThread', changeModelOrder: 'model-order.changeModelOrder',
+  getIssue: 'issues.getIssue', setIssueDeleted: 'issue-operations.setIssueDeleted',
+  getDeletedIssue: 'issue-operations.getDeletedIssue', getArtifact: 'artifacts.getArtifact' })
 const serverCodes = new Set(['authRequired', 'workspaceAccessDenied', 'executionModelUnknown', 'executionAccountUnavailable', 'executionRuleOrderInvalid', 'modelUnavailable', 'botNotFound', 'factoryStale', 'factoryStopped', 'factoryNotFound', 'factoryLifecycleUnavailable', 'factoryUnavailable', 'issueOutdated', 'runChainEnded', 'runNotFound', 'subscription_unavailable', 'backend_unavailable', 'validationGeneric'])
 const codes = new Set([
   'configuration_required', 'origin_rejected', 'merge_scope_rejected', 'build_mismatch', 'build_mapping_required',
@@ -241,52 +244,15 @@ function deterministicId(text) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`
 }
 
-/** Resolve only named, public client references for this exact deployment. */
+/** Only actions this exact deployment's web UI publishes, named as its RPC registry names them. */
 export async function discoverActions(request) {
-  const page = await request('/en')
-  check(page.ok, 'action_missing')
-  const html = await page.text()
-  const queue = [...new Set([...html.matchAll(/(?:src|href)="([^"]+\.js(?:\?[^"]*)?)"/g)]
-    .map(match => new URL(match[1], ORIGIN)).filter(url => url.origin === ORIGIN && url.pathname.startsWith('/mikka/_next/static/chunks/')).map(url => url.pathname))]
-  const seen = new Set(), found = {}
-  while (queue.length && seen.size < 200 && Object.keys(found).length < actionsAllowed.size) {
-    const batch = queue.splice(0, 20).filter(path => !seen.has(path))
-    for (const path of batch) seen.add(path)
-    await Promise.all(batch.map(async path => {
-      const response = await request(path)
-      if (!response.ok) return
-      const source = await response.text()
-      check(source.length <= 8_000_000, 'response_invalid')
-      for (const match of source.matchAll(/createServerReference\)\("([a-f0-9]{40,64})",[^;]{0,140}?"([A-Za-z]+)"\)/g))
-        if (actionsAllowed.has(match[2])) found[match[2]] = match[1]
-      for (const match of source.matchAll(/static\/chunks\/[a-zA-Z0-9_.-]+\.js/g)) {
-        const next = '/mikka/_next/' + match[0]
-        if (!seen.has(next) && !queue.includes(next) && queue.length < 3000) queue.push(next)
-      }
-    }))
-  }
-  return found
+  return (await discoverRpcActions(request, { origin: ORIGIN, pages: ['/en'], actions: rpcActions })).refs
 }
 
-export function actionResult(text, name) {
-  check(actionsAllowed.has(name), 'action_not_allowed')
-  const rows = new Map()
-  for (const line of text.split('\n')) {
-    const match = /^([a-f0-9]+):(.*)$/.exec(line)
-    if (!match) continue
-    try { rows.set(match[1], JSON.parse(match[2])) } catch { /* Flight imports/debug rows aren't results. */ }
-  }
-  let result = rows.get('0')?.a
-  for (let depth = 0; depth < 8 && typeof result === 'string' && /^\$@?[a-f0-9]+$/.test(result); depth++) result = rows.get(result.replace(/^\$@?/, ''))
-  if (result === undefined) {
-    const shape = value => value && typeof value === 'object' && (value.error
-      || (name === 'getIssueThread' && value.thread && Array.isArray(value.chunks))
-      || (name === 'changeModelOrder' && Array.isArray(value.entries) && typeof value.customized === 'boolean')
-      || (['getIssue', 'setIssueDeleted'].includes(name) && value.issue)
-      || (name === 'getDeletedIssue' && uuid(value.id) && value.deletedAt)
-      || (name === 'getArtifact' && uuid(value.id) && Array.isArray(value.versions) && 'runId' in value && 'issueId' in value))
-    result = [...rows.values()].find(shape)
-  }
+export function actionResult(data, name) {
+  check(Object.hasOwn(rpcActions, name), 'action_not_allowed')
+  const { result, failure } = rpcResult(data)
+  if (failure) throw new AcceptanceError('action_refused', 'blocked', { serverCode: failure })
   if (result?.error) throw new AcceptanceError('action_refused', 'blocked', { serverCode: result.error })
   check(result !== undefined, 'action_refused')
   return result
@@ -345,11 +311,12 @@ export async function runModelProviderAcceptance({ env = process.env, fetchImpl 
   }
   async function pin() { assertVersion((await json('/api/version')).build, expectedSha) }
   async function action(name, args) {
-    check(actionsAllowed.has(name), 'action_not_allowed')
-    check(typeof actionRefs[name] === 'string', 'action_missing')
-    const response = await request('/en', args, 'POST', { 'next-action': actionRefs[name], accept: 'text/x-component' })
-    if (!response.ok) throw new AcceptanceError('action_refused', 'blocked', { httpStatus: response.status })
-    return actionResult(await response.text(), name)
+    check(Object.hasOwn(rpcActions, name), 'action_not_allowed')
+    check(actionRefs[name] === rpcActions[name], 'action_missing')
+    const response = await request('/api/rpc', rpcBody(actionRefs[name], args), 'POST', RPC_HEADERS)
+    const data = await response.json().catch(() => null)
+    if (!response.ok) throw new AcceptanceError('action_refused', 'blocked', { httpStatus: response.status, serverCode: data?.error?.code })
+    return actionResult(data, name)
   }
   const orderRead = () => json(`/api/settings/model-order?workspace=${workspaceId}`)
   async function inventory(kind) {
