@@ -92,6 +92,8 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
   const pending = useRef<{ context: number; path: string; ticket: number; promise: Promise<void>; mode: ReadMode } | null>(null)
   const hasData = useRef(data !== null)
   hasData.current = data !== null
+  // A read the person asked for that iOS cut off: its redo keeps their mode, so its failure still shows.
+  const resumeShown = useRef(false)
 
   /**
    * One read of `path`. A transient failure is retried with backoff first; a
@@ -104,21 +106,24 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
     const context = cache.context()
     if (pending.current?.context === context && pending.current.path === path) {
       // The person asked while the app was refreshing on its own: this read's failure is theirs to see.
-      if (mode === 'shown') pending.current.mode = 'shown'
+      if (mode === 'shown' || resumeShown.current) { pending.current.mode = 'shown'; resumeShown.current = false }
       return pending.current.promise
     }
+    if (resumeShown.current) { mode = 'shown'; resumeShown.current = false }
     const readRevision = cache.revision(path)
     const ticket = ++request.current
     const trips = backgroundTrips
     const current = () => activePath.current === path && ticket === request.current && cache.context() === context && cache.revision(path) === readRevision
     const accept = (apply: () => void) => cache.commit(context, () => { if (current()) apply() })
     accept(() => setLoading(true))
-    const started = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()
+    const clock = () => typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()
+    // A pushed deadline counts from the attempt that answered, not from the first one that failed.
+    let started = clock()
     const entry = { context, path, ticket, promise: Promise.resolve(), mode }
     let again = false
     entry.promise = (async () => {
       try {
-        const next = await readWithRetry(() => read(path), { canRetry: () => current() && inForeground() && trips === backgroundTrips, wait: pause })
+        const next = await readWithRetry(() => { started = clock(); return read(path) }, { canRetry: () => current() && inForeground() && trips === backgroundTrips, wait: pause })
         accept(() => { cache.storeRead(path, next, context); setStored(next); setError(null); failed.current = false; loadedAt.current = Date.now(); setRequestedAt(started) })
       } catch (failure) {
         accept(() => {
@@ -130,8 +135,11 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
           const interrupted = trips !== backgroundTrips || !inForeground()
           const outcome = readFailureOutcome({ transient: isTransientReadFailure(failure), interrupted, mode: entry.mode, hasData: hasData.current })
           if (outcome === 'show') setError(failure as Error)
-          // Back in the foreground before this read gave up: its own foreground read joined it, so read once more now.
-          else again = interrupted && inForeground()
+          else if (interrupted) {
+            if (entry.mode === 'shown') resumeShown.current = true
+            // Back in the foreground before this read gave up: its own foreground read joined it, so read once more now.
+            again = inForeground()
+          }
         })
       } finally {
         accept(() => setLoading(false))
@@ -172,7 +180,7 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
     setSource({ path, context: cache.context() })
     setStored(path ? cache.get<T>(path) : null)
     setError(null)
-    loadedAt.current = 0; failed.current = false; pending.current = null; setRequestedAt(null)
+    loadedAt.current = 0; failed.current = false; pending.current = null; resumeShown.current = false; setRequestedAt(null)
     setLoading(Boolean(path))
     void load()
     return () => { activePath.current = null; request.current++ }
@@ -180,7 +188,7 @@ function useApiRead<T>(path: string | null, read: (path: string) => Promise<T>, 
 
   useEffect(() => onWorkspaceChange(() => {
     setSource({ path, context: cache.context() })
-    setStored(null); setError(null); loadedAt.current = 0; failed.current = false; pending.current = null; setRequestedAt(null); setLoading(Boolean(path))
+    setStored(null); setError(null); loadedAt.current = 0; failed.current = false; pending.current = null; resumeShown.current = false; setRequestedAt(null); setLoading(Boolean(path))
     void load()
   }), [load, path])
 
