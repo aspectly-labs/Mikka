@@ -136,10 +136,10 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
   const {createIssueForTeam,promoteIssueToTeam,setIssueScope,saveIssue}=await import('../app/actions/issues')
   const {exchangeDocument}=await import('../app/actions/collaboration')
   const {createRequestScope,runRequestScope}=await import('../apps/api/src/context')
-  const {NextRequest}=await import('../lib/server-runtime/server')
+  const {RouteRequest}=await import('../lib/server-runtime/server')
   const Y=await import('yjs')
   async function withAfter<T>(fn:()=>Promise<T>) {
-    const scope=createRequestScope(new NextRequest('http://127.0.0.1/mikka'))
+    const scope=createRequestScope(new RouteRequest('http://127.0.0.1/mikka'))
     return runRequestScope(scope,async()=>{
       try{return await fn()}finally{await scope.after.finish()}
     })

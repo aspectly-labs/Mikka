@@ -124,7 +124,7 @@ stub('./environment-instructions.ts', {
   instructionsWithEnvironment: (_instructions: string) => _instructions,
   readScopedPromptInstructionsForBot: async () => ({ environmentId: null, environmentInstructions: '', botInstructions: '' }),
 })
-mock.module('@/lib/server-runtime/server', { namedExports: { NextResponse: Response, after: () => {} } })
+mock.module('@/lib/server-runtime/server', { namedExports: { RouteResponse: Response, after: () => {} } })
 
 let composer: typeof import('./product-instructions'), store: typeof import('./store'), personal: typeof import('./personal-instructions')
 before(async () => {

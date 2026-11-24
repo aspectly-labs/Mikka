@@ -2,18 +2,18 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { FastResponse } from 'srvx/node'
 
-test('NextResponse JSON preserves HTTP refusals with the real srvx global Response', async t => {
+test('RouteResponse JSON preserves HTTP refusals with the real srvx global Response', async t => {
   const NativeResponse = globalThis.Response
   // Nitro installs this exact adapter before loading the compatibility modules.
   // This file runs in its own node:test process, before any application import.
   globalThis.Response = FastResponse as unknown as typeof Response
   try {
-    const { NextResponse } = await import('@/lib/server-runtime/server')
+    const { RouteResponse } = await import('@/lib/server-runtime/server')
     const { createApiHandler } = await import('../src/application')
-    assert.equal(Object.getPrototypeOf(NextResponse), FastResponse)
+    assert.equal(Object.getPrototypeOf(RouteResponse), FastResponse)
 
     await t.test('reading headers then body cannot turn a 404 JSON response into 200', async () => {
-      const response = NextResponse.json({ error: 'factoryNotFound' }, {
+      const response = RouteResponse.json({ error: 'factoryNotFound' }, {
         status: 404, statusText: 'Not Found',
         headers: { 'cache-control': 'no-store', 'x-fixture': 'preserved' },
       })
@@ -42,7 +42,7 @@ test('NextResponse JSON preserves HTTP refusals with the real srvx global Respon
         const app = createApiHandler([{
           path: '/mikka/api/fixture', template: '/api/fixture', source: 'fixture', methods: ['GET'],
           load: async () => ({ GET: () => {
-            const response = NextResponse.json(payload, {
+            const response = RouteResponse.json(payload, {
               status, statusText,
               headers: {
                 'cache-control': 'no-store',

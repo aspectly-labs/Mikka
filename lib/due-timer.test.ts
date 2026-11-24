@@ -108,6 +108,33 @@ test('an older caller leaves the latest holder in place and wakes it', async () 
   assert.equal(timer.live()?.runId, 'run-new')
 })
 
+test('without a latest deployment from the World, a newer release replaces an older holder (Cloudflare World)', async () => {
+  process.env.MIKKA_DEPLOYMENT_ID = 'f7d8d204d296-45307716778-1'
+  const timer = world({ runId: 'run-old', deploymentId: '3f7eaa6042d0-43798137072-6' })
+  dueTimerTransport.latestDeployment = async () => undefined
+  await armDueTimer('audit-retention')
+  assert.deepEqual(timer.calls, ['cancel:run-old', 'start:audit-retention'])
+  assert.equal(timer.live()?.deploymentId, 'f7d8d204d296-45307716778-1')
+})
+
+test('without a latest deployment from the World, an older release never replaces a newer holder', async () => {
+  process.env.MIKKA_DEPLOYMENT_ID = '3f7eaa6042d0-43798137072-6'
+  const timer = world({ runId: 'run-new', deploymentId: 'f7d8d204d296-45307716778-1' })
+  dueTimerTransport.latestDeployment = async () => undefined
+  await armDueTimer('schedules')
+  assert.deepEqual(timer.calls, ['resume:due-timer:schedules'])
+  assert.equal(timer.live()?.runId, 'run-new')
+})
+
+test('without a latest deployment from the World, ids with no release order are left in place', async () => {
+  process.env.MIKKA_DEPLOYMENT_ID = 'new_release'
+  const timer = world({ runId: 'run-old', deploymentId: 'old_release' })
+  dueTimerTransport.latestDeployment = async () => undefined
+  await armDueTimer('schedules')
+  assert.deepEqual(timer.calls, ['resume:due-timer:schedules'])
+  assert.equal(timer.live()?.runId, 'run-old')
+})
+
 test('production run recovery is left to its own owner handover (#1403): never cancelled here', async () => {
   process.env.MIKKA_DEPLOYMENT_ID = 'new_release'
   process.env.MIKKA_DEPLOYMENT_STAGE = 'production'

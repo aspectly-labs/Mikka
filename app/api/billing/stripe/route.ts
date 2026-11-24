@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z, ZodError } from 'zod'
 import { applyStripeEvent } from '@/lib/billing/service'
 import { stripeConfig, verifyStripeSignature } from '@/lib/billing/stripe'
@@ -7,9 +7,9 @@ import { stripeConfig, verifyStripeSignature } from '@/lib/billing/stripe'
 /** Stripe webhook: subscription state, purchased points and refunds. Signature-checked. */
 export async function POST(request: Request) {
   const secret = stripeConfig()?.webhookSecret
-  if (!secret) return new NextResponse(null, { status: 404 })
+  if (!secret) return new RouteResponse(null, { status: 404 })
   const body = await request.text()
-  if (!verifyStripeSignature(body, request.headers.get('stripe-signature'), secret)) return new NextResponse(null, { status: 400 })
+  if (!verifyStripeSignature(body, request.headers.get('stripe-signature'), secret)) return new RouteResponse(null, { status: 400 })
   try {
     const event = JSON.parse(body)
     if (event.type === 'setup_intent.succeeded') {
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     // A malformed event is refused for good; anything else (the database) is a 500 so Stripe retries.
     if (!(error instanceof ZodError || error instanceof SyntaxError)) throw error
     console.error('[billing] webhook event rejected', { name: error.name })
-    return new NextResponse(null, { status: 400 })
+    return new RouteResponse(null, { status: 400 })
   }
-  return NextResponse.json({ received: true })
+  return RouteResponse.json({ received: true })
 }

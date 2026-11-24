@@ -45,9 +45,9 @@ test('group read routes advance actual group history without opening private DMs
   const links = await import('../app/api/conversation-links/[id]/messages/route')
   const messages = await import('../app/api/conversations/[id]/messages/route')
   const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
-  const { NextRequest } = await import('../lib/server-runtime/server')
+  const { RouteRequest } = await import('../lib/server-runtime/server')
   const history = async (query = '', conversationId: string = group) => {
-    const request = new NextRequest(`http://127.0.0.1/api/conversations/${conversationId}/messages${query}`)
+    const request = new RouteRequest(`http://127.0.0.1/api/conversations/${conversationId}/messages${query}`)
     const scope = createRequestScope(request)
     return runRequestScope(scope, async () => {
       try { return await messages.GET(request, { params: Promise.resolve({ id: conversationId }) }) }

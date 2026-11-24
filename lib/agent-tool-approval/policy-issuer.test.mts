@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { BASE_PATH } from '../base-path'
 import * as server from './policy-distribution'
-import { NextRequest } from '@/lib/server-runtime/server'
+import { RouteRequest } from '@/lib/server-runtime/server'
 import { defaultRunPolicy } from '@mikka/protocol/agent-policy'
 import { HttpServerLink } from '../../packages/daemon/src/server-link-http'
 
@@ -17,14 +17,14 @@ const runId = 'c708f6b3-d3f2-4419-9c93-882b0f7e4bf7'
  *
  * - the transport hands over the original Request, whose URL still carries the
  *   deployment base path;
- * - the server facade (`NextRequest`) exposes `nextUrl` with the base path
+ * - the server facade (`RouteRequest`) exposes `routeUrl` with the base path
  *   stripped, while `request.url` keeps it.
  *
  * Both must yield the same issuer: the configured deployment origin.
  */
 function routeRequest(path: string) {
-  const request = new NextRequest(`${origin}${BASE_PATH}${path}`, { nextConfig: { basePath: BASE_PATH } })
-  assert.equal(request.nextUrl.pathname, path.split('?')[0], 'the facade strips the base path from nextUrl')
+  const request = new RouteRequest(`${origin}${BASE_PATH}${path}`, { routeConfig: { basePath: BASE_PATH } })
+  assert.equal(request.routeUrl.pathname, path.split('?')[0], 'the facade strips the base path from routeUrl')
   assert.equal(new URL(request.url).pathname, `${BASE_PATH}${path.split('?')[0]}`, 'the transport URL keeps it')
   return request
 }

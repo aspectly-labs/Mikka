@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, gt, inArray, isNull, or } from 'drizzle-orm'
 import type { PoolClient } from 'pg'
 import { RUN_CHECKPOINT_MAX_BYTES, runCheckpointReceiptSchema, runCheckpointSchema } from '@mikka/protocol/device'
@@ -28,7 +28,7 @@ export const maxDuration = 30
  */
 async function handlePOST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { runId } = await params
   const [run] = await db
     .select({ id: agentRuns.id, userId: agentRuns.userId, deviceId: agentRuns.deviceId, repoId: agentRuns.deviceRepoId,
@@ -41,23 +41,23 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ runI
       inArray(agentRuns.status, [...LEASED_RUN_STATUSES]), gt(agentRuns.leaseExpiresAt, new Date()), isNull(agentRuns.stopRequestedAt)))
     .limit(1)
   // An ended run (or one taken over elsewhere) keeps the checkpoint it had.
-  if (!run) return NextResponse.json({ error: 'Run is not running on this device.' }, { status: 409 })
+  if (!run) return RouteResponse.json({ error: 'Run is not running on this device.' }, { status: 409 })
   let body: unknown
   try { body = await workspaceJSON(request, 20 * 1024 * 1024) }
   catch (error) {
     if (!(error instanceof CodingWorkspaceError)) throw error
-    return NextResponse.json({ error: error.code === 'workspace_limit_exceeded' ? 'Checkpoint too large.' : 'Invalid checkpoint.' },
+    return RouteResponse.json({ error: error.code === 'workspace_limit_exceeded' ? 'Checkpoint too large.' : 'Invalid checkpoint.' },
       { status: error.code === 'workspace_limit_exceeded' ? 413 : 400 })
   }
   const parsed = runCheckpointSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid checkpoint.' }, { status: 400 })
+  if (!parsed.success) return RouteResponse.json({ error: 'Invalid checkpoint.' }, { status: 400 })
   const patch = Buffer.from(parsed.data.patch, 'base64')
-  if (patch.length > RUN_CHECKPOINT_MAX_BYTES) return NextResponse.json({ error: 'Checkpoint too large.' }, { status: 413 })
+  if (patch.length > RUN_CHECKPOINT_MAX_BYTES) return RouteResponse.json({ error: 'Checkpoint too large.' }, { status: 413 })
   // 4e2 item 4: the patch is the agent's work tree diff; secrets written to files are masked.
   const mask = await runSecretMasker(runId)
   let masked: ReturnType<typeof maskCheckpoint<number>>
   try { masked = maskCheckpoint({ patch, files: parsed.data.files }, mask) } catch (error) {
-    if (error instanceof CheckpointUnmaskable) return NextResponse.json({ error: 'Checkpoint could not be read.' }, { status: 422 })
+    if (error instanceof CheckpointUnmaskable) return RouteResponse.json({ error: 'Checkpoint could not be read.' }, { status: 422 })
     throw error
   }
   // Keep the authority row locked through the write. A STOP, takeover or
@@ -114,12 +114,12 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ runI
       } catch (error) { await client.query('ROLLBACK'); throw error }
       finally { client.release() }
     }
-    if (!saved) return NextResponse.json({ error: 'Run is not running on this device.' }, { status: 409 })
-    return NextResponse.json(runCheckpointReceiptSchema.parse({ runId: saved.runId, takenAt: saved.takenAt.toISOString() }))
+    if (!saved) return RouteResponse.json({ error: 'Run is not running on this device.' }, { status: 409 })
+    return RouteResponse.json(runCheckpointReceiptSchema.parse({ runId: saved.runId, takenAt: saved.takenAt.toISOString() }))
   } catch (error) {
-    if (error instanceof CheckpointUnmaskable) return NextResponse.json({ error: 'Checkpoint could not be read.' }, { status: 422 })
+    if (error instanceof CheckpointUnmaskable) return RouteResponse.json({ error: 'Checkpoint could not be read.' }, { status: 422 })
     if (error instanceof CodingWorkspaceError || error instanceof WorkspaceReviewError)
-      return NextResponse.json({ error: 'Run is not running on this device.' }, { status: 409 })
+      return RouteResponse.json({ error: 'Run is not running on this device.' }, { status: 409 })
     throw error
   }
 }

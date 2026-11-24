@@ -1,5 +1,5 @@
 import { OFFICIAL_WEB_URL, officialWebOriginAllowed, webConnectionURL, type WebConnectionEnvironment } from './policy'
-import { NextRequest } from '../../lib/server-runtime/server'
+import { RouteRequest } from '../../lib/server-runtime/server'
 import { parseRequestCookies } from '../../apps/api/src/request-cookies.mjs'
 import { selectedWorkspaceId, WORKSPACE_SELECTION_HEADER, workspaceSelection } from '../workspace-selection'
 
@@ -97,7 +97,7 @@ export function createWebTransport(options: {
       // The shared adapter unwraps srvx's native backing request. Constructing
       // a native Request directly from its Node facade fails Undici's private
       // state check; the outer H3 event still owns disposal and waitUntil.
-      return { request: new NextRequest(request, { headers }), run: work => work(), response: finish }
+      return { request: new RouteRequest(request, { headers }), run: work => work(), response: finish }
     }
     const authorization = request.headers.get('authorization')
     if (!authorization || !bearer.test(authorization) || /^Bearer (?:mkp_|mka_|mkr_)/.test(authorization)) return finish(rejected(401, 'web_connection_session_expired'))
@@ -117,7 +117,7 @@ export function createWebTransport(options: {
       headers.set('origin', new URL(request.url).origin)
       headers.set('sec-fetch-site', 'same-origin')
     }
-    return { request: new NextRequest(request, { headers }), run: work => options.scope(identity, work), response: response => {
+    return { request: new RouteRequest(request, { headers }), run: work => options.scope(identity, work), response: response => {
       // The Eve client validates the schema before reading a line and uses the tail for replay.
       const stream = method === 'GET' && route.startsWith('/api/agents/') && new URL(request.url).pathname.endsWith('/stream')
         && response.ok && response.headers.get('content-type')?.split(';')[0]?.trim() === 'application/x-ndjson'
