@@ -1,5 +1,6 @@
 // Mikka 额度 usage and the points balance (card verification is history only, decision 2026-11-15-1900),
 // as the backend reports them (#531, #558, #559), and the UI's helpers for them.
+import { toMikkaErrorContract, type MikkaErrorContract } from '../primitives/error-contract'
 
 /** Every state `getHostedUsage` reports; a refused model call carries the same code. */
 export const HOSTED_STATES = ['ready', 'verification_required', 'free_allowance_used', 'points_exhausted', 'platform_paused', 'usage_in_progress', 'usage_concurrency_limit', 'usage_cost_unavailable', 'usage_budget_exhausted', 'billing_authorization_revoked', 'billing_scope_missing', 'billing_owner_missing'] as const
@@ -98,4 +99,21 @@ export function refusalOffer(code: HostedRefusal, usage: HostedUsage | null) {
 /** Allowance and purchased points as one balance, rounded down so the screen never shows more than is left. */
 export function balancePoints(balance: HostedBalance): number {
   return Math.floor(Math.max(0, balance.free + (balance.plan ?? 0) + balance.purchased) / MICRO_USD_PER_POINT)
+}
+
+/**
+ * Additive canonical single-CTA error contract for a hosted refusal.
+ * Keeps `refusalOffer()` intact for existing callers while giving new UI
+ * surfaces strictly one primary recovery CTA matching Codex / Claude Code.
+ */
+export function hostedRefusalErrorContract(
+  code: HostedRefusal,
+  usage: HostedUsage | null = null,
+): MikkaErrorContract {
+  return toMikkaErrorContract(code, {
+    personal: usage?.personal,
+    admin: usage?.admin,
+    subscribed: usage?.subscribed,
+    workspaceId: usage?.workspaceId,
+  })
 }

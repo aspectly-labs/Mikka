@@ -4,6 +4,11 @@ import { chatBalanceRefusal } from '@/lib/chat-balance'
 import { cloudErrorCode, type CloudErrorCode } from '@/lib/cloud-services/errors'
 import { parseCodedErrorText } from '@mikka/protocol/coded-error'
 import { readRunFailure, type RunFailure } from '@mikka/protocol/run-failure'
+import {
+  toMikkaErrorContract,
+  type MikkaErrorContract,
+  type MikkaErrorContractOptions,
+} from './primitives/error-contract'
 
 /**
  * Why a chat's last reply did not come, as the web's chat reads it
@@ -82,4 +87,12 @@ export function failureMessageKey(failure: ChatFailure): FailureMessageKey {
     case 'wake': return { namespace: 'Coordinator', key: `wakeErrors.${failure.code}` }
     default: return failure.cloudCode ? { namespace: 'RunErrors', key: `${failure.cloudCode}.default` } : { namespace: 'Coordinator', key: failure.reason === 'modelRequired' ? 'modelRequired' : failure.reason === 'balance' ? 'apiBalance' : failure.reason === 'tools' ? 'replyToolUnavailable' : 'failedTitle' }
   }
+}
+
+/** Additive canonical single-CTA error contract for a classified chat failure. */
+export function chatFailureErrorContract(
+  failure: ChatFailure,
+  options?: MikkaErrorContractOptions,
+): MikkaErrorContract {
+  return toMikkaErrorContract(failure, options)
 }

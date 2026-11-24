@@ -3,6 +3,7 @@ import { APIError, type BetterAuthOptions, type User, type DBAdapter } from 'bet
 import { getCurrentAdapter, runWithTransaction } from '@better-auth/core/context'
 import { verifyJWT } from 'better-auth/crypto'
 import { deliverMail, mailConfigured, mailFrom } from './mail-delivery'
+import { toMikkaErrorContract } from './primitives/error-contract'
 
 export const AUTH_EMAIL_TTL_SECONDS = 15 * 60
 export const AUTH_EMAIL_FROM = mailFrom()
@@ -24,8 +25,19 @@ type Delivery = { kind: MailKind; outcome: 'accepted_by_provider' | 'failed' | '
 function digest(value: string) { return createHash('sha256').update(value).digest('hex') }
 function invalidLink(stage = 'validation'): never {
   console.warn('auth_email_verification_rejected', { stage })
-  throw new APIError('BAD_REQUEST', { code: 'INVALID_TOKEN', message: 'Invalid or expired link' }) }
-function unavailable(): never { throw new APIError('SERVICE_UNAVAILABLE', { code: 'AUTH_EMAIL_DELIVERY_UNAVAILABLE', message: 'Email service unavailable' }) }
+  throw new APIError('BAD_REQUEST', {
+    code: 'INVALID_TOKEN',
+    message: 'Invalid or expired link',
+    errorContract: toMikkaErrorContract({ code: 'INVALID_TOKEN', status: 400 }),
+  })
+}
+function unavailable(): never {
+  throw new APIError('SERVICE_UNAVAILABLE', {
+    code: 'AUTH_EMAIL_DELIVERY_UNAVAILABLE',
+    message: 'Email service unavailable',
+    errorContract: toMikkaErrorContract({ code: 'AUTH_EMAIL_DELIVERY_UNAVAILABLE', status: 503 }),
+  })
+}
 
 export function createAuthEmail(options: {
   origin: string
@@ -128,7 +140,11 @@ export function createAuthEmail(options: {
       if (['/send-verification-email', '/request-password-reset', '/reset-password'].includes(ctx.path ?? '') && ctx.request) {
         const requestOrigin = ctx.request.headers.get('origin')
         if ((requestOrigin && requestOrigin !== origin) || ctx.request.headers.get('sec-fetch-site') === 'cross-site') {
-          throw new APIError('FORBIDDEN', { code: 'INVALID_ORIGIN', message: 'Invalid origin' })
+          throw new APIError('FORBIDDEN', {
+            code: 'INVALID_ORIGIN',
+            message: 'Invalid origin',
+            errorContract: toMikkaErrorContract({ code: 'INVALID_ORIGIN', status: 403 }),
+          })
         }
       }
       if (ctx.path === '/send-verification-email') callback(ctx.body?.callbackURL, verifyReturn)
