@@ -165,3 +165,36 @@ test('Codex streaming through LiteLLM retains usage and settles the same credit 
   assert.equal(response.headers.get('x-litellm-model-api-base'), null, 'internal provider metadata stays behind the gateway')
   assert.deepEqual(calls.settled.map(([id, cost]) => [id, cost]), [[calls.reserved[0], 120]])
 })
+
+test('frozen run serviceTier injects OpenAI priority/ultrafast and Anthropic fast speed + beta header', async () => {
+  const fastCodex = harness({ verify: async () => grant({ harness: 'codex', serviceTier: 'fast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi' }), 'openai', 'responses', fastCodex.dependencies)
+  assert.equal(JSON.parse(String(fastCodex.calls.fetched[0].init.body)).service_tier, 'priority')
+
+  const ultraCodex = harness({ verify: async () => grant({ harness: 'codex', serviceTier: 'ultrafast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi' }), 'openai', 'responses', ultraCodex.dependencies)
+  assert.equal(JSON.parse(String(ultraCodex.calls.fetched[0].init.body)).service_tier, 'ultrafast')
+
+  const fastClaude = harness({ verify: async () => grant({ harness: 'claude_code', serviceTier: 'fast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ messages: [] }), 'anthropic', 'messages', fastClaude.dependencies)
+  const claudeReq = fastClaude.calls.fetched[0].init
+  assert.equal(JSON.parse(String(claudeReq.body)).speed, 'fast')
+  assert.match(String((claudeReq.headers as Record<string, string>)['anthropic-beta']), /fast-mode-2026-02-01/)
+
+  // SEC: an unapproved Claude run cannot spoof speed: 'fast' or fast-mode-2026-02-01 header.
+  const spoofed = harness({ verify: async () => grant({ harness: 'claude_code' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ messages: [], speed: 'fast' }, { 'x-api-key': 'mkg_valid', 'anthropic-beta': 'fast-mode-2026-02-01,interleaved-thinking-2025-05-14' }), 'anthropic', 'messages', spoofed.dependencies)
+  assert.equal(JSON.parse(String(spoofed.calls.fetched[0].init.body)).speed, undefined)
+  assert.equal((spoofed.calls.fetched[0].init.headers as Record<string, string>)['anthropic-beta'], 'interleaved-thinking-2025-05-14')
+
+  // Claude Code running an OpenAI-compatible BYOK key with verified Ultrafast encodes service_tier: 'ultrafast' without Anthropic fast beta.
+  const claudeOnOpenAi = harness({
+    verify: async () => grant({ harness: 'claude_code', source: { kind: 'api_key', keyId: '10000000-0000-4000-8000-000000000003' }, model: 'gpt-5.3-codex', serviceTier: 'ultrafast' }),
+    upstream: async () => ({ upstream: { url: 'http://litellm:4000', masterKey: 'internal', credential: { key: 'sk-test', provider: 'openai', apiBase: 'https://api.openai.com/v1' } } }),
+    answer: () => Response.json({ ok: true }),
+  })
+  await handleModelGateway(post({ messages: [] }), 'anthropic', 'messages', claudeOnOpenAi.dependencies)
+  assert.equal(JSON.parse(String(claudeOnOpenAi.calls.fetched[0].init.body)).service_tier, 'ultrafast')
+  assert.equal(JSON.parse(String(claudeOnOpenAi.calls.fetched[0].init.body)).speed, undefined)
+  assert.equal((claudeOnOpenAi.calls.fetched[0].init.headers as Record<string, string>)['anthropic-beta'], undefined)
+})

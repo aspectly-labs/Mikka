@@ -27,6 +27,8 @@ export interface ThreadStartParams {
   approvalPolicy?: AskForApproval | null
   sandbox?: SandboxMode | null
   model?: string | null
+  /** Codex app-server service tier ('fast' | 'ultrafast'), passed only when verified supported by the server. */
+  serviceTier?: 'fast' | 'ultrafast' | null
   developerInstructions?: string | null
 }
 
@@ -43,6 +45,7 @@ export interface ThreadResponse {
 
 export interface TurnStartParams {
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  serviceTier?: 'fast' | 'ultrafast'
   threadId: string
   input: UserInput[]
 }

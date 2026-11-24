@@ -127,10 +127,15 @@ func (e CPAPlainModel) ExecuteStream(ctx context.Context, a *core.Auth, request 
 	var converted []byte
 	var err error
 	endpoint := "https://api.anthropic.com/v1/messages"
+	claudeFastRequested := false
 	if e.Provider == "claude" {
 		// The converter accepts an explicit user field before its cache-ID derivation.
 		// Supply an honest application marker, then drop metadata entirely before
 		// transport. No synthesized device/session identity is sent or generated.
+		if speed, ok := original["speed"].(string); ok && speed == "fast" {
+			claudeFastRequested = true
+		}
+		delete(original, "speed")
 		delete(original, "metadata")
 		original["user"] = "Mikka"
 		input, _ := json.Marshal(original)
@@ -151,13 +156,18 @@ func (e CPAPlainModel) ExecuteStream(ctx context.Context, a *core.Auth, request 
 		requestFailure(e.Provider, "conversion", "json_invalid", len(converted), modelConvertedRequestMaxBytes)
 		return nil, ErrProvider
 	}
-	allowed := " model messages system max_tokens stream tools tool_choice temperature top_p stop_sequences thinking output_config service_tier "
+	allowed := " model messages system max_tokens stream tools tool_choice temperature top_p stop_sequences thinking output_config service_tier speed "
 	if e.Provider == "codex" {
 		allowed = " model input instructions stream store max_output_tokens tools tool_choice parallel_tool_calls reasoning text include service_tier "
-		// The pinned converter also accepts ultrafast. This path only enables
-		// the fixed priority tier; no arbitrary tier reaches native transport.
-		if tier, ok := body["service_tier"].(string); !ok || tier != "priority" {
+		// Only the allowlisted speed tiers ("priority" for Fast and "ultrafast")
+		// may cross native transport; no arbitrary tier reaches upstream.
+		if tier, ok := body["service_tier"].(string); !ok || (tier != "priority" && tier != "ultrafast") {
 			delete(body, "service_tier")
+		}
+	} else {
+		delete(body, "speed")
+		if claudeFastRequested {
+			body["speed"] = "fast"
 		}
 	}
 	for key := range body {
@@ -192,7 +202,11 @@ func (e CPAPlainModel) ExecuteStream(ctx context.Context, a *core.Auth, request 
 	req.Header.Set("Accept", "text/event-stream")
 	if e.Provider == "claude" {
 		req.Header.Set("anthropic-version", "2023-06-01")
-		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		if claudeFastRequested {
+			req.Header.Set("anthropic-beta", "oauth-2025-04-20,fast-mode-2026-02-01")
+		} else {
+			req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		}
 	} else {
 		account, _ := a.Metadata["account_id"].(string)
 		if !scopePattern.MatchString(account) {

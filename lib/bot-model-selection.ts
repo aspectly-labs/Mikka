@@ -6,6 +6,7 @@ import { botModelEffort } from "./bot-model-effort";
 import { ExecutionSettings, executionWorkspace } from "./execution-settings";
 import { botApiKeyChoice, usableApiKeys } from "./model-api-keys";
 import { apiKeyServesBotModel, resolveBotModelChoice } from "./bot-model-choice";
+import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS, type ModelRoutingEffort, type ModelServiceTier } from "./model-routing";
 import {
   freezeHostedModelSelection,
   hostedApiKeySnapshotSchema,
@@ -21,9 +22,33 @@ export async function freezeBotModel(
 ): Promise<HostedRuntimeSnapshot> {
   const workspaceId = scope.workspaceId ?? (await executionWorkspace(scope.ownerId, scope.botId));
   const snapshot = await freezeBotModelChoice({ ...scope, workspaceId }, dependencies);
-  // The Bot's reasoning effort is frozen with the turn's model (lib/model-effort.ts applies it per call).
-  const effort = await botModelEffort(pool, { ownerId: scope.ownerId, workspaceId }, scope.botId);
-  return effort ? { ...snapshot, effort } : snapshot;
+  // The Bot's reasoning effort and serving speed tier are frozen with the turn's model.
+  const [botEffort, orderRow] = await Promise.all([
+    botModelEffort(pool, { ownerId: scope.ownerId, workspaceId }, scope.botId),
+    pool
+      ? pool.query<{ effort: string | null; tier: string | null }>(
+          `SELECT to_jsonb(model_order_settings)->>'defaultEffort' AS effort,
+                  to_jsonb(model_order_settings)->>'defaultServiceTier' AS tier
+           FROM model_order_settings WHERE "ownerId"=$1 AND "workspaceId"=$2`,
+          [scope.ownerId, workspaceId],
+        ).then(result => result.rows[0] ?? null, () => null)
+      : Promise.resolve(null),
+  ]);
+  const workspaceEffort = MODEL_ROUTING_EFFORTS.find(item => item === orderRow?.effort);
+  const effort: ModelRoutingEffort | undefined = botEffort ?? (workspaceEffort && workspaceEffort !== "medium" ? workspaceEffort : undefined);
+  const savedTier = MODEL_SERVICE_TIERS.find(item => item === orderRow?.tier);
+  let serviceTier: ModelServiceTier | undefined = savedTier;
+  if (!snapshot.modelSelection && snapshot.model && (savedTier === "fast" || savedTier === "ultrafast")) {
+    // Verify Mikka Credits speed capability on the Node server before freezing (keeps Workflow VM free of model-order).
+    const { creditsModelSpeedModes } = await import("./model-order");
+    const supported = await creditsModelSpeedModes(snapshot.model);
+    serviceTier = supported.includes(savedTier) ? savedTier : "standard";
+  }
+  return {
+    ...snapshot,
+    ...(effort ? { effort } : {}),
+    ...(serviceTier ? { serviceTier } : {}),
+  };
 }
 
 async function freezeBotModelChoice(

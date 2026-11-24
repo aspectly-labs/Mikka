@@ -253,3 +253,24 @@ test('evaluation hooks and definitions leave business model and private capabili
     assert.equal(modelReads + policyReads + pluginReads + sourceReads + scheduleReads, 0)
   })
 })
+
+test('explicit standard serviceTier omits Codex priority while fast and ultrafast forward exact policies', async () => {
+  const selection = { type: 'subscription' as const, bindingId: serverId, ownerId: 'subscription-owner', consumerId: scope.botId,
+    workspaceId: scope.workspaceId, connectionId: serverId, connectionRevision: 7, modelId: 'shared-model', route: 'codex_cpa' as const }
+  await contextStorage.run(new ContextContainer(), async () => {
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'standard' }
+    await started({ data: { turnId: 'turn_std' } }, context({ turnId: 'turn_std' }))
+    await modelForSession(context({ turnId: 'turn_std' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: undefined })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'ultrafast' }
+    await started({ data: { turnId: 'turn_ultra' } }, context({ turnId: 'turn_ultra' }))
+    await modelForSession(context({ turnId: 'turn_ultra' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexServiceTier: 'ultrafast', apiKeyServiceTier: 'ultrafast' } })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'fast' }
+    await started({ data: { turnId: 'turn_fast' } }, context({ turnId: 'turn_fast' }))
+    await modelForSession(context({ turnId: 'turn_fast' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexServiceTier: 'priority', claudeSpeed: 'fast', apiKeyServiceTier: 'fast' } })
+  })
+})

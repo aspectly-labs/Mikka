@@ -9,7 +9,9 @@ import { deviceOnlineStates } from './device-presence'
 import { deviceSchedulingView, type SchedulingNode } from './device-scheduling'
 import type { HarnessInfo } from '@mikka/protocol/harness'
 import { ActionFailureError } from './action-error'
-import { apiKeyHarnesses } from './model-api-key-providers'
+import { gatewayKeyHarnesses } from './model-api-key-providers'
+import { catalogIdFor, type CatalogModel } from './model-catalog'
+import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS, resolveSpeedModesFromEvidence, type ModelRoutingEffort, type ModelServiceTier, type ModelSpeedMode } from './model-routing'
 import { hasStaleOfficialAllowance, shownSubscriptionAvailability, subscriptionAvailability } from './subscription-quota'
 import { providerHealthStates, providerSourceKey } from './model-provider-health'
 import {
@@ -49,12 +51,16 @@ export interface OrderView {
   location: RunLocation
   customized: boolean
   autoModelRouting: boolean
-  /** 优先使用的 Agent: which Agent's own list is shown and tried first. */
+  /** 优先使用的 Harness: which Harness's own list is shown and tried first. */
   preferredHarness: OrderHarness
+  /** Default reasoning effort selected in Settings > Models (BoardUI ModelPicker EffortSlider). */
+  defaultEffort: ModelRoutingEffort
+  /** Default serving speed tier selected in Settings > Models (Capy Fast mode / Ultrafast). */
+  defaultServiceTier: ModelServiceTier
   /** Connected subscriptions and usable API keys here: none means 优先使用的模型 says to connect one (C8). */
   credentials: number
   entries: OrderRow[]
-  candidates: (OrderCandidate & { provider: string; added: boolean })[]
+  candidates: (OrderCandidate & { provider: string; added: boolean; speedModes?: readonly ModelSpeedMode[] })[]
   /** Devices that take part (参与调度 on). */
   devices: number
   /** 云端: the person's own E2B cloud would take a run now. */
@@ -87,30 +93,118 @@ export interface ModelCandidateSnapshot {
   keys?: UsableApiKey[]
 }
 
+function jsonBoolMap(value: unknown): Record<string, boolean> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const out: Record<string, boolean> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'boolean') out[k] = v
+  }
+  return Object.keys(out).length ? out : null
+}
+
+async function liveCatalogIndex(requireConfigured = true): Promise<Map<string, CatalogModel>> {
+  try {
+    if (requireConfigured) {
+      const { gatewayLiteLlm } = await import('./model-gateway/config')
+      if (!gatewayLiteLlm()) return new Map()
+    }
+    const { modelCatalog } = await import('./model-catalog-server')
+    const list = await modelCatalog()
+    return new Map(list.map(model => [model.id, model]))
+  } catch {
+    return new Map()
+  }
+}
+
+function gatewayEntryFor(catalog: ReadonlyMap<string, CatalogModel>, model: string, provider: string): CatalogModel | undefined {
+  const id = catalogIdFor(model)
+  if (!id) return undefined
+  const entry = catalog.get(id)
+  if (!entry) return undefined
+  const directMatch = (provider === 'openai' && entry.vendor === 'openai')
+    || ((provider === 'anthropic' || provider === 'claude') && entry.vendor === 'anthropic')
+    || (provider === 'custom' && model.includes('/'))
+  return directMatch ? entry : undefined
+}
+
+/** Server-verified speed modes for a Mikka Credits (`vendor/model`) catalogue model. */
+export async function creditsModelSpeedModes(model: string): Promise<readonly ModelSpeedMode[]> {
+  const catalog = await liveCatalogIndex(false)
+  const entry = catalog.get(model) ?? (catalogIdFor(model) ? catalog.get(catalogIdFor(model)!) : undefined)
+  return resolveSpeedModesFromEvidence({ catalogSpeedModes: entry?.speedModes, catalogTags: entry?.tags })
+}
+
 /** What the person can add here: their usable subscriptions' models and their usable keys' models. */
-export async function orderCandidates(query: Query, scope: OrderScope, cached: ModelCandidateSnapshot = {}): Promise<(OrderCandidate & { provider: string; credentialOwnerId: string })[]> {
+export async function orderCandidates(query: Query, scope: OrderScope, cached: ModelCandidateSnapshot = {}): Promise<(OrderCandidate & { provider: string; credentialOwnerId: string; speedModes?: readonly ModelSpeedMode[] })[]> {
   const { ExecutionSettings } = await import('./execution-settings')
   const { usableApiKeys } = await import('./model-api-keys')
   const settings = new ExecutionSettings(query as Pool)
+  const gatewayCatalogPromise = liveCatalogIndex()
   const rows = cached.rows ?? await settings.modelCandidates(scope, query)
   // A subscription serves its owner only (decision 2026-11-17): no teammate's account is a candidate.
   // Each account's models in the order the account listed them (its catalogue): the default takes the first Codex model.
   const connectionIds = [...new Set(rows.map(row => String(row.connectionId)))]
-  const listed = new Map((connectionIds.length ? (await query.query<{ id: string; models: unknown }>(
-    `SELECT id::text AS id,"modelCatalog"->'models' AS models FROM byos_connections WHERE id::text = ANY($1) AND "ownerId"=ANY($2::text[])`, [connectionIds, [...new Set(rows.map(row => String(row.ownerId)))]] )).rows : [])
-    .map(row => [row.id, Array.isArray(row.models) ? row.models.map(String) : []]))
+  const catalogRows = connectionIds.length ? (await query.query<{
+    id: string; models: unknown; epoch: string; revision: string | null
+    prioritySupport: unknown; ultrafastSupport: unknown; fastSupport: unknown
+  }>(
+    `SELECT id::text AS id,"modelCatalog"->'models' AS models,epoch::text AS epoch,"modelCatalog"->>'revision' AS revision,"modelCatalog"->'prioritySupport' AS "prioritySupport","modelCatalog"->'ultrafastSupport' AS "ultrafastSupport","modelCatalog"->'fastSupport' AS "fastSupport" FROM byos_connections WHERE id::text = ANY($1) AND "ownerId"=ANY($2::text[])`,
+    [connectionIds, [...new Set(rows.map(row => String(row.ownerId)))]])).rows : []
+  const usableKeys = cached.keys ?? await usableApiKeys(query, scope.ownerId, scope.workspaceId)
+  const gatewayCatalog = await gatewayCatalogPromise
+  const listed = new Map(catalogRows.map(row => [row.id, Array.isArray(row.models) ? row.models.map(String) : []]))
+  const currentEpochCatalog = new Map(catalogRows.map(row => [
+    row.id,
+    {
+      current: row.revision !== null && row.revision === row.epoch,
+      priority: jsonBoolMap(row.prioritySupport),
+      ultrafast: jsonBoolMap(row.ultrafastSupport),
+      fast: jsonBoolMap(row.fastSupport),
+    },
+  ]))
   const rank = (connectionId: string, model: string) => { const at = listed.get(connectionId)?.indexOf(model) ?? -1; return at < 0 ? Number.MAX_SAFE_INTEGER : at }
-  const subscriptions = rows.map(row => ({
-    harness: (row.provider === 'codex' ? 'codex' : 'claude_code') as OrderHarness, model: String(row.modelId), name: String(row.modelId),
-    source: { kind: 'subscription' as const, connectionId: String(row.connectionId) }, provider: String(row.provider), credentialOwnerId: String(row.ownerId),
-  })).map((item, at) => ({ item, at })).sort((a, b) => a.item.source.connectionId === b.item.source.connectionId
+  const subscriptions = rows.map(row => {
+    const harness = (row.provider === 'codex' ? 'codex' : 'claude_code') as OrderHarness
+    const model = String(row.modelId)
+    const connId = String(row.connectionId)
+    const provider = String(row.provider)
+    const cap = currentEpochCatalog.get(connId)
+    const speedModes = provider === 'codex'
+      // Codex subscriptions read speed tiers strictly from the account's current-epoch /backend-api/codex/models service_tiers.
+      ? resolveSpeedModesFromEvidence(cap?.current ? {
+          prioritySupported: cap.priority?.[model],
+          ultrafastSupported: cap.ultrafast?.[model],
+        } : {})
+      // Claude subscriptions prefer explicit Anthropic /v1/models capability flags, falling back to live server Gateway catalogue only when absent.
+      : resolveSpeedModesFromEvidence({
+          fastSupported: cap?.current ? cap.fast?.[model] : undefined,
+          ultrafastSupported: cap?.current ? cap.ultrafast?.[model] : undefined,
+          catalogSpeedModes: gatewayEntryFor(gatewayCatalog, model, provider)?.speedModes,
+          catalogTags: gatewayEntryFor(gatewayCatalog, model, provider)?.tags,
+        })
+    return {
+      harness, model, name: model,
+      source: { kind: 'subscription' as const, connectionId: connId }, provider, credentialOwnerId: String(row.ownerId),
+      ...(speedModes.length ? { speedModes } : {}),
+    }
+  }).map((item, at) => ({ item, at })).sort((a, b) => a.item.source.connectionId === b.item.source.connectionId
     ? rank(a.item.source.connectionId, a.item.model) - rank(b.item.source.connectionId, b.item.model) || a.at - b.at
     : a.at - b.at).map(({ item }) => item)
-  // A key serves each Agent of each protocol it speaks: a DeepSeek or Kimi model is a candidate on both (model · Agent).
-  const keys = (cached.keys ?? await usableApiKeys(query, scope.ownerId, scope.workspaceId)).flatMap(key => key.models.flatMap(model => apiKeyHarnesses(key).map(harness => ({
-    harness: harness as OrderHarness, model, name: model,
-    source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId,
-  }))))
+  // Through LiteLLM, any OpenAI-compatible key serves both Claude Code and Codex; Anthropic-protocol keys serve Claude Code.
+  const keys = usableKeys.flatMap(key => key.models.flatMap(model => gatewayKeyHarnesses(key).map(harness => {
+    const advertised = key.modelSpeedModes && Object.hasOwn(key.modelSpeedModes, model) ? key.modelSpeedModes[model] : undefined
+    const gatewayMatch = advertised === undefined ? gatewayEntryFor(gatewayCatalog, model, key.provider) : undefined
+    const speedModes = resolveSpeedModesFromEvidence({
+      advertised,
+      catalogSpeedModes: gatewayMatch?.speedModes,
+      catalogTags: gatewayMatch?.tags,
+    })
+    return {
+      harness: harness as OrderHarness, model, name: model,
+      source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId,
+      ...(speedModes.length ? { speedModes } : {}),
+    }
+  })))
   // Claude first, then ChatGPT/Codex, then keys (orchestration.md § 2).
   const ordered = [...subscriptions.filter(item => item.provider === 'claude'), ...subscriptions.filter(item => item.provider !== 'claude'), ...keys]
   return [...new Map(ordered.map(item => [entryKey(item), item])).values()]
@@ -124,18 +218,38 @@ export async function selectedOrderCandidates(query: Query, scope: OrderScope, e
   // Mikka 额度 is no connected credential; it has no candidates to select.
   if (entry.source.kind === 'credits') return []
   if (!z.uuid().safeParse(sourceId(entry)).success) return []
+  const gatewayCatalog = await liveCatalogIndex()
   if (entry.source.kind === 'api_key') {
     const { usableApiKeys } = await import('./model-api-keys')
     return (await usableApiKeys(query, scope.ownerId, scope.workspaceId, entry.source.keyId))
-      .filter(key => key.models.includes(entry.model) && apiKeyHarnesses(key).includes(entry.harness))
-      .map(key => ({ harness: entry.harness, model: entry.model, name: entry.model,
-        source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId }))
+      .filter(key => key.models.includes(entry.model) && gatewayKeyHarnesses(key).includes(entry.harness))
+      .map(key => {
+        const advertised = key.modelSpeedModes && Object.hasOwn(key.modelSpeedModes, entry.model) ? key.modelSpeedModes[entry.model] : undefined
+        const gatewayMatch = advertised === undefined ? gatewayEntryFor(gatewayCatalog, entry.model, key.provider) : undefined
+        const speedModes = resolveSpeedModesFromEvidence({
+          advertised,
+          catalogSpeedModes: gatewayMatch?.speedModes,
+          catalogTags: gatewayMatch?.tags,
+        })
+        return {
+          harness: entry.harness, model: entry.model, name: entry.model,
+          source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId,
+          ...(speedModes.length ? { speedModes } : {}),
+        }
+      })
   }
   const { runMayUseCredentialSql } = await import('./personal-policy')
   // Derive the payor only from the exact source and its current workspace share.
   // The source owner's active membership is still checked before its catalogue.
-  const { rows: [source] } = await query.query<{ ownerId: string }>(`SELECT c."ownerId" FROM byos_connections c
-    WHERE c.id=$1 AND ${runMayUseCredentialSql('c."ownerId"', '$2', '$3')}`,
+  const { rows: [source] } = await query.query<{
+    ownerId: string; epoch: string; revision: string | null
+    prioritySupport: unknown; ultrafastSupport: unknown; fastSupport: unknown
+  }>(`SELECT c."ownerId", c.epoch::text AS epoch, c."modelCatalog"->>'revision' AS revision,
+       c."modelCatalog"->'prioritySupport' AS "prioritySupport",
+       c."modelCatalog"->'ultrafastSupport' AS "ultrafastSupport",
+       c."modelCatalog"->'fastSupport' AS "fastSupport"
+     FROM byos_connections c
+     WHERE c.id=$1 AND ${runMayUseCredentialSql('c."ownerId"', '$2', '$3')}`,
   [entry.source.connectionId, scope.ownerId, scope.workspaceId])
   if (!source) return []
   if (source.ownerId !== scope.ownerId) {
@@ -143,22 +257,48 @@ export async function selectedOrderCandidates(query: Query, scope: OrderScope, e
     try { await authorizeSubscriptionWorkspace(source.ownerId, scope.workspaceId) } catch { return [] }
   }
   const { executionModelOptions } = await import('./execution-model-options')
+  const currentEpoch = source.revision !== null && source.revision === source.epoch
+  const priority = jsonBoolMap(source.prioritySupport)
+  const ultrafast = jsonBoolMap(source.ultrafastSupport)
+  const fast = jsonBoolMap(source.fastSupport)
   return (await executionModelOptions(query, { ...scope, ownerId: source.ownerId }, true,
     { connectionId: entry.source.connectionId, model: entry.model }))
-    .map(row => ({ harness: (row.provider === 'codex' ? 'codex' : 'claude_code') as OrderHarness,
-      model: String(row.modelId), name: String(row.modelId), source: { kind: 'subscription' as const, connectionId: String(row.connectionId) },
-      provider: String(row.provider), credentialOwnerId: String(row.ownerId) }))
+    .map(row => {
+      const provider = String(row.provider)
+      const model = String(row.modelId)
+      const speedModes = provider === 'codex'
+        ? resolveSpeedModesFromEvidence(currentEpoch ? { prioritySupported: priority?.[model], ultrafastSupported: ultrafast?.[model] } : {})
+        : resolveSpeedModesFromEvidence({
+            fastSupported: currentEpoch ? fast?.[model] : undefined,
+            ultrafastSupported: currentEpoch ? ultrafast?.[model] : undefined,
+            catalogSpeedModes: gatewayEntryFor(gatewayCatalog, model, provider)?.speedModes,
+            catalogTags: gatewayEntryFor(gatewayCatalog, model, provider)?.tags,
+          })
+      return {
+        harness: (row.provider === 'codex' ? 'codex' : 'claude_code') as OrderHarness,
+        model, name: model, source: { kind: 'subscription' as const, connectionId: String(row.connectionId) },
+        provider, credentialOwnerId: String(row.ownerId),
+        ...(speedModes.length ? { speedModes } : {}),
+      }
+    })
     .filter(candidate => entryKey(candidate) === entryKey(entry))
 }
 
 async function settingsRow(query: Query, scope: OrderScope) {
-  const { rows: [row] } = await query.query<{ location: RunLocation; customized: boolean; preferredHarness: OrderHarness; autoModelRouting: boolean }>(
-    'SELECT location,customized,"preferredHarness","autoModelRouting" FROM model_order_settings WHERE "ownerId"=$1 AND "workspaceId"=$2', [scope.ownerId, scope.workspaceId])
-  return row ?? { location: 'cloud' as RunLocation, customized: false, preferredHarness: 'claude_code' as OrderHarness, autoModelRouting: true }
+  const { rows: [row] } = await query.query<{ location: RunLocation; customized: boolean; preferredHarness: OrderHarness; autoModelRouting: boolean; defaultEffort: string | null; defaultServiceTier: string | null }>(
+    `SELECT location,customized,"preferredHarness","autoModelRouting",
+      COALESCE(to_jsonb(model_order_settings)->>'defaultEffort','medium') AS "defaultEffort",
+      COALESCE(to_jsonb(model_order_settings)->>'defaultServiceTier','standard') AS "defaultServiceTier"
+    FROM model_order_settings WHERE "ownerId"=$1 AND "workspaceId"=$2`, [scope.ownerId, scope.workspaceId])
+  const effort = MODEL_ROUTING_EFFORTS.find(item => item === row?.defaultEffort) ?? 'medium'
+  const serviceTier = MODEL_SERVICE_TIERS.find(item => item === row?.defaultServiceTier) ?? 'standard'
+  return row
+    ? { ...row, defaultEffort: effort, defaultServiceTier: serviceTier }
+    : { location: 'cloud' as RunLocation, customized: false, preferredHarness: 'claude_code' as OrderHarness, autoModelRouting: true, defaultEffort: 'medium' as ModelRoutingEffort, defaultServiceTier: 'standard' as ModelServiceTier }
 }
 
 /** The allowed models in order: the stored list, or for an untouched list the default preference (ids are stable per entry). */
-export async function readOrder(query: Query, scope: OrderScope, candidates?: (OrderCandidate & { provider: string })[]): Promise<{ location: RunLocation; customized: boolean; preferredHarness: OrderHarness; autoModelRouting: boolean; entries: StoredEntry[] }> {
+export async function readOrder(query: Query, scope: OrderScope, candidates?: (OrderCandidate & { provider: string })[]): Promise<{ location: RunLocation; customized: boolean; preferredHarness: OrderHarness; autoModelRouting: boolean; defaultEffort: ModelRoutingEffort; defaultServiceTier: ModelServiceTier; entries: StoredEntry[] }> {
   const settings = await settingsRow(query, scope)
   if (!settings.customized) {
     const available = latestDefaultCandidates(candidates ?? await orderCandidates(query, scope))
@@ -364,6 +504,8 @@ export async function orderView(query: Query, scope: OrderScope, readDevices: ()
     customized: order.customized,
     autoModelRouting: order.autoModelRouting,
     preferredHarness: order.preferredHarness,
+    defaultEffort: order.defaultEffort,
+    defaultServiceTier: order.defaultServiceTier,
     credentials: credentials!,
     devices: devices.filter(device => device.enabled).length,
     cloudReady: ready,
@@ -384,6 +526,8 @@ export async function orderView(query: Query, scope: OrderScope, readDevices: ()
 }
 
 const harnessSchema = z.enum(['claude_code', 'codex'])
+const effortSchema = z.enum(MODEL_ROUTING_EFFORTS)
+const serviceTierSchema = z.enum(MODEL_SERVICE_TIERS)
 const candidateInput = z.object({
   harness: harnessSchema, model: z.string().trim().min(1).max(128),
   source: z.discriminatedUnion('kind', [
@@ -401,6 +545,10 @@ export type OrderChange =
   | { kind: 'autoRouting'; enabled: boolean }
   /** 优先使用的 Agent: which Agent's list the page shows and dispatch runs; no row moves. */
   | { kind: 'preferred'; harness: OrderHarness }
+  /** Default reasoning effort for Settings > Models default model picker. */
+  | { kind: 'effort'; effort: ModelRoutingEffort }
+  /** Default serving speed tier (standard / fast / ultrafast) for Settings > Models. */
+  | { kind: 'serviceTier'; serviceTier: ModelServiceTier }
   /** One row's Agent, for a model both Agents run. */
   | { kind: 'harness'; id: string; harness: OrderHarness }
 
@@ -433,6 +581,20 @@ export async function changeOrder(pool: Pool, scope: OrderScope, change: OrderCh
       await client.query(`INSERT INTO model_order_settings ("ownerId","workspaceId","preferredHarness") VALUES ($1,$2,$3)
         ON CONFLICT ("ownerId","workspaceId") DO UPDATE SET "preferredHarness"=EXCLUDED."preferredHarness","updatedAt"=now()`, [scope.ownerId, scope.workspaceId, preferred])
       // Each Agent keeps its own rows and order; switching only picks which list the page shows and dispatch runs.
+      await client.query('COMMIT')
+      return
+    }
+    if (change.kind === 'effort') {
+      const effort = effortSchema.parse(change.effort)
+      await client.query(`INSERT INTO model_order_settings ("ownerId","workspaceId","defaultEffort") VALUES ($1,$2,$3)
+        ON CONFLICT ("ownerId","workspaceId") DO UPDATE SET "defaultEffort"=EXCLUDED."defaultEffort","updatedAt"=now()`, [scope.ownerId, scope.workspaceId, effort])
+      await client.query('COMMIT')
+      return
+    }
+    if (change.kind === 'serviceTier') {
+      const serviceTier = serviceTierSchema.parse(change.serviceTier)
+      await client.query(`INSERT INTO model_order_settings ("ownerId","workspaceId","defaultServiceTier") VALUES ($1,$2,$3)
+        ON CONFLICT ("ownerId","workspaceId") DO UPDATE SET "defaultServiceTier"=EXCLUDED."defaultServiceTier","updatedAt"=now()`, [scope.ownerId, scope.workspaceId, serviceTier])
       await client.query('COMMIT')
       return
     }

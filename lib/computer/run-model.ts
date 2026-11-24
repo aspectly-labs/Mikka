@@ -1,7 +1,7 @@
 import 'server-only'
 import type { Pool } from 'pg'
 import type { OrderEntry } from '@/lib/model-order-plan'
-import type { WorkerDefinitionSnapshot, WorkerModelDispatch } from '@/lib/agent-kit/worker'
+import { workerModelDispatchFromTarget, type WorkerDefinitionSnapshot, type WorkerModelDispatch } from '@/lib/agent-kit/worker'
 import { runPolicySchema } from '@mikka/protocol/agent-policy'
 import { intersectRunPolicy } from '@/lib/run-assignment-policy'
 
@@ -65,7 +65,7 @@ export async function chooseCloudRunModel(pool: Pool, scope: { ownerId: string; 
   const target = await resolveModelDispatch(pool, scope, asked ? { harness, model: asked } : null, 'cloud', undefined, { cloudPurpose: purpose, harness, ...(exactEntry ? { exactEntry } : {}) })
   if (target.kind !== 'cloud') return { error: 'machineUnavailable', ...(target.kind === 'none' ? { reason: target.reason } : {}) }
   const source = target.entry.source
-  const modelDispatch: WorkerModelDispatch = { mode: asked ? 'picked' : 'preference', location: 'cloud', entry: target.entry }
+  const modelDispatch: WorkerModelDispatch = workerModelDispatchFromTarget(target, { mode: asked ? 'picked' : 'preference', location: 'cloud' })
   if (source.kind === 'api_key') return { model: target.model, apiKeyId: source.keyId, modelDispatch }
   // Mikka 额度: no subscription or key; the run gets the model gateway at claim.
   if (source.kind === 'credits') return { model: target.model, modelDispatch }
@@ -80,5 +80,10 @@ export async function chooseLocalRunModel(pool: Pool, scope: { ownerId: string; 
   const { resolveModelDispatch } = await import('@/lib/model-dispatch')
   const target = await resolveModelDispatch(pool, scope, asked ? { harness: agent.harness, model: asked } : null, 'local', agent.deviceId, { harness: agent.harness, ...(exactEntry ? { exactEntry } : {}) })
   if (target.kind !== 'device' || target.agentId !== agent.id) return { error: 'machineUnavailable', ...(target.kind === 'none' ? { reason: target.reason } : {}) }
-  return { model: target.model, ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}), ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}), modelDispatch: { mode: asked ? 'picked' : 'preference', location: 'local', entry: target.entry } }
+  return {
+    model: target.model,
+    ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
+    ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}),
+    modelDispatch: workerModelDispatchFromTarget(target, { mode: asked ? 'picked' : 'preference', location: 'local' }),
+  }
 }

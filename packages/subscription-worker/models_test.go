@@ -54,7 +54,13 @@ func TestModelsReadsOnlyBoundOwnerCatalogue(t *testing.T) {
 				if models[2].ID != "no-priority" || models[2].Name != "no-priority" || models[2].PrioritySupported == nil || *models[2].PrioritySupported {
 					t.Fatal("name sanitization lost explicit priority absence")
 				}
-			} else if models[0].PrioritySupported != nil {
+				if models[0].UltrafastSupported == nil || *models[0].UltrafastSupported {
+					t.Fatal("unadvertised Codex ultrafast became true")
+				}
+				if models[1].UltrafastSupported != nil {
+					t.Fatal("missing service_tiers became known ultrafast capability")
+				}
+			} else if models[0].PrioritySupported != nil || models[0].UltrafastSupported != nil {
 				t.Fatal("Claude acquired a Codex priority capability")
 			}
 			raw, _ := json.Marshal(models)
@@ -202,5 +208,32 @@ func TestCodexPrioritySupportedRequiresAdvertisedTier(t *testing.T) {
 				t.Fatalf("priority capability = %v; want %s", supported, tc.want)
 			}
 		})
+	}
+}
+
+func TestCodexUltrafastAndClaudeFastCapabilities(t *testing.T) {
+	u := codexUltrafastSupported(json.RawMessage(`[{"id":"priority"},{"id":"ultrafast"}]`))
+	if u == nil || !*u {
+		t.Fatalf("advertised ultrafast capability = %v; want true", u)
+	}
+	uFalse := codexUltrafastSupported(json.RawMessage(`[{"id":"priority"}]`))
+	if uFalse == nil || *uFalse {
+		t.Fatalf("absent ultrafast capability = %v; want false", uFalse)
+	}
+	if codexUltrafastSupported(json.RawMessage(`null`)) != nil {
+		t.Fatal("null service_tiers must remain unknown for ultrafast")
+	}
+	yes, no := true, false
+	if got := claudeFastSupported(&yes, nil); got == nil || !*got {
+		t.Fatalf("explicit Claude supports_fast_mode = %v; want true", got)
+	}
+	if got := claudeFastSupported(&no, nil); got == nil || *got {
+		t.Fatalf("explicit Claude supports_fast_mode false = %v; want false", got)
+	}
+	if got := claudeFastSupported(nil, json.RawMessage(`{"fast_mode":{"supported":true}}`)); got == nil || !*got {
+		t.Fatalf("Claude capabilities.fast_mode.supported = %v; want true", got)
+	}
+	if got := claudeFastSupported(nil, nil); got != nil {
+		t.Fatalf("absent Claude fast capability = %v; want nil", got)
 	}
 }

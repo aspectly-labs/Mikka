@@ -7,7 +7,7 @@ import type { TeamScope } from './team-access'
 import { personalMailboxEnabled } from './personal-mailbox-config'
 import { byosEnabled } from './cloud-computer-flag'
 import { snapshotMailboxTools } from '@/lib/personal-mailbox-capability'
-import { freezeWorkerDefinition, type WorkerModelDispatch } from '@/lib/agent-kit/worker'
+import { freezeWorkerDefinition, workerModelDispatchFromTarget, type WorkerModelDispatch } from '@/lib/agent-kit/worker'
 import type { AgentExecution } from '@/lib/agent-kit/store'
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -375,7 +375,7 @@ async function factoryRunModel(userId: string, botId: string | null, agentId: st
     { ownerId: userId, workspaceId, botId }, { issueId: issueId!, stage, profileId, agentId: agent.id, deviceId: agent.deviceId, location: 'local', asked: { harness: agent.harness } }, { transaction })
   if (target.kind !== 'device' || target.agentId !== agent.id) throw new ActionFailureError('runModelMissing')
   return { model: target.model, agentProfile,
-    modelDispatch: { mode: selectionMode ?? 'preference', location: 'local' as const, entry: target.entry },
+    modelDispatch: workerModelDispatchFromTarget(target, { mode: selectionMode ?? 'preference', location: 'local', profileEffort: agentProfile?.effort }),
     ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
     ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}),
     ...(chosen.policyCeiling ? { policyCeiling: chosen.policyCeiling } : {}) }

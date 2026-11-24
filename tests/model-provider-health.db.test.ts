@@ -94,7 +94,7 @@ test('provider health persists across dispatches without changing credential own
     await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,$2,'Fixture device','local',true,now(),$3,now())`,
       [deviceId, scope.ownerId, JSON.stringify([{ harness: 'codex', installed: true }])])
     await pool.query('UPDATE agents SET "deviceId"=$2 WHERE id=$1', [scope.agentId, deviceId])
-    const fallback = first.candidates.find(candidate => candidate.source.kind === 'api_key' && candidate.source.keyId === ready.id)!
+    const fallback = first.candidates.find(candidate => candidate.harness === 'codex' && candidate.source.kind === 'api_key' && candidate.source.keyId === ready.id)!
     await order.changeOrder(pool, scope, { kind: 'add', entries: [fallback] })
     for (let task = 0; task < 2; task++) {
       const dispatch = await resolveModelDispatch(pool, scope, undefined, 'local')
@@ -170,7 +170,8 @@ test('provider health persists across dispatches without changing credential own
     const source = { kind: 'api_key' as const, keyId: saved.id }
     await run(scope, source, { kind: 'unavailable', retryable: true, status: 503 }, now - 1_000, { finishedAt: now, status: 'finishing', model: 'fixture-outage' })
     const blocked = await read(scope, now + 119_999)
-    assert.deepEqual(blocked.states.get(blocked.entries[0].id)?.credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() })
+    const blockedCodex = blocked.entries.find(entry => entry.harness === 'codex')!
+    assert.deepEqual(blocked.states.get(blockedCodex.id)?.credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() })
     assert.ok([...(await read(scope, now + 120_000)).states.values()].every(state => state.credential.usable))
     await run(scope, source, { kind: 'balance', retryable: false }, now - 2_000)
     assert.deepEqual([...(await read(scope, now + 120_000)).states.values()][0].credential, { usable: false, reason: 'balance' })
@@ -189,7 +190,9 @@ test('provider health persists across dispatches without changing credential own
     await run(scope, source, { kind: 'auth', retryable: false }, now - 10_000, { status: 'succeeded', stopReason: 'completed' })
     assert.ok([...(await read(scope)).states.values()].every(state => state.credential.usable), 'stale successful metadata is not failure evidence')
     await run(scope, source, { kind: 'unavailable', retryable: true }, now - 1_000, { status: 'finishing', finishedAt: now, model: 'fixture-cancelled' })
-    assert.deepEqual([...(await read(scope)).states.values()][0].credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() }, 'a genuine provider stop remains visible while completion is finishing')
+    const finishing = await read(scope)
+    const finishingCodex = finishing.entries.find(entry => entry.harness === 'codex')!
+    assert.deepEqual(finishing.states.get(finishingCodex.id)?.credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() }, 'a genuine provider stop remains visible while completion is finishing')
   })
 
   await t.test('a model outage leaves the next model on the same key runnable and needs its own later success', async () => {
@@ -199,8 +202,8 @@ test('provider health persists across dispatches without changing credential own
     await run(scope, source, { kind: 'unavailable', retryable: true, status: 502 }, now - 10_000, { model: 'fixture-outage' })
     await run(scope, source, null, now - 8_000, { model: 'fixture-ready' })
     const first = await read(scope)
-    const outage = first.entries.find(entry => entry.model === 'fixture-outage')!
-    const ready = first.entries.find(entry => entry.model === 'fixture-ready')!
+    const outage = first.entries.find(entry => entry.harness === 'codex' && entry.model === 'fixture-outage')!
+    const ready = first.entries.find(entry => entry.harness === 'codex' && entry.model === 'fixture-ready')!
     assert.equal(first.states.get(outage.id)?.credential.usable, false, 'success on another model does not clear this outage')
     assert.deepEqual(first.states.get(ready.id)?.credential, { usable: true })
     // The untouched default contains one Codex model, not the entire /models

@@ -1333,6 +1333,7 @@ export class RunSupervisor {
       fixture: assignment.fixture,
       model: assignment.model,
       effort: assignment.effort,
+      ...(assignment.serviceTier ? { serviceTier: assignment.serviceTier } : {}),
       // In memory only: the adapter hands it to the run's CLI environment.
       credential: assignment.modelCredential,
     }

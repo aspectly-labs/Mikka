@@ -56,7 +56,8 @@ export async function resolveFrozenHostedModel(scope: HostedModelScope, runtime:
     if (expected.ownerId !== scope.ownerId || expected.botId !== scope.botId || expected.workspaceId !== scope.workspaceId || runtime.model !== frozen.modelId) throw refuse()
     cancelled(signal)
     const { resolveApiKeyChatModel } = await import('./model-api-key-chat')
-    return resolveApiKeyChatModel(frozen)
+    const tier = runtime.serviceTier === 'fast' || runtime.serviceTier === 'ultrafast' ? runtime.serviceTier : undefined
+    return tier ? resolveApiKeyChatModel(frozen, tier) : resolveApiKeyChatModel(frozen)
   }
   const frozen = hostedSubscriptionSnapshotSchema.parse(runtime.modelSelection)
   checkScope(scope, frozen)

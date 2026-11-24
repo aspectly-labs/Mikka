@@ -17,7 +17,7 @@ import { stepIdentity } from './model-call-timing'
 import { CLEANUP_DUE_SQL, expireSubscriptionAcquisitions } from './subscription-acquire-expiry'
 import { ownerSettingsChanged } from './live/lists'
 import { measureSubscriptionNative } from './subscription-native-timing'
-import { codexPrioritySupport, subscriptionModelRequestPolicySchema, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
+import { claudeFastSupport, codexPrioritySupport, codexUltrafastSupport, subscriptionModelRequestPolicySchema, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
 
 // Matches modelRequestMaxBytes in the Go worker. The conversation's 100k
 // compaction estimate excludes the system prompt and tool schemas.
@@ -49,7 +49,7 @@ export class SubscriptionService {
     this.modelRequestPolicy = modelRequestPolicy === undefined ? undefined : subscriptionModelRequestPolicySchema.parse(modelRequestPolicy)
   }
 
-  async access(use: SubscriptionUse, signal?: AbortSignal, modelOverride?: string | null, includePrioritySupport = false): Promise<SubscriptionAccess & { codexPrioritySupport?: CodexPrioritySupport }> {
+  async access(use: SubscriptionUse, signal?: AbortSignal, modelOverride?: string | null, includePrioritySupport = false): Promise<SubscriptionAccess & { codexPrioritySupport?: CodexPrioritySupport; codexUltrafastSupport?: CodexPrioritySupport; claudeFastSupport?: CodexPrioritySupport }> {
     const { modelId: boundModelId, ...binding } = await this.repository.binding(use.ownerId, use.bindingId)
     if (binding.workspaceId !== use.workspaceId || binding.consumerId !== use.consumerId) throw new SubscriptionRefusal('binding_mismatch', { detail: 'scope_mismatch' })
     await this.workspace(use.ownerId, binding.workspaceId, binding.consumerId)
@@ -73,7 +73,11 @@ export class SubscriptionService {
     if (current.paused) throw new SubscriptionRefusal('account_unavailable', { detail: 'account_paused' })
     return {
       binding,
-      ...(includePrioritySupport ? { codexPrioritySupport: current.provider === 'codex' ? codexPrioritySupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : 'unknown' as const } : {}),
+      ...(includePrioritySupport ? {
+        codexPrioritySupport: current.provider === 'codex' ? codexPrioritySupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : 'unknown' as const,
+        codexUltrafastSupport: current.provider === 'codex' ? codexUltrafastSupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : 'unknown' as const,
+        claudeFastSupport: current.provider === 'claude' ? claudeFastSupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : 'unknown' as const,
+      } : {}),
       modelId: modelOverride === null ? undefined : modelOverride ?? boundModelId,
       credentialTransition: current.state === 'refreshing' ? 'refreshing' : current.state === 'publication_pending' ? 'publication_pending' : undefined,
       connection: { id: row.id, ownerId: row.ownerId, workspaceId: row.workspaceId, provider: row.provider === 'codex' ? 'openai' : 'anthropic', revision: Number(current.epoch), state: current.state === 'connected' ? 'connected' : current.state === 'disconnected' ? 'disconnected' : current.state === 'pending' ? 'pending' : 'reconnect_required', quota },
@@ -109,18 +113,25 @@ export class SubscriptionService {
             }
             const payload = JSON.parse(init.body)
             if (payload.model !== binding.modelId || payload.stream !== true) throw new SubscriptionRefusal('binding_mismatch', { detail: 'stream_request_mismatch' })
-            const priorityRequested = binding.route === 'codex_cpa' && this.modelRequestPolicy?.codexServiceTier === 'priority'
-            const authorized = await this.check(use, signal, undefined, priorityRequested)
+            const codexTierIntent = binding.route === 'codex_cpa' ? this.modelRequestPolicy?.codexServiceTier : undefined
+            const claudeFastIntent = binding.route === 'claude_cpa' && this.modelRequestPolicy?.claudeSpeed === 'fast'
+            const checkSpeedSupport = Boolean(codexTierIntent || claudeFastIntent)
+            const authorized = await this.check(use, signal, undefined, checkSpeedSupport)
             await admit(init.signal ?? signal ?? undefined)
             // Provider options are not an opt-in to a paid service tier. Only
-            // the internal Coordinator policy and this fresh epoch's catalogue
+            // the internal server policy and this fresh epoch's catalogue
             // can request it. Unknown/unsupported uses the same single call.
             if (binding.route === 'codex_cpa') {
               delete payload.service_tier
-              if (priorityRequested && authorized.codexPrioritySupport === 'supported') payload.service_tier = 'priority'
-              if (priorityRequested) {
-                try { console.info(JSON.stringify({ level: 'info', msg: 'subscription_service_tier_policy', intent: 'priority', capability: authorized.codexPrioritySupport ?? 'unknown', requested: payload.service_tier === 'priority' ? 'priority' : 'omitted', ...await stepIdentity() })) } catch { /* diagnostics cannot change authorization or the request */ }
+              if (codexTierIntent === 'ultrafast' && authorized.codexUltrafastSupport === 'supported') payload.service_tier = 'ultrafast'
+              else if (codexTierIntent === 'priority' && authorized.codexPrioritySupport === 'supported') payload.service_tier = 'priority'
+              if (codexTierIntent) {
+                const capability = codexTierIntent === 'ultrafast' ? (authorized.codexUltrafastSupport ?? 'unknown') : (authorized.codexPrioritySupport ?? 'unknown')
+                try { console.info(JSON.stringify({ level: 'info', msg: 'subscription_service_tier_policy', intent: codexTierIntent, capability, requested: payload.service_tier === 'priority' || payload.service_tier === 'ultrafast' ? payload.service_tier : 'omitted', ...await stepIdentity() })) } catch { /* diagnostics cannot change authorization or the request */ }
               }
+            } else if (binding.route === 'claude_cpa') {
+              delete payload.speed
+              if (claudeFastIntent && authorized.claudeFastSupport === 'supported') payload.speed = 'fast'
             }
             return new Response(client.stream(binding.connectionRevision, modelId, payload, init.signal ?? signal ?? undefined), { headers: { 'content-type': 'text/event-stream' } })
           }
@@ -174,7 +185,14 @@ export class SubscriptionService {
   async check(use: SubscriptionUse, signal?: AbortSignal, modelOverride?: string | null, includePrioritySupport = false) {
     const access = await this.access(use, signal, modelOverride, includePrioritySupport)
     const authorized = authorizeSubscriptionUse(use, access)
-    return { ...authorized, ...(includePrioritySupport ? { codexPrioritySupport: access.codexPrioritySupport } : {}) }
+    return {
+      ...authorized,
+      ...(includePrioritySupport ? {
+        codexPrioritySupport: access.codexPrioritySupport,
+        codexUltrafastSupport: access.codexUltrafastSupport,
+        claudeFastSupport: access.claudeFastSupport,
+      } : {}),
+    }
   }
   async nativeRun(ownerId: string, deviceId: string, runId: string) {
     const { rows } = await this.repository.pool.query(`select b.id,b."ownerId",b."workspaceId",b."consumerId",b.route,b."modelId",r."agentDefinition",a.harness from byos_native_runs n join agent_runs r on r.id=n."runId" join agents a on a.id=r."agentId" join devices d on d.id=r."deviceId" and d."ownerId"=r."userId" and d.enabled=true join byos_bindings b on b.id=n."bindingId" where r.id=$1 and r."userId"=$2 and r."deviceId"=$3 and a."userId"=$2 and ${runMayUseCredentialSql('b."ownerId"', '$2', 'b."workspaceId"')} and b."consumerId"=a.id::text and d.harnesses @> jsonb_build_array(jsonb_build_object('harness',coalesce(r."agentDefinition"->>'harness',a.harness),'installed',true,'subscriptionBroker',true))
@@ -350,7 +368,15 @@ export class SubscriptionService {
     for (const item of result) {
       if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.id) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || Array.from(item.name as string).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_entry_invalid' })
       if (item.prioritySupported !== undefined && typeof item.prioritySupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
-      if (!options.has(item.id)) options.set(item.id, { id: item.id, name: item.name, ...(row.provider === 'codex' && typeof item.prioritySupported === 'boolean' ? { prioritySupported: item.prioritySupported } : {}) })
+      if (item.ultrafastSupported !== undefined && typeof item.ultrafastSupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
+      if (item.fastSupported !== undefined && typeof item.fastSupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
+      if (!options.has(item.id)) options.set(item.id, {
+        id: item.id,
+        name: item.name,
+        ...(row.provider === 'codex' && typeof item.prioritySupported === 'boolean' ? { prioritySupported: item.prioritySupported } : {}),
+        ...(row.provider === 'codex' && typeof item.ultrafastSupported === 'boolean' ? { ultrafastSupported: item.ultrafastSupported } : {}),
+        ...(row.provider === 'claude' && typeof item.fastSupported === 'boolean' ? { fastSupported: item.fastSupported } : {}),
+      })
     }
     return [...options.values()]
   }

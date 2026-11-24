@@ -64,6 +64,11 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
     const gatewayMigration = await readFile(new URL('../drizzle/20261115204738_model_gateway_tokens.sql', import.meta.url), 'utf8')
     await pool.query(gatewayMigration)
     await pool.query(gatewayMigration)
+    // Decision 2026-11-23: multiple API keys per preset provider + persisted defaultEffort; replays cleanly.
+    await pool.query('CREATE TABLE IF NOT EXISTS model_order_settings ("ownerId" text NOT NULL, "workspaceId" uuid NOT NULL, PRIMARY KEY ("ownerId","workspaceId"))')
+    const multiKeyMigration = await readFile(new URL('../drizzle/20261124010135_multi_api_keys_and_default_effort.sql', import.meta.url), 'utf8')
+    await pool.query(multiKeyMigration)
+    await pool.query(multiKeyMigration)
     assert.equal(await store.apiKeyAfterQuota(pool, 'alice'), true, 'on by default')
 
     const personal = { id: randomUUID(), kind: 'personal' as const }
@@ -91,10 +96,18 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
     assert.deepEqual({ ...anthropic, id: undefined }, { id: undefined, provider: 'anthropic', name: null, baseUrl: null, protocol: 'anthropic', last4: firstKey.slice(-4), models: ['claude-opus-5-5', 'claude-sonnet-5-5'], modelsError: null, responsesApi: true })
     const raw = (await pool.query('SELECT * FROM model_api_keys WHERE id=$1', [anthropic.id])).rows[0]
     assert.ok(!JSON.stringify(raw).includes(secret), 'stored sealed')
-    // Adding the same preset again replaces the key in place.
-    const replaced = await store.addApiKey(pool, 'alice', { provider: 'anthropic', apiKey: newKey }, { env, fetch: fetchWith(() => models(['claude-opus-5-5'])) })
+    // Adding the same preset again creates a distinct key; replaceId updates an owned key in place.
+    const secondAnthropic = await store.addApiKey(pool, 'alice', { provider: 'anthropic', name: 'Secondary', apiKey: newKey }, { env, fetch: fetchWith(() => models(['claude-opus-5-5'])) })
+    assert.notEqual(secondAnthropic.id, anthropic.id)
+    assert.equal(secondAnthropic.name, 'Secondary')
+    await store.removeApiKey(pool, 'alice', secondAnthropic.id)
+    const replaced = await store.addApiKey(pool, 'alice', { provider: 'anthropic', apiKey: newKey, replaceId: anthropic.id }, { env, fetch: fetchWith(() => models(['claude-opus-5-5'])) })
     assert.equal(replaced.id, anthropic.id)
     assert.equal(replaced.last4, newKey.slice(-4))
+    const renamed = await store.updateApiKey(pool, 'alice', anthropic.id, { name: 'Primary Anthropic' }, { env })
+    assert.equal(renamed.name, 'Primary Anthropic')
+    assert.equal(renamed.last4, newKey.slice(-4))
+    await store.updateApiKey(pool, 'alice', anthropic.id, { name: null }, { env })
 
     // Custom providers: https on a public address only; the person's own model list wins.
     await assert.rejects(store.addApiKey(pool, 'alice', { provider: 'custom', name: 'Internal', baseUrl: 'http://example.com/v1', protocol: 'openai', apiKey: customKey }, { env, fetch: fetchWith(() => models([])) }), { code: 'apiKeyBaseUrlInvalid' })
@@ -198,7 +211,7 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
     assert.deepEqual((await store.usableApiKeys(pool, 'alice', team.id, gateway.id)).map(key => [key.id, key.mine]), [[gateway.id, false]], 'approval never widens selectedKeyId')
     assert.deepEqual((await store.usableApiKeys(pool, 'alice', team.id, gateway.id)).map(key => key.models), [['qwen-max']], 'approval authorizes the key, not its disabled catalogue models')
     await assert.rejects(store.setBotApiKeyChoice(pool, governedScope, null, gateway.id, disabledModel), { code: 'executionModelUnknown' })
-    assert.deepEqual(await store.setBotApiKeyChoice(pool, governedScope, null, gateway.id, 'qwen-max'), { keyId: gateway.id, model: 'qwen-max', harnesses: ['codex'] })
+    assert.deepEqual(await store.setBotApiKeyChoice(pool, governedScope, null, gateway.id, 'qwen-max'), { keyId: gateway.id, model: 'qwen-max', harnesses: ['claude_code', 'codex'] })
     assert.equal((await store.openApiKeyForChat(pool, 'alice', team.id, gateway.id, env)).keyOwnerId, 'bob')
     await pool.query('UPDATE mikka_organization_resource_approvals SET status=\'denied\' WHERE id=$1', [approval])
     assert.deepEqual(await store.usableApiKeys(pool, 'alice', team.id, gateway.id), [], 'the same caller observes approval revocation immediately')
@@ -217,9 +230,9 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
     await pool.query('INSERT INTO bots (id,"workspaceId","ownerId") VALUES ($1,$2,$3)', [aliceBot, team.id, 'alice'])
     await assert.rejects(store.setBotApiKeyChoice(pool, scope, aliceBot, anthropic.id, 'not-listed'), { code: 'executionModelUnknown' })
     await assert.rejects(store.setBotApiKeyChoice(pool, scope, randomUUID(), anthropic.id, 'claude-opus-5-5'), { code: 'botNotFound' })
-    assert.deepEqual(await store.setBotApiKeyChoice(pool, scope, aliceBot, gateway.id, 'qwen-max'), { keyId: gateway.id, model: 'qwen-max', harnesses: ['codex'] })
+    assert.deepEqual(await store.setBotApiKeyChoice(pool, scope, aliceBot, gateway.id, 'qwen-max'), { keyId: gateway.id, model: 'qwen-max', harnesses: ['claude_code', 'codex'] })
     assert.deepEqual(await store.setBotApiKeyChoice(pool, scope, null, anthropic.id, 'claude-opus-5-5'), { keyId: anthropic.id, model: 'claude-opus-5-5', harnesses: ['claude_code'] })
-    assert.deepEqual(await store.botApiKeyChoice(pool, scope, aliceBot), { keyId: gateway.id, model: 'qwen-max', harnesses: ['codex'] })
+    assert.deepEqual(await store.botApiKeyChoice(pool, scope, aliceBot), { keyId: gateway.id, model: 'qwen-max', harnesses: ['claude_code', 'codex'] })
     await assert.rejects(pool.query(`INSERT INTO bot_model_choices VALUES ('alice',$1,'both',$2,$3,'m')`, [team.id, randomUUID(), anthropic.id]), { code: '23514' }, 'a choice is a binding or a key, not both')
     // An Anthropic-only custom provider serves threads, not bot chats.
     await store.setApiKeyShare(pool, 'bob', team, local.id, true)
@@ -291,7 +304,7 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
     const chatOnly = await store.addApiKey(pool, 'alice', { provider: 'custom', name: 'Chat only', baseUrl: 'https://chat.example.com/v1', protocol: 'openai', apiKey: chatKey }, { env, fetch: chatFetch, resolve: async () => ['93.184.216.34'] })
     assert.deepEqual(probes, ['GET https://chat.example.com/v1/models'])
     assert.deepEqual([chatOnly.responsesApi, chatOnly.models], [true, ['chat-1']])
-    assert.deepEqual((await store.setBotApiKeyChoice(pool, scope, null, chatOnly.id, 'chat-1')).harnesses, ['codex'])
+    assert.deepEqual((await store.setBotApiKeyChoice(pool, scope, null, chatOnly.id, 'chat-1')).harnesses, ['claude_code', 'codex'])
     assert.equal((await store.openApiKeyForChat(pool, 'alice', team.id, chatOnly.id, env)).baseUrl, 'https://chat.example.com/v1')
     const chatRun = randomUUID()
     await pool.query(`INSERT INTO agent_runs (id,"userId","botId",status) VALUES ($1,'alice',$2,'running')`, [chatRun, teamBot])

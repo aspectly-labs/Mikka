@@ -15,7 +15,7 @@ import { executionIdentitySchema, freezeExecutionIdentity, type ExecutionIdentit
 import { entryKey, type OrderEntry, type SkippedEntry } from './model-order-plan'
 import { credentialStates, orderCandidates, readOrder } from './model-order'
 import { bindAgentToConnection, modelUnavailableCard, resolveModelDispatch, type ModelDispatch } from './model-dispatch'
-import type { ModelRoutingSnapshot } from './model-routing'
+import type { ModelRoutingEffort, ModelRoutingSnapshot, ModelSpeedMode } from './model-routing'
 import { modelFallbackRecordSchema, type ModelFallbackChoice, type ModelFallbackRecord } from './run-model-fallback-view'
 import { lockFactoryCompletionTasks } from './run-completion-effects'
 import { lockCliAgentPolicy, lockCliTaskScope, providerContinuationPolicy } from './agent-tool-approval/policy-store'
@@ -81,12 +81,14 @@ const standingIdentity = (identity: ExecutionIdentity) => ({ requester: identity
 export function providerContinuationDefinition(source: WorkerDefinitionSnapshot, admitted: WorkerDefinitionSnapshot, prompt: string, policyCeiling?: RunPolicy): WorkerDefinitionSnapshot {
   const { apiKey: _key, subscription: _subscription, executionIdentity: _identity, repositoryAdmission: _admission,
     allowLocalRecovery: _local, profileOriginRunId: _profileOrigin, ...standing } = structuredClone(source)
-  const { routing: _previousRouting, ...dispatch } = source.modelDispatch!
+  const { routing: _previousRouting, serviceTier: _previousTier, effort: _previousEffort, ...dispatch } = source.modelDispatch!
   const definition: WorkerDefinitionSnapshot = { ...standing, harness: admitted.harness, model: admitted.model,
     modelSource: admitted.modelSource, cliModelSelection: 'explicit', promptDigest: digest(prompt),
     ...(source.agentProfile && admitted.modelDispatch?.entry ? { agentProfile: { ...structuredClone(source.agentProfile), targetEntry: structuredClone(admitted.modelDispatch.entry) } } : {}),
     ...(policyCeiling ? { policyCeiling: source.policyCeiling ? intersectRunPolicy(policyCeiling, source.policyCeiling) : policyCeiling } : {}),
     modelDispatch: { ...dispatch, mode: 'preference', entry: admitted.modelDispatch?.entry,
+      ...(admitted.modelDispatch?.effort ? { effort: admitted.modelDispatch.effort } : {}),
+      ...(admitted.modelDispatch?.serviceTier ? { serviceTier: admitted.modelDispatch.serviceTier } : {}),
       ...(admitted.modelDispatch?.routing ? { routing: structuredClone(admitted.modelDispatch.routing) } : {}) },
     ...(admitted.apiKey ? { apiKey: admitted.apiKey } : {}), ...(admitted.subscription ? { subscription: admitted.subscription } : {}),
     ...(admitted.repositoryAdmission ? { repositoryAdmission: admitted.repositoryAdmission } : {}),
@@ -208,7 +210,7 @@ async function unavailableRecord(pool: Pool, scope: Scope, run: Run, attempted: 
  * as admission/Factory. A worker replay can safely finish an interrupted handoff. */
 async function settle(pool: Pool, original: Run, receipt: ModelFallbackRecord, target?: {
   agentId: string; deviceId: string; deviceRepoId: string; model: string; entry: OrderEntry;
-  routing?: ModelRoutingSnapshot;
+  routing?: ModelRoutingSnapshot; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode;
   subscriptionBindingId?: string; cloud: boolean; botId: string | null; workspaceId: string;
 }): Promise<Continuation | null> {
   if (!original.workspaceId) throw new ActionFailureError('executionAccountUnavailable')
@@ -258,8 +260,15 @@ async function settle(pool: Pool, original: Run, receipt: ModelFallbackRecord, t
     await withDatabaseClient(client, async () => {
       if (target && source.agentDefinition && source.issueId) {
         const policyCeiling = await providerContinuationPolicy(client, source.userId, source.id)
-        const { routing: _previousRouting, ...dispatch } = source.agentDefinition.modelDispatch!
-        const modelDispatch = { ...dispatch, mode: 'preference' as const, entry: target.entry }
+        const { routing: _previousRouting, serviceTier: _previousTier, effort: _previousEffort, ...dispatch } = source.agentDefinition.modelDispatch!
+        const nextEffort = source.agentDefinition.agentProfile?.effort ? undefined : target.effort
+        const modelDispatch = {
+          ...dispatch,
+          mode: 'preference' as const,
+          entry: target.entry,
+          ...(nextEffort ? { effort: nextEffort } : {}),
+          ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+        }
         const selection = { model: target.model, modelDispatch, ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
           ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}) }
         let runId: string
@@ -429,6 +438,8 @@ async function recoverAuthorizedProviderFailure(pool: Pool, source: Run, initial
           if (!current) { skipped.push({ entry: selected.entry, block: { usable: false, reason: 'noDevice' } }); continue }
           const repoId = origin.remoteUrl ? (await (await import('./device-repositories')).ensureDeviceRepository(userId, current.deviceId, origin.remoteUrl)).id : current.repoId
           target = { agentId: ready.agentId, deviceId: current.deviceId, deviceRepoId: repoId, model: selected.model, entry: selected.entry,
+            ...(selected.effort ? { effort: selected.effort } : {}),
+            ...(selected.serviceTier ? { serviceTier: selected.serviceTier } : {}),
             ...(binding ? { subscriptionBindingId: binding } : {}), cloud: true, botId, workspaceId: scope.workspaceId }
         }
       }

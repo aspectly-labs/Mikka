@@ -135,7 +135,23 @@ export class ExecutionSettings {
         const id = `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
         await client.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`, [id,scope.ownerId,connection.workspaceId,id,connectionId,connection.epoch,route,model.id]);
       }
-      await client.query(`UPDATE byos_connections SET "modelCatalog"=$2::jsonb,"modelSettings"=$3::jsonb WHERE id=$1`, [connectionId,JSON.stringify({revision:String(connection.epoch),models:unique.map(model=>model.id),...(connection.provider === 'codex' ? {priorityVersion:1,prioritySupport:Object.fromEntries(unique.filter(model=>typeof model.prioritySupported === 'boolean').map(model=>[model.id,model.prioritySupported]))} : {})}), JSON.stringify({ ...reconcileSubscriptionModels(unique.map(model => model.id), current.rows[0].modelSettings as ModelSettings | null), refreshedAt: new Date().toISOString() })]);
+      const codexUltrafast = connection.provider === 'codex'
+        ? Object.fromEntries(unique.filter(model => typeof model.ultrafastSupported === 'boolean').map(model => [model.id, model.ultrafastSupported]))
+        : null;
+      const claudeFast = connection.provider === 'claude'
+        ? Object.fromEntries(unique.filter(model => typeof model.fastSupported === 'boolean').map(model => [model.id, model.fastSupported]))
+        : null;
+      const catalogPayload = {
+        revision: String(connection.epoch),
+        models: unique.map(model => model.id),
+        ...(connection.provider === 'codex' ? {
+          priorityVersion: 1,
+          prioritySupport: Object.fromEntries(unique.filter(model => typeof model.prioritySupported === 'boolean').map(model => [model.id, model.prioritySupported])),
+          ...(codexUltrafast && Object.keys(codexUltrafast).length ? { ultrafastSupport: codexUltrafast } : {}),
+        } : {}),
+        ...(claudeFast && Object.keys(claudeFast).length ? { fastSupport: claudeFast } : {}),
+      };
+      await client.query(`UPDATE byos_connections SET "modelCatalog"=$2::jsonb,"modelSettings"=$3::jsonb WHERE id=$1`, [connectionId, JSON.stringify(catalogPayload), JSON.stringify({ ...reconcileSubscriptionModels(unique.map(model => model.id), current.rows[0].modelSettings as ModelSettings | null), refreshedAt: new Date().toISOString() })]);
       await client.query('COMMIT');
     } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
     const options = (await this.botModels(scope)).filter(row => row.connectionId === connectionId && unique.some(model => model.id === row.modelId));

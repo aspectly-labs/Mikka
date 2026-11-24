@@ -15,7 +15,7 @@ export const taskRunSettingsSchema = z.strictObject({
   visibility: workVisibilitySchema.optional(),
   /** The workspace Environment the run uses instead of its Project's default. */
   environmentId: z.uuid().optional(),
-  /** The model the run asks for, and its reasoning effort. */
+  /** The model the run asks for and its reasoning effort. */
   model: z.strictObject({ id: z.string().trim().min(1).max(200), effort: z.enum(MODEL_ROUTING_EFFORTS).optional() }).optional(),
   /** The Cloudflare machine size; else the Environment's default, else Mikka's. */
   machineSize: z.enum(Object.keys(MACHINE_SIZES) as [MachineSize, ...MachineSize[]]).optional(),

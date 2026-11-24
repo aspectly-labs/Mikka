@@ -9,7 +9,7 @@ import { subscriptionFixture } from '../tests/fixtures/subscription'
 const priority = { codexServiceTier: 'priority' as const }
 const catalogue = (supported: boolean) => ({ revision: '1', models: ['fixture-model'], priorityVersion: 1, prioritySupport: { 'fixture-model': supported } })
 const encoder = new TextEncoder()
-type Policy = { codexServiceTier?: 'priority' }
+type Policy = { codexServiceTier?: 'priority' | 'ultrafast'; claudeSpeed?: 'fast' }
 function modelService(route: 'codex_cpa' | 'claude_cpa', catalog: unknown, policy: Policy = {}) {
   const { use, access } = subscriptionFixture(route)
   access.connection!.quota.observedAt = new Date().toISOString()
@@ -140,4 +140,20 @@ test('existing catalogue transaction stores priority evidence with the same epoc
   const fence = statements.find(s => s.sql.includes('FOR UPDATE'))!
   assert.deepEqual(fence.values, [id(4), 'alice', '7'])
   assert.equal(statements.at(-1)!.sql, 'COMMIT')
+})
+
+test('codex ultrafast and claude fast only send when advertised by current-epoch catalogue', async () => {
+  const withUltrafast = { ...catalogue(true), ultrafastSupport: { 'fixture-model': true } }
+  const withoutUltrafast = { ...catalogue(true), ultrafastSupport: { 'fixture-model': false } }
+  const ultraOk = await request(modelService('codex_cpa', withUltrafast, { codexServiceTier: 'ultrafast' }))
+  assert.equal(ultraOk.service_tier, 'ultrafast')
+  const ultraBlocked = await request(modelService('codex_cpa', withoutUltrafast, { codexServiceTier: 'ultrafast' }))
+  assert.equal(Object.hasOwn(ultraBlocked, 'service_tier'), false)
+
+  const claudeWithFast = { revision: '1', models: ['fixture-model'], fastSupport: { 'fixture-model': true } }
+  const claudeNoFast = { revision: '1', models: ['fixture-model'], fastSupport: { 'fixture-model': false } }
+  const claudeOk = await request(modelService('claude_cpa', claudeWithFast, { claudeSpeed: 'fast' }))
+  assert.equal(claudeOk.speed, 'fast')
+  const claudeBlocked = await request(modelService('claude_cpa', claudeNoFast, { claudeSpeed: 'fast' }))
+  assert.equal(Object.hasOwn(claudeBlocked, 'speed'), false)
 })

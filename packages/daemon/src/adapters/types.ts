@@ -147,6 +147,8 @@ export interface SessionOptions {
    */
   model?: string
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  /** Server-verified serving speed tier (fast / ultrafast) passed to the native CLI. */
+  serviceTier?: 'fast' | 'ultrafast'
 }
 
 export interface StartOptions extends SessionOptions {
