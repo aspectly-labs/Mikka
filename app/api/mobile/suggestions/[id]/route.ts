@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { afterJob } from '@/lib/background'
 import { ActionFailureError } from '@/lib/action-error'
-import { startSuggestion } from '@/lib/cloud-computer/suggestions'
+import { resolveSuggestionStartWorkspace, startSuggestion } from '@/lib/cloud-computer/suggestions'
 import { ComputerError } from '@/lib/computer/store'
 import { wakeCoordinator } from '@/lib/coordinator/wake'
 import { pool } from '@/lib/db'
@@ -45,10 +45,12 @@ async function handlePOST(request: Request, { params }: Params) {
     if (parsed.data.action === 'send') {
       return json(await handoffSuggestionToCoordinator(user.id, id.data), 202)
     }
-    const context = await loadWorkspaceContext(undefined, user)
+    const workspaceId =
+      (await resolveSuggestionStartWorkspace(pool, user, id.data))
+      ?? (await loadWorkspaceContext(undefined, user)).workspace.id
     const result = await startSuggestion(
       pool,
-      { userId: user.id, workspaceId: context.workspace.id },
+      { userId: user.id, workspaceId },
       id.data,
     )
     afterJob('after:coordinator-wake', () => wakeCoordinator(user.id))

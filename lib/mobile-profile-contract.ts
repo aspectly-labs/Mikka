@@ -31,25 +31,61 @@ export function normalizeMediaType(header: string | null): string {
   return (header ?? '').split(';')[0]?.trim().toLowerCase() ?? ''
 }
 
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024
+
+async function readBoundedBody(request: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer>> {
+  const contentLength = Number(request.headers.get('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new MobileAvatarError('avatarTooLarge', 413)
+  }
+
+  const reader = request.body?.getReader()
+  if (!reader) throw new MobileAvatarError('avatarInvalidType', 400)
+
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) break
+      size += next.value.byteLength
+      if (size > maxBytes) {
+        await reader.cancel()
+        throw new MobileAvatarError('avatarTooLarge', 413)
+      }
+      chunks.push(next.value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const out = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return out
+}
+
 /**
  * Reads an uploaded avatar payload from either `multipart/form-data` (field `avatar`)
  * or a direct binary `image/png | image/jpeg | image/webp` request body, capping
- * buffered bytes at `AVATAR_MAX_BYTES` before reading unbounded memory.
+ * buffered bytes before parsing even when `Content-Length` is omitted.
  */
 export async function readMobileAvatarPayload(
   request: Request,
 ): Promise<{ declaredType: string; bytes: Uint8Array }> {
-  const mediaType = normalizeMediaType(request.headers.get('content-type'))
+  const rawContentType = request.headers.get('content-type')
+  const mediaType = normalizeMediaType(rawContentType)
 
   if (mediaType === 'multipart/form-data') {
-    const contentLength = Number(request.headers.get('content-length'))
-    // Multipart overhead is small; reject egregiously large forms early.
-    if (Number.isFinite(contentLength) && contentLength > AVATAR_MAX_BYTES + 64 * 1024) {
-      throw new MobileAvatarError('avatarTooLarge', 413)
-    }
+    const rawBody = await readBoundedBody(request, AVATAR_MAX_BYTES + MULTIPART_OVERHEAD_BYTES)
     let form: FormData
     try {
-      form = await request.formData()
+      form = await new Response(rawBody, {
+        headers: rawContentType ? { 'content-type': rawContentType } : undefined,
+      }).formData()
     } catch (cause) {
       throw new MobileAvatarError('avatarInvalidType', 400, { cause })
     }
@@ -66,30 +102,5 @@ export async function readMobileAvatarPayload(
     throw new MobileAvatarError('avatarInvalidType', 400)
   }
 
-  const contentLength = Number(request.headers.get('content-length'))
-  if (Number.isFinite(contentLength) && contentLength > AVATAR_MAX_BYTES) {
-    throw new MobileAvatarError('avatarTooLarge', 413)
-  }
-
-  const reader = request.body?.getReader()
-  if (!reader) throw new MobileAvatarError('avatarInvalidType', 400)
-
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    for (;;) {
-      const next = await reader.read()
-      if (next.done) break
-      size += next.value.byteLength
-      if (size > AVATAR_MAX_BYTES) {
-        await reader.cancel()
-        throw new MobileAvatarError('avatarTooLarge', 413)
-      }
-      chunks.push(next.value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-
-  return { declaredType: mediaType, bytes: new Uint8Array(Buffer.concat(chunks)) }
+  return { declaredType: mediaType, bytes: await readBoundedBody(request, AVATAR_MAX_BYTES) }
 }

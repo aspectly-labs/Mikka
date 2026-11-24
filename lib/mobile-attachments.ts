@@ -1,6 +1,8 @@
 import 'server-only'
 import { pool } from '@/lib/db'
 import { apiWorkspaceAllowed, type ApiSession } from '@/lib/api-auth'
+import { enterpriseWorkspaceAllowed } from '@/lib/enterprise/access'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import {
   authorizeFileScope,
   chatFileDownloadUrl,
@@ -19,10 +21,16 @@ export {
   type MobileAttachmentsQuery,
 } from './mobile-attachments-contract'
 
-type StoredAttachmentRow = FileRow & { createdAt: Date | string }
+type StoredAttachmentRow = Pick<
+  FileRow,
+  'id' | 'userId' | 'botId' | 'conversationId' | 'runId' | 'name' | 'mediaType' | 'size' | 'storageKey' | 'usedAt'
+> & { createdAt: Date | string }
 
+// Never select `inlineData` or `textContent` on metadata listings: self-hosted
+// installs store up to 25 MiB per file inline, so loading full bytes for a
+// 50-row metadata batch would buffer >1 GiB.
 const SELECT_COLUMNS =
-  'id,"userId","botId","conversationId","runId",name,"mediaType",size,state,sha256,"storageKey","uploadKey","inlineData","textContent","usedAt","uploadExpiresAt","removedAt","createdAt"'
+  'id,"userId","botId","conversationId","runId",name,"mediaType",size,"storageKey","usedAt","createdAt"'
 
 async function toItem(row: StoredAttachmentRow, download: boolean): Promise<MobileAttachmentItem> {
   const downloadUrl = await chatFileDownloadUrl(row, download)
@@ -38,21 +46,37 @@ async function toItem(row: StoredAttachmentRow, download: boolean): Promise<Mobi
   }
 }
 
+async function workspacePermitted(
+  session: ApiSession,
+  workspaceId: string,
+  enterpriseCache: Map<string, boolean>,
+): Promise<boolean> {
+  if (!apiWorkspaceAllowed(session, workspaceId)) return false
+  let allowed = enterpriseCache.get(workspaceId)
+  if (allowed === undefined) {
+    allowed = await enterpriseWorkspaceAllowed(session.user.id, workspaceId, session.user[enterprisePrincipal])
+    enterpriseCache.set(workspaceId, allowed)
+  }
+  return allowed
+}
+
 /**
  * Authorized read of ready chat attachments for mobile conversation rendering
  * (batch by file IDs extracted from `[mikka-file:...]` tokens, or by scope).
- * Reuses `authorizeFileScope` + `apiWorkspaceAllowed` so workspace and group
- * membership checks stay identical to `/api/chat/attachments/[id]`.
+ * Reuses `authorizeFileScope`, `apiWorkspaceAllowed`, and
+ * `enterpriseWorkspaceAllowed` so workspace, enterprise session assurance, and
+ * group membership checks stay enforced on every read.
  */
 export async function readMobileAttachments(
   session: ApiSession,
   query: MobileAttachmentsQuery,
 ): Promise<MobileAttachmentItem[]> {
   const userId = session.user.id
+  const enterpriseCache = new Map<string, boolean>()
 
   if (query.kind === 'scope') {
     const workspace = await authorizeFileScope(userId, query.scope)
-    if (!apiWorkspaceAllowed(session, workspace)) throw new ChatFileError('notFound')
+    if (!(await workspacePermitted(session, workspace, enterpriseCache))) throw new ChatFileError('notFound')
     const column =
       query.scope.kind === 'bot' ? '"botId"' : query.scope.kind === 'group' ? '"conversationId"' : '"runId"'
     const visibility =
@@ -92,7 +116,7 @@ export async function readMobileAttachments(
     if (allowed === undefined) {
       try {
         const workspace = await authorizeFileScope(userId, scope)
-        allowed = apiWorkspaceAllowed(session, workspace)
+        allowed = await workspacePermitted(session, workspace, enterpriseCache)
       } catch (error) {
         if (error instanceof ChatFileError && error.code === 'notFound') allowed = false
         else throw error

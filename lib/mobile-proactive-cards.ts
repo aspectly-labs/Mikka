@@ -3,16 +3,22 @@ import { and, desc, eq, gte } from 'drizzle-orm'
 import { afterJob } from '@/lib/background'
 import { db, pool } from '@/lib/db'
 import { briefings } from '@/lib/db/schema'
-import { listPendingActions, type PendingAction } from '@/lib/pending-action-store'
+import type { mobileUser } from '@/lib/mobile-api'
+import { listPendingActions } from '@/lib/pending-action-store'
+import { effectiveRequestWorkspace } from '@/lib/request-workspace'
 import { ACTION_LOCALES, type ActionLocale } from '@/lib/suggestions/action-title'
 import { rememberLocale } from '@/lib/suggestions/action-title-server'
 import { BRIEFING_WINDOW_MS } from '@/lib/suggestions/briefing'
 import { ensureComposioTriggers } from '@/lib/suggestions/sources'
 import { listSuggestions, recordTimeZone, todaysBriefing } from '@/lib/suggestions/store'
 import { manualTimeZone } from '@/lib/suggestions/time-zone'
-import { pendingActionsOutsideToken, suggestionsOutsideToken } from '@/lib/tokens/scope'
+import { tokenWorkspace } from '@/lib/tokens/principal'
+import { isPersonalWorkspace, pendingActionsOutsideToken, suggestionsOutsideToken } from '@/lib/tokens/scope'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
-import type { RequestWorkspaceUser } from '@/lib/request-workspace'
+import { WorkspaceError } from '@/lib/workspace-error'
+
+export type MobilePendingAction = Awaited<ReturnType<typeof listPendingActions>>[number]
+export type MobileProactiveUser = NonNullable<Awaited<ReturnType<typeof mobileUser>>>
 
 export interface MobileProactiveBriefing {
   localDate: string
@@ -45,11 +51,15 @@ export interface MobileProactiveCardsResponse {
   workspaceId: string
   observedAt: string
   briefing: MobileProactiveBriefing | null
-  pendingActions: PendingAction[]
+  pendingActions: MobilePendingAction[]
   suggestions: {
     inProgress: MobileInProgressSuggestionCard[]
     items: MobileSuggestionCard[]
   }
+}
+
+function safeErrorLog(error: unknown) {
+  return { name: error instanceof Error ? error.name : 'UnknownError' }
 }
 
 async function startedSuggestions(userId: string, ids: readonly string[]) {
@@ -81,13 +91,14 @@ async function latestBriefingReadOnly(userId: string) {
  * Unified authorized read of Coordinator proactive cards for mobile:
  * - active pending actions (approve/decline via `POST /api/mobile/pending-actions/:id`)
  * - active suggestions & in-progress suggestion runs (act via `POST|DELETE /api/mobile/suggestions/:id`)
- * - today's daily briefing summary
+ * - today's daily briefing summary (omitted for team-scoped tokens)
  *
- * When `readonly` is true, performs zero writes (no briefing creation, no
- * trigger sync, no timezone/locale persistence).
+ * When `readonly` is true, performs zero writes (no workspace provisioning or
+ * locale rename, no briefing creation, no trigger sync, no timezone/locale
+ * persistence).
  */
 export async function readMobileProactiveCards(
-  user: RequestWorkspaceUser,
+  user: MobileProactiveUser,
   options: {
     timeZone?: string | null
     ipTimeZone?: string | null
@@ -96,14 +107,26 @@ export async function readMobileProactiveCards(
   } = {},
 ): Promise<MobileProactiveCardsResponse> {
   const observedAt = new Date().toISOString()
-  const context = await loadWorkspaceContext(undefined, user)
+  let workspaceId: string
+  if (options.readonly) {
+    const resolved = await effectiveRequestWorkspace(user)
+    if (!resolved) throw new WorkspaceError('workspaceAccessDenied')
+    workspaceId = resolved
+  } else {
+    workspaceId = (await loadWorkspaceContext(undefined, user)).workspace.id
+  }
+
+  // Personal briefings aggregate account-level notifications across personal
+  // integrations, so a team-scoped PAT must never read or trigger them.
+  const pinnedWorkspace = user[tokenWorkspace]
+  const allowPersonalBriefing = !pinnedWorkspace || (await isPersonalWorkspace(user.id, pinnedWorkspace))
 
   if (!options.readonly) {
     afterJob('after:composio-triggers', async () => {
       try {
         await ensureComposioTriggers(user.id)
       } catch (error) {
-        console.error('Composio trigger check failed', error instanceof Error ? error.message : error)
+        console.error('Composio trigger check failed', safeErrorLog(error))
       }
     })
     if (options.timeZone) {
@@ -112,7 +135,7 @@ export async function readMobileProactiveCards(
         try {
           await recordTimeZone(user.id, tz)
         } catch (error) {
-          console.error('Time zone could not be saved', error instanceof Error ? error.message : error)
+          console.error('Time zone could not be saved', safeErrorLog(error))
         }
       })
     }
@@ -122,18 +145,23 @@ export async function readMobileProactiveCards(
         try {
           await rememberLocale(user.id, loc)
         } catch (error) {
-          console.error('Remembering the locale failed', error instanceof Error ? error.message : error)
+          console.error('Remembering the locale failed', safeErrorLog(error))
         }
       })
     }
   }
 
-  const timeZone = options.readonly
-    ? null
-    : (await manualTimeZone(user.id)) ?? options.timeZone ?? options.ipTimeZone ?? null
+  const timeZone =
+    options.readonly || !allowPersonalBriefing
+      ? null
+      : (await manualTimeZone(user.id)) ?? options.timeZone ?? options.ipTimeZone ?? null
 
   const [briefingRow, rawPending, rawSuggestions] = await Promise.all([
-    options.readonly ? latestBriefingReadOnly(user.id) : todaysBriefing(user.id, timeZone),
+    !allowPersonalBriefing
+      ? Promise.resolve(null)
+      : options.readonly
+        ? latestBriefingReadOnly(user.id)
+        : todaysBriefing(user.id, timeZone),
     listPendingActions(user.id),
     listSuggestions(user.id),
   ])
@@ -199,7 +227,7 @@ export async function readMobileProactiveCards(
     : null
 
   return {
-    workspaceId: context.workspace.id,
+    workspaceId,
     observedAt,
     briefing,
     pendingActions,

@@ -529,7 +529,10 @@ export async function chatFileContent(
   return parts
 }
 
-export async function chatFileDownloadUrl(file: FileRow, download = true): Promise<string | null> {
+export async function chatFileDownloadUrl(
+  file: Pick<FileRow, 'storageKey' | 'mediaType' | 'name'>,
+  download = true,
+): Promise<string | null> {
   if (!file.storageKey) return null
   if (artifactStorage() !== 'r2') return null
   const inline = !download && /^(image\/(png|jpeg|webp|gif)|application\/pdf|audio\/)/.test(file.mediaType)

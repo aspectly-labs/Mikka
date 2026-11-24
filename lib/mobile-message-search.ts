@@ -3,11 +3,14 @@ import { and, eq } from 'drizzle-orm'
 import { pool } from '@/lib/db'
 import { workspaceDb } from '@/lib/workspace-db'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
+import { enterpriseWorkspaceAllowed } from '@/lib/enterprise/access'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { escapeLike } from '@/lib/issue-search'
 import { maskCredentials } from '@/lib/secrets/mask'
 import { COORDINATOR_WELCOME_MARK } from '@/lib/agent-welcome'
 import { HANDOFF_PREFIX } from '@/lib/attention/handoff'
 import { tokenWorkspace } from '@/lib/tokens/principal'
+import type { RequestWorkspaceUser } from '@/lib/request-workspace'
 import {
   buildMessageSearchSnippet,
   encodeMessageSearchCursor,
@@ -18,7 +21,7 @@ import {
 
 export class MobileMessageSearchAccessError extends Error {}
 
-type SearchUser = { id: string; [tokenWorkspace]?: string }
+type SearchUser = RequestWorkspaceUser
 
 async function requireActiveWorkspaceMember(user: SearchUser, workspaceId: string) {
   if (user[tokenWorkspace] && user[tokenWorkspace] !== workspaceId) {
@@ -36,6 +39,9 @@ async function requireActiveWorkspaceMember(user: SearchUser, workspaceId: strin
     )
     .limit(1)
   if (!row) throw new MobileMessageSearchAccessError('workspaceAccessDenied')
+  if (!(await enterpriseWorkspaceAllowed(user.id, workspaceId, user[enterprisePrincipal]))) {
+    throw new MobileMessageSearchAccessError('workspaceAccessDenied')
+  }
 }
 
 interface RawHitRow {
@@ -53,7 +59,8 @@ interface RawHitRow {
  * Authorized full-text message search across the caller's visible Bot chats,
  * group/named conversations, and task/agent thread messages within one active
  * workspace. Ownership and membership predicates are enforced in SQL before
- * `LIMIT`, and workspace membership is re-verified before returning results.
+ * `LIMIT`, and workspace membership + enterprise assurance are re-verified
+ * before returning results.
  */
 export async function searchMobileMessages(
   user: SearchUser,
@@ -66,25 +73,31 @@ export async function searchMobileMessages(
   const includeGroups = (input.scope === 'all' || input.scope === 'group') && !input.botId
   const includeThreads = (input.scope === 'all' || input.scope === 'thread') && !input.botId && !input.conversationId
 
-  // Parameters:
-  // $1: userId, $2: workspaceId, $3: pattern, $4: cursorTime|null, $5: cursorId|null,
-  // $6: botId|null, $7: conversationId|null, $8: welcomePrefix, $9: handoffPrefix, $10: limit + 1
-  const params: unknown[] = [
-    user.id,
-    input.workspaceId,
-    pattern,
-    input.cursor?.time ?? null,
-    input.cursor?.id ?? null,
-    input.botId,
-    input.conversationId,
-    COORDINATOR_WELCOME_MARK,
-    HANDOFF_PREFIX,
-    input.limit + 1,
-  ]
+  if (!includeBots && !includeGroups && !includeThreads) {
+    return { workspaceId: input.workspaceId, query: input.q, items: [], nextCursor: null }
+  }
+
+  // Bind parameters dynamically as branches are included so PostgreSQL never
+  // sees an unreferenced/untyped parameter slot when a scope or filter omits
+  // one of the UNION branches.
+  const params: unknown[] = []
+  const bind = (value: unknown) => {
+    params.push(value)
+    return `$${params.length}`
+  }
+
+  const pUser = bind(user.id)
+  const pWorkspace = bind(input.workspaceId)
+  const pPattern = bind(pattern)
+  const pCursorTime = bind(input.cursor?.time ?? null)
+  const pCursorId = bind(input.cursor?.id ?? null)
 
   const branches: string[] = []
 
   if (includeBots) {
+    const pBotId = bind(input.botId)
+    const pWelcome = bind(COORDINATOR_WELCOME_MARK)
+    const pHandoff = bind(HANDOFF_PREFIX)
     branches.push(`
       SELECT
         'bot'::text AS kind,
@@ -97,7 +110,7 @@ export async function searchMobileMessages(
         m."createdAt" AS "createdAtRaw",
         to_char(m."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt"
       FROM coordinator_messages m
-      JOIN bots b ON b.id = m."botId" AND b."ownerId" = $1 AND b."workspaceId" = $2::uuid
+      JOIN bots b ON b.id = m."botId" AND b."ownerId" = ${pUser} AND b."workspaceId" = ${pWorkspace}::uuid
       CROSS JOIN LATERAL (
         SELECT CASE
           WHEN jsonb_typeof(m.message->'mikkaDisplay') = 'object'
@@ -115,8 +128,8 @@ export async function searchMobileMessages(
           ELSE NULL
         END AS body
       ) txt
-      WHERE m."userId" = $1
-        AND ($6::uuid IS NULL OR m."botId" = $6::uuid)
+      WHERE m."userId" = ${pUser}
+        AND (${pBotId}::uuid IS NULL OR m."botId" = ${pBotId}::uuid)
         AND m.message->>'role' IN ('user', 'assistant')
         AND COALESCE(m.message->'mikkaSuperseded', 'null'::jsonb) IN ('null'::jsonb, 'false'::jsonb, '""'::jsonb)
         AND COALESCE(m.message->'mikkaRetried', 'false'::jsonb) IS DISTINCT FROM 'true'::jsonb
@@ -126,20 +139,21 @@ export async function searchMobileMessages(
           m.message->>'role' = 'user'
           AND m.message->'mikkaDisplay' IS NULL
           AND (
-            starts_with(txt.body, $8)
-            OR starts_with(txt.body, $9)
+            starts_with(txt.body, ${pWelcome})
+            OR starts_with(txt.body, ${pHandoff})
             OR (
               COALESCE(m.message->'mikkaUserEvent', 'null'::jsonb) IN ('null'::jsonb, 'false'::jsonb, '0'::jsonb, '""'::jsonb)
               AND starts_with(txt.body, '[Event]')
             )
           )
         )
-        AND txt.body ILIKE $3 ESCAPE '\\'
-        AND ($4::timestamptz IS NULL OR (m."createdAt", m.id) < ($4::timestamptz, $5::uuid))
+        AND txt.body ILIKE ${pPattern} ESCAPE '\\'
+        AND (${pCursorTime}::timestamptz IS NULL OR (m."createdAt", m.id) < (${pCursorTime}::timestamptz, ${pCursorId}::uuid))
     `)
   }
 
   if (includeGroups) {
+    const pConversationId = bind(input.conversationId)
     branches.push(`
       SELECT
         'group'::text AS kind,
@@ -154,18 +168,18 @@ export async function searchMobileMessages(
       FROM conversation_messages m
       JOIN conversations c ON c.id = m."conversationId"
         AND c.kind = 'group'
-        AND c."workspaceId" = $2::uuid
-        AND (c."creationPurpose" <> 'conversation' OR c."createdBy" = $1)
-      WHERE ($7::uuid IS NULL OR c.id = $7::uuid)
+        AND c."workspaceId" = ${pWorkspace}::uuid
+        AND (c."creationPurpose" <> 'conversation' OR c."createdBy" = ${pUser})
+      WHERE (${pConversationId}::uuid IS NULL OR c.id = ${pConversationId}::uuid)
         AND EXISTS (
           SELECT 1 FROM conversation_members cm
           WHERE cm."conversationId" = c.id
             AND cm."memberType" = 'user'
-            AND cm."memberId" = $1
+            AND cm."memberId" = ${pUser}
             AND cm."leftAt" IS NULL
         )
-        AND m.body ILIKE $3 ESCAPE '\\'
-        AND ($4::timestamptz IS NULL OR (m."createdAt", m.id) < ($4::timestamptz, $5::uuid))
+        AND m.body ILIKE ${pPattern} ESCAPE '\\'
+        AND (${pCursorTime}::timestamptz IS NULL OR (m."createdAt", m.id) < (${pCursorTime}::timestamptz, ${pCursorId}::uuid))
     `)
   }
 
@@ -190,24 +204,21 @@ export async function searchMobileMessages(
         to_char(m."createdAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt"
       FROM run_messages m
       JOIN agent_runs r ON r.id = m."runId"
-        AND r."userId" = $1
-        AND r."workspaceId" = $2::uuid
+        AND r."userId" = ${pUser}
+        AND r."workspaceId" = ${pWorkspace}::uuid
         AND r."deletedAt" IS NULL
-      WHERE m."userId" = $1
-        AND m.text ILIKE $3 ESCAPE '\\'
-        AND ($4::timestamptz IS NULL OR (m."createdAt", m.id) < ($4::timestamptz, $5::uuid))
+      WHERE m."userId" = ${pUser}
+        AND m.text ILIKE ${pPattern} ESCAPE '\\'
+        AND (${pCursorTime}::timestamptz IS NULL OR (m."createdAt", m.id) < (${pCursorTime}::timestamptz, ${pCursorId}::uuid))
     `)
   }
 
-  if (!branches.length) {
-    return { workspaceId: input.workspaceId, query: input.q, items: [], nextCursor: null }
-  }
-
+  const pLimit = bind(input.limit + 1)
   const sql = `
     SELECT kind, "messageId", "targetId", title, body, "authorType", position, "createdAt"
     FROM (${branches.join('\nUNION ALL\n')}) hits
     ORDER BY "createdAtRaw" DESC, "messageId" DESC
-    LIMIT $10
+    LIMIT ${pLimit}
   `
 
   const { rows } = await pool.query<RawHitRow>(sql, params)

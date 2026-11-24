@@ -218,7 +218,13 @@ mock.module(new URL('../lib/suggestions/store.ts', import.meta.url).href, {
   namedExports: { dismissSuggestion: async () => dismissResult },
 })
 mock.module(new URL('../lib/cloud-computer/suggestions.ts', import.meta.url).href, {
-  namedExports: { startSuggestion: async () => ({ started: true, runId: RUN_1 }) },
+  namedExports: {
+    resolveSuggestionStartWorkspace: async () => {
+      if (workspaceError) throw workspaceError
+      return WS_1
+    },
+    startSuggestion: async () => ({ started: true, runId: RUN_1 }),
+  },
 })
 mock.module(new URL('../lib/computer/store.ts', import.meta.url).href, {
   namedExports: {
@@ -678,7 +684,7 @@ test('Gap 6 route: GET/POST /api/mobile/billing handles admin/non-admin views, a
   )
   assert.equal(nonJson.status, 400)
 
-  billingMutateError = new GovernanceError('conflict')
+  billingMutateError = new GovernanceError('plan_changed')
   const conflict = await POST(
     new Request('https://mikka.test/api/mobile/billing', {
       method: 'POST',
