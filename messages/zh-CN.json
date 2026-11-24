@@ -1,5 +1,6 @@
 {
   "Settings": {
+    "searchEmptyFor": "没有与「{query}」匹配的设置",
     "skillsPage": {
       "editTitle": "编辑技能",
       "scopeLabel": "适用范围",
@@ -4546,6 +4547,7 @@
     "retry": "重试"
   },
   "Shell": {
+    "searchEmptyFor": "没有与「{query}」匹配的结果",
     "panel": {
       "task": {
         "bot": "派出的 Bot",
@@ -7261,6 +7263,7 @@
     "forgotPasswordTitle": "重置密码 · Mikka"
   },
   "Nav": {
+    "workspaceLoadFailed": "读取工作区失败",
     "botMenu": {
       "noFilterMatches": "没有符合筛选「{filters}」的结果",
       "noMatchesFor": "没有与「{query}」匹配的结果",

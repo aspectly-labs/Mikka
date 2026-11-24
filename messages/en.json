@@ -1,5 +1,6 @@
 {
   "Settings": {
+    "searchEmptyFor": "No settings match “{query}”",
     "skillsPage": {
       "editTitle": "Edit skill",
       "scopeLabel": "Scope",
@@ -4546,6 +4547,7 @@
     "retry": "Retry"
   },
   "Shell": {
+    "searchEmptyFor": "Nothing matches “{query}”",
     "panel": {
       "task": {
         "bot": "Dispatched by",
@@ -7261,6 +7263,7 @@
     "forgotPasswordTitle": "Reset password · Mikka"
   },
   "Nav": {
+    "workspaceLoadFailed": "Couldn't load workspaces",
     "botMenu": {
       "noFilterMatches": "Nothing matches the filter “{filters}”",
       "noMatchesFor": "Nothing matches “{query}”",
