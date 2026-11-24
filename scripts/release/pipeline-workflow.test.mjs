@@ -148,6 +148,12 @@ test('read-only migration admission precedes candidate preparation and deploymen
       assert.equal(job.steps[later].if, "steps.select.outputs.status == 'selected'", 'the default success condition must stop later work')
       assert.equal(job.steps[later]['continue-on-error'], undefined)
     }
+    const applyStep = job.steps.find(step => step.name === applyName)
+    assert.deepEqual(applyStep.env, {
+      GH_TOKEN: expectedToken,
+      MIKKA_OVERLAY_READ_TOKEN: expectedOverlayToken,
+      MIKKA_PUBLIC_ACTIONS_TOKEN: '${{ github.token }}',
+    })
     const upload = job.steps.find(step => step.name === uploadName)
     assert.equal(upload.if, "always() && steps.select.outputs.status == 'selected'", 'a rejection must retain safe evidence')
   }

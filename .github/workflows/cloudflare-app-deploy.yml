@@ -340,7 +340,7 @@ jobs:
         with:
           app-id: ${{ env.GITHUB_APP_ID }}
           private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
-          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          owner: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || (vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'alexj11324' && 'alexj11324' || (vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324')) }}
           repositories: mikka-hosted-ui
           permission-contents: read
           permission-actions: read
@@ -587,7 +587,7 @@ jobs:
         with:
           app-id: ${{ env.GITHUB_APP_ID }}
           private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
-          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          owner: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || (vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'alexj11324' && 'alexj11324' || (vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324')) }}
           repositories: mikka-hosted-ui
           permission-contents: read
           permission-actions: read
