@@ -6,6 +6,7 @@ import { auditRequestContext } from '../audit/events'
 import { localTestAccountsMode } from '@mikka/protocol/local-test-mode'
 import { runtimeResourcePath } from '../runtime-resource'
 import { deploymentStage } from '../deployment-stage.mjs'
+import { toMikkaErrorContract } from '../primitives/error-contract'
 const domains = new Set(
   readFileSync(
     runtimeResourcePath('lib/abuse/data/disposable-email-domains.txt'),
@@ -25,11 +26,16 @@ export function disposableEmail(email: string) {
   const parts = domain.split('.')
   return parts.some((_, i) => domains.has(parts.slice(i).join('.')))
 }
+const failureStatus = (
+  status: 'BAD_REQUEST' | 'TOO_MANY_REQUESTS' | 'SERVICE_UNAVAILABLE',
+) => (status === 'TOO_MANY_REQUESTS' ? 429 : status === 'SERVICE_UNAVAILABLE' ? 503 : 400)
 const failure = (
   status: 'BAD_REQUEST' | 'TOO_MANY_REQUESTS' | 'SERVICE_UNAVAILABLE',
   code: string,
+  resetAt?: string | null,
 ): never => {
-  throw new APIError(status, { code, message: code })
+  const errorContract = toMikkaErrorContract({ code, status: failureStatus(status), resetAt })
+  throw new APIError(status, { code, message: code, errorContract })
 }
 export async function verifyTurnstile(
   token: unknown,
@@ -152,7 +158,12 @@ export async function signupRateLimit(
         ON CONFLICT (key) DO UPDATE SET count="rateLimit".count+1,"lastRequest"=$3 RETURNING count`,
         [randomUUID(), key, now],
       )
-      if (row.count > max) failure('TOO_MANY_REQUESTS', 'SIGNUP_RATE_LIMITED')
+      if (row.count > max)
+        failure(
+          'TOO_MANY_REQUESTS',
+          'SIGNUP_RATE_LIMITED',
+          new Date((window + 1) * 3_600_000).toISOString(),
+        )
     }
     await tx.query('COMMIT')
   } catch (error) {

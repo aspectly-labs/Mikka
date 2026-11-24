@@ -1,3 +1,5 @@
+import { normalizeLegacyRefusal, type MikkaErrorContract } from './primitives/error-contract'
+
 // Sign-up and verification-mail refusals from #527 (codes as in PR #531,
 // docs/backend/hosted-abuse-controls.md). The Turnstile token goes in this
 // header on email/password sign-up and on 重新发送验证邮件.
@@ -32,4 +34,26 @@ export function signInRefusal(status: number | undefined, code: string | undefin
   if (code === 'INVALID_EMAIL_OR_PASSWORD' || code === 'USER_EMAIL_NOT_FOUND' || code === 'INVALID_PASSWORD' || code === 'CREDENTIAL_ACCOUNT_NOT_FOUND' || status === 401) return 'invalidCredentials'
   if (status === 429) return 'signInRateLimited'
   return null
+}
+
+/** Additive canonical error contract for a recognized sign-up refusal, or null. */
+export function signupRefusalErrorContract(
+  status: number | undefined,
+  code: string | undefined,
+  resetAt?: string | null,
+): MikkaErrorContract | null {
+  const refusal = signupRefusal(status, code)
+  if (!refusal) return null
+  return normalizeLegacyRefusal(code ?? refusal, { status, resetAt }) ?? normalizeLegacyRefusal(refusal, { status, resetAt })
+}
+
+/** Additive canonical error contract for a recognized sign-in refusal, or null. */
+export function signInRefusalErrorContract(
+  status: number | undefined,
+  code: string | undefined,
+  resetAt?: string | null,
+): MikkaErrorContract | null {
+  const refusal = signInRefusal(status, code)
+  if (!refusal) return null
+  return normalizeLegacyRefusal(code ?? refusal, { status, resetAt }) ?? normalizeLegacyRefusal(refusal, { status, resetAt })
 }
