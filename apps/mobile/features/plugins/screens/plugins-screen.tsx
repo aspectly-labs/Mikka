@@ -125,7 +125,7 @@ function Apps({ query, header }: { query: string; header: ReactElement }) {
           <AppIcon entry={row.item} />
           <Text style={styles.name} numberOfLines={1}>{row.item.name}</Text>
           {stateText(row.item) === copy.state.connected ? <View style={styles.connected} /> : stateText(row.item) ? <Text style={styles.state}>{stateText(row.item)}</Text> : null}
-          <Symbol name="chevron.right" size={13} color={colors.tertiary} />
+          <Symbol name="arrow.up.right" size={12} color={colors.tertiary} />
         </GroupRow>
       )}
     />
@@ -135,7 +135,7 @@ function Apps({ query, header }: { query: string; header: ReactElement }) {
 /** A row of an inset group (Comma design 17): white on the grouped page, rounded at the group's ends, a hairline between rows. */
 function GroupRow({ place: { first, last }, label, onPress, children }: { place: Place; label: string; onPress: () => void; children: ReactNode }) {
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
+    <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityHint={mobileMessages.MobileCore.opensOnWeb} onPress={onPress}
       style={({ pressed }) => [styles.groupRow, first && styles.groupFirst, last && styles.groupLast, pressed && { backgroundColor: colors.pressed }]}>
       {children}
       {last ? null : <View style={styles.hairline} />}

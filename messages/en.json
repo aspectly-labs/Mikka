@@ -9398,9 +9398,9 @@
     "pin": "Pin",
     "steps": "Ran {count} steps",
     "cannotPasteImage": "Cannot paste the image",
-    "organizationOnWeb": "Organization (web)",
+    "organizationOnWeb": "Organization",
     "hiddenChats": "Hidden threads",
-    "personalFilesOnWeb": "Personal files (web)",
+    "personalFilesOnWeb": "Personal files",
     "unpin": "Unpin",
     "content": "Content",
     "activity": "Activity",
@@ -9412,7 +9412,6 @@
     "messageThread": "Message this thread",
     "currentLanguage": "English",
     "settings": {
-      "connectedApps": "Connected apps",
       "language": "Language",
       "signingOut": "Signing out…",
       "signOutFailed": "Couldn’t sign out.",
@@ -9524,6 +9523,7 @@
       "translatePrompt": "Translate this: Chinese into English, other languages into Chinese.",
       "addToThread": "Add to thread"
     },
+    "removeLimitConfirm": "Remove this spending limit?",
     "refine": "Refine further",
     "botProfileLabel": "{name}, profile",
     "chat": {

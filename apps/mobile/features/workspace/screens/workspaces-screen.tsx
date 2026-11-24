@@ -32,7 +32,7 @@ export function WorkspacesScreen() {
   const drag = { from: useSharedValue(-1), travel: useSharedValue(0) }
   return (
     <View style={styles.screen}>
-      <NavBar title={mobileMessages.MobileCore.workspaces} large
+      <NavBar title={mobileMessages.MobileCore.workspaces}
         right={{ icon: 'checkmark', label: sorting ? M.done : M.edit, text: sorting ? M.done : M.edit, web: <Text style={styles.word}>{sorting ? M.done : M.edit}</Text>, onPress: () => setSorting(on => !on) }} />
       <ScrollView {...underBar} contentContainerStyle={styles.content}>
         <View style={styles.group}>
@@ -43,7 +43,7 @@ export function WorkspacesScreen() {
               onMove={(from, to) => setOrder(moveTo(workspaces.map(w => w.id), from, to))} />
           ))}
         </View>
-        {problem ? <Text style={styles.problem}>{problem}</Text> : null}
+        {problem ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.problem}>{problem}</Text> : null}
       </ScrollView>
     </View>
   )

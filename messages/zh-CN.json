@@ -9398,9 +9398,9 @@
     "pin": "置顶",
     "steps": "执行了 {count} 步",
     "cannotPasteImage": "无法粘贴图片",
-    "organizationOnWeb": "组织（网页版）",
+    "organizationOnWeb": "组织",
     "hiddenChats": "隐藏的线程",
-    "personalFilesOnWeb": "个人文件（网页版）",
+    "personalFilesOnWeb": "个人文件",
     "unpin": "取消置顶",
     "content": "内容",
     "activity": "活动",
@@ -9412,7 +9412,6 @@
     "messageThread": "给这个线程发消息",
     "currentLanguage": "简体中文",
     "settings": {
-      "connectedApps": "已连接的 App",
       "language": "语言",
       "signingOut": "正在退出登录",
       "signOutFailed": "退出登录未完成。",
@@ -9524,6 +9523,7 @@
       "translatePrompt": "翻译这段：中文译成英文，其他语言译成中文。",
       "addToThread": "添加到线程"
     },
+    "removeLimitConfirm": "移除这个消费上限？",
     "refine": "继续细化",
     "botProfileLabel": "{name}，资料",
     "chat": {

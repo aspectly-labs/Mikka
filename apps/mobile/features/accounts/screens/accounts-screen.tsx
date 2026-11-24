@@ -30,10 +30,10 @@ export default function AccountsScreen() {
       <Group>{state.accounts.filter(account => account.user).map(account => <Row key={account.id}
         icon={<Avatar name={account.user!.name || account.user!.email} image={null} size={36} />}
         label={account.user!.email} detail={`${account.server.name} · ${account.server.url}`} disabled={busy}
-        trailing={account.id === state.active ? <Symbol name="checkmark" size={20} color={colors.success} web={<Check size={20} color={colors.success} />} /> : null}
+        trailing={account.id === state.active ? <Symbol name="checkmark" size={17} color={colors.accent} web={<Check size={20} color={colors.accent} strokeWidth={2.4} />} /> : null}
         onPress={() => { if (account.id !== state.active) void change(() => selectMobileAccount(account.id)) }} />)}</Group>
       <Group><Row label={copy.addAccount} disabled={busy} onPress={() => void change(addMobileAccount)} /></Group>
-      {failed ? <Text selectable accessibilityRole="alert" style={{ color: colors.danger }}>{copy.switchFailed}</Text> : null}
+      {failed ? <Text selectable accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 13, marginLeft: 16 }}>{copy.switchFailed}</Text> : null}
     </ScrollView>
   </View>
 }
