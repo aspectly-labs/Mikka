@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { serviceDigest } from './service-builds.mjs'
 import { planHistoricalServiceRelease, planServiceRelease } from './service-diff.mjs'
-import { migrationRoots, migrationToolchain } from './migration-inputs.mjs'
+import { migrationRoots } from './migration-inputs.mjs'
 
 const digest = value => 'sha256:' + createHash('sha256').update(value).digest('hex')
 function release() {
@@ -24,9 +24,10 @@ function release() {
           image: 'registry.cloudflare.com/' + 'c'.repeat(32) + '/mikka-' + name + '@' + imageDigest } : {}) }
       return [name, { ...service, digest: serviceDigest(service) }]
     })),
-    migrations: { version: 2, contextDigest: digest('initial migrations'), files: ['drizzle/20261120000000_initial.sql'],
+    migrations: { version: 3, contextDigest: digest('initial migrations'), files: ['drizzle/20261120000000_initial.sql'],
       execution: { entrypoint: 'scripts/migrate.mjs', contextDigest: digest('initial migration execution'),
-        files: [...migrationRoots, ...migrationToolchain].sort() } } }
+        files: [...migrationRoots].sort(),
+        runtime: { imports: [], lockfileVersion: '9.0', nodeMajor: 24, packages: [] } } } }
 }
 function change(manifest, name) {
   const service = manifest.services[name]
@@ -95,8 +96,8 @@ test('SQL-only history cannot become a new candidate or claim an unchanged execu
   assert.deepEqual(plan.changedServices, [])
   assert.deepEqual(plan.migrations.before, current.migrations)
   assert.deepEqual(current, before)
-  assert.throws(() => planServiceRelease(next, current), /execution identity v2/)
-  assert.throws(() => planServiceRelease(null, current), /execution identity v2/)
+  assert.throws(() => planServiceRelease(next, current), /execution identity v3/)
+  assert.throws(() => planServiceRelease(null, current), /execution identity v3/)
 })
 
 test('the explicit historical comparator describes rollback artifacts without authorizing SQL removal or a legacy forward candidate', () => {
@@ -113,7 +114,7 @@ test('the explicit historical comparator describes rollback artifacts without au
   assert.deepEqual(rollback.migrations.before, current.migrations)
   assert.deepEqual(rollback.migrations.after, old.migrations)
   assert.deepEqual(current, before)
-  assert.throws(() => planServiceRelease(current, old), /execution identity v2/)
+  assert.throws(() => planServiceRelease(current, old), /execution identity v3/)
   const firstRollback = planHistoricalServiceRelease(null, old)
   assert.equal(firstRollback.bootstrap, true)
   assert.equal(firstRollback.previousSourceCommit, null)

@@ -53,6 +53,30 @@ build. Unpinned development layers may fall back to the public no-content contra
 `auth-sso`; `workspace-entry` is always required whenever `MIKKA_UI_OVERLAY_DIR`
 is set.
 
+## Paired changes: merge order
+
+A change that touches both repositories ships as two PRs with the same branch
+name: the public PR and the `mikka-hosted-ui` PR. The overlay's CI tests against
+the public branch of the same name while it exists, and against public `main`
+once it is merged.
+
+Merge them in this order:
+
+1. **Public PR first.** Public `main` must build on its own, so it may not wait for
+   anything in the overlay. Messages, contracts and slot props the overlay uses
+   land here.
+2. **Then the hosted PR.** Its CI now runs against public `main`, which holds the
+   public half.
+3. **Then the pin.** Only now does the `mikka-cloud` PR move `overlaySource` in
+   `deploy-build-inputs.json` to the hosted merge commit. A pin that points at an
+   overlay whose public half is not on `main` fails the release build (as
+   mikka-cloud #447 did before #3188 merged), and its pairing check refuses it.
+4. **Release.** API (with its migrations) before Web, because the new Web calls the
+   new actions and reads the new tables.
+
+Reverting goes the other way: move the pin back first, then revert the hosted PR,
+then the public one.
+
 ## Slots
 
 | Slot | Surface | Props | Callers import |

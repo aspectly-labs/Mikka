@@ -1,4 +1,5 @@
 import "server-only";
+import { z } from "zod";
 import { pool } from "./db";
 import { ActionFailureError } from "./action-error";
 import { botModelEffort } from "./bot-model-effort";
@@ -42,6 +43,15 @@ async function freezeBotModelChoice(
   // existing precedence and needs no subscription default written.
   const savedKey = keyChoice && keys.find(key => key.id === keyChoice.keyId && apiKeyServesBotModel(key, keyChoice.model));
   const selected = savedKey ? undefined : await settings.botModel(settingsScope, scope.botId);
+  // A member's saved choice can still name an owner's subscription binding
+  // (borrowed before owner-only, decision 2026-11-17): refuse the run as
+  // theirs-not-yours, not an unselected model — menus keep their fallback
+  // (issue #3057).
+  if (selected && z.uuid().safeParse(selected).success
+    && await settings.bindingHeldElsewhere(settingsScope, selected)) {
+    const { SubscriptionRefusal } = await import("@mikka/protocol/subscription");
+    throw new SubscriptionRefusal("account_unavailable");
+  }
   const choice = await resolveBotModelChoice(pool, settings, settingsScope, scope.botId,
     { selected, key: keyChoice }, { keys });
   if (choice.kind === "hosted") return { harness: "ai_sdk", model: choice.model };

@@ -340,8 +340,12 @@ test(
       // Unshared, it is hers alone.
       assert.equal((await settings.botModels({ownerId:'bob',workspaceId:teamB.workspaceId})).length,0,'another member of team B never sees or uses it');
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'executionModelUnknown'},'another member\'s bot asks for a model');
-      await assert.rejects(settings.bindingForBot({ownerId:'bob',workspaceId:teamB.workspaceId},null,catalogue.bindingId),{code:'executionModelUnknown'});
+      await assert.rejects(settings.bindingForBot({ownerId:'bob',workspaceId:teamB.workspaceId},null,catalogue.bindingId),{code:'account_unavailable'},'another member\'s binding is a borrow refusal, not an unknown model');
       await assert.rejects(settings.setBotModel({ownerId:'bob',workspaceId:teamB.workspaceId},bobBot,catalogue.bindingId),{code:'executionModelUnknown'});
+      // A choice borrowed before owner-only stays stored under the member: the run refuses it.
+      await pool.query('INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId") VALUES ($1,$2,$3,$4)',['bob',teamB.workspaceId,bobBot,catalogue.bindingId]);
+      await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'account_unavailable'},'a member\'s stored borrow refuses as unavailable, not an unknown model');
+      await pool.query('DELETE FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2',['bob',teamB.workspaceId]);
       // Team B's admin switch never limits her own use.
       await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)',[teamB.workspaceId]);
       assert.ok((await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:teamBot},dependencies)).modelSelection,'admin switch off: her own bot still uses her subscription');

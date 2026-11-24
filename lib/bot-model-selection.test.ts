@@ -13,6 +13,7 @@ const binding = { id: id(3), ownerId: 'alice', consumerId: id(1), workspaceId: i
 let selected: string | undefined
 let available: { bindingId: string; provider?: string }[] = []
 let savedBinding: Pick<BotSubscriptionChoice, 'bindingId'> & Partial<BotSubscriptionChoice> | undefined
+let bindingElsewhere = false
 let settingsError: Error | undefined
 let catalogueError: Error | undefined
 let catalogueReads = 0
@@ -45,6 +46,7 @@ mock.module(new URL('./execution-settings.ts', import.meta.url).href, { namedExp
     async botModel() { if (settingsError) throw settingsError; return selected }
     async chatModels() { catalogueReads++; if (catalogueError) throw catalogueError; return available }
     async chatBinding(...args: unknown[]) { bindingReads.push(args); return savedBinding }
+    async bindingHeldElsewhere() { return bindingElsewhere }
     async bindingForBot(_scope: unknown, _bot: unknown, bindingId: string) { return bindingId }
   },
 } })
@@ -93,6 +95,7 @@ beforeEach(() => {
   selected = undefined
   available = []
   savedBinding = undefined
+  bindingElsewhere = false
   settingsError = undefined
   catalogueError = undefined
   catalogueReads = 0
@@ -152,6 +155,16 @@ test('a saved choice whose account is gone, with nothing bound, asks for a model
   selected = id(9)
   available = []
   for (const botId of [null, id(1)]) await assert.rejects(freezeBotModel({ ...scope, botId }, noSubscription), NOT_CHOSEN)
+})
+
+test('a coordinator saved choice still held by another owner refuses as theirs-not-yours, not an unselected model', async () => {
+  // #3057: a member's stored borrow of an owner's binding must surface
+  // account_unavailable so the run says why, instead of asking for a model.
+  // (The named-bot refusal is covered by the real-PG regression in
+  // lib/execution-settings.db.test.ts; this adds the coordinator path.)
+  selected = id(9)
+  bindingElsewhere = true
+  await assert.rejects(freezeBotModel({ ...scope, botId: null }, noSubscription), { code: 'account_unavailable' })
 })
 
 test('a Mikka 额度 model picked in the composer stays on Mikka 额度 while a subscription is bound', async () => {

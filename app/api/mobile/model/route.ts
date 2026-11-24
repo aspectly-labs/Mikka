@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { withRequestLog, noteLogUser } from '@/lib/request-log'
 import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
 import { ActionFailureError } from '@/lib/action-error'
+import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { pool } from '@/lib/db'
 import { ExecutionSettings } from '@/lib/execution-settings'
 import { botModelMenu, botModelScope, chooseBotModel, refreshBotModelMenu } from '@/lib/bot-model-menu'
@@ -18,6 +19,9 @@ const putChoice = z.union([choice, temporaryChoice, restoreChoice])
 
 function failed(error: unknown) {
   if (error instanceof ActionFailureError && (error.code === 'botNotFound' || error.code === 'workspaceAccessDenied')) return json({ error: 'botNotFound' }, 404)
+  // A binding held by another account answers the same as a missing one: the
+  // response never discloses whether the id exists under someone else (#3057).
+  if (error instanceof SubscriptionRefusal) return json({ error: 'modelUnavailable' }, 409)
   if (error instanceof ActionFailureError && error.code === 'executionModelUnknown') return json({ error: 'modelUnavailable' }, 409)
   throw error
 }
