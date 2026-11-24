@@ -9,7 +9,6 @@ import type { ListLiveRead } from '@/lib/live/list-read'
 
 import { cookies, headers } from '@/lib/server-runtime/headers'
 import { storedLocale } from '@/i18n/locale-cookie.mjs'
-import { afterJob } from '@/lib/background'
 import { z } from 'zod'
 import { ActionFailureError, runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
@@ -19,7 +18,6 @@ import { ExecutionSettings } from '@/lib/execution-settings'
 import { botModelPreference, resolveBotModelChoice } from '@/lib/bot-model-choice'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { userMessageEvent } from '@/lib/coordinator-events'
-import { personalSubmissionRecorded, recordPersonalSubmission, SubmissionConflictError } from '@/lib/coordinator-submission'
 import { botChats, chatVersionState, chatView, citationSources, storedReasoning, type BotChatSummary, type ChatView } from '@/lib/coordinator/store'
 import * as chatStore from '@/lib/coordinator/store'
 import { refreshChatMetadata, type UnchangedChat } from '@/lib/coordinator/chat-poll'
@@ -30,11 +28,9 @@ import { credentialChatFingerprints } from '@/lib/credentials/chat-guard'
 import { and, eq, sql } from 'drizzle-orm'
 import { chatBotId, type openChatBotId } from '@/lib/coordinator/coordinator-bot'
 import { bots } from '@/lib/db/schema'
-import { coordinatorEnabled, wakeCoordinator } from '@/lib/coordinator/wake'
+import { coordinatorEnabled } from '@/lib/coordinator/wake'
 import { coordinatorWelcome } from '@/lib/agent-welcome'
-import { suggestionInboxChanged } from '@/lib/inbox/live'
-import { claimSuggestion, readClaimedSuggestion } from '@/lib/suggestions/store'
-import { suggestionMessage } from '@/lib/suggestions/card'
+import { handoffSuggestionToCoordinator } from '@/lib/suggestions/handoff'
 import { issueMutationsEnabled } from '@/lib/coordinator/issue-tools-enabled'
 import { cacheReadAction } from '@/lib/cache-read-action'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
@@ -323,29 +319,7 @@ export async function coordinatorTurnVersions(botId: string | null): Promise<Rec
  * Coordinator to read it, nothing is sent and the card stays.
  */
 export async function sendSuggestion(suggestionId: string): Promise<ActionResult<{ queued: true }>> {
-  return runAction(async () => {
-    const userId = await getUserId()
-    const id = z.uuid().safeParse(suggestionId)
-    if (!id.success) throw new ActionFailureError('validationGeneric')
-    try {
-      await db.transaction(async tx => {
-        const claimed = await claimSuggestion(userId, id.data, tx)
-        const item = claimed ?? await readClaimedSuggestion(userId, id.data, tx)
-        if (!item) throw new ActionFailureError('suggestionNotFound')
-        if (!await coordinatorEnabled(userId, item.botId)) throw new ActionFailureError('coordinatorUnavailable')
-        const text = suggestionMessage({ source: item.source, action: item.action, title: item.title, actionTitle: item.actionTitle, actor: item.actor, url: item.url })
-        // The suggestion stored its Coordinator bot row when it was made (null only on an older one).
-        if (claimed) await recordPersonalSubmission(tx, userId, text, { submissionId: item.id, botId: item.botId })
-        else if (!await personalSubmissionRecorded(tx, userId, text, item.id, item.botId)) throw new ActionFailureError('suggestionNotFound')
-        if (claimed) await suggestionInboxChanged(tx, userId, item.botId)
-      })
-    } catch (error) {
-      if (error instanceof SubmissionConflictError) throw Object.assign(new ActionFailureError('submissionConflict'), { cause: error })
-      throw error
-    }
-    afterJob('after:coordinator-wake', () => wakeCoordinator(userId))
-    return { queued: true as const }
-  })
+  return runAction(async () => handoffSuggestionToCoordinator(await getUserId(), suggestionId))
 }
 
 /** Whether the new-task dialog can create a task; it explains itself when this is off. */

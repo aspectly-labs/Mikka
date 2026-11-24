@@ -1845,6 +1845,25 @@
       "sourceHash": "dc0b998364e0f7e26c689e7f4d127be98d16207fae94defa7ed41be665eb4b6c"
     },
     {
+      "path": "/mikka/api/mobile/attachments",
+      "template": "/api/mobile/attachments",
+      "source": "app/api/mobile/attachments/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "d694cdae159f1d8617987a1003f79bfe40efeabab1ddc6557314e3e99cb55592"
+    },
+    {
+      "path": "/mikka/api/mobile/billing",
+      "template": "/api/mobile/billing",
+      "source": "app/api/mobile/billing/route.ts",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "sourceHash": "8b5f07a7ed14ea6ba9a8a865d086e657da0939e7fc8521f7bf19624b78524b8f"
+    },
+    {
       "path": "/mikka/api/mobile/bots",
       "template": "/api/mobile/bots",
       "source": "app/api/mobile/bots/route.ts",
@@ -1977,6 +1996,34 @@
       "sourceHash": "b92f24c45a4a3284a6232b0f482a45dda4a2f821ce158b1ef42a6ac5946fd160"
     },
     {
+      "path": "/mikka/api/mobile/proactive-cards",
+      "template": "/api/mobile/proactive-cards",
+      "source": "app/api/mobile/proactive-cards/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "33ad236603f6637d9e2053bc6eeb26408f0bf14352acccfd0eec3d918ddfaedd"
+    },
+    {
+      "path": "/mikka/api/mobile/profile",
+      "template": "/api/mobile/profile",
+      "source": "app/api/mobile/profile/route.ts",
+      "methods": [
+        "GET",
+        "PATCH"
+      ],
+      "sourceHash": "793ef1ca3803c572f2fa2cc2379ab54dc36beacdb1842bacdda5b64ab2e02e12"
+    },
+    {
+      "path": "/mikka/api/mobile/profile/avatar",
+      "template": "/api/mobile/profile/avatar",
+      "source": "app/api/mobile/profile/avatar/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "2421f4ce613df667bc173081d5bacb39bad8c10d8027c755bb2f4ff21deb2247"
+    },
+    {
       "path": "/mikka/api/mobile/push-tokens",
       "template": "/api/mobile/push-tokens",
       "source": "app/api/mobile/push-tokens/route.ts",
@@ -2015,7 +2062,16 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "f9b29a6605f7437e67623b44afc776bf7660d53acd5d9e17df0259d2850b153b"
+      "sourceHash": "496e119adb9fef88626f23410d428c70105aa9f45aea8848a1dd4420fe78c5b1"
+    },
+    {
+      "path": "/mikka/api/mobile/search/messages",
+      "template": "/api/mobile/search/messages",
+      "source": "app/api/mobile/search/messages/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "050f56d0b8c84a361e55662b0d8681498a8078da97399e6f82a20b643e666ba5"
     },
     {
       "path": "/mikka/api/mobile/settings",
@@ -2025,6 +2081,16 @@
         "GET"
       ],
       "sourceHash": "1193b1f833f86f66e5cbc909d5683d9a90a99d05a1ab2f9c569baf04ec40fe5b"
+    },
+    {
+      "path": "/mikka/api/mobile/suggestions/[id]",
+      "template": "/api/mobile/suggestions/[id]",
+      "source": "app/api/mobile/suggestions/[id]/route.ts",
+      "methods": [
+        "DELETE",
+        "POST"
+      ],
+      "sourceHash": "375591907b1bc5fbca4986c7e06f642ba9fa3f5d8e60a32e41d4b62780adaa59"
     },
     {
       "path": "/mikka/api/mobile/task-presentations",
@@ -2080,7 +2146,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "56ec0c77296b8cef270d05d8466d2ceab1d6c63fd1ae521ac469463254e36731"
+      "sourceHash": "f7a1edddbc40d5d144b92bcc551bda3ff4c2486f5e82e6802834c07c7e9aefac"
     },
     {
       "path": "/mikka/api/mobile/threads/[id]/artifacts",
@@ -3057,7 +3123,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "797283fb13d3ff53fda906e429dd2ebdfddb6f1e7a8388c25b83a7c2a98152f3"
+      "sourceHash": "4ffc542982d8ced33f741e15eb57ffa4035bc68c9c8499e5caacf44f0cf897a9"
     },
     {
       "path": "/mikka/api/tasks/dictation",

@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
-import { startSuggestion } from '@/lib/cloud-computer/suggestions'
+import { WorkspaceError } from '@/lib/workspace-error'
+import { resolveSuggestionStartWorkspace, startSuggestion } from '@/lib/cloud-computer/suggestions'
 import { ComputerError } from '@/lib/computer/store'
 import { wakeCoordinator } from '@/lib/coordinator/wake'
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -14,12 +15,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!session?.user) return respond({ error: 'authRequired' }, 401)
     if (request.headers.get('origin') !== new URL(request.url).origin) return respond({ error: 'Invalid origin' }, 403)
     const id = z.uuid().parse((await params).id)
-    const context = await loadWorkspaceContext(undefined, session.user)
-    const result = await startSuggestion(pool, { userId: session.user.id, workspaceId: context.workspace.id }, id)
+    const workspaceId =
+      (await resolveSuggestionStartWorkspace(pool, session.user, id))
+      ?? (await loadWorkspaceContext(undefined, session.user)).workspace.id
+    const result = await startSuggestion(pool, { userId: session.user.id, workspaceId }, id)
     afterJob('after:coordinator-wake', () => wakeCoordinator(session.user.id))
     return respond(result, 202)
   } catch (error) {
     if (error instanceof ComputerError) return respond({ error: error.message }, error.status)
+    if (error instanceof WorkspaceError) return respond({ error: error.code }, error.code === 'workspaceAccessDenied' ? 403 : 409)
     if (error instanceof z.ZodError) return respond({ error: 'Invalid suggestion' }, 400)
     return respond({ error: 'Task start unavailable' }, 503)
   }

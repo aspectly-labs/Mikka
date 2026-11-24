@@ -4498,5 +4498,145 @@
     "behavior": "PostHog analytics and flags use the operator's project token and ingestion host; without a token no client is created and nothing is sent.",
     "test": "lib/posthog-server.test.ts",
     "suite": "test:service-config"
+  },
+  "app/api/mobile/search/messages/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients search visible Bot chat, group conversation, and thread messages in one workspace against the local application and workspace databases.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-message-search-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates native message search parameters, binds opaque pagination cursors to caller/workspace/query context, and slices plain-text snippets; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-message-search.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Executes workspace-authorized full-text message search across visible Bot chats, group conversations, and thread messages with keyset pagination against the local databases.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/attachments/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients batch-read ready chat attachment metadata and download paths/grants for visible Bot chats, group chats, and threads against the local database and configured artifact storage.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-attachments-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates mobile attachment batch-by-id and scope listing query parameters; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-attachments.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads ready chat attachments after enforcing chat scope ownership/membership and workspace token bounds against the local database and optional artifact storage.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/reactions.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads and updates per-message emoji reactions on accessible Bot chat and group conversation messages in the local application database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-thread-pagination.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Parses optional limit/before pagination parameters and slices oldest-first thread items with opaque historyBefore cursors; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/tokens/scope.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Enforces personal access token workspace boundaries across runs, messages, pending actions, suggestions, bots, and groups against the local databases.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/suggestions/handoff.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Claims an owned suggestion and queues it as a Coordinator personal submission in the local application database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-proactive-cards.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads the signed-in person's daily briefing summary, token-scoped pending actions, and visible suggestions against the local application database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/proactive-cards/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients read Coordinator proactive cards (briefing, pending actions, suggestions) with an optional side-effect-free readonly mode against the local database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/suggestions/[id]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients hand off, start, or dismiss owned proactive suggestions under the mobile origin policy and token workspace bounds.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-profile-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates mobile display-name patches and reads bounded multipart or binary avatar uploads up to 200 KB; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-profile.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads and updates the signed-in person's display name and uploaded avatar through Better Auth and the local avatar store, refusing workspace-scoped PATs.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/profile/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients read their profile and update their display name with a fresh human session under the mobile origin policy.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/profile/avatar/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients upload PNG, JPEG, or WebP profile avatars up to 200 KB with a fresh human session under the mobile origin policy.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-billing-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates mobile billing scope query selectors and mutation payloads; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-billing.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Resolves the caller's workspace or organization billing scope and delegates reads and mutations to the existing billing management service.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/billing/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients read workspace or organization billing status and invoke billing actions with a fresh session under the mobile origin policy.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
   }
 }
