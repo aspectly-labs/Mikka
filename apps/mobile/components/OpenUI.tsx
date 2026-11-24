@@ -87,7 +87,7 @@ function Node({ value, path }: { value: Value | undefined; path: string }) {
   }
 }
 
-/** The bot's words keep the grey bubble (R-14); only cards go without. */
+/** The bot's words are full-width text with no bubble (R-14 on iOS since 2026-11-24); cards draw their own surface. */
 function Words({ text }: { text: string }) {
   const { sources, onOpen } = useCard()
   if (!text.trim()) return null
