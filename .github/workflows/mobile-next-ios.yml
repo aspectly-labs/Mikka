@@ -1,0 +1,283 @@
+name: Mobile next iOS build
+
+# Builds Mikka's new iOS app (mikka-hosted-ui mobile-next: T3 Code's mobile app on Mikka's
+# backend) on GitHub's macOS runner and uploads it to TestFlight, the way desktop-release.yml
+# builds the desktop app. No EAS build: Xcode signs automatically with the existing App Store
+# Connect API key and uploads with it. Today's app (mobile-native.yml, mobile-update.yml) is
+# untouched; this build has its own runtime version (mikka-next-*) and update channel (next).
+#
+# Credentials are the existing Infisical prod:/platform names that desktop-release.yml reads:
+# HOSTED_UI_READ_KEY, APPLE_TEAM_ID, ASC_API_KEY_P8, ASC_API_KEY_ID, ASC_API_ISSUER_ID.
+# Private install and build output goes to files on the runner and is never echoed or uploaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      overlay_sha:
+        description: Exact mikka-hosted-ui commit to build (40 hex characters)
+        type: string
+        required: true
+      build_number:
+        description: CFBundleVersion (defaults to this workflow's run number)
+        type: string
+        default: ''
+      xcode_version:
+        description: Xcode on the runner (the app builds with the iOS 27 SDK)
+        type: string
+        default: '27.1'
+      upload:
+        description: Upload the build to App Store Connect (TestFlight)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-next-ios
+  cancel-in-progress: false
+
+env:
+  MIKKA_PRIVATE_GITHUB_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER }}
+  MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
+  NODE_VERSION: '26'
+  PNPM_VERSION: '10.34.3'
+
+jobs:
+  ios:
+    name: Build, sign and upload (macOS)
+    if: >-
+      (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main'
+    # The app needs the iOS 27 SDK, which only the xcode-27 image carries (macos-26 has Xcode 26).
+    runs-on: xcode-27
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      OVERLAY_SHA: ${{ inputs.overlay_sha }}
+      MIKKA_UI_OVERLAY_SHA: ${{ inputs.overlay_sha }}
+      APP_DIR: .hosted-ui/mobile-next/apps/mobile
+      BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+    steps:
+      - name: Require an exact private revision and build number
+        run: |
+          [[ "$OVERLAY_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::overlay_sha must be a full 40-character commit"; exit 1; }
+          [[ "$BUILD_NUMBER" =~ ^[0-9]{1,9}$ ]] || { echo "::error::build_number must be digits"; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate the selected private UI owner before credential access
+        run: |
+          node --input-type=module - <<'JS'
+          import { privateMikkaRepository } from './scripts/cloudflare-source.mjs'
+          privateMikkaRepository('mikka-hosted-ui')
+          JS
+      - name: Read the private UI checkout credential
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /platform
+          secret-name: HOSTED_UI_READ_KEY
+          include-imports: false
+      - name: Check out the private app revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ format('{0}/mikka-hosted-ui', vars.MIKKA_HOSTED_UI_GITHUB_OWNER || vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324') }}
+          ref: ${{ env.OVERLAY_SHA }}
+          ssh-key: ${{ env.HOSTED_UI_READ_KEY }}
+          path: .hosted-ui
+          persist-credentials: false
+      # Only reviewed code is signed: the revision must already be on mikka-hosted-ui main. Fetches
+      # main quietly (no ref names in this public log), with the pinned GitHub host key.
+      - name: Require the private revision to be on main
+        run: |
+          set -euo pipefail
+          umask 077
+          key_dir=$(mktemp -d)
+          trap 'rm -rf -- "$key_dir"' EXIT
+          printf '%s\n' "$HOSTED_UI_READ_KEY" > "$key_dir/key"
+          known_hosts="$PWD/scripts/acceptance/desktop-delivery/github-known-hosts"
+          test -r "$known_hosts"
+          printf -v GIT_SSH_COMMAND 'ssh -F /dev/null -i %q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=%q' "$key_dir/key" "$known_hosts"
+          export GIT_SSH_COMMAND
+          node --input-type=module -e "import { verifyOverlayMain } from './scripts/cloudflare-native-oci.mjs'; try { verifyOverlayMain('.hosted-ui', process.env.OVERLAY_SHA) } catch { process.exitCode = 1 }" || {
+            echo "::error::overlay_sha is not on mikka-hosted-ui main; merge its PR first."
+            exit 1
+          }
+      # Checks the checkout is that exact revision and clears the read key from later steps.
+      - name: Pin the private UI revision
+        run: node scripts/release/hosted-ui.mjs record .hosted-ui
+      - name: Require the new app in that revision
+        run: |
+          test -f .hosted-ui/mobile-next/pnpm-lock.yaml && test -f "$APP_DIR/app.config.ts" || {
+            echo "::error::The selected mikka-hosted-ui revision has no mobile-next app."
+            exit 1
+          }
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode_version }}
+        run: |
+          [[ "$XCODE_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo "::error::xcode_version must look like 27.1"; exit 1; }
+          app="/Applications/Xcode_${XCODE_VERSION}.app"
+          test -d "$app" || { echo "::error::Xcode $XCODE_VERSION is not installed on this runner:"; ls -d /Applications/Xcode*.app; exit 1; }
+          sudo xcode-select -s "$app/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -q 'iphoneos27' || { echo "::error::Xcode $XCODE_VERSION has no iOS 27 SDK."; exit 1; }
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install the app's dependencies
+        run: |
+          if ! pnpm --dir .hosted-ui/mobile-next install --frozen-lockfile > "$RUNNER_TEMP/mobile-next-install.log" 2>&1; then
+            echo "::error::mobile-next dependency installation failed; private diagnostics withheld."
+            exit 1
+          fi
+      - name: Read existing APPLE_TEAM_ID through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /platform
+          secret-name: APPLE_TEAM_ID
+          recursive: false
+          include-imports: false
+      - name: Read existing ASC_API_KEY_P8 through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /platform
+          secret-name: ASC_API_KEY_P8
+          recursive: false
+          include-imports: false
+      - name: Read existing ASC_API_KEY_ID through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /platform
+          secret-name: ASC_API_KEY_ID
+          recursive: false
+          include-imports: false
+      - name: Read existing ASC_API_ISSUER_ID through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /platform
+          secret-name: ASC_API_ISSUER_ID
+          recursive: false
+          include-imports: false
+      - name: Map existing Apple credential names in the trusted runner
+        run: node scripts/release/apple-credentials.mjs
+      - name: Materialize the App Store Connect key
+        run: |
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{1,30}$ ]] || { echo "::error::APPLE_TEAM_ID is missing"; exit 1; }
+          umask 077
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          key="$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$key"
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
+      - name: Generate the native project
+        env:
+          APP_VARIANT: production
+          EXPO_NO_GIT_STATUS: '1'
+          CI: '1'
+        run: |
+          if ! pnpm --dir .hosted-ui/mobile-next ios:prebuild > "$RUNNER_TEMP/mobile-next-prebuild.log" 2>&1; then
+            echo "::error::expo prebuild failed; private diagnostics withheld."
+            exit 1
+          fi
+          if ! (cd "$APP_DIR/ios" && pod install > "$RUNNER_TEMP/mobile-next-pods.log" 2>&1); then
+            echo "::error::pod install failed; private diagnostics withheld."
+            exit 1
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_DIR/ios/Mikka/Info.plist"
+          echo "Mikka $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/ios/Mikka/Info.plist") ($BUILD_NUMBER)"
+      - name: Archive with automatic signing
+        env:
+          APP_VARIANT: production
+        run: |
+          set -o pipefail
+          if ! xcodebuild archive \
+              -workspace "$APP_DIR/ios/Mikka.xcworkspace" \
+              -scheme Mikka \
+              -configuration Release \
+              -destination 'generic/platform=iOS' \
+              -archivePath "$RUNNER_TEMP/Mikka.xcarchive" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$ASC_KEY_PATH" \
+              -authenticationKeyID "$APPLE_API_KEY_ID" \
+              -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
+              DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+              CODE_SIGN_STYLE=Automatic \
+              > "$RUNNER_TEMP/mobile-next-archive.log" 2>&1; then
+            echo "::error::xcodebuild archive failed; private diagnostics withheld."
+            grep -cE ' error: ' "$RUNNER_TEMP/mobile-next-archive.log" | sed 's/^/Compiler errors: /' || true
+            exit 1
+          fi
+      - name: Export the App Store build
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          if ! xcodebuild -exportArchive \
+              -archivePath "$RUNNER_TEMP/Mikka.xcarchive" \
+              -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+              -exportPath "$RUNNER_TEMP/export" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$ASC_KEY_PATH" \
+              -authenticationKeyID "$APPLE_API_KEY_ID" \
+              -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
+              > "$RUNNER_TEMP/mobile-next-export.log" 2>&1; then
+            echo "::error::xcodebuild -exportArchive failed; private diagnostics withheld."
+            exit 1
+          fi
+          ls "$RUNNER_TEMP/export"/*.ipa
+      - name: Upload to App Store Connect (TestFlight)
+        if: inputs.upload
+        run: |
+          ipa="$(ls "$RUNNER_TEMP/export"/*.ipa | head -n 1)"
+          if ! xcrun altool --upload-app --type ios --file "$ipa" \
+              --apiKey "$APPLE_API_KEY_ID" --apiIssuer "$APPLE_API_ISSUER" \
+              > "$RUNNER_TEMP/mobile-next-upload.log" 2>&1; then
+            echo "::error::The upload to App Store Connect failed."
+            grep -E 'ERROR ITMS-[0-9]+' "$RUNNER_TEMP/mobile-next-upload.log" | head -n 5 || true
+            exit 1
+          fi
+          echo "::notice title=Uploaded::Mikka build $BUILD_NUMBER from mikka-hosted-ui $OVERLAY_SHA is processing in App Store Connect."
+      - name: Remove the App Store Connect key
+        if: always()
+        run: rm -f "$HOME/.appstoreconnect/private_keys/"AuthKey_*.p8
