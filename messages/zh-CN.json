@@ -4728,7 +4728,8 @@
       "membersError": "成员加载失败",
       "allThreadsWaiting": "全部线程，{count} 条等你",
       "addMembers": "添加成员到 {group}",
-      "deleteFileFailed": "「{name}」未删除"
+      "deleteFileFailed": "「{name}」未删除",
+      "botTasks": "{name} · 任务"
     },
     "board": {
       "card": {

@@ -4728,7 +4728,8 @@
       "membersError": "Members failed to load",
       "allThreadsWaiting": "All threads, {count} waiting on you",
       "addMembers": "Add members to {group}",
-      "deleteFileFailed": "“{name}” was not deleted"
+      "deleteFileFailed": "“{name}” was not deleted",
+      "botTasks": "{name} · Tasks"
     },
     "board": {
       "card": {
