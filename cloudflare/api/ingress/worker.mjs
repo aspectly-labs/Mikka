@@ -5,6 +5,7 @@ import { applicationEnvironment } from './environment.mjs'
 import { configureTaskBridge, taskMachine } from './task-machine.mjs'
 import { businessWorkflowDelivery, businessWorldRequest, eveServiceRequest, liteLlmRequest, publicWorkflowDispatch } from './services.mjs'
 import { brokerRequest, identityRequest } from '../../credential-identity/transport.mjs'
+import { legacyDaemonEdgeResponse } from '../../../lib/daemon-edge-cutoff.mjs'
 export { ContainerProxy } from '@cloudflare/containers'
 
 export class BusinessApi extends Container {
@@ -96,6 +97,10 @@ export default class ApiIngress extends WorkerEntrypoint {
     if (env.BUSINESS_WORLD && publicWorkflowDispatch(request.url)) return new Response(null, { status: 404 })
     const forwarded = apiRequest(request, env.PUBLIC_ORIGIN)
     if (!forwarded) return new Response(null, { status: 400, headers: { 'cache-control': 'no-store' } })
+    // Reject retired legacy desktop daemons and removed heartbeats at the
+    // Worker edge so they never wake the BusinessApi Durable Object / Container.
+    const cutoff = legacyDaemonEdgeResponse(forwarded)
+    if (cutoff) return cutoff
     // One active request or task never owns shutdown of the shared host.
     return env.BUSINESS_API.getByName('shared-api').fetch(forwarded)
   }

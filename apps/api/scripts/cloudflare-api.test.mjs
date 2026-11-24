@@ -392,3 +392,104 @@ test('the shared converter reshapes only the currently serving API’s legacy BY
   const noCredential = request({ authorization: 'Bearer master' }, { model: 'mikka-decision' })
   assert.equal(await converterCompatibilityRequest(noCredential), noCredential)
 })
+
+test('ApiIngress rejects retired legacy daemon traffic and removed heartbeats at the Worker edge with zero BusinessApi container wake', async () => {
+  const { registerHooks } = await import('node:module')
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const modules = {
+        'cloudflare:workers': 'export class WorkerEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env } }',
+        '@cloudflare/containers': 'export class Container { constructor(ctx, env) { this.ctx = ctx; this.env = env } } export class ContainerProxy {}',
+      }
+      if (modules[specifier]) return { url: 'data:text/javascript,' + encodeURIComponent(modules[specifier]), shortCircuit: true }
+      return nextResolve(specifier, context)
+    },
+  })
+  let ApiIngress
+  try {
+    ({ default: ApiIngress } = await import('../../../cloudflare/api/ingress/worker.mjs'))
+  } finally {
+    hooks.deregister()
+  }
+
+  const origin = 'https://app.example'
+  const deviceId = '00000000-0000-4000-8000-000000000001'
+  const forwardedCalls = []
+  let getByNameCalls = 0
+  const env = {
+    PUBLIC_ORIGIN: origin,
+    BUSINESS_API: {
+      getByName(name) {
+        getByNameCalls++
+        assert.equal(name, 'shared-api')
+        return {
+          fetch(req) {
+            forwardedCalls.push({ method: req.method, path: new URL(req.url).pathname })
+            return Response.json({ forwarded: true })
+          },
+        }
+      },
+    },
+  }
+  const ingress = new ApiIngress({}, env)
+
+  // 1. Legacy daemon requests (missing/invalid x-mikka-device-session or outdated semver) return 426 with 0 container wakes.
+  for (const [method, path, headers] of [
+    ['GET', `/mikka/v1/devices/${deviceId}/commands`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.524' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/runs`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.357' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/gateway`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.701' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/heartbeat`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.524' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/heartbeat/`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.701' }],
+    ['POST', '/mikka/v1/devices/register', { authorization: 'Bearer legacy', 'x-mikka-device-session': '0' }],
+    ['POST', `/mikka/v1/runs/${deviceId}/events`, { authorization: 'Bearer legacy' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/report`, { authorization: 'Bearer legacy', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.455' }],
+  ]) {
+    const res = await ingress.fetch(new Request(origin + path, { method, headers }))
+    assert.equal(res.status, 426, `${method} ${path}`)
+    assert.equal(res.headers.get('cache-control'), 'private, no-store')
+    const body = await res.json()
+    assert.equal(body.error, 'update_required')
+    assert.equal(body.code, 'daemonUpgradeRequired')
+    assert.equal(body.minVersion, '0.0.456')
+    assert.deepEqual(body.daemonVersions, { min: '0.0.456' })
+  }
+
+  // 2. Retired heartbeat endpoint even with a valid device session returns 410 with 0 container wakes.
+  const gone = await ingress.fetch(new Request(origin + `/mikka/v1/devices/${deviceId}/heartbeat`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer current', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.800' },
+  }))
+  assert.equal(gone.status, 410)
+  assert.equal((await gone.json()).code, 'heartbeatRetired')
+
+  // Wrong origin still fails closed with 400 before edge cutoff or container wake.
+  const wrongOrigin = await ingress.fetch(new Request(`https://other.example/mikka/v1/devices/${deviceId}/commands`))
+  assert.equal(wrongOrigin.status, 400)
+
+  assert.equal(getByNameCalls, 0, 'BusinessApi Durable Object must never be looked up for retired legacy daemons')
+  assert.equal(forwardedCalls.length, 0, 'BusinessApi.fetch must never be invoked for retired legacy daemons')
+
+  // 3. Updated/current daemon requests, enrollment, internal device-session reports, sandbox, OPTIONS, Web, Mobile, Auth, and Eve pass straight through.
+  const passthrough = [
+    ['POST', '/mikka/v1/devices/register', { authorization: 'Bearer current', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.456' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/report`, { authorization: 'Bearer current', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.800' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/commands`, { authorization: 'Bearer cloud', 'x-mikka-device-session': '1' }],
+    ['POST', `/mikka/v1/runs/${deviceId}/events`, { authorization: 'Bearer source', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.1' }],
+    ['POST', '/mikka/v1/devices/enroll', { authorization: 'Bearer orv_fixture' }],
+    ['POST', `/mikka/v1/internal/device-sessions/${deviceId}`, { authorization: 'Bearer push-secret' }],
+    ['POST', '/mikka/v1/mailbox', { authorization: 'Bearer run-token' }],
+    ['POST', `/mikka/v1/task-secrets/${deviceId}`, { authorization: 'Bearer cap-token' }],
+    ['OPTIONS', `/mikka/v1/devices/${deviceId}/commands`, {}],
+    ['GET', '/mikka/api/auth/get-session', { cookie: 'session=fixture' }],
+    ['POST', '/mikka/api/rpc', { cookie: 'session=fixture' }],
+    ['GET', '/mikka/api/mobile/threads', { authorization: 'Bearer mobile' }],
+  ]
+  for (const [method, path, headers] of passthrough) {
+    const res = await ingress.fetch(new Request(origin + path, { method, headers }))
+    assert.equal(res.status, 200, `${method} ${path} should pass through`)
+  }
+  const eveRes = await ingress.eveProduct(new Request(origin + '/mikka/api/internal/eve/tools', { method: 'POST', body: '{}' }), 'scope-1')
+  assert.equal(eveRes.status, 200)
+  assert.equal(getByNameCalls, passthrough.length + 1)
+  assert.equal(forwardedCalls.length, passthrough.length + 1)
+})
