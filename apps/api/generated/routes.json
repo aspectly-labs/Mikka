@@ -2146,7 +2146,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "f7a1edddbc40d5d144b92bcc551bda3ff4c2486f5e82e6802834c07c7e9aefac"
+      "sourceHash": "345476e6cfd16c33593f1dc4e6a40c404121d47695c31339e5c544c971a92c71"
     },
     {
       "path": "/mikka/api/mobile/threads/[id]/artifacts",
@@ -3416,7 +3416,7 @@
         "POST"
       ],
       "maxDuration": 60,
-      "sourceHash": "f2c2b918bc23fd9c21e377614a598f776313fd7834ad2aaf1573f9bd7bffab7d"
+      "sourceHash": "3a37d134c5662bbc74815d4380a0c81acee519850821286dd1d4d4c79eef7684"
     },
     {
       "path": "/mikka/api/threads/[runId]/machine",
@@ -3487,7 +3487,7 @@
         "POST"
       ],
       "maxDuration": 60,
-      "sourceHash": "d3a36fdb2596328f3763d38ac379afe6eaadf01b8bb66620a446bb6b71a0fee7"
+      "sourceHash": "889892e2a773245d4c018c29c20f001dabab95443e262b917b47d5d628028599"
     },
     {
       "path": "/mikka/api/threads/[runId]/slack-bind",

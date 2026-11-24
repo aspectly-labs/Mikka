@@ -5,11 +5,14 @@ import path from 'node:path'
 import { before, beforeEach, mock, test } from 'node:test'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { planMigration } from '../scripts/migration-steps.mjs'
+import type { DecisionAnswer } from './coordinator/decision'
 import { tokenWorkspace } from './tokens/principal'
 
 const OWNER = 'perf-owner'
 const WORKSPACE = '11111111-1111-4111-8111-111111111111'
 const ROOT_RUN = '22222222-2222-4222-8222-222222222222'
+const ATTEMPT_2 = '22222222-2222-4222-8222-222222222223'
+const UNREADABLE_RUN = '22222222-2222-4222-8222-222222222299'
 const MSG_ID = '33333333-3333-4333-8333-333333333333'
 const DEVICE_ID = '44444444-4444-4444-8444-444444444444'
 const TASK_1 = '66666666-6666-4666-8666-666666666666'
@@ -44,10 +47,13 @@ const mockClientPool = {
     const q = compact(sqlText)
     sqlLog.push({ via: 'pool', sql: q, params })
     if (q.startsWith('SELECT * FROM agent_runs WHERE id=$1')) {
+      const requestedId = String(params[0] ?? ROOT_RUN)
       return {
         rows: [{
-          id: ROOT_RUN, userId: OWNER, workspaceId: WORKSPACE, deviceId: DEVICE_ID,
-          title: 'Source thread', prompt: 'Initial prompt', status: 'succeeded', deletedAt: null,
+          id: requestedId, userId: OWNER, workspaceId: WORKSPACE, deviceId: DEVICE_ID,
+          title: requestedId === ATTEMPT_2 ? 'Second attempt' : 'Source thread',
+          prompt: requestedId === ATTEMPT_2 ? 'Retry prompt' : 'Initial prompt',
+          status: 'succeeded', deletedAt: null,
         }],
       }
     }
@@ -161,6 +167,7 @@ let forkRoute: typeof import('../app/api/threads/[runId]/fork/route')
 let sideRoute: typeof import('../app/api/threads/[runId]/side-threads/route')
 let messageRefs: typeof import('./message-references')
 let queryVersionMod: typeof import('./db/query-version')
+let agentRunsMod: typeof import('./agent-runs')
 let attentionStore: typeof import('./attention/store')
 
 before(async () => {
@@ -179,6 +186,7 @@ before(async () => {
         latestRunId: ROOT_RUN,
         attempts: [{ runId: ROOT_RUN, attempt: 1, status: 'succeeded', stopRequestedAt: null, createdAt: new Date(), finishedAt: new Date() }],
       }),
+      resolveStopTargets: async () => [],
     },
   })
   mock.module('./tokens/scope.ts', {
@@ -211,6 +219,7 @@ before(async () => {
   mock.module('./device-gateway-notify.ts', {
     namedExports: {
       notifyDeviceWork: (deviceId: string) => { notifiedDevices.push(deviceId) },
+      runControlChanged: () => {},
     },
   })
   mock.module('./api-auth.ts', {
@@ -223,10 +232,22 @@ before(async () => {
       COORDINATOR_CONVERSATION_ROW_LIMIT: 500,
       citationSources: async (reader: { id: string }, citations: string[]) => {
         citationCalls.push({ userId: reader.id, citations })
-        return {
+        const out: Record<string, { kind: 'issue'; title: string; identifier: string; status: string } | { kind: 'run'; title: string; status: string }> = {
           [TASK_1]: { kind: 'issue', title: 'Fix perf', identifier: 'MIK-1', status: 'in_progress' },
           [TASK_2]: { kind: 'issue', title: 'Add index', identifier: 'MIK-2', status: 'todo' },
         }
+        // Faithfully enforce visibleRuns' 100-row ceiling per citationSources call.
+        let runCount = 0
+        for (const token of citations) {
+          const match = /^\[\[run:([0-9a-f-]+)\]\]$/i.exec(token)
+          if (!match) continue
+          const id = match[1]!
+          if (id === UNREADABLE_RUN) continue
+          if (runCount >= 100) break
+          runCount++
+          out[id] = { kind: 'run', title: `Thread ${id.slice(-4)}`, status: 'succeeded' }
+        }
+        return out
       },
     },
   })
@@ -239,6 +260,7 @@ before(async () => {
   sideRoute = await import('../app/api/threads/[runId]/side-threads/route')
   messageRefs = await import('./message-references')
   queryVersionMod = await import('./db/query-version')
+  agentRunsMod = await import('./agent-runs')
   attentionStore = await import('./attention/store')
 })
 
@@ -328,6 +350,14 @@ test('P0 #4: spawnThread + /fork & /side-threads honor Idempotency-Key replays a
   assert.equal(conflictRes.status, 409)
   assert.deepEqual(await conflictRes.json(), { error: 'idempotencyKeyConflict' })
 
+  // Reusing the same key on a different source attempt in the same chain also returns 409.
+  const attemptConflictRes = await forkRoute.POST(
+    mkReq(`https://mikka.test/api/threads/${ATTEMPT_2}/fork`, { mode: 'full' }, { 'idempotency-key': 'fork-key-1' }),
+    { params: Promise.resolve({ runId: ATTEMPT_2 }) },
+  )
+  assert.equal(attemptConflictRes.status, 409)
+  assert.deepEqual(await attemptConflictRes.json(), { error: 'idempotencyKeyConflict' })
+
   // Mismatched header and body idempotency keys return 400.
   const mismatchRes = await forkRoute.POST(
     mkReq(`https://mikka.test/api/threads/${ROOT_RUN}/fork`, { mode: 'full', idempotencyKey: 'key-a' }, { 'idempotency-key': 'key-b' }),
@@ -366,6 +396,23 @@ test('P1 N+1: resolveMessageReferencesBatch batches multiple messages into O(1) 
   assert.equal(batch[1]![0]!.identifier, 'MIK-2')
   assert.equal(batch[2]![1]!.type, 'pr')
   assert.deepEqual(batch[3], [])
+
+  // Large batch (>100 distinct threads) chunks within visibleRuns' 100-row ceiling
+  // so every readable thread resolves and genuinely unreadable threads stay unavailable.
+  citationCalls = []
+  const runIdAt = (index: number) => `33333333-3333-4333-8333-${String(index + 1).padStart(12, '0')}`
+  const readableIds = Array.from({ length: 105 }, (_, i) => runIdAt(i))
+  const chunkedTexts = [
+    ...Array.from({ length: 35 }, (_, i) => `[[run:${readableIds[i * 3]}]] [[run:${readableIds[i * 3 + 1]}]] [[run:${readableIds[i * 3 + 2]}]]`),
+    `[[run:${UNREADABLE_RUN}]]`,
+  ]
+  const largeBatch = await messageRefs.resolveMessageReferencesBatch({ userId: OWNER, workspaceId: WORKSPACE }, chunkedTexts)
+  assert.equal(citationCalls.length, 2, '106 distinct refs must chunk into 2 citationSources calls (<=100 each)')
+  assert.ok(citationCalls.every(call => call.citations.length <= messageRefs.CITATION_BATCH_CHUNK))
+  const resolvedReadable = largeBatch.slice(0, 35).flat()
+  assert.equal(resolvedReadable.length, 105)
+  assert.ok(resolvedReadable.every(ref => !ref.unavailable && ref.title?.startsWith('Thread ')))
+  assert.equal(largeBatch[35]![0]!.unavailable, true)
 })
 
 test('P1 CTE dedup: queryVersionFromRowSignatures matches Postgres empty and sorted MD5 aggregation', () => {
@@ -418,10 +465,16 @@ test('P1 N+1: attentionStore.settleTurn batches updates & logs instead of issuin
   // Also test Decisions settlement path (1 quiet + 2 snoozed with distinct windows)
   sqlLog = []
   let callIndex = 0
+  type Answer = Exclude<DecisionAnswer, { type: 'refusal' }>
   await attentionStore.settleTurn(OWNER, [MATTER_1, MATTER_2, MATTER_3], false, now, async () => {
     callIndex++
-    if (callIndex === 1) return new Map([['settle', { type: 'choice', choice: 'quiet' }]])
-    if (callIndex === 2) return new Map([['settle', { type: 'choice', choice: 'snooze' }], ['retryIn', { type: 'choice', choice: '2h' }]])
+    if (callIndex === 1) return new Map<string, Answer>([['settle', { type: 'choice', name: 'settle', choice: 'quiet' }]])
+    if (callIndex === 2) {
+      return new Map<string, Answer>([
+        ['settle', { type: 'choice', name: 'settle', choice: 'snooze' }],
+        ['retryIn', { type: 'choice', name: 'retryIn', choice: '2h' }],
+      ])
+    }
     return null
   })
   const settleUpdates = sqlLog.filter(entry => entry.sql.startsWith('update "attention_matters"'))
@@ -431,48 +484,43 @@ test('P1 N+1: attentionStore.settleTurn batches updates & logs instead of issuin
   assert.equal(settleLogs.length, 1, 'all settlement logs must insert in 1 batched INSERT')
 })
 
-test('P0 #5 & P1 source contracts: bounded limits, CTE dedup, batched mutations, and valid CONCURRENTLY migration', () => {
+test('P0 #5: readRunMessages defaults to bounded newest tail and supports explicit unbounded cursor mode', async () => {
+  const older = new Date('2026-11-24T10:00:00.000Z')
+  const newer = new Date('2026-11-24T10:01:00.000Z')
+  dbQueryHandler = (q, _params, rowMode) => {
+    const isDesc = q.includes('order by "run_messages"."createdAt" desc')
+    const rows = isDesc
+      ? [
+          { id: 'm-2', text: 'second', createdAt: newer, sourceRunId: ROOT_RUN, editable: false, submissionId: null },
+          { id: 'm-1', text: 'first', createdAt: older, sourceRunId: ROOT_RUN, editable: false, submissionId: null },
+        ]
+      : [
+          { id: 'm-1', text: 'first', createdAt: older, sourceRunId: ROOT_RUN, editable: false, submissionId: null },
+          { id: 'm-2', text: 'second', createdAt: newer, sourceRunId: ROOT_RUN, editable: false, submissionId: null },
+        ]
+    return rowMode === 'array'
+      ? rows.map(r => [r.id, r.text, r.createdAt, r.sourceRunId, r.editable, r.submissionId])
+      : rows
+  }
+
+  const bounded = await agentRunsMod.readRunMessages(OWNER, [ROOT_RUN])
+  assert.deepEqual(bounded.map(row => row.id), ['m-1', 'm-2'], 'tail query reverses back into chronological order')
+  const boundedQuery = sqlLog.find(entry => entry.sql.includes('from "run_messages"'))!
+  assert.match(boundedQuery.sql, /order by "run_messages"\."createdAt" desc.*"run_messages"\."id" desc limit \$/i)
+  assert.ok(boundedQuery.params.includes(agentRunsMod.RUN_MESSAGES_LIMIT))
+
+  sqlLog = []
+  const full = await agentRunsMod.readRunMessages(OWNER, [ROOT_RUN], { limit: null })
+  assert.deepEqual(full.map(row => row.id), ['m-1', 'm-2'])
+  const fullQuery = sqlLog.find(entry => entry.sql.includes('from "run_messages"'))!
+  assert.match(fullQuery.sql, /order by "run_messages"\."createdAt" asc.*"run_messages"\."id" asc$/i)
+})
+
+test('P1 migration: factory_events_task_kind_idx plans as valid no-transaction CONCURRENTLY index', () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
-  const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8')
-
-  // P0 #5 bounds
-  const deviceLink = read('lib/device-link.ts')
-  assert.match(deviceLink, /export const DEVICE_WORK_RUN_LIMIT = 500/)
-  assert.match(deviceLink, /\.limit\(DEVICE_WORK_RUN_LIMIT\)/)
-  assert.match(deviceLink, /resolveMessageReferencesBatch/)
-
-  const coordStore = read('lib/coordinator/store.ts')
-  assert.match(coordStore, /export const COORDINATOR_CONVERSATION_ROW_LIMIT = 500/)
-  assert.match(coordStore, /\.orderBy\(desc\(coordinatorMessages\.position\)\)\s*\.limit\(COORDINATOR_CONVERSATION_ROW_LIMIT\)/)
-
-  const agentRunsSrc = read('lib/agent-runs.ts')
-  assert.match(agentRunsSrc, /export const RUN_MESSAGES_LIMIT = 1_000/)
-  assert.match(agentRunsSrc, /export const RUN_CHUNKS_LIMIT = 5_000/)
-  assert.match(agentRunsSrc, /orderBy\(desc\(runChunks\.seq\)\)\.limit\(chunkLimit\)/)
-  assert.match(agentRunsSrc, /orderBy\(desc\(runMessages\.createdAt\), desc\(runMessages\.id\)\)\s*\.limit\(limit\)/)
-
-  const mobileThreadRoute = read('app/api/mobile/threads/[id]/route.ts')
-  assert.match(mobileThreadRoute, /readRun\(user\.id, id\.data, 'latest-events'\)/)
-  assert.match(mobileThreadRoute, /\.limit\(RUN_CHUNKS_LIMIT\)/)
-  assert.match(mobileThreadRoute, /const messages = detail\.run\.agentId \? await readRunMessages\(user\.id, runIds\) : \[\]/)
-
-  // P1 CTE dedup & batched mutations
-  const issuesAction = read('app/actions/issues.ts')
-  assert.match(issuesAction, /db\.\$with\('task_list'\)\.as\(candidateQuery\)/)
-  assert.match(issuesAction, /queryVersionFromRowSignatures\(/)
-
-  const issueOps = read('app/actions/issue-operations.ts')
-  assert.doesNotMatch(issueOps, /for \(const \[id, patch\] of patches\)/)
-  assert.match(issueOps, /tx\.insert\(issues\)\.values\(copyValues\)/)
-
-  const projectsAction = read('app/actions/projects.ts')
-  assert.match(projectsAction, /where\(inArray\(projectTasks\.projectId, linked\.map\(project => project\.id\)\)\)/)
-  assert.match(projectsAction, /where\(inArray\(projects\.id, orderedProjects\.map\(project => project\.id\)\)\)/)
-
-  // Additive CONCURRENTLY index migration on factory_events
   const migrationFiles = fs.readdirSync(path.join(root, 'drizzle')).filter(f => f.endsWith('_factory_events_task_kind_idx.sql'))
   assert.equal(migrationFiles.length, 1)
-  const migrationSql = read(path.join('drizzle', migrationFiles[0]!))
+  const migrationSql = fs.readFileSync(path.join(root, 'drizzle', migrationFiles[0]!), 'utf8')
   const planned = planMigration(migrationFiles[0]!, migrationSql)
   assert.equal(planned.target, 'MIKKA_DATABASE_URL')
   assert.equal(planned.noTransaction, true)

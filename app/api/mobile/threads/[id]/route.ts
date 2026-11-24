@@ -1,11 +1,11 @@
-import { desc, eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { threadModelProjection } from '@/lib/context-usage'
 import { threadReadReceipts } from '@/lib/thread-reads'
 import { db, pool } from '@/lib/db'
 import { agentRuns, runChunks } from '@/lib/db/schema'
 import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { readRun, readRunMessages, RUN_CHUNKS_LIMIT } from '@/lib/agent-runs'
+import { readRun, readRunMessages } from '@/lib/agent-runs'
 import { readRunChain } from '@/lib/run-chain'
 import { sendThreadMessage } from '@/lib/thread-continue'
 import { ActionFailureError } from '@/lib/action-error'
@@ -43,13 +43,17 @@ async function handleGET(request: Request, { params }: Params) {
   const runIds = chain ? chain.attempts.slice(from).map(attempt => attempt.runId) : [detail.run.id]
   const live = chain?.attempts.find(attempt => attempt.runId === chain.latestRunId)?.status ?? detail.run.status
   const readReceipts = detail.run.agentId ? await threadReadReceipts(user.id, runIds) : []
+  // Preserve full chain history for legacy unpaged clients and backward cursor
+  // paging (`sliceThreadItemsPage`) so older replies remain reachable; readRun
+  // above already uses `'latest-events'` to avoid scanning chunks twice, and
+  // restricted teammate runs (`!detail.run.agentId`) skip both reads.
   const rawChunks = detail.run.agentId
-    ? (await db.select({ runId: runChunks.runId, seq: runChunks.seq, chunk: runChunks.chunk, at: runChunks.createdAt }).from(runChunks)
+    ? await db.select({ runId: runChunks.runId, seq: runChunks.seq, chunk: runChunks.chunk, at: runChunks.createdAt }).from(runChunks)
         .innerJoin(agentRuns, eq(agentRuns.id, runChunks.runId))
-        .where(inArray(runChunks.runId, runIds)).orderBy(desc(agentRuns.createdAt), desc(runChunks.seq)).limit(RUN_CHUNKS_LIMIT)).reverse()
+        .where(inArray(runChunks.runId, runIds)).orderBy(asc(agentRuns.createdAt), asc(runChunks.seq))
     : []
   const chunks = chainChunks(rawChunks)
-  const messages = detail.run.agentId ? await readRunMessages(user.id, runIds) : []
+  const messages = detail.run.agentId ? await readRunMessages(user.id, runIds, { limit: null }) : []
   const allItems = await threadItems(
     detail.run.agentId ? chunks : [],
     messages.map(message => ({ id: message.id, text: message.text, author: user.name, mine: true, at: message.createdAt })),

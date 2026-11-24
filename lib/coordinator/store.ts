@@ -170,7 +170,7 @@ async function readConversationRows(userId: string, botId: string) {
   if (recent.length === COORDINATOR_CONVERSATION_ROW_LIMIT) {
     console.warn('coordinator_conversation_rows_capped', { botId, limit: COORDINATOR_CONVERSATION_ROW_LIMIT })
   }
-  return { session, rows: recent.reverse() }
+  return { session, rows: [...recent].sort((left, right) => left.position - right.position) }
 }
 
 function conversationWithMemory({ session, rows }: Awaited<ReturnType<typeof readConversationRows>>, memoryEnabled: boolean): LoadedConversation {

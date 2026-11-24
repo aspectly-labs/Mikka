@@ -80,7 +80,7 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   const normalizedKey = input.idempotencyKey?.trim() || null
   const dispatchKey = normalizedKey ? `thread_spawn:${relation}:${normalizedKey}` : null
   const dispatchFingerprint = dispatchKey
-    ? createHash('sha256').update(JSON.stringify({ root, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null })).digest('hex')
+    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null })).digest('hex')
     : null
   // `fromMessageId` is the branch point: nothing after it joins the copy or the prompt.
   let cutoff: string | null = null

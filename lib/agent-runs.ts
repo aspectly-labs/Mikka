@@ -9,7 +9,7 @@ import { byosEnabled } from './cloud-computer-flag'
 import { snapshotMailboxTools } from '@/lib/personal-mailbox-capability'
 import { freezeWorkerDefinition, workerModelDispatchFromTarget, type WorkerModelDispatch } from '@/lib/agent-kit/worker'
 import type { AgentExecution } from '@/lib/agent-kit/store'
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
 import { db, pool, withDatabaseClient } from '@/lib/db'
@@ -469,16 +469,25 @@ export async function visibleRuns(reader: IssueReader, input: RunListFilter & { 
 export const RUN_MESSAGES_LIMIT = 1_000
 export const RUN_CHUNKS_LIMIT = 5_000
 
-/** The caller has authorized these run IDs. Only the reader's own sends include a retry identity. */
-export async function readRunMessages(userId: string, runIds: string[], options?: { limit?: number }) {
+/**
+ * The caller has authorized these run IDs. Only the reader's own sends include
+ * a retry identity. Defaults to the newest RUN_MESSAGES_LIMIT rows; pass
+ * `{ limit: null }` only for cursor-paginated thread readers that require full
+ * chain history before slicing.
+ */
+export async function readRunMessages(userId: string, runIds: string[], options?: { limit?: number | null }) {
   if (!runIds.length) return []
-  const limit = Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT))
-  const rows = await db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId: runMessages.runId,
+  const base = db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId: runMessages.runId,
     editable: sql<boolean>`${runMessages.userId}=${userId} AND ${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
     submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'` })
     .from(runMessages).leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id),
       eq(coordinatorEvents.userId, userId), eq(coordinatorEvents.kind, 'user_message')))
     .where(inArray(runMessages.runId, runIds))
+  if (options?.limit === null) {
+    return base.orderBy(asc(runMessages.createdAt), asc(runMessages.id))
+  }
+  const limit = Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT))
+  const rows = await base
     .orderBy(desc(runMessages.createdAt), desc(runMessages.id))
     .limit(limit)
   return rows.reverse()

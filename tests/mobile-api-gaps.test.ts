@@ -145,9 +145,7 @@ mock.module(new URL('../lib/db/index.ts', import.meta.url).href, {
         from: () => ({
           innerJoin: () => ({
             where: () => ({
-              orderBy: () => ({
-                limit: async () => [{ runId: RUN_1, seq: 1, chunk: { type: 'text', text: 'x' }, at: new Date() }],
-              }),
+              orderBy: async () => [{ runId: RUN_1, seq: 1, chunk: { type: 'text', text: 'x' }, at: new Date() }],
             }),
           }),
         }),
@@ -161,7 +159,6 @@ mock.module(new URL('../lib/context-usage.ts', import.meta.url).href, { namedExp
 mock.module(new URL('../lib/thread-reads.ts', import.meta.url).href, { namedExports: { threadReadReceipts: async () => [] } })
 mock.module(new URL('../lib/agent-runs.ts', import.meta.url).href, {
   namedExports: {
-    RUN_CHUNKS_LIMIT: 5_000,
     readRun: async () => ({ run: { id: RUN_1, agentId: 'a-1', issueId: null, status: 'succeeded', report: null, error: null }, messages: [] }),
     readRunMessages: async () => [],
   },
