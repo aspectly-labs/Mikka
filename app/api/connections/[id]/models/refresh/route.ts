@@ -1,10 +1,10 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { ActionFailureError } from '@/lib/action-error'
 import { refreshConnectionModels } from '@/lib/connection-models'
 
-const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
 
 // #2938 (1): manual re-probe — the same LiteLLM model discovery connect/key-change runs.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {

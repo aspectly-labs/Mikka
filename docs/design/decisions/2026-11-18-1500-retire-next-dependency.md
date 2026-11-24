@@ -12,7 +12,7 @@
 
 | 原来 | 现在 | 说明 |
 | --- | --- | --- |
-| `next/server` | `@/lib/server-runtime/server` | `NextRequest`/`NextResponse`/`NextURL`/`after`，名字保留是因为所有 handler 和测试都在用；它描述形状，不是依赖 |
+| `next/server` | `@/lib/server-runtime/server` | `RouteRequest`/`RouteResponse`/`RouteURL`/`after`（2026-11-24 由 `NextRequest`/`NextResponse`/`NextURL` 改名，`nextUrl` 改为 `routeUrl`） |
 | `next/headers` | `@/lib/server-runtime/headers` | `headers()` 只读；`cookies()` 返回请求的 cookie journal |
 | `next/navigation` | `@/lib/server-runtime/navigation` | `redirect`/`notFound` 抛 `NavigationResponse`，由 `application.ts` 转成响应 |
 | `next/navigation`、`next/link`、`next/dynamic`、`next/script`（客户端） | `@/lib/client-runtime/*` | Web 与桌面共用一份；桌面的 `location.ts` 只是转发 |
@@ -35,7 +35,12 @@
 
 ## 明确保留
 
-- **`NEXT_LOCALE`**：一年有效期的业务 cookie，改名会让所有用户的界面语言选择静默丢失。
+- **`NEXT_LOCALE` 分阶段退役**（2026-11-24 更新）：这个一年有效期的业务 cookie 改名为 `mikka-locale`（与 `mikka-workspace` 同一命名）。直接改名会让所有用户的界面语言选择静默丢失；先删旧 cookie 又会在 Web 发布回滚（smoke 失败时流水线自动回滚）后让旧代码读不到选择，自托管服务器也会晚升级、继续只写旧名。所以按 expand/contract 分三个发布阶段，不定日历截止日：
+  1. **扩展（本次发布）**：先读 `mikka-locale`，没有合法值时回退读 `NEXT_LOCALE`；所有写入（页面文档响应、客户端切换语言）同值同属性写两个名字；页面文档响应只在任一 cookie 缺失或与页面语言不同时才发 Set-Cookie；不让 `NEXT_LOCALE` 过期。
+  2. **停写**：本阶段已在生产上越过回滚窗口之后的某个发布里，只写 `mikka-locale`，页面文档仍带 `NEXT_LOCALE` 时让它过期（`Max-Age=0; Path=/mikka; SameSite=Lax`），读取回退保留。
+  3. **停读**：最老的受支持自托管发布已写 `mikka-locale`，且第 2 阶段上线后至少过了一个 cookie 寿命（一年），删除回退读取和常量。
+
+  旧名只留在 `i18n/locale-cookie.mjs` 的 `LEGACY_LOCALE_COOKIE` 一个常量里，只有这个模块用它（读写方调 `storedLocale` / `localeCookies`），每个阶段都只动这一处；`scripts/next-free-locale.test.mjs` 守住这一点，并要求常量注释写明这三个阶段。
 - **`NEXT_PUBLIC_*`**：Vite `define` 白名单的构建期约定，改名牵动 Cloudflare release 的 `publicBuildSettings` 与 receipts。留作独立任务。
 - **`next-themes`**：只有 react peer，与 Next 无关。
 - **`import 'server-only'`**：仓库自己的编译期标记（`lib/server-only.ts`），不是 npm 包——官方包带 react-server 条件副作用。

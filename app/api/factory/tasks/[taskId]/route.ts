@@ -1,6 +1,6 @@
 import { factoryWorkspaceResponse } from '@/lib/factory/workspace-http';
 import { actAs } from "@/lib/acting-user";
-import { NextResponse } from "@/lib/server-runtime/server";
+import { RouteResponse } from "@/lib/server-runtime/server";
 import { auth } from "@/lib/api-auth";
 import { handleFactory } from "@/lib/factory/http";
 import { factoryHumanStore } from "@/lib/factory/server";
@@ -34,7 +34,7 @@ async function respond(
       try { liveWorkspaceId = (await factoryLiveScopes(pool, workspacePool, taskId, session.user.id))?.task.workspaceId ?? null; }
       catch { console.warn('[live] Factory task scope unavailable'); }
     }
-    return NextResponse.json(result.status === 200 ? { ...(result.body as Record<string, unknown>), liveWorkspaceId } : result.body, {
+    return RouteResponse.json(result.status === 200 ? { ...(result.body as Record<string, unknown>), liveWorkspaceId } : result.body, {
       status: result.status,
       headers: { "Cache-Control": "private, no-store" },
     });

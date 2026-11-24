@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { readUnderDeviceAuthority } from '@/lib/db'
 import { authenticateDevice } from '@/lib/device-link'
 import { freeDeviceSlotsSql } from '@/lib/device-capacity'
@@ -9,7 +9,7 @@ import { COMMANDS_MAX_SKIP, COMMANDS_SKIP_PARAM } from '@mikka/protocol/device'
 /** `GET /v1/devices/:deviceId/runs?state=queued`: runs waiting for this device. */
 async function handleGET(request: Request, { params }: { params: Promise<{ deviceId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { deviceId } = await params
   const skip = (new URL(request.url).searchParams.get(COMMANDS_SKIP_PARAM) ?? '')
     .split(',', COMMANDS_MAX_SKIP)
@@ -21,8 +21,8 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
       ORDER BY r."createdAt",r.id LIMIT LEAST(100,${freeDeviceSlotsSql})
     ) queued), '[]'::json) ELSE '[]'::json END)
     FROM devices d WHERE d.id=$1 AND d."ownerId"=$2 AND d."removedAt" IS NULL`, [deviceId, caller.userId, 'queued', skip])
-  if (!result) return NextResponse.json({ error: 'Unknown device.' }, { status: 404 })
-  return NextResponse.json(result)
+  if (!result) return RouteResponse.json({ error: 'Unknown device.' }, { status: 404 })
+  return RouteResponse.json(result)
 }
 
 export const GET = withDeviceRoute(handleGET)

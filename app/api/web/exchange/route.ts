@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, gt, isNotNull, isNull } from 'drizzle-orm'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -13,15 +13,15 @@ import { webAuthHeaders, webAuthStateHash } from '@/lib/web-connection/auth-serv
 import { inheritEnterpriseSession } from '@/lib/enterprise/session-handoff'
 
 async function handlePOST(request: Request) {
-  const reject = () => NextResponse.json({ error: 'web_auth_exchange_rejected' }, { status: 400, headers: webAuthHeaders })
-  if (!officialWebOriginAllowed(request.headers.get('origin'))) return NextResponse.json({ error: 'web_auth_forbidden' }, { status: 403, headers: webAuthHeaders })
+  const reject = () => RouteResponse.json({ error: 'web_auth_exchange_rejected' }, { status: 400, headers: webAuthHeaders })
+  if (!officialWebOriginAllowed(request.headers.get('origin'))) return RouteResponse.json({ error: 'web_auth_forbidden' }, { status: 403, headers: webAuthHeaders })
   let value: Record<string, unknown>
   try { value = await request.json() } catch { value = {} }
   const state = desktopAuthState(value?.state)
   const code = desktopAuthCode(value?.code)
   const verifier = desktopAuthVerifier(value?.verifier)
   const callback = officialWebCallback(value?.callback)
-  if (!state || !code || !verifier || !callback) return NextResponse.json({ error: 'web_auth_invalid_request' }, { status: 400, headers: webAuthHeaders })
+  if (!state || !code || !verifier || !callback) return RouteResponse.json({ error: 'web_auth_invalid_request' }, { status: 400, headers: webAuthHeaders })
   const now = new Date()
   const scope = and(eq(desktopAuthRequests.stateHash, webAuthStateHash(state)), eq(desktopAuthRequests.callback, callback))
   // The first proof attempt consumes the code, including an incorrect verifier.
@@ -38,7 +38,7 @@ async function handlePOST(request: Request) {
     try {
       admitted = await inheritEnterpriseSession(source.session.id, session.id, source.user.id)
       if (!admitted) return reject()
-      return NextResponse.json({ token: session.token, ...safeDesktopSession({ user: source.user, session }) }, { headers: webAuthHeaders })
+      return RouteResponse.json({ token: session.token, ...safeDesktopSession({ user: source.user, session }) }, { headers: webAuthHeaders })
     } finally {
       if (!admitted) await internalAdapter.deleteSession(session.token)
     }

@@ -1,5 +1,5 @@
 import { noteLogUser, withRequestLog } from '@/lib/request-log'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { authBaseURL } from '@/lib/auth'
@@ -41,12 +41,12 @@ async function findOwnAccount(composio: ComposioClient, userId: string, accountI
 async function handleGET(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers })
   noteLogUser(session?.user?.id)
-  if (!session?.user) return NextResponse.json({ error: 'authRequired' }, { status: 401 })
+  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401 })
   const composio = getComposio()
   const callbackVerifierConfigured = isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)
   const webhookConfigured = Boolean(process.env.COMPOSIO_API_KEY && process.env.COMPOSIO_WEBHOOK_SECRET)
   if (!composio) {
-    return NextResponse.json({ configured: false, callbackVerifierConfigured, webhookConfigured, accounts: [] }, { headers: { 'Cache-Control': 'private, no-store' } })
+    return RouteResponse.json({ configured: false, callbackVerifierConfigured, webhookConfigured, accounts: [] }, { headers: { 'Cache-Control': 'private, no-store' } })
   }
   try {
     const [items, records] = await Promise.all([
@@ -62,61 +62,61 @@ async function handleGET(request: Request) {
       rename: (accountId, alias) => renameComposioAccount(composio, accountId, alias),
     })
     const accounts = withAccountRecords(items.flatMap(account => toConnectedAccountView(account) ?? []), filled)
-    return NextResponse.json({ configured: true, callbackVerifierConfigured, webhookConfigured, accounts }, { headers: { 'Cache-Control': 'private, no-store' } })
+    return RouteResponse.json({ configured: true, callbackVerifierConfigured, webhookConfigured, accounts }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch {
-    return NextResponse.json({ error: 'integrationsUnavailable' }, { status: 502 })
+    return RouteResponse.json({ error: 'integrationsUnavailable' }, { status: 502 })
   }
 }
 
 async function handlePOST(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers })
   noteLogUser(session?.user?.id)
-  if (!session?.user) return NextResponse.json({ error: 'authRequired' }, { status: 401 })
-  if (!sameOrigin(request)) return NextResponse.json({ error: 'originNotAllowed' }, { status: 403 })
+  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401 })
+  if (!sameOrigin(request)) return RouteResponse.json({ error: 'originNotAllowed' }, { status: 403 })
   const parsed = connectSchema.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return NextResponse.json({ error: 'invalidIntegration' }, { status: 400 })
+  if (!parsed.success) return RouteResponse.json({ error: 'invalidIntegration' }, { status: 400 })
   const composio = getComposio()
-  if (!composio) return NextResponse.json({ error: 'composioNotConfigured' }, { status: 503 })
-  if (!isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)) return NextResponse.json({ error: 'callbackVerifierNotConfigured' }, { status: 503 })
+  if (!composio) return RouteResponse.json({ error: 'composioNotConfigured' }, { status: 503 })
+  if (!isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)) return RouteResponse.json({ error: 'callbackVerifierNotConfigured' }, { status: 503 })
   try {
     // Reconnect starts a fresh link for the same toolkit (Composio deprecated
     // refreshing an account in place); the callback then retires the old one.
     const replacing = 'accountId' in parsed.data ? await findOwnAccount(composio, session.user.id, parsed.data.accountId) : undefined
-    if ('accountId' in parsed.data && !replacing) return NextResponse.json({ error: 'integrationNotFound' }, { status: 404 })
+    if ('accountId' in parsed.data && !replacing) return RouteResponse.json({ error: 'integrationNotFound' }, { status: 404 })
     const toolkit = 'toolkit' in parsed.data ? parsed.data.toolkit : replacing!.toolkit.slug
     // A new connection must be a store toolkit with Composio-managed auth.
     // Reconnecting an existing account remains possible during catalog outages.
     if ('toolkit' in parsed.data) await assertCatalogToolkit(composioToolkitLister(composio), toolkit, 'managed', composioToolkitRetriever(composio))
     const composioSession = await composio.create(session.user.id)
     const connection = await composioSession.authorize(toolkit)
-    if (!connection.redirectUrl) return NextResponse.json({ error: 'integrationStartFailed' }, { status: 502 })
-    const response = NextResponse.json({ redirectUrl: connection.redirectUrl }, { headers: { 'Cache-Control': 'no-store' } })
+    if (!connection.redirectUrl) return RouteResponse.json({ error: 'integrationStartFailed' }, { status: 502 })
+    const response = RouteResponse.json({ redirectUrl: connection.redirectUrl }, { headers: { 'Cache-Control': 'no-store' } })
     // Bound to this link: the callback acts on `replace` only when it completes `link`.
     const returnTo = safeReturnPath(parsed.data.returnTo) ?? undefined
     response.cookies.set(COMPOSIO_FLOW_COOKIE, encodeComposioFlow({ link: connection.id, replace: replacing?.id, returnTo }), composioFlowCookieOptions(request.url, 600))
     return response
   } catch (error) {
-    if (error instanceof PluginError) return NextResponse.json({ error: error.code }, { status: error.status })
-    return NextResponse.json({ error: 'integrationStartFailed' }, { status: 502 })
+    if (error instanceof PluginError) return RouteResponse.json({ error: error.code }, { status: error.status })
+    return RouteResponse.json({ error: 'integrationStartFailed' }, { status: 502 })
   }
 }
 
 async function handleDELETE(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers })
   noteLogUser(session?.user?.id)
-  if (!session?.user) return NextResponse.json({ error: 'authRequired' }, { status: 401 })
-  if (!sameOrigin(request)) return NextResponse.json({ error: 'originNotAllowed' }, { status: 403 })
+  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401 })
+  if (!sameOrigin(request)) return RouteResponse.json({ error: 'originNotAllowed' }, { status: 403 })
   const parsed = disconnectSchema.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return NextResponse.json({ error: 'invalidIntegration' }, { status: 400 })
+  if (!parsed.success) return RouteResponse.json({ error: 'invalidIntegration' }, { status: 400 })
   const composio = getComposio()
-  if (!composio) return NextResponse.json({ error: 'composioNotConfigured' }, { status: 503 })
+  if (!composio) return RouteResponse.json({ error: 'composioNotConfigured' }, { status: 503 })
   try {
     const account = await findOwnAccount(composio, session.user.id, parsed.data.accountId)
-    if (!account) return NextResponse.json({ error: 'integrationNotFound' }, { status: 404 })
+    if (!account) return RouteResponse.json({ error: 'integrationNotFound' }, { status: 404 })
     await retireComposioAccount(composio, session.user.id, account.id, 'disconnect')
     return new Response(null, { status: 204 })
   } catch {
-    return NextResponse.json({ error: 'integrationDisconnectFailed' }, { status: 502 })
+    return RouteResponse.json({ error: 'integrationDisconnectFailed' }, { status: 502 })
   }
 }
 
@@ -124,15 +124,15 @@ async function handleDELETE(request: Request) {
 async function handlePATCH(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers })
   noteLogUser(session?.user?.id)
-  if (!session?.user) return NextResponse.json({ error: 'authRequired' }, { status: 401 })
-  if (!sameOrigin(request)) return NextResponse.json({ error: 'originNotAllowed' }, { status: 403 })
+  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401 })
+  if (!sameOrigin(request)) return RouteResponse.json({ error: 'originNotAllowed' }, { status: 403 })
   const parsed = accountUpdateSchema.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return NextResponse.json({ error: 'invalidIntegration' }, { status: 400 })
+  if (!parsed.success) return RouteResponse.json({ error: 'invalidIntegration' }, { status: 400 })
   const composio = getComposio()
-  if (!composio) return NextResponse.json({ error: 'composioNotConfigured' }, { status: 503 })
+  if (!composio) return RouteResponse.json({ error: 'composioNotConfigured' }, { status: 503 })
   try {
     const account = await findOwnAccount(composio, session.user.id, parsed.data.accountId)
-    if (!account) return NextResponse.json({ error: 'integrationNotFound' }, { status: 404 })
+    if (!account) return RouteResponse.json({ error: 'integrationNotFound' }, { status: 404 })
     if ('enabled' in parsed.data) {
       if (parsed.data.enabled) await composio.connectedAccounts.enable(account.id)
       else await composio.connectedAccounts.disable(account.id)
@@ -142,13 +142,13 @@ async function handlePATCH(request: Request) {
       try {
         await renameComposioAccount(composio, account.id, parsed.data.alias)
       } catch (error) {
-        if (isDuplicateAliasError(error)) return NextResponse.json({ error: 'aliasTaken' }, { status: 409 })
+        if (isDuplicateAliasError(error)) return RouteResponse.json({ error: 'aliasTaken' }, { status: 409 })
         throw error
       }
     }
     return new Response(null, { status: 204 })
   } catch {
-    return NextResponse.json({ error: 'integrationUpdateFailed' }, { status: 502 })
+    return RouteResponse.json({ error: 'integrationUpdateFailed' }, { status: 502 })
   }
 }
 

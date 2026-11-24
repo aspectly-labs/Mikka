@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
@@ -9,7 +9,7 @@ import { resolveThreadBrowserViewer } from '@/lib/cloud-computer/subagent-browse
  * on the thread's managed Chromium (#2940). A fresh POST per open keeps the
  * token's two-minute life off the wire. */
 export async function POST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const respond = (body: unknown, status: number) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return respond({ error: 'authRequired' }, 401)

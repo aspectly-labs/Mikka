@@ -1,6 +1,7 @@
 import Negotiator from 'negotiator'
 import { match } from '@formatjs/intl-localematcher'
 import { parseRequestCookies } from '../src/request-cookies.mjs'
+import { localeCookies, localeCookiesCurrent, storedLocale } from '../../../i18n/locale-cookie.mjs'
 
 export const baseSecurityHeaders = {
   'x-content-type-options': 'nosniff',
@@ -90,11 +91,15 @@ export function pageRedirect(request, { production = process.env.NODE_ENV === 'p
   }
 }
 
-/** @returns {{locale:'en'|'zh-CN', redirect?:Response, cookie?:string}} */
+/** A document response keeps the locale cookies in step with the page it
+ * serves, and sends Set-Cookie only when one of them is missing or holds
+ * another value. Which names are written is the migration phase's choice
+ * (i18n/locale-cookie.mjs).
+ * @returns {{locale:'en'|'zh-CN', redirect?:Response, cookies?:string[]}} */
 export function localizePage(request) {
   const url = new URL(request.url), explicit = /^\/mikka\/(en|zh-CN)(?=\/|$)/.exec(url.pathname)?.[1]
-  const cookie = parseRequestCookies(request.headers.get('cookie')).get('NEXT_LOCALE')
-  let locale = explicit ?? (cookie === 'en' || cookie === 'zh-CN' ? cookie : undefined)
+  const cookies = parseRequestCookies(request.headers.get('cookie'))
+  let locale = explicit ?? storedLocale(name => cookies.get(name))
   if (!locale) {
     try { locale = match(new Negotiator({ headers: { 'accept-language': request.headers.get('accept-language') ?? '' } }).languages().filter(value => value !== '*'), ['zh-CN', 'en'], 'zh-CN') }
     catch { locale = 'zh-CN' }
@@ -103,8 +108,8 @@ export function localizePage(request) {
   let destination
   if (explicit === 'zh-CN') destination = url.pathname.replace(/^\/mikka\/zh-CN/, '/mikka')
   else if (!explicit && locale === 'en') destination = url.pathname.replace(/^\/mikka/, '/mikka/en')
-  const document = request.headers.get('sec-fetch-dest')
-  const result = { locale, ...(document === 'document' && cookie !== locale ? { cookie: `NEXT_LOCALE=${locale}; Max-Age=31536000; Path=/mikka; SameSite=Lax` } : {}) }
+  const update = request.headers.get('sec-fetch-dest') === 'document' && !localeCookiesCurrent(name => cookies.get(name), locale)
+  const result = { locale, ...(update ? { cookies: localeCookies(locale) } : {}) }
   if (destination) { url.pathname = destination; return { ...result, redirect: new Response(null, { status: 307, headers: { location: url.href } }) } }
   return result
 }
@@ -116,11 +121,12 @@ export async function pageResponse(request, render, options = {}) {
   if (!isPagePath(path)) return applySecurityHeaders(request, new Response(null, { status: 404 }))
   if (!['GET', 'HEAD'].includes(request.method)) return applySecurityHeaders(request, new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } }))
   const localized = localizePage(request)
-  const headers = { 'cache-control': 'no-store', vary: 'Accept-Language, Cookie', ...(localized.cookie ? { 'set-cookie': localized.cookie } : {}) }
-  if (localized.redirect) {
-    for (const [key, value] of Object.entries(headers)) localized.redirect.headers.set(key, value)
-    return applySecurityHeaders(request, localized.redirect)
+  const documentHeaders = headers => {
+    headers.set('cache-control', 'no-store'); headers.set('vary', 'Accept-Language, Cookie')
+    for (const cookie of localized.cookies ?? []) headers.append('set-cookie', cookie)
+    return headers
   }
+  if (localized.redirect) { documentHeaders(localized.redirect.headers); return applySecurityHeaders(request, localized.redirect) }
   const html = request.method === 'HEAD' ? null : (await render()).replace(/<html\b[^>]*\blang="[^"]*"/, `<html lang="${localized.locale}"`)
-  return applySecurityHeaders(request, new Response(html, { headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } }))
+  return applySecurityHeaders(request, new Response(html, { headers: documentHeaders(new Headers({ 'content-type': 'text/html; charset=utf-8' })) }))
 }

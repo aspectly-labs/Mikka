@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 
 import { db } from '@/lib/db'
 import { desktopAuthRequests } from '@/lib/db/schema'
@@ -15,19 +15,19 @@ import { withRequestLog } from '@/lib/request-log'
  * only the holder of the verifier can trade the result for a token (/exchange).
  */
 async function handlePOST(request: Request) {
-  if (!desktopSameOriginRequest(request)) return new NextResponse(null, { status: 403 })
+  if (!desktopSameOriginRequest(request)) return new RouteResponse(null, { status: 403 })
 
   let body: unknown
   try {
     body = await request.json()
   } catch {
-    return NextResponse.json({ error: 'invalidRequest' }, { status: 400 })
+    return RouteResponse.json({ error: 'invalidRequest' }, { status: 400 })
   }
   const value = body && typeof body === 'object' ? body as Record<string, unknown> : {}
   const state = desktopAuthState(value.state)
   const callback = desktopLoopbackCallback(value.callback)
   const challenge = desktopAuthChallenge(value.challenge)
-  if (!state || !callback || !challenge) return NextResponse.json({ error: 'invalidRequest' }, { status: 400 })
+  if (!state || !callback || !challenge) return RouteResponse.json({ error: 'invalidRequest' }, { status: 400 })
 
   const result = await db.insert(desktopAuthRequests).values({
     stateHash: sha256Hex(state),
@@ -35,8 +35,8 @@ async function handlePOST(request: Request) {
     codeChallenge: challenge,
     expiresAt: new Date(Date.now() + DESKTOP_AUTH_PENDING_TTL_MS),
   }).onConflictDoNothing()
-  if (!result.rowCount) return NextResponse.json({ error: 'stateUnavailable' }, { status: 409 })
-  return new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+  if (!result.rowCount) return RouteResponse.json({ error: 'stateUnavailable' }, { status: 409 })
+  return new RouteResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
 }
 
 export const POST = withRequestLog('/api/desktop/begin', handlePOST)

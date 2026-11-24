@@ -1,5 +1,5 @@
 import 'server-only'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { z } from 'zod'
 import { start } from 'workflow/api'
@@ -12,7 +12,7 @@ import { SubagentStore } from './subagents'
 import { webSubagentWorkflow } from '@/workflows/subagent/workflow'
 const headers = { 'Cache-Control': 'private, no-store' }
 export async function subagentRoute(request: Request, botId: string, id?: string, action?: 'viewer' | 'stop') {
-  const response = (body: unknown, status = 200) => NextResponse.json(body, { status, headers })
+  const response = (body: unknown, status = 200) => RouteResponse.json(body, { status, headers })
   try {
     const session = await auth.api.getSession({ headers: request.headers })
     if (!session?.user) return response({ error: 'authRequired' }, 401)

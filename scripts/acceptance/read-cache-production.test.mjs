@@ -320,7 +320,7 @@ test('after discovery the business reads are pinned to the release that publishe
 
 test('page discovery cookies accompany later chunks, actions, Settings and sign-out', async () => {
   const f = fixture({ responseCookies: ({ url, method }) => url.pathname === '/mikka' && method === 'GET'
-    ? ['NEXT_LOCALE=zh-CN; Path=/mikka; Secure; SameSite=Lax'] : [] })
+    ? ['mikka-locale=zh-CN; Path=/mikka; Secure; SameSite=Lax'] : [] })
   const report = await f.run()
   assert.equal(report.status, 'pass'); assert.equal(report.sessionClosed, true)
   const landing = f.calls.findIndex(call => call.path === '/mikka' && call.method === 'GET')
@@ -329,11 +329,11 @@ test('page discovery cookies accompany later chunks, actions, Settings and sign-
   for (const path of ['/mikka/settings?section=preferences', '/mikka/renderer-manifest.json', '/mikka/api/rpc',
     '/mikka/api/settings/issue-prefix', '/mikka/api/auth/sign-out']) assert.ok(later.some(call => call.path === path), path)
   for (const call of later) {
-    assert.equal(requestCookies(call.cookie).get('NEXT_LOCALE'), 'zh-CN', call.path)
+    assert.equal(requestCookies(call.cookie).get('mikka-locale'), 'zh-CN', call.path)
     assert.equal(requestCookies(call.cookie).get('better-auth.session_token'), COOKIE, call.path)
   }
   assert.equal(report.reads.length, 28)
-  assert.equal(JSON.stringify(report).includes('NEXT_LOCALE'), false)
+  assert.equal(JSON.stringify(report).includes('mikka-locale'), false)
 })
 
 test('response cookies replace the session and nonce, expire, and use Max-Age before Expires', async () => {

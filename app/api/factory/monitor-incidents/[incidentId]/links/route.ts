@@ -1,6 +1,6 @@
 import { factoryHumanWorkspaceResponse } from '@/lib/factory/workspace-http'
 import { factoryBrowserSession } from '@/lib/factory/browser-human'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/api-auth'
 import { FactoryError } from '@/lib/factory/contract'
 import { factoryMonitorIssueLinks } from '@/lib/factory/server'
@@ -9,22 +9,22 @@ import { GitHubAccessError } from '@/lib/github/user-access'
 const headers={'Cache-Control':'private, no-store'}
 async function respond(request:Request,{params}:{params:Promise<{incidentId:string}>}){
   const session=await factoryBrowserSession(request, nativeHeaders => auth.api.getSession({headers:nativeHeaders,query:{disableCookieCache:true}}))
-  if(!session?.user)return NextResponse.json({error:'authRequired'},{status:401,headers})
-  if(request.method==='POST'&&request.headers.get('origin')!==new URL(request.url).origin)return NextResponse.json({error:'originRejected'},{status:403,headers})
+  if(!session?.user)return RouteResponse.json({error:'authRequired'},{status:401,headers})
+  if(request.method==='POST'&&request.headers.get('origin')!==new URL(request.url).origin)return RouteResponse.json({error:'originRejected'},{status:403,headers})
   return factoryHumanWorkspaceResponse(session.user, async () => {
     try{
       const {incidentId}=await params
       const result=request.method==='POST'
         ?await factoryMonitorIssueLinks.linkGitHub(session.user.id,incidentId,request.headers,await request.json().catch(()=>null))
         :await factoryMonitorIssueLinks.read(session.user.id,incidentId)
-      return NextResponse.json(result,{headers})
+      return RouteResponse.json(result,{headers})
     }catch(error){
-      if(error instanceof GitHubAccessError)return NextResponse.json({error:error.code},{status:error.status,headers})
+      if(error instanceof GitHubAccessError)return RouteResponse.json({error:error.code},{status:error.status,headers})
       if(error instanceof FactoryError){
         const status=error.code==='factoryNotFound'?404:error.code==='factoryInvalid'?422:409
-        return NextResponse.json({error:error.code},{status,headers})
+        return RouteResponse.json({error:error.code},{status,headers})
       }
-      return NextResponse.json({error:'factoryUnavailable'},{status:503,headers})
+      return RouteResponse.json({error:'factoryUnavailable'},{status:503,headers})
     }
   });
 

@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { pool } from '@/lib/db'
 import { getApiSession } from '@/lib/api-auth'
@@ -31,13 +31,13 @@ async function startedSuggestions(userId: string, ids: string[]) {
  */
 export async function GET(request: Request) {
   const user = (await getApiSession({ headers: request.headers }))?.user
-  if (!user) return NextResponse.json({ error: 'authRequired' }, { status: 401, headers })
+  if (!user) return RouteResponse.json({ error: 'authRequired' }, { status: 401, headers })
   // `count=1`, the count on 收件箱: how many cards the list shows, read only. No briefing written, no Coordinator
   // woken, no trigger, zone or locale saved: a count shown on every page must change nothing.
   if (new URL(request.url).searchParams.get('count') === '1') {
     const items = await listSuggestions(user.id)
     const started = await startedSuggestions(user.id, items.map(item => item.id))
-    return NextResponse.json({ count: items.filter(item => !started.has(item.id)).length }, { headers })
+    return RouteResponse.json({ count: items.filter(item => !started.has(item.id)).length }, { headers })
   }
   // Hobby cron runs once a day, so opening the list is when a missing trigger gets re-created.
   afterJob('after:composio-triggers', async () => {
@@ -66,7 +66,7 @@ export async function GET(request: Request) {
   const groups = new Map<SuggestionSource, typeof items>()
   for (const item of items) if (!execution.has(item.id)) groups.set(item.source, [...groups.get(item.source) ?? [], item])
   const view = (item: (typeof items)[number]) => ({ id: item.id, source: item.source, action: item.action, title: item.title, actionTitle: item.actionTitle, url: item.url, actor: item.actor, required: item.required, occurredAt: item.occurredAt })
-  return NextResponse.json({
+  return RouteResponse.json({
     inProgress: items.filter(item => ['starting', 'running'].includes(execution.get(item.id)?.status)).map(item => ({ ...view(item), state: execution.get(item.id)?.status, runId: execution.get(item.id)?.runId, subagentId: execution.get(item.id)?.subagentId })),
     groups: [...groups].map(([source, list]) => ({ source, items: list.map(view) })),
   }, { headers })

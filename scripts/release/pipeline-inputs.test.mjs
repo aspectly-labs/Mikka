@@ -68,13 +68,16 @@ test('merge queue provenance is accepted only on automatic main runs with both b
   assert.throws(() => checkedRun({ ...original, path: producer, event: 'workflow_dispatch' }, producer, { event: 'push' }))
 })
 
-test('merge queue identity cannot select a manual stage, rollback or production promotion', async () => {
+test('merge queue identity cannot select a manual stage or rollback, and an unknown actor cannot promote', async () => {
   const env = { GITHUB_REPOSITORY: repo.full_name, GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963',
     GITHUB_REF: 'refs/heads/main', GITHUB_ACTOR_ID: '118344674', GITHUB_ACTOR: 'github-merge-queue[bot]' }
   const api = async () => assert.fail('Untrusted selection must not read GitHub')
   for (const phase of ['pipeline-stage', 'pipeline-rollback'])
     await assert.rejects(selectPipeline({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_dispatch', MIKKA_DEPLOYMENT_PHASE: phase }, api }))
-  await assert.rejects(selectPromotion({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_run' }, api }))
+  await assert.rejects(selectPromotion({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_run', GITHUB_ACTOR_ID: '1', GITHUB_ACTOR: 'someone' }, api }),
+    /pipeline_actor_untrusted/)
+  await assert.rejects(selectPromotion({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_run', GITHUB_ACTOR: 'other-bot' }, api }),
+    /pipeline_actor_untrusted/)
 })
 
 test('failed builds, fork PRs, branches and different actors never become deployable candidates', () => {
@@ -152,6 +155,43 @@ test('a rerun that fails before its writer cannot hide an earlier partial deploy
     assert.deepEqual(prior.summary, summary)
     assert.throws(() => baselineOrigin(prior.summary), /requires_recovery/)
     assert.equal(calls.some(path => path.includes('/attempts/2/jobs?')), currentRun !== '101')
+  }
+})
+
+test('a Deploy step that failed before its first receipt is skipped, but a printed summary still blocks', async () => {
+  const zip = members => execFileSync('python3', ['-c',
+    'import io,sys,json,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z:\n  for k,v in json.loads(sys.argv[1]).items(): z.writestr(k,v)\nsys.stdout.buffer.write(b.getvalue())',
+    JSON.stringify(members)])
+  const failed = { ...run(), id: 202, path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_run', conclusion: 'failure', run_attempt: 1 }
+  const older = { ...failed, id: 201 }
+  const summary = { version: 1, target: 'staging', status: 'failed', rollback: { status: 'passed' }, previousOrigin: null,
+    deployment: { runId: '201', runAttempt: '1' }, origin: { runId: '100', runAttempt: '1', artifactId: '299' } }
+  const empty = zip({ 'release-manifest.json': JSON.stringify(manifestFixture()) })
+  const full = zip({ 'pipeline-summary.json': JSON.stringify(summary) })
+  const artifactOf = (id, runId, bytes) => ({ id, name: `deploy-pipeline-${runId}-1`, expired: false, size_in_bytes: bytes.length,
+    digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
+    workflow_run: { id: runId, head_sha: source, head_branch: 'main', repository_id: repo.id, head_repository_id: repo.id } })
+  for (const printed of [false, true]) {
+    const api = async path => {
+      if (path.includes('actions/workflows/')) return { total_count: 2, workflow_runs: [failed, older] }
+      const id = path.includes('/runs/202/') ? 202 : 201
+      if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: id + 300, name: 'pipeline', status: 'completed',
+        conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'failure' }] }] }
+      if (path.includes('/runs/202/artifacts?')) return { total_count: 1, artifacts: [artifactOf(402, 202, empty)] }
+      if (path.includes('/runs/201/artifacts?')) return { total_count: 1, artifacts: [artifactOf(401, 201, full)] }
+      if (path.endsWith('/artifacts/402/zip')) return empty
+      if (path.endsWith('/artifacts/401/zip')) return full
+      if (path.endsWith('/jobs/502/logs')) return Buffer.from((printed ? 'MIKKA_DEPLOYMENT_PIPELINE={}\n' : '')
+        + 'Artifact deploy-pipeline-202-1.zip successfully finalized.\nArtifact ID 402')
+      if (path.endsWith('/jobs/501/logs')) return Buffer.from('Artifact deploy-pipeline-201-1.zip successfully finalized.\nArtifact ID 401')
+      assert.fail('Unexpected metadata request: ' + path)
+    }
+    if (printed) await assert.rejects(priorDeployment(api, '300'), /pipeline_deployment_summary_missing/)
+    else {
+      const prior = await priorDeployment(api, '300')
+      assert.equal(prior.run.id, 201)
+      assert.equal(baselineOrigin(prior.summary), null)
+    }
   }
 })
 
@@ -250,7 +290,7 @@ test('automatic, manual staging and production candidate selection require migra
   assert.equal(valid.calls.length, 4)
 })
 
-test('owner promotion scans bot staging history without granting the bot production authority', async t => {
+test('promotion by the owner or the merge queue scans staging history and selects the staged release', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'mikka-promotion-history-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const env = { GITHUB_REPOSITORY: repo.full_name, GITHUB_REPOSITORY_ID: String(repo.id), GITHUB_REPOSITORY_OWNER_ID: '183887963',
@@ -296,8 +336,11 @@ test('owner promotion scans bot staging history without granting the bot product
     assert.equal(result.status, 'selected')
     assert.equal(result.source, source)
     assert.equal(scanned, true)
-    await assert.rejects(selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login },
-      api: async () => assert.fail('Bot promotion must fail before reading GitHub') }))
+    scanned = false
+    const queued = await selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login }, api })
+    assert.equal(queued.status, 'selected')
+    assert.equal(queued.source, source)
+    assert.equal(scanned, true)
   }
 })
 

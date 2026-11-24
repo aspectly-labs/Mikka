@@ -79,7 +79,7 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
     }},
     '@/lib/cloud-computer-flag':{cloudComputerTasksEnabled:()=>true},
     '@/lib/background':{afterJob:()=>{calls.push('wakeScheduled')}},
-    '@/lib/server-runtime/server':{NextResponse:class extends Response {static json(body:unknown,init?:ResponseInit){return Response.json(body,init)}}},
+    '@/lib/server-runtime/server':{RouteResponse:class extends Response {static json(body:unknown,init?:ResponseInit){return Response.json(body,init)}}},
     'drizzle-orm':{and:(...args:unknown[])=>args,eq:(...args:unknown[])=>args,isNull:(value:unknown)=>value},
     '@mikka/protocol/coded-error':codedErrorProtocol,
     '@mikka/protocol/device':deviceProtocol,

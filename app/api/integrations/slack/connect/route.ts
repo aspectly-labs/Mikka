@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
 import { pool } from '@/lib/db'
@@ -13,19 +13,19 @@ async function handle(request: Request) {
     intent = url.searchParams.get('intent') ?? ''
   const platform = installPlatform()
   const back = new URL(SLACK_INSTALL_RETURN_PATH, url.origin)
-  if (!platform || !/^[A-Za-z0-9_-]{43}$/.test(intent)) return NextResponse.redirect(back)
+  if (!platform || !/^[A-Za-z0-9_-]{43}$/.test(intent)) return RouteResponse.redirect(back)
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session?.user) {
     const next = path + '?intent=' + encodeURIComponent(intent)
-    return NextResponse.redirect(new URL(withBasePath('/sign-in?next=' + encodeURIComponent(next)), url.origin))
+    return RouteResponse.redirect(new URL(withBasePath('/sign-in?next=' + encodeURIComponent(next)), url.origin))
   }
   try {
     const workspace = await consumeInstall(pool, session.user.id, intent, 'handoff')
-    if (!workspace) return NextResponse.redirect(back)
+    if (!workspace) return RouteResponse.redirect(back)
     const state = await withTaskWorkspace(session.user, workspace, () =>
       startInstall(pool, session.user.id, workspace, 'oauth'),
     )
-    const response = NextResponse.redirect(authorizeSlack(platform, state))
+    const response = RouteResponse.redirect(authorizeSlack(platform, state))
     response.cookies.set(SLACK_STATE_COOKIE, state, {
       httpOnly: true,
       secure: new URL(platform.redirect).protocol === 'https:',
@@ -37,7 +37,7 @@ async function handle(request: Request) {
     response.headers.set('Referrer-Policy', 'no-referrer')
     return response
   } catch {
-    return NextResponse.redirect(back)
+    return RouteResponse.redirect(back)
   }
 }
 export const GET = withRequestLog(path, handle)
