@@ -4,15 +4,18 @@ import { Tabs } from 'expo-router/js-tabs'
 import { NativeTabs } from 'expo-router/native-tabs'
 import { Bot, Lightbulb, ListChecks, Search, UserCircle } from 'lucide-react-native'
 import { colors } from '@/lib/theme'
+import { SidebarDrawer } from '@/features/shell/components/sidebar'
 
 /**
  * The app's places, as the system's tab bar with Liquid Glass: Bot, 任务, 建议 and 设置, then the system search tab
  * (decisions/2026-11-07-2045-tasks-only-threads-inside.md; no 线程 tab, threads open inside their task). A chat, a
  * task and a thread open over the tabs, so the tab bar goes away there. The tabs carry no badges (Alex 2026-11-06).
+ * With 设置 › 试用侧边栏 on, the bot sidebar wraps the tabs (features/shell/components/sidebar.tsx); off, nothing changes.
  */
 export default function TabsLayout() {
   if (Platform.OS === 'web') return <WebTabs />
   return (
+    <SidebarDrawer>
     <NativeTabs>
       <NativeTabs.Trigger name="(chats)">
         {/* SF Symbols has no robot: lucide's bot as a template image, so the system tints it like the others. */}
@@ -35,6 +38,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Label>{mobileMessages.Common.search}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>
+    </SidebarDrawer>
   )
 }
 

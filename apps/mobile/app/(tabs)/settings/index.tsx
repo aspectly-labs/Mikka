@@ -9,7 +9,7 @@ import { Spinner } from '@/components/icons'
 import { NavBar, underBar } from '@/components/NavBar'
 import { PushRow } from '@/components/PushRow'
 import { PreferenceSaveNotice } from '@/components/PreferenceSaveNotice'
-import { Avatar, Row } from '@/components/settings'
+import { Avatar, Row, ToggleRow } from '@/components/settings'
 import { Symbol, type SymbolName } from '@/components/Symbol'
 import { Text } from '@/components/Text'
 import { Group } from '@/components/ui'
@@ -18,6 +18,7 @@ import { clearApiCache } from '@/lib/useApi'
 import { usePluginConnections } from '@/features/plugins/use-plugin-connections'
 import { useSettings } from '@/lib/settings'
 import { versionLabel } from '@/lib/updates'
+import { setSidebarTrial, useSidebarTrial } from '@/lib/sidebar-trial'
 import { colors } from '@/lib/theme'
 import { currentAccount, servers } from '@/lib/config'
 import { serverCopy } from '@/lib/server-copy'
@@ -45,6 +46,7 @@ export default function SettingsScreen() {
   const leaving = useRef(false)
   const [signingOut, setSigningOut] = useState(false)
   const [signOutFailed, setSignOutFailed] = useState(false)
+  const sidebarTrial = useSidebarTrial()
   const signOut = async () => {
     if (leaving.current) return
     leaving.current = true; setSigningOut(true); setSignOutFailed(false)
@@ -98,6 +100,9 @@ export default function SettingsScreen() {
             <Row icon={icon('info.circle.fill', Info, '#8E8E93')} label="版本" value={versionLabel()} trailing={null} />
             <Row icon={icon('hand.raised.fill', Hand, '#5856D6')} label={messages.Common.privacyPolicy} onPress={() => void openPrivacyPolicy()} />
           </Group>
+          {Platform.OS === 'web' ? null : <Group>
+            <ToggleRow label="试用侧边栏" value={sidebarTrial} onChange={setSidebarTrial} />
+          </Group>}
           <Group>
             <Row label={signingOut ? "正在退出登录" : "退出登录"} disabled={signingOut} destructive onPress={confirmSignOut} />
           </Group>
