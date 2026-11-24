@@ -1,72 +1,81 @@
 # Brand: the Mikka mark
 
-Mikka has one mark: an M drawn on a 5×5 dot grid. The 13 dots that form the M
-are solid. The other 12 are ghosts at low opacity. This page says where the
-mark goes, how big it is, and what color it takes.
+Mikka has one mark: a geometric ribbon M built on an exact 3:2 grid (Figma
+`12Yn4bNPchBdDvdIb83KER`, nodes `1:127`, `1:128`, `1:154`;
+[decision 2026-11-24-2235](decisions/2026-11-24-2235-new-mikka-ribbon-mark.md)).
+The previous 5×5 dot-grid M is retired and deleted. This page says where the
+mark goes, its exact vector coordinates, how big it is, and what color it takes.
+
+## Canonical vector coordinates
+
+Do not redraw or approximate the path:
+
+- **Pure 3:2 mark** (`viewBox="0 0 630 420"`):
+  `M0 0H210V210L0 420V0ZM210 210L420 0H630V420L420 210L210 420V210Z`
+- **Inline square UI mark** (`viewBox="0 0 24 24"`, exact 3:2 integer coordinates at `x=3, y=6, w=18, h=12`):
+  `M3 6H9V12L3 18V6ZM9 12L15 6H21V18L15 12L9 18V12Z`
+- **1024×1024 App Icon master** (`viewBox="0 0 1024 1024"`, mark at `x=197, y=320, w=630, h=420`):
+  `M197 320H407V530L197 740V320ZM407 530L617 320H827V740L617 530L407 740V530Z`
 
 ## Assets
 
 | File | Use |
 | --- | --- |
-| `public/brand/mikka-icon-light.svg` | Black mark for light backgrounds, 1024×1024 with padding. |
-| `public/brand/mikka-icon-dark.svg` | White mark for dark backgrounds, 1024×1024 with padding. |
-| `public/brand/mikka-app-icon-{48,96,192}.png` | Approved black app icon for browser tabs, matching the website. |
-| `public/favicon.ico` | Browser fallback, with 16px, 32px and 48px sizes. |
-| `public/apple-icon.png` | 180px home-screen icon, matching the website. |
+| `public/brand/mikka-icon-light.svg` | `#080808` ribbon mark for light backgrounds (README, docs), `1024×1024` transparent canvas with Figma `1:127` padding. |
+| `public/brand/mikka-icon-dark.svg` | `#FFFFFF` ribbon mark for dark backgrounds (README, docs), `1024×1024` transparent canvas with Figma `1:127` padding. |
+| `public/brand/mikka-app-icon-{48,96,192}.png` | Default `#FFFFFF` tile with `#080808` mark for browser tabs. |
+| `public/favicon.ico` | Browser fallback with `16px`, `32px`, and `48px` sizes. |
+| `public/apple-icon.png` / `app/apple-icon.png` | `180px` unmasked `#FFFFFF` / `#080808` home-screen icon. |
+| `app/icon.svg` | Canonical theme-switching inline square SVG (`viewBox="0 0 24 24"`, `#080808` light / `#FFFFFF` dark). |
+| `apps/mobile/assets/icon.icon/` & `apps/desktop/build/icon.icon/` | Byte-identical Apple Icon Composer bundle (`Assets/mark.svg` + `icon.json` `fill-specializations`: Default `#FFFFFF`/`#080808`, Dark `#1C1C1E`/`#FFFFFF`, Tinted/Clear `#FFFFFF`). |
+| `apps/mobile/assets/icon.png` & `apps/desktop/build/icon.png` | `1024×1024` unmasked opaque RGB Default master (`#FFFFFF` background, `#080808` mark). |
 
-The `public/brand/mikka-icon-*.svg` files leave a wide margin around the dots, so a 28px
-`<img>` shows a mark only about 16px tall. In product UI, inline the SVG with
-its viewBox cropped to the dots (`19.2 19.2 61.6 61.6`, as in `components/brand/mikka-mark.tsx`).
-Then the size you set is the size people see.
-
-Browser and home-screen icons use the approved black PNG artwork in both
-themes ([decision](decisions/2026-11-12-0449-browser-app-icon.md)). Vite copies
-these files from `public/`; the app shell declares them under `/mikka/`.
+In product UI, inline the SVG using the `viewBox="0 0 24 24"` square path (or
+the pure `0 0 630 420` path when laying out at 3:2) instead of rendering the
+`1024×1024` padded files inside small `<img>` boxes. Vite copies the browser
+and home-screen assets from `public/`; the app shell declares them under
+`/mikka/`.
 
 ## Color
 
-- In product UI, solid dots use `fill="currentColor"`, so the mark takes the text color
-  and switches with the light/dark theme on its own. Don't ship two images
-  swapped with `dark:hidden`.
-- Ghost dots are the same color at 10% opacity.
-- The mark is never tinted with an accent color, given a gradient, or given
-  a shadow.
+- **Default (Light) App Icon**: canvas `#FFFFFF`, mark `#080808`.
+- **Dark App Icon**: canvas `#1C1C1E`, mark `#FFFFFF`.
+- **Tinted / Clear App Icon**: monochrome `#FFFFFF` glass mark.
+- **Product UI**: use `fill="currentColor"` so the mark inherits text color and
+  switches automatically between Light and Dark themes. Do not ship two bitmap
+  or SVG images toggled with `dark:hidden`.
+- Never tint the inline mark with an accent color, gradient, or drop shadow.
 
 ## Sizes
 
-Sizes are the visible size of the dot grid, not the `<img>` box. Inside a
-paid block's logo slot (for example the hosted sign-in card) the block's own
-size and placement win ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+Inside a paid block's logo slot (for example the hosted sign-in card) the
+block's own size and placement win
+([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
 
 | Placement | Size | Notes |
 | --- | --- | --- |
-| Bot list header (top left) | 28px | Mark only, no "Mikka" wordmark. Same height as the header's `+` button (`h-7`). |
+| Bot list / rail header (top left) | 28px | Mark only, no "Mikka" wordmark. Same height as the header's `+` button (`h-7`). |
 | Sign-in / sign-up (`auth-logo.tsx`) | 24px | Mark plus "Mikka" in `text-lg font-semibold`, gap 10px (`gap-2.5`). |
-| Native sign-in (`SignIn.tsx`) | 56pt | Dot-grid mark above the existing 30pt "Mikka" wordmark, gap 12pt. |
+| Native sign-in (`SignIn.tsx`) | 56pt | Geometric ribbon mark (`apps/mobile/components/MikkaMark.tsx`) above the 30pt "Mikka" wordmark, gap 12pt. |
 | Onboarding welcome | 56px | Mark only, centered above the "欢迎来到 Mikka" title. |
-| Browser tab | 16 / 32 / 48px | ICO fallback and PNG sizes 48, 96 and 192px. |
-
-Below 16px the ghost dots blur into a grey square, so drop them and draw only
-the solid dots.
+| Browser tab | 16 / 32 / 48px | ICO fallback and PNG sizes 48, 96, and 192px. |
 
 ## Implementation status
 
-`components/brand/mikka-mark.tsx` implements the cropped, inherited-colour
-mark at 28px and drops ghost dots in its 12px variant.
-`apps/mobile/components/MikkaMark.tsx` renders the same 13 solid and 12 ghost
-dots for native sign-in, using the dynamic text colour and its existing 56pt frame.
-The public
-`components/blocks/auth-19/components/auth-logo.tsx` still renders the two
-padded image assets at 28px, so its visible mark differs from the 24px
-placement above. The implemented onboarding in
-`components/onboarding/onboarding.tsx` uses the new Bot's avatar on its
-welcome step. Check those source paths when changing these placements;
-the measurements above record the brand requirements.
+- Public `apps/mobile/components/MikkaMark.tsx` renders the canonical
+  `viewBox="0 0 24 24"` ribbon path using `react-native-svg` (`Path`) and
+  dynamic `colors.text` at 56pt; `apps/mobile/tests/mikka-mark.test.mts`
+  verifies parity with `app/icon.svg` and the `icon.icon` bundles.
+- Official Web and Mobile-Next mark components live in `mikka-hosted-ui`
+  (`components/mikka/brand-mark.tsx`, `core/components/brand/mikka-mark.tsx`,
+  `mobile-next/apps/mobile/src/components/BrandMark.tsx`) and share the exact
+  same Figma `12Yn4bNPchBdDvdIb83KER` vector coordinates and `icon.icon` bundle.
 
 ## Clear space
 
-Keep at least one dot pitch of empty space around the mark: 1/5 of its size,
-which is about 6px at 28px. No button, text or edge goes inside that space.
+Keep at least 25% of the mark's height as clear space on all sides (matching
+the 18×12 mark inside the 24×24 square box). No button, text, or edge enters
+that space.
 
 ## Wordmark
 

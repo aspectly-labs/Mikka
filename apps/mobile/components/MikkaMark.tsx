@@ -1,29 +1,13 @@
-import { Circle, G, Svg } from 'react-native-svg'
+import { Path, Svg } from 'react-native-svg'
 import { colors } from '@/lib/theme'
 
-// Canonical dot-grid M from components/brand/mikka-mark.tsx and docs/design/brand.md.
-const SOLID = [
-  [26, 26], [74, 26],
-  [26, 38], [38, 38], [62, 38], [74, 38],
-  [26, 50], [50, 50], [74, 50],
-  [26, 62], [74, 62],
-  [26, 74], [74, 74],
-]
-const GHOST = [
-  [38, 26], [50, 26], [62, 26],
-  [50, 38],
-  [38, 50], [62, 50],
-  [38, 62], [50, 62], [62, 62],
-  [38, 74], [50, 74], [62, 74],
-]
+// Canonical Mikka geometric ribbon M (Figma 12Yn4bNPchBdDvdIb83KER, docs/design/brand.md).
+export const MIKKA_MARK_PATH = 'M3 6H9V12L3 18V6ZM9 12L15 6H21V18L15 12L9 18V12Z'
 
 export function MikkaMark() {
   return (
-    <Svg width={56} height={56} viewBox="19.2 19.2 61.6 61.6" fill={colors.text} accessible={false}>
-      <G opacity={0.1}>
-        {GHOST.map(([cx, cy]) => <Circle key={`${cx}-${cy}`} cx={cx} cy={cy} r={4.8} />)}
-      </G>
-      {SOLID.map(([cx, cy]) => <Circle key={`${cx}-${cy}`} cx={cx} cy={cy} r={4.8} />)}
+    <Svg width={56} height={56} viewBox="0 0 24 24" fill="none" accessible={false}>
+      <Path d={MIKKA_MARK_PATH} fill={colors.text} />
     </Svg>
   )
 }
