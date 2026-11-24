@@ -58,10 +58,11 @@ export async function sessionTokenFor(userId: string, sessionId: string): Promis
 
 /**
  * Before one device is signed out: ends the iPhone refresh credential that
- * keeps it signed in, so no rotation can renew it again, and returns the
- * session's token as it is now (a rotation may have replaced the one read
- * when the list was drawn). Null when the session is gone.
+ * keeps it signed in, so no rotation can renew or replace it again, and
+ * returns the tokens of every session to revoke: this one's as it is now (a
+ * rotation may have renewed it since the list was drawn) and any replacement
+ * a rotation committed meanwhile. Empty when nothing is left.
  */
-export async function endSignedInDevice(userId: string, sessionId: string): Promise<string | null> {
+export async function endSignedInDevice(userId: string, sessionId: string): Promise<string[]> {
   return endMobileRefreshForSession(pool, userId, sessionId)
 }

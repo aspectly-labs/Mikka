@@ -163,9 +163,9 @@ async function revokeSessionBody(sessionId: string): Promise<ActionResult<{ revo
     const { user, session, headers: requestHeaders } = await requireSession()
     if (parsed.data === session.id) throw new ActionFailureError('sessionIsCurrent')
     if (!await sessionTokenFor(user.id, parsed.data)) throw new ActionFailureError('sessionNotFound')
-    // A phone may rotate its session token at any moment: end its refresh credential first, then revoke the token it has now.
-    const token = await endSignedInDevice(user.id, parsed.data)
-    if (token) await auth.api.revokeSession({ body: { token }, headers: requestHeaders })
+    // A phone may rotate its session at any moment: end its refresh credential first, then revoke every
+    // session that credential still backs, by the tokens they have now (a renewed one, or a replacement).
+    for (const token of await endSignedInDevice(user.id, parsed.data)) await auth.api.revokeSession({ body: { token }, headers: requestHeaders })
     return { revoked: true as const }
   })
 }

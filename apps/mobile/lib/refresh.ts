@@ -51,8 +51,10 @@ export const accessKeeper = createAccessKeeper({
   clear: account => SecureStore.deleteItemAsync(key(account)),
   exchange: async account => {
     const answer = await post(account, '/mobile-refresh/exchange', {})
-    const credential = answer?.status === 200 ? issued(answer.data) : null
-    return credential ? { status: 'ok', credential } : { status: 'unavailable' }
+    // No answer, or the server could not answer now: the next request asks again. Any other answer is the server's no.
+    if (!answer || answer.status >= 500 || answer.status === 429) return { status: 'unavailable' }
+    const credential = answer.status === 200 ? issued(answer.data) : null
+    return credential ? { status: 'ok', credential } : { status: 'refused' }
   },
   rotate: async (account, refreshToken): Promise<RotateResult> => {
     const answer = await post(account, '/mobile-refresh/rotate', { refreshToken })
@@ -72,7 +74,7 @@ export const prepareAccess = (account: string) => native() ? accessKeeper.prepar
 /** After a 401 on a request sent at `generation` (see accessGeneration). */
 export const recoverAccess = (account: string, generation: number) => native() ? accessKeeper.recover(account, generation) : Promise.resolve('none' as const)
 export const accessGeneration = (account: string) => accessKeeper.generation(account)
-/** Signed in on this phone: get a refresh credential once per session per launch. */
+/** Signed in on this phone: get a refresh credential once per session per launch (again before a request if it got no answer). */
 export const keepSignedIn = (account: string, userId: string, session: string) => native() ? accessKeeper.ensureExchanged(account, userId, session) : Promise.resolve()
 /** Signing out or losing the session: end the refresh credential too. */
 export const forgetAccess = (account: string) => native() ? accessKeeper.forget(account) : Promise.resolve()

@@ -11,9 +11,11 @@
  * a 5xx or a 404 (a server without these endpoints) leaves the person signed in
  * and today's behaviour in charge.
  *
- * No timers: it runs before a request, after a 401 and when the app returns to
- * the foreground. Pure, with its storage and server calls injected, so it runs
- * under node:test.
+ * No timers and no foreground listener: it runs when the app is signed in,
+ * before a request and after a 401. An exchange that got no answer (an offline
+ * launch) is tried again before the next request, so reconnecting with the
+ * same session is enough. Pure, with its storage and server calls injected, so
+ * it runs under node:test.
  */
 /** What the server issues: the person, the access session it renewed and the next refresh token. */
 export type IssuedCredential = { userId: string; sessionId: string; refreshToken: string; refreshExpiresAt: string; accessExpiresAt: string }
@@ -24,7 +26,8 @@ export type IssuedCredential = { userId: string; sessionId: string; refreshToken
  */
 export type RefreshCredential = IssuedCredential & { bindingSessionId: string }
 export type RotateResult = { status: 'ok'; credential: IssuedCredential } | { status: 'rejected' } | { status: 'unavailable' }
-export type ExchangeResult = { status: 'ok'; credential: IssuedCredential } | { status: 'unavailable' }
+/** `refused`: the server answered no (an organization SSO session, a server without the endpoint); not asked again for that session. */
+export type ExchangeResult = { status: 'ok'; credential: IssuedCredential } | { status: 'refused' } | { status: 'unavailable' }
 /** After a 401: `rotated` replays the request; `rejected` and `none` leave the 401 to the session check; `unavailable` keeps the person signed in. */
 export type Recovery = 'rotated' | 'rejected' | 'none' | 'unavailable'
 export type HeldState = 'unknown' | 'held' | 'none'
@@ -49,8 +52,10 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
   const loading = new Map<string, Promise<RefreshCredential | null>>()
   const rotating = new Map<string, Promise<RotateResult>>()
   const exchanging = new Map<string, Promise<void>>()
-  /** Sessions (account:session) that already tried an exchange in this launch or foreground. */
+  /** Sessions (account:session) that already asked for an exchange in this launch. */
   const exchanged = new Set<string>()
+  /** A signed-in session whose exchange got no answer, tried again before the account's next request. */
+  const unanswered = new Map<string, { userId: string; session: string }>()
   /** Bumped by every successful rotation, so a 401 for a request sent before it just replays. */
   const generations = new Map<string, number>()
   const listeners = new Set<() => void>()
@@ -108,6 +113,24 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
     return work
   }
 
+  function exchange(account: string, userId: string, session: string): Promise<void> {
+    const running = exchanging.get(account)
+    if (running) return running
+    unanswered.delete(account)
+    const work = (async () => {
+      const current = await load(account)
+      if (current?.userId === userId) return
+      // A credential for someone else in this slot is stale; never use it.
+      if (current) await store(account, null)
+      const result = await deps.exchange(account).catch((): ExchangeResult => ({ status: 'unavailable' }))
+      if (credentials.get(account)) return
+      if (result.status === 'unavailable') unanswered.set(account, { userId, session })
+      else if (result.status === 'ok' && result.credential.userId === userId) await store(account, { ...result.credential, bindingSessionId: result.credential.sessionId })
+    })().finally(() => { exchanging.delete(account) })
+    exchanging.set(account, work)
+    return work
+  }
+
   return {
     /** For the sign-in gate: whether this account holds a refresh credential (`unknown` until the keychain answered). */
     held(account: string): HeldState {
@@ -125,10 +148,21 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
       return session === null || session === credential.sessionId || session === credential.bindingSessionId ? credential.bindingSessionId : null
     },
 
-    /** Before a request: renew an access session that is about to end. Never throws, never signs out. */
+    /**
+     * Before a request: renew an access session that is about to end, or ask
+     * again for the exchange an offline launch could not make (in the
+     * background: this request goes out with the cookie either way). Never
+     * throws, never signs out.
+     */
     async prepare(account: string): Promise<void> {
       if (unsaved.has(account)) await persist(account)
       const credential = await load(account)
+      const waiting = credential ? null : unanswered.get(account)
+      if (waiting) {
+        const owner = deps.owner?.(account) ?? null
+        if (owner === null || owner === waiting.userId) void exchange(account, waiting.userId, waiting.session).catch(() => undefined)
+        else unanswered.delete(account)
+      }
       if (!credential || Date.parse(credential.accessExpiresAt) - deps.now() > ROTATE_BEFORE_MS) return
       await rotate(account, credential)
     },
@@ -145,31 +179,21 @@ export function createAccessKeeper(deps: AccessKeeperDeps) {
       return result.status === 'ok' ? 'rotated' : result.status
     },
 
-    /** Signed in without a refresh credential: get one, at most once per session per launch or foreground. */
+    /**
+     * Signed in without a refresh credential: get one, once per session per
+     * launch. Unanswered, the next request asks again (see prepare); refused,
+     * it is not asked again in this launch.
+     */
     async ensureExchanged(account: string, userId: string, session: string): Promise<void> {
       const key = `${account}:${session}`
       if (exchanged.has(key)) return exchanging.get(account)
       exchanged.add(key)
-      const work = (async () => {
-        const current = await load(account)
-        if (current?.userId === userId) return
-        // A credential for someone else in this slot is stale; never use it.
-        if (current) await store(account, null)
-        const result = await deps.exchange(account).catch((): ExchangeResult => ({ status: 'unavailable' }))
-        if (result.status === 'ok' && result.credential.userId === userId && !credentials.get(account)) await store(account, { ...result.credential, bindingSessionId: result.credential.sessionId })
-      })().finally(() => { exchanging.delete(account) })
-      exchanging.set(account, work)
-      return work
-    },
-
-    /** The app came back to the foreground: a new chance to exchange, and renew a session about to end. */
-    foreground(account: string): Promise<void> {
-      for (const key of exchanged) if (key.startsWith(`${account}:`)) exchanged.delete(key)
-      return this.prepare(account)
+      return exchange(account, userId, session)
     },
 
     /** Signing out: the server ends the family (best effort) and the keychain forgets it. */
     async forget(account: string): Promise<void> {
+      unanswered.delete(account)
       const credential = await load(account)
       await store(account, null)
       if (credential) await deps.revoke(account, credential.refreshToken).catch(() => undefined)

@@ -49,7 +49,7 @@ stub('../lib/auth.ts', { auth: { $context: Promise.resolve({ sessionConfig: { fr
 } } })
 stub('../lib/mcp/resource.ts', { appOrigin: 'https://app.example.com' })
 stub('../lib/account/avatar.ts', { saveAvatar: calls.saveAvatar })
-stub('../lib/account/sessions.ts', { listSignedInDevices: calls.listDevices, sessionTokenFor: async (userId: string, id: string) => tokens[`${userId}:${id}`] ?? null, endSignedInDevice: async (userId: string, id: string) => tokens[`${userId}:${id}`] ?? null })
+stub('../lib/account/sessions.ts', { listSignedInDevices: calls.listDevices, sessionTokenFor: async (userId: string, id: string) => tokens[`${userId}:${id}`] ?? null, endSignedInDevice: async (userId: string, id: string) => tokens[`${userId}:${id}`] ? [tokens[`${userId}:${id}`]] : [] })
 stub('../lib/account/export.ts', { EXPORT_LINK_TTL_MS: 86_400_000, reserveExport: calls.reserveExport, releaseExport: calls.releaseExport })
 stub('../lib/account/mail.ts', { accountMailConfigured: () => mailConfigured, sendAccountMail: calls.sendMail })
 stub('../lib/account/shared-links.ts', { listSharedArtifacts: calls.listShared })

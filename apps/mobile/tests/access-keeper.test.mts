@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createAccessKeeper, ROTATE_BEFORE_MS, type AccessKeeperDeps, type IssuedCredential, type RefreshCredential, type RotateResult } from '../lib/access-keeper.ts'
+import { createAccessKeeper, ROTATE_BEFORE_MS, type AccessKeeperDeps, type ExchangeResult, type IssuedCredential, type RefreshCredential, type RotateResult } from '../lib/access-keeper.ts'
 
 const HOUR = 3_600_000
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
@@ -13,7 +13,7 @@ function fixture(stored: Record<string, RefreshCredential | null> = {}, owner?: 
   let failWrites = 0
   const calls = { rotate: [] as string[], exchange: 0, revoke: [] as string[] }
   let answers: (() => Promise<RotateResult>)[] = []
-  let exchangeAnswer: () => Promise<{ status: 'ok'; credential: IssuedCredential } | { status: 'unavailable' }> = async () => ({ status: 'unavailable' })
+  let exchangeAnswer: () => Promise<ExchangeResult> = async () => ({ status: 'unavailable' })
   const deps: AccessKeeperDeps = {
     read: async account => store.get(account) ?? null,
     write: async (account, value) => { if (failWrites > 0) { failWrites--; throw new Error('errSecInteractionNotAllowed') } store.set(account, value) },
@@ -75,23 +75,47 @@ test('an access session about to end is renewed before a request; one with time 
   assert.equal(f.calls.rotate.length, 1)
 })
 
-test('exchange runs once per session until the app comes back to the foreground', async () => {
+test('an offline launch exchanges on the next request once the phone is back online, with the same session', async () => {
   const f = fixture()
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  // Launched offline: the sign-in is there (cached), the server is not.
   f.exchangeWith(async () => ({ status: 'unavailable' }))
   await Promise.all([f.keeper.ensureExchanged('a', 'u1', 's1'), f.keeper.ensureExchanged('a', 'u1', 's1')])
   await f.keeper.ensureExchanged('a', 'u1', 's1')
-  assert.equal(f.calls.exchange, 1, 'a failure is not retried in the same foreground')
-  await f.keeper.foreground('a')
+  assert.equal(f.calls.exchange, 1, 'the sign-in asks once')
+  await f.keeper.prepare('a'); await settle()
+  assert.equal(f.calls.exchange, 2, 'a request made while still offline asks again')
+  // Back online, same session: nothing re-runs the sign-in effect, the next request does.
   f.exchangeWith(async () => ({ status: 'ok', credential: credential(1) }))
-  await f.keeper.ensureExchanged('a', 'u1', 's1')
-  assert.equal(f.calls.exchange, 2)
+  await f.keeper.prepare('a'); await settle()
+  assert.equal(f.calls.exchange, 3)
   assert.equal(f.store.get('a')?.refreshToken, credential(1).refreshToken)
-  await f.keeper.foreground('a')
+  assert.equal(f.keeper.held('a'), 'held')
+  await f.keeper.prepare('a'); await settle()
   await f.keeper.ensureExchanged('a', 'u1', 's1')
-  assert.equal(f.calls.exchange, 2, 'held: no exchange')
-  // A new sign-in in the slot (another session) may exchange at once.
-  await f.keeper.ensureExchanged('a', 'u1', 's2')
-  assert.equal(f.calls.exchange, 2)
+  assert.equal(f.calls.exchange, 3, 'held: no exchange')
+  assert.equal(f.calls.rotate.length, 0, 'a fresh credential is not rotated')
+})
+
+test('an exchange the server refused is not asked again; a sign-out drops an unanswered one', async () => {
+  const f = fixture()
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  f.exchangeWith(async () => ({ status: 'refused' }))
+  await f.keeper.ensureExchanged('a', 'u1', 's1')
+  await f.keeper.prepare('a'); await settle()
+  await f.keeper.ensureExchanged('a', 'u1', 's1')
+  assert.equal(f.calls.exchange, 1, 'an organization SSO session keeps today\'s behaviour without asking on every request')
+  f.exchangeWith(async () => ({ status: 'unavailable' }))
+  await f.keeper.ensureExchanged('b', 'u1', 's1')
+  await f.keeper.forget('b')
+  await f.keeper.prepare('b'); await settle()
+  assert.equal(f.calls.exchange, 2, 'signed out: no exchange for the old sign-in')
+  // Someone else signed in to the slot meanwhile: the unanswered exchange is not theirs to make.
+  const g = fixture({}, 'u2')
+  g.exchangeWith(async () => ({ status: 'unavailable' }))
+  await g.keeper.ensureExchanged('c', 'u1', 's1')
+  await g.keeper.prepare('c'); await settle()
+  assert.equal(g.calls.exchange, 1)
 })
 
 test('a credential for another person in the slot is dropped, never rotated', async () => {

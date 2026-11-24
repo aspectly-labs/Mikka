@@ -8,14 +8,17 @@ const server = { url: 'https://cloud.example/mikka', name: 'Cloud', version: nul
 let current: SavedAccount = { id: '1', server, user: { id: 'u1', name: 'A', email: 'a@example.test' } }
 const keychain = new Map<string, string>()
 let cookie = 'better-auth.session_token=old'
-let rotateAnswer: () => Promise<{ data: unknown; error: { status: number; code?: string } | null }> = async () => ({ data: null, error: { status: 503 } })
+type AuthAnswer = { data: unknown; error: { status: number; code?: string } | null }
+let rotateAnswer: () => Promise<AuthAnswer> = async () => ({ data: null, error: { status: 503 } })
+const exchanged = (): AuthAnswer => ({ data: { userId: 'u1', sessionId: 's1', refreshToken: `mkmr_${'e'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(60) }, error: null })
+let exchangeAnswer: () => Promise<AuthAnswer> = async () => exchanged()
 const authCalls: string[] = []
 const client = {
   getCookie: async () => cookie,
   $fetch: async (path: string, init: { body?: Record<string, string> }) => {
     authCalls.push(path)
     if (path === '/mobile-refresh/rotate') return rotateAnswer()
-    if (path === '/mobile-refresh/exchange') return { data: { userId: 'u1', sessionId: 's1', refreshToken: `mkmr_${'e'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(60) }, error: null }
+    if (path === '/mobile-refresh/exchange') return exchangeAnswer()
     if (path === '/mobile-refresh/revoke') return { data: { status: !!init.body }, error: null }
     return { data: null, error: { status: 404 } }
   },
@@ -42,6 +45,7 @@ function signedIn(account: string, accessMinutes = 60) {
   apiCache.setIdentity(`${account}:u1`)
   cookie = 'better-auth.session_token=old'
   refused = 0; authCalls.length = 0
+  exchangeAnswer = async () => exchanged()
   keychain.set(accountStorageKey(account, 'refresh'), JSON.stringify({ userId: 'u1', sessionId: 's1', refreshToken: `mkmr_${'a'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(accessMinutes) }))
 }
 const renewed = { data: { userId: 'u1', sessionId: 's1', refreshToken: `mkmr_${'b'.repeat(43)}`, refreshExpiresAt: later(1440), accessExpiresAt: later(60) }, error: null }
@@ -130,6 +134,29 @@ test('signed in without a credential, the app exchanges once', async () => {
   await keepSignedIn('18', 'u1', 's1')
   assert.deepEqual(authCalls, ['/mobile-refresh/exchange'])
   assert.equal(JSON.parse(keychain.get(accountStorageKey('18', 'refresh'))!).userId, 'u1')
+})
+
+test('launched offline, the first request back online exchanges for the same session; an SSO refusal is not asked again', async t => {
+  signedIn('20')
+  keychain.delete(accountStorageKey('20', 'refresh'))
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ ok: true }))
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  exchangeAnswer = async () => { throw new TypeError('Network request failed') }
+  await keepSignedIn('20', 'u1', 's1')
+  assert.equal(keychain.has(accountStorageKey('20', 'refresh')), false)
+  exchangeAnswer = async () => exchanged()
+  assert.deepEqual(await api('/api/mobile/home'), { ok: true })
+  await settle()
+  assert.deepEqual(authCalls, ['/mobile-refresh/exchange', '/mobile-refresh/exchange'], 'the request back online asked again')
+  assert.equal(JSON.parse(keychain.get(accountStorageKey('20', 'refresh'))!).sessionId, 's1')
+
+  signedIn('21')
+  keychain.delete(accountStorageKey('21', 'refresh'))
+  exchangeAnswer = async () => ({ data: null, error: { status: 409, code: 'refreshUnavailable' } })
+  await keepSignedIn('21', 'u1', 's1')
+  assert.deepEqual(await api('/api/mobile/home'), { ok: true })
+  await settle()
+  assert.deepEqual(authCalls, ['/mobile-refresh/exchange'], 'refused: today\'s behaviour, no exchange per request')
 })
 
 test('a replay keeps the workspace its request was made in, even after a switch during renewal', async t => {

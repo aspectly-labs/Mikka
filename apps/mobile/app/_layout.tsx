@@ -79,7 +79,8 @@ function SessionGate() {
     if (data?.user) void servers.remember(account.id, { id: data.user.id, name: data.user.name, email: data.user.email }).catch(() => { if (live) setSaveFailed(true) })
     return () => { live = false }
   }, [account.id, data?.user?.id, data?.user?.name, data?.user?.email, attempt])
-  // Signed in: get this phone a refresh credential once per launch. Renewal itself runs before the next request
+  // Signed in: get this phone a refresh credential once per launch (one that got no answer, offline, is asked
+  // for again before the next request). Renewal itself runs before the next request
   // (lib/api.ts), never on a foreground listener: coming back re-reads nothing (scripts/focus-refetch-policy.mjs).
   useEffect(() => {
     if (data?.user && data.session) void keepSignedIn(account.id, data.user.id, data.session.id).catch(() => undefined)

@@ -84,6 +84,25 @@ async function sessionOf(jar: Jar) {
 }
 const rows = async (userId: string) => (await pool.query<{ id: string; family_id: string; session_id: string | null; session_rotated: boolean; used_at: Date | null; revoked_at: Date | null; revoked_reason: string | null; replaced_by: string | null; token_hash: string }>(
   'select * from mobile_refresh_tokens where user_id = $1 order by created_at, id', [userId])).rows
+/**
+ * Resolves once another backend waits on a lock `holder` holds (and, given
+ * `query`, runs a statement like it), so an interleaving never rests on timing.
+ */
+async function blockedBy(holder: import('pg').PoolClient, query = '%') {
+  const { rows: [{ pid }] } = await holder.query<{ pid: number }>('select pg_backend_pid() as pid')
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const { rowCount } = await pool.query('select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid)) and query like $2', [pid, query])
+    if (rowCount) return
+    await delay(25)
+  }
+  assert.fail(`nothing waited on the lock held by backend ${pid}`)
+}
+/** The access session a first rotation mints when the expired one is gone (Better Auth's own createSession). */
+async function replacementFor(userId: string) {
+  const created = await (await auth.$context).internalAdapter.createSession(userId, false, { expiresAt: new Date(Date.now() + 3600_000) }, true)
+  assert.ok(created)
+  return created
+}
 const sessionRow = async (id: string) => (await pool.query<{ id: string; expiresAt: Date; twoFactorVerifiedAt: Date | null; twoFactorMethod: string | null }>(
   'select id, "expiresAt", "twoFactorVerifiedAt", "twoFactorMethod" from session where id = $1', [id])).rows[0]
 
@@ -91,7 +110,7 @@ before(async () => {
   if (skip) return
   assert.ok(isE2eTarget(dbUrl), 'mobile refresh tests require an isolated e2e database')
   const { Pool } = await import('pg')
-  pool = new Pool({ connectionString: dbUrl, max: 2 })
+  pool = new Pool({ connectionString: dbUrl, max: 4 })
   auth = (await import('../lib/auth')).auth
   refresh = await import('../lib/auth-mobile-refresh')
   origin = new URL((await auth.$context).baseURL).origin
@@ -344,7 +363,8 @@ test('a revocation that waits on a rotation in flight still ends the token that 
       select $1, family_id, user_id, session_id, true, $2, expires_at, family_expires_at from mobile_refresh_tokens where id = $3`, [next, randomBytes(32).toString('hex'), row.id])
     await rotation.query('update mobile_refresh_tokens set session_id = null, used_at = now(), replaced_by = $2 where id = $1', [row.id, next])
     const revoking = call('/mobile-refresh/revoke', { body: { refreshToken: first.refreshToken } })
-    await delay(300)
+    // The revocation found the family and now waits on its lock: the rotation commits under it.
+    await blockedBy(rotation, '%pg_advisory_xact_lock%')
     await rotation.query('commit')
     assert.equal((await revoking).status, 200)
     const family = await rows(person.id)
@@ -364,10 +384,81 @@ test('signing a phone out from 登录设备 holds even when the phone rotated af
   // The phone renews its session between the list and the tap.
   const second = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } }))
   assert.equal(await (await auth.$context).internalAdapter.findSession(tokenWhenListed!), null, 'the token read with the list no longer names the session')
-  const token = await endSignedInDevice(person.id, listed.id)
-  assert.ok(token)
-  await auth.api.revokeSession({ body: { token }, headers: new Headers({ cookie: web.header(), origin }) })
+  const tokens = await endSignedInDevice(person.id, listed.id)
+  assert.equal(tokens.length, 1, 'the session renewed in place, by its token as it is now')
+  for (const token of tokens) await auth.api.revokeSession({ body: { token }, headers: new Headers({ cookie: web.header(), origin }) })
   assert.equal(await sessionOf(person.jar), null, 'the phone is signed out')
   await refusal(await call('/mobile-refresh/rotate', { body: { refreshToken: second.refreshToken } }))
   assert.ok(await sessionOf(web))
+})
+
+test('a retry of a lost answer that overlaps the rotation replacing its expired session still recovers', { skip }, async () => {
+  const person = await phone()
+  const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
+  const [parent] = await rows(person.id)
+  const expired = person.session.session.id
+  await pool.query(`update session set "expiresAt" = now() - interval '1 second' where id = $1`, [expired])
+  const replacement = await replacementFor(person.id)
+  // The first rotation has claimed the token and holds the expired session's row; its answer never reaches the phone.
+  await pool.query('update mobile_refresh_tokens set used_at = now() where id = $1', [parent.id])
+  const rotation = await pool.connect()
+  try {
+    await rotation.query('begin')
+    await rotation.query('select 1 from session where id = $1 for update', [expired])
+    const phoneJar = new Jar(); phoneJar.ip = person.jar.ip
+    const retry = call('/mobile-refresh/rotate', { jar: phoneJar, body: { refreshToken: first.refreshToken } })
+    // The retry, inside the grace window, has read the expired session as the family's and waits for its row.
+    await blockedBy(rotation, '%from session where id = $1%for update%')
+    // Meanwhile the first rotation finds that row gone, adopts its minted replacement and links the next token to it.
+    await rotation.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`mobile-refresh:${parent.family_id}`])
+    await rotation.query('delete from session where id = $1', [expired])
+    const lost = randomUUID()
+    await rotation.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_rotated, token_hash, expires_at, family_expires_at)
+      select $1, family_id, user_id, $2, true, $3, expires_at, family_expires_at from mobile_refresh_tokens where id = $4`, [lost, replacement.id, randomBytes(32).toString('hex'), parent.id])
+    await rotation.query('update mobile_refresh_tokens set session_id = null, replaced_by = $2 where id = $1', [parent.id, lost])
+    await rotation.query('commit')
+
+    const recovered = await issued(await retry)
+    assert.equal(recovered.sessionId, replacement.id, 'the retry renews the session the family moved to')
+    assert.equal((await sessionOf(phoneJar))?.session.id, replacement.id, 'and the phone has a working cookie for it')
+    const family = await rows(person.id)
+    assert.equal(family.find(token => token.id === lost)?.revoked_reason, 'superseded', 'the lost answer\'s token is retired')
+    assert.equal(family.at(-1)?.session_id, replacement.id)
+    assert.equal(family.filter(token => !token.revoked_at && !token.used_at).length, 1, 'one live token: the one the retry returned')
+    assert.equal((await pool.query('select count(*)::int as n from session where "userId" = $1', [person.id])).rows[0].n, 1, 'the retry minted nothing beside it')
+  } finally { rotation.release() }
+})
+
+test('signing a phone out from 登录设备 while a rotation replaces its session ends the replacement too', { skip }, async () => {
+  const person = await phone()
+  await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
+  const [parent] = await rows(person.id)
+  const expired = person.session.session.id
+  const web = new Jar(); web.ip = person.jar.ip
+  assert.equal((await call('/sign-in/email', { jar: web, origin, body: { email: person.email, password: person.password } })).status, 200)
+  // The phone's access session expired while it was away; 登录设备 still lists it through its family.
+  await pool.query(`update session set "expiresAt" = now() - interval '1 second' where id = $1`, [expired])
+  const { endSignedInDevice } = await import('../lib/account/sessions')
+  const replacement = await replacementFor(person.id)
+  const rotation = await pool.connect()
+  try {
+    // A rotation holds the family lock while it replaces the expired session.
+    await rotation.query('begin')
+    await rotation.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`mobile-refresh:${parent.family_id}`])
+    const ending = endSignedInDevice(person.id, expired)
+    await blockedBy(rotation, '%pg_advisory_xact_lock%')
+    await rotation.query('delete from session where id = $1', [expired])
+    const next = randomUUID()
+    await rotation.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_rotated, token_hash, expires_at, family_expires_at)
+      select $1, family_id, user_id, $2, true, $3, expires_at, family_expires_at from mobile_refresh_tokens where id = $4`, [next, replacement.id, randomBytes(32).toString('hex'), parent.id])
+    await rotation.query('update mobile_refresh_tokens set session_id = null, used_at = now(), replaced_by = $2 where id = $1', [parent.id, next])
+    await rotation.query('commit')
+
+    const tokens = await ending
+    assert.deepEqual(tokens, [replacement.token], 'the replacement committed while the sign-out waited is ended too')
+    for (const token of tokens) await auth.api.revokeSession({ body: { token }, headers: new Headers({ cookie: web.header(), origin }) })
+    assert.equal(await sessionRow(replacement.id), undefined, 'no session of the phone is left')
+    assert.ok((await rows(person.id)).every(token => token.revoked_at), 'and its family is over')
+    assert.ok(await sessionOf(web), 'the device that signed it out stays signed in')
+  } finally { rotation.release() }
 })
