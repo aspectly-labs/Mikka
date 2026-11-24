@@ -29,7 +29,8 @@ test('the hosted API needs two trusted service origins, existing PostgreSQL conf
     assert.throws(() => verifyConfiguration({ ...env, WORKFLOW_TARGET_WORLD: choice }), /HOSTED_WORLD_REQUIRED/)
   }
   assert.throws(() => verifyConfiguration({ ...env, VERCEL_ENV: 'production' }), /EDITION_INVALID/)
-  for (const stage of [undefined, 'preview', 'development']) {
+  verifyConfiguration({ ...env, MIKKA_DEPLOYMENT_STAGE: 'preview' })
+  for (const stage of [undefined, 'development', 'prod']) {
     assert.throws(() => verifyConfiguration({ ...env, MIKKA_DEPLOYMENT_STAGE: stage }), /DEPLOYMENT_STAGE_INVALID/)
   }
 })
@@ -177,7 +178,7 @@ test('the private API receives its sign-in and product bindings without inheriti
     GOOGLE_CLIENT_ID: 'google', GOOGLE_CLIENT_SECRET: 'google-credential',
     GITHUB_CLIENT_ID: 'github', GITHUB_CLIENT_SECRET: 'github-credential', GITHUB_WEBHOOK_SECRET: 'existing-hook',
     BETTER_AUTH_SECRET: 'auth', TURNSTILE_SECRET_KEY: 'signup-verification', MIKKA_CLOUDFLARE_TASKS_DISABLED: 'sponsor',
-    MIKKA_DEPLOYMENT_ID: id, MIKKA_WORKFLOW_QUEUE_PUBLIC_KEY: 'public-verification-key',
+    MIKKA_DEPLOYMENT_ID: id, MIKKA_DEPLOYMENT_STAGE: 'preview', MIKKA_WORKFLOW_QUEUE_PUBLIC_KEY: 'public-verification-key',
     MIKKA_LITELLM_URL: 'http://litellm.internal:4000', MIKKA_LITELLM_MASTER_KEY: 'converter-fixture',
     DEVICE_GATEWAY_URL: 'https://gateway.example', DEVICE_GATEWAY_PUSH_SECRET: 'device-signing',
     WORKSPACE_SECRETS_KEY: 'workspace-sealing',
