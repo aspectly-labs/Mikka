@@ -135,7 +135,9 @@ test('thread cost ledger read', { skip: !dbUrl }, async t => {
     const as = <T>(user: string, work: () => Promise<T>) => withActivitySession(user, work, workspace.id) as Promise<T>
     const summary = await as(owner, () => getThreadSummary(issue, root))
     assert.deepEqual(summary?.cost?.credits, { microUsd: 1_200 + 800 + 2_000 + 50 + 8_334 + 12_500, unpricedReceipts: 3 })
-    // The thread's userId fence answers null to a workspace teammate.
-    assert.equal(await as(teammate, () => getThreadSummary(issue, root)), null)
+    // A teammate reaches no totals: the readable-thread fence refuses with
+    // runNotFound, and a thread they may read still answers null on ownership.
+    const theirs = await as(teammate, () => getThreadSummary(issue, root)).catch((error: unknown) => ({ code: (error as { code?: string })?.code }))
+    assert.ok(theirs === null || (theirs as { code?: string }).code === 'runNotFound', `a teammate reads no thread cost: ${JSON.stringify(theirs)}`)
   })
 })
