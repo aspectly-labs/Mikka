@@ -168,7 +168,9 @@ export async function resolveModelDispatch(pool: Pool, scope: OrderScope & { bot
   const serviceTier = stored.defaultServiceTier !== 'standard' && resolvedSpeedModes.includes(stored.defaultServiceTier)
     ? { serviceTier: stored.defaultServiceTier as ModelSpeedMode }
     : {}
-  const effort = stored.defaultEffort !== 'medium' && supportedModelEfforts(plan.model, plan.entry.harness).includes(stored.defaultEffort)
+  const bareModel = plan.model.includes('/') ? plan.model.split('/').pop()! : plan.model
+  const effortModelId = /^claude-(?:fable|opus|sonnet|haiku)-\d+\.\d+$/.test(bareModel) ? bareModel.replace('.', '-') : bareModel
+  const effort = stored.defaultEffort !== 'medium' && supportedModelEfforts(effortModelId, plan.entry.harness).includes(stored.defaultEffort)
     ? { effort: stored.defaultEffort }
     : {}
   if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...effort, ...serviceTier, ...quotaCheckPending }

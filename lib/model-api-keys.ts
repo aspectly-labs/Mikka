@@ -181,7 +181,11 @@ function parseStoredSpeedModes(settings: ModelSettings | null | undefined): Reco
  * Errors: apiKeyInvalid (401/403), apiKeyUnverifiable (anything else),
  * apiKeyBaseUrlInvalid, apiKeyNotFound, secretsUnavailable. The key is never logged.
  */
-export async function addApiKey(query: Query, ownerId: string, input: unknown, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
+export async function addApiKey(query: Query, ownerId: string, input: unknown, options: {
+  env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]>
+  /** Atomically admit and save workspace sharing alongside the key write (never mutates/deletes on share refusal). */
+  shareWorkspace?: { id: string; kind: 'personal' | 'team' }
+} = {}): Promise<ApiKeyView> {
   const parsed = addApiKeyInput.parse(input)
   const env = options.env ?? process.env
   const custom = parsed.provider === 'custom' ? parsed : null
@@ -200,6 +204,12 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   } else {
     id = randomUUID()
   }
+  const shareWorkspace = options.shareWorkspace
+  if (shareWorkspace) {
+    if (shareWorkspace.kind !== 'team') throw new WorkspaceError('validationGeneric')
+    if (!(await memberSubscriptionsAllowed(query, shareWorkspace.id))) throw new WorkspaceError('workspaceAccessDenied')
+    await assertOrganizationResourceShare(shareWorkspace.id, 'api_key', id, ownerId)
+  }
   let sealed: ReturnType<typeof sealSecret>
   try { sealed = sealSecret(parsed.apiKey, keyAad(id, ownerId), env) } catch (error) {
     if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
@@ -214,15 +224,41 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   // LiteLLM converts Chat Completions to Responses; no native inference probe.
   const responsesApi = true
   const name = parsed.name ?? null
-  if (endpointChanged) {
-    await stopRunsUsingApiKeys(query, { keyId: id, ownerId })
-    await query.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1', [id])
+  const persist = async (q: Query) => {
+    if (shareWorkspace) {
+      if (!(await memberSubscriptionsAllowed(q, shareWorkspace.id))) throw new WorkspaceError('workspaceAccessDenied')
+      await assertOrganizationResourceShare(shareWorkspace.id, 'api_key', id, ownerId)
+    }
+    if (endpointChanged) {
+      await q.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1', [id])
+    }
+    const { rows: [saved] } = await q.query<Row>(`INSERT INTO model_api_keys (id,"ownerId",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi","modelSettings")
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
+      ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=${SURGICAL_SPEED_MODES_SQL('$14', 'model_api_keys.')},"updatedAt"=now()
+      RETURNING ${COLUMNS}`,
+    [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, initialSettings, speedJson])
+    if (shareWorkspace) {
+      await q.query('INSERT INTO model_api_key_shares ("keyId","workspaceId") VALUES ($1,$2) ON CONFLICT DO NOTHING', [saved.id, shareWorkspace.id])
+    }
+    return saved
   }
-  const { rows: [row] } = await query.query<Row>(`INSERT INTO model_api_keys (id,"ownerId",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi","modelSettings")
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
-    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=${SURGICAL_SPEED_MODES_SQL('$14', 'model_api_keys.')},"updatedAt"=now()
-    RETURNING ${COLUMNS}`,
-  [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, initialSettings, speedJson])
+  let row: Row
+  if (shareWorkspace && 'connect' in query && typeof (query as Pool).connect === 'function') {
+    const client = await (query as Pool).connect()
+    try {
+      await client.query('BEGIN')
+      row = await persist(client)
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
+    }
+  } else {
+    row = await persist(query)
+  }
+  if (endpointChanged) await stopRunsUsingApiKeys(query, { keyId: id, ownerId })
   return view(row)
 }
 
