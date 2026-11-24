@@ -28,14 +28,16 @@ async function handlePOST(request: Request) {
   noteLogUser(session.user.id)
   try {
     const payload = await readMobileAvatarPayload(request)
-    const updated = await updateMobileProfileAvatar(
+    const { image, user: profile, setCookies } = await updateMobileProfileAvatar(
       request,
       session.user.id,
       payload.declaredType,
       payload.bytes,
     )
-    if (!updated.user) return unauthorized()
-    return json(updated)
+    if (!profile) return unauthorized()
+    const response = json({ image, user: profile })
+    for (const cookie of setCookies) response.headers.append('set-cookie', cookie)
+    return response
   } catch (error) {
     if (error instanceof MobileAvatarError) return json({ error: error.code }, error.status)
     throw error

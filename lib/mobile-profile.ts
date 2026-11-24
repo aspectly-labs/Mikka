@@ -44,16 +44,27 @@ export async function readMobileProfile(userId: string): Promise<MobileProfileUs
   return row ? { id: row.id, name: row.name, email: row.email, image: row.image ?? null } : null
 }
 
+function extractSetCookies(headers: Headers | undefined): string[] {
+  if (!headers) return []
+  if (typeof headers.getSetCookie === 'function') return headers.getSetCookie()
+  const single = headers.get('set-cookie')
+  return single ? [single] : []
+}
+
 /** Single owning profile display-name write via Better Auth + live list fanout. */
 export async function updateMobileProfileName(
   request: Request,
   userId: string,
   name: string,
-): Promise<MobileProfileUser | null> {
-  await sessionAuth.api.updateUser({ body: { name }, headers: request.headers })
+): Promise<{ user: MobileProfileUser | null; setCookies: string[] }> {
+  const result = await sessionAuth.api.updateUser({
+    body: { name },
+    headers: request.headers,
+    returnHeaders: true,
+  })
   await ownerIssueListsChanged(pool, userId)
   await ownerProfileListsChanged(pool, userId)
-  return readMobileProfile(userId)
+  return { user: await readMobileProfile(userId), setCookies: extractSetCookies(result?.headers) }
 }
 
 /** Single owning avatar validation, storage and user.image update for mobile. */
@@ -62,7 +73,7 @@ export async function updateMobileProfileAvatar(
   userId: string,
   declaredType: string,
   bytes: Uint8Array,
-): Promise<{ image: string; user: MobileProfileUser | null }> {
+): Promise<{ image: string; user: MobileProfileUser | null; setCookies: string[] }> {
   const checked = checkAvatarFile(declaredType, bytes)
   if (!checked.ok) {
     throw new MobileAvatarError(
@@ -71,8 +82,12 @@ export async function updateMobileProfileAvatar(
     )
   }
   const image = await saveAvatar(userId, checked.contentType, checked.bytes)
-  await sessionAuth.api.updateUser({ body: { image }, headers: request.headers })
+  const result = await sessionAuth.api.updateUser({
+    body: { image },
+    headers: request.headers,
+    returnHeaders: true,
+  })
   await ownerIssueListsChanged(pool, userId)
   await ownerProfileListsChanged(pool, userId)
-  return { image, user: await readMobileProfile(userId) }
+  return { image, user: await readMobileProfile(userId), setCookies: extractSetCookies(result?.headers) }
 }

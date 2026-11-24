@@ -39,9 +39,11 @@ async function handlePATCH(request: Request) {
   noteLogUser(session.user.id)
   const parsed = mobileProfilePatchSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) return json({ error: 'validationNameRequired' }, 400)
-  const profile = await updateMobileProfileName(request, session.user.id, parsed.data.name)
+  const { user: profile, setCookies } = await updateMobileProfileName(request, session.user.id, parsed.data.name)
   if (!profile) return unauthorized()
-  return json({ user: profile })
+  const response = json({ user: profile })
+  for (const cookie of setCookies) response.headers.append('set-cookie', cookie)
+  return response
 }
 
 export const GET = withRequestLog('/api/mobile/profile', handleGET)

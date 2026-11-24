@@ -118,8 +118,8 @@ export async function searchMobileMessages(
       WHERE m."userId" = $1
         AND ($6::uuid IS NULL OR m."botId" = $6::uuid)
         AND m.message->>'role' IN ('user', 'assistant')
-        AND COALESCE((m.message->>'mikkaSuperseded')::boolean, false) = false
-        AND COALESCE((m.message->>'mikkaRetried')::boolean, false) = false
+        AND COALESCE(m.message->'mikkaSuperseded', 'null'::jsonb) IN ('null'::jsonb, 'false'::jsonb, '""'::jsonb)
+        AND COALESCE(m.message->'mikkaRetried', 'false'::jsonb) IS DISTINCT FROM 'true'::jsonb
         AND COALESCE(m.message->'mikkaDisplay'->>'kind', '') NOT IN ('hidden', 'event', 'welcome')
         AND txt.body IS NOT NULL
         AND NOT (

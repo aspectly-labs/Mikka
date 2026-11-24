@@ -2002,7 +2002,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "4cf598624935ebf5c488e4c7362ec0796352fc18427457e05e9ff8277023c201"
+      "sourceHash": "33ad236603f6637d9e2053bc6eeb26408f0bf14352acccfd0eec3d918ddfaedd"
     },
     {
       "path": "/mikka/api/mobile/profile",
@@ -2012,7 +2012,7 @@
         "GET",
         "PATCH"
       ],
-      "sourceHash": "d58485a8890f7136cfed84516c8c74f7f8bf49dc825a3e84b023be104ca56d17"
+      "sourceHash": "793ef1ca3803c572f2fa2cc2379ab54dc36beacdb1842bacdda5b64ab2e02e12"
     },
     {
       "path": "/mikka/api/mobile/profile/avatar",
@@ -2021,7 +2021,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "ab8868c3fa81e6b63b2be7f31563e0c7645102b0eec69ce5f03abf32e4a3aeae"
+      "sourceHash": "2421f4ce613df667bc173081d5bacb39bad8c10d8027c755bb2f4ff21deb2247"
     },
     {
       "path": "/mikka/api/mobile/push-tokens",
@@ -2090,7 +2090,7 @@
         "DELETE",
         "POST"
       ],
-      "sourceHash": "f2a4aa95e4edf7608a0b535785a9b3c195daa34831f66a8f565a48570f56ec57"
+      "sourceHash": "7118e6efcc84a99ba7e4b26a45f3b5576d6ed112a2536753f087050b42121da0"
     },
     {
       "path": "/mikka/api/mobile/task-presentations",

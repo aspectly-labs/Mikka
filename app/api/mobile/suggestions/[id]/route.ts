@@ -11,6 +11,7 @@ import { handoffSuggestionToCoordinator } from '@/lib/suggestions/handoff'
 import { dismissSuggestion } from '@/lib/suggestions/store'
 import { suggestionsOutsideToken } from '@/lib/tokens/scope'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
+import { WorkspaceError } from '@/lib/workspace-error'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -65,6 +66,12 @@ async function handlePOST(request: Request, { params }: Params) {
       return json({ error: error.code }, status)
     }
     if (error instanceof ComputerError) return json({ error: error.message }, error.status)
+    if (error instanceof WorkspaceError) {
+      return json(
+        { error: error.code === 'workspaceAccessDenied' ? 'workspaceAccessDenied' : error.code },
+        error.code === 'workspaceAccessDenied' ? 403 : 409,
+      )
+    }
     throw error
   }
 }

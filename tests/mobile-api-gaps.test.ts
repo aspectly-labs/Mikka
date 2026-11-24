@@ -2,6 +2,7 @@
 // message search, reactions & attachments, thread history pagination,
 // Coordinator proactive cards & suggestions, profile & avatar editing, and billing.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { mock, test } from 'node:test'
 import { ActionFailureError } from '../lib/action-error'
 import { ChatFileError } from '../lib/chat-attachments/extract'
@@ -60,10 +61,14 @@ mock.module(new URL('../lib/background.ts', import.meta.url).href, {
   namedExports: { afterJob: (_name: string, _fn: () => unknown) => {} },
 })
 
+let workspaceError: WorkspaceError | null = null
 mock.module(new URL('../lib/workspace-access.ts', import.meta.url).href, {
   namedExports: {
     WorkspaceError,
-    loadWorkspaceContext: async () => ({ workspace: { id: WS_1, name: 'Personal', kind: 'personal' }, role: 'admin', choices: [] }),
+    loadWorkspaceContext: async () => {
+      if (workspaceError) throw workspaceError
+      return { workspace: { id: WS_1, name: 'Personal', kind: 'personal' }, role: 'admin', choices: [] }
+    },
   },
 })
 
@@ -176,14 +181,23 @@ mock.module(new URL('../lib/live/panels.ts', import.meta.url).href, { namedExpor
 
 // Gap 4 mocks (proactive cards & suggestions)
 const proactiveCalls: unknown[] = []
+let proactiveError: Error | null = null
 mock.module(new URL('../lib/mobile-proactive-cards.ts', import.meta.url).href, {
   namedExports: {
     readMobileProactiveCards: async (_user: unknown, opts: unknown) => {
       proactiveCalls.push(opts)
+      if (proactiveError) throw proactiveError
       return {
         workspaceId: WS_1,
         observedAt: '2026-11-24T12:00:00.000Z',
-        briefing: null,
+        briefing: {
+          localDate: '2026-11-24',
+          kind: 'daily',
+          total: 2,
+          counts: { github: 2 },
+          highlights: [SUG_1],
+          createdAt: '2026-11-24T08:00:00.000Z',
+        },
         pendingActions: [],
         suggestions: { inProgress: [], items: [] },
       }
@@ -252,12 +266,18 @@ mock.module(new URL('../lib/mobile-profile.ts', import.meta.url).href, {
       return currentSession
     },
     readMobileProfile: async () => signedInUser,
-    updateMobileProfileName: async (_req: Request, _userId: string, name: string) =>
-      signedInUser ? { ...signedInUser, name } : null,
+    updateMobileProfileName: async (_req: Request, _userId: string, name: string) => ({
+      user: signedInUser ? { ...signedInUser, name } : null,
+      setCookies: ['mikka.session_data=refreshed; Path=/; HttpOnly'],
+    }),
     updateMobileProfileAvatar: async () => {
       if (avatarError) throw avatarError
       const image = `/api/avatars/user-1/${'a'.repeat(64)}`
-      return { image, user: signedInUser ? { ...signedInUser, image } : null }
+      return {
+        image,
+        user: signedInUser ? { ...signedInUser, image } : null,
+        setCookies: ['mikka.session_data=refreshed-avatar; Path=/; HttpOnly'],
+      }
     },
   },
 })
@@ -294,6 +314,8 @@ function resetAuth() {
   signedInUser = { id: 'user-1', name: 'Alex', email: 'alex@example.com', image: null }
   currentSession = { user: signedInUser, session: { id: 'sess-1' } }
   originOk = true
+  workspaceError = null
+  proactiveError = null
   outsideMsgIds = new Set()
   outsideRunIds = new Set()
   outsideSuggestionIds = new Set()
@@ -325,6 +347,12 @@ test('Gap 1 route: GET /api/mobile/search/messages enforces auth, validation, wo
 
   signedInUser = null
   assert.equal((await GET(new Request('https://mikka.test/api/mobile/search/messages?q=hello'))).status, 401)
+
+  // Regression guard (#137): mikkaSuperseded holds a revision UUID string, never cast to ::boolean in SQL.
+  const searchStoreSource = readFileSync(new URL('../lib/mobile-message-search.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(searchStoreSource, /mikkaSuperseded'\)::boolean|mikkaRetried'\)::boolean/)
+  assert.match(searchStoreSource, /COALESCE\(m\.message->'mikkaSuperseded', 'null'::jsonb\) IN \('null'::jsonb, 'false'::jsonb, '""'::jsonb\)/)
+  assert.match(searchStoreSource, /COALESCE\(m\.message->'mikkaRetried', 'false'::jsonb\) IS DISTINCT FROM 'true'::jsonb/)
 })
 
 test('Gap 2 routes: reactions return updated counts and attachments enforce scope/auth', async () => {
@@ -423,12 +451,30 @@ test('Gap 4 routes: proactive cards read and suggestion handoff/start/dismiss ob
   proactiveCalls.length = 0
   const feed = await proactive.GET(new Request('https://mikka.test/api/mobile/proactive-cards?readonly=1&tz=America/New_York&locale=zh-CN'))
   assert.equal(feed.status, 200)
+  const feedBody = (await feed.json()) as { briefing: Record<string, unknown> }
+  assert.equal(feedBody.briefing.localDate, '2026-11-24')
+  assert.equal('id' in feedBody.briefing, false)
   assert.deepEqual(proactiveCalls[0], {
     timeZone: 'America/New_York',
     ipTimeZone: null,
     locale: 'zh-CN',
     readonly: true,
   })
+
+  // Regression guard (#137): WorkspaceError maps to 403/409 instead of unhandled 500.
+  proactiveError = new WorkspaceError('workspaceAccessDenied')
+  const feedDenied = await proactive.GET(new Request('https://mikka.test/api/mobile/proactive-cards'))
+  assert.equal(feedDenied.status, 403)
+  assert.deepEqual(await feedDenied.json(), { error: 'workspaceAccessDenied' })
+  proactiveError = new WorkspaceError('workspaceSuspended')
+  const feedSuspended = await proactive.GET(new Request('https://mikka.test/api/mobile/proactive-cards'))
+  assert.equal(feedSuspended.status, 409)
+  assert.deepEqual(await feedSuspended.json(), { error: 'workspaceSuspended' })
+  proactiveError = null
+
+  // Regression guard (#137): lib/mobile-proactive-cards.ts never references non-existent briefingRow.id.
+  const proactiveSource = readFileSync(new URL('../lib/mobile-proactive-cards.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(proactiveSource, /briefingRow\.id/)
 
   const sendOk = await suggestions.POST(
     new Request(`https://mikka.test/api/mobile/suggestions/${SUG_1}`, {
@@ -449,6 +495,19 @@ test('Gap 4 routes: proactive cards read and suggestion handoff/start/dismiss ob
   )
   assert.equal(startOk.status, 202)
   assert.deepEqual(await startOk.json(), { started: true, runId: RUN_1 })
+
+  // Regression guard (#137): WorkspaceError on suggestion start maps to 403/409, never 500.
+  workspaceError = new WorkspaceError('workspaceAccessDenied')
+  const startDenied = await suggestions.POST(
+    new Request(`https://mikka.test/api/mobile/suggestions/${SUG_1}`, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'start' }),
+    }),
+    { params: Promise.resolve({ id: SUG_1 }) },
+  )
+  assert.equal(startDenied.status, 403)
+  assert.deepEqual(await startDenied.json(), { error: 'workspaceAccessDenied' })
+  workspaceError = null
 
   handoffError = new ActionFailureError('submissionConflict')
   const conflict = await suggestions.POST(
@@ -514,6 +573,7 @@ test('Gap 5 routes: profile read/edit and avatar upload enforce human session, o
     }),
   )
   assert.equal(patched.status, 200)
+  assert.match(patched.headers.get('set-cookie') ?? '', /mikka\.session_data=refreshed/)
   assert.equal(((await patched.json()) as { user: FakeUser }).user.name, 'Alex Updated')
 
   const badName = await profile.PATCH(
@@ -555,6 +615,7 @@ test('Gap 5 routes: profile read/edit and avatar upload enforce human session, o
     }),
   )
   assert.equal(uploaded.status, 200)
+  assert.match(uploaded.headers.get('set-cookie') ?? '', /mikka\.session_data=refreshed-avatar/)
   assert.ok(((await uploaded.json()) as { image: string }).image.startsWith('/api/avatars/user-1/'))
 
   avatarError = new MobileAvatarError('avatarInvalidType', 400)

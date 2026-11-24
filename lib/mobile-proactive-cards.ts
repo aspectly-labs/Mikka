@@ -15,7 +15,6 @@ import { loadWorkspaceContext } from '@/lib/workspace-access'
 import type { RequestWorkspaceUser } from '@/lib/request-workspace'
 
 export interface MobileProactiveBriefing {
-  id: string
   localDate: string
   kind: string
   total: number
@@ -187,7 +186,6 @@ export async function readMobileProactiveCards(
 
   const briefing: MobileProactiveBriefing | null = briefingRow
     ? {
-        id: briefingRow.id,
         localDate: briefingRow.localDate,
         kind: briefingRow.kind,
         total: briefingRow.total,
