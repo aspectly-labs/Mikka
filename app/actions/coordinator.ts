@@ -276,7 +276,7 @@ export async function stopCoordinatorTurn(botId: string | null = null): Promise<
 }
 
 /** 重试 on a failed reply: the same turn again, once per click; the chat shows its normal working state. */
-export async function retryCoordinatorTurn(botId: string | null = null): Promise<ActionResult<{ queued: true } | { queued: false; reason: 'unavailable' | 'working' | 'nothingToRetry' }>> {
+export async function retryCoordinatorTurn(botId: string | null = null): Promise<ActionResult<{ queued: true } | { queued: false; reason: 'unavailable' | 'working' | 'nothingToRetry' | 'accountUnavailable' }>> {
   return runAction(async () => {
     const session = await auth.api.getSession({ headers: await headers() })
     if (!session?.user) throw new ActionFailureError('authRequired')

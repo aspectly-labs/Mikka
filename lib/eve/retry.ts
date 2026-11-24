@@ -1,5 +1,4 @@
 import 'server-only'
-import {z} from 'zod'
 import {createHash} from 'node:crypto'
 import {Client,type ClientSession} from 'eve/client'
 import {emptySessionView,foldEvents,idle,turns} from 'eve/events'
@@ -48,9 +47,12 @@ export async function retryEveTurn(ownerId:string,botId:string,requestHeaders:He
   if(!bot)return {queued:false as const,reason:'nothingToRetry' as const}
   // A resend frozen on another owner's binding would only refuse at
   // turn.started (#3057): answer up front, like the thread send path does.
-  const settings=new (await import('../execution-settings')).ExecutionSettings(pool)
-  const selected=await settings.botModel({ownerId,workspaceId:bot.workspaceId},botId)
-  if(selected&&z.uuid().safeParse(selected).success&&await settings.bindingHeldElsewhere({ownerId,workspaceId:bot.workspaceId},selected))
+  // Read the saved row — botModel would write a default before eligibility.
+  const saved=(await pool.query<{bindingId:string|null}>(
+    'SELECT "bindingId" FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3',
+    [ownerId,bot.workspaceId,botId])).rows[0]?.bindingId
+  if(saved&&await new (await import('../execution-settings')).ExecutionSettings(pool)
+    .bindingHeldElsewhere({ownerId,workspaceId:bot.workspaceId},saved))
     return {queued:false as const,reason:'accountUnavailable' as const}
   const scope=await assertEveScope({ownerId,botId,workspaceId:bot.workspaceId,surface:'web'})
   const headers=eveRetryHeaders(requestHeaders)

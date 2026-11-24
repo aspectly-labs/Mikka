@@ -4119,6 +4119,7 @@
       "working": "回复正在处理",
       "queued": "回复已排队",
       "unavailable": "回复暂不可重试",
+      "accountUnavailable": "此账号不可用。",
       "nothingToRetry": "没有待重试的回复"
     },
     "subscriptionRefusal": {
