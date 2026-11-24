@@ -4,7 +4,7 @@ import { retryReply, replyRetryLine } from '../lib/reply-retry.ts'
 import { mobileMessages } from '../lib/messages.ts'
 
 test('the phone preserves confirmed retry outcomes even when refresh fails', async () => {
-  for (const response of [{ queued: true }, { queued: false, reason: 'working' }, { queued: false, reason: 'nothingToRetry' }, { queued: false, reason: 'unavailable' }] as const) {
+  for (const response of [{ queued: true }, { queued: false, reason: 'working' }, { queued: false, reason: 'nothingToRetry' }, { queued: false, reason: 'unavailable' }, { queued: false, reason: 'accountUnavailable' }] as const) {
     assert.equal(await retryReply(async () => response, async () => { throw new Error('fixture-refetch-error') }), response.queued ? 'queued' : response.reason)
   }
 })

@@ -1,5 +1,6 @@
 {
   "Settings": {
+    "searchEmptyFor": "No settings match “{query}”",
     "skillsPage": {
       "editTitle": "Edit skill",
       "scopeLabel": "Scope",
@@ -534,7 +535,8 @@
       "ownerLabel": "Owner",
       "lastConnectedLabel": "Last connected",
       "unreported": "—",
-      "removeDeviceTitle": "Remove device"
+      "removeDeviceTitle": "Remove device",
+      "localPathPlaceholder": "~/projects/repo"
     },
     "integrations": {
       "githubAppCreate": "Create GitHub App",
@@ -4119,6 +4121,7 @@
       "working": "Reply already processing",
       "queued": "Reply queued",
       "unavailable": "Reply retry unavailable",
+      "accountUnavailable": "This account is unavailable.",
       "nothingToRetry": "No failed reply to retry"
     },
     "subscriptionRefusal": {
@@ -4546,6 +4549,7 @@
     "retry": "Retry"
   },
   "Shell": {
+    "searchEmptyFor": "Nothing matches “{query}”",
     "panel": {
       "task": {
         "bot": "Dispatched by",
@@ -4728,7 +4732,8 @@
       "membersError": "Members failed to load",
       "allThreadsWaiting": "All threads, {count} waiting on you",
       "addMembers": "Add members to {group}",
-      "deleteFileFailed": "“{name}” was not deleted"
+      "deleteFileFailed": "“{name}” was not deleted",
+      "botTasks": "{name} · Tasks"
     },
     "board": {
       "card": {
@@ -4844,7 +4849,8 @@
       "title": "Board",
       "filter": "Filter",
       "me": "Me",
-      "showEmpty": "Show empty columns"
+      "showEmpty": "Show empty columns",
+      "showSubtasks": "Show sub-tasks"
     },
     "groups": {
       "groupChats": "Group chats",
@@ -5564,7 +5570,10 @@
     "compareImplementationApproachesByCostComplexityAnd": "Compare implementation approaches by cost, complexity, and maintainability.",
     "unableToDisplayResponse": "Unable to display response",
     "thisMessageWasAlreadySubmittedPleaseAsk": "This message was already submitted. Please ask a new question.",
-    "activeAgentsGroupNotFound": "Group not found or you are not a member."
+    "activeAgentsGroupNotFound": "Group not found or you are not a member.",
+    "diagramStreaming": "The diagram is being written; the preview appears when it is done.",
+    "diagramFailed": "The diagram can't be drawn right now; its source is kept below.",
+    "diagramRendering": "Drawing the diagram…"
   },
   "RunErrors": {
     "run_subscription_expired": {
@@ -6771,7 +6780,8 @@
     "notSent": "Not sent",
     "composer": "Message {name}",
     "untitled": "Untitled group chat",
-    "you": "You"
+    "you": "You",
+    "emptyHint": "Mention a member with @ to hand it to them, or write to the whole group."
   },
   "Members": {
     "noMatchTitle": "No matching members",
@@ -7258,7 +7268,11 @@
     "forgotPasswordTitle": "Reset password · Mikka"
   },
   "Nav": {
+    "workspaceLoadFailed": "Couldn't load workspaces",
     "botMenu": {
+      "noFilterMatches": "Nothing matches the filter “{filters}”",
+      "noMatchesFor": "Nothing matches “{query}”",
+      "clearNamedFilters": "Clear filters: {filters}",
       "moveTo": "Move to",
       "unhide": "Unhide",
       "unpin": "Unpin",
@@ -7855,7 +7869,9 @@
     "deselect": "Deselect",
     "diffPartial": "More files changed than this read reached",
     "diffPatchUnavailable": "{count} file(s) have no patch (binary or truncated)",
-    "reviewSelf": "You cannot request changes on your own pull request"
+    "reviewSelf": "You cannot request changes on your own pull request",
+    "noneSelected": "Select a pull request to see it here",
+    "changesTab": "Changes"
   },
   "HostedConnections": {
     "state": {
@@ -8686,7 +8702,9 @@
       "workedNoTime": "Worked",
       "stopped": "stopped",
       "failed": "failed"
-    }
+    },
+    "olderFailed": "Couldn't load. Retry",
+    "readFullOptions": "Read full options"
   },
   "Board": {
     "scrollRight": "Scroll board right",
@@ -9780,6 +9798,7 @@
     "linksCreated": "{count, plural, =1 {1 invite link created} other {# invite links created}}"
   },
   "Common": {
+    "undo": "Undo",
     "resize": {
       "groupPanel": "Resize right panel",
       "boardSidebar": "Resize Coordinator sidebar",
@@ -10167,7 +10186,10 @@
     "empty": "No tasks",
     "created": "Created {date}",
     "root": "Tasks",
-    "due": "Due {date}"
+    "due": "Due {date}",
+    "emptyFiltered": "No tasks match these filters",
+    "loadFailed": "Couldn't load tasks",
+    "sortBy": "Sort: {order}"
   },
   "Computer": {
     "card": "Computer task",
@@ -10458,7 +10480,9 @@
     "clearFilters": "Clear filters",
     "automationUnknown": "this automation",
     "emptyTitle": "No threads yet.",
-    "archiveOff": "Off"
+    "archiveOff": "Off",
+    "activeGroup": "Active & waiting",
+    "recentGroup": "Recent threads"
   },
   "ThreadReferences": {
     "empty": "No matching references",
@@ -10927,5 +10951,183 @@
     "question": "Question from {name}",
     "openChat": "Open {name}'s chat",
     "openThread": "Open thread"
+  },
+  "PullPreview": {
+    "changesTab": "Changes",
+    "overviewTab": "Overview",
+    "issuesTab": "Issues",
+    "commitsTab": "Commits",
+    "allCommits": "All commits",
+    "viewed": "Viewed",
+    "collapseAll": "Collapse all",
+    "expandAll": "Expand all",
+    "diffSettings": "Diff settings",
+    "wrap": "Wrap lines",
+    "scroll": "Horizontal scroll",
+    "filesCount": "{count, plural, one {# file} other {# files}}",
+    "changedFilesHeading": "{count, plural, one {# changed file} other {# changed files}}",
+    "viewedProgress": "{done}/{total} viewed",
+    "loadingChanges": "Loading changed files…",
+    "loadChangesFailed": "Could not load changed files.",
+    "noChangedFiles": "No changed files.",
+    "binaryOrTruncated": "Binary file or truncated patch. View on GitHub.",
+    "mergePr": "Merge PR",
+    "mergeMethods": {
+      "merge": "Create a merge commit",
+      "squash": "Squash and merge",
+      "rebase": "Rebase and merge"
+    },
+    "confirmMerge": "Confirm: {method}",
+    "selectMergeMethod": "Select merge method",
+    "submitting": "Submitting…",
+    "allPassed": "All checks & approvals passed",
+    "checksPassed": "All checks passed",
+    "checksFailing": "{count, plural, one {# check failing} other {# checks failing}}",
+    "checksPending": "Checks in progress",
+    "hasConflicts": "Merge conflicts",
+    "changesRequested": "Changes requested",
+    "reviewRequired": "Review required",
+    "draftStatus": "Draft PR",
+    "mergedStatus": "Pull request merged",
+    "closedStatus": "Pull request closed",
+    "noIssues": "No unresolved review issues.",
+    "resolved": "Resolved",
+    "unresolved": "Open",
+    "addReviewComment": "Add review comment",
+    "noCommits": "No commits reported.",
+    "summaryHeading": "Summary",
+    "openBrowser": "Open in browser",
+    "quoteRef": "Copy PR reference"
+  },
+  "ModelPicker": {
+    "models": "Models",
+    "quickSearch": "Quick Search",
+    "searchModels": "Search models",
+    "closeSearch": "Close search",
+    "noModelsMatch": "No models match",
+    "providers": "Providers",
+    "matchingModels": "Matching models",
+    "other": "Other",
+    "all": "All",
+    "vendorModels": "{vendor} models"
+  },
+  "ReviewCopy": {
+    "review": "Review",
+    "openReview": "Review {name}",
+    "changes": "Changes",
+    "files": "Files",
+    "terminal": "Terminal",
+    "preview": "Preview",
+    "copyLink": "Copy link",
+    "permissions": "Permissions",
+    "owner": "task owner",
+    "readOnly": "read-only",
+    "branchCopied": "Branch name copied",
+    "versionedReadOnly": "This revision is available for reading only",
+    "reviewUnavailable": "This review action is unavailable",
+    "sourceCommit": "commit",
+    "checkNeutral": "Neutral",
+    "notOwnerMerge": "Only the task owner can merge",
+    "notOwnerSend": "Only the task owner can send to the agent",
+    "notOwnerTerminal": "Only the task owner can use the terminal",
+    "githubPermission": "GitHub permission is not enough to merge",
+    "checksFailed": "{count} failed",
+    "checksPassed": "{count} passed",
+    "checksPending": "{count} running",
+    "checksTitle": "Checks",
+    "checksLoadFailed": "Could not load the checks",
+    "retry": "Retry",
+    "attachToComment": "Attach to comments",
+    "attached": "Attached",
+    "fullLog": "View full log",
+    "checkFailed": "{name} failed",
+    "removeCheck": "Remove {name}",
+    "approveMerge": "Approve and merge",
+    "merged": "Merged",
+    "runningNoPr": "Running · no PR yet",
+    "noPr": "No PR yet",
+    "mergeConfirm": "{count} checks still fail. Merge anyway?",
+    "mergeAnyway": "Merge anyway",
+    "cancel": "Cancel",
+    "merging": "Merging…",
+    "mergeFailed": "Could not merge. Try again.",
+    "close": "Close",
+    "diffLayout": "Diff layout",
+    "unified": "Unified",
+    "split": "Split",
+    "live": "Live",
+    "commitFilter": "Filter by commit",
+    "allCommits": "All commits",
+    "commitPlaceholder": "Commit SHA",
+    "applyCommit": "Filter",
+    "changedFiles": "Changed files",
+    "markViewed": "Viewed",
+    "viewedCount": "Viewed {viewed}/{total}",
+    "commentsCount": "{count} comments",
+    "collapseFile": "Collapse {name}",
+    "expandFile": "Expand {name}",
+    "load": "Load",
+    "loadFailed": "Could not load",
+    "loadMore": "Load more files",
+    "tooLarge": "Too large to load with the rest",
+    "line": "Line {line}",
+    "you": "You",
+    "pendingTag": "Pending",
+    "stale": "Outdated",
+    "edit": "Edit",
+    "delete": "Delete",
+    "addComment": "Add comment",
+    "saveComment": "Save",
+    "commentPlaceholder": "Write a comment…",
+    "commentOn": "Comment on line {line}",
+    "notePlaceholder": "Write what to change…",
+    "noteLabel": "Change note",
+    "sendToAgent": "Send to agent",
+    "sendFailed": "Could not send. Try again.",
+    "sent": "Sent to the agent",
+    "emptyTitle": "No changes",
+    "emptyBody": "The agent hasn't changed any files yet. Changes show here as they happen.",
+    "reclaimed": "The machine was reclaimed: showing the last checkpoint / PR changes",
+    "source": "Source: {kind} · {time}",
+    "sourceMachine": "machine",
+    "sourceCheckpoint": "checkpoint",
+    "sourcePr": "PR",
+    "reviewLoadFailed": "Could not load the changes",
+    "collapse": "Collapse",
+    "conversation": "Task thread",
+    "noConversation": "No thread on this task yet",
+    "reviewOf": "Review {name}",
+    "changed": "Changed",
+    "refresh": "Refresh",
+    "loading": "Loading…",
+    "noFiles": "No files",
+    "selectFile": "Select a file",
+    "sourceUnavailable": "Cannot display this file",
+    "sourceTruncated": "File content was truncated",
+    "filesUnavailable": "Files are unavailable for this task",
+    "runLog": "Run log",
+    "noRunLog": "No run log",
+    "openFullLog": "View full log on GitHub",
+    "fullLogUnavailable": "Full log unavailable",
+    "terminalUnavailable": "Interactive terminal unavailable",
+    "terminalConnecting": "Connecting to the terminal…",
+    "terminalReclaimed": "The machine was reclaimed",
+    "terminalFailed": "Could not connect to the terminal",
+    "terminalEnded": "The terminal ended",
+    "terminalExited": "Terminal exited ({code})",
+    "terminalInput": "Type a command",
+    "terminalSendFailed": "Could not send",
+    "drawerTabs": "Logs and terminal",
+    "noFailingLog": "No failing log",
+    "openOnGitHub": "Open on GitHub",
+    "noLogExcerpt": "No log excerpt",
+    "excerptOnly": "Only the log excerpt is shown",
+    "previewUnavailable": "No preview available",
+    "previewFailed": "Could not load the preview",
+    "openingPreview": "Opening preview…",
+    "previewChecking": "Checking preview…",
+    "noDevServer": "No running dev server",
+    "previewStartMissing": "Preview start endpoint is not available yet",
+    "startPreview": "Start preview"
   }
 }

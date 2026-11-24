@@ -47,6 +47,7 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM model_order_entries WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM model_order_settings WHERE "ownerId" = ANY($1)', [users])
+    await pool.query('DELETE FROM bot_model_choices WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM repository_settings WHERE "userId" = ANY($1)', [users])
@@ -1219,6 +1220,35 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     // The source is history now: forking it again, or sending to it, is refused.
     await assert.rejects(forkThread(owner.id, owner.ws.id, { ...input, requestId: randomUUID() }), { code: 'threadReplaced' })
     await assert.rejects(sendThreadMessage(owner.id, source.runId, 'Again.'), { code: 'threadReplaced' })
+  })
+
+  await t.test('a send whose continuation is frozen on another owner\'s binding is refused before a run queues', async () => {
+    const member = await person()
+    const initial = await steps.dispatchRun(member.id, { model: { harness: 'codex' as const }, issueId: member.issueId, repo: 'octo/repo', requestKey: `dispatch:${randomUUID()}` }, undefined, member.botId) as unknown as { runId: string }
+    await end(initial.runId, 'succeeded')
+    // Bound to a bot computer the thread continues on the cloud path, where no
+    // admission check stands behind the pre-flight — only it can refuse.
+    await pool.query('INSERT INTO computer_run_bindings("runId","botId","workspaceId","ownerId") VALUES($1,$2,$3,$4)', [initial.runId, member.botId, member.ws.id, member.id])
+    const { rows: [seeded] } = await pool.query<{ def: unknown }>(`SELECT "agentDefinition" AS def FROM agent_runs WHERE id=$1`, [initial.runId])
+    const { rows: [foreign] } = await pool.query('SELECT id FROM byos_bindings WHERE "ownerId"=$1', [a.id])
+    const { rows: [frozen] } = await pool.query<{ bindingId: string }>(`UPDATE agent_runs SET "agentDefinition"=jsonb_set(jsonb_set("agentDefinition",'{subscription,bindingId}',to_jsonb($2::text)),'{apiKey}','null'::jsonb) WHERE id=$1 RETURNING "agentDefinition"->'subscription'->>'bindingId' AS "bindingId"`, [initial.runId, foreign.id])
+    assert.equal(frozen.bindingId, foreign.id, 'the seeded run froze on a subscription the update rewrote')
+    await assert.rejects(sendThreadMessage(member.id, initial.runId, 'Send it again.'), { code: 'executionAccountUnavailable' })
+    const { rows: [{ count }] } = await pool.query<{ count: string }>('SELECT count(*)::text AS count FROM agent_runs WHERE "userId"=$1', [member.id])
+    assert.equal(count, '1', 'the refusal happens before any continuation run is created')
+    await pool.query(`UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1`, [initial.runId, JSON.stringify(seeded.def)])
+    // Still on the cloud path: the pre-flight must let an own-account continuation
+    // through. With no bot computer seeded the dispatch itself answers one of these
+    // refusals — any of them proves the send reached it past the guard. runInvalid
+    // is thrown only on or after the dispatch result (thread-continue.ts:256,351).
+    const recovery = await sendThreadMessage(member.id, initial.runId, 'Now on my own subscription.')
+      .then(result => ({ ok: result.continued }), (error: unknown) => ({ code: (error as { code?: string })?.code }))
+    assert.ok((recovery as { ok?: boolean }).ok === true
+      || (recovery as { code?: string }).code === 'cloudComputerUnavailable'
+      || (recovery as { code?: string }).code === 'factoryLifecycleUnavailable'
+      || (recovery as { code?: string }).code === 'runInvalid',
+      `the pre-flight let the own-account send reach the cloud dispatch: ${JSON.stringify(recovery)}`)
+    await pool.query('DELETE FROM computer_run_bindings WHERE "runId"=$1', [initial.runId])
   })
 
   await t.test('a deleted thread takes no more messages until it is restored', async () => {
