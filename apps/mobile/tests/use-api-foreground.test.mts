@@ -130,3 +130,18 @@ test('a Retry cut off by leaving the app is redone on return, and still shows it
   assert.ok(state!.error, 'the redone Retry exhausted its attempts, so the person sees it failed')
   assert.deepEqual(state!.data, { name: 'first' })
 })
+
+test('a Retry still pending when the app returns is redone once it fails, and still shows its failure', async () => {
+  answers = [{ name: 'first' }]
+  await mount()
+  hold = { resolve: () => {} }
+  await act(async () => { void state!.reload(); await flush() })
+  await setAppState('background')
+  await setAppState('active')
+  // The suspended request only fails after the app is back in the foreground.
+  hold.resolve(); hold = null
+  await advance(6_000)
+  assert.equal(reads, 6, 'the cut-off Retry, then a redo with its three retries')
+  assert.ok(state!.error)
+  assert.deepEqual(state!.data, { name: 'first' })
+})
