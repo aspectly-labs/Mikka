@@ -14,7 +14,7 @@ on:
         description: Reviewed deployment phase; never compiles product source
         type: choice
         required: true
-        options: [stage-all, stage-verify, stage-worlds, stage-task, stage-eve, stage-litellm, stage-api, stage-web, stage-sessions, production-reserve, production-litellm, production-eve, production-eve-maintenance, production-eve-postgres, production-worlds-prepare, production-api, production-worlds-register, production-web, production-verify, production-migrate-database, production-task, gateway-prepare, gateway-observe, eve-retire, service-stage, service-production, pipeline-stage, pipeline-rollback]
+        options: [stage-all, stage-verify, stage-worlds, stage-task, stage-eve, stage-litellm, stage-api, stage-web, stage-sessions, production-reserve, production-litellm, production-eve, production-eve-maintenance, production-eve-postgres, production-worlds-prepare, production-api, production-worlds-register, production-web, production-verify, production-migrate-database, production-task, gateway-prepare, gateway-observe, eve-retire, service-stage, service-production, pipeline-stage, pipeline-rollback, cloud-services-stage, cloud-services-production]
       database_window:
         description: Existing reviewed database migration window; used only by production-migrate-database
         type: string
