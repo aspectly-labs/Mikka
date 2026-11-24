@@ -130,15 +130,19 @@ export const currentAgent = (segments: readonly Segment[]) => segments.length ? 
 
 /**
  * Each attempt's thread read, settled: one attempt that cannot be read no longer blanks the conversation; it is
- * listed in `failed` and says so in place. A fatal answer (signed out), the reply run's own failure, or every read
- * failing still rejects the whole read, since the composer and the page then have nothing to stand on.
+ * listed in `failed` and says so in place, with a retry. An attempt the server no longer serves (deleted, or access
+ * withdrawn; see `gone`) is listed in `gone` instead: nothing of it should stay on screen, and a retry cannot bring it
+ * back. A fatal answer (signed out), the reply run's own failure, or every read failing still rejects the whole read,
+ * since the composer and the page then have nothing to stand on.
  */
-export function settledThreads<T>(runIds: readonly string[], reads: readonly PromiseSettledResult<T>[], replyRunId: string | null, fatal: (reason: unknown) => boolean): { threads: Record<string, T>; failed: string[] } {
+export function settledThreads<T>(runIds: readonly string[], reads: readonly PromiseSettledResult<T>[], replyRunId: string | null,
+  fatal: (reason: unknown) => boolean, gone: (reason: unknown) => boolean = () => false): { threads: Record<string, T>; failed: string[]; gone: string[] } {
   const failures = reads.flatMap((read, index) => read.status === 'rejected' ? [{ runId: runIds[index]!, reason: read.reason as unknown }] : [])
   const stop = failures.find(failure => fatal(failure.reason) || failure.runId === replyRunId) ?? (failures.length && failures.length === reads.length ? failures[0] : undefined)
   if (stop) throw stop.reason
   return {
     threads: Object.fromEntries(reads.flatMap((read, index) => read.status === 'fulfilled' ? [[runIds[index]!, read.value] as const] : [])),
-    failed: failures.map(failure => failure.runId),
+    failed: failures.filter(failure => !gone(failure.reason)).map(failure => failure.runId),
+    gone: failures.filter(failure => gone(failure.reason)).map(failure => failure.runId),
   }
 }

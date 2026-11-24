@@ -30,6 +30,7 @@ import { runErrorLine } from '@/lib/run-error'
 import type { TaskDetail, ThreadDetail, ThreadItem } from '@/lib/types'
 import { readPushedTask } from '@/lib/task-push-app'
 import { useLiveApi } from '@/lib/useApi'
+import { withholdsCachedRead } from '@/lib/api-read-state'
 import { useStop } from '@/lib/useStop'
 import { colors } from '@/lib/theme'
 import { ThreadArtifactsList, ThreadSegments } from '../components/thread-artifacts'
@@ -37,7 +38,7 @@ import { hasThreadArtifacts, threadArtifactsPath, type ThreadArtifacts, type Thr
 import { boundary, conversationReplyRun, conversationSegments, currentAgent, reviewRun, settledThreads, type Attempt } from '../model/task-conversation'
 import { STAGE_WORD, stageLine, verdictWord, type TaskFlow } from '../model/task-flow'
 
-type Conversation = { detail: TaskDetail; threads: Record<string, ThreadDetail>; failed?: string[] }
+type Conversation = { detail: TaskDetail; threads: Record<string, ThreadDetail>; failed?: string[]; gone?: string[] }
 
 /** The task's detail, then each attempt's thread: one read per attempt with the existing routes, no new API. */
 async function readConversation(id: string, workspace?: string): Promise<Conversation> {
@@ -46,9 +47,10 @@ async function readConversation(id: string, workspace?: string): Promise<Convers
   const attempts = detail.activity.filter((item): item is Attempt => item.kind === 'attempt')
   // One attempt that cannot be read no longer blanks the whole conversation (#9); see settledThreads.
   const reads = await Promise.allSettled(attempts.map(attempt => api<ThreadDetail>(`/api/mobile/threads/${attempt.runId}`)))
-  const { threads, failed } = settledThreads(attempts.map(attempt => attempt.runId), reads, conversationReplyRun(detail.task, detail.activity),
-    reason => reason instanceof ApiError && reason.status === 401)
-  return { detail, threads, failed }
+  const { threads, failed, gone } = settledThreads(attempts.map(attempt => attempt.runId), reads, conversationReplyRun(detail.task, detail.activity),
+    reason => reason instanceof ApiError && reason.status === 401,
+    reason => reason instanceof ApiError && withholdsCachedRead(reason.status))
+  return { detail, threads, failed, gone }
 }
 
 /**
@@ -72,14 +74,17 @@ export function TaskConversationScreen() {
     const thread = newest ? threadLive(current?.threads[newest] ?? null, newest) : null
     return { minIntervalMs: tasks.minIntervalMs, refs: [...tasks.refs, ...(thread?.refs ?? [])] }
   }, read)
-  // A refresh where one older attempt fails keeps what that attempt last showed, instead of dropping it.
+  // A refresh where one older attempt fails for a passing reason keeps what that attempt last showed, with a retry in
+  // place. One the server no longer serves (deleted, access withdrawn) leaves the screen and the saved copy at once.
   const shown = useRef<Record<string, ThreadDetail>>({})
+  const gone = new Set(data?.gone ?? [])
+  if (data) shown.current = Object.fromEntries(Object.entries({ ...shown.current, ...data.threads }).filter(([runId]) => !gone.has(runId)))
   const threads = data ? { ...Object.fromEntries((data.failed ?? []).flatMap(runId => shown.current[runId] ? [[runId, shown.current[runId]!]] : [])), ...data.threads } : {}
-  if (data) shown.current = { ...shown.current, ...data.threads }
-  const missing = (data?.failed ?? []).filter(runId => !threads[runId])
+  const failed = data?.failed ?? []
+  const activity = data ? data.detail.activity.filter(item => item.kind !== 'attempt' || !gone.has(item.runId)) : []
   const [retrying, setRetrying] = useState(false)
   const retry = () => { setRetrying(true); void reload().finally(() => setRetrying(false)) }
-  const segments = data ? conversationSegments(data.detail.activity, new Map(Object.entries(threads))) : []
+  const segments = data ? conversationSegments(activity, new Map(Object.entries(threads))) : []
   const newest = data && conversationReplyRun(data.detail.task, data.detail.activity)
   const live = newest ? data?.threads[newest] ?? null : null
   const canSend = Boolean(newest && live && live.canReply !== false && !conversationAccessDenied(error))
@@ -139,7 +144,7 @@ export function TaskConversationScreen() {
               </ReviewCard>
               : segment.items.map((item, at) => <View key={item.id}><Item item={item} live={data?.threads[segment.attempt.runId]?.active === true && at === segment.items.length - 1} />
                 {(item.kind==='person' || (item.kind==='agent' && endsTurn(segment.items, at))) && <MobileReplyVersions detail={data?.threads[segment.attempt.runId]} runId={segment.attempt.runId} itemId={item.id} text={item.text} reload={reload} working={!!live?.active} side={item.kind === 'person' ? 'end' : 'start'} />}</View>)}
-            {missing.includes(segment.attempt.runId) ? <Pressable accessibilityRole="button" accessibilityState={{ busy: retrying, disabled: retrying }} disabled={retrying} onPress={retry} hitSlop={6} style={({ pressed }) => [styles.segmentRetry, pressed && { opacity: 0.6 }]}>
+            {failed.includes(segment.attempt.runId) ? <Pressable accessibilityRole="button" accessibilityState={{ busy: retrying, disabled: retrying }} disabled={retrying} onPress={retry} hitSlop={6} style={({ pressed }) => [styles.segmentRetry, pressed && { opacity: 0.6 }]}>
               {retrying ? <Spinner /> : <Text style={styles.causeLine}>{mobileMessages.ConversationDirectory.loadError} <Text style={styles.retry}>{mobileMessages.Common.retry}</Text></Text>}
             </Pressable> : null}
             {/* A failed attempt's cause stays inside it, in words, with the raw code under 详情 (2026-11-05-0330). */}
