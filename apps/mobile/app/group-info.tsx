@@ -8,8 +8,8 @@ import { Text } from '@/components/Text'
 import { Group } from '@/components/ui'
 import { ListLoading } from '@/shared/components/empty-state'
 import { mobileMessages } from '@/lib/messages'
-import type { GroupMember } from '@/lib/types'
-import { useLiveApi, useRefresh } from '@/lib/useApi'
+import type { GroupMember, GroupSummary } from '@/lib/types'
+import { useApi, useLiveApi, useRefresh } from '@/lib/useApi'
 import { useHome } from '@/lib/home'
 import { groupChatLive } from '@/lib/live-keys'
 import { botPath } from '@/lib/pins'
@@ -22,11 +22,16 @@ import { colors } from '@/lib/theme'
 export default function GroupInfoScreen() {
   const { id, title, workspace } = useLocalSearchParams<{ id: string; title?: string; workspace?: string }>()
   const router = useRouter()
+  const home = useHome().data
+  // The group's workspace, read here as the chat reads it (cached), so the live key holds even when the page was opened
+  // before the chat had it.
+  const groups = useApi<{ conversations: GroupSummary[] }>(home ? `/api/conversations?workspaceId=${home.workspace.id}` : null)
+  const workspaceId = groups.data?.conversations.find(group => group.id === id)?.workspaceId ?? workspace
   // The group's own live key, as the chat reads its members: a rename or a new member shows here too.
-  const { data, error, loading, reload } = useLiveApi<{ members: GroupMember[] }>(`/api/conversations/${id}/members`, () => groupChatLive(id, workspace))
+  const { data, error, loading, reload } = useLiveApi<{ members: GroupMember[] }>(`/api/conversations/${id}/members`, () => groupChatLive(id, workspaceId))
   // Only a Bot of the viewer's own opens a chat (a guest sees the owner's Bots read-only); the Coordinator opens by its
-  // alias, so its unsent messages stay in one place.
-  const own = new Map((useHome().data?.bots ?? []).map(bot => [bot.id, bot]))
+  // alias, so its unsent messages stay in one place. An archived Bot is not on Home either, so it stays read-only here.
+  const own = new Map((home?.bots ?? []).map(bot => [bot.id, bot]))
   const refresh = useRefresh(reload)
   // Bots first (each opens its chat), then people.
   const members = data?.members ?? []
