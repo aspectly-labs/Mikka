@@ -184,19 +184,39 @@ test('attestation never reads account credentials or forwards the GitHub token t
     fetchImpl: async () => Response.json({ build: 'b'.repeat(40) }) }), /build_mismatch/)
   await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
     fetchImpl: async url => new URL(url).origin === ORIGIN ? Response.json({ build: SHA }) : Response.json({ workflow_runs: [] }) }), /worker_release/)
-  // A failed-deploy workflow_run or skipped release (which also matches failed-input retry suppression) cannot satisfy worker_release.
-  for (const jobs of [
-    workerJobs({ runId: 13, published: false, inputsEvaluated: false }),
-    workerJobs({ runId: 13, published: false, inputsEvaluated: true }),
-  ]) {
-    await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
-      fetchImpl: async url => {
-        const parsed = new URL(url)
-        if (parsed.origin === ORIGIN) return Response.json({ build: SHA })
-        if (parsed.pathname.endsWith('/runs')) return Response.json({ workflow_runs: [{ ...release('worker'), id: 13 }] })
-        return Response.json({ jobs })
-      } }), /worker_release/)
+  // A failed-deploy workflow_run cannot satisfy worker_release (never consults reused publications).
+  const skippedFetch = jobs => async url => {
+    const parsed = new URL(url)
+    if (parsed.origin === ORIGIN) return Response.json({ build: SHA })
+    if (parsed.pathname.endsWith('/runs')) return Response.json({ workflow_runs: [{ ...release('worker'), id: 13 }] })
+    return Response.json({ jobs })
   }
+  await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
+    fetchImpl: skippedFetch(workerJobs({ runId: 13, published: false, inputsEvaluated: false })),
+    workerHash: () => assert.fail('failed-deploy run must not reuse an earlier publication'),
+    latestPublished: () => assert.fail('failed-deploy run must not query publication history') }), /worker_release/)
+  // A skipped release caused by failed-input retry suppression (latest published workerSha != revision hash) is rejected.
+  const WORKER_HASH = 'c'.repeat(40), OTHER_HASH = 'd'.repeat(40), PRIOR_COMMIT = 'b'.repeat(40)
+  await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
+    fetchImpl: skippedFetch(workerJobs({ runId: 13, published: false, inputsEvaluated: true })),
+    workerHash: ({ ref }) => { assert.equal(ref, SHA); return WORKER_HASH },
+    latestPublished: async () => ({ runId: 9, runAttempt: 1, sourceCommit: PRIOR_COMMIT, workerSha: OTHER_HASH }) }), /worker_release/)
+  await assert.rejects(attestDeployment({ env: input, event: event(), now: () => EPOCH,
+    fetchImpl: skippedFetch(workerJobs({ runId: 13, published: false, inputsEvaluated: true })),
+    workerHash: () => WORKER_HASH, latestPublished: async () => null }), /worker_release/)
+  // A skipped release whose revision hash matches the latest verified published runtime reuses that publication.
+  const reusedProof = await attestDeployment({ env: input, event: event(), now: () => EPOCH,
+    fetchImpl: skippedFetch(workerJobs({ runId: 13, published: false, inputsEvaluated: true })),
+    workerHash: ({ ref }) => { assert.equal(ref, SHA); return WORKER_HASH },
+    latestPublished: async ({ token }) => {
+      assert.equal(token, 'private-github-token')
+      return { runId: 9, runAttempt: 1, sourceCommit: PRIOR_COMMIT, workerSha: WORKER_HASH }
+    } })
+  assert.equal(reusedProof.status, 'ready')
+  assert.equal(reusedProof.workerReleaseRunId, 9)
+  assert.equal(reusedProof.workerReleaseSha, SHA)
+  assert.equal(reusedProof.workerReleaseStatus, 'reused')
+  assert.equal(reusedProof.workerReleaseSourceCommit, PRIOR_COMMIT)
   // A manual workflow_dispatch must prove report.sourceCommit === revision through the attempt-bound release report artifact.
   const dispatchFixture = sourceCommit => {
     const run = dispatchRun({ id: 14, runAttempt: 2, headSha: SHA })

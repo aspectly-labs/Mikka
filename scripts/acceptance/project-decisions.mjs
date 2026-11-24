@@ -16,6 +16,7 @@ import {
 } from './model-order-cases.mjs'
 import { discoverRpcActions, releaseHeaders, releaseVersionGuard, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
 import { publicRepositoryId } from '../cloudflare-source.mjs'
+import { lastPublishedRelease, runtimeInputsDigest } from '../e2b/runtime-inputs.mjs'
 import { assertReportIdentity, downloadReleaseReport, readReleaseArtifact, TEMPLATE_KINDS } from '../e2b/runtime-report.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
@@ -244,7 +245,10 @@ export async function verifyWorkerReleaseCandidate(candidate, jobs, { readGithub
 }
 
 /** Runs before the Infisical action, with no smoke-account environment access. */
-export async function attestDeployment({ env = process.env, event, fetchImpl = fetch, wait = delay, now = Date.now } = {}) {
+export async function attestDeployment({
+  env = process.env, event, fetchImpl = fetch, wait = delay, now = Date.now,
+  workerHash = runtimeInputsDigest, latestPublished = lastPublishedRelease,
+} = {}) {
   const guard = triggerGuard(env, event)
   check(typeof env.GH_TOKEN === 'string' && env.GH_TOKEN.length > 0, 'configuration_required')
   async function read(url, github = false) {
@@ -272,11 +276,28 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
   do {
     await pin()
     const candidates = matchingReleases((await runs('e2b-official-runtime.yml')).workflow_runs, guard.revision, 'worker')
+    let skipped = null
     for (const candidate of candidates) {
       const evaluated = await verifyWorkerReleaseCandidate(candidate, (await runJobs(candidate)).jobs,
         { readGithub, token: env.GH_TOKEN, fetchImpl, now })
       if (evaluated.status === 'published') {
         worker = candidate; proof = evaluated; break
+      }
+      if (evaluated.status === 'not_published' && !skipped) skipped = { candidate, evaluated }
+    }
+    if (!worker && skipped) {
+      // Skipped release jobs cover both genuinely unchanged inputs and retry suppression of
+      // previously failed inputs. Accept reuse only when the latest verified published release
+      // has the exact canonical worker hash of guard.revision.
+      let expectedHash = null, published = null
+      try { expectedHash = workerHash({ ref: guard.revision }) } catch { expectedHash = null }
+      if (sha(expectedHash)) {
+        try { published = await latestPublished({ token: env.GH_TOKEN, fetchImpl, now }) } catch { published = null }
+      }
+      if (published && sha(published.sourceCommit) && published.workerSha === expectedHash
+        && Number.isSafeInteger(published.runId) && published.runId > 0) {
+        worker = { id: published.runId }
+        proof = { status: 'reused', runId: published.runId, sourceCommit: published.sourceCommit }
       }
     }
     if (worker || now() >= deadline) break
@@ -286,6 +307,7 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
   await pin()
   return { status: 'ready', issue: 1245, repository: REPOSITORY, ...guard,
     workerReleaseRunId: worker.id, workerReleaseSha: guard.revision, workerReleaseStatus: proof.status,
+    ...(proof.sourceCommit ? { workerReleaseSourceCommit: proof.sourceCommit } : {}),
     checkedAt: new Date(now()).toISOString() }
 }
 
