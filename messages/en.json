@@ -4121,6 +4121,7 @@
       "working": "Reply already processing",
       "queued": "Reply queued",
       "unavailable": "Reply retry unavailable",
+      "accountUnavailable": "This account is unavailable.",
       "nothingToRetry": "No failed reply to retry"
     },
     "subscriptionRefusal": {

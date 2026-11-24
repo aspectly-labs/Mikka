@@ -45,6 +45,15 @@ export async function retryEveTurn(ownerId:string,botId:string,requestHeaders:He
   const {pool}=await import('../db')
   const bot=(await pool.query<{workspaceId:string}>('SELECT "workspaceId" FROM bots WHERE id=$1 AND "ownerId"=$2',[botId,ownerId])).rows[0]
   if(!bot)return {queued:false as const,reason:'nothingToRetry' as const}
+  // A resend frozen on another owner's binding would only refuse at
+  // turn.started (#3057): answer up front, like the thread send path does.
+  // Read the saved row — botModel would write a default before eligibility.
+  const saved=(await pool.query<{bindingId:string|null}>(
+    'SELECT "bindingId" FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3',
+    [ownerId,bot.workspaceId,botId])).rows[0]?.bindingId
+  if(saved&&await new (await import('../execution-settings')).ExecutionSettings(pool)
+    .bindingHeldElsewhere({ownerId,workspaceId:bot.workspaceId},saved))
+    return {queued:false as const,reason:'accountUnavailable' as const}
   const scope=await assertEveScope({ownerId,botId,workspaceId:bot.workspaceId,surface:'web'})
   const headers=eveRetryHeaders(requestHeaders)
   // Credentials are the current request's. A host service token would lose
