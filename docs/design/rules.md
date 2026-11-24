@@ -76,9 +76,9 @@ source wins in a conflict is in [`README.md`](README.md).
 - **R-13** One-to-one chats (a bot, the Coordinator, the 建议 page's
   Coordinator chat, the board's Coordinator sidebar) show no avatar or name on
   messages; the header pill names the bot.
-  Group chats show a 24px avatar on the left of the bubbles at the bottom of
-  each run and the name once per run, 12px Medium in the bot's colour (Figma
-  `224:5023`). A group's 详情 is about people, not computers: the group
+  Group chats show a 28px avatar and the author's name once per same-author run
+  ([2026-11-23-0300](decisions/2026-11-23-0300-agent-messages-as-rows.md),
+  [`design-system.md`](design-system.md) §3.1). A group's 详情 is about people, not computers: the group
   avatar and name, then its members (people and bots), recent tasks and
   files. No cloud computer in a group; open a bot's own chat to see its.
 - **R-14** Across Web, Desktop and iOS, assistant replies (Bot, Coordinator and
@@ -776,9 +776,10 @@ library's shipped look ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-
   filters" are two different states, each with the one action that resolves it
   (R-41); loading is a skeleton, never a status string.
 - **R-97** A list, table, panel, row, menu or popover never takes a radius
-  above 12, and Mikka's own UI does not draw `rounded-3xl` (24) on those
-  surfaces. R-33's 14 stays for the approval and list card, and a dialog keeps
-  the radius the shipped modal draws ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+  above `12px`, and Mikka's own UI does not draw `rounded-3xl` (`24px`) on those
+  surfaces. Approval and takeover cards take R-33's `8px` (`rounded-lg`), and a
+  paid dialog keeps the radius the shipped modal draws
+  ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
 
 The measured baseline these come from, and the Capy values they were compared
 against, are in [2026-11-18-1400](decisions/2026-11-18-1400-pr-surface-and-craft-baseline.md).

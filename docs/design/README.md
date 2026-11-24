@@ -38,11 +38,12 @@ source is now out of date and who owns it.
 | --- | --- | --- |
 | 1 | Alex's latest explicit decision, reflected in current `AGENTS.md`, active design rules and current source | Anything it names; historical decision records never override a later decision |
 | 2 | `glossary.md` | Words and the bot / chat / thread model |
-| 3 | `design-system.md` & `rules.md` | Visual tokens, primitives, viewport budgets, 7-state contract, product and visual rules |
-| 4 | A Figma draft Alex is reviewing now | Layout: what goes where, sizes, order, grouping |
-| 5 | The running app on `main` ([decision 2026-11-01-0015](decisions/2026-11-01-0015-main-is-the-design.md)) | Layout everywhere else; it wins over any other Figma frame |
-| 6 | ChatGPT / Codex + Claude Code (chat, strips, composer) & Capy (right rail, sidebar, task panel) | Look, density, quiet chrome and interaction craft when Mikka's own spec is silent ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)) |
-| 7 | reUI / shadcn defaults | Only what nothing above covers |
+| 3 | `design-system.md` | Visual tokens, restricted primitives, viewport budgets, 7-state contract and copy density (wins over older visual clauses in `rules.md`) |
+| 4 | `rules.md` | Product behavior and domain-specific UI rules |
+| 5 | A Figma draft Alex is reviewing now | Layout: what goes where, sizes, order, grouping |
+| 6 | The running app on `main` ([decision 2026-11-01-0015](decisions/2026-11-01-0015-main-is-the-design.md)) | Layout everywhere else; it wins over any other Figma frame |
+| 7 | ChatGPT / Codex + Claude Code (chat, strips, composer) & Capy (right rail, sidebar, task panel) | Look, density, quiet chrome and interaction craft when Mikka's own spec is silent ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)) |
+| 8 | reUI / shadcn defaults | Only what nothing above covers |
 
 A paid block or component (BoardUI Pro, affectUI, beUI Pro) is outside this
 order: the library's shipped demo decides its look, and only data and text
