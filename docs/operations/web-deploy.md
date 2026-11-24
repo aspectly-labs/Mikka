@@ -128,7 +128,7 @@ A per-service release (private operations `service-release`) publishes no
 `Web deploy` run, and nothing waits for one. The production acceptance
 workflows that used to follow it (`read-cache-production`,
 `self-hosted-production`, `task-attachment-production`,
-`project-decisions-acceptance`, `model-provider-fallback-acceptance` and
+`project-decisions-acceptance` and
 `issue1415-deployed-production`) are dispatched on main after the release
 instead. Their only release check is that the live `/mikka/api/version` serves
 the expected build. `factory-visual-evidence-acceptance` still follows the E2B

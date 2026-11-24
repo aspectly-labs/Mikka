@@ -57,12 +57,18 @@ export function selectAutomaticCandidate(event, actualRun, mainSha) {
   return actualRun.head_sha === mainSha ? 'selected' : 'superseded'
 }
 
+const preWriteSteps = ['artifacts', 'existing-resources']
+
 /** A completed rollback makes its previous manifest current again. A failed
  * deployment must be recovered explicitly before another automatic writer. */
 export function baselineOrigin(summary, target = 'staging') {
   assert.equal(summary?.version, 1, 'pipeline_summary_version_required')
   assert.equal(summary.target, target, 'pipeline_summary_target_mismatch')
   if (summary.rollback?.status === 'passed') return summary.previousOrigin ?? null
+  // The publisher reads artifacts and observes every existing resource before its first migration or
+  // service write. A run that failed at one of those two steps changed nothing, so its baseline stands.
+  if (summary.status === 'failed' && preWriteSteps.includes(summary.failedStep) && summary.rollback === undefined
+    && summary.admission === undefined) return summary.previousOrigin ?? null
   assert.equal(summary.status, 'passed', 'pipeline_previous_release_requires_recovery')
   assert.equal(summary.verification?.status, 'pass', 'pipeline_summary_verification_required')
   return summary.origin

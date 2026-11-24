@@ -112,10 +112,6 @@ export const pollingAllowlist = {
     reason: "heartbeat keeps the explicit live-inbox acceptance WebSocket open; no business state reads",
     hits: 1,
   },
-  "scripts/acceptance/model-provider-fallback.mjs": harness(
-    "bounded integration acceptance observes its owned test request and protects its test order from mutation",
-    1,
-  ),
   "scripts/acceptance/owned-process-supervisor.py": local(
     "bounded wait for an owned child process to exit during explicit supervisor acceptance",
     1,
