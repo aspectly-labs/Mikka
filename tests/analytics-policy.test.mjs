@@ -534,3 +534,125 @@ test('acquisition fields keep bounded UTM labels and referring domains, never ra
   assert.equal(p.utm_content, undefined)
   assert.equal(p.$referrer, undefined)
 })
+
+test('frontend ErrorBoundary and runtime error RUM events keep only sanitized bounded fields and strip PII', () => {
+  const renderEvent = sanitizeAnalyticsEvent({
+    event: 'frontend_render_error',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      $session_id: 'session-1',
+      error_name: 'TypeError',
+      boundary: 'app-frame-page',
+      route: 'https://app.aspectlylabs.com/en/tasks/550e8400-e29b-41d4-a716-446655440000?token=PRIVATE_QUERY_CANARY&email=alice@example.com#PRIVATE_HASH',
+      build_sha: '5be23b0',
+      viewport_bucket: 'desktop',
+      recoverable: true,
+      message: 'PRIVATE_ERROR_MESSAGE_CANARY',
+      stack: 'Error at /Users/alex/private.ts:12',
+      email: 'alice@example.com',
+      lcp_ms: 1200,
+    },
+    $set: { email: 'alice@example.com' },
+  })
+  assert.equal(JSON.stringify(renderEvent).includes('PRIVATE_'), false)
+  assert.equal(JSON.stringify(renderEvent).includes('alice@example.com'), false)
+  assert.deepEqual(renderEvent, {
+    event: 'frontend_render_error',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      $session_id: 'session-1',
+      route: '/en/tasks/:id',
+      build_sha: '5be23b0',
+      viewport_bucket: 'desktop',
+      error_name: 'TypeError',
+      boundary: 'app-frame-page',
+      recoverable: true,
+    },
+  })
+
+  const hostileRuntime = sanitizeAnalyticsEvent({
+    event: 'frontend_runtime_error',
+    properties: {
+      error_name: 'Bearer sk_live_PRIVATE_CANARY failed for alice@example.com',
+      error_source: 'unhandled_rejection',
+      route: '/en/invite/PRIVATE_INVITE_CODE/users/alice@example.com/987654?secret=PRIVATE_QUERY',
+      build_sha: 'invalid sha with spaces',
+      viewport_bucket: 'invalid_bucket',
+      reason: 'PRIVATE_REASON_CANARY',
+    },
+  })
+  assert.equal(JSON.stringify(hostileRuntime).includes('PRIVATE_'), false)
+  assert.equal(JSON.stringify(hostileRuntime).includes('alice@example.com'), false)
+  assert.deepEqual(hostileRuntime, {
+    event: 'frontend_runtime_error',
+    properties: {
+      route: '/en/invite/:token/users/:redacted/:id',
+      error_name: 'Error',
+      error_source: 'unhandled_rejection',
+    },
+  })
+})
+
+test('frontend_web_vitals keeps bounded CWV timings, drops empty/invalid payloads, and keeps RUM fields off $pageview', () => {
+  const vitals = sanitizeAnalyticsEvent({
+    event: 'frontend_web_vitals',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      route: '/en/pulls/123456?code=PRIVATE_OAUTH_CODE#frag',
+      build_sha: '5be23b0',
+      viewport_bucket: 'mobile',
+      flush_reason: 'visibility_hidden',
+      lcp_ms: 1245.7,
+      cls: 0.12345,
+      inp_ms: 88.2,
+      fcp_ms: 410.4,
+      ttfb_ms: 180.6,
+      userAgent: 'PRIVATE_UA_CANARY',
+      query: 'PRIVATE_QUERY_CANARY',
+    },
+    $set_once: { email: 'alice@example.com' },
+  })
+  assert.equal(JSON.stringify(vitals).includes('PRIVATE_'), false)
+  assert.deepEqual(vitals, {
+    event: 'frontend_web_vitals',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      route: '/en/pulls/:id',
+      build_sha: '5be23b0',
+      viewport_bucket: 'mobile',
+      flush_reason: 'visibility_hidden',
+      lcp_ms: 1246,
+      cls: 0.1235,
+      inp_ms: 88,
+      fcp_ms: 410,
+      ttfb_ms: 181,
+    },
+  })
+
+  // Empty or out-of-range vitals payloads are dropped cleanly.
+  assert.equal(sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: '/en/tasks', flush_reason: 'pagehide' } }), null)
+  assert.equal(
+    sanitizeAnalyticsEvent({
+      event: 'frontend_web_vitals',
+      properties: { lcp_ms: -5, cls: 999, inp_ms: Number.POSITIVE_INFINITY, fcp_ms: '123', ttfb_ms: 9_999_999 },
+    }),
+    null,
+  )
+
+  // RUM-specific fields never leak onto unrelated events like $pageview.
+  const pageview = sanitizeAnalyticsEvent({
+    event: '$pageview',
+    properties: {
+      distinct_id: 'opaque-user-id',
+      error_name: 'TypeError',
+      boundary: 'app-frame-page',
+      route: '/en/tasks',
+      lcp_ms: 1000,
+    },
+  })
+  assert.deepEqual(pageview.properties, { distinct_id: 'opaque-user-id' })
+})
