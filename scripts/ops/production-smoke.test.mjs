@@ -122,7 +122,9 @@ test('staging names its own team admin by digest; the production policy identity
         { userId: 'admin', email: admin, role: 'admin', status: 'active' },
       ] : [] })
   } })
-  assert.equal((await runSmoke({ env: { ...env, SMOKE_POLICY_ADMIN_EMAIL_SHA256: digest }, fetchImpl: staging(stagingAdmin).fetchImpl })).status, 'pass')
+  const passed = await runSmoke({ env: { ...env, SMOKE_POLICY_ADMIN_EMAIL_SHA256: digest }, fetchImpl: staging(stagingAdmin).fetchImpl })
+  assert.equal(passed.status, 'pass')
+  assert.equal(passed.team.teamOwnerAttribution, 'configured-policy-admin-digest')
   await assert.rejects(runSmoke({ env, fetchImpl: staging(stagingAdmin).fetchImpl }), /team_workspace_failed/)
   await assert.rejects(runSmoke({ env: { ...env, SMOKE_POLICY_ADMIN_EMAIL_SHA256: digest }, fetchImpl: staging('alex@acme.aspectlylabs.com').fetchImpl }), /team_workspace_failed/)
 })

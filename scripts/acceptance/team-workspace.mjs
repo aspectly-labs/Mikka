@@ -108,7 +108,9 @@ export async function selectTeamWorkspace({ ownerId, json, onSelected, policyAdm
     teamWorkspaceConfirmed: true,
     teamWorkspaceHash: createHash('sha256').update('team-workspace\0' + workspaceId).digest('hex'),
     teamSelectionBasis: 'unique-active-admin-identity-match',
-    teamOwnerAttribution: 'AGENTS.md-and-owner-comment-1504-6691409495',
+    // Only the production policy identity is attributed to the owner's comment.
+    teamOwnerAttribution: policyAdminEmailSha256 === POLICY_ADMIN_EMAIL_SHA256
+      ? 'AGENTS.md-and-owner-comment-1504-6691409495' : 'configured-policy-admin-digest',
     teamAdminMembershipVerified: true,
   }
 }

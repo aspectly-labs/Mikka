@@ -55,11 +55,10 @@ path with no demand from an untested idle path. Canary runs themselves enter
 the monitor's ordinary run counts; no synthetic demand-metric exclusion is
 added by this workflow. This check does not certify startup-latency targets.
 
-## Staging smoke identities
+## Another environment's team admin
 
-Staging never uses the production smoke account. The deployment pipeline reads
-its own staging-only pair (`staging:/` `SMOKE_OWNER_*` and `SMOKE_ADMIN_*` in
-Infisical), signs them up through the normal API when they are missing, keeps
-one team in which the admin invited the owner, and runs the same smoke with
-`SMOKE_POLICY_ADMIN_EMAIL_SHA256` set to the digest of the staging admin's
-address. Without that variable the smoke keeps the production policy identity.
+By default the smoke accepts only a team whose active admin is the production
+policy identity. An environment with its own smoke identities (such as staging)
+passes `SMOKE_POLICY_ADMIN_EMAIL_SHA256`, the lowercase SHA-256 of its own
+admin's lowercased address; the address itself is never passed. How a hosted
+environment provisions those identities is in the private operations runbook.
