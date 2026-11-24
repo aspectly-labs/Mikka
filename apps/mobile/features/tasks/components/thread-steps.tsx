@@ -81,10 +81,11 @@ function Step({ step, running }: { step: ThreadStep; running: boolean }) {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 32, alignSelf: 'flex-start' },
+  // The whole line is the target (44 pt, as HIG asks), not only the summary's words.
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, alignSelf: 'stretch' },
   label: { fontSize: 14, color: colors.secondary },
   list: { marginTop: 4, marginLeft: 6, paddingLeft: 14, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.separator, gap: 2 },
-  step: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 6, minHeight: 32 },
+  step: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 6, minHeight: 44 },
   kind: { marginTop: 2 },
   text: { flex: 1, minWidth: 0, gap: 2 },
   title: { fontSize: 14, lineHeight: 19, color: colors.text },
