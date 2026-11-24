@@ -23,7 +23,7 @@ const TAB_ROOTS = new Set(['/', '/tasks', '/suggestions', '/settings', '/search'
  */
 export function SidebarDrawer({ children }: { children: ReactNode }) {
   const trial = useSidebarTrial()
-  if (!trial || Platform.OS === 'web') return <>{children}</>
+  if (!trial || Platform.OS !== 'ios') return <>{children}</>
   return <SidebarShell>{children}</SidebarShell>
 }
 
@@ -38,12 +38,12 @@ function SidebarShell({ children }: { children: ReactNode }) {
     <DrawerLayout
       ref={drawer}
       renderNavigationView={renderNavigationView}
-      drawerType={Platform.OS === 'ios' ? DrawerType.SLIDE : DrawerType.FRONT}
+      drawerType={DrawerType.SLIDE}
       drawerWidth={Math.min(400, width * 0.8)}
       drawerBackgroundColor={colors.grouped}
       overlayColor="rgba(0, 0, 0, 0.08)"
       edgeWidth={width}
-      minSwipeDistance={Platform.OS === 'android' ? 20 : 5}
+      minSwipeDistance={5}
       drawerLockMode={atRoot ? DrawerLockMode.UNLOCKED : DrawerLockMode.LOCKED_CLOSED}>
       {children}
     </DrawerLayout>
@@ -59,15 +59,15 @@ function SidebarContent({ go }: { go: (href: Href) => void }) {
   const groups = shown.filter(chat => chat.row.kind === 'group')
   return (
     <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }]}>
-      <Place label="全部" onPress={() => go('/tasks')}
+      <Place label={mobileMessages.MobileCore.all} onPress={() => go('/tasks')}
         icon={<View style={styles.allIcon}><Symbol name="square.stack.3d.up.fill" size={17} color="#fff" /></View>} />
       {bots.length ? <Text style={styles.section}>Bot</Text> : null}
       {bots.map(chat => <ChatPlace key={chat.key} chat={chat} go={go} />)}
-      {groups.length ? <Text style={styles.section}>群聊</Text> : null}
+      {groups.length ? <Text style={styles.section}>{mobileMessages.MobileCore.groupChats}</Text> : null}
       {groups.map(chat => <ChatPlace key={chat.key} chat={chat} go={go} />)}
       <View style={styles.gap} />
-      <Place label="新建 Bot" onPress={() => go('/new-bot')} icon={<Symbol name="plus" size={17} color={colors.accent} />} accent />
-      <Place label="新建群聊" onPress={() => go('/new-group')} icon={<Symbol name="person.2" size={17} color={colors.accent} />} accent />
+      <Place label={mobileMessages.Nav.newBot} onPress={() => go('/new-bot')} icon={<Symbol name="plus" size={17} color={colors.accent} />} accent />
+      <Place label={mobileMessages.Nav.newGroup} onPress={() => go('/new-group')} icon={<Symbol name="person.2" size={17} color={colors.accent} />} accent />
     </ScrollView>
   )
 }

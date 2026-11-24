@@ -100,8 +100,8 @@ export default function SettingsScreen() {
             <Row icon={icon('info.circle.fill', Info, '#8E8E93')} label="版本" value={versionLabel()} trailing={null} />
             <Row icon={icon('hand.raised.fill', Hand, '#5856D6')} label={messages.Common.privacyPolicy} onPress={() => void openPrivacyPolicy()} />
           </Group>
-          {Platform.OS === 'web' ? null : <Group>
-            <ToggleRow label="试用侧边栏" value={sidebarTrial} onChange={setSidebarTrial} />
+          {Platform.OS !== 'ios' ? null : <Group>
+            <ToggleRow label={messages.MobileCore.sidebarTrial} value={sidebarTrial} onChange={setSidebarTrial} />
           </Group>}
           <Group>
             <Row label={signingOut ? "正在退出登录" : "退出登录"} disabled={signingOut} destructive onPress={confirmSignOut} />
