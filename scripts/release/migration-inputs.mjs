@@ -347,7 +347,11 @@ function lockfileBlock(lines, start, indent) {
 }
 
 export function readLockfile(text) {
-  assert.ok(!/[\0-\x09\x0b-\x1f\x7f\x85\u2028\u2029\ufeff]/.test(text), lockfileError)
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    const refused = (code < 0x20 && code !== 0x0a) || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029 || code === 0xfeff
+    assert.ok(!refused, lockfileError)
+  }
   const lines = []
   for (const line of text.split('\n')) {
     if (/^ *$/.test(line)) continue
