@@ -11,7 +11,7 @@ let liveRunId: string | undefined = current
 const observed: Record<string, unknown> = {}
 const none = () => null
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL('../' + path, import.meta.url).href, { namedExports })
-mock.module('react-native', { namedExports: { StyleSheet: { create: (css: unknown) => css }, View: 'div' } })
+mock.module('react-native', { namedExports: { StyleSheet: { create: (css: unknown) => css }, View: 'div', useWindowDimensions: () => ({ width: 393, height: 852 }) } })
 mock.module('react-native-keyboard-controller', { namedExports: { KeyboardChatScrollView: ({children}:{children:ReactNode}) => createElement('section',null,children) } })
 mock.module('react-native-safe-area-context', { namedExports: { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) } })
 const lucide = { namedExports: { Square: none } }

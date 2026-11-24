@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ComponentProps } from 'react'
-import { Pressable, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
 import { ModelMenu } from '@/components/ModelMenu'
 import { ModelNotice } from '@/components/ModelNotice'
 import { useModelMenu } from '@/lib/model-menu'
+import { modelDisplayName } from '@/lib/model-menu-view'
 import { Text } from '@/components/Text'
 import { api } from '@/lib/api'
 import { apiCache } from '@/lib/api-cache'
@@ -11,6 +12,7 @@ import { mobileMessages } from '@/lib/messages'
 import type { ModelMenu as Menu } from '@/lib/model-menu-view'
 import type { ThreadDetail } from '@/lib/types'
 import { useApi } from '@/lib/useApi'
+import { colors } from '@/lib/theme'
 import { DESKTOP_RPC_VERSION } from '../../../../../lib/desktop-rpc/version'
 import { choiceFromMenu, type ThreadModelChoice } from '../../../../../lib/thread-model-choice'
 import { mentionAt, referenceMarker, referenceQueryReady, sourceMentionAt, type ThreadReference } from '../../../../../lib/thread-references'
@@ -47,14 +49,16 @@ function ThreadInput({ detail, runId, workspaceId, onSend, ...props }: Props & {
   const currentMenu = menu.data && option && group ? { ...menu.data, current: { ...menu.data.current, id: option.id, modelId: option.modelId, kind: group.kind, credentialLabel: group.credentialLabel } } : menu.data
   const copy = mobileMessages.IssueThreads
   const selected = detail.composerModel?.selectedModel, served = detail.composerModel?.servedModel
+  const running = served || selected
+  // The model's name sits once, in the chip beside 「+」 (as in the ChatGPT and Claude apps): the one picked for the
+  // next message, else the one this thread runs on. Never again as a bare line over the field.
+  const chipLabel = option?.modelId ? modelDisplayName(option.modelId) : running ? `${modelDisplayName(running)} ▾` : undefined
   const model = selectable && (currentMenu || menu.error || menu.loading) ? <ModelMenu model={{
     menu: currentMenu, busy: false, choosing: null, loading: menu.loading, refreshing: menu.loading, refreshFailed: Boolean(menu.error),
     choose: id => setChoice(id), retryRead: menu.reload, refresh: menu.reload,
-  }} label={option?.modelId || undefined} /> : null
-  const notices = <View>
-    <Text>{served || selected || copy.composerModelUnknown}</Text>
-    {selected && served && selected !== served && <Text>{copy.composerModelRequested.replace('{model}', selected)}</Text>}
-  </View>
+  }} label={chipLabel} highlight={Boolean(option?.modelId)} /> : running ? <Text numberOfLines={1} style={styles.model}>{modelDisplayName(running)}</Text> : null
+  // Only when the run differs from what was asked for does a line say so.
+  const notices = selected && served && selected !== served && !option ? <Text style={styles.notice}>{copy.composerModelRequested.replace('{model}', modelDisplayName(selected))}</Text> : undefined
   return <ReferenceComposer {...props} workspaceId={workspaceId} value={text} onChangeText={setText} notice={notices} accessory={model}
     onSend={message => {
       const accepted = onSend(message, option ? choiceFromMenu(option.id) ?? undefined : undefined)
@@ -110,3 +114,8 @@ export function ReferenceComposer({ workspaceId, value: text, onChangeText: setT
   return <Composer {...props} value={text} onChangeText={setText} onCaretChange={workspaceId ? setCaret : props.onCaretChange}
     notice={notice && picker ? <View>{notice}{picker}</View> : notice || picker} />
 }
+
+const styles = StyleSheet.create({
+  model: { fontSize: 13, color: colors.secondary, paddingHorizontal: 6, flexShrink: 1 },
+  notice: { fontSize: 12, lineHeight: 16, color: colors.secondary, paddingHorizontal: 12 },
+})

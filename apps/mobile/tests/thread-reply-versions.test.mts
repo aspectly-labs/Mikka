@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import { mock, test } from 'node:test'
 import { act, createElement, type ReactNode } from 'react'
 import { Window } from 'happy-dom'
@@ -17,9 +18,15 @@ const ok = (value: unknown) => ({ version: 1, ok: true, result: value })
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL('../' + path, import.meta.url).href, { namedExports })
 class ApiError extends Error { constructor(readonly status: number, message: string) { super(message) } }
 mock.module('expo-crypto', { namedExports: { randomUUID: () => id(100 + ++issued) } })
-mock.module('react-native', { namedExports: { View: 'div', Linking: { openURL: async (url: string) => { opened.push(url) } },
+mock.module('react-native', { namedExports: { View: ({ children }: { children?: ReactNode }) => createElement('div', null, children), Platform: { OS: 'ios' }, StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+  Pressable: ({ accessibilityLabel, onPress, disabled, children }: { accessibilityLabel?: string; onPress: () => void; disabled?: boolean; children: ReactNode }) =>
+    createElement('button', { 'aria-label': accessibilityLabel, disabled, onClick: onPress }, children),
+  Linking: { openURL: async (url: string) => { opened.push(url) } },
   TextInput: ({ value, onChangeText }: { value: string; onChangeText: (text: string) => void }) => createElement('textarea', { value, onInput: (e: { currentTarget: { value: string } }) => onChangeText(e.currentTarget.value), onChange: () => {} }) } })
 stub('components/Text.tsx', { Text: ({ accessibilityRole, children }: { accessibilityRole?: string; children: ReactNode }) => createElement('span', { role: accessibilityRole }, children) })
+stub('components/Symbol.tsx', { Symbol: () => null })
+stub('lib/theme.ts', { colors: {} })
+mock.module(createRequire(import.meta.url).resolve('lucide-react-native'), { namedExports: { Pencil: () => null, RotateCw: () => null } })
 stub('components/GlassButton.tsx', { GlassButton: ({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) =>
   createElement('button', { disabled, onClick: onPress }, label) })
 stub('components/Segmented.tsx', { Segmented: ({ options, value, onChange }: { options: { value: string; label: string }[]; value: string; onChange: (value: string) => void }) =>
@@ -40,7 +47,8 @@ async function mount(operation: 'edit' | 'rerun') {
   const detail = { issueId, versionAnchors: { item: { runId, key: anchorKey, operation } } } as ThreadDetail
   const render = (working: boolean, data: ThreadDetail | undefined = detail) => act(async () => root.render(createElement(MobileReplyVersions,
     { detail: data, runId, itemId: 'item', text: operation === 'edit' ? 'Original input' : 'Original immutable reply', working, reload: async () => { reloads++ } })))
-  const button = (label: string) => [...host.querySelectorAll('button')].find(node => node.textContent === label)
+  // The trigger is an icon named by its label; the panel's actions carry their words.
+  const button = (label: string) => [...host.querySelectorAll('button')].find(node => node.textContent === label || node.getAttribute('aria-label') === label)
   writes.length = 0; opened.length = 0; reads = 0; issued = 0; reloads = 0
   await render(false)
   return { host, render, button, click: (label: string) => act(async () => { assert.ok(button(label), label); button(label)!.click() }),
@@ -115,4 +123,10 @@ test('the native picker refuses malformed replies and revoked access without exp
     assert.equal(ui.button(copy.versionRun)?.disabled, true); assert.equal(ui.button(copy.versionPullRequest), undefined)
     assert.ok(!ui.host.textContent?.includes(previous.originalOutput)); assert.equal(reloads, 0)
   } finally { await ui.close() }
+})
+
+test('rerun sits once per turn, under the agent reply that ends it', async () => {
+  const { endsTurn } = await import('../features/chat/components/thread-reply-versions.tsx')
+  const items = [{ kind: 'person' }, { kind: 'steps' }, { kind: 'agent' }, { kind: 'steps' }, { kind: 'agent' }, { kind: 'agent' }, { kind: 'person' }, { kind: 'agent' }, { kind: 'error' }]
+  assert.deepEqual(items.map((_, index) => endsTurn(items, index)), [true, true, false, true, false, true, true, true, true])
 })
