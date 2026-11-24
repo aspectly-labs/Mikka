@@ -292,7 +292,7 @@ function PromptButton({ value, path }: { value: Component; path: string }) {
   const label = str(value.props.label)
   return (
     <View style={{ alignItems: 'flex-start', gap: 6 }}>
-      <CardButton label={PROMPT_LABELS[label] ?? label} disabled={!open} busy={state === 'sending'} onPress={() => void send(str(value.props.action) || label)} />
+      <CardButton label={Object.hasOwn(PROMPT_LABELS, label) ? PROMPT_LABELS[label] : label} disabled={!open} busy={state === 'sending'} onPress={() => void send(str(value.props.action) || label)} />
       <Failed state={state} />
     </View>
   )
