@@ -17,7 +17,7 @@ const networkErrors = new Set(['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ENOTFOUND
 const processSignals = new Set(['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGILL', 'SIGTRAP', 'SIGABRT', 'SIGBUS', 'SIGFPE', 'SIGKILL', 'SIGSEGV', 'SIGPIPE', 'SIGALRM', 'SIGTERM', 'SIGUSR1', 'SIGUSR2'])
 const runtimePhases = new Set(['startup', 'attestation-prepare', 'attestation', 'landing-prepare', 'accounts-and-reads', 'evidence'])
 const errorClasses = new Set(['Error', 'TypeError', 'SyntaxError', 'ReferenceError', 'RangeError', 'EvalError', 'URIError', 'AggregateError', 'ModuleBuildError', 'ModuleNotFoundError', 'ModuleParseError', 'WebpackError'])
-const errorCodes = new Set([...networkErrors, 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED', 'ERR_PACKAGE_IMPORT_NOT_DEFINED', 'ERR_REQUIRE_ESM', 'ERR_REQUIRE_ASYNC_MODULE', 'ERR_INVALID_ARG_TYPE', 'ENOENT', 'EACCES', 'EPERM', 'EMFILE', 'ENOMEM', 'ENOSPC', 'EADDRINUSE', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'ERR_TLS_CERT_ALTNAME_INVALID', 'NEXT_REDIRECT', 'NEXT_NOT_FOUND'])
+const errorCodes = new Set([...networkErrors, 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED', 'ERR_PACKAGE_IMPORT_NOT_DEFINED', 'ERR_REQUIRE_ESM', 'ERR_REQUIRE_ASYNC_MODULE', 'ERR_INVALID_ARG_TYPE', 'ENOENT', 'EACCES', 'EPERM', 'EMFILE', 'ENOMEM', 'ENOSPC', 'EADDRINUSE', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'ERR_TLS_CERT_ALTNAME_INVALID'])
 const errorCategories = [
   ['lockfile_patch', /Failed to patch lockfile|lockfile missing swc dependencies/iu],
   ['module_not_found', /Module not found|Cannot find (?:module|package)|Can't resolve/iu],

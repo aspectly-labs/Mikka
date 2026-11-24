@@ -382,17 +382,16 @@ const sources = new Map([
 registerHooks({
   resolve(specifier,context,next){
     if(specifier==='server-only')return {url:'claim-fixture:empty',shortCircuit:true}
-    if(specifier==='next/server')return {url:'claim-fixture:next-server',shortCircuit:true}
     const result=next(specifier,context)
     // tsx resolves the `@/` alias first, so match the resolved path, not the specifier.
     // The stub itself imports the real classes; let that one through.
-    if(result.url===realServer&&context.parentURL!=='claim-fixture:next-server')return {url:'claim-fixture:next-server',shortCircuit:true}
+    if(result.url===realServer&&context.parentURL!=='claim-fixture:server-runtime')return {url:'claim-fixture:server-runtime',shortCircuit:true}
     for(const [suffix,source] of sources)if(result.url.endsWith(suffix))return {url:`claim-fixture:${encodeURIComponent(source)}`,shortCircuit:true}
     return result
   },
   load(url,context,next){
     if(url==='claim-fixture:empty')return {format:'module',source:'export {}',shortCircuit:true}
-    if(url==='claim-fixture:next-server')return {format:'module',source:`export {NextResponse,NextRequest} from ${JSON.stringify(nextServer)};export function after(work){const p=globalThis.claimResponseProbe;if(!p)throw new Error('Claim scheduling requires its fixture');(p.scheduledAfter??=[]).push(work)}`,shortCircuit:true}
+    if(url==='claim-fixture:server-runtime')return {format:'module',source:`export {NextResponse,NextRequest} from ${JSON.stringify(nextServer)};export function after(work){const p=globalThis.claimResponseProbe;if(!p)throw new Error('Claim scheduling requires its fixture');(p.scheduledAfter??=[]).push(work)}`,shortCircuit:true}
     if(url.startsWith('claim-fixture:'))return {format:'module',source:decodeURIComponent(url.slice('claim-fixture:'.length)),shortCircuit:true}
     return next(url,context)
   },

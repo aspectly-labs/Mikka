@@ -110,7 +110,7 @@ function refreshTarget(response: () => Response) {
   return { target, events, signals, reads: () => reads, reloads: () => reloads }
 }
 
-const missingAction = () => new Response('', { status: 404, headers: { 'x-nextjs-action-not-found': '1' } })
+const missingAction = () => new Response('', { status: 404, headers: { 'x-mikka-action-not-found': '1' } })
 
 test('concurrent missing action responses retire the page once', async () => {
   const app = await import(new URL('./app-build.ts?concurrent-missing', import.meta.url).href)

@@ -8,8 +8,8 @@ type Props = Omit<ScriptHTMLAttributes<HTMLScriptElement>, 'onLoad' | 'onError'>
 }
 const scripts = new Map<string, { element: HTMLScriptElement; promise: Promise<Event> }>()
 
-/** The existing browser Turnstile component needs next/script's one-load,
- * onReady-on-each-mount contract, not any Next server runtime. */
+/** The browser Turnstile component needs a script tag loaded once, with
+ * onReady called on each mount. */
 export default function Script({ src, id, onReady, onLoad, onError, strategy: _strategy, ...attributes }: Props) {
   const callbacks = useRef({ onReady, onLoad, onError })
   callbacks.current = { onReady, onLoad, onError }

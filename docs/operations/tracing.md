@@ -176,7 +176,7 @@ groups like a route.
 | Workflow steps (every `'use step'` body) | `workflow:<workflow>/<step>` | `workflow` | Continues the durable SDK trace carrier, including opaque Mikka correlation IDs |
 
 - Schedule deferred work with `afterJob('after:<job>', task)` from
-  `lib/background.ts`, never the `next/server` compatibility adapter's `after`
+  `lib/background.ts`, never the `after` of the server-runtime adapter (`@/lib/server-runtime/server`)
   directly (oxlint `no-restricted-imports`). The adapter binds callbacks to the
   scheduling request's async context. Its `AfterQueue` starts them at H3's
   actual response-disposal boundary, with their complete lifetime retained by

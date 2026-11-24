@@ -215,7 +215,7 @@ export function canonicalHref(current: URL, botExists?: (id: string) => boolean)
 
 /**
  * Each entry the workspace writes carries a mark in history.state beside
- * Next's own keys (`__NA`, `__PRIVATE_NEXTJS_INTERNALS_TREE`, copied, never
+ * any keys already there (older pages left Next's `__NA`, copied, never
  * replaced): its position and, on a task page, the entry that opened it. ✕
  * steps back there when that entry belongs to this page load (`doc`), so the
  * chat comes back as it was; a pasted link, a reload or a cold start has no
