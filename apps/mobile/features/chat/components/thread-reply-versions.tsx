@@ -123,9 +123,9 @@ function VersionPicker({ issueId, runId, anchor, text, reload, working, generati
 const styles = StyleSheet.create({
   wrap: { alignItems: 'flex-start', gap: 6 },
   end: { alignItems: 'flex-end' },
-  // A 44 pt target (HIG) that draws a 32 pt circle; the negative margin keeps the drawn icon where a 32 pt one sits,
-  // and the target itself is laid out, so no parent clips it as it would a hitSlop.
-  target: { width: 44, height: 44, margin: -6, alignItems: 'center', justifyContent: 'center' },
+  // A 44 pt target (HIG) that draws a 32 pt circle, laid out in full inside its row, so no parent clips it (as it would
+  // a hitSlop) and it never reaches over the step row below; only the side margin pulls the circle to the text's edge.
+  target: { width: 44, height: 44, marginHorizontal: -6, alignItems: 'center', justifyContent: 'center' },
   icon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   panel: { alignSelf: 'stretch', gap: 10, padding: 14, borderRadius: 16, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator },
   heading: { fontSize: 15, fontWeight: '600', color: colors.ink },

@@ -125,3 +125,15 @@ test('the native picker refuses malformed replies and revoked access without exp
   } finally { await ui.close() }
 })
 
+test('the icon hides only while the thread generates, not while it waits for an answer; every anchored reply has one', async () => {
+  rows = []
+  const ui = await mount('rerun')
+  try {
+    const anchors = { item: { runId, key: anchorKey, operation: 'rerun' as const } }
+    await ui.render(true, { issueId, versionAnchors: anchors, working: false } as ThreadDetail)
+    assert.ok(ui.button(copy.versionRerun), 'waiting for input keeps the icon')
+    await ui.render(true, { issueId, versionAnchors: anchors, working: true } as ThreadDetail)
+    assert.equal(ui.button(copy.versionRerun), undefined, 'generating hides it')
+  } finally { await ui.close() }
+})
+
