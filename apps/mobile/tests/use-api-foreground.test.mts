@@ -35,6 +35,8 @@ function Page() { state = hooks.useApi<Settings>('/api/mobile/settings?view=prof
 
 before(async () => {
   mock.timers.enable({ apis: ['Date', 'setTimeout'], now: start })
+  // The longest jitter, so every backoff fits the windows below.
+  mock.method(Math, 'random', () => 1)
   for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, HTMLElement: browser.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) {
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value })
   }
@@ -77,7 +79,7 @@ test('a failed refresh on return keeps the content on screen and shows no error'
   assert.deepEqual(state!.data, { name: 'first' })
   answers = [new TypeError('Network request failed'), new TypeError('Network request failed'), new TypeError('Network request failed'), new TypeError('Network request failed')]
   await awayAndBack()
-  await advance(6_000)
+  await advance(10_000)
   assert.equal(reads, 5, 'one first load, then the return read and its three retries')
   assert.deepEqual(state!.data, { name: 'first' })
   assert.equal(state!.error, null)
@@ -98,7 +100,7 @@ test('the server answering 401 or 404 is not retried', async () => {
   await mount()
   answers = [new ApiError(401, 'authRequired')]
   await awayAndBack()
-  await advance(6_000)
+  await advance(10_000)
   assert.equal(reads, 2)
   assert.equal((state!.error as ApiError | null)?.status, 401)
 })
@@ -109,7 +111,7 @@ test('Retry that fails after its retries shows the error', async () => {
   answers = []
   let done = false
   await act(async () => { void state!.reload().then(() => { done = true }); await flush() })
-  await advance(6_000)
+  await advance(10_000)
   assert.equal(done, true)
   assert.ok(state!.error)
   assert.deepEqual(state!.data, { name: 'first' })
@@ -126,7 +128,7 @@ test('a Retry cut off by leaving the app is redone on return, and still shows it
   await advance(1_000)
   assert.equal(state!.error, null, 'the interruption itself is not an error')
   await setAppState('active')
-  await advance(6_000)
+  await advance(10_000)
   assert.ok(state!.error, 'the redone Retry exhausted its attempts, so the person sees it failed')
   assert.deepEqual(state!.data, { name: 'first' })
 })
@@ -140,7 +142,7 @@ test('a Retry still pending when the app returns is redone once it fails, and st
   await setAppState('active')
   // The suspended request only fails after the app is back in the foreground.
   hold.resolve(); hold = null
-  await advance(6_000)
+  await advance(10_000)
   assert.equal(reads, 6, 'the cut-off Retry, then a redo with its three retries')
   assert.ok(state!.error)
   assert.deepEqual(state!.data, { name: 'first' })
