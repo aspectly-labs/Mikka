@@ -3,6 +3,7 @@ import { mock, test } from 'node:test'
 import { act, createElement } from 'react'
 import { Window } from 'happy-dom'
 import { mobileMessages } from '../lib/messages.ts'
+import { modelDisplayName } from '../lib/model-menu-view.ts'
 import { sameConversationCommand, submitConversation, type ConversationCommand } from '../lib/conversation-submission.ts'
 import { threadModelKey, type ThreadModelChoice } from '../../../lib/thread-model-choice.ts'
 
@@ -16,12 +17,13 @@ const runAndChat = [
   { kind: 'thread', conversationKind: 'chat', id: runId, title: 'Standalone conversation' },
 ]
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL('../' + path, import.meta.url).href, { namedExports })
-mock.module('react-native', { namedExports: { View: 'div', Pressable: ({ onPress, children }: any) => createElement('button', { onClick: onPress }, children) } })
+mock.module('react-native', { namedExports: { View: 'div', StyleSheet: { create: (styles: unknown) => styles }, Pressable: ({ onPress, children }: any) => createElement('button', { onClick: onPress }, children) } })
 stub('components/Text.tsx', { Text: 'span' })
+stub('lib/theme.ts', { colors: {} })
 const botWrites: [string, string][] = []
 stub('components/ModelNotice.tsx', { ModelNotice: () => null })
 stub('lib/model-menu.ts', { useModelMenu: (botId: string) => ({ choose: (choiceId: string) => botWrites.push([botId, choiceId]) }) })
-stub('components/ModelMenu.tsx', { ModelMenu: ({ model }: any) => createElement('button', { id: 'choose', onClick: () => model.choose(option.id) }, option.modelId) })
+stub('components/ModelMenu.tsx', { ModelMenu: ({ model, label }: any) => createElement('button', { id: 'choose', onClick: () => model.choose(option.id) }, label ?? option.modelId) })
 stub('lib/api-cache.ts', { apiCache: { context: () => 'test' } })
 stub('lib/home.tsx', { useHome: () => ({ data: { workspace: { id: 'workspace' } } }) })
 stub('lib/useApi.ts', { useApi: (key: string | null) => ({ data: key ? { current: {}, groups: [{ kind: 'subscription', options: [option] }] } : null }) })
@@ -44,8 +46,9 @@ test('the native composer selects a funded continuation, inserts the authorized 
   const render = (data: typeof detail | Omit<typeof detail, 'issueId'>) => root.render(createElement(ThreadComposer, { detail: data as never, runId, placeholder: '', onSend: (...args) => { sends.push(args); return true } }))
   try {
     await act(async () => render(detail))
-    assert.ok(host.textContent?.includes('served-model'))
-    assert.ok(host.textContent?.includes(mobileMessages.IssueThreads.composerModelRequested.replace('{model}', 'requested-model')))
+    // The served model is named once, in the chip; the requested one only as the line that says they differ.
+    assert.equal(host.textContent?.split(modelDisplayName('served-model')).length, 2)
+    assert.ok(host.textContent?.includes(mobileMessages.IssueThreads.composerModelRequested.replace('{model}', modelDisplayName('requested-model'))))
     await act(async () => host.querySelector<HTMLButtonElement>('#choose')!.click())
     const input = host.querySelector('input')!
     await act(async () => { input.value = 'See @task:sa please'; input.setSelectionRange(12,12); input.dispatchEvent(new browser.Event('input', { bubbles: true }) as unknown as Event) })
@@ -60,7 +63,7 @@ test('the native composer selects a funded continuation, inserts the authorized 
     const { issueId: _issueId, ...standalone } = detail
     await act(async () => render(standalone))
     assert.equal(host.querySelector('#choose'), null)
-    assert.ok(host.textContent?.includes('served-model'))
+    assert.ok(host.textContent?.includes(modelDisplayName('served-model')))
     // A standalone conversation has no authorized repository binding. A source
     // mention stays literal, and never enters the task/PR directory endpoint.
     for (const value of ['@file:src/private.ts', '@folder:src/private']) {
