@@ -185,8 +185,9 @@ export function automaticFactoryDispatch(pool: Pool) {
         agentId = target.agentId
         deviceId = target.deviceId
         deviceRepoId = (await ensureDeviceRepository(task.userId, target.deviceId, source.remoteUrl, tx)).id
+        const { workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
         selection = { ...inheritedPolicy, model: target.model, agentProfile: profileChoice.agentProfile,
-          modelDispatch: { mode: profileChoice.selectionMode ?? 'preference', location: 'local', entry: target.entry },
+          modelDispatch: workerModelDispatchFromTarget(target, { mode: profileChoice.selectionMode ?? 'preference', location: 'local', profileEffort: profileChoice.agentProfile?.effort }),
           ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
           ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}) }
       }
@@ -212,9 +213,10 @@ export function automaticFactoryDispatch(pool: Pool) {
       const target = profileChoice.target
       if (target.kind !== 'cloud') throw new FactoryError('factoryCheckHarnessUnavailable')
       const entry = target.entry.source
+      const { bindAgentToConnection, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
       model = { model: target.model, agentProfile: profileChoice.agentProfile,
-        modelDispatch: { mode: profileChoice.selectionMode ?? 'preference', location: 'cloud', entry: target.entry },
-        ...(entry.kind === 'api_key' ? { apiKeyId: entry.keyId } : entry.kind === 'credits' ? {} : { subscriptionBindingId: await (await import('@/lib/model-dispatch')).bindAgentToConnection(tx,
+        modelDispatch: workerModelDispatchFromTarget(target, { mode: profileChoice.selectionMode ?? 'preference', location: 'cloud', profileEffort: profileChoice.agentProfile?.effort }),
+        ...(entry.kind === 'api_key' ? { apiKeyId: entry.keyId } : entry.kind === 'credits' ? {} : { subscriptionBindingId: await bindAgentToConnection(tx,
           { ownerId: task.userId, workspaceId: source.workspaceId }, runtime.agentId, target.harness, entry.connectionId, target.model) }) }
     } else if (selectStageProfile && !checkStart) model = await chooseCloudRunModel(pool, { ownerId: task.userId, workspaceId: source.workspaceId, botId: task.botId }, runtime.agentId, source.harness, undefined, source.remoteUrl ? 'task' : 'desktop')
     if ('error' in model || !('model' in model) || typeof model.model !== 'string') throw new FactoryError('factoryCheckHarnessUnavailable')

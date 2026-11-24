@@ -36,11 +36,20 @@ export function upstreamRequest(input: {
   }
   if (input.protocol === 'anthropic' && !headers['anthropic-version']) headers['anthropic-version'] = '2023-06-01'
   const body = modelGatewayProtocolBody(input.protocol, input.body)
+  // Speed mode is server-owned (frozen on the run after capability verification);
+  // strip client-injected Anthropic fast-mode beta flags unless server-approved.
+  const openaiTarget = input.protocol === 'openai' || input.upstream.credential?.provider === 'openai'
+  const allowAnthropicFast = input.serviceTier === 'fast' && !openaiTarget && input.operation !== 'count_tokens'
+  if (headers['anthropic-beta'] && !allowAnthropicFast) {
+    const filtered = headers['anthropic-beta'].split(',').map(part => part.trim()).filter(part => part && part !== 'fast-mode-2026-02-01')
+    if (filtered.length) headers['anthropic-beta'] = filtered.join(',')
+    else delete headers['anthropic-beta']
+  }
   if (input.serviceTier && input.operation !== 'count_tokens') {
-    if (input.protocol === 'openai') {
+    if (openaiTarget) {
       if (body.service_tier === undefined) body.service_tier = input.serviceTier === 'ultrafast' ? 'ultrafast' : 'priority'
-    } else if (input.serviceTier === 'fast') {
-      if (body.speed === undefined) body.speed = 'fast'
+    } else if (allowAnthropicFast) {
+      body.speed = 'fast'
       const beta = headers['anthropic-beta']
       if (!beta) headers['anthropic-beta'] = 'fast-mode-2026-02-01'
       else if (!beta.split(',').map(part => part.trim()).includes('fast-mode-2026-02-01')) headers['anthropic-beta'] = `${beta},fast-mode-2026-02-01`

@@ -43,6 +43,7 @@ export function withModelEffort(model: Model, effort: ModelRoutingEffort | null 
 export function withModelServiceTier(model: Model, serviceTier: ModelSpeedMode | null | undefined): Model {
   if (!serviceTier) return model
   const codexTier = serviceTier === 'ultrafast' ? 'ultrafast' : 'priority'
+  const anthropicFast = serviceTier === 'fast' && /(^|\/)claude/i.test(model.modelId)
   const extra: NonNullable<CallOptions['providerOptions']> = {
     openai: { serviceTier: codexTier },
     openaiCompatible: { service_tier: codexTier },
@@ -51,7 +52,14 @@ export function withModelServiceTier(model: Model, serviceTier: ModelSpeedMode |
   const merge = (options: CallOptions): CallOptions => {
     const providerOptions = { ...options.providerOptions }
     for (const [key, value] of Object.entries(extra)) providerOptions[key] = { ...value, ...providerOptions[key] }
-    return { ...options, providerOptions }
+    if (!anthropicFast) return { ...options, providerOptions }
+    const existing = options.headers?.['anthropic-beta']
+    const beta = !existing
+      ? 'fast-mode-2026-02-01'
+      : existing.split(',').map(part => part.trim()).includes('fast-mode-2026-02-01')
+        ? existing
+        : `${existing},fast-mode-2026-02-01`
+    return { ...options, providerOptions, headers: { ...options.headers, 'anthropic-beta': beta } }
   }
   return {
     specificationVersion: 'v4', provider: model.provider, modelId: model.modelId, supportedUrls: model.supportedUrls,

@@ -5,6 +5,7 @@ import type { ModelSpeedMode } from './model-routing'
 export const subscriptionModelRequestPolicySchema = z.strictObject({
   codexServiceTier: z.enum(['priority', 'ultrafast']).optional(),
   claudeSpeed: z.literal('fast').optional(),
+  apiKeyServiceTier: z.enum(['fast', 'ultrafast']).optional(),
 })
 export type SubscriptionModelRequestPolicy = z.infer<typeof subscriptionModelRequestPolicySchema>
 

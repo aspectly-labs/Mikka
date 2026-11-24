@@ -8,7 +8,8 @@ import type { SubscriptionPreflightFailure } from '@mikka/protocol/harness'
 import { cloudReady } from './rule-dispatch'
 import { credentialStates, creditsModelSpeedModes, dispatchOrder, orderCandidates, selectedOrderCandidates, poolDevices, readOrder, type OrderScope, type RefreshOrderQuota } from './model-order'
 import { entryKey, planDispatch, whyNoDevice, type NoDeviceWhy, type NothingReason, type OrderEntry, type RunLocation, type SkippedEntry } from './model-order-plan'
-import type { ModelSpeedMode } from './model-routing'
+import { supportedModelEfforts, type ModelRoutingEffort, type ModelSpeedMode } from './model-routing'
+import type { WorkerModelDispatch } from './agent-kit/worker'
 
 /**
  * Where a new run goes and on which model (decision 2026-11-02-1400): the
@@ -27,9 +28,35 @@ import type { ModelSpeedMode } from './model-routing'
 /** Why nothing runs: the list's reasons, or the model the thread named (decision 2026-11-02-1400). */
 export type DispatchNothingReason = NothingReason | 'cloudTemporarilyUnavailable' | 'notOffered' | 'namedDevice' | 'pickedNoDevice' | 'pickedUnavailable'
 export type ModelDispatch =
-  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; serviceTier?: ModelSpeedMode; subscriptionBindingId?: string; quotaCheckPending?: true }
-  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; serviceTier?: ModelSpeedMode; quotaCheckPending?: true }
+  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; subscriptionBindingId?: string; quotaCheckPending?: true }
+  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; quotaCheckPending?: true }
   | { kind: 'none'; reason: DispatchNothingReason; card: ReturnType<typeof modelUnavailableCard>; skipped?: SkippedEntry[] }
+
+/**
+ * Converts a resolved dispatch target into the frozen `WorkerModelDispatch` stored on the run.
+ * Preserves server-verified `serviceTier` and applies workspace `defaultEffort` when neither
+ * an explicit Agent Profile effort nor a per-task effort overrides it.
+ */
+export function workerModelDispatchFromTarget(
+  target: Extract<ModelDispatch, { kind: 'device' | 'cloud' }>,
+  options: {
+    mode: WorkerModelDispatch['mode']
+    location?: WorkerModelDispatch['location']
+    followed?: WorkerModelDispatch['followed']
+    profileEffort?: ModelRoutingEffort
+  },
+): WorkerModelDispatch {
+  // Explicit profile effort wins over workspace defaultEffort (claim reads modelDispatch.effort ?? agentProfile.effort).
+  const effort = options.profileEffort ? undefined : target.effort
+  return {
+    mode: options.mode,
+    ...(options.location ? { location: options.location } : {}),
+    entry: target.entry,
+    ...(options.followed ? { followed: options.followed } : {}),
+    ...(effort ? { effort } : {}),
+    ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+  }
+}
 
 /**
  * The Agent or model a Bot passed for a new thread must be one of 优先使用的模型: the same list its prompt shows
@@ -141,12 +168,15 @@ export async function resolveModelDispatch(pool: Pool, scope: OrderScope & { bot
   const serviceTier = stored.defaultServiceTier !== 'standard' && resolvedSpeedModes.includes(stored.defaultServiceTier)
     ? { serviceTier: stored.defaultServiceTier as ModelSpeedMode }
     : {}
-  if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...serviceTier, ...quotaCheckPending }
+  const effort = stored.defaultEffort !== 'medium' && supportedModelEfforts(plan.model, plan.entry.harness).includes(stored.defaultEffort)
+    ? { effort: stored.defaultEffort }
+    : {}
+  if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...effort, ...serviceTier, ...quotaCheckPending }
   const { rows: [agent] } = await pool.query<{ id: string }>('SELECT id FROM agents WHERE "userId"=$1 AND "deviceId"=$2 AND harness=$3 AND ($4::text IS NULL OR id::text=$4) ORDER BY "createdAt",id LIMIT 1',
     [scope.ownerId, plan.deviceId, plan.entry.harness, dependencies.agentId ?? null])
   if (!agent) return { kind: 'none', reason: 'noDevice', card: modelUnavailableCard('noDevice') }
   const subscriptionBindingId = dependencies.bindSubscription !== false && plan.entry.source.kind === 'subscription' ? await bindAgentToConnection(pool, scope, agent.id, plan.entry.harness, plan.entry.source.connectionId, plan.entry.model) : undefined
-  return { kind: 'device', deviceId: plan.deviceId, agentId: agent.id, model: plan.model, entry: plan.entry, ...serviceTier, ...(subscriptionBindingId ? { subscriptionBindingId } : {}), ...quotaCheckPending }
+  return { kind: 'device', deviceId: plan.deviceId, agentId: agent.id, model: plan.model, entry: plan.entry, ...effort, ...serviceTier, ...(subscriptionBindingId ? { subscriptionBindingId } : {}), ...quotaCheckPending }
 }
 
 /**

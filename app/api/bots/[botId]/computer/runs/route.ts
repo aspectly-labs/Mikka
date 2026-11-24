@@ -92,9 +92,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ bot
           const ready = await (await import('@/lib/computer/auto-runtime')).ensureBotCloudRuntime(pool, { userId: session.user.id, workspaceId: context.workspace.id }, botId, { harness })
           if (!ready) throw new ComputerError(409, 'Bot computer task is unavailable')
           const source = target.entry.source
+          const { bindAgentToConnection, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
           runModel = { model: target.model, agentProfile: picked.agentProfile,
-            modelDispatch: { mode: picked.selectionMode ?? (parsed.data.harness ? 'picked' : 'preference'), location: 'cloud', entry: target.entry },
-            ...(source.kind === 'api_key' ? { apiKeyId: source.keyId } : source.kind === 'credits' ? {} : { subscriptionBindingId: await (await import('@/lib/model-dispatch')).bindAgentToConnection(pool, scope, ready.agentId, harness, source.connectionId, target.model) }) }
+            modelDispatch: workerModelDispatchFromTarget(target, { mode: picked.selectionMode ?? (parsed.data.harness ? 'picked' : 'preference'), location: 'cloud', profileEffort: picked.agentProfile?.effort }),
+            ...(source.kind === 'api_key' ? { apiKeyId: source.keyId } : source.kind === 'credits' ? {} : { subscriptionBindingId: await bindAgentToConnection(pool, scope, ready.agentId, harness, source.connectionId, target.model) }) }
         }
         const runtime = (await pool.query('SELECT r."agentId",r."repoId",a."deviceId" FROM bot_cloud_runtimes r JOIN agents a ON a.id=r."agentId" WHERE r."botId"=$1 AND r."ownerId"=$2 AND r."workspaceId"=$3 AND r.harness=$4', [botId, session.user.id, context.workspace.id, harness])).rows[0]
         if (!runtime) throw new ComputerError(409, 'Bot computer task is unavailable')

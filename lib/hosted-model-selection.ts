@@ -38,8 +38,8 @@ export interface HostedRuntimeSnapshot {
   modelSelection?: HostedModelSelection
   /** The Bot's saved reasoning effort for this turn (bot_model_choices.effort); absent is the model's default. */
   effort?: import('./model-routing').ModelRoutingEffort
-  /** The owner's saved serving speed tier (model_order_settings.defaultServiceTier); absent is standard. */
-  serviceTier?: import('./model-routing').ModelSpeedMode
+  /** The owner's saved serving speed tier (model_order_settings.defaultServiceTier); absent preserves legacy behavior. */
+  serviceTier?: import('./model-routing').ModelServiceTier
 }
 /** The bot scope a frozen selection belongs to. */
 export const selectionScope = (selection: HostedModelSelection): HostedModelScope => ({

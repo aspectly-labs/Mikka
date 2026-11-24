@@ -50,7 +50,15 @@ async function createApiKeyBody(input: unknown, workspaceId?: string, options?: 
   return settingsWorkspaceAction(async () => {
     const { userId, workspace } = await actor(workspaceId)
     const created = await addApiKey(pool, userId, input)
-    if (options?.share) await setApiKeyShare(pool, userId, workspace, created.id, true)
+    if (options?.share) {
+      try {
+        await setApiKeyShare(pool, userId, workspace, created.id, true)
+      } catch (error) {
+        // Never leave behind an unshared private key when workspace/org sharing policy rejects the add.
+        await removeApiKey(pool, userId, created.id).catch(() => {})
+        throw error
+      }
+    }
     return created
   })
 }

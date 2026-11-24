@@ -153,16 +153,14 @@ export async function listApiKeys(query: Query, ownerId: string, workspace: { id
   return { keys: keys.rows.map(row => ({ ...view(row), shared: shared.has(row.id) })), canShare: allowed, apiKeyAfterQuota: fallback }
 }
 
-function mergeApiKeySpeedModes(
-  existing: ModelSettings | null | undefined,
-  discovered: Record<string, readonly ModelSpeedMode[]> | undefined,
-): ModelSettings | null {
-  if (!discovered || !Object.keys(discovered).length) return existing ?? null
-  return {
-    ...(existing ?? { autoEnable: true, models: {} }),
-    speedModes: { ...discovered },
-  }
+function speedModesJson(discovered: Record<string, readonly ModelSpeedMode[]> | undefined): string | null {
+  if (!discovered || !Object.keys(discovered).length) return null
+  return JSON.stringify(discovered)
 }
+
+/** Surgical SQL expression that updates ONLY `{speedModes}` in `"modelSettings"`, preserving concurrent `models` toggles and clearing stale speed metadata when absent. */
+const SURGICAL_SPEED_MODES_SQL = (param: string, tablePrefix = '') =>
+  `CASE WHEN ${param}::jsonb IS NULL THEN CASE WHEN ${tablePrefix}"modelSettings" IS NULL THEN NULL ELSE ${tablePrefix}"modelSettings" - 'speedModes' END ELSE jsonb_set(COALESCE(${tablePrefix}"modelSettings", '{"autoEnable":true,"models":{}}'::jsonb), '{speedModes}', ${param}::jsonb, true) END`
 
 function parseStoredSpeedModes(settings: ModelSettings | null | undefined): Record<string, readonly ModelSpeedMode[]> | undefined {
   const raw = settings?.speedModes
@@ -192,12 +190,13 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   const protocol: ApiKeyProtocol = custom ? custom.protocol : apiKeyProtocols({ provider: parsed.provider, protocol: 'anthropic' })[0]
   const target = modelsTarget({ provider: parsed.provider, baseUrl, protocol })
   let id: string
-  let existingSettings: ModelSettings | null = null
+  let endpointChanged = false
   if (parsed.replaceId) {
-    const existing = (await query.query<{ id: string; provider: ApiKeyProvider; modelSettings: ModelSettings | null }>('SELECT id,provider,"modelSettings" FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [parsed.replaceId, ownerId])).rows[0]
+    const existing = (await query.query<{ id: string; provider: ApiKeyProvider; baseUrl: string | null; protocol: ApiKeyProtocol }>(
+      'SELECT id,provider,"baseUrl",protocol FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [parsed.replaceId, ownerId])).rows[0]
     if (!existing || existing.provider !== parsed.provider) throw new WorkspaceError('apiKeyNotFound')
     id = existing.id
-    existingSettings = existing.modelSettings ?? null
+    endpointChanged = existing.provider === 'custom' && (baseUrl !== existing.baseUrl || protocol !== existing.protocol)
   } else {
     id = randomUUID()
   }
@@ -210,28 +209,35 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   if (!result.ok) throw new WorkspaceError(result.code === 'invalid' ? 'apiKeyInvalid' : 'apiKeyUnverifiable')
   // A custom provider's own list, when given, is what its models are; otherwise what the provider listed.
   const models = custom?.models?.length ? [...new Set(custom.models)] : result.models
-  const nextSettings = mergeApiKeySpeedModes(existingSettings, result.speedModes)
+  const speedJson = speedModesJson(result.speedModes)
+  const initialSettings = speedJson ? JSON.stringify({ autoEnable: true, models: {}, speedModes: result.speedModes }) : null
   // LiteLLM converts Chat Completions to Responses; no native inference probe.
   const responsesApi = true
   const name = parsed.name ?? null
+  if (endpointChanged) {
+    await stopRunsUsingApiKeys(query, { keyId: id, ownerId })
+    await query.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1', [id])
+  }
   const { rows: [row] } = await query.query<Row>(`INSERT INTO model_api_keys (id,"ownerId",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi","modelSettings")
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
-    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=COALESCE(EXCLUDED."modelSettings",model_api_keys."modelSettings"),"updatedAt"=now()
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=${SURGICAL_SPEED_MODES_SQL('$14', 'model_api_keys.')},"updatedAt"=now()
     RETURNING ${COLUMNS}`,
-  [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, nextSettings ? JSON.stringify(nextSettings) : null])
+  [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, initialSettings, speedJson])
   return view(row)
 }
 
 /**
  * Updates an owned key's label, custom endpoint settings, or secret key in place.
- * Preserves existing workspace shares and enabled-model flags. When rotating the
- * key or changing a custom endpoint/protocol, re-verifies against the provider.
+ * Preserves enabled-model flags via surgical JSONB updates. When rotating the key
+ * or changing a custom endpoint/protocol, revalidates DNS/SSRF and re-verifies
+ * against the provider; changing a custom endpoint/protocol revokes workspace
+ * shares and stops active runs so teammates never inherit an unapproved target.
  */
 export async function updateApiKey(query: Query, ownerId: string, id: string, input: unknown, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
   z.uuid().parse(id)
   const parsed = updateApiKeyInput.parse(input)
   const env = options.env ?? process.env
-  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`, [id, ownerId])
+  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`, [id, ownerId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
   const isCustom = row.provider === 'custom'
   if (!isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined || parsed.models !== undefined)) {
@@ -239,21 +245,29 @@ export async function updateApiKey(query: Query, ownerId: string, id: string, in
   }
   const nextName = parsed.name === undefined ? row.name : (parsed.name && parsed.name.trim() ? parsed.name.trim() : isCustom ? row.name : null)
   if (isCustom && !nextName) throw new WorkspaceError('validationGeneric')
-  const nextBaseUrl = isCustom && parsed.baseUrl !== undefined ? await checkBaseUrl(parsed.baseUrl, env, options.resolve) : row.baseUrl
   const nextProtocol: ApiKeyProtocol = isCustom && parsed.protocol !== undefined ? parsed.protocol : row.protocol
   const needsVerify = parsed.apiKey !== undefined || (isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined))
+  // Always revalidate a custom endpoint against SSRF/DNS rebinding whenever contacting it or changing baseUrl.
+  const nextBaseUrl = isCustom && (parsed.baseUrl !== undefined || needsVerify)
+    ? await checkBaseUrl(parsed.baseUrl !== undefined ? parsed.baseUrl : row.baseUrl!, env, options.resolve)
+    : row.baseUrl
+  const endpointChanged = isCustom && (nextBaseUrl !== row.baseUrl || nextProtocol !== row.protocol)
   let nextModels = row.models
   let nextModelsError = row.modelsError ?? null
-  let nextSettings = row.modelSettings ?? null
+  let speedJson: string | null = null
   if (needsVerify) {
     const secretToVerify = parsed.apiKey ?? (await openKey(query, id, env)).apiKey
     const result = await verifyApiKey(modelsTarget({ provider: row.provider, baseUrl: nextBaseUrl, protocol: nextProtocol }), secretToVerify, options.fetch)
     if (!result.ok) throw new WorkspaceError(result.code === 'invalid' ? 'apiKeyInvalid' : 'apiKeyUnverifiable')
     nextModels = isCustom && parsed.models?.length ? [...new Set(parsed.models)] : (result.models.length || !isCustom ? result.models : row.models)
     nextModelsError = null
-    nextSettings = mergeApiKeySpeedModes(row.modelSettings, result.speedModes)
+    speedJson = speedModesJson(result.speedModes)
   } else if (isCustom && parsed.models !== undefined) {
     nextModels = [...new Set(parsed.models)]
+  }
+  if (endpointChanged) {
+    await stopRunsUsingApiKeys(query, { keyId: id, ownerId })
+    await query.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1', [id])
   }
   if (parsed.apiKey !== undefined) {
     let sealed: ReturnType<typeof sealSecret>
@@ -262,16 +276,24 @@ export async function updateApiKey(query: Query, ownerId: string, id: string, in
       throw error
     }
     const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
-      SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"modelSettings"=$12::jsonb,"updatedAt"=now()
+      SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$12')},"updatedAt"=now()
       WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-    [id, ownerId, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError, nextSettings ? JSON.stringify(nextSettings) : null])
+    [id, ownerId, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError, speedJson])
+    if (!saved) throw new WorkspaceError('apiKeyNotFound')
+    return view(saved)
+  }
+  if (needsVerify) {
+    const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
+      SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$8')},"updatedAt"=now()
+      WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
+    [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError, speedJson])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
   }
   const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
-    SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"modelSettings"=$8::jsonb,"updatedAt"=now()
+    SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"updatedAt"=now()
     WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-  [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError, nextSettings ? JSON.stringify(nextSettings) : null])
+  [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
 }
@@ -293,9 +315,15 @@ export async function refreshApiKeyModels(query: Query, ownerId: string, id: str
   const result: ApiKeyVerifyResult = reachable ? await verifyApiKey(modelsTarget(row), apiKey, options.fetch) : { ok: false, code: 'unavailable' }
   const models = result.ok ? (result.models.length || row.provider !== 'custom' ? result.models : row.models) : row.models
   const responsesApi = result.ok ? true : row.responsesApi
-  const nextSettings = result.ok ? mergeApiKeySpeedModes(row.modelSettings, result.speedModes) : (row.modelSettings ?? null)
-  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"modelSettings"=COALESCE($6::jsonb,"modelSettings"),"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-    [id, ownerId, JSON.stringify(models), result.ok ? null : result.code, responsesApi, nextSettings ? JSON.stringify(nextSettings) : null])
+  if (result.ok) {
+    const speedJson = speedModesJson(result.speedModes)
+    const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=NULL,"responsesApi"=$4,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$5')},"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
+      [id, ownerId, JSON.stringify(models), responsesApi, speedJson])
+    if (!saved) throw new WorkspaceError('apiKeyNotFound')
+    return view(saved)
+  }
+  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
+    [id, ownerId, JSON.stringify(models), result.code, responsesApi])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
 }
@@ -446,7 +474,7 @@ export async function setBotApiKeyChoice(query: Query, scope: { ownerId: string;
  * Checked on every call, so a withdrawn share or a deleted key stops the
  * chat instead of switching (§ 2). Throws WorkspaceError('apiKeyNotFound').
  */
-export async function openApiKeyForChat(query: Query, userId: string, workspaceId: string, keyId: string, env: Env = process.env): Promise<{ apiKey: string; baseUrl: string; keyOwnerId: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol }> {
+export async function openApiKeyForChat(query: Query, userId: string, workspaceId: string, keyId: string, env: Env = process.env): Promise<{ apiKey: string; baseUrl: string; keyOwnerId: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; modelSpeedModes?: Record<string, readonly ModelSpeedMode[]> }> {
   await assertOrganizationModelProvider(workspaceId, 'api-key')
   const usable = (await usableApiKeys(query, userId, workspaceId)).find(key => key.id === keyId)
   const baseUrl = usable && apiKeyChatBaseUrl(usable)
@@ -454,7 +482,8 @@ export async function openApiKeyForChat(query: Query, userId: string, workspaceI
   const { rows: [owner] } = await query.query<{ ownerId: string }>('SELECT "ownerId" FROM model_api_keys WHERE id=$1', [keyId])
   if (!owner || (owner.ownerId !== userId && !await executionMembersActive(workspaceId, [userId, owner.ownerId]))) throw new WorkspaceError('apiKeyNotFound')
   const { row, apiKey } = await openKey(query, keyId, env)
-  return { apiKey, baseUrl, keyOwnerId: row.ownerId, provider: row.provider, protocol: row.protocol }
+  const modelSpeedModes = parseStoredSpeedModes(row.modelSettings)
+  return { apiKey, baseUrl, keyOwnerId: row.ownerId, provider: row.provider, protocol: row.protocol, ...(modelSpeedModes ? { modelSpeedModes } : {}) }
 }
 
 const ACTIVE_RUN = ['queued', 'preparing', 'running', 'paused', 'waiting_input', 'finishing']

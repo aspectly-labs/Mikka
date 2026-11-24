@@ -374,8 +374,9 @@ async function factoryRunModel(userId: string, botId: string | null, agentId: st
   const { target, agentProfile, selectionMode } = await (await import('@/lib/factory/agent-profile')).resolveAgentProfileDispatch(pool,
     { ownerId: userId, workspaceId, botId }, { issueId: issueId!, stage, profileId, agentId: agent.id, deviceId: agent.deviceId, location: 'local', asked: { harness: agent.harness } }, { transaction })
   if (target.kind !== 'device' || target.agentId !== agent.id) throw new ActionFailureError('runModelMissing')
+  const { workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
   return { model: target.model, agentProfile,
-    modelDispatch: { mode: selectionMode ?? 'preference', location: 'local' as const, entry: target.entry },
+    modelDispatch: workerModelDispatchFromTarget(target, { mode: selectionMode ?? 'preference', location: 'local', profileEffort: agentProfile?.effort }),
     ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
     ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}),
     ...(chosen.policyCeiling ? { policyCeiling: chosen.policyCeiling } : {}) }

@@ -38,22 +38,21 @@ export async function modelForSession(ctx: DynamicModelContext) {
     // The receipt names the turn the saved reply carries as mikkaStreamId (lib/eve/projection.ts).
     const turnRef = ctx.turn ? eveTurnRef(ctx.session.id, ctx.turn.id) : null
     let hostedModel = withModelEffort(new HostedWorkflowModel(scope.ownerId, scope.botId, runtime.model, turnRef), runtime.effort)
-    if (runtime.serviceTier) {
-      const { creditsModelSpeedModes } = await import('../model-order')
-      const supported = await creditsModelSpeedModes(runtime.model)
-      if (supported.includes(runtime.serviceTier)) hostedModel = withModelServiceTier(hostedModel, runtime.serviceTier)
+    // Hosted Credits speed capability is verified server-side when freezing HostedRuntimeSnapshot.
+    if (runtime.serviceTier === 'fast' || runtime.serviceTier === 'ultrafast') {
+      hostedModel = withModelServiceTier(hostedModel, runtime.serviceTier)
     }
     return hostedModel
   }
   const [{ SubscriptionWorkflowModel }, { streamingModel }] = await Promise.all([
     import('../subscription-workflow-model'), import('./streaming-model'),
   ])
-  const requestPolicy = ctx.session.parent || turnRequest.get().scheduledRead
+  const requestPolicy = ctx.session.parent || turnRequest.get().scheduledRead || runtime.serviceTier === 'standard'
     ? undefined
     : runtime.serviceTier === 'ultrafast'
-      ? { codexServiceTier: 'ultrafast' as const }
+      ? { codexServiceTier: 'ultrafast' as const, apiKeyServiceTier: 'ultrafast' as const }
       : runtime.serviceTier === 'fast'
-        ? { codexServiceTier: 'priority' as const, claudeSpeed: 'fast' as const }
+        ? { codexServiceTier: 'priority' as const, claudeSpeed: 'fast' as const, apiKeyServiceTier: 'fast' as const }
         : { codexServiceTier: 'priority' as const }
   return withModelEffort(streamingModel(new SubscriptionWorkflowModel(runtime.modelSelection, requestPolicy)), runtime.effort)
 }
