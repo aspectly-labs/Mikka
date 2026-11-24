@@ -19,8 +19,8 @@ const stub = (path: string, namedExports: Record<string, unknown>) => mock.modul
 class ApiError extends Error { constructor(readonly status: number, message: string) { super(message) } }
 mock.module('expo-crypto', { namedExports: { randomUUID: () => id(100 + ++issued) } })
 mock.module('react-native', { namedExports: { View: ({ children }: { children?: ReactNode }) => createElement('div', null, children), Platform: { OS: 'ios' }, StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
-  Pressable: ({ accessibilityLabel, onPress, disabled, children }: { accessibilityLabel?: string; onPress: () => void; disabled?: boolean; children: ReactNode }) =>
-    createElement('button', { 'aria-label': accessibilityLabel, disabled, onClick: onPress }, children),
+  Pressable: ({ accessibilityLabel, onPress, disabled, children }: { accessibilityLabel?: string; onPress: () => void; disabled?: boolean; children: ReactNode | ((state: { pressed: boolean }) => ReactNode) }) =>
+    createElement('button', { 'aria-label': accessibilityLabel, disabled, onClick: onPress }, typeof children === 'function' ? children({ pressed: false }) : children),
   Linking: { openURL: async (url: string) => { opened.push(url) } },
   TextInput: ({ value, onChangeText }: { value: string; onChangeText: (text: string) => void }) => createElement('textarea', { value, onInput: (e: { currentTarget: { value: string } }) => onChangeText(e.currentTarget.value), onChange: () => {} }) } })
 stub('components/Text.tsx', { Text: ({ accessibilityRole, children }: { accessibilityRole?: string; children: ReactNode }) => createElement('span', { role: accessibilityRole }, children) })
@@ -125,8 +125,3 @@ test('the native picker refuses malformed replies and revoked access without exp
   } finally { await ui.close() }
 })
 
-test('rerun sits once per turn, under the agent reply that ends it', async () => {
-  const { endsTurn } = await import('../features/chat/components/thread-reply-versions.tsx')
-  const items = [{ kind: 'person' }, { kind: 'steps' }, { kind: 'agent' }, { kind: 'steps' }, { kind: 'agent' }, { kind: 'agent' }, { kind: 'person' }, { kind: 'agent' }, { kind: 'error' }]
-  assert.deepEqual(items.map((_, index) => endsTurn(items, index)), [true, true, false, true, false, true, true, true, true])
-})

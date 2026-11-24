@@ -33,27 +33,15 @@ async function rpc(action: string, args: unknown[]) {
   return receipt.result
 }
 
-/**
- * Rerun sits once per turn, under the reply that ends it (as Codex and Claude put their action row only under a
- * finished turn): an agent item shows it only when no later agent text comes before the person's next message.
- */
-export function endsTurn(items: readonly { kind: string }[], index: number) {
-  if (items[index]?.kind !== 'agent') return true
-  for (const item of items.slice(index + 1)) {
-    if (item.kind === 'person') return true
-    if (item.kind === 'agent') return false
-  }
-  return true
-}
-
 export function MobileReplyVersions({ detail, runId, itemId, ...props }: Props) {
   const anchor = detail?.versionAnchors?.[itemId]
   if (!anchor || !detail?.issueId) return null
+  // Only a thread that is generating hides the icons; one waiting for an answer keeps its history in reach.
   return <VersionPicker key={JSON.stringify([detail.issueId, runId, anchor.runId, anchor.key, anchor.operation])}
-    {...props} issueId={detail.issueId} runId={runId} anchor={anchor} />
+    {...props} issueId={detail.issueId} runId={runId} anchor={anchor} generating={detail.working ?? props.working} />
 }
 
-function VersionPicker({ issueId, runId, anchor, text, reload, working, side = 'start' }: Pick<Props, 'text' | 'reload' | 'working' | 'runId' | 'side'> & { issueId: string; anchor: Anchor }) {
+function VersionPicker({ issueId, runId, anchor, text, reload, working, generating, side = 'start' }: Pick<Props, 'text' | 'reload' | 'working' | 'runId' | 'side'> & { issueId: string; anchor: Anchor; generating: boolean }) {
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [versions, setVersions] = useState<Version[] | null>(null), [selected, setSelected] = useState('original'), [draft, setDraft] = useState(text)
   const submitting = useRef(false), revision = useRef(0), request = useRef<{ id: string; text: string } | null>(null)
@@ -101,16 +89,15 @@ function VersionPicker({ issueId, runId, anchor, text, reload, working, side = '
     finally { submitting.current = false; setBusy(false) }
   }
   // As in the ChatGPT and Claude apps: a small icon under the message, not a full-width button under every reply.
-  // It hides while the thread works (nothing can start then); the panel opens below it.
-  if (working && !open) return null
+  // It hides while the thread generates (nothing can start then); the panel opens below it.
+  if (generating && !open) return null
   const edit = anchor.operation === 'edit'
   const tint = open ? colors.accent : colors.secondary
   return <View style={[styles.wrap, side === 'end' && styles.end]}>
     <Pressable accessibilityRole="button" accessibilityLabel={open ? `${copy.versionClose} ${label}` : label} accessibilityState={{ expanded: open, disabled: busy }}
-      aria-expanded={Platform.OS === 'web' ? open : undefined} disabled={busy} hitSlop={6} onPress={toggle}
-      style={({ pressed }) => [styles.icon, pressed && { backgroundColor: colors.pressed }]}>
-      <Symbol name={edit ? 'pencil' : 'arrow.clockwise'} size={15} color={tint}
-        web={edit ? <Pencil size={15} color={tint} strokeWidth={2} /> : <RotateCw size={15} color={tint} strokeWidth={2} />} />
+      aria-expanded={Platform.OS === 'web' ? open : undefined} disabled={busy} onPress={toggle} style={styles.target}>
+      {({ pressed }) => <View style={[styles.icon, pressed && { backgroundColor: colors.pressed }]}><Symbol name={edit ? 'pencil' : 'arrow.clockwise'} size={15} color={tint}
+        web={edit ? <Pencil size={15} color={tint} strokeWidth={2} /> : <RotateCw size={15} color={tint} strokeWidth={2} />} /></View>}
     </Pressable>
     {open && <View style={styles.panel}>
       <Text style={styles.heading}>{label}</Text>
@@ -136,7 +123,9 @@ function VersionPicker({ issueId, runId, anchor, text, reload, working, side = '
 const styles = StyleSheet.create({
   wrap: { alignItems: 'flex-start', gap: 6 },
   end: { alignItems: 'flex-end' },
-  // 32 pt drawn, 44 pt with the hitSlop (HIG).
+  // A 44 pt target (HIG) that draws a 32 pt circle; the negative margin keeps the drawn icon where a 32 pt one sits,
+  // and the target itself is laid out, so no parent clips it as it would a hitSlop.
+  target: { width: 44, height: 44, margin: -6, alignItems: 'center', justifyContent: 'center' },
   icon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   panel: { alignSelf: 'stretch', gap: 10, padding: 14, borderRadius: 16, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator },
   heading: { fontSize: 15, fontWeight: '600', color: colors.ink },

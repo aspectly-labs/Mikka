@@ -16,7 +16,7 @@ export function ModelMenu({ model, running = false, label, highlight = label !==
     onPress={() => { void retryRead().catch(() => undefined) }} style={styles.chip}><Text style={styles.label}>{modelMenuReadLabel(loading)}</Text></Pressable>
   const { current, groups } = menu
   return <>
-    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={copy.Coordinator.modelPicker.label.replace('{name}', modelSourceLabel(current))} accessibilityState={{ expanded: open, busy }} aria-expanded={open} aria-busy={busy} aria-disabled={false} onPress={() => setOpen(true)} style={styles.chip}>
+    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={copy.Coordinator.modelPicker.label.replace('{name}', !current.id && label ? label.replace(/\s*▾$/, '') : modelSourceLabel(current))} accessibilityState={{ expanded: open, busy }} aria-expanded={open} aria-busy={busy} aria-disabled={false} onPress={() => setOpen(true)} style={styles.chip}>
       <Text numberOfLines={1} style={[styles.label, highlight ? { color: colors.accent } : null]}>{label ?? `${modelMenuLabel(current, running)} ▾`}</Text>
     </Pressable>
     <Modal visible={open} transparent animationType="none" onRequestClose={close} onShow={() => closeButton.current?.focus()}>
