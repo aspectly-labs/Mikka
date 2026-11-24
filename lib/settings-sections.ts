@@ -180,7 +180,7 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'billing', group: 'workspace', title: 'Billing' },
   { id: 'usage', group: 'workspace', title: 'Usage' },
   { id: 'activity', group: 'workspace', title: 'Activity' },
-  { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true, sidebar: false },
+  { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true },
   { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
   { id: 'cloud', group: 'workspace', title: 'Mikka Cloud' },
   { id: 'referrals', group: 'personal', title: 'Referrals' },
@@ -252,11 +252,16 @@ export function resolveSettingsSection(pathname: string, section: string | null 
   return 'preferences'
 }
 
-export function settingsHref(id: SettingsSectionId, workspaceId?: string): string {
+export function settingsHref(id: SettingsSectionId, workspaceId?: string, params?: Record<string, string | undefined>): string {
   const def = SETTINGS_SECTIONS.find(s => s.id === id)
   const search = new URLSearchParams(workspaceId ? { workspace: workspaceId } : {})
+  if (!def?.routed) search.set('section', id)
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined) search.set(key, value)
+    }
+  }
   if (def?.routed) return `/settings/${id}${search.size ? `?${search}` : ''}`
-  search.set('section', id)
   return `/settings?${search}`
 }
 

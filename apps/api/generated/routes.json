@@ -2080,7 +2080,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "eeba55abb61254a92ebb5f8b7563e77d0632ecfc36c4e07a85c0d358ff89b35e"
+      "sourceHash": "209b265ff12f1626aefd592dbccc65b6a9402f617829a7ee81e77a6830edb3ac"
     },
     {
       "path": "/mikka/api/mobile/threads/[id]/artifacts",

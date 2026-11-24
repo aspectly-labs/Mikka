@@ -2216,7 +2216,7 @@
       "loading": "正在检查…",
       "notConnected": "未连接",
       "openTelegram": "打开 Telegram",
-      "disconnectConfirm": "断开 Telegram 并删除此会话中尚未确认的任务草稿？",
+      "disconnectConfirm": "断开 Telegram 并删除此聊天中尚未确认的任务草稿？",
       "notConfigured": "未配置",
       "connected": "已连接",
       "linkTitle": "完成连接"
@@ -4546,7 +4546,8 @@
     "scope": "运行你的线程",
     "title": "连接这台电脑",
     "approved": "已批准",
-    "retry": "重试"
+    "retry": "重试",
+    "back": "返回设备列表"
   },
   "Shell": {
     "searchEmptyFor": "没有与「{query}」匹配的结果",
@@ -7664,11 +7665,11 @@
     }
   },
   "TelegramBot": {
-    "linked": "已将本会话关联到 {issue}：{title}",
+    "linked": "已将此聊天关联到 {issue}：{title}",
     "connect": "请在 Mikka 设置 → 集成中连接 Telegram，然后打开生成的链接。",
     "linkedUnavailable": "关联的任务已不可用。",
     "linkUsage": "请使用 /link MIK-12、/link ALEX-12 或 /link <任务 UUID>。",
-    "linkedChat": "本会话已关联任务。可用 /status、/unlink 或 /new <标题>。",
+    "linkedChat": "此聊天已关联任务。可用 /status、/unlink 或 /new <标题>。",
     "pairConflict": "此 Telegram 账号已连接到另一个 Mikka 账号。",
     "status": {
       "review": "审核中",
@@ -7694,12 +7695,12 @@
     "finishDraft": "请先完成或丢弃当前草稿，再关联任务。",
     "help": "Mikka Telegram 命令：\n/new <标题> — 新建任务草稿\n草稿进行中时发送详情，然后用 /confirm 创建到待办\n其他消息会发送给 Orchestrator，回复会发回此处\n/cancel — 丢弃草稿\n/issues — 查看最近任务\n/link ORV-123 或 /link <任务 UUID> — 关联任务\n/status — 查看关联任务\n/unlink — 取消关联",
     "taskUnavailable": "找不到该任务，或当前账号无权访问。",
-    "notLinked": "本会话未关联任务，请使用 /link ORV-123。",
+    "notLinked": "此聊天未关联任务，请使用 /link ORV-123。",
     "titleRequired": "请使用 /new 加任务标题，最多 200 个字符。",
     "created": "已创建待办任务 {issue}：{title}\n用 /status 查看任务。",
     "noDraft": "当前没有待丢弃的草稿。",
     "paired": "Telegram 已连接到 Mikka。发送 /help 查看命令。",
-    "unlinkNoTask": "本会话未关联任务。",
+    "unlinkNoTask": "此聊天未关联任务。",
     "detailsAdded": "详情已添加。可继续发送，或用 /confirm 创建待办任务。",
     "draftTooLong": "草稿已达到 20,000 字符上限，请用 /confirm 创建或 /cancel 丢弃。",
     "startDraft": "请先用 /new <标题> 开始草稿。",
@@ -8909,7 +8910,8 @@
     "breadcrumb": "当前位置",
     "loadingCreate": "正在加载新建任务…",
     "signOutFailed": "退出失败，请稍后重试。",
-    "documentTitle": "{name} · Mikka"
+    "documentTitle": "{name} · Mikka",
+    "nameRequired": "工作区名称不能为空"
   },
   "MobileTaskSchedule": {
     "interval": "每 {minutes} 分钟",
@@ -9877,13 +9879,14 @@
     "googleStartFailed": "暂时无法开始 Google 登录。",
     "verifyLinkInvalid": "验证链接无效、已过期或已使用。如邮箱尚未验证，请重新发送。",
     "submitSignIn": "登录工作台",
-    "testIssueSwitchTitle": "【测试】任务切换与会话复用",
+    "testIssueSwitchTitle": "【测试】任务切换与线程复用",
     "googleAccountNotLinked": "此 Google 账号尚未关联 Mikka。请先用已有方式登录，再到「设置 → 账户」关联 Google。",
     "passwordTooShort": "密码至少 8 位字符",
     "browserUpdateRequired": "请更新 Mikka 后再使用 Google 或 GitHub 登录。",
     "forgotPassword": "忘记密码？",
     "mobileProviderUnavailable": "此登录方式暂不可用。",
-    "switchAccount": "换个账号"
+    "switchAccount": "换个账号",
+    "verificationPending": "请先完成人机验证后再继续。"
   },
   "DesktopServer": {
     "cancel": "取消",
@@ -10048,7 +10051,8 @@
     "loadMore": "更早的消息",
     "selected": "已选中",
     "refresh": "刷新",
-    "retry": "重试"
+    "retry": "重试",
+    "later": "稍后"
   },
   "Overview": {
     "viewsTitle": "工作区视图",
@@ -10732,7 +10736,9 @@
     "newTab": "新建标签页",
     "closeTab": "关闭{title}",
     "tabHome": "首页",
-    "tabSettings": "设置"
+    "tabSettings": "设置",
+    "reloadPage": "重新加载",
+    "reopenClosedTab": "重新打开已关闭的标签页"
   },
   "ConversationDirectory": {
     "loading": "正在加载线程…",
