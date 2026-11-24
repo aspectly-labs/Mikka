@@ -31,7 +31,7 @@ export const personalAccessTokens = pgTable('personal_access_tokens', {
  * iOS refresh credentials (lib/auth-mobile-refresh.ts). Mirrors
  * drizzle/20261124035101_mobile_refresh_tokens.sql (MIKKA_DATABASE_URL), whose
  * triggers revoke a family when its live access session is deleted and keep a
- * minted access session from sliding.
+ * rotated access session from sliding.
  */
 export const mobileRefreshTokens = pgTable('mobile_refresh_tokens', {
   id: uuid('id').primaryKey(),
@@ -40,8 +40,8 @@ export const mobileRefreshTokens = pgTable('mobile_refresh_tokens', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   /** The access session this token currently backs; null once used or revoked. No FK (see the migration). */
   sessionId: text('session_id'),
-  /** sessionId was minted by rotation: short-lived and never slid. */
-  sessionMinted: boolean('session_minted').notNull().default(false),
+  /** sessionId was renewed by a rotation: one hour, never slid. */
+  sessionRotated: boolean('session_rotated').notNull().default(false),
   /** sha256 hex of the token. The plaintext is never stored. */
   tokenHash: text('token_hash').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

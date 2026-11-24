@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS mobile_refresh_tokens (
   family_id uuid NOT NULL,
   user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
   session_id text,
-  -- session_id was minted by rotation: a short access session that never slides.
-  session_minted boolean NOT NULL DEFAULT false,
+  -- session_id was renewed by a rotation: a one-hour access session that never slides.
+  session_rotated boolean NOT NULL DEFAULT false,
   token_hash text NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),
   created_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS mobile_refresh_tokens (
   revoked_at timestamptz,
   revoked_reason text CHECK (revoked_reason IN ('reused', 'session_ended', 'signed_out', 'superseded', 'replaced')),
   user_agent text,
-  -- The sign-in's second-factor assurance, carried to each minted session.
+  -- The sign-in's second-factor assurance, for a session minted when the renewed one is gone.
   two_factor_verified_at timestamptz,
   two_factor_method text,
   CONSTRAINT mobile_refresh_tokens_expiry CHECK (expires_at > created_at AND expires_at <= family_expires_at),
@@ -46,8 +46,7 @@ CREATE TRIGGER account_deletion_insert_guard BEFORE INSERT ON mobile_refresh_tok
 
 -- A live access session that ends (sign-out, a revoke on the web, a password
 -- reset, enterprise deprovisioning, any SQL delete) ends the family it backs.
--- Rotation moves session_id to the new session before deleting the old one,
--- so its own delete revokes nothing. An expired session's cleanup is not a
+-- Rotation renews the session in place and deletes nothing. An expired session's cleanup is not a
 -- sign-out: Better Auth deletes one when its own stale cookie arrives, and
 -- lib/auth-mobile-refresh.ts revokes for an expired session only when another
 -- request deleted it.
@@ -65,13 +64,14 @@ DROP TRIGGER IF EXISTS mobile_refresh_session_ended ON session;
 CREATE TRIGGER mobile_refresh_session_ended AFTER DELETE ON session
 FOR EACH ROW EXECUTE FUNCTION mikka_mobile_refresh_session_ended();
 
--- A rotated access session keeps the expiry it was minted with. Better Auth
+-- A rotated access session keeps the expiry its rotation gave it. Better Auth
 -- slides a session it reads (updateAge) to the full 7 days; this keeps a
--- minted session at its short lifetime whatever path reads it.
+-- rotated session at its hour whatever path reads it. Rotation itself clears
+-- session_id on the claimed row before it renews the session, in one transaction.
 CREATE OR REPLACE FUNCTION mikka_mobile_refresh_session_no_slide() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM mobile_refresh_tokens WHERE session_id = OLD.id AND session_minted) THEN
+  IF EXISTS (SELECT 1 FROM mobile_refresh_tokens WHERE session_id = OLD.id AND session_rotated) THEN
     NEW."expiresAt" := OLD."expiresAt";
   END IF;
   RETURN NEW;

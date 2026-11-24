@@ -80,7 +80,7 @@ async function sessionOf(jar: Jar) {
   const response = await call('/get-session?disableCookieCache=true', { jar })
   return await response.json() as { session: { id: string; token: string; expiresAt: string }; user: { id: string } } | null
 }
-const rows = async (userId: string) => (await pool.query<{ id: string; family_id: string; session_id: string | null; session_minted: boolean; used_at: Date | null; revoked_at: Date | null; revoked_reason: string | null; replaced_by: string | null; token_hash: string }>(
+const rows = async (userId: string) => (await pool.query<{ id: string; family_id: string; session_id: string | null; session_rotated: boolean; used_at: Date | null; revoked_at: Date | null; revoked_reason: string | null; replaced_by: string | null; token_hash: string }>(
   'select * from mobile_refresh_tokens where user_id = $1 order by created_at, id', [userId])).rows
 const sessionRow = async (id: string) => (await pool.query<{ id: string; expiresAt: Date; twoFactorVerifiedAt: Date | null; twoFactorMethod: string | null }>(
   'select id, "expiresAt", "twoFactorVerifiedAt", "twoFactorMethod" from session where id = $1', [id])).rows[0]
@@ -113,7 +113,7 @@ test('exchange starts a family bound to the signed-in session, only for the nati
   const stored = await rows(person.id)
   assert.equal(stored.length, 1)
   assert.equal(stored[0].session_id, person.session.session.id)
-  assert.equal(stored[0].session_minted, false)
+  assert.equal(stored[0].session_rotated, false)
   assert.notEqual(stored[0].token_hash, first.refreshToken, 'only the hash is stored')
   // A second exchange for the same session (a lost keychain) replaces the first family.
   const second = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
@@ -122,33 +122,35 @@ test('exchange starts a family bound to the signed-in session, only for the nati
   assert.equal((await rows(person.id)).find(row => row.id === stored[0].id)?.revoked_reason, 'replaced')
 })
 
-test('rotate mints a short access session as the cookie, retires the previous one and keeps the family', { skip }, async () => {
+test('rotate renews the access session in place as a one-hour cookie and keeps the family', { skip }, async () => {
   const person = await phone()
   const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
-  const before = person.jar.header()
+  const stale = new Jar(); stale.cookies = new Map(person.jar.cookies); stale.ip = person.jar.ip
   const second = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } }))
-  assert.notEqual(person.jar.header(), before, 'the response set the new session cookie')
+  assert.notEqual(person.jar.header(), stale.header(), 'the response set the renewed session cookie')
   assert.notEqual(second.refreshToken, first.refreshToken)
   const minutes = (Date.parse(second.accessExpiresAt) - Date.now()) / 60_000
   assert.ok(minutes > 58 && minutes <= 60, `access session lasts an hour, got ${minutes}`)
   const current = await sessionOf(person.jar)
-  assert.ok(current && current.session.id !== person.session.session.id, 'the jar now holds the minted session')
-  assert.equal(await sessionRow(person.session.session.id), undefined, 'the exchanged session was deleted')
+  assert.equal(current?.session.id, person.session.session.id, 'the same session: its id, pushes and outbox stay')
+  assert.equal(new Date(current!.session.expiresAt).toISOString(), second.accessExpiresAt)
+  assert.equal(await sessionOf(stale), null, 'the previous cookie stopped working')
   assert.deepEqual(person.jar.multi().filter(name => name.endsWith(person.session.session.token.toLowerCase())), [], 'the old multi-session cookie was expired')
   const family = await rows(person.id)
   assert.equal(family.length, 2)
   assert.ok(family.every(row => row.revoked_at === null), 'rotation never revokes its own family')
   assert.equal(family[0].replaced_by, family[1].id)
   assert.equal(family[0].session_id, null)
-  assert.equal(family[1].session_id, current.session.id)
-  assert.equal(family[1].session_minted, true)
-  // The next rotation works from the new token and replaces the minted session.
+  assert.equal(family[1].session_id, current!.session.id)
+  assert.equal(family[1].session_rotated, true)
+  // The next rotation works from the new token, after the hour has run out too.
+  await pool.query(`update session set "expiresAt" = now() - interval '1 second' where id = $1`, [current!.session.id])
   const third = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: second.refreshToken } }))
-  assert.equal(await sessionRow(current.session.id), undefined)
+  assert.equal((await sessionOf(person.jar))?.session.id, current!.session.id)
   assert.ok(third.refreshToken)
 })
 
-test('a minted access session never slides; an exchanged one still does', { skip }, async () => {
+test('a rotated access session never slides; an exchanged one still does', { skip }, async () => {
   const person = await phone()
   const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
   // The exchanged session is an ordinary session: due for Better Auth's daily refresh, it slides to 7 days.
@@ -159,6 +161,7 @@ test('a minted access session never slides; an exchanged one still does', { skip
   const second = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } }))
   const minted = (await sessionOf(person.jar))!.session.id
   const expiry = (await sessionRow(minted)).expiresAt.toISOString()
+  assert.ok(Date.parse(expiry) - Date.now() < 3_600_000, 'rotation shortened the exchanged session to an hour')
   assert.equal(expiry, second.accessExpiresAt)
   // Better Auth would slide this read to 7 days (it is past updateAge by construction).
   for (let read = 0; read < 2; read++) assert.ok(await sessionOf(person.jar))
@@ -189,12 +192,13 @@ test('within the grace window a lost response rotates again; once its child is u
   const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
   const lost = new Jar(); lost.cookies = new Map(person.jar.cookies); lost.ip = person.jar.ip
   const dropped = await issued(await call('/mobile-refresh/rotate', { jar: lost, body: { refreshToken: first.refreshToken } }))
-  const droppedSession = (await sessionOf(lost))!.session.id
+  assert.ok(await sessionOf(lost))
   // The phone never saw that answer and presents the same token again.
   const retried = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } }))
   const family = await rows(person.id)
-  assert.equal(family.find(row => row.session_id === null && row.revoked_reason === 'superseded')?.id !== undefined, true, 'the lost child is superseded')
-  assert.equal(await sessionRow(droppedSession), undefined)
+  assert.ok(family.some(row => row.session_id === null && row.revoked_reason === 'superseded'), 'the lost child is superseded')
+  assert.equal(await sessionOf(lost), null, 'the lost answer\'s cookie stopped working')
+  assert.ok(await sessionOf(person.jar))
   await refusal(await call('/mobile-refresh/rotate', { body: { refreshToken: dropped.refreshToken } }))
   // That refusal is of a revoked token, not a replay: the family lives on.
   const next = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: retried.refreshToken } }))
@@ -229,11 +233,18 @@ test('signing out, on the phone or elsewhere, revokes the family; an expired ses
   const bToken = (await issued(await call('/mobile-refresh/exchange', { jar: b.jar }))).refreshToken
   const bNext = (await issued(await call('/mobile-refresh/rotate', { jar: b.jar, body: { refreshToken: bToken } }))).refreshToken
   const bMinted = (await sessionOf(b.jar))!.session.id
+  await pool.query(`insert into mobile_push_tokens (id, "userId", token, platform, "sessionId") values (gen_random_uuid(), $1, $2, 'ios', $3)`,
+    [b.id, `ExponentPushToken[${b.id}]`, bMinted])
   await pool.query(`update session set "expiresAt" = now() - interval '1 second' where id = $1`, [bMinted])
+  const signedIn = `select count(*)::int as n from session where id = $1 and ${refresh.PHONE_SESSION_SIGNED_IN}`
+  assert.equal((await pool.query(signedIn, [bMinted])).rows[0].n, 1, 'a phone whose hour ran out still gets its pushes')
   assert.equal(await sessionOf(b.jar), null)
   assert.equal(await sessionRow(bMinted), undefined, 'Better Auth cleaned the expired session up')
   assert.equal((await rows(b.id)).at(-1)?.revoked_at, null)
   const bThird = (await issued(await call('/mobile-refresh/rotate', { jar: b.jar, body: { refreshToken: bNext } }))).refreshToken
+  const bRenewed = (await sessionOf(b.jar))!.session.id
+  assert.notEqual(bRenewed, bMinted, 'with its row gone, rotation minted a new session')
+  assert.equal((await pool.query('select "sessionId" from mobile_push_tokens where "userId" = $1', [b.id])).rows[0].sessionId, bRenewed, 'and moved the phone\'s push registration to it')
 
   // Another device signs the phone out after its access session expired: 登录设备 still lists it, and revoking ends the family.
   const web = new Jar(); web.ip = b.jar.ip
@@ -246,6 +257,7 @@ test('signing out, on the phone or elsewhere, revokes the family; an expired ses
   assert.ok(listed.some(device => device.id === phoneSession.id), 'a phone kept signed in by its refresh credential is listed')
   assert.equal((await call('/revoke-session', { jar: web, origin, body: { token: phoneSession.token } })).status, 200)
   assert.equal((await rows(b.id)).at(-1)?.revoked_reason, 'session_ended')
+  assert.equal((await pool.query(signedIn, [phoneSession.id])).rows[0].n, 0, 'a signed-out phone gets no pushes')
   await refusal(await call('/mobile-refresh/rotate', { body: { refreshToken: bThird } }))
 
   // 退出其他所有设备 skips expired sessions in Better Auth, but not a phone held by its family.
@@ -268,19 +280,26 @@ test('signing out, on the phone or elsewhere, revokes the family; an expired ses
   await refusal(await call('/mobile-refresh/rotate', { body: { refreshToken: dToken } }))
 })
 
-test('the sign-in\'s second-factor assurance carries to each minted session; organization SSO keeps its own session', { skip }, async () => {
+test('the sign-in\'s second-factor assurance stays with the session; organization SSO keeps its own session', { skip }, async () => {
   const person = await phone()
   const verifiedAt = new Date(Date.now() - 3_600_000)
   await pool.query('update session set "twoFactorVerifiedAt" = $2, "twoFactorMethod" = $3 where id = $1', [person.session.session.id, verifiedAt, 'totp'])
   const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
   const second = await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: first.refreshToken } }))
+  const renewed = await sessionRow((await sessionOf(person.jar))!.session.id)
+  assert.equal(renewed.twoFactorVerifiedAt?.toISOString(), verifiedAt.toISOString())
+  assert.equal(renewed.twoFactorMethod, 'totp')
+  // The session row is gone (its own stale cookie): the minted one gets the family's copy.
+  await pool.query(`update session set "expiresAt" = now() - interval '1 second' where id = $1`, [renewed.id])
+  assert.equal(await sessionOf(person.jar), null)
+  await issued(await call('/mobile-refresh/rotate', { jar: person.jar, body: { refreshToken: second.refreshToken } }))
   const minted = await sessionRow((await sessionOf(person.jar))!.session.id)
+  assert.notEqual(minted.id, renewed.id)
   assert.equal(minted.twoFactorVerifiedAt?.toISOString(), verifiedAt.toISOString())
   assert.equal(minted.twoFactorMethod, 'totp')
-  // Even after the previous access session is gone, the family's own copy carries it.
+  // A live access session deleted by any SQL path ends the family.
   await pool.query('delete from session where id = $1', [minted.id])
-  assert.equal((await rows(person.id)).at(-1)?.revoked_reason, 'session_ended', 'a live access session deleted by SQL ends the family')
-  assert.ok(second.refreshToken)
+  assert.equal((await rows(person.id)).at(-1)?.revoked_reason, 'session_ended')
 
   const sso = await phone()
   await pool.query(`update session set "enterpriseOrganizationId" = 'org-fixture' where id = $1`, [sso.session.session.id])

@@ -10,23 +10,26 @@ import { z } from 'zod'
  *
  * The app keeps riding a Better Auth session cookie as its access credential.
  * `exchange` gives a signed-in phone a refresh token bound to that session;
- * `rotate` trades a refresh token for a new short access session (set as the
- * session cookie, like a sign-in) and the next refresh token in the same
- * family. A refresh token is single use: presenting a used one again revokes
- * its whole family, except within a short grace window that covers a response
- * lost on the network. Old app builds and the web never call these endpoints
- * and see no change.
+ * `rotate` trades a refresh token for a fresh one-hour access credential, set
+ * as the session cookie like a sign-in, and the next refresh token in the same
+ * family. The access session is renewed in place: a new token and expiry on
+ * the same row, so the previous cookie stops working while the session's id
+ * (push registrations, the app's outbox, review sessions, 2FA and SSO fields)
+ * stays. A refresh token is single use: presenting a used one again revokes
+ * its whole family and ends its session, except within a short grace window
+ * that covers a response lost on the network. Old app builds and the web never
+ * call these endpoints and see no change.
  *
  * The table and its two session triggers live in
  * drizzle/20261124035101_mobile_refresh_tokens.sql: deleting a live access
- * session revokes the family it backs, and a minted access session never
- * slides past the lifetime it was minted with.
+ * session revokes the family it backs, and a rotated access session never
+ * slides past the hour it was given.
  */
 
 /** A distinct prefix: never a Better Auth session token, a PAT (`mkp_`) or an OAuth token (`mka_`/`mkr_`). */
 export const MOBILE_REFRESH_TOKEN_PREFIX = 'mkmr_'
 const TOKEN = /^mkmr_[A-Za-z0-9_-]{43}$/
-/** A minted access session. Short, so a stolen cookie is worth an hour at most. */
+/** A rotated access session. Short, so a stolen cookie is worth an hour at most. */
 export const MOBILE_ACCESS_SECONDS = 60 * 60
 /** A refresh token unused this long expires; each rotation starts a new one. */
 export const MOBILE_REFRESH_SECONDS = 60 * 24 * 60 * 60
@@ -38,8 +41,24 @@ export const MOBILE_REFRESH_GRACE_SECONDS = 60
 export const REFRESH_REJECTED = 'refreshRejected'
 export const REFRESH_UNAVAILABLE = 'refreshUnavailable'
 
+/**
+ * SQL over a row of "session": the phone is still signed in. Its session is
+ * unexpired, or the iPhone's refresh credential backs it: that access session
+ * lasts an hour and is renewed when the app next opens, so a phone in a pocket
+ * keeps getting its pushes until someone signs it out (which revokes the family).
+ */
+export const PHONE_SESSION_SIGNED_IN = `("session"."expiresAt">clock_timestamp() OR EXISTS (SELECT 1 FROM mobile_refresh_tokens r
+  WHERE r.session_id="session".id AND r.user_id="session"."userId" AND r.revoked_at IS NULL AND r.expires_at>clock_timestamp()))`
+
 const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 const newToken = () => `${MOBILE_REFRESH_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
+const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+/** A session token in Better Auth's own shape: 32 letters and digits. */
+function sessionTokenValue() {
+  let value = ''
+  while (value.length < 32) for (const byte of randomBytes(48)) if (byte < 248 && value.length < 32) value += ALPHANUMERIC[byte % 62]
+  return value
+}
 const later = (seconds: number) => new Date(Date.now() + seconds * 1000)
 const rejected = () => new APIError('UNAUTHORIZED', { code: REFRESH_REJECTED, message: 'Refresh rejected' })
 /** A credential response is never cached by anything between the server and the phone. */
@@ -83,6 +102,7 @@ type EndpointContext = {
     internalAdapter: {
       deleteSession(token: string): Promise<unknown>
       findUserById(id: string): Promise<{ id: string } | null>
+      findSession(token: string): Promise<{ session: { id: string; token: string }; user: { id: string } } | null>
       createSession(userId: string, dontRememberMe?: boolean, override?: Record<string, unknown>, overrideAll?: boolean): Promise<{ id: string; token: string; expiresAt: Date; userId: string } | null>
     }
     authCookies: { sessionToken: { name: string; attributes: Record<string, unknown> } }
@@ -113,6 +133,51 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
     return { verifiedAt: row.two_factor_verified_at, method: row.two_factor_method }
   }
 
+  type Linked = { sessionToken: string; retiredTokens: string[] }
+  /**
+   * In one transaction: retire the claimed token (and, in the grace case, the
+   * child whose answer was lost), renew the access session or adopt the minted
+   * one, and insert the next token. The previous session token stops working
+   * here. 'gone' means the backing session row no longer exists.
+   */
+  async function link(row: Row, token: string, refreshExpiresAt: Date, accessExpiresAt: Date, userAgent: string | null, minted: { id: string; token: string } | null): Promise<Linked | 'gone' | null> {
+    return transaction(database, async tx => {
+      const { rows: [parent] } = await tx.query<Row>('select * from mobile_refresh_tokens where id = $1 for update', [row.id])
+      if (!parent || parent.revoked_at) return null
+      // The grace case: the child whose response was lost is superseded below.
+      const { rows: [child] } = parent.replaced_by
+        ? await tx.query<Row>('select * from mobile_refresh_tokens where id = $1 for update', [parent.replaced_by])
+        : { rows: [] as Row[] }
+      if (child?.used_at || child?.revoked_at) return null
+      const backing = parent.session_id ?? child?.session_id ?? null
+      const { rows: [old] } = backing
+        ? await tx.query<{ token: string }>('select token from session where id = $1 and "userId" = $2 for update', [backing, parent.user_id])
+        : { rows: [] as { token: string }[] }
+      if (!minted && !old) return 'gone'
+      if (child) await tx.query(`update mobile_refresh_tokens set revoked_at = now(), revoked_reason = 'superseded', session_id = null where id = $1`, [child.id])
+      // Nothing backs the session while it is renewed, so the no-slide trigger lets this extension through.
+      await tx.query('update mobile_refresh_tokens set session_id = null where id = $1', [parent.id])
+      let sessionId: string, sessionToken: string
+      if (minted) {
+        sessionId = minted.id; sessionToken = minted.token
+        // A vanished session's phone registrations follow the sign-in.
+        if (backing) await tx.query('update mobile_push_tokens set "sessionId" = $1 where "userId" = $2 and "sessionId" = $3', [minted.id, parent.user_id, backing])
+      } else {
+        sessionId = backing!; sessionToken = sessionTokenValue()
+        await tx.query('update session set token = $2, "expiresAt" = $3, "updatedAt" = now() where id = $1', [sessionId, sessionToken, accessExpiresAt])
+      }
+      const { rows: [assured] } = await tx.query<{ verifiedAt: Date | null; method: string | null }>(
+        'select "twoFactorVerifiedAt" as "verifiedAt", "twoFactorMethod" as method from session where id = $1', [sessionId])
+      const id = randomUUID()
+      await tx.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_rotated, token_hash, expires_at,
+          family_expires_at, user_agent, two_factor_verified_at, two_factor_method) values ($1, $2, $3, $4, true, $5, $6, $7, $8, $9, $10)`,
+      [id, parent.family_id, parent.user_id, sessionId, hash(token), refreshExpiresAt, parent.family_expires_at,
+        userAgent, assured?.verifiedAt ?? null, assured?.method ?? null])
+      await tx.query('update mobile_refresh_tokens set replaced_by = $2 where id = $1', [parent.id, id])
+      return { sessionToken, retiredTokens: old ? [old.token] : [] }
+    })
+  }
+
   const exchange = createAuthEndpoint('/mobile-refresh/exchange', { method: 'POST', requireHeaders: true }, async ctx => {
     // Only the native app: a browser always sends its own http(s) Origin, so a
     // script on a web page can never turn the person's cookie into a refresh token.
@@ -130,19 +195,19 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
       // An organization SSO session's assurance belongs to its identity provider's
       // own session (SAML lineage, deprovisioning). It keeps today's session.
       if (session.enterprise) return 'enterprise' as const
-      // A session a rotation minted stays short even when a new family adopts it.
-      const { rows: [{ minted }] } = await tx.query<{ minted: boolean }>(
-        'select exists(select 1 from mobile_refresh_tokens where session_id = $1 and session_minted) as minted', [session.id])
+      // A session a rotation renewed stays short even when a new family adopts it.
+      const { rows: [{ rotated }] } = await tx.query<{ rotated: boolean }>(
+        'select exists(select 1 from mobile_refresh_tokens where session_id = $1 and session_rotated) as rotated', [session.id])
       // One family per access session; an older one (a lost keychain) ends here.
       await revokeFamilies(tx, 'session_id = $1', [session.id], 'replaced')
       // Bounded cleanup instead of a sweep: this person's ended families.
       await tx.query(`delete from mobile_refresh_tokens where user_id = $1
         and (family_expires_at < now() or revoked_at < now() - interval '30 days')`, [current.user.id])
       const familyExpiresAt = later(MOBILE_REFRESH_FAMILY_SECONDS), expiresAt = later(MOBILE_REFRESH_SECONDS)
-      await tx.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_minted, token_hash, expires_at,
+      await tx.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_rotated, token_hash, expires_at,
           family_expires_at, user_agent, two_factor_verified_at, two_factor_method) values ($1, $2, $3, $4, $11, $5, $6, $7, $8, $9, $10)`,
       [randomUUID(), randomUUID(), current.user.id, session.id, hash(token), expiresAt, familyExpiresAt,
-        ctx.headers?.get('user-agent')?.slice(0, 512) ?? null, session.verifiedAt, session.method, minted])
+        ctx.headers?.get('user-agent')?.slice(0, 512) ?? null, session.verifiedAt, session.method, rotated])
       return { refreshExpiresAt: expiresAt, accessExpiresAt: session.expiresAt }
     })
     if (issued === 'enterprise') throw new APIError('CONFLICT', { code: REFRESH_UNAVAILABLE, message: 'Refresh unavailable' })
@@ -177,52 +242,39 @@ export function mobileRefresh(options: { database: Database }): BetterAuthPlugin
     const user = await endpoint.context.internalAdapter.findUserById(row.user_id)
     if (!user) throw rejected()
 
-    // 2. Mint the access session through Better Auth, so its create hooks run,
-    // then give it the sign-in's own second-factor assurance.
-    const carried = await assurance(row)
+    // 2. Renew the access session the family backs, in place: a new token and
+    // a short expiry on the same session row. Its id, second-factor and SSO
+    // fields, push registrations and everything else bound to it stay. Only
+    // when that row is gone (Better Auth deleted it on a stale cookie) is a new
+    // session minted through Better Auth, with the sign-in's own assurance.
     const accessExpiresAt = new Date(Math.min(later(MOBILE_ACCESS_SECONDS).getTime(), row.family_expires_at.getTime()))
-    const minted = await endpoint.context.internalAdapter.createSession(row.user_id, false, { expiresAt: accessExpiresAt }, true)
-    if (!minted) throw new APIError('INTERNAL_SERVER_ERROR', { code: 'FAILED_TO_CREATE_SESSION', message: 'Failed to create session' })
-    let published = false
+    const refreshExpiresAt = new Date(Math.min(later(MOBILE_REFRESH_SECONDS).getTime(), row.family_expires_at.getTime()))
+    const token = newToken()
+    const userAgent = ctx.headers?.get('user-agent')?.slice(0, 512) ?? null
+    let minted: { id: string; token: string } | null = null
     try {
-      await database.query('update session set "twoFactorVerifiedAt" = $2, "twoFactorMethod" = $3 where id = $1 and "userId" = $4',
-        [minted.id, carried.verifiedAt, carried.method, row.user_id])
-      // 3. Link the next token; whatever the family backed before ends.
-      const token = newToken()
-      const refreshExpiresAt = new Date(Math.min(later(MOBILE_REFRESH_SECONDS).getTime(), row.family_expires_at.getTime()))
-      const linked = await transaction(database, async tx => {
-        const { rows: [parent] } = await tx.query<Row>('select * from mobile_refresh_tokens where id = $1 for update', [row.id])
-        if (!parent || parent.revoked_at) return null
-        const previous = parent.session_id ? [parent.session_id] : []
-        if (parent.replaced_by) {
-          // The grace case: the child whose response was lost is superseded.
-          const { rows: [child] } = await tx.query<Row>('select * from mobile_refresh_tokens where id = $1 for update', [parent.replaced_by])
-          if (child?.used_at || child?.revoked_at) return null
-          if (child) {
-            await tx.query(`update mobile_refresh_tokens set revoked_at = now(), revoked_reason = 'superseded', session_id = null where id = $1`, [child.id])
-            if (child.session_id) previous.push(child.session_id)
-          }
-        }
-        const id = randomUUID()
-        await tx.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_minted, token_hash, expires_at,
-            family_expires_at, user_agent, two_factor_verified_at, two_factor_method) values ($1, $2, $3, $4, true, $5, $6, $7, $8, $9, $10)`,
-        [id, parent.family_id, parent.user_id, minted.id, hash(token), refreshExpiresAt, parent.family_expires_at,
-          ctx.headers?.get('user-agent')?.slice(0, 512) ?? null, carried.verifiedAt, carried.method])
-        await tx.query('update mobile_refresh_tokens set replaced_by = $2, session_id = null where id = $1', [parent.id, id])
-        return previous
-      })
-      if (!linked) throw rejected()
-      // The family no longer points at these sessions, so deleting them revokes nothing.
-      const ended = await deleteSessions(endpoint, linked)
+      let linked: Linked | 'gone' | null = await link(row, token, refreshExpiresAt, accessExpiresAt, userAgent, null)
+      if (linked === 'gone') {
+        const carried = await assurance(row)
+        const created = await endpoint.context.internalAdapter.createSession(row.user_id, false, { expiresAt: accessExpiresAt }, true)
+        if (!created) throw new APIError('INTERNAL_SERVER_ERROR', { code: 'FAILED_TO_CREATE_SESSION', message: 'Failed to create session' })
+        minted = created
+        await database.query('update session set "twoFactorVerifiedAt" = $2, "twoFactorMethod" = $3 where id = $1 and "userId" = $4',
+          [created.id, carried.verifiedAt, carried.method, row.user_id])
+        linked = await link(row, token, refreshExpiresAt, accessExpiresAt, userAgent, created)
+      }
+      if (!linked || linked === 'gone') throw rejected()
+      const renewed = await endpoint.context.internalAdapter.findSession(linked.sessionToken)
+      if (!renewed) throw rejected()
       const cookie = endpoint.context.authCookies.sessionToken
-      for (const old of ended) endpoint.setCookie(`${cookie.name}_multi-${old.toLowerCase()}`, '', { ...cookie.attributes, maxAge: 0 })
-      // The cookie lasts as long as the session, so the app's cookie jar drops it on time.
-      await setSessionCookie(ctx, { session: minted, user } as never, false, { maxAge: Math.max(1, Math.floor((accessExpiresAt.getTime() - Date.now()) / 1000)) })
-      published = true
+      for (const old of linked.retiredTokens) endpoint.setCookie(`${cookie.name}_multi-${old.toLowerCase()}`, '', { ...cookie.attributes, maxAge: 0 })
+      // The cookie lasts as long as the access session, so the app's cookie jar drops it on time.
+      await setSessionCookie(ctx, renewed as never, false, { maxAge: Math.max(1, Math.floor((accessExpiresAt.getTime() - Date.now()) / 1000)) })
+      minted = null
       noStore(ctx)
       return ctx.json({ refreshToken: token, refreshExpiresAt: refreshExpiresAt.toISOString(), accessExpiresAt: accessExpiresAt.toISOString() })
     } finally {
-      if (!published) await endpoint.context.internalAdapter.deleteSession(minted.token).catch(() => undefined)
+      if (minted) await endpoint.context.internalAdapter.deleteSession(minted.token).catch(() => undefined)
     }
   })
 
