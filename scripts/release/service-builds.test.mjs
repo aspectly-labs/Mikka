@@ -138,7 +138,8 @@ const runtimeFixture = {
   'pnpm-lock.yaml': lockfile(),
   'pnpm-workspace.yaml': 'packages: []\n',
   'scripts/migrate.mjs': "import { writeFileSync } from 'node:fs';\nimport './migration-helper.mjs';\nwriteFileSync(new URL('../executed', import.meta.url), 'candidate evaluated');\n",
-  'scripts/migration-helper.mjs': "import pg from 'pg';\nexport const pool = pg.Pool;\n",
+  // Built from parts so scripts/run-db-tests.mjs does not take this fixture text for a real pg import.
+  'scripts/migration-helper.mjs': ['import pg from', "'pg';", '\nexport const pool = pg.Pool;\n'].join(' ').replace("'pg'; \n", "'pg';\n"),
   'scripts/check-migrations.mjs': 'export const checkMigrations = () => [];\n',
   'scripts/migration-steps.mjs': 'export const headerLines = () => [];\n',
   'drizzle/0001_base.sql': 'CREATE TABLE example (id integer);\n',
