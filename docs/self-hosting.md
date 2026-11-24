@@ -4,7 +4,7 @@ Self-hosting is community-maintained. Mikka ended dedicated compatibility testin
 
 Deploy the community server, then connect the official app to that server. It runs on your own database and does not need a Mikka account, Stripe, Vercel, Cloudflare, or a Mikka-owned API key. Your subscriptions and API keys belong to you. Hosted Mikka billing is disabled in the community edition.
 
-The image provides the server: API, realtime, daemon gateway, scheduling, migrations and BYOK. **Mikka has one official UI**, whose Web, Desktop and iOS clients connect to this server ([active One UI decision](design/decisions/2026-11-08-2133-one-ui.md)). The old built-in community workspace was retired; `MIKKA_COMMUNITY_UI=1` no longer re-enables it. The public image still serves server status, sign-in and account handoff pages, not a second workbench. Official UI screenshots are not copied into the public server image.
+The image provides the server: API, realtime, daemon gateway, scheduling, migrations and BYOK. **Mikka has one official UI**, whose Web, Desktop and iOS clients connect to this server ([active One UI decision](design/decisions/2026-11-08-2133-one-ui.md)). The old built-in community workspace was retired; `MIKKA_COMMUNITY_UI=1` no longer re-enables it. An image built from this repository alone has no browser pages: it answers a browser with a page that says the server has no web interface ([decision 2026-11-24-1000](design/decisions/2026-11-24-1000-all-ui-in-hosted.md)), and people sign in from the official clients. Official UI screenshots are not copied into the public server image.
 
 ## Start the server
 
@@ -135,7 +135,7 @@ The server retains sign-in, sign-up, verification/reset, device authorization, O
 
 Open the official Web app and choose **Change** on the sign-in screen or under account settings. Select **Self-hosted server**, enter the HTTPS address from `/mikka/api/server`, and continue to sign in on your server. The app lists saved accounts with their server addresses. Choose **Mikka Cloud** to return to the Cloud account. Official Desktop and iOS clients also accept a server address.
 
-The public image contains the API, daemon integration, and the pages needed for sign-in, password recovery, invitations, consent, and app handoffs. Upgrading uses the existing database and installation keys. Remove `MIKKA_COMMUNITY_UI` from older Compose configurations.
+The public image contains the API and daemon integration; sign-in, password recovery, invitations and consent are pages of the official UI. Upgrading uses the existing database and installation keys. Remove `MIKKA_COMMUNITY_UI` from older Compose configurations.
 
 ## Installation secrets and backups
 

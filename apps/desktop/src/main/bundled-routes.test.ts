@@ -113,7 +113,9 @@ function sources(directory: string, found: string[] = []): string[] {
     if (SKIP.has(entry.name)) continue
     const path = join(directory, entry.name)
     if (entry.isDirectory()) {
-      if (entry.name === 'tests' && directory.endsWith(`${sep}.hosted-ui${sep}web`)) continue
+      if (entry.name === 'tests' && (directory.endsWith(`${sep}.hosted-ui${sep}web`) || directory.endsWith(`${sep}.hosted-ui${sep}core`))) continue
+      // The browser's own platform (core/renderer/web) is never in the desktop renderer (mikka:platform).
+      if (entry.name === 'web' && directory.endsWith(`${sep}.hosted-ui${sep}core${sep}renderer`)) continue
       sources(path, found)
     }
     else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && !entry.name.endsWith('.d.ts')) found.push(path)
@@ -122,11 +124,12 @@ function sources(directory: string, found: string[] = []): string[] {
 }
 
 /**
- * The renderer bundles `components/`, `hooks/` and the desktop renderer itself,
- * then whatever `lib/` modules they import — the rest of `lib/` is server code.
+ * The renderer bundles the desktop renderer's runtime and the official UI checkout
+ * (`.hosted-ui/core`, its client application, and `.hosted-ui/web`), then whatever
+ * `lib/` modules they import — the rest of `lib/` is server code.
  */
 function rendererSources(): string[] {
-  const roots = ['components', 'hooks', 'apps/desktop/src/renderer', '.hosted-ui/web']
+  const roots = ['apps/desktop/src/renderer', '.hosted-ui/core', '.hosted-ui/web']
     .map(root => join(repository, root))
     .filter(root => existsSync(root))
   const slotEntries = ['.hosted-ui/slots/auth-sso.tsx', '.hosted-ui/slots/workspace-entry.tsx']
@@ -134,7 +137,7 @@ function rendererSources(): string[] {
     .filter(file => existsSync(file))
   const included = new Set([...roots.flatMap(root => sources(root)), ...slotEntries].map(file => relative(repository, file).split(sep).join('/')))
   const library = new Map(sources(join(repository, 'lib')).map(file => [relative(repository, file).split(sep).join('/'), file]))
-  const specifier = /(?:from|import)\s*\(?\s*['"]@\/((?:lib|components|hooks)\/[^'"]+)['"]/g
+  const specifier = /(?:from|import)\s*\(?\s*['"]@\/(lib\/[^'"]+)['"]/g
   const pending = [...included]
   while (pending.length) {
     const file = pending.pop()!
@@ -280,7 +283,11 @@ const key = (path: string) => path.replaceAll('\u0000', '*')
 const described = (path: string) => path.replaceAll('\u0000', '${…}')
 const asked = new Set([...sites.keys()].map(key))
 
-test('every API route the renderer requests is on the desktop allowlist', () => {
+// The renderer's screens are the official UI's: without its checkout around this repository the scan has nothing to
+// read, and mikka-hosted-ui's CI runs these with it (scripts/core-ui.test.mjs there).
+const needsOfficialUi = !existsSync(join(repository, '.hosted-ui/core')) && 'needs the official UI checkout at .hosted-ui; mikka-hosted-ui CI runs it'
+
+test('every API route the renderer requests is on the desktop allowlist', { skip: needsOfficialUi }, () => {
   const denied = [...sites.values()]
     .filter(site => checkable(site.path) && NOT_SERVED[key(site.path)] === undefined)
     .flatMap(site => [...site.methods]
@@ -289,18 +296,14 @@ test('every API route the renderer requests is on the desktop allowlist', () => 
   assert.deepEqual(denied, [], 'bundled-policy.ts denies these renderer routes: add them, or record in NOT_SERVED why the desktop build does not serve them')
 })
 
-const hasHostedUi = existsSync(join(repository, '.hosted-ui/web'))
-const HOSTED_UI_ONLY_NOT_SERVED = new Set(['/api/cloud/*', '/api/integrations/google/callback'])
-
-test('the recorded exceptions still describe a route the renderer asks for', () => {
-  const stale = Object.keys(NOT_SERVED).filter(path => !asked.has(path) && (hasHostedUi || !HOSTED_UI_ONLY_NOT_SERVED.has(path)))
+test('the recorded exceptions still describe a route the renderer asks for', { skip: needsOfficialUi }, () => {
+  const stale = Object.keys(NOT_SERVED).filter(path => !asked.has(path))
   assert.deepEqual(stale, [], 'stale NOT_SERVED entries: the renderer no longer asks for these')
 })
 
-test('the scan sees the panels whose routes drifted before', () => {
+test('the scan sees the panels whose routes drifted before', { skip: needsOfficialUi }, () => {
   // Guards the scan itself: a broken walk would make the rule above pass for the wrong reason.
-  const expected = ['/api/integrations/github/tools', '/api/organizations', '/api/artifacts/shared/*']
-  if (hasHostedUi) expected.push('/api/devices', '/api/integrations/github/repositories/pulls')
+  const expected = ['/api/integrations/github/tools', '/api/organizations', '/api/artifacts/shared/*', '/api/devices', '/api/integrations/github/repositories/pulls']
   for (const path of expected) {
     assert.ok(asked.has(path), `${path} missing from the scan`)
   }

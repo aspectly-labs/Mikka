@@ -2,14 +2,16 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
-const PUBLIC_WEB_FILES = new Set(['components/plugins/connected-apps.tsx'])
-export const isMovedWebFile = file => /^(?:components|hooks)\//.test(file) && !PUBLIC_WEB_FILES.has(file)
+// Every web screen is the official UI's (mikka-hosted-ui): its own web/ or core/ (decision 2026-11-22-2205).
+export const isMovedWebFile = file => /^(?:components|hooks)\//.test(file)
 export const resolveEntityFile = (file, root = '.') => {
   const direct = path.join(root, file)
   if (existsSync(direct)) return direct
   if (isMovedWebFile(file)) {
-    const hosted = path.join(root, '.hosted-ui/web', file)
-    if (existsSync(hosted)) return hosted
+    for (const checkout of ['.hosted-ui/web', '.hosted-ui/core']) {
+      const hosted = path.join(root, checkout, file)
+      if (existsSync(hosted)) return hosted
+    }
   }
   return null
 }

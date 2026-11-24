@@ -209,10 +209,18 @@ try {
   check('native badge, payload validation, device and quota bridge')
 
   await page.goto('mikka://app/mikka/en/settings?section=computers', { waitUntil: 'domcontentloaded' })
-  await page.getByText('Devices', { exact: true }).first().waitFor({ state: 'visible' })
-  await page.screenshot({ path: join(output, 'bundled-devices.png'), animations: 'disabled' })
-  assert.equal(nativeErrors.length, 0, `renderer uncaught errors: ${nativeErrors.join(',')}`)
-  check('settings deep link and shared devices page')
+  // A build without the official UI checkout shows the page that says so (apps/frontend/src/headless.ts); the shell
+  // around it is what this repository owns, and the devices page is checked where the official UI is built in.
+  if (await page.evaluate(() => document.documentElement.dataset.mikkaHeadless === 'true')) {
+    await page.waitForFunction(() => document.body.innerText.trim().length > 30)
+    assert.equal(nativeErrors.length, 0, `renderer uncaught errors: ${nativeErrors.join(',')}`)
+    check('settings deep link reaches the renderer (no official UI in this build)')
+  } else {
+    await page.getByText('Devices', { exact: true }).first().waitFor({ state: 'visible' })
+    await page.screenshot({ path: join(output, 'bundled-devices.png'), animations: 'disabled' })
+    assert.equal(nativeErrors.length, 0, `renderer uncaught errors: ${nativeErrors.join(',')}`)
+    check('settings deep link and shared devices page')
+  }
 
   await page.evaluate(() => window.mikka.bundled.signOut())
   assert.equal(await page.evaluate(() => window.mikka.bundled.session()), null)

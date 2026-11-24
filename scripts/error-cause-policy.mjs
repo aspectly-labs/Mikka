@@ -16,6 +16,7 @@
 //    droppedCauseAllowlist; that list only shrinks, as the polling allowlist does.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import { officialCoreFiles, readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 
 export const errorCauseMessage = '保留原因：catch 里抛出的新错误要带 `{ cause: error }`（或把 error 传给 helper），给出 detail 子码，并为用户能看到的错误码在 messages/*.json 写文案；见 docs/design/decisions/2026-11-05-0330-error-causes.md。确实要丢弃原因时在同一行或上一行写 `// error-cause: <原因>`。'
 
@@ -116,12 +117,13 @@ export function auditDroppedCauses(file, source, allowlist = droppedCauseAllowli
 export function errorCauseFiles() {
   return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
     .split('\0')
+    .concat(officialCoreFiles())
     .filter(file => errorCauseRoots.some(root => file.startsWith(root))
       && /\.(?:[cm]?[jt]sx?)$/.test(file)
       && !/(?:^|\/)(?:node_modules|\.next|dist|out|build|__tests__|tests?|e2e|fakes)\//.test(file)
       && !/\.(?:test|spec|fixture|stories|node-test)\.[cm]?[jt]sx?$/.test(file)
       && !file.endsWith('.d.ts')
-      && existsSync(file))
+      && uiExists(file))
 }
 
 export function readRegistry() {
@@ -133,7 +135,7 @@ export function auditRepository() {
   const registry = existsSync(registryFile) ? readRegistry() : {}
   const found = existsSync(registryFile) ? auditErrorCopy(registry, Object.fromEntries(catalogues.map(file => [file, JSON.parse(readFileSync(file, 'utf8'))]))) : []
   for (const file of errorCauseFiles()) {
-    const source = readFileSync(file, 'utf8')
+    const source = readUi(file)
     found.push(...auditCodedLiterals(file, source, registry), ...auditDroppedCauses(file, source))
   }
   return found
@@ -142,8 +144,9 @@ export function auditRepository() {
 /** Allowlist entries that no longer match the code: a fixed drop, or a count to lower. */
 export function staleAllowlistEntries(allowlist = droppedCauseAllowlist) {
   return Object.entries(allowlist).flatMap(([file, hits]) => {
-    if (!existsSync(file)) return [`${file}: file no longer exists; delete its droppedCauseAllowlist entry`]
-    const found = findDroppedCauses(file, readFileSync(file, 'utf8')).length
+    if (unverifiable(file)) return []
+    if (!uiExists(file)) return [`${file}: file no longer exists; delete its droppedCauseAllowlist entry`]
+    const found = findDroppedCauses(file, readUi(file)).length
     if (found === 0) return [`${file}: no dropped cause left; delete its droppedCauseAllowlist entry`]
     if (found < hits) return [`${file}: ${found} dropped causes, allowlist says ${hits}; lower it`]
     return []
@@ -155,7 +158,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const d of found) console.error(`${d.file}:${d.line}:${d.column} error [${d.rule}] ${d.message}`)
   if (process.argv.includes('--counts')) {
     const counts = {}
-    for (const file of errorCauseFiles()) { const n = findDroppedCauses(file, readFileSync(file, 'utf8')).length; if (n) counts[file] = n }
+    for (const file of errorCauseFiles()) { const n = findDroppedCauses(file, readUi(file)).length; if (n) counts[file] = n }
     console.log(JSON.stringify(counts, null, 2))
   }
   process.exitCode = found.length ? 1 : 0

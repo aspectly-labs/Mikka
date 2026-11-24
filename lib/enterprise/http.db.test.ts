@@ -1065,8 +1065,8 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     assert.equal((await session(oidcCookies))?.user.id, userId, 'neither sign-out touches the independent OIDC session')
   })
   await t.test('the 组织 page client adds a second Org admin, who can export audit until revoked, then is refused (#1669)', async adminTest => {
-    const { organizationApi } = await import('../../hooks/settings/use-organization')
-    const { GovernanceRequestError } = await import('../../hooks/settings/use-workspace-governance')
+    const { organizationApi } = await import('../organization-client')
+    const { GovernanceRequestError } = await import('../organization-client')
     const { auth: applicationAuth } = await import('../auth')
     const native = await applicationAuth.$context
     const secondAdmin = `org-second-admin-${randomUUID()}`

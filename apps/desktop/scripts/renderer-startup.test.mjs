@@ -4,6 +4,7 @@ import { build } from 'esbuild'
 import { Window } from 'happy-dom'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { needsOfficialUi, officialRenderer, officialUiResolution } from './official-ui.mjs'
 
 const repository = fileURLToPath(new URL('../../..', import.meta.url))
 let imports = 0
@@ -22,21 +23,22 @@ async function fixture(t, pathname = '/mikka') {
   })
   const result = await build({
     absWorkingDir: repository, stdin: {
-      contents: 'export { loadWorkspace, preloadWorkspace } from "./apps/desktop/src/renderer/workspace-loader"; export { readBootstrap } from "./apps/desktop/src/renderer/bootstrap"',
+      // The workspace loader is the official UI's; the bootstrap reader is this repository's runtime.
+      contents: `${needsOfficialUi ? '' : `export { loadWorkspace, preloadWorkspace } from ${JSON.stringify(join(officialRenderer, 'workspace-loader'))}; `}export { readBootstrap } from "./apps/desktop/src/renderer/bootstrap"`,
       resolveDir: repository, loader: 'ts',
     }, write: false, bundle: true, format: 'esm', platform: 'browser', target: 'es2023',
     tsconfig: join(repository, 'apps/desktop/tsconfig.renderer.json'),
     define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '"/mikka"', 'process.env': '{}' },
     plugins: [{ name: 'local-workspace-module-fixture', setup(builder) {
-      builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-fixture' } : undefined)
+      builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-fixture' } : undefined)
       builder.onLoad({ filter: /.*/, namespace: 'startup-fixture' }, () => ({ contents: 'globalThis.__workspaceImported++; export function Workspace() { globalThis.__workspaceRendered++; return null }', loader: 'js' }))
-    } }],
+    } }, officialUiResolution],
   })
   const module = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}#${++imports}`)
   return { window, module }
 }
 
-test('retained-account local module loading overlaps the real bootstrap promise without mounting or an extra backend read', async t => {
+test('retained-account local module loading overlaps the real bootstrap promise without mounting or an extra backend read', { skip: needsOfficialUi }, async t => {
   const { window, module } = await fixture(t)
   window.mikka = { bundled: { session: async () => ({ user: { id: 'owner' }, session: { id: 'session' } }) } }
   let finish, requests = 0, bootstrapFinished = false
@@ -58,7 +60,7 @@ test('retained-account local module loading overlaps the real bootstrap promise 
   assert.equal(globalThis.__workspaceImported, 1)
 })
 
-test('signed-out root and public/auth routes do not preload the workspace graph', async t => {
+test('signed-out root and public/auth routes do not preload the workspace graph', { skip: needsOfficialUi }, async t => {
   for (const pathname of ['/mikka', '/mikka/en/sign-in', '/mikka/en/a/public-share']) {
     await t.test(pathname, async t => {
       const { window, module } = await fixture(t, pathname)
@@ -73,7 +75,7 @@ test('signed-out root and public/auth routes do not preload the workspace graph'
   }
 })
 
-test('failure of the optional main identity hint leaves the normal bootstrap and lazy path available', async t => {
+test('failure of the optional main identity hint leaves the normal bootstrap and lazy path available', { skip: needsOfficialUi }, async t => {
   const { window, module } = await fixture(t)
   const cause = new Error('fixture IPC unavailable')
   window.mikka = { bundled: { session: async () => { throw cause } } }

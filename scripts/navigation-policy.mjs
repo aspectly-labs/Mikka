@@ -13,7 +13,7 @@
 // The files below predate the rule and each keeps exactly the count it has,
 // with its reason. A new call anywhere, or one more in these files, fails.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { officialCoreFiles, readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 
 /** The two modules that own the address. */
 export const navigationModules = ['components/workspace/workspace-navigation.ts', 'lib/settings-navigation.ts']
@@ -67,18 +67,20 @@ export function auditNavigation(file, source) {
 export function navigationPolicyFiles() {
   return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
     .split('\0')
-    .filter(file => /^(?:app|components|hooks|lib)\/.*\.(?:[cm]?[jt]sx?)$/.test(file) && !/\.test\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.d.ts') && existsSync(file))
+    .concat(officialCoreFiles())
+    .filter(file => /^(?:app|components|hooks|lib)\/.*\.(?:[cm]?[jt]sx?)$/.test(file) && !/\.test\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.d.ts') && uiExists(file))
 }
 
 export function auditRepository() {
-  return navigationPolicyFiles().flatMap(file => auditNavigation(file, readFileSync(file, 'utf8')))
+  return navigationPolicyFiles().flatMap(file => auditNavigation(file, readUi(file)))
 }
 
 /** Allowlisted counts that are now higher than the file needs: lower them so a new call cannot hide in the slack. */
 export function staleAllowances() {
   const stale = []
   for (const [file, entries] of Object.entries(navigationAllowlist)) {
-    const code = existsSync(file) ? withoutComments(readFileSync(file, 'utf8')) : ''
+    if (unverifiable(file)) continue
+    const code = uiExists(file) ? withoutComments(readUi(file)) : ''
     for (const [rule, { count }] of Object.entries(entries)) {
       const pattern = rules.find(item => item.rule === rule).pattern
       const found = [...code.matchAll(pattern)].length

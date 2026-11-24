@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { uiExists, unverifiable } from './official-ui-tree.mjs'
 import test from 'node:test'
 import { auditNavigation, auditRepository, navigationAllowlist, navigationModules, staleAllowances } from './navigation-policy.mjs'
 
@@ -10,9 +10,9 @@ test('nothing in the app writes history or builds a workspace address outside th
 })
 
 test('every allowance exists, says why, and is no larger than the file needs', () => {
-  for (const file of navigationModules) assert.ok(existsSync(file), file)
+  for (const file of navigationModules) assert.ok(unverifiable(file) || uiExists(file), file)
   for (const [file, entries] of Object.entries(navigationAllowlist)) {
-    assert.ok(existsSync(file), file)
+    assert.ok(unverifiable(file) || uiExists(file), file)
     for (const { reason } of Object.values(entries)) assert.ok(reason.length > 10, file)
   }
   assert.deepEqual(staleAllowances(), [])

@@ -17,8 +17,8 @@ async function assetFiles(directory) {
   return result
 }
 
-export async function buildFrontend({ target = 'web', outdir = resolve(frontend, 'dist', target), clean = true, serverPages = false, publicTestFixture = false } = {}) {
-  const config = await frontendConfig({ target, outdir, clean, serverPages, publicTestFixture })
+export async function buildFrontend({ target = 'web', outdir = resolve(frontend, 'dist', target), clean = true } = {}) {
+  const config = await frontendConfig({ target, outdir, clean })
   outdir = resolve(config.root, config.build.outDir)
   // This directory belongs to the build. Complete its removal before Vite
   // writes anything, then verify the emitted inventory before publishing it.
@@ -69,7 +69,9 @@ export async function buildFrontend({ target = 'web', outdir = resolve(frontend,
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const target = process.argv.includes('--desktop') ? 'desktop' : 'web'
-  const result = await buildFrontend({ target, serverPages: process.argv.includes('--server-pages'), publicTestFixture: process.argv.includes('--public-test-fixture') })
+  const args = process.argv.slice(2)
+  if (args.length > 1 || args.some(arg => !['web', 'desktop', '--desktop'].includes(arg))) throw new Error('FRONTEND_BUILD_ARGUMENTS_INVALID')
+  const target = args.some(arg => arg === 'desktop' || arg === '--desktop') ? 'desktop' : 'web'
+  const result = await buildFrontend({ target })
   process.stdout.write(`${JSON.stringify({ target, rendererBuild: result.rendererBuild, actions: result.usedActions.length, exports: result.exports, serverModules: result.serverModules })}\n`)
 }

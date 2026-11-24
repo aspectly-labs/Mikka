@@ -11,6 +11,7 @@ import { join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { buildFrontend } from './build.mjs'
+import { needsOfficialUi } from './application-test-build.mjs'
 import { frontendConfig } from '../vite.config.mjs'
 import { rendererActionContract } from '../../../lib/renderer-actions.mjs'
 import { publishedReadActions } from '../../../scripts/acceptance/read-action-transport.mjs'
@@ -29,7 +30,7 @@ async function emittedAssets(directory) {
   return hashes
 }
 
-test('real frontend builds retain incremental files without fingerprinting them and clean builds remove them', { timeout: 120_000 }, async () => {
+test('real frontend builds retain incremental files without fingerprinting them and clean builds remove them', { timeout: 120_000, skip: needsOfficialUi }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mikka-build-output-'))
   const previous = process.env.MIKKA_DEPLOYMENT_ID
   try {
@@ -38,13 +39,12 @@ test('real frontend builds retain incremental files without fingerprinting them 
     const content = 'import "./previous-deployment.js";\n'
     await mkdir(join(directory, 'assets'))
     await writeFile(stale, content)
-    const incremental = await buildFrontend({ target: 'web', outdir: directory, clean: false, publicTestFixture: true })
+    const incremental = await buildFrontend({ target: 'web', outdir: directory, clean: false })
     assert.equal(await readFile(stale, 'utf8'), content, 'incremental development keeps an already loaded chunk available')
     const incrementalAssets = await emittedAssets(directory)
-    const clean = await buildFrontend({ target: 'web', outdir: directory, publicTestFixture: true })
+    const clean = await buildFrontend({ target: 'web', outdir: directory })
     await assert.rejects(readFile(stale), { code: 'ENOENT' })
-    assert.equal(clean.publicTestFixture, true)
-    assert.ok(clean.inputs.includes('apps/frontend/src/public-test-fixture-workspace.tsx'))
+    assert.equal(clean.headless, undefined)
     const reads = publishedReadActions(clean)
     const contract = rendererActionContract(clean)
     for (const action of Object.values(reads)) {
@@ -54,8 +54,8 @@ test('real frontend builds retain incremental files without fingerprinting them 
     // one process must inject the same one. If the identities below ever drift
     // again, this separates "the injected revision moved" from "the bundler split
     // the same modules differently" — two causes a bare fingerprint cannot tell apart.
-    const firstConfig = await frontendConfig({ target: 'web', outdir: directory, clean: false, publicTestFixture: true })
-    const secondConfig = await frontendConfig({ target: 'web', outdir: directory, publicTestFixture: true })
+    const firstConfig = await frontendConfig({ target: 'web', outdir: directory, clean: false })
+    const secondConfig = await frontendConfig({ target: 'web', outdir: directory })
     assert.equal(firstConfig.define['process.env.NEXT_PUBLIC_MIKKA_BUILD'], secondConfig.define['process.env.NEXT_PUBLIC_MIKKA_BUILD'],
       'two builds of one process inject one application revision')
     // A failure here has to say *which* kind of drift happened: an asset only one
@@ -80,20 +80,25 @@ test('real frontend builds retain incremental files without fingerprinting them 
   }
 })
 
-test('the public server ships its real handoff pages without the workspace or private providers', { timeout: 120_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'mikka-server-pages-'))
+test('without the official UI the public build ships only the headless page', { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mikka-headless-'))
+  const saved = { dir: process.env.MIKKA_UI_OVERLAY_DIR, sha: process.env.MIKKA_UI_OVERLAY_SHA }
   try {
+    delete process.env.MIKKA_UI_OVERLAY_DIR
+    delete process.env.MIKKA_UI_OVERLAY_SHA
     const result = await buildFrontend({ target: 'web', outdir: directory })
     const manifest = JSON.parse(await readFile(join(directory, 'renderer-manifest.json'), 'utf8'))
     assert.deepEqual(manifest, result)
-    assert.equal(manifest.serverPages, true)
-    for (const required of ['components/auth-form.tsx', 'components/device-authorization.tsx',
-      'components/oauth-consent.tsx', 'components/plugins/github-settings.tsx', 'apps/desktop/src/renderer/deep-link-routes.tsx']) {
-      assert.ok(manifest.inputs.includes(required), required)
+    assert.equal(manifest.headless, true)
+    assert.deepEqual(manifest.inputs, ['apps/frontend/src/headless.ts', 'apps/frontend/src/index.ts'])
+    assert.deepEqual(manifest.usedActions, [])
+    const html = await readFile(join(directory, 'index.html'), 'utf8')
+    assert.match(html, /<div id="root"><\/div>/)
+  } finally {
+    for (const [key, value] of [['MIKKA_UI_OVERLAY_DIR', saved.dir], ['MIKKA_UI_OVERLAY_SHA', saved.sha]]) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
     }
-    const forbidden = /(?:^|\/)(?:\.hosted-ui\/|apps\/desktop\/src\/renderer\/workspace(?:-loader)?\.tsx?$|apps\/frontend\/src\/public-test-fixture-workspace\.tsx$|components\/(?:workspace\/issue-workspace|slots\/(?:workspace-entry|app-frame|tasks|task-detail|inbox|board))\.tsx?$)/
-    assert.deepEqual(manifest.inputs.filter(path => forbidden.test(path)), [])
-    assert.ok(!manifest.inputs.includes('apps/frontend/src/public-test-fixture-workspace.tsx'))
-    assert.ok(manifest.inputs.includes('apps/frontend/src/web/server-workspace-loader.ts'))
-  } finally { await rm(directory, { recursive: true, force: true }) }
+    await rm(directory, { recursive: true, force: true })
+  }
 })

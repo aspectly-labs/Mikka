@@ -8,7 +8,6 @@ on:
       - 'lib/device-presence*.ts'
       - 'lib/live/**'
       - 'lib/db/commit-effects*.ts'
-      - 'hooks/use-live-key.tsx'
       - 'app/api/live/**'
       - 'scripts/device-gateway/**'
       - 'scripts/release/cloudflare-promoted-web.mjs'

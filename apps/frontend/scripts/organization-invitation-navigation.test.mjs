@@ -9,16 +9,18 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { serverDocumentKind } from '../../../lib/server-pages.ts'
 import { cn } from '../../../lib/utils.ts'
+import { needsOfficialUi, officialUi } from './application-test-build.mjs'
 
 const require = createRequire(import.meta.url)
-const source = await readFile(new URL('../../../components/workspace/invitation-card.tsx', import.meta.url), 'utf8')
+// The invitation cards are the official UI's (core/components/workspace in its checkout); without one these tests skip.
+const source = officialUi.dir ? await readFile(`${officialUi.dir}/core/components/workspace/invitation-card.tsx`, 'utf8') : ''
 const { code } = await transform(source, { loader: 'tsx', format: 'cjs', jsx: 'automatic' })
 const loadCard = runInThisContext('(function (require, module) {' + code + '\n})')
 
 for (const locale of ['en', 'zh-CN']) {
   const messages = JSON.parse(await readFile(new URL('../../../messages/' + locale + '.json', import.meta.url), 'utf8'))
   for (const serverOnly of [false, true]) {
-    test(locale + ' Workspace and Organization invitations from ' + (serverOnly ? 'the self-hosted server' : 'an official app'), async t => {
+    test(locale + ' Workspace and Organization invitations from ' + (serverOnly ? 'the self-hosted server' : 'an official app'), { skip: needsOfficialUi }, async t => {
       const window = new Window()
       const globals = { window, document: window.document, IS_REACT_ACT_ENVIRONMENT: true }
       const previous = Object.getOwnPropertyDescriptors(globalThis)
@@ -40,17 +42,17 @@ for (const locale of ['en', 'zh-CN']) {
       const acceptWorkspace = t.mock.fn(async () => admitted ? { ok: true, data: { workspaceId } } : { ok: false, error: 'Declined' })
       const go = t.mock.method(window.location, 'assign', () => {})
       const boundary = {
-        '@/components/icons': { LoaderCircle: () => null, Users: () => null },
-        '@/components/ui/spinner': { Spinner: () => null },
+        '@hosted/core/components/icons': { LoaderCircle: () => null, Users: () => null },
+        '@hosted/core/components/ui/spinner': { Spinner: () => null },
         '@/lib/intl/i18n-client': { useTranslations: namespace => key => namespace.split('.').reduce((dict, part) => dict[part], messages)[key] },
-        '@/components/ui/card': { Card: plain, CardContent: plain, CardFooter: plain, CardHeader: plain, CardTitle: plain },
-        '@/components/ui/button': { Button: props => createElement('button', props), buttonVariants: () => '' },
-        '@/components/ui/alert': { Alert: plain, AlertDescription: plain },
-        '@/i18n/navigation': { Link: props => createElement('a', props) },
+        '@hosted/core/components/ui/card': { Card: plain, CardContent: plain, CardFooter: plain, CardHeader: plain, CardTitle: plain },
+        '@hosted/core/components/ui/button': { Button: props => createElement('button', props), buttonVariants: () => '' },
+        '@hosted/core/components/ui/alert': { Alert: plain, AlertDescription: plain },
+        '@hosted/core/lib/client-runtime/localized-navigation': { Link: props => createElement('a', props) },
         '@/lib/server-pages': { serverDocumentKind },
         '@/lib/utils': { cn },
         '@/lib/use-action-error': { useActionError: () => String },
-        '@/hooks/settings/use-organization': { organizationApi: { acceptInvitation: accept }, useOrganizationErrorText: () => String },
+        '@hosted/core/hooks/settings/use-organization': { organizationApi: { acceptInvitation: accept }, useOrganizationErrorText: () => String },
         '@/app/actions/workspace': { acceptWorkspaceInvitation: acceptWorkspace }, '@/lib/auth-client': {},
         '@/lib/base-path': { withBasePath: path => '/mikka' + path },
       }

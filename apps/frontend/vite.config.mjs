@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { applicationPlugin, frontend, repository } from './scripts/application-plugin.mjs'
 import { deploymentPlugin, pinnedUrl } from './scripts/deployment-plugin.mjs'
+import { uiOverlay } from '../../lib/ui-overlay.mjs'
 import { configuredDeploymentId } from '../../lib/deployment-id.mjs'
 import { deploymentStage } from '../../lib/deployment-stage.mjs'
 import { installationBuild } from '../../scripts/build-installation.mjs'
@@ -26,20 +27,18 @@ function applicationBuild() {
   return resolvedApplicationBuild
 }
 
-export async function frontendConfig({ target = 'web', command = 'build', outdir, clean = true, serverPages = false, publicTestFixture = false } = {}) {
+export async function frontendConfig({ target = 'web', command = 'build', outdir, clean = true } = {}) {
   if (!['web', 'desktop'].includes(target)) throw new Error('FRONTEND_TARGET_INVALID')
   if (!['build', 'serve'].includes(command)) throw new Error('FRONTEND_COMMAND_INVALID')
   const stage = deploymentStage()
   const development = command === 'serve'
   const directory = process.env.MIKKA_UI_OVERLAY_DIR?.trim()
-  const selected = directory || process.env.MIKKA_UI_OVERLAY_SHA?.trim()
-  if (serverPages && (target !== 'web' || selected || publicTestFixture)) throw new Error('SERVER_PAGES_REQUIRE_PUBLIC_WEB_BUILD')
-  if (publicTestFixture && (selected || stage === 'production')) throw new Error('PUBLIC_FIXTURE_REQUIRES_NON_RELEASE_BUILD')
-  if (!publicTestFixture && !(development && directory && !process.env.MIKKA_UI_OVERLAY_SHA)) {
-    const mode = await installationBuild({ ...process.env, MIKKA_UI_OVERLAY_DIR: directory && resolve(repository, directory) })
-    if (target === 'desktop' && mode === 'build:server') throw new Error('OFFICIAL_DESKTOP_UI_CHECKOUT_REQUIRED')
-    serverPages = mode === 'build:server'
+  // A development server may run an unpinned checkout; every other build is
+  // either a declared official build (checkout and revision) or has no UI.
+  if (!(development && directory && !process.env.MIKKA_UI_OVERLAY_SHA)) {
+    await installationBuild({ ...process.env, MIKKA_UI_OVERLAY_DIR: directory && resolve(repository, directory) })
   }
+  const overlay = uiOverlay(repository)
   const deploymentId = target === 'web' && !development ? configuredDeploymentId() ?? '' : ''
   return {
     configFile: false,
@@ -69,11 +68,11 @@ export async function frontendConfig({ target = 'web', command = 'build', outdir
       'process.env.NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME ?? '@aspectlylabs/mikka' : ''),
       'process.env': '{}',
     },
-    plugins: [await applicationPlugin(target, { deploymentId, serverPages, publicTestFixture }), react(), await deploymentPlugin({ repository, deploymentId })],
+    plugins: [await applicationPlugin(target, { deploymentId, overlay }), react(), await deploymentPlugin({ repository, deploymentId })],
     experimental: deploymentId ? { renderBuiltUrl: filename => pinnedUrl(`/mikka/${filename}`, deploymentId) } : {},
-    // A hosted UI layer (docs/ui-overlay.md) may carry its own node_modules; React stays this repository's.
+    // The official UI checkout (docs/ui-overlay.md) carries its own node_modules; React stays this repository's.
     resolve: { dedupe: ['react', 'react-dom'] },
-    css: { postcss: { plugins: sharedStylePlugins(repository, { development }) } },
+    css: { postcss: { plugins: sharedStylePlugins(repository, { development, overlay }) } },
     build: {
       outDir: outdir ?? resolve(frontend, `dist/${target}`),
       emptyOutDir: clean,

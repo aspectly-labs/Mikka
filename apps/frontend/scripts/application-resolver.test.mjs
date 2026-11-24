@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import { applicationPlugin, repository } from './application-plugin.mjs'
+import { uiFixture } from './application-test-build.mjs'
 
-test('redirected and canonical imports retain the same complete resolution metadata', async () => {
-  const plugin = await applicationPlugin('web')
-  const id = resolve(repository, 'lib/client-runtime/localized-navigation.tsx')
-  const importer = resolve(repository, 'components/auth-form.tsx')
+test('redirected and canonical imports retain the same complete resolution metadata', async t => {
+  const fixture = await uiFixture()
+  t.after(fixture.cleanup)
+  const plugin = await applicationPlugin('desktop', { overlay: fixture.overlay() })
+  // Desktop redirects the browser auth client to its own (application-plugin.mjs desktopAliases).
+  const id = resolve(repository, 'apps/desktop/src/renderer/auth-client.ts')
+  const importer = resolve(fixture.dir, 'core/components/auth-form.tsx')
   const options = { isEntry: false, attributes: { type: 'javascript' } }
   const resolved = { id, moduleSideEffects: false, meta: { packageJsonPath: resolve(repository, 'package.json') } }
   const calls = []
@@ -14,9 +18,9 @@ test('redirected and canonical imports retain the same complete resolution metad
     calls.push({ source, parent, selected })
     return resolved
   } }
-  const redirected = await plugin.resolveId.call(context, '@/i18n/navigation', importer, options)
-  const canonical = await plugin.resolveId.call(context, '@/lib/client-runtime/localized-navigation', importer, options)
+  const redirected = await plugin.resolveId.call(context, '@/lib/auth-client', importer, options)
+  const canonical = await plugin.resolveId.call(context, '@/apps/desktop/src/renderer/auth-client', importer, options)
   assert.equal(redirected, resolved, 'a redirect must retain package format and side-effect metadata')
   assert.equal(canonical, resolved)
-  assert.deepEqual(calls, [id, id.slice(0, -4)].map(source => ({ source, parent: importer, selected: { ...options, skipSelf: true } })))
+  assert.deepEqual(calls, [id, id.slice(0, -3)].map(source => ({ source, parent: importer, selected: { ...options, skipSelf: true } })))
 })

@@ -6,7 +6,7 @@
 // Hand-written focus, visibility or app-state listeners are allowed by file,
 // each with its reason.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { officialCoreFiles, readUi, uiExists } from './official-ui-tree.mjs'
 
 /** Files allowed to listen for focus, visibility or app state, and why. */
 export const focusListenerAllowlist = {
@@ -59,9 +59,10 @@ export function auditFocusRefetch(file, source) {
 export function focusPolicyFiles() {
   return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
     .split('\0')
-    .filter(file => /\.(?:[cm]?[jt]sx?)$/.test(file) && !/(?:^|\/)(?:node_modules|\.next|dist|out|build)\//.test(file) && !/\.test\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.d.ts') && file !== 'scripts/focus-refetch-policy.mjs' && existsSync(file))
+    .concat(officialCoreFiles())
+    .filter(file => /\.(?:[cm]?[jt]sx?)$/.test(file) && !/(?:^|\/)(?:node_modules|\.next|dist|out|build)\//.test(file) && !/\.test\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.d.ts') && file !== 'scripts/focus-refetch-policy.mjs' && uiExists(file))
 }
 
 export function auditRepository() {
-  return focusPolicyFiles().flatMap(file => auditFocusRefetch(file, readFileSync(file, 'utf8')))
+  return focusPolicyFiles().flatMap(file => auditFocusRefetch(file, readUi(file)))
 }

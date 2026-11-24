@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import ts from 'typescript'
+import { readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 
 const actionControls = /^(?:button|Button|SidebarMenu(?:Sub)?Button|SidebarMenu(?:Sub)?Action|InputGroupButton|DropdownMenuItem|ContextMenuItem|MenubarItem|CommandItem|NavigationMenuLink)$/
 const behaviorControls = /^(?:MorphPopoverTrigger|(?:Dialog|AlertDialog|Sheet|Drawer)(?:Trigger|Close|Cancel)|(?:DropdownMenu|ContextMenu|Menubar|Popover|HoverCard|Collapsible|Accordion|Select|Combobox|NavigationMenu)(?:Trigger|SubTrigger)|(?:Tabs|ToggleGroup|RadioGroup)(?:Trigger|Item)|Toggle|SidebarTrigger|SidebarRail|KanbanItemHandle)$/
@@ -288,8 +289,9 @@ export function staleBaselineEntries(baseline = asyncPressBaseline) {
   for (const [file, allowed] of Object.entries(baseline)) {
     if (!Number.isInteger(allowed) || allowed < 1) { stale.push(`${file}: baseline 的计数是大于 0 的整数；把这一行删掉`); continue }
     if (/^components\/(?:ui|reui)\//.test(file)) { stale.push(`${file}: 已经不在这条策略的检查范围内；删掉这一行`); continue }
-    if (!existsSync(file)) { stale.push(`${file}: 文件不在了；删掉这一行`); continue }
-    const found = auditInteractions(file, readFileSync(file, 'utf8'), {}).length
+    if (unverifiable(file)) continue
+    if (!uiExists(file)) { stale.push(`${file}: 文件不在了；删掉这一行`); continue }
+    const found = auditInteractions(file, readUi(file), {}).length
     if (found === 0) stale.push(`${file}: 一处都不剩了；删掉这一行`)
     else if (found < allowed) stale.push(`${file}: 现在 ${found} 处，baseline 记着 ${allowed} 处；把它改成 ${found}`)
     else if (found > allowed) stale.push(`${file}: 现在 ${found} 处，baseline 只记了 ${allowed} 处；先修掉多出来的再改数字`)

@@ -4,8 +4,8 @@
 // with its reason and its hit count, so the list only shrinks: a new poller fails,
 // a replaced one must leave the list.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import ts from "typescript";
+import { officialCoreFiles, readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 
 export const pollingMessage =
   "不要新增轮询；数据变化用 live push（`hooks/use-live-key.tsx` / `lib/live/*`），见 #1212；确实只是界面计时器或外部 API 才加入 allowlist 并写明原因。";
@@ -656,6 +656,7 @@ export function pollingPolicyFiles() {
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   )
     .split("\0")
+    .concat(officialCoreFiles())
     .filter(
       (file) =>
         pollingRoots.some((root) => file.startsWith(root)) &&
@@ -667,7 +668,7 @@ export function pollingPolicyFiles() {
         !file.endsWith("_test.go") &&
         !/\.(?:test|spec|fixture)\.py$/.test(file) &&
         !file.endsWith(".d.ts") &&
-        existsSync(file),
+        uiExists(file),
     );
 }
 
@@ -679,7 +680,7 @@ export const isTestSource = (source) =>
 
 export function auditRepository() {
   return pollingPolicyFiles().flatMap((file) => {
-    const source = readFileSync(file, "utf8");
+    const source = readUi(file);
     return isTestSource(source) ? [] : auditPolling(file, source);
   });
 }
@@ -687,11 +688,12 @@ export function auditRepository() {
 /** Allowlist entries that no longer match the code: a replaced poller, or a count to lower. */
 export function staleAllowlistEntries(allowlist = pollingAllowlist) {
   return Object.entries(allowlist).flatMap(([file, entry]) => {
-    if (!existsSync(file))
+    if (unverifiable(file)) return [];
+    if (!uiExists(file))
       return [
         `${file}: file no longer exists; delete its pollingAllowlist entry`,
       ];
-    const hits = findPolling(file, readFileSync(file, "utf8")).length;
+    const hits = findPolling(file, readUi(file)).length;
     if (hits === 0)
       return [`${file}: no polling left; delete its pollingAllowlist entry`];
     if (hits < entry.hits)

@@ -4,10 +4,11 @@
 // not a check, so the numbers are computed here from the tokens themselves.
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { needsOfficialUi, readUi } from './official-ui-tree.mjs'
 
-const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8')
+// The tokens live in the official UI checkout's core/app/globals.css; without it there is nothing to compute.
+const css = needsOfficialUi ? '' : readUi('app/globals.css')
 
 /** The declarations of one top-level block (`:root` or `.dark`), as a name → value map. */
 function block(selector) {
@@ -49,7 +50,7 @@ function over(fg, alpha, bg) {
 const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 
 for (const selector of [':root', '.dark']) {
-  test(`text-tertiary clears 4.5:1 on the page, a card and a muted fill (${selector})`, () => {
+  test(`text-tertiary clears 4.5:1 on the page, a card and a muted fill (${selector})`, { skip: needsOfficialUi }, () => {
     const tokens = block(selector)
     const tertiary = colour(tokens.tertiary)
     const page = colour(tokens.background)
@@ -70,7 +71,7 @@ for (const selector of [':root', '.dark']) {
     }
   })
 
-  test(`text-tertiary stays a step quieter than text-muted-foreground (${selector})`, () => {
+  test(`text-tertiary stays a step quieter than text-muted-foreground (${selector})`, { skip: needsOfficialUi }, () => {
     const tokens = block(selector)
     assert.ok(ratio(colour(tokens['muted-foreground']).y, colour(tokens.tertiary).y) >= 1.15,
       `${selector}: --tertiary is not visibly quieter than --muted-foreground`)
