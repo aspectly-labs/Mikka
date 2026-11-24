@@ -7,8 +7,8 @@ import { isSmokeAccountEmail } from '../../lib/smoke-account.ts'
 import {
   CASES, ORIGIN, REPOSITORY, successfulRelease, publicFailure as acceptanceFailure,
 } from './project-decisions.mjs'
-import { assertWorkspaceIdle, caseOrderPlan, orderFingerprint, ownedSource } from './model-provider-fallback.mjs'
-import { discoverRpcActions, releaseHeaders } from './rpc-actions.mjs'
+import { assertWorkspaceIdle, caseOrderPlan, orderFingerprint, ownedSource } from './model-order-cases.mjs'
+import { discoverRpcActions, releaseHeaders, releaseVersionGuard } from './rpc-actions.mjs'
 import { isValidDeploymentId } from '../../lib/deployment-id.mjs'
 
 export const ACCEPTANCE_BRANCH = 'refs/heads/acceptance/proactive-1157-1163'
@@ -87,7 +87,8 @@ export async function attestReadiness({ env = process.env, event, plan, fetchImp
     check(value !== null, 'deployment_proof')
     return value
   }
-  const pin = async () => check((await read(ORIGIN + '/mikka/api/version')).build === guard.applicationSha, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.applicationSha)
+  const pin = async () => check(sameRelease(await read(ORIGIN + '/mikka/api/version')), 'build_mismatch')
   await pin()
   const runs = await read('https://api.github.com/repos/' + REPOSITORY + '/actions/runs?head_sha=' + guard.applicationSha + '&per_page=100', true)
   const worker = successfulRelease(runs.workflow_runs, guard.applicationSha, 'worker')
@@ -185,7 +186,8 @@ export async function runReadiness({ env = process.env, event, plan, attestation
     check(response.ok && value !== null && !value?.error, 'http_refused', response.status)
     return value
   }
-  const pin = async () => check((await json('/api/version')).build === guard.applicationSha, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.applicationSha)
+  const pin = async () => check(sameRelease(await json('/api/version')), 'build_mismatch')
   const botsScope = bots => check(Array.isArray(bots) && bots.length > 0
     && bots.every(bot => bot.ownerId === ownerId && bot.workspaceId === (workspaceId ?? bots[0].workspaceId))
     && uuid(bots[0].workspaceId), 'workspace_missing')

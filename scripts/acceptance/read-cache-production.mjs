@@ -12,7 +12,7 @@ import { attestReadiness, ReadinessError, triggerGuard } from './production-read
 import { createReadClient, discoverReadActions, requestAllowed as readRequestAllowed } from './read-cache.mjs'
 import { DeployedTargetError, deployedTargetGuard, attestDeployedTarget, publicTargetFailure } from './deployed-target.mjs'
 import { responseCookieJar } from './response-cookie-jar.mjs'
-import { releaseHeaders } from './rpc-actions.mjs'
+import { releaseHeaders, releaseVersionGuard } from './rpc-actions.mjs'
 
 export { responseCookieJar }
 
@@ -107,7 +107,8 @@ export async function attestProductionReadCache({ env = process.env, event, fetc
       check(ref.ref === 'refs/heads/main' && ref.object?.type === 'commit' && ref.object.sha === guard.applicationSha, 'build_mismatch')
     }
     await currentMain()
-    const pin = async () => check((await read(`${ORIGIN}/mikka/api/version`)).build === guard.applicationSha, 'build_mismatch')
+    const sameRelease = releaseVersionGuard(guard.applicationSha)
+    const pin = async () => check(sameRelease(await read(`${ORIGIN}/mikka/api/version`)), 'build_mismatch')
     await pin()
     await currentMain()
     return { ...base, status: 'ready', metadataReadAuthorized: true, readable: true, checkedAt: new Date(now()).toISOString() }
@@ -254,7 +255,8 @@ export async function runProductionReadCache({ env = process.env, event, attesta
     return value
   }
   const client = createReadClient({ request }, environment, 'owner', measurements, refs)
-  const pin = async () => check((await json('/mikka/api/version')).build === guard.applicationSha, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.applicationSha)
+  const pin = async () => check(sameRelease(await json('/mikka/api/version')), 'build_mismatch')
   const session = async () => {
     const value = await json('/mikka/api/auth/get-session')
     check(value?.user?.email?.toLowerCase() === email.toLowerCase()

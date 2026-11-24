@@ -60,7 +60,8 @@ function fixture(options = {}) {
     assert.equal(url.origin, 'https://app.aspectlylabs.com')
     assert.equal(init.redirect, 'error')
     assert.equal(init.headers.authorization, undefined)
-    if (url.pathname === '/mikka/api/version') return response({ build: ++versionReads >= (options.buildChangeAt ?? Infinity) ? 'c'.repeat(40) : APP })
+    if (url.pathname === '/mikka/api/version') return response({ build: ++versionReads >= (options.buildChangeAt ?? Infinity) ? 'c'.repeat(40) : APP,
+      apiBuild: versionReads >= (options.apiChangeAt ?? Infinity) ? 'e'.repeat(40) : 'd'.repeat(40) })
     if (url.pathname === '/mikka/api/auth/sign-in/email') {
       assert.deepEqual(JSON.parse(init.body), { email: EMAIL, password: PASSWORD })
       return response({}, options.loginStatus ?? 200, { 'set-cookie': 'better-auth.session_token=' + COOKIE + '; HttpOnly; Secure' })
@@ -382,6 +383,9 @@ test('unpinned local Vite and deployment-changing documents keep their own disco
 })
 
 test('deployment movement and sign-out failure cannot produce ready', async () => {
+  const api = await fixture({ apiChangeAt: 3 }).run()
+  assert.equal(api.status, 'blocked'); assert.equal(api.code, 'build_mismatch', 'an API binding updated in place is a different deployment')
+  assert.equal(api.sessionClosed, true)
   const changed = await fixture({ buildChangeAt: 3 }).run()
   assert.equal(changed.status, 'blocked'); assert.equal(changed.code, 'build_mismatch')
   assert.equal(changed.sessionClosed, true)
@@ -400,7 +404,7 @@ test('the candidate workflow keeps OIDC after attestation, two named secrets, an
   assert.match(workflow, /cancel-in-progress: false/)
   assert.doesNotMatch(workflow, /run-proactive-acceptance|group-policy-preflight\.mjs|VERCEL_DEPLOY_TOKEN|mode:\s*active/)
   assert.match(workflow, /production-readiness-report\/attestation\.json\s+production-readiness-report\/report\.json/)
-  for (const path of ['project-decisions-acceptance.yml', 'model-provider-fallback-acceptance.yml']) {
+  for (const path of ['project-decisions-acceptance.yml']) {
     const other = await readFile(new URL('.github/workflows/' + path, root), 'utf8')
     assert.match(other, /group: production-smoke-owner-acceptance\n  cancel-in-progress: false/)
   }

@@ -73,7 +73,8 @@ function fixture(options = {}) {
     assert.equal(url.origin, ORIGIN)
     assert.equal(init.redirect, 'error')
     assert.equal(headers.get('authorization'), null, 'a GitHub token never reaches the application')
-    if (url.pathname === '/mikka/api/version') return json({ build: ++versions === options.buildChangeAt ? OTHER : APP })
+    if (url.pathname === '/mikka/api/version') return json({ build: ++versions === options.buildChangeAt ? OTHER : APP,
+      apiBuild: versions >= (options.apiChangeAt ?? Infinity) ? OTHER : APP })
     if (url.pathname === '/mikka/api/auth/sign-in/email') {
       assert.equal(headers.get('cookie'), null, 'the driver cannot inherit another session')
       assert.deepEqual(JSON.parse(init.body), { email: EMAIL, password: PASSWORD })
@@ -542,7 +543,7 @@ test('missing existing resources are blocked and never cause fixture creation', 
 test('identity/access changes and response redirects stop the read sequence and still close only this login cookie', async () => {
   for (const [options, code] of [[{ foreignEmail: true }, 'session_identity'], [{ foreignBot: true }, 'scope_changed'],
     [{ foreignViewer: true }, 'scope_changed'], [{ accessLost: true }, 'read_access_changed'], [{ redirect: true }, 'redirect_refused'],
-    [{ requestError: true }, 'request_failed'], [{ buildChangeAt: 2 }, 'build_mismatch']]) {
+    [{ requestError: true }, 'request_failed'], [{ buildChangeAt: 2 }, 'build_mismatch'], [{ apiChangeAt: 2 }, 'build_mismatch']]) {
     const f = fixture(options), report = await f.run()
     assert.equal(report.code, code)
     assert.notEqual(report.status, 'pass')

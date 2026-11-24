@@ -7,7 +7,7 @@ import { assertDatabaseIdentity, EnvironmentError, loadEnvironment } from '../te
 import { TestAccountError } from '../test-accounts/pool.mjs'
 import { withTestAccounts } from '../test-accounts/session.mjs'
 import { publishedReadActions, readRpcActions, rpcReadAllowed, rpcReadRequest, rpcReadResult } from './read-action-transport.mjs'
-import { releaseHeaders } from './rpc-actions.mjs'
+import { releaseHeaders, releaseVersionGuard } from './rpc-actions.mjs'
 
 export const READ_ACTIONS = Object.freeze(['syncCoordinatorChat', 'syncIssueList', 'syncThreadList', 'pollIssue', 'pollIssueActivityPage', 'loadEarlierIssueActivity'])
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
@@ -304,7 +304,8 @@ export async function runReadCacheAcceptance() {
         try {
           const refs = {}, release = {}, owner = createReadClient(scope.owner, environment, 'owner', reads, refs, release)
           const peer = createReadClient(scope.peer, environment, 'peer', reads, refs, release)
-          const pin = async scenario => check((await owner.json(`${environment.basePath}/api/version`, 'environment', scenario)).build === environment.deploymentSha, 'application_build_changed')
+          const sameRelease = releaseVersionGuard(environment.deploymentSha)
+          const pin = async scenario => check(sameRelease(await owner.json(`${environment.basePath}/api/version`, 'environment', scenario)), 'application_build_changed')
           evidence.stage = 'version-before'
           await pin('before')
           evidence.stage = 'workspace'

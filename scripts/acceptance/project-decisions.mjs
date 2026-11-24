@@ -13,8 +13,8 @@ import { assertFlashTestModel } from '../test-model-policy.mjs'
 import {
   AcceptanceError as ProviderAcceptanceError, assertRunEvidence, assertWorkspaceIdle,
   caseOrderPlan, orderFingerprint, ownedSource, providerReceipt, verifyCheckRuns,
-} from './model-provider-fallback.mjs'
-import { discoverRpcActions, releaseHeaders, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
+} from './model-order-cases.mjs'
+import { discoverRpcActions, releaseHeaders, releaseVersionGuard, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
 export const REPOSITORY = 'alexj11324/Mikka'
@@ -131,7 +131,8 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
     check(body !== null, 'deployment_proof')
     return body
   }
-  const pin = async () => check((await read(ORIGIN + '/mikka/api/version')).build === guard.revision, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.revision)
+  const pin = async () => check(sameRelease(await read(ORIGIN + '/mikka/api/version')), 'build_mismatch')
   const runs = async workflow => read('https://api.github.com/repos/' + REPOSITORY + '/actions/workflows/' + workflow
     + '/runs?head_sha=' + guard.revision + '&per_page=100', true)
   await pin()
@@ -277,7 +278,8 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     check(response.ok && value !== null && !value?.error, 'http_refused', 'blocked', { httpStatus: response.status })
     return value
   }
-  const pin = async () => check((await json('/api/version')).build === guard.revision, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.revision)
+  const pin = async () => check(sameRelease(await json('/api/version')), 'build_mismatch')
   async function action(name, args) {
     check(Object.hasOwn(ACTIONS, name), 'action_not_allowed')
     check(refs[name] === ACTIONS[name], 'action_missing')

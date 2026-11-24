@@ -6,6 +6,7 @@ import {
   decisionProof, discoverActions, publicFailure, readChatState, runProjectDecisionsAcceptance, smallArtifactBytes, successfulRelease, triggerGuard,
 } from './project-decisions.mjs'
 import { decode, encode } from '../../lib/desktop-rpc/wire.ts'
+import { releaseVersionGuard } from './rpc-actions.mjs'
 
 const SHA = 'a'.repeat(40)
 const OWNER = 'synthetic-owner'
@@ -489,6 +490,41 @@ test('a promotion after the version check cannot move fixture reads or writes to
   // The version check stays unpinned, so a later build change is still seen.
   assert.ok(traffic.filter(call => call.path === '/mikka/api/version').every(call => call.header === undefined))
   assert.ok(traffic.filter(call => call.path.startsWith('/mikka/api/auth/')).every(call => call.header === undefined))
+})
+
+test('an API binding updated in place after the first version check stops the run before any fixture write', async () => {
+  // The Web release and its build stay the same; only the bound API's source
+  // (apiBuild in cloudflare/web/version.mjs) changes once discovery is done.
+  const f = fixture({ active: true }), traffic = []
+  let listed = false, changedAt = -1
+  const fetchImpl = async (input, init) => {
+    const url = new URL(input), path = url.pathname
+    traffic.push({ path, method: init.method ?? 'GET' })
+    if (path === '/mikka/renderer-actions.json') listed = true
+    if (path === '/mikka/api/version') {
+      if (listed && changedAt < 0) changedAt = traffic.length - 1
+      return Response.json({ build: SHA, apiBuild: changedAt >= 0 ? 'd'.repeat(40) : 'c'.repeat(40) })
+    }
+    return f.fetchImpl(input, init)
+  }
+  const report = await runProjectDecisionsAcceptance({ env: env('active'), event: event('active'), attestation: attestation('active'),
+    ...f, fetchImpl, newId: () => DIRECTION })
+  assert.ok(changedAt > 0)
+  assert.ok(report.cases.every(item => item.status === 'blocked' && item.code === 'build_mismatch'), JSON.stringify(report.cases))
+  assert.deepEqual(traffic.slice(changedAt).filter(call => call.method !== 'GET' && !call.path.startsWith('/mikka/api/auth/')), [])
+  assert.equal(report.sessionClosed, true)
+})
+
+test('the release guard fixes build and apiBuild at the first check', () => {
+  const same = releaseVersionGuard(SHA)
+  assert.equal(same({ build: SHA, apiBuild: 'c'.repeat(40) }), true)
+  assert.equal(same({ build: SHA, apiBuild: 'c'.repeat(40) }), true)
+  assert.equal(same({ build: SHA, apiBuild: 'd'.repeat(40) }), false, 'only the API source changed')
+  assert.equal(same({ build: SHA }), false, 'the API source disappeared')
+  assert.equal(same({ build: 'b'.repeat(40), apiBuild: 'c'.repeat(40) }), false)
+  const local = releaseVersionGuard(SHA)
+  assert.equal(local({ build: SHA }), true, 'a runtime without a separate API binding reports no apiBuild')
+  assert.equal(local({ build: SHA, apiBuild: 'c'.repeat(40) }), false)
 })
 
 test('chat reader accepts only its normal route and shape while preserving live control state', async () => {

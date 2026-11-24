@@ -97,3 +97,18 @@ export function rpcResult(data) {
   if (!Object.hasOwn(data, 'result')) return { failure: 'response_invalid' }
   try { return { result: decode(data.result) } } catch { return { failure: 'response_invalid' } }
 }
+
+/** The public version document names the Web release's source (`build`) and,
+ * where the API is a separate binding, that binding's source (`apiBuild`). The
+ * binding can be updated in place without a new Web release
+ * (cloudflare/web/version.mjs), so a release pin alone does not freeze it. A run
+ * records both at its first check; every later check needs the same pair. */
+export function releaseVersionGuard(expectedBuild) {
+  let apiBuild
+  return version => {
+    if (version?.build !== expectedBuild) return false
+    const current = version.apiBuild ?? null
+    if (apiBuild === undefined) apiBuild = current
+    return current === apiBuild
+  }
+}

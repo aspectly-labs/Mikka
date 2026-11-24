@@ -123,7 +123,7 @@ test('canonical worker input ignores Eve-only package/lock, Web/helper, migratio
     let after = commit()
     assert.equal(runtimeInputsDigest({ ref: after, cwd: dir }), original)
     for (const path of ['.github/workflows/web-deploy.yml', 'scripts/release/build-vercel.mjs', 'scripts/acceptance/cloud-startup.mjs',
-      'scripts/acceptance/model-provider-fallback.mjs', 'lib/agents/new-agent.ts', 'apps/eve/eve.config.ts', 'migrations/next.sql', 'docs/change.md']) {
+      'scripts/acceptance/project-decisions.mjs', 'lib/agents/new-agent.ts', 'apps/eve/eve.config.ts', 'migrations/next.sql', 'docs/change.md']) {
       write(path, 'unrelated app change'); after = commit()
       const inputs = pushRuntimeInputs({ ref: after, event: { before, after, ref: 'refs/heads/main' }, cwd: dir })
       assert.equal(releaseDecision({ ...inputs, eventName: 'push', live: 'stale-production', refresh: true }).changed, false, path)
