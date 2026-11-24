@@ -209,8 +209,8 @@ product regression. Main pushes and merge groups continue normal full coverage.
   they do not prove that an Expo production update or a device install occurred.
 - `mobile-next-ios.yml` (dispatch only, from main) builds the new iOS app from
   `mikka-hosted-ui` `mobile-next` at an exact `overlay_sha` that is already on its `main`, on the `xcode-27` runner (iOS 27 SDK), signs it
-  with Xcode's automatic signing and the existing App Store Connect key, and uploads
-  it to TestFlight. It keeps no build artifact (this repository is public), and uses no EAS build and no new secret; its runtime version
+  manually with one persistent Apple Distribution identity (`APPLE_IOS_DISTRIBUTION_P12_BASE64`, `APPLE_IOS_DISTRIBUTION_P12_PASSWORD` in Infisical `prod:/platform`) imported into a temporary runner keychain, reuses or creates only the matching App Store provisioning profile through the existing App Store Connect API key (never creating or revoking certificates), and uploads
+  it to TestFlight. It keeps no build artifact (this repository is public) and uses no EAS build; its runtime version
   (`mikka-next-*`) and update channel (`next`) keep it apart from today's app and
   `mobile-update.yml`.
 

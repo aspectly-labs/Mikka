@@ -2,12 +2,16 @@ name: Mobile next iOS build
 
 # Builds Mikka's new iOS app (mikka-hosted-ui mobile-next: T3 Code's mobile app on Mikka's
 # backend) on GitHub's macOS runner and uploads it to TestFlight, the way desktop-release.yml
-# builds the desktop app. No EAS build: Xcode signs automatically with the existing App Store
-# Connect API key and uploads with it. Today's app (mobile-native.yml, mobile-update.yml) is
+# builds the desktop app. No EAS build. Xcode signs manually with one persistent Apple
+# Distribution identity imported into a temporary keychain; the existing App Store Connect API key
+# only finds or creates the App Store profile for it and uploads. Nothing here creates a
+# certificate: automatic signing on an ephemeral runner created one per run, lost its private key
+# and filled the account's certificate limit. Today's app (mobile-native.yml, mobile-update.yml) is
 # untouched; this build has its own runtime version (mikka-next-*) and update channel (next).
 #
-# Credentials are the existing Infisical prod:/platform names that desktop-release.yml reads:
-# HOSTED_UI_READ_KEY, APPLE_TEAM_ID, ASC_API_KEY_P8, ASC_API_KEY_ID, ASC_API_ISSUER_ID.
+# Credentials are Infisical prod:/platform names read through OIDC: HOSTED_UI_READ_KEY,
+# APPLE_TEAM_ID, ASC_API_KEY_P8, ASC_API_KEY_ID, ASC_API_ISSUER_ID (as desktop-release.yml) and
+# APPLE_IOS_DISTRIBUTION_P12_BASE64, APPLE_IOS_DISTRIBUTION_P12_PASSWORD (the iOS signing identity).
 # Private install and build output goes to files on the runner and is never echoed or uploaded.
 
 on:
@@ -68,6 +72,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Verify the signing boundary before credential access
+        run: node --test scripts/release/ios-app-store-signing.test.mjs scripts/release/apple-credentials.test.mjs
       - name: Validate the selected private UI owner before credential access
         run: |
           node --input-type=module - <<'JS'
@@ -199,6 +205,69 @@ jobs:
           key="$HOME/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
           printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$key"
           echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
+      - name: Read existing APPLE_IOS_DISTRIBUTION_P12_BASE64 through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /platform
+          secret-name: APPLE_IOS_DISTRIBUTION_P12_BASE64
+          recursive: false
+          include-imports: false
+      - name: Read existing APPLE_IOS_DISTRIBUTION_P12_PASSWORD through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /platform
+          secret-name: APPLE_IOS_DISTRIBUTION_P12_PASSWORD
+          recursive: false
+          include-imports: false
+      # One persistent identity in a temporary keychain: Xcode finds it and never creates a
+      # certificate. The .p12 and its password are cleared from later steps.
+      - name: Import the persistent Apple Distribution identity
+        run: |
+          set -euo pipefail
+          [[ -n "${APPLE_IOS_DISTRIBUTION_P12_BASE64:-}" && -n "${APPLE_IOS_DISTRIBUTION_P12_PASSWORD:-}" ]] || { echo "::error::APPLE_IOS_DISTRIBUTION_P12_BASE64 and APPLE_IOS_DISTRIBUTION_P12_PASSWORD are required in prod:/platform"; exit 1; }
+          umask 077
+          keychain="$RUNNER_TEMP/mikka-ios-signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::$password"
+          p12="$RUNNER_TEMP/mikka-ios-distribution.p12"
+          printf '%s' "$APPLE_IOS_DISTRIBUTION_P12_BASE64" | base64 -D > "$p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          if ! security import "$p12" -k "$keychain" -P "$APPLE_IOS_DISTRIBUTION_P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcodebuild > /dev/null 2>&1; then
+            rm -f "$p12"
+            echo "::error::The Apple Distribution .p12 could not be imported (wrong password or format)."
+            exit 1
+          fi
+          rm -f "$p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          existing=()
+          while IFS= read -r line; do line="${line#"${line%%[![:space:]]*}"}"; existing+=("${line//\"/}"); done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" ${existing[@]+"${existing[@]}"}
+          security default-keychain -d user -s "$keychain"
+          identities="$(security find-identity -v -p codesigning "$keychain" | grep -E '^[[:space:]]*[0-9]+\) [0-9A-F]{40} "(Apple|iPhone) Distribution' || true)"
+          [[ "$(printf '%s' "$identities" | grep -c . || true)" == 1 ]] || { echo "::error::The .p12 must hold exactly one Apple Distribution identity."; exit 1; }
+          identity="$(printf '%s' "$identities" | awk '{print $2}')"
+          serial="$(security find-certificate -a -Z -p "$keychain" | awk -v id="$identity" '/^SHA-1 hash:/ { take = ($3 == id) } take' | openssl x509 -noout -serial 2> /dev/null | sed 's/^serial=//' || true)"
+          [[ "$serial" =~ ^[0-9A-Fa-f]+$ ]] || { echo "::error::The Apple Distribution certificate serial could not be read."; exit 1; }
+          {
+            echo "IOS_SIGNING_KEYCHAIN=$keychain"
+            echo "IOS_SIGNING_IDENTITY=$identity"
+            echo "IOS_SIGNING_SERIAL=$serial"
+            echo "APPLE_IOS_DISTRIBUTION_P12_BASE64="
+            echo "APPLE_IOS_DISTRIBUTION_P12_PASSWORD="
+          } >> "$GITHUB_ENV"
+          echo "Imported 1 Apple Distribution identity."
       - name: Generate the native project
         env:
           APP_VARIANT: production
@@ -219,7 +288,51 @@ jobs:
           fi
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_DIR/ios/Mikka/Info.plist"
           echo "Mikka $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/ios/Mikka/Info.plist") ($BUILD_NUMBER)"
-      - name: Archive with automatic signing
+      # The API key finds or creates only the App Store profile for the imported certificate; each
+      # signable app target (not the Pods) is pinned to that identity and profile.
+      - name: Pin manual App Store signing
+        run: |
+          set -euo pipefail
+          run_xcodeproj_ruby() {
+            if ruby -e 'require "xcodeproj"' > /dev/null 2>&1; then
+              ruby "$@"
+              return
+            fi
+            local pod_bin pod_real libexec shebang cand f
+            pod_bin="$(command -v pod)"
+            pod_real="$(realpath "$pod_bin" 2> /dev/null || printf '%s' "$pod_bin")"
+            libexec="$(cd "$(dirname "$pod_real")/.." && pwd)/libexec"
+            local -a rubies=()
+            for f in "$pod_bin" "$libexec/bin/pod"; do
+              [[ -r "$f" ]] || continue
+              shebang="$(sed -n '1s/^#![[:space:]]*//p' "$f" | awk '{print ($1 ~ /\/env$/) ? $2 : $1}')"
+              [[ "$shebang" == *ruby* ]] || continue
+              [[ "$shebang" == */* ]] || shebang="$(command -v "$shebang" 2> /dev/null || true)"
+              [[ -n "$shebang" ]] && rubies+=("$shebang")
+            done
+            rubies+=(/opt/homebrew/opt/ruby/bin/ruby /usr/local/opt/ruby/bin/ruby "$(command -v ruby)" /usr/bin/ruby)
+            for cand in "${rubies[@]}"; do
+              [[ -x "$cand" ]] || continue
+              if "$cand" -e 'require "xcodeproj"' > /dev/null 2>&1; then
+                "$cand" "$@"
+                return
+              fi
+              if [[ -d "$libexec" ]] && env -u GEM_PATH GEM_HOME="$libexec" "$cand" -e 'require "xcodeproj"' > /dev/null 2>&1; then
+                env -u GEM_PATH GEM_HOME="$libexec" "$cand" "$@"
+                return
+              fi
+            done
+            echo "::error::Could not locate a Ruby runtime with the xcodeproj gem."
+            exit 1
+          }
+          project="$APP_DIR/ios/Mikka.xcodeproj"
+          run_xcodeproj_ruby scripts/release/ios-manual-signing.rb list "$project" "$RUNNER_TEMP/ios-bundle-ids.json"
+          node scripts/release/ios-app-store-signing.mjs \
+            --bundle-ids "$RUNNER_TEMP/ios-bundle-ids.json" \
+            --profiles "$RUNNER_TEMP/ios-profiles.json" \
+            --export-options "$RUNNER_TEMP/ExportOptions.plist"
+          run_xcodeproj_ruby scripts/release/ios-manual-signing.rb apply "$project" "$RUNNER_TEMP/ios-profiles.json"
+      - name: Archive with the Apple Distribution identity
         env:
           APP_VARIANT: production
         run: |
@@ -230,12 +343,7 @@ jobs:
               -configuration Release \
               -destination 'generic/platform=iOS' \
               -archivePath "$RUNNER_TEMP/Mikka.xcarchive" \
-              -allowProvisioningUpdates \
-              -authenticationKeyPath "$ASC_KEY_PATH" \
-              -authenticationKeyID "$APPLE_API_KEY_ID" \
-              -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
-              DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-              CODE_SIGN_STYLE=Automatic \
+              OTHER_CODE_SIGN_FLAGS="--keychain $IOS_SIGNING_KEYCHAIN" \
               > "$RUNNER_TEMP/mobile-next-archive.log" 2>&1; then
             echo "::error::xcodebuild archive failed; private diagnostics withheld."
             grep -cE ' error: ' "$RUNNER_TEMP/mobile-next-archive.log" | sed 's/^/Compiler errors: /' || true
@@ -245,28 +353,10 @@ jobs:
           fi
       - name: Export the App Store build
         run: |
-          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>export</string>
-            <key>signingStyle</key><string>automatic</string>
-            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
-            <key>uploadSymbols</key><true/>
-            <key>manageAppVersionAndBuildNumber</key><false/>
-          </dict>
-          </plist>
-          PLIST
           if ! xcodebuild -exportArchive \
               -archivePath "$RUNNER_TEMP/Mikka.xcarchive" \
               -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
               -exportPath "$RUNNER_TEMP/export" \
-              -allowProvisioningUpdates \
-              -authenticationKeyPath "$ASC_KEY_PATH" \
-              -authenticationKeyID "$APPLE_API_KEY_ID" \
-              -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
               > "$RUNNER_TEMP/mobile-next-export.log" 2>&1; then
             echo "::error::xcodebuild -exportArchive failed; private diagnostics withheld."
             grep -E '^(xcodebuild: error: |error: |[^:]+\.xcodeproj: error: )' "$RUNNER_TEMP/mobile-next-export.log" | sed -E "s#^[^:]+\.xcodeproj: ##; s#${GITHUB_WORKSPACE}#.#g; s#${HOME}#~#g; s#${APPLE_TEAM_ID}#[TEAM]#g; s/[[:space:]]*(\\{|=>|\\[[\"':]).*\$//" | grep -v '\.hosted-ui/' | cut -c1-200 | head -n 8 || true
@@ -285,6 +375,8 @@ jobs:
             exit 1
           fi
           echo "::notice title=Uploaded::Mikka build $BUILD_NUMBER from mikka-hosted-ui $OVERLAY_SHA is processing in App Store Connect."
-      - name: Remove the App Store Connect key
+      - name: Remove the signing keychain and the App Store Connect key
         if: always()
-        run: rm -f "$HOME/.appstoreconnect/private_keys/"AuthKey_*.p8
+        run: |
+          if [[ -n "${IOS_SIGNING_KEYCHAIN:-}" ]]; then security delete-keychain "$IOS_SIGNING_KEYCHAIN" 2> /dev/null || true; fi
+          rm -f "$RUNNER_TEMP/mikka-ios-distribution.p12" "$HOME/.appstoreconnect/private_keys/"AuthKey_*.p8
