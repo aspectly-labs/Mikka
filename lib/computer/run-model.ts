@@ -1,7 +1,7 @@
 import 'server-only'
 import type { Pool } from 'pg'
 import type { OrderEntry } from '@/lib/model-order-plan'
-import type { WorkerDefinitionSnapshot, WorkerModelDispatch } from '@/lib/agent-kit/worker'
+import { workerModelDispatchFromTarget, type WorkerDefinitionSnapshot, type WorkerModelDispatch } from '@/lib/agent-kit/worker'
 import { runPolicySchema } from '@mikka/protocol/agent-policy'
 import { intersectRunPolicy } from '@/lib/run-assignment-policy'
 
@@ -61,7 +61,7 @@ export async function latestThreadRunModel(pool: Pick<Pool, 'query'>, userId: st
  * this harness. A subscription entry is bound to the Agent so the run uses that account.
  */
 export async function chooseCloudRunModel(pool: Pool, scope: { ownerId: string; workspaceId: string; botId: string | null }, agentId: string, harness: 'claude_code' | 'codex', asked?: string, purpose: 'task' | 'desktop' = 'desktop', exactEntry?: OrderEntry): Promise<RunModel | { error: 'machineUnavailable'; reason?: string }> {
-  const { resolveModelDispatch, bindAgentToConnection, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+  const { resolveModelDispatch, bindAgentToConnection } = await import('@/lib/model-dispatch')
   const target = await resolveModelDispatch(pool, scope, asked ? { harness, model: asked } : null, 'cloud', undefined, { cloudPurpose: purpose, harness, ...(exactEntry ? { exactEntry } : {}) })
   if (target.kind !== 'cloud') return { error: 'machineUnavailable', ...(target.kind === 'none' ? { reason: target.reason } : {}) }
   const source = target.entry.source
@@ -77,7 +77,7 @@ export async function chooseCloudRunModel(pool: Pool, scope: { ownerId: string; 
  * A local run is frozen with its model like a cloud one; it is no longer left to the CLI to choose.
  */
 export async function chooseLocalRunModel(pool: Pool, scope: { ownerId: string; workspaceId: string; botId: string | null }, agent: { id: string; deviceId: string; harness: 'claude_code' | 'codex' }, asked?: string, exactEntry?: OrderEntry): Promise<RunModel | { error: 'machineUnavailable'; reason?: string }> {
-  const { resolveModelDispatch, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+  const { resolveModelDispatch } = await import('@/lib/model-dispatch')
   const target = await resolveModelDispatch(pool, scope, asked ? { harness: agent.harness, model: asked } : null, 'local', agent.deviceId, { harness: agent.harness, ...(exactEntry ? { exactEntry } : {}) })
   if (target.kind !== 'device' || target.agentId !== agent.id) return { error: 'machineUnavailable', ...(target.kind === 'none' ? { reason: target.reason } : {}) }
   return {

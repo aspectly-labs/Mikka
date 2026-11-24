@@ -276,7 +276,7 @@ async function dispatchStandaloneTask(userId:string,input:Parameters<GroupFactor
     if (!runtime) return {error:'cloudComputerUnavailable' as const}
     const source=target?.kind==='cloud' ? target.entry.source : null
     const subscriptionBindingId=source?.kind==='subscription' && target?.kind==='cloud' ? await bindAgentToConnection(pool,{ownerId:userId,workspaceId},runtime.agentId,harness,source.connectionId,target.model) : undefined
-    const { workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+    const { workerModelDispatchFromTarget } = await import('@/lib/agent-kit/worker')
     const selection:RunModel|null=kept ?? (target?.kind==='cloud' ? {model:target.model,agentProfile:choice?.agentProfile,modelDispatch:workerModelDispatchFromTarget(target,{mode:choice?.selectionMode ?? 'preference',location:'cloud',profileEffort:choice?.agentProfile?.effort}),...(subscriptionBindingId?{subscriptionBindingId}:{}),...(source?.kind==='api_key'?{apiKeyId:source.keyId}:{})} : null)
     if (!selection) return {error:'threadModelUnavailable' as const}
     const {dispatchComputerTask}=await import('@/workflows/coordinator/steps')

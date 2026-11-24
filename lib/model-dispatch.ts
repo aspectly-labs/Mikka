@@ -9,7 +9,7 @@ import { cloudReady } from './rule-dispatch'
 import { credentialStates, creditsModelSpeedModes, dispatchOrder, orderCandidates, selectedOrderCandidates, poolDevices, readOrder, type OrderScope, type RefreshOrderQuota } from './model-order'
 import { entryKey, planDispatch, whyNoDevice, type NoDeviceWhy, type NothingReason, type OrderEntry, type RunLocation, type SkippedEntry } from './model-order-plan'
 import { supportedModelEfforts, type ModelRoutingEffort, type ModelSpeedMode } from './model-routing'
-import type { WorkerModelDispatch } from './agent-kit/worker'
+export { workerModelDispatchFromTarget } from './agent-kit/worker'
 
 /**
  * Where a new run goes and on which model (decision 2026-11-02-1400): the
@@ -31,32 +31,6 @@ export type ModelDispatch =
   | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; subscriptionBindingId?: string; quotaCheckPending?: true }
   | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; quotaCheckPending?: true }
   | { kind: 'none'; reason: DispatchNothingReason; card: ReturnType<typeof modelUnavailableCard>; skipped?: SkippedEntry[] }
-
-/**
- * Converts a resolved dispatch target into the frozen `WorkerModelDispatch` stored on the run.
- * Preserves server-verified `serviceTier` and applies workspace `defaultEffort` when neither
- * an explicit Agent Profile effort nor a per-task effort overrides it.
- */
-export function workerModelDispatchFromTarget(
-  target: Extract<ModelDispatch, { kind: 'device' | 'cloud' }>,
-  options: {
-    mode: WorkerModelDispatch['mode']
-    location?: WorkerModelDispatch['location']
-    followed?: WorkerModelDispatch['followed']
-    profileEffort?: ModelRoutingEffort
-  },
-): WorkerModelDispatch {
-  // Explicit profile effort wins over workspace defaultEffort (claim reads modelDispatch.effort ?? agentProfile.effort).
-  const effort = options.profileEffort ? undefined : target.effort
-  return {
-    mode: options.mode,
-    ...(options.location ? { location: options.location } : {}),
-    entry: target.entry,
-    ...(options.followed ? { followed: options.followed } : {}),
-    ...(effort ? { effort } : {}),
-    ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
-  }
-}
 
 /**
  * The Agent or model a Bot passed for a new thread must be one of 优先使用的模型: the same list its prompt shows

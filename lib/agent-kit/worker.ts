@@ -29,6 +29,36 @@ export interface WorkerModelDispatch {
   serviceTier?: import('../model-routing').ModelSpeedMode
 }
 
+/**
+ * Converts a resolved dispatch target into the frozen `WorkerModelDispatch` stored on the run.
+ * Preserves server-verified `serviceTier` and applies workspace `defaultEffort` when neither
+ * an explicit Agent Profile effort nor a per-task effort overrides it.
+ */
+export function workerModelDispatchFromTarget(
+  target: {
+    entry: OrderEntry
+    effort?: import('../model-routing').ModelRoutingEffort
+    serviceTier?: import('../model-routing').ModelSpeedMode
+  },
+  options: {
+    mode: WorkerModelDispatch['mode']
+    location?: WorkerModelDispatch['location']
+    followed?: WorkerModelDispatch['followed']
+    profileEffort?: import('../model-routing').ModelRoutingEffort
+  },
+): WorkerModelDispatch {
+  // Explicit profile effort wins over workspace defaultEffort (claim reads modelDispatch.effort ?? agentProfile.effort).
+  const effort = options.profileEffort ? undefined : target.effort
+  return {
+    mode: options.mode,
+    ...(options.location ? { location: options.location } : {}),
+    entry: target.entry,
+    ...(options.followed ? { followed: options.followed } : {}),
+    ...(effort ? { effort } : {}),
+    ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+  }
+}
+
 export interface WorkerDefinitionSnapshot {
   /** Correlates a complete host-frozen review request. It grants no authority;
    * claim resolves the immutable accepted batch for this exact queued Run. */

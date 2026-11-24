@@ -185,7 +185,7 @@ export function automaticFactoryDispatch(pool: Pool) {
         agentId = target.agentId
         deviceId = target.deviceId
         deviceRepoId = (await ensureDeviceRepository(task.userId, target.deviceId, source.remoteUrl, tx)).id
-        const { workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+        const { workerModelDispatchFromTarget } = await import('@/lib/agent-kit/worker')
         selection = { ...inheritedPolicy, model: target.model, agentProfile: profileChoice.agentProfile,
           modelDispatch: workerModelDispatchFromTarget(target, { mode: profileChoice.selectionMode ?? 'preference', location: 'local', profileEffort: profileChoice.agentProfile?.effort }),
           ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
@@ -213,7 +213,8 @@ export function automaticFactoryDispatch(pool: Pool) {
       const target = profileChoice.target
       if (target.kind !== 'cloud') throw new FactoryError('factoryCheckHarnessUnavailable')
       const entry = target.entry.source
-      const { bindAgentToConnection, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+      const { bindAgentToConnection } = await import('@/lib/model-dispatch')
+      const { workerModelDispatchFromTarget } = await import('@/lib/agent-kit/worker')
       model = { model: target.model, agentProfile: profileChoice.agentProfile,
         modelDispatch: workerModelDispatchFromTarget(target, { mode: profileChoice.selectionMode ?? 'preference', location: 'cloud', profileEffort: profileChoice.agentProfile?.effort }),
         ...(entry.kind === 'api_key' ? { apiKeyId: entry.keyId } : entry.kind === 'credits' ? {} : { subscriptionBindingId: await bindAgentToConnection(tx,

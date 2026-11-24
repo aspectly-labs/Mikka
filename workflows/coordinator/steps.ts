@@ -12,7 +12,7 @@ import { publicFactoryReceipt } from '@/lib/factory/public-receipt'
 import { personalMailboxEnabled } from '@/lib/personal-mailbox-config'
 import type { MailboxToolRequest } from '@/lib/mailbox-tools'
 import type { AgentExecution } from '@/lib/agent-kit/store'
-import type { WorkerDefinitionSnapshot, WorkerModelDispatch } from '@/lib/agent-kit/worker'
+import { workerModelDispatchFromTarget, type WorkerDefinitionSnapshot, type WorkerModelDispatch } from '@/lib/agent-kit/worker'
 import { issueVisibility } from '@/lib/issue-visibility'
 import { createHash } from 'node:crypto'
 import { assertNativeToolScope, type NativeToolScope } from './tool-scope'
@@ -512,7 +512,6 @@ async function dispatchByRules(userId: string, { followed, sponsoredDefault, ...
     const { resolveAgentProfileDispatch } = await import('@/lib/factory/agent-profile')
     const { target, agentProfile, selectionMode } = await resolveAgentProfileDispatch(pool, { ownerId: userId, workspaceId: await executionWorkspace(userId, botId), botId }, { issueId: input.issueId, stage, note: input.note, profileId: input.profileId, asked: input.model, location: 'local', deviceId: device.deviceId, agentId: input.agentId, defaultOnly: Boolean(input.threadRunId) })
     if (target.kind !== 'device') return { error: 'machineUnavailable' as const, issueId: input.issueId, ...(target.kind === 'none' ? { reason: target.reason, card: target.card } : {}) }
-    const { workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
     const modelDispatch: WorkerModelDispatch = workerModelDispatchFromTarget(target, { mode: selectionMode ?? (input.model ? 'picked' : 'preference'), location: 'local', followed, profileEffort: agentProfile?.effort })
     const result = await queueTaskRun(userId, { ...input, agentId: target.agentId, model: target.model, modelDispatch, agentProfile, pinnedDeviceId: target.deviceId, ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}), ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}) }, botId, execution, requestEventId, { origin: input.origin ?? 'web', originRef: input.originRef ?? null })
     return { ...result, status: 'queued' as const }
@@ -526,7 +525,7 @@ async function dispatchByRules(userId: string, { followed, sponsoredDefault, ...
     if (!await timedPhase('issueForUser', () => issueForUser(userId, input.issueId))) throw new ActionFailureError('issueNotFound')
     const { executionWorkspace } = await import('@/lib/execution-settings')
     const workspaceId = await timedPhase('executionWorkspace', () => executionWorkspace(userId, botId))
-    const { resolveModelDispatch, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+    const { resolveModelDispatch } = await import('@/lib/model-dispatch')
     const { resolveAgentProfileDispatch } = await import('@/lib/factory/agent-profile')
     let sponsored = place === 'cloud' && sponsoredDefault === true
     if (requestEventId) {
@@ -705,7 +704,7 @@ export async function dispatchComputerThread(userId: string, input: { brief?: st
         const runtime = await (await import('@/lib/computer/auto-runtime')).ensureBotCloudRuntime(pool, { userId, workspaceId: bot.workspaceId }, request.botId, { harness: target.harness })
         if (!runtime) return { error: 'cloudComputerUnavailable' as const }
         const source = target.entry.source
-        const { bindAgentToConnection, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+        const { bindAgentToConnection } = await import('@/lib/model-dispatch')
         const subscriptionBindingId = source.kind === 'subscription' ? await bindAgentToConnection(pool,
           { ownerId: userId, workspaceId: bot.workspaceId }, runtime.agentId, target.harness, source.connectionId, target.model) : undefined
         harness = target.harness

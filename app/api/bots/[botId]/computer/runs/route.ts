@@ -92,7 +92,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ bot
           const ready = await (await import('@/lib/computer/auto-runtime')).ensureBotCloudRuntime(pool, { userId: session.user.id, workspaceId: context.workspace.id }, botId, { harness })
           if (!ready) throw new ComputerError(409, 'Bot computer task is unavailable')
           const source = target.entry.source
-          const { bindAgentToConnection, workerModelDispatchFromTarget } = await import('@/lib/model-dispatch')
+          const { bindAgentToConnection } = await import('@/lib/model-dispatch')
+          const { workerModelDispatchFromTarget } = await import('@/lib/agent-kit/worker')
           runModel = { model: target.model, agentProfile: picked.agentProfile,
             modelDispatch: workerModelDispatchFromTarget(target, { mode: picked.selectionMode ?? (parsed.data.harness ? 'picked' : 'preference'), location: 'cloud', profileEffort: picked.agentProfile?.effort }),
             ...(source.kind === 'api_key' ? { apiKeyId: source.keyId } : source.kind === 'credits' ? {} : { subscriptionBindingId: await bindAgentToConnection(pool, scope, ready.agentId, harness, source.connectionId, target.model) }) }
