@@ -335,6 +335,63 @@ A Task the person cannot read, or can read but not steer, answers
 mobile origin policy (`403 originNotAllowed`); a malformed body is
 `400 validationGeneric`.
 
+### Native mobile conversation, proactive, profile and billing APIs
+
+Native clients (`apps/mobile` / `mobile-next`) consume these REST endpoints
+under `app/api/mobile/*` using the existing Bearer/Expo session auth,
+`writeAllowed` mobile origin policy, and workspace/PAT token fences:
+
+- **Message search:** `GET /api/mobile/search/messages?q=&workspaceId=&scope=all|bot|group|thread&botId=&conversationId=&limit=&cursor=`
+  searches visible Bot chat messages (`coordinator_messages`, excluding hidden,
+  superseded, retried, event and tool payloads), group/named conversation
+  messages (`conversation_messages`), and owned thread messages (`run_messages`)
+  within one verified active workspace, with SHA-256 context-bound keyset
+  pagination (`nextCursor`) and credential-masked plain snippets.
+- **Reactions & attachments:**
+  - `GET /api/mobile/reactions?ids=<uuid,...>` reads reactions across both
+    visible group messages and caller-owned Bot chat messages (up to 100 IDs);
+    `POST /api/mobile/reactions` returns `{ ok: true, messageId, reactions }`
+    with the updated counts.
+  - `GET /api/mobile/attachments?ids=<uuid,...>` (up to 50 ready IDs) or
+    `?scope=bot|group|thread&id=<uuid>&limit=<1..50>` batch-reads authorized
+    attachment metadata and signed download URLs (`downloadPath`,
+    `downloadUrl`) via `lib/chat-attachments/store.ts`. Uploads and removals
+    continue using `POST /api/chat/attachments` and
+    `DELETE /api/chat/attachments/:id`.
+- **Older chat history pagination:**
+  - Bot chats already page via `GET /api/mobile/chat?bot=&through=<position>`
+    (`historyBefore`), and group chats already page via
+    `GET /api/conversations/:id/messages?limit=&before=<position>` (`nextBefore`).
+  - `GET /api/mobile/threads/:id` now accepts optional `?limit=<1..100>&before=<historyBefore>`
+    to page older folded thread items backwards, returning `historyBefore`,
+    `hasMore`, and `totalItems` (`400 invalidWindow` on malformed parameters;
+    omitting both keeps legacy full-thread responses intact).
+- **Coordinator proactive cards:**
+  - `GET /api/mobile/proactive-cards` (optional `tz`, `locale`, `readonly=1`)
+    returns today's `briefing` summary, token-scoped `pendingActions`, and
+    `suggestions` (`inProgress` + `items`). Pending action approval/decline
+    continues via `POST /api/mobile/pending-actions/:id`.
+  - `POST /api/mobile/suggestions/:id` with `{ action: 'send' | 'start' }`
+    hands off a suggestion to the Coordinator (`lib/suggestions/handoff.ts`) or
+    starts it on the Bot's cloud computer (`startSuggestion`) under mobile
+    origin rules; `DELETE /api/mobile/suggestions/:id` dismisses it.
+- **Profile editing:**
+  - `GET /api/mobile/profile` reads `{ user: { id, name, email, image } }`.
+  - `PATCH /api/mobile/profile` (`{ name }`) and `POST /api/mobile/profile/avatar`
+    (multipart `avatar` or raw `image/png|image/jpeg|image/webp` up to 200 KB)
+    require a fresh human session (`freshSessionRoute`; PATs receive
+    `403 sessionRequired`) and delegate to Better Auth `updateUser` plus
+    `checkAvatarFile` / `saveAvatar`.
+- **Billing:**
+  - `GET /api/mobile/billing` (optional `scopeKind`, `scopeId`,
+    `budgetWorkspace`, `usageMember`) resolves the caller's workspace or
+    organization billing scope (`{ available: false, billingScope: null, view: null }`
+    for non-admin members) and delegates to `billingManagementView`.
+  - `POST /api/mobile/billing` (`{ scope?, action, ... }`) requires a fresh
+    session and `writeAllowed` and delegates directly to
+    `mutateBillingManagement` (`checkout`, `portal`, `topup`, `budget`,
+    `recharge`, `account`).
+
 The server validates the Workspace against the authenticated principal and
 current membership, including an empty batch. Duplicate IDs are read once.
 Missing, deleted, inaccessible and other-Workspace Tasks are all omitted from

@@ -12,6 +12,7 @@ import { ActionFailureError } from '@/lib/action-error'
 import { chainChunks, runIsActive, runIsWorking, threadItems } from '@/lib/issue-run-conversation'
 import { isThreadRun } from '@/lib/issue-threads'
 import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { parseThreadPageParams, sliceThreadItemsPage } from '@/lib/mobile-thread-pagination'
 import { mobileThread } from '@/lib/mobile-threads'
 import { runOutsideToken } from '@/lib/tokens/scope'
 import { threadQuotaView } from '@/lib/run-quota-view'
@@ -21,11 +22,16 @@ import { workspacePool } from '@/lib/workspace-db'
 
 type Params = { params: Promise<{ id: string }> }
 
-/** `GET /api/mobile/threads/:id`: one thread as a conversation: agent replies, folded steps, what the person said. */
+/**
+ * `GET /api/mobile/threads/:id`: one thread as a conversation: agent replies, folded steps, what the person said.
+ * Optional `?limit=<1..100>&before=<historyBefore>` pages older thread items backwards while keeping legacy full reads unchanged when omitted.
+ */
 async function handleGET(request: Request, { params }: Params) {
   const user = await mobileUser(request)
   noteLogUser(user?.id)
   if (!user) return unauthorized()
+  const page = parseThreadPageParams(new URL(request.url).searchParams)
+  if (!page) return json({ error: 'invalidWindow' }, 400)
   const id = z.uuid().safeParse((await params).id)
   if (!id.success || await runOutsideToken(user, id.data)) return json({ error: 'runNotFound' }, 404)
   const [thread, detail] = await Promise.all([mobileThread(user.id, id.data), readRun(user.id, id.data)])
@@ -42,10 +48,12 @@ async function handleGET(request: Request, { params }: Params) {
     .where(inArray(runChunks.runId, runIds)).orderBy(asc(agentRuns.createdAt), asc(runChunks.seq))
   const chunks = chainChunks(rawChunks)
   const messages = runIds.length > 1 ? await readRunMessages(user.id, runIds) : detail.messages
-  const items = await threadItems(
+  const allItems = await threadItems(
     detail.run.agentId ? chunks : [],
     messages.map(message => ({ id: message.id, text: message.text, author: user.name, mine: true, at: message.createdAt })),
   )
+  const paged = sliceThreadItemsPage(allItems, page)
+  const items = paged.items
   // A run paused on its subscription's quota: when it resets and whether a key can take over (the web's ThreadQuotaPausedCard).
   const liveRunId = chain?.latestRunId ?? detail.run.id
   const [model, { paused }, runs, delivery, control] = await Promise.all([
@@ -75,7 +83,7 @@ async function handleGET(request: Request, { params }: Params) {
     const source=sourceRuns.find(id=>part.startsWith(id+':'))
     return source ? [[item.id,{runId:source,key:part.slice(source.length+1),operation:'rerun'}]] : []
   }))
-  return json({ liveRunId, composerModel: model.rows[0] ?? null, readReceipts, versionAnchors, delivery, issueId: detail.run.issueId, threadRelation: control.rows[0]?.threadRelation ?? null, canReply: Boolean(detail.run.agentId) && !readOnlyForHuman, confirmedSubmissionIds: messages.flatMap(message => message.submissionId ? [message.submissionId] : []), live: { runs }, thread, active: runIsActive(live), working: runIsWorking(live), paused, summary: detail.run.report && typeof detail.run.report.summary === 'string' ? detail.run.report.summary : null, error: detail.run.error, items })
+  return json({ liveRunId, composerModel: model.rows[0] ?? null, readReceipts, versionAnchors, delivery, issueId: detail.run.issueId, threadRelation: control.rows[0]?.threadRelation ?? null, canReply: Boolean(detail.run.agentId) && !readOnlyForHuman, confirmedSubmissionIds: messages.flatMap(message => message.submissionId ? [message.submissionId] : []), live: { runs }, thread, active: runIsActive(live), working: runIsWorking(live), paused, summary: detail.run.report && typeof detail.run.report.summary === 'string' ? detail.run.report.summary : null, error: detail.run.error, items, historyBefore: paged.historyBefore, hasMore: paged.hasMore, totalItems: paged.totalItems })
 }
 
 /** `POST /api/mobile/threads/:id` with `{ text }`: a message to the thread; the daemon delivers it, or an ended thread runs again. */
