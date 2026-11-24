@@ -32,7 +32,7 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   let preparation: DecisionFailureReason = 'preparation_failed'
   try {
   if (signal?.aborted) return recordDecisionFailure(purpose, 'cancelled')
-  const { hostedBillingScope } = await import('@/lib/abuse/context')
+  const { hostedBillingScope, cachedDecisionGate } = await import('@/lib/abuse/context')
   const scope = hostedBillingScope.getStore()
   if (!scope) return recordDecisionFailure(purpose, 'billing_scope_missing')
   const proxy = gatewayLiteLlm()
@@ -41,7 +41,8 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   const endpoint = baseUrl + DECISIONS_PATH.slice('/v1'.length)
   const { assertLiteLLMModelTransport } = await import('@/lib/model-admission/runtime')
   preparation = 'admission_refused'
-  await assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal)
+  await cachedDecisionGate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+    () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
   preparation = 'billing_refused'
   const usage = await import('@/lib/abuse/runtime')
   const store = billingAdapter?.usage ?? usage.hostedUsage
@@ -49,10 +50,11 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   // Like every hosted call (lib/abuse/model.ts): the workspace's own balance first, then shared credits.
   if (store && store.metered !== false) {
     const { withSharedCredits } = await import('@/lib/credit-shares')
-    const billingPrincipal = await withSharedCredits(scope.workspaceId, async payer => {
-      await (billingAdapter?.admit ?? usage.canUseMikkaPaid)(payer)
-      return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
-    })
+    const billingPrincipal = await cachedDecisionGate(`principal:${scope.workspaceId}:${billingAdapter?.admit ? 'adapter' : 'usage'}`,
+      () => withSharedCredits(scope.workspaceId, async payer => {
+        await (billingAdapter?.admit ?? usage.canUseMikkaPaid)(payer)
+        return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
+      }))
     await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
   }
   let requestStarted = false
@@ -69,7 +71,8 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
         : []))
       const executionId = randomUUID(), startedAt = new Date().toISOString()
       preparation = 'admission_refused'
-      await assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal)
+      await cachedDecisionGate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+        () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
       preparation = 'preparation_failed'
       if (signal?.aborted) throw new DOMException('Model request cancelled', 'AbortError')
       requestStarted = true
