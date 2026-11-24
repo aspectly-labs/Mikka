@@ -11,6 +11,7 @@ import { promisify, stripVTControlCharacters } from 'node:util'
 import { loadEnvironment, assertDeploymentIdentity, EnvironmentError } from '../test-accounts/environment.mjs'
 import { runReadCacheAcceptance, publicFailure, ReadCacheAcceptanceError } from './read-cache.mjs'
 import { productionApplication } from '../../apps/desktop/test/production-application.mjs'
+import { WRITTEN_LOCALE_COOKIES } from '../../i18n/locale-cookie.mjs'
 
 const ownedFailures = new WeakMap()
 const networkErrors = new Set(['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'UND_ERR_ABORTED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'ABORT_ERR', 'AbortError', 'TimeoutError'])
@@ -294,9 +295,11 @@ export async function prepareLandingRoute(environment, fetchImpl = fetch) {
     })
   } catch (error) { throw new ReadCacheAcceptanceError('owned_landing_prepare_unavailable', { cause: error }) }
   await response.body?.cancel()
-  // next-intl 4.14.9 syncCookie can set NEXT_LOCALE on an anonymous document.
-  // Discard that language preference; refuse every other cookie, including auth.
-  if (response.headers.getSetCookie().some(value => !/^NEXT_LOCALE=(?:zh-CN|en)(?:;|$)/u.test(value))) throw new ReadCacheAcceptanceError('owned_landing_prepare_refused')
+  // The page response sets the locale cookie on an anonymous document
+  // (apps/api/runtime/http-policy.mjs). Discard that language preference;
+  // refuse every other cookie, including auth.
+  const locale = new RegExp(`^(?:${WRITTEN_LOCALE_COOKIES.join('|')})=(?:zh-CN|en)(?:;|$)`, 'u')
+  if (response.headers.getSetCookie().some(value => !locale.test(value))) throw new ReadCacheAcceptanceError('owned_landing_prepare_refused')
   const destinations = ['/api/acceptance', `${environment.basePath}/api/acceptance`].flatMap(path => [path, `${environment.origin}${path}`])
   // loading.tsx can make the redirect a 200 streamed document. No document or
   // redirect is executed, and no request to any acceptance endpoint is made.

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 
-// Exact workflow bytes reviewed at private 5050eece. Removals are safe; edits,
+// Exact workflow bytes reviewed at private bfb1a619. Removals are safe; edits,
 // including new Cloudflare profiles, need public policy review before building.
 const approvedWorkflows = Object.freeze({
   '.github/workflows/capture-retention.yml': 'ebab36f3a8acac6b818adfd60e85db6d5ec8e26ba14f1fa7ac0671d5445fe702',
@@ -11,14 +11,16 @@ const approvedWorkflows = Object.freeze({
   '.github/workflows/eve-world-resources.yml': '912351b1cf33e4c1ccee722dddb1b818a6078072235389c8df412c4d9f7384bb',
   '.github/workflows/github-webhook-prepare.yml': '13a8fdc3d450e80d1e91932af28b81faac7263ced5935b243a62cb5f420d2d32',
   '.github/workflows/marketing-cloudflare-release.yml': '8e734ae3a6f8cb2687c5d1b3bd6d5d076e882f4057cffd3322962f283306848b',
+  '.github/workflows/migration-drift.yml': 'fff3d45c251b4bedebb8dd9965ff606d7a24daeb957d14125ef31e65e5ba678c',
   '.github/workflows/observe-cloudflare-runtime.yml': 'a0e19145e330d7349362733eaa43add5cbe99aa3528002d186a2d60a0c7add46',
   '.github/workflows/private-source-download.yml': '795c9055b705095776983f91a22a62725b714a7a942e9bfeb676e849624618d0',
   '.github/workflows/product-task-canary.yml': '6ae7a104132db529fd1d91b515a2a6c2cadc7e41b425ede8881890d4272f174f',
-  '.github/workflows/production-daemon-qualification.yml': '24da69abec9bf4c7d5ecfffebbf499d60eb64689cb11dde306aa259943f2cc2f',
+  '.github/workflows/production-daemon-qualification.yml': 'e3fb5da02ad7bce8c209eb006ea7f3466f9f3c1a5e3de9e641a1335006e52525',
   '.github/workflows/runtime-native-alert.yml': '227f374ee4756d4d6767e6c8345b42afaf198a7067cc7ed36274899319f98ede',
   '.github/workflows/runtime-observer-runner-canary.yml': 'be71c2c734859587e894e0da7f960cdac80bd7690853c0d5ad6cd00307d0b53f',
   '.github/workflows/vercel-project-billing.yml': '013709338c50323a56d3a703fd979769b1272b655e8d528568219f96059bd489',
   '.github/workflows/vercel-workflow-inventory.yml': 'a8766a7900b04eda41c6c72a9f7b2197cf80e46b24d76f85bccaae808d28dc94',
+  '.github/workflows/zero-residency-guard.yml': '9436ca47273fefac2d72f286e96b8e74f6ea9318212c681dd5e75e8d6a365b6a',
 })
 const fail = () => { throw new Error('CLOUD_PUBLIC_CI_PRIVATE_RUNNER_PLACEMENT') }
 

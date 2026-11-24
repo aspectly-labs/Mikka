@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { AfterQueue } from './after'
 import { CookieJar } from './cookies'
+import { storedLocale } from '../../../i18n/locale-cookie.mjs'
 
 export type Locale = 'zh-CN' | 'en'
 type Memo = { children: Map<unknown, Memo>; result?: { value: unknown; error: boolean } }
@@ -22,8 +23,8 @@ export function requireRequestScope(): RequestScope {
 function requestLocale(request: Request, cookies: CookieJar): Locale {
   const explicit = request.headers.get('x-mikka-locale')
   if (explicit === 'en' || explicit === 'zh-CN') return explicit
-  const stored = cookies.get('NEXT_LOCALE')?.value
-  if (stored === 'en' || stored === 'zh-CN') return stored
+  const stored = storedLocale((name) => cookies.get(name)?.value)
+  if (stored) return stored
   // Nobody has chosen yet. A browser that asks for English is not a Chinese
   // user who forgot to switch: serve English. Every other case keeps the
   // previous fallback, so this only changes the outcome for English speakers.

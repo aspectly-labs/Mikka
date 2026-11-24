@@ -2,6 +2,7 @@ import { forwardRef, useMemo } from 'react'
 import { useLocale } from '@/lib/intl/i18n-client'
 import { BASE_PATH } from '@/lib/base-path'
 import { routing } from '@/i18n/routing'
+import { localeCookies } from '@/i18n/locale-cookie.mjs'
 import NextLink, { type LinkProps } from './link'
 import { localeHref, navigate, refresh, useLocation, withoutLocale, type Href } from './location'
 
@@ -9,14 +10,13 @@ export const usePathname = () => withoutLocale(useLocation().pathname)
 export const getPathname = ({ href, locale }: { href: Href; locale: string }) => localeHref(href, locale)
 export const redirect = ({ href, locale }: { href: Href; locale: string }) => navigate(href, true, { locale }, true)
 
-/** Preserve next-intl's explicit locale-switch cookie on normal web pages.
+/** Remember an explicit locale switch in the locale cookie on normal web pages.
  * The bundled custom scheme keeps its existing main-process boundary. */
 function syncLocaleCookie(locale: string, nextLocale: string | undefined) {
-  if (nextLocale === locale || !routing.locales.some(value => value === nextLocale)) return
+  if (!nextLocale || nextLocale === locale || !routing.locales.some(value => value === nextLocale)) return
   if (window.location.protocol !== 'https:' && window.location.protocol !== 'http:') return
-  const cookie = routing.localeCookie
-  if (!cookie || typeof cookie !== 'object') return
-  document.cookie = `NEXT_LOCALE=${nextLocale}; Max-Age=${cookie.maxAge}; Path=${BASE_PATH || '/'}; SameSite=Lax`
+  // One assignment stores one cookie; the migration phase decides how many.
+  for (const cookie of localeCookies(nextLocale, BASE_PATH)) document.cookie = cookie
 }
 
 export function useRouter() {

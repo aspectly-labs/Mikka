@@ -107,7 +107,7 @@ jobs:
           printf -v GIT_SSH_COMMAND 'ssh -F /dev/null -i %q -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=%q' "$key_dir/key" "$known_hosts"
           export GIT_SSH_COMMAND
           node --input-type=module -e "import { verifyOverlayMain } from './scripts/cloudflare-native-oci.mjs'; try { verifyOverlayMain('.hosted-ui', process.env.OVERLAY_SHA) } catch { process.exitCode = 1 }" || {
-            echo "::error::overlay_sha is not on mikka-hosted-ui main; merge its PR first."
+            echo "::error::overlay_sha is not verified on mikka-hosted-ui main (see the stage above); if the fetch worked, merge its PR first."
             exit 1
           }
       # Checks the checkout is that exact revision and clears the read key from later steps.
@@ -210,7 +210,9 @@ jobs:
             exit 1
           fi
           if ! (cd "$APP_DIR/ios" && pod install > "$RUNNER_TEMP/mobile-next-pods.log" 2>&1); then
-            echo "::error::pod install failed; private diagnostics withheld."
+            echo "::error::pod install failed; private source withheld."
+            # CocoaPods' own [!] lines name public pods and their published errors, not app source.
+            grep -E '^\[!\]' "$RUNNER_TEMP/mobile-next-pods.log" | sed "s#${GITHUB_WORKSPACE}#.#g; s#${HOME}#~#g" | cut -c1-300 | head -n 8 || true
             exit 1
           fi
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_DIR/ios/Mikka/Info.plist"
