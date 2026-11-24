@@ -5,8 +5,9 @@
 // Legacy unguarded routes are pinned in `scripts/route-guard-baseline.json` so the
 // ceiling can only go down as routes migrate.
 //
-// Usage: node scripts/route-guard-policy.mjs        check; exits 1 on violations
-//        node scripts/route-guard-policy.mjs --json print scan + audit JSON
+// Usage: node scripts/route-guard-policy.mjs                  check; exits 1 on violations
+//        node scripts/route-guard-policy.mjs --base <ref>     also enforce diff-aware migration against <ref>
+//        node scripts/route-guard-policy.mjs --json           print scan + audit JSON
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { posix, resolve } from 'node:path'
@@ -324,10 +325,25 @@ function validateBaselineSchema(baseline, label) {
       `${label}: maxUnguardedRoutes (${baseline.maxUnguardedRoutes}) must equal legacyRoutes.length (${baseline.legacyRoutes.length})`,
     )
   }
+  if (baseline.exemptRoutes !== undefined) {
+    if (!baseline.exemptRoutes || typeof baseline.exemptRoutes !== 'object' || Array.isArray(baseline.exemptRoutes)) {
+      problems.push(`${label}: exemptRoutes must be an object mapping legacy route paths to { reason }`)
+    } else {
+      for (const [file, entry] of Object.entries(baseline.exemptRoutes)) {
+        if (!seen.has(file)) {
+          problems.push(`${label}: exemptRoutes entry ${file} must also be an existing legacyRoutes entry`)
+        }
+        const reason = typeof entry === 'object' && entry !== null ? entry.reason : ''
+        if (typeof reason !== 'string' || reason.trim().length < 20) {
+          problems.push(`${label}: exemptRoutes entry ${file} requires a reason of at least 20 characters`)
+        }
+      }
+    }
+  }
   return problems
 }
 
-export function auditApiRoutes(scan, baseline, previous = baseline) {
+export function auditApiRoutes(scan, baseline, previous = baseline, options = {}) {
   const problems = validateBaselineSchema(baseline, BASELINE_PATH)
   if (problems.length) return problems
 
@@ -352,6 +368,7 @@ export function auditApiRoutes(scan, baseline, previous = baseline) {
   }
 
   const legacySet = new Set(baseline.legacyRoutes)
+  const exemptSet = new Set(Object.keys(baseline.exemptRoutes ?? {}))
   const byFile = new Map(scan.results.map(entry => [entry.file, entry]))
 
   for (const entry of scan.invalid) {
@@ -365,6 +382,19 @@ export function auditApiRoutes(scan, baseline, previous = baseline) {
         `${entry.file}: unguarded API route (${methods}) is not in ${BASELINE_PATH}; wrap exported handlers in defineRoute(...) from @/lib/primitives/define-route`,
       )
     }
+  }
+
+  // Diff-aware Boy Scout rule: modifying any existing legacy unguarded route requires
+  // migrating it onto `defineRoute(...)` (unless explicitly exempted with a documented reason).
+  const modifiedRoutes = options.modifiedRoutes ?? []
+  for (const file of modifiedRoutes) {
+    const entry = byFile.get(file)
+    if (!entry || entry.status !== 'unguarded') continue
+    if (!legacySet.has(file) || exemptSet.has(file)) continue
+    const methods = entry.unguardedMethods.length ? entry.unguardedMethods.join(', ') : 'no HTTP methods'
+    problems.push(
+      `${file}: modified legacy unguarded API route (${methods}) must be migrated to defineRoute(...) from @/lib/primitives/define-route (or documented under exemptRoutes in ${BASELINE_PATH})`,
+    )
   }
 
   const totalNonGuarded = scan.unguarded.length + scan.invalid.length
@@ -391,7 +421,32 @@ export function auditApiRoutes(scan, baseline, previous = baseline) {
   return problems
 }
 
-export function resolveRatchetBase(root = process.cwd(), env = process.env) {
+export function modifiedApiRoutes(root = process.cwd(), base) {
+  if (!base) return []
+  const git = (...args) =>
+    execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+  let diffBase = base
+  try {
+    const common = git('merge-base', 'HEAD', base).trim()
+    if (common) diffBase = common
+  } catch {}
+  const changed = new Set()
+  try {
+    for (const file of git('diff', '--name-only', '--diff-filter=ACMR', '-z', diffBase, '--', 'app/api').split('\0')) {
+      if (file) changed.add(file)
+    }
+  } catch {}
+  try {
+    for (const file of git('ls-files', '--others', '--exclude-standard', '-z', '--', 'app/api').split('\0')) {
+      if (file) changed.add(file)
+    }
+  } catch {}
+  return [...changed]
+    .filter(file => /^app\/api\/(?:.+\/)?route\.ts$/.test(file) && existsSync(resolve(root, file)))
+    .sort()
+}
+
+export function resolveRatchetBase(root = process.cwd(), env = process.env, explicitBase = '') {
   const git = (...args) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   const hasCommit = ref => {
@@ -401,6 +456,12 @@ export function resolveRatchetBase(root = process.cwd(), env = process.env) {
     } catch {
       return false
     }
+  }
+  if (explicitBase) {
+    if (!hasCommit(explicitBase)) {
+      return { base: '', missingRequiredBase: true, reason: `cannot resolve --base ref "${explicitBase}"` }
+    }
+    return { base: git('rev-parse', '--verify', `${explicitBase}^{commit}`), missingRequiredBase: false }
   }
   const eventName = env.GITHUB_EVENT_NAME ?? ''
   let eventBase = ''
@@ -428,20 +489,34 @@ export function resolveRatchetBase(root = process.cwd(), env = process.env) {
 
   const fallback = trustedPolicyBase(root)
   if (fallback && hasCommit(fallback)) return { base: fallback, missingRequiredBase: false }
-  return { base: '', missingRequiredBase: requiresEventBase }
+  return {
+    base: '',
+    missingRequiredBase: requiresEventBase,
+    reason: requiresEventBase
+      ? `cannot resolve trusted base commit for ${eventName} event; failing closed so the route-guard ratchet cannot be bypassed`
+      : '',
+  }
 }
 
-export function runRouteGuardPolicy(root = process.cwd(), env = process.env) {
+export function parseBaseArg(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--base') return argv[i + 1] ?? ''
+    if (argv[i].startsWith('--base=')) return argv[i].slice('--base='.length)
+  }
+  return ''
+}
+
+export function runRouteGuardPolicy(root = process.cwd(), env = process.env, options = {}) {
   const baseline = JSON.parse(readFileSync(resolve(root, BASELINE_PATH), 'utf8'))
   const scan = scanApiRoutes(root)
-  const { base, missingRequiredBase } = resolveRatchetBase(root, env)
+  const explicitBase = options.baseRef ?? ''
+  const { base, missingRequiredBase, reason } = resolveRatchetBase(root, env, explicitBase)
   if (missingRequiredBase) {
     return {
       scan,
       baseline,
-      problems: [
-        `${BASELINE_PATH}: cannot resolve trusted base commit for ${env.GITHUB_EVENT_NAME} event; failing closed so the route-guard ratchet cannot be bypassed`,
-      ],
+      modified: [],
+      problems: [`${BASELINE_PATH}: ${reason}`],
     }
   }
   const existsInBase = base
@@ -459,17 +534,21 @@ export function runRouteGuardPolicy(root = process.cwd(), env = process.env) {
         }),
       )
     : baseline
-  const problems = auditApiRoutes(scan, baseline, previous)
-  return { scan, baseline, problems }
+  const modified = base ? modifiedApiRoutes(root, base) : []
+  const problems = auditApiRoutes(scan, baseline, previous, { modifiedRoutes: modified })
+  return { scan, baseline, modified, problems }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const baseRef = parseBaseArg(process.argv.slice(2))
   if (process.argv.includes('--json')) {
     const scan = scanApiRoutes()
     const baseline = existsSync(resolve(process.cwd(), BASELINE_PATH))
       ? JSON.parse(readFileSync(resolve(process.cwd(), BASELINE_PATH), 'utf8'))
       : null
-    const problems = baseline ? auditApiRoutes(scan, baseline, baseline) : []
+    const { base } = resolveRatchetBase(process.cwd(), process.env, baseRef)
+    const modified = base ? modifiedApiRoutes(process.cwd(), base) : []
+    const problems = baseline ? auditApiRoutes(scan, baseline, baseline, { modifiedRoutes: modified }) : []
     process.stdout.write(
       JSON.stringify(
         {
@@ -477,6 +556,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
           guarded: scan.guarded.map(entry => ({ file: entry.file, methods: entry.methods })),
           unguarded: scan.unguarded.map(entry => ({ file: entry.file, methods: entry.unguardedMethods })),
           invalid: scan.invalid.map(entry => ({ file: entry.file, errors: entry.specErrors })),
+          modified,
           maxUnguardedRoutes: scan.unguarded.length,
           problems,
         },
@@ -487,14 +567,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     process.exit(0)
   }
 
-  const { scan, baseline, problems } = runRouteGuardPolicy()
+  const { scan, baseline, modified, problems } = runRouteGuardPolicy(process.cwd(), process.env, { baseRef })
   if (problems.length) {
     process.stderr.write(
       `[route-guard-policy] ${problems.length} problem(s):\n${problems.map(problem => `- ${problem}`).join('\n')}\n`,
     )
     process.exit(1)
   }
+  const diffNote = modified.length ? `, ${modified.length} modified route(s) verified guarded` : ''
   process.stdout.write(
-    `[route-guard-policy] ok: ${scan.guarded.length} guarded, ${scan.unguarded.length} legacy unguarded (ceiling ${baseline.maxUnguardedRoutes})\n`,
+    `[route-guard-policy] ok: ${scan.guarded.length} guarded, ${scan.unguarded.length} legacy unguarded (ceiling ${baseline.maxUnguardedRoutes}${diffNote})\n`,
   )
 }

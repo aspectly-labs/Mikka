@@ -215,7 +215,103 @@ test('CLI ratchet blocks new unguarded routes, allows new guarded routes, and en
   f.write(BASELINE_PATH, JSON.stringify({ version: 1, maxUnguardedRoutes: 0, legacyRoutes: [] }, null, 2) + '\n')
   const ratcheted = f.run()
   assert.equal(ratcheted.status, 0)
-  assert.match(ratcheted.stdout, /2 guarded, 0 legacy unguarded \(ceiling 0\)/)
+  assert.match(ratcheted.stdout, /2 guarded, 0 legacy unguarded \(ceiling 0/)
+})
+
+test('diff-aware Boy Scout rule blocks edits to legacy unguarded routes unless migrated or explicitly exempted', t => {
+  const f = fixture(t)
+  f.write('app/api/legacy/route.ts', UNGUARDED_SAMPLE)
+  f.write('app/api/untouched/route.ts', UNGUARDED_SAMPLE)
+  f.write(
+    BASELINE_PATH,
+    JSON.stringify(
+      {
+        version: 1,
+        maxUnguardedRoutes: 2,
+        legacyRoutes: ['app/api/legacy/route.ts', 'app/api/untouched/route.ts'],
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+  f.commit('base')
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: f.root })
+  execFileSync('git', ['checkout', '-q', '-b', 'edit-legacy'], { cwd: f.root })
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'main'], { cwd: f.root })
+
+  const runWithArgs = (...args) =>
+    spawnSync(process.execPath, [policyScript, ...args], { cwd: f.root, encoding: 'utf8' })
+
+  // Editing an unrelated file leaves untouched legacy routes passing.
+  f.write('lib/unrelated.ts', 'export const x = 1\n')
+  assert.equal(runWithArgs('--base', 'origin/main').status, 0)
+
+  // Editing an existing legacy unguarded route without migrating fails with --base.
+  f.write('app/api/legacy/route.ts', `${UNGUARDED_SAMPLE}\n// tweaked handler\n`)
+  const blockedEdit = runWithArgs('--base', 'origin/main')
+  assert.equal(blockedEdit.status, 1)
+  assert.match(blockedEdit.stderr, /app\/api\/legacy\/route\.ts: modified legacy unguarded API route/)
+
+  // Short/undocumented exemptRoutes reason is rejected.
+  f.write(
+    BASELINE_PATH,
+    JSON.stringify(
+      {
+        version: 1,
+        maxUnguardedRoutes: 2,
+        exemptRoutes: { 'app/api/legacy/route.ts': { reason: 'too short' } },
+        legacyRoutes: ['app/api/legacy/route.ts', 'app/api/untouched/route.ts'],
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+  const shortReason = runWithArgs('--base=origin/main')
+  assert.equal(shortReason.status, 1)
+  assert.match(shortReason.stderr, /requires a reason of at least 20 characters/)
+
+  // Explicitly documented exemptRoutes entry allows the reviewed legacy edit.
+  f.write(
+    BASELINE_PATH,
+    JSON.stringify(
+      {
+        version: 1,
+        maxUnguardedRoutes: 2,
+        exemptRoutes: {
+          'app/api/legacy/route.ts': {
+            reason: 'Emergency hotfix tracked for follow-up defineRoute migration in #9999',
+          },
+        },
+        legacyRoutes: ['app/api/legacy/route.ts', 'app/api/untouched/route.ts'],
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+  assert.equal(runWithArgs('--base', 'origin/main').status, 0)
+
+  // Migrating the edited route to defineRoute and lowering baseline passes cleanly.
+  f.write('app/api/legacy/route.ts', GUARDED_SAMPLE)
+  f.write(
+    BASELINE_PATH,
+    JSON.stringify(
+      {
+        version: 1,
+        maxUnguardedRoutes: 1,
+        legacyRoutes: ['app/api/untouched/route.ts'],
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+  const migrated = runWithArgs('--base', 'origin/main')
+  assert.equal(migrated.status, 0)
+  assert.match(migrated.stdout, /1 modified route\(s\) verified guarded/)
+
+  // Unresolvable --base fails closed.
+  const badBase = runWithArgs('--base', 'refs/heads/does-not-exist')
+  assert.equal(badBase.status, 1)
+  assert.match(badBase.stderr, /cannot resolve --base ref/)
 })
 
 test('shallow synthetic PR merge checkouts still enforce the ratchet against pull_request.base.sha and fail closed when unresolvable', t => {
