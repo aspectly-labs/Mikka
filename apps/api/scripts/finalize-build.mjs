@@ -4,6 +4,7 @@ import { join, resolve, sep } from 'node:path'
 import { build } from 'esbuild'
 import { runtimeResources } from '../../../scripts/release/runtime-resources.mjs'
 import { configuredDeploymentId } from '../../../lib/deployment-id.mjs'
+import { publicEnv } from '../../../lib/public-env.mjs'
 import { nodeRuntimePackages } from '../build-contract.mjs'
 import { assertNoFixtureAuthInDirectories } from '../../../scripts/fixtures/bundle-check.mjs'
 
@@ -32,7 +33,7 @@ export async function finalizeBuild({ root, output, preset, revision }) {
   const evidence = { version: 1, revision, preset, node: process.version,
     target: process.env.MIKKA_BUILD_TARGET === 'local-fixture' ? 'local-fixture' : 'production',
     basePath: '/mikka',
-    appBuild: process.env.NEXT_PUBLIC_MIKKA_BUILD || revision,
+    appBuild: publicEnv('MIKKA_PUBLIC_BUILD') || revision,
     testDeploymentSha: process.env.MIKKA_TEST_DEPLOYMENT_SHA ?? '',
     lockSha256: hash(await readFile(join(root, 'pnpm-lock.yaml'))),
     routesSha256: hash(await readFile(join(root, 'apps/api/generated/routes.json'))),

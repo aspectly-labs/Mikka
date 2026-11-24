@@ -34,9 +34,9 @@ test('the cloud-computer snapshot keeps the exact existing public environment pr
     ['preview', undefined, '1', false], ['production', '1', undefined, false],
     [undefined, '1', '1', false], ['production', undefined, 'true', false],
   ] as const) {
-    const features = await desktopFeatures(undefined, { env: { NEXT_PUBLIC_COMPUTER_DEPLOYMENT: deployment, NEXT_PUBLIC_COMPUTER_ACCEPTANCE: acceptance, NEXT_PUBLIC_COMPUTER_ENABLED: enabled, PRIVATE_SECRET: 'never returned' } })
+    const features = await desktopFeatures(undefined, { env: { MIKKA_PUBLIC_COMPUTER_DEPLOYMENT: deployment, MIKKA_PUBLIC_COMPUTER_ACCEPTANCE: acceptance, MIKKA_PUBLIC_COMPUTER_ENABLED: enabled, PRIVATE_SECRET: 'never returned' } })
     assert.equal(features.cloudComputer, expected)
     assert.equal(JSON.stringify(features).includes('never returned'), false)
   }
-  assert.equal((await desktopFeatures(undefined, { env: { NEXT_PUBLIC_COMPUTER_MOCK: '1' } })).cloudComputer, true)
+  assert.equal((await desktopFeatures(undefined, { env: { MIKKA_PUBLIC_COMPUTER_MOCK: '1' } })).cloudComputer, true)
 })

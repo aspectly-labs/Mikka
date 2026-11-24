@@ -8,6 +8,7 @@ import { withBillingAuthority } from './authority'
 import { POINTS_PURCHASE_AMOUNTS } from './points'
 import { stripeConfig, stripePost, StripeRequestError } from './stripe'
 import { ensureBillingCustomer } from './customer'
+import { publicEnv } from '@/lib/public-env.mjs'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -33,7 +34,7 @@ export async function pointsPurchaseUrl(actorId: string, workspaceId: string, am
 export interface PurchaseFromChat { chat: { botId: string | null } }
 
 /**
- * 充值. From a chat with NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY set, an embedded
+ * 充值. From a chat with MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY set, an embedded
  * Checkout session whose client secret the chat mounts in a dialog. Without
  * the key, or from 计费, a hosted Checkout page that comes back to where it
  * started (`url`).
@@ -52,7 +53,7 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
     back.searchParams.set('workspace', workspaceId)
     // The bundled renderer cannot load Stripe's remote script. Its authenticated
     // RPC scope selects the existing hosted flow, retaining the same chat return.
-    const embedded = Boolean(chat && env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY && !from.hosted)
+    const embedded = Boolean(chat && publicEnv('MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', env) && !from.hosted)
     const metadata = { workspaceId, points: String(amount * 1_000_000 / MICRO_USD_PER_POINT), purpose: 'points_purchase' }
     try {
       const customer = await ensureBillingCustomer(workspaceId, config, fetchImpl)

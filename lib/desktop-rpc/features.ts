@@ -2,6 +2,7 @@ import 'server-only'
 import { computerAcceptancePreview, computerProductionEnabled, gatedFeatures, killSwitches, upcomingFeatures } from '@/lib/feature-flags'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import type { DesktopFeatures } from './wire'
+import { publicEnv } from '@/lib/public-env.mjs'
 
 // These are the same public flags read by use-feature-availability. Never send
 // arbitrary PostHog flags, project configuration or server environment values.
@@ -19,8 +20,8 @@ export async function desktopFeatures(userId?: string, {
   return {
     flags,
     cloudComputer: flags[gatedFeatures.cloudComputer]
-      || env.NEXT_PUBLIC_COMPUTER_MOCK === '1'
-      || computerAcceptancePreview(env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT, env.NEXT_PUBLIC_COMPUTER_ACCEPTANCE)
-      || computerProductionEnabled(env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT, env.NEXT_PUBLIC_COMPUTER_ENABLED),
+      || publicEnv('MIKKA_PUBLIC_COMPUTER_MOCK', env) === '1'
+      || computerAcceptancePreview(publicEnv('MIKKA_PUBLIC_COMPUTER_DEPLOYMENT', env), publicEnv('MIKKA_PUBLIC_COMPUTER_ACCEPTANCE', env))
+      || computerProductionEnabled(publicEnv('MIKKA_PUBLIC_COMPUTER_DEPLOYMENT', env), publicEnv('MIKKA_PUBLIC_COMPUTER_ENABLED', env)),
   }
 }

@@ -3,7 +3,7 @@ import type { ComputerEvent, ComputerState, KnownHost, SetupStep, SetupStepState
 
 /**
  * A stand-in for the cloud computer backend (#172) while it is being built,
- * on when NEXT_PUBLIC_COMPUTER_MOCK=1. It keeps state in the page and plays
+ * on when MIKKA_PUBLIC_COMPUTER_MOCK=1. It keeps state in the page and plays
  * the same states the real API reports. Like the real one there is one
  * machine per workspace: ?computer-mock=sleep in the page address starts it
  * asleep and ?computer-mock=waking starts it mid-wake (it stays there, for

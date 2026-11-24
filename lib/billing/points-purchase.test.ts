@@ -146,14 +146,16 @@ test('from a chat: a dialog session with a publishable key, else a hosted page; 
   back = new URL(requests.at(-1)!.body.get('success_url')!)
   assert.deepEqual([back.pathname, back.searchParams.has('bot')], [`${BASE_PATH}/en/`, false])
   // With the key: an embedded session for the dialog; Stripe returns to the chat only when a payment method must leave the page.
-  assert.deepEqual(await pointsPurchase('actor', workspaceId, 25, 'zh-CN', { chat: { botId: bot } }, fake, { ...env, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { clientSecret: 'cs_fixture_secret' })
+  assert.deepEqual(await pointsPurchase('actor', workspaceId, 25, 'zh-CN', { chat: { botId: bot } }, fake, { ...env, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { clientSecret: 'cs_fixture_secret' })
+  // An empty new name counts as unset and falls back to the legacy key (lib/public-env.mjs).
+  assert.deepEqual(await pointsPurchase('actor', workspaceId, 25, 'zh-CN', { chat: { botId: bot } }, fake, { ...env, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: '', NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { clientSecret: 'cs_fixture_secret' })
   const { body } = requests.at(-1)!
   assert.deepEqual([body.get('ui_mode'), body.has('success_url'), body.has('cancel_url'), new URL(body.get('return_url')!).searchParams.get('bot')], ['embedded_page', false, false, bot])
   assert.equal(body.get('metadata[points]'), '2500')
   assert.equal(body.get('line_items[0][price_data][product_data][tax_code]'), 'txcd_10105002')
   // A native chat requests the same hosted fallback even when web Checkout is
   // embedded. Amount, workspace permission and chat return remain identical.
-  assert.deepEqual(await pointsPurchase('actor', workspaceId, 25, 'en', { chat: { botId: bot }, hosted: true }, fake, { ...env, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { url: checkoutUrl })
+  assert.deepEqual(await pointsPurchase('actor', workspaceId, 25, 'en', { chat: { botId: bot }, hosted: true }, fake, { ...env, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { url: checkoutUrl })
   const native = requests.at(-1)!.body
   assert.equal(native.has('ui_mode'), false)
   assert.equal(native.has('return_url'), false)
@@ -161,7 +163,7 @@ test('from a chat: a dialog session with a publishable key, else a hosted page; 
   assert.equal(new URL(native.get('cancel_url')!).searchParams.get('workspace'), workspaceId)
   assert.equal(native.get('metadata[points]'), '2500')
   // 计费 keeps its hosted page even with the key; a bot id that is not one is refused before Stripe.
-  assert.deepEqual(await pointsPurchaseUrl('actor', workspaceId, 10, 'zh-CN', fake, { ...env, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { url: checkoutUrl })
+  assert.deepEqual(await pointsPurchaseUrl('actor', workspaceId, 10, 'zh-CN', fake, { ...env, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }), { url: checkoutUrl })
   const count = requests.length
   await assert.rejects(pointsPurchase('actor', workspaceId, 10, 'en', { chat: { botId: 'https://evil.example/' } }, fake, env))
   assert.equal(requests.length, count)

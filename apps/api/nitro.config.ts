@@ -4,6 +4,7 @@ import { defineConfig } from 'nitro'
 import type { ModuleOptions as WorkflowOptions } from 'workflow/nitro'
 import { configuredDeploymentId } from '../../lib/deployment-id.mjs'
 import { deploymentStage } from '../../lib/deployment-stage.mjs'
+import { publicEnv, withLegacyPublicDefines } from '../../lib/public-env.mjs'
 import { apiAliases } from './compat-aliases.mjs'
 import { nodeRuntimePackages, productWorkflowDirectories, workflowNodeExternals } from './build-contract.mjs'
 import { publicAssetConfiguration } from './public-assets.mjs'
@@ -15,7 +16,8 @@ const root = fileURLToPath(new URL('../..', import.meta.url))
 const stage = deploymentStage()
 const revision = process.env.MIKKA_BUILD_REVISION || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('API_BUILD_SHA_REQUIRED')
-const build = process.env.NEXT_PUBLIC_MIKKA_BUILD || revision
+// An empty value counts as unset, under either name (lib/public-env.mjs).
+const build = publicEnv('MIKKA_PUBLIC_BUILD') || revision
 const assets = await publicAssetConfiguration(root)
 
 export default defineConfig({
@@ -34,13 +36,14 @@ export default defineConfig({
   // Discover only product sources. Eve compiles its independent World under
   // apps/eve/.eve and .output before this build; those are never product inputs.
   workflow: { dirs: productWorkflowDirectories, runtime: 'nodejs24.x', sourcemap: false, dashboard: false } satisfies WorkflowOptions,
-  replace: {
+  // Each public constant is also replaced under its legacy NEXT_PUBLIC_* name until phase 2 (lib/public-env.mjs).
+  replace: withLegacyPublicDefines({
     'process.env.MIKKA_UI_OVERLAY_SHA': JSON.stringify(process.env.MIKKA_UI_OVERLAY_SHA ?? ''),
     'process.env.MIKKA_BASE_PATH': JSON.stringify('/mikka'),
-    'process.env.NEXT_PUBLIC_MIKKA_BUILD': JSON.stringify(build),
+    'process.env.MIKKA_PUBLIC_BUILD': JSON.stringify(build),
     'process.env.MIKKA_TEST_BUILD_SHA': JSON.stringify(process.env.MIKKA_TEST_DEPLOYMENT_SHA ?? ''),
-    'process.env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT': JSON.stringify(stage ?? ''),
-  },
+    'process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT': JSON.stringify(stage ?? ''),
+  }),
   sourcemap: false,
   compatibilityDate: '2026-11-05',
 })

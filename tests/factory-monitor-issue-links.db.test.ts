@@ -21,10 +21,10 @@ test('monitor mappings use actual owner/scope authorization, GitHub readback and
   for(const id of [owner,peer])await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())',[id,`${id}@example.invalid`])
   const environment={GITHUB_APP_ID:process.env.GITHUB_APP_ID,LINEAR_TOKEN_ENCRYPTION_KEY:process.env.LINEAR_TOKEN_ENCRYPTION_KEY,
     BETTER_AUTH_URL:process.env.BETTER_AUTH_URL,BETTER_AUTH_SECRET:process.env.BETTER_AUTH_SECRET,
-    MIKKA_EDITION:process.env.MIKKA_EDITION,NEXT_PUBLIC_POSTHOG_KEY:process.env.NEXT_PUBLIC_POSTHOG_KEY}
+    MIKKA_EDITION:process.env.MIKKA_EDITION,MIKKA_PUBLIC_POSTHOG_KEY:process.env.MIKKA_PUBLIC_POSTHOG_KEY,NEXT_PUBLIC_POSTHOG_KEY:process.env.NEXT_PUBLIC_POSTHOG_KEY}
   const origin='http://localhost:3100'
   Object.assign(process.env,{GITHUB_APP_ID:'4840908',LINEAR_TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('hex'),
-    BETTER_AUTH_URL:origin,BETTER_AUTH_SECRET:randomBytes(32).toString('hex'),MIKKA_EDITION:'cloud',NEXT_PUBLIC_POSTHOG_KEY:''})
+    BETTER_AUTH_URL:origin,BETTER_AUTH_SECRET:randomBytes(32).toString('hex'),MIKKA_EDITION:'cloud',MIKKA_PUBLIC_POSTHOG_KEY:'',NEXT_PUBLIC_POSTHOG_KEY:''})
   const incidentWorkspaces=new Map<string,string>()
   let issueReads=0,repositoryAllowed=true,afterIssueRead:(()=>Promise<void>)|undefined
   const receiver=createServer(async(request,response)=>{

@@ -31,8 +31,8 @@ const api = { version: 1, provider: 'github-actions', repository: 'alexj11324/Mi
     appGateway: { path: 'workers/app-gateway.mjs', sha256: '8'.repeat(64), bytes: 720 },
   },
   offlineVerification: 'buildkit-network-none', publication: 'registry-only', production: false }
-api.publicBuildSettings = { publicSha, privateSha: overlaySha, publication: 'registry-only', NEXT_PUBLIC_POSTHOG_KEY: 'public-analytics',
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_public', NEXT_PUBLIC_TURNSTILE_SITE_KEY: 'public-turnstile', NEXT_PUBLIC_COMPUTER_ENABLED: '1' }
+api.publicBuildSettings = { publicSha, privateSha: overlaySha, publication: 'registry-only', MIKKA_PUBLIC_POSTHOG_KEY: 'public-analytics',
+  MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_public', MIKKA_PUBLIC_TURNSTILE_SITE_KEY: 'public-turnstile', MIKKA_PUBLIC_COMPUTER_ENABLED: '1' }
 api.publicBuildSettingsSha256 = createHash('sha256').update(JSON.stringify(api.publicBuildSettings)).digest('hex')
 const env = { GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963',
   GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: publicSha,
@@ -63,7 +63,7 @@ test('manual publication binds the genuine public workflow run to the accepted A
     { GITHUB_RUN_ID: 'not-a-run' }]) assert.throws(() => releaseIdentity({ ...env, ...patch }, 'eve', api))
   for (const patch of [{ publication: 'none' }, { production: true }, { provider: 'cloudflare-workers-builds' }, { runAttempt: '2' }, { actorId: '1' }, { workflowSha: overlaySha },
     { publicBuildSettingsSha256: '0'.repeat(64) },
-    { publicBuildSettings: { ...api.publicBuildSettings, NEXT_PUBLIC_COMPUTER_ENABLED: '0' } },
+    { publicBuildSettings: { ...api.publicBuildSettings, MIKKA_PUBLIC_COMPUTER_ENABLED: '0' } },
     { overlayCheckout: { ...api.overlayCheckout, actualSha: publicSha } }, { image: api.image.replace('/mikka-api@', '/another@') }]) {
     assert.throws(() => releaseIdentity(env, 'eve', { ...api, ...patch }))
   }

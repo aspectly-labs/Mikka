@@ -12,13 +12,14 @@ import { dbUrl, seedBot, seedIssue, seedProjectTasks, seedUser, seedWorkspace } 
 import { fakeThreadMachines } from './support/thread-machine-fake'
 
 test('cloud provider recovery keeps the thread\'s Agent, preserves scope and uses fresh task machines without waking its parent', { skip: !dbUrl }, async t => {
-  const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_FACTORY_LIFECYCLE_ENABLED', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
+  const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_FACTORY_LIFECYCLE_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
   const saved = new Map(names.map(name => [name, process.env[name]]))
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.MIKKA_BYOS_ENABLED = '1'
   process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1'
   process.env.MIKKA_FACTORY_ROUTING_ENABLED = '0'
   process.env.MIKKA_FACTORY_LIFECYCLE_ENABLED = '0'
+  delete process.env.MIKKA_PUBLIC_POSTHOG_KEY
   delete process.env.NEXT_PUBLIC_POSTHOG_KEY
   let networkAttempts = 0
   t.mock.method(globalThis, 'fetch', async () => { networkAttempts++; throw new Error('Unexpected network request in cloud provider fixture') })
