@@ -117,7 +117,7 @@ function fakeQuery(sql: string, params: unknown[] = []) {
   // patchThread root metadata + lockedFactoryRun
   if (normalized.includes('AS "lockedFactoryRun" FROM agent_runs r WHERE r.id=$1')) {
     assert.match(normalized, /a\.stage IN \('review','verify','monitor'\)/)
-    assert.match(normalized, /a\.status IN \('pending','running','waiting'\)/)
+    assert.match(normalized, /t\."attemptId"=a\.id AND \(a\.status IN \('pending','running','waiting'\)/)
     const run = state.runs.get(String(params[0]))
     if (!run || run.userId !== params[1] || run.deletedAt) return { rows: [] }
     return { rows: [{ id: run.id, issueId: run.issueId, workspaceId: run.workspaceId, threadRelation: run.threadRelation, kind: run.kind, lockedFactoryRun: Boolean(run.independentCheck) }] }
@@ -133,7 +133,8 @@ function fakeQuery(sql: string, params: unknown[] = []) {
   // patchThread atomic recursive chain + Factory lock + root ACL parent update
   if (normalized.startsWith('WITH RECURSIVE chain AS ( SELECT id FROM agent_runs WHERE id=$1')) {
     assert.match(normalized, /r\."continuesRunId"=chain\.id OR r\."retryOf"=chain\.id/)
-    assert.match(normalized, /a\.status IN \('pending','running','waiting'\)/)
+    assert.match(normalized, /questionContinuation/)
+    assert.match(normalized, /t\."attemptId"=a\.id AND \(a\.status IN \('pending','running','waiting'\)/)
     assert.match(normalized, /UPDATE resource_access_policies SET "parentKind"=\$5,"parentId"=\$2::uuid/)
     const rootId = String(params[0])
     const nextIssueId = params[1] as string | null

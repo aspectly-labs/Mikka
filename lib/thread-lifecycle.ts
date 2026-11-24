@@ -162,6 +162,9 @@ export async function sharedThread(token: string): Promise<Run | null> {
   return { ...run, messages }
 }
 
+const QUESTION_ORIGIN_SQL = `(CASE WHEN r."questionContinuation"->>'originRunId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN (r."questionContinuation"->>'originRunId')::uuid END)`
+const LOCKED_FACTORY_PREDICATE = `(a.stage IN ('review','verify','monitor') OR (t."attemptId"=a.id AND (a.status IN ('pending','running','waiting') OR t.status IN ('pending','running','waiting'))))`
+
 /** PATCH: retarget the thread's task and/or its tags (on the root the lists read). */
 export async function patchThread(user: ApiUser, runId: string, input: { taskId?: string | null, tags?: string[] }): Promise<Run | null | 'forbidden'> {
   const source = await ownedRun(user, runId)
@@ -173,10 +176,7 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
   const { rows: [rootRow] } = await pool.query<{ id: string; issueId: string | null; workspaceId: string | null; threadRelation: string | null; kind: string; lockedFactoryRun: boolean }>(
     `SELECT r.id,r."issueId",r."workspaceId",r."threadRelation",r.kind,EXISTS (
        SELECT 1 FROM factory_attempts a LEFT JOIN factory_tasks t ON t.id=a."taskId"
-       WHERE a."runId"=ANY($3::uuid[])
-         AND (a.stage IN ('review','verify','monitor')
-           OR a.status IN ('pending','running','waiting')
-           OR (t."attemptId"=a.id AND t.status IN ('pending','running','waiting')))
+       WHERE a."runId"=ANY($3::uuid[]) AND ${LOCKED_FACTORY_PREDICATE}
      ) AS "lockedFactoryRun" FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 AND r."deletedAt" IS NULL`,
     [root, user.id, chainIds])
   if (!rootRow) return null
@@ -210,9 +210,9 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
   if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 20 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 60))) return null
   if (input.taskId === undefined && input.tags === undefined) return source
   // Task retarget discovers the scoped chain inside the mutation statement so
-  // concurrent retries/continuations move with the root instead of splitting.
-  // Re-check Factory lock atomically and keep the root thread's ACL ancestry
-  // synchronized in the same statement. Tags live on the root the lists read.
+  // concurrent retries/continuations/question-resumes move with the root
+  // instead of splitting. Re-check Factory lock atomically and keep the root
+  // thread's ACL ancestry synchronized in the same statement.
   if (input.taskId !== undefined) {
     const { rows: [move] } = await pool.query<{ moved: boolean }>(
       `WITH RECURSIVE chain AS (
@@ -220,17 +220,15 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
          WHERE id=$1 AND "userId"=$3 AND "workspaceId" IS NOT DISTINCT FROM $4::uuid
            AND "issueId" IS NOT DISTINCT FROM $6::uuid AND "deletedAt" IS NULL
          UNION
-         SELECT r.id FROM agent_runs r JOIN chain ON r."continuesRunId"=chain.id OR r."retryOf"=chain.id
+         SELECT r.id FROM agent_runs r JOIN chain
+           ON r."continuesRunId"=chain.id OR r."retryOf"=chain.id OR ${QUESTION_ORIGIN_SQL}=chain.id
          WHERE r."userId"=$3 AND r."workspaceId" IS NOT DISTINCT FROM $4::uuid
            AND r."issueId" IS NOT DISTINCT FROM $6::uuid AND r."deletedAt" IS NULL
        ), eligible AS (
          SELECT id FROM chain
          WHERE NOT EXISTS (
            SELECT 1 FROM factory_attempts a LEFT JOIN factory_tasks t ON t.id=a."taskId"
-           WHERE a."runId" IN (SELECT id FROM chain)
-             AND (a.stage IN ('review','verify','monitor')
-               OR a.status IN ('pending','running','waiting')
-               OR (t."attemptId"=a.id AND t.status IN ('pending','running','waiting')))
+           WHERE a."runId" IN (SELECT id FROM chain) AND ${LOCKED_FACTORY_PREDICATE}
          )
        ), moved AS (
          UPDATE agent_runs SET "issueId"=$2

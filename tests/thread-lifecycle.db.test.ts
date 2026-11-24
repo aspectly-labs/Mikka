@@ -111,17 +111,42 @@ test('patch moves task binding and tags on the root; foreign, cross-workspace an
   assert.equal(relinked.issueId, next)
   assert.equal((await pool.query(`SELECT "issueId" FROM agent_runs WHERE id=$1`, [retryId])).rows[0]?.issueId, next)
   assert.deepEqual((await pool.query(`SELECT "parentKind","parentId" FROM resource_access_policies WHERE kind='thread' AND id=$1`, [rootId])).rows[0], { parentKind: 'task', parentId: next })
-  // Active Factory execute attempts cannot be moved or unlinked off their task.
-  const factoryTaskId = randomUUID(), attemptId = randomUUID(), sourceEventId = randomUUID()
-  await pool.query(
-    `INSERT INTO factory_tasks (id,"userId","workspaceId","issueId","sourceEventId",route,stage,status,"attemptId",reason)
-     VALUES ($1,$2,$3,$4,$5,'{}'::jsonb,'execute','running',$6,'active test')`,
-    [factoryTaskId, owner.id, workspace.id, next, sourceEventId, attemptId])
-  await pool.query(
-    `INSERT INTO factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
-     VALUES ($1,$2,'execute',1,1,'running',$3,'active test')`,
-    [attemptId, factoryTaskId, rootId])
+  // Active Factory execute attempts cannot be moved or unlinked off their task,
+  // while a completed task with a superseded earlier waiting attempt can be moved again.
+  const factoryTaskId = randomUUID(), attemptId = randomUUID(), resumedAttemptId = randomUUID(), sourceEventId = randomUUID()
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `INSERT INTO factory_tasks (id,"userId","workspaceId","issueId","sourceEventId",route,stage,status,"attemptId",reason)
+       VALUES ($1,$2,$3,$4,$5,'{}'::jsonb,'execute','running',$6,'active test')`,
+      [factoryTaskId, owner.id, workspace.id, next, sourceEventId, attemptId])
+    await client.query(
+      `INSERT INTO factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
+       VALUES ($1,$2,'execute',1,1,'waiting',$3,'waiting question')`,
+      [attemptId, factoryTaskId, rootId])
+    await client.query('COMMIT')
+  } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   assert.equal(await patchThread(owner, rootId, { taskId: null }), null)
+  // Once a resumed attempt finishes and becomes current, the superseded waiting attempt no longer locks the thread.
+  const finishClient = await pool.connect()
+  try {
+    await finishClient.query('BEGIN')
+    await finishClient.query(
+      `INSERT INTO factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
+       VALUES ($1,$2,'execute',2,2,'passed',$3,'resumed done')`,
+      [resumedAttemptId, factoryTaskId, retryId])
+    await finishClient.query(
+      `UPDATE factory_tasks SET status='passed',"attemptId"=$2 WHERE id=$1`,
+      [factoryTaskId, resumedAttemptId])
+    await finishClient.query('COMMIT')
+  } catch (error) { await finishClient.query('ROLLBACK'); throw error } finally { finishClient.release() }
+  const afterFactoryDone = await patchThread(owner, rootId, { taskId: null })
+  assert.ok(afterFactoryDone && afterFactoryDone !== 'forbidden')
+  assert.equal(afterFactoryDone.issueId, null)
+  const relinkAfterFactory = await patchThread(owner, rootId, { taskId: next })
+  assert.ok(relinkAfterFactory && relinkAfterFactory !== 'forbidden')
+  assert.equal(relinkAfterFactory.issueId, next)
   await pool.query(`DELETE FROM factory_tasks WHERE id=$1`, [factoryTaskId])
   // Subagent runs cannot be retargeted independently.
   const subagentId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId: next, status: 'succeeded' })
