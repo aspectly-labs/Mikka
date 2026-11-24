@@ -68,13 +68,16 @@ test('merge queue provenance is accepted only on automatic main runs with both b
   assert.throws(() => checkedRun({ ...original, path: producer, event: 'workflow_dispatch' }, producer, { event: 'push' }))
 })
 
-test('merge queue identity cannot select a manual stage, rollback or production promotion', async () => {
+test('merge queue identity cannot select a manual stage or rollback, and an unknown actor cannot promote', async () => {
   const env = { GITHUB_REPOSITORY: repo.full_name, GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963',
     GITHUB_REF: 'refs/heads/main', GITHUB_ACTOR_ID: '118344674', GITHUB_ACTOR: 'github-merge-queue[bot]' }
   const api = async () => assert.fail('Untrusted selection must not read GitHub')
   for (const phase of ['pipeline-stage', 'pipeline-rollback'])
     await assert.rejects(selectPipeline({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_dispatch', MIKKA_DEPLOYMENT_PHASE: phase }, api }))
-  await assert.rejects(selectPromotion({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_run' }, api }))
+  await assert.rejects(selectPromotion({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_run', GITHUB_ACTOR_ID: '1', GITHUB_ACTOR: 'someone' }, api }),
+    /pipeline_actor_untrusted/)
+  await assert.rejects(selectPromotion({ env: { ...env, GITHUB_EVENT_NAME: 'workflow_run', GITHUB_ACTOR: 'other-bot' }, api }),
+    /pipeline_actor_untrusted/)
 })
 
 test('failed builds, fork PRs, branches and different actors never become deployable candidates', () => {
@@ -287,7 +290,7 @@ test('automatic, manual staging and production candidate selection require migra
   assert.equal(valid.calls.length, 4)
 })
 
-test('owner promotion scans bot staging history without granting the bot production authority', async t => {
+test('promotion by the owner or the merge queue scans staging history and selects the staged release', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'mikka-promotion-history-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const env = { GITHUB_REPOSITORY: repo.full_name, GITHUB_REPOSITORY_ID: String(repo.id), GITHUB_REPOSITORY_OWNER_ID: '183887963',
@@ -333,8 +336,11 @@ test('owner promotion scans bot staging history without granting the bot product
     assert.equal(result.status, 'selected')
     assert.equal(result.source, source)
     assert.equal(scanned, true)
-    await assert.rejects(selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login },
-      api: async () => assert.fail('Bot promotion must fail before reading GitHub') }))
+    scanned = false
+    const queued = await selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login }, api })
+    assert.equal(queued.status, 'selected')
+    assert.equal(queued.source, source)
+    assert.equal(scanned, true)
   }
 })
 
