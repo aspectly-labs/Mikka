@@ -97,7 +97,7 @@ export default function SuggestionsScreen() {
           const disabled = anyPending || state.status === 'unavailable' || state.status === 'accepted'
           const errorText = 'error' in state ? mobileMessages.Errors[state.error as keyof typeof mobileMessages.Errors] : null
           const message = typeof errorText === 'string' ? errorText : 'error' in state ? mobileMessages.Errors.generic : null
-          return <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ busy: pending, disabled }} onPress={() => { void arrange(item) }} style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }]}>
+          return <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ busy: pending, disabled }} onPress={() => { void arrange(item) }} style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }, disabled && !pending && { opacity: 0.45 }]}>
             <View style={styles.badge}><SourceIcon source={item.source} size={16} /></View>
             <View style={styles.body}>
               <Text style={styles.title} numberOfLines={2}>{VERB[item.action] ? <Text style={styles.verb}>{VERB[item.action]} </Text> : null}{item.title}</Text>

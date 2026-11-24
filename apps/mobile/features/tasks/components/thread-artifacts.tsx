@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Image, Pressable, ScrollView, StyleSheet, View, type ImageURISource } from 'react-native'
 import { useRouter } from 'expo-router'
 import { ChevronRight, ClipboardList, FileText, Play } from 'lucide-react-native'
+import { Spinner } from '@/components/icons'
 import { Text } from '@/components/Text'
 import { Segmented } from '@/components/Segmented'
 import { underBar } from '@/components/NavBar'
@@ -60,9 +61,10 @@ export function ThreadArtifactsList({ data }: { data: ThreadArtifacts }) {
               const open = item.kind === 'image' ? () => setViewer({ index, origin: null, radius: 0 }) : item.webPath ? () => { void openOnWeb(item.webPath!) } : undefined
               return (
                 <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={IssueThreads.artifacts.open.replace('{title}', captureLabel(item))} disabled={!open} onPress={open}
-                  style={({ pressed }) => [styles.tile, pressed && { opacity: 0.6 }]}>
-                  {item.kind === 'image' && headers ? <Image source={sources[index]} style={styles.thumb} resizeMode="cover" /> : null}
-                  {item.kind === 'video' ? <View style={styles.play}><Play size={14} color={colors.ink} fill={colors.ink} /></View> : null}
+                  style={({ pressed }) => [styles.tile, pressed && { opacity: 0.6 }, !open && { opacity: 0.4 }]}>
+                  {item.kind === 'image' && headers ? <Image source={sources[index]} style={styles.thumb} resizeMode="cover" /> : item.kind === 'image' ? <View style={styles.play}><Spinner size={14} /></View> : null}
+                  {/* A video with no page to play it on draws no ▶: it would promise what a tap cannot do. */}
+                  {item.kind === 'video' && open ? <View style={styles.play}><Play size={14} color={colors.ink} fill={colors.ink} /></View> : null}
                 </Pressable>
               )
             })}</View>
