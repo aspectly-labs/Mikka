@@ -8,7 +8,7 @@ export const CORE_BUSINESS_ISSUES = Object.freeze([1560, 1561, 1562, 1556, 1826]
 // credential/device business checks or permitting an Infisical account read.
 export const CORE_ISSUES = Object.freeze([...CORE_BUSINESS_ISSUES, 1820, 1821])
 export const CORE_ORIGIN = 'https://app.aspectlylabs.com'
-const REPOSITORY = 'alexj11324/Mikka'
+const REPOSITORY = 'aspectly-labs/Mikka'
 const API = 'https://api.github.com/repos/' + REPOSITORY
 const SHA = /^[a-f0-9]{40}$/
 const positive = value => Number.isSafeInteger(value) && value > 0
@@ -32,8 +32,8 @@ export const coreBusinessSelected = proof => proof?.status === 'ready' && proof.
 
 export function coreProductionGuard(env, event) {
   check(env.MIKKA_ACCEPTANCE_TARGET_MODE === CORE_MODE, 'core_configuration', 'mode')
-  check(env.GITHUB_REPOSITORY === REPOSITORY && env.GITHUB_REPOSITORY_OWNER === 'alexj11324'
-    && event?.repository?.full_name === REPOSITORY && event.repository.owner?.login === 'alexj11324', 'core_configuration', 'repository')
+  check(env.GITHUB_REPOSITORY === REPOSITORY && env.GITHUB_REPOSITORY_OWNER === 'aspectly-labs'
+    && event?.repository?.full_name === REPOSITORY && event.repository.owner?.login === 'aspectly-labs', 'core_configuration', 'repository')
   check(env.GITHUB_WORKFLOW_REF === REPOSITORY + '/' + CORE_WORKFLOW + '@refs/heads/main', 'core_configuration', 'workflow')
   check(env.GITHUB_EVENT_NAME === 'workflow_dispatch' && env.GITHUB_REF === 'refs/heads/main', 'core_configuration', 'event')
   check(SHA.test(env.GITHUB_SHA ?? '') && integerText(env.GITHUB_RUN_ID) && integerText(env.GITHUB_RUN_ATTEMPT), 'core_configuration', 'identity')

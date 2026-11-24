@@ -66,7 +66,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 800 }, { name: '
     const held = new Promise<void>(resolve => { release = resolve })
     await page.route('**/*', async route => {
       const request = route.request()
-      if (request.method() === 'POST' && request.headers()['next-action']) { await held; return route.continue() }
+      if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') { await held; return route.continue() }
       return route.fallback()
     })
     await cloud.click()

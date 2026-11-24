@@ -4,7 +4,7 @@ import { auditTarget, patReadAllowed, runAuthAudit } from './auth-audit-producti
 import { encode, decode } from '../../lib/desktop-rpc/wire.ts'
 
 const sha = 'a'.repeat(40)
-const env = { GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REF: 'refs/heads/main',
+const env = { GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REF: 'refs/heads/main',
   GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: sha, APPLICATION_SHA: sha }
 test('production auth acceptance requires an exact main driver and explicit dispatch', () => {
   assert.equal(auditTarget(env), sha)

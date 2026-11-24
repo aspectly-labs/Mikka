@@ -15,7 +15,7 @@ const codes = new Set(['target_refused', 'build_changed', 'login_failed', 'ident
   'pat_refusal_failed', 'pat_cleanup_failed', 'session_cleanup_failed', 'acceptance_failed'])
 
 export function auditTarget(env) {
-  check(env.GITHUB_REPOSITORY === 'alexj11324/Mikka' && env.GITHUB_REF === 'refs/heads/main'
+  check(env.GITHUB_REPOSITORY === 'aspectly-labs/Mikka' && env.GITHUB_REF === 'refs/heads/main'
     && env.GITHUB_EVENT_NAME === 'workflow_dispatch' && /^[a-f0-9]{40}$/.test(env.APPLICATION_SHA ?? '')
     && env.GITHUB_SHA === env.APPLICATION_SHA, 'target_refused')
   return env.APPLICATION_SHA

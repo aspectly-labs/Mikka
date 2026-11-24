@@ -60,7 +60,7 @@ export function rpcReadResult(data) {
   return decode(data.result)
 }
 
-export function observedAction(request, pathname, basePath, actionIds) {
+export function observedAction(request, pathname, basePath) {
   if (request.method() !== 'POST') return null
   if ([`${basePath}/api/rpc`, `${basePath}/api/desktop/rpc`].includes(pathname)) {
     try {
@@ -70,6 +70,5 @@ export function observedAction(request, pathname, basePath, actionIds) {
       return { kind: 'rpc', action: value.action }
     } catch { return null }
   }
-  const action = actionIds.get(request.headers()['next-action'])
-  return action ? { kind: 'flight', action } : null
+  return null
 }

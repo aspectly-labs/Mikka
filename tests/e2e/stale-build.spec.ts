@@ -41,7 +41,7 @@ test('打开很久的页面：新部署后提示「Mikka 已更新 · 刷新」�
   let missing = 0
   await page.route('**/*', async route => {
     const request = route.request()
-    if (request.method() === 'POST' && request.headers()['next-action']) {
+    if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') {
       missing += 1
       await route.fulfill({ status: 404, headers: { 'x-mikka-action-not-found': '1', 'content-type': 'text/plain' }, body: 'Server action not found.' })
       return

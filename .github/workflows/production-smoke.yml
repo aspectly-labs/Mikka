@@ -112,7 +112,7 @@ jobs:
           if-no-files-found: ignore
 
   lease-audit:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != '' && inputs.audit_lease == true
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != '' && inputs.audit_lease == true
     runs-on: ubuntu-latest
     timeout-minutes: 35
     concurrency:
@@ -167,7 +167,7 @@ jobs:
           retention-days: 14
 
   auth-audit:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != ''
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:

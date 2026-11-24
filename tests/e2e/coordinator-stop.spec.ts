@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { test, expect, register } from './fixtures'
+import { test, expect, register, parseBrowserRpc } from './fixtures'
 
 // 停止 while the Coordinator answers: send turns into stop (same place, a
 // square), Esc does the same, and the stopped reply keeps its words under 已停止.
@@ -18,9 +18,9 @@ async function mockChat(page: Page) {
   const state = { items: [ASKED] as Item[], working: true, stops: 0, chatAction: null as string | null }
   await page.route('**/*', async route => {
     const request = route.request()
-    const actionId = request.headers()['next-action']
-    if (request.method() !== 'POST' || !actionId) return route.fallback()
-    if (state.chatAction && actionId !== state.chatAction) {
+    const rpc = parseBrowserRpc(request)
+    if (!rpc) return route.fallback()
+    if (state.chatAction && rpc.action !== state.chatAction) {
       const response = await route.fetch()
       const body = await response.text()
       // The stop action answers `{ stopped }`; once it has, the turn is over.
@@ -31,12 +31,12 @@ async function mockChat(page: Page) {
       }
       return route.fulfill({ response, body })
     }
-    if (!state.chatAction && (request.postData() ?? '').trim() !== '[]') return route.fallback()
+    if (!state.chatAction && rpc.args.length !== 0) return route.fallback()
     // A poll names the version it shows; drop it so every poll is a full read to rewrite.
-    const response = await route.fetch({ postData: '[]' })
+    const response = await route.fetch({ postData: JSON.stringify({ ...rpc, args: [] }) })
     const body = await response.text()
     if (!ITEMS.test(body) || !/"working"\s*:/.test(body)) return route.fulfill({ response, body })
-    state.chatAction = actionId
+    state.chatAction = rpc.action
     return route.fulfill({ response, body: body.replace(ITEMS, `"items":${JSON.stringify(state.items)}`).replace(/"working"\s*:\s*(true|false)/, `"working":${state.working}`).replace(/"enabled"\s*:\s*false/, '"enabled":true') })
   })
   await page.context().route('**/api/conversations/coordinator/read', route => route.fulfill({ json: { lastReadMessageId: null, lastReadPosition: null, unreadCount: 0 } }))

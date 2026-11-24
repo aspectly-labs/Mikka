@@ -5,7 +5,7 @@ import { Pool } from 'pg'
 import { recordAuthenticationSecrets } from '../../scripts/test-accounts/session.mjs'
 import { dbUrl, seedAgent, seedRun } from '../support/workspace-admin-db'
 import { test as pooledTest } from './test-account-fixtures'
-import { test, expect, register, app } from './fixtures'
+import { test, expect, register, app, parseBrowserRpc } from './fixtures'
 
 /**
  * D12: the display name was a read-only span. It is an input that saves in
@@ -71,8 +71,8 @@ test('设置预取未返回时，开关仍立即保存', async ({ page }) => {
   await page.locator('[data-slot="settings-list"]').getByRole('link', { name: '模型与订阅', exact: true }).hover()
   await expect.poll(() => held.length).toBeGreaterThan(0)
   const saved = page.waitForResponse(response => {
-    const request = response.request()
-    try { return Boolean(request.headers()['next-action']) && request.postData() === JSON.stringify([{ proactive: false }]) } catch { return false }
+    const rpc = parseBrowserRpc(response.request())
+    return Boolean(rpc) && JSON.stringify(rpc?.args) === JSON.stringify([{ proactive: false }])
   })
   await proactive.click()
   expect((await saved).ok()).toBe(true)
@@ -92,9 +92,10 @@ test('通知保存失败时开关恢复原值，重试后保存成功', async ({
   await register(page, '/settings?section=notifications')
   const proactive = page.getByRole('switch', { name: '主动消息', exact: true })
   await expect(proactive).toBeChecked()
-  // A server action POSTs its arguments as JSON with a Next-Action header; drop exactly the save of this switch.
+  // A browser RPC action POSTs `{ version, action, args }` with `x-mikka-rpc: 1`; drop exactly the save of this switch.
   const isSave = (request: import('@playwright/test').Request) => {
-    try { return Boolean(request.headers()['next-action']) && JSON.stringify(JSON.parse(request.postData() ?? '')) === JSON.stringify([{ proactive: false }]) } catch { return false }
+    const rpc = parseBrowserRpc(request)
+    return Boolean(rpc) && JSON.stringify(rpc?.args) === JSON.stringify([{ proactive: false }])
   }
   let aborted = 0
   const dropSave = async (route: import('@playwright/test').Route) => {

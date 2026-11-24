@@ -22,12 +22,12 @@ const workflow = { id: 456, name: RELEASE_NAME, path: RELEASE_WORKFLOW, state: '
 const started = new Date(Date.now() - 60_000).toISOString()
 const run = { id: 123, run_attempt: 2, workflow_id: workflow.id, name: RELEASE_NAME, path: RELEASE_WORKFLOW,
   head_sha: SHA, head_branch: 'main', event: 'push', status: 'completed', conclusion: 'success', run_started_at: started,
-  repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } },
-  head_repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } } }
+  repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 359279274 } },
+  head_repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 359279274 } } }
 const expected = { sourceCommit: SHA, runId: run.id, runAttempt: run.run_attempt, workflowId: workflow.id, event: run.event,
   repositoryId: run.repository.id, repositoryFullName: REPOSITORY }
 const env = () => ({ GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_run', GITHUB_REPOSITORY: REPOSITORY,
-  GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963',
+  GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '359279274',
   GITHUB_REF: 'refs/heads/main', GITHUB_SHA: SHA, GITHUB_RUN_ID: '990', GITHUB_RUN_ATTEMPT: '1', GITHUB_TOKEN: TOKEN,
   TASK_SECRETS_JOB_ID: '991', TASK_SECRETS_JOB_STARTED_AT: started, TASK_SECRETS_JOB_START_SOURCE: 'github_actions_job.started_at',
   APPLICATION_SHA: SHA, EXPECTED_SOURCE_SHA: SHA, EXPECTED_UPSTREAM_RUN_ID: '123', EXPECTED_UPSTREAM_RUN_ATTEMPT: '2',

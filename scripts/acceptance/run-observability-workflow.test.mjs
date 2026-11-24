@@ -11,7 +11,7 @@ const env = { MIKKA_ACCEPTANCE_PROGRESS_TOKEN: token, MIKKA_EXPECTED_DEPLOYMENT_
   ACME_DEMO_EMAIL: 'PRIVATE_EMAIL', ACME_DEMO_PASSWORD: 'PRIVATE_PASSWORD', PATH: '/usr/bin',
   GITHUB_TOKEN: token, GH_TOKEN: 'PRIVATE_OTHER_TOKEN', ACCIDENTAL_ALIAS: 'Bearer ' + token }
 const runnerArgs = [...args, '--runner-browser']
-const runnerEnv = { ...env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: revision }
+const runnerEnv = { ...env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: revision }
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value }); return { promise, resolve } }
 function ready(item = CASES[0]) {
   const fixture = fixtureTask(revision, item)
@@ -59,7 +59,7 @@ test('fixed progress bridge posts verified fixture once and keeps every token al
   await data.posted
   assert.equal(data.calls.length, 1)
   const { url, init } = data.calls[0]
-  assert.equal(url, 'https://api.github.com/repos/alexj11324/Mikka/issues/1512/comments')
+  assert.equal(url, 'https://api.github.com/repos/aspectly-labs/Mikka/issues/1512/comments')
   assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error')
   assert.equal(init.headers.authorization, 'Bearer ' + token); assert.ok(init.signal instanceof AbortSignal)
   const body = JSON.parse(init.body)

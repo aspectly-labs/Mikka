@@ -33,7 +33,7 @@ export function controlledFailureSettings(args: string[], env: NodeJS.ProcessEnv
   if (!args.length) return undefined
   if (args.length !== 1 || args[0] !== '--export-controlled-failures') throw new Error('invalid_trace_benchmark_mode')
   if (env.GITHUB_ACTIONS !== 'true' || env.GITHUB_EVENT_NAME !== 'workflow_dispatch'
-    || env.GITHUB_REPOSITORY !== 'alexj11324/Mikka' || env.GITHUB_REF !== 'refs/heads/main'
+    || env.GITHUB_REPOSITORY !== 'aspectly-labs/Mikka' || env.GITHUB_REF !== 'refs/heads/main'
     || !/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') || env.GITHUB_SHA !== env.MIKKA_EXPECTED_DEPLOYMENT_SHA) {
     throw new Error('controlled_failure_source_binding_required')
   }

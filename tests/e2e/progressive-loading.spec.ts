@@ -34,7 +34,7 @@ test('任务与项目请求未返回时聊天可独立加载', async ({ page }) 
   const pending = new Promise<void>(resolve => { release = resolve })
   let blocked = false
   await page.route('**/*', async route => {
-    if (route.request().method() === 'POST' && route.request().headers()['next-action']) {
+    if (route.request().method() === 'POST' && route.request().headers()['x-mikka-rpc'] === '1') {
       blocked = true
       await pending
     }

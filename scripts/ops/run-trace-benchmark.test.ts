@@ -17,7 +17,7 @@ import { createLogProvider } from '../../lib/tracing/logs'
 
 const subject = () => import('./run-trace-benchmark')
 const revision = 'a'.repeat(40)
-const env = { NODE_ENV: 'test' as const, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'alexj11324/Mikka',
+const env = { NODE_ENV: 'test' as const, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'aspectly-labs/Mikka',
   GITHUB_REF: 'refs/heads/main', GITHUB_SHA: revision, MIKKA_EXPECTED_DEPLOYMENT_SHA: revision,
   MIKKA_PUBLIC_POSTHOG_KEY: 'phc_UNIT_PRIVATE_CANARY', E2E_DATABASE_URL: 'postgresql://e2e:local-only@127.0.0.1:5432/mikka_e2e' }
 const flag = ['--export-controlled-failures']
@@ -26,14 +26,24 @@ const workflow = require('js-yaml').load(readFileSync(new URL('../../.github/wor
 
 test('controlled-failure workflow mode has one isolated job and preserves every old mode', () => {
   assert.deepEqual(workflow.on.workflow_dispatch.inputs.mode.options, ['preflight', 'execute', 'export', 'controlled-failure'])
-  for (const [mode, expected] of [['preflight', 'acceptance'], ['execute', 'acceptance'], ['export', 'export'], ['controlled-failure', 'controlled-failure'], ['unknown', undefined]]) {
-    const active = Object.entries(workflow.jobs).filter(([, value]) => runInNewContext((value as { if: string }).if, {
-      github: { repository: 'alexj11324/Mikka', ref: 'refs/heads/main' }, inputs: { mode },
-    })).map(([name]) => name)
-    assert.deepEqual(active, expected ? [expected] : [])
+  for (const github of [
+    { repository: 'aspectly-labs/Mikka', repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main' },
+    { repository: 'alexj11324/Mikka', repository_id: '1427517699', repository_owner_id: '183887963', ref: 'refs/heads/main' },
+  ]) {
+    for (const [mode, expected] of [['preflight', 'acceptance'], ['execute', 'acceptance'], ['export', 'export'], ['controlled-failure', 'controlled-failure'], ['unknown', undefined]]) {
+      const active = Object.entries(workflow.jobs).filter(([, value]) => runInNewContext((value as { if: string }).if, {
+        github, inputs: { mode },
+      })).map(([name]) => name)
+      assert.deepEqual(active, expected ? [expected] : [])
+    }
   }
   const job = workflow.jobs['controlled-failure']
-  for (const github of [{ repository: 'foreign/repo', ref: 'refs/heads/main' }, { repository: 'alexj11324/Mikka', ref: 'refs/heads/unreviewed' }]) {
+  for (const github of [
+    { repository: 'foreign/repo', repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main' },
+    { repository: 'aspectly-labs/Mikka', repository_id: '999', repository_owner_id: '359279274', ref: 'refs/heads/main' },
+    { repository: 'aspectly-labs/Mikka', repository_id: '1427517699', repository_owner_id: '183887963', ref: 'refs/heads/main' },
+    { repository: 'aspectly-labs/Mikka', repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/unreviewed' },
+  ]) {
     assert.equal(runInNewContext(job.if, { github, inputs: { mode: 'controlled-failure' } }), false)
   }
   assert.equal(job.services.postgres.image, 'postgres:17')
