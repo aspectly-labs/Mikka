@@ -4413,5 +4413,40 @@
     "behavior": "Owner-only Bot chat actions, including Edit and Regenerate of the latest turn, against the installation database and eve channel.",
     "test": "tests/bot-chat-revisions.db.test.ts",
     "suite": "test:activity-actor-db"
+  },
+  "app/api/mobile/tasks/[id]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "An authenticated native client reads one task, optionally with its status, priority and assignee choices, and changes them through the web's own task actions and revision fence in the local application database.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
+  },
+  "app/api/mobile/tasks/[id]/comments/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "An authenticated native client adds a task discussion comment through the web editor's document exchange, attributed to its own account, in the local application database.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
+  },
+  "lib/mobile-task-edit.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Applies native task status, priority, assignee and comment changes by acting as the signed-in person through the existing web actions and their task access checks; no external service.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
+  },
+  "lib/mobile-task-edit-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates native task edit and comment requests and maps their result codes; pure, with no configuration.",
+    "test": "lib/mobile-task-edit-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-tasks.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Locates a bound task the native caller may read and pins its stored workspace for the task detail and edits, using the local application and workspace databases.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
   }
 }

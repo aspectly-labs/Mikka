@@ -2049,9 +2049,19 @@
       "template": "/api/mobile/tasks/[id]",
       "source": "app/api/mobile/tasks/[id]/route.ts",
       "methods": [
-        "GET"
+        "GET",
+        "PATCH"
       ],
-      "sourceHash": "875c1e7ef9d19c604e08d3737823e494eea6674f0e819e1e7390bcde56de52de"
+      "sourceHash": "f48aa96b54beaac59e7f66c1e517deef92fb3ab4bfb0eaf3b507cb9b1728b550"
+    },
+    {
+      "path": "/mikka/api/mobile/tasks/[id]/comments",
+      "template": "/api/mobile/tasks/[id]/comments",
+      "source": "app/api/mobile/tasks/[id]/comments/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "383c32683c449d214cdb9864975b995b5346c01ee73d7e8d3ba4594422821835"
     },
     {
       "path": "/mikka/api/mobile/threads",

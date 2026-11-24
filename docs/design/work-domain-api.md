@@ -301,6 +301,40 @@ Web/Desktop/iOS integration must consume this bounded batch once per existing
 list/live update to display current Factory handoffs consistently. Supplying
 the backend contract does not complete that UI integration.
 
+### Native task edits
+
+The phone edits a Task through the Web's own actions, run as the signed-in
+person (`actAs`), so the Task ACL (`canSteer`), membership, revision fence,
+history, live keys and Linear effects are the Web's. Each route answers the
+detail shape of `GET /api/mobile/tasks/:id`, which now also carries
+`task.revision`, `task.stateId` and `task.assignee` (`{ id, name, image }` or
+null).
+
+- `GET /api/mobile/tasks/:id?options=1` adds `options`: `canEdit`, the
+  Workspace's `states` (as the status picker reads them), `priorities` and the
+  active `members` who may be assigned.
+- `PATCH /api/mobile/tasks/:id` with `{ revision }` and exactly one change:
+  `status` (with an optional `stateId` of that category, `moveIssue`),
+  `priority` (`changeIssuePriority`) or `assigneeId`, null to unassign
+  (`updateIssueMetadata`). Each action commits on its own, so a body with two
+  changes is `400 validationGeneric` and nothing is saved. `409 issueStale`
+  when `revision` is not the Task's; `400 memberNotJoined` for an assignee who
+  is not an active member.
+- `POST /api/mobile/tasks/:id/comments` with `{ body, clientId? }` adds a
+  Task-level discussion (an unanchored comment thread, up to 2000 characters)
+  through `exchangeDocument`, which binds the author to the account. The thread
+  is a Yjs update from its own client, independent of any document state, so it
+  integrates even when another writer initializes the document first; a never
+  opened document is seeded with the editor's canonical seed. It answers `201`
+  with the detail plus `comment`, its `timeline` row, only once the saved
+  document holds it (otherwise `409 issueStale`, safe to retry); a repeated
+  `clientId` lands once.
+
+A Task the person cannot read, or can read but not steer, answers
+`404 issueNotFound` to every write, as the Web's actions do. Writes follow the
+mobile origin policy (`403 originNotAllowed`); a malformed body is
+`400 validationGeneric`.
+
 The server validates the Workspace against the authenticated principal and
 current membership, including an empty batch. Duplicate IDs are read once.
 Missing, deleted, inaccessible and other-Workspace Tasks are all omitted from

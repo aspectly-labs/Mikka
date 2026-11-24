@@ -10,7 +10,7 @@ import { issueForUser } from '@/lib/issue-access'
 import { withIssueWorkspace } from '@/lib/issue-scope-authorization'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
-import { taskIdentifiers } from '@/lib/task-identifier-server'
+import { taskAssignees, taskIdentifiers } from '@/lib/task-identifier-server'
 import { githubPullRequestKey, readIssueMetadata, taskWorkOwner } from '@/lib/issue-metadata'
 import { taskRelationKinds } from './issue-relations'
 import { taskPullConversations } from './task-work-pulls'
@@ -33,11 +33,9 @@ import { taskReviewSourceHint } from '@/lib/coding-workspace/task-review/summary
 /** Locate the persisted tenant through the full reader, then hold fresh
  * membership and re-read every projection. Cookie/default choices are not pins. */
 export async function mobileTask(user: Exclude<IssueReader, string>, id: string, explicitWorkspaceId?: string, includeWork = false) {
-  const candidate = await issueForUser(user, id, false, db, { withoutBody: true })
-  if (!candidate || candidate.ownershipState !== 'bound' || !candidate.workspaceId
-    || (explicitWorkspaceId !== undefined && candidate.workspaceId !== explicitWorkspaceId)) return null
-  const workspaceId = candidate.workspaceId
-  const reader = { ...user, [tokenWorkspace]: workspaceId, [enterprisePrincipal]: user[enterprisePrincipal] }
+  const located = await mobileTaskReader(user, id, explicitWorkspaceId)
+  if (!located) return null
+  const { workspaceId, reader } = located
   const read = () => withIssueWorkspace(reader, workspaceId, { issueId: id, action: 'canReadContent' }, () => readMobileTask(reader, workspaceId, id))
   if (!includeWork) return read()
   const { withTaskWorkspace } = await import('./task-workspace')
@@ -79,6 +77,19 @@ export async function mobileTask(user: Exclude<IssueReader, string>, id: string,
   })
 }
 
+/** A bound task the caller may read, its stored tenant and a reader pinned to
+ * it, or null. A selected workspace that is not the task's own is not a pin. */
+export async function mobileTaskReader(user: Exclude<IssueReader, string>, id: string, explicitWorkspaceId?: string) {
+  const candidate = await issueForUser(user, id, false, db, { withoutBody: true })
+  if (!candidate || candidate.ownershipState !== 'bound' || !candidate.workspaceId
+    || (explicitWorkspaceId !== undefined && candidate.workspaceId !== explicitWorkspaceId)) return null
+  const workspaceId = candidate.workspaceId
+  return { workspaceId, reader: { ...user, [tokenWorkspace]: workspaceId, [enterprisePrincipal]: user[enterprisePrincipal] } }
+}
+
+const memberView = (member: { id: string; name: string; image: string | null } | null | undefined) =>
+  member ? { id: member.id, name: member.name, image: member.image } : null
+
 async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: string, id: string) {
   const issue = await issueForUser(user, id)
   if (!issue || issue.ownershipState !== 'bound' || issue.workspaceId !== workspaceId) return null
@@ -86,7 +97,7 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
   const owner = taskWorkOwner(metadata)
   const blockerIds = metadata.blockedByIds ?? []
   const visibleBlockers = blockerIds.length ? await issueVisibility(user, false, workspaceId, db, { onlyIssueIds: blockerIds }) : null
-  const [identifiers, runs, [decoration], versions, [document], labels, blockers] = await Promise.all([
+  const [identifiers, runs, [decoration], versions, [document], labels, blockers, assignees] = await Promise.all([
     taskIdentifiers([{ id, ownerId: issue.userId, scope: issue.scope, number: metadata.number, issuedIdentifier: issue.issuedIdentifier }]),
     db.select({ ...taskStateRunColumns, pullRequest: runPublications.pullRequest,
       kind: agentRuns.kind, createdAt: agentRuns.createdAt,
@@ -110,6 +121,8 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
     taskScheduleLabels(),
     visibleBlockers ? db.select({ id: issues.id, status: issues.status, userId: issues.userId, scope: issues.scope, content: issues.content, issuedIdentifier: issues.issuedIdentifier }).from(issues)
       .where(and(inArray(issues.id, blockerIds), visibleBlockers.predicate)) : [],
+    // The web's runtime authority: only an active workspace member reads as the assignee.
+    taskAssignees([{ id, workspaceId, assignee: metadata.assignee }]),
   ])
   const reviews = await taskReviewSummaries(user, decoration?.codingReview ? [id] : [], workspaceId)
   const history = deriveIssueActivity(await enrichActivityActors(versions, issue.userId), [], Infinity)
@@ -140,7 +153,10 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
     task: {
       id, identifier: identifiers.get(id) ?? null, title: issue.title, description: issueContentToMarkdown(issue.content, { mentionLabels: true }).trim() || null,
       workOwner: owner ? { kind: owner.kind, name: owner.name } : null,
-      status: issue.status, priority: issue.priority, ...taskStateOf(task, newest, { block, schedule }), bot: newest?.bot ?? null,
+      status: issue.status, priority: issue.priority,
+      // What an edit (PATCH) needs: the revision it must match, the chosen state and the assignee.
+      revision: issue.revision, stateId: issue.stateId ?? null, assignee: memberView(assignees.get(id)),
+      ...taskStateOf(task, newest, { block, schedule }), bot: newest?.bot ?? null,
       replyRunId: latestConversationRun(runs),
       agent: newest ? { harness: newest.harness, model: newest.model } : null, place, schedule,
       review: reviews.get(id) ?? null,

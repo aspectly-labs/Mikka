@@ -1,13 +1,28 @@
 import { z } from 'zod'
 import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
 import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
 import { workspaceSelection } from '@/lib/workspace-selection'
 import { mobileTask } from '@/lib/mobile-tasks'
+import { editMobileTask, mobileTaskOptions } from '@/lib/mobile-task-edit'
+import { mobileTaskEditInput, mobileTaskWriteError } from '@/lib/mobile-task-edit-contract'
 import { ActionFailureError } from '@/lib/action-error'
 
+type MobileUser = NonNullable<Awaited<ReturnType<typeof mobileUser>>>
 
-/** Read one task and its attempts; raw run errors remain on /api/mobile/threads/:id. */
+/** The app's selected workspace, when it sent one: the task must be in it. */
+async function selectedWorkspace(request: Request, user: MobileUser) {
+  return workspaceSelection(request.headers).present ? (await loadWorkspaceContext(undefined, user)).workspace.id : undefined
+}
+
+/** A missing, hidden or no longer reachable task, however the check failed. */
+const hidden = (error: unknown) => error instanceof WorkspaceError
+  || (error instanceof ActionFailureError && ['issueNotFound', 'workspaceAccessDenied'].includes(error.code))
+
+/**
+ * Read one task and its attempts; raw run errors remain on /api/mobile/threads/:id.
+ * `?options=1` adds `options`: the status, priority and assignee pickers' choices and `canEdit`.
+ */
 async function handleGET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await mobileUser(request)
   noteLogUser(user?.id)
@@ -15,15 +30,43 @@ async function handleGET(request: Request, { params }: { params: Promise<{ id: s
   const id = z.uuid().safeParse((await params).id)
   if (!id.success) return json({ error: 'issueNotFound' }, 404)
   try {
-    const selectedWorkspaceId = workspaceSelection(request.headers).present
-      ? (await loadWorkspaceContext(undefined, user)).workspace.id : undefined
-    const detail = await mobileTask(user, id.data, selectedWorkspaceId, new URL(request.url).searchParams.get('work') === '1')
-    return detail ? json(detail) : json({ error: 'issueNotFound' }, 404)
+    const selectedWorkspaceId = await selectedWorkspace(request, user)
+    const search = new URL(request.url).searchParams
+    const detail = await mobileTask(user, id.data, selectedWorkspaceId, search.get('work') === '1')
+    if (!detail) return json({ error: 'issueNotFound' }, 404)
+    if (search.get('options') !== '1') return json(detail)
+    const options = await mobileTaskOptions(user, id.data, selectedWorkspaceId)
+    return options ? json({ ...detail, options }) : json({ error: 'issueNotFound' }, 404)
   } catch (error) {
-    if (error instanceof WorkspaceError || (error instanceof ActionFailureError && ['issueNotFound', 'workspaceAccessDenied'].includes(error.code)))
-      return json({ error: 'issueNotFound' }, 404)
+    if (hidden(error)) return json({ error: 'issueNotFound' }, 404)
+    throw error
+  }
+}
+
+/**
+ * `PATCH /api/mobile/tasks/:id` with `{ revision, status?, stateId?, priority?, assigneeId? }`:
+ * the web's own status, priority and assignee changes. Answers the task as GET does;
+ * 409 `issueStale` when `revision` is not the task's, 404 when the person may not edit it.
+ */
+async function handlePATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!writeAllowed(request)) return forbiddenOrigin()
+  const user = await mobileUser(request)
+  noteLogUser(user?.id)
+  if (!user) return unauthorized()
+  const id = z.uuid().safeParse((await params).id)
+  if (!id.success) return json({ error: 'issueNotFound' }, 404)
+  const input = mobileTaskEditInput.safeParse(await request.json().catch(() => null))
+  if (!input.success) return json({ error: 'validationGeneric' }, 400)
+  try {
+    const result = await editMobileTask(user, id.data, input.data, await selectedWorkspace(request, user))
+    if ('detail' in result) return json(result.detail)
+    const { status, error } = mobileTaskWriteError(result.error)
+    return json({ error }, status)
+  } catch (error) {
+    if (hidden(error)) return json({ error: 'issueNotFound' }, 404)
     throw error
   }
 }
 
 export const GET = withRequestLog('/api/mobile/tasks/[id]', handleGET)
+export const PATCH = withRequestLog('/api/mobile/tasks/[id]', handlePATCH)
