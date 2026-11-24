@@ -3,6 +3,7 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import Script from '@/lib/client-runtime/script'
 import { useLocale } from '@/lib/intl/i18n-client'
+import { publicEnv } from '@/lib/public-env.mjs'
 
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
 
@@ -23,7 +24,7 @@ export type TurnstileHandle = { reset(): void }
  * without a site key (local, previews) nothing renders and no token is sent.
  * A token is single-use: the form resets the widget after each request.
  */
-export function Turnstile({ ref, onToken, siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY }: { ref?: Ref<TurnstileHandle>; onToken: (token: string | null) => void; siteKey?: string }) {
+export function Turnstile({ ref, onToken, siteKey = process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY || publicEnv('MIKKA_PUBLIC_TURNSTILE_SITE_KEY') }: { ref?: Ref<TurnstileHandle>; onToken: (token: string | null) => void; siteKey?: string }) {
   const locale = useLocale()
   const container = useRef<HTMLDivElement>(null)
   const widget = useRef<string | null>(null)

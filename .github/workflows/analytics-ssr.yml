@@ -54,7 +54,7 @@ jobs:
       DATABASE_URL: postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e
       BETTER_AUTH_URL: http://localhost:3186
       BETTER_AUTH_SECRET: synthetic-ssr-regression-secret-not-a-real-credential
-      NEXT_PUBLIC_POSTHOG_KEY: phc_synthetic_ssr_regression
+      MIKKA_PUBLIC_POSTHOG_KEY: phc_synthetic_ssr_regression
       MIGRATE: '0'
     steps:
       - name: Require a successful trusted selection

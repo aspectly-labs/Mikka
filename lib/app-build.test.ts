@@ -39,13 +39,13 @@ test('failed version reads stay unknown and do not turn into a known stale build
 })
 
 test('concurrent stale actions share one refresh notification and a later action stays blocked', async () => {
-  const priorBuild = process.env.NEXT_PUBLIC_MIKKA_BUILD
+  const priorBuild = process.env.MIKKA_PUBLIC_BUILD
   const priorWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
   const priorFetch = globalThis.fetch
   const events: string[] = []
   let reads = 0, actions = 0
   try {
-    process.env.NEXT_PUBLIC_MIKKA_BUILD = 'fixture-old'
+    process.env.MIKKA_PUBLIC_BUILD = 'fixture-old'
     Object.defineProperty(globalThis, 'window', { configurable: true, value: { dispatchEvent: (event: Event) => { events.push(event.type); return true } } })
     globalThis.fetch = async () => { reads++; return Response.json({ build: 'fixture-new' }) }
     const { checkPageBuildBeforeAction } = await import(new URL('./app-build.ts?stale-action-fixture', import.meta.url).href)
@@ -56,8 +56,8 @@ test('concurrent stale actions share one refresh notification and a later action
     assert.equal(reads, 1)
     assert.deepEqual(events, [STALE_BUILD_EVENT])
   } finally {
-    if (priorBuild === undefined) delete process.env.NEXT_PUBLIC_MIKKA_BUILD
-    else process.env.NEXT_PUBLIC_MIKKA_BUILD = priorBuild
+    if (priorBuild === undefined) delete process.env.MIKKA_PUBLIC_BUILD
+    else process.env.MIKKA_PUBLIC_BUILD = priorBuild
     if (priorWindow) Object.defineProperty(globalThis, 'window', priorWindow)
     else Reflect.deleteProperty(globalThis, 'window')
     globalThis.fetch = priorFetch
@@ -65,13 +65,13 @@ test('concurrent stale actions share one refresh notification and a later action
 })
 
 test('a pending version check cannot reopen a page retired by another response', async () => {
-  const priorBuild = process.env.NEXT_PUBLIC_MIKKA_BUILD
+  const priorBuild = process.env.MIKKA_PUBLIC_BUILD
   const priorWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
   const priorFetch = globalThis.fetch
   const target = new EventTarget()
   const pending = Promise.withResolvers<Response>()
   try {
-    process.env.NEXT_PUBLIC_MIKKA_BUILD = 'fixture-old'
+    process.env.MIKKA_PUBLIC_BUILD = 'fixture-old'
     Object.defineProperty(globalThis, 'window', { configurable: true, value: target })
     globalThis.fetch = () => pending.promise
     const app = await import(new URL('./app-build.ts?version-retired-while-pending', import.meta.url).href)
@@ -80,8 +80,8 @@ test('a pending version check cannot reopen a page retired by another response',
     pending.resolve(Response.json({ build: 'fixture-old' }))
     assert.equal(await allowed, false)
   } finally {
-    if (priorBuild === undefined) delete process.env.NEXT_PUBLIC_MIKKA_BUILD
-    else process.env.NEXT_PUBLIC_MIKKA_BUILD = priorBuild
+    if (priorBuild === undefined) delete process.env.MIKKA_PUBLIC_BUILD
+    else process.env.MIKKA_PUBLIC_BUILD = priorBuild
     if (priorWindow) Object.defineProperty(globalThis, 'window', priorWindow)
     else Reflect.deleteProperty(globalThis, 'window')
     globalThis.fetch = priorFetch

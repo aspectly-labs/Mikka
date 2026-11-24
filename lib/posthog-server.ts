@@ -6,7 +6,7 @@ import { registerTelemetryFlush } from '@/lib/tracing/flush'
 import { safeErrorAttributes } from '@mikka/protocol/tracing'
 
 // PostHog on the server, for per-person flags and LLM usage. It uses the same
-// project as the browser (NEXT_PUBLIC_POSTHOG_KEY) and the same distinct id,
+// project as the browser (MIKKA_PUBLIC_POSTHOG_KEY) and the same distinct id,
 // the Mikka user id (components/posthog-analytics.tsx). POSTHOG_SECRET_KEY, a
 // project secret or personal API key, lets flags be evaluated locally from
 // polled definitions; without it each uncached check asks PostHog. Without the

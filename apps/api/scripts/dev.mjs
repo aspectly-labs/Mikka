@@ -9,6 +9,7 @@ import { apiProxyOptions, developmentPages } from './dev-http.mjs'
 import { installOverlay, prepareDevelopment, provisionDevelopmentAccount } from './dev-preflight.mjs'
 import { assertApiBuildConfiguration, nodeRuntimePackages } from '../build-contract.mjs'
 import { startEveService } from '../../../scripts/eve-service.mjs'
+import { withLegacyPublicDefines } from '../../../lib/public-env.mjs'
 
 const execute = promisify(execFile)
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
@@ -249,7 +250,7 @@ export async function startDevelopment({ args = [], root = repository, log = con
       buildDir: join(directory, 'build'), output: { dir: join(directory, 'output') },
       routes: { '/**': join(root, 'apps/api/runtime/dev-entry.ts') },
       serveStatic: false,
-      replace: { 'process.env.NEXT_PUBLIC_MIKKA_BUILD': '""' },
+      replace: withLegacyPublicDefines({ 'process.env.MIKKA_PUBLIC_BUILD': '""' }),
     }, { dotenv: false })
     assertApiBuildConfiguration(nitro, root, { development: true })
     // Config merging appends arrays; explicitly remove production public assets

@@ -107,7 +107,7 @@ test('real Vite/Nitro HTTP: authenticated activity, all-run media, immutable ver
     BETTER_AUTH_URL:origin,BETTER_AUTH_SECRET:randomBytes(32).toString('hex'),E2E_BASE_URL:origin,
     MIKKA_LOCAL_TEST_ACCOUNTS:'1',MIKKA_TEST_DEPLOYMENT_SHA:revision,MIKKA_TEST_ENVIRONMENT_FILE:descriptor,
     MIKKA_DEV_SKIP_ENV_FILES:'1',WORKFLOW_TARGET_WORLD:'local',WORKFLOW_LOCAL_BASE_URL:origin,
-    MIKKA_TRACE_SAMPLE_RATE:'0',NEXT_PUBLIC_POSTHOG_KEY:'',
+    MIKKA_TRACE_SAMPLE_RATE:'0',MIKKA_PUBLIC_POSTHOG_KEY:'',NEXT_PUBLIC_POSTHOG_KEY:'',
     WORKFLOW_LOCAL_DATA_DIR:join(directory,'workflow'),FACTORY_ACTIVITY_HTTP_NETWORK_RECEIPT:networkReceipt,
   }))configure(key,value)
   if(process.env.ORVILO_DATABASE_URL)configure('ORVILO_DATABASE_URL',target.toString())

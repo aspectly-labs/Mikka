@@ -1,6 +1,12 @@
+import { withLegacyPublicNames } from '../../../lib/public-env.mjs'
+
 // These bindings belong to the hosted business API. Deployment credentials,
 // broker decryption authority and managed GitHub App signing stay outside it.
-const applicationBindings = [
+// Public settings are forwarded under their legacy NEXT_PUBLIC_* names too
+// until phase 2 of the rename (lib/public-env.mjs). An empty binding is not
+// forwarded, which is the same rule publicEnv() applies: an empty new name
+// falls back to a non-empty legacy one.
+const applicationBindings = withLegacyPublicNames([
   'BETTER_AUTH_SECRET', 'TURNSTILE_SECRET_KEY', 'DATABASE_URL', 'MIKKA_DATABASE_URL', 'MIN_CLIENT_VERSION',
   'MIKKA_EVE_ORIGIN', 'WORKFLOW_TARGET_WORLD', 'MIKKA_WORKFLOW_QUEUE_PUBLIC_KEY',
   'MIKKA_DEPLOYMENT_ID', 'MIKKA_CLOUDFLARE_TASKS_DISABLED',
@@ -15,8 +21,8 @@ const applicationBindings = [
   'COMPOSIO_API_KEY', 'COMPOSIO_WEBHOOK_SECRET', 'COMPOSIO_CALLBACK_VERIFIER_URL',
   'BETTER_AUTH_OAUTH_PROXY_URL', 'BETTER_AUTH_OAUTH_PROXY_SECRET',
   'RESEND_API_KEY', 'SMTP_URL', 'MIKKA_EMAIL_FROM',
-  'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_TEAM_PRICE_ID', 'STRIPE_TEAM_RESOURCE_PRICE_ID', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
-  'NEXT_PUBLIC_POSTHOG_KEY', 'EXPO_ACCESS_TOKEN', 'NEON_API_KEY', 'CRON_SECRET',
+  'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_TEAM_PRICE_ID', 'STRIPE_TEAM_RESOURCE_PRICE_ID', 'MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY',
+  'MIKKA_PUBLIC_POSTHOG_KEY', 'EXPO_ACCESS_TOKEN', 'NEON_API_KEY', 'CRON_SECRET',
   'OPS_ALERT_SLACK_WEBHOOK_URL',
   'LINEAR_CLIENT_ID', 'LINEAR_CLIENT_SECRET', 'LINEAR_TOKEN_ENCRYPTION_KEY', 'LINEAR_WEBHOOK_SECRET',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'TELEGRAM_WEBHOOK_SECRET_TOKEN',
@@ -27,12 +33,13 @@ const applicationBindings = [
   'MIKKA_BYOS_ENABLED', 'MIKKA_BYOS_CLAUDE_OAUTH', 'MIKKA_BYOS_CODEX_OAUTH', 'MIKKA_BYOS_ENROLLMENT_ENABLED',
   'MIKKA_BYOS_ENROLLMENT_ATTEMPT_PATH', 'MIKKA_BYOS_ENROLLMENT_CLAIM_PATH', 'MIKKA_BYOS_ENROLLMENT_GRANT_PATH',
   'MIKKA_LITELLM_URL', 'MIKKA_LITELLM_MASTER_KEY', 'MIKKA_DECISION_TIMEOUT_MS',
-]
+])
 
 export function applicationEnvironment(bindings) {
   const environment = { BETTER_AUTH_URL: bindings.PUBLIC_ORIGIN, MIKKA_API_INGRESS: 'cloudflare' }
   for (const name of applicationBindings) {
     const value = bindings[name]
+    // Empty counts as unset, for public settings as for every other binding.
     if (typeof value === 'string' && value.length) environment[name] = value
   }
   return environment

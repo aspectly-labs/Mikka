@@ -102,6 +102,14 @@ test('a failed stage blocks the next writer while a completed rollback restores 
   assert.throws(() => baselineOrigin({ ...summary, verification: { status: 'fail' } }))
   assert.deepEqual(baselineOrigin({ ...summary, status: 'failed', rollback: { status: 'passed' } }), previousOrigin)
   assert.equal(baselineOrigin({ ...summary, previousOrigin: null, rollback: { status: 'passed' } }), null)
+  for (const failedStep of ['artifacts', 'existing-resources']) {
+    assert.deepEqual(baselineOrigin({ ...summary, status: 'failed', failedStep }), previousOrigin)
+    assert.equal(baselineOrigin({ ...summary, target: 'production', status: 'failed', failedStep, previousOrigin: null }, 'production'), null)
+    assert.throws(() => baselineOrigin({ ...summary, status: 'failed', failedStep, rollback: { status: 'failed' } }), /requires_recovery/)
+    assert.throws(() => baselineOrigin({ ...summary, status: 'failed', failedStep, admission: 'rejected' }), /requires_recovery/)
+  }
+  for (const failedStep of ['migrations', 'api', 'manifest-readback', 'production-probes', 'staging-probes', undefined])
+    assert.throws(() => baselineOrigin({ ...summary, status: 'failed', failedStep }), /requires_recovery/)
   assert.throws(() => baselineOrigin({ ...summary, target: 'staging' }, 'production'))
   assert.deepEqual(baselineOrigin({ ...summary, target: 'production' }, 'production'), origin)
 })

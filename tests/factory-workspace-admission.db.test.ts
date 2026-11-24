@@ -33,10 +33,10 @@ test('human Factory admission holds Workspace before APP and reuses Profile memb
   const environment = { E2E_DATABASE_URL: process.env.E2E_DATABASE_URL, MIKKA_DATABASE_URL: process.env.MIKKA_DATABASE_URL,
     DATABASE_URL: process.env.DATABASE_URL, BETTER_AUTH_URL: process.env.BETTER_AUTH_URL, BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     MIKKA_EDITION: process.env.MIKKA_EDITION, MIKKA_BYOS_ENABLED: process.env.MIKKA_BYOS_ENABLED,
-    NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY, WORKSPACE_SECRETS_KEY: process.env.WORKSPACE_SECRETS_KEY }
+    MIKKA_PUBLIC_POSTHOG_KEY: process.env.MIKKA_PUBLIC_POSTHOG_KEY, NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY, WORKSPACE_SECRETS_KEY: process.env.WORKSPACE_SECRETS_KEY }
   const origin = 'http://localhost:3100'
   Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url, MIKKA_EDITION: 'cloud',
-    MIKKA_BYOS_ENABLED: '1', NEXT_PUBLIC_POSTHOG_KEY: '', BETTER_AUTH_URL: origin,
+    MIKKA_BYOS_ENABLED: '1', MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '', BETTER_AUTH_URL: origin,
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
   globals.mikkaPool = app; globals.workspacePool = workspace
   let github: ReturnType<typeof githubAppStub> | undefined

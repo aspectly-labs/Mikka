@@ -19,6 +19,7 @@ import { Turnstile, type TurnstileHandle } from '@/components/auth/turnstile'
 import { selectedWebServer } from '@/lib/web-connection/selection'
 import { WebServerControl } from '@/components/settings/web-server-control'
 import { AuthSso } from '@ui-slot/auth-sso'
+import { publicEnv } from '@/lib/public-env.mjs'
 
 const DESKTOP_OAUTH_STATE_KEY = 'mikka:desktop-oauth'
 const DESKTOP_OAUTH_TTL_MS = 10 * 60_000
@@ -213,7 +214,7 @@ export function AuthForm({ mode, addAccount = false, googleEnabled = false, gith
   const [hasToken, setHasToken] = useState(false)
   const tokenRef = useRef<string | null>(null)
   const [verificationFailed, setVerificationFailed] = useState(false)
-  const verificationRequired = registering && Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY)
+  const verificationRequired = registering && Boolean(process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY || publicEnv('MIKKA_PUBLIC_TURNSTILE_SITE_KEY'))
   const receiveToken = useCallback((token: string | null) => {
     tokenRef.current = token
     setHasToken(Boolean(token))

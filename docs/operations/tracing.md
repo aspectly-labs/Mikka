@@ -587,7 +587,7 @@ is preserved alongside it.
 
 | Variable | Use |
 | --- | --- |
-| `NEXT_PUBLIC_POSTHOG_KEY` | The existing PostHog project token (`phc_…`), sent as `Authorization: Bearer` |
+| `MIKKA_PUBLIC_POSTHOG_KEY` | The existing PostHog project token (`phc_…`), sent as `Authorization: Bearer`. The old `NEXT_PUBLIC_POSTHOG_KEY` is still accepted ([rename](public-env-rename.md)) |
 | `MIKKA_TRACE_SAMPLE_RATE` | Optional, default `0.1` |
 | `MIKKA_TRACE_ENDPOINT` | Optional, for a local mock collector; default `https://us.i.posthog.com/i/v1/traces` (OTLP HTTP/protobuf) |
 

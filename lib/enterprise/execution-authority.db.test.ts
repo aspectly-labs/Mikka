@@ -34,10 +34,10 @@ test('Enterprise execution authority keeps verified device/workflow/cron provena
   const previousPools = { app: globals.mikkaPool, workspace: globals.workspacePool }
   const envKeys = ['E2E_DATABASE_URL', 'MIKKA_DATABASE_URL', 'DATABASE_URL', 'ORVILO_DATABASE_URL',
     'MIKKA_EDITION', 'MIKKA_BYOS_ENABLED', 'VERCEL_ENV', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET',
-    'WORKSPACE_SECRETS_KEY', 'CRON_SECRET', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
+    'WORKSPACE_SECRETS_KEY', 'CRON_SECRET', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
   const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]))
   Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url, ORVILO_DATABASE_URL: url,
-    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', NEXT_PUBLIC_POSTHOG_KEY: '',
+    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '',
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'),
     CRON_SECRET: randomBytes(32).toString('hex') })
   delete process.env.VERCEL_ENV

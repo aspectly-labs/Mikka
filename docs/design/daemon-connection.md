@@ -71,8 +71,10 @@ The configured public package is `@aspectlylabs/mikka`.
 supports manual dispatch, using npm trusted publishing and provenance. It
 requires checks for the exact source commit and verifies the sealed package
 again after its installed-package test. Release results belong to that run's
-evidence. `MIKKA_DAEMON_PACKAGE_NAME` selects the release package name and
-`NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME` supplies the matching web name. Existing
+evidence. `MIKKA_DAEMON_PACKAGE_NAME` selects the release package name, and
+the web build reads the same variable for the matching web name (the old
+`NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME` is still accepted, see
+[the rename](../operations/public-env-rename.md)). Existing
 auth/database configuration remains in Infisical. See the
 [daemon guide](../../packages/daemon/README.md) for installation and release details.
 
