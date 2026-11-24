@@ -729,9 +729,10 @@ export class ScheduleStore {
     if(!this.automation.runWhen||!row.workspace_id)throw new ScheduleError('scheduleRunWhenUnavailable',503)
     // runWhen judgments for one occurrence share admission/billing reads (decisionBatchCache).
     const {decisionBatchCache}=await import('@/lib/abuse/context')
+    const workspaceId=row.workspace_id,runOwnerId=row.run_as_user_id??row.owner_id
     return decisionBatchCache.run(new Map(),async()=>{
       for(const trigger of triggers){
-        const holds=await this.automation.runWhen!({ownerId:row.run_as_user_id??row.owner_id,workspaceId:row.workspace_id,condition:trigger.runWhen!,event})
+        const holds=await this.automation.runWhen!({ownerId:runOwnerId,workspaceId,condition:trigger.runWhen!,event})
         if(holds===null)throw new ScheduleError('scheduleRunWhenUnavailable',503)
         if(holds)return true
       }
