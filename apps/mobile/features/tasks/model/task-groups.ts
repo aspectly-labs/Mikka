@@ -111,13 +111,14 @@ export type TaskListRow<T> =
 
 /**
  * The list's rows: each group with tasks gets its header (name, count, fold), then its tasks unless folded. 已完成
- * starts folded; `toggled` holds the groups the person opened or closed. A filter shows that group alone.
+ * starts folded; `toggled` holds the groups the person opened or closed. A filter shows that group alone, open: a
+ * filter that showed only a folded 已完成 bar would look as if it had not applied.
  */
 export function taskListRows<T extends Pick<Task, 'group' | 'status' | 'blocked'>>(tasks: readonly T[], toggled: ReadonlySet<TaskGroup>, filter: TaskFilter = 'all'): TaskListRow<T>[] {
   return TASK_GROUPS.filter(group => filter === 'all' || group.id === filter).flatMap((group): TaskListRow<T>[] => {
     const items = tasks.filter(task => groupOf(task) === group.id)
     if (!items.length) return []
-    const folded = (group.id === 'done') !== toggled.has(group.id)
+    const folded = filter === 'all' && (group.id === 'done') !== toggled.has(group.id)
     return [{ kind: 'section', id: group.id, title: group.title, count: items.length, folded }, ...(folded ? [] : items.map(task => ({ kind: 'task' as const, task })))]
   })
 }
