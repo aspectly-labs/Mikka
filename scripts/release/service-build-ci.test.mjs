@@ -3,11 +3,11 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { checkedServiceCache, selectServicePublications, stageContext, trustedBuildSource } from './service-build-ci.mjs'
 import { registryImage, serviceDigest, serviceNames } from './service-builds.mjs'
-import { UI_SLOTS, uiOverlay } from '../../lib/ui-overlay.mjs'
+import { OVERLAY_APPLICATION, uiOverlay } from '../../lib/ui-overlay.mjs'
 
 const revision = 'a'.repeat(40), merge = 'b'.repeat(40)
 
@@ -46,18 +46,18 @@ async function selectionFixture(t) {
 
 test('automatic builds select an independent compatible UI pin while preserving the serving staging request', async t => {
   const { directory, staging, stagingBytes, select } = await selectionFixture(t)
-  const requiredAdditions = new Set(['workspace-entry'])
+  // The older pin predates the client application in core/renderer/ (lib/ui-overlay.mjs OVERLAY_APPLICATION).
+  const requiredAdditions = new Set([OVERLAY_APPLICATION.entry])
   for (const pin of [revision, merge]) {
-    const slots = join(directory, pin, 'slots')
-    await mkdir(slots, { recursive: true })
-    for (const name of UI_SLOTS) {
-      if (pin === revision && requiredAdditions.has(name)) continue
-      await writeFile(join(slots, name + '.tsx'), '')
+    for (const path of Object.values(OVERLAY_APPLICATION)) {
+      if (pin === revision && requiredAdditions.has(path)) continue
+      await mkdir(dirname(join(directory, pin, path)), { recursive: true })
+      await writeFile(join(directory, pin, path), '')
     }
   }
-  // A pinned official build must still reject the old provider inventory.
+  // A pinned official build must still reject the old application inventory.
   assert.throws(() => uiOverlay(directory, { MIKKA_UI_OVERLAY_DIR: revision, MIKKA_UI_OVERLAY_SHA: revision }),
-    /UI_OVERLAY_SLOT_REQUIRED: workspace-entry/)
+    { message: `UI_OVERLAY_APPLICATION_REQUIRED: ${OVERLAY_APPLICATION.entry}` })
   const result = await select()
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, '')

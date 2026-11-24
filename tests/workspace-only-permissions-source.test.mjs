@@ -4,7 +4,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = new URL('..', import.meta.url).pathname
-const ROOTS = ['lib', 'app', 'components', 'workflows']
+// The interface's components moved to the official UI checkout's core/ (decision 2026-11-24-1000); scan them there
+// when it is mounted.
+const ROOTS = ['lib', 'app', 'components', '.hosted-ui/core/components', 'workflows'].filter(dir => existsSync(join(root, dir)))
 /** The legacy owner ceiling and the fold helper are the only readers of a head's policy columns. */
 const POLICY_COLUMN_ALLOWED = new Set(['lib/operations/write-policy-store.ts', 'lib/coordinator/coordinator-bot.ts'])
 
