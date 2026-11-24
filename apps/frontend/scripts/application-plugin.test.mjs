@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { join, relative, resolve, sep } from 'node:path'
 import test from 'node:test'
 import postcss from 'postcss'
-import { applicationPlugin, repository } from './application-plugin.mjs'
+import { repository } from './application-plugin.mjs'
 import { compileApplication as compile, needsOfficialUi, officialUi, uiFixture } from './application-test-build.mjs'
 import { sharedStylePlugins } from './shared-styles.mjs'
 
