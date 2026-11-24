@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
 import { SubscriptionRefusal, subscriptionRouteSchema } from '@mikka/protocol/subscription'
 import type { SubscriptionService } from './subscription-service'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
@@ -19,6 +20,7 @@ const input = z.discriminatedUnion('action', [
   z.object({ action: z.enum(['status', 'disconnect', 'recover']), connectionId: id, revision: z.number().int().positive().optional() }).strict(),
   z.object({ action: z.literal('remove'), connectionId: id, revision: z.number().int().positive() }).strict(),
   z.object({ action: z.literal('pause'), connectionId: id, paused: z.boolean() }).strict(),
+  z.object({ action: z.literal('clone'), connectionId: id, ownerId: z.string().min(1).max(128), workspaceId: id }).strict(),
   z.object({ action: z.literal('bind'), connectionId: id, revision: z.number().int().positive(), consumerId: z.string().min(1).max(128), route: subscriptionRouteSchema.exclude(['openai_siwc']), modelId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/) }).strict()
 ])
 const headers = { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' }
@@ -123,6 +125,16 @@ export function subscriptionHTTP(deps: SubscriptionHTTPDependencies) {
       else if (body.action === 'pause') {
         await service.repository.setPaused(session.userId, row.id, body.paused)
         result = { id: row.id, paused: body.paused }
+      }
+      else if (body.action === 'clone') {
+        // 复制连接: the worker re-binds custody + access bundles and writes the
+        // new connection, artifacts and catalogue bindings in one transaction.
+        if (session.tokenWorkspaceId && session.tokenWorkspaceId !== body.workspaceId) return Response.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
+        await deps.workspace(session.userId, body.workspaceId)
+        await deps.workspace(body.ownerId, body.workspaceId)
+        const connectionId = randomUUID()
+        result = await worker.call('clone', { target: { ownerId: body.ownerId, workspaceId: body.workspaceId, connectionId, provider: row.provider } }, acquisitionSignal())
+        if (body.ownerId !== session.userId) await ownerSettingsChanged(service.repository.pool, body.ownerId)
       }
       else if (body.action === 'remove') {
         // 移除: fence and clean up like 断开连接 first, then hide the row for good.
