@@ -225,7 +225,7 @@ test('the workflow binds the canonical RouteRequest origin before signing the en
   assert.ok(authOrigin); assert.equal(authOrigin, baseOrigin)
   const route = new RouteRequest(`${authOrigin}/mikka/api/test-environment?challenge=${'a'.repeat(64)}`)
   assert.equal(new URL(route.url).origin, authOrigin, 'the route checks an exact origin before it reads the HMAC key')
-  // Next's RouteRequest rewrote IPv4 loopback to `localhost`; the runtime this
+  // Next.js's request type rewrote IPv4 loopback to `localhost`; the runtime this
   // repository owns keeps the host it was handed. Database identity therefore
   // stays separate from the HTTP origin by configuration, not by URL rewriting.
   assert.equal(new URL(new RouteRequest('http://127.0.0.1:3137/mikka/api/test-environment').url).hostname, '127.0.0.1')
