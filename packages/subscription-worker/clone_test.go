@@ -25,14 +25,19 @@ func TestCloneRebindsTheCredentialAndCopiesTheCatalogue(t *testing.T) {
 	if result["connectionId"] != target.ConnectionID {
 		t.Fatalf("clone answered %v, not the minted connection", result)
 	}
-	var owner, state, custodyName, custodyDigest, accessName, accessDigest, subject string
+	var owner, state, custodyName, custodyDigest, accessName, accessDigest, subject, catalogRevision string
 	var epoch, version int64
-	if err = w.Repo.DB.QueryRow(`select "ownerId",state,epoch,"credentialVersion","secretName","secretDigest",coalesce("accessSecretName",''),coalesce("accessDigest",''),coalesce("providerSubject",'') from byos_connections where id=$1`,
-		target.ConnectionID).Scan(&owner, &state, &epoch, &version, &custodyName, &custodyDigest, &accessName, &accessDigest, &subject); err != nil {
+	if err = w.Repo.DB.QueryRow(`select "ownerId",state,epoch,"credentialVersion","secretName","secretDigest",coalesce("accessSecretName",''),coalesce("accessDigest",''),coalesce("providerSubject",''),"modelCatalog"->>'revision' from byos_connections where id=$1`,
+		target.ConnectionID).Scan(&owner, &state, &epoch, &version, &custodyName, &custodyDigest, &accessName, &accessDigest, &subject, &catalogRevision); err != nil {
 		t.Fatal(err)
 	}
 	if owner != "bob" || state != "connected" || epoch != 1 || version != 1 {
 		t.Fatalf("clone row %s %s epoch=%d version=%d", owner, state, epoch, version)
+	}
+	// keyOnlyModel binds modelCatalog->>'revision' to the row epoch — it must
+	// read '1' here even when the source catalogue is a later revision.
+	if catalogRevision != "1" {
+		t.Fatalf("clone modelCatalog revision %q, want 1", catalogRevision)
 	}
 	if custodyName == "" || custodyName == source.SecretName || custodyDigest == source.Digest || subject != source.Subject {
 		t.Fatalf("clone kept the source secret identity %q / digest", custodyName)

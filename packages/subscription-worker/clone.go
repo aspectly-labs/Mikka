@@ -78,7 +78,7 @@ func (w *Worker) Clone(ctx context.Context, target Scope) (map[string]any, error
 	}
 	result, err := tx.ExecContext(ctx, `insert into byos_connections
 		(id,"ownerId","workspaceId",provider,state,epoch,"credentialVersion","secretName","secretDigest","accessSecretName","accessDigest","providerSubject",quota,"accountLabel","modelCatalog","modelSettings",paused)
-		select $1,$2,$3,provider,'connected',1,1,$4,$5,$6,$7,"providerSubject",quota,"accountLabel","modelCatalog","modelSettings",false
+		select $1,$2,$3,provider,'connected',1,1,$4,$5,$6,$7,"providerSubject",quota,"accountLabel",jsonb_set("modelCatalog",'{revision}',to_jsonb('1'::text)),"modelSettings",false
 		from byos_connections where id=$8 and "ownerId"=$9 and state='connected' and "removedAt" is null`,
 		target.ConnectionID, target.OwnerID, target.WorkspaceID, custodyName, custodyDigest, accessName, accessDigest, source.ConnectionID, source.OwnerID)
 	if err != nil {
