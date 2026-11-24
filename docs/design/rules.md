@@ -78,7 +78,9 @@ source wins in a conflict is in [`README.md`](README.md).
   avatar and name, then its members (people and bots), recent tasks and
   files. No cloud computer in a group; open a bot's own chat to see its.
 - **R-14** The user's messages sit in an accent-blue bubble with white text
-  (`accent/default`); a bot's text sits in the light grey bubble. Charts,
+  (`accent/default`); a bot's text sits in the light grey bubble (on iOS,
+  full-width text with no bubble since
+  [2026-11-24-0520](decisions/2026-11-24-0520-ios-agent-replies-full-width.md)). Charts,
   OpenUI cards and choice cards have no bubble. Bordered cards (document,
   computer, Artifact) sit below the text bubble, never inside it. A 建议 card
   the user taps is their message but keeps its card shape, no blue bubble; the

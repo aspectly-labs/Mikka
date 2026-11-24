@@ -23,7 +23,7 @@ mock.module('react-native', { namedExports: {
 } })
 mock.module(require.resolve('lucide-react-native'), { namedExports: { ArrowUpRight: () => null, Check: () => null } })
 mock.module(new URL('../components/Text.tsx', import.meta.url).href, { namedExports: { Text: text } })
-mock.module(new URL('../components/chat.tsx', import.meta.url).href, { namedExports: { BotBubble: view } })
+mock.module(new URL('../components/chat.tsx', import.meta.url).href, { namedExports: { BotText: view } })
 mock.module(new URL('../components/Markdown.tsx', import.meta.url).href, { namedExports: { Markdown: ({ text: words }: { text: string }) => createElement('p', null, words) } })
 mock.module(new URL('../components/icons.tsx', import.meta.url).href, { namedExports: { Spinner: () => null } })
 mock.module(new URL('../lib/images.ts', import.meta.url).href, { namedExports: { useImage: () => null } })

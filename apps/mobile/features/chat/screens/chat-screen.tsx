@@ -12,7 +12,7 @@ import { Spinner } from '@/components/icons'
 import { ListTopFade } from '@/components/NavBar'
 import { useScrolledUnderBar } from '@/components/BarBackdrop'
 import { runIcon } from '@/lib/thread-icon'
-import { Arrival, BotBubble, EventLine, MessageActions, MessageRow, MyBubble, OutgoingBubble, Reactions, ThreadCard, TimeSeparator, useChatPhotos } from '@/components/chat'
+import { Arrival, BotText, EventLine, MessageActions, MessageRow, MyBubble, OutgoingBubble, Reactions, ThreadCard, TimeSeparator, useChatPhotos } from '@/components/chat'
 import { myReaction, toggled, withMine } from '@/lib/reactions'
 import { Markdown } from '@/components/Markdown'
 import { OfflineBanner } from '@/components/OfflineBanner'
@@ -308,9 +308,9 @@ function ChatScreenSession({ botId, name, color, shape, draft, focus, compose, c
           <MessageRow onSelect={selected ? undefined : () => toggleSelection(item.position, item.text)}>
             {cardDocument
               ? <OpenUIReply text={item.text} live={index > lastMine} canAnswer={child => canAnswerCard(canSend, outbox, `${cardDocument}:${child}`)} reply={items.slice(index + 1).find(next => next.from === 'person')?.text} answer={(message, child) => send(message, [], `${cardDocument}:${child}`)} sources={sources} onOpen={open} />
-              : <BotBubble>{selected
+              : <BotText>{selected
                 ? <ChatSelectableText text={selected.text} onSelect={onSelected} onRect={rect => { selectionRect.current = rect }} />
-                : <Markdown text={item.text} sources={sources} onOpen={open} />}</BotBubble>}
+                : <Markdown text={item.text} sources={sources} onOpen={open} />}</BotText>}
             {chips(item.id)}
             {selected ? null : <MessageActions message={message(item.text, item.id, item.position)} copy={index === latestReply && !working} />}
           </MessageRow>
