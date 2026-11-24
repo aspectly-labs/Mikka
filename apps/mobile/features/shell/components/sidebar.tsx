@@ -1,7 +1,7 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useRef, type ReactNode } from 'react'
 import { Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native'
 import { type Href, usePathname, useRouter } from 'expo-router'
-import { Drawer } from 'react-native-drawer-layout'
+import DrawerLayout, { DrawerLockMode, DrawerType, type DrawerLayoutMethods } from 'react-native-gesture-handler/ReanimatedDrawerLayout'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { BotAvatar } from '@/components/icons'
 import { Symbol } from '@/components/Symbol'
@@ -17,9 +17,9 @@ const TAB_ROOTS = new Set(['/', '/tasks', '/suggestions', '/settings', '/search'
 
 /**
  * The sidebar trial (lib/sidebar-trial.ts): with the switch off it renders the tabs and nothing else. With it on, the
- * tabs sit in react-native-drawer-layout configured as Bluesky's app does: on iOS the content slides right with the
- * drawer (only a transform moves), a swipe to the right anywhere on a tab root opens it, and any movement to the left
- * is left to the page (a row's pin swipe).
+ * tabs sit in Gesture Handler's own Reanimated drawer, set up the way Bluesky's app sets its drawer: on iOS the
+ * content slides right with the drawer (only a transform moves, on the UI thread), a swipe to the right anywhere on a
+ * tab root opens it after 5 points, and pushed pages keep the system back swipe because the drawer is locked there.
  */
 export function SidebarDrawer({ children }: { children: ReactNode }) {
   const trial = useSidebarTrial()
@@ -28,34 +28,25 @@ export function SidebarDrawer({ children }: { children: ReactNode }) {
 }
 
 function SidebarShell({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false)
+  const drawer = useRef<DrawerLayoutMethods>(null)
   const router = useRouter()
   const atRoot = TAB_ROOTS.has(usePathname())
   const { width } = useWindowDimensions()
-  const onOpen = useCallback(() => setOpen(true), [])
-  const onClose = useCallback(() => setOpen(false), [])
-  const go = useCallback((href: Href) => { setOpen(false); router.push(href) }, [router])
-  const renderDrawerContent = useCallback(() => <SidebarContent go={go} />, [go])
+  const go = useCallback((href: Href) => { drawer.current?.closeDrawer(); router.push(href) }, [router])
+  const renderNavigationView = useCallback(() => <SidebarContent go={go} />, [go])
   return (
-    <Drawer
-      open={open}
-      onOpen={onOpen}
-      onClose={onClose}
-      renderDrawerContent={renderDrawerContent}
-      drawerType={Platform.OS === 'ios' ? 'slide' : 'front'}
-      drawerStyle={{ width: Math.min(400, width * 0.8), backgroundColor: colors.grouped }}
-      overlayStyle={{ backgroundColor: 'rgba(0, 0, 0, 0.08)' }}
-      swipeEdgeWidth={width}
-      swipeMinVelocity={100}
-      swipeMinDistance={10}
-      configureGestureHandler={handler => {
-        if (!atRoot) return { ...handler, onBegin: undefined, failOffsetX: [0, 0], failOffsetY: [0, 0] }
-        if (open) return { ...handler, activeOffsetX: [-1, 1] }
-        // Any movement to the left belongs to the page; a movement to the right claims the drawer after 5 points.
-        return { ...handler, failOffsetX: -1, activeOffsetX: Platform.OS === 'android' ? 20 : 5 }
-      }}>
+    <DrawerLayout
+      ref={drawer}
+      renderNavigationView={renderNavigationView}
+      drawerType={Platform.OS === 'ios' ? DrawerType.SLIDE : DrawerType.FRONT}
+      drawerWidth={Math.min(400, width * 0.8)}
+      drawerBackgroundColor={colors.grouped}
+      overlayColor="rgba(0, 0, 0, 0.08)"
+      edgeWidth={width}
+      minSwipeDistance={Platform.OS === 'android' ? 20 : 5}
+      drawerLockMode={atRoot ? DrawerLockMode.UNLOCKED : DrawerLockMode.LOCKED_CLOSED}>
       {children}
-    </Drawer>
+    </DrawerLayout>
   )
 }
 
