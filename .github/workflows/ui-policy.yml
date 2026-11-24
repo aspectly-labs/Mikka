@@ -173,6 +173,8 @@ jobs:
       - run: pnpm check:sql-safety
       - run: pnpm check:route-guard
         if: always()
+      - run: pnpm check:rule-as-code
+        if: always()
       - name: Verify all production release credentials use existing Infisical OIDC
         run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs scripts/release/ios-app-store-signing.test.mjs
         if: always()
