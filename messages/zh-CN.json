@@ -5052,7 +5052,8 @@
       "empty": "暂时没有要看的消息",
       "noneToday": "今天还没有新的建议。",
       "title": "建议",
-      "routine": "例行事项"
+      "routine": "例行事项",
+      "filterHint": "只看这个应用的建议，再点一次显示全部"
     },
     "newTask": "新建任务",
     "createConversation": {
@@ -9409,7 +9410,10 @@
     "allTasks": "全部任务",
     "lastThreadStatus": "上次状态：{status}",
     "messageThread": "给这个线程发消息",
-    "currentLanguage": "简体中文"
+    "currentLanguage": "简体中文",
+    "groupInfo": {
+      "bot": "Bot"
+    }
   },
   "HostedInbox": {
     "writeError": "未能确认收件箱更改。请刷新后重试。",

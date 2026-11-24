@@ -5052,7 +5052,8 @@
       "empty": "Nothing to read right now",
       "noneToday": "No new suggestions today.",
       "title": "Suggestions",
-      "routine": "Routine"
+      "routine": "Routine",
+      "filterHint": "Shows only this app's suggestions; tap again for all"
     },
     "newTask": "New task",
     "createConversation": {
@@ -9409,7 +9410,10 @@
     "allTasks": "All tasks",
     "lastThreadStatus": "Last status: {status}",
     "messageThread": "Message this thread",
-    "currentLanguage": "English"
+    "currentLanguage": "English",
+    "groupInfo": {
+      "bot": "Bot"
+    }
   },
   "HostedInbox": {
     "writeError": "Could not confirm the inbox change. Refresh and try again.",

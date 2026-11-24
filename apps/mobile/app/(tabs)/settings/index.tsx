@@ -3,7 +3,7 @@ import { ReadNotice } from '@/components/ReadNotice'
 import { ActionSheetIOS, Linking, Platform, ScrollView, View } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { ArrowUpRight, Bell, BookOpen, Blocks, BriefcaseBusiness, Folder, Globe, Hand, Info } from 'lucide-react-native'
+import { ArrowUpRight, Bell, BookOpen, Blocks, BriefcaseBusiness, Building2, CreditCard, Folder, Globe, Hand, Info, PanelLeft, Users } from 'lucide-react-native'
 import { CardButton } from '@/components/cards'
 import { Spinner } from '@/components/icons'
 import { NavBar, underBar } from '@/components/NavBar'
@@ -84,13 +84,13 @@ export default function SettingsScreen() {
           <PreferenceSaveNotice />
           <Group>
             <Row icon={<Avatar name={data.user.name || data.user.email} image={data.user.image} size={56} />} label={data.user.name || data.user.email} detail={data.user.email} onPress={() => router.push(settingsPath('profile'))} />
-            <Row label={serverCopy.accounts} value={currentAccount().server.name} onPress={() => router.push(settingsPath('accounts'))} />
+            <Row icon={icon('person.2.fill', Users, '#007AFF')} label={serverCopy.accounts} value={currentAccount().server.name} onPress={() => router.push(settingsPath('accounts'))} />
           </Group>
           <Group>
             <Row icon={icon('briefcase.fill', BriefcaseBusiness, '#8E8E93')} label="工作区" value={data.workspace.name} onPress={() => router.push(settingsPath('workspaces'))} />
-            {data.organizationSettingsAvailable && <Row label={messages.MobileCore.organizationOnWeb} onPress={() => void openOnWeb(mobileOrganizationPath(data.workspace.id), { confirmAccount: true })} />}
+            {data.organizationSettingsAvailable && <Row icon={icon('building.2.fill', Building2, '#8E8E93')} label={messages.MobileCore.organizationOnWeb} onPress={() => void openOnWeb(mobileOrganizationPath(data.workspace.id), { confirmAccount: true })} />}
             {data.personalFilesAvailable && <Row icon={icon('folder.fill', Folder, '#007AFF')} label={messages.MobileCore.personalFilesOnWeb} onPress={() => void openOnWeb(mobileFilesPath(data.workspace.id), { confirmAccount: true })} />}
-            {data.billingScope && <Row label={messages.Billing.management.billingEntry} onPress={() => router.push(settingsPath('billing'))} />}
+            {data.billingScope && <Row icon={icon('creditcard.fill', CreditCard, '#34C759')} label={messages.Billing.management.billingEntry} onPress={() => router.push(settingsPath('billing'))} />}
           </Group>
           <Group>
             <Row icon={icon('bell.fill', Bell, '#FF3B30')} label={messages.Settings.sections.notifications.title} value={data.preferences.proactive ? messages.MobileCore.notifications.on : messages.MobileCore.notifications.off} onPress={() => router.push(settingsPath('notifications'))} />
@@ -104,7 +104,7 @@ export default function SettingsScreen() {
             <Row icon={icon('hand.raised.fill', Hand, '#5856D6')} label={messages.Common.privacyPolicy} onPress={() => void openPrivacyPolicy()} />
           </Group>
           {Platform.OS !== 'ios' ? null : <Group>
-            <ToggleRow label={messages.MobileCore.sidebarTrial} value={sidebarTrial} onChange={setSidebarTrial} />
+            <ToggleRow icon={icon('sidebar.left', PanelLeft, '#007AFF')} label={messages.MobileCore.sidebarTrial} value={sidebarTrial} onChange={setSidebarTrial} />
           </Group>}
           <Group>
             <Row label={signingOut ? "正在退出登录" : "退出登录"} disabled={signingOut} destructive onPress={confirmSignOut} />
