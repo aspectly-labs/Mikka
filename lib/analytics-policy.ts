@@ -33,6 +33,16 @@ export function analyticsPath(pathname: string) {
 const exceptionLevels = new Set(['error', 'warning', 'info', 'debug', 'log', 'fatal'])
 /** A class name (`TypeError`, `DOMException`), never a message or a path. */
 const EXCEPTION_TYPE = /^[A-Za-z_$][\w$.-]{0,63}$/
+const SAFE_BOUNDARY_NAME = /^[a-zA-Z0-9._:-]{1,64}$/
+const SAFE_BUILD_SHA = /^[a-zA-Z0-9._-]{0,64}$/
+const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const LONG_TOKEN_SEGMENT = /^(?=.*\d)[A-Za-z0-9_-]{16,}$/
+const NUMERIC_ID_SEGMENT = /^\d{5,}$/
+const EMAIL_LIKE_SEGMENT = /@/
+const viewportBuckets = new Set(['mobile', 'tablet', 'desktop', 'wide'])
+const runtimeErrorSources = new Set(['window_error', 'unhandled_rejection'])
+const rumFlushReasons = new Set(['visibility_hidden', 'pagehide', 'route_change'])
+const frontendRumEvents = new Set(['frontend_render_error', 'frontend_runtime_error', 'frontend_web_vitals'])
 /** Bounds a hostile payload, not a real one: the SDK sends one entry and at
  * most 50 frames for an exception. */
 const EXCEPTION_LIST_LIMIT = 5
@@ -153,9 +163,84 @@ function sanitizeExceptionEvent<T extends { event: string; properties: Record<st
   })
 }
 
+/** Re-sanitizes a RUM route path at the PostHog gateway so query strings,
+ * hashes, invite tokens, UUIDs, emails and opaque IDs can never pass through. */
+function sanitizeRumRoute(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  let pathname = value.trim()
+  try {
+    pathname = new URL(pathname, 'https://mikka.invalid').pathname
+  } catch {
+    pathname = pathname.split(/[?#]/, 1)[0] ?? '/'
+  }
+  if (!pathname.startsWith('/')) pathname = `/${pathname}`
+  const segments = pathname.split('/').filter(Boolean)
+  const clean: string[] = []
+  for (let index = 0; index < segments.length; index += 1) {
+    const raw = segments[index] ?? ''
+    if (index > 0 && segments[index - 1]?.toLowerCase() === 'invite') clean.push(':token')
+    else if (UUID_SEGMENT.test(raw)) clean.push(':id')
+    else if (EMAIL_LIKE_SEGMENT.test(raw)) clean.push(':redacted')
+    else if (LONG_TOKEN_SEGMENT.test(raw)) clean.push(':token')
+    else if (NUMERIC_ID_SEGMENT.test(raw)) clean.push(':id')
+    else clean.push(raw.slice(0, 48))
+  }
+  const normalized = `/${clean.join('/')}`
+  return normalized.length > 160 ? normalized.slice(0, 160) : normalized
+}
+
+function boundedMs(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 3_600_000) return undefined
+  return Math.round(value)
+}
+
+function boundedCls(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) return undefined
+  return Math.round(value * 10_000) / 10_000
+}
+
+/** Strict allowlist for frontend ErrorBoundary and zero-idle Core Web Vitals RUM
+ * events: keeps only bounded non-PII class names, routes, buckets and timings. */
+function sanitizeFrontendRumEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T): T | null {
+  const props = event.properties
+  const kept: Record<string, unknown> = {}
+  const rumRoute = sanitizeRumRoute(props.route)
+  if (rumRoute !== undefined) kept.route = rumRoute
+  if (typeof props.build_sha === 'string' && SAFE_BUILD_SHA.test(props.build_sha)) kept.build_sha = props.build_sha
+  if (typeof props.viewport_bucket === 'string' && viewportBuckets.has(props.viewport_bucket)) kept.viewport_bucket = props.viewport_bucket
+
+  if (event.event === 'frontend_render_error') {
+    kept.error_name = typeof props.error_name === 'string' && EXCEPTION_TYPE.test(props.error_name) ? props.error_name : 'Error'
+    if (typeof props.boundary === 'string' && SAFE_BOUNDARY_NAME.test(props.boundary)) kept.boundary = props.boundary
+    if (typeof props.recoverable === 'boolean') kept.recoverable = props.recoverable
+    return narrow(event, kept)
+  }
+
+  if (event.event === 'frontend_runtime_error') {
+    kept.error_name = typeof props.error_name === 'string' && EXCEPTION_TYPE.test(props.error_name) ? props.error_name : 'Error'
+    if (typeof props.error_source === 'string' && runtimeErrorSources.has(props.error_source)) kept.error_source = props.error_source
+    return narrow(event, kept)
+  }
+
+  if (typeof props.flush_reason === 'string' && rumFlushReasons.has(props.flush_reason)) kept.flush_reason = props.flush_reason
+  const lcp = boundedMs(props.lcp_ms)
+  const cls = boundedCls(props.cls)
+  const inp = boundedMs(props.inp_ms)
+  const fcp = boundedMs(props.fcp_ms)
+  const ttfb = boundedMs(props.ttfb_ms)
+  if (lcp === undefined && cls === undefined && inp === undefined && fcp === undefined && ttfb === undefined) return null
+  if (lcp !== undefined) kept.lcp_ms = lcp
+  if (cls !== undefined) kept.cls = cls
+  if (inp !== undefined) kept.inp_ms = inp
+  if (fcp !== undefined) kept.fcp_ms = fcp
+  if (ttfb !== undefined) kept.ttfb_ms = ttfb
+  return narrow(event, kept)
+}
+
 export function sanitizeAnalyticsEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T | null): T | null {
   if (!event) return null
   if (event.event === '$exception') return sanitizeExceptionEvent(event)
+  if (frontendRumEvents.has(event.event)) return sanitizeFrontendRumEvent(event)
   if (event.event !== '$snapshot' && !allowedEvents.has(event.event)) return null
   // rrweb masks the DOM before serialization (instrumentation-client.ts).
   // Its transport needs the opaque snapshot payload and session identifiers;
