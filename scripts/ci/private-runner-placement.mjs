@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 
-// Exact workflow bytes reviewed at private 72bdb348. Removals are safe; edits,
+// Exact workflow bytes reviewed at private a1136d5 (mikka-cloud#506). Removals are safe; edits,
 // including new Cloudflare profiles, need public policy review before building.
 const approvedWorkflows = Object.freeze({
   '.github/workflows/capture-retention.yml': 'ebab36f3a8acac6b818adfd60e85db6d5ec8e26ba14f1fa7ac0671d5445fe702',
@@ -14,8 +14,8 @@ const approvedWorkflows = Object.freeze({
   '.github/workflows/migration-drift.yml': '2e4a3430a24111572549ed314e632efea0e94345afaf1f08c9b649b8dc951be1',
   '.github/workflows/observe-cloudflare-runtime.yml': 'a0e19145e330d7349362733eaa43add5cbe99aa3528002d186a2d60a0c7add46',
   '.github/workflows/ops-scheduler-deploy.yml': '159dd9df51310320b538149ac0665b72fd16f71df7d5f0eede3f713770ccc6bb',
-  '.github/workflows/overlay-source-sync.yml': '1cfb11e30cc877b36f1fc606cb52c418821db3f7a084b85fc3f3085d95c03e62',
-  '.github/workflows/overlay-sync-tests.yml': '905303a3f2118cbce10667173a5e6f36d82e6776793b8c35baa2af8fab2a1412',
+  '.github/workflows/overlay-source-sync.yml': '9bc19b7fac9061ecde7e1811d6df2e65f10a615e748a414893f56cd3155faeb6',
+  '.github/workflows/overlay-sync-tests.yml': '037ba39d7b031ff4fc6ba3b48e47f46026aa8b0f5ea115cea38363eebb695514',
   '.github/workflows/private-source-download.yml': '795c9055b705095776983f91a22a62725b714a7a942e9bfeb676e849624618d0',
   '.github/workflows/product-task-canary.yml': '6ae7a104132db529fd1d91b515a2a6c2cadc7e41b425ede8881890d4272f174f',
   '.github/workflows/production-daemon-qualification.yml': 'e3fb5da02ad7bce8c209eb006ea7f3466f9f3c1a5e3de9e641a1335006e52525',
@@ -24,6 +24,7 @@ const approvedWorkflows = Object.freeze({
   '.github/workflows/runtime-observer-runner-canary.yml': 'be71c2c734859587e894e0da7f960cdac80bd7690853c0d5ad6cd00307d0b53f',
   '.github/workflows/vercel-project-billing.yml': '013709338c50323a56d3a703fd979769b1272b655e8d528568219f96059bd489',
   '.github/workflows/vercel-workflow-inventory.yml': 'a8766a7900b04eda41c6c72a9f7b2197cf80e46b24d76f85bccaae808d28dc94',
+  '.github/workflows/verify-overlay-pin.yml': '99e094af1ac38b8a203fc7261325b6883239f9abbaec5071072b792b651fbdec',
   '.github/workflows/zero-residency-guard.yml': '73c48a769e7d25087c3e6b23c261cfabb11d83a342baca48a9530d1dc59d368c',
 })
 const fail = () => { throw new Error('CLOUD_PUBLIC_CI_PRIVATE_RUNNER_PLACEMENT') }

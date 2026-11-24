@@ -334,6 +334,16 @@ jobs:
           permission-contents: read
           permission-actions: read
           permission-issues: read
+      - name: Mint a short-lived read-only overlay verification token
+        id: overlay-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          repositories: mikka-hosted-ui
+          permission-contents: read
+          permission-actions: read
       - name: Remove App credentials before loading private operations code
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
@@ -391,6 +401,7 @@ jobs:
         working-directory: operations
         env:
           GH_TOKEN: ${{ steps.source-token.outputs.token }}
+          MIKKA_OVERLAY_READ_TOKEN: ${{ steps.overlay-token.outputs.token }}
           MIKKA_PUBLIC_ACTIONS_TOKEN: ${{ github.token }}
         run: node operations/business-api/pipeline-preflight.mjs
       - name: Install pinned product client and verification dependencies
@@ -422,6 +433,7 @@ jobs:
         working-directory: operations
         env:
           GH_TOKEN: ${{ steps.source-token.outputs.token }}
+          MIKKA_OVERLAY_READ_TOKEN: ${{ steps.overlay-token.outputs.token }}
           MIKKA_PUBLIC_ACTIONS_TOKEN: ${{ github.token }}
         run: node operations/public-release.mjs
       - name: Upload pipeline receipts
@@ -569,6 +581,16 @@ jobs:
           permission-contents: read
           permission-actions: read
           permission-issues: read
+      - name: Mint a short-lived read-only overlay verification token
+        id: overlay-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          repositories: mikka-hosted-ui
+          permission-contents: read
+          permission-actions: read
       - name: Remove App credentials before loading private operations code
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
@@ -613,6 +635,7 @@ jobs:
         working-directory: operations
         env:
           GH_TOKEN: ${{ steps.source-token.outputs.token }}
+          MIKKA_OVERLAY_READ_TOKEN: ${{ steps.overlay-token.outputs.token }}
           MIKKA_PUBLIC_ACTIONS_TOKEN: ${{ github.token }}
         run: node operations/business-api/pipeline-preflight.mjs
       - name: Install pinned product client and verification dependencies
@@ -644,6 +667,7 @@ jobs:
         working-directory: operations
         env:
           GH_TOKEN: ${{ steps.source-token.outputs.token }}
+          MIKKA_OVERLAY_READ_TOKEN: ${{ steps.overlay-token.outputs.token }}
           MIKKA_PUBLIC_ACTIONS_TOKEN: ${{ github.token }}
         run: node operations/public-release.mjs
       - name: Upload production receipts
