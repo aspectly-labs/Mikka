@@ -97,6 +97,11 @@ async function blockedBy(holder: import('pg').PoolClient, query = '%') {
   }
   assert.fail(`nothing waited on the lock held by backend ${pid}`)
 }
+/** A held connection goes back to the pool with its locks gone, even when the test failed before its commit. */
+async function settle(held: import('pg').PoolClient) {
+  await held.query('rollback').catch(() => undefined)
+  held.release()
+}
 /** The access session a first rotation mints when the expired one is gone (Better Auth's own createSession). */
 async function replacementFor(userId: string) {
   const created = await (await auth.$context).internalAdapter.createSession(userId, false, { expiresAt: new Date(Date.now() + 3600_000) }, true)
@@ -369,7 +374,7 @@ test('a revocation that waits on a rotation in flight still ends the token that 
     assert.equal((await revoking).status, 200)
     const family = await rows(person.id)
     assert.equal(family.find(token => token.id === next)?.revoked_reason, 'signed_out', 'the token committed while the revocation waited is revoked too')
-  } finally { rotation.release() }
+  } finally { await settle(rotation) }
 })
 
 test('signing a phone out from 登录设备 holds even when the phone rotated after the list was read', { skip }, async () => {
@@ -426,7 +431,7 @@ test('a retry of a lost answer that overlaps the rotation replacing its expired 
     assert.equal(family.at(-1)?.session_id, replacement.id)
     assert.equal(family.filter(token => !token.revoked_at && !token.used_at).length, 1, 'one live token: the one the retry returned')
     assert.equal((await pool.query('select count(*)::int as n from session where "userId" = $1', [person.id])).rows[0].n, 1, 'the retry minted nothing beside it')
-  } finally { rotation.release() }
+  } finally { await settle(rotation) }
 })
 
 test('signing a phone out from 登录设备 while a rotation replaces its session ends the replacement too', { skip }, async () => {
@@ -460,5 +465,44 @@ test('signing a phone out from 登录设备 while a rotation replaces its sessio
     assert.equal(await sessionRow(replacement.id), undefined, 'no session of the phone is left')
     assert.ok((await rows(person.id)).every(token => token.revoked_at), 'and its family is over')
     assert.ok(await sessionOf(web), 'the device that signed it out stays signed in')
-  } finally { rotation.release() }
+  } finally { await settle(rotation) }
+})
+
+test('a retry that minted its own session while another rotation installed a replacement renews the replacement and deletes its own', { skip }, async () => {
+  const person = await phone()
+  const first = await issued(await call('/mobile-refresh/exchange', { jar: person.jar }))
+  const [parent] = await rows(person.id)
+  const expired = person.session.session.id
+  // Better Auth has deleted the expired access session (its own stale cookie); the family still names it.
+  await pool.query(`update session set "expiresAt" = now() - interval '1 second' where id = $1`, [expired])
+  await pool.query('delete from session where id = $1', [expired])
+  const replacement = await replacementFor(person.id)
+  // The first rotation has claimed the token; its answer never reaches the phone.
+  await pool.query('update mobile_refresh_tokens set used_at = now() where id = $1', [parent.id])
+  const rotation = await pool.connect()
+  try {
+    // Session rows can be read and locked, not inserted: the retry gets as far as minting its own session.
+    await rotation.query('begin')
+    await rotation.query('lock table session in share mode')
+    const phoneJar = new Jar(); phoneJar.ip = person.jar.ip
+    const retry = call('/mobile-refresh/rotate', { jar: phoneJar, body: { refreshToken: first.refreshToken } })
+    await blockedBy(rotation, '%insert into%session%')
+    // Meanwhile the first rotation links the next token to its replacement and commits.
+    await rotation.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`mobile-refresh:${parent.family_id}`])
+    const lost = randomUUID()
+    await rotation.query(`insert into mobile_refresh_tokens (id, family_id, user_id, session_id, session_rotated, token_hash, expires_at, family_expires_at)
+      select $1, family_id, user_id, $2, true, $3, expires_at, family_expires_at from mobile_refresh_tokens where id = $4`, [lost, replacement.id, randomBytes(32).toString('hex'), parent.id])
+    await rotation.query('update mobile_refresh_tokens set session_id = null, replaced_by = $2 where id = $1', [parent.id, lost])
+    await rotation.query('commit')
+
+    const recovered = await issued(await retry)
+    assert.equal(recovered.sessionId, replacement.id, 'the retry renews the replacement the family moved to')
+    assert.equal((await sessionOf(phoneJar))?.session.id, replacement.id)
+    const sessions = (await pool.query<{ id: string }>('select id from session where "userId" = $1', [person.id])).rows
+    assert.deepEqual(sessions.map(session => session.id), [replacement.id], 'the session the retry minted for itself is deleted')
+    const family = await rows(person.id)
+    assert.equal(family.find(token => token.id === lost)?.revoked_reason, 'superseded')
+    assert.ok(family.every(token => token.revoked_reason !== 'session_ended'), 'deleting the spare session ends nothing')
+    await issued(await call('/mobile-refresh/rotate', { jar: phoneJar, body: { refreshToken: recovered.refreshToken } }))
+  } finally { await settle(rotation) }
 })
