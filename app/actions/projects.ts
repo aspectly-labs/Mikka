@@ -185,10 +185,13 @@ export async function moveIssueToProject(input: { issueId: string; revision: num
       const references = await accessibleProjectReferences(context.user, context.workspaceId)
       const projectReferences = linked.map(project => references.find(reference => reference.id === project.id))
       if (projectReferences.some(reference => !reference)) throw new ActionFailureError('projectNotFound')
-      const priorByProject = new Map<string, string[]>()
-      for (const project of linked) {
-        const rows = await tx.select({ id: projectTasks.issueId }).from(projectTasks).where(eq(projectTasks.projectId, project.id))
-        priorByProject.set(project.id, rows.map(row => row.id).sort())
+      const priorByProject = new Map<string, string[]>(linked.map(project => [project.id, []]))
+      if (linked.length) {
+        const priorRows = await tx.select({ projectId: projectTasks.projectId, id: projectTasks.issueId })
+          .from(projectTasks)
+          .where(inArray(projectTasks.projectId, linked.map(project => project.id)))
+        for (const row of priorRows) priorByProject.get(row.projectId)?.push(row.id)
+        for (const ids of priorByProject.values()) ids.sort()
       }
       return db.transaction(async application => {
         await lockResourcesAccess(application, context.user.id, [
@@ -210,14 +213,27 @@ export async function moveIssueToProject(input: { issueId: string; revision: num
         if (parsed.data.projectId) await tx.insert(projectTasks).values({ issueId: task.id, projectId: parsed.data.projectId, workspaceId: context.workspaceId })
         // Locks were acquired by ID; remove the old ACL parent before attaching
         // the new one so a destination sorting first cannot invalidate removal.
-        for (const project of linked.toSorted((left, right) => Number(left.id === parsed.data.projectId) - Number(right.id === parsed.data.projectId))) {
+        const orderedProjects = linked.toSorted((left, right) => Number(left.id === parsed.data.projectId) - Number(right.id === parsed.data.projectId))
+        for (const project of orderedProjects) {
           const before = priorByProject.get(project.id) ?? []
           const after = project.id === parsed.data.projectId
             ? [...before.filter(id => id !== task.id), task.id].sort()
             : before.filter(id => id !== task.id)
           await bindProjectTasks(application, context.user, { kind: 'project', id: project.id, workspaceId: context.workspaceId }, before, after, { confirmAccess: parsed.data.confirmAccess })
-          await tx.update(projects).set({ revision: project.revision + 1, updatedAt: new Date() }).where(eq(projects.id, project.id))
-          await emitProjectChange(tx, project.id, context.user.id, i18nText(project.id === parsed.data.projectId ? 'Projects.activity.tasksAdded' : 'Projects.activity.tasksRemoved'))
+        }
+        if (orderedProjects.length) {
+          const now = new Date()
+          await tx.update(projects)
+            .set({ revision: sql`${projects.revision} + 1`, updatedAt: now })
+            .where(inArray(projects.id, orderedProjects.map(project => project.id)))
+          await tx.insert(projectEvents).values(orderedProjects.map(project => ({
+            id: crypto.randomUUID(),
+            userId: context.user.id,
+            projectId: project.id,
+            message: i18nText(project.id === parsed.data.projectId ? 'Projects.activity.tasksAdded' : 'Projects.activity.tasksRemoved'),
+          })))
+          const { projectMapChanged } = await import('@/lib/live/project-map')
+          for (const project of orderedProjects) await projectMapChanged(tx, project.id)
         }
         const [saved] = await recordProjectTaskChanges(application, [task.id], context.user.id)
         return saved

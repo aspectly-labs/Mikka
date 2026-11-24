@@ -1,7 +1,7 @@
 import { runMessagePrompt } from './run-message-prompt'
 import 'server-only'
 import { createHash, randomBytes } from 'node:crypto'
-import { and, asc, eq, or, sql, getTableColumns, inArray, isNull } from 'drizzle-orm'
+import { and, asc, eq, notInArray, or, sql, getTableColumns, inArray, isNull } from 'drizzle-orm'
 import { db, pool } from '@/lib/db'
 import { cloudDeviceScopeAllows } from '@/lib/device-token-scope'
 import { z } from 'zod'
@@ -30,6 +30,7 @@ const LIVE_RUN_STATUSES = ['queued', 'preparing', 'running', 'paused', 'waiting_
  * daemon past its local grace has stopped the run itself.
  */
 export const TAKEN_BACK_WINDOW = '10 minutes'
+export const DEVICE_WORK_RUN_LIMIT = 500
 const takenBackSql = (alias: string) => `(${alias}."leaseExpiresAt"<=now() AND ${alias}."leaseExpiresAt">now()-interval '${TAKEN_BACK_WINDOW}'
   AND (${alias}.status IN ('preparing','running','paused','waiting_input','finishing') OR ${alias}."stopReason"='device_lost'))`
 
@@ -209,10 +210,21 @@ export async function deviceMayHaveWork(deviceId: string, skip: readonly string[
  * Runs in `skip` (already handed over) are left out.
  */
 export async function deviceWork(deviceId: string, skip: readonly string[], options: { activeTurnSteer?: boolean; mailboxNotices?: boolean; queued?: boolean } = {}): Promise<{ commands: RunCommand[]; queuedRuns: string[] }> {
+  const skipUuids = skip.filter(id => z.uuid().safeParse(id).success)
+  const takenBackExpr = takenBackSql('"agent_runs"')
   const rows = await db
-    .select({ id: agentRuns.id, status: agentRuns.status, stopRequestedAt: agentRuns.stopRequestedAt, takenBack: sql<boolean>`${sql.raw(takenBackSql('"agent_runs"'))}` })
+    .select({ id: agentRuns.id, status: agentRuns.status, stopRequestedAt: agentRuns.stopRequestedAt, takenBack: sql<boolean>`${sql.raw(takenBackExpr)}` })
     .from(agentRuns)
-    .where(and(eq(agentRuns.deviceId, deviceId), or(inArray(agentRuns.status, [...LIVE_RUN_STATUSES]), sql.raw(takenBackSql('"agent_runs"')))))
+    .where(and(
+      eq(agentRuns.deviceId, deviceId),
+      skipUuids.length ? notInArray(agentRuns.id, skipUuids) : undefined,
+      or(inArray(agentRuns.status, [...LIVE_RUN_STATUSES]), sql.raw(takenBackExpr)),
+    ))
+    .orderBy(
+      sql`CASE WHEN ${agentRuns.stopRequestedAt} IS NOT NULL OR ${sql.raw(takenBackExpr)} THEN 0 WHEN ${agentRuns.status} IN ('preparing','running','paused','waiting_input','finishing') THEN 1 ELSE 2 END`,
+      asc(agentRuns.createdAt),
+    )
+    .limit(DEVICE_WORK_RUN_LIMIT)
   const skipped = new Set(skip)
   // A run whose lease ended gets its stop here, whether the server took it back
   // or a stop (policy, revocation, a person) ended the lease at the same time.
@@ -248,15 +260,29 @@ async function deliveredReferences(messages: { id: string; runId: string | null;
   const owned = messages.filter(message => message.runId && message.origin === 'owner' && messageReferences(message.text).length)
   const resolved = new Map<string, Awaited<ReturnType<typeof import('./message-references').resolveMessageReferences>>>()
   if (!owned.length) return resolved
+  const ownedById = new Map(owned.map(message => [message.id, message]))
   const { rows } = await pool.query<{ id: string; userId: string; workspaceId: string | null }>(
     'SELECT m.id, r."userId", r."workspaceId" FROM run_messages m JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."userId" WHERE m.id=ANY($1::uuid[])', [owned.map(message => message.id)])
-  const { resolveMessageReferences } = await import('./message-references')
+  const groups = new Map<string, { reader: { userId: string; workspaceId: string }; items: { id: string; text: string }[] }>()
   for (const row of rows) {
-    const message = owned.find(item => item.id === row.id)
+    const message = ownedById.get(row.id)
     if (!message || !row.workspaceId) continue
+    const key = `${row.userId}:${row.workspaceId}`
+    let group = groups.get(key)
+    if (!group) {
+      group = { reader: { userId: row.userId, workspaceId: row.workspaceId }, items: [] }
+      groups.set(key, group)
+    }
+    group.items.push({ id: row.id, text: message.text })
+  }
+  const { resolveMessageReferencesBatch } = await import('./message-references')
+  for (const group of groups.values()) {
     // A reader that lost the workspace sees nothing: the markers go out as unavailable, and the device's work still goes out.
-    resolved.set(row.id, await resolveMessageReferences({ userId: row.userId, workspaceId: row.workspaceId }, message.text)
-      .catch(() => messageReferences(message.text).map(item => ({ ...item, unavailable: true as const }))))
+    const batch = await resolveMessageReferencesBatch(group.reader, group.items.map(item => item.text))
+      .catch(() => group.items.map(item => messageReferences(item.text).map(ref => ({ ...ref, unavailable: true as const }))))
+    group.items.forEach((item, index) => {
+      resolved.set(item.id, batch[index] ?? [])
+    })
   }
   return resolved
 }

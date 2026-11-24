@@ -9,7 +9,7 @@ import { byosEnabled } from './cloud-computer-flag'
 import { snapshotMailboxTools } from '@/lib/personal-mailbox-capability'
 import { freezeWorkerDefinition, workerModelDispatchFromTarget, type WorkerModelDispatch } from '@/lib/agent-kit/worker'
 import type { AgentExecution } from '@/lib/agent-kit/store'
-import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
 import { db, pool, withDatabaseClient } from '@/lib/db'
@@ -466,26 +466,40 @@ export async function visibleRuns(reader: IssueReader, input: RunListFilter & { 
   })
 }
 
+export const RUN_MESSAGES_LIMIT = 1_000
+export const RUN_CHUNKS_LIMIT = 5_000
+
 /** The caller has authorized these run IDs. Only the reader's own sends include a retry identity. */
-export function readRunMessages(userId: string, runIds: string[]) {
-  return db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId:runMessages.runId,
-    editable:sql<boolean>`${runMessages.userId}=${userId} AND ${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
+export async function readRunMessages(userId: string, runIds: string[], options?: { limit?: number }) {
+  if (!runIds.length) return []
+  const limit = Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT))
+  const rows = await db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId: runMessages.runId,
+    editable: sql<boolean>`${runMessages.userId}=${userId} AND ${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
     submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'` })
     .from(runMessages).leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id),
       eq(coordinatorEvents.userId, userId), eq(coordinatorEvents.kind, 'user_message')))
-    .where(inArray(runMessages.runId, runIds)).orderBy(asc(runMessages.createdAt))
+    .where(inArray(runMessages.runId, runIds))
+    .orderBy(desc(runMessages.createdAt), desc(runMessages.id))
+    .limit(limit)
+  return rows.reverse()
 }
 
-export async function readRun(userId: string, runId: string, history: 'full' | 'latest-events' = 'full'): Promise<RunDetail | null> {
+export async function readRun(
+  userId: string,
+  runId: string,
+  history: 'full' | 'latest-events' = 'full',
+  options?: { chunkLimit?: number; messageLimit?: number },
+): Promise<RunDetail | null> {
   const [run] = await visibleRuns(userId, { runIds: [runId], limit: 1 })
   if (!run) return null
   // Empty agentId is the deliberately restricted teammate projection.
   if (!run.agentId) return { run, chunks: [], messages: [] }
   const chunksForRun = db.select({ chunk: runChunks.chunk }).from(runChunks).where(eq(runChunks.runId, run.id))
-  const chunks = history === 'full'
-    ? await chunksForRun.orderBy(asc(runChunks.seq))
-    : (await chunksForRun.orderBy(desc(runChunks.seq)).limit(5)).reverse()
-  const messages = history === 'full' ? await readRunMessages(userId, [run.id]) : []
+  const chunkLimit = history === 'full'
+    ? Math.max(1, Math.min(options?.chunkLimit ?? RUN_CHUNKS_LIMIT, RUN_CHUNKS_LIMIT))
+    : 5
+  const chunks = (await chunksForRun.orderBy(desc(runChunks.seq)).limit(chunkLimit)).reverse()
+  const messages = history === 'full' ? await readRunMessages(userId, [run.id], { limit: options?.messageLimit }) : []
   const decisionWarnings = await runDecisionWarnings(pool, userId, run.id)
   return { run, chunks: chunks.map(row => row.chunk), messages, decisionWarnings }
 }

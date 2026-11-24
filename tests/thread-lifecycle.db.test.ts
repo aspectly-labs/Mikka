@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { pool } from '../lib/db'
 import {
   bindSlackThread, createThreadShare, revokeThreadShares, deleteThread, listThreadChildren, moveThread,
-  patchThread, restoreThread, sharedThread, spawnThread,
+  patchThread, restoreThread, sharedThread, spawnThread, ThreadSpawnConflictError,
 } from '../lib/thread-lifecycle.js'
 import { remoteKey } from '@mikka/protocol/repository'
 import { seedAgent, seedIssue, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db.js'
@@ -66,6 +66,23 @@ test('fork full replays transcript and anchors to the chain root; side thread an
   // A non-owner spawns nothing, shares nothing, and sees no children.
   assert.equal(await spawnThread(outsider, rootId, { relation: 'fork', mode: 'full' }), null)
   assert.equal(await listThreadChildren(outsider, rootId), null)
+})
+
+test('spawnThread honors idempotencyKey replays without duplicating history and rejects mismatched payloads', async () => {
+  const { rootId } = await fixture()
+  await pool.query(`INSERT INTO run_messages (id,"runId","userId",text) VALUES ($1,$2,$3,'seed message')`, [randomUUID(), rootId, owner.id])
+  const key = `fork-idem-${randomUUID()}`
+  const first = await spawnThread(owner, rootId, { relation: 'fork', mode: 'full', idempotencyKey: key })
+  assert.ok(first)
+  kept.push(first.id)
+  const replay = await spawnThread(owner, rootId, { relation: 'fork', mode: 'full', idempotencyKey: key })
+  assert.ok(replay)
+  assert.equal(replay.id, first.id)
+  assert.equal((await pool.query(`SELECT count(*)::int AS n FROM run_messages WHERE "runId"=$1`, [first.id])).rows[0].n, 1)
+  await assert.rejects(
+    () => spawnThread(owner, rootId, { relation: 'fork', mode: 'summary', idempotencyKey: key }),
+    ThreadSpawnConflictError,
+  )
 })
 
 test('share links read only the transcript and revoking ends access', async () => {

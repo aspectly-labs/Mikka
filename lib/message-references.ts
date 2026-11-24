@@ -20,11 +20,19 @@ export type ResolvedReference = MessageReference & {
 
 export type ReferenceReader = { userId: string; workspaceId: string }
 
-export async function resolveMessageReferences(reader: ReferenceReader, text: string): Promise<ResolvedReference[]> {
-  const references = messageReferences(text)
-  if (!references.length) return []
-  const cited = references.filter(item => item.type === 'task' || item.type === 'thread')
-  const chats = [...new Set(references.filter(item => item.type === 'chat').map(item => item.id))]
+export async function resolveMessageReferencesBatch(
+  reader: ReferenceReader,
+  texts: readonly string[],
+): Promise<ResolvedReference[][]> {
+  const parsed = texts.map(text => messageReferences(text))
+  const flat = parsed.flat()
+  if (!flat.length) return parsed.map(() => [])
+  const cited = [...new Map(
+    flat
+      .filter(item => item.type === 'task' || item.type === 'thread')
+      .map(item => [`${item.type}:${item.id}`, item] as const),
+  ).values()]
+  const chats = [...new Set(flat.filter(item => item.type === 'chat').map(item => item.id))]
   const [{ citationSources }, members] = await Promise.all([
     import('@/lib/coordinator/store'),
     chats.length ? pool.query<{ id: string; title: string | null }>(`SELECT c.id, c.title FROM conversations c
@@ -36,7 +44,7 @@ export async function resolveMessageReferences(reader: ReferenceReader, text: st
     : {}
   const { runTitle } = await import('@/lib/coordinator/citations')
   const chatTitles = new Map(members?.rows.map(row => [row.id, row.title]) ?? [])
-  return references.map((reference): ResolvedReference => {
+  return parsed.map(references => references.map((reference): ResolvedReference => {
     if (reference.type === 'pr') return reference
     if (reference.type === 'chat') return chatTitles.has(reference.id)
       ? { ...reference, ...(chatTitles.get(reference.id) ? { title: chatTitles.get(reference.id)! } : {}) }
@@ -45,7 +53,12 @@ export async function resolveMessageReferences(reader: ReferenceReader, text: st
     if (reference.type === 'task' && source?.kind === 'issue') return { ...reference, title: source.title, identifier: source.identifier, status: source.status }
     if (reference.type === 'thread' && source?.kind === 'run') return { ...reference, title: runTitle(source), status: source.status }
     return { ...reference, unavailable: true }
-  })
+  }))
+}
+
+export async function resolveMessageReferences(reader: ReferenceReader, text: string): Promise<ResolvedReference[]> {
+  const [resolved] = await resolveMessageReferencesBatch(reader, [text])
+  return resolved ?? []
 }
 
 /** The references a sender may not send: deleted, from another workspace, or not readable by them. */
