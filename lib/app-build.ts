@@ -63,8 +63,8 @@ export async function checkPageBuildBeforeAction(): Promise<boolean> {
   return !pageNeedsRefresh()
 }
 
-/** Next answers a server action it does not have with this response header. */
-export const ACTION_NOT_FOUND_HEADER = 'x-nextjs-action-not-found'
+/** The RPC endpoint answers an action this server no longer has with this response header (lib/desktop-rpc/handler.ts). */
+export const ACTION_NOT_FOUND_HEADER = 'x-mikka-action-not-found'
 
 /** Raised when an action targets an obsolete build; VersionGuard offers an explicit 刷新. */
 export const STALE_BUILD_EVENT = 'mikka:stale-build'

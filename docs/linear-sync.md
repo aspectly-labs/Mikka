@@ -30,7 +30,7 @@ the background and flag evaluation never opens a database connection.
 
 When paused:
 
-- Next and Cloudflare validate webhook signatures. With a confirmed off
+- The API (`apps/api`) and Cloudflare validate webhook signatures. With a confirmed off
   flag, ordinary issue/comment events are acknowledged with `200 { disabled:
   true }` without inserting inbox rows or ingesting suggestions. A signed
   OAuth authorization/app revocation is the exception: it immediately marks

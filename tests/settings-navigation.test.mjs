@@ -48,7 +48,7 @@ test('带 basePath 与 locale 前缀的设置路由仍使用即时导航', () =>
   assert.equal(isLocalSettingsNavigation(url('/mikka/en'), url('/mikka/en/settings'), undefined, '/mikka'), true)
 })
 
-test('认证页、未知页面及外站不绕过 Next.js 路由', () => {
+test('认证页、未知页面及外站不绕过应用路由', () => {
   for (const [from, to] of [
     ['/sign-in', '/settings'],
     ['/settings', '/sign-in'],
