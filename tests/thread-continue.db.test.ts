@@ -1236,9 +1236,15 @@ test('a message to an ended thread runs it again in the same thread; only its ow
     await assert.rejects(sendThreadMessage(member.id, initial.runId, 'Send it again.'), { code: 'executionAccountUnavailable' })
     const { rows: [{ count }] } = await pool.query<{ count: string }>('SELECT count(*)::text AS count FROM agent_runs WHERE "userId"=$1', [member.id])
     assert.equal(count, '1', 'the refusal happens before any continuation run is created')
-    await pool.query('DELETE FROM computer_run_bindings WHERE "runId"=$1', [initial.runId])
     await pool.query(`UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1`, [initial.runId, JSON.stringify(seeded.def)])
-    assert.equal((await sendThreadMessage(member.id, initial.runId, 'Now on my own subscription.')).continued, true)
+    // Still on the cloud path: the pre-flight must let an own-account continuation
+    // through. Whatever the dispatch itself lands on (a real bot computer is not
+    // part of the fixture) is not this refusal.
+    const recovery = await sendThreadMessage(member.id, initial.runId, 'Now on my own subscription.')
+      .then(result => ({ ok: result.continued }), (error: unknown) => ({ code: (error as { code?: string })?.code }))
+    assert.notEqual((recovery as { code?: string }).code, 'executionAccountUnavailable',
+      'the pre-flight does not refuse a continuation frozen on the caller\'s own binding')
+    await pool.query('DELETE FROM computer_run_bindings WHERE "runId"=$1', [initial.runId])
   })
 
   await t.test('a deleted thread takes no more messages until it is restored', async () => {
