@@ -140,7 +140,7 @@ export function NavBar({ title, titleView, left, right, back, large, topTitle, s
         ...navBarOptions({ title, titleView, large, topTitle }),
         ...(search ? { headerSearchBarOptions: { placeholder: search.placeholder, hideWhenScrolling: false, onChangeText: event => search.onChange(event.nativeEvent.text), onCancelButtonPress: () => search.onChange('') } } : {}),
       }} />
-      {!topTitle && lefts.length ? <Stack.Toolbar placement="left">{lefts.map(nativeItem)}</Stack.Toolbar> : null}
+      {lefts.length ? <Stack.Toolbar placement="left">{lefts.map(nativeItem)}</Stack.Toolbar> : null}
       {rights.length ? <Stack.Toolbar placement="right">{rights.map(nativeItem)}</Stack.Toolbar> : null}
       {scrolled !== undefined ? <BarBackdrop visible={scrolled} />
         : fade && needsTopFade(Platform.OS, Platform.Version) ? <TopFade color={background} /> : null}
