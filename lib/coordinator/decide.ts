@@ -32,8 +32,14 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   let preparation: DecisionFailureReason = 'preparation_failed'
   try {
   if (signal?.aborted) return recordDecisionFailure(purpose, 'cancelled')
-  const { hostedBillingScope } = await import('@/lib/abuse/context')
+  const { hostedBillingScope, cachedDecisionGate, forgetDecisionGate } = await import('@/lib/abuse/context')
   const scope = hostedBillingScope.getStore()
+  // Tests mock the context module without the batch helper; degrade to direct
+  // loads there while production batches share the read-only gates.
+  const gate: typeof cachedDecisionGate = typeof cachedDecisionGate === 'function'
+    ? cachedDecisionGate
+    : <T,>(_key: string, load: () => Promise<T>) => load()
+  const forget = typeof forgetDecisionGate === 'function' ? forgetDecisionGate : () => {}
   if (!scope) return recordDecisionFailure(purpose, 'billing_scope_missing')
   const proxy = gatewayLiteLlm()
   const baseUrl = liteLLMBaseUrl(proxy?.url)
@@ -41,7 +47,8 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   const endpoint = baseUrl + DECISIONS_PATH.slice('/v1'.length)
   const { assertLiteLLMModelTransport } = await import('@/lib/model-admission/runtime')
   preparation = 'admission_refused'
-  await assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal)
+  await gate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+    () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
   preparation = 'billing_refused'
   const usage = await import('@/lib/abuse/runtime')
   const store = billingAdapter?.usage ?? usage.hostedUsage
@@ -49,11 +56,24 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   // Like every hosted call (lib/abuse/model.ts): the workspace's own balance first, then shared credits.
   if (store && store.metered !== false) {
     const { withSharedCredits } = await import('@/lib/credit-shares')
-    const billingPrincipal = await withSharedCredits(scope.workspaceId, async payer => {
+    const principalKey = `principal:${scope.workspaceId}:${billingAdapter?.admit ? 'adapter' : 'usage'}`
+    const loadPrincipal = () => withSharedCredits(scope.workspaceId, async payer => {
       await (billingAdapter?.admit ?? usage.canUseMikkaPaid)(payer)
       return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
     })
-    await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
+    const billingPrincipal = await gate(principalKey, loadPrincipal)
+    try {
+      await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
+    } catch (firstFailure) {
+      // The cached principal can point at a payer that ran dry inside this
+      // batch; drop it once and let withSharedCredits pick a funded sharer.
+      // Same principal reselected — the refusal is real, not staleness. The
+      // organization is part of it: a payer under a new org still retries.
+      forget(principalKey)
+      const retryPrincipal = await gate(principalKey, loadPrincipal)
+      if (retryPrincipal.payer === billingPrincipal.payer && retryPrincipal.organizationId === billingPrincipal.organizationId) throw firstFailure
+      await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), retryPrincipal)
+    }
   }
   let requestStarted = false
   preparation = 'preparation_failed'
@@ -69,7 +89,8 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
         : []))
       const executionId = randomUUID(), startedAt = new Date().toISOString()
       preparation = 'admission_refused'
-      await assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal)
+      await gate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+        () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
       preparation = 'preparation_failed'
       if (signal?.aborted) throw new DOMException('Model request cancelled', 'AbortError')
       requestStarted = true

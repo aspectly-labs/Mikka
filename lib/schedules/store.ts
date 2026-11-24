@@ -727,12 +727,17 @@ export class ScheduleStore {
     const triggers=(o.trigger&&'triggers' in o.trigger?o.trigger.triggers:[]).map(index=>o.definition.events?.[index]).filter((trigger):trigger is EventTrigger=>Boolean(trigger))
     if(!triggers.length||triggers.some(trigger=>!trigger.runWhen))return true
     if(!this.automation.runWhen||!row.workspace_id)throw new ScheduleError('scheduleRunWhenUnavailable',503)
-    for(const trigger of triggers){
-      const holds=await this.automation.runWhen({ownerId:row.run_as_user_id??row.owner_id,workspaceId:row.workspace_id,condition:trigger.runWhen!,event})
-      if(holds===null)throw new ScheduleError('scheduleRunWhenUnavailable',503)
-      if(holds)return true
-    }
-    return false
+    // runWhen judgments for one occurrence share admission/billing reads (decisionBatchCache).
+    const {decisionBatchCache}=await import('@/lib/abuse/context')
+    const workspaceId=row.workspace_id,runOwnerId=row.run_as_user_id??row.owner_id
+    return decisionBatchCache.run(new Map(),async()=>{
+      for(const trigger of triggers){
+        const holds=await this.automation.runWhen!({ownerId:runOwnerId,workspaceId,condition:trigger.runWhen!,event})
+        if(holds===null)throw new ScheduleError('scheduleRunWhenUnavailable',503)
+        if(holds)return true
+      }
+      return false
+    })
   }
   /** An event that did not need a run: recorded in the history, not posted to the chat. */
   private async skipQuietly(row:Schedule,o:Occurrence,reason:string){

@@ -3,6 +3,10 @@ import { before, beforeEach, after, mock, test } from 'node:test'
 import { decisionFailureScope, recordDecisionFailure, type DecisionFailureReason } from '../coordinator/decision-failure'
 let scope: { workspaceId: string; ownerId: string } | undefined
 let balance = true, deniedAt: 'prepare' | 'send' | null = null, checks = 0, sends = 0, reservations = 0
+// payer/billing-org queues handed out per withSharedCredits call; payers that fail reserve once
+let payers: string[] = [], orgs: string[] = [], reserveFails = new Set<string>()
+let currentOrg = 'org-stable'
+const reservedPayers: string[] = []
 const settlements: Array<number | null> = []
 const logs: unknown[][] = []
 const receipts: Array<Record<string, unknown>> = [], errors: unknown[] = []
@@ -13,11 +17,17 @@ const original = { fetch: globalThis.fetch, key: process.env.MIKKA_LITELLM_MASTE
 mock.module(new URL('../abuse/context.ts',import.meta.url).href,{namedExports:{hostedBillingScope:{getStore:()=>scope}}})
 mock.module(new URL('../abuse/runtime.ts',import.meta.url).href,{namedExports:{
   canUseMikkaPaid:async()=>{if(!balance)throw new Error('points_exhausted')},
-  hostedUsage:{reserve:async()=>{reservations++},settle:async(_id:string,cost:number|null)=>{settlements.push(cost)}},
+  hostedUsage:{reserve:async(payer:string)=>{reservations++;reservedPayers.push(payer);if(reserveFails.delete(payer))throw new Error('EMPTY_BALANCE')},settle:async(_id:string,cost:number|null)=>{settlements.push(cost)}},
 }})
 mock.module(new URL('../abuse/alerts.ts',import.meta.url).href,{namedExports:{checkAbuseAlerts:async()=>{}}})
 // This transport unit owns no DB; real payer resolution and revocation run in billing/credit-share PG suites.
-mock.module(new URL('../credit-shares.ts',import.meta.url).href,{namedExports:{withSharedCredits:async(workspaceId:string,attempt:(payer:string)=>unknown)=>attempt(workspaceId)}})
+mock.module(new URL('../credit-shares.ts',import.meta.url).href,{namedExports:{withSharedCredits:async(workspaceId:string,attempt:(payer:string)=>unknown,expected?:{payer:string,organizationId:string|null})=>{
+  // Real impl rejects a stale expected principal before reserving (lib/credit-shares.ts:107-119)
+  if(expected&&expected.organizationId!==currentOrg)throw new Error('billing_authorization_revoked')
+  currentOrg=orgs.length?orgs.shift()!:currentOrg
+  if(scope)(scope as {billingOrganizationId?:string}).billingOrganizationId=currentOrg
+  return attempt(payers.length?payers.shift()!:workspaceId)
+}}})
 mock.module(new URL('./runtime.ts',import.meta.url).href,{namedExports:{assertLiteLLMModelTransport:async(identity:unknown)=>{
   assert.deepEqual(identity,scope);checks++
   if(deniedAt===(checks===1?'prepare':'send'))throw new Error('modelRouteDenied')
@@ -28,6 +38,7 @@ beforeEach(()=>{
   process.env.MIKKA_LITELLM_URL='https://litellm.example';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-test-only';process.env.MIKKA_EDITION='community';console.error=(...args:unknown[])=>{logs.push(args)}
   scope={workspaceId:'fixture-workspace',ownerId:'fixture-owner'}
   balance=true;deniedAt=null;checks=0;sends=0;reservations=0;settlements.length=0
+  payers=[];orgs=[];reserveFails.clear();reservedPayers.length=0;currentOrg='org-stable'
   logs.length=0
   receipts.length=0;errors.length=0
   globalThis.fetch=async(_url,init)=>{
@@ -70,6 +81,24 @@ test('an allowed scoped call sends once and settles only the returned actual cos
   assert.ok(await invoke('fixture','test',questions))
   assert.equal(sends,1);assert.equal(checks,2);assert.deepEqual(settlements,[1])
   assert.deepEqual(logs,[])
+})
+test('a payer that ran dry mid-batch is switched once to a funded sharer',async()=>{
+  payers=['ws-a','ws-a','ws-b','ws-b'];reserveFails.add('ws-a')
+  assert.ok(await invoke('fixture','test',questions))
+  assert.deepEqual(reservedPayers,['ws-a','ws-b'])
+  assert.equal(sends,1)
+})
+test('a payer reselected under a new organization is a new principal and retries',async()=>{
+  payers=['ws-a','ws-a','ws-a','ws-a'];orgs=['org-old','org-new'];reserveFails.add('ws-a')
+  assert.ok(await invoke('fixture','test',questions))
+  assert.deepEqual(reservedPayers,['ws-a','ws-a'])
+  assert.equal(sends,1)
+})
+test('a reserve refusal with no other payer is not retried',async()=>{
+  payers=['ws-a','ws-a','ws-a','ws-a'];reserveFails.add('ws-a')
+  await assert.rejects(invoke('fixture','test',questions),/EMPTY_BALANCE/)
+  assert.deepEqual(reservedPayers,['ws-a'])
+  assert.equal(sends,0)
 })
 
 test('missing configuration retains the purpose and reports only a closed reason',async()=>{
