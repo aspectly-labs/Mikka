@@ -34,6 +34,11 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   if (signal?.aborted) return recordDecisionFailure(purpose, 'cancelled')
   const { hostedBillingScope, cachedDecisionGate } = await import('@/lib/abuse/context')
   const scope = hostedBillingScope.getStore()
+  // Tests mock the context module without the batch helper; degrade to direct
+  // loads there while production batches share the read-only gates.
+  const gate: typeof cachedDecisionGate = typeof cachedDecisionGate === 'function'
+    ? cachedDecisionGate
+    : <T,>(_key: string, load: () => Promise<T>) => load()
   if (!scope) return recordDecisionFailure(purpose, 'billing_scope_missing')
   const proxy = gatewayLiteLlm()
   const baseUrl = liteLLMBaseUrl(proxy?.url)
@@ -41,7 +46,7 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   const endpoint = baseUrl + DECISIONS_PATH.slice('/v1'.length)
   const { assertLiteLLMModelTransport } = await import('@/lib/model-admission/runtime')
   preparation = 'admission_refused'
-  await cachedDecisionGate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+  await gate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
     () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
   preparation = 'billing_refused'
   const usage = await import('@/lib/abuse/runtime')
@@ -50,7 +55,7 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
   // Like every hosted call (lib/abuse/model.ts): the workspace's own balance first, then shared credits.
   if (store && store.metered !== false) {
     const { withSharedCredits } = await import('@/lib/credit-shares')
-    const billingPrincipal = await cachedDecisionGate(`principal:${scope.workspaceId}:${billingAdapter?.admit ? 'adapter' : 'usage'}`,
+    const billingPrincipal = await gate(`principal:${scope.workspaceId}:${billingAdapter?.admit ? 'adapter' : 'usage'}`,
       () => withSharedCredits(scope.workspaceId, async payer => {
         await (billingAdapter?.admit ?? usage.canUseMikkaPaid)(payer)
         return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
@@ -71,7 +76,7 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
         : []))
       const executionId = randomUUID(), startedAt = new Date().toISOString()
       preparation = 'admission_refused'
-      await cachedDecisionGate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+      await gate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
         () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
       preparation = 'preparation_failed'
       if (signal?.aborted) throw new DOMException('Model request cancelled', 'AbortError')
