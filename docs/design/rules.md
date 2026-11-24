@@ -51,15 +51,19 @@ source wins in a conflict is in [`README.md`](README.md).
 ## Chat
 
 - **R-10** An input box goes only where there is a conversation, and it is
-  always the same composer (the Coordinator chat's: Grok style, attachment
-  button). Views that are not a conversation never get one: the task list
-  and a bot's computer screen send instructions through the centre composer.
-  An open thread is a conversation with the agent running it, so its detail
-  uses that composer in the task page, thread column and Artifact window.
-  It sends to the current authorized run. An independent review or verification
-  waiting for an answer uses the same composer. Send follows the run's reply
+  always the same composer (`ComposerSurface` in [`design-system.md`](design-system.md)
+  §2: `8px` radius, hairline shadow, attachment `+` button, clean model chip).
+  Views that are not a conversation never get one: the task list and a bot's
+  computer screen send instructions through the centre composer. An open thread
+  is a conversation with the agent running it, so its detail uses that composer
+  in the task page, thread column and Artifact window, sending to the current
+  authorized run. Blocking permissions, questions and logins take the single
+  bottom slot (`TakeoverCard`) with `Later` / `Esc` collapse (`design-system.md`
+  §3.2); non-blocking quota, model and offline warnings sit above the intact
+  composer as a 1-line `ChatStatusStrip`. Send follows the run's reply
   permission, and the legacy Agent archive is read-only
-  ([decision](decisions/2026-11-02-0220-every-thread-ends-in-the-composer.md)).
+  ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md);
+  retires the old Grok composer and independent-review composer clauses).
 - **R-11** A bot's composer, the Coordinator's included, has one model chip
   (`BotModelPicker`) beside 「+」, saved per bot; it picks a model only, never
   an Agent. Settings has no per-bot model rows
@@ -77,15 +81,17 @@ source wins in a conflict is in [`README.md`](README.md).
   `224:5023`). A group's 详情 is about people, not computers: the group
   avatar and name, then its members (people and bots), recent tasks and
   files. No cloud computer in a group; open a bot's own chat to see its.
-- **R-14** The user's messages sit in an accent-blue bubble with white text
-  (`accent/default`); a bot's text sits in the light grey bubble (on iOS,
-  full-width text with no bubble since
-  [2026-11-24-0520](decisions/2026-11-24-0520-ios-agent-replies-full-width.md)). Charts,
-  OpenUI cards and choice cards have no bubble. Bordered cards (document,
-  computer, Artifact) sit below the text bubble, never inside it. A 建议 card
-  the user taps is their message but keeps its card shape, no blue bubble; the
-  instruction under it is a blue bubble (R-55). This holds in every one-to-one
-  chat, the board's Coordinator sidebar and the AI sidebar included.
+- **R-14** Across Web, Desktop and iOS, assistant replies (Bot, Coordinator and
+  Agent threads) render as full-width quiet text with no bubble, and the user's
+  message sits in a compact subtle neutral bubble (`--secondary`, `rounded-xl`,
+  [`design-system.md`](design-system.md) §3.1;
+  [2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md),
+  building on [2026-11-24-0520](decisions/2026-11-24-0520-ios-agent-replies-full-width.md)).
+  Charts, OpenUI cards and choice cards have no bubble. Bordered cards
+  (document, computer, Artifact) sit below the reply, never inside it. A 建议
+  card the user taps keeps its card shape above their neutral prompt bubble
+  (R-55). This holds in every one-to-one chat, the board's Coordinator sidebar
+  and the AI sidebar.
 - **R-15** A task mentioned in chat is an inline chip: its status icon (R-52)
   alone and its code, such as 「◐ ALEX-45」, with the title, status, priority
   and what its Agent is doing (in words) in the hover card; a task with no
@@ -631,13 +637,13 @@ library's shipped look ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-
   metadata, borders and hover only. One accent, `accent/default`
   (`--sidebar-primary`): no second brand hue on buttons or selections (the
   violet workspace and project accents now map to it; unslop, 2026-10-31).
-- **R-31** No white hairlines. Inputs have a grey fill and no stroke. The
-  sources to watch: shadcn `border-input` (dark `--input` is
-  `oklch(1 0 0 / 15%)`), `ring-foreground/10` on dialogs and popovers,
-  Comma's 0.5px hairlines, and column `border-l/r`. Inputs are decided;
-  the app-wide sweep is open in `decisions.md`. Exception: a comment card
-  and the comment box (R-63) carry a 1px `--border` line, which must be a
-  dark grey in dark mode, never white at low opacity.
+- **R-31** No white hairlines. Structural dividers and notice rules use the
+  translucent tokens in [`design-system.md`](design-system.md) §1.1 (`--border`
+  `6%/8%`, `--rule` `8%/9%` in `mikka-hosted-ui/styles/palette.css`), never
+  opaque white hairlines or un-overridden dark `#262626` rules. Inputs have a
+  grey fill and no stroke (watch shadcn `border-input`, `ring-foreground/10` on
+  dialogs and popovers, and column `border-l/r`). Exception: a comment card and
+  the comment box (R-63) carry a `1px` `--border` line.
   Secondary buttons follow the same rule: a grey fill and no stroke, like
   the 「Add folder…」 button in Claude desktop's settings (a light grey pill
   on a white panel, no outline). `Button variant="outline"` and `variant="secondary"` (and the
@@ -655,50 +661,44 @@ library's shipped look ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-
   `--control` fill, no stroke, the magnifier on the left and a light focus ring.
   ui-policy fails an outlined `Input`, `InputGroup` or `SidebarInput` used for
   search as `style/search-input`.
-- **R-32** Type follows Comma (decision `2026-11-01-1204-type-follows-comma`):
-  Inter Variable for text and Geist Mono for code, self-hosted from
-  `app/fonts/`, registered by the shared renderer's `@font-face` rules in
-  `apps/desktop/src/renderer/styles.css` (no runtime font CDN, no metric
-  fallback, `font-display: block`), then the system stack `"SF Pro Display",
-  -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, …, sans-serif`. No
-  Chinese font is named: Chinese takes the system font (PingFang on a Mac), and
-  no self-hosted text font may draw a CJK code point (`ui-policy.test.mjs`).
-  Regular is 450 (`font-normal`); `font-synthesis: none`,
+- **R-32** Typography follows [`design-system.md`](design-system.md) §1.3
+  ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md),
+  retiring Comma type precedent): self-hosted `Mikka Inter` (variable) for UI
+  and `Mikka Geist Mono` for code, registered in `mikka-hosted-ui/core/renderer/styles.css`
+  (no runtime font CDN, no metric fallback, `font-display: block`), then the
+  system stack `"SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI",
+  Roboto, …, sans-serif`. No Chinese font is named: Chinese takes the system
+  font (PingFang on a Mac), and no self-hosted text font may draw a CJK code
+  point (`ui-policy.test.mjs`). `font-synthesis: none`,
   `text-rendering: optimizeLegibility`, `-webkit-font-smoothing: antialiased`.
-  A local font is only allowed after
-  its file and CSS variable are registered in `ui-policy.json` →
-  `typography.localFonts`. The size tokens are Comma's, set in
-  `app/globals.css` and pinned in `ui-policy.json`: `text-xs` 12/18,
-  `text-sm` 13/20, `text-md` 15/24, `text-lg` 18/28 and `text-xl` 20/30 at
-  -0.01em, `text-2xl` 24/32. UI body is 13/20 (list titles in Medium), meta
-  and group titles 12/18, badges 11/14 Medium, and 24/32 SemiBold for the
-  建议 page title only (R-55). Documents people read (a task's title and
-  description, the Artifact reader, comments) use 24/32 SemiBold title,
-  18/28 SemiBold section heading, 15/24 Regular body and 12/18 meta; a
-  smaller heading is the body size in SemiBold. Chat, the thread pane
-  included, is 13/21 (`text-sm leading-5.25`, Comma's message text). Nothing is smaller than 11px. Labels are sentence case:
-  no uppercase label with wide tracking (unslop; ui-policy
-  `typography/uppercase-label`). Weights stop at SemiBold, never Bold.
-- **R-33** Radii: 6 tag, 8 button and input, 9 rail item, 12 card and shell,
-  14 approval and list card, 14 dialog (`rounded-xl`, the `DialogContent` /
-  `AlertDialogContent` default; a call site does not change it), 999 pill. Spacing is a multiple of 4.
-  Exception: 建议 cards use 16 (R-55). On a coarse pointer every `Button`,
-  `Toggle`, `ToggleGroupItem` and `SelectTrigger` extends its hit area to at least 44×44px with
-  an invisible `::after` (`lib/touch-target.ts`), and drawer rows on a phone
-  are 44px tall; the desktop look does not change (interface-design, Alex
-  2026-10-31; WCAG 2.5.5, HCI review M7).
-- **R-34** Status colours come only from the StatusBadge set (Figma
-  `99:75`), shared by devices, threads and tasks.
-- **R-35** Shell (Comma): grey window background, 44px top bar (back,
-  forward, centred search pill that opens ⌘K, the 浏览器 globe toggle at the
-  right, R-57), 68px icon rail, in this order: 主页, 建议, 看板, 插件,
-  Artifact; and one rounded content card. Rail items are icons only: no text
-  under the icon; the name shows as a tooltip on hover and stays the item's
-  accessible name (Alex, #580; restored 2026-11-01 after #747 brought the
-  labels back). Build on
-  `components/app-shell.tsx`; no reUI App Shell blocks. Standing rule: a
-  skill audit (unslop, interface-design) never changes the shell layout;
-  Alex keeps it as it is (2026-10-31).
+  A local font is only allowed after its file and CSS variable are registered
+  in `ui-policy.json` → `typography.localFonts`. Sizes: chat prose and composer
+  `14/22`, documents and Artifact reader `15/24` body (`24/32` SemiBold title,
+  `18/28` SemiBold section heading), compact UI chrome and status strips `13/20`
+  (list titles Medium), metadata and group titles `12/18` (`tabular-nums`),
+  badges `11/14` Medium (`11px` floor), and `24/32` SemiBold for the 建议
+  briefing header (R-55). Labels are sentence case: no uppercase label with
+  wide tracking (`typography/uppercase-label`). Weights stop at SemiBold, never
+  Bold.
+- **R-33** Radii follow [`design-system.md`](design-system.md) §1.3: `6px`
+  button, tab, tag and compact row; `8px` composer, `TakeoverCard`, notice
+  strip, input and board card; `9px` rail item; `12px` floating strip, inset
+  panel, shell and dialog (`--radius-panel`); `9999px` pill and avatar. Never
+  place a `16px` (`rounded-2xl`) notice box above an `8px` composer. Spacing is
+  a multiple of `4`. Exception: 建议 cards use `16px` (R-55). On a coarse
+  pointer every `Button`, `Toggle`, `ToggleGroupItem` and `SelectTrigger`
+  extends its hit area to at least `44×44px` with an invisible `::after`
+  (`lib/touch-target.ts`), and drawer rows on a phone are `44px` tall; the
+  desktop look does not change (WCAG 2.5.5).
+- **R-34** Status colours come only from the StatusBadge / `state-mark.ts` set
+  (R-52) and the quiet status washes in `design-system.md` §1.2 (T3).
+- **R-35** Shell: neutral window background (`#f8f8f8` / `#0e0e10`), `48px`
+  unified header row, sidebar work tree (R-01, Capy Captains model), centred
+  `896px` chat reading column, and resizable Capy right-column tab rail (`520px`
+  default, `design-system.md` §3.3). Rail items are icons only with tooltips and
+  accessible names; no text under rail icons. Build on the official hosted
+  `components/app-shell.tsx`; no reUI App Shell blocks. Standing rule: a skill
+  audit (`unslop`, `interface-design`) never changes the shell layout.
 - **R-80** Every vertical line between two columns can be dragged to resize
   them (Alex: 「只要是这种竖线都可以 resizable」, decision 2026-11-01-1310):
   the bot list, the right panel, 建议's two halves, Artifact's list, the
@@ -957,13 +957,14 @@ How a design is reviewed:
   "send to a bot"). Never "这里是空的" or "Check back later".
 - **R-42** Every visible string lives in `messages/zh-CN.json` and
   `messages/en.json`; `pnpm i18n:check` must pass. Write Chinese first.
-- **R-43** Use the glossary's words: Bot, 对话, 线程, Agent, 资料库, 浏览器, 电脑.
-  Never 会话 for a left row or a run. The panel's list tab is 任务;
-  threads are reached through their task. The right-side worker that does a thread's work (Claude Code, Codex) is
-  an **Agent**, never harness or 执行器 in the UI; it runs on a 电脑 (your
-  computer, an SSH server or Mikka Cloud). `scripts/check-copy.mjs` rejects harness and
-  执行器 in `messages/`. 「Artifact」 is never translated. Built-in role names stay English
-  (Coordinator).
+- **R-43** Use the glossary's words: Bot, 线程, 群聊, Agent, 资料库, 浏览器, 电脑
+  (C-09: never 对话 except 对话框; never 会话 for a left row or a run). The
+  panel's list tab is 任务; threads are reached through their task. The
+  right-side worker that does a thread's work (Claude Code, Codex) is an
+  **Agent**, never harness or 执行器 in the UI; it runs on a 电脑 (your
+  computer, an SSH server or Mikka Cloud). `scripts/check-copy.mjs` rejects
+  harness and 执行器 in `messages/`. 「Artifact」 is never translated. Built-in
+  role names stay English (Coordinator).
 - **R-44** The 建议 panel header greets by time of day and name
   (「早上好，Alex。」, `Shell.suggestions.morning` / `afternoon` / `evening`);
   it is a briefing, not a page headline. Every other title names the place or
@@ -987,27 +988,12 @@ How a design is reviewed:
 
 ## Tokens
 
-The Figma variable collection `Mikka` (style guide section `98:2`) and
-`app/globals.css` describe the same palette under different names. Use the
-code token in code and the Figma variable in Figma. Values as of
-2026-10-24 (light mode); a "drift" row is a known mismatch to fix in one
-place, not a licence to pick either.
-
-| Figma variable | Figma value | Code token | Code value | Drift |
-| --- | --- | --- | --- | --- |
-| `bg/canvas` (window) | `#f3f3f3` | `--shell-chrome` | `#f5f5f5` | yes |
-| `bg/surface` (content card) | `#fdfdfd` | `--shell-panel` | `#f9f9f9` | yes |
-| `bg/elevated` | `#ffffff` | `--shell-raised`, `--card`, `--popover` | `#ffffff` | |
-| `text/primary` | `#171717` | `--foreground` | `#0a0a0a` | yes |
-| `text/secondary` | `#737373` | `--muted-foreground` | `#606060` | yes (code darker on purpose, less grey) |
-| `text/tertiary` | `#a3a3a3` | `--ink-3` | `--muted-foreground` 90% into `--background` (oklch). Text only in the source list's domain (`streaming-text.tsx`), on `bg-inset`, hovered `--hover`: light 4.62 / 4.74, dark 4.82 / 5.09 | deliberate (Figma lighter; code holds 4.5:1, [decision](decisions/2026-11-05-0040-ink-3-holds-contrast.md)) |
-| `border/default` | `#00000014` | `--border` | `#e5e5e5` | close |
-| `border/rule` | `#e5e5e5` / dark `#383838` | `--rule` | `oklch(0.922 0 0)` / dark `oklch(0.269 0 0)` | |
-| `accent/default` | `#2f6bff` | `--sidebar-primary` | shadcn blue | yes |
-| `status/*` | StatusBadge set | `--success`, `--warning`, `--destructive` | Tailwind palette (500; red 600 light) | check |
-| `status/*` text | — | `--success-foreground`, `--warning-foreground`, `--destructive-foreground`, `--info-foreground` | light: emerald / yellow / violet 900, red 800; dark: emerald / yellow / violet 400, red 300 | |
-| `status/warning` mark | — | `--warning-ink` | light yellow 900, dark `--card`: the 紧急 square's ! on solid amber (R-87) | |
-| `brand/claude` (R-74 mark) | none yet | `--color-brand-claude` | `#D97757`, both themes | Figma to add |
+The authoritative light and dark design token tables — surfaces, translucent
+borders (`--border`, `--rule`), WCAG AA text contrast (`T1`), quiet status
+washes (`T3`), radii (`T2`), shadows and typography — live in
+[`design-system.md`](design-system.md) §1 (`mikka-hosted-ui/styles/palette.css`
+and `apps/mobile/styles/tokens.css`). All previous 2026-10-24 Figma zinc-grey
+drift entries are retired in favor of `design-system.md` §1.
 
 A status word or icon, on a status tint (a badge) or on its own, takes the
 `*-foreground` token, never the status colour itself: the colour is the tint and
@@ -1021,8 +1007,5 @@ dark, status/10 in light):
 | success | 8.81 (was 500: 2.24) | 7.27 (was 600: 3.84) | 6.38 (was 600: 3.36) |
 | destructive | 7.01 | 7.52 with red 300 (was 600: 3.03) | 6.61 (was 600: 2.66; red 400 would be 4.39) |
 | info | 9.70 | 5.37 with violet 400 (was 600: 2.60) | 4.74 (was 600: 2.30) |
-
-The drift rows are open in `decisions.md`. Until they are settled, the code
-value is what ships and Figma is updated to match.
 
 - A conversation owner can edit a delivered personal message or rerun a reply. Versions keep their original output and publication receipts. Switching versions only reads history. An explicit new execution uses its own native session and worktree. [Decision](decisions/2026-11-13-1730-conversation-message-versions.md)
