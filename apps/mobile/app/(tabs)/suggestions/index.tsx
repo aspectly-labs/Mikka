@@ -1,6 +1,6 @@
 import { ReadNotice } from '@/components/ReadNotice'
 import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFocusEffect, usePathname, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Puzzle, Sparkles } from 'lucide-react-native'
@@ -49,8 +49,10 @@ export default function SuggestionsScreen() {
   const groups = (data?.groups ?? []).filter(group => group.items.length)
   const items = groups.flatMap(group => group.items).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
   const [source, setSource] = useState<string | null>(null)
-  // A filter on an app that has nothing left today falls back to every app.
+  // A filter on an app that has nothing left today falls back to every app, and is dropped once a read confirms it, so
+  // a later suggestion from that app does not quietly bring the filter back.
   const filter = source && groups.some(group => group.source === source) ? source : null
+  useEffect(() => { if (data && source && !filter) setSource(null) }, [data, source, filter])
   const shown = filter ? items.filter(item => item.source === filter) : items
   const key = (id: string) => `${context}:${id}`
   const submitting = () => items.some(item => delivery.state(key(item.id)).status === 'submitting')

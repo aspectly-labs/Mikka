@@ -9,7 +9,10 @@ import { Group } from '@/components/ui'
 import { ListLoading } from '@/shared/components/empty-state'
 import { mobileMessages } from '@/lib/messages'
 import type { GroupMember } from '@/lib/types'
-import { useApi, useRefresh } from '@/lib/useApi'
+import { useLiveApi, useRefresh } from '@/lib/useApi'
+import { useHome } from '@/lib/home'
+import { groupChatLive } from '@/lib/live-keys'
+import { botPath } from '@/lib/pins'
 import { colors } from '@/lib/theme'
 
 /**
@@ -17,9 +20,13 @@ import { colors } from '@/lib/theme'
  * audit C3: a group had no way to see who is in it). Reads the same members list the chat already reads.
  */
 export default function GroupInfoScreen() {
-  const { id, title } = useLocalSearchParams<{ id: string; title?: string }>()
+  const { id, title, workspace } = useLocalSearchParams<{ id: string; title?: string; workspace?: string }>()
   const router = useRouter()
-  const { data, error, loading, reload } = useApi<{ members: GroupMember[] }>(`/api/conversations/${id}/members`)
+  // The group's own live key, as the chat reads its members: a rename or a new member shows here too.
+  const { data, error, loading, reload } = useLiveApi<{ members: GroupMember[] }>(`/api/conversations/${id}/members`, () => groupChatLive(id, workspace))
+  // Only a Bot of the viewer's own opens a chat (a guest sees the owner's Bots read-only); the Coordinator opens by its
+  // alias, so its unsent messages stay in one place.
+  const own = new Map((useHome().data?.bots ?? []).map(bot => [bot.id, bot]))
   const refresh = useRefresh(reload)
   // Bots first (each opens its chat), then people.
   const members = data?.members ?? []
@@ -35,8 +42,8 @@ export default function GroupInfoScreen() {
         {data ? (
           <Group label={mobileMessages.Shell.panel.members.replace('{count}', String(count))}>
             {bots.map(bot => (
-              <Row key={`bot:${bot.id}`} icon={<BotAvatar color={bot.color} shape={bot.shape} size={28} />} label={bot.name} value="Bot"
-                onPress={() => router.push({ pathname: '/bots/[id]', params: { id: bot.id } })} />
+              <Row key={`bot:${bot.id}`} icon={<BotAvatar color={bot.color} shape={bot.shape} size={28} />} label={bot.name} value={mobileMessages.MobileCore.groupInfo.bot}
+                onPress={own.has(bot.id) ? () => router.push(botPath(own.get(bot.id)!)) : undefined} />
             ))}
             {people.map(person => (
               <Row key={`user:${person.id}`} icon={<View style={styles.person}><PersonInitial name={person.name} /></View>} label={person.name}

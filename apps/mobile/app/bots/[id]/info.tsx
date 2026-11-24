@@ -166,11 +166,11 @@ export default function BotInfo() {
                     <Text style={styles.swipeDeleteText}>{mobileMessages.Common.delete}</Text>
                   </Pressable>
                 )}>
-                <View style={styles.libraryRow} accessibilityActions={[{ name: 'delete', label: mobileMessages.Common.delete }]}
-                  onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'delete') requestDelete(item) }}>
+                <View style={styles.libraryRow}>
                   <Row icon={<Symbol name={item.kind === 'html' ? 'globe' : 'doc.text'} size={19} />} label={item.title}
                     value={deletingId === item.id ? undefined : shortWhen(item.updatedAt)} trailing={deletingId === item.id ? <Spinner /> : undefined}
-                    onPress={() => openArtifact(item)} onLongPress={() => requestDelete(item)} />
+                    onPress={() => openArtifact(item)} onLongPress={() => requestDelete(item)}
+                    actions={deletingId === null ? [{ name: 'delete', label: mobileMessages.Common.delete, run: () => requestDelete(item) }] : undefined} />
                 </View>
               </Swipeable>
             ))}

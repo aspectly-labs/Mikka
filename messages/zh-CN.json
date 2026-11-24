@@ -9410,7 +9410,10 @@
     "allTasks": "全部任务",
     "lastThreadStatus": "上次状态：{status}",
     "messageThread": "给这个线程发消息",
-    "currentLanguage": "简体中文"
+    "currentLanguage": "简体中文",
+    "groupInfo": {
+      "bot": "Bot"
+    }
   },
   "HostedInbox": {
     "writeError": "未能确认收件箱更改。请刷新后重试。",

@@ -247,7 +247,7 @@ export default function GroupChat() {
       <NavBar title={accessDenied ? '' : title} scrolled={underBar.scrolled}
         // 详情 (usability audit C3): who is in the group, as a one-to-one chat opens its Bot's page.
         right={accessDenied ? undefined : { icon: 'info.circle', label: mobileMessages.Shell.panel.details, web: <Info size={20} color={colors.ink} strokeWidth={2} />,
-          onPress: () => router.push({ pathname: '/group-info', params: { id, title } }) }} />
+          onPress: () => router.push({ pathname: '/group-info', params: { id, title, ...(summary?.workspaceId ? { workspace: summary.workspaceId } : {}) } }) }} />
       <View style={{ flex: 1, overflow: 'hidden' }}>
         <ChatMessageList ref={list} testID="group-chat-scroll" data={messages} scrollEnabled onScrollUnderBar={underBar.onScroll} bottomInset={composerHeight} onAtLatestChange={setAtLatest}
           keyOf={message => message.id} renderItem={renderMessage} anchorIndex={anchorIndex}
