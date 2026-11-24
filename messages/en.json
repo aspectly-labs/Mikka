@@ -7857,7 +7857,9 @@
     "deselect": "Deselect",
     "diffPartial": "More files changed than this read reached",
     "diffPatchUnavailable": "{count} file(s) have no patch (binary or truncated)",
-    "reviewSelf": "You cannot request changes on your own pull request"
+    "reviewSelf": "You cannot request changes on your own pull request",
+    "noneSelected": "Select a pull request to see it here",
+    "changesTab": "Changes"
   },
   "HostedConnections": {
     "state": {
@@ -10934,5 +10936,52 @@
     "question": "Question from {name}",
     "openChat": "Open {name}'s chat",
     "openThread": "Open thread"
+  },
+  "PullPreview": {
+    "changesTab": "Changes",
+    "overviewTab": "Overview",
+    "issuesTab": "Issues",
+    "commitsTab": "Commits",
+    "allCommits": "All commits",
+    "viewed": "Viewed",
+    "collapseAll": "Collapse all",
+    "expandAll": "Expand all",
+    "diffSettings": "Diff settings",
+    "wrap": "Wrap lines",
+    "scroll": "Horizontal scroll",
+    "filesCount": "{count, plural, one {# file} other {# files}}",
+    "changedFilesHeading": "{count, plural, one {# changed file} other {# changed files}}",
+    "viewedProgress": "{done}/{total} viewed",
+    "loadingChanges": "Loading changed files…",
+    "loadChangesFailed": "Could not load changed files.",
+    "noChangedFiles": "No changed files.",
+    "binaryOrTruncated": "Binary file or truncated patch. View on GitHub.",
+    "mergePr": "Merge PR",
+    "mergeMethods": {
+      "merge": "Create a merge commit",
+      "squash": "Squash and merge",
+      "rebase": "Rebase and merge"
+    },
+    "confirmMerge": "Confirm: {method}",
+    "selectMergeMethod": "Select merge method",
+    "submitting": "Submitting…",
+    "allPassed": "All checks & approvals passed",
+    "checksPassed": "All checks passed",
+    "checksFailing": "{count, plural, one {# check failing} other {# checks failing}}",
+    "checksPending": "Checks in progress",
+    "hasConflicts": "Merge conflicts",
+    "changesRequested": "Changes requested",
+    "reviewRequired": "Review required",
+    "draftStatus": "Draft PR",
+    "mergedStatus": "Pull request merged",
+    "closedStatus": "Pull request closed",
+    "noIssues": "No unresolved review issues.",
+    "resolved": "Resolved",
+    "unresolved": "Open",
+    "addReviewComment": "Add review comment",
+    "noCommits": "No commits reported.",
+    "summaryHeading": "Summary",
+    "openBrowser": "Open in browser",
+    "quoteRef": "Copy PR reference"
   }
 }

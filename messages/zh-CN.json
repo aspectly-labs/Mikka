@@ -7857,7 +7857,9 @@
     "deselect": "取消选择",
     "diffPartial": "改动文件数超过本次读取的上限",
     "diffPatchUnavailable": "{count} 个文件没有补丁（二进制或被截断）",
-    "reviewSelf": "不能在自己的 PR 上请求修改"
+    "reviewSelf": "不能在自己的 PR 上请求修改",
+    "noneSelected": "选择一个 PR，在这里查看",
+    "changesTab": "变更"
   },
   "HostedConnections": {
     "state": {
@@ -10934,5 +10936,52 @@
     "question": "{name} 提了问题",
     "openChat": "打开 {name} 的聊天",
     "openThread": "打开线程"
+  },
+  "PullPreview": {
+    "changesTab": "变更",
+    "overviewTab": "概览",
+    "issuesTab": "问题",
+    "commitsTab": "提交",
+    "allCommits": "所有提交",
+    "viewed": "已阅",
+    "collapseAll": "收起全部",
+    "expandAll": "展开全部",
+    "diffSettings": "Diff 设置",
+    "wrap": "自动换行",
+    "scroll": "横向滚动",
+    "filesCount": "{count} 个文件",
+    "changedFilesHeading": "{count} 个改动文件",
+    "viewedProgress": "已阅 {done}/{total}",
+    "loadingChanges": "正在加载文件改动…",
+    "loadChangesFailed": "改动加载失败。",
+    "noChangedFiles": "没有文件改动。",
+    "binaryOrTruncated": "二进制文件或补丁已截断，请在 GitHub 查看。",
+    "mergePr": "合并 PR",
+    "mergeMethods": {
+      "merge": "合并提交",
+      "squash": "压缩并合并",
+      "rebase": "变基并合并"
+    },
+    "confirmMerge": "确认{method}",
+    "selectMergeMethod": "选择合并方式",
+    "submitting": "提交中…",
+    "allPassed": "全部检查与审批已通过",
+    "checksPassed": "全部检查已通过",
+    "checksFailing": "{count} 项检查失败",
+    "checksPending": "检查进行中",
+    "hasConflicts": "存在合并冲突",
+    "changesRequested": "审阅者要求修改",
+    "reviewRequired": "等待审阅批准",
+    "draftStatus": "草稿 PR，暂不可合并",
+    "mergedStatus": "此 PR 已合并",
+    "closedStatus": "此 PR 已关闭",
+    "noIssues": "暂无未解决的评审问题。",
+    "resolved": "已解决",
+    "unresolved": "待处理",
+    "addReviewComment": "提交审阅意见",
+    "noCommits": "暂无提交记录。",
+    "summaryHeading": "PR 摘要",
+    "openBrowser": "在浏览器打开",
+    "quoteRef": "复制 PR 引用"
   }
 }
