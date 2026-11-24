@@ -34,7 +34,7 @@ mock.module('expo/fetch', { namedExports: { fetch: async (input: RequestInfo | U
 mock.module('expo-secure-store', { namedExports: { getItemAsync: async (key: string) => workspaces.get(key) ?? null, setItemAsync: async () => {} } })
 mock.module(new URL('../lib/auth.ts', import.meta.url).href, { namedExports: { authClient: { getCookie: async () => 'better-auth.session_token=fixture-a' } } })
 mock.module(new URL('../lib/config.ts', import.meta.url).href, { namedExports: { currentAccount: () => current } })
-mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => {}, sessionRefused: async () => {}, keepRenewedSession: async () => {} } })
+mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => {}, sessionRefused: async () => {} } })
 mock.module(new URL('../lib/tracing.ts', import.meta.url).href, { namedExports: { mobileTraceHeaders: () => ({ 'x-mikka-client': 'mobile' }) } })
 const { eveClientOptions } = await import('../lib/eve-client.ts')
 after(() => { globalThis.fetch = originalFetch })

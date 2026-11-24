@@ -13,7 +13,7 @@ mock.module('react-native', { namedExports: { Platform: { OS: 'ios' } } })
 mock.module('expo-secure-store', { namedExports: { getItemAsync: async () => null, setItemAsync: async () => {} } })
 mock.module(new URL('../lib/auth.ts', import.meta.url).href, { namedExports: { authClient: client } })
 mock.module(new URL('../lib/config.ts', import.meta.url).href, { namedExports: { currentAccount: () => current } })
-mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => { ended++ }, sessionRefused: async () => { ended++ }, keepRenewedSession: async () => {} } })
+mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => { ended++ }, sessionRefused: async () => { ended++ } } })
 const failedTraceId = '6abe308341a942df9b952484f9179a9b'
 mock.module(new URL('../lib/tracing.ts', import.meta.url).href, { namedExports: { mobileTraceHeaders: () => ({
   'x-mikka-client-kind': 'mobile',

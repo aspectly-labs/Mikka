@@ -4,7 +4,7 @@ import { validTraceparent } from '@mikka/protocol/trace-context'
 import { hostedApiUpgrade } from '@mikka/protocol/version'
 import { authClient } from '@/lib/auth'
 import { currentAccount } from '@/lib/config'
-import { keepRenewedSession, sessionRefused } from '@/lib/session'
+import { sessionRefused } from '@/lib/session'
 import { apiCache } from './api-cache'
 import { mobileTraceHeaders } from './tracing'
 import { accountStorageKey } from './server-store'
@@ -116,9 +116,8 @@ export async function api<T>(path: string, init: ApiRequest = {}, connection: Ap
       throw error
     })
     if (!init.diagnostics) clearTimeout(timer)
-    void keepRenewedSession(connection.account.id, response)
     // A response for a previous identity must not sign the current person out.
-    if (response.status === 401 && currentAccount().id === connection.account.id) apiCache.commit(context, () => { void sessionRefused() })
+    if (response.status === 401 && currentAccount().id === connection.account.id) apiCache.commit(context, () => { void sessionRefused(authentication.cookie ?? null) })
     if (response.status === 204) return undefined as T
     const data = await response.json().catch(error => {
       if (response.ok && init.diagnostics) throw new ApiTransportError(controller.signal.aborted ? 'timeout' : 'invalid_response', error, traceId)
