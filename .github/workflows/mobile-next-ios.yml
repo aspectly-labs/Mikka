@@ -244,7 +244,7 @@ jobs:
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$password" "$keychain"
-          if ! security import "$p12" -k "$keychain" -P "$APPLE_IOS_DISTRIBUTION_P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security > /dev/null 2>&1; then
+          if ! security import "$p12" -k "$keychain" -P "$APPLE_IOS_DISTRIBUTION_P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcodebuild > /dev/null 2>&1; then
             rm -f "$p12"
             echo "::error::The Apple Distribution .p12 could not be imported (wrong password or format)."
             exit 1
@@ -254,6 +254,7 @@ jobs:
           existing=()
           while IFS= read -r line; do line="${line#"${line%%[![:space:]]*}"}"; existing+=("${line//\"/}"); done < <(security list-keychains -d user)
           security list-keychains -d user -s "$keychain" ${existing[@]+"${existing[@]}"}
+          security default-keychain -d user -s "$keychain"
           identities="$(security find-identity -v -p codesigning "$keychain" | grep -E '^[[:space:]]*[0-9]+\) [0-9A-F]{40} "(Apple|iPhone) Distribution' || true)"
           [[ "$(printf '%s' "$identities" | grep -c . || true)" == 1 ]] || { echo "::error::The .p12 must hold exactly one Apple Distribution identity."; exit 1; }
           identity="$(printf '%s' "$identities" | awk '{print $2}')"
@@ -292,18 +293,45 @@ jobs:
       - name: Pin manual App Store signing
         run: |
           set -euo pipefail
-          ruby_bin=ruby
-          if ! ruby -e 'require "xcodeproj"' > /dev/null 2>&1; then
-            ruby_bin="$(sed -n '1s/^#![[:space:]]*//p' "$(command -v pod)" | awk '{print ($1 ~ /\/env$/) ? $2 : $1}')"
-            [[ "$ruby_bin" == */* ]] || ruby_bin="$(command -v "$ruby_bin")"
-          fi
+          run_xcodeproj_ruby() {
+            if ruby -e 'require "xcodeproj"' > /dev/null 2>&1; then
+              ruby "$@"
+              return
+            fi
+            local pod_bin pod_real libexec shebang cand f
+            pod_bin="$(command -v pod)"
+            pod_real="$(realpath "$pod_bin" 2> /dev/null || printf '%s' "$pod_bin")"
+            libexec="$(cd "$(dirname "$pod_real")/.." && pwd)/libexec"
+            local -a rubies=()
+            for f in "$pod_bin" "$libexec/bin/pod"; do
+              [[ -r "$f" ]] || continue
+              shebang="$(sed -n '1s/^#![[:space:]]*//p' "$f" | awk '{print ($1 ~ /\/env$/) ? $2 : $1}')"
+              [[ "$shebang" == *ruby* ]] || continue
+              [[ "$shebang" == */* ]] || shebang="$(command -v "$shebang" 2> /dev/null || true)"
+              [[ -n "$shebang" ]] && rubies+=("$shebang")
+            done
+            rubies+=(/opt/homebrew/opt/ruby/bin/ruby /usr/local/opt/ruby/bin/ruby "$(command -v ruby)" /usr/bin/ruby)
+            for cand in "${rubies[@]}"; do
+              [[ -x "$cand" ]] || continue
+              if "$cand" -e 'require "xcodeproj"' > /dev/null 2>&1; then
+                "$cand" "$@"
+                return
+              fi
+              if [[ -d "$libexec" ]] && env -u GEM_PATH GEM_HOME="$libexec" "$cand" -e 'require "xcodeproj"' > /dev/null 2>&1; then
+                env -u GEM_PATH GEM_HOME="$libexec" "$cand" "$@"
+                return
+              fi
+            done
+            echo "::error::Could not locate a Ruby runtime with the xcodeproj gem."
+            exit 1
+          }
           project="$APP_DIR/ios/Mikka.xcodeproj"
-          "$ruby_bin" scripts/release/ios-manual-signing.rb list "$project" "$RUNNER_TEMP/ios-bundle-ids.json"
+          run_xcodeproj_ruby scripts/release/ios-manual-signing.rb list "$project" "$RUNNER_TEMP/ios-bundle-ids.json"
           node scripts/release/ios-app-store-signing.mjs \
             --bundle-ids "$RUNNER_TEMP/ios-bundle-ids.json" \
             --profiles "$RUNNER_TEMP/ios-profiles.json" \
             --export-options "$RUNNER_TEMP/ExportOptions.plist"
-          "$ruby_bin" scripts/release/ios-manual-signing.rb apply "$project" "$RUNNER_TEMP/ios-profiles.json"
+          run_xcodeproj_ruby scripts/release/ios-manual-signing.rb apply "$project" "$RUNNER_TEMP/ios-profiles.json"
       - name: Archive with the Apple Distribution identity
         env:
           APP_VARIANT: production

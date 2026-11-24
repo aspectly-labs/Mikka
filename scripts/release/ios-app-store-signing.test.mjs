@@ -41,15 +41,24 @@ test('export options sign manually with the imported identity and each profile',
   assert.doesNotMatch(plist, /automatic/)
 })
 
-function fakeAsc({ certificates, bundles, profiles = [] }) {
+function fakeAsc({ certificates, bundles, profiles = [], pageSize = 200 }) {
   const calls = []
   const reply = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) })
   const fetchImpl = async (url, init) => {
-    const { pathname, searchParams } = new URL(url)
+    const parsed = new URL(url)
+    const { pathname, searchParams } = parsed
     calls.push({ method: init.method, pathname, body: init.body ? JSON.parse(init.body) : undefined })
     if (init.method === 'GET' && pathname === '/v1/certificates') return reply(200, { data: certificates })
     if (init.method === 'GET' && pathname === '/v1/bundleIds') return reply(200, { data: bundles.filter(b => b.attributes.identifier.includes(searchParams.get('filter[identifier]'))) })
-    if (init.method === 'GET' && pathname === '/v1/profiles') return reply(200, { data: profiles.filter(p => p.attributes.name === searchParams.get('filter[name]')) })
+    if (init.method === 'GET' && pathname === '/v1/profiles') {
+      const exactName = searchParams.get('filter[name]')
+      const filtered = exactName ? profiles.filter(p => p.attributes.name === exactName) : profiles
+      const cursor = Number(searchParams.get('cursor') ?? '0')
+      const slice = filtered.slice(cursor, cursor + pageSize)
+      const nextCursor = cursor + pageSize
+      const links = nextCursor < filtered.length ? { next: `https://api.appstoreconnect.apple.com/v1/profiles?filter[profileType]=IOS_APP_STORE&include=certificates,bundleId&cursor=${nextCursor}` } : {}
+      return reply(200, { data: slice, links })
+    }
     if (init.method === 'POST' && pathname === '/v1/profiles') return reply(201, { data: { id: 'NEWPROFILE1', attributes: { name: JSON.parse(init.body).data.attributes.name, uuid: '00000000-0000-0000-0000-000000000002', profileContent: Buffer.from('new').toString('base64'), profileState: 'ACTIVE' } } })
     return reply(404, { errors: [{ code: 'NOT_FOUND' }] })
   }
@@ -62,13 +71,48 @@ const bundles = [
   { id: 'BUNDLEID02', attributes: { identifier: 'com.aspectlylabs.mikka.dev' } },
 ]
 
-test('an existing active profile for the certificate is reused without creating anything', async () => {
+test('an existing active profile matching bundleId and certificate is reused without creating anything', async () => {
   const serial = normalizeSerial('AB12CD34EF')
-  const existing = { id: 'PROFILEID1', attributes: { name: profileName('com.aspectlylabs.mikka', serial), uuid: '00000000-0000-0000-0000-000000000001', profileContent: Buffer.from('old').toString('base64'), profileState: 'ACTIVE' } }
+  const existing = {
+    id: 'PROFILEID1',
+    attributes: { name: profileName('com.aspectlylabs.mikka', serial), uuid: '00000000-0000-0000-0000-000000000001', profileContent: Buffer.from('old').toString('base64'), profileState: 'ACTIVE' },
+    relationships: { bundleId: { data: { type: 'bundleIds', id: 'BUNDLEID01' } }, certificates: { data: [{ type: 'certificates', id: 'CERTID0001' }] } },
+  }
   const { calls, fetchImpl } = fakeAsc({ certificates: [certificate], bundles, profiles: [existing] })
   const result = await ensureProfiles({ fetchImpl, token: 't', serial, bundleIds: ['com.aspectlylabs.mikka'] })
-  assert.deepEqual(result.map(p => [p.bundleId, p.uuid]), [['com.aspectlylabs.mikka', '00000000-0000-0000-0000-000000000001']])
+  assert.deepEqual(result.map(p => [p.bundleId, p.uuid, p.name]), [['com.aspectlylabs.mikka', '00000000-0000-0000-0000-000000000001', existing.attributes.name]])
   assert.ok(calls.every(call => call.method === 'GET'))
+})
+
+test('an active same-name profile bound to a different certificate is NOT reused; a compatible profile is created under an unused name', async () => {
+  const serial = normalizeSerial('AB12CD34EF')
+  const baseName = profileName('com.aspectlylabs.mikka', serial)
+  const mismatched = {
+    id: 'PROFILEID_WRONG_CERT',
+    attributes: { name: baseName, uuid: '00000000-0000-0000-0000-000000000099', profileContent: Buffer.from('wrong').toString('base64'), profileState: 'ACTIVE' },
+    relationships: { bundleId: { data: { type: 'bundleIds', id: 'BUNDLEID01' } }, certificates: { data: [{ type: 'certificates', id: 'OTHERCERT9' }] } },
+  }
+  const { calls, fetchImpl } = fakeAsc({ certificates: [certificate], bundles, profiles: [mismatched] })
+  const [profile] = await ensureProfiles({ fetchImpl, token: 't', serial, bundleIds: ['com.aspectlylabs.mikka'] })
+  assert.equal(profile.name, `${baseName} 2`)
+  assert.equal(profile.uuid, '00000000-0000-0000-0000-000000000002')
+  const created = calls.filter(call => call.method === 'POST')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].body.data.attributes.name, `${baseName} 2`)
+  assert.deepEqual(created[0].body.data.relationships, {
+    bundleId: { data: { type: 'bundleIds', id: 'BUNDLEID01' } },
+    certificates: { data: [{ type: 'certificates', id: 'CERTID0001' }] },
+  })
+  const compatible = {
+    id: 'PROFILEID_SUF2',
+    attributes: { name: `${baseName} 2`, uuid: '00000000-0000-0000-0000-000000000002', profileContent: Buffer.from('good').toString('base64'), profileState: 'ACTIVE' },
+    relationships: { bundleId: { data: { type: 'bundleIds', id: 'BUNDLEID01' } }, certificates: { data: [{ type: 'certificates', id: 'CERTID0001' }] } },
+  }
+  const secondRun = fakeAsc({ certificates: [certificate], bundles, profiles: [mismatched, compatible], pageSize: 1 })
+  const [reused] = await ensureProfiles({ fetchImpl: secondRun.fetchImpl, token: 't', serial, bundleIds: ['com.aspectlylabs.mikka'] })
+  assert.equal(reused.name, `${baseName} 2`)
+  assert.equal(reused.uuid, '00000000-0000-0000-0000-000000000002')
+  assert.ok(secondRun.calls.every(call => call.method === 'GET'))
 })
 
 test('a missing profile is created for the exact bundle id and the registered certificate only', async () => {
@@ -124,5 +168,7 @@ test('the workflow reads the persistent identity through OIDC and never lets Xco
   const cleanup = step('Remove the signing keychain and the App Store Connect key')
   assert.ok(cleanup.includes('if: always()'))
   assert.ok(cleanup.includes('security delete-keychain'))
-  assert.ok(workflow.indexOf('node --test scripts/release/ios-app-store-signing.test.mjs') < workflow.indexOf('Read the private UI checkout credential'))
+  const testIndex = workflow.indexOf('node --test scripts/release/ios-app-store-signing.test.mjs')
+  const credIndex = workflow.indexOf('Read the private UI checkout credential')
+  assert.ok(testIndex >= 0 && credIndex > testIndex, 'pre-credential signing test must run before private checkout credential')
 })

@@ -77,26 +77,57 @@ async function asc(fetchImpl, token, method, path, body) {
   return json
 }
 
+async function listPages(fetchImpl, token, initialPath, maxPages = 20) {
+  const items = []
+  let path = initialPath
+  for (let page = 0; path && page < maxPages; page += 1) {
+    const response = await asc(fetchImpl, token, 'GET', path)
+    if (Array.isArray(response.data)) items.push(...response.data)
+    const next = response.links?.next
+    if (typeof next !== 'string' || !next) break
+    if (!next.startsWith(`${API}/`)) throw Error('RELEASE_IOS_ASC_PAGINATION_INVALID')
+    path = next.slice(API.length)
+  }
+  return items
+}
+
+export function profileMatches(profile, { bundleId, certificateId }) {
+  if (profile?.attributes?.profileState !== 'ACTIVE') return false
+  if (profile?.relationships?.bundleId?.data?.id !== bundleId) return false
+  const certs = profile?.relationships?.certificates?.data
+  return Array.isArray(certs) && certs.some(item => item?.id === certificateId)
+}
+
 export async function ensureProfiles({ fetchImpl = fetch, token, serial, bundleIds }) {
-  const certificates = await asc(fetchImpl, token, 'GET', '/certificates?filter[certificateType]=IOS_DISTRIBUTION,DISTRIBUTION&limit=200')
-  const certificate = (certificates.data ?? []).find(item => {
+  const certificates = await listPages(fetchImpl, token, '/certificates?filter[certificateType]=IOS_DISTRIBUTION,DISTRIBUTION&limit=200')
+  const certificate = certificates.find(item => {
     try { return normalizeSerial(item.attributes?.serialNumber) === serial } catch { return false }
   })
   if (!certificate) throw Error('RELEASE_IOS_CERTIFICATE_NOT_REGISTERED')
+  const allProfiles = await listPages(fetchImpl, token, '/profiles?filter[profileType]=IOS_APP_STORE&include=certificates,bundleId&limit=200')
   const profiles = []
   for (const bundleId of bundleIds) {
     if (!BUNDLE_ID.test(bundleId)) throw Error('RELEASE_IOS_BUNDLE_ID_INVALID')
     const bundles = await asc(fetchImpl, token, 'GET', `/bundleIds?filter[identifier]=${encodeURIComponent(bundleId)}&limit=200`)
     const bundle = (bundles.data ?? []).find(item => item.attributes?.identifier === bundleId)
     if (!bundle) throw Error('RELEASE_IOS_BUNDLE_ID_NOT_REGISTERED')
-    const name = profileName(bundleId, serial)
-    const existing = await asc(fetchImpl, token, 'GET', `/profiles?filter[name]=${encodeURIComponent(name)}&filter[profileType]=IOS_APP_STORE&filter[profileState]=ACTIVE&limit=200`)
-    let profile = (existing.data ?? []).find(item => item.attributes?.name === name && item.attributes?.profileState === 'ACTIVE')
+    const baseName = profileName(bundleId, serial)
+    const candidates = allProfiles.filter(item => {
+      const candidateName = item?.attributes?.name ?? ''
+      return candidateName === baseName || candidateName.startsWith(`${baseName} `)
+    })
+    let profile = candidates.find(item => profileMatches(item, { bundleId: bundle.id, certificateId: certificate.id }))
     if (!profile) {
+      const takenNames = new Set(allProfiles.map(item => item?.attributes?.name).filter(Boolean))
+      let createName = baseName
+      for (let suffix = 2; takenNames.has(createName); suffix += 1) {
+        if (suffix > 100) throw Error('RELEASE_IOS_PROFILE_NAME_EXHAUSTED')
+        createName = `${baseName} ${suffix}`
+      }
       const created = await asc(fetchImpl, token, 'POST', '/profiles', {
         data: {
           type: 'profiles',
-          attributes: { name, profileType: 'IOS_APP_STORE' },
+          attributes: { name: createName, profileType: 'IOS_APP_STORE' },
           relationships: {
             bundleId: { data: { type: 'bundleIds', id: bundle.id } },
             certificates: { data: [{ type: 'certificates', id: certificate.id }] },
@@ -104,10 +135,11 @@ export async function ensureProfiles({ fetchImpl = fetch, token, serial, bundleI
         },
       })
       profile = created.data
+      if (profile) allProfiles.push(profile)
     }
-    const { uuid, profileContent } = profile?.attributes ?? {}
-    if (typeof uuid !== 'string' || !/^[0-9A-Fa-f-]{36}$/.test(uuid) || typeof profileContent !== 'string' || !profileContent) throw Error('RELEASE_IOS_PROFILE_INVALID')
-    profiles.push({ bundleId, name, uuid, content: profileContent })
+    const { name: actualName, uuid, profileContent } = profile?.attributes ?? {}
+    if (typeof actualName !== 'string' || !actualName || typeof uuid !== 'string' || !/^[0-9A-Fa-f-]{36}$/.test(uuid) || typeof profileContent !== 'string' || !profileContent) throw Error('RELEASE_IOS_PROFILE_INVALID')
+    profiles.push({ bundleId, name: actualName, uuid, content: profileContent })
   }
   return profiles
 }
