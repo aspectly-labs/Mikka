@@ -1,6 +1,6 @@
-import { StyleSheet, View } from 'react-native'
+import { ScrollView, StyleSheet, View } from 'react-native'
 import { useLocalSearchParams } from 'expo-router'
-import { NavBar } from '@/components/NavBar'
+import { NavBar, underBar } from '@/components/NavBar'
 import { TaskList } from '@/features/tasks/components/task-list'
 import { useHome } from '@/lib/home'
 import { mobileMessages } from '@/lib/messages'
@@ -19,7 +19,7 @@ export default function BotTasks() {
     <View style={styles.screen}>
       <NavBar title={mobileMessages.MobileCore.botTasks.replace('{name}', id === 'coordinator' ? 'Coordinator' : bot?.name ?? '')} />
       {/* Until the bots are read the list cannot know whose tasks to show: a spinner, not 「没有任务」 (#1). */}
-      {bots ? <TaskList bot={bot?.id ?? null} /> : home.error ? <ReadNotice error={home.error} hasData={false} label={mobileMessages.Nav.tasks} onRetry={home.reload} /> : <ListLoading />}
+      {bots ? <TaskList bot={bot?.id ?? null} /> : <ScrollView {...underBar}>{home.error ? <ReadNotice error={home.error} hasData={false} label={mobileMessages.Nav.tasks} onRetry={home.reload} /> : <ListLoading />}</ScrollView>}
     </View>
   )
 }
