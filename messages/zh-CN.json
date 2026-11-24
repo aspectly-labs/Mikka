@@ -7262,6 +7262,9 @@
   },
   "Nav": {
     "botMenu": {
+      "noFilterMatches": "没有符合筛选「{filters}」的结果",
+      "noMatchesFor": "没有与「{query}」匹配的结果",
+      "clearNamedFilters": "清除筛选：{filters}",
       "moveTo": "移到",
       "unhide": "取消隐藏",
       "unpin": "取消置顶",

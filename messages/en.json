@@ -7262,6 +7262,9 @@
   },
   "Nav": {
     "botMenu": {
+      "noFilterMatches": "Nothing matches the filter “{filters}”",
+      "noMatchesFor": "Nothing matches “{query}”",
+      "clearNamedFilters": "Clear filters: {filters}",
       "moveTo": "Move to",
       "unhide": "Unhide",
       "unpin": "Unpin",
