@@ -239,6 +239,8 @@ jobs:
               > "$RUNNER_TEMP/mobile-next-archive.log" 2>&1; then
             echo "::error::xcodebuild archive failed; private diagnostics withheld."
             grep -cE ' error: ' "$RUNNER_TEMP/mobile-next-archive.log" | sed 's/^/Compiler errors: /' || true
+            # Xcode project/signing/provisioning and top-level xcodebuild errors only; source-file diagnostics stay withheld.
+            grep -E '^(xcodebuild: error: |error: |[^:]+\.xcodeproj: error: )' "$RUNNER_TEMP/mobile-next-archive.log" | sed -E "s#^[^:]+\.xcodeproj: ##; s#${GITHUB_WORKSPACE}#.#g; s#${HOME}#~#g; s#${APPLE_TEAM_ID}#[TEAM]#g; s/[[:space:]]*(\\{|=>|\\[[\"':]).*\$//" | grep -v '\.hosted-ui/' | cut -c1-200 | head -n 8 || true
             exit 1
           fi
       - name: Export the App Store build
@@ -267,6 +269,7 @@ jobs:
               -authenticationKeyIssuerID "$APPLE_API_ISSUER" \
               > "$RUNNER_TEMP/mobile-next-export.log" 2>&1; then
             echo "::error::xcodebuild -exportArchive failed; private diagnostics withheld."
+            grep -E '^(xcodebuild: error: |error: |[^:]+\.xcodeproj: error: )' "$RUNNER_TEMP/mobile-next-export.log" | sed -E "s#^[^:]+\.xcodeproj: ##; s#${GITHUB_WORKSPACE}#.#g; s#${HOME}#~#g; s#${APPLE_TEAM_ID}#[TEAM]#g; s/[[:space:]]*(\\{|=>|\\[[\"':]).*\$//" | grep -v '\.hosted-ui/' | cut -c1-200 | head -n 8 || true
             exit 1
           fi
           ls "$RUNNER_TEMP/export"/*.ipa
