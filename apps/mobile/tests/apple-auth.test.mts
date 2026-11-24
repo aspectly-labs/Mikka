@@ -38,7 +38,7 @@ mock.module(new URL('../lib/auth.ts', import.meta.url).href, { namedExports: { a
   getSession: (input: unknown) => { assert.deepEqual(input, { query: { disableCookieCache: true } }); return sessionRead() },
 } } })
 mock.module(new URL('../lib/config.ts', import.meta.url).href, { namedExports: { currentAccount: () => account } })
-mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => { lost++ } } })
+mock.module(new URL('../lib/session.ts', import.meta.url).href, { namedExports: { endLostSession: async () => { lost++ }, sessionRefused: async () => { lost++ } } })
 const { finishAppleDeletionHandoff, forgetAppleCredential, signInWithApple, watchAppleCredential } = await import('../lib/apple-auth.ts')
 const flush = () => new Promise(resolve => setImmediate(resolve))
 beforeEach(() => {

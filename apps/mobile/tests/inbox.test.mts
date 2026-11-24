@@ -17,10 +17,11 @@ const writes: unknown[] = [], navigation: string[] = [], reads: string[] = []
 const noop = () => null
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL('../' + path, import.meta.url).href, { namedExports })
 mock.module('expo-router', { namedExports: { useRouter: () => ({ push: (path: string) => navigation.push(path) }) } })
-mock.module('react-native', { namedExports: { StyleSheet: { create: (s: unknown) => s }, View: 'div', RefreshControl: noop,
+mock.module('react-native', { namedExports: { StyleSheet: { create: (s: unknown) => s }, View: 'div', RefreshControl: noop, Platform: { OS: 'ios' },
   FlatList: ({ data, renderItem, ListHeaderComponent, ListEmptyComponent }: { data: { id: string }[]; renderItem: (row: unknown) => ReactNode; ListHeaderComponent: ReactNode; ListEmptyComponent: ReactNode }) =>
     createElement(Fragment, null, ListHeaderComponent, ...(data.length ? data.map(item => createElement('section', { key: item.id }, renderItem({ item }))) : [createElement(Fragment, { key: 'empty' }, ListEmptyComponent)])) } })
 stub('components/NavBar.tsx', { NavBar: noop, underBar: {} })
+stub('lib/sidebar-trial.ts', { useSidebarTrial: () => false })
 stub('components/ReadNotice.tsx', { ReadNotice: noop })
 stub('components/settings.tsx', { Row: ({ label, detail, onPress }: { label: string; detail: string; onPress: () => void }) => createElement('a', { onClick: onPress }, label, detail) })
 stub('components/Text.tsx', { Text: ({ children }: { children: ReactNode }) => createElement('span', null, children) })

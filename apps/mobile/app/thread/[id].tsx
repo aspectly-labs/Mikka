@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useThreadReadEnd } from '@/features/chat/model/use-thread-read-end'
-import { endsTurn, MobileReplyVersions } from '@/features/chat/components/thread-reply-versions'
+import { MobileReplyVersions } from '@/features/chat/components/thread-reply-versions'
 import { useThreadDeliveryControls } from '@/features/chat/components/thread-delivery-controls'
 import { conversationAccessDenied, useConversationDelivery } from '@/features/chat/components/conversation-delivery'
 import { StyleSheet, useWindowDimensions, View } from 'react-native'
@@ -95,7 +95,7 @@ export default function ThreadScreen() {
           switch (item.kind) {
             case 'steps':
               return <ThreadSteps key={item.id} steps={item.steps} count={item.count} live={data.active && index === data.items.length - 1} />
-            case 'agent': return <View key={item.id} style={{ marginVertical: 4 }}><BotBubble><Markdown text={item.text} /></BotBubble>{endsTurn(data.items, index) ? <MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} /> : null}</View>
+            case 'agent': return <View key={item.id} style={{ marginVertical: 4 }}><BotBubble><Markdown text={item.text} /></BotBubble><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} /></View>
             case 'error': return <Text key={item.id} style={styles.error}>{item.text}</Text>
             case 'person': return <View key={item.id} style={{ marginVertical: 4 }}><MyBubble text={item.text} threadReferences /><MobileReplyVersions detail={data} runId={id} itemId={item.id} text={item.text} reload={reload} working={data.active} side="end" /></View>
           }

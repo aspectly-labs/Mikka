@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native'
+import { FlatList, Platform, RefreshControl, StyleSheet, View } from 'react-native'
+import { useSidebarTrial } from '@/lib/sidebar-trial'
 import { useRouter } from 'expo-router'
 import { Inbox as InboxIcon } from 'lucide-react-native'
 import { GlassButton } from '@/components/GlassButton'
@@ -32,6 +33,7 @@ const historyRow = (entry: InboxEntry) => ({ id: entry.completion?.id ?? entry.t
 
 export default function Inbox() {
   const router = useRouter()
+  const trial = useSidebarTrial() && Platform.OS === 'ios'
   const workspace = useHome().data?.workspace.id
   const [tab, setTab] = useState<Tab>('pending')
   const path = workspace ? '/api/inbox?' + new URLSearchParams({ workspaceId: workspace, tab }) : null
@@ -70,7 +72,8 @@ export default function Inbox() {
       }
     } finally { pending.current = false; setWriting(false) }
   }
-  const open = (entry: InboxEntry) => entry.type === 'suggestion' ? router.push('/suggestions')
+  // In the sidebar trial 建议 is a hidden tab: it opens on the root stack instead.
+  const open = (entry: InboxEntry) => entry.type === 'suggestion' ? router.push(trial ? '/browse/suggestions' : '/suggestions')
     : entry.type === 'conversation' ? router.push(`/thread/${entry.id}`) : router.push(`/task/${entry.id}`)
   return <View style={styles.screen}>
     <NavBar title={mobileMessages.Nav.inbox} back={() => router.back()} />
