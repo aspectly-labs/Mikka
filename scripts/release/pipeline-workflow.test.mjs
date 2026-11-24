@@ -68,7 +68,7 @@ test('public records cannot receive the private rollback receipt or runtime cred
   const record = workflow.jobs['pipeline-record']
   assert.deepEqual(record.permissions, { contents: 'read', actions: 'read', deployments: 'write', issues: 'write' })
   assert.equal(record.needs, 'pipeline')
-  assert.doesNotMatch(JSON.stringify(record), /Infisical|HOSTED_UI|CLOUDFLARE_API_TOKEN|source-token|id-token|private\.json/)
+  assert.doesNotMatch(JSON.stringify(record), /Infisical|HOSTED_UI|CLOUDFLARE_API_TOKEN|source-token|overlay-token|MIKKA_OVERLAY_READ_TOKEN|id-token|private\.json/)
   for (const [jobName, target, path] of [['pipeline-record', 'staging', 'pipeline-report'], ['pipeline-production-record', 'production', 'production-report']]) {
     const steps = workflow.jobs[jobName].steps
     const download = steps.find(step => step.uses?.startsWith('actions/download-artifact@'))
@@ -93,7 +93,7 @@ test('production waits for verified staging records and its separately reviewed 
   const upload = job.steps.find(step => step.name === 'Upload production receipts')
   assert.equal(upload.with.name, 'deploy-production-${{ github.run_id }}-${{ github.run_attempt }}')
   assert.ok(upload.with.path.trim().split('\n').every(path => path.startsWith('${{ runner.temp }}/deploy-production/')))
-  assert.doesNotMatch(JSON.stringify(workflow.jobs['pipeline-production-record']), /Infisical|HOSTED_UI|CLOUDFLARE_API_TOKEN|source-token|id-token|private\.json/)
+  assert.doesNotMatch(JSON.stringify(workflow.jobs['pipeline-production-record']), /Infisical|HOSTED_UI|CLOUDFLARE_API_TOKEN|source-token|overlay-token|MIKKA_OVERLAY_READ_TOKEN|id-token|private\.json/)
 })
 
 test('failure exercise is an explicit manual staging input and never a production input', () => {
@@ -109,18 +109,31 @@ test('failure exercise is an explicit manual staging input and never a productio
 test('read-only migration admission precedes candidate preparation and deployment credentials for both targets', () => {
   const command = 'node operations/business-api/pipeline-preflight.mjs'
   const expectedToken = '${{ steps.source-token.outputs.token }}'
+  const expectedOverlayToken = '${{ steps.overlay-token.outputs.token }}'
   for (const [name, applyName, uploadName] of [
     ['pipeline', 'Deploy and verify staged service manifest', 'Upload pipeline receipts'],
     ['pipeline-production', 'Promote and verify the staged service manifest', 'Upload production receipts'],
   ]) {
     const job = workflow.jobs[name]
+    const overlayMint = job.steps.find(step => step.id === 'overlay-token')
+    assert.ok(overlayMint, name + ' requires a scoped read-only overlay verification token')
+    assert.equal(overlayMint.uses, 'actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349')
+    assert.equal(overlayMint.with.repositories, 'mikka-hosted-ui')
+    assert.equal(overlayMint.with['permission-contents'], 'read')
+    assert.equal(overlayMint.with['permission-actions'], 'read')
+    const clearStep = job.steps.findIndex(step => step.name === 'Remove App credentials before loading private operations code')
+    assert.ok(clearStep > job.steps.indexOf(overlayMint), name + ' must clear App credentials after minting overlay token')
     const admissions = job.steps.filter(step => step.run === command)
     assert.equal(admissions.length, 1, name + ' requires one independent admission step')
     const admission = admissions[0]
     const index = job.steps.indexOf(admission)
     assert.equal(admission['working-directory'], 'operations')
     assert.equal(admission.if, "steps.select.outputs.status == 'selected'")
-    assert.deepEqual(admission.env, { GH_TOKEN: expectedToken, MIKKA_PUBLIC_ACTIONS_TOKEN: '${{ github.token }}' })
+    assert.deepEqual(admission.env, {
+      GH_TOKEN: expectedToken,
+      MIKKA_OVERLAY_READ_TOKEN: expectedOverlayToken,
+      MIKKA_PUBLIC_ACTIONS_TOKEN: '${{ github.token }}',
+    })
     assert.equal(admission['continue-on-error'], undefined)
     assert.equal(workflow.env?.CLOUDFLARE_API_TOKEN, undefined)
     assert.equal(job.env?.CLOUDFLARE_API_TOKEN, undefined)
@@ -135,6 +148,12 @@ test('read-only migration admission precedes candidate preparation and deploymen
       assert.equal(job.steps[later].if, "steps.select.outputs.status == 'selected'", 'the default success condition must stop later work')
       assert.equal(job.steps[later]['continue-on-error'], undefined)
     }
+    const applyStep = job.steps.find(step => step.name === applyName)
+    assert.deepEqual(applyStep.env, {
+      GH_TOKEN: expectedToken,
+      MIKKA_OVERLAY_READ_TOKEN: expectedOverlayToken,
+      MIKKA_PUBLIC_ACTIONS_TOKEN: '${{ github.token }}',
+    })
     const upload = job.steps.find(step => step.name === uploadName)
     assert.equal(upload.if, "always() && steps.select.outputs.status == 'selected'", 'a rejection must retain safe evidence')
   }
