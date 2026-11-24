@@ -73,3 +73,12 @@ test('a sign-in that lands while the old session is being checked is kept', asyn
   assert.equal(signOuts, 0)
   assert.equal(cleared, 0)
 })
+
+test('a revoked session whose cookie the auth client already cleared still signs out', async () => {
+  reset()
+  // Better Auth answers null and deletes the cookie; the Expo plugin applies that before getSession resolves.
+  answer = async () => { stored = '__Secure-better-auth.session_data=cache'; return { data: null, error: null } }
+  await sessionRefused(sent)
+  assert.equal(signOuts, 1)
+  assert.equal(cleared, 1)
+})

@@ -46,8 +46,13 @@ export function sessionRefused(sentCookie: string | null = null): Promise<void> 
   const token = sessionTokenOf(sentCookie)
   if (confirming?.token === token) return confirming.promise
   const client = authClient, account = currentAccount()
-  const sameSession = async () => currentAccount().id === account.id && authClient === client
-    && sessionTokenOf(await client.getCookie().catch(() => null)) === token
+  // A different token means a newer sign-in, which is never signed out. No token at all is still this
+  // session: the auth client clears the cookie itself when the server answers that the session is gone.
+  const sameSession = async () => {
+    if (currentAccount().id !== account.id || authClient !== client) return false
+    const stored = sessionTokenOf(await client.getCookie().catch(() => null))
+    return stored === null || stored === token
+  }
   const promise = (async () => {
     if (!await sameSession()) return
     const result = await client.getSession({ query: { disableCookieCache: true } }).catch(() => null)
