@@ -118,6 +118,31 @@ test('an exchange the server refused is not asked again; a sign-out drops an una
   assert.equal(g.calls.exchange, 1)
 })
 
+test('an exchange answered after sign-out is dropped, and the next sign-in gets its own', async () => {
+  const f = fixture()
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  f.exchangeWith(async () => ({ status: 'unavailable' }))
+  await f.keeper.ensureExchanged('a', 'u1', 's1')
+  // Back online, a request (push removal on the way to signing out) asks again; the answer is slow.
+  const late = deferred<ExchangeResult>()
+  f.exchangeWith(() => late.promise)
+  await f.keeper.prepare('a'); await settle()
+  assert.equal(f.calls.exchange, 2)
+  await f.keeper.forget('a')
+  late.resolve({ status: 'ok', credential: credential(1) })
+  await settle(); await settle()
+  assert.equal(f.store.has('a'), false, 'the keychain stays empty after sign-out')
+  assert.equal(f.keeper.held('a'), 'none')
+  await f.keeper.prepare('a'); await settle()
+  assert.equal(f.calls.exchange, 2, 'and nothing of the old sign-in is asked for again')
+  // The same person signs in again: a new session, its own exchange, its own credential.
+  f.exchangeWith(async () => ({ status: 'ok', credential: credential(2, HOUR, 'u1', 's2') }))
+  await f.keeper.ensureExchanged('a', 'u1', 's2')
+  assert.equal(f.calls.exchange, 3)
+  assert.equal(f.store.get('a')?.refreshToken, credential(2).refreshToken)
+  assert.equal(f.store.get('a')?.bindingSessionId, 's2')
+})
+
 test('a credential for another person in the slot is dropped, never rotated', async () => {
   const f = fixture({ a: credential(1, HOUR, 'someone-else') })
   f.exchangeWith(async () => ({ status: 'ok', credential: credential(2) }))
