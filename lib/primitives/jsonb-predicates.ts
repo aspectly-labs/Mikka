@@ -113,28 +113,28 @@ export function jsonbText(column: JsonbColumn, key: JsonbPathSegment): SQL<strin
   return sql<string | null>`${jsonbTextExpr(column, key)}`
 }
 
-/** Regex-guarded 32-bit integer projection from JSONB text extraction; malformed values yield `NULL`. */
+/** Regex- and range-guarded 32-bit integer projection from JSONB text extraction; malformed or out-of-range values yield `NULL`. */
 export function jsonbSafeInt(column: JsonbColumn, key: JsonbPathSegment): SQL<number | null> {
   const extracted = jsonbTextExpr(column, key)
-  return sql<number | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_INT_PATTERN}'`)} THEN (${extracted})::integer ELSE NULL END`
+  return sql<number | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_INT_PATTERN}'`)} AND pg_input_is_valid((${extracted}), 'integer') THEN (${extracted})::integer ELSE NULL END`
 }
 
-/** Regex-guarded 64-bit integer projection from JSONB text extraction; malformed values yield `NULL`. */
+/** Regex- and range-guarded 64-bit integer projection from JSONB text extraction; malformed or out-of-range values yield `NULL`. */
 export function jsonbSafeBigInt(column: JsonbColumn, key: JsonbPathSegment): SQL<string | null> {
   const extracted = jsonbTextExpr(column, key)
-  return sql<string | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_INT_PATTERN}'`)} THEN (${extracted})::bigint ELSE NULL END`
+  return sql<string | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_INT_PATTERN}'`)} AND pg_input_is_valid((${extracted}), 'bigint') THEN (${extracted})::bigint ELSE NULL END`
 }
 
-/** Regex-guarded arbitrary-precision numeric projection from JSONB text extraction; malformed values yield `NULL`. */
+/** Regex- and range-guarded arbitrary-precision numeric projection from JSONB text extraction; malformed or out-of-range values yield `NULL`. */
 export function jsonbSafeNumeric(column: JsonbColumn, key: JsonbPathSegment): SQL<string | null> {
   const extracted = jsonbTextExpr(column, key)
-  return sql<string | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_NUMERIC_PATTERN}'`)} THEN (${extracted})::numeric ELSE NULL END`
+  return sql<string | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_NUMERIC_PATTERN}'`)} AND pg_input_is_valid((${extracted}), 'numeric') THEN (${extracted})::numeric ELSE NULL END`
 }
 
-/** Regex-guarded double precision projection from JSONB text extraction; malformed values yield `NULL`. */
+/** Regex- and range-guarded double precision projection from JSONB text extraction; malformed or out-of-range values yield `NULL`. */
 export function jsonbSafeDouble(column: JsonbColumn, key: JsonbPathSegment): SQL<number | null> {
   const extracted = jsonbTextExpr(column, key)
-  return sql<number | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_DOUBLE_PATTERN}'`)} THEN (${extracted})::double precision ELSE NULL END`
+  return sql<number | null>`CASE WHEN (${extracted}) ~ ${sql.raw(`'${JSONB_DOUBLE_PATTERN}'`)} AND pg_input_is_valid((${extracted}), 'double precision') THEN (${extracted})::double precision ELSE NULL END`
 }
 
 /** Regex-guarded UUID projection from JSONB text extraction; malformed values yield `NULL`. */
@@ -177,28 +177,28 @@ export function jsonbTextSql(expr: string, key: JsonbPathSegment): string {
   return `${wrapSqlExpr(expr)}->>${formatSegmentSql(key)}`
 }
 
-/** Regex-guarded integer cast over an arbitrary JSONB text-extraction SQL expression (e.g. dynamic keys or `#>>`). */
+/** Regex- and range-guarded integer cast over an arbitrary JSONB text-extraction SQL expression (e.g. dynamic keys or `#>>`). */
 export function jsonbSafeIntExprSql(textExpr: string): string {
   const valid = assertValidSqlExpr(textExpr)
-  return `CASE WHEN (${valid}) ~ '${JSONB_INT_PATTERN}' THEN (${valid})::integer ELSE NULL END`
+  return `CASE WHEN (${valid}) ~ '${JSONB_INT_PATTERN}' AND pg_input_is_valid((${valid}), 'integer') THEN (${valid})::integer ELSE NULL END`
 }
 
-/** Regex-guarded bigint cast over an arbitrary JSONB text-extraction SQL expression. */
+/** Regex- and range-guarded bigint cast over an arbitrary JSONB text-extraction SQL expression. */
 export function jsonbSafeBigIntExprSql(textExpr: string): string {
   const valid = assertValidSqlExpr(textExpr)
-  return `CASE WHEN (${valid}) ~ '${JSONB_INT_PATTERN}' THEN (${valid})::bigint ELSE NULL END`
+  return `CASE WHEN (${valid}) ~ '${JSONB_INT_PATTERN}' AND pg_input_is_valid((${valid}), 'bigint') THEN (${valid})::bigint ELSE NULL END`
 }
 
-/** Regex-guarded numeric cast over an arbitrary JSONB text-extraction SQL expression. */
+/** Regex- and range-guarded numeric cast over an arbitrary JSONB text-extraction SQL expression. */
 export function jsonbSafeNumericExprSql(textExpr: string): string {
   const valid = assertValidSqlExpr(textExpr)
-  return `CASE WHEN (${valid}) ~ '${JSONB_NUMERIC_PATTERN}' THEN (${valid})::numeric ELSE NULL END`
+  return `CASE WHEN (${valid}) ~ '${JSONB_NUMERIC_PATTERN}' AND pg_input_is_valid((${valid}), 'numeric') THEN (${valid})::numeric ELSE NULL END`
 }
 
-/** Regex-guarded double precision cast over an arbitrary JSONB text-extraction SQL expression. */
+/** Regex- and range-guarded double precision cast over an arbitrary JSONB text-extraction SQL expression. */
 export function jsonbSafeDoubleExprSql(textExpr: string): string {
   const valid = assertValidSqlExpr(textExpr)
-  return `CASE WHEN (${valid}) ~ '${JSONB_DOUBLE_PATTERN}' THEN (${valid})::double precision ELSE NULL END`
+  return `CASE WHEN (${valid}) ~ '${JSONB_DOUBLE_PATTERN}' AND pg_input_is_valid((${valid}), 'double precision') THEN (${valid})::double precision ELSE NULL END`
 }
 
 /** Regex-guarded UUID cast over an arbitrary JSONB text-extraction SQL expression. */

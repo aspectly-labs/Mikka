@@ -94,26 +94,26 @@ describe('Drizzle JSONB predicate helpers', () => {
     assert.equal(render(jsonbText(sql`q.v`, 0)), `(q.v)->>0`)
   })
 
-  test('jsonbSafeInt wraps compound expressions and guards ::integer with regex CASE', () => {
+  test('jsonbSafeInt wraps compound expressions and guards ::integer with regex + pg_input_is_valid', () => {
     const out = render(jsonbSafeInt(sql`coalesce(${issues.content}->'attrs'->'mikka', ${issues.content}->'attrs'->'orvilo')`, 'number'))
     assert.equal(
       out,
-      `CASE WHEN ((coalesce("issues"."content"->'attrs'->'mikka', "issues"."content"->'attrs'->'orvilo'))->>'number') ~ '${JSONB_INT_PATTERN}' THEN ((coalesce("issues"."content"->'attrs'->'mikka', "issues"."content"->'attrs'->'orvilo'))->>'number')::integer ELSE NULL END`,
+      `CASE WHEN ((coalesce("issues"."content"->'attrs'->'mikka', "issues"."content"->'attrs'->'orvilo'))->>'number') ~ '${JSONB_INT_PATTERN}' AND pg_input_is_valid(((coalesce("issues"."content"->'attrs'->'mikka', "issues"."content"->'attrs'->'orvilo'))->>'number'), 'integer') THEN ((coalesce("issues"."content"->'attrs'->'mikka', "issues"."content"->'attrs'->'orvilo'))->>'number')::integer ELSE NULL END`,
     )
   })
 
-  test('jsonbSafeBigInt, jsonbSafeNumeric, jsonbSafeDouble, jsonbSafeUuid emit regex-guarded casts', () => {
+  test('jsonbSafeBigInt, jsonbSafeNumeric, jsonbSafeDouble, jsonbSafeUuid emit regex- and range-guarded casts', () => {
     assert.equal(
       render(jsonbSafeBigInt(messages.message, 'seq')),
-      `CASE WHEN ("coordinator_messages"."message"->>'seq') ~ '${JSONB_INT_PATTERN}' THEN ("coordinator_messages"."message"->>'seq')::bigint ELSE NULL END`,
+      `CASE WHEN ("coordinator_messages"."message"->>'seq') ~ '${JSONB_INT_PATTERN}' AND pg_input_is_valid(("coordinator_messages"."message"->>'seq'), 'bigint') THEN ("coordinator_messages"."message"->>'seq')::bigint ELSE NULL END`,
     )
     assert.equal(
       render(jsonbSafeNumeric(messages.message, 'amount')),
-      `CASE WHEN ("coordinator_messages"."message"->>'amount') ~ '${JSONB_NUMERIC_PATTERN}' THEN ("coordinator_messages"."message"->>'amount')::numeric ELSE NULL END`,
+      `CASE WHEN ("coordinator_messages"."message"->>'amount') ~ '${JSONB_NUMERIC_PATTERN}' AND pg_input_is_valid(("coordinator_messages"."message"->>'amount'), 'numeric') THEN ("coordinator_messages"."message"->>'amount')::numeric ELSE NULL END`,
     )
     assert.equal(
       render(jsonbSafeDouble(messages.message, 'until')),
-      `CASE WHEN ("coordinator_messages"."message"->>'until') ~ '${JSONB_DOUBLE_PATTERN}' THEN ("coordinator_messages"."message"->>'until')::double precision ELSE NULL END`,
+      `CASE WHEN ("coordinator_messages"."message"->>'until') ~ '${JSONB_DOUBLE_PATTERN}' AND pg_input_is_valid(("coordinator_messages"."message"->>'until'), 'double precision') THEN ("coordinator_messages"."message"->>'until')::double precision ELSE NULL END`,
     )
     assert.equal(
       render(jsonbSafeUuid(messages.message, 'runId')),
@@ -157,31 +157,31 @@ describe('Raw SQL fragment helpers', () => {
     )
   })
 
-  test('scalar helpers emit regex-guarded casts for simple, nested, and dynamic expressions', () => {
+  test('scalar helpers emit regex- and range-guarded casts for simple, nested, and dynamic expressions', () => {
     assert.equal(jsonbTextSql('m.lifecycle', 'phase'), `m.lifecycle->>'phase'`)
     assert.equal(
       jsonbSafeIntSql("f.patch->'file'", 'additions'),
-      `CASE WHEN ((f.patch->'file')->>'additions') ~ '${JSONB_INT_PATTERN}' THEN ((f.patch->'file')->>'additions')::integer ELSE NULL END`,
+      `CASE WHEN ((f.patch->'file')->>'additions') ~ '${JSONB_INT_PATTERN}' AND pg_input_is_valid(((f.patch->'file')->>'additions'), 'integer') THEN ((f.patch->'file')->>'additions')::integer ELSE NULL END`,
     )
     assert.equal(
       jsonbSafeBigIntSql('lifecycle', 'reconcileVersion'),
-      `CASE WHEN (lifecycle->>'reconcileVersion') ~ '${JSONB_INT_PATTERN}' THEN (lifecycle->>'reconcileVersion')::bigint ELSE NULL END`,
+      `CASE WHEN (lifecycle->>'reconcileVersion') ~ '${JSONB_INT_PATTERN}' AND pg_input_is_valid((lifecycle->>'reconcileVersion'), 'bigint') THEN (lifecycle->>'reconcileVersion')::bigint ELSE NULL END`,
     )
     assert.equal(
       jsonbSafeBigIntExprSql('u."planAllocations"->>g.id::text'),
-      `CASE WHEN (u."planAllocations"->>g.id::text) ~ '${JSONB_INT_PATTERN}' THEN (u."planAllocations"->>g.id::text)::bigint ELSE NULL END`,
+      `CASE WHEN (u."planAllocations"->>g.id::text) ~ '${JSONB_INT_PATTERN}' AND pg_input_is_valid((u."planAllocations"->>g.id::text), 'bigint') THEN (u."planAllocations"->>g.id::text)::bigint ELSE NULL END`,
     )
     assert.equal(
       jsonbSafeNumericSql('$4::jsonb', 'id'),
-      `CASE WHEN (($4::jsonb)->>'id') ~ '${JSONB_NUMERIC_PATTERN}' THEN (($4::jsonb)->>'id')::numeric ELSE NULL END`,
+      `CASE WHEN (($4::jsonb)->>'id') ~ '${JSONB_NUMERIC_PATTERN}' AND pg_input_is_valid((($4::jsonb)->>'id'), 'numeric') THEN (($4::jsonb)->>'id')::numeric ELSE NULL END`,
     )
     assert.equal(
       jsonbSafeNumericExprSql(`p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']`),
-      `CASE WHEN (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']) ~ '${JSONB_NUMERIC_PATTERN}' THEN (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id'])::numeric ELSE NULL END`,
+      `CASE WHEN (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']) ~ '${JSONB_NUMERIC_PATTERN}' AND pg_input_is_valid((p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']), 'numeric') THEN (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id'])::numeric ELSE NULL END`,
     )
     assert.equal(
       jsonbSafeDoubleSql('m.lifecycle', 'reconcileUntil'),
-      `CASE WHEN (m.lifecycle->>'reconcileUntil') ~ '${JSONB_DOUBLE_PATTERN}' THEN (m.lifecycle->>'reconcileUntil')::double precision ELSE NULL END`,
+      `CASE WHEN (m.lifecycle->>'reconcileUntil') ~ '${JSONB_DOUBLE_PATTERN}' AND pg_input_is_valid((m.lifecycle->>'reconcileUntil'), 'double precision') THEN (m.lifecycle->>'reconcileUntil')::double precision ELSE NULL END`,
     )
     assert.equal(
       jsonbSafeUuidSql('e.scope', 'factoryTaskId'),

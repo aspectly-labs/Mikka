@@ -51,18 +51,21 @@ describe('sql-safety-policy: unsafe JSONB ::boolean casts', () => {
 })
 
 describe('sql-safety-policy: unguarded JSONB scalar casts', () => {
-  test('flags unguarded ::int, ::integer, ::bigint, ::uuid, ::numeric, ::double precision, and CAST(...)', () => {
+  test('flags unguarded ::int, ::integer, ::bigint, ::uuid, ::numeric, ::double precision, pg_catalog.*, parameterized numeric, and CAST(...)', () => {
     const cases = [
       ["const q = `SELECT (col->>'n')::int`", 'int'],
       ["const q = `SELECT (col->>'n')::integer`", 'integer'],
       ["const q = `SELECT (col->>'n')::bigint`", 'bigint'],
+      ["const q = `SELECT (col->>'n')::pg_catalog.int4`", 'int4'],
       ["const q = `SELECT (col->>'id')::uuid`", 'uuid'],
       ["const q = `SELECT (col#>>ARRAY['a','id'])::numeric`", 'numeric'],
+      ["const q = `SELECT (col->>'amount')::numeric(8, 2)`", 'numeric(8,2)'],
       ["const q = `SELECT (col->>'until')::double precision`", 'double precision'],
       ["const q = `SELECT * FROM t WHERE x AND (definition#>>'{webhook,batchMinutes}')::int > 0`", 'int'],
       ["const q = `SELECT DISTINCT (result->>'id')::uuid FROM t`", 'uuid'],
       ["const q = `SELECT COALESCE(col->>'n', '0')::int`", 'int'],
       ["const q = `SELECT CAST(col->>'n' AS integer)`", 'integer'],
+      ["const q = `SELECT CAST(doc->>'amount' AS numeric(8,2))`", 'numeric(8,2)'],
       ["const q = `SELECT MAX(col->>'n')::int`", 'int'],
     ]
     for (const [source, expectedType] of cases) {
@@ -73,16 +76,17 @@ describe('sql-safety-policy: unguarded JSONB scalar casts', () => {
     }
   })
 
-  test('allows properly guarded CASE WHEN casts (~ / ~* / pg_input_is_valid / jsonb_typeof)', () => {
+  test('allows properly guarded CASE WHEN casts (~ / ~* / pg_input_is_valid / jsonb_typeof for numeric)', () => {
     const safe = `
-      const a = \`SELECT CASE WHEN (col->>'n') ~ '^-?[0-9]+$' THEN (col->>'n')::integer ELSE NULL END\`
+      const a = \`SELECT CASE WHEN (col->>'n') ~ '^-?[0-9]+$' AND pg_input_is_valid((col->>'n'), 'integer') THEN (col->>'n')::integer ELSE NULL END\`
       const b = \`SELECT CASE WHEN (col->>'id') ~* '^[0-9a-f-]{36}$' THEN (col->>'id')::uuid END\`
       const c = \`SELECT CASE WHEN pg_input_is_valid(o.result->>'id', 'uuid') THEN (o.result->>'id')::uuid END\`
-      const d = \`SELECT CASE WHEN jsonb_typeof(e.result->'task'->'revision')='number' THEN (e.result->'task'->>'revision')::integer END\`
+      const d = \`SELECT CASE WHEN jsonb_typeof(e.result->'task'->'amount')='number' THEN (e.result->'task'->>'amount')::numeric END\`
       const e = sql\`on e.id=(case when m.message#>>'{mikkaUserEvent,id}' ~* \${UUID} then m.message#>>'{mikkaUserEvent,id}' end)::uuid\`
       const f = \`SELECT
         CASE WHEN r."questionContinuation"->>'originRunId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
           THEN (r."questionContinuation"->>'originRunId')::uuid END AS origin\`
+      const g = \`SELECT CASE WHEN pg_input_is_valid(doc->>'amount', 'numeric(8,2)') THEN (doc->>'amount')::numeric(8,2) END\`
     `
     assert.deepEqual(findSqlSafetyViolations('lib/example.ts', safe), [])
   })
@@ -97,6 +101,15 @@ describe('sql-safety-policy: unguarded JSONB scalar casts', () => {
       "const q = `SELECT CASE WHEN (col->>'a') ~ '^[0-9]+$' THEN 1 ELSE (col->>'a')::integer END`",
       // Cast on CASE with unguarded ELSE branch
       "const q = `SELECT (CASE WHEN col->>'id' ~* '^[0-9a-f-]+$' THEN col->>'id' ELSE col->>'fallback' END)::uuid`",
+      // Guard bypassed via OR branch
+      "const q = `SELECT CASE WHEN (col->>'n') ~ '^[0-9]+$' OR true THEN (col->>'n')::integer END`",
+      // pg_input_is_valid checked incompatible target type
+      "const q = `SELECT CASE WHEN pg_input_is_valid(col->>'n', 'text') THEN (col->>'n')::integer END`",
+      "const q = `SELECT CASE WHEN pg_input_is_valid(col->>'n', 'numeric') THEN (col->>'n')::numeric(8,2) END`",
+      // jsonb_typeof = 'number' allows fractions like 1.5 which crash ::integer
+      "const q = `SELECT CASE WHEN jsonb_typeof(e.result->'task'->'revision')='number' THEN (e.result->'task'->>'revision')::integer END`",
+      // Negated guard
+      "const q = `SELECT CASE WHEN NOT pg_input_is_valid(col->>'n', 'integer') THEN (col->>'n')::integer END`",
     ]
     for (const source of unsafe) {
       const findings = findSqlSafetyViolations('lib/example.ts', source)
@@ -127,11 +140,17 @@ describe('sql-safety-policy: unguarded JSONB scalar casts', () => {
     assert.deepEqual(scanSqlForUnsafeJsonbCasts("SELECT 1 -- (m.message->>'x')::boolean\n/* (col->>'n')::int */"), [])
   })
 
-  test('catches unsafe SQL inside template interpolation branches and string concatenation', () => {
+  test('catches unsafe SQL inside template interpolation branches and string concatenation (static and dynamic)', () => {
     const ternary = "const q = `SELECT 1 ${flag ? `AND (m.message->>'bad')::boolean` : ''}`"
     const concat = "const q = 'SELECT ' + \"(m.message->>'bad')::uuid\""
+    const dynRight = "const q = query + \" AND (doc->>'amount')::numeric > 0\""
+    const dynLeft = "const q = \"SELECT (doc->>'amount')::numeric \" + suffix"
+    const dynNested = "const q = base + (flag ? \" AND (doc->>'id')::uuid = $1\" : '') + ' LIMIT 1'"
     assert.equal(findSqlSafetyViolations('lib/a.ts', ternary).length, 1)
     assert.equal(findSqlSafetyViolations('lib/b.ts', concat).length, 1)
+    assert.equal(findSqlSafetyViolations('lib/c.ts', dynRight).length, 1)
+    assert.equal(findSqlSafetyViolations('lib/d.ts', dynLeft).length, 1)
+    assert.equal(findSqlSafetyViolations('lib/e.ts', dynNested).length, 1)
   })
 })
 

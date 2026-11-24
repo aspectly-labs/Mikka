@@ -22,8 +22,41 @@ export const unguardedScalarCastMessage =
   'Unguarded JSONB text extraction (->> / #>>) cast to a scalar type crashes PostgreSQL with 500 on malformed values. Use jsonbSafeInt / jsonbSafeBigInt / jsonbSafeNumeric / jsonbSafeDouble / jsonbSafeUuid from lib/primitives/jsonb-predicates.ts (or guard inside CASE WHEN ... ~ / pg_input_is_valid / jsonb_typeof).'
 
 const BOOLEAN_CAST_TYPES = new Set(['boolean', 'bool'])
-const SCALAR_CAST_RE = /::\s*(boolean|bool|double\s+precision|integer|bigint|smallint|int2|int4|int8|int|uuid|numeric|decimal|real|float4|float8|float)\b/gi
-const CAST_TYPE_TAIL_RE = /\bAS\s+(boolean|bool|double\s+precision|integer|bigint|smallint|int2|int4|int8|int|uuid|numeric|decimal|real|float4|float8|float)\s*$/i
+const SCALAR_TYPE_PATTERN =
+  '(?:pg_catalog\\.)?(?:boolean|bool|double\\s+precision|integer|bigint|smallint|int2|int4|int8|int|uuid|numeric|decimal|real|float4|float8|float)(?:\\s*\\(\\s*\\d+(?:\\s*,\\s*\\d+)?\\s*\\))?'
+const SCALAR_CAST_RE = new RegExp(`::\\s*(${SCALAR_TYPE_PATTERN})(?![A-Za-z0-9_])`, 'gi')
+const CAST_TYPE_TAIL_RE = new RegExp(`\\bAS\\s+(${SCALAR_TYPE_PATTERN})\\s*$`, 'i')
+
+const UNCONSTRAINED_NUMERIC_TYPES = new Set(['numeric', 'decimal'])
+
+const PG_INPUT_COMPATIBLE_TYPES = {
+  smallint: new Set(['smallint', 'int2']),
+  int2: new Set(['smallint', 'int2']),
+  int: new Set(['int', 'int4', 'integer', 'smallint', 'int2']),
+  int4: new Set(['int', 'int4', 'integer', 'smallint', 'int2']),
+  integer: new Set(['int', 'int4', 'integer', 'smallint', 'int2']),
+  bigint: new Set(['bigint', 'int8', 'int', 'int4', 'integer', 'smallint', 'int2']),
+  int8: new Set(['bigint', 'int8', 'int', 'int4', 'integer', 'smallint', 'int2']),
+  uuid: new Set(['uuid']),
+  numeric: new Set(['numeric', 'decimal', 'bigint', 'int8', 'int', 'int4', 'integer', 'smallint', 'int2']),
+  decimal: new Set(['numeric', 'decimal', 'bigint', 'int8', 'int', 'int4', 'integer', 'smallint', 'int2']),
+  real: new Set(['real', 'float4', 'smallint', 'int2']),
+  float4: new Set(['real', 'float4', 'smallint', 'int2']),
+  'double precision': new Set(['double precision', 'float8', 'float', 'real', 'float4', 'bigint', 'int8', 'int', 'int4', 'integer', 'smallint', 'int2']),
+  float8: new Set(['double precision', 'float8', 'float', 'real', 'float4', 'bigint', 'int8', 'int', 'int4', 'integer', 'smallint', 'int2']),
+  float: new Set(['double precision', 'float8', 'float', 'real', 'float4', 'bigint', 'int8', 'int', 'int4', 'integer', 'smallint', 'int2']),
+}
+
+function normalizeCastType(raw) {
+  return raw
+    .toLowerCase()
+    .replace(/^pg_catalog\./, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\(\s*/g, '(')
+    .replace(/\s*,\s*/g, ',')
+    .replace(/\s*\)/g, ')')
+    .trim()
+}
 
 const SAFE_AGGREGATE_OR_METADATA_FUNCTIONS = new Set([
   'count',
@@ -139,23 +172,6 @@ const SQL_KEYWORDS_BEFORE_PAREN = new Set([
   'where',
   'with',
   'within',
-])
-
-const NUMERIC_CAST_TYPES = new Set([
-  'int',
-  'int2',
-  'int4',
-  'int8',
-  'integer',
-  'bigint',
-  'smallint',
-  'numeric',
-  'decimal',
-  'real',
-  'double precision',
-  'float',
-  'float4',
-  'float8',
 ])
 
 /** Strip SQL comments outside single-quoted literals while preserving string length and line breaks. */
@@ -447,35 +463,102 @@ function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Check whether a WHEN condition validates `extractedExpr` before casting to `castType`. */
+/**
+ * Extract top-level required `AND` conjuncts from a SQL boolean expression.
+ * Returns `[]` if any top-level `OR` is present (since an `OR` branch is not guaranteed to hold),
+ * recursively flattens parenthesized `AND` groups, and excludes negated (`NOT ...`) conjuncts.
+ */
+function extractRequiredConjuncts(clause) {
+  const s = stripOuterParens(clause)
+  if (!s) return []
+  const m = singleQuoteMask(s)
+  let depth = 0
+  let inDouble = false
+  const andSplits = []
+  for (let i = 0; i < s.length; i++) {
+    if (m[i]) continue
+    const ch = s[i]
+    if (inDouble) {
+      if (ch === '"') inDouble = false
+      continue
+    }
+    if (ch === '"') { inDouble = true; continue }
+    if (ch === '(' || ch === '[') { depth++; continue }
+    if (ch === ')' || ch === ']') { depth = Math.max(0, depth - 1); continue }
+    if (depth > 0) continue
+    if (!/[A-Za-z_]/.test(ch)) continue
+    let end = i + 1
+    while (end < s.length && /[A-Za-z0-9_]/.test(s[end])) end++
+    const prev = i > 0 ? s[i - 1] : ''
+    const word = s.slice(i, end).toLowerCase()
+    if (prev !== '.') {
+      if (word === 'or') return []
+      if (word === 'and') andSplits.push([i, end])
+    }
+    i = end - 1
+  }
+  if (andSplits.length === 0) {
+    if (/^not\b/i.test(s)) return []
+    return [s]
+  }
+  const parts = []
+  let start = 0
+  for (const [splitStart, splitEnd] of andSplits) {
+    parts.push(s.slice(start, splitStart).trim())
+    start = splitEnd
+  }
+  parts.push(s.slice(start).trim())
+  return parts.flatMap(part => extractRequiredConjuncts(part))
+}
+
+/** Check whether a WHEN condition guarantees `extractedExpr` is valid for `castType`. */
 function whenGuardsExpression(whenClause, extractedExpr, castType) {
-  const normWhen = normalizeSqlExpr(whenClause)
   const normExpr = normalizeSqlExpr(extractedExpr)
   if (!normExpr) return false
 
-  // Allow optional surrounding parentheses around the expression in the WHEN clause.
+  const conjuncts = extractRequiredConjuncts(whenClause)
+  if (conjuncts.length === 0) return false
+
+  const normCastType = normalizeCastType(castType)
+  const hasModifier = normCastType.includes('(')
+  const baseType = hasModifier ? normCastType.slice(0, normCastType.indexOf('(')) : normCastType
+
   const exprVariants = [normExpr]
-  // Also allow unwrapping inner parens around base: `((a->'b')->>'c')` vs `a->'b'->>'c'`
+  // Allow unwrapping inner parens around base: `((a->'b')->>'c')` vs `a->'b'->>'c'`
   const unwrapped = normExpr.replace(/^\(([^()]+)\)(->>|#>>)/, '$1$2')
   if (unwrapped !== normExpr) exprVariants.push(unwrapped)
 
-  for (const variant of exprVariants) {
-    const escaped = escapeRegExp(variant)
-    // 1. Regex match guard: `expr ~ '...'` or `(expr) ~* ...`
-    if (new RegExp(`(?:^|[^A-Za-z0-9_."])\\(*${escaped}\\)*\\s*~\\*?`, 'i').test(normWhen)) {
-      return true
-    }
-    // 2. PostgreSQL 16+ `pg_input_is_valid(expr, 'type')`
-    if (new RegExp(`\\bpg_input_is_valid\\(\\s*\\(*${escaped}\\)*\\s*,`, 'i').test(normWhen)) {
-      return true
-    }
-    // 3. `jsonb_typeof(col->'k') = 'number'` for numeric/integer casts
-    if (NUMERIC_CAST_TYPES.has(castType)) {
-      const nodeVariant = toJsonbNodeExpr(variant)
-      if (nodeVariant) {
-        const escapedNode = escapeRegExp(nodeVariant)
-        if (new RegExp(`\\bjsonb_typeof\\(\\s*\\(*${escapedNode}\\)*\\s*\\)\\s*=\\s*'number'`, 'i').test(normWhen)) {
+  for (const rawConjunct of conjuncts) {
+    const normConjunct = normalizeSqlExpr(rawConjunct)
+    if (!normConjunct || /^not\b/i.test(normConjunct)) continue
+
+    for (const variant of exprVariants) {
+      const escaped = escapeRegExp(variant)
+
+      // 1. PostgreSQL 16+ `pg_input_is_valid(expr, 'target_type')` with compatible target type
+      const pgValidMatch = new RegExp(`^pg_input_is_valid\\(\\s*\\(*${escaped}\\)*\\s*,\\s*'([^']+)'\\s*\\)$`, 'i').exec(normConjunct)
+      if (pgValidMatch) {
+        const validatedType = normalizeCastType(pgValidMatch[1])
+        if (hasModifier) {
+          if (validatedType === normCastType) return true
+        } else if (PG_INPUT_COMPATIBLE_TYPES[baseType]?.has(validatedType)) {
           return true
+        }
+      }
+
+      // 2. Regex match guard: `expr ~ '...'` or `(expr) ~* ...` (only for unconstrained types)
+      if (!hasModifier && new RegExp(`^\\(*${escaped}\\)*\\s*~\\*?\\s*`, 'i').test(normConjunct)) {
+        return true
+      }
+
+      // 3. `jsonb_typeof(col->'k') = 'number'` (only safe for unconstrained numeric/decimal, not integer types)
+      if (!hasModifier && UNCONSTRAINED_NUMERIC_TYPES.has(baseType)) {
+        const nodeVariant = toJsonbNodeExpr(variant)
+        if (nodeVariant) {
+          const escapedNode = escapeRegExp(nodeVariant)
+          if (new RegExp(`^jsonb_typeof\\(\\s*\\(*${escapedNode}\\)*\\s*\\)\\s*=\\s*'number'$`, 'i').test(normConjunct)) {
+            return true
+          }
         }
       }
     }
@@ -658,8 +741,9 @@ export function scanSqlForUnsafeJsonbCasts(rawSql) {
   }
 
   const checkOperand = (operand, operandStart, castEnd, rawCastType) => {
-    const castType = rawCastType.toLowerCase().replace(/\s+/g, ' ')
-    const isBool = BOOLEAN_CAST_TYPES.has(castType)
+    const castType = normalizeCastType(rawCastType)
+    const baseCastType = castType.includes('(') ? castType.slice(0, castType.indexOf('(')) : castType
+    const isBool = BOOLEAN_CAST_TYPES.has(baseCastType)
     const rule = isBool ? sqlSafetyRules.unsafeJsonbBooleanCast : sqlSafetyRules.unguardedJsonbScalarCast
     const stripped = stripOuterParens(operand)
 
@@ -765,35 +849,61 @@ function constantModuleSpecifier(node) {
   return null
 }
 
-/** Extract segments `{ text, start }` from a string literal, template literal, or `+` concatenation. */
-function extractStringSegments(node, tree, consumed) {
+/**
+ * Purely assemble `{ segments, nodes, dynamicExprs }` from a string literal, template literal, or `+` concatenation
+ * without speculatively mutating `consumed`. Dynamic operands inside `+` become `__EXPR__` and are still returned
+ * in `dynamicExprs` so nested SQL expressions (e.g. ternaries) are scanned too.
+ */
+function assembleStringExpression(node, tree) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-    consumed.add(node)
-    return [{ text: node.text, start: node.getStart(tree) + 1 }]
+    return {
+      hasLiteral: true,
+      segments: [{ text: node.text, start: node.getStart(tree) + 1 }],
+      nodes: [node],
+      dynamicExprs: [],
+    }
   }
   if (ts.isTemplateExpression(node)) {
-    consumed.add(node)
     const segments = [{ text: node.head.text, start: node.head.getStart(tree) + 1 }]
+    const nodes = [node]
+    const dynamicExprs = []
     for (const span of node.templateSpans) {
       const exprSegments = tryInlineConstantSegments(span.expression, tree)
       if (exprSegments) {
         segments.push(...exprSegments)
+        nodes.push(span.expression)
       } else {
         segments.push({ text: '__EXPR__', start: span.expression.getStart(tree) })
+        dynamicExprs.push(span.expression)
       }
       segments.push({ text: span.literal.text, start: span.literal.getStart(tree) + 1 })
     }
-    return segments
+    return { hasLiteral: true, segments, nodes, dynamicExprs }
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = extractStringSegments(node.left, tree, consumed)
-    const right = extractStringSegments(node.right, tree, consumed)
-    if (left && right) {
-      consumed.add(node)
-      return [...left, ...right]
+    const left = assembleStringExpression(node.left, tree)
+    const right = assembleStringExpression(node.right, tree)
+    if (!left.hasLiteral && !right.hasLiteral) {
+      return {
+        hasLiteral: false,
+        segments: [{ text: '__EXPR__', start: node.getStart(tree) }],
+        nodes: [],
+        dynamicExprs: [node],
+      }
+    }
+    return {
+      hasLiteral: true,
+      segments: [...left.segments, ...right.segments],
+      nodes: [node, ...left.nodes, ...right.nodes],
+      dynamicExprs: [...left.dynamicExprs, ...right.dynamicExprs],
     }
   }
-  return null
+  return {
+    hasLiteral: false,
+    segments: [{ text: '__EXPR__', start: node.getStart(tree) }],
+    nodes: [],
+    dynamicExprs: [node],
+  }
 }
 
 function tryInlineConstantSegments(node, tree) {
@@ -859,36 +969,14 @@ export function findSqlSafetyViolations(file, source) {
       ts.isTemplateExpression(node) ||
       (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
     )) {
-      const segments = extractStringSegments(node, tree, consumed)
-      if (segments) {
-        const text = segments.map(s => s.text).join('')
+      const assembled = assembleStringExpression(node, tree)
+      if (assembled.hasLiteral) {
+        for (const consumedNode of assembled.nodes) consumed.add(consumedNode)
+        const text = assembled.segments.map(s => s.text).join('')
         for (const item of scanSqlForUnsafeJsonbCasts(text)) {
-          addFinding(mapOffsetToSource(segments, item.offset), item)
+          addFinding(mapOffsetToSource(assembled.segments, item.offset), item)
         }
-        // Still inspect interpolated expressions inside templates (e.g. ternaries containing SQL).
-        if (ts.isTemplateExpression(node)) {
-          for (const span of node.templateSpans) {
-            if (!tryInlineConstantSegments(span.expression, tree)) visit(span.expression)
-          }
-          return
-        }
-        if (ts.isBinaryExpression(node)) {
-          // Recurse into any template span expressions inside the binary concatenation.
-          const visitTemplateSpans = sub => {
-            if (ts.isTemplateExpression(sub)) {
-              for (const span of sub.templateSpans) {
-                if (!tryInlineConstantSegments(span.expression, tree)) visit(span.expression)
-              }
-              return
-            }
-            if (ts.isBinaryExpression(sub) && sub.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-              visitTemplateSpans(sub.left)
-              visitTemplateSpans(sub.right)
-            }
-          }
-          visitTemplateSpans(node)
-          return
-        }
+        for (const expr of assembled.dynamicExprs) visit(expr)
         return
       }
     }
