@@ -321,12 +321,7 @@ jobs:
 
   candidate-checks:
     if: github.event_name == 'merge_group'
-    permissions:
-      contents: read
-      pull-requests: read
     uses: ./.github/workflows/ci-merge-candidate.yml
-    secrets:
-      HOSTED_UI_READ_KEY: ${{ secrets.HOSTED_UI_READ_KEY }}
 
   ui-policy:
     # The required check name. It reports success when only documentation

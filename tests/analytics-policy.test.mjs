@@ -292,6 +292,24 @@ test('analytics build proof checks actual packaged bytes, public Vite entry and 
   await assert.rejects(verifyRuntimeResources(root, built))
 })
 
+test('headless public builds still prove runtime resources and asset byte identity without private UI analytics', async t => {
+  const { root, write } = await analyticsBuildFixture(t)
+  const headlessScript = 'document.documentElement.dataset.mikkaHeadless = "true";\n'
+  await write('apps/frontend/dist/web/assets/index-real.js', headlessScript)
+  await write('.output/public/mikka/assets/index-real.js', headlessScript)
+  // Without an explicit matching headless manifest, missing analytics config must still fail.
+  await assert.rejects(inspectAnalyticsBuild(root), /Synthetic analytics configuration/)
+  const manifest = JSON.stringify({ version: 1, target: 'web', headless: true, usedActions: [] })
+  await write('apps/frontend/dist/web/renderer-manifest.json', manifest)
+  await write('.output/public/mikka/renderer-manifest.json', manifest)
+  const result = await inspectAnalyticsBuild(root)
+  assert.equal(result.headless, true)
+  assert.equal(result.assets.size, 1)
+  assert.equal(result.configuredAssets.size, 0)
+  await write('.output/public/mikka/renderer-manifest.json', '{"headless":false}')
+  await assert.rejects(inspectAnalyticsBuild(root), /served renderer manifest/)
+})
+
 test('artifact verification rejects escaping and symlinked files instead of accepting their filenames', async t => {
   const { root, built } = await analyticsBuildFixture(t)
   for (const path of ['../private', '/private', 'packages//private', 'packages/./private', 'packages\\private']) {
