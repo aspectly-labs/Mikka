@@ -44,7 +44,7 @@ for the part of Mikka you are changing. Development and acceptance rules live in
   [GitHub cloud connection](self-hosting-github-cloud.md) cover their setup.
 - [MCP](mcp.md) connects external agents and documents the available tools.
 - [GitHub App setup](github-app-manifest.md), [Telegram](telegram.md),
-  [Slack](slack-bot.md) and [Linear sync](linear-sync.md) cover integrations.
+  [Slack](slack-bot.md) covers integrations. [Linear sync](linear-sync.md) is retired (2026-11-24) and kept for reference.
 - [Desktop](../apps/desktop/README.md) covers the Electron client.
 - [Mobile](../apps/mobile/README.md) covers the Expo client.
 
