@@ -183,9 +183,18 @@ test('frozen run serviceTier injects OpenAI priority/ultrafast and Anthropic fas
 
   // SEC: an unapproved Claude run cannot spoof speed: 'fast' or fast-mode-2026-02-01 header.
   const spoofed = harness({ verify: async () => grant({ harness: 'claude_code' }), answer: () => Response.json({ ok: true }) })
-  await handleModelGateway(post({ messages: [], speed: 'fast' }, { 'x-api-key': 'mkg_valid', 'anthropic-beta': 'fast-mode-2026-02-01,interleaved-thinking-2025-05-14' }), 'anthropic', 'messages', spoofed.dependencies)
+  await handleModelGateway(post({ messages: [], speed: 'fast', service_tier: 'auto' }, { 'x-api-key': 'mkg_valid', 'anthropic-beta': 'fast-mode-2026-02-01,interleaved-thinking-2025-05-14' }), 'anthropic', 'messages', spoofed.dependencies)
   assert.equal(JSON.parse(String(spoofed.calls.fetched[0].init.body)).speed, undefined)
+  assert.equal(JSON.parse(String(spoofed.calls.fetched[0].init.body)).service_tier, undefined)
   assert.equal((spoofed.calls.fetched[0].init.headers as Record<string, string>)['anthropic-beta'], 'interleaved-thinking-2025-05-14')
+
+  // SEC: an unapproved Codex credits run cannot spoof OpenAI priority/flex; a frozen ultrafast grant overwrites a client value.
+  const spoofedCodex = harness({ verify: async () => grant({ harness: 'codex' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi', service_tier: 'priority' }), 'openai', 'responses', spoofedCodex.dependencies)
+  assert.equal(JSON.parse(String(spoofedCodex.calls.fetched[0].init.body)).service_tier, undefined)
+  const overrideUltra = harness({ verify: async () => grant({ harness: 'codex', serviceTier: 'ultrafast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi', service_tier: 'flex' }), 'openai', 'responses', overrideUltra.dependencies)
+  assert.equal(JSON.parse(String(overrideUltra.calls.fetched[0].init.body)).service_tier, 'ultrafast')
 
   // Claude Code running an OpenAI-compatible BYOK key with verified Ultrafast encodes service_tier: 'ultrafast' without Anthropic fast beta.
   const claudeOnOpenAi = harness({
