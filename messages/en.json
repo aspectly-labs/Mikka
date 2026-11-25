@@ -2871,7 +2871,7 @@
     "title": "Settings",
     "workspaceLoading": "Loading the workspace…",
     "sharedLinks": {
-      "revokeConfirmTitle": "Revoke shared link?",
+      "revokeConfirmTitle": "Stop sharing “{title}”?",
       "revokeConfirmBody": "Anyone with this link will immediately lose access.",
       "revokeConfirmAction": "Revoke link",
       "cancel": "Cancel",
@@ -2976,7 +2976,7 @@
         "done": "Saved it",
         "empty": "No SCIM connections",
         "active": "Syncing",
-        "revokeTitle": "Revoke this SCIM connection?",
+        "revokeTitle": "Revoke the SCIM connection created {date}?",
         "revoked": "SCIM connection revoked.",
         "token": "Bearer credential",
         "revoke": "Revoke"
@@ -8398,7 +8398,12 @@
       "caption": "Plans include monthly usage, switch anytime",
       "subscribe": "Subscribe",
       "plan": "Mikka Pro",
-      "title": "Choose a plan"
+      "title": "Choose a plan",
+      "tag": "Credits",
+      "outTitle": "Mikka credits are used up",
+      "outHint": "Switch to a model on your own subscription, or top up to continue",
+      "freeModel": "Change model",
+      "ownSubscription": "Use my subscription"
     }
   },
   "SettingsRegistry": {
@@ -9079,7 +9084,8 @@
       "todoLead": "Updated the plan",
       "delegate": "started subagents",
       "delegateLead": "Started subagents"
-    }
+    },
+    "retryingIn": "Retrying in {n}s"
   },
   "Board": {
     "scrollRight": "Scroll board right",
@@ -9354,7 +9360,9 @@
       "title": "Connect {name}",
       "submit": "Connect",
       "connected": "Connected {name}",
-      "fieldPlaceholder": "Enter {label}"
+      "fieldPlaceholder": "Enter {label}",
+      "formsFailed": "Couldn't load how to connect {name}",
+      "noKeyForm": "{name} can't be connected with a key"
     },
     "appsTab": "Apps",
     "state": {
@@ -11341,7 +11349,7 @@
     "name": "Identity name",
     "keyScope": "Key scope",
     "back": "Back to service identities",
-    "confirmRevoke": "Revoke the service key?",
+    "confirmRevoke": "Revoke the service key for “{scope}”?",
     "confirm": "Confirm",
     "copyNow": "Copy this key now. It is shown once.",
     "unconfigured": "No key issued",
@@ -11379,7 +11387,7 @@
     "relatedThreads": "Related threads",
     "closeOtherTabs": "Close other tabs",
     "sidebarNavigation": "Sidebar navigation",
-    "searchTabs": "Search tabs",
+    "searchTabs": "Search panels",
     "noTabsFound": "No tabs found.",
     "nothingHere": "Nothing here yet",
     "search": "Search",
