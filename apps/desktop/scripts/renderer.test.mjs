@@ -337,20 +337,65 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
       import React from 'react'
       import { createRoot } from 'react-dom/client'
       import { DesktopTabs } from ${JSON.stringify(join(officialRenderer, 'desktop-tabs.tsx'))}
-      let testWindow
       export function setWindow(value) { globalThis.__mikkaDesktopTabsWindow = value }
+      function EffectBarrier({ token, onEffect, onUnmount }) {
+        React.useEffect(() => { onEffect(token) }, [token, onEffect])
+        React.useEffect(() => () => { onUnmount() }, [onUnmount])
+        return null
+      }
+      function waitWithTimeout(promise, label, timeoutMs = 5000) {
+        let timer
+        return Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(label)), timeoutMs)
+          }),
+        ]).finally(() => clearTimeout(timer))
+      }
       export async function mount(container) {
         const root = createRoot(container)
-        root.render(React.createElement(DesktopTabs))
-        await new Promise(resolve => setTimeout(resolve, 30))
-        return root
+        let token = 0
+        let effectResolve = null
+        let unmountResolve = null
+        const unmounted = new Promise(resolve => { unmountResolve = resolve })
+        const onEffect = seen => {
+          if (seen === token && effectResolve) {
+            const done = effectResolve
+            effectResolve = null
+            done()
+          }
+        }
+        const onUnmount = () => {
+          if (unmountResolve) {
+            const done = unmountResolve
+            unmountResolve = null
+            done()
+          }
+        }
+        const renderAndFlushEffects = async label => {
+          const nextToken = ++token
+          const flushed = new Promise(resolve => { effectResolve = resolve })
+          root.render(React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(DesktopTabs),
+            React.createElement(EffectBarrier, { token: nextToken, onEffect, onUnmount }),
+          ))
+          await waitWithTimeout(flushed, label)
+        }
+        await renderAndFlushEffects('DESKTOP_TABS_MOUNT_EFFECT_TIMEOUT')
+        await renderAndFlushEffects('DESKTOP_TABS_RESTORE_EFFECT_TIMEOUT')
+        return { root, renderAndFlushEffects, unmounted }
       }
-      export async function unmount(root) { root.unmount(); await new Promise(resolve => setTimeout(resolve, 0)) }
-      export async function navigateForTest(href) {
+      export async function unmount(handle) {
+        handle.root.unmount()
+        await waitWithTimeout(handle.unmounted, 'DESKTOP_TABS_UNMOUNT_TIMEOUT')
+      }
+      export async function navigateForTest(handle, href) {
         globalThis.__mikkaDesktopTabsWindow.history.pushState(globalThis.__mikkaDesktopTabsWindow.history.state, '', href)
         globalThis.__mikkaDesktopTabsWindow.dispatchEvent(new globalThis.__mikkaDesktopTabsWindow.CustomEvent('mikka:desktop-history', { detail: { method: 'pushState', href } }))
         globalThis.__mikkaDesktopTabsWindow.dispatchEvent(new globalThis.__mikkaDesktopTabsWindow.Event('mikka:test-location'))
-        await new Promise(resolve => setTimeout(resolve, 30))
+        await handle.renderAndFlushEffects('DESKTOP_TABS_NAVIGATE_EFFECT_TIMEOUT')
       }
     `,
     plugins: [{
@@ -375,15 +420,20 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
       },
     }, officialUiResolution],
   })
+  let mounted = null
   try {
     fixture.setWindow(window)
     const container = window.document.createElement('div')
     window.document.body.append(container)
-    const root = await fixture.mount(container)
+    mounted = await fixture.mount(container)
     assert.equal(window.location.pathname, '/mikka/en/dashboard', 'startup restores the saved active route')
-    await fixture.navigateForTest('/mikka/en/settings')
+    await fixture.navigateForTest(mounted, '/mikka/en/settings')
     assert.equal(window.location.pathname, '/mikka/en/settings', 'later Settings navigation is not reset to the launch route')
-    await fixture.unmount(root)
   } finally {
+    try {
+      if (mounted) await fixture.unmount(mounted)
+    } finally {
+      delete globalThis.__mikkaDesktopTabsWindow
+    }
   }
 }))
