@@ -1,7 +1,7 @@
 # The right column as Tembo: one level of tabs, no Overview
 
 - Date: 2026-11-23 22:00 UTC
-- **Status:** Accepted (Alex, 2026-11-23: 「Tembo 没有做 overview，我们也不做了，做成他们这种，一目了然」; approval for the paid App Shell's work-area strip and menus)
+- **Status:** Superseded in part by [2026-11-26-0110](2026-11-26-0110-pages-environments-from-benchmark.md) (otherwise accepted: Alex, 2026-11-23: 「Tembo 没有做 overview，我们也不做了，做成他们这种，一目了然」; approval for the paid App Shell's work-area strip and menus)
 - Supersedes: the right column's Overview tab and its inner 详情 / 任务 / PR / 电脑 tabs (#2927).
 
 ## Context

@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-23  
 **Decider:** Alex  
-**Status:** Accepted
+**Status:** Superseded in part by [2026-11-26-0100](2026-11-26-0100-settings-structure-from-benchmark.md)
 
 ## Context
 

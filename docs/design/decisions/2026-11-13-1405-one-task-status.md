@@ -1,7 +1,7 @@
 # A task has one status, one entry, and a conversation has its own short title
 
 - Date: 2026-11-13
-- **Status:** Superseded in part by [2026-11-18-0300](2026-11-18-0300-one-status-icon-set.md) and [2026-11-19-1630](2026-11-19-1630-one-mark-registry.md) (shared icon set and Capy/Linear colour order)
+- **Status:** Superseded in part by [2026-11-18-0300](2026-11-18-0300-one-status-icon-set.md) and [2026-11-19-1630](2026-11-19-1630-one-mark-registry.md); [2026-11-26-0110](2026-11-26-0110-pages-environments-from-benchmark.md) (shared icon set and Capy/Linear colour order)
 - Source: Alex, 2026-11-13, on the official build showing a task's status field beside a second set of run states (排队中 / 运行中 / 等待你 / 等你回复 / 待审阅 / 失败) and a 任务 page beside the board: 「这就不应该有两个状态，只能有一个状态」, 「看板就是放任务的地方」, 「按照 linear 的写法去写」. On names, the same day: 「我改的永远都是对话，也就是 session run、agent run，这个必须要用短标题」 and 「这是绝对不行的，对话必须要有自己的标题」. On scope of the change: 「你要改就改，所有东西都是可以改的，包括数据库之类的」.
 - Rule: R-15, R-52, R-53; `glossary.md` (Task status, Agent mark, Run result); `components.md` (Board, task status icon); `../ui-overlay.md` (the `tasks` slot is retired)
 - Replaces:

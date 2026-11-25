@@ -1,7 +1,7 @@
 # 模型与订阅 and 设备: R1, R2, R3, R5
 
 - Date: 2026-11-02
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-26-0100](2026-11-26-0100-settings-structure-from-benchmark.md)
 - Source: Alex accepted the coordination draft (Artifact NXhjpSTmgDq1aVNqzLYP2x, Version 2; Figma zPe5LKycb2XuT1ivCLRw07, page 834:2, R1 872:2 / 872:263, R2 872:37 / 872:298, R3 872:127 / 872:388, R5 872:206 / 872:467), relayed by the coordinator session.
 - Rule: R-23 (cloud without a key offers 填入 E2B Key), R-40, R-51
 - Replaces: the separate 「云电脑」 section of 模型与订阅; the confirmation before 移除 in [2026-11-02-1400](2026-11-02-1400-model-order-dispatch.md) ("removes them (with a confirmation)").

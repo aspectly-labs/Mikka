@@ -1,6 +1,6 @@
 # 新建任务只登记；指派给 Bot 会唤醒它
 
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-26-0120](2026-11-26-0120-auth-and-overlays-from-benchmark.md)
 
 2026-11-19。Alex 指出新建任务逻辑和 Capy 不一致，要求按 Capy 的 Electron 源码做。
 

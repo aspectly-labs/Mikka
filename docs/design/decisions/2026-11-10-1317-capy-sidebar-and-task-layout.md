@@ -1,7 +1,7 @@
 # Capy-style Bot navigation and task detail order
 
 - Date: 2026-11-10
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-26-0110](2026-11-26-0110-pages-environments-from-benchmark.md)
 - Source: Alex, reviewing the new #1865 / hosted #66 UI with a Capy screenshot: 「左边 sidebar 那里，BOT 的图标是没有的，群聊的图标也是没有的」 and 「BOT 下面是可以折叠的，折叠展开之后，BOT 和 Agent 都在这下面。我觉得这个方法很好，你可以去做一下」. After the right task view's repeated title, property-card-first order and cramped body were identified, Alex confirmed: 「你的观察是对的，就这样的继续处理吧」.
 - Rule: R-01, R-82; glossary and component map.
 - Replaces: the hosted sidebar restriction to Bot/group rows without children; the work-area task implementation that put a large property card before the title and repeated the title in an inner toolbar. The task-list model in [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md) continues outside this navigation exception.

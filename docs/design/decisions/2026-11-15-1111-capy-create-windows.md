@@ -1,6 +1,6 @@
 # 新建任务、新建 Bot 照 Capy 的新建窗口做
 
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-26-0120](2026-11-26-0120-auth-and-overlays-from-benchmark.md)
 
 Alex，2026-11-15：「去加吧，另外 mikka 新建 issue 的窗口也是能换的」。
 

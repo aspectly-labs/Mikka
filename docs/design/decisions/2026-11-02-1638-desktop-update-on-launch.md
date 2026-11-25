@@ -1,7 +1,7 @@
 # The desktop app installs a newer version before it opens
 
 - Date: 2026-11-02
-- **Status:** Accepted
+- **Status:** Superseded by [2026-11-26-0120](2026-11-26-0120-auth-and-overlays-from-benchmark.md)
 - Source: Alex, relayed by the coordinator: 电脑版启动时强制更新；用户把 App 关了，下次打开时如果有新版本，必须先更新完才能进入
 - Rule: —
 - Replaces: — (adds to `2026-10-31-2005-desktop-update-button.md`, which still holds while the app runs)

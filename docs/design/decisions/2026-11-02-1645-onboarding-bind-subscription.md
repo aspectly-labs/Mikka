@@ -1,7 +1,7 @@
 # 首次引导加一步「绑定订阅」
 
 - Date: 2026-11-02
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-26-0120](2026-11-26-0120-auth-and-overlays-from-benchmark.md)
 - Source: Alex, relayed by the coordinator: onboarding 里要有「绑定订阅」入口（Claude、ChatGPT），直接复用「模型订阅」现有的连接组件和流程，行为不变，可以跳过
 - Rule: R-40
 - Amends: `docs/design/onboarding.md` §4（新增第 1b 步）
