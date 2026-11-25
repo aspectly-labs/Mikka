@@ -1,7 +1,5 @@
-import { Pressable, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Text } from '@/components/Text'
-import { tap } from '@/lib/haptics'
-import { mobileMessages } from '@/lib/messages'
 import { colors, GROUP_INSET, LIST_INSET } from '@/lib/theme'
 
 /** How many rows a closed section (已解决, 已完成) shows before 「显示全部」. */
@@ -18,20 +16,9 @@ export function ListSectionHeader({ title, count, grouped = false }: { title: st
   )
 }
 
-/** Under a closed section cut to its first rows: shows the rest. */
-export function ShowAllRow({ count, onPress }: { count: number; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="button" onPress={() => { tap(); onPress() }} hitSlop={6} style={({ pressed }) => [styles.all, pressed && { opacity: 0.6 }]}>
-      <Text style={styles.allText}>{mobileMessages.MobileCore.showAllItems.replace('{count}', String(count))}</Text>
-    </Pressable>
-  )
-}
-
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: LIST_INSET, paddingTop: 14, paddingBottom: 4 },
   groupedHeader: { paddingHorizontal: GROUP_INSET + 16, paddingTop: 18, paddingBottom: 6 },
   title: { fontSize: 15, lineHeight: 20, fontWeight: '600', color: colors.secondary },
   count: { fontSize: 15, lineHeight: 20, color: colors.tertiary },
-  all: { alignSelf: 'flex-start', paddingHorizontal: LIST_INSET, paddingVertical: 8 },
-  allText: { fontSize: 14, lineHeight: 19, fontWeight: '500', color: colors.accent },
 })
