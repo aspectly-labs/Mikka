@@ -3996,7 +3996,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "3f5adb9610da3b43998f66a769d1cd0f9df50b93b139d8f9ac9465e1a866922b"
+      "sourceHash": "72c460bcd402c1bad0033f7d658b91086f2158024d3289ce3a950b3d86da0792"
     },
     {
       "path": "/mikka/api/workspaces/[workspaceId]/projects/[projectId]/setup",
@@ -4211,7 +4211,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "9322808c62f3fdaf33aa233c74041c23eefafd90ddb01bec9dd7c060904a7641"
+      "sourceHash": "93028e8b251c42c7ec1580b13546bc3ef293044c6a5c089c83376384e3bf217a"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

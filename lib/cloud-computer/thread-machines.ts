@@ -101,6 +101,7 @@ export function threadMachineStartFailure(error: unknown): FailedThreadStart | n
  */
 async function replaceGoneSandbox(query: Pick<Pool, 'query'>, runId: string, template: string, leaseId?: string) {
   const replaced = (await query.query(`UPDATE thread_machines SET "sandboxId"=NULL,"operationId"=$2,"snapshotId"=$4,"templateKind"=$5,state='starting',"restoreStartedAt"=NULL,
+      "environmentSnapshotId"=NULL,
       "computeSeconds"="computeSeconds"+COALESCE(GREATEST(0,EXTRACT(EPOCH FROM (clock_timestamp()-"runningSince")))::bigint,0),"runningSince"=NULL
     WHERE "runId"=$1 AND state<>'ended' AND ($3::uuid IS NULL OR "workerLeaseId"=$3) RETURNING *`, [runId, randomUUID(), leaseId ?? null, template, cloudTemplateOrigin(template)?.kind ?? null])).rows[0]
   if (replaced) taskActivityChanged(query, runId)
@@ -897,7 +898,7 @@ export async function ensureThreadMachine(...args: Parameters<typeof ensureThrea
   })
 }
 
-async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: string, provider: typeof threadMachineProvider & { state?: (sandboxId: string, ownerId: string, budget?: RuntimeBudget) => Promise<string> } = threadMachineProvider, desktop = threadDesktop, refreshRuntime = false) {
+async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: string, provider: typeof threadMachineProvider & { selectEnvironmentSnapshot?: typeof import('../project-resources/environment-snapshots').readyEnvironmentSnapshot; state?: (sandboxId: string, ownerId: string, budget?: RuntimeBudget) => Promise<string> } = threadMachineProvider, desktop = threadDesktop, refreshRuntime = false) {
   z.uuid().parse(runId)
   let refreshDeadline = refreshRuntime ? Date.now() + 240_000 : undefined
   const budgetUntil = (deadline: number): RuntimeBudget => maximumMs => {
@@ -917,6 +918,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
   let questionRuntimeUpgrade: QuestionRuntimeUpgrade | undefined
   let unclaimedQuestionRecovery: UnclaimedQuestionRuntimeRecovery | null = null
   let unclaimedRuntimeSwitchStarted = false
+  let selectEnvironmentSnapshot = false
   let reservedStartLease = false
   let runtimeRollback: (() => Promise<void>) | undefined
   let verifyRefreshedRuntime: (() => Promise<unknown>) | undefined
@@ -1071,8 +1073,12 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
               AND (m."sandboxId" IS NOT NULL OR m."workerLeaseUntil">now()) LIMIT 1`, [run.issueId, actor.userId, actor.workspaceId, runId])
           if (busy.rowCount) throw new ComputerError(409, 'Thread provisioning in progress')
         }
+        selectEnvironmentSnapshot = repositoryTask
         machine = (await client.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","botId","issueId","snapshotId","operationId",state,"templateKind")
-          VALUES ($1,$2,$3,$4,$5,$6,$7,'starting',$8) ON CONFLICT ("runId") DO UPDATE SET "snapshotId"=EXCLUDED."snapshotId","templateKind"=EXCLUDED."templateKind","issueId"=EXCLUDED."issueId" RETURNING *`, [runId, actor.workspaceId, actor.userId, run.runtimeBotId, run.issueId ?? null, template, randomUUID(), cloudTemplateOrigin(template)?.kind ?? null])).rows[0]
+          VALUES ($1,$2,$3,$4,$5,$6,$7,'starting',$8) ON CONFLICT ("runId") DO UPDATE SET
+          "snapshotId"=EXCLUDED."snapshotId","templateKind"=EXCLUDED."templateKind","issueId"=EXCLUDED."issueId",
+          "operationId"=EXCLUDED."operationId","environmentSnapshotId"=NULL RETURNING *`,
+          [runId, actor.workspaceId, actor.userId, run.runtimeBotId, run.issueId ?? null, template, randomUUID(), cloudTemplateOrigin(template)?.kind ?? null])).rows[0]
       }
     }
     if (retainedSandboxId && !refreshRuntime) {
@@ -1145,8 +1151,44 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
     }
     if (restored) machine = restored.machine
-    const anonymousFreshMachine = !connected && !restored && !machine.sandboxId && !machine.deviceId && ['claude', 'codex'].includes(cloudTemplateOrigin(machine.snapshotId)?.kind ?? '')
-    const sandbox = restored?.sandbox ?? connected ?? await provider.create(machine.snapshotId, machine.operationId, { application: 'mikka-thread', workspaceId: actor.workspaceId, runId, operationId: machine.operationId }, actor.userId)
+    const fresh = !connected && !restored && !machine.sandboxId && !machine.deviceId
+    let started = restored?.sandbox ?? connected
+    if (!started) {
+      const metadata = () => ({ application: 'mikka-thread', workspaceId: actor.workspaceId, runId, operationId: machine.operationId })
+      let candidate: { id: string; providerId: string } | null = null
+      const execution = run.agentDefinition?.projectExecution
+      if ((selectEnvironmentSnapshot || machine.environmentSnapshotId) && execution?.environment && execution.repositoryClone === 'start') {
+        const { readyEnvironmentSnapshot } = await import('../project-resources/environment-snapshots')
+        candidate = await (provider.selectEnvironmentSnapshot ?? readyEnvironmentSnapshot)({
+          workspaceId: actor.workspaceId, userId: actor.userId, environmentId: execution.environment.id,
+          revision: execution.environment.revision, templateId: machine.snapshotId,
+        })
+      }
+      // Before reusing a persisted intent, recheck all cached repository grants,
+      // the worker version, and the flag. An obsolete intent gets a new key.
+      if (machine.environmentSnapshotId && machine.environmentSnapshotId !== candidate?.id) {
+        machine = await replaceGoneSandbox(pool, runId, freshTemplate(), leaseId)
+        if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
+        candidate = null
+      }
+      if (candidate) {
+        const reserved = await pool.query(`UPDATE thread_machines SET "environmentSnapshotId"=$3 WHERE "runId"=$1
+          AND "workerLeaseId"=$2 AND "operationId"=$4 AND state<>'ended' AND "sandboxId" IS NULL RETURNING "runId"`,
+          [runId, leaseId, candidate.id, machine.operationId])
+        if (!reserved.rowCount) throw new ComputerError(409, 'Thread provisioning cancelled')
+        machine.environmentSnapshotId = candidate.id
+        try {
+          started = await threadLifecycleProvider.createFromSnapshot(candidate.providerId, machine.operationId, metadata(), actor.userId)
+        } catch (error) {
+          if (!snapshotUnusable(error)) throw error
+          machine = await replaceGoneSandbox(pool, runId, freshTemplate(), leaseId)
+          if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
+        }
+      }
+      started ??= await provider.create(machine.snapshotId, machine.operationId, metadata(), actor.userId)
+    }
+    const anonymousFreshMachine = fresh && !machine.environmentSnapshotId && ['claude', 'codex'].includes(cloudTemplateOrigin(machine.snapshotId)?.kind ?? '')
+    const sandbox = started
     connected = null
     refreshPhase = timings.next('record_sandbox')
     const recorded = await recordThreadSandbox(pool, runId, sandbox.sandboxId, leaseId)

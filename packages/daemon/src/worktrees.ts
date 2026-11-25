@@ -243,6 +243,27 @@ export class WorktreeManager {
     return path
   }
 
+  /** Move the prebuilt checkout, including ignored dependency files, into the
+   * task. If its setup outputs conflict with the requested commit, a normal
+   * worktree and full setup can still run from the clean repository cache. */
+  async createFromEnvironmentSnapshot(runId: string, repoPath: string, baseBranch: string): Promise<string | null> {
+    const prepared = repoPath + ".environment-setup"
+    const path = this.pathFor(runId)
+    if (!lstatSync(prepared, { throwIfNoEntry: false })?.isDirectory() || existsSync(path)) return null
+    await excludeVerifyArtifacts(repoPath)
+    return withRepoConfig(repoPath, async () => {
+      const gitDir = await worktreeGitDir(repoPath, prepared)
+      const commit = (await simpleGit(repoPath).raw(["rev-parse", "--verify", "--end-of-options", baseBranch + "^{commit}"])).trim()
+      const switched = await execa("git", ["-c", "core.hooksPath=/dev/null", "checkout", "--no-overwrite-ignore", "-B", runBranch(runId), commit], {
+        cwd: prepared, env: { GIT_DIR: gitDir, GIT_WORK_TREE: prepared }, stdin: "ignore", reject: false,
+      })
+      if (switched.exitCode !== 0) return null
+      mkdirSync(this.root, { recursive: true })
+      await simpleGit(repoPath).raw(["worktree", "move", "--", prepared, path])
+      return path
+    })
+  }
+
   /**
    * The commit `branch` points at on `remote`, fetched into the repo, for a
    * fresh worktree of an issue that already has a branch (ADR 0024): the

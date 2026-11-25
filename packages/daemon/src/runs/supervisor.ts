@@ -1398,14 +1398,21 @@ export class RunSupervisor {
       )
     if (assignment.requireWorktreeContinuation && !entry.worktree && !continued)
       throw new CheckpointRecoveryError('Original worktree is unavailable and there is no usable recovery snapshot.')
+    let usedEnvironmentSnapshot = false
     const worktree =
       entry.worktree ??
       continued ??
-      (await this.stage(runId, "worktree", async () => this.deps.worktrees.create(
-        runId,
-        repo.path,
-        await this.startPoint(runId, repo, assignment),
-      )))
+      (await this.stage(runId, "worktree", async () => {
+        const start = await this.startPoint(runId, repo, assignment)
+        if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly) {
+          const prepared = await this.deps.worktrees.createFromEnvironmentSnapshot(runId, repo.path, start)
+          if (prepared) {
+            usedEnvironmentSnapshot = true
+            return prepared
+          }
+        }
+        return this.deps.worktrees.create(runId, repo.path, start)
+      }))
     run.workspaceControl?.setWorktree(worktree)
     if (!entry.worktree) {
       // A continued worktree was bootstrapped by the run that made it.
@@ -1446,7 +1453,9 @@ export class RunSupervisor {
       const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, effectiveRepo) : await this.deps.worktrees.bootstrap(worktree, repo.path, effectiveRepoSetup)
       if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup?.approved) {
         if (policy.permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
-        await this.deps.worktrees.bootstrap(worktree, repo.path, assignment.projectEnvironment.setup, assignment.taskEnv, { includeWorktreeFile: false })
+        const { setup } = assignment.projectEnvironment
+        const recipe = usedEnvironmentSnapshot ? { ...setup, command: setup.maintenance } : setup
+        await this.deps.worktrees.bootstrap(worktree, repo.path, recipe, assignment.taskEnv, { includeWorktreeFile: false })
       }
       log.info({ worktree, setup }, "worktree ready")
       this.deps.journal.update(runId, { worktree, baseCommit })

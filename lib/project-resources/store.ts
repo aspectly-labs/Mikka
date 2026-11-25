@@ -239,7 +239,8 @@ export async function saveWorkspaceRepositoryPolicy(reader: Reader, raw: z.input
 
 function setupRecipe(configuration: EnvironmentConfiguration): ProjectSetupRecipe | null {
   const setup = configuration.setup
-  return setup ? { copyFiles: setup.copyFiles, ...(setup.command !== undefined ? { command: setup.command } : {}) } : null
+  return setup ? { copyFiles: setup.copyFiles, ...(setup.command !== undefined ? { command: setup.command } : {}),
+    ...(setup.maintenance !== undefined ? { maintenance: setup.maintenance } : {}) } : null
 }
 
 async function recordSetupVersion(tx: WorkspaceTransaction, workspaceId: string, id: string, revision: number, configuration: EnvironmentConfiguration) {
