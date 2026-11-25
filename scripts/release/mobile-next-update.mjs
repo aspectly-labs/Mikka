@@ -142,10 +142,21 @@ function parseJsonPayload(rawOutput, errorCode = 'invalidEasJson') {
   }
 }
 
-function extractMappedBranchNames(channelPayload) {
-  if (!channelPayload || typeof channelPayload !== 'object' || Array.isArray(channelPayload)) {
+function unwrapChannelPage(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     fail('invalidChannelJson')
   }
+  if (Object.hasOwn(payload, 'currentPage')) {
+    if (!payload.currentPage || typeof payload.currentPage !== 'object' || Array.isArray(payload.currentPage)) {
+      fail('invalidChannelJson')
+    }
+    return payload.currentPage
+  }
+  return payload
+}
+
+function extractMappedBranchNames(rawPayload) {
+  const channelPayload = unwrapChannelPage(rawPayload)
   const byId = new Map()
   if (Array.isArray(channelPayload.updateBranches)) {
     for (const branch of channelPayload.updateBranches) {
@@ -191,10 +202,10 @@ function extractMappedBranchNames(channelPayload) {
 
 export function verifyChannelMapping(
   nextChannelRaw,
-  { expectedChannel = EXPECTED_CHANNEL, productionChannelRaw = null } = {},
+  { expectedChannel = EXPECTED_CHANNEL, productionChannelRaw } = {},
 ) {
   if (expectedChannel !== EXPECTED_CHANNEL) fail('channelMustBeNext')
-  const nextPayload = parseJsonPayload(nextChannelRaw, 'invalidChannelJson')
+  const nextPayload = unwrapChannelPage(parseJsonPayload(nextChannelRaw, 'invalidChannelJson'))
   if (nextPayload?.name !== undefined && nextPayload.name !== expectedChannel) {
     fail('channelNameMismatch')
   }
@@ -203,11 +214,16 @@ export function verifyChannelMapping(
   const [branch] = nextBranches
   if (!SAFE_BRANCH.test(branch) || branch === 'production') fail('forbiddenBranch')
 
-  if (productionChannelRaw !== null && productionChannelRaw !== undefined && String(productionChannelRaw).trim() !== '') {
-    const prodPayload = parseJsonPayload(productionChannelRaw, 'invalidProductionChannelJson')
-    const prodBranches = extractMappedBranchNames(prodPayload)
-    if (prodBranches.includes(branch)) fail('branchSharedWithProduction')
+  if (typeof productionChannelRaw !== 'string' || productionChannelRaw.trim() === '') {
+    fail('productionChannelRequired')
   }
+  const prodPayload = unwrapChannelPage(parseJsonPayload(productionChannelRaw, 'invalidProductionChannelJson'))
+  if (prodPayload?.name !== undefined && prodPayload.name !== 'production') {
+    fail('productionChannelNameMismatch')
+  }
+  const prodBranches = extractMappedBranchNames(prodPayload)
+  if (prodBranches.length === 0) fail('invalidProductionChannelJson')
+  if (prodBranches.includes(branch)) fail('branchSharedWithProduction')
 
   return { channel: expectedChannel, branch }
 }
@@ -335,15 +351,15 @@ async function main() {
   }
   if (command === 'verify-channel') {
     if (!target) fail('channelJsonPathRequired')
-    const nextRaw = await readFile(target, 'utf8')
-    let prodRaw = null
-    if (secondary) {
-      try {
-        prodRaw = await readFile(secondary, 'utf8')
-      } catch (error) {
-        if (error?.code !== 'ENOENT') fail('productionChannelUnreadable')
-      }
-    }
+    if (!secondary) fail('productionChannelRequired')
+    const [nextRaw, prodRaw] = await Promise.all([
+      readFile(target, 'utf8'),
+      readFile(secondary, 'utf8').catch(() => {
+        // Redaction boundary: fail closed if the production channel lookup file
+        // is missing or unreadable without leaking runner filesystem paths.
+        fail('productionChannelRequired')
+      }),
+    ])
     const verified = verifyChannelMapping(nextRaw, {
       expectedChannel: process.env.EAS_CHANNEL ?? EXPECTED_CHANNEL,
       productionChannelRaw: prodRaw,

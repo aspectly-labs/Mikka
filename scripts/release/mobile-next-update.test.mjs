@@ -173,14 +173,15 @@ test('verifyResolvedExpoConfig rejects dynamic ios.runtimeVersion overrides, wro
   )
 })
 
-test('verifyChannelMapping permits dedicated next branch and rejects next->production or shared production branches', () => {
-  const nextClean = JSON.stringify({
+test('verifyChannelMapping unwraps currentPage responses, permits dedicated next branch, and rejects production overlap or missing prod proof', () => {
+  const page = channel => JSON.stringify({ currentPage: channel })
+  const nextClean = page({
     id: 'ch-next',
     name: 'next',
     branchMapping: JSON.stringify({ version: 0, data: [{ branchId: 'br-next', branchMappingLogic: 'true' }] }),
     updateBranches: [{ id: 'br-next', name: 'next' }],
   })
-  const prodClean = JSON.stringify({
+  const prodClean = page({
     id: 'ch-prod',
     name: 'production',
     branchMapping: JSON.stringify({ version: 0, data: [{ branchId: 'br-prod', branchMappingLogic: 'true' }] }),
@@ -190,8 +191,19 @@ test('verifyChannelMapping permits dedicated next branch and rejects next->produ
     verifyChannelMapping(nextClean, { productionChannelRaw: prodClean }),
     { channel: 'next', branch: 'next' },
   )
+  // Also accept unwrapped legacy objects when present.
+  assert.deepEqual(
+    verifyChannelMapping(JSON.stringify(JSON.parse(nextClean).currentPage), {
+      productionChannelRaw: JSON.stringify(JSON.parse(prodClean).currentPage),
+    }),
+    { channel: 'next', branch: 'next' },
+  )
+  assert.throws(
+    () => verifyChannelMapping(nextClean, { productionChannelRaw: null }),
+    /mobileNextUpdate:productionChannelRequired/,
+  )
 
-  const nextToProd = JSON.stringify({
+  const nextToProd = page({
     id: 'ch-next',
     name: 'next',
     branchMapping: JSON.stringify({ version: 0, data: [{ branchId: 'br-prod', branchMappingLogic: 'true' }] }),
@@ -202,7 +214,7 @@ test('verifyChannelMapping permits dedicated next branch and rejects next->produ
     /mobileNextUpdate:forbiddenBranch/,
   )
 
-  const prodSharingNext = JSON.stringify({
+  const prodSharingNext = page({
     id: 'ch-prod',
     name: 'production',
     branchMapping: JSON.stringify({ version: 0, data: [{ branchId: 'br-next', branchMappingLogic: 'true' }] }),
@@ -213,7 +225,7 @@ test('verifyChannelMapping permits dedicated next branch and rejects next->produ
     /mobileNextUpdate:branchSharedWithProduction/,
   )
 
-  const splitMapping = JSON.stringify({
+  const splitMapping = page({
     id: 'ch-next',
     name: 'next',
     branchMapping: JSON.stringify({
@@ -367,49 +379,89 @@ test('CLI subcommands verify config, resolved config, channel mapping, messages,
   assert.ok(readFileSync(summaryFile, 'utf8').includes('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'))
 })
 
-test('workflow publish step refuses to invoke eas update when EAS maps next to production', t => {
-  const dir = mkdtempSync(join(tmpdir(), 'mobile-next-publish-guard-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const binDir = join(dir, 'bin')
-  const runnerTemp = join(dir, 'temp')
-  const logFile = join(dir, 'npx-calls.log')
-  execFileSync('mkdir', ['-p', binDir, runnerTemp])
-  const fakeNpx = join(binDir, 'npx')
-  writeFileSync(fakeNpx, `#!/usr/bin/env bash
+test('workflow publish step enforces currentPage channel isolation before publishing and succeeds on dedicated next branch', t => {
+  const publishScript = extractStepRun('Publish EAS Update to next channel')
+  const workspaceRoot = new URL('../../', import.meta.url).pathname
+
+  function runPublishFixture(mode) {
+    const dir = mkdtempSync(join(tmpdir(), `mobile-next-publish-${mode}-`))
+    t.after(() => rmSync(dir, { recursive: true, force: true }))
+    const binDir = join(dir, 'bin')
+    const runnerTemp = join(dir, 'temp')
+    const logFile = join(dir, 'npx-calls.log')
+    const summaryFile = join(dir, 'summary.md')
+    execFileSync('mkdir', ['-p', binDir, runnerTemp])
+    const fakeNpx = join(binDir, 'npx')
+    writeFileSync(fakeNpx, `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${logFile}"
 if [[ "$*" == *"channel:view next"* ]]; then
-  echo '{"id":"ch-next","name":"next","branchMapping":"{\\"version\\":0,\\"data\\":[{\\"branchId\\":\\"b-prod\\",\\"branchMappingLogic\\":\\"true\\"}]}","updateBranches":[{"id":"b-prod","name":"production"}]}'
+  if [[ "${mode}" == "next-to-prod" ]]; then
+    echo '{"currentPage":{"id":"ch-next","name":"next","branchMapping":"{\\"version\\":0,\\"data\\":[{\\"branchId\\":\\"b-prod\\",\\"branchMappingLogic\\":\\"true\\"}]}","updateBranches":[{"id":"b-prod","name":"production"}]}}'
+  else
+    echo '{"currentPage":{"id":"ch-next","name":"next","branchMapping":"{\\"version\\":0,\\"data\\":[{\\"branchId\\":\\"b-next\\",\\"branchMappingLogic\\":\\"true\\"}]}","updateBranches":[{"id":"b-next","name":"next"}]}}'
+  fi
   exit 0
 fi
 if [[ "$*" == *"channel:view production"* ]]; then
-  echo '{"id":"ch-prod","name":"production","branchMapping":"{\\"version\\":0,\\"data\\":[{\\"branchId\\":\\"b-prod\\",\\"branchMappingLogic\\":\\"true\\"}]}","updateBranches":[{"id":"b-prod","name":"production"}]}'
+  if [[ "${mode}" == "prod-fail" ]]; then
+    echo "network error" >&2
+    exit 1
+  fi
+  echo '{"currentPage":{"id":"ch-prod","name":"production","branchMapping":"{\\"version\\":0,\\"data\\":[{\\"branchId\\":\\"b-prod\\",\\"branchMappingLogic\\":\\"true\\"}]}","updateBranches":[{"id":"b-prod","name":"production"}]}}'
+  exit 0
+fi
+if [[ "$*" == *" update "* ]]; then
+  echo '[{"id":"11111111-2222-4333-8444-555555555555","group":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","runtimeVersion":"mikka-next-1","platform":"ios","branch":"next","createdAt":"2026-11-25T01:10:00.000Z"}]'
   exit 0
 fi
 echo "unexpected npx call: $*" >&2
 exit 99
 `)
-  chmodSync(fakeNpx, 0o755)
-
-  const publishScript = extractStepRun('Publish EAS Update to next channel')
-  const workspaceRoot = new URL('../../', import.meta.url).pathname
-  assert.throws(
-    () => execFileSync('bash', ['--noprofile', '--norc', '-c', publishScript], {
+    chmodSync(fakeNpx, 0o755)
+    const run = () => execFileSync('bash', ['--noprofile', '--norc', '-c', publishScript], {
       env: {
         PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
         RUNNER_TEMP: runnerTemp,
         GITHUB_WORKSPACE: workspaceRoot,
+        GITHUB_STEP_SUMMARY: summaryFile,
         EAS_CHANNEL: 'next',
         EAS_CLI_VERSION: '27.2.0',
         MOBILE_NEXT_RUNTIME_VERSION: 'mikka-next-1',
         OVERLAY_SHA: SHA,
         UPDATE_MESSAGE: '',
       },
-      stdio: 'pipe',
-    }),
-  )
-  const calls = readFileSync(logFile, 'utf8')
-  assert.ok(calls.includes('channel:view next'))
-  assert.ok(!calls.includes(' update '), 'eas update must never be invoked when next maps to production')
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    return { run, logFile, summaryFile }
+  }
+
+  // Negative 1: next -> production mapping prevents eas update invocation.
+  const badMap = runPublishFixture('next-to-prod')
+  assert.throws(badMap.run)
+  const badMapCalls = readFileSync(badMap.logFile, 'utf8')
+  assert.ok(badMapCalls.includes('channel:view next'))
+  assert.ok(!badMapCalls.includes(' update '), 'eas update must never be invoked when next maps to production')
+
+  // Negative 2: failed production channel lookup fails closed before eas update.
+  const prodFail = runPublishFixture('prod-fail')
+  assert.throws(prodFail.run)
+  const prodFailCalls = readFileSync(prodFail.logFile, 'utf8')
+  assert.ok(prodFailCalls.includes('channel:view production'))
+  assert.ok(!prodFailCalls.includes(' update '), 'eas update must never be invoked when production channel lookup fails')
+
+  // Positive: valid currentPage responses publish explicitly to --branch next and emit summary.
+  const ok = runPublishFixture('ok')
+  const stdout = ok.run()
+  const okCalls = readFileSync(ok.logFile, 'utf8')
+  assert.ok(okCalls.includes('update --branch next --platform ios --message mobile-next OTA (' + SHA.slice(0, 12) + ') --non-interactive --json'))
+  const parsed = JSON.parse(stdout.trim())
+  assert.equal(parsed.updateGroupId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+  assert.equal(parsed.branch, 'next')
+  assert.equal(parsed.channel, 'next')
+  assert.equal(parsed.runtimeVersion, 'mikka-next-1')
+  assert.equal(parsed.overlaySha, SHA)
+  assert.ok(readFileSync(ok.summaryFile, 'utf8').includes('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'))
 })
 
 test('mobile-next-update.yml enforces fail-closed repo/main guard, pinned actions, step ordering, and next-channel isolation', () => {

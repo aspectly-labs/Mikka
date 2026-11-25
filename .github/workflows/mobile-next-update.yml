@@ -197,9 +197,9 @@ jobs:
               exit 1
             fi
           fi
-          rm -f "$RUNNER_TEMP/eas-channel-prod.json"
           if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view production --json --non-interactive > "$RUNNER_TEMP/eas-channel-prod.json" 2> "$RUNNER_TEMP/eas-channel-prod.err"; then
-            rm -f "$RUNNER_TEMP/eas-channel-prod.json"
+            echo "::error::Could not read EAS 'production' channel mapping to verify branch isolation; private diagnostics withheld."
+            exit 1
           fi
           verified_branch="$(node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" verify-channel "$RUNNER_TEMP/eas-channel-next.json" "$RUNNER_TEMP/eas-channel-prod.json")"
           export VERIFIED_EAS_BRANCH="$verified_branch"
