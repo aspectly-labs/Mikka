@@ -2021,7 +2021,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "83840e9b53c3a1fa73c04be94b6626799e92476109dc60c550a7f2dc53a0b19d"
+      "sourceHash": "db16646cc5cf825fafa7a847d3e263bf70de2a4c078625fdc1f5c7ada12bbab7"
     },
     {
       "path": "/mikka/api/mobile/push-tokens",

@@ -49,7 +49,7 @@ export const POST = defineRoute<'mobile-or-session', 'none'>(
     route: '/api/mobile/profile/avatar',
     auth: 'mobile-or-session',
     origin: 'native-mobile-allowed',
-    workspace: 'none', write: true,
+    workspace: 'none', write: true, freshSession: true,
   },
   async ({ request }) => handlePOST(request),
 )
