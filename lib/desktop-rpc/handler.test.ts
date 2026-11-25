@@ -358,3 +358,9 @@ test('自动化 lists accept 我的 and 定时 and nothing wider', () => {
   assert.equal(list.safeParse([{ owner: 'someone' }, workspace]).success, false)
   assert.equal(list.safeParse([{ trigger: 'github' }, workspace]).success, false)
 })
+
+test('bundled desktop accepts merged threads and group mentions', () => {
+  const validate = desktopActionSchemas['desktop-notifications.chooseDesktopNotifications']
+  assert.ok(validate.safeParse([[{ id: 'merged:one', kind: 'merged', runId: 'one' }, { id: 'mentioned:two', kind: 'mentioned', messageId: peer }]]).success)
+  assert.equal(validate.safeParse([[{ id: 'mentioned:two', kind: 'mentioned', issueId: peer }]]).success, false)
+})

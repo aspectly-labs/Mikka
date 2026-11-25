@@ -4764,7 +4764,7 @@
     "approved": "已批准",
     "retry": "重试",
     "back": "返回设备列表",
-    "expiresIn": "{time}过期",
+    "expiresIn": "{time}",
     "entryHint": "批准一台请求连接你 Mikka 账号的机器",
     "codeHint": "你要连接的机器上显示的 8 位字符",
     "unverified": "以下信息由请求连接的机器上报，未经验证",

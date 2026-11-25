@@ -5,7 +5,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import type { MikkaBridge, SshInstallState, BundledBridge, BundledLiveEvent, BundledViewerEvent } from '@mikka/protocol/bridge'
 import { IPC, BUNDLED_IPC } from '@mikka/protocol/ipc'
-import { windowKindFromArgv } from '../window-kind'
+import { windowKindFromArgv, trayBridge } from '../window-kind'
 
 const prefix = '--mikka-app-origin='
 const appOrigin = process.argv.find(argument => argument.startsWith(prefix))?.slice(prefix.length)
@@ -100,9 +100,7 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
     quota: {
       get: () => ipcRenderer.invoke(IPC.quotaGet),
     },
-    tray: {
-      update: (state: unknown) => ipcRenderer.invoke(IPC.trayUpdate, state),
-    },
+    tray: trayBridge(windowKindFromArgv(process.argv), state => ipcRenderer.invoke(IPC.trayUpdate, state)),
   }
   const bundledBridge: BundledBridge = {
     session: () => ipcRenderer.invoke(BUNDLED_IPC.session),
