@@ -35,6 +35,7 @@ export interface BridgeOptions {
   /** Opens the OS notification settings for Mikka (the page's "notifications are off" banner). */
   openNotificationSettings?(): Promise<void>
   /** The page's waiting count and recent threads for the tray menu (validated in main). */
+  appSettings?: Pick<import('./app-settings').AppSettings, 'read' | 'write'>
   updateTray?(state: unknown): void
   consumePendingClick(): string | null
   updates: Pick<Updates, 'ready' | 'install'>
@@ -102,5 +103,7 @@ export function registerBridge(options: BridgeOptions, sshInstaller?: SshInstall
   handle(IPC.notificationsConsumePendingClick, () => options.consumePendingClick())
   handle(IPC.notificationsAccess, () => options.notifications.access())
   handle(IPC.notificationsOpenSettings, () => options.openNotificationSettings?.())
+  handle(IPC.appSettingsRead, () => options.appSettings?.read())
+  handle(IPC.appSettingsWrite, patch => options.appSettings?.write(patch))
   handle(IPC.trayUpdate, state => options.updateTray?.(state))
 }

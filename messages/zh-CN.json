@@ -1043,6 +1043,9 @@
           "replaced": "更新凭据",
           "created": "保存凭据"
         },
+        "thread": {
+          "bulk_deleted": "删除了自己的线程"
+        },
         "audit": {
           "exported": "导出审计日志",
           "retention_applied": "执行审计留存清理",
@@ -8544,6 +8547,30 @@
     "allowPrivateNewWork": {
       "label": "允许私有线程与 Bot",
       "keywords": "新工作|创建|私有|权限|工作区|线程|Bot"
+    },
+    "requireTwoFactor": {
+      "label": "要求两步验证",
+      "keywords": "要求两步验证"
+    },
+    "skillPublishingPolicy": {
+      "label": "技能发布策略",
+      "keywords": "技能发布策略"
+    },
+    "prAutoOpen": {
+      "label": "自动创建 PR",
+      "keywords": "自动创建 PR"
+    },
+    "prWakeOnReview": {
+      "label": "收到审查评论时唤醒 Agent",
+      "keywords": "收到审查评论时唤醒 Agent"
+    },
+    "prWakeOnCiFailure": {
+      "label": "CI 失败时唤醒 Agent",
+      "keywords": "CI 失败时唤醒 Agent"
+    },
+    "prWakeOnConflict": {
+      "label": "出现合并冲突时唤醒 Agent",
+      "keywords": "出现合并冲突时唤醒 Agent"
     },
     "prTitlePrefix": {
       "keywords": "标题|前缀",

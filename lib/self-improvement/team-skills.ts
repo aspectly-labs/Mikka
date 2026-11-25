@@ -1,3 +1,4 @@
+import { readRuntimeSetting } from '@/lib/settings/runtime'
 import { runChanged } from '../live/panels'
 import 'server-only'
 import { runListChanged } from '../live/lists'
@@ -118,16 +119,21 @@ export class TeamSkillStore {
     },{guard:guard(scope,inspect)})
   }
   async register(scope: TeamSkillScope, input: unknown) {
-    await teamRole(scope, true)
+    await teamRole(scope)
     const parsed = teamSkillUploadSchema.safeParse(input)
     if (!parsed.success) throw new ImprovementError('invalid')
+    let adminRequired = false
     return writeTransaction(this.pool, async tx => {
+      const policy = await readRuntimeSetting(tx, 'skillPublishingPolicy', scope)
+      if (policy.value === 'off') throw new ImprovementError('runUnavailable')
+      adminRequired = policy.value === 'open'
       const value = parsed.data
       let catalogOwnerId = scope.userId
       if (value.skillId) {
         const { rows: [catalog] } = await tx.query<TeamSkillMetadata>(`SELECT * FROM improvement_team_skill_metadata
           WHERE "workspaceId"=$1 AND "skillId"=$2 ORDER BY "createdAt" LIMIT 1`, [scope.workspaceId, value.skillId])
         if (!catalog) throw new ImprovementError('notFound')
+        if (scope.userId !== catalog.catalogOwnerId) adminRequired = true
         catalogOwnerId = catalog.catalogOwnerId
       }
       const skillId = value.skillId ?? randomUUID(), versionId = randomUUID()
@@ -140,7 +146,7 @@ export class TeamSkillStore {
         actor: { type: 'user', id: scope.userId, name: scope.userId }, action: 'skill.registered',
         target: { type: 'skill', id: skillId, label: value.name }, metadata: { versionId, sha256: artifact.sha256, format: artifact.format } }))
       return { artifact, status: 'pending' as const }
-    }, { guard: guard(scope, true) })
+    }, { guard: (tx, signal) => guard(scope, adminRequired)(tx, signal) })
   }
   async read(scope: TeamSkillScope, versionId: string, inspect = false) {
     await teamRole(scope, inspect)
@@ -157,6 +163,7 @@ export class TeamSkillStore {
     const ended: {id:string;userId:string}[]=[]
     const result=await writeTransaction(this.pool, async tx => {
       const { versionId, sha256 } = parsed.data
+      if (operation === 'approve' && (await readRuntimeSetting(tx, 'skillPublishingPolicy', scope)).value === 'off') throw new ImprovementError('runUnavailable')
       const visible = await tx.query(`SELECT 1 FROM improvement_team_skill_metadata WHERE "versionId"=$1 AND "workspaceId"=$2 FOR SHARE`, [versionId, scope.workspaceId])
       if (!visible.rowCount) throw new ImprovementError('notFound')
       if (operation === 'withdraw') {

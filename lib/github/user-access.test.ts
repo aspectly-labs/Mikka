@@ -613,3 +613,22 @@ test('admitted repository returns matching recent PR openers, independent of rev
   }
   assert.deepEqual(await access.recentRepositoryPullAuthors('person-1', 'v2/github.com/owner/project', 'ad', { deadline: Date.now() + 25_000 }), ['Ada'])
 })
+
+test('workspace merge totals count both periods and withhold a partial or inaccessible denominator', async () => {
+  const previous = answer
+  const queries: string[] = []
+  answer = url => {
+    if (url.pathname !== '/search/issues') return previous(url)
+    const q = url.searchParams.get('q')!
+    queries.push(q)
+    return json({ total_count: q.endsWith('11-07') ? 5 : 8, incomplete_results: false })
+  }
+  const read = (...keys: string[]) => access.countWorkspaceMergedPulls('person-1', keys,
+    new Date('2026-11-08Z'), new Date('2026-11-15Z'), new Date('2026-11-01Z'))
+  const key = 'v2/github.com/owner/project'
+  assert.deepEqual(await read(key, key), { current: 8, previous: 5 })
+  assert.deepEqual(queries.sort(), ['repo:Owner/Project is:pr is:merged merged:2026-11-01..2026-11-07', 'repo:Owner/Project is:pr is:merged merged:2026-11-08..2026-11-14'])
+  assert.deepEqual(await read(key, 'v2/github.com/other/private'), { current: null, previous: null })
+  answer = url => url.pathname === '/search/issues' ? json({ total_count: 0, incomplete_results: true }) : previous(url)
+  assert.deepEqual(await read(key), { current: null, previous: null })
+})

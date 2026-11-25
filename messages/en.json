@@ -1069,6 +1069,9 @@
           "replaced": "updated a credential",
           "created": "saved a credential"
         },
+        "thread": {
+          "bulk_deleted": "Deleted own threads"
+        },
         "audit": {
           "exported": "exported audit log",
           "retention_applied": "applied audit retention",
@@ -8634,6 +8637,30 @@
     "allowPrivateNewWork": {
       "label": "Allow private threads and Bots",
       "keywords": "new work|creation|private|permission|workspace|thread|bot"
+    },
+    "requireTwoFactor": {
+      "label": "Require two-factor authentication",
+      "keywords": "Require two-factor authentication"
+    },
+    "skillPublishingPolicy": {
+      "label": "Skill publishing policy",
+      "keywords": "Skill publishing policy"
+    },
+    "prAutoOpen": {
+      "label": "Automatically open pull requests",
+      "keywords": "Automatically open pull requests"
+    },
+    "prWakeOnReview": {
+      "label": "Wake Agent on review comments",
+      "keywords": "Wake Agent on review comments"
+    },
+    "prWakeOnCiFailure": {
+      "label": "Wake Agent when CI fails",
+      "keywords": "Wake Agent when CI fails"
+    },
+    "prWakeOnConflict": {
+      "label": "Wake Agent on merge conflicts",
+      "keywords": "Wake Agent on merge conflicts"
     },
     "prTitlePrefix": {
       "keywords": "git|PR|title|prefix",

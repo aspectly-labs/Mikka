@@ -1,7 +1,7 @@
 import 'server-only'
-import { pool } from '@/lib/db'
+import { db, pool } from '@/lib/db'
 import { workspaceDb } from '@/lib/workspace-db'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import type { PoolClient } from 'pg'
 import { organizationWorkspaces } from '@/lib/db/governance-schema'
 import { actingContext } from '@/lib/activity-actor'
@@ -9,7 +9,7 @@ import { WorkspaceError } from '@/lib/workspace-error'
 import { enterprisePrincipal, type EnterprisePrincipal, type EnterpriseReader } from './principal'
 import { enterpriseAccessAllowed, type EnterpriseAccessState } from './access-policy'
 import { currentExecutionAuthority } from './execution-authority'
-import { organizationTwoFactorAllowed } from './two-factor'
+import { organizationTwoFactorAllowed, twoFactorSessionState } from './two-factor'
 export { enterpriseAccessAllowed } from './access-policy'
 
 type AccessPrincipal = EnterprisePrincipal | { kind: 'execution'; credentialValid: boolean }
@@ -35,8 +35,36 @@ export type EnterpriseAuthExecutor = Pick<PoolClient, 'query'>
 export async function enterpriseWorkspaceAllowed(userId: string, workspaceId: string, explicit?: EnterprisePrincipal, executor: WorkspaceLinkExecutor = workspaceDb, appExecutor: EnterpriseAuthExecutor = pool): Promise<boolean> {
   const links = await executor.select({ organizationId: organizationWorkspaces.organizationId }).from(organizationWorkspaces).where(eq(organizationWorkspaces.workspaceId, workspaceId)).limit(1)
   const organizationId = links[0]?.organizationId
+  if (!(await workspaceFactorAllowed(userId, workspaceId, explicit, appExecutor))) return false
   if (!organizationId) return true
   return organizationAccess(userId, workspaceId, organizationId, explicit, appExecutor)
+}
+async function workspaceFactorAllowed(userId: string, workspaceId: string, explicit: EnterprisePrincipal | undefined, database: EnterpriseAuthExecutor) {
+  const [policy] = await workspaceFactorPolicies([workspaceId], database)
+  if (!policy) return true
+  return checkWorkspaceFactor(userId, workspaceId, explicit, database, policy.updatedAt)
+}
+
+async function workspaceFactorPolicies(ids: string[], database: EnterpriseAuthExecutor) {
+  type Policy = { workspaceId: string; updatedAt: Date }
+  if (!ids.length) return []
+  // Drizzle carries the caller's transaction even when it did not borrow a raw pg client.
+  const result = database === pool
+    ? await db.execute<Policy>(sql`SELECT "workspaceId","updatedAt" FROM workspace_setting_values
+        WHERE "workspaceId" IN (${sql.join(ids.map(id => sql`${id}::uuid`), sql`,`)}) AND key='requireTwoFactor' AND "booleanValue"`)
+    : await database.query<Policy>(`SELECT "workspaceId","updatedAt" FROM workspace_setting_values
+        WHERE "workspaceId"=ANY($1::uuid[]) AND key='requireTwoFactor' AND "booleanValue"`, [ids])
+  return result.rows
+}
+
+async function checkWorkspaceFactor(userId: string, workspaceId: string, explicit: EnterprisePrincipal | undefined, database: EnterpriseAuthExecutor, requiredAt: Date) {
+  const principal = await currentPrincipal(userId, workspaceId, explicit, database)
+  if (!principal) return false
+  if (principal.kind !== 'session') return (await twoFactorSessionState(userId, null, database)).enabled
+  // Existing sessions retain access until the next sign-in.
+  const { rowCount } = await database.query(`SELECT 1 FROM session WHERE id=$1 AND "userId"=$2
+    AND "expiresAt">now() AND "createdAt"<$3`, [principal.sessionId, userId, requiredAt])
+  return Boolean(rowCount) || (await twoFactorSessionState(userId, principal.sessionId, database)).verified
 }
 async function organizationAccessState(userId: string, organizationId: string, appExecutor: EnterpriseAuthExecutor) {
   const { rows } = await appExecutor.query<{ enforceSso: boolean; allowMachineCredentials: boolean; managedRevoked: boolean; requireTwoFactor: boolean }>(`select
@@ -112,7 +140,10 @@ export async function requireEnterpriseWorkspace(userId: string, workspaceId: st
 async function filterWorkspaceOrganizations<T extends { id: string }>(reader: string | EnterpriseReader, workspaces: T[], organizations: ReadonlyMap<string, string | null>, appExecutor: EnterpriseAuthExecutor = pool): Promise<T[]> {
   const userId = typeof reader === 'string' ? reader : reader.id
   const principal = typeof reader === 'string' ? undefined : reader[enterprisePrincipal]
-  const checks = await Promise.all(workspaces.map(workspace => {
+  const policies = new Map((await workspaceFactorPolicies(workspaces.map(row => row.id), appExecutor)).map(row => [row.workspaceId, row.updatedAt]))
+  const checks = await Promise.all(workspaces.map(async workspace => {
+    const requiredAt = policies.get(workspace.id)
+    if (requiredAt && !(await checkWorkspaceFactor(userId, workspace.id, principal, appExecutor, requiredAt))) return false
     const organizationId = organizations.get(workspace.id)
     return organizationId ? organizationAccess(userId, workspace.id, organizationId, principal, appExecutor) : true
   }))

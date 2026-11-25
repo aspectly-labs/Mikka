@@ -522,6 +522,14 @@ export async function updateThread(runId: string, input: { taskId?: string | nul
   return run === 'forbidden' ? { error: 'taskNotFound' } : run ? { updated: true } : { error: 'runNotFound' }
 }
 
+export async function deleteAllThreads(input: { workspaceId: string; confirm: true }) {
+  if (input?.confirm !== true || !input.workspaceId) return { error: 'validationGeneric' } as const
+  const { currentWorkspaceActor } = await import('@/lib/workspace-admin/current')
+  const { userId: ownerId, workspaceId } = await currentWorkspaceActor(input.workspaceId)
+  const { deleteOwnedWorkspaceThreads } = await import('@/lib/settings/delete-threads')
+  return deleteOwnedWorkspaceThreads(ownerId, workspaceId)
+}
+
 export async function deleteThread(runId: string): Promise<ActionResult<{ recoveryDays: number }, 'runNotFound'>> {
   const { reader } = await conversationActor()
   const lc = await import('@/lib/thread-lifecycle')

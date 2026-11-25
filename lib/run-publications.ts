@@ -24,6 +24,7 @@ import { scheduleThreadTitle } from '@/lib/thread-title-schedule'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { runFinishedEvent } from '@/lib/coordinator-events'
 import { publicationBranch, publicationDraft, publicationGate } from '@/lib/run-publication-policy'
+import { readRuntimeSettings } from '@/lib/settings/runtime'
 import { publicationDefaults } from '@/lib/code-review/settings-storage'
 import { automaticMergeReadiness } from '@/lib/code-review/auto-merge'
 import { openRunPullRequest, PublicationError, type PublicationErrorCode, type PublishedPullRequest } from '@/lib/github/run-pull-request'
@@ -281,7 +282,8 @@ async function completionTransaction(userId: string, runId: string, completion: 
       return { userId, issueId: run.issueId, publicationPending: false, review, quotaCloud, providerRunId }
     }
     if (publication.status === 'assigned') {
-      const gate = publicationGate({ stopReason: run.stopReason, kind: run.kind, report: reportOf(run), assignment: publication })
+      const autoOpen = !run.workspaceId || (await readRuntimeSettings(tx, ['prAutoOpen'], { userId, workspaceId: run.workspaceId })).prAutoOpen.value
+      const gate = !autoOpen ? { state: 'skipped' as const } : publicationGate({ stopReason: run.stopReason, kind: run.kind, report: reportOf(run), assignment: publication })
       await tx.update(runPublications).set({ status: gate.state, errorCode: gate.state === 'blocked' ? gate.error : null, updatedAt: new Date() }).where(eq(runPublications.runId, runId))
       const review = gate.state !== 'pending' ? await finishResult(tx, run, { errorCode: gate.state === 'blocked' ? gate.error : null, branch: publication.branch }, true, publication.scopeVersion) : null
       return { userId, issueId: run.issueId, publicationPending: gate.state === 'pending', review, quotaCloud, providerRunId }

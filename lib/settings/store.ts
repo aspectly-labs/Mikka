@@ -56,7 +56,8 @@ async function writeRows(tx: Transaction, scope: SettingScope, context: Settings
         .onConflictDoUpdate({ target: [personalSettingValues.userId, personalSettingValues.workspaceId, personalSettingValues.key], set: changed })
     } else {
       await tx.insert(workspaceSettingValues).values({ workspaceId: context.workspaceId, key, ...changed })
-        .onConflictDoUpdate({ target: [workspaceSettingValues.workspaceId, workspaceSettingValues.key], set: changed })
+        .onConflictDoUpdate({ target: [workspaceSettingValues.workspaceId, workspaceSettingValues.key], set: changed,
+          ...(key === 'requireTwoFactor' ? { setWhere: sql`${workspaceSettingValues.booleanValue} IS DISTINCT FROM ${changed.booleanValue}` } : {}) })
     }
     if (field.mirror) await mirrorCodeReviewSetting(tx, scope, context, field.mirror, value)
     await mirrorLegacySetting(key)?.(tx, scope, context, value)

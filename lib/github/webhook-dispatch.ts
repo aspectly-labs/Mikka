@@ -38,13 +38,18 @@ export async function dispatchVerifiedGitHubWebhook(event: string | null, rawBod
   // delivery, so a failure here answers 503 and the redelivery adds no second run.
   const { githubAutomationEvents } = await import('@/lib/schedules/github-events')
   const automationEvents = githubAutomationEvents(event, payload).length > 0
+  const deliveryKey = options.deliveryId && /^[A-Za-z0-9-]{1,100}$/.test(options.deliveryId) ? `github:${options.deliveryId}` : `github-body:${createHash('sha256').update(event).update('\0').update(rawBody).digest('hex')}`
   if (automationEvents) {
-    const deliveryKey = options.deliveryId && /^[A-Za-z0-9-]{1,100}$/.test(options.deliveryId) ? `github:${options.deliveryId}` : `github-body:${createHash('sha256').update(event).update('\0').update(rawBody).digest('hex')}`
     try { await (await import('@/lib/schedules/runtime')).fireGitHubAutomations(deliveryKey, event, payload) }
     catch (error) {
       console.error(JSON.stringify({ event: 'github_automation_fire_failed', causeName: error instanceof Error ? error.name : 'unknown' }))
       return new Response('Automations temporarily unavailable.', { status: 503, headers: noStore })
     }
+  }
+  if (['pull_request', 'pull_request_review_comment', 'check_suite'].includes(event)) {
+    const { pullWakeEvent, wakePullRequestThreads } = await import('./pull-request-wake')
+    const wake = pullWakeEvent(event, payload)
+    if (wake) await wakePullRequestThreads(wake, deliveryKey)
   }
   const suite = completedCiSuite(event, payload)
   const hasNotifications = githubCandidateIds(event, payload).length > 0

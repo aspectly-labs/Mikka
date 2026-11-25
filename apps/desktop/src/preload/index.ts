@@ -100,6 +100,10 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
     quota: {
       get: () => ipcRenderer.invoke(IPC.quotaGet),
     },
+    appSettings: {
+      read: () => ipcRenderer.invoke(IPC.appSettingsRead),
+      write: (patch: unknown) => ipcRenderer.invoke(IPC.appSettingsWrite, patch),
+    },
     tray: {
       update: (state: unknown) => ipcRenderer.invoke(IPC.trayUpdate, state),
     },

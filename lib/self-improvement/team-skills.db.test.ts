@@ -46,6 +46,19 @@ test('team single-MD review, tenant-bound assignment and withdrawal use the exis
   })
   const queued=await run()
   let receiptId=''
+  await t.test('workspace publishing can require review or close new submissions and approvals', async () => {
+    const { writeSettings } = await import('../settings/store')
+    const set = (value: string) => writeSettings(scope, 'workspace', { values: { skillPublishingPolicy: value } })
+    await set('review')
+    const pending = await store.register(memberScope, upload)
+    assert.equal(pending.status, 'pending')
+    await assert.rejects(store.review(memberScope, pending.artifact, 'approve'), { code: 'notFound' })
+    await set('off')
+    await assert.rejects(store.register(scope, upload), { code: 'runUnavailable' })
+    await assert.rejects(store.review(scope, { versionId: pending.artifact.versionId, sha256: pending.artifact.sha256 }, 'approve'), { code: 'runUnavailable' })
+  })
+
+  await (await import('../settings/store')).writeSettings(scope, 'workspace', { values: { skillPublishingPolicy: null } })
   await t.test('a different team member gets the approved exact artifact through existing selection/claim',async()=>{
     await assignments.selectTeam(member,first.id,artifact.versionId)
     await assignments.selectTeam(member,queued.id,artifact.versionId)

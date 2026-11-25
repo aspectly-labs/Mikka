@@ -83,8 +83,14 @@ export type DesktopMenuCommand = z.infer<typeof desktopMenuCommand>
  * The tray / menu bar menu (decision C6, as Capy's and Codex's trays): how many threads wait for the person,
  * and the most recent threads. The renderer reads them; main only lists them. `threads: null` is still loading.
  */
+export const desktopAppSettings = z.strictObject({
+  startAtLogin: z.boolean(), menuBarIcon: z.boolean(), preventSleep: z.boolean(),
+})
+export type DesktopAppSettings = z.infer<typeof desktopAppSettings>
+export type DesktopAppSettingsView = DesktopAppSettings & { loginSupported: boolean }
 export const desktopTrayState = z.object({
   signedIn: z.boolean(),
+  activeRuns: z.number().int().nonnegative().optional(),
   waiting: z.number().int().min(0).max(9_999),
   threads: z.array(z.object({ title: z.string().max(300), href: appHref })).max(5).nullable(),
   hasMore: z.boolean(),
@@ -387,6 +393,10 @@ export interface MikkaBridge {
     openSystemSettings?(): Promise<void>
   }
   /** The tray / menu bar menu. Absent on older desktop builds and in the browser. */
+  appSettings?: {
+    read(): Promise<DesktopAppSettingsView>
+    write(patch: Partial<DesktopAppSettings>): Promise<DesktopAppSettingsView>
+  }
   tray?: {
     update(state: DesktopTrayState): Promise<void>
   }

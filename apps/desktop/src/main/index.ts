@@ -2,13 +2,14 @@
 // the UI reads through `window.mikka`. The renderer is treated as untrusted;
 // every privileged call goes through the validated IPC surface in `./bridge`.
 
-import { app, BrowserWindow, Menu, Notification, Tray, dialog, nativeImage, nativeTheme, net, protocol, safeStorage, session, shell, webContents } from 'electron'
+import { app, BrowserWindow, Menu, Notification, Tray, dialog, nativeImage, nativeTheme, net, powerSaveBlocker, protocol, safeStorage, session, shell, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 
 import { IPC, BUNDLED_IPC } from '@mikka/protocol/ipc'
 
+import { AppSettings } from './app-settings'
 import { registerBridge } from './bridge'
 import { localDeviceStatus, localQuota } from './daemon'
 import { connectForUpdate, updateLocalDaemon } from './daemon-update'
@@ -380,6 +381,7 @@ function sendMenuCommand(command: DesktopMenuCommand): void {
   if (!contents.isDestroyed() && isTrustedFrame(contents.getURL(), PAGE_URL)) contents.send(IPC.appMenuCommand, command)
 }
 
+let appSettings: AppSettings | undefined
 let tray: Tray | null = null
 let trayState: DesktopTrayState = { signedIn: false, waiting: 0, threads: null, hasMore: false }
 
@@ -425,6 +427,7 @@ function installTray(): void {
 
 function updateTray(raw: unknown): void {
   trayState = desktopTrayState.parse(raw)
+  appSettings?.setActive(trayState.signedIn && (trayState.activeRuns ?? 0) > 0)
   renderTray()
 }
 
@@ -715,7 +718,16 @@ async function start(): Promise<void> {
     }))
     session.fromPartition(PARTITION).protocol.handle('mikka', bundledProtocol(join(__dirname, 'renderer'), bundledAuth))
   }
+  appSettings = new AppSettings(join(app.getPath('userData'), 'app-settings.json'), {
+    loginSupported: process.platform === 'darwin' || process.platform === 'win32',
+    getLogin: () => app.getLoginItemSettings().openAtLogin,
+    setLogin: openAtLogin => app.setLoginItemSettings({ openAtLogin }),
+    tray: enabled => { if (enabled) installTray(); else { tray?.destroy(); tray = null } },
+    block: () => powerSaveBlocker.start('prevent-app-suspension'),
+    unblock: id => powerSaveBlocker.stop(id),
+  })
   registerBridge({
+    appSettings,
     appUrl: APP_URL,
     serverUrl: currentServer,
     rendererUrl: PAGE_URL,
@@ -763,7 +775,7 @@ async function start(): Promise<void> {
   // update downloads in the background. A downloaded version reaches the rail's 重启以更新 and the menu check's
   // 立即重启 / 稍后, and installs on quit. Only a server that requires a newer desktop blocks (enforceMinimumVersion).
   createMainWindow()
-  installTray()
+  appSettings.apply()
   if (app.isPackaged && FLAVOR !== 'dev') {
     // This app may just have updated: the daemon on this computer updates too, when idle (daemon-update.ts).
     void updateLocalDaemon(FLAVOR, { connect: connectForUpdate({ name: 'mikka-desktop', version: APP_VERSION }) })
