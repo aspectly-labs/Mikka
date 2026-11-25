@@ -141,8 +141,17 @@ jobs:
             echo "::error::mobile-next dependency installation failed; private diagnostics withheld."
             exit 1
           fi
-      - name: Verify mobile-next typecheck and tests
+      - name: Verify mobile-next resolved config, typecheck and tests
+        env:
+          APP_VARIANT: production
+          EXPO_NO_GIT_STATUS: '1'
+          CI: '1'
         run: |
+          if ! pnpm --dir "$APP_DIR" exec expo config --type public --json > "$RUNNER_TEMP/expo-config.json" 2> "$RUNNER_TEMP/mobile-next-config.log"; then
+            echo "::error::mobile-next expo config resolution failed; private diagnostics withheld."
+            exit 1
+          fi
+          node scripts/release/mobile-next-update.mjs verify-resolved-config "$RUNNER_TEMP/expo-config.json"
           if ! pnpm --dir .hosted-ui/mobile-next typecheck > "$RUNNER_TEMP/mobile-next-typecheck.log" 2>&1; then
             echo "::error::mobile-next typecheck failed; private diagnostics withheld."
             exit 1
@@ -178,15 +187,25 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$EAS_CHANNEL" == "next" ]] || { echo "::error::EAS_CHANNEL must be next."; exit 1; }
-          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view "$EAS_CHANNEL" --json --non-interactive > "$RUNNER_TEMP/eas-channel-view.log" 2>&1; then
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view "$EAS_CHANNEL" --json --non-interactive > "$RUNNER_TEMP/eas-channel-next.json" 2> "$RUNNER_TEMP/eas-channel-view.err"; then
             if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:create "$EAS_CHANNEL" --non-interactive --json > "$RUNNER_TEMP/eas-channel-create.log" 2>&1; then
               echo "::error::Could not ensure EAS channel '$EAS_CHANNEL' exists; private diagnostics withheld."
               exit 1
             fi
+            if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view "$EAS_CHANNEL" --json --non-interactive > "$RUNNER_TEMP/eas-channel-next.json" 2> "$RUNNER_TEMP/eas-channel-view.err"; then
+              echo "::error::Could not read newly created EAS channel '$EAS_CHANNEL'; private diagnostics withheld."
+              exit 1
+            fi
           fi
+          rm -f "$RUNNER_TEMP/eas-channel-prod.json"
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view production --json --non-interactive > "$RUNNER_TEMP/eas-channel-prod.json" 2> "$RUNNER_TEMP/eas-channel-prod.err"; then
+            rm -f "$RUNNER_TEMP/eas-channel-prod.json"
+          fi
+          verified_branch="$(node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" verify-channel "$RUNNER_TEMP/eas-channel-next.json" "$RUNNER_TEMP/eas-channel-prod.json")"
+          export VERIFIED_EAS_BRANCH="$verified_branch"
           message="$(node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" format-message)"
           if ! npx -y "eas-cli@${EAS_CLI_VERSION}" update \
-            --channel "$EAS_CHANNEL" \
+            --branch "$verified_branch" \
             --platform ios \
             --message "$message" \
             --non-interactive \
@@ -203,4 +222,4 @@ jobs:
             echo 'HOSTED_UI_READ_KEY='
             echo 'EXPO_TOKEN='
           } >> "$GITHUB_ENV"
-          rm -f "$RUNNER_TEMP"/mobile-next-*.log "$RUNNER_TEMP"/eas-*
+          rm -f "$RUNNER_TEMP"/mobile-next-*.log "$RUNNER_TEMP"/expo-config.json "$RUNNER_TEMP"/eas-*

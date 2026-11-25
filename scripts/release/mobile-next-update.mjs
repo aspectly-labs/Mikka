@@ -1,6 +1,7 @@
 // Fail-closed helper for .github/workflows/mobile-next-update.yml.
-// Enforces next-channel OTA isolation, validates dispatch inputs, and prints
-// only public-safe EAS Update metadata (never credentials or private diagnostics).
+// Enforces next-channel OTA isolation, validates dispatch inputs and EAS channel
+// mappings before publication, and prints only public-safe metadata (never
+// credentials or private diagnostics).
 import { appendFile, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,6 +12,7 @@ const SAFE_ID = /^[A-Za-z0-9-]+$/
 const SAFE_BRANCH = /^[A-Za-z0-9._/-]+$/
 export const EXPECTED_CHANNEL = 'next'
 export const EXPECTED_PLATFORM = 'ios'
+export const EXPECTED_IOS_BUNDLE_ID = 'com.aspectlylabs.mikka'
 
 function hasControlChars(text) {
   for (let index = 0; index < text.length; index++) {
@@ -59,10 +61,17 @@ export function verifyMobileNextConfig(appConfigSource, easConfigSource) {
   ) {
     fail('appConfigIsolationInvalid')
   }
+  const iosBlockMatch = /\bios\s*:\s*\{([\s\S]*?)\n\s{2}\},/.exec(appConfigSource)
+  if (iosBlockMatch && /\bruntimeVersion\s*:/.test(iosBlockMatch[1])) {
+    fail('iosRuntimeVersionOverrideForbidden')
+  }
   let easConfig
   try {
     easConfig = JSON.parse(easConfigSource)
   } catch {
+    // Redaction boundary: eas.json belongs to private mikka-hosted-ui; drop
+    // the raw JSON.parse error cause so private config excerpts cannot leak
+    // into public Actions logs (docs/design/decisions/2026-11-05-0330-error-causes.md).
     fail('easConfigInvalidJson')
   }
   const nextProfile = easConfig?.build?.next
@@ -78,13 +87,47 @@ export function verifyMobileNextConfig(appConfigSource, easConfigSource) {
   }
 }
 
-function parseJsonPayload(rawOutput) {
+export function verifyResolvedExpoConfig(rawConfigJson, { expectedChannel = EXPECTED_CHANNEL, expectedRuntimeVersion } = {}) {
+  if (expectedChannel !== EXPECTED_CHANNEL) fail('channelMustBeNext')
+  if (typeof expectedRuntimeVersion !== 'string' || !NEXT_RUNTIME.test(expectedRuntimeVersion)) {
+    fail('runtimeVersionInvalid')
+  }
+  const config = parseJsonPayload(rawConfigJson, 'invalidExpoConfigJson')
+  if (!config || typeof config !== 'object' || Array.isArray(config)) fail('invalidExpoConfigJson')
+
+  const updatesChannel = config.updates?.requestHeaders?.['expo-channel-name']
+  if (updatesChannel !== expectedChannel) fail('resolvedChannelMismatch')
+  if (config.updates?.enabled === false) fail('updatesDisabled')
+
+  const topRuntime = config.runtimeVersion
+  const iosRuntime = config.ios?.runtimeVersion
+  const effectiveIosRuntime = iosRuntime ?? topRuntime
+  if (typeof effectiveIosRuntime !== 'string' || effectiveIosRuntime !== expectedRuntimeVersion) {
+    fail('resolvedRuntimeVersionMismatch')
+  }
+  if (typeof topRuntime !== 'string' || topRuntime !== expectedRuntimeVersion) {
+    fail('resolvedRuntimeVersionMismatch')
+  }
+  if (config.ios?.bundleIdentifier !== EXPECTED_IOS_BUNDLE_ID) {
+    fail('resolvedBundleIdMismatch')
+  }
+
+  return {
+    channel: updatesChannel,
+    runtimeVersion: effectiveIosRuntime,
+    bundleIdentifier: config.ios.bundleIdentifier,
+  }
+}
+
+function parseJsonPayload(rawOutput, errorCode = 'invalidEasJson') {
   if (typeof rawOutput !== 'string' || rawOutput.trim() === '') fail('emptyEasOutput')
   const trimmed = rawOutput.trim()
   try {
     return JSON.parse(trimmed)
   } catch {
-    // Metro/CLI can emit non-JSON progress lines before the JSON block.
+    // Redaction boundary: Expo/EAS CLI stdout may contain private workspace
+    // diagnostics before the JSON block; scan for a trailing JSON payload and
+    // drop raw parser causes so private text never enters public logs.
     for (let index = 0; index < trimmed.length; index++) {
       const ch = trimmed[index]
       if (ch !== '[' && ch !== '{') continue
@@ -92,17 +135,88 @@ function parseJsonPayload(rawOutput) {
       try {
         return JSON.parse(trimmed.slice(index))
       } catch {
-        // Keep scanning for the trailing JSON payload.
+        // Ignore non-JSON preamble braces; redaction drops intermediate causes.
       }
     }
-    fail('invalidEasJson')
+    fail(errorCode)
   }
+}
+
+function extractMappedBranchNames(channelPayload) {
+  if (!channelPayload || typeof channelPayload !== 'object' || Array.isArray(channelPayload)) {
+    fail('invalidChannelJson')
+  }
+  const byId = new Map()
+  if (Array.isArray(channelPayload.updateBranches)) {
+    for (const branch of channelPayload.updateBranches) {
+      if (typeof branch?.id === 'string' && typeof branch?.name === 'string') {
+        byId.set(branch.id, branch.name)
+      }
+    }
+  }
+
+  let mapping = channelPayload.branchMapping
+  if (typeof mapping === 'string') {
+    try {
+      mapping = JSON.parse(mapping)
+    } catch {
+      // Redaction boundary: drop raw JSON parse error on EAS channel response.
+      fail('invalidBranchMapping')
+    }
+  }
+
+  const names = []
+  if (Array.isArray(mapping?.data) && mapping.data.length > 0) {
+    for (const entry of mapping.data) {
+      if (Array.isArray(entry?.updateBranches) && entry.updateBranches.length > 0) {
+        for (const sub of entry.updateBranches) {
+          if (typeof sub?.name === 'string') names.push(sub.name)
+        }
+      } else if (typeof entry?.branchName === 'string') {
+        names.push(entry.branchName)
+      } else if (typeof entry?.branchId === 'string' && byId.has(entry.branchId)) {
+        names.push(byId.get(entry.branchId))
+      } else {
+        fail('unmappedBranchId')
+      }
+    }
+  } else if (Array.isArray(channelPayload.updateBranches) && channelPayload.updateBranches.length > 0) {
+    for (const branch of channelPayload.updateBranches) {
+      if (typeof branch?.name === 'string') names.push(branch.name)
+    }
+  }
+
+  return [...new Set(names)]
+}
+
+export function verifyChannelMapping(
+  nextChannelRaw,
+  { expectedChannel = EXPECTED_CHANNEL, productionChannelRaw = null } = {},
+) {
+  if (expectedChannel !== EXPECTED_CHANNEL) fail('channelMustBeNext')
+  const nextPayload = parseJsonPayload(nextChannelRaw, 'invalidChannelJson')
+  if (nextPayload?.name !== undefined && nextPayload.name !== expectedChannel) {
+    fail('channelNameMismatch')
+  }
+  const nextBranches = extractMappedBranchNames(nextPayload)
+  if (nextBranches.length !== 1) fail('ambiguousBranchMapping')
+  const [branch] = nextBranches
+  if (!SAFE_BRANCH.test(branch) || branch === 'production') fail('forbiddenBranch')
+
+  if (productionChannelRaw !== null && productionChannelRaw !== undefined && String(productionChannelRaw).trim() !== '') {
+    const prodPayload = parseJsonPayload(productionChannelRaw, 'invalidProductionChannelJson')
+    const prodBranches = extractMappedBranchNames(prodPayload)
+    if (prodBranches.includes(branch)) fail('branchSharedWithProduction')
+  }
+
+  return { channel: expectedChannel, branch }
 }
 
 export function parseEasUpdateOutput(
   rawOutput,
   {
     expectedChannel = EXPECTED_CHANNEL,
+    expectedBranch = null,
     expectedRuntimeVersion,
     expectedPlatform = EXPECTED_PLATFORM,
     overlaySha,
@@ -123,6 +237,10 @@ export function parseEasUpdateOutput(
         ? [payload]
         : []
 
+  for (const entry of candidates) {
+    if (entry?.branch === 'production') fail('forbiddenBranch')
+  }
+
   const selected = candidates.find(entry => entry?.platform === expectedPlatform)
     ?? (candidates.length === 1 && !candidates[0]?.platform ? candidates[0] : null)
   if (!selected || typeof selected !== 'object') fail('platformMissing')
@@ -138,10 +256,11 @@ export function parseEasUpdateOutput(
   const runtimeVersion = selected.runtimeVersion ?? payload?.runtimeVersion ?? ''
   if (runtimeVersion !== expectedRuntimeVersion) fail('runtimeVersionMismatch')
 
-  const branch = selected.branch ?? payload?.branch ?? expectedChannel
+  const branch = selected.branch ?? payload?.branch ?? expectedBranch ?? expectedChannel
   if (typeof branch !== 'string' || !SAFE_BRANCH.test(branch) || branch === 'production') {
     fail('forbiddenBranch')
   }
+  if (expectedBranch && branch !== expectedBranch) fail('branchMismatch')
 
   const createdAt = typeof (selected.createdAt ?? payload?.createdAt) === 'string'
     && /^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z?$/.test(selected.createdAt ?? payload?.createdAt)
@@ -179,7 +298,7 @@ export function formatStepSummary(summary) {
 }
 
 async function main() {
-  const [command, target] = process.argv.slice(2)
+  const [command, target, secondary] = process.argv.slice(2)
   if (command === 'validate-inputs') {
     const ref = validateHostedUiRef(process.env.HOSTED_UI_REF)
     if (process.env.UPDATE_MESSAGE && process.env.UPDATE_MESSAGE.trim() !== '') {
@@ -204,6 +323,34 @@ async function main() {
     console.log(JSON.stringify(verified))
     return
   }
+  if (command === 'verify-resolved-config') {
+    if (!target) fail('expoConfigPathRequired')
+    const raw = await readFile(target, 'utf8')
+    const verified = verifyResolvedExpoConfig(raw, {
+      expectedChannel: process.env.EAS_CHANNEL ?? EXPECTED_CHANNEL,
+      expectedRuntimeVersion: process.env.MOBILE_NEXT_RUNTIME_VERSION,
+    })
+    console.log(JSON.stringify(verified))
+    return
+  }
+  if (command === 'verify-channel') {
+    if (!target) fail('channelJsonPathRequired')
+    const nextRaw = await readFile(target, 'utf8')
+    let prodRaw = null
+    if (secondary) {
+      try {
+        prodRaw = await readFile(secondary, 'utf8')
+      } catch (error) {
+        if (error?.code !== 'ENOENT') fail('productionChannelUnreadable')
+      }
+    }
+    const verified = verifyChannelMapping(nextRaw, {
+      expectedChannel: process.env.EAS_CHANNEL ?? EXPECTED_CHANNEL,
+      productionChannelRaw: prodRaw,
+    })
+    process.stdout.write(verified.branch)
+    return
+  }
   if (command === 'format-message') {
     const message = formatUpdateMessage(process.env.UPDATE_MESSAGE, process.env.OVERLAY_SHA)
     process.stdout.write(message)
@@ -214,6 +361,7 @@ async function main() {
     const raw = await readFile(target, 'utf8')
     const summary = parseEasUpdateOutput(raw, {
       expectedChannel: process.env.EAS_CHANNEL ?? EXPECTED_CHANNEL,
+      expectedBranch: process.env.VERIFIED_EAS_BRANCH || null,
       expectedRuntimeVersion: process.env.MOBILE_NEXT_RUNTIME_VERSION,
       expectedPlatform: EXPECTED_PLATFORM,
       overlaySha: process.env.OVERLAY_SHA,

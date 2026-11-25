@@ -218,10 +218,11 @@ product regression. Main pushes and merge groups continue normal full coverage.
   on `mikka-hosted-ui` `main`) to the isolated **`next`** channel (`runtimeVersion: mikka-next-1`,
   `APP_VARIANT=production`, `--platform ios`). It reads only `HOSTED_UI_READ_KEY` and `EXPO_TOKEN` from
   Infisical `prod:/platform` via OIDC, scrubs `HOSTED_UI_READ_KEY` via `scripts/release/hosted-ui.mjs record`
-  before installing dependencies or running `mobile-next` typecheck/adapter tests, verifies `app.config.ts`
-  and `eas.json` target `next` / `mikka-next-*` (never `production`), keeps private logs in `$RUNNER_TEMP`,
-  and reports only public-safe update metadata (update group ID, runtime version, channel, branch, and
-  resolved `mikka-hosted-ui` SHA).
+  before installing dependencies, verifying the resolved `APP_VARIANT=production` Expo config and running
+  `mobile-next` typecheck/adapter tests, verifies `app.config.ts`, `eas.json`, and the live EAS `next`
+  channel→branch mapping before publishing explicitly to that dedicated branch (never `production`), keeps
+  private logs in `$RUNNER_TEMP`, and reports only public-safe update metadata (update group ID, runtime
+  version, channel, branch, and resolved `mikka-hosted-ui` SHA).
 
 ## Cloud worker template release
 
