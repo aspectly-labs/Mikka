@@ -14,7 +14,7 @@
    approved on 2026-11-22.
 2. **Feedback as Codex asks for it.** No feedback card in the transcript; thumbs up/down sit in the reply's action row and
    a comment box appears only after a click.
-3. **Cost is not shown in the thread header.** A run's cost is shown under Settings › 用量 only.
+3. **Cost is not shown in the thread header.** A run's cost sits in the row under the composer, beside the context ring.
 4. **Memory is deferred.** The memory feature is not being developed for now. Its sidebar entry stays behind the `memory`
    feature flag, which is off by default; do not turn the flag on or treat the hidden page as a bug. The memory settings
    section and page code stay in place until the feature is picked up again.
