@@ -349,20 +349,6 @@ async function persistRepositorySetup(
   return stored
 }
 
-async function syncRepositorySettingsVerifyCommand(
-  client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
-  userId: string,
-  remoteKey: string,
-  verifyCommand: string | null,
-): Promise<void> {
-  // Keep an already-present repository_settings row aligned when the owner edits
-  // verifyCommand on a device repo, without creating a row where none existed.
-  await client.query(
-    `UPDATE repository_settings SET "verifyCommand"=$3, "updatedAt"=now() WHERE "userId"=$1 AND "remoteKey"=$2`,
-    [userId, remoteKey, verifyCommand],
-  )
-}
-
 async function readRepositorySetup(
   client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
   userId: string,
@@ -510,9 +496,6 @@ export async function upsertDeviceRepository(
       saved = row!
     }
     const setupKey = resolveRepositorySetupKey(saved.repoPath, saved.remoteUrl)
-    if (parsed.verifyCommand !== undefined) {
-      await syncRepositorySettingsVerifyCommand(client, actor.userId, setupKey, saved.verifyCommand)
-    }
     const nextSetup = parsed.setup !== undefined
       ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup, saved.verifyCommand)
       : await readRepositorySetup(client, actor.userId, setupKey)
@@ -568,9 +551,6 @@ export async function patchDeviceRepository(
       [existing.id, deviceId, actor.userId, nextLocalPath, nextBaseBranch, nextVerifyCommand],
     )
     const setupKey = resolveRepositorySetupKey(updated!.repoPath, updated!.remoteUrl)
-    if (parsed.verifyCommand !== undefined) {
-      await syncRepositorySettingsVerifyCommand(client, actor.userId, setupKey, updated!.verifyCommand)
-    }
     const nextSetup = parsed.setup !== undefined
       ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup, updated!.verifyCommand)
       : await readRepositorySetup(client, actor.userId, setupKey)
