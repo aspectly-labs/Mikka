@@ -1,14 +1,14 @@
 import { z } from 'zod'
 import { auth } from '@/lib/api-auth'
-import { freshSessionRoute } from '@/lib/fresh-session'
 import { GovernanceError } from '@/lib/governance/errors'
 import { governanceJson } from '@/lib/governance/http'
 import { forbiddenOrigin, json, unauthorized, writeAllowed } from '@/lib/mobile-api'
 import { parseMobileBillingGetQuery, parseMobileBillingPostBody } from '@/lib/mobile-billing-contract'
 import { readMobileBilling, runMobileBillingMutation } from '@/lib/mobile-billing'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { isActionErrorCode } from '@/lib/workspace-admin/action'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 function mapBillingError(error: unknown) {
   if (error instanceof z.ZodError) return json({ error: 'validationGeneric' }, 400)
@@ -82,5 +82,22 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const GET = freshSessionRoute(withRequestLog('/api/mobile/billing', handleGET))
-export const POST = freshSessionRoute(withRequestLog('/api/mobile/billing', handlePOST))
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/billing',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped', freshSession: true,
+  },
+  async ({ request }) => handleGET(request),
+)
+
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/billing',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true, freshSession: true,
+  },
+  async ({ request }) => handlePOST(request),
+)

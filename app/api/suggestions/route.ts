@@ -1,13 +1,14 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { pool } from '@/lib/db'
-import { getApiSession } from '@/lib/api-auth'
+import type { ApiSession } from '@/lib/api-auth'
 import type { SuggestionSource } from '@/lib/db/schema'
 import { ACTION_LOCALES, type ActionLocale } from '@/lib/suggestions/action-title'
 import { rememberLocale } from '@/lib/suggestions/action-title-server'
 import { ensureComposioTriggers } from '@/lib/suggestions/sources'
 import { listSuggestions, recordTimeZone, todaysBriefing } from '@/lib/suggestions/store'
 import { manualTimeZone } from '@/lib/suggestions/time-zone'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 const headers = { 'Cache-Control': 'private, no-store' }
@@ -29,9 +30,7 @@ async function startedSuggestions(userId: string, ids: string[]) {
  * `locale` is the UI language, remembered so new items' action lines (R-45)
  * are written in it.
  */
-export async function GET(request: Request) {
-  const user = (await getApiSession({ headers: request.headers }))?.user
-  if (!user) return RouteResponse.json({ error: 'authRequired' }, { status: 401, headers })
+async function handleGET(request: Request, user: ApiSession['user']) {
   // `count=1`, the count on 收件箱: how many cards the list shows, read only. No briefing written, no Coordinator
   // woken, no trigger, zone or locale saved: a count shown on every page must change nothing.
   if (new URL(request.url).searchParams.get('count') === '1') {
@@ -71,3 +70,13 @@ export async function GET(request: Request) {
     groups: [...groups].map(([source, list]) => ({ source, items: list.map(view) })),
   }, { headers })
 }
+
+export const GET = defineRoute<'session', 'none'>(
+  {
+    route: '/api/suggestions',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

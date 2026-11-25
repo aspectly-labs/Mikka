@@ -45,7 +45,7 @@ test('real tickets project only the active owned personal home and recheck a rev
     assert.equal((await auth.$context).checkSchema, undefined, 'the auth fixture uses the production schema validation policy')
     fresh.readFreshSessionsInScope(auth.api)
     mocks.push(mock.module(new URL('../api-auth.ts', import.meta.url).href, { namedExports: { auth } }))
-    mocks.push(mock.module(new URL('../request-log.ts', import.meta.url).href, { namedExports: { noteLogRpcAction: () => {}, withRequestLog: (_name: string, route: (request: Request) => Promise<Response>) => route } }))
+    mocks.push(mock.module(new URL('../request-log.ts', import.meta.url).href, { namedExports: { noteLogRpcAction: () => {}, noteLogUser: () => {}, withRequestLog: (_name: string, route: (request: Request) => Promise<Response>) => route } }))
     const { GET } = await import('../../app/api/live/ticket/route')
     handle = request => new URL(request.url).pathname.includes('/api/auth/') ? auth.handler(request) : GET(request)
     process.env.DEVICE_GATEWAY_URL = 'https://gateway.example.invalid'

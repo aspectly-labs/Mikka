@@ -1,6 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { RouteResponse } from '@/lib/server-runtime/server'
-import { withRequestLog } from '@/lib/request-log'
 import { auth } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
 import { isCloudEdition } from '@/lib/edition'
@@ -11,6 +10,7 @@ import { handoffSessionCookie, openHandoff, sealHandoff } from '@/lib/mobile-han
 import { mobileWebWorkspace, MobileWebScopeError } from '@/lib/mobile-web-scope'
 import en from '@/messages/en.json'
 import zh from '@/messages/zh-CN.json'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 type HandoffSession = { session: { id: string }; user: { id: string; email: string } }
 const pendingCookie = 'mikka-mobile-handoff'
@@ -129,5 +129,24 @@ async function claimTask(request: Request, origin: string) {
   return RouteResponse.json({ target, workspaceId: issue.workspaceId, userId: session.user.id }, { headers: safeHeaders })
 }
 
-export const GET = withRequestLog('/api/mobile/open', handleGET)
-export const POST = withRequestLog('/api/mobile/open', handlePOST)
+
+
+export const GET = defineRoute<'public', 'none'>(
+  {
+    route: '/api/mobile/open',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handleGET(request),
+)
+
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/mobile/open',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handlePOST(request),
+)

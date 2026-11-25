@@ -1,9 +1,10 @@
 import { auth } from '@/lib/api-auth'
 import { ChatFileError } from '@/lib/chat-attachments/extract'
 import { json, unauthorized } from '@/lib/mobile-api'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
 import { parseMobileAttachmentsQuery } from '@/lib/mobile-attachments-contract'
 import { readMobileAttachments } from '@/lib/mobile-attachments'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
  * `GET /api/mobile/attachments?ids=<id,...>` or `?scope=bot|group|thread&id=<uuid>&limit=`:
@@ -25,4 +26,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/mobile/attachments', handleGET)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/attachments',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request }) => handleGET(request),
+)

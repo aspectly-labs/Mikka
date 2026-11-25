@@ -8,10 +8,11 @@ import { reactionsFor } from '@/lib/reactions'
 import { chatFailure } from '@/lib/chat-failure'
 import { coordinatorEnabled } from '@/lib/coordinator/wake'
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
 import { coordinatorHistory, pollCoordinatorChat } from '@/app/actions/coordinator'
 import { ActionFailureError } from '@/lib/action-error'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 
 const botParam = z.uuid().nullable()
@@ -50,10 +51,7 @@ function readKind(params: URLSearchParams) {
  * - `&after=&cursor=&prefix=` (the last read's `continuation`): what is new since it, with `after`; the app keeps the
  *   messages it has up to `after`. If the chat changed before that point, the latest page as a full read.
  */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const params = new URL(request.url).searchParams
   const bot = botParam.safeParse(params.get('bot'))
   if (!bot.success) return json({ error: 'invalidBot' }, 400)
@@ -89,6 +87,23 @@ async function history(userId: string, page: Awaited<ReturnType<typeof chatView>
   return json({ items, sources: page.sources, artifacts: page.artifacts, historyBefore: page.historyBefore ?? null, reactions: await reactionsOf(userId, items) })
 }
 
-export const GET = withRequestLog('/api/mobile/chat', handleGET)
-export const POST = withRequestLog('/api/mobile/chat', () =>
-  Response.json({ error: 'coordinatorSendRetired' }, { status: 410, headers: { 'Cache-Control': 'no-store' } }))
+
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/mobile/chat',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  () => Response.json({ error: 'coordinatorSendRetired' }, { status: 410, headers: { 'Cache-Control': 'no-store' } }),
+)
+
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/chat',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)
