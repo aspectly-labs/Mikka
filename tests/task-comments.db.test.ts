@@ -168,9 +168,9 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     assert.deepEqual(audit, [{ action: 'task.comment_deleted', actorId: owner, targetType: 'task', targetId: task, category: 'member' }])
     // The last live message takes its whole thread.
     assert.deepEqual(await as(owner, () => actions.deleteTaskComment({ taskId: task, threadId: 'discussion-b', messageId: 'reply-b1' })), { deleted: 'removed', threadRemoved: true })
-    assert.equal((await threads()).some(item => item.id === 'discussion-b'), false)
+    assert.deepEqual(taskDiscussionEvents((await threads()).filter(item => item.id === 'discussion-b')), [])
     assert.deepEqual(await as(owner, () => actions.deleteTaskComment(ownerComment)), { deleted: 'removed', threadRemoved: true })
-    assert.deepEqual(await threads(), [])
+    assert.deepEqual(taskDiscussionEvents(await threads()), [])
     assert.deepEqual(await reactionRows(), [])
   })
 

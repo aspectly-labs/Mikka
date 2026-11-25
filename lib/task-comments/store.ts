@@ -114,7 +114,7 @@ export async function deleteTaskComment(input: TaskCommentRef) {
     const author = Boolean(located.message.authorUserId) && located.message.authorUserId === user.id
     const allowed = author ? await mayWrite(tx, user, task) : await workspaceAdmin(user.id, task.workspaceId)
     if (!allowed) return { error: 'taskCommentDeleteForbidden' as const }
-    const deleted = deleteThreadMessage(doc, threadId, located, user.id, at)
+    const deleted = deleteThreadMessage(doc, located, user.id, at)
     await forgetCommentReactions(tx, taskId, deleted.messageIds)
     if (!author) await recordAudit(tx, { workspaceId: task.workspaceId, actor: { type: 'user', id: user.id, name: user.name || user.email },
       action: 'task.comment_deleted', target: { type: 'task', id: taskId, label: task.issuedIdentifier } })

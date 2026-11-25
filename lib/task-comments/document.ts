@@ -8,7 +8,7 @@ import { isDeletedMessage, TASK_FILE_NODE, type TaskCommentAttachment } from './
 // A thread's messages are plain values in a Y.Array; a message keeps its index for
 // good, because wake keys (lib/task-activity-wake.ts) and Linear mappings name it by
 // position or id. So a message is never spliced out of a thread that stays: it becomes
-// a tombstone, and a thread goes as a whole once no live message is left in it.
+// a tombstone, and a thread is hidden once no live message is left in it.
 
 /** Origin of the server's discussion edits; the editor's undo skips it. */
 export const TASK_COMMENT_ORIGIN = 'task-comment'
@@ -48,18 +48,17 @@ export type DeletedMessage = { result: 'tombstone' | 'removed'; threadRemoved: b
  * Deletes one message. While another live message stays in its thread the
  * message becomes a tombstone (no body, no files; 「评论已删除」 where the
  * thread needs it, lib/task-comments/contract.ts visibleThreadMessages);
- * otherwise the whole thread goes. `messageIds` are every message that no
+ * otherwise the whole thread is hidden. `messageIds` are every message that no
  * longer carries content, for their reactions.
  */
-export function deleteThreadMessage(doc: Y.Doc, threadId: string, located: LocatedMessage, by: string, at: string): DeletedMessage {
+export function deleteThreadMessage(doc: Y.Doc, located: LocatedMessage, by: string, at: string): DeletedMessage {
   const list = located.messages.toArray()
   const othersLive = list.some((message, index) => index !== located.index && !isDeletedMessage(message))
-  if (!othersLive) {
-    doc.transact(() => doc.getMap(THREADS_FIELD).delete(threadId), TASK_COMMENT_ORIGIN)
-    return { result: 'removed', threadRemoved: true, messageIds: list.map(message => message.id) }
-  }
   const { attachments: _files, editedAt: _edited, ...kept } = located.message
   doc.transact(() => replace(located, { ...kept, body: '', deletedAt: at, deletedBy: by }), TASK_COMMENT_ORIGIN)
+  // Offline replies reference this shared array. Removing the parent map would
+  // discard those inserts when their client reconnects.
+  if (!othersLive) return { result: 'removed', threadRemoved: true, messageIds: list.map(message => message.id) }
   return { result: 'tombstone', threadRemoved: false, messageIds: [located.message.id] }
 }
 

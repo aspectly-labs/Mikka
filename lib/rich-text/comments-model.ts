@@ -1,5 +1,6 @@
 import * as Y from 'yjs'
 import type { ThreadMessage, ThreadRecord } from '@/lib/task-discussion'
+import { isDeletedMessage } from '@/lib/task-comments/contract'
 import { THREADS_FIELD } from './comment-mark'
 
 export { CommentMark, COMMENT_MARK, THREADS_FIELD } from './comment-mark'
@@ -88,10 +89,12 @@ export type ThreadIndex = Record<string, ThreadRecord>
 export function createThreadStore(doc: Y.Doc) {
   const map = threadMap(doc)
   const listeners = new Set<() => void>()
-  let snapshot = map.toJSON() as ThreadIndex
+  const read = () => Object.fromEntries(Object.entries(map.toJSON() as ThreadIndex)
+    .filter(([, thread]) => !thread.messages.length || thread.messages.some(message => !isDeletedMessage(message))))
+  let snapshot = read()
 
   function onChange() {
-    snapshot = map.toJSON() as ThreadIndex
+    snapshot = read()
     listeners.forEach((listener) => listener())
   }
 
