@@ -24,10 +24,6 @@ export async function runMcpAuthority(userId: string, runId: string, query: Quer
   return { ...parsed.data, ...(row.environmentId || parsed.data.environmentId ? { environmentId: row.environmentId } : {}) }
 }
 
-export async function runMcpAdvertised(userId: string, runId: string): Promise<boolean> {
-  return Boolean((await runMcpAuthority(userId, runId))?.servers.length)
-}
-
 /** The same token is checked again after remote initialization, before any tool side effect. */
 export async function runCustomMcp(request: Request, auth: AuthInfo, command: PersonalMcpCommand, dependencies?: McpDependencies) {
   const scope = workerRun(auth)

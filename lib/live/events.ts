@@ -56,7 +56,3 @@ export function liveReadiness(value: unknown): { kinds: LiveKind[]; revisions: L
   const known = (names: unknown) => (names as string[]).filter((kind): kind is LiveKind => LIVE_KINDS.includes(kind as LiveKind))
   return { kinds: known(record.kinds), revisions: record.version === 2 ? known(record.revisions).filter(isLiveRevisionKind) : [] }
 }
-
-export function liveCapabilities(value: unknown): LiveKind[] | null {
-  return liveReadiness(value)?.kinds ?? null
-}

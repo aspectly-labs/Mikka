@@ -126,11 +126,6 @@ export async function listRunCheckpoints(dependencies: GitDependencies, actor: R
   }, { historical: true, signal })
 }
 
-export async function readCheckpointRevision(client: WorkspaceQuery, scope: ReviewScope, checkpointId: string) {
-  const entries = await readCheckpointEntries(client, scope)
-  return entries.find(entry => entry.checkpointId === checkpointId) ?? null
-}
-
 /** #2929: the thread's turns as diff boundaries. A turn is one attempt of the
  * run chain; its checkpoint review retains the base/head it wrote against, so a
  * per-turn diff is the pair (previous turn's head, this turn's head) read with

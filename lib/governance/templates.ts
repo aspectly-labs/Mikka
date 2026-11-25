@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { z } from 'zod'
 import { approvalModeSchema, networkAllowSchema, storedPermissionsSchema } from '@mikka/protocol/agent-policy'
@@ -26,15 +26,6 @@ export const approvalTemplateRulesSchema = z.object({
 }).strict().refine(value => Object.keys(value).length > 0)
 const templateInputSchema = z.object({ id: z.uuid().optional(), name: z.string().trim().min(1).max(120), rules: approvalTemplateRulesSchema }).strict()
 const revision = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-
-export async function listApprovalTemplates(workspaceId: string, reader: string | EnterpriseReader) {
-  const userId = typeof reader === 'string' ? reader : reader.id
-  return workspaceDb.transaction(async tx => {
-    await requireWorkspace(tx, workspaceId, userId, true, typeof reader === 'string' ? undefined : reader[enterprisePrincipal])
-    await requireGovernanceFeature(tx, workspaceId, 'approvalTemplates')
-    return tx.select().from(governanceApprovalTemplates).where(eq(governanceApprovalTemplates.workspaceId, workspaceId)).orderBy(asc(governanceApprovalTemplates.createdAt))
-  })
-}
 
 export async function saveApprovalTemplate(workspaceId: string, reader: string | EnterpriseReader, input: unknown) {
   const userId = typeof reader === 'string' ? reader : reader.id
