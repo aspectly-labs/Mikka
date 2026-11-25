@@ -1899,7 +1899,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "15cdd0c5424220f87233056b868e0206fac202ed9aa99f14160a41f543752d80"
+      "sourceHash": "dfe06042680cdc50ee4806620dd5a62e64927919a87d908b1f2bdee15acd1dcb"
     },
     {
       "path": "/mikka/api/mobile/chat-order",
@@ -2155,7 +2155,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "bf0c2a3e2cb7b9175ed108ee28045603bf79e3bb36b98e54717912f04769400f"
+      "sourceHash": "849a8158bc3da8894d5871ab14ba04810ba19b4c1825055c1b45389fd011999f"
     },
     {
       "path": "/mikka/api/mobile/threads/[id]/artifacts",
