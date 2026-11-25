@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import * as Y from 'yjs'
-import { addThread, replyToThread } from '@/lib/rich-text/comments-model'
+import { addThread, createThreadStore, replyToThread } from '@/lib/rich-text/comments-model'
 import { readDocumentThreads } from '@/lib/task-activity-wake'
 import { taskDiscussionEvents } from '@/lib/task-activity-timeline'
 import { sniffTaskFileMediaType, taskFileDisplayPath, taskFileDownloadPath, taskInlineFileUploadPath } from '@/lib/task-attachments/contract'
@@ -42,7 +42,7 @@ test('deleting a comment with replies leaves a tombstone; deleting the last live
   const doc = discussion()
   replyToThread(doc, 'discussion-1', { id: 'reply-1', author: 'Bo', authorUserId: 'bo', body: 'Reply', at: AT })
   editThreadMessage(doc, findThreadMessage(doc, 'discussion-1', 'discussion-1-1')!, { body: 'With file', attachments: [{ id: FILE, name: 'a.png', size: 3, mediaType: 'image/png' }] }, LATER)
-  const root = deleteThreadMessage(doc, 'discussion-1', findThreadMessage(doc, 'discussion-1', 'discussion-1-1')!, 'ann', LATER)
+  const root = deleteThreadMessage(doc, findThreadMessage(doc, 'discussion-1', 'discussion-1-1')!, 'ann', LATER)
   assert.deepEqual(root, { result: 'tombstone', threadRemoved: false, messageIds: ['discussion-1-1'] })
   const [tombstone, reply] = thread(doc)!.messages
   assert.deepEqual([tombstone.body, tombstone.deletedAt, tombstone.deletedBy, tombstone.attachments, tombstone.editedAt], ['', LATER, 'ann', undefined, undefined])
@@ -53,10 +53,31 @@ test('deleting a comment with replies leaves a tombstone; deleting the last live
   assert.deepEqual(events.map(event => [event.kind, event.body, event.deleted ?? false]), [['comment', '', true], ['reply', 'Reply', false]])
   assert.deepEqual([...liveMessageIds(readDocumentThreads(doc))], ['reply-1'])
   // The last live message goes with its whole thread, tombstones included.
-  const last = deleteThreadMessage(doc, 'discussion-1', findThreadMessage(doc, 'discussion-1', 'reply-1')!, 'bo', LATER)
+  const last = deleteThreadMessage(doc, findThreadMessage(doc, 'discussion-1', 'reply-1')!, 'bo', LATER)
   assert.deepEqual(last, { result: 'removed', threadRemoved: true, messageIds: ['discussion-1-1', 'reply-1'] })
-  assert.equal(thread(doc), undefined)
+  assert.deepEqual(visibleThreadMessages(thread(doc)!), [])
   doc.destroy()
+})
+
+test('a reply written offline survives concurrent deletion of the only saved comment', () => {
+  const server = discussion()
+  const offline = new Y.Doc()
+  Y.applyUpdate(offline, Y.encodeStateAsUpdate(server))
+  const before = Y.encodeStateVector(offline)
+  const store = createThreadStore(server)
+  replyToThread(offline, 'discussion-1', { id: 'reply', author: 'Bo', body: 'Reply', at: LATER })
+  deleteThreadMessage(server, findThreadMessage(server, 'discussion-1', 'discussion-1-1')!, 'ann', LATER)
+  assert.equal(store.isOpen('discussion-1'), false)
+  Y.applyUpdate(server, Y.encodeStateAsUpdate(offline, before))
+  Y.applyUpdate(offline, Y.encodeStateAsUpdate(server, Y.encodeStateVector(offline)))
+  for (const peer of [server, offline]) {
+    assert.deepEqual(visibleThreadMessages(thread(peer)!).map(message => [message.id, message.body]),
+      [['discussion-1-1', ''], ['reply', 'Reply']])
+  }
+  assert.equal(store.isOpen('discussion-1'), true)
+  store.destroy()
+  server.destroy()
+  offline.destroy()
 })
 
 test('a deleted reply keeps its index (wake keys stay stable) but is hidden unless a live reply answers it', () => {
@@ -64,8 +85,8 @@ test('a deleted reply keeps its index (wake keys stay stable) but is hidden unle
   replyToThread(doc, 'discussion-1', { id: 'reply-1', author: 'Bo', authorUserId: 'bo', body: 'Question', at: AT })
   replyToThread(doc, 'discussion-1', { id: 'reply-2', author: 'Cy', authorUserId: 'cy', body: 'Answer', at: AT, replyToMessageId: 'reply-1' })
   replyToThread(doc, 'discussion-1', { id: 'reply-3', author: 'Bo', authorUserId: 'bo', body: 'Aside', at: AT })
-  deleteThreadMessage(doc, 'discussion-1', findThreadMessage(doc, 'discussion-1', 'reply-1')!, 'bo', LATER)
-  deleteThreadMessage(doc, 'discussion-1', findThreadMessage(doc, 'discussion-1', 'reply-3')!, 'bo', LATER)
+  deleteThreadMessage(doc, findThreadMessage(doc, 'discussion-1', 'reply-1')!, 'bo', LATER)
+  deleteThreadMessage(doc, findThreadMessage(doc, 'discussion-1', 'reply-3')!, 'bo', LATER)
   assert.deepEqual(thread(doc)!.messages.map(message => message.id), ['discussion-1-1', 'reply-1', 'reply-2', 'reply-3'])
   assert.deepEqual(visibleThreadMessages(thread(doc)!).map(message => message.id), ['discussion-1-1', 'reply-1', 'reply-2'])
   assert.deepEqual(taskDiscussionEvents(readDocumentThreads(doc)).map(event => event.messageId), ['discussion-1-1', 'reply-1', 'reply-2'])
