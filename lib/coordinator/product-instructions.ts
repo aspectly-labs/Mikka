@@ -40,7 +40,7 @@ export async function composeEveInstructions(userId: string, botId: string, snap
   const { memory } = conversation
   const mailboxTools: readonly MailboxToolName[] = []
   const githubScope = { hosted: true, readOnly: false, effectiveTools: policy?.effectiveTools }
-  // The hosted Coordinator renders OpenUI like the native one, so it gets the same presentation rules and catalog.
+  // Hosted and native Coordinators share the same Markdown presentation rules.
   const host = snapshot ? executionInstructions(snapshot) : await botInstructions(userId, botId, COORDINATOR_INSTRUCTIONS)
   const base = withCoordinatorPresentation(nativePolicy ? definitionInstructions(host, nativePolicy.definition) : host)
   const instructions = personalMailboxEnabled() && policy ? personalMailboxInstructions(base, snapshotMailboxTools(policy).filter(name => mailboxTools.includes(name))) : base

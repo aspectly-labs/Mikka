@@ -8,7 +8,7 @@ export type RepositoryLister = (userId: string) => Promise<{ repositories: reado
 type GitHubProblem = 'githubNotConnected' | 'githubNotConfigured' | 'githubReconnectRequired' | 'githubUnavailable' | 'githubRepositoryForbidden'
 
 const ownRepositories: RepositoryLister = async userId => (await import('@/lib/github/user-access')).listRepositoriesForUser(userId)
-/** At most this many rows in one BeQuestions choice (lib/agent-ui-catalog.ts). */
+/** At most this many candidate options shown in one repository choice prompt. */
 const CARD_OPTIONS = 6
 
 export function repositoryAmbiguousCard(name: string, candidates: readonly Repository[]) {

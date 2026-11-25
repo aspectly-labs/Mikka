@@ -96,7 +96,7 @@ test('the early desktop entry keeps signed-out and public/auth documents lazy an
 test('the web runtime remains its existing production/development instrumentation entry without the desktop warm-up', () => {
   const overlay = join(repository, '.hosted-ui')
   for (const development of [false, true]) {
-    const original = `${development ? 'globalThis[Symbol.for("openui.devtools.autoMount")] = true;\n' : ''}import ${JSON.stringify(join(repository, 'apps/frontend/src/web/runtime.ts'))};\n`
+    const original = `import ${JSON.stringify(join(repository, 'apps/frontend/src/web/runtime.ts'))};\n`
     assert.equal(frontendRuntimeSource('web', { development, frontend: join(repository, 'apps/frontend'), overlay }), original)
   }
   assert.throws(() => frontendRuntimeSource('web', { frontend: join(repository, 'apps/frontend') }), /FRONTEND_RUNTIME_REQUIRES_UI/)

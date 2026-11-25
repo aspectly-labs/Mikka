@@ -1,6 +1,5 @@
 import { composerDisplay, type MessageReference } from './composer-references'
-import { detectAgentUISource } from './agent-ui-source'
-import { isComponent, openUIText, parseOpenUI, splitOpenUI, type Value } from './openui-lang'
+import { extractLegacyOpenUIText } from './legacy-chat-content'
 
 export type SavedAgentSession = { id: string; title: string; updatedAt: string; preview?: string }
 
@@ -74,29 +73,17 @@ export function sessionPreview(completion: string | null | undefined, prompt: st
   return (prompt ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
 }
 
-const CHARTS = new Set(['BarChart', 'LineChart', 'AreaChart', 'DonutChart', 'RadialChart'])
-
-/** A card without its charts: their axis labels and series names are not words to quote. */
-function withoutCharts(value: Value): Value {
-  if (Array.isArray(value)) return value.map(withoutCharts)
-  if (isComponent(value)) return CHARTS.has(value.name) ? null : { ...value, props: Object.fromEntries(Object.entries(value.props).map(([key, prop]) => [key, withoutCharts(prop)])), args: value.args.map(withoutCharts) }
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withoutCharts(item)]))
-  return value
-}
-
 /**
  * A chat message as the one plain line a bot or group row shows, on the web
- * and on the phone. Markdown reads as its text. An OpenUI reply reads as the
- * first words it shows (its prose, then its cards' text), never its source;
- * null when it shows no words (charts only, or a card that does not parse),
- * and the row shows its card placeholder instead.
+ * and on the phone. Markdown reads as its text. Historical OpenUI replies read
+ * as the first words they show (their prose, then their cards' text), never
+ * their raw source; null when they show no words (charts/forms only), and the
+ * row shows its card placeholder instead.
  */
 export function chatPreview(text: string): string | null {
-  const detected = detectAgentUISource(text)
-  if (!detected.isOpenUI) return clip(markdownLine(text))
-  const card = parseOpenUI(detected.source)
-  const words = [splitOpenUI(detected.source)?.prose ?? '', card === null ? '' : openUIText(withoutCharts(card))]
-  for (const line of words.join('\n').split('\n')) {
+  const legacy = extractLegacyOpenUIText(text, { omitCharts: true })
+  if (legacy === null) return clip(markdownLine(text))
+  for (const line of legacy.split('\n')) {
     const plain = markdownLine(line)
     if (plain) return clip(plain)
   }

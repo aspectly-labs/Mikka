@@ -134,7 +134,7 @@ jobs:
       - name: Prepare the isolated E2E schema
         run: pnpm test:e2e:setup
       - name: Build the production web backend
-        run: pnpm generate:agent-ui && pnpm build:app
+        run: pnpm build:app
         env:
           NODE_OPTIONS: --max-old-space-size=6144
       - name: Archive the compiled Linux backend

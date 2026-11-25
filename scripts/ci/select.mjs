@@ -54,7 +54,7 @@ export async function select(plan, changes, { force = false } = {}) {
   } catch (error) { full = true; reasons.push(`Nx affected failed (${error.name})`) }
   const selected = new Set(affected)
   // Source policies and security/credential/release regressions stay unconditional.
-  const always = /test:(?:ui-policy|i18n|release-security|credentials|test-accounts|execution-rules|abuse|signup-turnstile|db-runner)|(?:i18n:check|check:agent-ui|check:agent-definitions)/
+  const always = /test:(?:ui-policy|i18n|release-security|credentials|test-accounts|execution-rules|abuse|signup-turnstile|db-runner)|(?:i18n:check|check:agent-definitions)/
   const units = Object.entries(tasks).filter(([key, value]) => !docs && (full || selected.has(taskId(key)) || always.test(value.command) || key === 'core-triage')).map(([key]) => taskId(key))
   let suites = docs ? [] : plan.db.scripts.filter(s => full || selected.has(dbId(s)))
   // Server paths without a proven suite mapping must never silently skip DB.
