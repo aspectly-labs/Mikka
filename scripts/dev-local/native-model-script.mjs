@@ -65,8 +65,8 @@ export function nativeLocalModelAnswer(request) {
         command: `set -e
 check_output="$(npm test 2>&1)"
 commit="$(git rev-parse HEAD)"
-receipt="$TMPDIR/mikka-local-acceptance-evidence.txt"
-png="$TMPDIR/mikka-local-acceptance-evidence.png"
+receipt="$PWD/.mikka-local-acceptance-evidence.txt"
+png="$PWD/.mikka-local-acceptance-evidence.png"
 {
   printf 'Mikka local acceptance evidence\\n'
   printf 'marker: ${marker}\\n'
