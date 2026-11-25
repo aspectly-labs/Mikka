@@ -1405,7 +1405,7 @@ export class RunSupervisor {
       (await this.stage(runId, "worktree", async () => {
         const start = await this.startPoint(runId, repo, assignment)
         if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly) {
-          const prepared = await this.deps.worktrees.createFromEnvironmentSnapshot(runId, repo.path, start)
+          const prepared = await this.deps.worktrees.createFromEnvironmentSnapshot(runId, repo.path, start, Boolean(assignment.projectEnvironment.setup?.maintenance?.trim()))
           if (prepared) {
             usedEnvironmentSnapshot = true
             return prepared

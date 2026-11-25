@@ -34,7 +34,8 @@ it('moves prebuilt dependencies into the task worktree and checks out the reques
     writeFileSync(join(prepared, 'setup-ran'), 'built once')
     writeFileSync(join(repo, 'README.md'), 'new task base')
     await execa('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-am', 'change base'], { cwd: repo })
-    const path = await manager.createFromEnvironmentSnapshot('snapshot-run', repo, 'main')
+    expect(await manager.createFromEnvironmentSnapshot('snapshot-run', repo, 'main')).toBeNull()
+    const path = await manager.createFromEnvironmentSnapshot('snapshot-run', repo, 'main', true)
     expect(path).toBe(manager.pathFor('snapshot-run'))
     expect(readFileSync(join(path!, 'setup-ran'), 'utf8')).toBe('built once')
     expect(readFileSync(join(path!, 'README.md'), 'utf8')).toBe('new task base')
@@ -42,4 +43,19 @@ it('moves prebuilt dependencies into the task worktree and checks out the reques
   } finally {
     rmSync(prepared, { recursive: true, force: true })
   }
+})
+
+
+it('falls back to normal setup when a prepared worktree has a submodule', async () => {
+  const repo = await makeRepo(), moduleRepo = await makeRepo()
+  const prepared = repo + '.environment-setup'
+  const manager = new WorktreeManager(tempDir())
+  try {
+    await execa('git', ['-c','protocol.file.allow=always','submodule','add',moduleRepo,'dependency'], {cwd:repo})
+    await execa('git', ['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-am','submodule'], {cwd:repo})
+    await execa('git', ['worktree','add','--detach','--',prepared,'HEAD'], {cwd:repo})
+    await execa('git', ['-c','protocol.file.allow=always','submodule','update','--init'], {cwd:prepared})
+    expect(await manager.createFromEnvironmentSnapshot('module-run',repo,'main')).toBeNull()
+    expect(await manager.create('module-run',repo,'main')).toBe(manager.pathFor('module-run'))
+  } finally { rmSync(prepared,{recursive:true,force:true}) }
 })

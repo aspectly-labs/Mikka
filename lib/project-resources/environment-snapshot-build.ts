@@ -136,7 +136,7 @@ export async function buildEnvironmentSnapshot(id: string) {
           }
           const branch = repo.baseBranch ? '--branch ' + quoteShell(repo.baseBranch) : ''
           await machine.commands.run(
-            `mkdir -p /home/user/.mikka/worker/repos/v2 && git -c credential.helper= -c http.followRedirects=false -c protocol.file.allow=never -c submodule.recurse=false clone --depth=50 --no-single-branch --no-recurse-submodules ${branch} -- ${quoteShell(remote)} ${quoteShell(directory)}`,
+            `mkdir -p /home/user/.mikka/worker/repos/v2 && git -c credential.helper= -c http.followRedirects=false -c protocol.file.allow=never -c submodule.recurse=false clone --no-checkout --depth=50 --no-single-branch --no-recurse-submodules ${branch} -- ${quoteShell(remote)} ${quoteShell(directory)}`,
             { user: 'user', envs: { ...headers, GIT_TERMINAL_PROMPT: '0' }, timeoutMs: 90_000 },
           )
           const prepared = directory + '.environment-setup'

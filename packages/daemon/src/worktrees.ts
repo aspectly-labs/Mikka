@@ -246,7 +246,7 @@ export class WorktreeManager {
   /** Move the prebuilt checkout, including ignored dependency files, into the
    * task. If its setup outputs conflict with the requested commit, a normal
    * worktree and full setup can still run from the clean repository cache. */
-  async createFromEnvironmentSnapshot(runId: string, repoPath: string, baseBranch: string): Promise<string | null> {
+  async createFromEnvironmentSnapshot(runId: string, repoPath: string, baseBranch: string, canRefreshSetup = false): Promise<string | null> {
     const prepared = repoPath + ".environment-setup"
     const path = this.pathFor(runId)
     if (!lstatSync(prepared, { throwIfNoEntry: false })?.isDirectory() || existsSync(path)) return null
@@ -254,12 +254,20 @@ export class WorktreeManager {
     return withRepoConfig(repoPath, async () => {
       const gitDir = await worktreeGitDir(repoPath, prepared)
       const commit = (await simpleGit(repoPath).raw(["rev-parse", "--verify", "--end-of-options", baseBranch + "^{commit}"])).trim()
-      const switched = await execa("git", ["-c", "core.hooksPath=/dev/null", "checkout", "--no-overwrite-ignore", "-B", runBranch(runId), commit], {
+      // A changed commit may alter any input consumed by the setup command.
+      // Without maintenance only the exact built commit is safe to reuse.
+      const built = (await execa("git", ["rev-parse", "HEAD"], { cwd: prepared })).stdout.trim()
+      if (built !== commit && !canRefreshSetup) return null
+      const switched = await execa("git", ["-c", "core.hooksPath=/dev/null", "checkout", "--no-overwrite-ignore", "--detach", commit], {
         cwd: prepared, env: { GIT_DIR: gitDir, GIT_WORK_TREE: prepared }, stdin: "ignore", reject: false,
       })
       if (switched.exitCode !== 0) return null
       mkdirSync(this.root, { recursive: true })
-      await simpleGit(repoPath).raw(["worktree", "move", "--", prepared, path])
+      const moved = await execa("git", [...FETCH_GIT, "worktree", "move", "--", prepared, path], {
+        cwd: repoPath, stdin: "ignore", reject: false,
+      })
+      if (moved.exitCode !== 0) return null
+      await execa("git", [...FETCH_GIT, "checkout", "-B", runBranch(runId), commit], { cwd: path, stdin: "ignore" })
       return path
     })
   }
