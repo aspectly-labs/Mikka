@@ -437,11 +437,12 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   has an 「Artifact · N」 entry. Opening an Artifact shows a window with the
   acceptance content on the left (PR, checks, screenshots and recordings),
   the thread's chat on the right, and 打回 / 通过 at the top.
-  Factory acceptance uses the same window: its left side is the acceptance
-  report Artifact (HTML or Markdown, evidence inline), its right side the
-  thread that did the work, and the task page has a 验收 button that opens it
-  (decision `2026-11-04-2200-factory-flow-like-warp.md`; it replaces the 「验收」
-  tab of 2026-10-30).
+  Factory acceptance does not use this window: its criteria (标准) are a
+  checklist in the task description, its per-criterion results (检查) with
+  evidence and the 合并 / 要求修改 actions are in the right-column PR tab, and
+  the task page shows one property row (decision
+  `2026-11-26-0210-acceptance-from-benchmark.md`, replacing
+  `2026-11-04-2200-factory-flow-like-warp.md`'s acceptance page).
 - **R-57** The local 浏览器 is an icon-only globe toggle at the right of the
   top bar, with no 「浏览器」 label. Turned on, it opens a right column with
   the browser (URL bar and page). In the hosted edition 浏览器 is a work-area tab opened from the New tab's Tools or ⌘⇧B, with no globe in a window bar (decision `2026-11-09-2330-overview-as-work-area-tab.md`). Selecting an element and annotating it puts
@@ -885,7 +886,8 @@ design that fails any of them is sent back before it reaches Alex.
   its message chip. The task toolbar opens the task's Artifact collection.
   A one-to-one bot chat uses `CoordinatorChat`.
 - **R-85** Deliverables (PR, diff, recording, screenshot, test output) live
-  on the acceptance page (the Artifact window, R-56). Coding-task diffs, PR
+  in the right-column PR tab beside each criterion's check (decision
+  `2026-11-26-0210-acceptance-from-benchmark.md`). Coding-task diffs, PR
   checks and review actions also live on the dedicated review page under
   [1230](decisions/2026-11-08-1230-coding-workspace.md). The task's
   activity timeline and the bot's comments carry one plain sentence about
@@ -903,10 +905,10 @@ design that fails any of them is sent back before it reaches Alex.
 - **R-88** At 1440 wide, no screen leaves an empty area larger than about a
   third of the viewport. A list with a detail pane keeps the list narrow
   (about 320px) and fills the detail with the thing to act on (for example
-  the acceptance page itself), not a summary and a button.
+  the open PR tab with its checks), not a summary and a button.
 - **R-89** The primary entry for what the person must do next is visible on
   first sight without scrolling: one prominent block or button per screen
-  (for example the task page's 验收 block under the description), not a small
+  (for example the task page's PR property row that opens the PR tab), not a small
   header button or a link inside a comment.
 - **R-90** Reuse before you draw or build. Before a screen or a part of one is
   designed (Figma) or coded, look up the component for that job, in this
