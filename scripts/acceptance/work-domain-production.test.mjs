@@ -156,6 +156,7 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
       assert.equal(body.clientContext.expectedWorkspaceId, workspaceId)
       const args = [body.message, null, url.searchParams.get('botId'), init.headers['x-mikka-submission-id'], body.clientContext.taskDestination, null, [], null, body.clientContext.profileId]
         const issue = issues.find(row => args[0].includes(row.id)); assert.ok(issue)
+        assert.ok(projects.some(row => row.id === issue.projectId))
         assert.ok(environments.some(row => row.id === issue.environmentId))
         assert.deepEqual(args[4], { kind: 'cloud' }); assert.match(args[0], /"readOnly":true/)
         const profile = profiles.find(row => row.id === args[8]); assert.ok(profile)
@@ -261,6 +262,11 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
           id: id(200 + issues.length), userId: ownerId, revision: 1,
           projectId: null, identifier: 'WS-1687-' + (issues.length + 1) }
         issues.push(issue); return rpc({ issue })
+      }
+      if (action === 'projects.moveIssueToProject') {
+        const issue = issues.find(row => row.id === args[0].issueId); assert.ok(issue)
+        assert.equal(args[0].workspaceId, workspaceId); assert.equal(args[0].revision, issue.revision)
+        issue.projectId = args[0].projectId; issue.revision++; return rpc({ issue })
       }
       if (action === 'environments.setTaskEnvironment') {
         const issue = issues.find(row => row.id === args[0].issueId); assert.ok(issue)

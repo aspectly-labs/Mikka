@@ -185,11 +185,11 @@ export async function listProjectResources(reader: Reader, workspaceId: string, 
     : withTaskWorkspace(reader, workspaceId, (_workspace, tx) => read(tx))
 }
 
-function activeDefaultEnvironment(workspaceId: string, projectId: string) {
+function activeDefaultEnvironment(workspaceId: string, projectId: string, userId: string) {
   return sql`from workspace_project_environments b
     join workspace_environments e on e.id=b."environmentId" and e."workspaceId"=b."workspaceId"
     where b."workspaceId"=${workspaceId} and b."projectId"=${projectId} and b."isDefault"
-      and e."archivedAt" is null`
+      and e."archivedAt" is null and (e.scope='workspace' or e."ownerId"=${userId})`
 }
 
 /** Read one ordinary variable from the Project's current default environment. */
@@ -198,7 +198,7 @@ export async function readProjectEnvironmentVariable(reader: Reader, raw: z.inpu
   return withConfiguredProject(reader, workspaceId, projectId, async tx => {
     const { rows: [row] } = await tx.execute<{ value: string | null }>(sql`
       SELECT e.configuration->'variables'->>${name}::text AS value
-      ${activeDefaultEnvironment(workspaceId, projectId)}`)
+      ${activeDefaultEnvironment(workspaceId, projectId, actorId(reader))}`)
     return row?.value == null ? null : { name, value: row.value }
   })
 }
@@ -320,6 +320,7 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
       ? { configuration: environmentConfiguration.safeParse(saved.configuration).data ?? environmentConfiguration.parse({}), repositories: saved.repositories } : null, input.repositories)
     configuration.repositoryKeys = repositoryKeys
     const scope = saved?.scope ?? input.scope ?? 'workspace'
+    if (scope === 'workspace' && role !== 'admin' && configuration.setup) configuration.setup.approved = false
     await persistEnvironment(tx, reader, input.workspaceId, id, input.name, { configuration, repositories, revision, archivedAt: input.archived ? new Date() : null,
       defaultMachineSize: input.defaultMachineSize, instructions: input.instructions, scope, ownerId: saved ? saved.ownerId : scope === 'personal' ? actor : null })
     await audit(tx, reader, input.workspaceId, input.archived ? 'environment.archived' : 'environment.saved', id, { revision, ...(saved ? {} : { scope }) })
@@ -332,7 +333,7 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
  * Share a personal environment with the workspace (its owner only: nobody else can see it), or take a shared one
  * back to 「仅我」 (its owner, or an administrator under the existing policy that administrators manage shared
  * environments; a shared environment with no owner goes to the administrator who takes it back). Idempotent; the
- * revision is unchanged because no run setting changes, so continuing threads keep their frozen environment. Runs
+ * revision changes when sharing invalidates personal setup approval. Runs
  * by anyone but the owner are refused at their next admission once it is personal.
  */
 export async function setEnvironmentScope(reader: Reader, raw: z.input<typeof environmentShareInput>, scope: EnvironmentScope) {
@@ -351,7 +352,11 @@ export async function setEnvironmentScope(reader: Reader, raw: z.input<typeof en
     if (row.scope === scope) return { id: environmentId, scope, ownerId: row.ownerId, changed: false }
     if (scope === 'workspace' ? row.ownerId !== actor : row.ownerId !== actor && role !== 'admin') throw new ActionFailureError('workspaceAccessDenied')
     const ownerId = row.ownerId ?? actor
-    await tx.execute(sql`update workspace_environments set scope=${scope},"ownerId"=${ownerId},"updatedBy"=${actor},"updatedAt"=now()
+    // A personal setup's approval covers its owner only. Sharing a runnable recipe requires a fresh workspace approval.
+    const resetApproval = sql`${scope}='workspace' and configuration#>>'{setup,approved}'='true'`
+    await tx.execute(sql`update workspace_environments set scope=${scope},"ownerId"=${ownerId},"updatedBy"=${actor},"updatedAt"=now(),
+      configuration=case when ${resetApproval} then jsonb_set(configuration,'{setup,approved}','false') else configuration end,
+      revision=revision+case when ${resetApproval} then 1 else 0 end
       where id=${environmentId} and "workspaceId"=${workspaceId}`)
     await audit(tx, reader, workspaceId, scope === 'workspace' ? 'environment.shared' : 'environment.unshared', environmentId, { ownerId })
     await workspaceListChanged(tx, workspaceId, ['workspace_settings'])
@@ -515,12 +520,13 @@ async function withEnvironmentSetup<T>(reader: Reader, scope: SetupScope, write:
       where id=${environmentId} and "workspaceId"=${workspaceId} and "archivedAt" is null and ${visibleEnvironment(actor)}`)).rows[0]
     if (!environment) throw new ActionFailureError('projectEnvironmentUnavailable')
     if (write && !environmentManageableBy(environment, actor, role)) throw new ActionFailureError('workspaceAccessDenied')
-    const { rows: [counts] } = await tx.execute<{ projects: number; tasks: number }>(sql`select
+    const { rows: [counts] } = await tx.execute<{ projects: number; tasks: number; taskSet: string | null }>(sql`select
       (select count(*)::int from (select "projectId" from workspace_project_environments where "workspaceId"=${workspaceId} and "environmentId"=${environmentId}
         union select "projectId" from workspace_project_repositories where "workspaceId"=${workspaceId} and "environmentId"=${environmentId}) bound) as projects,
-      (select count(*)::int from workspace_task_environments where "workspaceId"=${workspaceId} and "environmentId"=${environmentId}) as tasks`)
+      count(*)::int as tasks, md5(string_agg("issueId"::text,',' order by "issueId")) as "taskSet"
+      from workspace_task_environments where "workspaceId"=${workspaceId} and "environmentId"=${environmentId}`)
     // The restore confirmation names who it reaches; a change in that reach makes the confirmation stale.
-    const snapshot = createHash('sha256').update(JSON.stringify([workspaceId, environmentId, environment.scope, environment.ownerId, counts.tasks])).digest('hex')
+    const snapshot = createHash('sha256').update(JSON.stringify([workspaceId, environmentId, environment.scope, environment.ownerId, counts.taskSet])).digest('hex')
     return work(tx, environment, counts, snapshot)
   })
 }
@@ -554,7 +560,7 @@ export async function rollbackProjectSetup(reader: Reader, raw: z.input<typeof r
 }
 
 /** `environmentId`: an Environment the run's request chose, used instead of the task's 「环境」 (it must still fit). */
-export type ProjectExecutionInput = { userId: string; workspaceId: string; issueId: string; repositoryKey: string | null; baseBranch: string | null; runtime: 'local' | 'cloud'; harness: string; environmentId?: string }
+export type ProjectExecutionInput = { userId: string; workspaceId: string; issueId: string; repositoryKey: string | null; baseBranch: string | null; runtime: 'local' | 'cloud'; harness: string; environmentId?: string; botId?: string | null }
 
 /** Hold current membership and policy through the caller's Run transaction. Existing
  * GitHub/device authorization remains mandatory at that caller; an environment grants none.
@@ -571,25 +577,34 @@ export async function withProjectExecution<T>(input: ProjectExecutionInput, oper
     const project = await tx.execute<{ id: string; revision: number; archivedAt: Date | null }>(sql`select p.id,p.revision,p."archivedAt" from workspace_project_tasks t join workspace_projects p on p.id=t."projectId" and p."workspaceId"=t."workspaceId" where t."issueId"=${input.issueId} and t."workspaceId"=${input.workspaceId}`)
     const selected = project.rows[0]
     if (selected?.archivedAt) throw new ActionFailureError('projectArchived')
-    const taskEnvironment = await tx.execute<{ environmentId: string }>(sql`select "environmentId" from workspace_task_environments where "issueId"=${input.issueId} and "workspaceId"=${input.workspaceId}`)
-    const environmentId = input.environmentId ?? taskEnvironment.rows[0]?.environmentId ?? null
-    let baseBranch = input.baseBranch
+    const { rows: [taskSettings] } = await tx.execute<{ environmentId: string | null; legacyBranch: string | null }>(sql`select
+      (select "environmentId" from workspace_task_environments where "issueId"=${input.issueId} and "workspaceId"=${input.workspaceId}) as "environmentId",
+      (select "baseBranch" from workspace_task_legacy_repository_branches where "workspaceId"=${input.workspaceId}
+        and "issueId"=${input.issueId} and "repositoryKey"=${input.repositoryKey}) as "legacyBranch"`)
+    const selectedId = input.environmentId ?? taskSettings.environmentId
+    const bot = !selectedId && input.botId ? (await db.execute<{ environmentId: string | null }>(sql`
+      select "environmentId" from bots where id=${input.botId} and "workspaceId"=${input.workspaceId}
+      and "ownerId"=${input.userId} and "archivedAt" is null`)).rows[0] : null
+    const environmentId = selectedId ?? bot?.environmentId
+    let baseBranch = environmentId ? input.baseBranch : taskSettings.legacyBranch ?? input.baseBranch
     let repositoryClone: ProjectExecutionSnapshot['repositoryClone'] = null
     let environment: ProjectExecutionSnapshot['environment'] = null
     if (environmentId) {
       const rows = await tx.execute<EnvironmentRow>(sql`select ${environmentColumns} from workspace_environments where id=${environmentId} and "workspaceId"=${input.workspaceId} and "archivedAt" is null`)
       const row = rows.rows[0]
       // Someone else's personal environment does not exist for this run.
-      if (!row || !environmentVisibleTo(row, input.userId)) throw new ActionFailureError('projectEnvironmentUnavailable')
+      if (!row || !environmentVisibleTo(row, input.userId) || (!selectedId && row.scope !== 'workspace')) throw new ActionFailureError('projectEnvironmentUnavailable')
       const parsed = environmentConfiguration.safeParse(row.configuration)
       if (!parsed.success) throw new ActionFailureError('projectEnvironmentUnavailable')
       const config = parsed.data
       if ((config.runtime !== 'any' && config.runtime !== input.runtime) || (config.harness !== 'any' && config.harness !== input.harness)) throw new ActionFailureError('projectEnvironmentUnavailable')
       await secretsFit(input.workspaceId, config, input.repositoryKey)
       const repositories = environmentRepositoryRows({ configuration: config, repositories: row.repositories })
+      if (policy.rows[0]?.mode === 'restricted' && repositories.some(repo => repo.clone === 'start'
+        && !policy.rows[0].repositoryKeys.includes(repo.key))) throw new ActionFailureError('projectRepositoryDenied')
       const configured = input.repositoryKey ? repositories.find(item => item.key === input.repositoryKey) : undefined
       if (input.repositoryKey) repositoryClone = configured?.clone ?? 'demand'
-      baseBranch = configured?.baseBranch ?? input.baseBranch
+      baseBranch = configured ? configured.baseBranch : input.baseBranch
       environment = { id: row.id, revision: row.revision, name: row.name, ...config, scope: row.scope, repositories, ...(input.environmentId ? { chosen: true as const } : {}),
         ...(isMachineSize(row.defaultMachineSize) ? { defaultMachineSize: row.defaultMachineSize } : {}) }
     }

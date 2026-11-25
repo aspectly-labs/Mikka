@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Pool } from 'pg'
@@ -92,6 +93,21 @@ test('personal environments: creation, visibility, sharing, management and run a
       [['environment.shared', member, member], ['environment.unshared', admin, member]])
   })
 
+  await t.test('workspace setup approval belongs to an administrator', async () => {
+    const setup = { command: 'node --version', approved: true, copyFiles: [] }
+    const personal = await store.saveEnvironment(member, { workspaceId: workspace.id, scope: 'personal', name: 'Setup approval', configuration: { setup } })
+    const ref = { workspaceId: workspace.id, environmentId: personal.id }
+    const approval = async () => (await store.listProjectResources(member, workspace.id)).environments.find(env => env.id === personal.id)!.configuration.setup!.approved
+    assert.equal(await approval(), true)
+    await store.setEnvironmentScope(member, ref, 'workspace')
+    assert.equal(await approval(), false)
+    const edit = { workspaceId: workspace.id, id: personal.id, name: 'Shared setup', configuration: { setup } }
+    const memberWrite = await store.saveEnvironment(member, { ...edit, revision: personal.revision + 1 })
+    assert.equal(await approval(), false)
+    await store.saveEnvironment(admin, { ...edit, revision: memberWrite.revision })
+    assert.equal(await approval(), true)
+  })
+
   await t.test('an administrator taking back an ownerless shared environment becomes its owner', async () => {
     const legacy = await store.saveEnvironment(admin, { workspaceId: workspace.id, name: 'Legacy shared', configuration: {} })
     await rejects(store.setEnvironmentScope(member, { workspaceId: workspace.id, environmentId: legacy.id }, 'personal'), 'workspaceAccessDenied')
@@ -111,6 +127,13 @@ test('personal environments: creation, visibility, sharing, management and run a
     const made = await store.ensureBotEnvironment(member, lonely.id, 'Default', [])
     assert.notEqual(made, solo.id, 'a new Bot never lands in a member\'s personal environment')
     assert.deepEqual(await row(made), { scope: 'workspace', ownerId: null, revision: 1 })
+    const botId = randomUUID(), issueId = await seedIssue(fixture, member, lonely.id)
+    await fixture.query('insert into bots (id,"workspaceId","ownerId",name,"environmentId") values($1,$2,$3,$4,$5)', [botId, lonely.id, member, 'Fixture Bot', made])
+    const run = () => store.withProjectExecution({ userId: member, botId, workspaceId: lonely.id, issueId,
+      repositoryKey: null, baseBranch: null, runtime: 'local', harness: 'codex' }, async snapshot => snapshot)
+    assert.equal((await run()).environment?.id, made)
+    await assignTaskEnvironment(fixture, member, lonely.id, [issueId], solo.id)
+    assert.equal((await run()).environment?.id, solo.id, 'an explicit personal selection takes precedence for its owner')
   })
 })
 
@@ -140,7 +163,13 @@ test('repository rows: on-demand clone under the workspace repository policy', {
   await store.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 0, mode: 'restricted', repositoryKeys: [start, demand] })
   await assert.rejects(admit(elsewhere), { code: 'projectRepositoryDenied' }, 'the workspace repository policy still refuses repositories it does not admit')
   assert.deepEqual(shape(await admit(demand)), [demand, 'demand', 'next'])
-  await store.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 1, mode: 'restricted', repositoryKeys: [] })
+  await store.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 1, mode: 'restricted', repositoryKeys: [demand] })
+  await assert.rejects(admit(demand), { code: 'projectRepositoryDenied' }, 'extra startup repositories also require current workspace permission')
+  await store.saveEnvironment(owner, { workspaceId: workspace.id, id: environment.id, name: 'Repository default', revision: 1,
+    configuration: {}, repositories: [{ key: demand, clone: 'demand', baseBranch: null }] })
+  assert.equal((await admit(demand)).baseBranch, null, 'the repository default takes precedence over a configured device branch')
+  await store.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 2, mode: 'restricted', repositoryKeys: [] })
   await assert.rejects(admit(start), { code: 'projectRepositoryDenied' }, 'an environment row grants nothing the policy refuses')
   assert.equal((await admit(null)).environment?.id, environment.id, 'a default environment needs no repository')
+
 })

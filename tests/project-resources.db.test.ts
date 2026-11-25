@@ -59,6 +59,11 @@ test('Environment repository/policy admission on real PostgreSQL', { skip: !dbUr
     await rejects(resources.listProjectResources({ id: owner, [tokenWorkspace]: other.id }, workspace.id, projectId), 'workspaceAccessDenied')
     await assert.rejects(assignTaskEnvironment(connection, owner, other.id, [issueId], environment.id), { code: 'projectEnvironmentUnavailable' })
   })
+  await t.test('a migrated branch-only task uses its original branch without choosing an environment', async () => {
+    await connection.query('insert into workspace_task_legacy_repository_branches ("issueId","workspaceId","repositoryKey","baseBranch") values ($1,$2,$3,$4)', [issueId, workspace.id, repoA, 'release'])
+    assert.equal((await admission()).baseBranch, 'release')
+    assert.equal((await admission()).environment, null)
+  })
   await t.test('the task\'s environment, its repository rows and the Workspace policy form the admission', async () => {
     await assignTaskEnvironment(connection, owner, workspace.id, [issueId], environmentId)
     const value = await admission()
@@ -71,8 +76,8 @@ test('Environment repository/policy admission on real PostgreSQL', { skip: !dbUr
     const onDemand = await admission(repoC)
     assert.deepEqual([onDemand.repositoryKey, onDemand.repositoryClone, onDemand.baseBranch, onDemand.environment?.id], [repoC, 'demand', 'main', environmentId],
       'a repository outside the environment is admitted by the workspace policy and cloned on demand')
-    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 0, mode: 'restricted', repositoryKeys: [repoA, repoC] })
-    await rejects(admission(repoB), 'projectRepositoryDenied')
+    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 0, mode: 'restricted', repositoryKeys: [repoA, repoB, repoC] })
+    await rejects(admission('v2/github.com/elsewhere/blocked'), 'projectRepositoryDenied')
     assert.equal((await admission(repoC)).repositoryClone, 'demand', 'the policy, not the environment, admits on-demand repositories')
     assert.equal((await admission()).policyRevision, 1)
     await rejects(resources.withProjectExecution({ ...request, runtime: 'cloud' }, async value => value), 'projectEnvironmentUnavailable')
@@ -82,6 +87,11 @@ test('Environment repository/policy admission on real PostgreSQL', { skip: !dbUr
     await connection.query('insert into workspace_project_environments("projectId","workspaceId","environmentId","isDefault") values($1,$2,$3,true)', [projectId, workspace.id, environmentId])
     assert.deepEqual(await resources.readProjectEnvironmentVariable(owner, { workspaceId: workspace.id, projectId, name: 'FEATURE_MODE' }), { name: 'FEATURE_MODE', value: 'test' })
     assert.equal(await resources.readProjectEnvironmentVariable(owner, { workspaceId: workspace.id, projectId, name: 'UNCONFIGURED' }), null)
+    const personal = await resources.saveEnvironment(member, { workspaceId: workspace.id, name: 'Member variables', scope: 'personal',
+      configuration: { variables: { FEATURE_MODE: 'private' } } })
+    await connection.query('UPDATE workspace_project_environments SET "environmentId"=$1 WHERE "projectId"=$2', [personal.id, projectId])
+    assert.equal(await resources.readProjectEnvironmentVariable(owner, { workspaceId: workspace.id, projectId, name: 'FEATURE_MODE' }), null)
+    await connection.query('UPDATE workspace_project_environments SET "environmentId"=$1 WHERE "projectId"=$2', [environmentId, projectId])
     const governance = await import('../lib/governance/organizations')
     const { rows: [user] } = await connection.query('select id,name,email from "user" where id=$1', [owner])
     const org = await governance.createOrganization(user, { name: 'Environment variable scope' })
@@ -156,7 +166,7 @@ test('Environment repository/policy admission on real PostgreSQL', { skip: !dbUr
     await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 2, mode: 'restricted', repositoryKeys: [repoB] })
     await rejects(withRunProjectExecution(request, original, async () => { claimed++ }), 'projectRepositoryDenied')
     assert.equal(claimed, 1, 'a queued Run is not a grant after repository revocation')
-    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 3, mode: 'restricted', repositoryKeys: [repoA, repoC] })
+    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 3, mode: 'restricted', repositoryKeys: [repoA, repoB, repoC] })
     const alternate = await resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Replacement', configuration: {} })
     await assignTaskEnvironment(connection, owner, workspace.id, [issueId], alternate.id)
     await rejects(withRunProjectExecution(request, original, async () => { claimed++ }), 'projectEnvironmentUnavailable')

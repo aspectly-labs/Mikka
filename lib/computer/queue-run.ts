@@ -49,6 +49,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
   /** The run this one continues, named in the error when the model is missing. */
   threadRunId?: string
   /** Host provider recovery retains resource configuration without inheriting a native session or Profile. */
+  refreshTaskEnvironment?: true
   frozenSourceRunId?: string
   idempotencyKey?: string; execution?: AgentExecution
   /** A quota continuation's key (lib/run-quota.ts): frozen as given instead of choosing the credential. */
@@ -86,20 +87,20 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
   const entry = resolveRunOrigin({ explicit: input.origin ? { origin: input.origin, originRef: input.originRef } : null, defaultOrigin: 'web' })
   if (!projectExecution) {
     const { rows: [target] } = await (existing ?? pool).query(`SELECT repo."repoPath",repo."remoteUrl",a.harness,
-        CASE WHEN source.id IS NULL THEN repo."baseBranch"
+        CASE WHEN source.id IS NULL OR ($7::boolean AND source."agentDefinition"#>>'{projectExecution,environment,chosen}' IS DISTINCT FROM 'true') THEN repo."baseBranch"
           WHEN source."agentDefinition"->'projectExecution' IS NOT NULL THEN source."agentDefinition"->'projectExecution'->>'baseBranch'
           ELSE source."baseBranch" END AS "baseBranch",
         CASE WHEN source."agentDefinition"#>>'{projectExecution,environment,chosen}'='true' THEN source."agentDefinition"#>>'{projectExecution,environment,id}' END AS "chosenEnvironmentId"
       FROM device_repos repo JOIN agents a ON a.id=$2 AND a."userId"=$3
       JOIN issues i ON i.id=$4 AND i."workspaceId"=$5 AND i."ownershipState"='bound'
       LEFT JOIN agent_runs source ON source.id=$6 AND source."userId"=$3 AND source."issueId"=i.id AND source."workspaceId"=i."workspaceId"
-      WHERE repo.id=$1 AND repo."userId"=$3`, [input.deviceRepoId, input.agentId, actor.userId, input.issueId, actor.workspaceId, input.frozenSourceRunId ?? input.threadRunId ?? null])
+      WHERE repo.id=$1 AND repo."userId"=$3`, [input.deviceRepoId, input.agentId, actor.userId, input.issueId, actor.workspaceId, input.frozenSourceRunId ?? input.threadRunId ?? null, input.refreshTaskEnvironment === true])
     if (!target) throw new ComputerError(409, 'Bot computer task is unavailable')
     const { withProjectExecution } = await import('@/lib/project-resources/store')
     // An Environment the request chose for a new thread; a continuation keeps the one its thread was admitted with.
     const environmentId = input.frozenSourceRunId ?? input.threadRunId ? target.chosenEnvironmentId ?? undefined
       : (await requestedRunSettings(existing ?? pool, actor.userId, input.sourceEventId)).environmentId
-    return withProjectExecution({ userId: actor.userId, workspaceId: actor.workspaceId, issueId: input.issueId, repositoryKey: target.remoteUrl ? target.repoPath : null, baseBranch: target.baseBranch, runtime: 'cloud', harness: target.harness, ...(environmentId ? { environmentId } : {}) },
+    return withProjectExecution({ userId: actor.userId, botId: input.withoutBot ? null : input.botId, workspaceId: actor.workspaceId, issueId: input.issueId, repositoryKey: target.remoteUrl ? target.repoPath : null, baseBranch: target.baseBranch, runtime: 'cloud', harness: target.harness, ...(environmentId ? { environmentId } : {}) },
       snapshot => queueCloudRun(pool, actor, input, existing, factoryContext, snapshot), Boolean(existing))
   }
   requireProjectResourceLease(actor.userId, actor.workspaceId)
@@ -157,16 +158,17 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     const sourceId = input.frozenSourceRunId ?? input.threadRunId
     const prior = sourceId ? (await client.query('select "agentDefinition","baseBranch" from agent_runs where id=$1 and "userId"=$2 and "workspaceId"=$3 and "issueId"=$4 FOR SHARE', [sourceId, actor.userId, actor.workspaceId, input.issueId])).rows[0] : undefined
     if (sourceId && !prior) throw new ComputerError(409, 'Original task execution is unavailable')
-    if (prior) {
+    const retainSource = prior && (!input.refreshTaskEnvironment || prior.agentDefinition?.projectExecution?.environment?.chosen)
+    if (retainSource) {
       const { assertRunProjectExecution } = await import('@/lib/project-resources/run-lease')
       assertRunProjectExecution(prior, prior.agentDefinition?.projectExecution, projectExecution)
     }
-    const effectiveExecution: ProjectExecutionSnapshot | undefined = prior ? prior.agentDefinition?.projectExecution : projectExecution
+    const effectiveExecution: ProjectExecutionSnapshot | undefined = retainSource ? prior.agentDefinition?.projectExecution : projectExecution
     if (effectiveExecution) {
       assertFrozenProjectExecution(effectiveExecution, projectExecution)
       frozen.projectExecution = structuredClone(effectiveExecution)
     }
-    const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : prior ? prior.baseBranch : projectExecution.baseBranch
+    const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : retainSource ? prior.baseBranch : projectExecution.baseBranch
     const earlierPlacement = prior?.agentDefinition?.taskMachine
     if (earlierPlacement || sponsored) {
       if (input.withoutBot || !repository.remoteUrl || !effectiveExecution?.repositoryKey || !subscription || !['codex','claude_code'].includes(target.harness) ||

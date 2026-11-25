@@ -4166,7 +4166,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "cc2a37740c4a1cb3fc6fa3dfbc5e1a8e26b08ff27bd90b33bf4eed32a3723f2b"
+      "sourceHash": "90f757f6ca4e4b4a7ea1acca41943c51d7d80160bc382bf4aee7bab0fe06a76a"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/report",
@@ -4211,7 +4211,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "93028e8b251c42c7ec1580b13546bc3ef293044c6a5c089c83376384e3bf217a"
+      "sourceHash": "7e70184e15c21e1cdd9b1aca1628afb87be1d56f74e71ccfc1bf8b8e6f5ffcc1"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

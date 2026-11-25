@@ -88,3 +88,11 @@ export const workspaceTaskEnvironments = pgTable('workspace_task_environments', 
   updatedBy: text('updatedBy'),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('workspace_task_environments_environment_idx').on(table.workspaceId, table.environmentId)])
+
+/** Original branch-only settings of a migrated task before its first environment selection. */
+export const workspaceTaskLegacyRepositoryBranches = pgTable('workspace_task_legacy_repository_branches', {
+  workspaceId: uuid('workspaceId').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  issueId: uuid('issueId').notNull(),
+  repositoryKey: text('repositoryKey').notNull(),
+  baseBranch: text('baseBranch').notNull(),
+}, table => [primaryKey({ columns: [table.workspaceId, table.issueId, table.repositoryKey] })])

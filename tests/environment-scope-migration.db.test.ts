@@ -40,10 +40,11 @@ test('the environment migration moves unambiguous Project data onto task 环境 
     const e2 = await environment('Only bound, any repository', [])
     const e3a = await environment('Ambiguous A', []), e3b = await environment('Ambiguous B', [])
     const e4 = await environment('Disagreeing Projects', [repoA, repoB])
-    await project([{ environmentId: e1, isDefault: true }], [{ key: repoA, baseBranch: 'develop', environmentId: null, isPrimary: true }], [defaulted, kept])
-    await project([{ environmentId: e2, isDefault: false }], [{ key: repoC, baseBranch: 'feature-x', environmentId: e2, isPrimary: false }], [onlyBound])
+    await project([{ environmentId: e1, isDefault: true }], [{ key: repoA, baseBranch: 'develop', environmentId: null, isPrimary: true },
+      { key: repoC, baseBranch: 'next', environmentId: null, isPrimary: false }], [defaulted, kept])
+    await project([{ environmentId: e2, isDefault: false }], [{ key: repoC, baseBranch: 'feature-x', environmentId: null, isPrimary: false }], [onlyBound])
     await project([{ environmentId: e3a, isDefault: false }, { environmentId: e3b, isDefault: false }], [], [ambiguous])
-    await project([], [], [unbound])
+    await project([], [{ key: repoA, baseBranch: 'old', environmentId: null, isPrimary: true }], [unbound])
     await project([{ environmentId: e4, isDefault: true }], [{ key: repoA, baseBranch: 'one', environmentId: null, isPrimary: true }], [])
     await project([{ environmentId: e4, isDefault: true }], [{ key: repoA, baseBranch: 'two', environmentId: null, isPrimary: false }, { key: repoB, baseBranch: null, environmentId: null, isPrimary: true }], [])
     // A person's own choice made after the release is never overwritten by a replay.
@@ -58,10 +59,13 @@ test('the environment migration moves unambiguous Project data onto task 环境 
       [onlyBound]: [e2, null],
       [kept]: [e2, owner],
     }, 'the default, else the only bound environment; ambiguous and unbound tasks get none')
+    assert.deepEqual((await client.query('select "repositoryKey","baseBranch" from workspace_task_legacy_repository_branches where "workspaceId"=$1 and "issueId"=$2',[ws,unbound])).rows,
+      [{ repositoryKey: repoA, baseBranch: 'old' }])
     const repositories = async (id: string) => (await client.query('SELECT repositories,revision,scope,"ownerId" FROM workspace_environments WHERE id=$1', [id])).rows[0]
     assert.deepEqual(await repositories(e1), { revision: 1, scope: 'workspace', ownerId: null, repositories: [
       { key: repoA, clone: 'start', baseBranch: 'develop', primary: true },
       { key: repoB, clone: 'start', baseBranch: null, primary: false },
+      { key: repoC, clone: 'demand', baseBranch: 'next', primary: false },
     ] }, 'start rows follow repositoryKeys and take the Project branch and 主仓库; the revision is unchanged')
     assert.deepEqual((await repositories(e2)).repositories, [{ key: repoC, clone: 'demand', baseBranch: 'feature-x', primary: false }],
       'an environment that admitted any repository keeps its bound repositories as on-demand rows')
