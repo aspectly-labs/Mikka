@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { CAPTURE_CONTENT_TYPES, CAPTURE_MAX_BYTES } from '@mikka/protocol/capture'
+import { localTestAccountsMode } from '@mikka/protocol/local-test-mode'
 
 const uuid = z.uuid()
 const sha = z.string().regex(/^[a-f0-9]{40}$/)
@@ -22,9 +23,11 @@ export type PublicationEvidence = z.infer<typeof publicationEvidenceSchema>
 export function publicCaptureToken(value: string) {
   let url: URL
   try { url = new URL(value) } catch { return null }
-  if (url.href !== value || url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.port) return null
-  if (url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname.startsWith('[')
-    || /^\d+(?:\.\d+){3}$/.test(url.hostname)) return null
+  const loopback = url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname.startsWith('[')
+    || /^\d+(?:\.\d+){3}$/.test(url.hostname)
+  const localFixture = loopback && url.protocol === 'http:' && localTestAccountsMode(process.env)
+  if (url.href !== value || (url.protocol !== 'https:' && !localFixture) || url.username || url.password || url.search || url.hash) return null
+  if ((!localFixture && url.port) || (loopback && !localFixture)) return null
   return url.pathname.match(/^(?:\/[\w-]+)*\/api\/captures\/shared\/(mkc_[A-Za-z0-9_-]{32})$/)?.[1] ?? null
 }
 

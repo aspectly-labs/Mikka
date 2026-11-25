@@ -589,6 +589,22 @@ test('private, credential-bearing, foreign-shaped or mismatched evidence never s
   }
 })
 
+test('loopback evidence links are confined to the local test-account fixture', () => {
+  const evidence = visualEvidence({ captures: [{ ...visualEvidence().captures[0], url: `http://127.0.0.1:3110/mikka/api/captures/shared/mkc_${'v'.repeat(32)}` }] })
+  const saved = ['MIKKA_LOCAL_TEST_ACCOUNTS', 'E2E_DATABASE_URL', 'MIKKA_DATABASE_URL', 'DATABASE_URL'].map(name => [name, process.env[name]] as const)
+  try {
+    process.env.MIKKA_LOCAL_TEST_ACCOUNTS = '1'
+    process.env.E2E_DATABASE_URL = 'postgresql://fixture:fixture@127.0.0.1:55432/fixture_e2e'
+    process.env.MIKKA_DATABASE_URL = process.env.E2E_DATABASE_URL
+    process.env.DATABASE_URL = process.env.E2E_DATABASE_URL
+    assert.equal(validPublicationEvidence(evidence)?.captures[0].url, evidence.captures[0].url)
+    process.env.MIKKA_LOCAL_TEST_ACCOUNTS = '0'
+    assert.equal(validPublicationEvidence(evidence), null)
+  } finally {
+    for (const [name, value] of saved) value === undefined ? delete process.env[name] : process.env[name] = value
+  }
+})
+
 test('a missing evidence write acknowledgement never returns a successful publication receipt', async () => {
   const { fetcher } = visualStub({ existing: [visualPr], patch: 'malformed' })
   await assert.rejects(openRunPullRequest({ ...input, fetcher, visualEvidence: visualEvidence() }), { code: 'github_request_failed' })
