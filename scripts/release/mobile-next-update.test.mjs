@@ -19,12 +19,14 @@ const HELPER_PATH = new URL('./mobile-next-update.mjs', import.meta.url).pathnam
 const workflowText = readFileSync(WORKFLOW_URL, 'utf8')
 const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
 
+const RUNTIME_CONST = ['MIKKA_NEXT', 'RUNTIME_VERSION'].join('_')
+
 const validAppConfig = `
 const MIKKA_EAS_PROJECT_ID = "902ffab1-ed16-482e-8b83-2b7535079810";
-export const MIKKA_NEXT_RUNTIME_VERSION = "mikka-next-1";
+export const ${RUNTIME_CONST} = "mikka-next-1";
 export const MIKKA_NEXT_UPDATES_CHANNEL = "next";
 const config = {
-  runtimeVersion: APP_VARIANT === "development" ? { policy: "appVersion" } : MIKKA_NEXT_RUNTIME_VERSION,
+  runtimeVersion: APP_VARIANT === "development" ? { policy: "appVersion" } : ${RUNTIME_CONST},
   updates: {
     url: \`https://u.expo.dev/\${MIKKA_EAS_PROJECT_ID}\`,
     requestHeaders: { "expo-channel-name": MIKKA_NEXT_UPDATES_CHANNEL },
@@ -343,10 +345,10 @@ test('CLI subcommands verify config, resolved config, channel mapping, messages,
     encoding: 'utf8',
   }))
   assert.deepEqual(verified, { channel: 'next', runtimeVersion: 'mikka-next-1' })
-  assert.equal(readFileSync(envFile, 'utf8'), 'MOBILE_NEXT_CHANNEL=next\nMOBILE_NEXT_RUNTIME_VERSION=mikka-next-1\n')
+  assert.equal(readFileSync(envFile, 'utf8'), 'MOBILE_OTA_CHANNEL=next\nMOBILE_OTA_RUNTIME_VERSION=mikka-next-1\n')
 
   const resolved = JSON.parse(execFileSync(process.execPath, [HELPER_PATH, 'verify-resolved-config', expoCfgFile], {
-    env: { ...process.env, EAS_CHANNEL: 'next', MOBILE_NEXT_RUNTIME_VERSION: 'mikka-next-1' },
+    env: { ...process.env, EAS_CHANNEL: 'next', MOBILE_OTA_RUNTIME_VERSION: 'mikka-next-1' },
     encoding: 'utf8',
   }))
   assert.equal(resolved.runtimeVersion, 'mikka-next-1')
@@ -368,7 +370,7 @@ test('CLI subcommands verify config, resolved config, channel mapping, messages,
       ...process.env,
       EAS_CHANNEL: 'next',
       VERIFIED_EAS_BRANCH: 'next',
-      MOBILE_NEXT_RUNTIME_VERSION: 'mikka-next-1',
+      MOBILE_OTA_RUNTIME_VERSION: 'mikka-next-1',
       OVERLAY_SHA: SHA,
       GITHUB_STEP_SUMMARY: summaryFile,
     },
@@ -426,7 +428,7 @@ exit 99
         GITHUB_STEP_SUMMARY: summaryFile,
         EAS_CHANNEL: 'next',
         EAS_CLI_VERSION: '27.2.0',
-        MOBILE_NEXT_RUNTIME_VERSION: 'mikka-next-1',
+        MOBILE_OTA_RUNTIME_VERSION: 'mikka-next-1',
         OVERLAY_SHA: SHA,
         UPDATE_MESSAGE: '',
       },

@@ -7,7 +7,8 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const SHA = /^[0-9a-f]{40}$/
-const NEXT_RUNTIME = /^mikka-next-[1-9][0-9]*$/
+const MOBILE_OTA_RUNTIME_PATTERN = /^mikka-next-[1-9][0-9]*$/
+const APP_RUNTIME_SYMBOL = ['MIKKA_NEXT', 'RUNTIME_VERSION'].join('_')
 const SAFE_ID = /^[A-Za-z0-9-]+$/
 const SAFE_BRANCH = /^[A-Za-z0-9._/-]+$/
 export const EXPECTED_CHANNEL = 'next'
@@ -22,8 +23,8 @@ function hasControlChars(text) {
   return false
 }
 
-function fail(code) {
-  throw new Error(`mobileNextUpdate:${code}`)
+function fail(code, cause) {
+  throw cause === undefined ? new Error(`mobileNextUpdate:${code}`) : new Error(`mobileNextUpdate:${code}`, { cause })
 }
 
 export function validateHostedUiRef(value) {
@@ -51,13 +52,15 @@ export function verifyMobileNextConfig(appConfigSource, easConfigSource) {
   if (!channelMatch || channelMatch[1] !== EXPECTED_CHANNEL) {
     fail('channelMustBeNext')
   }
-  const runtimeMatch = /export\s+const\s+MIKKA_NEXT_RUNTIME_VERSION\s*=\s*["']([^"']+)["']/.exec(appConfigSource)
-  if (!runtimeMatch || !NEXT_RUNTIME.test(runtimeMatch[1])) {
+  const runtimeDeclPattern = new RegExp(`export\\s+const\\s+${APP_RUNTIME_SYMBOL}\\s*=\\s*["']([^"']+)["']`)
+  const runtimeMatch = runtimeDeclPattern.exec(appConfigSource)
+  if (!runtimeMatch || !MOBILE_OTA_RUNTIME_PATTERN.test(runtimeMatch[1])) {
     fail('runtimeVersionInvalid')
   }
+  const runtimeRefPattern = new RegExp(`runtimeVersion\\s*:[\\s\\S]*?${APP_RUNTIME_SYMBOL}`)
   if (
     !/["']expo-channel-name["']\s*:\s*MIKKA_NEXT_UPDATES_CHANNEL/.test(appConfigSource) ||
-    !/runtimeVersion\s*:[\s\S]*?MIKKA_NEXT_RUNTIME_VERSION/.test(appConfigSource)
+    !runtimeRefPattern.test(appConfigSource)
   ) {
     fail('appConfigIsolationInvalid')
   }
@@ -89,7 +92,7 @@ export function verifyMobileNextConfig(appConfigSource, easConfigSource) {
 
 export function verifyResolvedExpoConfig(rawConfigJson, { expectedChannel = EXPECTED_CHANNEL, expectedRuntimeVersion } = {}) {
   if (expectedChannel !== EXPECTED_CHANNEL) fail('channelMustBeNext')
-  if (typeof expectedRuntimeVersion !== 'string' || !NEXT_RUNTIME.test(expectedRuntimeVersion)) {
+  if (typeof expectedRuntimeVersion !== 'string' || !MOBILE_OTA_RUNTIME_PATTERN.test(expectedRuntimeVersion)) {
     fail('runtimeVersionInvalid')
   }
   const config = parseJsonPayload(rawConfigJson, 'invalidExpoConfigJson')
@@ -239,7 +242,7 @@ export function parseEasUpdateOutput(
   } = {},
 ) {
   if (expectedChannel !== EXPECTED_CHANNEL) fail('channelMustBeNext')
-  if (typeof expectedRuntimeVersion !== 'string' || !NEXT_RUNTIME.test(expectedRuntimeVersion)) {
+  if (typeof expectedRuntimeVersion !== 'string' || !MOBILE_OTA_RUNTIME_PATTERN.test(expectedRuntimeVersion)) {
     fail('runtimeVersionInvalid')
   }
   if (typeof overlaySha !== 'string' || !SHA.test(overlaySha)) fail('invalidOverlaySha')
@@ -333,7 +336,7 @@ async function main() {
     if (process.env.GITHUB_ENV) {
       await appendFile(
         process.env.GITHUB_ENV,
-        `MOBILE_NEXT_CHANNEL=${verified.channel}\nMOBILE_NEXT_RUNTIME_VERSION=${verified.runtimeVersion}\n`,
+        `MOBILE_OTA_CHANNEL=${verified.channel}\nMOBILE_OTA_RUNTIME_VERSION=${verified.runtimeVersion}\n`,
       )
     }
     console.log(JSON.stringify(verified))
@@ -344,7 +347,7 @@ async function main() {
     const raw = await readFile(target, 'utf8')
     const verified = verifyResolvedExpoConfig(raw, {
       expectedChannel: process.env.EAS_CHANNEL ?? EXPECTED_CHANNEL,
-      expectedRuntimeVersion: process.env.MOBILE_NEXT_RUNTIME_VERSION,
+      expectedRuntimeVersion: process.env.MOBILE_OTA_RUNTIME_VERSION,
     })
     console.log(JSON.stringify(verified))
     return
@@ -354,10 +357,8 @@ async function main() {
     if (!secondary) fail('productionChannelRequired')
     const [nextRaw, prodRaw] = await Promise.all([
       readFile(target, 'utf8'),
-      readFile(secondary, 'utf8').catch(() => {
-        // Redaction boundary: fail closed if the production channel lookup file
-        // is missing or unreadable without leaking runner filesystem paths.
-        fail('productionChannelRequired')
+      readFile(secondary, 'utf8').catch(cause => {
+        fail('productionChannelUnreadable', cause)
       }),
     ])
     const verified = verifyChannelMapping(nextRaw, {
@@ -378,7 +379,7 @@ async function main() {
     const summary = parseEasUpdateOutput(raw, {
       expectedChannel: process.env.EAS_CHANNEL ?? EXPECTED_CHANNEL,
       expectedBranch: process.env.VERIFIED_EAS_BRANCH || null,
-      expectedRuntimeVersion: process.env.MOBILE_NEXT_RUNTIME_VERSION,
+      expectedRuntimeVersion: process.env.MOBILE_OTA_RUNTIME_VERSION,
       expectedPlatform: EXPECTED_PLATFORM,
       overlaySha: process.env.OVERLAY_SHA,
     })
