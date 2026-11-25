@@ -74,6 +74,7 @@ export type SettingItemId =
   | 'appearance.diffView'
   | 'appearance.diffColors'
   | 'appearance.hiddenFiles'
+  | 'shortcuts.customizeBindings'
   | 'environments.networkAccess'
   | 'threads.subagentMaxConcurrent'
   | 'threads.subagentDepth'
@@ -85,20 +86,21 @@ export const SETTINGS_ITEM_STATUS: Readonly<Record<SettingItemId, SettingAvailab
   'appearance.sync': 'available',
   'appearance.colorScheme': 'available',
   'appearance.theme': 'available',
-  'appearance.myThemes': 'pending',
+  'appearance.myThemes': 'skipped',
   'appearance.colors': 'available',
-  'appearance.dashboardBackground': 'pending',
+  'appearance.dashboardBackground': 'skipped',
   'appearance.backgroundEffect': 'available',
   'appearance.codeFontSize': 'available',
   'appearance.diffView': 'available',
   'appearance.diffColors': 'available',
   'appearance.hiddenFiles': 'available',
-  'environments.networkAccess': 'skipped',
+  'shortcuts.customizeBindings': 'available',
+  'environments.networkAccess': 'available',
   'threads.subagentMaxConcurrent': 'available',
-  'threads.subagentDepth': 'pending',
-  'workspace.newWorkVisibility': 'pending',
-  'workspace.workVisibility': 'pending',
-  'workspace.allowPrivate': 'pending',
+  'threads.subagentDepth': 'skipped',
+  'workspace.newWorkVisibility': 'available',
+  'workspace.workVisibility': 'available',
+  'workspace.allowPrivate': 'available',
 }
 
 export function settingSectionStatus(id: SettingsSectionId): SettingAvailability {
@@ -150,38 +152,42 @@ export interface SettingsSectionDef {
 }
 
 const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] = [
+  // Personal (account-scoped)
   { id: 'preferences', group: 'personal', title: 'General' },
   { id: 'appearance', group: 'personal', title: 'Appearance' },
   { id: 'account', group: 'personal', title: 'Profile' },
   { id: 'security', group: 'personal', title: 'Security' },
   { id: 'notifications', group: 'personal', title: 'Notifications' },
   { id: 'shortcuts', group: 'personal', title: 'Shortcuts' },
-  { id: 'models', group: 'personal', title: 'Models and subscriptions' },
-  { id: 'environments', group: 'personal', title: 'Run environments' },
-  { id: 'mcp', group: 'personal', title: 'MCP and plugins' },
-  { id: 'connections', group: 'personal', title: 'Integrations' },
-  { id: 'developer', group: 'personal', title: 'Personal access tokens' },
-  { id: 'secrets', group: 'personal', title: 'Secrets and environment' },
-  // Personal secrets stay one click from an old link; the sidebar entry is 密钥与环境.
+  // Personal secrets stay one click from an old link; the sidebar entry is Secrets & Credentials.
   { id: 'logins', group: 'personal', title: 'Secrets and logins', sidebar: false },
-  { id: 'computers', group: 'personal', title: 'Devices' },
+  // Agent & Compute (models, cloud environments, local devices, secrets, MCP, integrations, instructions, skills, threads, git)
+  { id: 'models', group: 'agent', title: 'Models and subscriptions' },
+  { id: 'environments', group: 'agent', title: 'Cloud environments' },
+  { id: 'computers', group: 'agent', title: 'Devices' },
+  { id: 'secrets', group: 'agent', title: 'Secrets & Credentials' },
+  { id: 'mcp', group: 'agent', title: 'MCP Servers' },
+  { id: 'connections', group: 'agent', title: 'Integrations' },
   { id: 'instructions', group: 'agent', title: 'Instructions' },
   { id: 'team-skills', group: 'agent', title: 'Skills' },
   { id: 'threads', group: 'agent', title: 'Threads' },
   { id: 'git', group: 'agent', title: 'Git and pull requests' },
   { id: 'memory', group: 'agent', title: 'Memory' },
+  // Review (withheld)
   { id: 'review-repositories', group: 'review', title: 'Review repositories' },
   { id: 'review-config', group: 'review', title: 'Review config' },
+  // Workspace (team / workspace administration, API, activity, billing, governance)
   { id: 'general', group: 'workspace', title: 'Workspace general' },
-  { id: 'organization', group: 'workspace', title: 'Organization' },
-  { id: 'issue-states', group: 'workspace', title: 'Issue states' },
+  { id: 'issue-states', group: 'workspace', title: 'Task states' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
-  { id: 'billing', group: 'workspace', title: 'Billing' },
-  { id: 'usage', group: 'workspace', title: 'Usage' },
-  { id: 'activity', group: 'workspace', title: 'Activity' },
   { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true },
   { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
+  { id: 'developer', group: 'workspace', title: 'API' },
+  { id: 'activity', group: 'workspace', title: 'Activity' },
+  { id: 'billing', group: 'workspace', title: 'Billing' },
+  { id: 'usage', group: 'workspace', title: 'Usage' },
+  { id: 'organization', group: 'workspace', title: 'Organization' },
   { id: 'cloud', group: 'workspace', title: 'Mikka Cloud' },
   { id: 'referrals', group: 'personal', title: 'Referrals' },
   { id: 'experiments', group: 'personal', title: 'Experiments' },
@@ -225,10 +231,11 @@ export type SettingsVisibility = {
 }
 
 /** One place decides whether a section is listed. The sidebar and search both ask this. */
-export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false, memory = false }: SettingsVisibility): boolean {
+export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false, organization = true, memory = false }: SettingsVisibility): boolean {
   if (SETTINGS_SECTION_STATUS[section.id] !== 'available' || section.sidebar === false) return false
   if (section.adminOnly && !admin) return false
   if (personal && TEAM_ONLY_SECTIONS.has(section.id)) return false
+  if (!organization && section.id === 'organization') return false
   if (!billing && section.id === 'billing') return false
   if (!cloudAdmin && section.id === 'cloud') return false
   if (!memory && section.id === 'memory') return false

@@ -16,11 +16,11 @@ import {
   withPendingSuffix,
 } from '../lib/settings-sections.ts'
 
-test('every nav item has exactly one section, in the Figma 1508:2 group order', () => {
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !s.withheld && !s.unbuilt && s.sidebar !== false).map(s => s.id), ['preferences', 'appearance', 'account', 'security', 'notifications', 'shortcuts', 'models', 'environments', 'mcp', 'connections', 'developer', 'secrets', 'computers'])
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld).map(s => s.id), ['instructions', 'team-skills', 'threads', 'git', 'memory'])
+test('every nav item has exactly one section, grouped by true ownership scope (Personal / Agent & Compute / Workspace)', () => {
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !s.withheld && !s.unbuilt && s.sidebar !== false).map(s => s.id), ['preferences', 'appearance', 'account', 'security', 'notifications', 'shortcuts'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld).map(s => s.id), ['models', 'environments', 'computers', 'secrets', 'mcp', 'connections', 'instructions', 'team-skills', 'threads', 'git', 'memory'])
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'review' && !s.unbuilt && !s.withheld).map(s => s.id), [])
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'organization', 'issue-states', 'members', 'teams', 'billing', 'usage', 'activity', 'permissions', 'audit', 'cloud'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'issue-states', 'members', 'teams', 'permissions', 'audit', 'developer', 'activity', 'billing', 'usage', 'organization', 'cloud'])
 })
 
 test('old links keep landing on the page that now holds their content, and deleted bot-permissions is not a legacy alias', () => {
@@ -56,11 +56,16 @@ const SIDEBAR_OFF = ['logins']
 test('centralized 3-tier status governs section and item presentation', () => {
   for (const id of PENDING_SECTIONS) assert.equal(settingSectionStatus(id), 'pending', id)
   for (const id of SKIPPED_SECTIONS) assert.equal(settingSectionStatus(id), 'skipped', id)
-  assert.equal(settingItemStatus('environments.networkAccess'), 'skipped')
-  assert.equal(settingItemShown('environments.networkAccess'), false)
-  assert.equal(settingItemPending('threads.subagentDepth'), true)
+  assert.equal(settingItemStatus('environments.networkAccess'), 'available')
+  assert.equal(settingItemShown('environments.networkAccess'), true)
+  assert.equal(settingItemStatus('shortcuts.customizeBindings'), 'available')
+  assert.equal(settingItemStatus('workspace.newWorkVisibility'), 'available')
+  assert.equal(settingItemStatus('workspace.workVisibility'), 'available')
+  assert.equal(settingItemStatus('workspace.allowPrivate'), 'available')
+  assert.equal(settingItemShown('threads.subagentDepth'), false)
+  assert.equal(settingItemShown('appearance.myThemes'), false)
+  assert.equal(settingItemShown('appearance.dashboardBackground'), false)
   assert.equal(settingItemPending('threads.subagentMaxConcurrent'), false)
-  assert.equal(settingItemPending('workspace.workVisibility'), true)
   assert.equal(SETTINGS_ITEM_STATUS['appearance.sync'], 'available')
   assert.equal(withPendingSuffix('嵌套深度', '待接入'), '嵌套深度 · 待接入')
   assert.deepEqual([...WIDE_SETTINGS_SECTIONS], ['shortcuts', 'environments', 'members', 'teams', 'usage', 'activity', 'audit'])
@@ -87,6 +92,7 @@ test('cloud server settings require the explicit server administrator capability
 test('身份与访问 is in the public team sidebar; a personal workspace has no organization', () => {
   for (const admin of [false, true]) {
     assert.equal(visibleSettingsSections({ admin }).some(s => s.id === 'organization'), true)
+    assert.equal(visibleSettingsSections({ admin, organization: false }).some(s => s.id === 'organization'), false)
     assert.equal(visibleSettingsSections({ admin, personal: true }).some(s => s.id === 'organization'), false)
     assert.equal(visibleSettingsSections({ admin, organization: true, personal: true }).some(s => s.id === 'organization'), false)
   }
@@ -114,9 +120,9 @@ test('skipped pages (05/06/13 and UI-only 20/21) are not links and never appear'
   }
 })
 
-test('sidebar names follow Figma 设置 v4 in the English search titles', () => {
+test('sidebar names reflect Wave 4 scope-honest English search titles', () => {
   const title = id => SETTINGS_SECTIONS.find(s => s.id === id).title
-  assert.deepEqual(['computers', 'developer', 'permissions', 'logins'].map(title), ['Devices', 'Personal access tokens', 'Team permissions', 'Secrets and logins'])
+  assert.deepEqual(['computers', 'developer', 'environments', 'secrets', 'mcp', 'permissions', 'logins'].map(title), ['Devices', 'API', 'Cloud environments', 'Secrets & Credentials', 'MCP Servers', 'Team permissions', 'Secrets and logins'])
 })
 
 test('a current id wins over a legacy alias with the same name', () => {
@@ -127,7 +133,7 @@ test('a current id wins over a legacy alias with the same name', () => {
 test('a personal workspace has every setting of the workspace itself; only what is between people is a team\'s', () => {
   const personal = visibleSettingsSections({ admin: true, personal: true, memory: true }).map(s => s.id)
   const account = SETTINGS_SECTIONS.filter(s => (s.group === 'personal' || s.group === 'agent') && SETTINGS_SECTION_STATUS[s.id] === 'available' && s.sidebar !== false).map(s => s.id)
-  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'billing', 'usage', 'activity'])
+  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'developer', 'activity', 'billing', 'usage'])
   const team = visibleSettingsSections({ admin: true }).map(s => s.id)
   for (const id of ['general', 'organization', 'members', 'teams', 'environments', 'secrets', 'permissions', 'audit', 'usage', 'activity', 'billing']) assert.ok(team.includes(id), id)
   assert.equal(team.includes('logins'), false)

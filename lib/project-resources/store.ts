@@ -140,7 +140,7 @@ async function projectRepositoryBindings(tx: WorkspaceTransaction, workspaceId: 
 /** Workspace configuration stays tenant-scoped. Project bindings also require current Project content access. */
 export async function listProjectResources(reader: Reader, workspaceId: string, projectId?: string) {
   const read = async (tx: WorkspaceTransaction) => {
-    const policy = await tx.execute(sql`select mode,"repositoryKeys",revision from workspace_repository_policies where "workspaceId"=${workspaceId}`)
+    const policy = await tx.execute<{ mode: string; repositoryKeys: string[]; revision: number }>(sql`select mode,"repositoryKeys",revision from workspace_repository_policies where "workspaceId"=${workspaceId}`)
     const environments = await tx.execute<EnvironmentRow>(sql`select id,"workspaceId",name,configuration,instructions,revision,"archivedAt","defaultMachineSize" from workspace_environments where "workspaceId"=${workspaceId} order by name,id`)
     const repositories = projectId ? await projectRepositoryBindings(tx, workspaceId, projectId) : []
     const bindings = projectId ? await tx.execute(sql`select "environmentId","isDefault" from workspace_project_environments where "projectId"=${projectId} and "workspaceId"=${workspaceId} order by "environmentId"`) : { rows: [] }
@@ -240,10 +240,24 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
     await resourceWriteLock(tx, input.workspaceId)
     await secretsFit(input.workspaceId, input.configuration)
     const id = input.id ?? randomUUID()
-    const current = await tx.execute(sql`select revision from workspace_environments where id=${id} and "workspaceId"=${input.workspaceId}`)
+    const current = await tx.execute<{ revision: number; configuration: Partial<EnvironmentConfiguration> | null }>(sql`select revision,configuration from workspace_environments where id=${id} and "workspaceId"=${input.workspaceId}`)
     if (input.id && (!current.rowCount || Number(current.rows[0].revision) !== input.revision)) throw new ActionFailureError('projectResourceConflict')
+    const existingConfig = current.rows[0]?.configuration ?? null
     const revision = Number(current.rows[0]?.revision ?? 0) + 1
-    const configuration = { ...input.configuration, secretIds: [...new Set(input.configuration.secretIds)], repositoryKeys: [...new Set(input.configuration.repositoryKeys)] }
+    // Preserve newer optional fields when an older editor submits a payload that omits them.
+    // Callers clear startScript explicitly by passing an empty string.
+    const nextStartScript = input.configuration.startScript === undefined
+      ? (typeof existingConfig?.startScript === 'string' && existingConfig.startScript.trim() ? existingConfig.startScript.trim() : undefined)
+      : (input.configuration.startScript.trim() || undefined)
+    const nextNetworkAccess = input.configuration.networkAccess ?? existingConfig?.networkAccess ?? 'inherit'
+    const configuration: EnvironmentConfiguration = {
+      ...input.configuration,
+      networkAccess: nextNetworkAccess,
+      ...(nextStartScript ? { startScript: nextStartScript } : { startScript: undefined }),
+      secretIds: [...new Set(input.configuration.secretIds)],
+      repositoryKeys: [...new Set(input.configuration.repositoryKeys)],
+    }
+    if (configuration.startScript === undefined) delete configuration.startScript
     await persistEnvironment(tx, reader, input.workspaceId, id, input.name, configuration, revision, input.archived ? new Date() : null, input.defaultMachineSize, input.instructions)
     await audit(tx, reader, input.workspaceId, input.archived ? 'environment.archived' : 'environment.saved', id, { revision })
     await workspaceListChanged(tx, input.workspaceId, ['workspace_settings'])

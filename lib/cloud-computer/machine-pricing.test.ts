@@ -1,6 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { LARGEST_DEFAULT_QUOTA_SIZE, MACHINE_SIZES, QUOTA_GATED_SIZES, provisionableMachineSize, type MachineSize } from './machine-pricing'
+import {
+  DEFAULT_MACHINE_SIZE,
+  LARGEST_DEFAULT_QUOTA_SIZE,
+  MACHINE_SIZES,
+  QUOTA_GATED_SIZES,
+  SELECTABLE_MACHINE_SIZES,
+  machineHourlyUsd,
+  provisionableMachineSize,
+  selectableMachineSizeOptions,
+  type MachineSize,
+} from './machine-pricing'
 import { verifiedMachineQuota } from './sponsored-task'
 
 test('quota-gated sizes sit above the provider default limit and are the only gated ones', () => {
@@ -32,4 +42,21 @@ test('the verified-quota flag is opt-in and reads only its exact value', () => {
   assert.equal(verifiedMachineQuota({ MIKKA_TASK_MACHINE_16GIB_QUOTA: '0' }), false)
   assert.equal(verifiedMachineQuota({ MIKKA_TASK_MACHINE_16GIB_QUOTA: 'true' }), false)
   assert.equal(verifiedMachineQuota({ MIKKA_TASK_MACHINE_16GIB_QUOTA: '1' }), true)
+})
+
+test('SELECTABLE_MACHINE_SIZES excludes quota-gated tiers and reports vCPU, GiB and USD/hr metadata', () => {
+  assert.deepEqual(SELECTABLE_MACHINE_SIZES, ['standard-1', 'standard-2', 'standard-3', 'standard-4'])
+  for (const size of QUOTA_GATED_SIZES) {
+    assert.equal(SELECTABLE_MACHINE_SIZES.includes(size), false, `${size} must not appear in customer selectors`)
+  }
+  const options = selectableMachineSizeOptions()
+  assert.equal(options.length, SELECTABLE_MACHINE_SIZES.length)
+  assert.deepEqual(options.find(option => option.id === DEFAULT_MACHINE_SIZE), {
+    id: 'standard-3',
+    vcpu: 2,
+    ramGib: 8,
+    hourlyUsd: machineHourlyUsd('standard-3'),
+    isDefault: true,
+  })
+  assert.equal(options.filter(option => option.isDefault).length, 1)
 })

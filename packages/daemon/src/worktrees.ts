@@ -23,6 +23,136 @@ import { buildChildEnv } from "./env"
 import { assertSafeId } from "./ids"
 import type { SetupRecipe } from "./server-link"
 
+/** Repo-root file listing gitignored local files to copy into fresh worktrees (Claude Code / Orca convention). */
+export const WORKTREE_INCLUDE_FILE = ".worktreeinclude"
+const WORKTREE_INCLUDE_MAX_BYTES = 64 * 1024
+const WORKTREE_INCLUDE_MAX_ENTRIES = 200
+const FORBIDDEN_COPY_PATH = /(^|\/)(\.git|\.codex\/auth\.json|\.claude\/\.credentials\.json)(\/|$)/
+
+function globToRegExp(pattern: string): RegExp {
+  let out = "^"
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]!
+    if (ch === "*") {
+      if (pattern[i + 1] === "*") {
+        i++
+        if (pattern[i + 1] === "/") {
+          i++
+          out += "(?:.*/)?"
+        } else {
+          out += ".*"
+        }
+      } else {
+        out += "[^/]*"
+      }
+    } else if (ch === "?") {
+      out += "[^/]"
+    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
+      out += `\\${ch}`
+    } else {
+      out += ch
+    }
+  }
+  out += "$"
+  return new RegExp(out)
+}
+
+function collectSafeRepoFiles(repoPath: string, repoReal: string): string[] {
+  const files: string[] = []
+  const walk = (dir: string, relPrefix: string) => {
+    const entries = readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.name === "node_modules") continue
+      if (entry.isSymbolicLink()) continue
+      const full = join(dir, entry.name)
+      const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name
+      if (entry.isDirectory()) {
+        if (!isInside(repoReal, realpathSync(full))) continue
+        walk(full, rel)
+      } else if (entry.isFile()) {
+        if (FORBIDDEN_COPY_PATH.test(rel)) continue
+        if (!isInside(repoReal, realpathSync(full))) continue
+        files.push(rel)
+      }
+    }
+  }
+  walk(repoPath, "")
+  return files
+}
+
+/**
+ * Reads repo-root `.worktreeinclude` (gitignore-style patterns/paths of local
+ * ignored files such as `.env.local` or `.npmrc`) with strict repo-boundary,
+ * non-symlink, and native-credential exclusion checks.
+ */
+export function readWorktreeInclude(manifestRoot: string, matchRoot = manifestRoot): string[] {
+  const manifestReal = realpathSync(manifestRoot)
+  const matchReal = matchRoot === manifestRoot ? manifestReal : realpathSync(matchRoot)
+  const includePath = join(manifestRoot, WORKTREE_INCLUDE_FILE)
+  const stat = lstatSync(includePath, { throwIfNoEntry: false })
+  if (!stat) return []
+  if (!stat.isFile() || !isInside(manifestReal, realpathSync(includePath))) {
+    throw new Error(`${WORKTREE_INCLUDE_FILE} must be a regular file inside the repository`)
+  }
+  if (stat.size > WORKTREE_INCLUDE_MAX_BYTES) {
+    throw new Error(`${WORKTREE_INCLUDE_FILE} exceeds ${WORKTREE_INCLUDE_MAX_BYTES} bytes`)
+  }
+  const lines = readFileSync(includePath, "utf8").split(/\r?\n/)
+  const rules: Array<{ negate: boolean; pattern: string }> = []
+  for (const raw of lines) {
+    const trimmed = raw.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const negate = trimmed.startsWith("!")
+    const line = negate ? trimmed.slice(1).trim() : trimmed
+    if (!line) continue
+    if (line.includes("\0")) throw new Error(`${WORKTREE_INCLUDE_FILE} contains invalid path`)
+    const normalized = line.replace(/^\.\//, "").replace(/\\/g, "/")
+    if (!normalized) continue
+    if (normalized.startsWith("/") || normalized.split("/").includes("..")) {
+      throw new Error(`${WORKTREE_INCLUDE_FILE} references a path outside the repo: ${line}`)
+    }
+    if (!negate && FORBIDDEN_COPY_PATH.test(normalized)) {
+      throw new Error(`${WORKTREE_INCLUDE_FILE} cannot copy forbidden path: ${line}`)
+    }
+    rules.push({ negate, pattern: normalized })
+    if (rules.length > WORKTREE_INCLUDE_MAX_ENTRIES) {
+      throw new Error(`${WORKTREE_INCLUDE_FILE} exceeds ${WORKTREE_INCLUDE_MAX_ENTRIES} entries`)
+    }
+  }
+  if (!rules.length) return []
+  const matched = new Set<string>()
+  let allFiles: string[] | null = null
+  for (const { negate, pattern } of rules) {
+    const isGlob = /[*?]/.test(pattern)
+    if (negate) {
+      if (!isGlob) {
+        matched.delete(pattern)
+      } else {
+        const re = globToRegExp(pattern)
+        for (const file of [...matched]) {
+          if (re.test(file)) matched.delete(file)
+        }
+      }
+      continue
+    }
+    if (!isGlob) {
+      matched.add(pattern)
+      continue
+    }
+    if (!allFiles) allFiles = collectSafeRepoFiles(matchRoot, matchReal)
+    const re = globToRegExp(pattern)
+    for (const file of allFiles) {
+      if (re.test(file)) {
+        matched.add(file)
+        if (matched.size > WORKTREE_INCLUDE_MAX_ENTRIES) {
+          throw new Error(`${WORKTREE_INCLUDE_FILE} matched more than ${WORKTREE_INCLUDE_MAX_ENTRIES} files`)
+        }
+      }
+    }
+  }
+  return [...matched]
+}
+
 /** How long a disk usage figure is reused before the tree is walked again. */
 export const DISK_USAGE_TTL_MS = 5 * 60_000
 
@@ -206,47 +336,80 @@ export class WorktreeManager {
 
   /**
    * Runs the repo's approved setup recipe in a fresh worktree: copy
-   * git-ignored files from the main checkout, then the setup command with a
-   * clean env. An unapproved recipe is skipped (it would need asking).
+   * git-ignored files from `.worktreeinclude` and `recipe.copyFiles` in the
+   * main checkout, then the setup command with a clean env. An explicitly
+   * unapproved recipe is skipped (it would need asking).
    */
   async bootstrap(
     worktree: string,
     repoPath: string,
     recipe: SetupRecipe | undefined,
-    taskEnv?: Record<string, string>
+    taskEnv?: Record<string, string>,
+    options?: { includeWorktreeFile?: boolean; copySource?: string }
   ): Promise<"skipped" | "done"> {
-    if (!recipe || !recipe.approved) return "skipped"
-    const repoReal = realpathSync(repoPath)
+    if (recipe && !recipe.approved) return "skipped"
+    const sourceRoot = options?.copySource ?? repoPath
+    const includeFiles = options?.includeWorktreeFile === false
+      ? []
+      : existsSync(join(sourceRoot, WORKTREE_INCLUDE_FILE))
+        ? readWorktreeInclude(sourceRoot, sourceRoot)
+        : existsSync(join(worktree, WORKTREE_INCLUDE_FILE))
+          ? readWorktreeInclude(worktree, sourceRoot)
+          : []
+    if (!recipe && includeFiles.length === 0) return "skipped"
+    const sourceReal = realpathSync(sourceRoot)
     const worktreeReal = realpathSync(worktree)
-    for (const file of recipe.copyFiles) {
-      const rel = relative(repoPath, resolve(repoPath, file))
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        throw new Error(`setup recipe copies a file outside the repo: ${file}`)
+    const filesToCopy = [...new Set([...includeFiles, ...(recipe?.copyFiles ?? [])])]
+    if (sourceReal !== worktreeReal) {
+      for (const file of filesToCopy) {
+        const normalized = file.replace(/\\/g, "/")
+        if (FORBIDDEN_COPY_PATH.test(normalized)) {
+          throw new Error(`setup recipe cannot copy forbidden path: ${file}`)
+        }
+        const rel = relative(sourceRoot, resolve(sourceRoot, file))
+        if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+          throw new Error(`setup recipe copies a file outside the repo: ${file}`)
+        }
+        const from = join(sourceRoot, rel)
+        const fromStat = lstatSync(from, { throwIfNoEntry: false })
+        if (!fromStat) continue
+        // Symlinks (the file itself or a parent dir) could pull in or overwrite
+        // files outside the repo and the worktree; both ends must stay inside.
+        if (!fromStat.isFile() || !isInside(sourceReal, realpathSync(from))) {
+          throw new Error(
+            `setup recipe copies a symlink or non-file, or leaves the repo: ${file}`
+          )
+        }
+        const to = join(worktree, rel)
+        // Verify every existing parent directory inside the worktree before mkdirSync
+        // so a committed symlink directory cannot cause mkdirSync to write outside worktreeReal.
+        let probe = dirname(to)
+        while (probe !== worktree && probe !== dirname(probe)) {
+          const probeStat = lstatSync(probe, { throwIfNoEntry: false })
+          if (probeStat) {
+            if (!probeStat.isDirectory() || !isInside(worktreeReal, realpathSync(probe))) {
+              throw new Error(
+                `setup recipe would write through a symlink or outside the worktree: ${file}`
+              )
+            }
+            break
+          }
+          probe = dirname(probe)
+        }
+        mkdirSync(dirname(to), { recursive: true })
+        const toStat = lstatSync(to, { throwIfNoEntry: false })
+        if (
+          !isInside(worktreeReal, realpathSync(dirname(to))) ||
+          (toStat && !toStat.isFile())
+        ) {
+          throw new Error(
+            `setup recipe would write through a symlink or outside the worktree: ${file}`
+          )
+        }
+        copyFileSync(from, to)
       }
-      const from = join(repoPath, rel)
-      const fromStat = lstatSync(from, { throwIfNoEntry: false })
-      if (!fromStat) continue
-      // Symlinks (the file itself or a parent dir) could pull in or overwrite
-      // files outside the repo and the worktree; both ends must stay inside.
-      if (!fromStat.isFile() || !isInside(repoReal, realpathSync(from))) {
-        throw new Error(
-          `setup recipe copies a symlink or non-file, or leaves the repo: ${file}`
-        )
-      }
-      const to = join(worktree, rel)
-      mkdirSync(dirname(to), { recursive: true })
-      const toStat = lstatSync(to, { throwIfNoEntry: false })
-      if (
-        !isInside(worktreeReal, realpathSync(dirname(to))) ||
-        (toStat && !toStat.isFile())
-      ) {
-        throw new Error(
-          `setup recipe would write through a symlink or outside the worktree: ${file}`
-        )
-      }
-      copyFileSync(from, to)
     }
-    if (recipe.command) {
+    if (recipe?.command) {
       await execa(recipe.command, {
         shell: true,
         cwd: worktree,

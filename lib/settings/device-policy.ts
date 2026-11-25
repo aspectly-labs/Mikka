@@ -1,7 +1,7 @@
 import 'server-only'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { daemonTestMode, normalizeRepository } from '@mikka/protocol/repository'
+import { daemonTestMode, normalizeRepository, remoteKey } from '@mikka/protocol/repository'
 import { pool } from '@/lib/db'
 import { connectForCommitEffects } from '@/lib/db/commit-effects'
 import { workspaceDb } from '@/lib/workspace-db'
@@ -22,6 +22,7 @@ import {
   type DevicePolicyView,
   type DeviceRepositoryItem,
   type DeviceRepositoryListView,
+  type DeviceRepositorySetupInput,
 } from './device-policy-contract'
 
 export interface DevicePolicyActor {
@@ -263,6 +264,12 @@ function normalizeRepositoryInput(raw: string) {
   }
 }
 
+interface StoredSetupRecipe {
+  command?: string
+  copyFiles?: string[]
+  approved?: boolean
+}
+
 interface DeviceRepoRow {
   id: string
   deviceId: string
@@ -271,7 +278,87 @@ interface DeviceRepoRow {
   localPath: string | null
   baseBranch: string | null
   verifyCommand: string | null
+  setup?: StoredSetupRecipe | null
   createdAt: Date
+}
+
+function toDeviceRepositorySetup(raw: StoredSetupRecipe | null | undefined): DeviceRepositoryItem['setup'] {
+  if (!raw || typeof raw !== 'object') return null
+  const command = typeof raw.command === 'string' && raw.command.trim() ? raw.command : null
+  const copyFiles = Array.isArray(raw.copyFiles) ? raw.copyFiles.filter((item): item is string => typeof item === 'string' && item.length > 0) : []
+  if (!command && copyFiles.length === 0) return null
+  return { command, copyFiles, approved: raw.approved === true }
+}
+
+function normalizeSetupForStorage(input: DeviceRepositorySetupInput | null): { copyFiles: string[]; command?: string; approved: boolean } | null {
+  if (!input) return null
+  const command = input.command?.trim() || undefined
+  const copyFiles = [...new Set(input.copyFiles)]
+  if (!command && copyFiles.length === 0) return null
+  return { copyFiles, ...(command ? { command } : {}), approved: input.approved }
+}
+
+function resolveRepositorySetupKey(repoPath: string, remoteUrl: string | null): string {
+  if (remoteUrl) {
+    try {
+      return remoteKey(remoteUrl)
+    } catch {
+      // Fall back to canonical repoPath when remoteUrl cannot be parsed.
+    }
+  }
+  return repoPath
+}
+
+async function persistRepositorySetup(
+  client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
+  userId: string,
+  remoteKey: string,
+  setupInput: DeviceRepositorySetupInput | null,
+  fallbackVerifyCommand: string | null,
+): Promise<StoredSetupRecipe | null> {
+  const stored = normalizeSetupForStorage(setupInput)
+  if (!stored) {
+    await client.query(
+      `UPDATE repository_settings SET setup=NULL, "updatedAt"=now() WHERE "userId"=$1 AND "remoteKey"=$2`,
+      [userId, remoteKey],
+    )
+    return null
+  }
+  // Seed verifyCommand on first insert from the repository's configured verification
+  // command (falling back to any existing non-null verifyCommand on another device for
+  // the same owner/repo) so creating a repository_settings row for setup never turns
+  // into a NULL verifyCommand override on cloud claims.
+  await client.query(
+    `INSERT INTO repository_settings ("userId", "remoteKey", "verifyCommand", setup, "updatedAt")
+     VALUES (
+       $1,
+       $2,
+       COALESCE(
+         $3::text,
+         (SELECT dr."verifyCommand" FROM device_repos dr
+          WHERE dr."userId"=$1 AND dr."repoPath"=$2 AND dr."verifyCommand" IS NOT NULL
+          ORDER BY dr."createdAt" DESC LIMIT 1)
+       ),
+       $4::jsonb,
+       now()
+     )
+     ON CONFLICT ("userId", "remoteKey")
+     DO UPDATE SET setup=excluded.setup, "updatedAt"=now()`,
+    [userId, remoteKey, fallbackVerifyCommand, JSON.stringify(stored)],
+  )
+  return stored
+}
+
+async function readRepositorySetup(
+  client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
+  userId: string,
+  remoteKey: string,
+): Promise<StoredSetupRecipe | null> {
+  const { rows: [row] } = await client.query<{ setup: StoredSetupRecipe | null }>(
+    `SELECT setup FROM repository_settings WHERE "userId"=$1 AND "remoteKey"=$2 LIMIT 1`,
+    [userId, remoteKey],
+  )
+  return row?.setup ?? null
 }
 
 function toDeviceRepositoryItem(row: DeviceRepoRow): DeviceRepositoryItem {
@@ -284,6 +371,7 @@ function toDeviceRepositoryItem(row: DeviceRepoRow): DeviceRepositoryItem {
     localPath: row.localPath,
     baseBranch: row.baseBranch,
     verifyCommand: row.verifyCommand,
+    setup: toDeviceRepositorySetup(row.setup),
     createdAt: row.createdAt.toISOString(),
   }
 }
@@ -313,17 +401,39 @@ export async function listDeviceRepositories(
     await client.query('BEGIN')
     await assertDeviceOwner(client, actor, deviceId, 'SHARE')
     const { rows } = await client.query<DeviceRepoRow>(
-      `SELECT id, "deviceId", "repoPath", "remoteUrl", "localPath", "baseBranch", "verifyCommand", "createdAt"
-       FROM device_repos
-       WHERE "deviceId"=$1 AND "userId"=$2
-       ORDER BY "repoPath", id`,
+      `SELECT dr.id, dr."deviceId", dr."repoPath", dr."remoteUrl", dr."localPath", dr."baseBranch", dr."verifyCommand", rs.setup, dr."createdAt"
+       FROM device_repos dr
+       LEFT JOIN repository_settings rs ON rs."userId" = dr."userId" AND rs."remoteKey" = dr."repoPath"
+       WHERE dr."deviceId"=$1 AND dr."userId"=$2
+       ORDER BY dr."repoPath", dr.id`,
       [deviceId, actor.userId],
     )
+    const fallbackKeys = [...new Set(
+      rows
+        .filter((row) => !row.setup && row.remoteUrl)
+        .map((row) => ({ row, key: resolveRepositorySetupKey(row.repoPath, row.remoteUrl) }))
+        .filter(({ row, key }) => key !== row.repoPath)
+        .map(({ key }) => key),
+    )]
+    const fallbackByKey = new Map<string, StoredSetupRecipe | null>()
+    if (fallbackKeys.length > 0) {
+      const { rows: fallbackRows } = await client.query<{ remoteKey: string; setup: StoredSetupRecipe | null }>(
+        `SELECT "remoteKey", setup FROM repository_settings WHERE "userId"=$1 AND "remoteKey" = ANY($2::text[])`,
+        [actor.userId, fallbackKeys],
+      )
+      for (const fallbackRow of fallbackRows) {
+        fallbackByKey.set(fallbackRow.remoteKey, fallbackRow.setup)
+      }
+    }
     await client.query('COMMIT')
     return {
       deviceId,
       source: 'device',
-      repositories: rows.map(toDeviceRepositoryItem),
+      repositories: rows.map((row) => {
+        if (row.setup) return toDeviceRepositoryItem(row)
+        const key = resolveRepositorySetupKey(row.repoPath, row.remoteUrl)
+        return toDeviceRepositoryItem({ ...row, setup: fallbackByKey.get(key) ?? null })
+      }),
     }
   } catch (error) {
     await client.query('ROLLBACK')
@@ -385,9 +495,13 @@ export async function upsertDeviceRepository(
       )
       saved = row!
     }
+    const setupKey = resolveRepositorySetupKey(saved.repoPath, saved.remoteUrl)
+    const nextSetup = parsed.setup !== undefined
+      ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup, saved.verifyCommand)
+      : await readRepositorySetup(client, actor.userId, setupKey)
     await ownerListChanged(client, actor.userId, ['device_list'])
     await client.query('COMMIT')
-    return toDeviceRepositoryItem(saved)
+    return toDeviceRepositoryItem({ ...saved, setup: nextSetup })
   } catch (error) {
     await client.query('ROLLBACK')
     throw error
@@ -436,9 +550,13 @@ export async function patchDeviceRepository(
        RETURNING id, "deviceId", "repoPath", "remoteUrl", "localPath", "baseBranch", "verifyCommand", "createdAt"`,
       [existing.id, deviceId, actor.userId, nextLocalPath, nextBaseBranch, nextVerifyCommand],
     )
+    const setupKey = resolveRepositorySetupKey(updated!.repoPath, updated!.remoteUrl)
+    const nextSetup = parsed.setup !== undefined
+      ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup, updated!.verifyCommand)
+      : await readRepositorySetup(client, actor.userId, setupKey)
     await ownerListChanged(client, actor.userId, ['device_list'])
     await client.query('COMMIT')
-    return toDeviceRepositoryItem(updated!)
+    return toDeviceRepositoryItem({ ...updated!, setup: nextSetup })
   } catch (error) {
     await client.query('ROLLBACK')
     throw error
