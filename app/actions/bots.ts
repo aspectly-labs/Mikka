@@ -42,8 +42,9 @@ async function getOwner(workspaceId?: string) {
 }
 
 /** The bot list: the person's bots here, their Coordinator first (lib/coordinator/coordinator-bot.ts listOwnerBots). */
-export async function listBots(): Promise<BotView[]> {
-  return (await pollBots()).items
+export async function listBots(workspaceId?: string): Promise<BotView[]> {
+  const { ownerId, workspaceId: shown } = await getOwner(workspaceId)
+  return listOwnerBots(ownerId, shown)
 }
 
 /** The Bot list for the workspace a settings page shows (`?workspace=`), not the session's active one. */

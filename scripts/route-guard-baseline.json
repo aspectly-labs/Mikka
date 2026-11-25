@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "maxUnguardedRoutes": 330,
+  "maxUnguardedRoutes": 328,
   "legacyRoutes": [
     "app/api/acceptance/route.ts",
     "app/api/agent-cli-policy/route.ts",
@@ -232,7 +232,6 @@
     "app/api/self-improvement/route.ts",
     "app/api/service-identity/projects/[projectId]/route.ts",
     "app/api/service-identity/projects/route.ts",
-    "app/api/settings/[read]/route.ts",
     "app/api/settings/instructions/preview/route.ts",
     "app/api/settings/personal/reset/route.ts",
     "app/api/settings/personal/route.ts",
@@ -309,7 +308,6 @@
     "app/api/workspaces/[workspaceId]/activity/route.ts",
     "app/api/workspaces/[workspaceId]/audit-log/retention/route.ts",
     "app/api/workspaces/[workspaceId]/audit-log/route.ts",
-    "app/api/workspaces/[workspaceId]/billing/route.ts",
     "app/api/workspaces/[workspaceId]/billing/settings/route.ts",
     "app/api/workspaces/[workspaceId]/devices/[deviceId]/project-checkout/clear/route.ts",
     "app/api/workspaces/[workspaceId]/devices/[deviceId]/project-checkout/route.ts",

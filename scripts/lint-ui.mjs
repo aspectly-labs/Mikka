@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { auditSource, auditCss, isComponentLibrarySource, exemptAsShipped, exemptFrameworkShims } from './ui-policy.mjs'
-import { auditActionBindings, auditInteractions } from './interaction-policy.mjs'
+import { asyncPressBaseline, auditActionBindings, auditInteractions } from './interaction-policy.mjs'
 import { auditSettingsSurface } from './settings-policy.mjs'
 import { auditIconButtons } from './icon-button-policy.mjs'
 import { auditBasePath } from './base-path-policy.mjs'
@@ -46,6 +46,9 @@ const clientFiles = [
 ]
 for (const file of clientFiles) diagnostics.push(...auditActionBindings(file, readUi(file)))
 const interactionFiles = files.filter(file => /\.[jt]sx$/.test(file) && !['components/ui/', 'components/reui/'].some(root => file.startsWith(root)))
+if (Object.keys(asyncPressBaseline).length > 0) {
+  diagnostics.push({ file: 'scripts/interaction-busy-baseline.json', line: 1, column: 1, rule: 'interaction/async-press-baseline-locked', message: 'scripts/interaction-busy-baseline.json is permanently locked at 0 entries; pass `busy` on async presses instead.' })
+}
 for (const file of interactionFiles) {
   const text = readUi(file)
   diagnostics.push(...auditInteractions(file, text), ...auditIconButtons(file, text))

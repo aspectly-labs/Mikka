@@ -1,15 +1,11 @@
+import '../../../tests/support/server-only.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { mock, test } from 'node:test'
-import type { Sandbox } from 'e2b'
+import { SandboxNotFoundError, type Sandbox } from 'e2b'
 import type { TaskReviewAuthority } from '../review-authority'
 
-mock.module('../../computer/e2b-provider', { namedExports: {
-  connectComputer: async () => { throw new Error('Unexpected real provider call') },
-  computerState: async () => 'running',
-  computerGone: (error: unknown) => error instanceof Error && error.name === 'SandboxNotFoundError',
-} })
 mock.module('../../auth-config', { namedExports: { authTrustedOrigins: () => ['https://mikka.example.test'] } })
 const { prepareRunPreview, issueRunPreview, revokeRunPreview, previewParentOrigin, PreviewRuntimeError } = await import('./runtime')
 
@@ -54,12 +50,12 @@ async function fixture() {
       return { stdout: '' }
     } },
   } as unknown as Sandbox
-  return { state, sandbox, commands, messages, files, connect: async () => sandbox }
+  return { state, sandbox, commands, messages, files, connect: async () => sandbox, running: async () => 'running' as const }
 }
 
 test('preview preserves the frontend running discriminant and isolated one-use entry contract', async () => {
   const f = await fixture()
-  const prepared = await prepareRunPreview(authority, {}, f.connect)
+  const prepared = await prepareRunPreview(authority, {}, f.connect, f.running)
   assert.equal(prepared.running, true)
   if (!prepared.running) throw new Error('Expected a prepared preview')
   const expiry = new Date(Date.now() + 30_000).toISOString()
@@ -91,7 +87,7 @@ test('old, altered or unproved VM ingress is 404 before any gateway write or cap
   ]) {
     const f = await fixture()
     f.state.ingress = value
-    await assert.rejects(prepareRunPreview(authority, {}, f.connect), (error: unknown) => error instanceof PreviewRuntimeError
+    await assert.rejects(prepareRunPreview(authority, {}, f.connect, f.running), (error: unknown) => error instanceof PreviewRuntimeError
       && error.detail === 'configuration' && error.status === 404)
     assert.equal(f.files.size, 0)
     assert.equal(f.messages.length, 0)
@@ -102,9 +98,9 @@ test('old, altered or unproved VM ingress is 404 before any gateway write or cap
 test('no server is a normal unavailable result; version mismatch never issues a ticket', async () => {
   const f = await fixture()
   f.state.available = false
-  assert.equal((await prepareRunPreview(authority, {}, f.connect)).running, false)
+  assert.equal((await prepareRunPreview(authority, {}, f.connect, f.running)).running, false)
   f.state.version = 'stale-running-gateway'
-  await assert.rejects(prepareRunPreview(authority, {}, f.connect), (error: unknown) => error instanceof PreviewRuntimeError && error.detail === 'configuration')
+  await assert.rejects(prepareRunPreview(authority, {}, f.connect, f.running), (error: unknown) => error instanceof PreviewRuntimeError && error.detail === 'configuration')
   assert.deepEqual(f.messages.map(message => message.operation), ['prepare'])
 })
 
@@ -114,9 +110,9 @@ test('local machines, invalid ports, expired credentials and malformed tickets f
     [{ ...authority, machineKind: 'local' as const }, {}],
     [authority, { port: 0 }],
     [{ ...authority, credentialExpiresAt: new Date(0).toISOString() }, {}],
-  ] as const) await assert.rejects(prepareRunPreview(scope, options, f.connect), PreviewRuntimeError)
+  ] as const) await assert.rejects(prepareRunPreview(scope, options, f.connect, f.running), PreviewRuntimeError)
   assert.equal(f.commands.length, 0)
-  const prepared = await prepareRunPreview(authority, {}, f.connect)
+  const prepared = await prepareRunPreview(authority, {}, f.connect, f.running)
   if (!prepared.running) throw new Error('Expected a prepared preview')
   f.state.ticket = 'untrusted/entry?scope=other'
   await assert.rejects(issueRunPreview(prepared, 'https://mikka.example.test', { id: 'lease-synthetic', expiresAt: prepared.expiresAt }), (error: unknown) => error instanceof PreviewRuntimeError && error.detail === 'protocol')
@@ -127,14 +123,14 @@ test('local machines, invalid ports, expired credentials and malformed tickets f
 test('revoke requires the gateway acknowledgement and propagates provider failures with cause', async () => {
   const f = await fixture()
   const target = { runId: authority.runId, ownerId: authority.ownerId, workspaceId: authority.workspaceId, sandboxId: authority.sandboxId! }
-  await revokeRunPreview(target, {}, f.connect)
+  await revokeRunPreview(target, {}, f.connect, f.running)
   assert.deepEqual(f.messages, [{ operation: 'revoke', runId: authority.runId }])
   f.state.revoked = false
-  await assert.rejects(revokeRunPreview(target, {}, f.connect), PreviewRuntimeError)
+  await assert.rejects(revokeRunPreview(target, {}, f.connect, f.running), PreviewRuntimeError)
   const cause = new Error('Synthetic provider failure')
-  await assert.rejects(revokeRunPreview(target, {}, async () => { throw cause }), (error: unknown) => error instanceof PreviewRuntimeError && error.cause === cause)
-  const gone = Object.assign(new Error('Synthetic missing sandbox'), { name: 'SandboxNotFoundError' })
-  await revokeRunPreview(target, {}, async () => { throw gone })
+  await assert.rejects(revokeRunPreview(target, {}, async () => { throw cause }, f.running), (error: unknown) => error instanceof PreviewRuntimeError && error.cause === cause)
+  const gone = new SandboxNotFoundError('Synthetic missing sandbox')
+  await revokeRunPreview(target, {}, async () => { throw gone }, f.running)
 })
 
 test('parent origin uses the exact configured allowlist, never an arbitrary Host or Origin', () => {

@@ -296,8 +296,10 @@ test('the Bot list for a shown workspace is read from that workspace, not the se
   reset()
   const shown = '33333333-3333-4333-8333-333333333333'
   assert.deepEqual(await botActions.listBotsForWorkspace(shown), [{ id: 'bot-in-shown-workspace', name: 'Bot', color: 'encre', shape: 'cercle', coordinator: true }])
-  assert.deepEqual(workspaceContextCalls, [shown])
-  assert.deepEqual(relevant(), [['listOwnerBots', actor.userId, shown]])
+  assert.deepEqual(await botActions.listBots(shown), [{ id: 'bot-in-shown-workspace', name: 'Bot', color: 'encre', shape: 'cercle', coordinator: true }])
+  assert.deepEqual(await botActions.listWorkspaceBots(shown), { bots: [{ id: 'b', name: 'Bot', status: 'running', runningThreads: 2 }] })
+  assert.deepEqual(workspaceContextCalls, [shown, shown])
+  assert.deepEqual(relevant(), [['listOwnerBots', actor.userId, shown], ['listOwnerBots', actor.userId, shown], ['workspaceBots', shown]])
 })
 
 test('bot defaults and workspace bot list actions', async () => {
