@@ -601,7 +601,10 @@ test('loopback evidence links are confined to the local test-account fixture', (
     process.env.MIKKA_LOCAL_TEST_ACCOUNTS = '0'
     assert.equal(validPublicationEvidence(evidence), null)
   } finally {
-    for (const [name, value] of saved) value === undefined ? delete process.env[name] : process.env[name] = value
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
   }
 })
 
