@@ -37,7 +37,7 @@ import { AppLinks, appLinkFromArgv, appLinkScheme } from './app-link'
 import { pickRepo } from './repo-picker'
 import { agentLogins } from './agent-logins'
 import { openBundledWebPage } from './bundled-web'
-import { newWindowMenuItem } from './window-menu'
+import { menuCopy, newWindowMenuItem } from './window-menu'
 import { markStartup } from '../startup'
 
 const APP_URL = __MIKKA_APP_URL__
@@ -492,13 +492,15 @@ const ZOOM_ITEMS: Electron.MenuItemConstructorOptions[] = [
 ]
 
 function installMenu(): void {
-  const fileMenu = { label: 'File', submenu: [newWindowMenuItem(() => openChild(PAGE_URL))] }
+  const locale = app.getLocale()
+  const menu = menuCopy(locale)
+  const fileMenu = { label: menu.file, submenu: [newWindowMenuItem(() => openChild(PAGE_URL), locale)] }
   if (process.platform !== 'darwin') {
     // Windows and Linux show no menu bar; the menu stays only to keep its shortcuts.
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       fileMenu,
-      { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
-      { label: 'View', submenu: [{ label: 'Reload', accelerator: 'CommandOrControl+R', click: reloadApp }, ...ZOOM_ITEMS, ...(app.isPackaged ? [] : [{ role: 'forceReload' as const }, { role: 'toggleDevTools' as const }])] },
+      { label: menu.edit, submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+      { label: menu.view, submenu: [{ label: menu.reload, accelerator: 'CommandOrControl+R', click: reloadApp }, ...ZOOM_ITEMS, ...(app.isPackaged ? [] : [{ role: 'forceReload' as const }, { role: 'toggleDevTools' as const }])] },
     ]))
     return
   }
@@ -520,16 +522,16 @@ function installMenu(): void {
     },
     fileMenu,
     {
-      label: 'Edit',
+      label: menu.edit,
       submenu: [
         { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
         { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
       ],
     },
     {
-      label: 'View',
+      label: menu.view,
       submenu: [
-        { label: 'Reload', accelerator: 'CommandOrControl+R', click: reloadApp }, { role: 'forceReload' },
+        { label: menu.reload, accelerator: 'CommandOrControl+R', click: reloadApp }, { role: 'forceReload' },
         ...(app.isPackaged ? [] : [{ role: 'toggleDevTools' as const }]),
         { type: 'separator' },
         ...ZOOM_ITEMS,
@@ -538,7 +540,7 @@ function installMenu(): void {
       ],
     },
     {
-      label: 'Window',
+      label: menu.window,
       submenu: [
         { role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' },
       ],

@@ -63,7 +63,7 @@ export const GET = defineRoute(
     const pairedHumanSession = pairedMobileCloudUI() && user[enterprisePrincipal]?.kind === 'session'
     return json({
       personalFilesAvailable: pairedHumanSession,
-      organizationSettingsAvailable: pairedHumanSession,
+      organizationSettingsAvailable: pairedHumanSession && Boolean(context.organizationId),
       billingScope: context.role === 'admin' ? { kind: 'workspace', id: context.workspace.id } : organization ? { kind: 'organization', id: organization.id } : null,
       user: { id: profile.id, name: profile.name, email: profile.email, image: profile.image },
       workspace: {

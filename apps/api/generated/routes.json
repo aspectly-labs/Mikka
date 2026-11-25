@@ -1317,7 +1317,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "6cfb8845a90b74c51aa75483bbdd1133cca4fd1089dece39b645dc7af71a4883"
+      "sourceHash": "af55f99da21839912e7a48b4cd3826d8ff8bc99199db867ee9d91ba77d4a381c"
     },
     {
       "path": "/mikka/api/github/manifest",
@@ -2080,7 +2080,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "a7680eb1b65dcc6742faa7d3be302a94f824509532fbd2d59a59f8e3e83dea2a"
+      "sourceHash": "bab2ff030e3ed727d1fd7e8df4aadc37f648983605b392b5bd4388fb4bd7ec81"
     },
     {
       "path": "/mikka/api/mobile/suggestions/[id]",

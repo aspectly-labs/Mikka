@@ -64,9 +64,9 @@ export async function loadWorkspaceContext(requestedId?: string, authenticatedUs
   if (patWorkspace && (requestedId && requestedId !== patWorkspace || selection.workspaceId && selection.workspaceId !== patWorkspace)) throw new WorkspaceError('workspaceAccessDenied')
   // An explicit business target keeps its existing access check. A supplied
   // transport selection is exact: inaccessible choices never fall back home.
-  const { organizationId, ...context } = await readWorkspaceContext(user.id, user.email, user.name, user.image ?? null, patWorkspace ?? requestedId ?? selection.workspaceId ?? '', locale, user)
+  const context = await readWorkspaceContext(user.id, user.email, user.name, user.image ?? null, patWorkspace ?? requestedId ?? selection.workspaceId ?? '', locale, user)
   if (selection.present && !context.choices.some(choice => choice.id === selection.workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
-  if (!(await filterEnterpriseWorkspaceLinks(user, [{ id: context.workspace.id, organizationId }])).length) throw new WorkspaceError('workspaceAccessDenied')
+  if (!(await filterEnterpriseWorkspaceLinks(user, [{ id: context.workspace.id, organizationId: context.organizationId }])).length) throw new WorkspaceError('workspaceAccessDenied')
   return patWorkspace ? { ...context, choices: context.choices.filter(choice => choice.id === patWorkspace) } : context
 }
 
