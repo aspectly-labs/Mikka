@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { betterAuth } from 'better-auth'
+import { emailOTP } from 'better-auth/plugins'
+import { disabledEmailOtpPaths, mikkaTwoFactor, publicOtpError } from './auth-email-otp'
 import { createAuthMiddleware } from 'better-auth/api'
 import { getMigrations } from 'better-auth/db/migration'
 import { Pool } from 'pg'
@@ -19,7 +21,7 @@ const origin = 'https://auth.example.test'
 const secret = 'synthetic-auth-email-secret-with-enough-entropy'
 const root = `${origin}/mikka/api/auth`
 let fixtureNumber = 0
-before(async () => { await (await getMigrations({ database: pool, emailAndPassword: { enabled: true } })).runMigrations() })
+before(async () => { await (await getMigrations({ database: pool, plugins: [mikkaTwoFactor()], emailAndPassword: { enabled: true } })).runMigrations() })
 after(async () => { await pool.end() })
 
 function fixture(autoSend = false, deferred = false) {
@@ -33,6 +35,7 @@ function fixture(autoSend = false, deferred = false) {
   const pending: (() => Promise<void>)[] = []
   const email = createAuthEmail({ origin, apiKey: () => key,
     context: async (): Promise<AuthMailContext> => auth.$context,
+    verificationCode: async (email): Promise<string> => auth.api.createVerificationOTP({ body: { email, type: 'email-verification' } }),
     report: event => reports.push(event),
     ...(deferred ? { background: (task: () => Promise<void>) => { pending.push(task) } } : {}),
     fetch: async (input, init) => {
@@ -44,6 +47,7 @@ function fixture(autoSend = false, deferred = false) {
   })
   const auth = betterAuth({ baseURL: origin, basePath: '/mikka/api/auth', secret, database: pool,
     emailAndPassword: email.emailAndPassword, emailVerification: { ...email.emailVerification, sendOnSignUp: autoSend },
+    plugins: [emailOTP(email.emailOtp), mikkaTwoFactor()], disabledPaths: disabledEmailOtpPaths,
     rateLimit: email.rateLimit, trustedOrigins: [origin], logger: { disabled: true },
     databaseHooks: { user: { update: { before: async () => { if (failUpdate) throw new Error('synthetic update failure') } } } },
     hooks: {
@@ -57,6 +61,8 @@ function fixture(autoSend = false, deferred = false) {
           ctx.setHeader('referrer-policy', 'no-referrer')
           ctx.setHeader('cache-control', 'no-store')
         }
+        const otpError = publicOtpError(ctx.path, ctx.context.returned)
+        if (otpError) return otpError
         const result = await email.publicRequestResult(ctx.path, ctx.context.returned, ctx.request)
         if (result) return Response.json(result, { status: 202, headers: { 'cache-control': 'no-store' } })
       }),
@@ -435,4 +441,98 @@ test('real GitHub profile reader participates in callback linking and rejects un
     assert.equal(response.headers.get('location')===`${origin}/mikka`,verified)
     assert.equal((await pool.query('select count(*)::int n from account where "userId"=$1 and "providerId"=$2',[created.user.id,'github'])).rows[0].n,verified?1:0)
   }
+})
+
+function deliveredCode(f: ReturnType<typeof fixture>) {
+  const code = f.mail.at(-1)?.text.match(/\b(\d{6})\b/)?.[1]
+  assert.ok(code)
+  return code
+}
+
+test('signup email offers a six-digit verification code and the fallback link; redemption is single-use', async () => {
+  const f = fixture(true)
+  const { user: { email } } = await user(f)
+  assert.equal(link(f).pathname, '/mikka/api/auth/verify-email')
+  const otp = deliveredCode(f)
+  const results = await Promise.all([1, 2].map(() => f.post('/email-otp/verify-email', { email, otp })))
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 400])
+  const row = await pool.query('select "emailVerified" from "user" where email=$1', [email])
+  assert.equal(row.rows[0].emailVerified, true)
+})
+
+test('OTP request responses and address throttling are independent of registration; IP limit spans addresses', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  const f = fixture()
+  const { user: { email } } = await user(f)
+  const path = '/email-otp/send-verification-otp'
+  const absent = 'unknown-otp@example.test'
+  const request = (address: string, ip?: string) => f.post(path, { email: address, type: 'sign-in' }, ip)
+  const first = await request(email)
+  const unknown = await request(absent)
+  assert.equal(first.status, 202)
+  assert.equal(unknown.status, 202)
+  assert.deepEqual(await first.json(), await unknown.json())
+  assert.equal(f.mail.length, 1)
+  for (const address of [email, absent]) {
+    const repeat = await f.post('/email-otp/request-password-reset', { email: address.toUpperCase() }, '203.0.113.173')
+    assert.equal(repeat.status, 429)
+  }
+  assert.equal((await request('another-otp@example.test')).status, 202)
+  assert.equal((await request('fourth-otp@example.test')).status, 429)
+})
+
+test('password reset code expires, enforces attempts, and a valid reset revokes sessions and rejects reuse', async () => {
+  for (const scenario of ['expiry', 'attempts', 'success']) {
+    const f = fixture()
+    const { user: { email, id } } = await user(f)
+    assert.equal((await f.post('/email-otp/request-password-reset', { email })).status, 202)
+    const otp = deliveredCode(f)
+    const password = 'synthetic-new-otp-password'
+    const redeem = (code: string, ip?: string) => f.post('/email-otp/reset-password', { email, otp: code, password }, ip)
+    if (scenario === 'expiry') {
+      await pool.query('update verification set "expiresAt"=now()-interval \'1 second\' where identifier=$1', [`forget-password-otp-${email}`])
+    } else if (scenario === 'attempts') {
+      for (let i = 0; i < 3; i++) assert.equal((await redeem(otp === '000000' ? '000001' : '000000', `203.0.113.${40+i}`)).status, 400)
+    } else {
+      assert.equal((await redeem(otp)).status, 200)
+      const { rows } = await pool.query('select id from session where "userId"=$1', [id])
+      assert.equal(rows.length, 0)
+      assert.equal((await f.post('/sign-in/email', { email, password })).status, 200)
+    }
+    const rejected = await redeem(otp)
+    assert.equal(rejected.status, 400)
+    assert.deepEqual(await rejected.json(), { code: 'INVALID_OTP', message: 'Invalid or expired code' })
+  }
+})
+
+test('code sign-in creates a session once and enrolled users receive the native 2FA challenge', async () => {
+  for (const enrolled of [false, true]) {
+    const f = fixture()
+    const { user: { email, id } } = await user(f)
+    await pool.query('update "user" set "emailVerified"=true, "twoFactorEnabled"=$2 where id=$1', [id, enrolled])
+    assert.equal((await f.post('/email-otp/send-verification-otp', { email, type: 'sign-in' })).status, 202)
+    const body = { email, otp: deliveredCode(f) }
+    const response = await f.post('/sign-in/email-otp', body)
+    assert.equal(response.status, 200)
+    const data = await response.json()
+    if (enrolled) {
+      assert.equal(data.twoFactorRedirect, true)
+      assert.equal(data.token, undefined)
+    } else {
+      assert.equal(data.user.id, id)
+      assert.ok(data.token)
+    }
+    assert.equal((await f.post('/sign-in/email-otp', body)).status, 400)
+  }
+})
+
+test('a code issued before an address moves cannot authenticate its new owner', async () => {
+  const f = fixture()
+  const { user: original } = await user(f)
+  const { user: replacement } = await user(f)
+  assert.equal((await f.post('/email-otp/send-verification-otp', { email: original.email, type: 'sign-in' })).status, 202)
+  const otp = deliveredCode(f)
+  await pool.query('update "user" set email=$2 where id=$1', [original.id, 'moved-otp@example.test'])
+  await pool.query('update "user" set email=$2 where id=$1', [replacement.id, original.email])
+  assert.equal((await f.post('/sign-in/email-otp', { email: original.email, otp })).status, 400)
 })

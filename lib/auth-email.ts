@@ -1,14 +1,18 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { APIError, type BetterAuthOptions, type User, type DBAdapter } from 'better-auth'
 import { getCurrentAdapter, runWithTransaction } from '@better-auth/core/context'
+import type { EmailOTPOptions } from 'better-auth/plugins/email-otp'
 import { verifyJWT } from 'better-auth/crypto'
+import { otpPurposeByPath, otpRequestPaths } from './auth-email-otp'
 import { deliverMail, mailConfigured, mailFrom } from './mail-delivery'
 import { toMikkaErrorContract } from './primitives/error-contract'
 
 export const AUTH_EMAIL_TTL_SECONDS = 15 * 60
+const EMAIL_OTP_TTL_SECONDS = 5 * 60
 export const AUTH_EMAIL_FROM = mailFrom()
 
 type VerificationStore = {
+  createVerificationValue(input: { identifier: string; value: string; expiresAt: Date }): Promise<unknown>
   reserveVerificationValue(input: { identifier: string; value: string; expiresAt: Date }): Promise<boolean>
   consumeVerificationValue(identifier: string): Promise<{ value: string } | null>
   findVerificationValue(identifier: string): Promise<{ value: string; expiresAt: Date } | null>
@@ -19,8 +23,10 @@ export type AuthMailContext = { secret: string; internalAdapter: VerificationSto
 type MailContext = AuthMailContext & { adapter: DBAdapter }
 type HookContext = { path?: string; body?: Record<string, unknown>; query?: Record<string, unknown>; request?: Request; context: MailContext }
 type MailKind = 'verification' | 'password-reset'
+const otpSubjects = { 'sign-in': 'Sign in to Mikka', 'email-verification': 'Verify your Mikka email address', 'forget-password': 'Reset your Mikka password' }
+const mailRequestPaths = ['/send-verification-email', '/request-password-reset', ...otpRequestPaths]
 type MailData = { user: { id: string; email: string }; url: string; token: string }
-type Delivery = { kind: MailKind; outcome: 'accepted_by_provider' | 'failed' | 'throttled' }
+type Delivery = { kind: MailKind | 'one-time-code'; outcome: 'accepted_by_provider' | 'failed' | 'throttled' }
 
 function digest(value: string) { return createHash('sha256').update(value).digest('hex') }
 function invalidLink(stage = 'validation'): never {
@@ -44,6 +50,7 @@ export function createAuthEmail(options: {
   origin: string
   apiKey: () => string | undefined
   context: () => Promise<AuthMailContext>
+  verificationCode?: (email: string) => Promise<string>
   fetch?: typeof fetch
   report?: (event: Delivery) => void
   background?: (task: () => Promise<void>) => void
@@ -67,6 +74,18 @@ export function createAuthEmail(options: {
     try { url = new URL(value, origin) } catch { invalidLink() }
     if (url.href !== expected || url.username || url.password) invalidLink()
     return expected
+  }
+
+  function otpOwnerKey(secret: string, purpose: string, address: string, code: string) {
+    const key = createHmac('sha256', secret).update(JSON.stringify([purpose, address.toLowerCase(), code])).digest('hex')
+    return `mikka-otp-owner:${key}`
+  }
+
+  async function bindCode(context: AuthMailContext, purpose: string, address: string, code: string, userId: string) {
+    const identifier = otpOwnerKey(context.secret, purpose, address, code)
+    await context.internalAdapter.createVerificationValue({
+      identifier, value: userId, expiresAt: new Date(Date.now() + EMAIL_OTP_TTL_SECONDS * 1000),
+    })
   }
 
   async function send(kind: MailKind, data: MailData) {
@@ -105,9 +124,12 @@ export function createAuthEmail(options: {
       url.searchParams.set('callbackURL', resetReturn)
     }
     const subject = kind === 'verification' ? 'Verify your Mikka email address' : 'Reset your Mikka password'
+    const code = kind === 'verification' ? await options.verificationCode?.(data.user.email) : undefined
+    if (code) await bindCode(context, 'email-verification', data.user.email, code, data.user.id)
+    const instructions = code ? `Your verification code is ${code}. It expires in 5 minutes. You can also use this link:\n\n` : ''
     const deliver = async () => { try {
       await deliverMail({ to: data.user.email, subject,
-        text: `${subject}\n\n${url.href}\n\nThis link expires in 15 minutes. If you did not request this, ignore this email.` }, { apiKey: key, fetch: options.fetch })
+        text: `${subject}\n\n${instructions}${url.href}\n\nThis link expires in 15 minutes. If you did not request this, ignore this email.` }, { apiKey: key, fetch: options.fetch })
       report({ kind, outcome: 'accepted_by_provider' })
     } catch {
       report({ kind, outcome: 'failed' })
@@ -121,6 +143,27 @@ export function createAuthEmail(options: {
   }
 
   return {
+    emailOtp: {
+      disableSignUp: true, expiresIn: EMAIL_OTP_TTL_SECONDS, allowedAttempts: 3, otpLength: 6,
+      storeOTP: { hash: async code => createHmac('sha256', (await options.context()).secret).update('mikka-email-otp\0').update(code).digest('hex') },
+      async sendVerificationOTP({ email, otp, type }, endpoint) {
+        if (type === 'change-email') unavailable()
+        const account = await endpoint?.context.internalAdapter.findUserByEmail(email)
+        if (!account) return
+        await bindCode(await options.context(), type, email, otp, account.user.id)
+        const subject = otpSubjects[type]
+        const deliver = async () => {
+          try {
+            await deliverMail({ to: email, subject, text: `${subject}\n\nYour code is ${otp}. It expires in 5 minutes. If you did not request this, ignore this email.` },
+              { apiKey: options.apiKey(), fetch: options.fetch })
+            report({ kind: 'one-time-code', outcome: 'accepted_by_provider' })
+          } catch { report({ kind: 'one-time-code', outcome: 'failed' }) }
+        }
+        if (options.background) {
+          try { options.background(deliver) } catch { report({ kind: 'one-time-code', outcome: 'failed' }) }
+        } else await deliver()
+      },
+    } satisfies EmailOTPOptions,
     emailVerification: {
       expiresIn: AUTH_EMAIL_TTL_SECONDS, sendOnSignUp: true, sendOnSignIn: false, autoSignInAfterVerification: false,
       sendVerificationEmail: async (data: MailData) => send('verification', data),
@@ -137,8 +180,8 @@ export function createAuthEmail(options: {
       '/reset-password': { window: 60, max: 5 },
     } } satisfies BetterAuthOptions['rateLimit'],
     async before(ctx: HookContext) {
-      if (ctx.request && ['/send-verification-email', '/request-password-reset'].includes(ctx.path ?? '')) requestStart.set(ctx.request, Date.now())
-      if (['/send-verification-email', '/request-password-reset', '/reset-password'].includes(ctx.path ?? '') && ctx.request) {
+      if (ctx.request && mailRequestPaths.includes(ctx.path ?? '')) requestStart.set(ctx.request, Date.now())
+      if ([...mailRequestPaths, '/reset-password', '/email-otp/reset-password', '/email-otp/verify-email', '/sign-in/email-otp'].includes(ctx.path ?? '') && ctx.request) {
         const requestOrigin = ctx.request.headers.get('origin')
         if ((requestOrigin && requestOrigin !== origin) || ctx.request.headers.get('sec-fetch-site') === 'cross-site') {
           throw new APIError('FORBIDDEN', {
@@ -151,7 +194,32 @@ export function createAuthEmail(options: {
       if (ctx.path === '/send-verification-email') callback(ctx.body?.callbackURL, verifyReturn)
       if (ctx.path === '/request-password-reset') callback(ctx.body?.redirectTo, resetReturn)
       if (ctx.path?.startsWith('/reset-password/')) callback(ctx.query?.callbackURL, resetReturn, false)
-      if (['/send-verification-email', '/request-password-reset'].includes(ctx.path ?? '') && !mailConfigured(process.env, options.apiKey())) unavailable()
+      if (mailRequestPaths.includes(ctx.path ?? '') && !mailConfigured(process.env, options.apiKey())) unavailable()
+      if (otpRequestPaths.includes(ctx.path ?? '') && typeof ctx.body?.email === 'string' && ctx.body.email.length <= 320) {
+        const minute = Math.floor(Date.now() / 60_000)
+        const allowed = await ctx.context.internalAdapter.reserveVerificationValue({
+          identifier: `mikka-otp-rate:${digest(ctx.body.email.trim().toLowerCase())}:${minute}`,
+          value: 'reserved', expiresAt: new Date(Date.now() + 120_000),
+        })
+        if (!allowed) throw new APIError('TOO_MANY_REQUESTS', { code: 'RATE_LIMITED', message: 'Try again later' })
+      }
+      const purpose = otpPurposeByPath.get(ctx.path ?? '')
+      if (purpose && typeof ctx.body?.email === 'string' && typeof ctx.body.otp === 'string') {
+        const address = ctx.body.email.toLowerCase()
+        const identifier = otpOwnerKey(ctx.context.secret, purpose, address, ctx.body.otp)
+        const original = ctx.context.internalAdapter
+        // Better Auth validates and spends the code before resolving the user.
+        // Pin that lookup to the original owner even if the address was recycled.
+        return { context: { context: { internalAdapter: { ...original,
+          findUserByEmail: async (requested: string) => {
+            const proof = await original.findVerificationValue(identifier)
+            const user = proof && proof.expiresAt > new Date() ? await original.findUserById(proof.value) : null
+            if (!user || user.email.toLowerCase() !== address || requested.toLowerCase() !== address)
+              throw new APIError('BAD_REQUEST', { code: 'INVALID_OTP', message: 'Invalid or expired code' })
+            return { user, accounts: [] }
+          },
+        } } } }
+      }
       if (ctx.path === '/reset-password') {
         const token = ctx.body?.token || ctx.query?.token
         if (typeof token !== 'string' || !token || token.length > 4096) invalidLink('reset_token')
@@ -249,8 +317,8 @@ export function createAuthEmail(options: {
       } } } }
     },
     async publicRequestResult(path: string | undefined, result: unknown, request?: Request) {
-      if (!['/send-verification-email', '/request-password-reset'].includes(path ?? '')) return undefined
-      const success = result && typeof result === 'object' && 'status' in result && result.status === true
+      if (!mailRequestPaths.includes(path ?? '')) return undefined
+      const success = result && typeof result === 'object' && (('status' in result && result.status === true) || ('success' in result && result.success === true))
       const deliveryFailure = result instanceof APIError && result.body?.code === 'AUTH_EMAIL_DELIVERY_UNAVAILABLE'
       if (!success && !deliveryFailure) return undefined
       const start = request && requestStart.get(request)
@@ -260,7 +328,7 @@ export function createAuthEmail(options: {
       }
       // Same public outcome for unknown/verified/eligible addresses and delivery failures.
       // This is NOT a delivery receipt or a promise to retry. Failures are reported server-side.
-      return { status: true, delivery: 'unconfirmed' as const, message: 'Request processed. This response does not confirm whether an email was sent.' }
+      return { ...(otpRequestPaths.includes(path ?? '') ? { success: true } : {}), status: true, delivery: 'unconfirmed' as const, message: 'Request processed. This response does not confirm whether an email was sent.' }
     },
     base,
   }
