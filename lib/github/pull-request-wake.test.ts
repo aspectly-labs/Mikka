@@ -9,6 +9,8 @@ test('GitHub wake events match review comments, actual conflicts and failed suit
   assert.equal(pullWakeEvent('pull_request_review_comment', { ...base, sender: { type: 'Bot' } }), null)
   assert.equal(pullWakeEvent('pull_request', { ...base, action: 'synchronize' })?.preference, 'prWakeOnConflict')
   assert.equal(pullWakeEvent('pull_request', { ...base, action: 'synchronize', pull_request: { ...base.pull_request, mergeable: null } }), null)
+  const pending = pullWakeEvent('pull_request', { ...base, action: 'synchronize', pull_request: { ...base.pull_request, mergeable: null, head: { sha: 'a'.repeat(40) } } })
+  assert.ok(pending && 'checkConflict' in pending && pending.checkConflict)
   const check = { ...base, action: 'completed', check_suite: { id: 1, head_sha: 'a'.repeat(40), status: 'completed', conclusion: 'failure', pull_requests: [{ number: 8 }] } }
   assert.equal(pullWakeEvent('check_suite', check)?.preference, 'prWakeOnCiFailure')
   assert.equal(pullWakeEvent('check_suite', { ...check, check_suite: { ...check.check_suite, conclusion: 'success' } }), null)
