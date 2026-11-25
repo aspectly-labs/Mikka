@@ -1217,7 +1217,8 @@
       "loadedFilterNotice": "Filtering loaded entries",
       "title": "Audit log",
       "allActors": "All actors",
-      "eventId": "Event ID"
+      "eventId": "Event ID",
+      "unknownAction": "recorded “{action}”"
     },
     "memory": {
       "correct": "Correct",
