@@ -295,7 +295,7 @@
         "title": "Workspace general"
       },
       "connections": {
-        "keywords": "plugins integrations connections apps mcp",
+        "keywords": "plugins integrations connections apps custom mcp servers",
         "title": "Plugins"
       },
       "usage": {
