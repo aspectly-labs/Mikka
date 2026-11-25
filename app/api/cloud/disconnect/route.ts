@@ -1,3 +1,8 @@
-import { withRequestLog } from '@/lib/request-log'
 import { cloudRoutes } from '@/lib/cloud-services/routes'
-export const POST = withRequestLog('/api/cloud/disconnect', cloudRoutes.disconnect)
+import { defineRoute } from '@/lib/primitives/define-route'
+
+// Self-hosted edition gate, fresh browser session (readServerSession), and selfHostedAddress origin check run inside cloudRoutes.
+export const POST = defineRoute(
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/cloud/disconnect' },
+  ({ request }) => cloudRoutes.disconnect(request),
+)

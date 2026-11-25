@@ -38,7 +38,9 @@ before(async () => {
   if (!available) return
   mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) } })
   mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en', getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
-  mock.module('@/lib/session', { namedExports: { getSession: async () => currentUser ? { user: currentUser, session: { id: sessionId } } : null } })
+  const testSession = async () => (currentUser ? { user: currentUser, session: { id: sessionId } } : null)
+  mock.module('@/lib/session', { namedExports: { getSession: testSession } })
+  mock.module('@/lib/api-auth', { namedExports: { auth: { api: { getSession: testSession } }, getApiSession: testSession, apiWorkspaceAllowed: () => true } })
   mock.module('@/lib/suggestions/sources', { namedExports: { connectedComposioApps: async () => [] } })
   ;({ pool } = await import('@/lib/db'))
   pool.options.max = 1
