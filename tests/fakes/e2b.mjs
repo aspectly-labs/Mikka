@@ -11,13 +11,13 @@ function connectFrame(value, end = false) {
 }
 
 /** e2b@2.61 control API + envd HTTP/Connect JSON protocol, not a Sandbox mock. */
-export function createE2BFake({ now = () => Date.now(), templates = ['base', 'desktop', 'claude', 'codex'], limit = 8, commands = {}, processes } = {}) {
+export function createE2BFake({ now = () => Date.now(), templates = ['base', 'desktop', 'claude', 'codex'], limit = 8, commands = {}, processes, domain = 'localhost' } = {}) {
   const requests = [], sandboxes = new Map(), idempotency = new Map()
   let sequence = 0, pid = 100
   const state = { limit, templates: new Set(templates), commands, createError: null,
     metrics: /** @type {null | ((input: { sandbox: { id: string }, url: URL }) => unknown[])} */ (null) }
   const view = sandbox => ({ sandboxID: sandbox.id, templateID: sandbox.template, clientID: 'local-client',
-    domain: 'localhost', envdVersion: '0.5.6', envdAccessToken: sandbox.access,
+    domain, envdVersion: '0.5.6', envdAccessToken: sandbox.access,
     startedAt: new Date(sandbox.created).toISOString(), endAt: new Date(sandbox.expires).toISOString(),
     metadata: sandbox.metadata, state: sandbox.state, cpuCount: 1, memoryMB: 512 })
   const current = id => {

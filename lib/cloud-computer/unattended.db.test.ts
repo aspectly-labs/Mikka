@@ -1,9 +1,13 @@
+import '../../tests/support/server-only.mjs'
 import { DECISION_MODEL } from '../coordinator/decision'
 import assert from 'node:assert/strict'
 import { randomUUID,createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { before,after,beforeEach,mock,test } from 'node:test'
+import { Sandbox } from 'e2b'
 import { Pool } from 'pg'
+import { LOCAL_E2B_KEY } from '../../tests/fakes/e2b.mjs'
+import { startExternalServices } from '../../tests/fakes/external-services.mjs'
 import { applySettingsMigration } from '../../tests/support/settings-migration'
 import { browserEffects, type BrowserEffect, type BrowserMutation, type VisualObservation } from './visual-contract'
 import type { judgeVisualBrowserAction } from './visual-model'
@@ -29,8 +33,15 @@ function judgment(effect:BrowserEffect='browse'):Awaited<ReturnType<typeof judge
  return {scope:'within_task',effect,execution:{executionId:randomUUID(),modelId:DECISION_MODEL,providerGenerationId:'synthetic-provider',startedAt:new Date().toISOString(),completedAt:new Date().toISOString(),requestDigest:'b'.repeat(64),imageDigests:[imageDigest],vision:'image-input-submitted'}}
 }
 const realFetch=globalThis.fetch
+let services:Awaited<ReturnType<typeof startExternalServices>>|null=null
+const savedE2BEnv={apiUrl:process.env.E2B_API_URL,sandboxUrl:process.env.E2B_SANDBOX_URL,httpVersion:process.env.E2B_HTTP_VERSION}
 before(async()=>{
  if(!enabled)return
+ services=await startExternalServices()
+ process.env.E2B_API_URL=services.e2bOptions.apiUrl
+ process.env.E2B_SANDBOX_URL=services.e2bOptions.sandboxUrl
+ process.env.E2B_HTTP_VERSION='1.1'
+ const createdSandbox=await Sandbox.create('desktop',services.e2bOptions)
  admin=new Pool({connectionString:database});await admin.query(`CREATE SCHEMA "${schema}"`)
  pool=new Pool({connectionString:database,options:`-c search_path=${schema}`,max:6})
  await pool.query(`CREATE TABLE "user"(id text PRIMARY KEY);INSERT INTO "user" VALUES('alice'),('bob');CREATE TABLE agent_runs(id uuid PRIMARY KEY);CREATE TABLE devices(id uuid PRIMARY KEY);CREATE TABLE suggestions(id uuid PRIMARY KEY,"botId" uuid);CREATE TABLE device_repos(id uuid PRIMARY KEY)`)
@@ -46,7 +57,7 @@ before(async()=>{
  await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,$4)',[botId,actor.userId,actor.workspaceId,'Fixture'])
  await pool.query('INSERT INTO agent_kit_heads(owner_id,bot_id,workspace_id) VALUES($1,$2,$3)',[actor.userId,botId,actor.workspaceId])
  await pool.query('INSERT INTO workspace_computer_policies("workspaceId") VALUES($1)',[actor.workspaceId])
- await pool.query('INSERT INTO cloud_machines("workspaceId","ownerId","operationId","sandboxId",state,"runtimeReady") VALUES($1,$2,$3,$4,$5,true)',[actor.workspaceId,actor.userId,randomUUID(),'isolated-test-machine','running'])
+ await pool.query('INSERT INTO cloud_machines("workspaceId","ownerId","operationId","sandboxId",state,"runtimeReady") VALUES($1,$2,$3,$4,$5,true)',[actor.workspaceId,actor.userId,randomUUID(),createdSandbox.sandboxId,'running'])
  await pool.query(`INSERT INTO bot_subagents(id,"ownerId","workspaceId","botId",task,status,epoch,"targetId") VALUES($1,$2,$3,$4,'Open details','running',1,'chromium-target')`,[subagentId,actor.userId,actor.workspaceId,botId])
  await pool.query('INSERT INTO credentials VALUES($1,$2,$3,$4,NULL)',[credentialId,actor.userId,target.origin,'saved-user'])
  await pool.query('INSERT INTO credential_secrets VALUES($1,$2)',[credentialId,'secret-version-1'])
@@ -67,7 +78,12 @@ before(async()=>{
   grant:async(_sandbox:unknown,_row:unknown,_role:unknown,action:any)=>{assert.equal(action.operation,'submit');submissions++;return {endpoint:'https://owned-broker.invalid',expiresAt:Date.now()+60000}},
   endpointPath:(endpoint:string,path:string)=>endpoint+path,
  }})
- mock.module('@/lib/computer/e2b-provider',{namedExports:{connectComputer:async()=>({sandboxId:'isolated-test-machine'}),createComputer:async()=>({sandboxId:'isolated-test-machine'}),installComputerRuntime:async()=>undefined}})
+ mock.module('@/lib/secrets/e2b-runtime',{namedExports:{
+  sandboxKeyOwner:async(workspaceId:string,sandboxId:string)=>(await pool.query<{ownerId:string}>('SELECT "ownerId" FROM cloud_machines WHERE "sandboxId"=$1 AND "workspaceId"=$2 LIMIT 1',[sandboxId,workspaceId])).rows[0]?.ownerId??null,
+  e2bApiKey:async()=>LOCAL_E2B_KEY,
+  computerTemplate:()=>'desktop',
+  withE2BErrors:async(_owner:string,_creating:boolean,run:()=>Promise<unknown>)=>run(),
+ }})
  mock.module('./subagent-browser',{namedExports:{resolveSubagentBrowserTarget:async()=>target}})
  mock.module('@/lib/credentials/runtime',{namedExports:{credentialStore:{authorize:async()=>undefined,lease:async(_caller:unknown,_origin:unknown,_target:unknown,_username:unknown,_force:unknown,expected:any)=>{assert.equal(expected.credentialId,credentialId);assert.equal(expected.revision,'secret-version-1');leaseCalls++;return {status:'ready',lease:'synthetic-lease'}}},executeCredentialLease:async()=>({status:loginMode,origin:target.origin})}})
  const actions=await import('./action-reviews');browserAction=actions.browserAction;execute=actions.executeBrowserAction
@@ -79,7 +95,7 @@ beforeEach(async()=>{
  effects=0;mode='success';receipt=new Map();executableInputs=new Map();leaseCalls=0;submissions=0;loginMode='session_applied'
  await pool.query(`UPDATE bot_subagents SET status='running',needs=NULL,"activeActionId"=NULL,epoch=1,"targetId"='chromium-target';UPDATE pending_actions SET status='declined' WHERE status IN ('running','pending');UPDATE agent_kit_heads SET external_write_permissions='{}',external_write_policy_version=0;UPDATE workspace_computer_policies SET permission='allow',version=0,external_write_permissions='{}',external_write_policy_version=0;UPDATE credentials SET revoked_at=NULL;UPDATE credential_secrets SET nonce='secret-version-1'`)
 })
-after(async()=>{if(enabled){console.log(`Retained unattended DB schema: ${schema}`);globalThis.fetch=realFetch;await pool.end();await admin.end()}})
+after(async()=>{if(enabled){console.log(`Retained unattended DB schema: ${schema}`);globalThis.fetch=realFetch;for(const [k,v] of [['E2B_API_URL',savedE2BEnv.apiUrl],['E2B_SANDBOX_URL',savedE2BEnv.sandboxUrl],['E2B_HTTP_VERSION',savedE2BEnv.httpVersion]] as const){if(v===undefined)delete process.env[k];else process.env[k]=v}await services?.close();await pool.end();await admin.end()}})
 async function propose(effect:BrowserEffect='browse') {return browserAction(pool,actor,botId,subagentId,{action:'click',x:20,y:40},'Open the requested control',observation(),judgment(effect))}
 async function stored(id:string){return (await pool.query('SELECT * FROM pending_actions WHERE id=$1',[id])).rows[0]}
 function inputFor(actionId:string,effect:BrowserEffect='browse',mutation:BrowserMutation={action:'click',x:20,y:40}):import('./action-reviews').BrowserActionInput {
@@ -204,7 +220,7 @@ test('machine allocation does not hold a SQL connection while the provider is cr
 
 test('saved login covers guarded fill and one same-document submission, never two approval cards',{skip:!enabled},async()=>{
  loginMode='guarded'
- globalThis.fetch=(async(input:any)=>{assert.equal(String(input),'https://owned-broker.invalid/credentials/continue');return Response.json({resumed:true,operation:'submit'})}) as typeof fetch
+ globalThis.fetch=(async(input:any,init?:RequestInit)=>{const url=new URL(input instanceof Request?input.url:String(input));if(services && url.origin===services.origin)return realFetch(input,init);assert.equal(url.href,'https://owned-broker.invalid/credentials/continue');return Response.json({resumed:true,operation:'submit'})}) as typeof fetch
  try {
   const result=await proposeLogin(pool,{...actor,botId,subagentId},target)
   assert.equal(result.status,'resumed');assert.equal(leaseCalls,1);assert.equal(submissions,1)

@@ -1,6 +1,10 @@
+import '../../tests/support/server-only.mjs'
 import assert from 'node:assert/strict'
-import { before, beforeEach, mock, test } from 'node:test'
+import { after, before, beforeEach, mock, test } from 'node:test'
+import { Sandbox } from 'e2b'
 import type { Pool } from 'pg'
+import { LOCAL_E2B_KEY } from '../../tests/fakes/e2b.mjs'
+import { startExternalServices } from '../../tests/fakes/external-services.mjs'
 import { credentialPlanSchema, credentialPlanDigest, credentialReviewSummary, type CredentialPlan } from './credential-plan'
 
 const userId = 'owner'
@@ -31,7 +35,16 @@ const pool = {
   } },
 } as unknown as Pool
 let execute: typeof import('./credential-reviews').executeCredentialOperation
+let services: Awaited<ReturnType<typeof startExternalServices>>
+let sandboxId = ''
+const realFetch = globalThis.fetch
+const savedE2BEnv = { apiUrl: process.env.E2B_API_URL, sandboxUrl: process.env.E2B_SANDBOX_URL, httpVersion: process.env.E2B_HTTP_VERSION }
 before(async () => {
+  services = await startExternalServices()
+  process.env.E2B_API_URL = services.e2bOptions.apiUrl
+  process.env.E2B_SANDBOX_URL = services.e2bOptions.sandboxUrl
+  process.env.E2B_HTTP_VERSION = '1.1'
+  sandboxId = (await Sandbox.create('desktop', services.e2bOptions)).sandboxId
   mock.module('@/lib/subscription-runtime', { namedExports: { authorizeSubscriptionWorkspace: async (owner: string, workspace: string) => { if (!authorized || owner !== userId || workspace !== saved.workspaceId) throw new Error('denied') } } })
   mock.module('./subagents', { namedExports: { SubagentStore: class {
     async get() { return row }
@@ -43,19 +56,36 @@ before(async () => {
     executeCredentialLease: async () => ({ status: 'guarded' }),
   } })
   mock.module('./subagent-browser', { namedExports: { resolveSubagentBrowserTarget: async () => freshTarget } })
-  mock.module('@/lib/computer/e2b-provider', { namedExports: { connectComputer: async () => ({}) } })
+  mock.module('@/lib/secrets/e2b-runtime', { namedExports: {
+    sandboxKeyOwner: async () => userId,
+    e2bApiKey: async () => LOCAL_E2B_KEY,
+    computerTemplate: () => 'desktop',
+    withE2BErrors: async (_owner: string, _creating: boolean, run: () => Promise<unknown>) => run(),
+  } })
   mock.module('./runtime', { namedExports: {
     grant: async (...args: unknown[]) => { grants.push(args); return { endpoint: 'https://gateway.invalid/agents/case' } },
     endpointPath: (endpoint: string, path: string) => endpoint + path,
   } })
   execute = (await import('./credential-reviews')).executeCredentialOperation
 })
+after(async () => {
+  globalThis.fetch = realFetch
+  for (const [key, value] of [['E2B_API_URL', savedE2BEnv.apiUrl], ['E2B_SANDBOX_URL', savedE2BEnv.sandboxUrl], ['E2B_HTTP_VERSION', savedE2BEnv.httpVersion]] as const) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  await services.close()
+})
 beforeEach(() => {
   saved = envelope(); authorized = true; consented = true; claimed = true; grants = []; updates = []; requests = 0; leaseCalls = 0
   leaseStatus = { status: 'ready', lease: 'synthetic-lease' }
-  row = { id: saved.subagentId, ownerId: userId, workspaceId: saved.workspaceId, botId: saved.botId, status: 'running', epoch: saved.epoch, targetId: saved.targetId, needs: null, activeActionId: saved.actionId, permissionVersion: saved.permissionVersion, permission: 'ask', sandboxId: 'synthetic' }
+  row = { id: saved.subagentId, ownerId: userId, workspaceId: saved.workspaceId, botId: saved.botId, status: 'running', epoch: saved.epoch, targetId: saved.targetId, needs: null, activeActionId: saved.actionId, permissionVersion: saved.permissionVersion, permission: 'ask', sandboxId }
   freshTarget = { targetId: saved.targetId, origin: saved.origin, observedInputs: saved.inputs.map(input => ({ ...input, loaderId: saved.loaderId, epoch: saved.epoch, permissionVersion: saved.permissionVersion })) }
-  mock.method(globalThis, 'fetch', async () => { requests++; return Response.json({ resumed: true, operation: 'submit' }) })
+  mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    if (url.origin === services.origin) return realFetch(input, init)
+    requests++; return Response.json({ resumed: true, operation: 'submit' })
+  })
 })
 test('digest binds the owner, exact nodes, epoch, policy, origin and shown summary', () => {
   const p = plan(), digest = credentialPlanDigest(userId, p)
@@ -115,7 +145,11 @@ test('no usable saved login marks the task needs_you and records needs_login', a
   assert.ok(JSON.stringify(updates).includes('login unavailable'))
 })
 test('unknown external continuation outcome never retries or claims resumed', async () => {
-  mock.method(globalThis, 'fetch', async () => { requests++; throw new Error('unknown') })
+  mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    if (url.origin === services.origin) return realFetch(input, init)
+    requests++; throw new Error('unknown')
+  })
   assert.deepEqual(await execute(pool, userId, saved), { error: 'browserActionOutcomeUnknown' })
   assert.equal(requests, 1); assert.equal(grants.length, 1)
   assert.ok(JSON.stringify(updates).includes('Credential action outcome unknown'))
