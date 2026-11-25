@@ -1,10 +1,11 @@
+import '../../../tests/support/server-only.mjs'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { after, before, mock, test, type TestContext } from 'node:test'
 import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { diffSnapshot, WorkspaceReviewError, type DiffSnapshot, type ReviewAnchor } from '@mikka/protocol/coding-workspace-review'
-import { GitHubAccessError } from '../../github/user-access-error'
 import type { RequestBudget } from '../../request-budget'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import { diffDigest } from './patch'
 import type { NativeReviewWrite } from './github-write'
 
@@ -23,17 +24,37 @@ const commit = (label: string) => gitObject('commit', `tree ${emptyTree}\nauthor
 const baseSha = commit('base'), headSha = commit('reviewed head'), oldCommentSha = commit('original comment'), movedSha = commit('force push')
 const code = (expected: string) => (error: unknown) =>
   (error instanceof CodingWorkspaceError || error instanceof WorkspaceReviewError) && error.code === expected
-type UserCredential = Awaited<ReturnType<typeof import('../../github/user-access')['githubTokenForUser']>>
-const userToken = mock.fn(async (_userId: string, _options: { minValidityMs?: number; budget?: RequestBudget } = {}): Promise<UserCredential> => {
+type UserCredential = { token: string; githubAccountId: string; expiresAt: Date | null }
+const userToken = mock.fn(async (_userId: string, _options: { minValidityMs?: number; budget?: RequestBudget } = {}): Promise<UserCredential | null> => {
   throw new Error('A write fixture must install the actual viewer credential')
 })
-const readCredential = mock.fn(async () => { throw new Error('An installation/read grant cannot authorize a native write') })
-const credentialModule = mock.module(new URL('../../github/user-access.ts', import.meta.url).href, { namedExports: {
-  githubTokenForUser: userToken, githubRepositoryReadCredential: readCredential, GitHubAccessError,
+let userEndpointStatus = 200
+let githubHttp: Awaited<ReturnType<typeof startGitHubAccessHttp>>
+const realFetch = globalThis.fetch
+const readCredential = {
+  mock: {
+    resetCalls() { githubHttp.requests.length = 0 },
+    callCount() { return githubHttp.requests.filter(request => request.pathname.startsWith('/user/installations')).length },
+  },
+}
+const authModule = mock.module(new URL('../../auth.ts', import.meta.url).href, { namedExports: { auth: {
+  api: {}, $context: Promise.resolve({ internalAdapter: { findAccounts: async () => [] } }),
+} } })
+const connectionModule = mock.module(new URL('../../github/connection.ts', import.meta.url).href, { namedExports: {
+  githubConnectionToken: userToken,
 } })
 let native: typeof import('./github-write')
-before(async () => { native = await import('./github-write') })
-after(() => credentialModule.restore())
+before(async () => {
+  githubHttp = await startGitHubAccessHttp({
+    onRequest: url => {
+      if (url.pathname !== '/user') return undefined
+      if (userEndpointStatus !== 200) return new Response('provider error', { status: userEndpointStatus })
+      return Response.json({ id: accountId, login: 'viewer' })
+    },
+  })
+  native = await import('./github-write')
+})
+after(async () => { authModule.restore(); connectionModule.restore(); await githubHttp.close() })
 
 function snapshot(): DiffSnapshot {
   return diffSnapshot.parse({ id: randomUUID(), identity: { version: 1, runId: randomUUID(), repoId: randomUUID(),
@@ -89,6 +110,7 @@ function fixture(t: TestContext, kind: NativeReviewWrite['kind'] = 'github_revie
   }
   const calls: { url: URL; method: string; payload?: Record<string, unknown> }[] = [], events: string[] = []
   const budget: RequestBudget = { deadline: Date.now() + 30_000, signal: new AbortController().signal }
+  userEndpointStatus = 200
   userToken.mock.resetCalls(); readCredential.mock.resetCalls()
   userToken.mock.mockImplementation(async (userId, options) => {
     events.push(`token:${userId}`)
@@ -96,8 +118,12 @@ function fixture(t: TestContext, kind: NativeReviewWrite['kind'] = 'github_revie
     assert.deepEqual(options, { minValidityMs: 45_000, budget })
     return { token, githubAccountId: accountId, expiresAt: new Date(Date.now() + 60_000) }
   })
+  const routedAuth = githubHttp.routeFetch(realFetch)
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(String(input)), method = init.method ?? 'GET'
+    if (url.origin === 'https://api.github.com' && url.pathname === '/user') {
+      return routedAuth(input, init)
+    }
     const payload = init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
     calls.push({ url, method, ...(payload ? { payload } : {}) }); events.push(`${method} ${url.pathname}`)
     assert.equal(url.origin, 'https://api.github.com')
@@ -187,10 +213,13 @@ test('native review grants use only the actual viewer user token and preserve la
 })
 
 test('a missing or revoked user credential never falls back to an installation or the Run owner', async t => {
-  for (const failure of [new GitHubAccessError('githubNotConnected', 409), new GitHubAccessError('githubReconnectRequired', 401),
-    new GitHubAccessError('githubRepositoryForbidden', 403)]) await t.test(failure.code, async t => {
+  for (const [label, setup] of [
+    ['githubNotConnected', () => { userToken.mock.mockImplementation(async userId => { assert.equal(userId, viewer); return null }) }],
+    ['githubReconnectRequired', () => { userEndpointStatus = 401 }],
+    ['githubRepositoryForbidden', () => { userEndpointStatus = 403 }],
+  ] as const) await t.test(label, async t => {
     const f = fixture(t)
-    userToken.mock.mockImplementation(async userId => { assert.equal(userId, viewer); throw failure })
+    setup()
     await assert.rejects(f.publish(), code('workspace_review_github_forbidden'))
     assert.equal(userToken.mock.callCount(), 1)
     assert.equal(readCredential.mock.callCount(), 0)

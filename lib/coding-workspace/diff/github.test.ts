@@ -1,13 +1,14 @@
+import '../../../tests/support/server-only.mjs'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { after, before, mock, test, type TestContext } from 'node:test'
 import type { Pool } from 'pg'
 import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { diffSnapshot, WorkspaceReviewError, type DiffSnapshot } from '@mikka/protocol/coding-workspace-review'
-import { GitHubAccessError } from '../../github/user-access-error'
 import { CloudServiceError } from '../../cloud-services/errors'
 import type { RequestBudget } from '../../request-budget'
 import { createSecretMasker, identityMasker } from '../../secrets/mask'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import type { ReviewScope } from './authority'
 import type { ExternalDiffProvider } from './service'
 import { diffDigest, hunkFingerprint } from './patch'
@@ -16,15 +17,73 @@ const viewer = 'review-viewer', owner = 'run-owner', repositoryKey = 'v2/github.
 const fullName = 'Fixture/Review', repositoryId = '61393725', number = 7
 const apiPath = '/repos/fixture/review'
 type Credential = Awaited<ReturnType<typeof import('../../github/user-access')['githubRepositoryReadCredential']>>
-const credential = mock.fn(async (_userId: string, _key: string, _budget?: RequestBudget): Promise<Credential> => {
-  throw new Error('A provider test must install its viewer credential')
-})
-const credentialModule = mock.module(new URL('../../github/user-access.ts', import.meta.url).href, { namedExports: {
-  githubRepositoryReadCredential: credential, GitHubAccessError,
+let currentGrant: Credential = { token: 'fixture-viewer-token', githubAccountId: '73', kind: 'user', repository: {
+  id: repositoryId, installationId: '11', fullName, htmlUrl: `https://github.com/${fullName}`, private: true,
+} }
+let appConfig: { id: string | null; source: string } = { id: '4840908', source: 'database' }
+let connectedToken: { token: string; githubAccountId: string; expiresAt: Date | null } | null = null
+let repoAllowed = true
+let githubAuthStatus = 200
+let cloudBinding: { revoked: boolean; scopes: string[] } | null = null
+let cloudError: Error | null = null
+const credentialCalls: { userId: string; budget?: RequestBudget }[] = []
+const realFetch = globalThis.fetch
+let githubHttp: Awaited<ReturnType<typeof startGitHubAccessHttp>>
+
+const authModule = mock.module(new URL('../../auth.ts', import.meta.url).href, { namedExports: { auth: {
+  api: {}, $context: Promise.resolve({ internalAdapter: { findAccounts: async () => [] } }),
+} } })
+const dbModule = mock.module(new URL('../../db/index.ts', import.meta.url).href, { namedExports: { pool: {
+  async query(sql: string) {
+    if (sql.includes('cloud_service_bindings')) return { rows: cloudBinding ? [cloudBinding] : [], rowCount: cloudBinding ? 1 : 0 }
+    if (sql.includes('cloud_github_installations')) return {
+      rows: [{ installation_id: '11', account_id: '73', account_login: 'fixture', account_type: 'User', github_account_id: '73' }],
+      rowCount: 1,
+    }
+    return { rows: [], rowCount: 0 }
+  },
+  async connect() { return { async query() { return { rows: [], rowCount: 0 } }, release() {} } },
+} } })
+const editionModule = mock.module(new URL('../../edition.ts', import.meta.url).href, { namedExports: { isCloudEdition: () => false } })
+const cloudRuntimeModule = mock.module(new URL('../../cloud-services/runtime.ts', import.meta.url).href, { namedExports: {
+  cloudRequest: async (userId: string) => {
+    credentialCalls.push({ userId })
+    if (cloudError) throw cloudError
+    return Response.json({ token: currentGrant.token, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
+  },
+} })
+const appConfigModule = mock.module(new URL('../../github/app-config.ts', import.meta.url).href, { namedExports: {
+  readGitHubAppConfig: async () => appConfig,
+} })
+const connectionModule = mock.module(new URL('../../github/connection.ts', import.meta.url).href, { namedExports: {
+  githubConnectionToken: async (userId: string, options?: { budget?: RequestBudget }) => {
+    credentialCalls.push({ userId, budget: options?.budget })
+    assert.equal(userId, viewer, 'GitHub credentials belong to the actual viewer, never the Run owner')
+    assert.ok(options?.budget && Number.isFinite(options.budget.deadline))
+    return connectedToken
+  },
 } })
 let github: typeof import('./github')
-before(async () => { github = await import('./github') })
-after(() => credentialModule.restore())
+before(async () => {
+  githubHttp = await startGitHubAccessHttp({
+    getUser: () => githubAuthStatus === 200 ? { id: Number(currentGrant.githubAccountId ?? '73'), login: 'viewer' } : null,
+    getRepositories: () => {
+      if (githubAuthStatus !== 200) return null
+      return repoAllowed ? [{ id: Number(currentGrant.repository.id), full_name: currentGrant.repository.fullName, private: true }] : []
+    },
+    onRequest: url => {
+      if (githubAuthStatus !== 200 && (url.pathname === '/user' || url.pathname.startsWith('/user/installations') || url.pathname === apiPath)) {
+        return new Response('provider error', { status: githubAuthStatus })
+      }
+      return undefined
+    },
+  })
+  github = await import('./github')
+})
+after(async () => {
+  for (const mod of [authModule, dbModule, editionModule, cloudRuntimeModule, appConfigModule, connectionModule]) mod.restore()
+  await githubHttp.close()
+})
 
 const code = (expected: string) => (error: unknown) =>
   (error instanceof CodingWorkspaceError || error instanceof WorkspaceReviewError) && error.code === expected
@@ -89,16 +148,23 @@ function fixture(t: TestContext, options: { count?: number; added?: boolean; bef
     assert.ok(rows, 'only immutable host publication/original Factory association queries are allowed')
     return { rows: structuredClone(rows), rowCount: rows.length, command: 'SELECT', fields: [], oid: 0 }
   } } as unknown as Pool
-  credential.mock.resetCalls()
-  credential.mock.mockImplementation(async (userId, key, budget) => {
-    assert.equal(userId, viewer, 'GitHub credentials belong to the actual viewer, never the Run owner')
-    assert.equal(key, repositoryKey)
-    assert.ok(budget && Number.isFinite(budget.deadline))
-    return state.grant
-  })
+  credentialCalls.length = 0
+  currentGrant = grant
+  appConfig = { id: '4840908', source: 'database' }
+  connectedToken = { token: grant.token, githubAccountId: grant.githubAccountId ?? '73', expiresAt: null }
+  repoAllowed = true
+  githubAuthStatus = 200
+  cloudBinding = null
+  cloudError = null
+  const routedAuth = githubHttp.routeFetch(realFetch)
   const requests: URL[] = []
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input)); requests.push(url)
+    const url = new URL(String(input))
+    if (url.origin === 'https://api.github.com' && (url.pathname === '/user' || url.pathname === '/user/installations' || url.pathname === '/user/installations/11/repositories' || url.pathname === apiPath)) {
+      currentGrant = state.grant
+      return routedAuth(input, init)
+    }
+    requests.push(url)
     assert.equal(url.origin, 'https://api.github.com')
     assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${state.grant.token}`)
     assert.equal(init?.redirect, 'error')
@@ -145,8 +211,8 @@ function fixture(t: TestContext, options: { count?: number; added?: boolean; bef
 
 test('a whole PR uses the viewer credential, every native page and both complete immutable trees', async t => {
   const f = fixture(t, { count: 101 }), captured = await f.capture()
-  assert.equal(credential.mock.callCount(), 1)
-  assert.equal(credential.mock.calls[0]!.arguments[0], viewer)
+  assert.equal(credentialCalls.length, 1)
+  assert.equal(credentialCalls[0]!.userId, viewer)
   assert.notEqual(viewer, f.scope.identity.ownerId)
   assert.equal(captured.files.length, 101)
   assert.equal(captured.revision.baseSha, f.state.base.sha)
@@ -332,8 +398,8 @@ test('GitHub commit source remains authenticated after Stop without any device o
   assert.equal(f.scope.stopped, true)
   assert.ok(!('deviceId' in f.scope.identity))
   assert.equal(f.queries.length, 0, 'a stopped GitHub commit never falls back to a device or Task latest PR')
-  assert.equal(credential.mock.callCount(), 2, 'a later request reauthorizes the actual viewer')
-  credential.mock.mockImplementation(async () => { throw new GitHubAccessError('githubRepositoryForbidden', 403) })
+  assert.equal(credentialCalls.length, 2, 'a later request reauthorizes the actual viewer')
+  repoAllowed = false
   const denied = github.githubDiffProvider(f.database, viewer), count = f.requests.length
   await assert.rejects(denied.verify(f.scope, snapshot), code('workspace_review_github_forbidden'))
   assert.equal(f.requests.length, count)
@@ -423,18 +489,19 @@ test('ambiguous, untrusted or mismatched publication/candidate associations fail
 })
 
 test('viewer credential failure has no owner fallback and sends no GitHub source request', async t => {
-  for (const [failure, expected] of [
-    [new GitHubAccessError('githubRepositoryForbidden', 403), 'workspace_review_github_forbidden'],
-    [new GitHubAccessError('githubNotConnected', 409), 'workspace_review_github_forbidden'],
-    [new GitHubAccessError('githubUnavailable', 502), 'workspace_review_github_unavailable'],
-    [new GitHubAccessError('githubNotConfigured', 503), 'workspace_review_github_unavailable'],
-    [new CloudServiceError('cloud_access_denied'), 'workspace_review_github_forbidden'],
-    [new CloudServiceError('cloud_unavailable'), 'workspace_review_github_unavailable'],
-  ] as const) await t.test(failure.code, async t => {
+  for (const [label, setup, expected, expectedCalls] of [
+    ['githubRepositoryForbidden', () => { repoAllowed = false }, 'workspace_review_github_forbidden', 1],
+    ['githubNotConnected', () => { connectedToken = null }, 'workspace_review_github_forbidden', 1],
+    ['githubUnavailable', () => { githubAuthStatus = 502 }, 'workspace_review_github_unavailable', 1],
+    ['githubNotConfigured', () => { appConfig = { id: null, source: 'database' } }, 'workspace_review_github_unavailable', 0],
+    ['cloud_access_denied', () => { appConfig = { id: '4840908', source: 'environment' }; cloudBinding = { revoked: false, scopes: ['github'] }; cloudError = new CloudServiceError('cloud_access_denied') }, 'workspace_review_github_forbidden', 1],
+    ['cloud_unavailable', () => { appConfig = { id: '4840908', source: 'environment' }; cloudBinding = { revoked: false, scopes: ['github'] }; cloudError = new CloudServiceError('cloud_unavailable') }, 'workspace_review_github_unavailable', 1],
+  ] as const) await t.test(label, async t => {
     const f = fixture(t)
-    credential.mock.mockImplementation(async userId => { assert.equal(userId, viewer); throw failure })
+    setup()
     await assert.rejects(f.capture(), code(expected))
-    assert.equal(credential.mock.callCount(), 1)
+    assert.equal(credentialCalls.length, expectedCalls)
+    if (expectedCalls > 0) assert.equal(credentialCalls[0]!.userId, viewer)
     assert.equal(f.requests.length, 0)
     assert.equal(f.queries.length, 0)
   })

@@ -12,8 +12,7 @@ import { orderMigrations } from '../../../scripts/migration-order.mjs'
 import { disposableDatabase, E2E_DB_RULE } from '../../../tests/helpers/e2e-target.mjs'
 import { addFactoryPublicationEvidence, addFactoryVisualEvidence } from '../../../tests/helpers/factory-visual-evidence'
 import { createTestDatabase, dropTestDatabase } from '../../../tests/support/drop-test-database'
-import { GitHubAccessError } from '../../github/user-access-error'
-import type { RequestBudget } from '../../request-budget'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import type { FactoryTask } from '../../factory/store'
 import type { ReviewActor } from '../diff/authority'
 import type { TaskReviewHttpInput } from './http'
@@ -58,6 +57,18 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   const tokens = new Map<string, { token: string; githubAccountId: string; expiresAt: Date }>()
   const deniedCredentials = new Set<string>(), credentialReads: string[] = []
+  const realFetch = globalThis.fetch
+  const githubHttp = await startGitHubAccessHttp({
+    getUser: req => {
+      const entry = [...tokens.entries()].find(([, value]) => `Bearer ${value.token}` === req.headers.authorization)
+      if (!entry) return null
+      const [userId, credential] = entry
+      credentialReads.push(userId)
+      if (deniedCredentials.has(userId)) return null
+      return { id: credential.githubAccountId, login: 'merge-fixture' }
+    },
+  })
+  const routedAuth = githubHttp.routeFetch(realFetch)
   try {
     const migrations = new URL('../../../drizzle/', import.meta.url)
     for (const name of orderMigrations((await readdir(migrations)).filter(name => name.endsWith('.sql'))))
@@ -69,17 +80,6 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
     }) } })
     mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en',
       getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
-    const userAccess = await import('../../github/user-access')
-    mock.module(new URL('../../github/user-access.ts', import.meta.url).href, { namedExports: { ...userAccess,
-      githubTokenForUser: async (userId: string, options: { minValidityMs?: number; budget?: RequestBudget } = {}) => {
-        credentialReads.push(userId)
-        if (deniedCredentials.has(userId)) throw new GitHubAccessError('githubReconnectRequired', 401)
-        const token = tokens.get(userId)
-        assert.ok(token, 'merge must acquire the actual owner user credential')
-        assert.equal(options.minValidityMs, 60_000); assert.ok(options.budget && options.budget.deadline > Date.now())
-        return token
-      },
-    } })
     const { saveGitHubConnection } = await import('../../github/connection')
     const { factoryHumanStore } = await import('../../factory/server')
     const { approvalEvidence } = await import('../../factory/evidence')
@@ -204,6 +204,9 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
       const calls: { method: string; path: string; body?: Record<string, unknown> }[] = []
       context.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
         const target = new URL(String(input)), method = init.method ?? 'GET'
+        if (target.origin === 'https://api.github.com' && method === 'GET' && target.pathname === '/user') {
+          return routedAuth(input, init)
+        }
         assert.equal(target.origin, 'https://api.github.com'); assert.equal(init.redirect, 'error')
         assert.equal(new Headers(init.headers).get('authorization'), 'Bearer ' + token.token)
         const body = init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
@@ -504,6 +507,7 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
     })
   } finally {
     mock.restoreAll()
+    await githubHttp.close()
     for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value }
     await dropTestDatabase(admin, database, pool, appPool, workspacePool)
     await admin.end()
