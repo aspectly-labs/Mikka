@@ -40,7 +40,9 @@
       "remove": "移除技能",
       "pathLabel": "路径",
       "selectedSkillLabel": "当前技能",
-      "sourcePlaceholder": "owner/repo"
+      "sourcePlaceholder": "owner/repo",
+      "backToSkills": "技能",
+      "addTitle": "添加技能"
     },
     "agentProfiles": {
       "reasons": {
@@ -406,7 +408,17 @@
       "currentWorkspace": "当前工作区",
       "title": "自定义 MCP",
       "invalidConfiguration": "请检查服务器配置及变量名称。",
-      "confirmAuthority": "成员的任务可使用此连接，并在任务机器上读取配置的凭证。外部服务可能向连接账户收费。"
+      "confirmAuthority": "成员的任务可使用此连接，并在任务机器上读取配置的凭证。外部服务可能向连接账户收费。",
+      "namePlaceholder": "例如：DeepWiki",
+      "urlPlaceholder": "https://mcp.example.com/mcp",
+      "commandPlaceholder": "例如：npx",
+      "argumentsPlaceholder": "-y\n@modelcontextprotocol/server-filesystem",
+      "cwdPlaceholder": "例如：~/code",
+      "headerNamePlaceholder": "Authorization",
+      "headerValuePlaceholder": "Bearer …",
+      "variableNamePlaceholder": "API_KEY",
+      "variableValuePlaceholder": "变量值",
+      "editTitle": "编辑 MCP 服务器"
     },
     "workspaceForm": {
       "visibilityPrivate": "仅自己",
@@ -458,7 +470,10 @@
       "transferring": "正在转让…",
       "changeIcon": "更换",
       "loading": "正在加载工作区",
-      "copyId": "复制工作区 ID"
+      "copyId": "复制工作区 ID",
+      "namePlaceholder": "例如：Acme 研发团队",
+      "taskPrefixPlaceholder": "MIK",
+      "addressPlaceholder": "acme"
     },
     "devicesDetail": {
       "computerUseLabel": "电脑操作",
@@ -536,7 +551,11 @@
       "lastConnectedLabel": "最近连接",
       "unreported": "—",
       "removeDeviceTitle": "移除设备",
-      "localPathPlaceholder": "~/projects/repo"
+      "localPathPlaceholder": "~/projects/repo",
+      "namePlaceholder": "例如：MacBook Pro",
+      "repoKeyPlaceholder": "owner/repo",
+      "baseBranchPlaceholder": "main",
+      "verifyCommandPlaceholder": "pnpm test"
     },
     "integrations": {
       "githubAppCreate": "创建 GitHub App",
@@ -662,7 +681,9 @@
       "linkGoogle": "关联 Google",
       "githubAbilitiesHeading": "能力",
       "githubLinkOtherAccount": "浏览器登录的是 {browser}，App 里是 {app}",
-      "githubReconnectRequired": "GitHub 授权已失效，请重新关联。"
+      "githubReconnectRequired": "GitHub 授权已失效，请重新关联。",
+      "githubAppOrganizationPlaceholder": "例如：my-org",
+      "accountNamePlaceholder": "例如：工作账号"
     },
     "slackInstallation": {
       "enable": "启用",
@@ -726,7 +747,9 @@
       "kindPersonal": "个人",
       "quotaPointsUsed": "{used} / {total} 点",
       "portalAfterFirstCharge": "首次订阅或充值后可在 Stripe 账单门户管理",
-      "loadFailed": "自动充值设置读取失败。"
+      "loadFailed": "自动充值设置读取失败。",
+      "thresholdPlaceholder": "例如：25",
+      "monthlyCapPlaceholder": "例如：200"
     },
     "billing": {
       "viewInvoices": "查看发票",
@@ -904,7 +927,8 @@
         "verifying": "正在验证…",
         "key": "API Key",
         "missing": "未设置",
-        "set": "设置"
+        "set": "设置",
+        "keyPlaceholder": "e2b_..."
       },
       "lineError": {
         "reserved": "第 {line} 行 · {name} 是保留名称",
@@ -971,7 +995,15 @@
       "mineHeading": "我的密钥",
       "scope": "范围",
       "useMine": "用我的",
-      "replaceExisting": "已有同名时替换"
+      "replaceExisting": "已有同名时替换",
+      "namePlaceholder": "OPENAI_API_KEY",
+      "valuePlaceholder": "粘贴密钥值",
+      "notePlaceholder": "备注（选填）",
+      "repositoryPlaceholder": "例如：owner/repo",
+      "bulkPlaceholder": "API_KEY=sk-...\nWEBHOOK_SECRET=whsec_...",
+      "backToSecrets": "密钥与环境",
+      "environmentsCrossLink": "非敏感的启动环境变量可在「运行环境」中配置。",
+      "openEnvironmentsAction": "前往运行环境"
     },
     "audit": {
       "actions": {
@@ -1698,7 +1730,9 @@
       "charLimit": "{count} / {max} 字符",
       "readOnlyBadge": "只读",
       "saveError": "保存失败，修改已保留。",
-      "charSummary": "{count} 字符"
+      "charSummary": "{count} 字符",
+      "backToInstructions": "指令",
+      "editFileTitle": "编辑指令"
     },
     "linear": {
       "notConfigured": "未配置",
@@ -1946,7 +1980,8 @@
       "saveError": "保存失败，请重试。",
       "loadError": "无法读取个人任务编号。",
       "taken": "和已连接的 Linear 团队 key 重名，请换一个。",
-      "saved": "已保存，个人任务现在显示为 {example}。"
+      "saved": "已保存，个人任务现在显示为 {example}。",
+      "prefixPlaceholder": "MIK"
     },
     "privacy": {
       "sharedLinksNone": "没有公开访问的链接。",
@@ -1995,7 +2030,10 @@
       "cancel": "取消",
       "token": "令牌",
       "expires": "{date} 过期",
-      "revoke": "撤销"
+      "revoke": "撤销",
+      "namePlaceholder": "例如：CI 部署令牌",
+      "modelsCrossLink": "要配置模型服务商 API Key？前往「模型」管理。",
+      "openModelsAction": "前往模型"
     },
     "mcpIntegrations": {
       "toolPrefixDescription": "模型通过此前缀识别该服务器的工具。",
@@ -2068,7 +2106,21 @@
       "credentialsConfigured": "已配置凭证（写入后不可读）",
       "variablesWriteOnlyDescription": "凭证写入后不可读，保存新值将替换现有配置。",
       "testConnectionButton": "测试",
-      "mikkaIntegrationsHeading": "Mikka 集成"
+      "mikkaIntegrationsHeading": "Mikka 集成",
+      "connectedAppsHeading": "已连接应用",
+      "connectedAppsDescription": "已连接到工作区或个人的第三方应用账号。",
+      "emptyConnectedApps": "暂无已连接应用",
+      "browseAppsAction": "浏览应用",
+      "mcpOnlyEmptyShared": "暂无工作区共享 MCP 服务器",
+      "mcpOnlyEmptyPersonal": "暂无个人 MCP 服务器",
+      "mcpServersCount": "{count} 个 MCP 服务器",
+      "manageSkillsHint": "技能统一在「设置 › 技能」中管理。",
+      "openSkillsAction": "前往技能",
+      "backToMcp": "MCP 与插件",
+      "backToIntegrations": "集成",
+      "addMcpSubpageTitle": "添加 MCP 服务器",
+      "editMcpSubpageTitle": "编辑 MCP 服务器",
+      "editVariablesTitle": "编辑请求头与环境变量"
     },
     "logins": {
       "account": "账号",
@@ -2101,7 +2153,10 @@
       "empty": "还没有保存的网站登录。",
       "actions": "{site} 的操作",
       "usage": "使用记录",
-      "usageTitle": "{site} 的使用记录"
+      "usageTitle": "{site} 的使用记录",
+      "sitePlaceholder": "https://example.com",
+      "accountPlaceholder": "name@example.com",
+      "passwordPlaceholder": "密码"
     },
     "botPermissions": {
       "level": {
@@ -2167,7 +2222,8 @@
       "changeAvatar": "更换",
       "readOnly": "账户信息为只读，当前版本暂不支持在此修改。",
       "currentSession": "当前登录",
-      "uploading": "上传中…"
+      "uploading": "上传中…",
+      "namePlaceholder": "例如：陈明"
     },
     "cloud": {
       "connectedServers": "已连接的服务器",
@@ -2204,7 +2260,9 @@
       "cancel": "取消",
       "personalBilling": "我的 Mikka 额度",
       "pushFull": "完整",
-      "services": "服务"
+      "services": "服务",
+      "serverKeyPlaceholder": "粘贴服务器密钥",
+      "serverUrlPlaceholder": "https://mikka.example.com"
     },
     "telegram": {
       "newLink": "重新生成链接",
@@ -2293,7 +2351,10 @@
       "customAgents": "选了协议才知道能用哪个 Agent",
       "models": "模型（可选）",
       "addConfirm": "添加",
-      "othersUsage": "团队成员可以用它跑自己的 Bot，用量算在你的 API 账单上。"
+      "othersUsage": "团队成员可以用它跑自己的 Bot，用量算在你的 API 账单上。",
+      "namePlaceholder": "例如：OpenRouter",
+      "apiKeyPlaceholder": "sk-...",
+      "baseUrlPlaceholder": "https://api.example.com/v1"
     },
     "environments": {
       "machineSize": "默认机器规格",
@@ -2331,7 +2392,14 @@
       "editNamed": "编辑 {name}",
       "emptySetup": "无准备命令或文件",
       "machineSizeQuotaGated": "待提供商配额",
-      "archive": "归档"
+      "archive": "归档",
+      "namePlaceholder": "例如：Node 22 CI",
+      "variablesPlaceholder": "NODE_ENV=development",
+      "setupPlaceholder": "pnpm install --frozen-lockfile",
+      "copyFilesPlaceholder": ".env.local\n.npmrc",
+      "backToEnvironments": "运行环境",
+      "secretsCrossLink": "需要加密存储的密钥？前往「密钥与环境」管理。",
+      "openSecretsAction": "前往密钥"
     },
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
     "teamSkills": {
@@ -2383,7 +2451,8 @@
       "ignore": "忽略",
       "settingsError": "设置保存失败。",
       "editFactNamed": "编辑 {subject}",
-      "scopeProject": "项目"
+      "scopeProject": "项目",
+      "correctPlaceholder": "输入更正后的事实…"
     },
     "permissionsPage": {
       "blockedEmpty": "没有禁止的项目",
@@ -2423,7 +2492,11 @@
       "setPassword": "设置密码",
       "confirmPassword": "再输入一次",
       "passwordMismatch": "两次输入的密码不一致。",
-      "signingOut": "正在退出…"
+      "signingOut": "正在退出…",
+      "currentPasswordPlaceholder": "当前密码",
+      "newPasswordPlaceholder": "至少 8 位字符",
+      "confirmPasswordPlaceholder": "再次输入新密码",
+      "emailPlaceholder": "name@example.com"
     },
     "issueStates": {
       "cancel": "取消",
@@ -2457,7 +2530,8 @@
       "new": "新建状态",
       "icon": "图标",
       "actions": "{name} 的操作",
-      "moveUp": "上移"
+      "moveUp": "上移",
+      "namePlaceholder": "例如：审阅中"
     },
     "subscriptions": {
       "enabled": "启用",
@@ -2907,7 +2981,8 @@
         "note": "到期的组织审计记录会被删除；有导出进行中或开启法律保留时暂停删除。",
         "keep": "一直保留",
         "days": "按天数",
-        "daysLabel": "保留天数"
+        "daysLabel": "保留天数",
+        "daysPlaceholder": "例如：90"
       },
       "title": "资源共享策略",
       "rules": {
@@ -2928,7 +3003,8 @@
       "add": "允许域名",
       "added": "已允许 {domain}",
       "domain": "邮箱域名",
-      "discover": "可加入的组织"
+      "discover": "可加入的组织",
+      "domainPlaceholder": "example.com"
     },
     "members": {
       "description": "组织成员可以邀请普通成员；只有所有者和管理员可以更改角色、管理组织设置。",
@@ -2979,7 +3055,8 @@
       "noOrganizations": "暂未加入组织",
       "links": "复制邀请链接",
       "joined": "已作为普通成员加入组织，工作区权限不变。",
-      "accept": "加入组织"
+      "accept": "加入组织",
+      "emailPlaceholder": "alice@example.com"
     },
     "tabs": {
       "audit": "组织审计",
@@ -3012,7 +3089,8 @@
       "saved": "已保存密钥名称。",
       "title": "组织服务密钥",
       "name": "密钥名称",
-      "identity": "{identity} · {workspace}"
+      "identity": "{identity} · {workspace}",
+      "namePlaceholder": "例如：CI 密钥"
     },
     "copy": "复制",
     "intro": "组织是共享工作区之上的管理层：统一登录方式、目录同步、资源策略与组织审计。组织角色只用于管理组织，不会授予任何工作区、任务或内容的访问；工作区成员仍在「成员」中管理。",
@@ -3034,7 +3112,8 @@
       "organizationId": "组织 ID",
       "nameLabel": "组织名称",
       "seats": "{count} / {limit} 人",
-      "renamed": "组织已改名。"
+      "renamed": "组织已改名。",
+      "namePlaceholder": "例如：Acme 科技有限公司"
     },
     "loadFailed": "组织信息没有加载出来",
     "bound": {
@@ -3765,7 +3844,8 @@
       "otherHost": "其他主机",
       "add": "添加",
       "startFailed": "安装未开始",
-      "title": "添加设备"
+      "title": "添加设备",
+      "hostPlaceholder": "user@host.example.com"
     },
     "sandboxUsernsSpec": "Ubuntu 对这项设置的说明",
     "sandboxUsernsPersist": "重启后也生效：",
@@ -3843,7 +3923,8 @@
     "offlineNoRuns": "离线 · 不会被派任务",
     "online": "在线",
     "noAgentYet": "还没装 Agent",
-    "lastHeartbeat": "最后心跳 {time}"
+    "lastHeartbeat": "最后心跳 {time}",
+    "namePlaceholder": "例如：MacBook Pro"
   },
   "Coordinator": {
     "modelRequired": "任务未启动：未选择模型。",
@@ -7498,7 +7579,8 @@
       "delete": "删除",
       "networkAllowHint": "每行一个域名。留空表示不设置。",
       "count": "{count} / {limit} 个模板",
-      "description": "把一组 Agent 的审批方式和权限保存为模板，需要时应用到整个工作区。"
+      "description": "把一组 Agent 的审批方式和权限保存为模板，需要时应用到整个工作区。",
+      "networkAllowPlaceholder": "api.github.com\nregistry.npmjs.org"
     },
     "usage": {
       "show": "查看",
@@ -8016,7 +8098,11 @@
       "memberUsage": "费用归因",
       "unknownHelp": "自带模型、订阅、E2B 和设备的费用归资源所有者，Mikka 不为这些外部费用重复扣点。",
       "budgetSpent": "已消费",
-      "budgetScope": "适用范围"
+      "budgetScope": "适用范围",
+      "budgetLimitPlaceholder": "例如：200",
+      "budgetWarningPlaceholder": "80",
+      "rechargeThresholdPlaceholder": "例如：25",
+      "rechargeCapPlaceholder": "例如：200"
     },
     "refusal": {
       "unavailable": "暂时不可用",
@@ -8985,7 +9071,8 @@
       "incomplete": "填写不完整",
       "title": "连接 {name}",
       "submit": "连接",
-      "connected": "已连接 {name}"
+      "connected": "已连接 {name}",
+      "fieldPlaceholder": "输入{label}"
     },
     "appsTab": "应用",
     "state": {
@@ -9958,7 +10045,8 @@
     "settings": "设置",
     "members": "成员",
     "overview": "概览",
-    "identifierPlaceholder": "例如：ENG"
+    "identifierPlaceholder": "例如：ENG",
+    "deleteConfirmPlaceholder": "输入 {name} 以确认"
   },
   "Invite": {
     "csv": {
@@ -10567,7 +10655,12 @@
       "presetXai": "xAI",
       "presetCustom": "自定义兼容端点",
       "fallbackHint": "仅改用同一模型的下一条可用连接，不更换模型，也不切换 Agent",
-      "connectionTested": "连接正常 · {count} 个模型"
+      "connectionTested": "连接正常 · {count} 个模型",
+      "modelIdPlaceholder": "例如：gpt-5.4",
+      "apiKeyPlaceholder": "sk-...",
+      "baseUrlPlaceholder": "https://api.example.com/v1",
+      "apiCrossLink": "要管理 Mikka 访问令牌？前往「API」设置。",
+      "openApiAction": "前往 API"
     },
     "memory": {
       "learned": "从已连接的 App 学到",
@@ -10873,7 +10966,8 @@
     "confirmRestore": "恢复{name}？",
     "title": "服务身份",
     "scopeChanged": "原选组织已不可用。请选择当前关联的组织或此工作区。",
-    "issue": "签发密钥"
+    "issue": "签发密钥",
+    "namePlaceholder": "例如：发布机器人"
   },
   "HostedShell": {
     "tools": "工具",

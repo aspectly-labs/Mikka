@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { accountUpdateSchema, composioConnectRedirect, disconnectAndForgetAccount, isDuplicateAliasError, pickDefaultAccountId, PROVIDER_IDENTITY, safeReturnPath, sanitizeEmail, slackUserEmail, slackUserId, toConnectedAccountView, withAccountRecords } from './composio-accounts'
+import { accountUpdateSchema, composioConnectRedirect, disconnectAndForgetAccount, isComposioToolkitSlug, isDuplicateAliasError, isSecondaryConnectedApp, NATIVE_INTEGRATION_ROWS, OWN_INTEGRATIONS, pickDefaultAccountId, PROVIDER_IDENTITY, safeReturnPath, sanitizeEmail, slackUserEmail, slackUserId, toConnectedAccountView, withAccountRecords } from './composio-accounts'
 import { decodeComposioFlow, encodeComposioFlow } from './composio-flow'
 
 const account = { id: 'ca_1', status: 'ACTIVE', isDisabled: false, alias: null as string | null, createdAt: '2026-10-28T10:00:00.000Z', toolkit: { slug: 'gmail' } }
@@ -122,4 +122,25 @@ test('recognises Composio refusing a duplicate alias', () => {
   assert.equal(isDuplicateAliasError(new Error('alias must be unique per user and toolkit')), true)
   assert.equal(isDuplicateAliasError({ status: 500, message: 'boom' }), false)
   assert.equal(isDuplicateAliasError(null), false)
+})
+
+test('NATIVE_INTEGRATION_ROWS excludes Slack from secondary connected-app lists while keeping Slack Composio tools and OAuth intact', () => {
+  for (const slug of ['github', 'linear', 'telegram']) {
+    assert.equal(OWN_INTEGRATIONS.has(slug), true)
+    assert.equal(NATIVE_INTEGRATION_ROWS.has(slug), true)
+    assert.equal(isComposioToolkitSlug(slug), false)
+    assert.equal(isSecondaryConnectedApp(slug), false)
+  }
+  // Slack uses both native workspace bot + Composio Slack OAuth/tools: kept in Composio, excluded from secondary rows.
+  assert.equal(OWN_INTEGRATIONS.has('slack'), false)
+  assert.equal(NATIVE_INTEGRATION_ROWS.has('slack'), true)
+  assert.equal(isComposioToolkitSlug('slack'), true)
+  assert.equal(isSecondaryConnectedApp('slack'), false)
+  assert.equal(toConnectedAccountView({ ...account, toolkit: { slug: 'slack' } })?.toolkit, 'slack')
+
+  for (const slug of ['gmail', 'notion', 'hubspot']) {
+    assert.equal(isComposioToolkitSlug(slug), true)
+    assert.equal(isSecondaryConnectedApp(slug), true)
+  }
+  assert.equal(isSecondaryConnectedApp('Not A Slug'), false)
 })
