@@ -8,9 +8,6 @@ import { dbUrl, seedProject, seedTeam, seedUser, seedWorkspace } from './support
 const directory = new Map<string, { id: string; fullName: string }[]>()
 const requests: string[] = []
 const pullRequests: string[] = []
-mock.module(new URL('../lib/github/app-config.ts', import.meta.url).href, { namedExports: {
-  readGitHubAppConfig: async () => ({ id: '4840908', source: 'database' }),
-} })
 mock.module(new URL('../lib/github/connection.ts', import.meta.url).href, { namedExports: {
   githubConnectionToken: async (userId: string) => {
     requests.push(userId)
@@ -20,6 +17,8 @@ mock.module(new URL('../lib/github/connection.ts', import.meta.url).href, { name
 
 test('dependency references use stable GitHub ids, retain hidden selections and never grant execution repository access', { skip: !dbUrl }, async t => {
   const realFetch = globalThis.fetch
+  const previousAppId = process.env.GITHUB_APP_ID
+  process.env.GITHUB_APP_ID = '4840908'
   const userFromRequest = (req: { headers: Record<string, string | string[] | undefined> }) => {
     const auth = String(req.headers.authorization ?? '')
     return auth.startsWith('Bearer fixture-token-') ? auth.slice('Bearer fixture-token-'.length) : ''
@@ -44,7 +43,13 @@ test('dependency references use stable GitHub ids, retain hidden selections and 
   const { listDependencyRepositories: list, replaceDependencyRepositories: replace } = await import('../lib/project-resources/dependency-repositories')
   const { projectPullAuthors } = await import('../lib/project-resources/pull-authors')
   const { pool: app } = await import('../lib/db'), { workspacePool } = await import('../lib/workspace-db')
-  t.after(async () => { globalThis.fetch = realFetch; await githubHttp.close(); await Promise.all([pool.end(), app.end(), workspacePool.end()]) })
+  t.after(async () => {
+    globalThis.fetch = realFetch
+    if (previousAppId === undefined) delete process.env.GITHUB_APP_ID
+    else process.env.GITHUB_APP_ID = previousAppId
+    await githubHttp.close()
+    await Promise.all([pool.end(), app.end(), workspacePool.end()])
+  })
   const admin = await seedUser(pool, 'dependency-admin'), member = await seedUser(pool, 'dependency-reader')
   const ws = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }, { userId: member, role: 'member' }])
   const team = await seedTeam(pool, ws.id, admin), projectId = await seedProject(pool, admin, [{ teamId: team.id, workspaceId: ws.id }])
