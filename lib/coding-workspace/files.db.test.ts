@@ -250,7 +250,7 @@ test('coding workspace: real PostgreSQL authority, push delivery and daemon sour
       }
       assert.equal((await get()).status, 401)
       assert.equal((await get(memberToken.token)).status, 404)
-      assert.equal((await get(otherToken.token)).status, 404)
+      assert.equal((await get(otherToken.token)).status, 403)
       const { value: revokedPat } = await exchange(f, signal => get(ownerToken.token, signal), async () => {
         await pool.query('UPDATE personal_access_tokens SET "revokedAt"=now() WHERE id=$1', [ownerToken.id])
       })

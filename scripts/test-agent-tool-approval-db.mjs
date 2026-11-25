@@ -23,7 +23,7 @@ try {
     // The store suite's real workspace reader and membership lease must use
     // its minimal isolated schema. The HTTP suite migrates its own database.
     const testEnv = file === files[0] ? { ...env, MIKKA_DATABASE_URL: env.APPROVAL_TEST_DATABASE_URL, DATABASE_URL: env.APPROVAL_TEST_DATABASE_URL } : env
-    const result = spawnSync(process.execPath, ['--experimental-test-module-mocks', '--import', './scripts/server-test.mjs', '--import', 'tsx', '--test', file], { env: testEnv, stdio: 'inherit' })
+    const result = spawnSync(process.execPath, ['--test-force-exit', '--experimental-test-module-mocks', '--import', './scripts/server-test.mjs', '--import', 'tsx', '--test', file], { env: testEnv, stdio: 'inherit' })
     if (result.status !== 0) { process.exitCode = result.status || 1; break }
   }
 } finally {

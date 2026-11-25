@@ -146,7 +146,9 @@ test('API requests stay in their effective workspace on thread, evidence, propos
       activeWorkspaceId = personal.id
       assert.equal(await read(ownRun, ws.id), 200)
       assert.equal(await read(personalRun, ws.id), 404)
-      for (const invalid of ['invalid-workspace', randomUUID()]) {
+      assert.equal(await read(personalRun, 'invalid-workspace'), 403, 'the route guard rejects a malformed workspace selector before resource lookup')
+      assert.equal(await read(ownRun, 'invalid-workspace'), 403)
+      for (const invalid of [randomUUID()]) {
         assert.equal(await read(personalRun, invalid), 404)
         assert.equal(await read(ownRun, invalid), 404)
       }
@@ -163,7 +165,7 @@ test('API requests stay in their effective workspace on thread, evidence, propos
       browser = false; bearer = token.token; activeWorkspaceId = personal.id
       assert.equal(await read(ownRun), 200, 'a PAT retains its pinned team despite the personal cookie')
       assert.equal(await read(personalRun), 404)
-      assert.equal(await read(ownRun, personal.id), 404, 'a conflicting header cannot widen a PAT')
+      assert.equal(await read(ownRun, personal.id), 403, 'a conflicting header cannot widen a PAT')
     } finally {
       await pool.query(`UPDATE mikka_workspace_members SET status='active' WHERE "workspaceId"=ANY($1::uuid[]) AND "userId"=$2`, [[personal.id, ws.id], owner])
       bearer = token.token; browser = false; activeWorkspaceId = ws.id
