@@ -308,8 +308,9 @@ async function factoryApproval(runId, signal) {
     return row.stage === 'approval' && row.status === 'pending' ? row : null
   })
   const stages = await query(`SELECT a.stage,r."sessionId" FROM factory_attempts a JOIN agent_runs r ON r.id=a."runId" WHERE a."taskId"=$1 AND a.status='passed' ORDER BY a.position`,[task.id])
-  assert.deepEqual(stages.slice(-3).map(row=>row.stage),['execute','review','verify'])
-  assert.equal(new Set(stages.slice(-3).map(row=>row.sessionId)).size,3,'independent CLI sessions for all three stages')
+  const expectedStages = task.route?.flowVersion === 2 ? ['execute','review'] : ['execute','review','verify']
+  assert.deepEqual(stages.slice(-expectedStages.length).map(row=>row.stage),expectedStages)
+  assert.equal(new Set(stages.slice(-expectedStages.length).map(row=>row.sessionId)).size,expectedStages.length,'independent CLI sessions for every required check stage')
   return task
 }
 
