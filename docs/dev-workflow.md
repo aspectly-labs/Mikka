@@ -303,7 +303,19 @@ either order without renumbering; SQL dependencies still need to merge first.
 
 Keep inherited `main` migrations and every executed migration under their
 original names with their original SQL. Add a corrective migration for changes.
-The checker rejects malformed or duplicate IDs and changes to inherited history.
+The checker (`scripts/check-migrations.mjs`) rejects malformed or duplicate IDs,
+changes to inherited history, and any new `DROP COLUMN` (including shorthand
+`DROP name`) unless preceded by a reviewed
+`-- migrate: contract #<issue> <reader-cutover/backfill/rollback evidence>`
+header proving all live readers switched and backfills completed. Use
+expand-backfill-contract across separate migrations (add tables/columns and
+compatible readers/writers first, switch code and backfill, then contract later);
+deployment rollback restores code and artifacts, not deleted data. For breaking
+hosted API and internal `API ↔ Eve ↔ Task ↔ World` contracts (three-step
+`HOSTED_API_VERSION` / `HOSTED_API_FLOOR` cutover and immutable old-caller
+release fixtures), see
+[Three-step breaking contracts](engineering/HANDBOOK.md#breaking-contracts-and-database-migrations)
+and [hosted API compatibility](design/decisions/2026-11-20-1300-hosted-api-compatibility.md).
 Independent clones can still collide: regenerate an unexecuted migration with
 the command before merging, while retaining every executed file. Existing
 historical aliases and transaction rules remain in force.

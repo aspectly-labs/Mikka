@@ -18,9 +18,16 @@ Isolated harnesses acquire owner/peer accounts through
 `scripts/test-accounts/session.mjs` and `pool.mjs`, as
 [test accounts](test-accounts.md) describes. The supported adapters keep the
 database on loopback `*_e2e`, bind the actual application/database identity,
-and preserve lease ownership and cleanup. A pool result establishes that
-isolated fixture path. For shared production, use the
-[shared workspace contract](#shared-production-acceptance-workspace) instead.
+and preserve lease ownership and cleanup. Authorized tests clean up only the
+disposable fixtures, schemas, and temporary files they created in an isolated
+target — never shared or production data — and honor explicit preservation
+holds. A pool result establishes that isolated fixture path. For shared
+production, use the [shared workspace contract](#shared-production-acceptance-workspace)
+instead.
+
+For committed Factory handoff, startup-timing, or PostgreSQL CLI policy
+regressions, use the [Cloudflare engineering sandbox](operations/engineering-sandbox.md)
+with the owning issue and full source SHA; do not provision a retired Vercel Sandbox.
 
 ## Record the version and environment
 
@@ -71,10 +78,11 @@ historical pending attempt is picked up automatically.
 ## OAuth-specific acceptance
 
 For changes involving Google/GitHub OAuth rules, provider linking or OAuth
-proxy/callback routing, verify the relevant real provider flow and exact return
-origin. Reuse existing authorized provider/browser sessions. If the provider
-requires MFA or reauthentication, hand over that specific provider step once;
-never request passwords or verification codes in chat.
+proxy/callback routing, verify the relevant real provider flow using the stable
+HTTPS hub configured by `BETTER_AUTH_OAUTH_PROXY_URL` and the exact originating
+application origin. Reuse existing authorized provider/browser sessions. If the
+provider requires MFA or reauthentication, hand over that specific provider step
+once; never request passwords or verification codes in chat.
 
 There is no separate Infisical vault for an OAuth test account; the Aspectly Labs
 organization has no such project. Use the existing authorized provider/browser
