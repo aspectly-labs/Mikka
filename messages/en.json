@@ -982,7 +982,7 @@
       "confirmWorkspace": "Everyone in {workspace} can use {name}?",
       "value": "Value",
       "confirmWorkspaceMany": "Everyone in {workspace} can use these {count} secrets?",
-      "empty": "No secrets yet.",
+      "empty": "No secrets yet",
       "deleting": "Deleting…",
       "bulkTitle": "Bulk add",
       "importDone": "Added {created}, replaced {replaced}, skipped {kept}.",
@@ -1243,10 +1243,10 @@
       "personalSecretsAndLoginsHeading": "Personal secrets & logins",
       "statesCount": "{count} states",
       "onlyMeScope": "Only you",
-      "workspaceSecretsHint": "Referenced by secretIds without storing plaintext.",
+      "workspaceSecretsHint": "Environment variables reference secrets; no plaintext is stored.",
       "auditSearchPlaceholder": "Search by actor or target",
       "envSetupApproved": "Approved",
-      "personalSecretsAndLoginsEmpty": "No personal secrets or saved logins yet.",
+      "personalSecretsAndLoginsEmpty": "No personal secrets or saved logins yet",
       "auditColumnTime": "Time ↓",
       "apiKeysDescription": "Call the API as yourself or a service account.",
       "tokenNameRequired": "Enter a key name.",
@@ -1348,7 +1348,7 @@
       "hiddenNone": "Don't fold",
       "background": "Background",
       "languageEn": "English",
-      "myThemesEmpty": "No themes of your own yet.",
+      "myThemesEmpty": "No themes of your own yet",
       "steer": "Steer the current run",
       "theme_oled": "OLED",
       "hiddenShow": "Show",
@@ -2030,7 +2030,7 @@
       "copyFailed": "Could not copy. Select the token and copy it by hand",
       "shownOnce": "Shown this once only.",
       "revokeTitle": "Revoke “{name}”?",
-      "empty": "No tokens yet.",
+      "empty": "No tokens yet",
       "createdTitle": "Created “{name}”",
       "name": "Name",
       "expiryLabel": "Expires",
@@ -2174,13 +2174,13 @@
       "unknownBot": "Unknown bot",
       "usageError": "Usage could not be read.",
       "newPassword": "New password",
-      "usageEmpty": "No usage yet.",
+      "usageEmpty": "No usage yet",
       "deleteTitle": "Delete the sign-in for {site}?",
       "addTitle": "Add website login",
       "save": "Save",
       "cancel": "Cancel",
       "never": "Never used",
-      "empty": "No saved site sign-ins yet.",
+      "empty": "No saved site sign-ins yet",
       "actions": "Actions for {site}",
       "usage": "Usage",
       "usageTitle": "Usage for {site}",
@@ -2409,7 +2409,7 @@
       "projectDefaults": "Project defaults",
       "restoreSetup": "Restore setup",
       "setup": "Setup command",
-      "empty": "No cloud environments.",
+      "empty": "No cloud environments",
       "history": "Setup history",
       "archived": "Archived environment",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
@@ -2916,7 +2916,7 @@
       "needsEnterprise": "Single sign-on and SCIM need Enterprise"
     },
     "audit": {
-      "recentEmpty": "No Organization events yet.",
+      "recentEmpty": "No Organization events yet",
       "actions": {
         "sso": {
           "signed_in": "SSO sign-in",
@@ -3495,7 +3495,7 @@
     "acceptanceTab": "Acceptance",
     "composer": "Ask for follow-up changes",
     "changesTab": "Changes",
-    "pullTab": "Pull request",
+    "pullTab": "PR",
     "filesTab": "Files",
     "setupTab": "Setup",
     "filesThisThread": "This thread",
@@ -3525,9 +3525,9 @@
     "crewPulls": "Pull requests",
     "crewSide": "Side threads",
     "crewPullsEmpty": "No pull requests yet",
-    "crewPullsError": "Pull requests unavailable",
+    "crewPullsError": "Couldn't load pull requests",
     "crewSideEmpty": "No side threads yet",
-    "crewSideError": "Side threads unavailable",
+    "crewSideError": "Couldn't load side threads",
     "untitledThread": "Untitled thread",
     "deliveryQueued": "Queued",
     "fullInstructions": "View full instructions",
@@ -3996,8 +3996,8 @@
       "rename": "Rename",
       "remove": "Remove device",
       "redetect": "Re-detect agents",
-      "restart": "Restart daemon",
-      "update": "Update daemon"
+      "restart": "Restart background service",
+      "update": "Update background service"
     },
     "computers": "Computers",
     "remove": {
@@ -4409,7 +4409,8 @@
     "input": "Message the Coordinator",
     "sendOffline": "No connection. Not sent",
     "suggestionHandedTo": "Handed to {name}",
-    "commandNew": "Start a new thread"
+    "commandNew": "Start a new thread",
+    "emptyHint": "{name} opens tasks, sends Agents to do them and calls you when a pull request is ready"
   },
   "Errors": {
     "issueScopeInLinear": "Confirm how to handle the Linear issue before moving this task to personal.",
@@ -4860,7 +4861,7 @@
       "preview": {
         "untitled": "Untitled task",
         "agent": "Agent {name}",
-        "pullRequest": "Pull request",
+        "pullRequest": "PR",
         "unavailable": "Preview unavailable"
       },
       "prs": "PRs",
@@ -5072,10 +5073,12 @@
       "groupChats": "Group chats",
       "threads": "Threads",
       "tasks": "Tasks",
-      "actions": "Quick actions",
+      "actions": "Actions",
       "bots": "Bots",
       "conversations": "Threads",
-      "projects": "Projects"
+      "projects": "Projects",
+      "recent": "Recent threads",
+      "goTo": "Go to"
     },
     "newBot": {
       "loading": "Loading…",
@@ -5164,7 +5167,7 @@
       "prompt": "Create a task for me: {text}",
       "details": "Details",
       "sending": "Sending…",
-      "createOnly": "Create only",
+      "createOnly": "Create without dispatching",
       "label": "Task description",
       "titleLabel": "Title",
       "removeFile": "Remove {name}",
@@ -6349,7 +6352,7 @@
       "triggers": "Runs when any of these happens",
       "misfireSkip": "Skip it",
       "content": "Content",
-      "deleteBody": "Past runs and their tasks stay.",
+      "deleteBody": "It stops running; past runs and their threads stay readable.",
       "notify": "Post runs to Slack",
       "batches": {
         "confirmTitle": "Cancel this batch?",
@@ -6493,7 +6496,7 @@
       "modelDefault": "Agent default",
       "you": "You",
       "agent": "Agent",
-      "deleteTitle": "Delete this automation?",
+      "deleteTitle": "Delete “{name}”?",
       "runsInNew": "A new thread each run",
       "loadSavedVersion": "Discard edits and load saved version",
       "machineSizeDefault": "Environment default",
@@ -6981,7 +6984,7 @@
       "two": "{a} and {b} are working…"
     },
     "loadingOlder": "Loading…",
-    "notFound": "This group chat doesn't exist, or you're no longer in it.",
+    "notFound": "This group chat doesn't exist, or you're no longer in it",
     "answering": "Replying",
     "leaveError": "Couldn’t leave the group. Try again.",
     "leaveDenied": "You can’t leave this group with your current membership.",
@@ -6998,7 +7001,8 @@
     "composer": "Message {name}",
     "untitled": "Untitled group chat",
     "you": "You",
-    "emptyHint": "Mention a member with @ to hand it to them, or write to the whole group."
+    "emptyHint": "Mention a member with @ to hand it to them, or write to the whole group.",
+    "backToThreads": "Back to threads"
   },
   "Members": {
     "noMatchTitle": "No matching members",
@@ -7084,7 +7088,7 @@
     "remove": "Remove",
     "defaultWorkspaceName": "{name}'s Workspace",
     "unmute": "Follow",
-    "removeDialogTitle": "Remove this member?",
+    "removeDialogTitle": "Remove {name} from this task?",
     "removeFailedTitle": "Could not remove",
     "status": {
       "invited": "Invited",
@@ -7376,7 +7380,7 @@
       "memberEmail": "Member email",
       "project": "Project",
       "accessChangeBody": "This moves {tasks} task(s) and changes who can read them.",
-      "noLabelsYet": "No labels yet.",
+      "noLabelsYet": "No labels yet",
       "estimate": "Estimate",
       "taskProperties": "Task properties",
       "labelColor": "Label color",
@@ -7629,7 +7633,8 @@
     "untitledConversation": "Untitled thread",
     "newBot": "New bot",
     "workspaceAll": "{name} — all tasks",
-    "search": "Search tasks"
+    "search": "Search tasks",
+    "switchWorkspace": "Switch workspace"
   },
   "Governance": {
     "plan": {
@@ -7695,7 +7700,7 @@
         "ask": "Ask when needed",
         "unset": "Not set"
       },
-      "empty": "No approval templates yet.",
+      "empty": "No approval templates yet",
       "permissions": "Permissions",
       "namePlaceholder": "For example: contractor repos read-only",
       "cancel": "Cancel",
@@ -8053,10 +8058,10 @@
     "cancel": "Cancel",
     "refresh": "Refresh",
     "updated": "Updated",
-    "noMatches": "No pull requests match these filters.",
+    "noMatches": "No pull requests match these filters",
     "branch": "Branch",
     "openReview": "Open review",
-    "empty": "No pull requests yet.",
+    "empty": "No pull requests yet",
     "reviewers": "Reviewers",
     "savedViews": "Saved views",
     "label": "Label",
@@ -8074,7 +8079,7 @@
       "CONFLICTING": "Conflicts",
       "UNKNOWN": "Unknown"
     },
-    "detailFailed": "Pull request details unavailable",
+    "detailFailed": "Couldn't load pull request details",
     "requestChanges": "Request changes",
     "requestChangesTitle": "Request changes on {repo} #{number}",
     "requestChangesBody": "What needs to change…",
@@ -8099,7 +8104,9 @@
     "diffPatchUnavailable": "{count} file(s) have no patch (binary or truncated)",
     "reviewSelf": "You cannot request changes on your own pull request",
     "noneSelected": "Select a pull request to see it here",
-    "changesTab": "Changes"
+    "changesTab": "Changes",
+    "emptyHint": "Pull requests your Agents open show up here",
+    "emptyAction": "New thread"
   },
   "HostedConnections": {
     "state": {
@@ -8148,7 +8155,12 @@
       "amountColumn": "Amount",
       "section": "Balance",
       "type": "Type",
-      "receipt": "Receipt"
+      "receipt": "Receipt",
+      "topUpTitle": "Add Mikka credits",
+      "topUpHint": "Pick an amount. Stripe confirms the payment method in the next step.",
+      "topUpAmount": "Amount",
+      "topUpTotal": "Due today",
+      "topUpBuy": "Buy {amount}"
     },
     "management": {
       "budgetExhausted": "Limit reached",
@@ -8213,7 +8225,7 @@
       "budgets": "Budgets and thresholds",
       "platformReserved": "Reserved for pending or unknown usage",
       "budgetThreshold": "Warning threshold reached",
-      "historyEmpty": "No transactions yet.",
+      "historyEmpty": "No transactions yet",
       "accountNone": "No payment account selected",
       "budgetPeriod": "Period",
       "billingEntry": "Billing and budgets",
@@ -8726,7 +8738,7 @@
     "dependencies": {
       "unavailable": "The complete dependency list cannot be edited with your current access.",
       "title": "Dependency repositories",
-      "empty": "No repositories to show."
+      "empty": "No repositories to show"
     },
     "milestones": {
       "name": "Milestone {index} name",
@@ -9026,7 +9038,7 @@
       "saveFailed": "Save failed",
       "editorCrashedDescription": "The rest of the page is still available. Reload to keep working.",
       "membersTitle": "Members",
-      "activityFailed": "Could not load activity. Click to retry",
+      "activityFailed": "Couldn't load activity",
       "manageMembers": "Manage members",
       "advancedTools": "Advanced document tools",
       "emptyDocument": "Empty document",
@@ -9063,7 +9075,7 @@
       "aTask": "a task",
       "estimateChanged": "set the estimate to {estimate}",
       "resolve": "Resolve",
-      "timelinePullFailed": "Could not load linked pull request activity. Retry",
+      "timelinePullFailed": "Couldn't load linked pull request activity",
       "markedBlockedBy": "marked {code} as blocked by {other}",
       "moved": "moved {code} to {status}",
       "replyPlaceholder": "Leave a reply…",
@@ -9313,7 +9325,7 @@
       "restoring": "Restoring…",
       "description": "Preview the description and changes on the left, and pick a version on the right. Restoring only replaces the description; the title, properties, and comments stay.",
       "confirmTitle": "Restore this description?",
-      "empty": "No description history yet.",
+      "empty": "No description history yet",
       "reload": "Reload",
       "confirmAction": "Restore description",
       "restoreFailed": "Could not restore the description.",
@@ -9683,7 +9695,7 @@
       "askLabel": "Ask about or update memory",
       "askPlaceholder": "Ask or update",
       "sending": "Sending",
-      "empty": "Nothing remembered yet."
+      "empty": "Nothing remembered yet"
     },
     "profile": {
       "nameRequired": "Enter a name",
@@ -9963,7 +9975,7 @@
     "fileActions": "Actions for {name}",
     "tooLarge": "This file is too large.",
     "deleteFileTitle": "Delete {name}?",
-    "overviewEmpty": "No files yet.",
+    "overviewEmpty": "No files yet",
     "overviewSub": "Files you keep and results from your tasks.",
     "unarchiveFolder": "Restore folder",
     "accessUnavailable": "These files are no longer available to this account.",
@@ -10320,7 +10332,8 @@
     "selected": "Selected",
     "refresh": "Refresh",
     "retry": "Retry",
-    "later": "Later"
+    "later": "Later",
+    "newVersion": "New version available"
   },
   "Overview": {
     "viewsTitle": "Workspace views",
@@ -10771,10 +10784,10 @@
       "noApiKeys": "No API keys added",
       "defaultAgent": "Default Agent",
       "defaultAgentHint": "Pre-selected for new tasks and threads",
-      "defaultHarness": "Default harness",
+      "defaultHarness": "Default agent",
       "defaultHarnessHint": "Execution harness for new tasks and threads",
       "defaultModel": "Default model",
-      "defaultModelHint": "Default model and reasoning for the selected harness",
+      "defaultModelHint": "Default model and reasoning for the selected agent",
       "allProviders": "Favorites",
       "otherProvider": "Other",
       "speedFast": "Fast mode",
@@ -11001,7 +11014,7 @@
     "networkUnavailable": "No network",
     "openBrowser": "Open in browser",
     "serverUnavailable": "Can't reach Mikka",
-    "renderHint": "Retry to reopen the view.",
+    "renderHint": "This part of the page ran into an error. Retry opens it again; nothing else is affected.",
     "updateHint": "This version can no longer connect to Mikka. Check for an app update.",
     "reconnecting": "Reconnecting…",
     "browserOpened": "The page is open in your browser. You can return to Mikka when finished.",
@@ -11041,7 +11054,8 @@
     "duplicateTab": "Duplicate Tab",
     "copyUrl": "Copy URL",
     "moveToNewWindow": "Move to New Window",
-    "currentVersion": "Current version v{version}"
+    "currentVersion": "Current version v{version}",
+    "offlineKept": "Unsent text stays here until you are back online"
   },
   "ConversationDirectory": {
     "loading": "Loading threads…",
@@ -11071,7 +11085,7 @@
     "archived": "Archived",
     "clearFilters": "Clear filters",
     "automationUnknown": "this automation",
-    "emptyTitle": "No threads yet.",
+    "emptyTitle": "No threads yet",
     "archiveOff": "Off",
     "activeGroup": "Active & waiting",
     "recentGroup": "Recent threads"
@@ -11142,7 +11156,7 @@
     "unavailableProject": "Previously granted Project",
     "failed": "The request failed. Refresh to see the current settings.",
     "disable": "Disable",
-    "empty": "No service identities yet.",
+    "empty": "No service identities yet",
     "credential": "Service key",
     "expires": "Key expires {date}",
     "organizationScope": "Organization · {name}",
@@ -11163,7 +11177,7 @@
     "manage": "Manage {name}",
     "confirmProjects": "Grant this identity read access to the selected Projects?",
     "rename": "Rename",
-    "noProjects": "No Projects are available.",
+    "noProjects": "No Projects are available",
     "revoke": "Revoke key",
     "confirmRotate": "Issue a new key and invalidate any existing key?",
     "active": "Active",
@@ -11242,7 +11256,7 @@
     },
     "left": "{count, plural, one {# left} other {# left}}",
     "hide": "Hide setup checklist",
-    "title": "Setup checklist",
+    "title": "Get started with Mikka",
     "show": "Show checklist",
     "items": {
       "task": "Give the first task",
@@ -11588,11 +11602,11 @@
     "draftStatus": "Draft PR",
     "mergedStatus": "Pull request merged",
     "closedStatus": "Pull request closed",
-    "noIssues": "No unresolved review issues.",
+    "noIssues": "No unresolved review issues",
     "resolved": "Resolved",
     "unresolved": "Open",
     "addReviewComment": "Add review comment",
-    "noCommits": "No commits reported.",
+    "noCommits": "No commits reported",
     "summaryHeading": "Summary",
     "openBrowser": "Open in browser",
     "quoteRef": "Copy PR reference"
