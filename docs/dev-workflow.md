@@ -305,10 +305,12 @@ Keep inherited `main` migrations and every executed migration under their
 original names with their original SQL. Add a corrective migration for changes.
 The checker (`scripts/check-migrations.mjs`) rejects malformed or duplicate IDs,
 changes to inherited history, and any new `DROP COLUMN` (including shorthand
-`DROP name`) unless preceded by a reviewed
+`DROP name`) unless preceded by a
 `-- migrate: contract #<issue> <reader-cutover/backfill/rollback evidence>`
-header proving all live readers switched and backfills completed. Use
-expand-backfill-contract across separate migrations (add tables/columns and
+header. The script checks the marker syntax only; human/agent review must verify
+that the cited evidence actually proves all live readers switched and backfills
+completed (the marker is a reviewed exception, not automated proof of cutover).
+Use expand-backfill-contract across separate migrations (add tables/columns and
 compatible readers/writers first, switch code and backfill, then contract later);
 deployment rollback restores code and artifacts, not deleted data. For breaking
 hosted API and internal `API ↔ Eve ↔ Task ↔ World` contracts (three-step

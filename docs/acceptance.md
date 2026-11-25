@@ -77,12 +77,14 @@ historical pending attempt is picked up automatically.
 
 ## OAuth-specific acceptance
 
-For changes involving Google/GitHub OAuth rules, provider linking or OAuth
-proxy/callback routing, verify the relevant real provider flow using the stable
-HTTPS hub configured by `BETTER_AUTH_OAUTH_PROXY_URL` and the exact originating
-application origin. Reuse existing authorized provider/browser sessions. If the
-provider requires MFA or reauthentication, hand over that specific provider step
-once; never request passwords or verification codes in chat.
+For changes involving Google/GitHub OAuth sign-in, provider linking, or OAuth
+proxy/callback routing, verify the relevant real provider flow and exact return
+origin: sign-in proxy flows use the stable HTTPS hub configured by
+`BETTER_AUTH_OAUTH_PROXY_URL`, while GitHub provider linking uses the initiating
+application's own registered callback origin ([2026-11-03-0315](design/decisions/2026-11-03-0315-github-link-callback-origin.md)).
+Reuse existing authorized provider/browser sessions. If the provider requires
+MFA or reauthentication, hand over that specific provider step once; never
+request passwords or verification codes in chat.
 
 There is no separate Infisical vault for an OAuth test account; the Aspectly Labs
 organization has no such project. Use the existing authorized provider/browser
