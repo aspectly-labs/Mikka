@@ -27,6 +27,12 @@ before(async () => {
   if (!available) return
   mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) } })
   mock.module('@/lib/session', { namedExports: { getSession: async () => currentUser ? { user: currentUser, session: { id: 'instructions-test-session' } } : null } })
+  mock.module('@/lib/api-auth', { namedExports: {
+    auth: { api: { getSession: async () => currentUser ? { user: currentUser, session: { id: 'instructions-test-session' } } : null } },
+    getApiSession: async () => currentUser ? { user: currentUser, session: { id: 'instructions-test-session' } } : null,
+    apiWorkspaceAllowed: (session: { tokenWorkspaceId?: string }, workspaceId: string) =>
+      !session.tokenWorkspaceId || session.tokenWorkspaceId === workspaceId,
+  } })
   ;({ pool } = await import('@/lib/db'))
   ;({ workspacePool } = await import('@/lib/workspace-db'))
   route = await import('@/app/api/settings/workspace/[workspaceId]/route')
