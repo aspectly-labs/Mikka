@@ -122,7 +122,7 @@ test('the real Vite base middleware preserves the bare application mount and its
   }
 })
 
-test('only machine gateway socket upgrades cross the real Vite proxy; Vite HMR stays local', { timeout: 20_000 }, async t => {
+test('only machine gateway socket upgrades cross the real Vite proxy; Vite HMR stays local', { timeout: 20_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'mikka-vite-gateway-ws-'))
   const frontend = join(root, 'apps/frontend')
   await mkdir(frontend, { recursive: true })
@@ -174,7 +174,13 @@ test('only machine gateway socket upgrades cross the real Vite proxy; Vite HMR s
     const message = socket => new Promise((resolve, reject) => {
       const queue = received.get(socket)
       let settled = false
-      const finish = (error, value) => { if (!settled) { settled = true; clearTimeout(timer); error ? reject(error) : resolve(value) } }
+      const finish = (error, value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (error) reject(error)
+        else resolve(value)
+      }
       const timer = setTimeout(() => finish(new Error('VITE_GATEWAY_WS_MESSAGE_TIMEOUT')), 5_000)
       const take = () => {
         if (settled) return
