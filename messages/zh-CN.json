@@ -3493,7 +3493,7 @@
     "stepsTools": "调用了 {count} 个工具",
     "sendFailed": "发送结果未确认，草稿已保留",
     "acceptanceTab": "验收",
-    "composer": "告诉 {agent} 下一步做什么…",
+    "composer": "提出后续变更要求",
     "changesTab": "改动",
     "pullTab": "Pull request",
     "filesTab": "文件",
@@ -8902,7 +8902,8 @@
       "progress": "已完成 {completed}/{total} 项待办",
       "pending": "待处理",
       "inProgress": "进行中",
-      "completed": "已完成"
+      "completed": "已完成",
+      "step": "第 {step} / {total} 步"
     },
     "turnFold": {
       "working": "工作中 {duration}",
@@ -11482,6 +11483,7 @@
   "AgentMessageRow": {
     "dispatched": "{name} 派发了任务",
     "sent": "{name} 发来消息",
+    "sentBy": "由 {name} 发送",
     "reply": "收到 {name} 的回复",
     "message": "收到 {name} 的消息",
     "question": "{name} 提了问题",
