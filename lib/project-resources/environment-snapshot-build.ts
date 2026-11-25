@@ -52,8 +52,8 @@ async function finishSuperseded(row: Build) {
   const { rows } = await workspacePool.query<Build>(
     `SELECT * FROM environment_snapshots WHERE
     "workspaceId"=$1 AND "environmentId"=$2 AND "userId"=$3 AND "templateKind"=$4
-    AND state='outdated' AND "providerId" IS NOT NULL AND id<>$5`,
-    [row.workspaceId, row.environmentId, row.userId, row.templateKind, row.id],
+    AND state='outdated' AND "providerId" IS NOT NULL`,
+    [row.workspaceId, row.environmentId, row.userId, row.templateKind],
   )
   for (const old of rows) await expireEnvironmentSnapshot(old.id)
 }
@@ -83,6 +83,10 @@ export async function buildEnvironmentSnapshot(id: string) {
       if (row.sandboxId) await Sandbox.kill(row.sandboxId, await options(row.userId))
       return row
     }
+    // Different revisions or worker releases can build concurrently. Serialize
+    // publication per owner and harness so an older workflow cannot retain two
+    // ready images, or retire a later build that finished first.
+    const publicationKey = JSON.stringify([row.workspaceId, row.environmentId, row.userId, row.templateKind])
     const name = 'mikka-env-' + id
     // Bounded progress diagnostics contain phase names and exit codes only.
     // Provider stderr can echo credentials or arbitrary setup environment values.
@@ -166,15 +170,25 @@ export async function buildEnvironmentSnapshot(id: string) {
         // fall back to a full memory image with live setup processes.
         providerId = (await Sandbox.createSnapshot(sandboxId, { ...connection, name, mode: 'filesystem' })).snapshotId
       }
-      // An older build finishing late never supersedes a more recent revision.
-      await client.query(
-        `WITH published AS (
-        UPDATE environment_snapshots SET state='ready',"logTail"='complete',"providerId"=$2 WHERE id=$1 RETURNING *
-      ) UPDATE environment_snapshots old SET state='outdated' FROM published p WHERE old.id<>p.id AND old.state='ready'
-        AND old."workspaceId"=p."workspaceId" AND old."environmentId"=p."environmentId" AND old."userId"=p."userId"
-        AND old."templateKind"=p."templateKind" AND old."createdAt" < p."createdAt"`,
-        [id, providerId],
-      )
+      await client.query('BEGIN')
+      try {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [publicationKey])
+        await client.query(
+          `UPDATE environment_snapshots SET state='ready',"logTail"='complete',"providerId"=$2 WHERE id=$1`,
+          [id, providerId],
+        )
+        await client.query(
+          `WITH candidates AS (
+          SELECT id,row_number() OVER (ORDER BY revision DESC,"createdAt" DESC,id DESC) AS position
+          FROM environment_snapshots WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "userId"=$3 AND "templateKind"=$4 AND state='ready'
+        ) UPDATE environment_snapshots SET state='outdated' WHERE id IN (SELECT id FROM candidates WHERE position>1)`,
+          [row.workspaceId, row.environmentId, row.userId, row.templateKind],
+        )
+        await client.query('COMMIT')
+      } catch (error) {
+        await client.query('ROLLBACK')
+        throw error
+      }
     } catch (error) {
       const code = error && typeof error === 'object' && 'exitCode' in error ? error.exitCode : undefined
       if (typeof code === 'number' && Number.isSafeInteger(code)) progress.push('exit ' + code)
