@@ -12,7 +12,14 @@ const governanceDenied = () => Response.json(
 )
 
 export const POST = freshSessionRoute(defineRoute(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, onAuthFailure: governanceDenied },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: governanceDenied,
+    onAuthFailure: governanceDenied,
+  },
   async ({ request }) => governanceResponse(async () => {
     const url = new URL(request.url)
     if (request.headers.get('origin') !== url.origin) throw new GovernanceError('access_denied')

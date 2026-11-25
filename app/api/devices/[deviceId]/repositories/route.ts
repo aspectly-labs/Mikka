@@ -27,8 +27,20 @@ export const GET = freshSessionRoute(defineRoute<'session', 'none', { deviceId: 
     ),
 ))
 
+const deviceOriginDenied = () => Response.json(
+  { error: 'workspaceAccessDenied' },
+  { status: 403, headers: { 'cache-control': 'private, no-store' } },
+)
+
 export const PUT = freshSessionRoute(defineRoute<'session', 'none', { deviceId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/repositories' },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    route: '/api/devices/[deviceId]/repositories',
+    onOriginFailure: deviceOriginDenied,
+  },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {
       assertCookieMutationOrigin(request, session.tokenId)
@@ -38,7 +50,14 @@ export const PUT = freshSessionRoute(defineRoute<'session', 'none', { deviceId: 
 ))
 
 export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { deviceId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/repositories' },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    route: '/api/devices/[deviceId]/repositories',
+    onOriginFailure: deviceOriginDenied,
+  },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {
       assertCookieMutationOrigin(request, session.tokenId)
@@ -48,7 +67,14 @@ export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { deviceId
 ))
 
 export const DELETE = freshSessionRoute(defineRoute<'session', 'none', { deviceId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/repositories' },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    route: '/api/devices/[deviceId]/repositories',
+    onOriginFailure: deviceOriginDenied,
+  },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {
       assertCookieMutationOrigin(request, session.tokenId)

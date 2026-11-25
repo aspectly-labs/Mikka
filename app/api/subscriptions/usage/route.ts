@@ -9,5 +9,8 @@ const subscriptionAuthRequired = () => Response.json(
 )
 export const GET = defineRoute(
   { auth: 'session', origin: 'any', workspace: 'none', onAuthFailure: subscriptionAuthRequired },
-  ({ request }) => subscriptionUsage(request, subscriptionHTTPDependencies),
+  ({ request, session }) => subscriptionUsage(request, {
+    ...subscriptionHTTPDependencies,
+    session: async () => ({ userId: session.user.id, sessionId: session.session.id, tokenWorkspaceId: session.tokenWorkspaceId }),
+  }),
 )

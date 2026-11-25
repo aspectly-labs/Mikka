@@ -17,8 +17,22 @@ const handle = createSecretDeliveryHandler({
     secretAuditHook(actor, auditRequestContext(request.headers))),
 })
 
+const deliveryHeaders = {
+  'Cache-Control': 'private, no-store',
+  Vary: 'Cookie, Authorization',
+  'X-Content-Type-Options': 'nosniff',
+} as const
+
 const guarded = defineRoute(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: () => Response.json({ error: 'originRejected' }, { status: 403, headers: deliveryHeaders }),
+    onAuthFailure: () => Response.json({ error: 'authRequired' }, { status: 401, headers: deliveryHeaders }),
+    onAuthError: () => Response.json({ error: 'secretsUnavailable' }, { status: 503, headers: deliveryHeaders }),
+  },
   ({ request }) => handle(request),
 )
 

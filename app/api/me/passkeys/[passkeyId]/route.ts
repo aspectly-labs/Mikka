@@ -13,9 +13,20 @@ const passkeyUnauthorized = () => Response.json(
   { error: { code: 'unauthorized' } },
   { status: 401, headers: { 'cache-control': 'private, no-store' } },
 )
+const passkeyOriginDenied = () => Response.json(
+  { error: { code: 'governance_denied', detail: 'access_denied' } },
+  { status: 403, headers: { 'cache-control': 'private, no-store' } },
+)
 
 export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { passkeyId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, onAuthFailure: passkeyUnauthorized },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: passkeyOriginDenied,
+    onAuthFailure: passkeyUnauthorized,
+  },
   async ({ request, params }) => passkeyRouteResponse(async () => {
     const session = await passkeyAccountSession(request)
     const id = passkeyIdSchema.parse(params.passkeyId)
@@ -26,7 +37,14 @@ export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { passkeyI
 ))
 
 export const DELETE = freshSessionRoute(defineRoute<'session', 'none', { passkeyId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, onAuthFailure: passkeyUnauthorized },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: passkeyOriginDenied,
+    onAuthFailure: passkeyUnauthorized,
+  },
   async ({ request, params }) => passkeyRouteResponse(async () => {
     const session = await passkeyAccountSession(request)
     const id = passkeyIdSchema.parse(params.passkeyId)

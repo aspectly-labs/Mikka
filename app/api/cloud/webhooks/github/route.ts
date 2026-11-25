@@ -23,10 +23,11 @@ export const POST = defineRoute(
         if (!registration) return new Response(null, { status: 401, headers: noStore })
         const body = await readGitHubWebhookBody(request)
         if (body === null) return new Response(null, { status: 413, headers: noStore })
-        if (!verifyCloudGitHubSignature(body, request.headers.get('Mikka-Cloud-Signature'), registration.serverSecret)) {
+        const verifiedAt = Date.now()
+        if (!verifyCloudGitHubSignature(body, request.headers.get('Mikka-Cloud-Signature'), registration.serverSecret, verifiedAt)) {
           return new Response(null, { status: 401, headers: noStore })
         }
-        return { ok: true, payload: { registration, body } }
+        return { ok: true, payload: { registration, body, verifiedAt } }
       } catch (error) {
         return webhookFailure(error)
       }
@@ -38,6 +39,7 @@ export const POST = defineRoute(
       registration: async () => webhook!.registration,
       readBody: async () => webhook!.body,
       dispatch: dispatchVerifiedGitHubWebhook,
+      now: () => webhook!.verifiedAt,
     })
     try { return await receive(request) }
     catch (error) { return webhookFailure(error) }

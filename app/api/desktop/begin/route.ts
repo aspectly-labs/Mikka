@@ -15,7 +15,13 @@ import { defineRoute } from '@/lib/primitives/define-route'
  * only the holder of the verifier can trade the result for a token (/exchange).
  */
 export const POST = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', route: '/api/desktop/begin' },
+  {
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    route: '/api/desktop/begin',
+    onOriginFailure: () => new RouteResponse(null, { status: 403 }),
+  },
   async ({ request }) => {
     let body: unknown
     try {

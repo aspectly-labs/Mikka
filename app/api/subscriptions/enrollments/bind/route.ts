@@ -40,8 +40,13 @@ const handleBind = enrollmentBindHTTP({
   },
 })
 
+const enrollmentOriginRefused = () => Response.json(
+  { error: 'request_refused' },
+  { status: 403, headers: { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' } },
+)
+
 const POSTBody = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none' },
+  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: enrollmentOriginRefused },
   ({ request }) => handleBind(request),
 )
 

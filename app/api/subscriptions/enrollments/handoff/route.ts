@@ -8,8 +8,13 @@ import { byosEnrollmentEnabled } from '@/lib/cloud-computer-flag'
 export const maxDuration = 120
 const enabled = () => byosEnrollmentEnabled()
 const handleHandoff = enrollmentHandoffHTTP({ enabled, client: () => new EnrollmentClient(enrollmentConfiguration()) })
+const handoffOriginRefused = () => Response.json(
+  { error: 'request_refused' },
+  { status: 403, headers: { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' } },
+)
+
 const POSTBody = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none' },
+  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: handoffOriginRefused },
   ({ request }) => handleHandoff(request),
 )
 export const GET = defineRoute(

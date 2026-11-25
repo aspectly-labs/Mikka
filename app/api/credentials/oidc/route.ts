@@ -9,8 +9,9 @@ import { defineRoute } from '@/lib/primitives/define-route'
 export const maxDuration = 60
 /** Vercel deployment protection controls access to this Preview-only probe.
  * It returns four authorization booleans, no credentials or account data. */
+// Preview-only 404 gate intentionally precedes exact-origin + custom header CSRF validation in checkCredentialRequest.
 const POSTBody = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none' },
+  { auth: 'public', origin: 'any', workspace: 'none' },
   async ({ request }) => {
     try {
       if (process.env.VERCEL_ENV !== 'preview') throw new CredentialError('credential_denied', 404)

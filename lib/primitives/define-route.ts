@@ -46,6 +46,10 @@ export type RouteHandler<P extends RouteHandlerParams = Record<string, string>> 
   request: Request,
   context?: RouteHandlerContext<P>,
 ) => Promise<Response>
+export type PublicRouteHandler<P extends RouteHandlerParams = Record<string, string>> = (
+  request?: Request,
+  context?: RouteHandlerContext<P>,
+) => Promise<Response>
 
 export type WebhookVerifyResult<TWebhook = unknown> =
   | { ok: true; payload?: TWebhook }
@@ -83,13 +87,25 @@ type RouteSpecBase<P extends RouteHandlerParams> = {
   write?: boolean
   /** Forces database-fresh session reads (`disableCookieCache: true` inside `withFreshSession`). */
   freshSession?: boolean
+  /** Prevents Better Auth from renewing/extending the session cookie on read (`disableRefresh: true`). */
+  disableRefresh?: boolean
   /** Optional extractor for routes whose target workspace ID comes from URL params or query string. */
   workspaceId?: (input: { request: Request; params: P }) => string | null | undefined
+  /**
+   * Optional legacy refusal formatter for origin/CSRF failures (must return a 403 Response;
+   * any non-403 return value is ignored fail-closed so origin checks can never be bypassed).
+   */
+  onOriginFailure?: () => Response
   /**
    * Optional legacy refusal formatter for auth failures (must return a 401 or 403 Response;
    * any non-401/403 return value is ignored fail-closed so auth can never be bypassed).
    */
   onAuthFailure?: (reason: RouteAuthFailureReason) => Response
+  /**
+   * Optional fail-closed formatter when the session lookup itself throws (must return a 5xx Response;
+   * any non-5xx return value rethrows the underlying error so auth errors can never fail open).
+   */
+  onAuthError?: (error: unknown) => Response
 }
 
 export type RouteSpec<
@@ -266,6 +282,18 @@ const defaultDependencies: RouteGuardDependencies = {
   mobileAppOrigin: 'mikka://',
 }
 
+function originFailureResponse<P extends RouteHandlerParams>(
+  spec: RouteSpecBase<P>,
+): Response {
+  if (spec.onOriginFailure) {
+    const custom = spec.onOriginFailure()
+    if (custom instanceof Response && custom.status === 403) {
+      return custom
+    }
+  }
+  return routeJson({ error: 'originNotAllowed' }, 403)
+}
+
 function authFailureResponse<P extends RouteHandlerParams>(
   spec: RouteSpecBase<P>,
   reason: RouteAuthFailureReason,
@@ -279,6 +307,29 @@ function authFailureResponse<P extends RouteHandlerParams>(
   return reason === 'unauthenticated'
     ? routeJson({ error: 'authRequired' }, 401)
     : routeJson({ error: reason }, 403)
+}
+
+function authErrorResponse<P extends RouteHandlerParams>(
+  spec: RouteSpecBase<P>,
+  error: unknown,
+): Response {
+  if (spec.onAuthError) {
+    const custom = spec.onAuthError(error)
+    if (custom instanceof Response && custom.status >= 500 && custom.status <= 599) {
+      return custom
+    }
+  }
+  throw error
+}
+
+function buildSessionQuery<P extends RouteHandlerParams>(
+  spec: RouteSpecBase<P>,
+): { disableCookieCache?: boolean; disableRefresh?: boolean } | undefined {
+  if (!spec.freshSession && !spec.disableRefresh) return undefined
+  return {
+    ...(spec.freshSession ? { disableCookieCache: true } : {}),
+    ...(spec.disableRefresh ? { disableRefresh: true } : {}),
+  }
 }
 
 async function isNativeMobileOriginAllowed(
@@ -370,7 +421,13 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
   const loadWorkspace = deps.loadWorkspaceContext ?? defaultDependencies.loadWorkspaceContext
   const logUser = deps.noteLogUser ?? defaultDependencies.noteLogUser
 
-  return function defineRoute<
+  function defineRoute<
+    P extends RouteHandlerParams = Record<string, string>,
+  >(
+    spec: RouteSpec<'public', 'none', P> & { origin: 'any'; write?: false; route?: undefined },
+    handler: (ctx: RouteContext<'public', 'none', P>) => Promise<Response> | Response,
+  ): PublicRouteHandler<P>
+  function defineRoute<
     Auth extends RouteAuthMode,
     Workspace extends RouteWorkspacePolicy,
     P extends RouteHandlerParams = Record<string, string>,
@@ -378,18 +435,29 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
   >(
     spec: RouteSpec<Auth, Workspace, P, TWebhook>,
     handler: (ctx: RouteContext<Auth, Workspace, P, TWebhook>) => Promise<Response> | Response,
-  ): RouteHandler<P> {
+  ): RouteHandler<P>
+  function defineRoute<
+    Auth extends RouteAuthMode,
+    Workspace extends RouteWorkspacePolicy,
+    P extends RouteHandlerParams = Record<string, string>,
+    TWebhook = unknown,
+  >(
+    spec: RouteSpec<Auth, Workspace, P, TWebhook>,
+    handler: (ctx: RouteContext<Auth, Workspace, P, TWebhook>) => Promise<Response> | Response,
+  ): PublicRouteHandler<P> {
     validateSpec(spec)
+    const sessionQuery = buildSessionQuery(spec)
 
-    const execute: RouteHandler<P> = async (request, context) => {
+    const execute: PublicRouteHandler<P> = async (maybeRequest, context) => {
+      const request = maybeRequest as Request
       // 1. Origin / CSRF boundary (fail fast before any session or database I/O).
       if (spec.origin === 'same-origin-or-desktop') {
         if (!isSameOriginOrDesktopAllowed(request, deps)) {
-          return routeJson({ error: 'originNotAllowed' }, 403)
+          return originFailureResponse(spec)
         }
       } else if (spec.origin === 'native-mobile-allowed' || spec.write === true) {
         if (!(await isNativeMobileOriginAllowed(request, deps))) {
-          return routeJson({ error: 'originNotAllowed' }, 403)
+          return originFailureResponse(spec)
         }
       }
 
@@ -424,10 +492,14 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
           logUser(null)
           return authFailureResponse(spec, 'unauthenticated')
         }
-        session = await getSession({
-          headers,
-          ...(spec.freshSession ? { query: { disableCookieCache: true } } : {}),
-        })
+        try {
+          session = await getSession({
+            headers,
+            ...(sessionQuery ? { query: sessionQuery } : {}),
+          })
+        } catch (error) {
+          return authErrorResponse(spec, error)
+        }
         logUser(session?.user?.id)
         if (!session?.user) {
           return authFailureResponse(spec, 'unauthenticated')
@@ -440,25 +512,33 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
           return authFailureResponse(spec, 'humanSessionRequired')
         }
       } else if (spec.auth === 'mobile-or-session') {
-        if (spec.freshSession) {
-          session = await getSession({
-            headers: request.headers,
-            query: { disableCookieCache: true },
-          })
-          logUser(session?.user?.id)
-        } else {
-          const user = await mobileUser(request)
-          logUser(user?.id)
-          session = user ? sessionFromUser(user) : null
+        try {
+          if (spec.freshSession || spec.disableRefresh) {
+            session = await getSession({
+              headers: request.headers,
+              ...(sessionQuery ? { query: sessionQuery } : {}),
+            })
+            logUser(session?.user?.id)
+          } else {
+            const user = await mobileUser(request)
+            logUser(user?.id)
+            session = user ? sessionFromUser(user) : null
+          }
+        } catch (error) {
+          return authErrorResponse(spec, error)
         }
         if (!session?.user) {
           return authFailureResponse(spec, 'unauthenticated')
         }
       } else if (spec.auth === 'session') {
-        session = await getSession({
-          headers: request.headers,
-          ...(spec.freshSession ? { query: { disableCookieCache: true } } : {}),
-        })
+        try {
+          session = await getSession({
+            headers: request.headers,
+            ...(sessionQuery ? { query: sessionQuery } : {}),
+          })
+        } catch (error) {
+          return authErrorResponse(spec, error)
+        }
         logUser(session?.user?.id)
         if (!session?.user) {
           return authFailureResponse(spec, 'unauthenticated')
@@ -559,7 +639,7 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
       }
     }
 
-    const withFreshness: RouteHandler<P> = spec.freshSession
+    const withFreshness: PublicRouteHandler<P> = spec.freshSession
       ? (request, context) => (
           typeof freshSessionModule.withFreshSession === 'function'
             ? freshSessionModule.withFreshSession(() => execute(request, context))
@@ -567,10 +647,14 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
         )
       : execute
 
-    return spec.route && typeof requestLog.withRequestLog === 'function'
-      ? requestLog.withRequestLog(spec.route, withFreshness)
-      : withFreshness
+    return (
+      spec.route && typeof requestLog.withRequestLog === 'function'
+        ? requestLog.withRequestLog(spec.route, withFreshness as RouteHandler<P>)
+        : withFreshness
+    ) as PublicRouteHandler<P>
   }
+
+  return defineRoute
 }
 
 /**

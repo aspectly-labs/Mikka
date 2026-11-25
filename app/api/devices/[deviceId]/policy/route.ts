@@ -22,8 +22,20 @@ export const GET = freshSessionRoute(defineRoute<'session', 'none', { deviceId: 
     }),
 ))
 
+const deviceOriginDenied = () => Response.json(
+  { error: 'workspaceAccessDenied' },
+  { status: 403, headers: { 'cache-control': 'private, no-store' } },
+)
+
 export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { deviceId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/policy' },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    route: '/api/devices/[deviceId]/policy',
+    onOriginFailure: deviceOriginDenied,
+  },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {
       if (!session.tokenId && request.headers.has('cookie') && !request.headers.has('origin')) {

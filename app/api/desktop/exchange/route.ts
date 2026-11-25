@@ -19,7 +19,13 @@ const noStore = { 'Cache-Control': 'no-store' }
  * first attempt, right or wrong, so a code cannot be guessed against.
  */
 export const POST = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', route: '/api/desktop/exchange' },
+  {
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    route: '/api/desktop/exchange',
+    onOriginFailure: () => new RouteResponse(null, { status: 403 }),
+  },
   async ({ request }) => {
     let body: unknown
     try {

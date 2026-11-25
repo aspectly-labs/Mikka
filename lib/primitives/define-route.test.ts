@@ -596,3 +596,81 @@ test('onAuthFailure customizes 401/403 refusal envelopes fail-closed and optiona
   assert.equal(scimRes.status, 200)
   assert.deepEqual(await scimRes.json(), { connectionId: 'conn-1', resource: [] })
 })
+
+test('disableRefresh, fail-closed onOriginFailure/onAuthError, and zero-arg public routes work as specified', async () => {
+  const harness = makeHarness()
+
+  // disableRefresh forwards disableRefresh: true without renewing session cookies.
+  const nonRenewing = harness.guard(
+    { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, disableRefresh: true },
+    async ({ user }) => routeJson({ id: user.id }),
+  )
+  const ok = await nonRenewing(req('/api/account/deletion', { method: 'POST', headers: { origin: ORIGIN } }))
+  assert.equal(ok.status, 200)
+  assert.deepEqual(harness.sessionCalls.at(-1)?.query, { disableCookieCache: true, disableRefresh: true })
+
+  // onOriginFailure preserves route-specific 403 contract and ignores non-403 bypass attempts fail-closed.
+  const customOrigin = harness.guard(
+    {
+      auth: 'public',
+      origin: 'same-origin-or-desktop',
+      workspace: 'none',
+      onOriginFailure: () => Response.json({ error: 'originRejected' }, { status: 403, headers: { 'x-custom': '1' } }),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const rejected = await customOrigin(req('/api/device-tokens/x/revoke', { method: 'POST', headers: { origin: 'https://evil.example' } }))
+  assert.equal(rejected.status, 403)
+  assert.deepEqual(await rejected.json(), { error: 'originRejected' })
+  assert.equal(rejected.headers.get('x-custom'), '1')
+
+  const badOriginHook = harness.guard(
+    {
+      auth: 'public',
+      origin: 'same-origin-or-desktop',
+      workspace: 'none',
+      onOriginFailure: () => routeJson({ bypass: true }, 200),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const closedOrigin = await badOriginHook(req('/api/x', { method: 'POST', headers: { origin: 'https://evil.example' } }))
+  assert.equal(closedOrigin.status, 403)
+  assert.deepEqual(await closedOrigin.json(), { error: 'originNotAllowed' })
+
+  // onAuthError maps thrown session-lookup outages to custom 5xx and rethrows if a non-5xx bypass is returned.
+  const outage = new Error('session store unavailable')
+  const outageGuard = createRouteGuard({
+    getSession: async () => { throw outage },
+    noteLogUser: () => {},
+  })
+  const secretRoute = outageGuard(
+    {
+      auth: 'session',
+      origin: 'any',
+      workspace: 'none',
+      onAuthError: () => Response.json({ error: 'secretsUnavailable' }, { status: 503 }),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const unavailable = await secretRoute(req('/api/secrets/delivery'))
+  assert.equal(unavailable.status, 503)
+  assert.deepEqual(await unavailable.json(), { error: 'secretsUnavailable' })
+
+  const badAuthErrHook = outageGuard(
+    {
+      auth: 'session',
+      origin: 'any',
+      workspace: 'none',
+      onAuthError: () => routeJson({ bypass: true }, 200),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  await assert.rejects(() => badAuthErrHook(req('/api/secrets/delivery')), error => error === outage)
+
+  // Public routes with origin: 'any', workspace: 'none', no write/route allow zero-arg invocation.
+  const zeroArgRoute = harness.guard(
+    { auth: 'public', origin: 'any', workspace: 'none' },
+    () => new Response('ok', { status: 200 }),
+  )
+  assert.equal((await zeroArgRoute()).status, 200)
+})

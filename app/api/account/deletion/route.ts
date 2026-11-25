@@ -10,17 +10,30 @@ const headers = { 'cache-control': 'private, no-store', 'referrer-policy': 'no-r
 const receipt = z.string().uuid()
 const requestBody = z.object({ email: z.string().trim().max(320), requestId: receipt }).strict()
 
+const originDenied = () => Response.json({ error: 'originNotAllowed' }, { status: 403, headers })
+const authRequired = () => Response.json({ error: 'authRequired' }, { status: 401, headers })
+const deletionUnavailable = () => Response.json({ error: 'accountDeletionUnavailable' }, { status: 503, headers })
+
 /** A caller keeps its private request UUID before POST so a lost response can be resumed. No ID appears in a URL. */
 const POSTBody = defineRoute(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    disableRefresh: true,
+    onOriginFailure: originDenied,
+    onAuthFailure: authRequired,
+    onAuthError: deletionUnavailable,
+  },
   async ({ request, session: apiSession }) => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'originNotAllowed' }, { status: 403, headers })
+    if (request.headers.get('origin') !== new URL(request.url).origin) return originDenied()
     if (hasPatAuthorizationHeader(request) || isPatSession(apiSession)) return Response.json({ error: 'authRequired' }, { status: 403, headers })
     let session
     try { session = await requireFreshAccountSession(request.headers) }
     catch (error) {
       if (error instanceof AccountAuthenticationError) return Response.json({ error: error.code }, { status: error.status, headers })
-      return Response.json({ error: 'accountDeletionUnavailable' }, { status: 503, headers })
+      return deletionUnavailable()
     }
     const input = requestBody.safeParse(await request.json().catch(() => null))
     if (!input.success || input.data.email.toLowerCase() !== session.user.email.toLowerCase()) return Response.json({ error: 'accountEmailMismatch' }, { status: 400, headers })
@@ -30,7 +43,7 @@ const POSTBody = defineRoute(
       return Response.json(await readAccountDeletionReceipt(job.id), { status: 202, headers })
     } catch (error) {
       if (error instanceof GovernanceError && error.detail === 'last_owner') return Response.json({ error: 'accountLastOrganizationOwner' }, { status: 409, headers })
-      return Response.json({ error: 'accountDeletionUnavailable' }, { status: 503, headers })
+      return deletionUnavailable()
     }
   },
 )
@@ -47,11 +60,18 @@ export const GET = defineRoute(
 )
 
 const DELETEBody = defineRoute(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: originDenied,
+    onAuthFailure: authRequired,
+  },
   async ({ request, session }) => {
-    if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'originNotAllowed' }, { status: 403, headers })
+    if (request.headers.get('origin') !== new URL(request.url).origin) return originDenied()
     if (hasPatAuthorizationHeader(request) || isPatSession(session)) return Response.json({ error: 'authRequired' }, { status: 403, headers })
-    if (!session.session) return Response.json({ error: 'authRequired' }, { status: 401, headers })
+    if (!session.session) return authRequired()
     const input = receipt.safeParse(request.headers.get('x-mikka-deletion-receipt'))
     if (!input.success) return Response.json({ error: 'accountDeletionUnavailable' }, { status: 404, headers })
     try {

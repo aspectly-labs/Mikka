@@ -13,8 +13,20 @@ export const GET = defineRoute(
   ({ request }) => savedCredentialsRoute(request),
 )
 
+const credentialCsrfRejected = () => Response.json(
+  { error: 'credential_csrf_rejected' },
+  { status: 403, headers: privateHeaders },
+)
+
 const DELETEBody = defineRoute(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', freshSession: true, onAuthFailure: credentialAuthRequired },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: credentialCsrfRejected,
+    onAuthFailure: credentialAuthRequired,
+  },
   ({ request }) => savedCredentialsRoute(request),
 )
 
