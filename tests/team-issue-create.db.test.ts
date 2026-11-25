@@ -209,10 +209,10 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
       }
       assert.equal((await request('mkp_' + '0'.repeat(43))).status, 401)
       assert.deepEqual(await (await request(editor)).json(), { files: [], canEdit: true })
-      const file = { id: fileId, name, size: data.length }
+      const file = { id: fileId, name, size: data.length, mediaType: null }
       for (const response of await Promise.all([request(editor, 'POST', fileId), request(editor, 'POST', fileId)])) {
         assert.equal(response.status, 200)
-        assert.deepEqual(await response.json(), file)
+        assert.deepEqual(await response.json(), { ...file, placement: 'task' })
       }
       assert.equal((await request(editor, 'POST', fileId, new Uint8Array([1]))).status, 409)
       assert.deepEqual(await (await request(member)).json(), { files: [file], canEdit: true })
