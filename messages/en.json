@@ -746,7 +746,7 @@
       "amountLabel": "Recharge tier",
       "saveButton": "Save auto-recharge settings",
       "amountOption": "{points} pts",
-      "providerUnsupportedBadge": "Stripe Managed Payments auto-charge unsupported · Pending",
+      "providerUnsupportedBadge": "Stripe Managed Payments auto-charge unavailable",
       "quotaNoPlan": "0 / 0 pts",
       "readOnlyNote": "Only the billing account owner can update auto-recharge limits.",
       "workspaceKind": "Workspace type",
@@ -1019,9 +1019,9 @@
       "savedLoginsHeading": "Browser logins",
       "protectionModeLabel": "Protection level",
       "modeProtected": "Protected secret (Recommended)",
-      "modeProtectedHint": "Write-only. Injected via egress proxy; never readable as plaintext by the Agent.",
+      "modeProtectedHint": "Write-only; proxy-injected so the Agent cannot read plaintext.",
       "modeDirect": "Environment secret (Direct env)",
-      "modeDirectHint": "Write-only with log redaction. Exposed in process env for SDKs requiring direct access.",
+      "modeDirectHint": "Write-only; exposed in process env for legacy SDKs (log masking applies to values ≥ 8 chars).",
       "modePlainEnv": "Plain variable",
       "modePlainEnvHint": "Non-sensitive configuration readable by the Agent."
     },
@@ -1912,7 +1912,8 @@
       "dailySpendHeading": "Daily spend",
       "chartMetricLabel": "Chart metric",
       "emptyModels": "No model calls recorded in the selected range.",
-      "sourceLabel": "Billing source"
+      "sourceLabel": "Billing source",
+      "creditRate": "100 credits = US$1.00"
     },
     "notificationsMatrix": {
       "dndRowHint": "Mute push notifications during the scheduled window",
@@ -2788,7 +2789,13 @@
       "userName": "Preview user"
     },
     "title": "Settings",
-    "workspaceLoading": "Loading the workspace…"
+    "workspaceLoading": "Loading the workspace…",
+    "sharedLinks": {
+      "revokeConfirmTitle": "Revoke shared link?",
+      "revokeConfirmBody": "Anyone with this link will immediately lose access.",
+      "revokeConfirmAction": "Revoke link",
+      "cancel": "Cancel"
+    }
   },
   "Organization": {
     "identity": {
@@ -3249,7 +3256,12 @@
     "id": "ID",
     "copied": "ID copied",
     "created": "Created",
-    "copyFailed": "Couldn't copy"
+    "copyFailed": "Couldn't copy",
+    "repoPlaceholder": "Repository",
+    "branchPlaceholder": "Branch",
+    "environmentPlaceholder": "Cloud environment",
+    "modelPlaceholder": "Model",
+    "searchPlaceholder": "Search…"
   },
   "IssueThreads": {
     "executionIdentity": {
@@ -3948,7 +3960,7 @@
     "scheduledOffline": "Scheduled · runs when back online",
     "notScheduling": "Not taking part",
     "allowSchedulingTo": "Schedule runs on {name}",
-    "description": "Connected computers and their available tools.",
+    "description": "Connected devices and cloud environments.",
     "actions": {
       "editDescription": "Edit description",
       "rename": "Rename",
@@ -4714,9 +4726,9 @@
     "continue": "Continue",
     "codeMatches": "The terminal shows this same code",
     "expires": "Expires",
-    "device": "Computer",
+    "device": "Device",
     "scope": "Run your threads",
-    "title": "Connect this computer",
+    "title": "Connect this device",
     "approved": "Approved",
     "retry": "Retry",
     "back": "Back to Devices"
@@ -7799,7 +7811,13 @@
     "less": "Show less",
     "perTenOne": "run / 10 min",
     "nextRun": "next",
-    "runningNow": "Running now"
+    "runningNow": "Running now",
+    "cardBasics": "Basics & schedule",
+    "cardTarget": "Execution target",
+    "cardPrompt": "Instructions",
+    "cardDelivery": "Notifications & permissions",
+    "searchTimezonePlaceholder": "Search timezone…",
+    "noMatchingTimezone": "No matching timezone"
   },
   "AiElements": {
     "message": {
@@ -8762,7 +8780,10 @@
     "search": "Search projects",
     "emptyTitle": "No projects yet",
     "savingProperties": "Saving properties…",
-    "loading": "Loading projects"
+    "loading": "Loading projects",
+    "createTitle": "New project",
+    "createAction": "Create project",
+    "noMatches": "No matching projects"
   },
   "HostedThread": {
     "needsCount": "{count, plural, one {# needs you} other {# need you}}",
@@ -10068,7 +10089,11 @@
     "forgotPassword": "Forgot password?",
     "mobileProviderUnavailable": "This sign-in method is unavailable.",
     "switchAccount": "Use another account",
-    "verificationPending": "Complete human verification to continue."
+    "verificationPending": "Complete human verification to continue.",
+    "continuePasskey": "Continue with passkey",
+    "passkeyFailed": "Passkey sign-in did not finish. Try again.",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
   },
   "DesktopServer": {
     "cancel": "Cancel",
@@ -10174,7 +10199,7 @@
     "pendingCount": "{count, plural, =1 {1 person} other {# people}} to invite",
     "switchAccount": "Switch account",
     "description": "Invite teammates to {workspace} by entering emails or dropping in a CSV.",
-    "viewServerAndApps": "View server and available apps",
+    "viewServerAndApps": "View server info & downloads",
     "inviteLinkFor": "Invite link for {email}",
     "createLinks": "Create invite links",
     "linksDescription": "No email has been sent. Share each link privately with its recipient; it is valid for 7 days and can only be accepted while signed in with that address.",
@@ -10194,7 +10219,7 @@
     "creating": "Creating…",
     "skippedDuplicate": "Listed twice",
     "createAccount": "Create account",
-    "backToWorkspace": "Back to workspace",
+    "backToWorkspace": "Open workspace",
     "invalidToken": "This invite link is malformed. Ask an admin for the complete link.",
     "signInToAccept": "Sign in and accept",
     "joined": "You joined the workspace.",
@@ -10303,7 +10328,10 @@
     "title": "Allow {name} to use Mikka?",
     "scopeRead": "See your tasks and thread history",
     "scopeCoordinator": "Send messages to your Coordinator and read its replies",
-    "failed": "Authorization did not finish. Go back to the app and connect again."
+    "failed": "Authorization did not finish. Go back to the app and connect again.",
+    "scopesHeading": "Requested permissions",
+    "scopeOfflineAccess": "Keep access active while you are away",
+    "scopeFallback": "Access scope: {scope}"
   },
   "Artifact": {
     "roles": {
@@ -10376,7 +10404,7 @@
     "open": "Open task",
     "happened": "Latest",
     "noTask": "No task open",
-    "factoryStage": "Factory stage",
+    "factoryStage": "Run stage",
     "emptyActive": "No active tasks",
     "noTaskText": "Pick a task on the left to see where it is.",
     "tasks": "Tasks",
@@ -10394,7 +10422,7 @@
       "title": "Recommended",
       "heading": "A few things worth turning on",
       "linearText": "Hand Linear issues to Mikka",
-      "thisComputer": "This computer",
+      "thisComputer": "This device",
       "text": "All optional, and all in Settings later."
     },
     "workspace": {
@@ -10412,7 +10440,7 @@
     "plan": {
       "time": "Under 1 min",
       "title": "Plan",
-      "machines": "Cloudflare cloud machines, billed by the hour from credits",
+      "machines": "Mikka Cloud sandboxes, billed by the hour from credits",
       "credits": "$20 of Mikka credits each month, models at list price",
       "price": "$20/mo",
       "subscribe": "Subscribe",
@@ -10441,7 +10469,7 @@
     "skipped": "Skipped – pick it up anytime",
     "model": {
       "needed": "Pick a model to continue.",
-      "pick": "Model for the Coordinator",
+      "pick": "Default model",
       "text": "Use a subscription or key you already pay for, or start on Mikka credits. You can change it anytime.",
       "apiKey": "API key",
       "time": "About 1 min",
@@ -10453,7 +10481,7 @@
     "emails": "Email addresses",
     "page": "Getting started",
     "count": "{done} of {total} done",
-    "computerText": "With an E2B key the Bot can browse and threads can run in the cloud",
+    "computerText": "Threads run in Mikka Cloud by default; optionally add your own E2B key in Settings.",
     "nameError": "Give your workspace a name to continue.",
     "enter": "Get started",
     "continue": "Continue",
@@ -10469,14 +10497,14 @@
     "personLabel": "Your name",
     "finish": "Finish",
     "checklist": "Setup checklist",
-    "nextComputerText": "Add an E2B key in Settings › Secrets and environment.",
+    "nextComputerText": "Manage cloud environments or add an optional E2B key in Settings › Secrets & Credentials.",
     "doneKicker": "All set",
-    "nextSubscriptionText": "A Claude or ChatGPT subscription or an API key, in Settings › Models and subscriptions.",
+    "nextSubscriptionText": "Bind a Claude or ChatGPT subscription or API key in Settings › Models.",
     "root": "Mikka",
     "nextTaskText": "Write what needs doing; Mikka hands it to an Agent.",
     "skip": "Skip for now",
     "roleAdmin": "Admin",
-    "sub": "Four steps: your workspace, a model and a plan.",
+    "sub": "About two minutes.",
     "computer": "Cloud computer"
   },
   "GroupTask": {
@@ -10928,7 +10956,23 @@
     "tabHome": "Home",
     "tabSettings": "Settings",
     "reloadPage": "Reload page",
-    "reopenClosedTab": "Reopen closed tab"
+    "reopenClosedTab": "Reopen closed tab",
+    "tabTask": "Task",
+    "tabThread": "Thread",
+    "tabChat": "Chat",
+    "tabGroup": "Group",
+    "tabThreads": "Threads",
+    "tabTasks": "Tasks",
+    "tabProjects": "Projects",
+    "tabPulls": "Pull requests",
+    "tabInbox": "Inbox",
+    "tabPlugins": "Plugins",
+    "tabAutomations": "Automations",
+    "tabArtifacts": "Artifacts",
+    "tabMemory": "Memory",
+    "tabDevices": "Devices",
+    "tabTeams": "Teams",
+    "tabMembers": "Members"
   },
   "ConversationDirectory": {
     "loading": "Loading threads…",
@@ -11609,5 +11653,14 @@
     "noDevServer": "No running dev server",
     "previewStartMissing": "Preview start endpoint is not available yet",
     "startPreview": "Start preview"
+  },
+  "SharedThread": {
+    "badge": "Shared thread",
+    "readOnly": "Read-only",
+    "loading": "Loading shared thread…",
+    "notFoundTitle": "Shared thread unavailable",
+    "notFoundBody": "This share link was revoked or the thread is no longer available.",
+    "backHome": "Open Mikka",
+    "emptyMessages": "No messages in this thread."
   }
 }
