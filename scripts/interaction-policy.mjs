@@ -14,9 +14,8 @@ export const busyMessage = '按钮的点击会 await 异步结果，必须传 `b
 // 菜单项、链接这些控件不收 `busy`，让它们传一个不存在的属性只会变成类型错误。
 export const busyElsewhereMessage = '这个控件的点击会 await 异步结果，但它没有 `busy` 可传；改用 `Button` 并传 `busy`，让等待中的状态看得见。'
 
-// 今天已有的债务，按文件计数，只减不增：多了失败，少了也失败，逼着随修随降。
-// 拿掉一处就把它改小（0 处就删掉这一行），别让 baseline 变成冻结的名单。
-export const asyncPressBaseline = JSON.parse(readFileSync(new URL('./interaction-busy-baseline.json', import.meta.url), 'utf8'))
+// 异步按压 `busy` 债务已清零，永久锁在 0；不要再往 interaction-busy-baseline.json 里加条目。
+export const asyncPressBaseline = Object.freeze(JSON.parse(readFileSync(new URL('./interaction-busy-baseline.json', import.meta.url), 'utf8')))
 
 export function auditInteractions(file, text, baseline = asyncPressBaseline) {
   return audit(file, text, false, baseline)
