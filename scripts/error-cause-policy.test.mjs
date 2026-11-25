@@ -8,9 +8,9 @@ test('the repository passes: copy for every registered code, no new dropped caus
   assert.deepEqual(auditRepository().map(d => `${d.file}:${d.line} ${d.rule} ${d.message.slice(0, 80)}`), [])
 })
 
-test('the allowlist has no stale entries: a fixed drop leaves the list', () => {
+test('the allowlist is permanently empty and has no stale entries', () => {
+  assert.deepEqual(droppedCauseAllowlist, {})
   assert.deepEqual(staleAllowlistEntries(), [])
-  for (const [file, hits] of Object.entries(droppedCauseAllowlist)) assert.ok(Number.isInteger(hits) && hits > 0, file)
 })
 
 test('the registry is read from its source, with each code\'s details', () => {

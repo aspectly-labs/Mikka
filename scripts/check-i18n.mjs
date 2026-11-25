@@ -332,11 +332,12 @@ export function checkRepository() {
     problems.push(...findHardcodedText(file, source))
     problems.push(...findMissingTranslationKeys(file, source, reference))
   }
-  // The mobile app is a second entry point into the same catalog (R-42). It was
-  // written before this check covered it, so mobile-i18n-baseline.mjs freezes how many
-  // hardcoded strings each file still holds. The count only shrinks: a frozen file that
-  // gains one fails, and one that reaches zero must leave the list.
+  // The mobile app is a second entry point into the same catalog (R-42). Its
+  // legacy hardcoded-string baseline was burned to 0 and is permanently locked.
   const frozen = frozenMobileFiles()
+  if (frozen.size > 0) {
+    problems.push(`scripts/mobile-i18n-baseline.mjs must remain empty (locked at 0; found ${frozen.size} entries)`)
+  }
   for (const file of collectMobileFiles()) {
     const source = fs.readFileSync(file, 'utf8')
     const relative = path.relative(ROOT, file)

@@ -636,7 +636,7 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
         // Fatal decoding never turns invalid bytes into replacement characters;
         // preserve a BOM too, so the text describes the exact file contents.
         const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
-        // eslint-disable-next-line no-control-regex -- Preserve the original binary-text guard.
+        // oxlint-disable-next-line no-control-regex -- Preserve the original binary-text guard.
         if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) textUnavailable = 'binary'
         else contentUtf8 = text
       } catch { textUnavailable = 'binary' }

@@ -12,6 +12,7 @@ import {
   findThreadOwnership,
   flattenMessages,
 } from './check-i18n.mjs'
+import { frozenMobileFiles } from './mobile-i18n-baseline.mjs'
 
 const messages = {
   'zh-CN': {
@@ -159,4 +160,8 @@ test('Chinese copy never says 对话 for a thread or chat; 对话框 (a dialog b
   const problems = findBannedThreadWords({ 'zh-CN': { a: '新建对话', b: { c: 'Bot 对话' }, d: '与 Coordinator 的对话框外的对话', e: '关闭对话框' }, en: { a: '对话' } })
   assert.deepEqual(problems.map(problem => problem.split('"')[1]), ['a', 'b.c', 'd'])
   assert.deepEqual(findBannedThreadWords({ 'zh-CN': { a: '关闭对话框', b: '线程', c: '打开对话框后继续' } }), [])
+})
+
+test('mobile i18n baseline stays permanently empty at 0', () => {
+  assert.equal(frozenMobileFiles().size, 0)
 })

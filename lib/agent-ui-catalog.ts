@@ -229,7 +229,7 @@ export const agentComponentGroups: { name: string; components: AgentComponentNam
   { name: '内容、报告与图表', components: ['TextContent', 'BeCodeBlock', 'BeCard', 'BeCardGrid', 'BeImageCard', 'BeImage', 'BeAlert', 'BeTable', 'EditableTable', 'BeTabs', 'BeCollapsible', 'BarChart', 'LineChart', 'AreaChart', 'DonutChart', 'RadialChart', 'Separator', 'BeFileTree', 'BeFileDiff'], notes: ['beUI CodeBlock 用于代码回复；BeFileDiff 只展示建议修改；ToolResult、AgentActivity、ImageGeneration 已安装，仅在有真实数据的宿主流程中使用，不开放给模型，不自动生成虚构工具记录。', '报告：提示用 BeAlert，表格用 BeTable，标签页用 BeTabs，状态用 Tag，里程碑用 Steps；趋势用 LineChart，分类对比用 BarChart，排行用 BarChart 横向，已用与上限用 RadialChart，图表颜色来自主题图表色，只用用户或工具提供的数字。批量确认多条记录（例如建任务前）用 Form 包 EditableTable，提交按钮的 @ToAssistant 写清要做什么。'] },
 ]
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- OpenUI types each built-in renderer by its own props.
+// OpenUI types each built-in renderer by its own props.
 type AnyRenderer = ComponentRenderer<any>
 
 /** `block` wraps OpenUI's own renderers, so the host can treat its cards, tables and charts like its own. */
