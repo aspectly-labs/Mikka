@@ -40,7 +40,9 @@
       "remove": "Remove skill",
       "pathLabel": "Path",
       "selectedSkillLabel": "Selected skill",
-      "sourcePlaceholder": "owner/repo"
+      "sourcePlaceholder": "owner/repo",
+      "backToSkills": "Skills",
+      "addTitle": "Add skill"
     },
     "agentProfiles": {
       "reasons": {
@@ -406,7 +408,17 @@
       "currentWorkspace": "this workspace",
       "title": "Custom MCP",
       "invalidConfiguration": "Check the server configuration and entry names.",
-      "confirmAuthority": "Members' tasks can use this connection and read its configured credentials on their task machines. External services may charge the connected account."
+      "confirmAuthority": "Members' tasks can use this connection and read its configured credentials on their task machines. External services may charge the connected account.",
+      "namePlaceholder": "e.g. DeepWiki",
+      "urlPlaceholder": "https://mcp.example.com/mcp",
+      "commandPlaceholder": "e.g. npx",
+      "argumentsPlaceholder": "-y\n@modelcontextprotocol/server-filesystem",
+      "cwdPlaceholder": "e.g. ~/code",
+      "headerNamePlaceholder": "Authorization",
+      "headerValuePlaceholder": "Bearer …",
+      "variableNamePlaceholder": "API_KEY",
+      "variableValuePlaceholder": "Value",
+      "editTitle": "Edit MCP server"
     },
     "workspaceForm": {
       "visibilityPrivate": "Only me",
@@ -458,7 +470,10 @@
       "transferring": "Transferring…",
       "changeIcon": "Change",
       "loading": "Loading workspace",
-      "copyId": "Copy workspace ID"
+      "copyId": "Copy workspace ID",
+      "namePlaceholder": "e.g. Acme Engineering",
+      "taskPrefixPlaceholder": "MIK",
+      "addressPlaceholder": "acme"
     },
     "devicesDetail": {
       "computerUseLabel": "Computer use",
@@ -536,7 +551,11 @@
       "lastConnectedLabel": "Last connected",
       "unreported": "—",
       "removeDeviceTitle": "Remove device",
-      "localPathPlaceholder": "~/projects/repo"
+      "localPathPlaceholder": "~/projects/repo",
+      "namePlaceholder": "e.g. MacBook Pro",
+      "repoKeyPlaceholder": "owner/repo",
+      "baseBranchPlaceholder": "main",
+      "verifyCommandPlaceholder": "pnpm test"
     },
     "integrations": {
       "githubAppCreate": "Create GitHub App",
@@ -662,7 +681,9 @@
       "linkGoogle": "Link Google",
       "githubAbilitiesHeading": "Abilities",
       "githubLinkOtherAccount": "The browser is signed in as {browser}; the app as {app}",
-      "githubReconnectRequired": "GitHub authorization expired. Link your account again."
+      "githubReconnectRequired": "GitHub authorization expired. Link your account again.",
+      "githubAppOrganizationPlaceholder": "e.g. my-org",
+      "accountNamePlaceholder": "e.g. Work account"
     },
     "slackInstallation": {
       "enable": "Enable",
@@ -726,7 +747,9 @@
       "kindPersonal": "Personal",
       "quotaPointsUsed": "{used} / {total} pts",
       "portalAfterFirstCharge": "Available in the Stripe Customer Portal after your first subscription or top-up",
-      "loadFailed": "Failed to load auto-recharge settings."
+      "loadFailed": "Failed to load auto-recharge settings.",
+      "thresholdPlaceholder": "e.g. 25",
+      "monthlyCapPlaceholder": "e.g. 200"
     },
     "billing": {
       "viewInvoices": "View invoices",
@@ -904,7 +927,8 @@
         "verifying": "Verifying…",
         "key": "API key",
         "missing": "Not set",
-        "set": "Set"
+        "set": "Set",
+        "keyPlaceholder": "e2b_..."
       },
       "lineError": {
         "reserved": "Line {line} · {name} is reserved",
@@ -971,7 +995,15 @@
       "mineHeading": "My secrets",
       "scope": "Scope",
       "useMine": "Use mine",
-      "replaceExisting": "Replace existing names"
+      "replaceExisting": "Replace existing names",
+      "namePlaceholder": "OPENAI_API_KEY",
+      "valuePlaceholder": "Paste secret value",
+      "notePlaceholder": "Optional note",
+      "repositoryPlaceholder": "e.g. owner/repo",
+      "bulkPlaceholder": "API_KEY=sk-...\nWEBHOOK_SECRET=whsec_...",
+      "backToSecrets": "Secrets and environment",
+      "environmentsCrossLink": "Startup scripts and runtime variables",
+      "openEnvironmentsAction": "Open Run environments"
     },
     "audit": {
       "actions": {
@@ -1698,7 +1730,9 @@
       "charLimit": "{count} / {max} chars",
       "readOnlyBadge": "Read-only",
       "saveError": "Failed to save. Your changes were kept.",
-      "charSummary": "{count} chars"
+      "charSummary": "{count} chars",
+      "backToInstructions": "Instructions",
+      "editFileTitle": "Edit instructions"
     },
     "linear": {
       "notConfigured": "Not set up",
@@ -1946,7 +1980,8 @@
       "saveError": "Could not save. Try again.",
       "loadError": "Could not load your personal task ids.",
       "taken": "That matches a connected Linear team key. Choose another.",
-      "saved": "Saved. Personal tasks now show as {example}."
+      "saved": "Saved. Personal tasks now show as {example}.",
+      "prefixPlaceholder": "ALEX"
     },
     "privacy": {
       "sharedLinksNone": "No public links.",
@@ -1995,7 +2030,10 @@
       "cancel": "Cancel",
       "token": "Token",
       "expires": "Expires {date}",
-      "revoke": "Revoke"
+      "revoke": "Revoke",
+      "namePlaceholder": "e.g. CI deploy token",
+      "modelsCrossLink": "Model provider API keys",
+      "openModelsAction": "Open Models"
     },
     "mcpIntegrations": {
       "toolPrefixDescription": "Models identify tools from this server by this prefix.",
@@ -2068,7 +2106,21 @@
       "credentialsConfigured": "Credentials configured (write-only)",
       "variablesWriteOnlyDescription": "Credentials are write-only; saving new values replaces existing ones.",
       "testConnectionButton": "Test",
-      "mikkaIntegrationsHeading": "Mikka integrations"
+      "mikkaIntegrationsHeading": "Mikka integrations",
+      "connectedAppsHeading": "Connected apps",
+      "connectedAppsDescription": "Workspace and personal OAuth accounts",
+      "emptyConnectedApps": "No connected apps yet",
+      "browseAppsAction": "Browse apps",
+      "mcpOnlyEmptyShared": "No shared MCP servers",
+      "mcpOnlyEmptyPersonal": "No personal MCP servers",
+      "mcpServersCount": "{count, plural, one {# MCP server} other {# MCP servers}}",
+      "manageSkillsHint": "Workspace and personal skills",
+      "openSkillsAction": "Open Skills",
+      "backToMcp": "MCP & plugins",
+      "backToIntegrations": "Integrations",
+      "addMcpSubpageTitle": "Add MCP server",
+      "editMcpSubpageTitle": "Edit MCP server",
+      "editVariablesTitle": "Edit headers and variables"
     },
     "logins": {
       "account": "Account",
@@ -2101,7 +2153,10 @@
       "empty": "No saved site sign-ins yet.",
       "actions": "Actions for {site}",
       "usage": "Usage",
-      "usageTitle": "Usage for {site}"
+      "usageTitle": "Usage for {site}",
+      "sitePlaceholder": "https://example.com",
+      "accountPlaceholder": "name@example.com",
+      "passwordPlaceholder": "Password"
     },
     "botPermissions": {
       "level": {
@@ -2167,7 +2222,8 @@
       "changeAvatar": "Change",
       "readOnly": "Account details are read-only; this version does not support editing them here.",
       "currentSession": "This session",
-      "uploading": "Uploading…"
+      "uploading": "Uploading…",
+      "namePlaceholder": "e.g. Alex Chen"
     },
     "cloud": {
       "connectedServers": "Connected servers",
@@ -2204,7 +2260,9 @@
       "cancel": "Cancel",
       "personalBilling": "My Mikka credits",
       "pushFull": "Full message",
-      "services": "Services"
+      "services": "Services",
+      "serverKeyPlaceholder": "Paste server key",
+      "serverUrlPlaceholder": "https://mikka.example.com"
     },
     "telegram": {
       "newLink": "Generate new link",
@@ -2293,7 +2351,10 @@
       "customAgents": "Pick a protocol to see which Agent runs it",
       "models": "Models (optional)",
       "addConfirm": "Add",
-      "othersUsage": "Team members can use it to run their own bots. Usage is billed to your API account."
+      "othersUsage": "Team members can use it to run their own bots. Usage is billed to your API account.",
+      "namePlaceholder": "e.g. OpenRouter",
+      "apiKeyPlaceholder": "sk-...",
+      "baseUrlPlaceholder": "https://api.example.com/v1"
     },
     "environments": {
       "machineSize": "Default machine size",
@@ -2331,7 +2392,14 @@
       "editNamed": "Edit {name}",
       "emptySetup": "No setup command or files",
       "machineSizeQuotaGated": "pending provider quota",
-      "archive": "Archive"
+      "archive": "Archive",
+      "namePlaceholder": "e.g. Node 22 CI",
+      "variablesPlaceholder": "NODE_ENV=development",
+      "setupPlaceholder": "pnpm install --frozen-lockfile",
+      "copyFilesPlaceholder": ".env.local\n.npmrc",
+      "backToEnvironments": "Run environments",
+      "secretsCrossLink": "Encrypted credentials",
+      "openSecretsAction": "Open Secrets"
     },
     "workspaceUnavailable": "Couldn't load the workspace. Refresh and try again.",
     "teamSkills": {
@@ -2383,7 +2451,8 @@
       "ignore": "Ignore",
       "settingsError": "Failed to save setting.",
       "editFactNamed": "Edit {subject}",
-      "scopeProject": "Project"
+      "scopeProject": "Project",
+      "correctPlaceholder": "Write corrected fact…"
     },
     "permissionsPage": {
       "blockedEmpty": "Nothing is blocked",
@@ -2423,7 +2492,11 @@
       "setPassword": "Set password",
       "confirmPassword": "Repeat the password",
       "passwordMismatch": "The two passwords differ.",
-      "signingOut": "Signing out…"
+      "signingOut": "Signing out…",
+      "currentPasswordPlaceholder": "Current password",
+      "newPasswordPlaceholder": "At least 8 characters",
+      "confirmPasswordPlaceholder": "Re-enter new password",
+      "emailPlaceholder": "name@example.com"
     },
     "issueStates": {
       "cancel": "Cancel",
@@ -2457,7 +2530,8 @@
       "new": "New state",
       "icon": "Icon",
       "actions": "Actions for {name}",
-      "moveUp": "Move up"
+      "moveUp": "Move up",
+      "namePlaceholder": "e.g. In review"
     },
     "subscriptions": {
       "enabled": "On",
@@ -2907,7 +2981,8 @@
         "note": "Expired Organization audit records are deleted. Deletion pauses while an export is open or legal hold is on.",
         "keep": "Keep",
         "days": "For a number of days",
-        "daysLabel": "Days to keep"
+        "daysLabel": "Days to keep",
+        "daysPlaceholder": "e.g. 90"
       },
       "title": "Resource sharing policy",
       "rules": {
@@ -2928,7 +3003,8 @@
       "add": "Allow domain",
       "added": "Allowed {domain}",
       "domain": "Email domain",
-      "discover": "Organizations you can join"
+      "discover": "Organizations you can join",
+      "domainPlaceholder": "example.com"
     },
     "members": {
       "description": "Organization members can invite new members. Only owners and admins can change roles and manage workspace governance.",
@@ -2979,7 +3055,8 @@
       "noOrganizations": "No Organizations",
       "links": "Copy invitation link",
       "joined": "You joined the Organization as a Member. Workspace access is unchanged.",
-      "accept": "Join Organization"
+      "accept": "Join Organization",
+      "emailPlaceholder": "alice@example.com"
     },
     "tabs": {
       "audit": "Organization audit",
@@ -3012,7 +3089,8 @@
       "saved": "Key name saved.",
       "title": "Organization service keys",
       "name": "Key name",
-      "identity": "{identity} · {workspace}"
+      "identity": "{identity} · {workspace}",
+      "namePlaceholder": "e.g. CI key"
     },
     "copy": "Copy",
     "intro": "An Organization is a management layer over shared workspaces: one sign-in method, directory sync, resource policy and Organization audit. Organization roles only manage the Organization. They never grant access to a workspace, its tasks or content; workspace members are still managed in Members.",
@@ -3034,7 +3112,8 @@
       "organizationId": "Organization ID",
       "nameLabel": "Organization name",
       "seats": "{count} / {limit} people",
-      "renamed": "Organization renamed."
+      "renamed": "Organization renamed.",
+      "namePlaceholder": "e.g. Acme Corp"
     },
     "loadFailed": "Couldn't load the Organization",
     "bound": {
@@ -3765,7 +3844,8 @@
       "otherHost": "Other host",
       "add": "Add",
       "startFailed": "Install didn't start",
-      "title": "Add device"
+      "title": "Add device",
+      "hostPlaceholder": "user@host.example.com"
     },
     "sandboxUsernsSpec": "Ubuntu's description of this setting",
     "sandboxUsernsPersist": "After restarts too:",
@@ -3843,7 +3923,8 @@
     "offlineNoRuns": "Offline · gets no runs",
     "online": "Online",
     "noAgentYet": "No agent yet",
-    "lastHeartbeat": "Last heartbeat {time}"
+    "lastHeartbeat": "Last heartbeat {time}",
+    "namePlaceholder": "e.g. MacBook Pro"
   },
   "Coordinator": {
     "modelRequired": "No task started: no model selected.",
@@ -7498,7 +7579,8 @@
       "delete": "Delete",
       "networkAllowHint": "One domain per line. Leave empty to not set it.",
       "count": "{count} of {limit} templates",
-      "description": "Save an agent approval mode and permissions as a template, and apply it to the whole workspace when needed."
+      "description": "Save an agent approval mode and permissions as a template, and apply it to the whole workspace when needed.",
+      "networkAllowPlaceholder": "api.github.com\nregistry.npmjs.org"
     },
     "usage": {
       "show": "Show",
@@ -8016,7 +8098,11 @@
       "memberUsage": "Cost attribution",
       "unknownHelp": "BYO model, subscription, E2B and device costs stay with their resource owner. Mikka does not charge credits for those external costs.",
       "budgetSpent": "Spent",
-      "budgetScope": "Applies to"
+      "budgetScope": "Applies to",
+      "budgetLimitPlaceholder": "e.g. 200",
+      "budgetWarningPlaceholder": "80",
+      "rechargeThresholdPlaceholder": "e.g. 25",
+      "rechargeCapPlaceholder": "e.g. 200"
     },
     "refusal": {
       "unavailable": "Unavailable right now",
@@ -8985,7 +9071,8 @@
       "incomplete": "Fill in the required fields",
       "title": "Connect {name}",
       "submit": "Connect",
-      "connected": "Connected {name}"
+      "connected": "Connected {name}",
+      "fieldPlaceholder": "Enter {label}"
     },
     "appsTab": "Apps",
     "state": {
@@ -9958,7 +10045,8 @@
     "settings": "Settings",
     "members": "Members",
     "overview": "Overview",
-    "identifierPlaceholder": "e.g. ENG"
+    "identifierPlaceholder": "e.g. ENG",
+    "deleteConfirmPlaceholder": "Type {name} to confirm"
   },
   "Invite": {
     "csv": {
@@ -10567,7 +10655,12 @@
       "presetXai": "xAI",
       "presetCustom": "Custom endpoint",
       "fallbackHint": "Switches only to another connection for the same model, never another model or Agent",
-      "connectionTested": "Connected · {count, plural, one {# model} other {# models}}"
+      "connectionTested": "Connected · {count, plural, one {# model} other {# models}}",
+      "modelIdPlaceholder": "e.g. gpt-5.4",
+      "apiKeyPlaceholder": "sk-...",
+      "baseUrlPlaceholder": "https://api.example.com/v1",
+      "apiCrossLink": "Mikka API tokens",
+      "openApiAction": "Open API"
     },
     "memory": {
       "learned": "Learnt from your connected apps",
@@ -10873,7 +10966,8 @@
     "confirmRestore": "Restore {name}?",
     "title": "Service identities",
     "scopeChanged": "The selected organization is no longer available. Choose its replacement or this workspace.",
-    "issue": "Issue key"
+    "issue": "Issue key",
+    "namePlaceholder": "e.g. Release bot"
   },
   "HostedShell": {
     "tools": "Tools",
