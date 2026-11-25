@@ -11,14 +11,7 @@ const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options'
 const workspaceId = ({ request }: { request: Request }) => new URL(request.url).searchParams.get('workspaceId')
 
 export const GET = defineRoute<'session', 'pat-scoped', { runId: string }>(
-  {
-    auth: 'session',
-    origin: 'any',
-    workspace: 'pat-scoped',
-    workspaceId,
-    freshSession: true,
-    onWorkspaceError: () => Response.json({ ok: false, code: 'workspace_not_found' }, { status: 404, headers }),
-  },
+  { auth: 'session', origin: 'any', workspace: 'pat-scoped', workspaceId, freshSession: true },
   async ({ request, params, session, user }) => {
     try {
       const runId = z.uuid().parse(params.runId)

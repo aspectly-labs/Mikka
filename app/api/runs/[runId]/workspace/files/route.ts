@@ -19,7 +19,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { runId: string }>(
     workspace: 'pat-scoped',
     workspaceId: ({ request }) => new URL(request.url).searchParams.get('workspaceId'),
     freshSession: true,
-    onWorkspaceError: () => Response.json({ ok: false, code: 'workspace_not_found' }, { status: 404, headers }),
   },
   async ({ request, params, session, user }) => {
     try {
@@ -80,7 +79,6 @@ export const POST = defineRoute<'session', 'pat-scoped', { runId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     write: true,
-    onWorkspaceError: () => Response.json({ ok: false, code: 'workspace_not_found' }, { status: 404, headers }),
   },
   ({ request, params }) => gitPost(request, { params: Promise.resolve(params) }),
 )
