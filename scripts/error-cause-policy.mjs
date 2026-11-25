@@ -100,12 +100,12 @@ export function findDroppedCauses(file, source) {
 }
 
 /**
- * Empty since the 2026-11-21 burn-down (#1330): every catch-bound throw now
- * hands the caught error on as `{ cause }`, or carries an `// error-cause:`
- * justification where a provider body or crypto failure must never escape.
- * The list only shrinks as a matter of policy; do not add files here.
+ * Empty and locked at 0 since the 2026-11-21 burn-down (#1330): every
+ * catch-bound throw now hands the caught error on as `{ cause }`, or carries
+ * an `// error-cause:` justification where a provider body or crypto failure
+ * must never escape. Do not add entries here.
  */
-export const droppedCauseAllowlist = {}
+export const droppedCauseAllowlist = Object.freeze({})
 
 export function auditDroppedCauses(file, source, allowlist = droppedCauseAllowlist) {
   const found = findDroppedCauses(file, source)
@@ -134,6 +134,9 @@ export function auditRepository() {
   // A checkout without the registry (the UI policy's own fixture repository) has no codes to check.
   const registry = existsSync(registryFile) ? readRegistry() : {}
   const found = existsSync(registryFile) ? auditErrorCopy(registry, Object.fromEntries(catalogues.map(file => [file, JSON.parse(readFileSync(file, 'utf8'))]))) : []
+  if (Object.keys(droppedCauseAllowlist).length > 0) {
+    found.push({ file: 'scripts/error-cause-policy.mjs', line: 108, column: 1, rule: 'error-cause/allowlist-locked', message: 'droppedCauseAllowlist is permanently locked at 0 entries; pass { cause } or add an // error-cause: justification instead.' })
+  }
   for (const file of errorCauseFiles()) {
     const source = readUi(file)
     found.push(...auditCodedLiterals(file, source, registry), ...auditDroppedCauses(file, source))

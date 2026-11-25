@@ -1,4 +1,3 @@
-/* eslint-disable unicorn/no-thenable -- The transport fixture implements Drizzle's awaitable query contract. */
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, mock, test } from 'node:test'
 import { PgDialect } from 'drizzle-orm/pg-core'
@@ -88,6 +87,7 @@ const database = {
       where(value: SQL) { condition = value; return q },
       orderBy() { return q },
       limit() { return read() },
+      // oxlint-disable-next-line unicorn/no-thenable -- The transport fixture implements Drizzle's awaitable query contract.
       then(resolve: (value: unknown[]) => unknown, reject: (error: unknown) => unknown) { return read().then(resolve, reject) },
     }
     return q
