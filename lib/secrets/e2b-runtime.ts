@@ -1,10 +1,24 @@
 import 'server-only'
-// Every sandbox runs on its owner's own E2B key (orchestration § 2): never a teammate's, never the platform's.
+import { createHash } from 'node:crypto'
 import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
 import { E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
 
 type Env = Record<string, string | undefined>
+
+export function environmentSnapshotApiKey(env: Env = process.env): string {
+  const key = env.E2B_API_KEY?.trim()
+  if (!key) throw new E2BKeyError('e2b_key_missing', 'Instance E2B API key required')
+  return key
+}
+
+/** A configured team ID survives credential rotation. Without one, fail closed on a key change. */
+export function environmentSnapshotScope(env: Env = process.env): string {
+  const team = env.E2B_TEAM_ID?.trim()
+  if (team) return 'team:' + team
+  const key = env.E2B_API_KEY?.trim()
+  return key ? 'key:' + createHash('sha256').update(key).digest('hex') : 'unconfigured'
+}
 
 /** The sandbox owner's own key; the unused argument keeps the existing caller signature. */
 export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = process.env): Promise<string> {
