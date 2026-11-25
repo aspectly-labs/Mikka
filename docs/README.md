@@ -77,6 +77,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
   and its application, database and lease boundaries.
 - [UI review checklist](review-checklist.md) applies before presenting UI.
 - [Current build source of truth](operations/build-source-of-truth.md) separates public-root official builds, private UI Overlay, Cloudflare CI and the transitional OCI publisher.
+- [Cloud execution and secrets](operations/cloud-execution-and-secrets.md) defines E2B machine execution authority, LiteLLM-only managed model egress, task Secret isolation, native Task MCP delivery and additive E2B releases.
 - [Shared web and desktop runtime](operations/web-runtime.md) documents build
   outputs, startup and rollback.
 - [Hosted operations](operations/README.md) directs authorized operators to the private deployment and credential runbooks.
