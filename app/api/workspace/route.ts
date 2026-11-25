@@ -3,6 +3,8 @@ import { RouteResponse } from '@/lib/server-runtime/server'
 import { getTranslations } from '@/lib/intl/i18n-server'
 import { auth } from '@/lib/api-auth'
 import { loadWorkspaceSettings, WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
+import { selectedWorkspaceId } from '@/lib/workspace-selection'
 
 async function handleGET(request: Request) {
   const started = performance.now()
@@ -26,4 +28,14 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/workspace', handleGET)
+const GETBody = withRequestLog('/api/workspace', handleGET)
+
+export const GET = defineRoute<'session', 'pat-scoped'>(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ request }) => selectedWorkspaceId(new URL(request.url).searchParams.get('workspace')) ?? undefined,
+  },
+  ({ request }) => GETBody(request),
+)

@@ -9,9 +9,10 @@ import { workspaceGovernanceSummary } from '@/lib/governance/entitlements'
 import { governanceJson, governanceResponse, governanceSession } from '@/lib/governance/http'
 import { applyApprovalTemplate, deleteApprovalTemplate, saveApprovalTemplate } from '@/lib/governance/templates'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
+import { defineRoute } from '@/lib/primitives/define-route'
 type Context = { params: Promise<{ workspaceId: string }> }
 
-export const GET = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const GETBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const { workspaceId } = await context.params
   const session = await governanceSession(request, workspaceId)
   return workspaceDb.transaction(async tx => {
@@ -28,7 +29,7 @@ const operation = z.discriminatedUnion('action', [
   z.object({ action: z.literal('save'), template: z.unknown() }).strict(),
   z.object({ action: z.enum(['delete', 'apply']), templateId: z.uuid() }).strict(),
 ])
-export const POST = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const POSTBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const { workspaceId } = await context.params
   const session = await governanceSession(request, workspaceId)
   const value = operation.parse(await governanceJson(request))
@@ -37,3 +38,25 @@ export const POST = freshSessionRoute(async (request: Request, context: Context)
   await deleteApprovalTemplate(workspaceId, session.user, value.templateId)
   return { deleted: true }
 }))
+
+export const GET = defineRoute<'public', 'none', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/governance',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)
+
+export const POST = defineRoute<'public', 'none', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/governance',
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
+)

@@ -4,10 +4,11 @@ import { withRequestLog } from '@/lib/request-log'
 import { settingsBody } from '@/lib/settings/http'
 import { runInstructionRoute } from '@/lib/settings/instructions-http'
 import { ActionFailureError } from '@/lib/action-error'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 type Context = { params: Promise<{ workspaceId: string; environmentId: string }> }
 
-export const GET = withRequestLog(
+const GETBody = withRequestLog(
   '/api/workspaces/[workspaceId]/environments/[environmentId]/instructions',
   (request: Request, context: Context) => runInstructionRoute(request, async () => {
     const { workspaceId, environmentId } = await context.params
@@ -15,7 +16,7 @@ export const GET = withRequestLog(
   }),
 )
 
-export const PATCH = freshSessionRoute(withRequestLog(
+const PATCHBody = freshSessionRoute(withRequestLog(
   '/api/workspaces/[workspaceId]/environments/[environmentId]/instructions',
   (request: Request, context: Context) => runInstructionRoute(request, async () => {
     const { workspaceId, environmentId } = await context.params
@@ -35,3 +36,24 @@ export const PATCH = freshSessionRoute(withRequestLog(
     })
   }),
 ))
+
+export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string; environmentId: string }>(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => params.workspaceId,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)
+
+export const PATCH = defineRoute<'session', 'pat-scoped', { workspaceId: string; environmentId: string }>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => params.workspaceId,
+    freshSession: true,
+  },
+  ({ request, params }) => PATCHBody(request, { params: Promise.resolve(params) }),
+)

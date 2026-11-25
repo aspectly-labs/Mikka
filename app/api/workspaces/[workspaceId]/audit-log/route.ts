@@ -5,13 +5,14 @@ import { auditPageInput, auditScopeQuery, csvField } from '@/lib/audit/cursor'
 import { createHash } from 'node:crypto'
 import { AuditExportError, createAuditExport, readAuditExportPage } from '@/lib/audit/export'
 import { WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 60
 
 type Context = { params: Promise<{ workspaceId: string }> }
 
 /** 审计日志 › 导出 CSV: the last 90 days (or only 安全, some categories, a shorter period), admins only. */
-export async function GET(request: Request, { params }: Context) {
+async function GETBody(request: Request, { params }: Context) {
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session?.user) return new RouteResponse(null, { status: 401 })
   const { workspaceId } = await params
@@ -56,3 +57,14 @@ export async function GET(request: Request, { params }: Context) {
     throw error
   }
 }
+
+export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/audit-log',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => z.uuid().safeParse(params.workspaceId).success ? params.workspaceId : undefined,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)
