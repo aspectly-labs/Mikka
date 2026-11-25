@@ -42,6 +42,11 @@ const client = { async query(command: string) {
 } } as unknown as PoolClient
 observeCommitEffects(client)
 const database = {
+  async execute(statement: SQL) {
+    const { sql } = dialect.sqlToQuery(statement)
+    assert.match(sql, /FROM workspace_setting_values/)
+    return { rows: [] }
+  },
   session: { client },
   insert: () => ({ values: async (row: Record<string, unknown>) => { inserted.push(row) } }),
   async transaction<T>(work: (tx: { session: { client: PoolClient } }) => Promise<T>): Promise<T> {
@@ -133,13 +138,7 @@ before(async () => {
           assert.match(command, /^SELECT p.visibility FROM resource_access_policies/)
           return { rows: [{ visibility: 'private' }] }
         } } as unknown as PoolClient
-        const tx = { ...database,
-          execute: async (statement: SQL) => {
-            const { sql } = dialect.sqlToQuery(statement)
-            assert.match(sql, /FROM workspace_setting_values/)
-            return { rows: [] }
-          },
-          session: { client: txClient } }
+        const tx = { ...database, session: { client: txClient } }
         observeCommitEffects(txClient)
         await txClient.query('BEGIN')
         try {
