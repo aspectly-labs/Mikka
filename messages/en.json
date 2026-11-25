@@ -1913,7 +1913,7 @@
       "chartMetricLabel": "Chart metric",
       "emptyModels": "No model calls recorded in the selected range.",
       "sourceLabel": "Billing source",
-      "creditRate": "100 credits = US.00"
+      "creditRate": "100 credits = US$1.00"
     },
     "notificationsMatrix": {
       "dndRowHint": "Mute push notifications during the scheduled window",
@@ -10504,7 +10504,7 @@
     "nextTaskText": "Write what needs doing; Mikka hands it to an Agent.",
     "skip": "Skip for now",
     "roleAdmin": "Admin",
-    "sub": "Set up your workspace, default model, and plan.",
+    "sub": "About two minutes.",
     "computer": "Cloud computer"
   },
   "GroupTask": {
@@ -11659,7 +11659,7 @@
     "readOnly": "Read-only",
     "loading": "Loading shared thread…",
     "notFoundTitle": "Shared thread unavailable",
-    "notFoundBody": "This link may have expired or been revoked.",
+    "notFoundBody": "This share link was revoked or the thread is no longer available.",
     "backHome": "Open Mikka",
     "emptyMessages": "No messages in this thread."
   }

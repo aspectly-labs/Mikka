@@ -34,13 +34,26 @@ export function readSavedTabs(storage: Pick<Storage, 'getItem'>): SavedTabs | nu
     if (!raw) return null
     const parsed = savedTabs.safeParse(JSON.parse(raw))
     if (!parsed.success || parsed.data.items.length === 0 || parsed.data.active >= parsed.data.items.length) return null
-    const items = parsed.data.items.map(tab => {
-      const entries = tab.entries.map(entry => persistableHref(entry))
-      if (entries.some(entry => entry === null)) return null
-      return { entries: entries as string[], index: tab.index }
-    })
-    if (items.some(item => item === null)) return null
-    return { items: items as SavedTabs['items'], active: parsed.data.active }
+    const items: SavedTabs['items'] = []
+    let active = -1
+    let keptBeforeActive = 0
+    for (let tabIndex = 0; tabIndex < parsed.data.items.length; tabIndex++) {
+      const tab = parsed.data.items[tabIndex]!
+      const entries: string[] = []
+      let keptAtOrBefore = 0
+      for (let entryIndex = 0; entryIndex < tab.entries.length; entryIndex++) {
+        const safe = persistableHref(tab.entries[entryIndex]!)
+        if (!safe) continue
+        entries.push(safe)
+        if (entryIndex <= tab.index) keptAtOrBefore++
+      }
+      if (entries.length === 0) continue
+      if (tabIndex === parsed.data.active) active = items.length
+      else if (tabIndex < parsed.data.active) keptBeforeActive++
+      items.push({ entries, index: keptAtOrBefore > 0 ? keptAtOrBefore - 1 : 0 })
+    }
+    if (items.length === 0) return null
+    return { items, active: active >= 0 ? active : Math.min(keptBeforeActive, items.length - 1) }
   } catch {
     return null
   }
@@ -183,8 +196,10 @@ export function tabLabel(href: string): string {
     if (url.searchParams.has('group')) return 'Group'
     if (url.searchParams.has('bot')) return 'Chat'
     if (segments[0] === 'settings') {
-      if (segments[1] === 'members') return 'Members'
-      if (segments[1] === 'teams') return 'Teams'
+      const section = segments[1] ?? url.searchParams.get('section')
+      if (section === 'devices') return 'Devices'
+      if (section === 'members') return 'Members'
+      if (section === 'teams') return 'Teams'
       return 'Settings'
     }
     if (segments.length === 0 || segments[0] === 'dashboard') {

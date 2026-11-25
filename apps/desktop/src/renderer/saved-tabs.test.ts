@@ -72,6 +72,48 @@ test('tab recovery excludes authentication, invitation and credential-bearing UR
   assert.equal(persistableHref('//example.com/path'), null)
 })
 
+test('readSavedTabs strips legacy shared-thread URLs while preserving unrelated tabs and history', () => {
+  const upgraded = readSavedTabs(storage({
+    [SAVED_TABS_KEY]: JSON.stringify({
+      items: [
+        { entries: ['/mikka/settings', '/mikka/threads/shared/tok123'], index: 1 },
+        { entries: ['/mikka/threads/shared/only-share'], index: 0 },
+        { entries: ['/mikka/settings?section=devices'], index: 0 },
+      ],
+      active: 2,
+    }),
+  }))
+  assert.deepEqual(upgraded, {
+    items: [
+      { entries: ['/mikka/settings'], index: 0 },
+      { entries: ['/mikka/settings?section=devices'], index: 0 },
+    ],
+    active: 1,
+  })
+
+  const activeDropped = readSavedTabs(storage({
+    [SAVED_TABS_KEY]: JSON.stringify({
+      items: [
+        { entries: ['/mikka/settings'], index: 0 },
+        { entries: ['/mikka/threads/shared/tok123'], index: 0 },
+      ],
+      active: 1,
+    }),
+  }))
+  assert.deepEqual(activeDropped, {
+    items: [{ entries: ['/mikka/settings'], index: 0 }],
+    active: 0,
+  })
+
+  const onlyExcluded = readSavedTabs(storage({
+    [SAVED_TABS_KEY]: JSON.stringify({
+      items: [{ entries: ['/mikka/threads/shared/tok123'], index: 0 }],
+      active: 0,
+    }),
+  }))
+  assert.equal(onlyExcluded, null)
+})
+
 test('tablist keyboard navigation wraps and supports Home/End', () => {
   assert.equal(nextTabIndex(3, 0, 'ArrowLeft'), 2)
   assert.equal(nextTabIndex(3, 2, 'ArrowRight'), 0)
@@ -97,6 +139,9 @@ test('tabLabel derives contextual workspace, task, thread, and settings labels w
   assert.equal(tabLabel('/mikka/?issue=MIK-42'), 'Task')
   assert.equal(tabLabel('/mikka/tasks/abc-123'), 'Task')
   assert.equal(tabLabel('/mikka/settings?section=environments'), 'Settings')
+  assert.equal(tabLabel('/mikka/settings?section=devices'), 'Devices')
+  assert.equal(tabLabel('/mikka/settings?section=members'), 'Members')
+  assert.equal(tabLabel('/mikka/settings?section=teams'), 'Teams')
   assert.equal(tabLabel('/mikka/settings/members'), 'Members')
   assert.equal(tabLabel('/mikka/settings/teams'), 'Teams')
   assert.equal(tabLabel('/mikka/devices'), 'Devices')

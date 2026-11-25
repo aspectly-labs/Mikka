@@ -1913,7 +1913,7 @@
       "chartMetricLabel": "图表指标",
       "emptyModels": "所选时间段暂无模型调用记录。",
       "sourceLabel": "计费来源",
-      "creditRate": "100 额度 = US.00"
+      "creditRate": "100 额度 = US$1.00"
     },
     "notificationsMatrix": {
       "dndRowHint": "免打扰期间不发送推送提醒",
@@ -10504,7 +10504,7 @@
     "nextTaskText": "写下要做的事，Mikka 派给 Agent。",
     "skip": "先跳过",
     "roleAdmin": "管理员",
-    "sub": "设置工作区、默认模型与套餐。",
+    "sub": "大约两分钟。",
     "computer": "云电脑"
   },
   "GroupTask": {
@@ -11659,7 +11659,7 @@
     "readOnly": "只读",
     "loading": "正在加载分享线程…",
     "notFoundTitle": "无法访问此分享线程",
-    "notFoundBody": "该分享链接可能已过期或被撤销。",
+    "notFoundBody": "该分享链接已撤销，或该线程已不可用。",
     "backHome": "前往 Mikka",
     "emptyMessages": "该线程暂无消息。"
   }
