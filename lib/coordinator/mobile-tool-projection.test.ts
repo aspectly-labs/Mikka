@@ -24,7 +24,7 @@ test('unwrapShellCommand strips shell wrappers cleanly without redacting values'
   assert.equal(unwrapShellCommand('pnpm test'), 'pnpm test')
 })
 
-test('classifyShellCommand aligns with Codex CommandAction exploration vs exec', () => {
+test('classifyShellCommand aligns with Codex CommandAction exploration vs exec including multiline scripts', () => {
   const readCmd = classifyShellCommand(`/bin/zsh -lc 'cat lib/coordinator/context.ts'`)
   assert.equal(readCmd.kind, 'read')
   assert.equal(readCmd.command, 'cat lib/coordinator/context.ts')
@@ -64,6 +64,13 @@ test('classifyShellCommand aligns with Codex CommandAction exploration vs exec',
   const writeRedirect = classifyShellCommand('cat a.txt > b.txt')
   assert.equal(writeRedirect.kind, 'exec')
 
+  // Multiline scripts split on unquoted newlines so mutating lines are never hidden as exploration.
+  const multilineScript = classifyShellCommand('ls -la\nmkdir -p /tmp/demo')
+  assert.equal(multilineScript.kind, 'exec')
+  assert.equal(multilineScript.commandActions.length, 2)
+  assert.equal(multilineScript.commandActions[0].type, 'listFiles')
+  assert.equal(multilineScript.commandActions[1].type, 'unknown')
+
   const testCmd = classifyShellCommand('pnpm test:unit')
   assert.equal(testCmd.kind, 'exec')
   assert.deepEqual(testCmd.commandActions, [{ type: 'unknown', command: 'pnpm test:unit' }])
@@ -79,7 +86,9 @@ test('NO regex secret masking and NO UUID scrubbing in mobile tool projection', 
   }))
 
   assert.equal(shellTool.kind, 'exec')
+  assert.equal(shellTool.codexKind, 'exec')
   assert.equal(shellTool.status, 'completed')
+  assert.equal(shellTool.codexStatus, 'completed')
   assert.equal(shellTool.command, `echo ${token} ${uuid}`)
   assert.equal(shellTool.cwd, '/workspace/mikka')
   assert.equal(shellTool.exitCode, 0)
@@ -91,6 +100,7 @@ test('NO regex secret masking and NO UUID scrubbing in mobile tool projection', 
     output: JSON.stringify({ runId: uuid, status: 'queued' }),
   }))
   assert.equal(dispatchTool.kind, 'agent')
+  assert.equal(dispatchTool.codexKind, 'agent')
   assert.equal(dispatchTool.agentAction, 'spawn')
   assert.equal(dispatchTool.targetThreadId, uuid)
   assert.deepEqual(dispatchTool.arguments, { issueId: uuid, harness: 'codex', prompt: `Fix run ${uuid}` })
@@ -127,6 +137,17 @@ test('enrichMobileChatTool classifies MCP, edit, web, search, agent, think and e
   assert.equal(denied.kind, 'exec')
   assert.equal(denied.status, 'declined')
   assert.equal(denied.error, 'approval_denied')
+
+  // Successful command printing "Permission denied" stays completed, never declined.
+  const searchDenied = enrichMobileChatTool(makeChatTool({
+    name: 'bash',
+    state: 'done',
+    input: JSON.stringify({ command: 'rg denied server.log' }),
+    output: JSON.stringify({ exitCode: 0, output: 'server.log:14:Permission denied' }),
+  }))
+  assert.equal(searchDenied.kind, 'search')
+  assert.equal(searchDenied.status, 'completed')
+  assert.equal(searchDenied.aggregatedOutput, 'server.log:14:Permission denied')
 
   const web = enrichMobileChatTool(makeChatTool({
     name: 'web_search',
@@ -169,33 +190,33 @@ test('enrichMobileChatItems marks in-progress tools on stopped items as declined
   assert.equal('kind' in original[0].activity!.tools[0], false)
 })
 
-test('enrichMobileThreadItems extracts Codex fileChange stats, shell commandActions, chunk timing, cwd, and errorText', async () => {
+test('enrichMobileThreadItems preserves legacy ThreadStep kind/status while adding Codex 1:1 fields', async () => {
   const t0 = Date.parse('2026-11-25T14:00:00.000Z')
   const t1 = Date.parse('2026-11-25T14:00:02.450Z')
   const t2 = Date.parse('2026-11-25T14:00:03.000Z')
   const t3 = Date.parse('2026-11-25T14:00:03.200Z')
 
-  const patchInput = [
-    '*** Begin Patch',
-    '*** Update File: lib/app.ts',
-    '@@ -1,2 +1,3 @@',
-    '-const a = 1',
-    '+const a = 2',
-    '+const b = 3',
-    '*** Add File: lib/new.ts',
-    '+export const ok = true',
-    '*** End Patch',
-  ].join('\n')
-
   const rawChunks = [
+    // 1. Standard command execution
     { runId: 'run-1', seq: 1, at: new Date(t0), chunk: { type: 'tool-input-available', toolCallId: 'c1', toolName: 'Bash', input: { command: `/bin/zsh -lc 'pnpm test'`, cwd: '/repo/mikka' } } },
     { runId: 'run-1', seq: 2, at: new Date(t1), chunk: { type: 'tool-output-available', toolCallId: 'c1', output: { output: 'all 42 passed\n', exitCode: 0 } } },
-    { runId: 'run-1', seq: 3, at: new Date(t2), chunk: { type: 'tool-input-available', toolCallId: 'c2', toolName: 'apply_patch', input: { patch: patchInput } } },
-    { runId: 'run-1', seq: 4, at: new Date(t3), chunk: { type: 'tool-output-available', toolCallId: 'c2', output: 'Success' } },
-    { runId: 'run-1', seq: 5, at: new Date(t3), chunk: { type: 'tool-input-available', toolCallId: 'c3', toolName: 'mcp__github__pull_request_read', input: { pullNumber: 3300 } } },
-    { runId: 'run-1', seq: 6, at: new Date(t3 + 100), chunk: { type: 'tool-output-error', toolCallId: 'c3', errorText: 'GitHub rate limit exceeded' } },
-    { runId: 'run-1', seq: 7, at: new Date(t3 + 200), chunk: { type: 'tool-input-available', toolCallId: 'c4', toolName: 'Bash', input: { command: 'rg -n "foo" src/' } } },
-    { runId: 'run-1', seq: 8, at: new Date(t3 + 250), chunk: { type: 'tool-output-available', toolCallId: 'c4', output: { output: 'src/a.ts:1:foo', exitCode: 0 } } },
+    // 2. Real Codex adapter fileChange sequence (`input.files` + `output.status` + `data-file-change` chunks)
+    { runId: 'run-1', seq: 3, at: new Date(t2), chunk: { type: 'tool-input-available', toolCallId: 'c2', toolName: 'apply_patch', input: { files: ['lib/new.ts', 'lib/old.ts'] } } },
+    { runId: 'run-1', seq: 4, at: new Date(t3), chunk: { type: 'tool-output-available', toolCallId: 'c2', output: { status: 'completed' } } },
+    { runId: 'run-1', seq: 5, at: new Date(t3), chunk: { type: 'data-file-change', data: { path: 'lib/new.ts', change: 'added' } } },
+    { runId: 'run-1', seq: 6, at: new Date(t3), chunk: { type: 'data-file-change', data: { path: 'lib/old.ts', change: 'deleted' } } },
+    // 3. Failed Codex adapter fileChange (`output: { status: 'failed' }`)
+    { runId: 'run-1', seq: 7, at: new Date(t3), chunk: { type: 'tool-input-available', toolCallId: 'c2f', toolName: 'apply_patch', input: { files: ['lib/bad.ts'] } } },
+    { runId: 'run-1', seq: 8, at: new Date(t3), chunk: { type: 'tool-output-available', toolCallId: 'c2f', output: { status: 'failed' } } },
+    // 4. Failed MCP tool call
+    { runId: 'run-1', seq: 9, at: new Date(t3), chunk: { type: 'tool-input-available', toolCallId: 'c3', toolName: 'mcp__github__pull_request_read', input: { pullNumber: 3300 } } },
+    { runId: 'run-1', seq: 10, at: new Date(t3 + 100), chunk: { type: 'tool-output-error', toolCallId: 'c3', errorText: 'GitHub rate limit exceeded' } },
+    // 5. Exploration command with "Permission denied" in successful stdout (exitCode 0)
+    { runId: 'run-1', seq: 11, at: new Date(t3 + 200), chunk: { type: 'tool-input-available', toolCallId: 'c4', toolName: 'Bash', input: { command: 'rg -n "denied" server.log' } } },
+    { runId: 'run-1', seq: 12, at: new Date(t3 + 250), chunk: { type: 'tool-output-available', toolCallId: 'c4', output: { output: 'server.log:1:Permission denied', exitCode: 0 } } },
+    // 6. Shell command printing JSON that happens to contain an `output` field (must not be double-unwrapped!)
+    { runId: 'run-1', seq: 13, at: new Date(t3 + 300), chunk: { type: 'tool-input-available', toolCallId: 'c5', toolName: 'Bash', input: { command: 'node print-json.mjs' } } },
+    { runId: 'run-1', seq: 14, at: new Date(t3 + 300), chunk: { type: 'tool-output-available', toolCallId: 'c5', toolDurationMs: 120, output: { output: '{"output":"inner","meta":42}', exitCode: 0 } } },
   ]
 
   const chunks = chainChunks(rawChunks)
@@ -205,10 +226,14 @@ test('enrichMobileThreadItems extracts Codex fileChange stats, shell commandActi
 
   assert.equal(enriched.length, 1)
   assert.equal(enriched[0].kind, 'steps')
-  const [s1, s2, s3, s4] = enriched[0].steps
+  const [s1, s2, s2f, s3, s4, s5] = enriched[0].steps
 
-  assert.equal(s1.kind, 'exec')
-  assert.equal(s1.status, 'completed')
+  // Legacy ThreadStep contract preserved verbatim for older installed clients!
+  assert.equal(s1.kind, 'shell')
+  assert.equal(s1.status, 'ok')
+  // Codex 1:1 additive projection fields
+  assert.equal(s1.codexKind, 'exec')
+  assert.equal(s1.codexStatus, 'completed')
   assert.equal(s1.command, 'pnpm test')
   assert.equal(s1.cwd, '/repo/mikka')
   assert.equal(s1.exitCode, 0)
@@ -217,33 +242,54 @@ test('enrichMobileThreadItems extracts Codex fileChange stats, shell commandActi
   assert.equal(s1.completedAtMs, t1)
   assert.equal(s1.durationMs, 2450)
 
+  // Real Codex multi-file patch events preserved individually with add/delete kinds!
   assert.equal(s2.kind, 'edit')
-  assert.equal(s2.status, 'completed')
-  assert.equal(s2.fileChange?.path, 'lib/app.ts')
-  assert.equal(s2.fileChange?.changeKind, 'update')
-  assert.equal(s2.fileChange?.linesAdded, 2)
-  assert.equal(s2.fileChange?.linesRemoved, 1)
-  assert.equal(s2.fileChanges?.length, 2)
-  assert.equal(s2.fileChanges?.[1].path, 'lib/new.ts')
-  assert.equal(s2.fileChanges?.[1].changeKind, 'add')
-  assert.equal(s2.fileChanges?.[1].linesAdded, 1)
+  assert.equal(s2.codexKind, 'edit')
+  assert.equal(s2.codexStatus, 'completed')
+  assert.deepEqual(s2.fileChanges, [
+    { path: 'lib/new.ts', changeKind: 'add' },
+    { path: 'lib/old.ts', changeKind: 'delete' },
+  ])
+  assert.deepEqual(s2.fileChange, { path: 'lib/new.ts', changeKind: 'add' })
 
-  assert.equal(s3.kind, 'mcp')
+  // Failed Codex apply_patch output `{ status: 'failed' }` surfaces as failed!
+  assert.equal(s2f.codexKind, 'edit')
+  assert.equal(s2f.codexStatus, 'failed')
+  assert.deepEqual(s2f.fileChanges, [{ path: 'lib/bad.ts', changeKind: 'update' }])
+
+  // Failed MCP call
+  assert.equal(s3.kind, 'other')
+  assert.equal(s3.status, 'failed')
+  assert.equal(s3.codexKind, 'mcp')
+  assert.equal(s3.codexStatus, 'failed')
   assert.equal(s3.server, 'github')
   assert.equal(s3.tool, 'pull_request_read')
-  assert.equal(s3.status, 'failed')
   assert.equal(s3.error, 'GitHub rate limit exceeded')
   assert.deepEqual(s3.arguments, { pullNumber: 3300 })
 
-  assert.equal(s4.kind, 'search')
-  assert.equal(s4.query, 'foo')
-  assert.equal(s4.path, 'src/')
-  assert.equal(s4.command, 'rg -n "foo" src/')
-  assert.equal(s4.aggregatedOutput, 'src/a.ts:1:foo')
+  // Successful search containing "Permission denied" stays completed, never declined!
+  assert.equal(s4.kind, 'shell')
+  assert.equal(s4.status, 'ok')
+  assert.equal(s4.codexKind, 'search')
+  assert.equal(s4.codexStatus, 'completed')
+  assert.equal(s4.query, 'denied')
+  assert.equal(s4.path, 'server.log')
+  assert.equal(s4.aggregatedOutput, 'server.log:1:Permission denied')
+
+  // JSON stdout with `output` key is NOT double-unwrapped, and single-batch timing aligns with toolDurationMs!
+  assert.equal(s5.aggregatedOutput, '{"output":"inner","meta":42}')
+  assert.equal(s5.durationMs, 120)
+  assert.equal(s5.completedAtMs, t3 + 300)
+  assert.equal(s5.startedAtMs, t3 + 300 - 120)
 })
 
-test('enrichMobileThreadStep computes Edit line diff stats and bounds huge outputs safely', () => {
-  const edit = enrichMobileThreadStep({
+test('enrichMobileThreadStep computes Edit line diffs past 1024-char prefix and handles oversized inputs via chunk context', () => {
+  const unchangedPrefix = Array.from({ length: 40 }, (_, i) => `const unchangedLine_${i} = '${'x'.repeat(30)}'`).join('\n')
+  const oldStr = `${unchangedPrefix}\nconst target = 'before'`
+  const newStr = `${unchangedPrefix}\nconst target = 'after'\nconst extra = true`
+  assert.ok(unchangedPrefix.length > 1300)
+
+  const editFromSerialized = enrichMobileThreadStep({
     id: 'e1',
     name: 'Edit',
     detail: 'src/button.tsx',
@@ -251,17 +297,32 @@ test('enrichMobileThreadStep computes Edit line diff stats and bounds huge outpu
     kind: 'edit',
     status: 'ok',
     target: 'src/button.tsx',
-    input: JSON.stringify({
-      file_path: 'src/button.tsx',
-      old_string: 'const a = 1\nconst b = 2\nconst c = 3',
-      new_string: 'const a = 1\nconst b = 20\nconst d = 40\nconst c = 3',
-    }),
+    input: JSON.stringify({ file_path: 'src/button.tsx', old_string: oldStr, new_string: newStr }),
   })
-  assert.equal(edit.kind, 'edit')
-  assert.equal(edit.fileChange?.path, 'src/button.tsx')
-  assert.equal(edit.fileChange?.changeKind, 'update')
-  assert.equal(edit.fileChange?.linesRemoved, 1)
-  assert.equal(edit.fileChange?.linesAdded, 2)
+  assert.equal(editFromSerialized.codexKind, 'edit')
+  assert.equal(editFromSerialized.fileChange?.path, 'src/button.tsx')
+  assert.equal(editFromSerialized.fileChange?.linesRemoved, 1)
+  assert.equal(editFromSerialized.fileChange?.linesAdded, 2)
+
+  // Even when `step.input` is omitted (exceeded 8192-char legacy thread preview), chunk context computes exact diff stats!
+  const editFromOversizedChunk = enrichMobileThreadStep(
+    {
+      id: 'e2',
+      name: 'Edit',
+      detail: 'src/large.tsx',
+      failed: false,
+      kind: 'edit',
+      status: 'ok',
+      target: 'src/large.tsx',
+    },
+    {
+      context: {
+        rawInput: { file_path: 'src/large.tsx', old_string: oldStr, new_string: newStr },
+      },
+    },
+  )
+  assert.equal(editFromOversizedChunk.fileChange?.linesRemoved, 1)
+  assert.equal(editFromOversizedChunk.fileChange?.linesAdded, 2)
 
   const huge = 'a'.repeat(10_000)
   const cmd = enrichMobileThreadStep({

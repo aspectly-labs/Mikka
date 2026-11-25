@@ -1,6 +1,7 @@
 // Codex Electron 1:1 Tool-Use projection for Bot chats (/api/mobile/chat) and
-// Agent threads (/api/mobile/threads/[id]). Pure, non-mutating, bounded by length
-// only (no regex secret masking or UUID scrubbing — mirrors Codex/Cursor/Claude).
+// Agent threads (/api/mobile/threads/[id]). Pure, non-mutating, backward-compatible
+// with legacy ThreadStep fields, and bounded by length only (no regex secret masking
+// or UUID scrubbing — mirrors Codex Electron, Cursor, and Claude Desktop).
 import type { ChatItem, ChatTool } from '@/lib/coordinator/context'
 import { toolAction, toolFailure } from '@/lib/coordinator/tool-activity'
 import { previewFields } from '@/lib/coordinator/tool-detail'
@@ -40,38 +41,72 @@ export type CodexFileChange = {
 export type CodexAgentAction = 'spawn' | 'message' | 'wait' | 'stop' | 'other'
 
 export type CodexToolProjectionFields = {
-  kind: CodexToolKind
-  status: CodexToolStatus
+  /** Codex 1:1 tool category for rendering & exploration coalescing. */
+  codexKind: CodexToolKind
+  /** Codex lifecycle status (`running` while active; `declined` when denied or interrupted mid-call). */
+  codexStatus: CodexToolStatus
+  /** True when the turn/run was stopped while this tool was in progress. */
   interrupted?: true
+  /** Verbatim command with shell wrapper (`/bin/zsh -lc '...'`) stripped; no secret/UUID redaction. */
   command?: string
+  /** Working directory for shell/exec commands when provided in tool input or leading `cd`. */
   cwd?: string
+  /** Codex `CommandAction[]` parsed from shell commands (`read` / `listFiles` / `search` / `unknown`). */
   commandActions?: CodexCommandAction[]
+  /** Exit code for shell/exec commands (`0` success, non-zero failure, `null` when unknown/signaled). */
   exitCode?: number | null
+  /** Bounded raw stdout/stderr output (unwrapped once from `{ output, exitCode }`; no regex redaction). */
   aggregatedOutput?: string
+  /** Execution duration in milliseconds when recorded or derived from timestamps. */
   durationMs?: number
+  /** Epoch ms when the tool call started (consistent with `durationMs` when both exist). */
   startedAtMs?: number
+  /** Epoch ms when the tool call finished. */
   completedAtMs?: number
+  /** Primary file path (`read` / `listFiles` / `search` / `edit`). */
   path?: string
+  /** Search query / pattern (`search` / `web`). */
   query?: string
+  /** Web URL (`web`). */
   url?: string
+  /** Primary file change summary (`edit`). */
   fileChange?: CodexFileChange
+  /** All file changes for multi-file patches such as `apply_patch` (`edit`). */
   fileChanges?: CodexFileChange[]
+  /** MCP server / connector / namespace name (`mcp`). */
   server?: string
+  /** MCP / dynamic tool operation name (`mcp`). */
   tool?: string
+  /** Subagent / dispatch action verb (`agent`). */
   agentAction?: CodexAgentAction
+  /** Dispatched / target thread run ID (`agent`, verbatim UUID — never scrubbed). */
   targetThreadId?: string
+  /** Bounded raw arguments for expandable MCP/agent/tool cards (no regex redaction). */
   arguments?: unknown
+  /** Bounded raw result payload for expandable MCP/agent/tool cards (no regex redaction). */
   result?: unknown
+  /** Error message or code when the tool failed or was declined (no regex redaction). */
   error?: string
+  /** Compact 1-line human detail / subject fallback (no regex redaction). */
   detail?: string
 }
 
-export type MobileChatTool = ChatTool & CodexToolProjectionFields
-
-export type MobileThreadStep = Omit<ThreadStep, 'kind' | 'status'> &
-  Omit<CodexToolProjectionFields, 'detail'> & {
-    detail: string | null
+/**
+ * `/api/mobile/chat` tool entry: `ChatTool` had no prior `kind` or `status`, so both
+ * `kind`/`status` and `codexKind`/`codexStatus` are additive and identical.
+ */
+export type MobileChatTool = ChatTool &
+  CodexToolProjectionFields & {
+    kind: CodexToolKind
+    status: CodexToolStatus
   }
+
+/**
+ * `/api/mobile/threads/[id]` step entry: preserves legacy `ThreadStep.kind` (`shell`, `read`, …)
+ * and `ThreadStep.status` (`running`, `ok`, `failed`) for installed clients while adding Codex
+ * 1:1 fields (`codexKind`, `codexStatus`, `commandActions`, `aggregatedOutput`, `fileChanges`, …).
+ */
+export type MobileThreadStep = ThreadStep & Omit<CodexToolProjectionFields, 'detail'>
 
 export type MobileThreadItem =
   | Exclude<ThreadItem, { kind: 'steps' }>
@@ -84,6 +119,8 @@ export type ThreadStepChunkContext = {
   rawInput?: unknown
   rawCommand?: string
   errorText?: string
+  toolName?: string
+  fileChangeEvents?: CodexFileChange[]
 }
 
 export type EnrichMobileThreadOptions = {
@@ -213,6 +250,22 @@ function boundValue(value: unknown, depth = 0): unknown {
   return undefined
 }
 
+function parseRawJson(raw: unknown): unknown {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'string') return raw
+  const trimmed = raw.trim()
+  if (!trimmed) return undefined
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed) as unknown
+    } catch {
+      const partial = previewFields(trimmed)
+      if (Object.keys(partial).length > 0) return partial
+    }
+  }
+  return trimmed
+}
+
 function parseBoundedPayload(raw: unknown): unknown {
   if (raw === undefined || raw === null) return undefined
   if (typeof raw !== 'string') return boundValue(raw)
@@ -302,7 +355,7 @@ function tokenizeShell(command: string): string[] {
   return tokens
 }
 
-/** Splits on top-level operators (`&&`, `||`, `;`, or `|`) outside quotes. */
+/** Splits on top-level operators (`&&`, `||`, `;`, unquoted newlines, or `|`) outside quotes. */
 function splitShellTopLevel(command: string, mode: 'chain' | 'pipe'): string[] {
   const parts: string[] = []
   let current = ''
@@ -323,10 +376,16 @@ function splitShellTopLevel(command: string, mode: 'chain' | 'pipe'): string[] {
       else if (ch === '\\') escaped = true
       continue
     }
-    if (ch === '\\') { current += ch; escaped = true; continue }
+    if (ch === '\\') {
+      if (next === '\n') { i++; continue } // Line continuation
+      if (next === '\r' && command[i + 2] === '\n') { i += 2; continue }
+      current += ch
+      escaped = true
+      continue
+    }
     if (ch === "'" || ch === '"') { current += ch; quote = ch; continue }
     if (mode === 'chain') {
-      if (ch === ';') {
+      if (ch === ';' || ch === '\n' || ch === '\r') {
         if (current.trim()) parts.push(current.trim())
         current = ''
         continue
@@ -648,8 +707,14 @@ function extractFileChanges(
   rawOutput: string | undefined,
   fallbackTarget?: string,
   rawInputText?: string,
+  fileChangeEvents?: readonly CodexFileChange[],
 ): CodexFileChange[] {
-  const lower = name.toLowerCase()
+  // 1. Authoritative per-file change events emitted by the Codex daemon adapter (`data-file-change`).
+  if (fileChangeEvents && fileChangeEvents.length > 0) {
+    return fileChangeEvents.map(entry => ({ ...entry }))
+  }
+
+  // 2. Patch text (`*** Update File:` or `diff --git`).
   const patchText = [rawInputText, args.patch, args.input, args.diff, rawOutput].find(
     (v): v is string => typeof v === 'string' && (v.includes('*** ') || v.includes('diff --git ')),
   )
@@ -658,6 +723,17 @@ function extractFileChanges(
     if (parsed.length > 0) return parsed
   }
 
+  // 3. Multi-file list from Codex `apply_patch` input (`input: { files: [...] }`).
+  if (Array.isArray(args.files)) {
+    const files = args.files
+      .map(entry => nonEmptyString(entry, 400, false))
+      .filter((entry): entry is string => Boolean(entry))
+    if (files.length > 0) {
+      return files.map(filePath => ({ path: filePath, changeKind: 'update' as const }))
+    }
+  }
+
+  const lower = name.toLowerCase()
   const path = nonEmptyString(
     args.file_path ?? args.path ?? args.Path ?? args.TargetFile ?? args.notebook_path ?? args.file ?? args.destination ?? args.to ?? fallbackTarget,
     400,
@@ -797,6 +873,7 @@ function parseCommandEnvelope(value: unknown): { output: string; exitCode: numbe
   return null
 }
 
+/** Unwraps Codex `{ output, exitCode }` envelope once when `step.exitCode` is recorded. */
 function stepRawOutput(step: Pick<ThreadStep, 'output' | 'exitCode'>): string | undefined {
   const output = step.output
   if (!output || step.exitCode === undefined) return output
@@ -807,13 +884,12 @@ function stepRawOutput(step: Pick<ThreadStep, 'output' | 'exitCode'>): string | 
   }
 }
 
-function unwrapAggregatedOutput(rawOutput: string | undefined, explicitExitCode?: number | null): {
+/** Unwraps shell-result envelopes from Coordinator/Bot tool outputs without rewriting arbitrary JSON stdout. */
+function unwrapChatShellOutput(rawOutput: string | undefined): {
   aggregatedOutput?: string
   exitCode?: number | null
 } {
-  let exitCode = explicitExitCode
-  if (!rawOutput) return exitCode !== undefined ? { exitCode } : {}
-
+  if (!rawOutput) return {}
   const trimmed = rawOutput.trim()
   if (trimmed.startsWith('{')) {
     try {
@@ -822,13 +898,11 @@ function unwrapAggregatedOutput(rawOutput: string | undefined, explicitExitCode?
       if (cmdRes) {
         return {
           ...(cmdRes.output ? { aggregatedOutput: truncateMiddle(cmdRes.output, MAX_OUTPUT_CHARS) } : {}),
-          exitCode: exitCode ?? cmdRes.exitCode,
+          exitCode: cmdRes.exitCode,
         }
       }
       const obj = recordOf(parsed)
-      if (exitCode === undefined) {
-        exitCode = validExitCode(obj.exitCode ?? obj.exit_code)
-      }
+      const exitCode = validExitCode(obj.exitCode ?? obj.exit_code)
       const stdout = typeof obj.stdout === 'string' ? obj.stdout : undefined
       const stderr = typeof obj.stderr === 'string' ? obj.stderr : undefined
       if (stdout !== undefined || stderr !== undefined) {
@@ -838,29 +912,44 @@ function unwrapAggregatedOutput(rawOutput: string | undefined, explicitExitCode?
           ...(exitCode !== undefined ? { exitCode } : {}),
         }
       }
-      if (typeof obj.output === 'string') {
+      if (exitCode !== undefined && typeof obj.output === 'string') {
         return {
           ...(obj.output ? { aggregatedOutput: truncateMiddle(obj.output, MAX_OUTPUT_CHARS) } : {}),
-          ...(exitCode !== undefined ? { exitCode } : {}),
+          exitCode,
         }
       }
     } catch {
-      // Partial / truncated JSON preview: fall back to previewFields for exitCode and raw text.
       const fields = previewFields(trimmed)
-      if (exitCode === undefined) exitCode = validExitCode(fields.exitCode ?? fields.exit_code)
-      if (typeof fields.output === 'string' && fields.output) {
+      const exitCode = validExitCode(fields.exitCode ?? fields.exit_code)
+      if (exitCode !== undefined && typeof fields.output === 'string' && fields.output) {
         return {
           aggregatedOutput: truncateMiddle(fields.output, MAX_OUTPUT_CHARS),
-          ...(exitCode !== undefined ? { exitCode } : {}),
+          exitCode,
         }
       }
     }
   }
+  return { aggregatedOutput: truncateMiddle(rawOutput, MAX_OUTPUT_CHARS) }
+}
 
-  return {
-    aggregatedOutput: truncateMiddle(rawOutput, MAX_OUTPUT_CHARS),
-    ...(exitCode !== undefined ? { exitCode } : {}),
+/** Reads structured Codex/tool outcome statuses (e.g. `apply_patch` `{ status: "failed" | "declined" }`). */
+function structuredOutputStatus(raw: string | undefined): CodexToolStatus | undefined {
+  if (!raw) return undefined
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('{')) return undefined
+  let statusVal: unknown
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    statusVal = recordOf(parsed).status
+  } catch {
+    statusVal = previewFields(trimmed).status
   }
+  if (typeof statusVal !== 'string') return undefined
+  const lower = statusVal.trim().toLowerCase()
+  if (lower === 'declined' || lower === 'denied' || lower === 'rejected') return 'declined'
+  if (lower === 'failed' || lower === 'error') return 'failed'
+  if (lower === 'inprogress' || lower === 'in_progress' || lower === 'running') return 'running'
+  return undefined
 }
 
 function isDeclinedError(code?: string, detail?: string, message?: string): boolean {
@@ -923,23 +1012,53 @@ function buildCompactDetail(
 
 /**
  * Extracts per-call timestamps (`startedAtMs`, `completedAtMs`), shell `cwd`,
- * raw input (for large edit diffs / `cwd`), and `errorText` from scoped run chunks.
+ * complete input (for edit diff stats / `cwd`), `errorText`, and Codex adapter
+ * `data-file-change` events from scoped run chunks.
  */
 export function extractThreadStepContext(
   chunks: readonly { chunk: Record<string, unknown>; at: Date | string | number }[],
 ): Map<string, ThreadStepChunkContext> {
   const map = new Map<string, ThreadStepChunkContext>()
+  let lastPatchCallId: string | null = null
+
   for (const row of chunks) {
     const chunk = row.chunk
     const type = chunk?.type
-    if (typeof type !== 'string' || chunk.toolCallId === undefined) continue
+    if (typeof type !== 'string') continue
+
+    if (type === 'data-file-change' && lastPatchCallId !== null) {
+      const data = recordOf(chunk.data)
+      const filePath = nonEmptyString(data.path, 400, false)
+      if (filePath) {
+        const change = typeof data.change === 'string' ? data.change.toLowerCase() : ''
+        const changeKind: CodexFileChangeKind = change === 'added' || change === 'add'
+          ? 'add'
+          : change === 'deleted' || change === 'delete'
+            ? 'delete'
+            : 'update'
+        const target = map.get(lastPatchCallId)
+        if (target) {
+          target.fileChangeEvents ??= []
+          target.fileChangeEvents.push({ path: filePath, changeKind })
+        }
+      }
+      continue
+    }
+
+    if (chunk.toolCallId === undefined) {
+      lastPatchCallId = null
+      continue
+    }
+
     const callId = String(chunk.toolCallId)
     const atMs = validTimestampMs(row.at)
     let entry = map.get(callId)
     if (!entry) { entry = {}; map.set(callId, entry) }
 
     if (type === 'tool-input-start' || type === 'tool-input-available' || type === 'tool-input-error') {
+      lastPatchCallId = null
       if (entry.startedAtMs === undefined && atMs !== undefined) entry.startedAtMs = atMs
+      if (typeof chunk.toolName === 'string' && chunk.toolName.trim()) entry.toolName = chunk.toolName.trim()
       if (chunk.input !== undefined) {
         entry.rawInput = chunk.input
         const rec = recordOf(chunk.input)
@@ -957,6 +1076,11 @@ export function extractThreadStepContext(
       if (type === 'tool-output-error' && typeof chunk.errorText === 'string' && chunk.errorText.trim()) {
         entry.errorText = truncateEnd(chunk.errorText.trim(), MAX_ERROR_CHARS)
       }
+      lastPatchCallId = type === 'tool-output-available' && EDIT_NAMES.has((entry.toolName ?? '').toLowerCase())
+        ? callId
+        : null
+    } else {
+      lastPatchCallId = null
     }
   }
   return map
@@ -970,15 +1094,24 @@ type TimingInput = {
 }
 
 function resolveTiming(input: TimingInput): { startedAtMs?: number; completedAtMs?: number; durationMs?: number } {
-  const startedAtMs = validTimestampMs(input.startedAtMs)
+  let startedAtMs = validTimestampMs(input.startedAtMs)
   let completedAtMs = validTimestampMs(input.completedAtMs)
   let durationMs = validDurationMs(input.durationMs ?? input.ms)
-  if (durationMs === undefined && startedAtMs !== undefined && completedAtMs !== undefined && completedAtMs >= startedAtMs) {
+
+  if (durationMs !== undefined && startedAtMs !== undefined && completedAtMs !== undefined) {
+    // When both chunks arrived in the same DB batch (identical insert times), align `startedAtMs`
+    // backwards from the batch completion timestamp using the measured runtime so clocks stay consistent.
+    if (startedAtMs === completedAtMs && durationMs > 0) {
+      startedAtMs = Math.max(1, completedAtMs - durationMs)
+    } else if (completedAtMs < startedAtMs) {
+      completedAtMs = startedAtMs + durationMs
+    }
+  } else if (durationMs === undefined && startedAtMs !== undefined && completedAtMs !== undefined && completedAtMs >= startedAtMs) {
     durationMs = Math.round(completedAtMs - startedAtMs)
-  }
-  if (completedAtMs === undefined && startedAtMs !== undefined && durationMs !== undefined) {
+  } else if (completedAtMs === undefined && startedAtMs !== undefined && durationMs !== undefined) {
     completedAtMs = startedAtMs + durationMs
   }
+
   return {
     ...(startedAtMs !== undefined ? { startedAtMs } : {}),
     ...(completedAtMs !== undefined ? { completedAtMs } : {}),
@@ -991,10 +1124,13 @@ export function enrichMobileChatTool(
   tool: ChatTool & { startedAtMs?: unknown; completedAtMs?: unknown; durationMs?: unknown; ms?: unknown },
   opts: { itemStopped?: boolean } = {},
 ): MobileChatTool {
-  const inputFields = previewFields(tool.input)
-  const args = effectiveArgs(tool.name, inputFields)
-  const outputFields = previewFields(tool.output)
-  const lower = tool.name.toLowerCase()
+  const { startedAtMs: rawStart, completedAtMs: rawEnd, durationMs: rawDuration, ms: rawMs, ...baseTool } = tool
+  const rawInputSource = parseRawJson(baseTool.input)
+  const inputFields = recordOf(rawInputSource)
+  const args = effectiveArgs(baseTool.name, inputFields)
+  const outputFields = previewFields(baseTool.output)
+  const lower = baseTool.name.toLowerCase()
+
   const explicitShell = isShellToolName(lower)
   const rawShellCmd = explicitShell
     ? extractRawShellCommand(args, undefined, true)
@@ -1024,82 +1160,87 @@ export function enrichMobileChatTool(
   } else if (explicitShell) {
     kind = 'exec'
   } else {
-    kind = classifyNonShellKind(tool.name, inputFields)
+    kind = classifyNonShellKind(baseTool.name, inputFields)
     if (kind === 'read') {
-      path = nonEmptyString(args.file_path ?? args.path ?? args.notebook_path ?? args.file ?? tool.target, 400, false)
+      path = nonEmptyString(args.file_path ?? args.path ?? args.notebook_path ?? args.file ?? baseTool.target, 400, false)
     } else if (kind === 'listFiles') {
-      path = nonEmptyString(args.path ?? args.directory ?? args.dir ?? args.pattern ?? tool.target, 400, false)
+      path = nonEmptyString(args.path ?? args.directory ?? args.dir ?? args.pattern ?? baseTool.target, 400, false)
     } else if (kind === 'search') {
-      query = nonEmptyString(args.pattern ?? args.query ?? args.q ?? args.search ?? tool.target, MAX_DETAIL_CHARS)
+      query = nonEmptyString(args.pattern ?? args.query ?? args.q ?? args.search ?? baseTool.target, MAX_DETAIL_CHARS)
       path = nonEmptyString(args.path ?? args.directory ?? args.repository ?? args.repo, 400, false)
     } else if (kind === 'edit') {
-      const changes = extractFileChanges(tool.name, args, tool.output, tool.target, tool.input)
+      const changes = extractFileChanges(
+        baseTool.name,
+        args,
+        baseTool.output,
+        baseTool.target,
+        typeof rawInputSource === 'string' ? rawInputSource : undefined,
+      )
       if (changes.length) {
         fileChanges = changes
         path = changes[0].path
       }
     } else if (kind === 'web') {
       url = nonEmptyString(args.url, 500, false)
-      query = nonEmptyString(args.query ?? args.q ?? args.task ?? args.prompt ?? (!url ? tool.target : undefined), MAX_DETAIL_CHARS)
+      query = nonEmptyString(args.query ?? args.q ?? args.task ?? args.prompt ?? (!url ? baseTool.target : undefined), MAX_DETAIL_CHARS)
     } else if (kind === 'mcp') {
-      const identity = extractMcpIdentity(tool.name, inputFields, args)
+      const identity = extractMcpIdentity(baseTool.name, inputFields, args)
       server = identity.server
       mcpTool = identity.tool
     } else if (kind === 'agent') {
-      agentAction = classifyAgentAction(tool.name)
+      agentAction = classifyAgentAction(baseTool.name)
       targetThreadId = extractTargetThreadId(args, outputFields)
     }
   }
 
-  const failure = toolFailure(tool)
-  const rawErrorText = tool.errorCode && tool.errorDetail
-    ? `${tool.errorCode} (${tool.errorDetail})`
-    : tool.errorCode ?? failure.reason ?? (tool.state === 'error' ? nonEmptyString(tool.output, MAX_ERROR_CHARS, false) : undefined)
+  const isShellDerived = explicitShell || Boolean(rawShellCmd)
+  const { aggregatedOutput, exitCode } = isShellDerived
+    ? unwrapChatShellOutput(baseTool.output)
+    : { aggregatedOutput: undefined, exitCode: validExitCode(outputFields.exitCode ?? outputFields.exit_code) }
+
+  const failure = toolFailure(baseTool)
+  const outStatus = !isShellDerived ? structuredOutputStatus(baseTool.output) : undefined
+  const rawErrorText = baseTool.errorCode && baseTool.errorDetail
+    ? `${baseTool.errorCode} (${baseTool.errorDetail})`
+    : baseTool.errorCode ?? failure.reason ?? (baseTool.state === 'error' ? nonEmptyString(baseTool.output, MAX_ERROR_CHARS, false) : undefined)
 
   let status: CodexToolStatus
   let interrupted: true | undefined
-  if (tool.state === 'running') {
+  if (baseTool.state === 'running') {
     if (opts.itemStopped) {
       status = 'declined'
       interrupted = true
     } else {
       status = 'running'
     }
-  } else if (isDeclinedError(tool.errorCode, tool.errorDetail, rawErrorText)) {
+  } else if (outStatus === 'declined') {
     status = 'declined'
-  } else if (tool.state === 'error' || failure.failed) {
-    status = 'failed'
+  } else if (baseTool.state === 'error' || failure.failed || (typeof exitCode === 'number' && exitCode !== 0) || outStatus === 'failed') {
+    status = isDeclinedError(baseTool.errorCode, baseTool.errorDetail, rawErrorText) ? 'declined' : 'failed'
   } else {
     status = 'completed'
   }
 
-  const isShellDerived = explicitShell || Boolean(rawShellCmd)
-  const { aggregatedOutput, exitCode } = isShellDerived
-    ? unwrapAggregatedOutput(tool.output)
-    : { aggregatedOutput: undefined, exitCode: validExitCode(outputFields.exitCode ?? outputFields.exit_code) }
-
-  if (status === 'completed' && typeof exitCode === 'number' && exitCode !== 0) {
-    status = 'failed'
-  }
-
-  const parsedArguments = !isShellDerived ? parseBoundedPayload(tool.input) : undefined
+  const parsedArguments = !isShellDerived ? parseBoundedPayload(baseTool.input) : undefined
   const parsedResult = !isShellDerived && status !== 'failed' && status !== 'declined'
-    ? parseBoundedPayload(tool.output)
+    ? parseBoundedPayload(baseTool.output)
     : undefined
   const error = status === 'failed' || status === 'declined'
     ? nonEmptyString(rawErrorText ?? (typeof exitCode === 'number' && exitCode !== 0 ? `Exit code ${exitCode}` : undefined), MAX_ERROR_CHARS, false)
     : undefined
 
-  const timing = resolveTiming(tool)
+  const timing = resolveTiming({ startedAtMs: rawStart, completedAtMs: rawEnd, durationMs: rawDuration, ms: rawMs })
   const fileChange = fileChanges?.[0]
   const detail = buildCompactDetail(kind, {
-    command, path, query, url, quote: tool.quote, target: tool.target, server, tool: mcpTool, fileChange,
+    command, path, query, url, quote: baseTool.quote, target: baseTool.target, server, tool: mcpTool, fileChange,
   })
 
   return {
-    ...tool,
+    ...baseTool,
     kind,
     status,
+    codexKind: kind,
+    codexStatus: status,
     ...(interrupted ? { interrupted } : {}),
     ...(command ? { command } : {}),
     ...(cwd ? { cwd } : {}),
@@ -1137,22 +1278,27 @@ export function enrichMobileChatItems<T extends ChatItem>(items: readonly T[]): 
   })
 }
 
-/** Enriches one Agent ThreadStep into the Codex Electron 1:1 mobile wire projection. */
+/**
+ * Enriches one Agent ThreadStep with additive Codex Electron 1:1 fields (`codexKind`,
+ * `codexStatus`, `commandActions`, `aggregatedOutput`, `fileChanges`, timing, …) while
+ * preserving legacy `step.kind` and `step.status` for installed clients.
+ */
 export function enrichMobileThreadStep(
   step: ThreadStep,
   opts: { active?: boolean; context?: ThreadStepChunkContext } = {},
 ): MobileThreadStep {
   const ctx = opts.context
-  const inputSource = step.input !== undefined ? parseBoundedPayload(step.input) : ctx?.rawInput
-  const inputFields = recordOf(inputSource)
+  // Prefer complete chunk input before display truncation so edit diffs past 1024 chars compute accurately.
+  const rawInputSource = ctx?.rawInput !== undefined ? ctx.rawInput : parseRawJson(step.input)
+  const inputFields = recordOf(rawInputSource)
   const args = effectiveArgs(step.name, inputFields)
   const lower = step.name.toLowerCase()
 
   const isShellStep = step.kind === 'shell' || isShellToolName(lower) || Boolean(step.command)
   const rawShellCmd = isShellStep ? extractRawShellCommand(args, ctx?.rawCommand ?? step.command, true) : undefined
-  const rawInputText = typeof inputSource === 'string' ? inputSource : typeof ctx?.rawInput === 'string' ? ctx.rawInput : undefined
+  const rawInputText = typeof rawInputSource === 'string' ? rawInputSource : undefined
 
-  let kind: CodexToolKind
+  let codexKind: CodexToolKind
   let command: string | undefined
   let cwd = extractCwd(args, ctx?.cwd)
   let commandActions: CodexCommandAction[] | undefined
@@ -1167,77 +1313,90 @@ export function enrichMobileThreadStep(
 
   if (rawShellCmd) {
     const classified = classifyShellCommand(rawShellCmd)
-    kind = classified.kind
+    codexKind = classified.kind
     command = classified.command
     commandActions = classified.commandActions
     if (!cwd && classified.inferredCwd) cwd = classified.inferredCwd
     path = classified.path
     query = classified.query
   } else if (isShellStep) {
-    kind = 'exec'
+    codexKind = 'exec'
   } else {
-    kind = classifyNonShellKind(step.name, inputFields)
-    if (kind === 'other' && step.kind === 'delegate') kind = 'agent'
-    else if (kind === 'other' && step.kind === 'todo') kind = 'think'
-    else if (kind === 'other' && step.kind === 'read') kind = 'read'
-    else if (kind === 'other' && step.kind === 'search') kind = 'search'
-    else if (kind === 'other' && step.kind === 'edit') kind = 'edit'
-    else if (kind === 'other' && step.kind === 'web') kind = 'web'
+    codexKind = classifyNonShellKind(step.name, inputFields)
+    if (codexKind === 'other' && step.kind === 'delegate') codexKind = 'agent'
+    else if (codexKind === 'other' && step.kind === 'todo') codexKind = 'think'
+    else if (codexKind === 'other' && step.kind === 'read') codexKind = 'read'
+    else if (codexKind === 'other' && step.kind === 'search') codexKind = 'search'
+    else if (codexKind === 'other' && step.kind === 'edit') codexKind = 'edit'
+    else if (codexKind === 'other' && step.kind === 'web') codexKind = 'web'
 
-    if (kind === 'read') {
+    if (codexKind === 'read') {
       path = nonEmptyString(args.file_path ?? args.path ?? args.notebook_path ?? args.file ?? step.target, 400, false)
-    } else if (kind === 'listFiles') {
+    } else if (codexKind === 'listFiles') {
       path = nonEmptyString(args.path ?? args.directory ?? args.dir ?? step.scope ?? step.target, 400, false)
-    } else if (kind === 'search') {
+    } else if (codexKind === 'search') {
       query = nonEmptyString(args.pattern ?? args.query ?? args.q ?? step.target, MAX_DETAIL_CHARS)
       path = nonEmptyString(args.path ?? args.directory ?? step.scope, 400, false)
-    } else if (kind === 'edit') {
-      const changes = extractFileChanges(step.name, args, step.output, step.target, rawInputText)
+    } else if (codexKind === 'edit') {
+      const changes = extractFileChanges(
+        step.name,
+        args,
+        step.output,
+        step.target,
+        rawInputText,
+        ctx?.fileChangeEvents,
+      )
       if (changes.length) {
         fileChanges = changes
         path = changes[0].path
       }
-    } else if (kind === 'web') {
+    } else if (codexKind === 'web') {
       url = nonEmptyString(args.url ?? (step.target?.startsWith('http') ? step.target : undefined), 500, false)
       query = nonEmptyString(args.query ?? args.q ?? args.prompt ?? (!url ? step.target : undefined), MAX_DETAIL_CHARS)
-    } else if (kind === 'mcp') {
+    } else if (codexKind === 'mcp') {
       const identity = extractMcpIdentity(step.name, inputFields, args)
       server = identity.server
       mcpTool = identity.tool
-    } else if (kind === 'agent') {
+    } else if (codexKind === 'agent') {
       agentAction = classifyAgentAction(step.name)
       const outputFields = step.output ? previewFields(step.output) : {}
       targetThreadId = extractTargetThreadId(args, outputFields)
     }
   }
 
+  // Unwrap Codex `{ output, exitCode }` envelope once; never re-parse raw command stdout as a wrapper.
   const rawOutput = stepRawOutput(step)
-  const { aggregatedOutput, exitCode } = isShellStep
-    ? unwrapAggregatedOutput(rawOutput, step.exitCode)
-    : { aggregatedOutput: undefined, exitCode: step.exitCode }
+  const exitCode = step.exitCode
+  const aggregatedOutput = isShellStep && rawOutput !== undefined && rawOutput.length > 0
+    ? truncateMiddle(rawOutput, MAX_OUTPUT_CHARS)
+    : undefined
 
-  let status: CodexToolStatus
+  const outStatus = !isShellStep ? structuredOutputStatus(rawOutput) : undefined
+  const hasFailed = step.failed || step.status === 'failed' || (typeof exitCode === 'number' && exitCode !== 0) || Boolean(ctx?.errorText)
+
+  let codexStatus: CodexToolStatus
   let interrupted: true | undefined
   if (step.status === 'running') {
     if (opts.active === false) {
-      status = 'declined'
+      codexStatus = 'declined'
       interrupted = true
     } else {
-      status = 'running'
+      codexStatus = 'running'
     }
-  } else if (isDeclinedError(undefined, undefined, ctx?.errorText ?? aggregatedOutput ?? step.output)) {
-    status = 'declined'
-  } else if (step.failed || step.status === 'failed' || (typeof exitCode === 'number' && exitCode !== 0)) {
-    status = 'failed'
+  } else if (outStatus === 'declined') {
+    codexStatus = 'declined'
+  } else if (outStatus === 'failed' || hasFailed) {
+    const failureText = ctx?.errorText ?? (isShellStep ? aggregatedOutput : rawOutput)
+    codexStatus = isDeclinedError(undefined, undefined, failureText) ? 'declined' : 'failed'
   } else {
-    status = 'completed'
+    codexStatus = 'completed'
   }
 
-  const parsedArguments = !isShellStep ? parseBoundedPayload(step.input ?? ctx?.rawInput) : undefined
-  const parsedResult = !isShellStep && status !== 'failed' && status !== 'declined'
+  const parsedArguments = !isShellStep ? parseBoundedPayload(rawInputSource) : undefined
+  const parsedResult = !isShellStep && codexStatus !== 'failed' && codexStatus !== 'declined'
     ? parseBoundedPayload(rawOutput)
     : undefined
-  const error = status === 'failed' || status === 'declined'
+  const error = codexStatus === 'failed' || codexStatus === 'declined'
     ? nonEmptyString(
         ctx?.errorText ?? (isShellStep ? aggregatedOutput : rawOutput) ?? (typeof exitCode === 'number' && exitCode !== 0 ? `Exit code ${exitCode}` : undefined),
         MAX_ERROR_CHARS,
@@ -1251,15 +1410,15 @@ export function enrichMobileThreadStep(
     ms: step.ms,
   })
   const fileChange = fileChanges?.[0]
-  const detail = buildCompactDetail(kind, {
+  const detail = buildCompactDetail(codexKind, {
     command, path, query, url, target: step.target, server, tool: mcpTool, fileChange, fallbackDetail: step.detail,
   }) ?? step.detail
 
   return {
     ...step,
-    kind,
-    status,
     detail,
+    codexKind,
+    codexStatus,
     ...(interrupted ? { interrupted } : {}),
     ...(command ? { command } : {}),
     ...(cwd ? { cwd } : {}),
