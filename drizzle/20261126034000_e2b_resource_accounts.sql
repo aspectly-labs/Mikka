@@ -1,4 +1,3 @@
--- target: DATABASE_URL
 -- Provider IDs and create-operation receipts must stay bound to their original account.
 CREATE TABLE IF NOT EXISTS e2b_resource_accounts (
   kind text NOT NULL CHECK (kind IN ('operation','sandbox','snapshot')),
