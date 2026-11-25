@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3316 existing attachments keep their task placement and only new inline uploads enter the retention index
 -- target: MIKKA_DATABASE_URL
 
 -- Files inside a task's description and comments (placement 'inline'), kept
