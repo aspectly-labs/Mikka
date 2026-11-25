@@ -21,6 +21,9 @@ test('an Environment keeps its default machine size; a run that names it gets it
   await assert.rejects(store.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Bad', configuration, defaultMachineSize: 'huge' as never }))
   const snapshot = await store.withProjectExecution({ userId: owner, workspaceId: workspace.id, issueId, repositoryKey: null, baseBranch: null, runtime: 'cloud', harness: 'codex', environmentId: saved.id }, async value => value)
   assert.deepEqual([snapshot.environment?.id, snapshot.environment?.chosen, snapshot.environment?.defaultMachineSize], [saved.id, true, 'standard-4-16'])
+  const { withRunProjectExecution } = await import('../lib/project-resources/run-lease')
+  assert.ok(await withRunProjectExecution({ userId: owner, workspaceId: workspace.id, issueId, repositoryKey: null,
+    baseBranch: null, runtime: 'cloud', harness: 'codex' }, snapshot, async () => true), 'claim revalidates the explicitly selected environment')
   await store.saveEnvironment(owner, { workspaceId: workspace.id, id: saved.id, revision: renamed.revision, name: 'Large runs', configuration, defaultMachineSize: null })
   assert.equal(await size(saved.id), null, 'null goes back to Mikka’s default')
 })

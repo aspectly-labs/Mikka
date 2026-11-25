@@ -310,6 +310,7 @@ async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, 
     throw new ActionFailureError('executionAccountUnavailable')
   }
   const readOnly = previous.readOnly ? { readOnly: true } : {}
+  const turnSettings = request && !run.questionContinuation?.requireSessionResume ? { refreshTaskEnvironment: true as const } : {}
   if (previous.cloud) {
     if (previous.harness !== 'codex' && previous.harness !== 'claude_code') throw new ActionFailureError('threadCannotContinue')
     // The last run's repository belongs to its dedicated task machine. The
@@ -320,11 +321,11 @@ async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, 
       ...(previous.remoteUrl ? { repo: previous.remoteUrl } : {}), note, ...(request ? { sourceEventId: request.sourceEventId, factoryBotId: request.botId } : {}), withoutBot: run.botId === null,
       // A person's continuation in an open thread is an app entry.
       origin: 'web', originRef: null,
-      ...runModel, ...(fork ? {} : { threadRunId: run.id }), ...readOnly }, fork ? `fork:${run.id}:${fork}` : `thread:${run.id}:${request?.sourceEventId ?? crypto.randomUUID()}`)
+      ...runModel, ...(fork ? {} : { threadRunId: run.id }), ...turnSettings, ...readOnly }, fork ? `fork:${run.id}:${fork}` : `thread:${run.id}:${request?.sourceEventId ?? crypto.randomUUID()}`)
   }
   if (!previous.remoteUrl) throw new ActionFailureError('agentRepoMissing')
   // The thread's own model and account, as on the cloud; when it has none left, the person is told instead of the CLI choosing.
-  return queueTaskRun(userId, { issueId, agentId: run.agentId, repo: previous.remoteUrl, note, ...runModel, ...(fork ? { requestKey: `fork:${run.id}:${fork}` } : { threadRunId: run.id }), ...(request ? { requestKey: `thread:${run.id}:${request.sourceEventId}` } : {}), ...readOnly }, request ? request.botId : run.botId, undefined, request?.sourceEventId, { source: run.source === 'mcp' ? 'mcp' : null, origin: 'web', originRef: null })
+  return queueTaskRun(userId, { issueId, agentId: run.agentId, repo: previous.remoteUrl, note, ...runModel, ...turnSettings, ...(fork ? { requestKey: `fork:${run.id}:${fork}` } : { threadRunId: run.id }), ...(request ? { requestKey: `thread:${run.id}:${request.sourceEventId}` } : {}), ...readOnly }, request ? request.botId : run.botId, undefined, request?.sourceEventId, { source: run.source === 'mcp' ? 'mcp' : null, origin: 'web', originRef: null })
 }
 
 /**

@@ -67,6 +67,13 @@ test('one person saves an environment, selects it as the task\'s 环境 and queu
   const persisted = (await fixture.query('SELECT "agentDefinition" FROM agent_runs WHERE id=$1', [admitted.runId])).rows[0].agentDefinition.projectExecution
   assert.deepEqual(persisted, frozen, 'an environment edit never rewrites an already admitted Run')
 
+  await fixture.query(`UPDATE agent_runs SET status='succeeded' WHERE id=$1`, [admitted.runId])
+  const reply = await queueRun(owner, { issueId, agentId, repo: repository, model: ALLOWED_MODEL, threadRunId: admitted.runId,
+    refreshTaskEnvironment: true, requestKey: `solo-reply:${randomUUID()}` })
+  const afterEdit = (await fixture.query('SELECT "agentDefinition" FROM agent_runs WHERE id=$1', [reply.runId])).rows[0].agentDefinition.projectExecution
+  assert.equal(afterEdit.environment.revision, edited.revision)
+  assert.equal(afterEdit.environment.variables.SINGLE_WORKFLOW, 'next-run')
+
   const stranger = await seedUser(fixture, 'environment-solo-stranger')
   await assert.rejects(fixture.query(`INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status)
     VALUES($1,$2,'Unexpected personal member',$3,'admin','active')`, [workspaceId, stranger, `${stranger}@example.invalid`]), { code: '23514' }, 'the database itself rejects adding another account to a personal tenant')

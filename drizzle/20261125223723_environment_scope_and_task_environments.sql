@@ -1,8 +1,11 @@
+-- migrate: reviewed-data #3318 Backfill task environments and repository settings from existing workspace bindings.
 -- target: DATABASE_URL
 -- Environments are the only container for repositories and run settings (public decision
 -- 2026-11-26-0110 rules 1-5; Alex, 2026-11-25: personal 「仅我」 environments shared to the workspace).
 -- Expand only: the Project -> repository -> environment tables stay readable for one release and are
--- no longer written. Rollback: revert application code; these columns and rows are additive.
+-- no longer written. Rollback after new writes needs reconciliation: older readers ignore task selections and personal scope.
+-- Before rolling back, stop environment writes and compare these rows with the retained Project bindings.
+-- Do not expose personal environments through an older application.
 
 -- 1. Scope. 'workspace' is every existing environment. A 'personal' one has an owner and is visible to,
 --    and usable by, that owner only; sharing turns it into 'workspace' and keeps the owner.
@@ -46,26 +49,24 @@ WITH bound AS (
     coalesce(min("environmentId"::text) FILTER (WHERE "isDefault"),
       CASE WHEN count(DISTINCT "environmentId")=1 THEN min("environmentId"::text) END)::uuid AS "environmentId"
   FROM bound GROUP BY "projectId", "workspaceId"
-)
+), assigned AS (
 INSERT INTO workspace_task_environments("issueId","workspaceId","environmentId","updatedBy")
 SELECT t."issueId", t."workspaceId", c."environmentId", NULL
 FROM workspace_project_tasks t
 JOIN chosen c ON c."projectId"=t."projectId" AND c."workspaceId"=t."workspaceId"
 WHERE c."environmentId" IS NOT NULL
-ON CONFLICT ("issueId") DO NOTHING;
+ON CONFLICT ("issueId") DO NOTHING
+)
 
 -- 5. Move each Project repository's base branch and 主仓库 mark onto the environment it selected.
 --    A branch is kept only when every binding of that environment and repository agrees; a primary
 --    only when exactly one repository of the environment was primary. Start rows follow
---    repositoryKeys in order. An environment that listed no repositories admitted any, so its bound
---    repositories become on-demand rows. Revisions are unchanged: no run setting changes.
-WITH defaults AS (
-  SELECT "projectId","workspaceId","environmentId" FROM workspace_project_environments WHERE "isDefault"
-), selected AS (
+--    repositoryKeys in order. Other bound repositories become on-demand rows.
+, selected AS (
   SELECT r."workspaceId", coalesce(r."environmentId", d."environmentId") AS "environmentId",
     r."repositoryKey", r."baseBranch", r."isPrimary"
   FROM workspace_project_repositories r
-  LEFT JOIN defaults d ON d."projectId"=r."projectId" AND d."workspaceId"=r."workspaceId"
+  LEFT JOIN chosen d ON d."projectId"=r."projectId" AND d."workspaceId"=r."workspaceId"
 ), per_key AS (
   SELECT "workspaceId","environmentId","repositoryKey",
     CASE WHEN count(DISTINCT coalesce("baseBranch",''))=1 THEN min("baseBranch") END AS "baseBranch",
@@ -82,7 +83,7 @@ WITH defaults AS (
   UNION ALL
   SELECT e.id, 1000 + row_number() OVER (PARTITION BY e.id ORDER BY pk."repositoryKey") AS ord, pk."repositoryKey", 'demand', pk."baseBranch", pk."isPrimary"
   FROM envs e JOIN per_key pk ON pk."environmentId"=e.id AND pk."workspaceId"=e."workspaceId"
-  WHERE jsonb_array_length(e.keys)=0
+  WHERE NOT (e.keys ? pk."repositoryKey")
 ), primaries AS (
   SELECT id, count(*) FILTER (WHERE "isPrimary") AS n FROM rows GROUP BY id
 ), built AS (
@@ -92,3 +93,20 @@ WITH defaults AS (
 )
 UPDATE workspace_environments w SET repositories=built.repositories
 FROM built WHERE w.id=built.id AND w.repositories='[]'::jsonb;
+
+-- Project-only branch choices have no Environment to receive them. Keep the branch
+-- on the affected historical task, without publishing a private Project's repository
+-- list to the workspace or inferring an Environment. New tasks use the normal defaults.
+CREATE TABLE IF NOT EXISTS workspace_task_legacy_repository_branches (
+  "issueId" uuid NOT NULL, "workspaceId" uuid NOT NULL REFERENCES mikka_workspaces(id) ON DELETE CASCADE,
+  "repositoryKey" text NOT NULL, "baseBranch" text NOT NULL,
+  PRIMARY KEY ("workspaceId","issueId","repositoryKey")
+);
+INSERT INTO workspace_task_legacy_repository_branches ("issueId","workspaceId","repositoryKey","baseBranch")
+SELECT t."issueId", t."workspaceId", r."repositoryKey", r."baseBranch"
+FROM workspace_project_tasks t
+JOIN workspace_project_repositories r ON (r."workspaceId",r."projectId")=(t."workspaceId",t."projectId")
+WHERE r."baseBranch" IS NOT NULL AND r."environmentId" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM workspace_project_environments b WHERE (b."workspaceId",b."projectId")=(t."workspaceId",t."projectId"))
+  AND NOT EXISTS (SELECT 1 FROM workspace_task_environments e WHERE (e."workspaceId",e."issueId")=(t."workspaceId",t."issueId"))
+ON CONFLICT DO NOTHING;

@@ -360,6 +360,7 @@ export const setupRecipeSchema = z.object({
 export type SetupRecipe = z.infer<typeof setupRecipeSchema>
 
 export const REPO_ORIGIN_HEADER = "x-mikka-repo-origin-check"
+export const ENVIRONMENT_REPOSITORIES_HEADER = 'x-mikka-environment-repositories'
 export const PROJECT_ENVIRONMENT_HEADER = "x-mikka-project-environment"
 
 /** Sent by a daemon that injects `modelCredential`; a run frozen on an API key is handed only to one. */
@@ -485,7 +486,9 @@ export const runAssignmentSchema = z.object({
   /** Absent means origin/HEAD after fetch. */
   baseBranch: z.string().min(1).max(500).optional(),
   /** Frozen configuration, not a VM or a credential. Requires PROJECT_ENVIRONMENT_HEADER. */
-  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), setup: setupRecipeSchema.optional() }).strict().optional(),
+  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), setup: setupRecipeSchema.optional(),
+    startupRepositories: z.array(z.object({ key: z.string().max(1000), baseBranch: z.string().min(1).max(250).nullable() }).strict()).max(100).optional(),
+  }).strict().optional(),
   expectedRepoRemote: z.string().max(2_000).optional(),
   harness: harnessSchema,
   prompt: z.string().max(100_000),

@@ -51,6 +51,7 @@ export async function setTaskEnvironment(reader: Reader, raw: z.input<typeof tas
       if (task.revision !== revision) throw new ActionFailureError('issueOutdated')
       const previous = current?.environmentId ?? null
       if (previous === environmentId) return { revision: task.revision, environmentId }
+      await tx.execute(sql`delete from workspace_task_legacy_repository_branches where "workspaceId"=${workspaceId} and "issueId"=${issueId}`)
       if (environmentId) await tx.execute(sql`insert into workspace_task_environments("issueId","workspaceId","environmentId","updatedBy")
         values(${issueId},${workspaceId},${environmentId},${actor})
         on conflict("issueId") do update set "environmentId"=excluded."environmentId","updatedBy"=excluded."updatedBy","updatedAt"=now()`)
