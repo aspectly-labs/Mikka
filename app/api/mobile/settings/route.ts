@@ -7,7 +7,7 @@ import { isComposioToolkitSlug } from '@/lib/composio-accounts'
 import { listComposioPages } from '@/lib/composio-pagination'
 import { readPreferences } from '@/lib/preferences'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
-import { listOrganizations } from '@/lib/governance/organizations'
+import { isWorkspaceBoundToOrganization, listOrganizations } from '@/lib/governance/organizations'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { isCloudEdition } from '@/lib/edition'
 import { pairedMobileCloudUI } from '@/lib/mobile-web-scope'
@@ -50,20 +50,21 @@ export const GET = defineRoute(
     // 记忆 is the memory of the Coordinator of the workspace the app has open.
     const context = await loadWorkspaceContext(undefined, user)
     const coordinator = await chatBotId(user.id, null, context.workspace.id)
-    const [preferences, [profile], apps] = await Promise.all([
+    const pairedHumanSession = pairedMobileCloudUI() && user[enterprisePrincipal]?.kind === 'session'
+    const [preferences, [profile], apps, organizationBound] = await Promise.all([
       readPreferences(user.id),
       db.select({ id: users.id, name: users.name, email: users.email, image: users.image, memory: coordinatorSessions.memory })
         .from(users)
         .leftJoin(coordinatorSessions, and(eq(coordinatorSessions.userId, users.id), eq(coordinatorSessions.botId, coordinator)))
         .where(eq(users.id, user.id)).limit(1),
       view === 'profile' ? [] : connectedApps(user.id),
+      pairedHumanSession ? isWorkspaceBoundToOrganization(context.workspace.id) : false,
     ])
     if (!profile) return unauthorized()
     const organization = context.role === 'admin' ? null : (await listOrganizations(user.id)).find(item => item.role === 'owner' || item.role === 'admin')
-    const pairedHumanSession = pairedMobileCloudUI() && user[enterprisePrincipal]?.kind === 'session'
     return json({
       personalFilesAvailable: pairedHumanSession,
-      organizationSettingsAvailable: pairedHumanSession && Boolean(context.organizationId),
+      organizationSettingsAvailable: pairedHumanSession && organizationBound,
       billingScope: context.role === 'admin' ? { kind: 'workspace', id: context.workspace.id } : organization ? { kind: 'organization', id: organization.id } : null,
       user: { id: profile.id, name: profile.name, email: profile.email, image: profile.image },
       workspace: {

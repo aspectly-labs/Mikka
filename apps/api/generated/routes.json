@@ -2080,7 +2080,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "bab2ff030e3ed727d1fd7e8df4aadc37f648983605b392b5bd4388fb4bd7ec81"
+      "sourceHash": "b8903933bc3fe18b502ed8929d15d3210581ed363224ace0ec8d455c00c4b61f"
     },
     {
       "path": "/mikka/api/mobile/suggestions/[id]",
