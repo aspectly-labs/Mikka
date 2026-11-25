@@ -6,7 +6,6 @@
     "build/**",
     "packages/**",
     "apps/desktop/**",
-    "apps/mobile/**",
     "apps/frontend/dist/**",
     "apps/frontend/node_modules/**",
     "apps/api/generated/**",

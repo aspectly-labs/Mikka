@@ -6,8 +6,8 @@ name: Mobile next iOS build
 # Distribution identity imported into a temporary keychain; the existing App Store Connect API key
 # only finds or creates the App Store profile for it and uploads. Nothing here creates a
 # certificate: automatic signing on an ephemeral runner created one per run, lost its private key
-# and filled the account's certificate limit. Today's app (mobile-native.yml, mobile-update.yml) is
-# untouched; this build has its own runtime version (mikka-next-*) and update channel (next).
+# and filled the account's certificate limit. This workflow builds the active 2.0 iOS app on its
+# runtime version (mikka-next-*) and update channel (next).
 #
 # Credentials are Infisical prod:/platform names read through OIDC: HOSTED_UI_READ_KEY,
 # APPLE_TEAM_ID, ASC_API_KEY_P8, ASC_API_KEY_ID, ASC_API_ISSUER_ID (as desktop-release.yml) and
@@ -90,6 +90,7 @@ jobs:
           env-slug: prod
           secret-path: /platform
           secret-name: HOSTED_UI_READ_KEY
+          recursive: false
           include-imports: false
       - name: Check out the private app revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

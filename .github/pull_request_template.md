@@ -4,7 +4,7 @@
 
 ## UI changes
 
-<!-- Delete this section if the PR has no UI. A change under components/, apps/frontend/, apps/mobile/, the desktop renderer, or messages/ must include a screenshot or recording below. CI rejects the pull request otherwise. Opt out only with `Screenshots: not needed: <reason>`. -->
+<!-- Delete this section if the PR has no UI. A change under components/, apps/frontend/, the desktop renderer, or messages/ must include a screenshot or recording below. CI rejects the pull request otherwise. Opt out only with `Screenshots: not needed: <reason>`. -->
 
 | Before | After |
 | ------ | ----- |

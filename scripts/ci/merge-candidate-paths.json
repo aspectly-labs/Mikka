@@ -1,6 +1,5 @@
 {
   "app-icon": [
-    "apps/mobile/assets/icon.icon/**",
     "apps/desktop/build/icon.icon/**",
     ".github/workflows/app-icon.yml"
   ],
