@@ -139,12 +139,13 @@ mock.module(new URL('../lib/mobile-attachments.ts', import.meta.url).href, {
 })
 
 // Gap 3 mocks (thread pagination route)
-const fakeThreadItems = [
+const defaultFakeThreadItems: unknown[] = [
   { kind: 'person', id: 'p-1', text: 'first', author: 'Alex', mine: true, at: 1 },
   { kind: 'agent', id: `text:${RUN_1}:a1`, text: 'second', at: 2 },
   { kind: 'person', id: 'p-2', text: 'third', author: 'Alex', mine: true, at: 3 },
   { kind: 'agent', id: `text:${RUN_1}:a2`, text: 'fourth', at: 4 },
 ]
+let fakeThreadItems: unknown[] = defaultFakeThreadItems
 mock.module(new URL('../lib/db/index.ts', import.meta.url).href, {
   namedExports: {
     db: {
@@ -455,6 +456,61 @@ test('Gap 3 route: GET /api/mobile/threads/:id supports legacy unpaged reads and
   const bad = await GET(new Request(`https://mikka.test/api/mobile/threads/${RUN_1}?limit=500`), { params })
   assert.equal(bad.status, 400)
   assert.equal(((await bad.json()) as { error: string }).error, 'invalidWindow')
+
+  // Legacy readers keep `kind: 'shell'` & `status: 'ok'` while additive Codex fields populate cleanly.
+  fakeThreadItems = [
+    {
+      kind: 'steps',
+      id: 'steps:c1',
+      count: 2,
+      at: 100,
+      steps: [
+        {
+          id: `${RUN_1}:c1`,
+          name: 'Bash',
+          detail: `/bin/zsh -lc 'pnpm test'`,
+          command: `/bin/zsh -lc 'pnpm test'`,
+          output: JSON.stringify({ output: 'ok\n', exitCode: 0 }),
+          exitCode: 0,
+          failed: false,
+          kind: 'shell',
+          status: 'ok',
+        },
+        {
+          id: `${RUN_1}:c2`,
+          name: 'Bash',
+          detail: 'cat README.md',
+          command: 'cat README.md',
+          output: JSON.stringify({ output: '# Mikka\n', exitCode: 0 }),
+          exitCode: 0,
+          failed: false,
+          kind: 'shell',
+          status: 'ok',
+        },
+      ],
+    },
+  ]
+  try {
+    const stepRes = await GET(new Request(`https://mikka.test/api/mobile/threads/${RUN_1}`), { params })
+    assert.equal(stepRes.status, 200)
+    const stepBody = (await stepRes.json()) as {
+      items: Array<{ kind: string; steps?: Array<Record<string, unknown>> }>
+    }
+    const [execStep, readStep] = stepBody.items[0]?.steps ?? []
+    assert.equal(execStep?.kind, 'shell')
+    assert.equal(execStep?.status, 'ok')
+    assert.equal(execStep?.codexKind, 'exec')
+    assert.equal(execStep?.codexStatus, 'completed')
+    assert.equal(execStep?.command, 'pnpm test')
+    assert.equal(execStep?.aggregatedOutput, 'ok\n')
+    assert.equal(readStep?.kind, 'shell')
+    assert.equal(readStep?.status, 'ok')
+    assert.equal(readStep?.codexKind, 'read')
+    assert.equal(readStep?.codexStatus, 'completed')
+    assert.equal(readStep?.path, 'README.md')
+  } finally {
+    fakeThreadItems = defaultFakeThreadItems
+  }
 })
 
 test('Gap 4 routes: proactive cards read and suggestion handoff/start/dismiss obey mobile origin & token bounds', async () => {

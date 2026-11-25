@@ -18,6 +18,7 @@ import { runOutsideToken } from '@/lib/tokens/scope'
 import { threadQuotaView } from '@/lib/run-quota-view'
 import { threadLiveReferences } from '@/lib/live/panels'
 import { workspacePool } from '@/lib/workspace-db'
+import { enrichMobileThreadItems, extractThreadStepContext } from '@/lib/coordinator/mobile-tool-projection'
 
 /**
  * `GET /api/mobile/threads/:id`: one thread as a conversation: agent replies, folded steps, what the person said.
@@ -90,7 +91,11 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }
       const source = sourceRuns.find(id => part.startsWith(id + ':'))
       return source ? [[item.id, { runId: source, key: part.slice(source.length + 1), operation: 'rerun' }]] : []
     }))
-    return json({ liveRunId, composerModel: model.rows[0] ?? null, readReceipts, versionAnchors, delivery, issueId: detail.run.issueId, threadRelation: control.rows[0]?.threadRelation ?? null, canReply: Boolean(detail.run.agentId) && !readOnlyForHuman, confirmedSubmissionIds: messages.flatMap(message => message.submissionId ? [message.submissionId] : []), live: { runs }, thread, active: runIsActive(live), working: runIsWorking(live), paused, summary: detail.run.report && typeof detail.run.report.summary === 'string' ? detail.run.report.summary : null, error: detail.run.error, items, historyBefore: paged.historyBefore, hasMore: paged.hasMore, totalItems: paged.totalItems })
+    const active = runIsActive(live)
+    const stepContext = detail.run.agentId && items.some(item => item.kind === 'steps')
+      ? extractThreadStepContext(chunks)
+      : undefined
+    return json({ liveRunId, composerModel: model.rows[0] ?? null, readReceipts, versionAnchors, delivery, issueId: detail.run.issueId, threadRelation: control.rows[0]?.threadRelation ?? null, canReply: Boolean(detail.run.agentId) && !readOnlyForHuman, confirmedSubmissionIds: messages.flatMap(message => message.submissionId ? [message.submissionId] : []), live: { runs }, thread, active, working: runIsWorking(live), paused, summary: detail.run.report && typeof detail.run.report.summary === 'string' ? detail.run.report.summary : null, error: detail.run.error, items: enrichMobileThreadItems(items, { active, contextByCallId: stepContext }), historyBefore: paged.historyBefore, hasMore: paged.hasMore, totalItems: paged.totalItems })
   },
 )
 

@@ -124,11 +124,11 @@ export type ThreadStep = {
 const STEP_KINDS: Record<Exclude<ThreadStepKind, 'other'>, readonly string[]> = {
   read: ['read', 'notebookread', 'read_file', 'view', 'cat'],
   search: ['grep', 'glob', 'ls', 'search', 'find', 'file_search', 'codebase_search', 'list_dir'],
-  shell: ['bash', 'shell', 'execute', 'exec_command', 'local_shell'],
+  shell: ['bash', 'shell', 'execute', 'exec_command', 'execute_command', 'local_shell', 'run_command', 'terminal'],
   edit: ['edit', 'multiedit', 'write', 'notebookedit', 'apply_patch', 'delete', 'move', 'write_file', 'edit_file', 'str_replace'],
   web: ['webfetch', 'websearch', 'web_search', 'fetch'],
-  delegate: ['task', 'agent'],
-  todo: ['todowrite', 'update_plan', 'taskcreate', 'taskupdate'],
+  delegate: ['task', 'agent', 'dispatch_run', 'dispatch_bot_computer', 'dispatch_factory_run', 'dispatch_factory_task'],
+  todo: ['todowrite', 'update_plan', 'taskcreate', 'taskupdate', 'create_issue', 'update_issue'],
 }
 const STEP_KIND_OF = new Map(Object.entries(STEP_KINDS).flatMap(([kind, names]) => names.map(name => [name, kind as ThreadStepKind])))
 
@@ -288,8 +288,15 @@ function toolStep(part: ToolLike, where: ConversationPartMeta | undefined): Thre
   const name = part.toolName || (part.type.startsWith('tool-') ? part.type.slice(5) : '') || 'tool'
   const kind = threadStepKind(name)
   const step: ThreadStep = { id: part.toolCallId, name, detail: stepDetail(part.input), failed: false, kind, status: 'running', ...stepTarget(kind, part.input) }
-  if (isCommandStep(step) && part.input && typeof part.input === 'object' && 'command' in part.input && typeof part.input.command === 'string' && part.input.command.trim()) {
-    step.command = stepText(part.input.command)
+  const rawCommand = part.input && typeof part.input === 'object'
+    ? ('command' in part.input && typeof part.input.command === 'string' && part.input.command.trim()
+        ? part.input.command
+        : 'cmd' in part.input && typeof part.input.cmd === 'string' && part.input.cmd.trim()
+          ? part.input.cmd
+          : undefined)
+    : undefined
+  if (isCommandStep(step) && rawCommand) {
+    step.command = stepText(rawCommand)
   }
   // A command's input is its command, already kept above.
   const input = !step.command && part.input && typeof part.input === 'object' ? stepTextCut(part.input) : undefined

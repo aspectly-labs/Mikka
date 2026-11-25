@@ -13,6 +13,7 @@ import { ActionFailureError } from '@/lib/action-error'
 import { json } from '@/lib/mobile-api'
 import { defineRoute } from '@/lib/primitives/define-route'
 import type { ApiSession } from '@/lib/api-auth'
+import { enrichMobileChatItems } from '@/lib/coordinator/mobile-tool-projection'
 
 
 const botParam = z.uuid().nullable()
@@ -65,7 +66,7 @@ async function handleGET(request: Request, user: ApiSession['user']) {
       const enabled = await coordinatorEnabled(user.id, botId)
       const view = await chatUpdate(user.id, botId, read.kind === 'update' ? read.continuation : undefined)
       // The app shows a failed welcome through `failure`; the empty Bot item is no message (nor unread, nor reactable).
-      const chat = { ...view, items: view.items.filter(item => !item.welcome) }
+      const chat = { ...view, items: enrichMobileChatItems(view.items.filter(item => !item.welcome)) }
       const working = enabled && chat.working
       return json({ ...chat, submissionIds: true, enabled, working, failure: enabled ? chatFailure({ working, error: chat.error, cause: chat.cause, failureDetails: chat.failureDetails, items: chat.items }) : null, reactions: await reactionsOf(user.id, chat.items) })
     }
@@ -73,7 +74,7 @@ async function handleGET(request: Request, user: ApiSession['user']) {
     const polled = await pollCoordinatorChat(bot.data, undefined, read.kind === 'update' ? read.continuation : undefined)
     // Without a known version the poll always returns the chat itself.
     if ('unchanged' in polled) throw new Error('chatUnchangedWithoutVersion')
-    const chat = { ...polled, items: polled.items.filter(item => !item.welcome) }
+    const chat = { ...polled, items: enrichMobileChatItems(polled.items.filter(item => !item.welcome)) }
     return json({ ...chat, submissionIds: true, failure: chat.enabled ? chatFailure(chat) : null, reactions: await reactionsOf(user.id, chat.items) })
   } catch (error) {
     if (error instanceof ActionFailureError) return json({ error: error.code }, 404)
@@ -83,10 +84,9 @@ async function handleGET(request: Request, user: ApiSession['user']) {
 
 /** An older page: its messages and what they cite, and whether there are older ones still. */
 async function history(userId: string, page: Awaited<ReturnType<typeof chatView>>) {
-  const items = page.items.filter(item => !item.welcome)
+  const items = enrichMobileChatItems(page.items.filter(item => !item.welcome))
   return json({ items, sources: page.sources, artifacts: page.artifacts, historyBefore: page.historyBefore ?? null, reactions: await reactionsOf(userId, items) })
 }
-
 
 export const POST = defineRoute<'public', 'none'>(
   {
