@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
-import type { z } from 'zod'
-import type { addProjectRepositoriesBody } from '../lib/project-resources/contracts'
-import { dbUrl, seedIssue, seedPersonalWorkspace, seedProject, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
+import { dbUrl, seedIssue, seedPersonalWorkspace, seedUser, seedWorkspace } from './support/workspace-admin-db'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 
-test('Project repository/environment policy on real PostgreSQL', { skip: !dbUrl }, async t => {
+test('Environment repository/policy admission on real PostgreSQL', { skip: !dbUrl }, async t => {
   const { Pool } = await import('pg')
   const connection = new Pool({ connectionString: dbUrl, max: 3 })
   const resources = await import('../lib/project-resources/store')
@@ -26,48 +25,63 @@ test('Project repository/environment policy on real PostgreSQL', { skip: !dbUrl 
   await connection.query(`insert into workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
     values($1,$2,$3,'Shared project','','','planned','none','','','','','[]',1)`, [projectId, owner, workspace.id])
   await registerProjectAccess(owner, projectId, workspace.id)
-  await seedProjectTasks(connection, projectId, [issueId])
+  await connection.query('insert into workspace_project_tasks("issueId","projectId","workspaceId") values($1,$2,$3)', [issueId, projectId, workspace.id])
   const repoA = 'v2/github.com/acme/application', repoB = 'v2/github.com/acme/service', repoC = 'v2/github.com/elsewhere/private'
   const request = { userId: owner, workspaceId: workspace.id, issueId, repositoryKey: repoA, baseBranch: 'main', runtime: 'local' as const, harness: 'codex' }
-  const admission = (repositoryKey = repoA) => resources.withProjectExecution({ ...request, repositoryKey }, async snapshot => snapshot)
+  const admission = (repositoryKey: string | null = repoA) => resources.withProjectExecution({ ...request, repositoryKey }, async snapshot => snapshot)
 
-  await t.test('zero repository bindings inherit existing authorization without becoming a grant', async () => {
+  await t.test('a task without 环境 inherits existing authorization without an environment becoming a grant', async () => {
     const value = await admission(repoC)
     assert.equal(value.projectId, projectId)
     assert.equal(value.repositoryKey, repoC)
     assert.equal(value.policyRevision, 0)
     assert.equal(value.environment, null)
+    assert.equal(value.repositoryClone, undefined, 'without an environment nothing is recorded as cloned')
   })
   let environmentId: string
   await t.test('environment stores reusable configuration and validates existing references', async () => {
     assert.equal(environmentConfiguration.safeParse({ variables: { PATH: '/untrusted' } }).success, false)
     await rejects(resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Bad reference', configuration: { secretIds: [randomUUID()] } }), 'projectEnvironmentUnavailable')
     await rejects(resources.saveEnvironment(member, { workspaceId: workspace.id, name: 'No permission', configuration: {} }), 'workspaceAccessDenied')
-    const environment = await resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Tests', configuration: { variables: { FEATURE_MODE: 'test' }, runtime: 'local', harness: 'codex', repositoryKeys: [repoA, repoB], setup: { copyFiles: [], command: 'node --version', approved: true } } })
+    await assert.rejects(resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Two primaries', configuration: {},
+      repositories: [{ key: repoA, primary: true }, { key: repoB, primary: true }] }), 'at most one 主仓库')
+    await assert.rejects(resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Duplicate rows', configuration: {},
+      repositories: [{ key: repoA }, { key: repoA, clone: 'demand' }] }))
+    const environment = await resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Tests', configuration: { variables: { FEATURE_MODE: 'test' }, runtime: 'local', harness: 'codex',
+      setup: { copyFiles: [], command: 'node --version', approved: true } },
+    repositories: [{ key: repoA, clone: 'start', baseBranch: 'develop', primary: true }, { key: repoB, clone: 'start' }] })
     environmentId = environment.id
     assert.equal(environment.revision, 1)
+    const listed = (await resources.listProjectResources(owner, workspace.id)).environments.find(row => row.id === environmentId)!
+    assert.deepEqual(listed.configuration.repositoryKeys, [repoA, repoB], 'repositoryKeys stays the start rows for older readers')
+    assert.deepEqual(listed.repositories, [{ key: repoA, clone: 'start', baseBranch: 'develop', primary: true }, { key: repoB, clone: 'start', baseBranch: null, primary: false }])
+    assert.equal(listed.scope, 'workspace')
     await rejects(resources.listProjectResources({ id: owner, [tokenWorkspace]: other.id }, workspace.id, projectId), 'workspaceAccessDenied')
-    await rejects(resources.saveProjectResources(owner, { workspaceId: other.id, projectId, revision: 1, repositories: [], environmentIds: [environment.id], defaultEnvironmentId: environment.id }), 'projectNotFound')
+    await assert.rejects(assignTaskEnvironment(connection, owner, other.id, [issueId], environment.id), { code: 'projectEnvironmentUnavailable' })
   })
-  await t.test('multiple bindings and Workspace policy form an intersection', async () => {
-    await resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId, revision: 1,
-      repositories: [{ repositoryKey: repoA, isPrimary: true, baseBranch: 'develop' }, { repositoryKey: repoB }], environmentIds: [environmentId], defaultEnvironmentId: environmentId })
+  await t.test('the task\'s environment, its repository rows and the Workspace policy form the admission', async () => {
+    await assignTaskEnvironment(connection, owner, workspace.id, [issueId], environmentId)
     const value = await admission()
-    assert.equal(value.baseBranch, 'develop', 'the project target branch is frozen instead of the device default')
+    assert.equal(value.baseBranch, 'develop', 'the environment row\'s base branch is frozen instead of the device default')
+    assert.equal(value.repositoryClone, 'start')
     assert.equal(value.environment?.id, environmentId)
     assert.equal(value.environment?.variables.FEATURE_MODE, 'test')
-    assert.deepEqual(await resources.readProjectEnvironmentVariable(owner, { workspaceId: workspace.id, projectId, name: 'FEATURE_MODE' }),
-      { name: 'FEATURE_MODE', value: 'test' })
-    assert.equal(await resources.readProjectEnvironmentVariable(owner, { workspaceId: workspace.id, projectId, name: 'UNCONFIGURED' }), null)
+    assert.equal(value.environment?.scope, 'workspace')
     assert.equal((await admission(repoB)).repositoryKey, repoB)
-    await rejects(admission(repoC), 'projectRepositoryDenied')
+    const onDemand = await admission(repoC)
+    assert.deepEqual([onDemand.repositoryKey, onDemand.repositoryClone, onDemand.baseBranch, onDemand.environment?.id], [repoC, 'demand', 'main', environmentId],
+      'a repository outside the environment is admitted by the workspace policy and cloned on demand')
     await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 0, mode: 'restricted', repositoryKeys: [repoA, repoC] })
     await rejects(admission(repoB), 'projectRepositoryDenied')
+    assert.equal((await admission(repoC)).repositoryClone, 'demand', 'the policy, not the environment, admits on-demand repositories')
     assert.equal((await admission()).policyRevision, 1)
     await rejects(resources.withProjectExecution({ ...request, runtime: 'cloud' }, async value => value), 'projectEnvironmentUnavailable')
     await rejects(resources.withProjectExecution({ ...request, harness: 'claude_code' }, async value => value), 'projectEnvironmentUnavailable')
   })
-  await t.test('Organization reads the current Project variable through its active Workspace attachment', async () => {
+  await t.test('the retired Project default stays readable for one release, Organization-attached reads included', async () => {
+    await connection.query('insert into workspace_project_environments("projectId","workspaceId","environmentId","isDefault") values($1,$2,$3,true)', [projectId, workspace.id, environmentId])
+    assert.deepEqual(await resources.readProjectEnvironmentVariable(owner, { workspaceId: workspace.id, projectId, name: 'FEATURE_MODE' }), { name: 'FEATURE_MODE', value: 'test' })
+    assert.equal(await resources.readProjectEnvironmentVariable(owner, { workspaceId: workspace.id, projectId, name: 'UNCONFIGURED' }), null)
     const governance = await import('../lib/governance/organizations')
     const { rows: [user] } = await connection.query('select id,name,email from "user" where id=$1', [owner])
     const org = await governance.createOrganization(user, { name: 'Environment variable scope' })
@@ -81,127 +95,82 @@ test('Project repository/environment policy on real PostgreSQL', { skip: !dbUrl 
     assert.deepEqual(await resources.readOrganizationProjectEnvironmentVariable(member, input), { name: 'FEATURE_MODE', value: 'test' })
     await governance.detachOrganizationWorkspace(org.id, workspace.id, owner)
     await assert.rejects(resources.readOrganizationProjectEnvironmentVariable(owner, input), missing)
+    const { saveProjectResources, setProjectDefaultEnvironment } = await import('../app/actions/project-resources')
+    const { actAs } = await import('../lib/acting-user')
+    assert.equal((await actAs(owner, () => saveProjectResources({ workspaceId: workspace.id, projectId, revision: 1, repositories: [], environmentIds: [], defaultEnvironmentId: null }))).error, 'projectBindingsRetired')
+    assert.equal((await actAs(owner, () => setProjectDefaultEnvironment({ workspaceId: workspace.id, projectId, revision: 1, environmentId: null }))).error, 'projectBindingsRetired')
   })
-  await t.test('incremental repository adds keep existing metadata and serialize without duplicate revisions or audits', async () => {
-    const id = randomUUID()
-    await connection.query(`insert into workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
-      values($1,$2,$3,'Add repositories','','','planned','none','','','','','[]',1)`, [id, owner, workspace.id])
-    await registerProjectAccess(owner, id, workspace.id)
-    const scope = { workspaceId: workspace.id, projectId: id }
-    await resources.saveProjectResources(owner, { ...scope, revision: 1,
-      repositories: [{ repositoryKey: repoA, isPrimary: true, baseBranch: 'release', environmentId }],
-      environmentIds: [environmentId], defaultEnvironmentId: environmentId })
-    const before = await resources.listProjectResources(owner, workspace.id, id)
-    const add = (repos: z.input<typeof addProjectRepositoriesBody>['repos']) => resources.saveProjectResources(owner, { ...scope, repos })
-    const [a, b, c] = [repoA, repoB, repoC].map(key => ({ repoFullName: key.slice('v2/github.com/'.length) }))
-    const revisions = await Promise.all([add([a, { ...b, baseBranch: 'release/b' }]), add([c])])
-    assert.deepEqual(revisions.map(result => result.revision).sort(), [3, 4])
-    const replay = await add([{ ...b, repoFullName: b.repoFullName.toUpperCase() }, b, c])
-    assert.ok('repos' in replay)
-    assert.equal(replay.id, id)
-    assert.equal(replay.name, 'Add repositories')
-    assert.equal(replay.revision, 4)
-    assert.equal(replay.repos.find(row => row.repoFullName === b.repoFullName)?.baseBranch, 'release/b')
-    assert.deepEqual(await add([]), replay)
-    await rejects(add([{ ...b, baseBranch: 'conflicts' }]), 'projectResourceConflict')
-    await rejects(add([{ repoFullName: 'acme/new-primary', mode: 'primary' }]), 'projectResourceConflict')
-    await assert.rejects(add([{ repoFullName: 'acme/new' }, { ...c, mode: 'lazy' }]), { detail: 'feature_unavailable' })
-    const updated = await resources.listProjectResources(owner, workspace.id, id)
-    assert.deepEqual(updated.environmentBindings, before.environmentBindings)
-    assert.deepEqual(updated.policy, before.policy)
-    assert.deepEqual(updated.repositories.find(row => row.repositoryKey === repoA), before.repositories[0])
-    assert.deepEqual(updated.repositories.map(row => row.repositoryKey).sort(), [repoA, repoB, repoC].sort())
-    const extra = Array.from({ length: 98 }, (_, index) => ({ repoFullName: 'acme/extra-' + index }))
-    await assert.rejects(add(extra), { name: 'ZodError' })
-    const { rows: [row] } = await connection.query(`select revision,
-      (select count(*)::int from workspace_resource_events where "resourceId"=$1 and kind='project_resources.changed') as audits
-      from workspace_projects where id=$1`, [id])
-    assert.deepEqual(row, { revision: 4, audits: 3 })
-    assert.deepEqual((await resources.listProjectResources(owner, workspace.id, id)).repositories, updated.repositories)
-    await resources.saveProjectResources(owner, { ...scope, revision: 4, repositories: [], environmentIds: [], defaultEnvironmentId: null })
-    const first = await add([{ ...a, mode: 'primary', baseBranch: 'trunk' }])
-    assert.ok('repos' in first)
-    assert.deepEqual(first.repos, [{ ...a, repositoryKey: repoA, isPrimary: true, baseBranch: 'trunk', environmentId: null }])
-
+  await t.test('an older editor\'s repositoryKeys keep each saved row and its on-demand rows', async () => {
+    const saved = await resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Rows', configuration: {},
+      repositories: [{ key: repoA, baseBranch: 'release', primary: true }, { key: repoC, clone: 'demand', baseBranch: 'trunk' }] })
+    const rows = async () => (await resources.listProjectResources(owner, workspace.id)).environments.find(row => row.id === saved.id)!
+    assert.deepEqual((await rows()).configuration.repositoryKeys, [repoA])
+    const legacy = await resources.saveEnvironment(owner, { workspaceId: workspace.id, id: saved.id, revision: 1, name: 'Rows', configuration: { repositoryKeys: [repoB, repoA] } })
+    assert.deepEqual((await rows()).repositories, [
+      { key: repoB, clone: 'start', baseBranch: null, primary: false },
+      { key: repoA, clone: 'start', baseBranch: 'release', primary: true },
+      { key: repoC, clone: 'demand', baseBranch: 'trunk', primary: false },
+    ])
+    // A row written by an older writer (repositoryKeys only) is read as start rows.
+    await connection.query(`update workspace_environments set repositories='[]'::jsonb where id=$1`, [saved.id])
+    assert.deepEqual((await rows()).repositories.map(row => [row.key, row.clone]), [[repoB, 'start'], [repoA, 'start']])
+    await resources.saveEnvironment(owner, { workspaceId: workspace.id, id: saved.id, revision: legacy.revision, name: 'Rows', configuration: {}, repositories: [] })
+    assert.deepEqual([(await rows()).repositories, (await rows()).configuration.repositoryKeys], [[], []], 'a default environment needs no repository')
   })
 
-  await t.test('two Projects in one Workspace select the same repository independently across a binding change', async () => {
+  await t.test('two tasks in one Workspace select the same repository independently through their environments', async () => {
     const issueA = await seedIssue(connection, owner, workspace.id), issueB = await seedIssue(connection, owner, workspace.id)
-    const projectA = randomUUID(), projectB = randomUUID()
-    await connection.query(`insert into workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
-      values($1,$3,$4,'Repository Project A','','','planned','none','','','','','[]',1),
-        ($2,$3,$4,'Repository Project B','','','planned','none','','','','','[]',1)`, [projectA, projectB, owner, workspace.id])
-    await registerProjectAccess(owner, projectA, workspace.id)
-    await registerProjectAccess(owner, projectB, workspace.id)
-    await seedProjectTasks(connection, projectA, [issueA])
-    await seedProjectTasks(connection, projectB, [issueB])
     const environmentA = await resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Repository A',
-      configuration: { runtime: 'local', harness: 'codex', repositoryKeys: [repoA, repoC], variables: { PROJECT_CONTEXT: 'A' } } })
+      configuration: { runtime: 'local', harness: 'codex', variables: { PROJECT_CONTEXT: 'A' } },
+      repositories: [{ key: repoA, baseBranch: 'review-a', primary: true }, { key: repoC }] })
     const environmentB = await resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Repository B',
-      configuration: { runtime: 'local', harness: 'codex', repositoryKeys: [repoA], variables: { PROJECT_CONTEXT: 'B' } } })
-    const savedA = await resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId: projectA, revision: 1,
-      repositories: [{ repositoryKey: repoA, baseBranch: 'review-a', environmentId: environmentA.id, isPrimary: true }],
-      environmentIds: [environmentA.id], defaultEnvironmentId: environmentA.id })
-    await resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId: projectB, revision: 1,
-      repositories: [{ repositoryKey: repoA, baseBranch: 'review-b', environmentId: environmentB.id, isPrimary: true }],
-      environmentIds: [environmentB.id], defaultEnvironmentId: environmentB.id })
-    const configA = await resources.listProjectResources(owner, workspace.id, projectA)
-    const configB = await resources.listProjectResources(owner, workspace.id, projectB)
-    assert.deepEqual(configA.repositories, [{ repositoryKey: repoA, baseBranch: 'review-a', environmentId: environmentA.id, isPrimary: true }])
-    assert.deepEqual(configB.repositories, [{ repositoryKey: repoA, baseBranch: 'review-b', environmentId: environmentB.id, isPrimary: true }])
+      configuration: { runtime: 'local', harness: 'codex', variables: { PROJECT_CONTEXT: 'B' } },
+      repositories: [{ key: repoA, baseBranch: 'review-b', primary: true }] })
+    await assignTaskEnvironment(connection, owner, workspace.id, [issueA], environmentA.id)
+    await assignTaskEnvironment(connection, owner, workspace.id, [issueB], environmentB.id)
     const requestA = { ...request, issueId: issueA }, requestB = { ...request, issueId: issueB }
     const frozenA = await resources.withProjectExecution(requestA, async snapshot => snapshot)
     const frozenB = await resources.withProjectExecution(requestB, async snapshot => snapshot)
-    assert.deepEqual([frozenA.projectId, frozenA.repositoryKey, frozenA.baseBranch, frozenA.environment?.id, frozenA.environment?.variables.PROJECT_CONTEXT],
-      [projectA, repoA, 'review-a', environmentA.id, 'A'])
-    assert.deepEqual([frozenB.projectId, frozenB.repositoryKey, frozenB.baseBranch, frozenB.environment?.id, frozenB.environment?.variables.PROJECT_CONTEXT],
-      [projectB, repoA, 'review-b', environmentB.id, 'B'])
+    assert.deepEqual([frozenA.repositoryKey, frozenA.baseBranch, frozenA.environment?.id, frozenA.environment?.variables.PROJECT_CONTEXT], [repoA, 'review-a', environmentA.id, 'A'])
+    assert.deepEqual([frozenB.repositoryKey, frozenB.baseBranch, frozenB.environment?.id, frozenB.environment?.variables.PROJECT_CONTEXT], [repoA, 'review-b', environmentB.id, 'B'])
     const originalSnapshots = JSON.stringify([frozenA, frozenB])
-
-    // Both repositories remain Workspace-allowed. Only A's nonempty Project
-    // binding changes; removing its last binding would instead inherit policy.
-    await resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId: projectA, revision: savedA.revision,
-      repositories: [{ repositoryKey: repoC, baseBranch: 'review-a-next', environmentId: environmentA.id, isPrimary: true }],
-      environmentIds: [environmentA.id], defaultEnvironmentId: environmentA.id })
-    await rejects(resources.withProjectExecution(requestA, async () => assert.fail('Project A admitted its removed repository')), 'projectRepositoryDenied')
-    await rejects(withRunProjectExecution(requestA, frozenA, async () => assert.fail('Project A claimed its revoked frozen selection')), 'projectRepositoryDenied')
-    const changedA = await resources.withProjectExecution({ ...requestA, repositoryKey: repoC }, async snapshot => snapshot)
-    assert.deepEqual([changedA.projectId, changedA.repositoryKey, changedA.baseBranch, changedA.environment?.id],
-      [projectA, repoC, 'review-a-next', environmentA.id])
-    assert.deepEqual(await resources.listProjectResources(owner, workspace.id, projectB), configB, 'changing A leaves B resource selection unchanged')
+    // Only A's environment changes its branch for repoA.
+    await resources.saveEnvironment(owner, { workspaceId: workspace.id, id: environmentA.id, revision: environmentA.revision, name: 'Repository A',
+      configuration: { runtime: 'local', harness: 'codex', variables: { PROJECT_CONTEXT: 'A' } },
+      repositories: [{ key: repoA, baseBranch: 'review-a-next', primary: true }, { key: repoC }] })
+    await rejects(withRunProjectExecution(requestA, frozenA, async () => assert.fail('Task A claimed its changed frozen branch')), 'projectRepositoryDenied')
+    assert.equal((await resources.withProjectExecution(requestA, async snapshot => snapshot)).baseBranch, 'review-a-next')
     assert.deepEqual(await resources.withProjectExecution(requestB, async snapshot => snapshot), frozenB, 'B still admits its own repository, branch and Environment')
-    assert.equal(await withRunProjectExecution(requestB, frozenB, async () => 'Project B claim'), 'Project B claim')
+    assert.equal(await withRunProjectExecution(requestB, frozenB, async () => 'Task B claim'), 'Task B claim')
     assert.equal(JSON.stringify([frozenA, frozenB]), originalSnapshots, 'neither previously frozen selection is rewritten')
   })
   await t.test('snapshot remains immutable across edits; revocation blocks new admissions', async () => {
+    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 1, mode: 'inherit', repositoryKeys: [] })
     const original = await admission()
     const serialized = JSON.stringify(original)
     let claimed = 0
     await withRunProjectExecution({ ...request, baseBranch: original.baseBranch }, original, async () => { claimed++ })
     assert.equal(claimed, 1)
     assert.equal(await withRunProjectExecution({ ...request, baseBranch: 'a'.repeat(40) }, original, async () => 'candidate checkout'), 'candidate checkout',
-      'a Factory candidate SHA does not replace the separately frozen Project target branch')
-    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 1, mode: 'restricted', repositoryKeys: [repoB] })
+      'a Factory candidate SHA does not replace the separately frozen target branch')
+    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 2, mode: 'restricted', repositoryKeys: [repoB] })
     await rejects(withRunProjectExecution(request, original, async () => { claimed++ }), 'projectRepositoryDenied')
     assert.equal(claimed, 1, 'a queued Run is not a grant after repository revocation')
-    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 2, mode: 'restricted', repositoryKeys: [repoA, repoC] })
+    await resources.saveWorkspaceRepositoryPolicy(owner, { workspaceId: workspace.id, revision: 3, mode: 'restricted', repositoryKeys: [repoA, repoC] })
     const alternate = await resources.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Replacement', configuration: {} })
-    await resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId, revision: 2,
-      repositories: [{ repositoryKey: repoA, isPrimary: true, baseBranch: 'develop' }, { repositoryKey: repoB }], environmentIds: [environmentId, alternate.id], defaultEnvironmentId: alternate.id })
+    await assignTaskEnvironment(connection, owner, workspace.id, [issueId], alternate.id)
     await rejects(withRunProjectExecution(request, original, async () => { claimed++ }), 'projectEnvironmentUnavailable')
-    assert.equal(claimed, 1, 'binding replacement never mutates or reinterprets the frozen Environment')
-    await resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId, revision: 3,
-      repositories: [{ repositoryKey: repoA, isPrimary: true, baseBranch: 'different' }, { repositoryKey: repoB }], environmentIds: [environmentId], defaultEnvironmentId: environmentId })
-    await rejects(withRunProjectExecution(request, original, async () => { claimed++ }), 'projectRepositoryDenied')
-    await resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId, revision: 4,
-      repositories: [{ repositoryKey: repoA, isPrimary: true, baseBranch: 'develop' }, { repositoryKey: repoB }], environmentIds: [environmentId], defaultEnvironmentId: environmentId })
+    assert.equal(claimed, 1, 'a changed 环境 never mutates or reinterprets the frozen Environment')
+    await assignTaskEnvironment(connection, owner, workspace.id, [issueId], environmentId)
     await withRunProjectExecution({ ...request, baseBranch: original.baseBranch }, original, async () => { claimed++ })
     assert.equal(claimed, 2)
     await rejects(withRunProjectExecution({ ...request, baseBranch: original.baseBranch }, undefined, async () => { claimed++ }), 'projectEnvironmentUnavailable')
     assert.equal(claimed, 2, 'a legacy Run cannot silently acquire a new Environment')
-    await resources.saveEnvironment(owner, { workspaceId: workspace.id, id: environmentId, revision: 1, name: 'Renamed', configuration: { variables: { FEATURE_MODE: 'updated' } } })
+    await resources.saveEnvironment(owner, { workspaceId: workspace.id, id: environmentId, revision: 1, name: 'Renamed',
+      configuration: { runtime: 'local', harness: 'codex', variables: { FEATURE_MODE: 'updated' }, repositoryKeys: [repoA, repoB] } })
     assert.equal(JSON.stringify(original), serialized)
     assert.equal((await admission()).environment?.revision, 2)
+    assert.equal((await admission()).baseBranch, 'develop', 'an older editor\'s save keeps the row\'s base branch')
     await rejects(withRunProjectExecution(request, original, async () => { claimed++ }), 'projectEnvironmentUnavailable')
     await rejects(resources.saveEnvironment(owner, { workspaceId: workspace.id, id: environmentId, revision: 1, name: 'Stale', configuration: {} }), 'projectResourceConflict')
     await resources.saveEnvironment(owner, { workspaceId: workspace.id, id: environmentId, revision: 2, name: 'Renamed', archived: true, configuration: {} })
@@ -222,9 +191,9 @@ test('Project repository/environment policy on real PostgreSQL', { skip: !dbUrl 
   })
   await t.test('database foreign keys reject cross-tenant environment attachment', async () => {
     const personal = await seedPersonalWorkspace(connection, owner)
-    const personalProject = await seedProject(connection, owner, [])
     assert.ok(personal)
-    await assert.rejects(connection.query(`insert into workspace_project_environments("projectId","workspaceId","environmentId") values($1,$2,$3)`, [personalProject, personal, environmentId]), { code: '23503' })
+    await assert.rejects(connection.query(`insert into workspace_task_environments("issueId","workspaceId","environmentId") values($1,$2,$3)`, [randomUUID(), personal, environmentId]), { code: '23503' })
+    await assert.rejects(connection.query(`update workspace_environments set scope='personal',"ownerId"=null where id=$1`, [environmentId]), { code: '23514' }, 'a personal environment always has an owner')
   })
   await t.test('completed membership revocation cannot reuse a previously read configuration', async () => {
     await connection.query('update mikka_workspace_members set status=\'suspended\' where "workspaceId"=$1 and "userId"=$2', [other.id, owner])

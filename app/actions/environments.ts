@@ -11,12 +11,27 @@ import { deviceRepos, githubRepositoryInstallations } from '@/lib/db/schema'
 import { workspaceSecrets } from '@/lib/db/secrets-schema'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { withTaskWorkspace } from '@/lib/task-workspace'
-import { listProjectResources } from '@/lib/project-resources/store'
-import { projectRepositoryKey, type EnvironmentConfiguration, type EnvironmentNetworkAccess } from '@/lib/project-resources/contracts'
+import { environmentManageableBy, listProjectResources } from '@/lib/project-resources/store'
+import { projectRepositoryKey, type EnvironmentConfiguration, type EnvironmentNetworkAccess, type EnvironmentRepository, type EnvironmentScope, type taskEnvironmentInput, type taskEnvironmentsInput } from '@/lib/project-resources/contracts'
+import { runAction } from '@/lib/action-error'
+import type { z } from 'zod'
 import { isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 import type { SecretDelivery } from '@/lib/secrets/delivery'
 
-export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration & { networkAccess: EnvironmentNetworkAccess }; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null }
+export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration & { networkAccess: EnvironmentNetworkAccess }; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null
+  /** 'personal' (「仅我」) is listed only for its owner; 'workspace' is shared. */
+  scope: EnvironmentScope
+  /** The owner of a personal environment, or the member who shared it; null for a shared one made by an administrator. */
+  ownerId: string | null
+  /** Every repository row: cloned at start (configuration.repositoryKeys) or on demand, with base branch and 主仓库. */
+  repositories: EnvironmentRepository[]
+  /** Edit, archive, restore its setup. */
+  canEdit: boolean
+  /** Share with the workspace (its owner, while personal). */
+  canShare: boolean
+  /** Take back to 「仅我」 (its owner or an administrator, while shared). */
+  canUnshare: boolean }
+/** Deprecated for one release: the retired Project default-environment bindings, read-only. */
 export type EnvironmentProject = { id: string; name: string; revision: number; environmentId: string | null; canEditProperties: boolean }
 export type EnvironmentAvailableRepository = { key: string; label: string }
 export type EnvironmentAvailableSecret = {
@@ -28,8 +43,12 @@ export type EnvironmentAvailableSecret = {
 }
 export type EnvironmentsView = {
   environments: EnvironmentView[]
+  /** Deprecated for one release (see EnvironmentProject). */
   projects: EnvironmentProject[]
+  /** Create shared environments (administrators). */
   canManage: boolean
+  /** Create personal 「仅我」 environments (every active member). */
+  canCreatePersonal: boolean
   availableRepositories: EnvironmentAvailableRepository[]
   availableSecrets: EnvironmentAvailableSecret[]
 }
@@ -99,7 +118,7 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
     const candidateKeys = new Set<string>()
     for (const rawKey of [
       ...policyKeys,
-      ...resources.environments.flatMap(env => env.configuration.repositoryKeys ?? []),
+      ...resources.environments.flatMap(env => [...(env.configuration.repositoryKeys ?? []), ...env.repositories.map(row => row.key)]),
       ...projectRepos.rows.map(row => row.repositoryKey),
       ...githubRows.map(row => row.remoteKey),
       ...deviceRepoKeys,
@@ -120,19 +139,41 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
       delivery: row.delivery ?? { mode: 'protected' },
     }))
     return {
-      environments: resources.environments.map(({ id, name, revision, configuration, instructions, archivedAt, defaultMachineSize }) => ({
-        id,
-        name,
-        revision,
-        configuration: { ...configuration, networkAccess: configuration.networkAccess ?? 'inherit' },
-        instructions: instructions ?? '',
-        archived: Boolean(archivedAt),
-        defaultMachineSize: isMachineSize(defaultMachineSize) ? defaultMachineSize : null,
-      })),
+      environments: resources.environments.map(({ id, name, revision, configuration, instructions, archivedAt, defaultMachineSize, scope, ownerId, repositories }) => {
+        const canEdit = environmentManageableBy({ scope, ownerId }, user.id, member?.role ?? null)
+        return {
+          id,
+          name,
+          revision,
+          configuration: { ...configuration, networkAccess: configuration.networkAccess ?? 'inherit' },
+          instructions: instructions ?? '',
+          archived: Boolean(archivedAt),
+          defaultMachineSize: isMachineSize(defaultMachineSize) ? defaultMachineSize : null,
+          scope,
+          ownerId,
+          repositories,
+          canEdit,
+          canShare: Boolean(member) && !archivedAt && scope === 'personal' && ownerId === user.id,
+          canUnshare: Boolean(member) && !archivedAt && scope === 'workspace' && (ownerId === user.id || member?.role === 'admin'),
+        }
+      }),
       projects: projects.filter(project => !project.archivedAt).map(({ id, name, revision, canEditProperties }) => ({ id, name, revision, canEditProperties, environmentId: defaults.get(id) ?? null })),
       canManage: member?.role === 'admin',
+      canCreatePersonal: Boolean(member),
       availableRepositories,
       availableSecrets,
     }
   })
+}
+
+/** Set or clear a task's 「环境」 (replaces its Project's default environment). */
+export async function setTaskEnvironment(input: z.input<typeof taskEnvironmentInput>) {
+  const { setTaskEnvironment } = await import('@/lib/project-resources/task-environment')
+  return runAction(async () => setTaskEnvironment(await requireUser(), input))
+}
+
+/** The 「环境」 of up to 200 tasks the reader can see. */
+export async function listTaskEnvironments(input: z.input<typeof taskEnvironmentsInput>) {
+  const { readTaskEnvironments } = await import('@/lib/project-resources/task-environment')
+  return runAction(async () => ({ tasks: await readTaskEnvironments(await requireUser(), input) }))
 }

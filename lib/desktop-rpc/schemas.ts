@@ -6,7 +6,7 @@ import { AVATAR_MAX_BYTES, isAvatarContentType } from '../account/avatar-file'
 import { deletePasskeyInputSchema, renamePasskeyInputSchema } from '@/lib/account/passkeys-contract'
 import { threadModelChoice } from '@/lib/thread-model-choice'
 import { archiveIdleDays, conversationTargetInput, directoryInput } from '@/lib/conversation-directory-input'
-import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
+import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, environmentShareInput, taskEnvironmentInput, taskEnvironmentsInput, saveEnvironmentInstructionsInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
 import { createOnlyCommand, dispatchReceiptInput } from '@/lib/task-create-command'
 import { taskListPageInput } from '@/lib/task-list-page'
 import { taskPresentationsInput } from '@/lib/task-presentation-input'
@@ -142,8 +142,12 @@ export const desktopActionSchemas = {
   'project-resources.rollbackProjectSetup': tuple(rollbackProjectSetupInput),
   'project-resources.listProjectResources': tuple(uuid, uuid.optional()),
   'environments.listEnvironments': z.union([none, tuple(uuid)]),
+  'environments.setTaskEnvironment': tuple(taskEnvironmentInput),
+  'environments.listTaskEnvironments': tuple(taskEnvironmentsInput),
   'project-resources.setProjectDefaultEnvironment': tuple(projectDefaultEnvironmentInput),
   'project-resources.saveEnvironment': tuple(saveEnvironmentInput),
+  'project-resources.shareEnvironment': tuple(environmentShareInput),
+  'project-resources.unshareEnvironment': tuple(environmentShareInput),
   'project-resources.searchProjectPullAuthors': tuple(projectPullAuthorInput),
   'project-resources.listDependencyRepositories': tuple(listDependencyRepositoriesInput),
   'project-resources.replaceDependencyRepositories': tuple(replaceDependencyRepositoriesInput),

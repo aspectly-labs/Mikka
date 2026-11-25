@@ -10,6 +10,7 @@ import { normalizeRepository } from '@mikka/protocol/repository'
 import type { OrderEntry } from '../lib/model-order-plan'
 import { dbUrl, seedBot, seedIssue, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { fakeThreadMachines } from './support/thread-machine-fake'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 
 test('cloud provider recovery keeps the thread\'s Agent, preserves scope and uses fresh task machines without waking its parent', { skip: !dbUrl }, async t => {
   const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_FACTORY_LIFECYCLE_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
@@ -151,9 +152,7 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
         VALUES($1,$2,$3,'Cloud fallback resource','','','planned','none','','','','','[]',1)`, [projectId, userId, workspace.id])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(userId, projectId, workspace.id)
       await seedProjectTasks(pool, projectId, [issueId])
-      await resources.saveProjectResources(userId, { workspaceId: workspace.id, projectId, revision: 1,
-        repositories: [{ repositoryKey: normalizeRepository(remote).key, environmentId: environment.id, isPrimary: true }],
-        environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, userId, workspace.id, [issueId], environment.id)
     }
     const selected = await chooseCloudRunModel(pool, scope, parent.agentId, 'claude_code', undefined, 'task')
     assert.ok(!('error' in selected), JSON.stringify(selected))

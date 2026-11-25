@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { test } from 'node:test'
+import { Pool } from 'pg'
+import { dbUrl, seedUser, seedWorkspace } from './support/workspace-admin-db'
+
+const migration = () => readFile(new URL('../drizzle/20261125223723_environment_scope_and_task_environments.sql', import.meta.url), 'utf8')
+
+// Replays the expand migration over Project-bound fixtures inside one rolled-back transaction.
+test('the environment migration moves unambiguous Project data onto task 环境 and environment repository rows', { skip: !dbUrl }, async t => {
+  const pool = new Pool({ connectionString: dbUrl, max: 1 })
+  t.after(() => pool.end())
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const db = client as unknown as Pool
+    const owner = await seedUser(db, 'environment-migration')
+    const workspace = await seedWorkspace(db, owner, [{ userId: owner, role: 'admin' }])
+    const ws = workspace.id
+    const repoA = 'v2/github.com/acme/a', repoB = 'v2/github.com/acme/b', repoC = 'v2/github.com/acme/c'
+    const environment = async (name: string, repositoryKeys: string[]) => {
+      const id = randomUUID()
+      await client.query(`INSERT INTO workspace_environments(id,"workspaceId",name,configuration,revision,"createdBy","updatedBy") VALUES($1,$2,$3,$4,1,$5,$5)`,
+        [id, ws, name, JSON.stringify({ runtime: 'any', harness: 'any', variables: {}, secretIds: [], repositoryKeys }), owner])
+      return id
+    }
+    const project = async (bindings: { environmentId: string; isDefault: boolean }[], repositories: { key: string; baseBranch: string | null; environmentId: string | null; isPrimary: boolean }[], tasks: string[]) => {
+      const id = randomUUID()
+      await client.query(`INSERT INTO workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
+        VALUES($1,$2,$3,'Migration fixture','','','planned','none','','','','','[]',1)`, [id, owner, ws])
+      for (const binding of bindings) await client.query('INSERT INTO workspace_project_environments("projectId","workspaceId","environmentId","isDefault") VALUES($1,$2,$3,$4)', [id, ws, binding.environmentId, binding.isDefault])
+      for (const repo of repositories) await client.query('INSERT INTO workspace_project_repositories("projectId","workspaceId","repositoryKey","baseBranch","environmentId","isPrimary") VALUES($1,$2,$3,$4,$5,$6)',
+        [id, ws, repo.key, repo.baseBranch, repo.environmentId, repo.isPrimary])
+      for (const issueId of tasks) await client.query('INSERT INTO workspace_project_tasks("issueId","projectId","workspaceId") VALUES($1,$2,$3)', [issueId, id, ws])
+      return id
+    }
+    const [defaulted, onlyBound, ambiguous, unbound, kept] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    const e1 = await environment('Default with repositories', [repoA, repoB])
+    const e2 = await environment('Only bound, any repository', [])
+    const e3a = await environment('Ambiguous A', []), e3b = await environment('Ambiguous B', [])
+    const e4 = await environment('Disagreeing Projects', [repoA, repoB])
+    await project([{ environmentId: e1, isDefault: true }], [{ key: repoA, baseBranch: 'develop', environmentId: null, isPrimary: true }], [defaulted, kept])
+    await project([{ environmentId: e2, isDefault: false }], [{ key: repoC, baseBranch: 'feature-x', environmentId: e2, isPrimary: false }], [onlyBound])
+    await project([{ environmentId: e3a, isDefault: false }, { environmentId: e3b, isDefault: false }], [], [ambiguous])
+    await project([], [], [unbound])
+    await project([{ environmentId: e4, isDefault: true }], [{ key: repoA, baseBranch: 'one', environmentId: null, isPrimary: true }], [])
+    await project([{ environmentId: e4, isDefault: true }], [{ key: repoA, baseBranch: 'two', environmentId: null, isPrimary: false }, { key: repoB, baseBranch: null, environmentId: null, isPrimary: true }], [])
+    // A person's own choice made after the release is never overwritten by a replay.
+    await client.query('INSERT INTO workspace_task_environments("issueId","workspaceId","environmentId","updatedBy") VALUES($1,$2,$3,$4)', [kept, ws, e2, owner])
+
+    const sql = await migration()
+    await client.query(sql)
+    const taskEnvironments = async () => Object.fromEntries((await client.query<{ issueId: string; environmentId: string; updatedBy: string | null }>(
+      'SELECT "issueId","environmentId","updatedBy" FROM workspace_task_environments WHERE "workspaceId"=$1', [ws])).rows.map(row => [row.issueId, [row.environmentId, row.updatedBy]]))
+    assert.deepEqual(await taskEnvironments(), {
+      [defaulted]: [e1, null],
+      [onlyBound]: [e2, null],
+      [kept]: [e2, owner],
+    }, 'the default, else the only bound environment; ambiguous and unbound tasks get none')
+    const repositories = async (id: string) => (await client.query('SELECT repositories,revision,scope,"ownerId" FROM workspace_environments WHERE id=$1', [id])).rows[0]
+    assert.deepEqual(await repositories(e1), { revision: 1, scope: 'workspace', ownerId: null, repositories: [
+      { key: repoA, clone: 'start', baseBranch: 'develop', primary: true },
+      { key: repoB, clone: 'start', baseBranch: null, primary: false },
+    ] }, 'start rows follow repositoryKeys and take the Project branch and 主仓库; the revision is unchanged')
+    assert.deepEqual((await repositories(e2)).repositories, [{ key: repoC, clone: 'demand', baseBranch: 'feature-x', primary: false }],
+      'an environment that admitted any repository keeps its bound repositories as on-demand rows')
+    assert.deepEqual((await repositories(e3a)).repositories, [])
+    assert.deepEqual((await repositories(e4)).repositories, [
+      { key: repoA, clone: 'start', baseBranch: null, primary: false },
+      { key: repoB, clone: 'start', baseBranch: null, primary: false },
+    ], 'disagreeing branches and two primaries carry over as neither')
+    const before = JSON.stringify([await taskEnvironments(), await repositories(e1), await repositories(e2), await repositories(e4)])
+    await client.query(sql)
+    assert.equal(JSON.stringify([await taskEnvironments(), await repositories(e1), await repositories(e2), await repositories(e4)]), before, 'the migration replays without change')
+    await client.query('SAVEPOINT scope_check')
+    await assert.rejects(client.query(`UPDATE workspace_environments SET scope='personal' WHERE id=$1`, [e1]), { code: '23514' }, 'a personal environment needs an owner')
+    await client.query('ROLLBACK TO SAVEPOINT scope_check')
+    await assert.rejects(client.query(`UPDATE workspace_environments SET scope='team' WHERE id=$1`, [e1]), { code: '23514' })
+  } finally {
+    await client.query('ROLLBACK')
+    client.release()
+  }
+})
