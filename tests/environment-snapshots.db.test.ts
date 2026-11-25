@@ -220,6 +220,7 @@ test(
   { skip: !dbUrl },
   async (t) => {
     const { Sandbox } = await import('e2b')
+    const { applicationEnvironment } = await import('../cloudflare/api/ingress/environment.mjs')
     const { LOCAL_E2B_KEY } = await import('./fakes/e2b.mjs')
     const { startExternalServices } = await import('./fakes/external-services.mjs')
     const sha = 'd'.repeat(40),
@@ -238,10 +239,13 @@ test(
       },
     })
     t.after(() => services.close())
+    const projected = applicationEnvironment({ E2B_API_KEY: LOCAL_E2B_KEY, E2B_TEAM_ID: 'sdk-team', PUBLIC_ORIGIN: 'http://localhost' }) as Record<string,string>
+    assert.equal(projected.E2B_API_KEY, LOCAL_E2B_KEY)
+    assert.equal(projected.E2B_TEAM_ID, 'sdk-team')
     const env = {
       NODE_ENV: 'test',
-      E2B_API_KEY: LOCAL_E2B_KEY,
-      E2B_TEAM_ID: 'sdk-team',
+      E2B_API_KEY: projected.E2B_API_KEY,
+      E2B_TEAM_ID: projected.E2B_TEAM_ID,
       E2B_API_URL: services.e2bOptions.apiUrl,
       E2B_SANDBOX_URL: services.e2bOptions.sandboxUrl,
       E2B_HTTP_VERSION: '1.1',
@@ -306,6 +310,9 @@ test(
     assert.equal(failed.state, 'failed')
     assert.match(failed.logTail, /snapshot/)
     assert.equal(services.e2b.sandboxes.get(failed.sandboxId).state, 'killed')
+    const creates = services.e2b.requests.filter(item => item.method === 'POST' && item.path.endsWith('/v2/sandboxes'))
+    assert.equal(creates.length,4)
+    assert.doesNotMatch(JSON.stringify(creates.map(item => item.body)), /mikka-local-e2b|E2B_API_KEY|E2B_TEAM_ID|sdk-team/)
     const captures = services.e2b.requests.filter((item) => item.path.endsWith('/snapshots') && item.method === 'POST')
     assert.deepEqual(
       captures.map((item) => item.body.memory),
