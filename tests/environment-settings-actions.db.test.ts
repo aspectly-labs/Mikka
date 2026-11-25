@@ -25,7 +25,7 @@ test('environment settings GET keeps canonical storage, fresh membership and pri
   const mocks = [
     mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () =>
       current ? { user: current, session: { id: 'env-http-session' }, ...(current[tokenWorkspace] ? { tokenWorkspaceId: current[tokenWorkspace] } : {}) } : null
-    } } } } }),
+    } } } }),
     mock.module('@/lib/issue-access', { namedExports: { requireUser: async () => { if (!current) throw new ActionFailureError('authRequired'); return current } } }),
     // Deliberately stale context: the store must recheck the membership row,
     // and canManage must not trust this old admin projection.

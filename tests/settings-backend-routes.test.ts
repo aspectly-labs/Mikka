@@ -15,6 +15,7 @@ let webhookCalls = 0
 let cardSetupCalls = 0
 let cardCheckoutCalls = 0
 const workspaceId = '11111111-1111-4111-8111-111111111111'
+const hexWorkspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const secret = 'synthetic-stripe-webhook-secret'
 const calls: unknown[][] = []
 let auditRoute: typeof import('../app/api/workspaces/[workspaceId]/audit-log/route')
@@ -31,14 +32,18 @@ let tokenWorkspaceId: string | undefined
 let workspaceBotResult: unknown = { bots: [] }
 let workspaceBotFailure: Error | null = null
 const currentSession = new AsyncLocalStorage<string>()
+const currentTokenWorkspace = new AsyncLocalStorage<string | undefined>()
 const syntheticSessionId = 'synthetic-settings-session'
 let sessionGate: Promise<void> = Promise.resolve()
 let sessionReads = 0
+let savedLoginGate: Promise<void> = Promise.resolve()
+let savedLoginReads = 0
 
 before(async () => {
   mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () => {
     if (sessionFailure) throw sessionFailure
-    return user ? { user, session: { id: currentSession.getStore() ?? syntheticSessionId, userId: user.id }, ...(tokenWorkspaceId ? { tokenWorkspaceId } : {}) } : null
+    const scopedTokenWorkspace = currentTokenWorkspace.getStore() ?? tokenWorkspaceId
+    return user ? { user, session: { id: currentSession.getStore() ?? syntheticSessionId, userId: user.id }, ...(scopedTokenWorkspace ? { tokenWorkspaceId: scopedTokenWorkspace } : {}) } : null
   } } } } })
   mock.module('@/lib/intl/i18n-server', { namedExports: { getTranslations: async () => (key: string) => key } })
   mock.module('@/lib/workspace-switcher', { namedExports: { loadWorkspaceSwitcher: async (...args: unknown[]) => {
@@ -49,8 +54,8 @@ before(async () => {
   mock.module('@/lib/db/request-scope', { namedExports: { inDatabaseTransaction: () => false } })
   mock.module('@/lib/issue-access', { namedExports: { requireUser: async () => { if (!user) throw new Error('authRequired'); return user } } })
   mock.module('@/lib/workspace-access', { namedExports: { WorkspaceError, loadWorkspaceContext: async (requested?: string) => {
-    if (requested && requested !== workspaceId) throw new WorkspaceError('workspaceAccessDenied')
-    return { workspace: { id: workspaceId }, role: 'admin' }
+    if (requested && requested !== workspaceId && requested !== hexWorkspaceId) throw new WorkspaceError('workspaceAccessDenied')
+    return { workspace: { id: requested ?? workspaceId }, role: 'admin' }
   } } })
   mock.module('@/app/actions/account', { namedExports: {
     getPasswordStatus: () => { throw new Error('unexpected settings read') },
@@ -77,7 +82,6 @@ before(async () => {
   for (const [module, names] of Object.entries({
     '@/app/actions/preferences': ['getPreferences'],
     '@/app/actions/issue-prefix': ['getIssuePrefixState'],
-    '@/app/actions/settings-activity': ['listActivity', 'listSavedLogins'],
     '@/app/actions/workspace-settings': ['getWorkspaceDeletionImpact', 'getWorkspaceGeneral', 'getWorkspaceTransferTargets'],
     '@/app/actions/app-policy': ['getAppPolicy'],
     '@/app/actions/personal-policy': ['getSharePolicy', 'getCreditShare', 'getPaymentDesignation'],
@@ -91,6 +95,15 @@ before(async () => {
     '@/app/actions/thread-title-settings': ['getThreadTitleSettings'],
     '@/app/actions/issue-states': ['getIssueStates'],
   })) mock.module(module, { namedExports: Object.fromEntries(names.map(name => [name, () => { throw new Error('unexpected settings read') }])) })
+  mock.module('@/app/actions/settings-activity', { namedExports: {
+    listActivity: () => { throw new Error('unexpected settings read') },
+    listSavedLogins: async () => {
+      savedLoginReads++
+      if (currentTokenWorkspace.getStore()) return { error: 'authRequired' }
+      await savedLoginGate
+      return { logins: [{ id: 'human-only-login' }] }
+    },
+  } })
   mock.module('@/app/actions/bots', { namedExports: {
     listBots: async (...args: unknown[]) => {
       ownerBotCalls.push(args)
@@ -195,12 +208,23 @@ test('workspace-bots and bots GET honor validated ?workspace=, ignore caller use
   assert.equal(defaultBotsRes.status, 200)
   assert.deepEqual(ownerBotCalls, [[workspaceId], [undefined]])
 
+  // Uppercase/mixed-case workspace UUIDs normalize to lowercase before dispatching and sharing.
+  const upperId = hexWorkspaceId.toUpperCase()
+  const upperWorkspaceBots = await settingsRoute.GET(new Request(`https://mikka.example/api/settings/workspace-bots?workspace=${upperId}`),
+    { params: Promise.resolve({ read: 'workspace-bots' }) })
+  assert.equal(upperWorkspaceBots.status, 200)
+  assert.deepEqual(workspaceBotCalls.at(-1), [hexWorkspaceId])
+  const upperBots = await settingsRoute.GET(new Request(`https://mikka.example/api/settings/bots?workspace=${upperId}`),
+    { params: Promise.resolve({ read: 'bots' }) })
+  assert.equal(upperBots.status, 200)
+  assert.deepEqual(ownerBotCalls.at(-1), [hexWorkspaceId])
+
   // Malformed ?workspace= is refused at the route boundary before calling the action.
   const malformed = await settingsRoute.GET(new Request('https://mikka.example/api/settings/workspace-bots?workspace=untrusted'),
     { params: Promise.resolve({ read: 'workspace-bots' }) })
   assert.equal(malformed.status, 403)
   assert.deepEqual(await malformed.json(), { error: 'workspaceAccessDenied' })
-  assert.equal(workspaceBotCalls.length, 1)
+  assert.equal(workspaceBotCalls.length, 2)
 
   // Scoped PAT cannot read another workspace via ?workspace=.
   tokenWorkspaceId = '22222222-2222-4222-8222-222222222222'
@@ -209,7 +233,7 @@ test('workspace-bots and bots GET honor validated ?workspace=, ignore caller use
       { params: Promise.resolve({ read: 'bots' }) })
     assert.equal(crossTenant.status, 403)
     assert.deepEqual(await crossTenant.json(), { error: 'workspaceAccessDenied' })
-    assert.equal(ownerBotCalls.length, 2)
+    assert.equal(ownerBotCalls.length, 3)
   } finally { tokenWorkspaceId = undefined }
 
   // Missing session is refused before calling any settings action.
@@ -219,8 +243,34 @@ test('workspace-bots and bots GET honor validated ?workspace=, ignore caller use
       { params: Promise.resolve({ read: 'workspace-bots' }) })
     assert.equal(unauth.status, 401)
     assert.deepEqual(await unauth.json(), { error: 'authRequired' })
-    assert.equal(workspaceBotCalls.length, 1)
+    assert.equal(workspaceBotCalls.length, 2)
   } finally { user = { id: 'admin' } }
+})
+
+test('workspace PATs never join an owner human session in-flight saved-logins singleFlight read', async () => {
+  user = { id: 'admin' }
+  savedLoginReads = 0
+  let release!: () => void
+  savedLoginGate = new Promise(resolve => { release = resolve })
+  const humanPromise = currentTokenWorkspace.run(undefined, () => settingsRoute.GET(
+    new Request('https://mikka.example/api/settings/saved-logins'),
+    { params: Promise.resolve({ read: 'saved-logins' }) },
+  ))
+  try {
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(savedLoginReads, 1)
+    const patResponse = await currentTokenWorkspace.run(workspaceId, () => settingsRoute.GET(
+      new Request('https://mikka.example/api/settings/saved-logins'),
+      { params: Promise.resolve({ read: 'saved-logins' }) },
+    ))
+    assert.equal(savedLoginReads, 2, 'PAT read must execute independently without joining the human singleFlight read')
+    assert.equal(patResponse.status, 401)
+    assert.deepEqual(await patResponse.json(), { error: 'authRequired' })
+    release()
+    const humanResponse = await humanPromise
+    assert.equal(humanResponse.status, 200)
+    assert.deepEqual(await humanResponse.json(), { logins: [{ id: 'human-only-login' }] })
+  } finally { release(); savedLoginGate = Promise.resolve(); await Promise.allSettled([humanPromise]) }
 })
 
 test('workspace-bots GET preserves auth and membership refusals and never substitutes an empty activity list', async () => {
