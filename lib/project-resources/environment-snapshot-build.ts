@@ -17,6 +17,7 @@ type Build = SnapshotSeed & {
   id: string
   state: SnapshotState
   providerId: string | null
+  allocationAttempted: boolean
   sandboxId: string | null
   expiresAt: Date
 }
@@ -36,16 +37,56 @@ async function withBuild<T>(id: string, work: (client: PoolClient, row: Build | 
   })
 }
 
-async function retireImage(row: Build) {
-  // Recover snapshots even if the create response was lost before its ID was recorded.
+const cleanupProvider = {
+  async findSandbox(owner: string, id: string) {
+    const metadata = { application: 'mikka-environment-build', buildId: id }
+    const pages = Sandbox.list({
+      ...(await options(owner)),
+      query: { metadata, state: ['running', 'paused'] },
+      limit: 2,
+    })
+    const rows = await pages.nextItems()
+    if (
+      pages.hasNext ||
+      rows.length > 1 ||
+      rows.some((row) => Object.entries(metadata).some(([k, v]) => row.metadata[k] !== v))
+    )
+      throw new Error('Environment build identity unavailable')
+    return rows[0]?.sandboxId ?? null
+  },
+  listSnapshots: threadLifecycleProvider.listSnapshots,
+  deleteSnapshot: threadLifecycleProvider.deleteSnapshot,
+  async kill(sandboxId: string, owner: string) {
+    await Sandbox.kill(sandboxId, await options(owner))
+  },
+}
+
+async function retireImage(row: Build, provider = cleanupProvider) {
+  // After a lost create ACK, only the exact owner-scoped build can be killed.
+  const sandboxId =
+    row.sandboxId ??
+    (row.allocationAttempted ? await provider.findSandbox(row.userId, row.id) : null)
   const images = row.providerId
     ? [row.providerId]
-    : row.sandboxId
-      ? (await threadLifecycleProvider.listSnapshots(row.sandboxId, row.userId, 'mikka-env-' + row.id)).map(
-          (item) => item.snapshotId,
-        )
+    : sandboxId
+      ? (await provider.listSnapshots(sandboxId, row.userId, 'mikka-env-' + row.id)).map((item) => item.snapshotId)
       : []
-  for (const image of images) await threadLifecycleProvider.deleteSnapshot(image, row.userId)
+  for (const image of images) await provider.deleteSnapshot(image, row.userId)
+  if (sandboxId) await provider.kill(sandboxId, row.userId)
+}
+
+export async function cleanupOwnerEnvironmentSnapshots(owner: string, provider = cleanupProvider) {
+  const { rows } = await workspacePool.query<{ id: string }>(
+    'SELECT id FROM environment_snapshots WHERE "userId"=$1 ORDER BY id',
+    [owner],
+  )
+  for (const { id } of rows) {
+    await withBuild(id, async (client, row) => {
+      if (!row || row.userId !== owner) return
+      await retireImage(row, provider)
+      await client.query('DELETE FROM environment_snapshots WHERE id=$1', [id])
+    })
+  }
 }
 
 async function finishSuperseded(row: Build) {
@@ -110,6 +151,8 @@ export async function buildEnvironmentSnapshot(id: string) {
       if (recovered.length > 1) throw new Error('Ambiguous snapshot receipt')
       providerId = recovered[0]?.snapshotId
       if (!providerId) {
+        stage('allocate')
+        await client.query('UPDATE environment_snapshots SET "allocationAttempted"=true,"logTail"=$2 WHERE id=$1', [id, progress.join('\n')])
         const machine = await Sandbox.create(row.templateId, {
           ...connection,
           idempotencyKey: id,
@@ -119,7 +162,9 @@ export async function buildEnvironmentSnapshot(id: string) {
         sandboxId = machine.sandboxId
         await client.query('UPDATE environment_snapshots SET "sandboxId"=$2 WHERE id=$1', [id, sandboxId])
         if (isOfficialE2BTemplate(row.templateId)) await bootstrapOfficialInstance(machine, row.templateId)
-        const sha = await machine.files.read('/opt/mikka/worker-source-sha', { user: 'root' })
+        const sha = await machine.files.read('/opt/mikka/worker-source-sha', {
+          user: 'root',
+        })
         if (sha.trim() !== row.workerSha) throw new Error('Worker release unavailable')
         stage('clone')
         const startRows = environment.repositories.filter((repo) => repo.clone === 'start')
@@ -137,7 +182,11 @@ export async function buildEnvironmentSnapshot(id: string) {
           const branch = repo.baseBranch ? '--branch ' + quoteShell(repo.baseBranch) : ''
           await machine.commands.run(
             `mkdir -p /home/user/.mikka/worker/repos/v2 && git -c credential.helper= -c http.followRedirects=false -c protocol.file.allow=never -c submodule.recurse=false clone --no-checkout --depth=50 --no-single-branch --no-recurse-submodules ${branch} -- ${quoteShell(remote)} ${quoteShell(directory)}`,
-            { user: 'user', envs: { ...headers, GIT_TERMINAL_PROMPT: '0' }, timeoutMs: 90_000 },
+            {
+              user: 'user',
+              envs: { ...headers, GIT_TERMINAL_PROMPT: '0' },
+              timeoutMs: 90_000,
+            },
           )
           const prepared = directory + '.environment-setup'
           await machine.commands.run(
@@ -168,7 +217,13 @@ export async function buildEnvironmentSnapshot(id: string) {
         if (!(await allowed(row))) throw new Error('Environment revision changed')
         // Only the filesystem is reusable. Unlike per-thread recovery, do not
         // fall back to a full memory image with live setup processes.
-        providerId = (await Sandbox.createSnapshot(sandboxId, { ...connection, name, mode: 'filesystem' })).snapshotId
+        providerId = (
+          await Sandbox.createSnapshot(sandboxId, {
+            ...connection,
+            name,
+            mode: 'filesystem',
+          })
+        ).snapshotId
       }
       await client.query('BEGIN')
       try {

@@ -40,7 +40,10 @@ export async function snapshotConfiguration(reader: Reader, input: SnapshotInput
   const layer = cliPolicyLayerSchema.parse(policyRow ? policyRow.policy : {})
   const configured = mergeCliPolicyValues(layer.defaults ?? {}, layer)
   const policy = resolveTrustedRunPolicy({
-    workspace: { permissions: configured.permissions, networkAllow: configured.networkAllow },
+    workspace: {
+      permissions: configured.permissions,
+      networkAllow: configured.networkAllow,
+    },
     personalApprovalMode: configured.approvalMode,
     environment: 'cloud',
   })
@@ -54,6 +57,26 @@ export async function snapshotConfiguration(reader: Reader, input: SnapshotInput
   return { eligible, environment }
 }
 
+async function hasRepositoryAccess(
+  owner: string,
+  repositories: { clone: string; key: string }[],
+  ids: Record<string, string>,
+) {
+  const keys = repositories.filter((repo) => repo.clone === 'start').map((repo) => repo.key)
+  if (keys.length !== Object.keys(ids).length || keys.some((key) => !Object.hasOwn(ids, key))) return false
+  // Bound parallel GitHub requests when an environment contains many startup repos.
+  for (let index = 0; index < keys.length; index += 4) {
+    const allowed = await Promise.all(
+      keys.slice(index, index + 4).map(async (key) => {
+        const access = await githubRepositoryReadCredential(owner, key).catch(() => null)
+        return access !== null && access.repository.id === ids[key]
+      }),
+    )
+    if (allowed.includes(false)) return false
+  }
+  return true
+}
+
 export async function readEnvironmentSnapshot(
   reader: Reader,
   raw: SnapshotInput,
@@ -62,10 +85,10 @@ export async function readEnvironmentSnapshot(
   if (!(await enabled(reader))) return { enabled: false, snapshot: null }
   const { environment, eligible } = await snapshotConfiguration(reader, input)
   const templateId = taskTemplate(input.templateKind === 'claude' ? 'claude_code' : 'codex')
-  const result = await workspacePool.query<SnapshotView>(
+  const result = await workspacePool.query<SnapshotView & { repositoryIds: Record<string, string> }>(
     `SELECT id,revision,"templateKind",
     CASE WHEN revision<>$5 OR "expiresAt"<=now() OR "templateId"<>$6 OR "workerSha" IS DISTINCT FROM $7 OR NOT $8 THEN 'outdated' ELSE state END AS state,
-    "logTail","expiresAt" FROM environment_snapshots
+    "logTail","expiresAt","repositoryIds" FROM environment_snapshots
     WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "userId"=$3 AND "templateKind"=$4
     ORDER BY "createdAt" DESC LIMIT 1`,
     [
@@ -80,7 +103,17 @@ export async function readEnvironmentSnapshot(
     ],
   )
   const row = result.rows[0]
-  return { enabled: true, snapshot: row ? { ...row, expiresAt: new Date(row.expiresAt).toISOString() } : null }
+  if (!row) return { enabled: true, snapshot: null }
+  const { repositoryIds, ...snapshot } = row
+  if (
+    snapshot.state === 'ready' &&
+    !(await hasRepositoryAccess(userOf(reader), environment.repositories, repositoryIds))
+  )
+    snapshot.state = 'outdated'
+  return {
+    enabled: true,
+    snapshot: { ...snapshot, expiresAt: new Date(row.expiresAt).toISOString() },
+  }
 }
 
 export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotInput) {
@@ -138,9 +171,16 @@ export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templa
   if (!(await enabled(input.userId))) return null
   const kind = cloudTemplateOrigin(input.templateId)?.kind
   if (!kind || kind === 'desktop' || !process.env.MIKKA_CLOUD_WORKER_SHA) return null
-  const { eligible, environment } = await snapshotConfiguration(input.userId, { ...input, templateKind: kind })
+  const { eligible, environment } = await snapshotConfiguration(input.userId, {
+    ...input,
+    templateKind: kind,
+  })
   if (!eligible || environment.revision !== input.revision) return null
-  const { rows } = await workspacePool.query<{ id: string; providerId: string; repositoryIds: Record<string, string> }>(
+  const { rows } = await workspacePool.query<{
+    id: string
+    providerId: string
+    repositoryIds: Record<string, string>
+  }>(
     `SELECT id,"providerId","repositoryIds"
     FROM environment_snapshots WHERE "workspaceId"=$1 AND "environmentId"=$2 AND revision=$3
     AND "userId"=$4 AND "templateId"=$5 AND "workerSha"=$6 AND state='ready'
@@ -158,9 +198,6 @@ export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templa
   if (!row) return null
   // Every startup clone is present in this image, including repositories the
   // current task does not use. Re-check the entire set and its immutable IDs.
-  for (const repo of environment.repositories.filter((repo) => repo.clone === 'start')) {
-    const access = await githubRepositoryReadCredential(input.userId, repo.key).catch(() => null)
-    if (!access || row.repositoryIds[repo.key] !== access.repository.id) return null
-  }
+  if (!(await hasRepositoryAccess(input.userId, environment.repositories, row.repositoryIds))) return null
   return { id: row.id, providerId: row.providerId }
 }

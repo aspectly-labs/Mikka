@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { pool } from '@/lib/db'
 import { getComposio, retireComposioAccount } from '@/lib/composio'
 import { listComposioPages } from '@/lib/composio-pagination'
-import type { AccountCleanupReport, AccountDeletionLease } from './cleanup-result'
+import { cleanupErrorIdentifier, type AccountCleanupReport, type AccountDeletionLease } from './cleanup-result'
 import { cleanupAccountSubscriptions } from './subscription-cleanup'
 import { cleanupAccountBilling } from './billing-cleanup'
 import { cleanupAccountRuntimes } from './runtime-cleanup'
@@ -34,5 +34,12 @@ export async function cleanupAccountConnections(ownerId: string, database: Pool,
   blocked.push(...subscription.blockedReasons); warnings.push(...subscription.warnings)
   const blockerErrors = { ...subscription.blockerErrors }
   blocked.push(...await cleanupAccountRuntimes(ownerId, database, { job, blockerErrors }))
+  try {
+    const { cleanupOwnerEnvironmentSnapshots } = await import('@/lib/project-resources/environment-snapshot-build')
+    await cleanupOwnerEnvironmentSnapshots(ownerId)
+  } catch (error) {
+    blocked.push('cloud_snapshot_cleanup_required')
+    blockerErrors.cloud_snapshot_cleanup_required = cleanupErrorIdentifier(error)
+  }
   return { blockedReasons: [...new Set(blocked)], warnings: [...new Set(warnings)], ...(Object.keys(blockerErrors).length ? { blockerErrors } : {}) }
 }

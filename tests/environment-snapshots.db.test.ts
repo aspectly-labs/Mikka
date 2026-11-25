@@ -59,8 +59,18 @@ test(
       name: 'snapshot',
       configuration: {},
     })
-    const input = { workspaceId: ws.id, userId: owner, environmentId, revision, templateId: 'codex' }
-    const readInput = { workspaceId: ws.id, environmentId, templateKind: 'codex' } as const
+    const input = {
+      workspaceId: ws.id,
+      userId: owner,
+      environmentId,
+      revision,
+      templateId: 'codex',
+    }
+    const readInput = {
+      workspaceId: ws.id,
+      environmentId,
+      templateKind: 'codex',
+    } as const
     const insert = async (state: string, provider: string | null) => {
       const id = randomUUID()
       await fixture.query(
@@ -73,10 +83,17 @@ test(
     const id = await insert('ready', 'fixture-good')
     process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-environment-snapshots":false}'
     assert.equal(await readyEnvironmentSnapshot(input), null)
-    assert.deepEqual(await readEnvironmentSnapshot(owner, readInput), { enabled: false, snapshot: null })
+    assert.deepEqual(await readEnvironmentSnapshot(owner, readInput), {
+      enabled: false,
+      snapshot: null,
+    })
     process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-environment-snapshots":true}'
     const ready = { id, providerId: 'fixture-good' }
     assert.deepEqual(await readyEnvironmentSnapshot(input), ready)
+    await fixture.query('UPDATE environment_snapshots SET "repositoryIds"=$2 WHERE id=$1', [id, { revoked: '123' }])
+    assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'outdated')
+    assert.equal(await readyEnvironmentSnapshot(input), null)
+    await fixture.query('UPDATE environment_snapshots SET "repositoryIds"=$2 WHERE id=$1', [id, {}])
     const { withTaskWorkspace } = await import('../lib/task-workspace')
     assert.deepEqual(await withTaskWorkspace(owner, ws.id, () => readyEnvironmentSnapshot(input)), ready)
     for (const changed of [{ userId: peer }, { revision: 2 }, { templateId: 'claude' }])
@@ -102,5 +119,66 @@ test(
     assert.equal(await readyEnvironmentSnapshot(input), null)
     await expireEnvironmentSnapshot(attempt)
     assert.equal((await fixture.query('SELECT id FROM environment_snapshots WHERE id=$1', [attempt])).rowCount, 0)
+  },
+)
+
+test(
+  'account deletion keeps receipts on provider failure, drains only owner images, and fences new builds',
+  { skip: !dbUrl },
+  async (t) => {
+    const db = new Pool({ connectionString: dbUrl })
+    t.after(() => db.end())
+    const { cleanupOwnerEnvironmentSnapshots } = await import('../lib/project-resources/environment-snapshot-build')
+    const owner = randomUUID(),
+      peer = randomUUID(),
+      source = randomUUID()
+    const insert = (user: string) =>
+      db.query(
+        `INSERT INTO environment_snapshots
+    (id,"workspaceId","environmentId",revision,"userId","templateKind","templateId","workerSha",state,"allocationAttempted")
+    VALUES($1,$2,$3,1,$4,'codex','codex','test','failed',true)`,
+        [randomUUID(), randomUUID(), randomUUID(), user],
+      )
+    await insert(owner)
+    await insert(peer)
+    await db.query('INSERT INTO account_deletion_guards ("subjectId","jobId") VALUES($1,$2)', [owner, randomUUID()])
+    await assert.rejects(insert(owner), { code: '55000' })
+    const killed: string[] = []
+    const provider = {
+      async findSandbox(user: string) {
+        assert.equal(user, owner)
+        return source
+      },
+      async listSnapshots(id: string, user: string) {
+        assert.equal(user, owner)
+        assert.equal(id, source)
+        return [{ snapshotId: 'image', names: [] }]
+      },
+      async deleteSnapshot(id: string, user: string) {
+        assert.equal(id, 'image')
+        assert.equal(user, owner)
+        return true
+      },
+      async kill(id: string, user: string) {
+        assert.equal(user, owner)
+        killed.push(id)
+      },
+    }
+    await assert.rejects(
+      cleanupOwnerEnvironmentSnapshots(owner, {
+        ...provider,
+        async deleteSnapshot() {
+          throw Error('retry')
+        },
+      }),
+      /retry/,
+    )
+    const count = async (user: string) =>
+      (await db.query('SELECT id FROM environment_snapshots WHERE "userId"=$1', [user])).rowCount
+    assert.equal(await count(owner), 1)
+    await cleanupOwnerEnvironmentSnapshots(owner, provider)
+    assert.equal(await count(owner), 0)
+    assert.equal(await count(peer), 1)
+    assert.deepEqual(killed, [source])
   },
 )
