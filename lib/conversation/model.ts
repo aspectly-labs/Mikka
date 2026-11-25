@@ -64,8 +64,3 @@ export function runOperation(status: string | null | undefined): OperationStatus
     default: return 'idle'
   }
 }
-
-/** True while the operation is underway: the composer's button is Stop. */
-export function operationBusy(status: OperationStatus) {
-  return status === 'submitted' || status === 'streaming'
-}

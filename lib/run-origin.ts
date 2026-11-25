@@ -56,17 +56,6 @@ export function resolveRunOrigin(input: {
   return { origin: input.defaultOrigin ?? 'web', originRef: null }
 }
 
-/** A stored/enum value, never a guess from `agent_runs.source`. */
-export function readRunOrigin(value: unknown): RunOrigin | null {
-  const parsed = runOriginSchema.safeParse(value)
-  return parsed.success ? parsed.data : null
-}
-
-export function readRunOriginRef(value: unknown): RunOriginRef | null {
-  const parsed = runOriginRefSchema.safeParse(value)
-  return parsed.success ? parsed.data : null
-}
-
 /** Telegram metadata as stored in a coordinator event payload: the chat id
  * and message id are opaque Slack/Telegram identifiers, not the text. */
 export function telegramRunOriginRef(value: unknown): RunOriginRef | null {

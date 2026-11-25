@@ -9,7 +9,6 @@ const USER_LIMIT_PER_MINUTE = 10
 const USER_MAX = 2000
 export type AuthorizeSearch = (ctx: SearchContext) => boolean | Promise<boolean>
 export const allowAllSearch: AuthorizeSearch = () => true
-export function normalizeQuery(query: string) { return query.trim().replace(/\s+/g, ' ').toLowerCase() }
 
 type ConsumeWebRate = (userId: string, now: number, signal: AbortSignal) => Promise<boolean>
 const persistentWebRate: ConsumeWebRate = async (userId, now, signal) => {
