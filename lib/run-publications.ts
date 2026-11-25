@@ -283,7 +283,7 @@ async function completionTransaction(userId: string, runId: string, completion: 
     }
     if (publication.status === 'assigned') {
       const autoOpen = !run.workspaceId || (await readRuntimeSettings(tx, ['prAutoOpen'], { userId, workspaceId: run.workspaceId })).prAutoOpen.value
-      const gate = !autoOpen ? { state: 'skipped' as const } : publicationGate({ stopReason: run.stopReason, kind: run.kind, report: reportOf(run), assignment: publication })
+      const gate = publicationGate({ autoOpen, stopReason: run.stopReason, kind: run.kind, report: reportOf(run), assignment: publication })
       await tx.update(runPublications).set({ status: gate.state, errorCode: gate.state === 'blocked' ? gate.error : null, updatedAt: new Date() }).where(eq(runPublications.runId, runId))
       const review = gate.state !== 'pending' ? await finishResult(tx, run, { errorCode: gate.state === 'blocked' ? gate.error : null, branch: publication.branch }, true, publication.scopeVersion) : null
       return { userId, issueId: run.issueId, publicationPending: gate.state === 'pending', review, quotaCloud, providerRunId }

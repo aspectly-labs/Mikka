@@ -45,3 +45,8 @@ test('plan, failed verification, cancellation, and unchanged base never open a P
 test('unverified submissions remain eligible for a draft without fabricating a pass', () => {
   assert.deepEqual(publicationGate({ ...ready, report: { ...report, verify: { status: 'not_run' } } }), { state: 'pending' })
 })
+
+test('disabling automatic PRs skips a validated published branch and preserves errors', () => {
+  assert.deepEqual(publicationGate({ ...ready, autoOpen: false }), { state: 'skipped' })
+  assert.deepEqual(publicationGate({ ...ready, autoOpen: false, assignment: null }), { state: 'blocked', error: 'publication_missing' })
+})

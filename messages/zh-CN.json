@@ -4416,6 +4416,11 @@
     "commandNew": "新建线程",
     "emptyHint": "{name} 会开任务、派 Agent 去做，PR 准备好时叫你"
   },
+  "PullRequestWake": {
+    "prWakeOnReview": "这条 PR 收到了审查评论。",
+    "prWakeOnCiFailure": "这条 PR 的 CI 检查失败。",
+    "prWakeOnConflict": "这条 PR 有合并冲突。"
+  },
   "Errors": {
     "skillReviewRequired": "请提交技能审核。",
     "skillPublishingDisabled": "工作区已关闭技能发布。",

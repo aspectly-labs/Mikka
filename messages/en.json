@@ -4510,6 +4510,11 @@
     "commandNew": "Start a new thread",
     "emptyHint": "{name} opens tasks, sends Agents to do them and calls you when a pull request is ready"
   },
+  "PullRequestWake": {
+    "prWakeOnReview": "A reviewer commented on this pull request.",
+    "prWakeOnCiFailure": "A CI check failed on this pull request.",
+    "prWakeOnConflict": "This pull request has a merge conflict."
+  },
   "Errors": {
     "skillReviewRequired": "Submit this skill for review.",
     "skillPublishingDisabled": "Skill publishing is turned off in this workspace.",
