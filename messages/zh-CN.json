@@ -249,7 +249,7 @@
       },
       "mcp": {
         "keywords": "MCP 插件 工具 市场",
-        "title": "MCP 与插件"
+        "title": "MCP 服务器"
       },
       "models": {
         "keywords": "模型订阅 订阅 额度 API Key 服务商 模型 优先使用的模型 顺序 派发 运行位置 云端 本地 Bot Agent",
@@ -289,7 +289,7 @@
         "title": "Git 与拉取请求"
       },
       "environments": {
-        "title": "运行环境"
+        "title": "云端环境"
       },
       "general": {
         "title": "工作区常规"
@@ -357,7 +357,7 @@
         "title": "设备"
       },
       "secrets": {
-        "title": "密钥与环境"
+        "title": "密钥与凭证"
       }
     },
     "mcpConnections": {
@@ -555,7 +555,13 @@
       "namePlaceholder": "例如：MacBook Pro",
       "repoKeyPlaceholder": "owner/repo",
       "baseBranchPlaceholder": "main",
-      "verifyCommandPlaceholder": "pnpm test"
+      "verifyCommandPlaceholder": "pnpm test",
+      "worktreeSetupHeading": "本地工作树设置",
+      "copyFilesLabel": "复制到新工作树的文件",
+      "copyFilesPlaceholder": ".env.local\n.npmrc",
+      "worktreeIncludeHint": "自动读取仓库根目录 .worktreeinclude",
+      "setupCommandLabel": "新工作树准备命令",
+      "setupCommandPlaceholder": "pnpm install --frozen-lockfile"
     },
     "integrations": {
       "githubAppCreate": "创建 GitHub App",
@@ -1001,9 +1007,16 @@
       "notePlaceholder": "备注（选填）",
       "repositoryPlaceholder": "例如：owner/repo",
       "bulkPlaceholder": "API_KEY=sk-...\nWEBHOOK_SECRET=whsec_...",
-      "backToSecrets": "密钥与环境",
+      "backToSecrets": "密钥与凭证",
       "environmentsCrossLink": "启动脚本与运行变量",
-      "openEnvironmentsAction": "前往运行环境"
+      "openEnvironmentsAction": "前往云端环境",
+      "deliveryLabel": "暴露方式",
+      "deliveryProtected": "受保护（推荐，代理注入、Agent 不可读原值）",
+      "deliveryDirect": "环境变量直传（兼容旧 SDK，Agent 可读）",
+      "deliveryBadgeProtected": "受保护",
+      "deliveryBadgeDirect": "环境变量直传",
+      "runtimeSecretsHeading": "运行时密钥",
+      "savedLoginsHeading": "网站登录凭证"
     },
     "audit": {
       "actions": {
@@ -2086,7 +2099,7 @@
       "removeServerConfirmBody": "移除后，所有线程将无法再调用此 MCP 服务器。",
       "emptyWorkspaceShared": "暂无工作区共享插件或 MCP 服务器",
       "addMcpServerOption": "MCP 服务器",
-      "mcpTitle": "MCP 与插件",
+      "mcpTitle": "MCP 服务器",
       "browseMarketplaceTitle": "浏览插件市场",
       "toolsCountMeta": "{count} 个工具",
       "addFromGitHub": "从 GitHub 仓库",
@@ -2116,11 +2129,27 @@
       "mcpServersCount": "{count} 个 MCP 服务器",
       "manageSkillsHint": "工作区与个人技能",
       "openSkillsAction": "前往技能",
-      "backToMcp": "MCP 与插件",
+      "backToMcp": "MCP 服务器",
       "backToIntegrations": "集成",
       "addMcpSubpageTitle": "添加 MCP 服务器",
       "editMcpSubpageTitle": "编辑 MCP 服务器",
-      "editVariablesTitle": "编辑请求头与环境变量"
+      "editVariablesTitle": "编辑请求头与环境变量",
+      "badgeEnabledUnchecked": "已启用 · 未检测",
+      "badgeHealthy": "健康",
+      "badgeHealthyMeta": "健康 · {count} 个工具",
+      "badgeNeedsAuth": "需授权",
+      "oauthConnectAction": "OAuth 授权",
+      "oauthReconnectAction": "重新授权",
+      "environmentsScopeLabel": "适用云端环境",
+      "environmentsScopeAll": "全部环境",
+      "environmentsScopeSaveFailed": "无法更新环境适用范围。",
+      "shareCredentialNotice": "共享后团队成员将通过你配置的凭证调用此服务器",
+      "hubTitle": "扩展中心",
+      "hubIntegrationsCount": "{count} 个已连接",
+      "hubMcpCount": "{count} 个 MCP 服务器",
+      "hubSkillsCount": "{count} 个技能",
+      "openIntegrationsAction": "前往集成",
+      "openMcpAction": "前往 MCP 服务器"
     },
     "logins": {
       "account": "账号",
@@ -2262,7 +2291,8 @@
       "pushFull": "完整",
       "services": "服务",
       "serverKeyPlaceholder": "粘贴服务器密钥",
-      "serverUrlPlaceholder": "https://mikka.example.com"
+      "serverUrlPlaceholder": "https://mikka.example.com",
+      "byoE2bHeading": "自有 E2B API Key"
     },
     "telegram": {
       "newLink": "重新生成链接",
@@ -2359,7 +2389,7 @@
     "environments": {
       "machineSize": "默认机器规格",
       "version": "版本 {revision}",
-      "title": "运行环境",
+      "title": "云端环境",
       "setupImpact": "使用此环境的 {count} 个项目都将采用恢复后的准备设置。请在运行前重新审查并批准。",
       "edit": "编辑环境",
       "copyFiles": "复制到工作树的文件，每行一个",
@@ -2397,9 +2427,29 @@
       "variablesPlaceholder": "NODE_ENV=development",
       "setupPlaceholder": "pnpm install --frozen-lockfile",
       "copyFilesPlaceholder": ".env.local\n.npmrc",
-      "backToEnvironments": "运行环境",
+      "backToEnvironments": "云端环境",
       "secretsCrossLink": "加密密钥",
-      "openSecretsAction": "前往密钥"
+      "openSecretsAction": "前往密钥",
+      "repositories": "关联仓库",
+      "repositoriesEmpty": "工作区全部仓库",
+      "repositoriesPlaceholder": "选择关联仓库",
+      "installScript": "安装与准备命令",
+      "startScript": "启动命令（选填）",
+      "startScriptPlaceholder": "pnpm dev",
+      "secrets": "关联加密密钥",
+      "secretsEmpty": "暂未配置加密密钥",
+      "secretsPlaceholder": "选择加密密钥",
+      "variablesLabel": "环境变量（非敏感配置）",
+      "networkAccess": "网络访问策略",
+      "networkOptions": {
+        "inherit": "默认",
+        "full": "完全访问",
+        "restricted": "受限访问",
+        "none": "禁止联网"
+      },
+      "advancedSettings": "高级设置",
+      "machineSizeStandardDefault": "Mikka 标准规格（默认，2 vCPU · 8 GiB · $0.20/小时）",
+      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/小时"
     },
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
     "teamSkills": {
@@ -2467,7 +2517,10 @@
       "appColumn": "应用",
       "blocked": "禁止",
       "allowed": "允许",
-      "block": "禁止{name}"
+      "block": "禁止{name}",
+      "decisionDeny": "禁止",
+      "decisionAsk": "询问",
+      "decisionAllow": "允许"
     },
     "security": {
       "saving": "正在保存…",
@@ -2480,7 +2533,7 @@
       "signOut": "退出",
       "currentDevice": "当前设备",
       "signInMethods": "登录方式",
-      "devices": "登录设备",
+      "devices": "当前登录",
       "revokeOthers": "同时退出其他设备",
       "lastActive": "最近活跃 {when}",
       "devicesLoading": "正在读取登录设备…",
@@ -2657,9 +2710,9 @@
       "yourTeams": "你的团队",
       "administration": "管理",
       "review": "审阅",
-      "agent": "Agent",
+      "agent": "Agent 与计算",
       "workspace": "工作区",
-      "personal": "个人设置"
+      "personal": "个人"
     },
     "loadingPage": "正在加载设置",
     "creditShare": {
@@ -7506,15 +7559,15 @@
     "plan": {
       "approvalTemplates": "审批模板（最多 {count} 个）",
       "approvalTemplatesName": "审批模板",
-      "memberNote": "席位和套餐由工作区管理员管理。需要更多席位时，请联系管理员。",
+      "memberNote": "套餐与计费由工作区管理员管理。",
       "retry": "重试",
       "features": "团队功能",
-      "upgradeBody": "Team Pro 提供更多席位、团队用量报告与 CSV 导出、审批模板。目前由人工开通，不在线付款：请联系 Mikka 并附上下面的工作区标识。",
+      "upgradeBody": "Team Pro 提供更高并发、团队用量导出与审批模板，可在「设置 › 计费」中升级。",
       "workspaceId": "工作区标识",
-      "seatsNote": "只计算活跃的人。待接受的邀请、已停用的成员、Bot、Agent 和设备都不占席位。",
-      "seatsUnlimited": "{count} 位活跃成员，不限人数",
+      "seatsNote": "工作区成员不限人数、不按席位收费；套餐仅决定额度与资源配额。",
+      "seatsUnlimited": "{count} 位活跃成员 · 不限人数",
       "copy": "复制",
-      "upgradeTitle": "需要更多席位或团队功能",
+      "upgradeTitle": "升级工作区套餐",
       "overLimit": "活跃成员已超过当前套餐的 {limit} 位上限。现有成员都会保留；人数回到上限以内之前，不能再接受邀请或恢复成员。",
       "edition": {
         "community": "社区版",
@@ -7530,7 +7583,7 @@
       "concurrency": "托管模型同时运行上限：{count}",
       "included": "已包含",
       "seats": "{count} / {limit} 位活跃成员",
-      "title": "套餐与席位"
+      "title": "套餐与配额"
     },
     "templates": {
       "approvalMode": "审批方式",
@@ -10660,7 +10713,9 @@
       "apiKeyPlaceholder": "sk-...",
       "baseUrlPlaceholder": "https://api.example.com/v1",
       "apiCrossLink": "Mikka 访问令牌",
-      "openApiAction": "前往 API"
+      "openApiAction": "前往 API",
+      "routingOrderLabel": "路由与扣费顺序",
+      "routingOrderValue": "官方订阅 CLI → 自有 API Key (BYOK) → Mikka 额度"
     },
     "memory": {
       "learned": "从已连接的 App 学到",

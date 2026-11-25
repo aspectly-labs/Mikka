@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
-import { WorktreeManager, runBranch, withRepoConfig } from "../src/worktrees"
+import { WorktreeManager, readWorktreeInclude, runBranch, withRepoConfig } from "../src/worktrees"
 import { cleanupTempDirs, makeRepo, tempDir } from "./helpers"
 
 afterEach(() => cleanupTempDirs())
@@ -209,5 +209,54 @@ describe("worktree removal", () => {
     await adding
     await removing
     expect(existsSync(path)).toBe(false)
+  })
+})
+
+describe(".worktreeinclude local worktree copy", () => {
+  it("copies literal paths and globs listed in .worktreeinclude and merges with recipe.copyFiles", async () => {
+    const repo = await makeRepo()
+    writeFileSync(join(repo, ".env.local"), "LOCAL_FLAG=1\n")
+    writeFileSync(join(repo, ".npmrc"), "//registry.npmjs.org/:always-auth=false\n")
+    mkdirSync(join(repo, "apps/web"), { recursive: true })
+    writeFileSync(join(repo, "apps/web/.env.development"), "WEB_PORT=3000\n")
+    writeFileSync(join(repo, "apps/web/.env.secret"), "SKIP_ME=1\n")
+    writeFileSync(
+      join(repo, ".worktreeinclude"),
+      "# local ignored files\n\n.env.local\napps/*/.env.*\n!apps/web/.env.secret\n"
+    )
+
+    const trees = new WorktreeManager(tempDir())
+    const wt1 = await trees.create("inc-only", repo, "main")
+    expect(await trees.bootstrap(wt1, repo, undefined)).toBe("done")
+    expect(readFileSync(join(wt1, ".env.local"), "utf8")).toBe("LOCAL_FLAG=1\n")
+    expect(readFileSync(join(wt1, "apps/web/.env.development"), "utf8")).toBe("WEB_PORT=3000\n")
+    expect(existsSync(join(wt1, "apps/web/.env.secret"))).toBe(false)
+    expect(existsSync(join(wt1, ".npmrc"))).toBe(false)
+
+    const wt2 = await trees.create("inc-merged", repo, "main")
+    expect(await trees.bootstrap(wt2, repo, { copyFiles: [".npmrc"], approved: true })).toBe("done")
+    expect(readFileSync(join(wt2, ".env.local"), "utf8")).toBe("LOCAL_FLAG=1\n")
+    expect(readFileSync(join(wt2, ".npmrc"), "utf8")).toContain("always-auth")
+  })
+
+  it("rejects path traversal, symlinks, and forbidden credential paths in .worktreeinclude", async () => {
+    const repo = await makeRepo()
+    const outside = join(tempDir("outside-"), "secret.txt")
+    writeFileSync(outside, "nope\n")
+    const trees = new WorktreeManager(tempDir())
+    const wt = await trees.create("inc-safe", repo, "main")
+
+    writeFileSync(join(repo, ".worktreeinclude"), "../secret.txt\n")
+    expect(() => readWorktreeInclude(repo)).toThrow(/outside the repo/)
+
+    writeFileSync(join(repo, ".worktreeinclude"), ".git/config\n")
+    expect(() => readWorktreeInclude(repo)).toThrow(/forbidden path/)
+
+    writeFileSync(join(repo, ".worktreeinclude"), ".codex/auth.json\n")
+    expect(() => readWorktreeInclude(repo)).toThrow(/forbidden path/)
+
+    writeFileSync(join(repo, ".worktreeinclude"), "escape.env\n")
+    symlinkSync(outside, join(repo, "escape.env"))
+    await expect(trees.bootstrap(wt, repo, undefined)).rejects.toThrow(/symlink/)
   })
 })

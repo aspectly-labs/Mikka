@@ -243,7 +243,14 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
     const current = await tx.execute(sql`select revision from workspace_environments where id=${id} and "workspaceId"=${input.workspaceId}`)
     if (input.id && (!current.rowCount || Number(current.rows[0].revision) !== input.revision)) throw new ActionFailureError('projectResourceConflict')
     const revision = Number(current.rows[0]?.revision ?? 0) + 1
-    const configuration = { ...input.configuration, secretIds: [...new Set(input.configuration.secretIds)], repositoryKeys: [...new Set(input.configuration.repositoryKeys)] }
+    const startScript = input.configuration.startScript?.trim() || undefined
+    const configuration: EnvironmentConfiguration = {
+      ...input.configuration,
+      ...(startScript ? { startScript } : { startScript: undefined }),
+      secretIds: [...new Set(input.configuration.secretIds)],
+      repositoryKeys: [...new Set(input.configuration.repositoryKeys)],
+    }
+    if (configuration.startScript === undefined) delete configuration.startScript
     await persistEnvironment(tx, reader, input.workspaceId, id, input.name, configuration, revision, input.archived ? new Date() : null, input.defaultMachineSize, input.instructions)
     await audit(tx, reader, input.workspaceId, input.archived ? 'environment.archived' : 'environment.saved', id, { revision })
     await workspaceListChanged(tx, input.workspaceId, ['workspace_settings'])

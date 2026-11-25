@@ -13,11 +13,18 @@ export const projectBranch = z.string().trim().min(1).max(250)
     && value.split('/').every(part => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock')))
 
 const envName = z.string().regex(SECRET_NAME).refine(name => !isReservedEnvName(name))
+export const ENVIRONMENT_NETWORK_ACCESS = ['inherit', 'full', 'restricted', 'none'] as const
+export type EnvironmentNetworkAccess = (typeof ENVIRONMENT_NETWORK_ACCESS)[number]
+
 export const environmentConfiguration = z.object({
   runtime: z.enum(['any', 'local', 'cloud']).default('any'),
   /** An official task harness constraint; this is not an independently provisioned machine. */
   harness: z.enum(['any', 'claude_code', 'codex', 'cursor']).default('any'),
   setup: setupRecipeSchema.optional(),
+  /** Optional start command (e.g. dev server / preview) run inside Cloud Environments. */
+  startScript: z.string().max(2_000).optional(),
+  /** Outbound network access policy for Cloud Environments; 'inherit' follows default policy. */
+  networkAccess: z.enum(ENVIRONMENT_NETWORK_ACCESS).default('inherit'),
   variables: z.record(envName, z.string().max(32_768)).default({}),
   /** Existing encrypted workspace_secrets IDs. Values never enter this object or a Run snapshot. */
   secretIds: z.array(z.uuid()).max(100).default([]),

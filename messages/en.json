@@ -249,7 +249,7 @@
       },
       "mcp": {
         "keywords": "MCP plugins tools marketplace",
-        "title": "MCP and plugins"
+        "title": "MCP Servers"
       },
       "models": {
         "keywords": "model subscriptions quota API key provider models preferred order dispatch run location cloud local bots agents",
@@ -271,7 +271,7 @@
         "title": "Run permissions"
       },
       "issue-states": {
-        "title": "Issue states and labels",
+        "title": "Task states and labels",
         "nav": "Issue states and labels"
       },
       "shortcuts": {
@@ -289,7 +289,7 @@
         "title": "Git and pull requests"
       },
       "environments": {
-        "title": "Run environments"
+        "title": "Cloud environments"
       },
       "general": {
         "title": "Workspace general"
@@ -357,7 +357,7 @@
         "title": "Devices"
       },
       "secrets": {
-        "title": "Secrets and environment"
+        "title": "Secrets & Credentials"
       }
     },
     "mcpConnections": {
@@ -555,7 +555,13 @@
       "namePlaceholder": "e.g. MacBook Pro",
       "repoKeyPlaceholder": "owner/repo",
       "baseBranchPlaceholder": "main",
-      "verifyCommandPlaceholder": "pnpm test"
+      "verifyCommandPlaceholder": "pnpm test",
+      "worktreeSetupHeading": "Local worktree setup",
+      "copyFilesLabel": "Files copied to new worktrees",
+      "copyFilesPlaceholder": ".env.local\n.npmrc",
+      "worktreeIncludeHint": "Repo-root .worktreeinclude is auto-detected",
+      "setupCommandLabel": "Worktree setup command",
+      "setupCommandPlaceholder": "pnpm install --frozen-lockfile"
     },
     "integrations": {
       "githubAppCreate": "Create GitHub App",
@@ -1001,9 +1007,16 @@
       "notePlaceholder": "Optional note",
       "repositoryPlaceholder": "e.g. owner/repo",
       "bulkPlaceholder": "API_KEY=sk-...\nWEBHOOK_SECRET=whsec_...",
-      "backToSecrets": "Secrets and environment",
+      "backToSecrets": "Secrets & Credentials",
       "environmentsCrossLink": "Startup scripts and runtime variables",
-      "openEnvironmentsAction": "Open Run environments"
+      "openEnvironmentsAction": "Open Cloud environments",
+      "deliveryLabel": "Exposure mode",
+      "deliveryProtected": "Protected (recommended — proxy injected, unreadable by Agent)",
+      "deliveryDirect": "Direct env (legacy SDKs — readable by Agent)",
+      "deliveryBadgeProtected": "Protected",
+      "deliveryBadgeDirect": "Direct env",
+      "runtimeSecretsHeading": "Runtime secrets",
+      "savedLoginsHeading": "Browser logins"
     },
     "audit": {
       "actions": {
@@ -2086,7 +2099,7 @@
       "removeServerConfirmBody": "Threads will no longer be able to call this MCP server.",
       "emptyWorkspaceShared": "No shared plugins or MCP servers",
       "addMcpServerOption": "MCP server",
-      "mcpTitle": "MCP & plugins",
+      "mcpTitle": "MCP Servers",
       "browseMarketplaceTitle": "Browse plugin marketplace",
       "toolsCountMeta": "{count, plural, one {# tool} other {# tools}}",
       "addFromGitHub": "From GitHub repository",
@@ -2116,11 +2129,27 @@
       "mcpServersCount": "{count, plural, one {# MCP server} other {# MCP servers}}",
       "manageSkillsHint": "Workspace and personal skills",
       "openSkillsAction": "Open Skills",
-      "backToMcp": "MCP & plugins",
+      "backToMcp": "MCP Servers",
       "backToIntegrations": "Integrations",
       "addMcpSubpageTitle": "Add MCP server",
       "editMcpSubpageTitle": "Edit MCP server",
-      "editVariablesTitle": "Edit headers and variables"
+      "editVariablesTitle": "Edit headers and variables",
+      "badgeEnabledUnchecked": "Enabled · Unchecked",
+      "badgeHealthy": "Healthy",
+      "badgeHealthyMeta": "Healthy · {count} tools",
+      "badgeNeedsAuth": "Needs authorization",
+      "oauthConnectAction": "Authorize OAuth",
+      "oauthReconnectAction": "Re-authorize",
+      "environmentsScopeLabel": "Cloud environments",
+      "environmentsScopeAll": "All environments",
+      "environmentsScopeSaveFailed": "Could not update environment scope.",
+      "shareCredentialNotice": "Shared with workspace members using your configured credentials",
+      "hubTitle": "Extensions",
+      "hubIntegrationsCount": "{count} connected",
+      "hubMcpCount": "{count} MCP servers",
+      "hubSkillsCount": "{count} skills",
+      "openIntegrationsAction": "Open Integrations",
+      "openMcpAction": "Open MCP Servers"
     },
     "logins": {
       "account": "Account",
@@ -2262,7 +2291,8 @@
       "pushFull": "Full message",
       "services": "Services",
       "serverKeyPlaceholder": "Paste server key",
-      "serverUrlPlaceholder": "https://mikka.example.com"
+      "serverUrlPlaceholder": "https://mikka.example.com",
+      "byoE2bHeading": "Bring your own E2B key"
     },
     "telegram": {
       "newLink": "Generate new link",
@@ -2359,7 +2389,7 @@
     "environments": {
       "machineSize": "Default machine size",
       "version": "Version {revision}",
-      "title": "Run environments",
+      "title": "Cloud environments",
       "setupImpact": "This changes setup for {count, plural, one {# project} other {# projects}} using this environment. Review and approve the restored setup before it can run.",
       "edit": "Edit environment",
       "copyFiles": "Files to copy into the worktree, one per line",
@@ -2397,9 +2427,29 @@
       "variablesPlaceholder": "NODE_ENV=development",
       "setupPlaceholder": "pnpm install --frozen-lockfile",
       "copyFilesPlaceholder": ".env.local\n.npmrc",
-      "backToEnvironments": "Run environments",
+      "backToEnvironments": "Cloud environments",
       "secretsCrossLink": "Encrypted credentials",
-      "openSecretsAction": "Open Secrets"
+      "openSecretsAction": "Open Secrets",
+      "repositories": "Repositories",
+      "repositoriesEmpty": "All workspace repositories",
+      "repositoriesPlaceholder": "Select repositories",
+      "installScript": "Install / setup script",
+      "startScript": "Start script (optional)",
+      "startScriptPlaceholder": "pnpm dev",
+      "secrets": "Encrypted secrets",
+      "secretsEmpty": "No encrypted secrets configured",
+      "secretsPlaceholder": "Select secrets",
+      "variablesLabel": "Environment variables (non-sensitive)",
+      "networkAccess": "Network access",
+      "networkOptions": {
+        "inherit": "Default",
+        "full": "Full access",
+        "restricted": "Restricted",
+        "none": "No network"
+      },
+      "advancedSettings": "Advanced settings",
+      "machineSizeStandardDefault": "Mikka standard (2 vCPU · 8 GiB · $0.20/hr)",
+      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/hr"
     },
     "workspaceUnavailable": "Couldn't load the workspace. Refresh and try again.",
     "teamSkills": {
@@ -2467,7 +2517,10 @@
       "appColumn": "App",
       "blocked": "Blocked",
       "allowed": "Allowed",
-      "block": "Block {name}"
+      "block": "Block {name}",
+      "decisionDeny": "Deny",
+      "decisionAsk": "Ask",
+      "decisionAllow": "Allow"
     },
     "security": {
       "saving": "Saving…",
@@ -2480,7 +2533,7 @@
       "signOut": "Sign out",
       "currentDevice": "This device",
       "signInMethods": "Sign-in methods",
-      "devices": "Signed-in devices",
+      "devices": "Active sign-ins",
       "revokeOthers": "Also sign out other devices",
       "lastActive": "Last active {when}",
       "devicesLoading": "Reading signed-in devices…",
@@ -2657,9 +2710,9 @@
       "yourTeams": "Your teams",
       "administration": "Administration",
       "review": "Review",
-      "agent": "Agent",
+      "agent": "Agent & Compute",
       "workspace": "Workspace",
-      "personal": "Personal settings"
+      "personal": "Personal"
     },
     "loadingPage": "Loading settings",
     "creditShare": {
@@ -7506,15 +7559,15 @@
     "plan": {
       "approvalTemplates": "Approval templates (up to {count})",
       "approvalTemplatesName": "Approval templates",
-      "memberNote": "Workspace admins manage seats and the plan. Ask an admin if you need more seats.",
+      "memberNote": "Workspace admins manage plan upgrades and billing.",
       "retry": "Retry",
       "features": "Team features",
-      "upgradeBody": "Team Pro adds seats, the team usage report with CSV export, and approval templates. It is set up by hand for now, with no online payment: contact Mikka with the workspace ID below.",
+      "upgradeBody": "Team Pro adds higher concurrency, team usage exports, and approval templates in Settings › Billing.",
       "workspaceId": "Workspace ID",
-      "seatsNote": "Only active people count. Pending invitations, suspended members, bots, agents and devices don't take a seat.",
-      "seatsUnlimited": "{count} active members, no limit",
+      "seatsNote": "Shared workspaces include unlimited members. Plans govern Credits and resource capacity, not seats.",
+      "seatsUnlimited": "{count} active members · Unlimited",
       "copy": "Copy",
-      "upgradeTitle": "Need more seats or team features",
+      "upgradeTitle": "Upgrade workspace plan",
       "overLimit": "Active members are over this plan's limit of {limit}. Everyone stays; until the count is back within the limit, invitations can't be accepted and members can't be restored.",
       "edition": {
         "community": "Community",
@@ -7530,7 +7583,7 @@
       "concurrency": "Hosted model calls at once: {count}",
       "included": "Included",
       "seats": "{count} of {limit} active members",
-      "title": "Plan and seats"
+      "title": "Plan and capacity"
     },
     "templates": {
       "approvalMode": "Approval mode",
@@ -10660,7 +10713,9 @@
       "apiKeyPlaceholder": "sk-...",
       "baseUrlPlaceholder": "https://api.example.com/v1",
       "apiCrossLink": "Mikka API tokens",
-      "openApiAction": "Open API"
+      "openApiAction": "Open API",
+      "routingOrderLabel": "Routing & billing order",
+      "routingOrderValue": "Official CLI subscription → Your API keys (BYOK) → Mikka Credits"
     },
     "memory": {
       "learned": "Learnt from your connected apps",

@@ -56,3 +56,30 @@ export const machineChunkMicroUsd = (size: MachineSize) => Math.ceil(machineHour
 /** USD per hour, e.g. 0.2 for standard-3. */
 export const machineHourlyUsd = (size: MachineSize) => machineHourlyMicroUsd(size) / 1_000_000
 export const isMachineSize = (value: unknown): value is MachineSize => typeof value === 'string' && Object.hasOwn(MACHINE_SIZES, value)
+
+export interface MachineSizeOption {
+  readonly id: MachineSize
+  readonly vcpu: number
+  readonly ramGib: number
+  readonly hourlyUsd: number
+  readonly isDefault: boolean
+}
+
+/**
+ * Provisionable cloud machine tiers safe for customer-facing selectors.
+ * Strictly excludes `QUOTA_GATED_SIZES` so the UI never offers tiers that
+ * would silently downgrade under the provider's default account ceiling.
+ */
+export const SELECTABLE_MACHINE_SIZES: readonly MachineSize[] = (
+  Object.keys(MACHINE_SIZES) as MachineSize[]
+).filter(size => !QUOTA_GATED_SIZES.has(size))
+
+/** Structured metadata (vCPU, GiB, USD/hr) for optional collapsed Advanced compute pickers. */
+export const selectableMachineSizeOptions = (): readonly MachineSizeOption[] =>
+  SELECTABLE_MACHINE_SIZES.map(id => ({
+    id,
+    vcpu: MACHINE_SIZES[id].vcpu,
+    ramGib: MACHINE_SIZES[id].gib,
+    hourlyUsd: machineHourlyUsd(id),
+    isDefault: id === DEFAULT_MACHINE_SIZE,
+  }))

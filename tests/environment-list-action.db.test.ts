@@ -26,7 +26,17 @@ test('listEnvironments reads only the reader\'s own workspace, for its members',
   ]
   t.after(() => { for (const replacement of mocks.reverse()) replacement.restore() })
   const store = await import('../lib/project-resources/store')
-  const mine = await store.saveEnvironment(owner, { workspaceId: workspace.id, name: 'mikka-dev', configuration: { runtime: 'cloud', setup: { copyFiles: [], command: 'pnpm install', approved: true } } })
+  const mine = await store.saveEnvironment(owner, {
+    workspaceId: workspace.id,
+    name: 'mikka-dev',
+    configuration: {
+      runtime: 'cloud',
+      repositoryKeys: ['v2/github.com/acme/mikka'],
+      startScript: 'pnpm dev',
+      networkAccess: 'restricted',
+      setup: { copyFiles: [], command: 'pnpm install', approved: true },
+    },
+  })
   const theirs = await store.saveEnvironment(peer, { workspaceId: foreign.id, name: 'other-team', configuration: {} })
   const { listEnvironments } = await import('../app/actions/environments')
   const as = (id: string) => { current = { id, name: id, email: `${id}@example.invalid` } }
@@ -35,6 +45,10 @@ test('listEnvironments reads only the reader\'s own workspace, for its members',
   const read = await listEnvironments(workspace.id)
   assert.deepEqual(read.environments.map(environment => environment.id), [mine.id], 'a member reads the workspace\'s Environments')
   assert.equal(read.environments[0]?.configuration.setup?.command, 'pnpm install')
+  assert.equal(read.environments[0]?.configuration.startScript, 'pnpm dev')
+  assert.equal(read.environments[0]?.configuration.networkAccess, 'restricted')
+  assert.deepEqual(read.availableRepositories, [{ key: 'v2/github.com/acme/mikka', label: 'acme/mikka' }])
+  assert.deepEqual(read.availableSecrets, [])
   assert.equal(read.canManage, false)
   assert.ok(!JSON.stringify(read).includes(theirs.id), 'never another workspace\'s Environment')
 
