@@ -24,7 +24,7 @@ export const gatedFeatures = {
   cloudComputer: 'mikka-cloud-computer',
   /** Points that bill cloud computer time (计费 › 点数). Hidden while E2B runs on the workspace's own API key (Alex, 2026-10-30). */
   computerBilling: 'mikka-computer-billing',
-  /** 记忆 (sidebar entry, its page and its settings section). Hidden: it does not work yet (Alex, 2026-11-20). */
+  /** 记忆 (sidebar entry, its page and its settings section). Hidden; see the hosted repo. */
   memory: 'mikka-memory',
 } as const
 
