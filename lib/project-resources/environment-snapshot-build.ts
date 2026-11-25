@@ -3,17 +3,18 @@ import { Sandbox } from 'e2b'
 import type { PoolClient } from 'pg'
 import { workspacePool } from '@/lib/workspace-db'
 import { withDirectSession } from '@/lib/db/direct-session'
-import { e2bApiKey } from '@/lib/secrets/e2b-runtime'
+import { environmentSnapshotApiKey, environmentSnapshotScope } from '@/lib/secrets/e2b-runtime'
 import { bootstrapOfficialInstance, isOfficialE2BTemplate } from '@/lib/computer/official-runtime'
 import { quoteShell } from '@/lib/computer/registration-command'
-import { threadLifecycleProvider } from '@/lib/cloud-computer/thread-lifecycle-provider'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import { githubRepositoryReadCredential } from '@/lib/github/user-access'
 import { gatedFeatures } from '@/lib/feature-flags'
 import { snapshotConfiguration } from './environment-snapshots'
 import { repositorySeed, type SnapshotSeed, type SnapshotState } from './environment-snapshot-contract'
 
-type Build = SnapshotSeed & {
+type Build = Omit<SnapshotSeed, 'userId'> & {
+  providerScope: string
+  requestedBy: string | null
   id: string
   state: SnapshotState
   providerId: string | null
@@ -21,11 +22,14 @@ type Build = SnapshotSeed & {
   sandboxId: string | null
   expiresAt: Date
 }
-const options = async (owner: string) => ({
-  apiKey: await e2bApiKey(owner, 'Cloud runtime unavailable'),
-  proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
-  requestTimeoutMs: 20_000,
-})
+function options(scope: string) {
+  if (scope !== environmentSnapshotScope()) throw new Error('Environment snapshot provider scope unavailable')
+  return {
+    apiKey: environmentSnapshotApiKey(),
+    proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
+    requestTimeoutMs: 20_000,
+  }
+}
 
 // Serialize provider effects across workflow retries and repeated UI clicks.
 // The direct session owns this lock until disconnect, including process loss.
@@ -38,10 +42,10 @@ async function withBuild<T>(id: string, work: (client: PoolClient, row: Build | 
 }
 
 const cleanupProvider = {
-  async findSandbox(owner: string, id: string) {
+  async findSandbox(scope: string, id: string) {
     const metadata = { application: 'mikka-environment-build', buildId: id }
     const pages = Sandbox.list({
-      ...(await options(owner)),
+      ...options(scope),
       query: { metadata, state: ['running', 'paused'] },
       limit: 2,
     })
@@ -54,35 +58,65 @@ const cleanupProvider = {
       throw new Error('Environment build identity unavailable')
     return rows[0]?.sandboxId ?? null
   },
-  listSnapshots: threadLifecycleProvider.listSnapshots,
-  deleteSnapshot: threadLifecycleProvider.deleteSnapshot,
-  async kill(sandboxId: string, owner: string) {
-    await Sandbox.kill(sandboxId, await options(owner))
+  async listSnapshots(sandboxId: string, scope: string, name: string) {
+    const connection = options(scope)
+    const pages = Sandbox.listSnapshots({ ...connection, sandboxId, name })
+    const images: { snapshotId: string }[] = []
+    while (pages.hasNext) images.push(...(await pages.nextItems(connection)))
+    return images
+  },
+  async deleteSnapshot(id: string, scope: string) {
+    return Sandbox.deleteSnapshot(id, options(scope))
+  },
+  async kill(sandboxId: string, scope: string) {
+    await Sandbox.kill(sandboxId, options(scope))
   },
 }
 
 async function retireImage(row: Build, provider = cleanupProvider) {
   // After a lost create ACK, only the exact owner-scoped build can be killed.
   const sandboxId =
-    row.sandboxId ??
-    (row.allocationAttempted ? await provider.findSandbox(row.userId, row.id) : null)
+    row.sandboxId ?? (row.allocationAttempted ? await provider.findSandbox(row.providerScope, row.id) : null)
   const images = row.providerId
     ? [row.providerId]
     : sandboxId
-      ? (await provider.listSnapshots(sandboxId, row.userId, 'mikka-env-' + row.id)).map((item) => item.snapshotId)
+      ? (await provider.listSnapshots(sandboxId, row.providerScope, 'mikka-env-' + row.id)).map(
+          (item) => item.snapshotId,
+        )
       : []
-  for (const image of images) await provider.deleteSnapshot(image, row.userId)
-  if (sandboxId) await provider.kill(sandboxId, row.userId)
+  for (const image of images) await provider.deleteSnapshot(image, row.providerScope)
+  if (sandboxId) await provider.kill(sandboxId, row.providerScope)
 }
 
-export async function cleanupOwnerEnvironmentSnapshots(owner: string, provider = cleanupProvider) {
+export async function cleanupOwnerEnvironmentSnapshots(
+  owner: string,
+  soloWorkspaces: readonly string[],
+  provider = cleanupProvider,
+) {
   const { rows } = await workspacePool.query<{ id: string }>(
-    'SELECT id FROM environment_snapshots WHERE "userId"=$1 ORDER BY id',
-    [owner],
+    `SELECT s.id FROM environment_snapshots s LEFT JOIN workspace_environments e
+       ON e.id=s."environmentId" AND e."workspaceId"=s."workspaceId"
+     WHERE s."requestedBy"=$1 OR s."workspaceId"=ANY($2::uuid[]) OR (e.scope='personal' AND e."ownerId"=$1)
+     ORDER BY s.id`,
+    [owner, soloWorkspaces],
   )
   for (const { id } of rows) {
     await withBuild(id, async (client, row) => {
-      if (!row || row.userId !== owner) return
+      if (!row) return
+      const {
+        rows: [environment],
+      } = await client.query<{ scope: string; ownerId: string | null }>(
+        'SELECT scope,"ownerId" FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2',
+        [row.environmentId, row.workspaceId],
+      )
+      const removingEnvironment =
+        soloWorkspaces.includes(row.workspaceId) || (environment?.scope === 'personal' && environment.ownerId === owner)
+      if (!removingEnvironment && row.requestedBy !== owner) return
+      // A shared image belongs to the installation, even if its builder leaves.
+      if (!removingEnvironment && environment && row.state === 'ready') {
+        await client.query('UPDATE environment_snapshots SET "requestedBy"=NULL WHERE id=$1', [id])
+        return
+      }
       await retireImage(row, provider)
       await client.query('DELETE FROM environment_snapshots WHERE id=$1', [id])
     })
@@ -92,9 +126,9 @@ export async function cleanupOwnerEnvironmentSnapshots(owner: string, provider =
 async function finishSuperseded(row: Build) {
   const { rows } = await workspacePool.query<Build>(
     `SELECT * FROM environment_snapshots WHERE
-    "workspaceId"=$1 AND "environmentId"=$2 AND "userId"=$3 AND "templateKind"=$4
+    "workspaceId"=$1 AND "environmentId"=$2 AND "providerScope"=$3 AND "templateKind"=$4
     AND state='outdated' AND "providerId" IS NOT NULL`,
-    [row.workspaceId, row.environmentId, row.userId, row.templateKind],
+    [row.workspaceId, row.environmentId, row.providerScope, row.templateKind],
   )
   for (const old of rows) await expireEnvironmentSnapshot(old.id)
 }
@@ -109,11 +143,13 @@ export async function expireEnvironmentSnapshot(id: string) {
 
 async function allowed(row: Build) {
   if (
-    !(await serverFlagEnabled(gatedFeatures.environmentSnapshots, row.userId)) ||
+    !row.requestedBy ||
+    row.providerScope !== environmentSnapshotScope() ||
+    !(await serverFlagEnabled(gatedFeatures.environmentSnapshots, row.requestedBy)) ||
     row.workerSha !== process.env.MIKKA_CLOUD_WORKER_SHA
   )
     return null
-  const { environment, eligible } = await snapshotConfiguration(row.userId, row)
+  const { environment, eligible } = await snapshotConfiguration(row.requestedBy, row)
   return eligible && environment.revision === row.revision ? environment : null
 }
 
@@ -121,13 +157,13 @@ export async function buildEnvironmentSnapshot(id: string) {
   const result = await withBuild(id, async (client, row) => {
     if (!row) return null
     if (row.state !== 'building') {
-      if (row.sandboxId) await Sandbox.kill(row.sandboxId, await options(row.userId))
+      if (row.sandboxId) await Sandbox.kill(row.sandboxId, options(row.providerScope))
       return row
     }
     // Different revisions or worker releases can build concurrently. Serialize
     // publication per owner and harness so an older workflow cannot retain two
     // ready images, or retire a later build that finished first.
-    const publicationKey = JSON.stringify([row.workspaceId, row.environmentId, row.userId, row.templateKind])
+    const publicationKey = JSON.stringify([row.workspaceId, row.environmentId, row.providerScope, row.templateKind])
     const name = 'mikka-env-' + id
     // Bounded progress diagnostics contain phase names and exit codes only.
     // Provider stderr can echo credentials or arbitrary setup environment values.
@@ -139,20 +175,23 @@ export async function buildEnvironmentSnapshot(id: string) {
     let sandboxId = row.sandboxId
     try {
       const environment = await allowed(row)
-      if (!environment || row.expiresAt <= new Date()) {
+      if (!row.requestedBy || !environment || row.expiresAt <= new Date()) {
         await client.query("UPDATE environment_snapshots SET state='outdated' WHERE id=$1", [id])
         return row
       }
       stage('create')
-      const connection = await options(row.userId)
+      const connection = options(row.providerScope)
       // A lost snapshot response is recovered by its unique build name; never
       // snapshot a second, unrelated VM for the same receipt.
-      const recovered = sandboxId ? await threadLifecycleProvider.listSnapshots(sandboxId, row.userId, name) : []
+      const recovered = sandboxId ? await cleanupProvider.listSnapshots(sandboxId, row.providerScope, name) : []
       if (recovered.length > 1) throw new Error('Ambiguous snapshot receipt')
       providerId = recovered[0]?.snapshotId
       if (!providerId) {
         stage('allocate')
-        await client.query('UPDATE environment_snapshots SET "allocationAttempted"=true,"logTail"=$2 WHERE id=$1', [id, progress.join('\n')])
+        await client.query('UPDATE environment_snapshots SET "allocationAttempted"=true,"logTail"=$2 WHERE id=$1', [
+          id,
+          progress.join('\n'),
+        ])
         const machine = await Sandbox.create(row.templateId, {
           ...connection,
           idempotencyKey: id,
@@ -168,11 +207,11 @@ export async function buildEnvironmentSnapshot(id: string) {
         if (sha.trim() !== row.workerSha) throw new Error('Worker release unavailable')
         stage('clone')
         const startRows = environment.repositories.filter((repo) => repo.clone === 'start')
-        const directories: string[] = []
+        const directories: { key: string; cache: string; prepared: string }[] = []
         const repositoryIds: Record<string, string> = {}
         for (const repo of startRows) {
           const { remote, directory } = repositorySeed(repo.key)
-          const { token, repository } = await githubRepositoryReadCredential(row.userId, repo.key)
+          const { token, repository } = await githubRepositoryReadCredential(row.requestedBy, repo.key)
           repositoryIds[repo.key] = repository.id
           const headers = {
             GIT_CONFIG_COUNT: '1',
@@ -193,7 +232,7 @@ export async function buildEnvironmentSnapshot(id: string) {
             `git -C ${quoteShell(directory)} worktree add --detach -- ${quoteShell(prepared)} HEAD`,
             { user: 'user', timeoutMs: 90_000 },
           )
-          directories.push(prepared)
+          directories.push({ key: repo.key, cache: directory, prepared })
         }
         await client.query('UPDATE environment_snapshots SET "repositoryIds"=$2::jsonb WHERE id=$1', [
           id,
@@ -204,13 +243,35 @@ export async function buildEnvironmentSnapshot(id: string) {
         if (setup?.approved && setup.command) {
           // Run once in each repository just as a new task would; environment
           // variables are scoped to this command, never stored in E2B metadata.
-          for (const cwd of directories.length ? directories : ['/home/user']) {
+          for (const primary of directories) {
+            const others = directories.filter((repo) => repo.key !== primary.key)
+            const staging = '.mikka-repositories-' + row.environmentId
+            const context = { user: 'user', cwd: primary.prepared, timeoutMs: 90_000 }
+            if (others.length) {
+              await machine.commands.run('mkdir -- ' + quoteShell(staging), context)
+              for (const other of others) {
+                const [organization, repository] = other.key.slice('v2/github.com/'.length).split('/')
+                const parent = staging + '/' + organization
+                await machine.commands.run(
+                  'mkdir -p -- ' +
+                    quoteShell(parent) +
+                    ' && git -c core.hooksPath=/dev/null clone --local --no-hardlinks --no-recurse-submodules -- ' +
+                    quoteShell(other.cache) +
+                    ' ' +
+                    quoteShell(parent + '/' + repository),
+                  context,
+                )
+              }
+            }
             await machine.commands.run(setup.command, {
-              user: 'user',
-              cwd,
-              envs: environment.configuration.variables,
+              ...context,
+              envs: {
+                ...environment.configuration.variables,
+                ...(others.length ? { ENVIRONMENT_REPOSITORIES: staging } : {}),
+              },
               timeoutMs: 180_000,
             })
+            if (others.length) await machine.commands.run('rm -rf -- ' + quoteShell(staging), context)
           }
         }
         stage('snapshot')
@@ -235,9 +296,9 @@ export async function buildEnvironmentSnapshot(id: string) {
         await client.query(
           `WITH candidates AS (
           SELECT id,row_number() OVER (ORDER BY revision DESC,"createdAt" DESC,id DESC) AS position
-          FROM environment_snapshots WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "userId"=$3 AND "templateKind"=$4 AND state='ready'
+          FROM environment_snapshots WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "providerScope"=$3 AND "templateKind"=$4 AND state='ready'
         ) UPDATE environment_snapshots SET state='outdated' WHERE id IN (SELECT id FROM candidates WHERE position>1)`,
-          [row.workspaceId, row.environmentId, row.userId, row.templateKind],
+          [row.workspaceId, row.environmentId, row.providerScope, row.templateKind],
         )
         await client.query('COMMIT')
       } catch (error) {
@@ -255,7 +316,7 @@ export async function buildEnvironmentSnapshot(id: string) {
         providerId ?? null,
       ])
     } finally {
-      if (sandboxId) await Sandbox.kill(sandboxId, await options(row.userId))
+      if (sandboxId) await Sandbox.kill(sandboxId, options(row.providerScope))
     }
     return row
   })

@@ -7,7 +7,7 @@ import { workspacePool } from '@/lib/workspace-db'
 import { gatedFeatures } from '@/lib/feature-flags'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import { cloudTemplateOrigin } from '@/lib/cloud-template-models'
-import { taskTemplate } from '@/lib/secrets/e2b-runtime'
+import { taskTemplate, environmentSnapshotScope } from '@/lib/secrets/e2b-runtime'
 import { pool as appPool } from '@/lib/db'
 import { cliPolicyLayerSchema, mergeCliPolicyValues } from '@/lib/agent-tool-approval/policy-store'
 import { resolveTrustedRunPolicy } from '@/lib/agent-tool-approval/policy-snapshot'
@@ -89,12 +89,12 @@ export async function readEnvironmentSnapshot(
     `SELECT id,revision,"templateKind",
     CASE WHEN revision<>$5 OR "expiresAt"<=now() OR "templateId"<>$6 OR "workerSha" IS DISTINCT FROM $7 OR NOT $8 THEN 'outdated' ELSE state END AS state,
     "logTail","expiresAt","repositoryIds" FROM environment_snapshots
-    WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "userId"=$3 AND "templateKind"=$4
+    WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "providerScope"=$3 AND "templateKind"=$4
     ORDER BY "createdAt" DESC LIMIT 1`,
     [
       input.workspaceId,
       input.environmentId,
-      userOf(reader),
+      environmentSnapshotScope(),
       input.templateKind,
       environment.revision,
       templateId,
@@ -128,9 +128,9 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
   const id = randomUUID()
   const claim = await workspacePool.query<{ id: string }>(
     `INSERT INTO environment_snapshots
-    (id,"workspaceId","environmentId",revision,"userId","templateKind","templateId","workerSha",state)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'building')
-    ON CONFLICT ("workspaceId","environmentId",revision,"userId","templateKind","templateId","workerSha") WHERE state='building'
+    (id,"workspaceId","environmentId",revision,"requestedBy","templateKind","templateId","workerSha","providerScope",state)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'building')
+    ON CONFLICT ("workspaceId","environmentId",revision,"providerScope","templateKind","templateId","workerSha") WHERE state='building'
     DO UPDATE SET revision=excluded.revision RETURNING id`,
     [
       id,
@@ -141,6 +141,7 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
       input.templateKind,
       templateId,
       workerSha,
+      environmentSnapshotScope(),
     ],
   )
   // Re-enqueue on repeats: a process can stop after the insert, before the workflow starts.
@@ -183,13 +184,13 @@ export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templa
   }>(
     `SELECT id,"providerId","repositoryIds"
     FROM environment_snapshots WHERE "workspaceId"=$1 AND "environmentId"=$2 AND revision=$3
-    AND "userId"=$4 AND "templateId"=$5 AND "workerSha"=$6 AND state='ready'
+    AND "providerScope"=$4 AND "templateId"=$5 AND "workerSha"=$6 AND state='ready'
     AND "providerId" IS NOT NULL AND "expiresAt">now() ORDER BY "createdAt" DESC LIMIT 1`,
     [
       input.workspaceId,
       input.environmentId,
       input.revision,
-      input.userId,
+      environmentSnapshotScope(),
       input.templateId,
       process.env.MIKKA_CLOUD_WORKER_SHA,
     ],

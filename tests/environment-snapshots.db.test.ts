@@ -22,7 +22,7 @@ test('prebuilt GitHub checkouts use the daemon cache identity and credential-bea
 })
 
 test(
-  'environment snapshot selection requires the same owner, revision, template and worker, retains last good after failure, and rechecks permissions',
+  'environment snapshot selection requires the same installation, revision, template and worker, retains last good after failure, and rechecks permissions',
   { skip: !dbUrl },
   async (t) => {
     const fixture = new Pool({ connectionString: dbUrl })
@@ -31,18 +31,25 @@ test(
       flags: process.env.MIKKA_FLAG_OVERRIDES,
       env: process.env.NODE_ENV,
       sha: process.env.MIKKA_CLOUD_WORKER_SHA,
+      team: process.env.E2B_TEAM_ID,
+      key: process.env.E2B_API_KEY,
     }
     process.env.NODE_ENV = 'test'
+    process.env.E2B_TEAM_ID = 'snapshot-fixture-team'
+    process.env.E2B_API_KEY = 'fixture-no-provider-requests'
     process.env.MIKKA_CLOUD_WORKER_SHA = 'a'.repeat(40)
     t.after(() => {
       for (const [key, value] of Object.entries({
         NODE_ENV: old.env,
+        E2B_TEAM_ID: old.team,
+        E2B_API_KEY: old.key,
         MIKKA_FLAG_OVERRIDES: old.flags,
         MIKKA_CLOUD_WORKER_SHA: old.sha,
       }))
         if (value === undefined) delete process.env[key]
         else process.env[key] = value
     })
+    const { environmentSnapshotScope } = await import('../lib/secrets/e2b-runtime')
     const { saveEnvironment } = await import('../lib/project-resources/store')
     const { buildEnvironmentSnapshot, expireEnvironmentSnapshot } =
       await import('../lib/project-resources/environment-snapshot-build')
@@ -74,9 +81,18 @@ test(
     const insert = async (state: string, provider: string | null) => {
       const id = randomUUID()
       await fixture.query(
-        `INSERT INTO environment_snapshots(id,"workspaceId","environmentId",revision,"userId","templateKind","templateId","workerSha",state,"providerId")
-      VALUES($1,$2,$3,1,$4,'codex','codex',$5,$6,$7)`,
-        [id, ws.id, environmentId, owner, process.env.MIKKA_CLOUD_WORKER_SHA, state, provider],
+        `INSERT INTO environment_snapshots(id,"workspaceId","environmentId",revision,"requestedBy","templateKind","templateId","workerSha",state,"providerId","providerScope")
+      VALUES($1,$2,$3,1,$4,'codex','codex',$5,$6,$7,$8)`,
+        [
+          id,
+          ws.id,
+          environmentId,
+          owner,
+          process.env.MIKKA_CLOUD_WORKER_SHA,
+          state,
+          provider,
+          environmentSnapshotScope(),
+        ],
       )
       return id
     }
@@ -96,7 +112,11 @@ test(
     await fixture.query('UPDATE environment_snapshots SET "repositoryIds"=$2 WHERE id=$1', [id, {}])
     const { withTaskWorkspace } = await import('../lib/task-workspace')
     assert.deepEqual(await withTaskWorkspace(owner, ws.id, () => readyEnvironmentSnapshot(input)), ready)
-    for (const changed of [{ userId: peer }, { revision: 2 }, { templateId: 'claude' }])
+    assert.deepEqual(await readyEnvironmentSnapshot({ ...input, userId: peer }), ready)
+    process.env.E2B_TEAM_ID = 'different-snapshot-install'
+    assert.equal(await readyEnvironmentSnapshot(input), null)
+    process.env.E2B_TEAM_ID = 'snapshot-fixture-team'
+    for (const changed of [{ revision: 2 }, { templateId: 'claude' }])
       assert.equal(await readyEnvironmentSnapshot({ ...input, ...changed }), null)
     process.env.MIKKA_CLOUD_WORKER_SHA = 'b'.repeat(40)
     assert.equal(await readyEnvironmentSnapshot(input), null)
@@ -110,11 +130,21 @@ test(
     // No E2B key is configured for this fixture. The real builder records its failure
     // without contacting the provider or replacing the last successful image.
     const attempt = await insert('building', null)
+    delete process.env.E2B_API_KEY
     await buildEnvironmentSnapshot(attempt)
+    process.env.E2B_API_KEY = 'fixture-no-provider-requests'
     const failed = (await readEnvironmentSnapshot(owner, readInput)).snapshot
     assert.equal(failed?.state, 'failed')
     assert.equal(failed?.logTail, 'configuration\ncreate')
     assert.deepEqual(await readyEnvironmentSnapshot(input), ready)
+    const { cleanupOwnerEnvironmentSnapshots } = await import('../lib/project-resources/environment-snapshot-build')
+    // Removing the builder from a surviving workspace preserves its shared image.
+    await cleanupOwnerEnvironmentSnapshots(owner, [])
+    assert.deepEqual(await readyEnvironmentSnapshot({ ...input, userId: peer }), ready)
+    assert.equal(
+      (await fixture.query('SELECT "requestedBy" FROM environment_snapshots WHERE id=$1', [id])).rows[0].requestedBy,
+      null,
+    )
     await fixture.query('UPDATE environment_snapshots SET "expiresAt"=now() WHERE id IN ($1,$2)', [id, attempt])
     assert.equal(await readyEnvironmentSnapshot(input), null)
     await expireEnvironmentSnapshot(attempt)
@@ -123,7 +153,7 @@ test(
 )
 
 test(
-  'account deletion keeps receipts on provider failure, drains only owner images, and fences new builds',
+  'account deletion keeps receipts on provider failure, drains only removed environments, and fences new builds',
   { skip: !dbUrl },
   async (t) => {
     const db = new Pool({ connectionString: dbUrl })
@@ -135,8 +165,8 @@ test(
     const insert = (user: string) =>
       db.query(
         `INSERT INTO environment_snapshots
-    (id,"workspaceId","environmentId",revision,"userId","templateKind","templateId","workerSha",state,"allocationAttempted")
-    VALUES($1,$2,$3,1,$4,'codex','codex','test','failed',true)`,
+    (id,"workspaceId","environmentId",revision,"requestedBy","templateKind","templateId","workerSha",state,"allocationAttempted","providerScope")
+    VALUES($1,$2,$3,1,$4,'codex','codex','test','failed',true,'install-fixture')`,
         [randomUUID(), randomUUID(), randomUUID(), user],
       )
     await insert(owner)
@@ -146,26 +176,26 @@ test(
     const killed: string[] = []
     const provider = {
       async findSandbox(user: string) {
-        assert.equal(user, owner)
+        assert.equal(user, 'install-fixture')
         return source
       },
       async listSnapshots(id: string, user: string) {
-        assert.equal(user, owner)
+        assert.equal(user, 'install-fixture')
         assert.equal(id, source)
         return [{ snapshotId: 'image', names: [] }]
       },
       async deleteSnapshot(id: string, user: string) {
         assert.equal(id, 'image')
-        assert.equal(user, owner)
+        assert.equal(user, 'install-fixture')
         return true
       },
       async kill(id: string, user: string) {
-        assert.equal(user, owner)
+        assert.equal(user, 'install-fixture')
         killed.push(id)
       },
     }
     await assert.rejects(
-      cleanupOwnerEnvironmentSnapshots(owner, {
+      cleanupOwnerEnvironmentSnapshots(owner, [], {
         ...provider,
         async deleteSnapshot() {
           throw Error('retry')
@@ -174,9 +204,9 @@ test(
       /retry/,
     )
     const count = async (user: string) =>
-      (await db.query('SELECT id FROM environment_snapshots WHERE "userId"=$1', [user])).rowCount
+      (await db.query('SELECT id FROM environment_snapshots WHERE "requestedBy"=$1', [user])).rowCount
     assert.equal(await count(owner), 1)
-    await cleanupOwnerEnvironmentSnapshots(owner, provider)
+    await cleanupOwnerEnvironmentSnapshots(owner, [], provider)
     assert.equal(await count(owner), 0)
     assert.equal(await count(peer), 1)
     assert.deepEqual(killed, [source])
