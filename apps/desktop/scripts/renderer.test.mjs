@@ -383,8 +383,13 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
           ))
           await waitWithTimeout(flushed, label)
         }
-        await renderAndFlushEffects('DESKTOP_TABS_MOUNT_EFFECT_TIMEOUT')
-        await renderAndFlushEffects('DESKTOP_TABS_RESTORE_EFFECT_TIMEOUT')
+        try {
+          await renderAndFlushEffects('DESKTOP_TABS_MOUNT_EFFECT_TIMEOUT')
+          await renderAndFlushEffects('DESKTOP_TABS_RESTORE_EFFECT_TIMEOUT')
+        } catch (error) {
+          root.unmount()
+          throw error
+        }
         return { root, renderAndFlushEffects, unmounted }
       }
       export async function unmount(handle) {
