@@ -216,6 +216,10 @@ export function createAuthEmail(options: {
             const user = proof && proof.expiresAt > new Date() ? await original.findUserById(proof.value) : null
             if (!user || user.email.toLowerCase() !== address || requested.toLowerCase() !== address)
               throw new APIError('BAD_REQUEST', { code: 'INVALID_OTP', message: 'Invalid or expired code' })
+            // A first-factor sign-in must not promote an unverified account and
+            // discard its existing credentials. The code has already been spent.
+            if (purpose === 'sign-in' && !user.emailVerified)
+              throw new APIError('FORBIDDEN', { code: 'EMAIL_NOT_VERIFIED', message: 'Verify your email address or reset your password before signing in with a code' })
             return { user, accounts: [] }
           },
         } } } }

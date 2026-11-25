@@ -6,7 +6,7 @@ import { disabledEmailOtpPaths, mikkaTwoFactor, publicOtpError } from './auth-em
 import { createAuthMiddleware } from 'better-auth/api'
 import { getMigrations } from 'better-auth/db/migration'
 import { Pool } from 'pg'
-import { signJWT } from 'better-auth/crypto'
+import { signJWT, symmetricEncrypt } from 'better-auth/crypto'
 import { createAuthEmail, AUTH_EMAIL_FROM, type AuthMailContext } from './auth-email'
 import { createHash } from 'node:crypto'
 import { githubVerifiedProfile } from './auth-github-profile'
@@ -510,6 +510,11 @@ test('code sign-in creates a session once and enrolled users receive the native 
     const f = fixture()
     const { user: { email, id } } = await user(f)
     await pool.query('update "user" set "emailVerified"=true, "twoFactorEnabled"=$2 where id=$1', [id, enrolled])
+    const factorSecret = 'synthetic-enrolled-factor-secret'
+    if (enrolled) {
+      const encrypted = await symmetricEncrypt({ key: (await f.auth.$context).secretConfig, data: factorSecret })
+      await pool.query('insert into "twoFactor" (id,"userId",secret,"backupCodes",verified) values ($1,$2,$3,$4,true)', [crypto.randomUUID(), id, encrypted, '[]'])
+    }
     assert.equal((await f.post('/email-otp/send-verification-otp', { email, type: 'sign-in' })).status, 202)
     const body = { email, otp: deliveredCode(f) }
     const response = await f.post('/sign-in/email-otp', body)
@@ -518,12 +523,40 @@ test('code sign-in creates a session once and enrolled users receive the native 
     if (enrolled) {
       assert.equal(data.twoFactorRedirect, true)
       assert.equal(data.token, undefined)
+      const cookies = response.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ')
+      assert.equal(await f.auth.api.getSession({ headers: new Headers({ cookie: cookies }) }), null)
+      const { code } = await f.auth.api.generateTOTP({ body: { secret: factorSecret } })
+      const verified = await f.auth.handler(new Request(root + '/two-factor/verify-totp', {
+        method: 'POST', headers: { origin, 'content-type': 'application/json', cookie: cookies }, body: JSON.stringify({ code }),
+      }))
+      assert.equal(verified.status, 200)
+      const finalCookies = verified.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; ')
+      const active = await f.auth.api.getSession({ headers: new Headers({ cookie: finalCookies }) })
+      assert.equal(active?.user.id, id)
     } else {
       assert.equal(data.user.id, id)
       assert.ok(data.token)
     }
     assert.equal((await f.post('/sign-in/email-otp', body)).status, 400)
   }
+})
+
+test('an unverified password signup must verify or recover before signing in with a code', async () => {
+  const f = fixture(true)
+  const { user: { id, email } } = await user(f)
+  const verificationCode = deliveredCode(f)
+  const requestCode = () => f.post('/email-otp/send-verification-otp', { email, type: 'sign-in' })
+  assert.equal((await requestCode()).status, 202)
+  const otp = deliveredCode(f)
+  const blocked = await f.post('/sign-in/email-otp', { email, otp })
+  assert.equal(blocked.status, 403)
+  assert.equal((await blocked.json()).code, 'EMAIL_NOT_VERIFIED')
+  assert.equal((await f.post('/sign-in/email-otp', { email, otp })).status, 400)
+  assert.equal((await pool.query('select "emailVerified" from "user" where id=$1', [id])).rows[0].emailVerified, false)
+  assert.equal((await f.post('/email-otp/verify-email', { email, otp: verificationCode })).status, 200)
+  const passwordLogin = await f.post('/sign-in/email', { email, password: 'synthetic-password-initial' })
+  assert.equal(passwordLogin.status, 200)
+  assert.equal((await passwordLogin.json()).user.id, id)
 })
 
 test('a code issued before an address moves cannot authenticate its new owner', async () => {
