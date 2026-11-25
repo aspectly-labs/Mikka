@@ -29,7 +29,9 @@ const facts = dialect.sqlToQuery(sql`SELECT (${runAwaitingApproval}) AS approval
 const unread = dialect.sqlToQuery(threadUnread)
 const attribution = dialect.sqlToQuery(sql`SELECT ${runBotId} AS id`)
 
-function conversationQuery() {
+/** `groups`: the thread directory also lists the group chats the person is a member of (owner 2026-11-25: group chats
+ * are threads with more members, resolved-pages.md); the Bot sidebar and the organization reads keep named chats only. */
+function conversationQuery(groups = false) {
   const owner = '$' + (facts.params.length + 1), workspace = '$' + (facts.params.length + 2)
   const depth = '$' + (facts.params.length + 3)
   const scope = `r."userId"=${owner} AND r."workspaceId"=${workspace}`
@@ -114,7 +116,8 @@ function conversationQuery() {
     LEFT JOIN LATERAL (SELECT m."createdAt" FROM conversation_messages m WHERE m."conversationId"=c.id ORDER BY position DESC LIMIT 1) last ON true
     LEFT JOIN LATERAL (SELECT gt.status FROM group_turns gt WHERE gt."conversationId"=c.id ORDER BY gt."createdAt" DESC,gt."messageId" DESC LIMIT 1) turn ON true
     CROSS JOIN LATERAL (SELECT greatest(c."createdAt",last."createdAt") AS touched) activity
-    WHERE c."workspaceId"=${workspace} AND c."createdBy"=${owner} AND c."creationPurpose"='conversation' AND c.kind='group'
+    WHERE c."workspaceId"=${workspace} AND c.kind='group'
+      AND (${groups ? `c."creationPurpose"='group' OR ` : ''}(c."creationPurpose"='conversation' AND c."createdBy"=${owner}))
   )`
 }
 
@@ -187,7 +190,7 @@ async function directoryPage(database: RunChainQueryable, userId: string, worksp
   if (input.projectId && !scope?.projectIssueIds) throw new Error('conversationDirectoryProjectUnresolved')
   const param = (i: number) => '$' + (facts.params.length + i)
   const [archived,bot,search,state,id,pinned,at,pullState,kind,project,since,automation] = Array.from({length:12}, (_,i) => param(4+i))
-  const statement = conversationQuery() + `, candidates AS (
+  const statement = conversationQuery(true) + `, candidates AS (
     SELECT kind,pulls,unread,id,title,"agentName",harness,"issueId",identifier,"taskTitle",status,pinned,touched,asked,state,at,archived,"botId" FROM visible
     UNION ALL
     SELECT n.kind,n.pulls,n.unread,n.id,n.title,n."agentName",n.harness,n."issueId",n.identifier,n."taskTitle",n.status,n.pinned,n.touched,n.asked,n.state,n.at,n.archived,${bot}::uuid FROM named_chats n
