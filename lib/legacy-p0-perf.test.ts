@@ -111,6 +111,7 @@ const mockClientPool = {
             sourceMessageId: params[5] ?? null,
             dispatchKey,
             dispatchFingerprint,
+            deletedAt: null,
           }
           if (dispatchKey) stagedRuns.set(dispatchKey, created)
           return { rows: [created] }
@@ -118,6 +119,16 @@ const mockClientPool = {
         if (q.startsWith('SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2')) {
           const hit = existingByDispatchKey.get(String(params[1]))
           return { rows: hit ? [hit] : [] }
+        }
+        if (q.startsWith('UPDATE agent_runs SET "dispatchKey"=NULL')) {
+          const key = String(params[2])
+          const hit = existingByDispatchKey.get(key)
+          if (hit && hit.id === String(params[0]) && hit.deletedAt) {
+            existingByDispatchKey.delete(key)
+            hit.dispatchKey = null
+            hit.dispatchFingerprint = null
+          }
+          return { rows: [] }
         }
         if (q.includes('INSERT INTO run_chunks') && failChunkCopy) {
           throw new Error('simulated chunk copy failure')
@@ -376,6 +387,29 @@ test('P0 #4: spawnThread + /fork & /side-threads honor Idempotency-Key replays a
     { params: Promise.resolve({ runId: ROOT_RUN }) },
   )
   assert.equal(sideConflict.status, 409)
+})
+
+test('P0 #4: spawnThread mints a new child when the idempotency receipt is a soft-deleted tombstone', async () => {
+  const user = { id: OWNER, [tokenWorkspace]: WORKSPACE }
+  const key = 'fork-deleted-key'
+  const dispatchKey = `thread_spawn:fork:${key}`
+  existingByDispatchKey.set(dispatchKey, {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    userId: OWNER,
+    workspaceId: WORKSPACE,
+    deviceId: DEVICE_ID,
+    status: 'queued',
+    deletedAt: new Date('2026-11-25T00:00:00.000Z'),
+    dispatchKey,
+    dispatchFingerprint: 'stale',
+  })
+  notifiedDevices = []
+  const spawned = await lifecycle.spawnThread(user, ROOT_RUN, { relation: 'fork', mode: 'full', idempotencyKey: key })
+  assert.ok(spawned)
+  assert.notEqual(spawned.id, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+  assert.equal(spawned.deletedAt, null)
+  assert.equal(spawned.dispatchKey, dispatchKey)
+  assert.deepEqual(notifiedDevices, [DEVICE_ID])
 })
 
 test('P1 N+1: resolveMessageReferencesBatch batches multiple messages into O(1) DB/citation queries', async () => {
