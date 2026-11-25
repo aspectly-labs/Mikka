@@ -142,6 +142,10 @@ const run = async id => {
 }
 
 async function dispatch(name, text, signal) {
+  // Sequential acceptance items must not race a previous runtime-notification
+  // turn: eve may fold adjacent queued input, and task creation authority must
+  // remain bound to this item's own user-message source event.
+  await until(signal, async () => (await json(accounts.owner, '/api/coordinator/messages')).working === false ? true : null)
   const since = new Date()
   await sendMessage(accounts.owner, `${text}\n验收标记：${runId}-${name}`, randomUUID())
   const created = await until(signal, async () => (await query('SELECT id FROM agent_runs WHERE "userId"=$1 AND "createdAt">=$2 AND prompt LIKE $3 ORDER BY "createdAt" DESC LIMIT 1', [accounts.owner.userId, since, `%${runId}-${name}%`]))[0])
@@ -411,6 +415,10 @@ async function accept(device) {
     // without waiting for network failures or changing run rows in the DB.
     const unavailable = `${runtime.scenario.barePath}.unavailable-${runId}`
     await rename(runtime.scenario.barePath, unavailable)
+    // Keep the path present but invalid: a vanished parent fails before the
+    // daemon can even enter its repository stage, while an empty directory is
+    // a real unavailable repository and must produce that failed stage.
+    await mkdir(runtime.scenario.barePath, { recursive: true })
     try {
       const id = await dispatch('item3', `创建新任务，以 readOnly:true 派发给本机 ${device.name}（设备ID ${device.id}）检查仓库 ${repo}。读取 README 并报告，不要替换仓库重试。任务描述完整保留验收标记。`, signal)
       const done = await terminal(id, signal)
@@ -422,7 +430,7 @@ async function accept(device) {
       assert.match(done.error, /clone|fetch|repository|仓库|not found|does not exist/i, 'Failure reason does not describe the repository failure')
       await progress('item3-failure-stage', 'scope', 'HTTP thread projection preserves the repository failure and its stage; visual placement is not browser-tested')
       await progress('item3-failure-stage', 'evidence', id)
-    } finally { await rename(unavailable, runtime.scenario.barePath) }
+    } finally { await rm(runtime.scenario.barePath, { recursive: true, force: true }); await rename(unavailable, runtime.scenario.barePath) }
   })
   if (only.includes('4')) await check('item4-agent-communication', 240_000, async signal => {
     const workspace = (await json(accounts.owner, '/api/workspace')).workspace.id
