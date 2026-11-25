@@ -4761,7 +4761,8 @@
     "title": "Connect this device",
     "approved": "Approved",
     "retry": "Retry",
-    "back": "Back to Devices"
+    "back": "Back to Devices",
+    "expiresIn": "Expires {time}"
   },
   "Shell": {
     "searchEmptyFor": "Nothing matches “{query}”",
@@ -10176,7 +10177,8 @@
     "selfHosted": "Self-hosted server",
     "disconnect": "Disconnect",
     "connecting": "Connecting…",
-    "change": "Change"
+    "change": "Change",
+    "connectionTitle": "Mikka server"
   },
   "TeamSettings": {
     "createHeading": "Create a new team",
@@ -11030,7 +11032,16 @@
     "tabMemory": "Memory",
     "tabDevices": "Devices",
     "tabTeams": "Teams",
-    "tabMembers": "Members"
+    "tabMembers": "Members",
+    "tabMenuLabel": "Tab menu for {title}",
+    "closeTabItem": "Close Tab",
+    "closeOtherTabs": "Close Other Tabs",
+    "closeTabsToLeft": "Close Tabs to the Left",
+    "closeTabsToRight": "Close Tabs to the Right",
+    "duplicateTab": "Duplicate Tab",
+    "copyUrl": "Copy URL",
+    "moveToNewWindow": "Move to New Window",
+    "currentVersion": "Current version v{version}"
   },
   "ConversationDirectory": {
     "loading": "Loading threads…",
@@ -11761,5 +11772,17 @@
     "notFoundBody": "This share link was revoked or the thread is no longer available.",
     "backHome": "Open Mikka",
     "emptyMessages": "No messages in this thread."
+  },
+  "DesktopNotificationAccess": {
+    "title": "Notifications for Mikka are off",
+    "description": "Turn them on to hear back when a thread needs you or fails, someone mentions you, or a pull request merges",
+    "open": "Open System Settings",
+    "notNow": "Not now"
+  },
+  "DesktopLocalRuns": {
+    "title": "Let Mikka run threads on this computer?",
+    "description": "Your threads can run here until you remove this computer in Settings › Devices.",
+    "allow": "Allow",
+    "cancel": "Cancel"
   }
 }

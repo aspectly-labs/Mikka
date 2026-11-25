@@ -12,6 +12,8 @@ export const IPC = {
   appInstallUpdate: "mikka:app:install-update",
   /** The page saw /api/version require a newer desktop; main verifies and runs the update gate. */
   appRequireUpdate: "mikka:app:require-update",
+  /** main -> renderer: a native menu command (DesktopMenuCommand), so ⌘W/⌘T work with focus in a text field. */
+  appMenuCommand: "mikka:app:menu-command",
   settingsGetAll: "mikka:settings:get-all",
   settingsSet: "mikka:settings:set",
   quotaGet: "mikka:quota:get",
@@ -29,6 +31,14 @@ export const IPC = {
     "mikka:notifications:consume-pending-click",
   /** main -> renderer push of a click's in-app href. */
   notificationsClicked: "mikka:notifications:clicked",
+  /** Whether the OS lets Mikka show notifications, as far as main has seen ('granted' | 'denied' | 'unknown'). */
+  notificationsAccess: "mikka:notifications:access",
+  /** main -> renderer push when that access changes. */
+  notificationsAccessChanged: "mikka:notifications:access-changed",
+  /** Opens the OS notification settings for Mikka. */
+  notificationsOpenSettings: "mikka:notifications:open-settings",
+  /** renderer -> main: what the tray / menu bar menu lists (DesktopTrayState). */
+  trayUpdate: "mikka:tray:update",
   sshChanged: "mikka:ssh:changed",
   sshHosts: "mikka:ssh:hosts",
   sshBegin: "mikka:ssh:begin",
