@@ -249,7 +249,7 @@
       },
       "mcp": {
         "keywords": "MCP plugins tools marketplace",
-        "title": "MCP Servers"
+        "title": "Custom MCP"
       },
       "models": {
         "keywords": "model subscriptions quota API key provider models preferred order dispatch run location cloud local bots agents",
@@ -295,8 +295,8 @@
         "title": "Workspace general"
       },
       "connections": {
-        "keywords": "connections apps",
-        "title": "Integrations"
+        "keywords": "plugins integrations connections apps mcp",
+        "title": "Plugins"
       },
       "usage": {
         "title": "Usage"
@@ -1016,7 +1016,14 @@
       "deliveryBadgeProtected": "Protected",
       "deliveryBadgeDirect": "Direct env",
       "runtimeSecretsHeading": "Runtime secrets",
-      "savedLoginsHeading": "Browser logins"
+      "savedLoginsHeading": "Browser logins",
+      "protectionModeLabel": "Protection level",
+      "modeProtected": "Protected secret (Recommended)",
+      "modeProtectedHint": "Write-only. Injected via egress proxy; never readable as plaintext by the Agent.",
+      "modeDirect": "Environment secret (Direct env)",
+      "modeDirectHint": "Write-only with log redaction. Exposed in process env for SDKs requiring direct access.",
+      "modePlainEnv": "Plain variable",
+      "modePlainEnvHint": "Non-sensitive configuration readable by the Agent."
     },
     "audit": {
       "actions": {
@@ -1233,7 +1240,7 @@
       "columnActions": "Actions",
       "labelsSourceTasks": "Tasks",
       "auditRange90d": "Past 90 days",
-      "noMatchingEnvironments": "No matching environments",
+      "noMatchingEnvironments": "No matching cloud environments",
       "workspaceSecretsHeading": "Workspace secrets",
       "personalSecretsAndLoginsHeading": "Personal secrets & logins",
       "statesCount": "{count} states",
@@ -1254,7 +1261,7 @@
       "serviceAccountsAdminOnly": "Only admins can manage service accounts.",
       "secretKindPlain": "Variable (unmasked)",
       "environmentsLead": "Repositories, setup scripts, environment variables, and secrets.",
-      "environmentsSearchPlaceholder": "Search environments",
+      "environmentsSearchPlaceholder": "Search cloud environments",
       "apiKeysEmpty": "No API keys",
       "loginEnabled": "Active",
       "permanentDelete": "Delete permanently",
@@ -1279,7 +1286,7 @@
       "envColumnRepos": "Repositories",
       "envVariables": "Environment variables (KEY=VALUE per line)",
       "labelsColumnSource": "Source",
-      "newEnvironment": "New environment",
+      "newEnvironment": "New cloud environment",
       "envSetupDefault": "Default",
       "createApiKey": "Create API key",
       "workspaceNamePlaceholder": "Workspace name",
@@ -2395,7 +2402,7 @@
       "copyFiles": "Files to copy into the worktree, one per line",
       "historyFor": "Setup history for {name}",
       "archiveNamed": "Archive {name}?",
-      "add": "Add environment",
+      "add": "New cloud environment",
       "none": "No default",
       "restore": "Restore",
       "confirmSetup": "Restore version {revision} in {name}?",
@@ -2408,7 +2415,7 @@
       "projectDefaults": "Project defaults",
       "restoreSetup": "Restore setup",
       "setup": "Setup command",
-      "empty": "No run environments.",
+      "empty": "No cloud environments.",
       "history": "Setup history",
       "archived": "Archived environment",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
@@ -2449,7 +2456,33 @@
       },
       "advancedSettings": "Advanced settings",
       "machineSizeStandardDefault": "Mikka standard (2 vCPU · 8 GiB · $0.20/hr)",
-      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/hr"
+      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/hr",
+      "searchPlaceholder": "Search cloud environments",
+      "cardRepositoriesBase": "Repositories & base",
+      "cardConfiguration": "Configuration",
+      "cardVariablesSecrets": "Variables & secrets",
+      "cardAdditional": "Additional settings",
+      "baseImageLabel": "Base image",
+      "baseImageValue": "Mikka standard Linux sandbox · Node, Python, Git",
+      "searchRepositoriesPlaceholder": "Search repositories…",
+      "selectRepositories": "Select repositories",
+      "searchSecretsPlaceholder": "Search secrets…",
+      "selectSecrets": "Select secrets",
+      "addVariable": "Add variable",
+      "pasteEnv": "Paste .env",
+      "variableNamePlaceholder": "Variable name",
+      "variableValuePlaceholder": "Variable value",
+      "mcpAllowlist": "MCP allowlist",
+      "environmentHistory": "Environment history",
+      "manageSecrets": "Manage secrets",
+      "manageMcp": "Manage MCP",
+      "columnRepositories": "Repositories",
+      "columnNetwork": "Network",
+      "columnConfiguration": "Configuration",
+      "summaryScripts": "{count, plural, one {# script} other {# scripts}}",
+      "summarySecrets": "{count, plural, one {# secret} other {# secrets}}",
+      "summaryMcp": "{count} MCP",
+      "summaryVars": "{count, plural, one {# var} other {# vars}}"
     },
     "workspaceUnavailable": "Couldn't load the workspace. Refresh and try again.",
     "teamSkills": {
@@ -8032,7 +8065,9 @@
     "addMore": "Add in Plugins",
     "connectApp": "Connect {name}",
     "emptyNote": "Apps you connect in Plugins, such as GitHub, Linear or Slack, appear here.",
-    "tabAll": "All"
+    "tabAll": "All",
+    "tabCustomMcp": "Custom MCP",
+    "searchMcpPlaceholder": "Search MCP servers…"
   },
   "Billing": {
     "balance": {
@@ -9188,7 +9223,9 @@
     "connectApp": "Connect {name}",
     "storeLoadFailed": "Couldn't load the app directory.",
     "noSkillsYet": "No skills yet",
-    "browseSkills": "Open skills.sh"
+    "browseSkills": "Open skills.sh",
+    "customMcpTab": "Custom MCP",
+    "searchMcpPlaceholder": "Search MCP servers…"
   },
   "IssueDetail": {
     "breadcrumbMore": "More locations",

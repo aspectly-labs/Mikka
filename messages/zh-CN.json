@@ -249,7 +249,7 @@
       },
       "mcp": {
         "keywords": "MCP 插件 工具 市场",
-        "title": "MCP 服务器"
+        "title": "自定义 MCP"
       },
       "models": {
         "keywords": "模型订阅 订阅 额度 API Key 服务商 模型 优先使用的模型 顺序 派发 运行位置 云端 本地 Bot Agent",
@@ -295,8 +295,8 @@
         "title": "工作区常规"
       },
       "connections": {
-        "keywords": "连接 应用",
-        "title": "集成"
+        "keywords": "插件 集成 连接 应用 mcp",
+        "title": "插件"
       },
       "usage": {
         "title": "用量"
@@ -1016,7 +1016,14 @@
       "deliveryBadgeProtected": "受保护",
       "deliveryBadgeDirect": "环境变量直传",
       "runtimeSecretsHeading": "运行时密钥",
-      "savedLoginsHeading": "网站登录凭证"
+      "savedLoginsHeading": "网站登录凭证",
+      "protectionModeLabel": "类型与保护级别",
+      "modeProtected": "受保护密钥（推荐）",
+      "modeProtectedHint": "写入后不可读，仅通过出口代理注入，Agent 无法读取明文。",
+      "modeDirect": "环境变量密钥（直传兼容）",
+      "modeDirectHint": "写入后不可读并做日志脱敏，直接注入环境变量以兼容必须进程内读取的 SDK。",
+      "modePlainEnv": "普通环境变量",
+      "modePlainEnvHint": "非敏感配置变量，Agent 可直接读取。"
     },
     "audit": {
       "actions": {
@@ -1233,7 +1240,7 @@
       "columnActions": "操作",
       "labelsSourceTasks": "任务",
       "auditRange90d": "过去 90 天",
-      "noMatchingEnvironments": "没有匹配的运行环境",
+      "noMatchingEnvironments": "没有匹配的云端环境",
       "workspaceSecretsHeading": "工作区密钥",
       "personalSecretsAndLoginsHeading": "个人密钥与登录",
       "statesCount": "{count} 个状态",
@@ -1254,7 +1261,7 @@
       "serviceAccountsAdminOnly": "只有管理员可以管理服务账号。",
       "secretKindPlain": "环境变量（明文输出）",
       "environmentsLead": "仓库、初始化脚本、环境变量和密钥。",
-      "environmentsSearchPlaceholder": "搜索运行环境",
+      "environmentsSearchPlaceholder": "搜索云端环境",
       "apiKeysEmpty": "暂无 API 密钥",
       "loginEnabled": "已启用",
       "permanentDelete": "永久删除",
@@ -1276,10 +1283,10 @@
       "serviceAccountNameRequired": "填写服务账号名称。",
       "noMatchingSecrets": "没有匹配的密钥",
       "close": "关闭",
-      "envColumnRepos": "仓库",
+      "envColumnRepos": "关联仓库",
       "envVariables": "环境变量（每行 KEY=VALUE）",
       "labelsColumnSource": "来源",
-      "newEnvironment": "新建运行环境",
+      "newEnvironment": "新建云端环境",
       "envSetupDefault": "默认",
       "createApiKey": "创建 API 密钥",
       "workspaceNamePlaceholder": "工作区名称",
@@ -2395,7 +2402,7 @@
       "copyFiles": "复制到工作树的文件，每行一个",
       "historyFor": "{name} 的设置历史",
       "archiveNamed": "归档 {name}？",
-      "add": "添加环境",
+      "add": "新建云端环境",
       "none": "无默认环境",
       "restore": "恢复",
       "confirmSetup": "在{name}中恢复第 {revision} 版？",
@@ -2408,7 +2415,7 @@
       "projectDefaults": "项目默认环境",
       "restoreSetup": "恢复准备设置",
       "setup": "准备命令",
-      "empty": "暂无运行环境。",
+      "empty": "暂无云端环境。",
       "history": "设置历史",
       "archived": "已归档环境",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
@@ -2449,7 +2456,33 @@
       },
       "advancedSettings": "高级设置",
       "machineSizeStandardDefault": "Mikka 标准规格（默认，2 vCPU · 8 GiB · $0.20/小时）",
-      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/小时"
+      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/小时",
+      "searchPlaceholder": "搜索云端环境",
+      "cardRepositoriesBase": "仓库与运行底座",
+      "cardConfiguration": "脚本与网络",
+      "cardVariablesSecrets": "环境变量与密钥",
+      "cardAdditional": "关联与高级设置",
+      "baseImageLabel": "基础镜像",
+      "baseImageValue": "Mikka 标准 Linux 沙盒 · Node / Python / Git",
+      "searchRepositoriesPlaceholder": "搜索仓库…",
+      "selectRepositories": "选择仓库",
+      "searchSecretsPlaceholder": "搜索密钥…",
+      "selectSecrets": "选择密钥",
+      "addVariable": "添加变量",
+      "pasteEnv": "粘贴 .env",
+      "variableNamePlaceholder": "变量名",
+      "variableValuePlaceholder": "变量值",
+      "mcpAllowlist": "MCP 白名单",
+      "environmentHistory": "变更历史",
+      "manageSecrets": "管理密钥",
+      "manageMcp": "管理 MCP",
+      "columnRepositories": "关联仓库",
+      "columnNetwork": "网络访问",
+      "columnConfiguration": "配置概要",
+      "summaryScripts": "{count} 个脚本",
+      "summarySecrets": "{count} 个密钥",
+      "summaryMcp": "{count} 个 MCP",
+      "summaryVars": "{count} 个变量"
     },
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
     "teamSkills": {
@@ -8032,7 +8065,9 @@
     "addMore": "在插件中添加",
     "connectApp": "连接 {name}",
     "emptyNote": "在插件中连接 GitHub、Linear、Slack 等应用后，会在这里出现。",
-    "tabAll": "全部"
+    "tabAll": "全部",
+    "tabCustomMcp": "自定义 MCP",
+    "searchMcpPlaceholder": "搜索 MCP 服务器…"
   },
   "Billing": {
     "balance": {
@@ -9188,7 +9223,9 @@
     "connectApp": "连接 {name}",
     "storeLoadFailed": "暂时无法加载应用目录。",
     "noSkillsYet": "还没有技能",
-    "browseSkills": "打开 skills.sh"
+    "browseSkills": "打开 skills.sh",
+    "customMcpTab": "自定义 MCP",
+    "searchMcpPlaceholder": "搜索 MCP 服务器…"
   },
   "IssueDetail": {
     "breadcrumbMore": "更多位置",
