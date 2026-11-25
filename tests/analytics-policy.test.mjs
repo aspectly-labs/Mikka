@@ -204,7 +204,7 @@ test('the active Vite web entry initializes PostHog and the shared application m
       plugin.configResolved({ command: development ? 'serve' : 'build' })
       const code = await plugin.load(runtimeId)
       assert.ok(code.split('\n').includes(`import ${JSON.stringify(entry)};`))
-      assert.equal(code.includes('globalThis[Symbol.for("openui.devtools.autoMount")] = true;'), development)
+      assert.equal(code.includes('openui.devtools'), false)
     }
   } finally {
     await fixture.cleanup()

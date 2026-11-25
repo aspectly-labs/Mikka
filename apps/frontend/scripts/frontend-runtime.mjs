@@ -9,5 +9,5 @@ export function frontendRuntimeSource(target, { development = false, frontend, o
   const runtime = target === 'web'
     ? resolve(frontend, 'src/web/runtime.ts')
     : resolve(overlay, 'core/renderer/installed-startup.ts')
-  return `${development ? 'globalThis[Symbol.for("openui.devtools.autoMount")] = true;\n' : ''}import ${JSON.stringify(runtime)};\n`
+  return `import ${JSON.stringify(runtime)};\n`
 }

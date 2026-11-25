@@ -239,11 +239,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-52": {
-    "command": "pnpm check:agent-ui",
-    "kind": "core",
-    "env": {}
-  },
   "core-53": {
     "command": "pnpm test:dev-local",
     "kind": "core",

@@ -1,12 +1,11 @@
-import { openUIText, parseOpenUI, splitOpenUI } from './openui-lang'
+import { extractLegacyOpenUIText } from './legacy-chat-content'
 
 /**
- * What 复制 on a reply copies: its Markdown as written. A card (OpenUI) has no Markdown of its own, so its prose and
- * the words in the card are copied instead of the program that draws it.
+ * What 复制 on a reply copies: its Markdown as written. Historical stored
+ * OpenUI replies are copied as their readable prose and words instead of the
+ * legacy card source.
  */
 export function replyCopyText(text: string): string {
-  const split = splitOpenUI(text)
-  if (!split) return text.trim()
-  const card = parseOpenUI(split.source)
-  return [split.prose, card === null ? '' : openUIText(card)].filter(Boolean).join('\n\n').trim()
+  const legacy = extractLegacyOpenUIText(text)
+  return legacy === null ? text.trim() : legacy
 }

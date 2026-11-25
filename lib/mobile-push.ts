@@ -16,7 +16,7 @@ import { pushAllowed } from '@/lib/push-allowed'
 import type { PushReason } from '@/lib/push-reasons'
 import { readNotificationRuntimeSettings } from '@/lib/settings/notification-preferences'
 import { chatMuted } from '@/lib/chat-preferences'
-import { openUIText, parseOpenUI } from '@/lib/openui-lang'
+import { extractLegacyOpenUIText } from '@/lib/legacy-chat-content'
 import type { ActionLocale } from '@/lib/suggestions/action-title'
 import { personLocale } from '@/lib/suggestions/action-title-server'
 import { appOrigin } from '@/lib/mcp/resource'
@@ -45,12 +45,12 @@ export { pushAllowed }
 
 /**
  * The push text: the reply's first lines, without citation tokens or Markdown
- * marks. A card (OpenUI) is read as its words: its text, question and options.
- * Pushes have no buttons (mobile.md).
+ * marks. Historical OpenUI replies are read as their words: text, question and
+ * options. Pushes have no buttons (mobile.md).
  */
 export function pushBody(text: string): string {
-  const card = parseOpenUI(text)
-  const plain = (card === null ? text : openUIText(card))
+  const legacy = extractLegacyOpenUIText(text)
+  const plain = (legacy === null ? text : legacy)
     .replace(/\[\[(?:issue|run|artifact):[0-9a-f-]{36}\]\]/gi, '')
     .replace(/\[([^\]\n]+)\]\((?:[^)\s]+)\)/g, '$1')
     .replace(/^\s*[-*]\s+/gm, '')

@@ -75,7 +75,6 @@
       "i18n/**",
       "postcss.config.mjs",
       "scripts/build-installation.mjs",
-      "scripts/generate-agent-ui-prompt.mjs",
       "instrumentation-client.ts",
       "apps/desktop/src/startup.ts",
       "scripts/release/hosted-ui.mjs",
@@ -169,7 +168,6 @@
         "scripts/build-cloudflare-world.mjs",
         "scripts/compile-cloudflare-eve-host.sh",
         "scripts/build-cloudflare-eve-image.sh",
-        "scripts/generate-agent-ui-prompt.mjs",
         "cloudflare/api/ingress/services.mjs",
         "cloudflare/litellm/request.mjs",
         "cloudflare/api/ingress/request.mjs"

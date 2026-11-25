@@ -1,30 +1,28 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createParser } from '@openuidev/lang-core'
-import { agentComponentCatalog, createAgentLibrary } from '../../lib/agent-ui-catalog.ts'
-import { detectAgentUISource } from '../../lib/agent-ui-source.ts'
+import { extractLegacyOpenUIMarkdown, isLegacyOpenUIReply } from '../../lib/legacy-chat-content.ts'
 import { CHATS } from './chats.mjs'
 import { CHATS as CHATS_EN } from './chats-en.mjs'
 
-const library = createAgentLibrary()
 const placeholder = (text: string) => text.replace(/\{\{\w+:[\w-]+\}\}/g, '11111111-1111-4111-8111-111111111111')
-const replies = [...Object.entries(CHATS), ...Object.entries(CHATS_EN).map(([bot, messages]) => [`en:${bot}`, messages] as const)].flatMap(([bot, messages]) => messages
+const replies = [
+  ...Object.entries(CHATS),
+  ...Object.entries(CHATS_EN).map(([bot, messages]) => [`en:${bot}`, messages] as const),
+].flatMap(([bot, messages]) => messages
   .filter(message => message.role === 'assistant')
-  .map(message => ({ bot, ...detectAgentUISource(placeholder((message.content as { type: string; text?: string }[]).filter(part => part.type === 'text').map(part => part.text).join('\n\n'))) }))
-  .filter(reply => reply.isOpenUI))
+  .map(message => ({
+    bot,
+    text: placeholder((message.content as { type: string; text?: string }[]).filter(part => part.type === 'text').map(part => part.text).join('\n\n')),
+  })))
 
-test('every demo OpenUI reply parses without errors', () => {
-  for (const { bot, source } of replies) {
-    const parsed = createParser(library.toJSONSchema(), library.root).parse(source)
-    assert.ok(parsed.root, bot)
-    assert.deepEqual(parsed.meta.errors, [], `${bot}: ${source.slice(0, 80)}`)
-    assert.deepEqual(parsed.meta.unresolved, [], bot)
+test('every demo assistant reply is non-empty and any historical OpenUI sample projects cleanly to readable Markdown', () => {
+  assert.ok(replies.length > 0)
+  for (const { bot, text } of replies) {
+    assert.ok(text.trim().length > 0, bot)
+    if (isLegacyOpenUIReply(text)) {
+      const projected = extractLegacyOpenUIMarkdown(text)
+      assert.ok(projected !== null, `${bot}: legacy OpenUI reply must project without throwing`)
+      assert.doesNotMatch(projected, /^\s*root\s*=/m, `${bot}: projected fallback must not leak root assignment`)
+    }
   }
-})
-
-// Run with DEMO_DATA_COVERAGE=1 after adding components, so the demo keeps showing every one of them.
-test('the demo replies use every component the bot can use', { skip: !process.env.DEMO_DATA_COVERAGE }, () => {
-  const used = replies.filter(reply => !reply.bot.startsWith('en:')).map(reply => reply.source).join('\n')
-  // BeFollowUps is kept only so saved replies parse; chats show no suggestion cards (R-12).
-  for (const name of Object.keys(agentComponentCatalog).filter(name => name !== 'BeFollowUps')) assert.match(used, new RegExp(`\\b${name}\\(`), name)
 })

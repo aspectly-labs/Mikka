@@ -6,11 +6,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { decode, encode } from '../../lib/desktop-rpc/wire.ts'
-import { parseOpenUI, isComponent } from '../../lib/openui-lang.ts'
-import { detectAgentUISource } from '../../lib/agent-ui-source.ts'
-import { createParser } from '@openuidev/react-lang'
-import { createAgentLibrary } from '../../lib/agent-ui-catalog.ts'
-import { getAgentUIIssue } from '../../lib/agent-ui-status.ts'
+import { extractLegacyOpenUIText, isLegacyOpenUIReply } from '../../lib/legacy-chat-content.ts'
 import { invalidToolParts } from '../../lib/coordinator/invalid-tool-call.ts'
 import { selectTeamWorkspace, isTeamWorkspaceReadPath, publicTeamWorkspaceFailure } from '../acceptance/team-workspace.mjs'
 
@@ -42,28 +38,17 @@ export function verifySharedSelection(row, scope) {
   return { bindingId: row.bindingId, connectionRevision: Number(row.connectionRevision), route: row.route }
 }
 
-const welcomeLibrary = createAgentLibrary()
-const welcomeParser = createParser(welcomeLibrary.toJSONSchema(), welcomeLibrary.root)
-
-/** Use the web renderer's schema/parser and issue check, without rendering or executing actions. */
+/** Parse bulleted Markdown starting options from a Coordinator welcome reply (OpenUI removed 2026-11-25). */
 export function welcomeOptions(text) {
-  const detected = detectAgentUISource(text)
-  const parsed = welcomeParser.parse(detected.source), questions = []
-  check(detected.isOpenUI && !getAgentUIIssue(parsed) && parsed.queryStatements.length === 0 && parsed.mutationStatements.length === 0, 'welcome_options_missing')
-  const root = parsed.root
-  const walk = (value, depth = 0) => {
-    if (depth > 25 || !value || typeof value !== 'object') return
-    if (Array.isArray(value)) { for (const child of value) walk(child, depth + 1); return }
-    if (value.type === 'element') {
-      if (value.typeName === 'BeQuestions') questions.push(...(Array.isArray(value.props.questions) ? value.props.questions : []))
-      for (const child of Object.values(value.props)) walk(child, depth + 1)
-    }
-  }
-  walk(root)
-  const start = questions.find(question => question?.id === 'start')
-  check(start && Array.isArray(start.options) && start.options.length === 4, 'welcome_options_missing')
-  const found = new Map(start.options.map(option => [option.value, option]))
-  check(['a', 'b', 'c', 'd'].every(key => typeof found.get(key)?.label === 'string' && found.get(key).label.trim() && !found.get(key).action), 'welcome_options_invalid')
+  check(typeof text === 'string' && text.trim() && !isLegacyOpenUIReply(text), 'welcome_options_missing')
+  const bullets = [...text.matchAll(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(.+)$/gm)]
+    .map(match => match[1].trim())
+    .filter(Boolean)
+  check(bullets.length >= 3, 'welcome_options_missing')
+  const keys = ['a', 'b', 'c', 'd']
+  const found = new Map()
+  bullets.slice(0, 4).forEach((label, index) => { found.set(keys[index], { value: keys[index], label }) })
+  check(found.size >= 3 && [...found.values()].every(option => typeof option.label === 'string' && option.label.trim()), 'welcome_options_invalid')
   return found
 }
 
@@ -355,36 +340,11 @@ export async function runAcceptance() {
       check(prior.length===1 && hash(prior[0].id)==='4a9f4e5aae4a8adee6cbf3a07d6dac69480c3d438093f0b803775a590659d49d','diagnostic_fixture_mismatch')
       const rows=await readSql(`SELECT m.message FROM coordinator_messages m JOIN bots b ON b.id=m."botId"
         WHERE m."userId"=$1 AND m."botId"=$2 AND b."ownerId"=$1 AND b."workspaceId"=$3 AND m.message->>'role'='assistant' ORDER BY m.position`,[ownerId,prior[0].id,teamScope.workspaceId])
-      const [{createParser},{createAgentLibrary},{getAgentUIIssue}]=await Promise.all([import('@openuidev/react-lang'),import('../../lib/agent-ui-catalog.ts'),import('../../lib/agent-ui-status.ts')])
-      const library=createAgentLibrary(), productionParser=createParser(library.toJSONSchema(),library.root)
       report.originalWelcomeShape=rows.map(row=>{
         const content=row.message?.content
         const text=typeof content==='string'?content:Array.isArray(content)?content.filter(part=>part?.type==='text').map(part=>part.text??'').join(''):''
-        const detected=detectAgentUISource(text)
-        const shape=value=>{
-          const components=[],questions=[]
-          const walk=(node,depth=0)=>{
-            if(depth>25 || !node || typeof node!=='object')return
-            if(Array.isArray(node)){for(const child of node)walk(child,depth+1);return}
-            if(isComponent(node)){
-              components.push(['Stack','TextContent','BeQuestions'].includes(node.name)?node.name:'other')
-              if(node.name==='BeQuestions')for(const q of Array.isArray(node.props.questions)?node.props.questions:[])questions.push({id:q?.id==='start'?'start':'other',options:Array.isArray(q?.options)?q.options.length:0,validValues:Array.isArray(q?.options)?q.options.filter(o=>['a','b','c','d'].includes(o?.value)).length:0})
-              for(const child of Object.values(node.props))walk(child,depth+1)
-            }
-          }
-          walk(value);return{parsed:value!==null,components,questions}
-        }
-        const parsed=productionParser.parse(detected.source), productionQuestions=[]
-        const walkProduction=(node,depth=0)=>{
-          if(depth>25 || !node || typeof node!=='object')return
-          if(Array.isArray(node)){for(const child of node)walkProduction(child,depth+1);return}
-          if(node.type==='element'){
-            if(node.typeName==='BeQuestions')for(const q of node.props?.questions??[])productionQuestions.push({id:q?.id==='start'?'start':'other',options:q?.options?.length??0,validValues:q?.options?.filter(o=>['a','b','c','d'].includes(o?.value)).length??0})
-            for(const child of Object.values(node.props??{}))walkProduction(child,depth+1)
-          }
-        }
-        walkProduction(parsed.root)
-        return{production:{hasRoot:Boolean(parsed.root),issuePresent:Boolean(getAgentUIIssue(parsed)),incomplete:parsed.meta.incomplete,unresolved:parsed.meta.unresolved.length,errors:parsed.meta.errors.length,questions:productionQuestions},chars:text.length,sha256:hash(text),matchesFailedStream:hash(text)==='7fa055e80740129680755d4a1c0c88e1928f72e9d5032d3fa827c879e85499e7',detectedAsUI:detected.isOpenUI,raw:shape(parseOpenUI(text)),rendered:shape(parseOpenUI(detected.source))}
+        const legacyText = extractLegacyOpenUIText(text)
+        return{chars:text.length,sha256:hash(text),matchesFailedStream:hash(text)==='7fa055e80740129680755d4a1c0c88e1928f72e9d5032d3fa827c879e85499e7',detectedAsLegacyOpenUI:isLegacyOpenUIReply(text),fallbackChars:(legacyText ?? text).length}
       })
       check(report.originalWelcomeShape.length>0,'diagnostic_welcome_missing')
     }
@@ -541,12 +501,11 @@ if (process.argv.includes('--self-test')) {
   assert.equal(requestAllowed(selectionPath, 'POST', { ...selectionBody, clientContext: { ...selectionBody.clientContext, expectedOwnerId: 'other' } }, submission), false)
   assert.equal(requestAllowed(selectionPath, 'POST', { ...selectionBody, turnPolicy: 'steer' }, submission), false)
   assert.equal(requestAllowed('/api/rpc', 'POST', { version: 1, action: 'coordinator.sendCoordinatorMessage', args: [] }), false)
-  const text = 'root = Stack([TextContent("Hi"), BeQuestions("Start", [{id:"start", title:"What", options:[{value:"a", label:"A"},{value:"b",label:"B"},{value:"c",label:"C"},{value:"d",label:"D"}], allowCustom:true}])])'
+  const text = 'Hi Alex!\n\nWhat would you like to start with?\n- A\n- B\n- C\n- D'
   assert.equal(welcomeOptions(text).get('d').label, 'D')
-  assert.equal(welcomeOptions(text.slice(0,-1)).get('b').label,'B','the real web renderer closes a complete card tree with one missing trailing parenthesis')
-  assert.throws(() => welcomeOptions('root = globalThis.process.exit(1)'), /welcome_options_missing/)
-  assert.throws(() => welcomeOptions(text.replace('{value:"d",label:"D"}', '{value:"c",label:"D"}')),/welcome_options_invalid/)
-  assert.equal(welcomeOptions(text.replace('root = ', '')).get('a').label,'A')
+  assert.equal(welcomeOptions(text).get('a').label, 'A')
+  assert.throws(() => welcomeOptions('root = Stack([TextContent("Hi")])'), /welcome_options_missing/)
+  assert.throws(() => welcomeOptions('Hi Alex! Just one line.'), /welcome_options_missing/)
   assert.equal(requestAllowed('/api/rpc','POST',{version:1,action:'workspace.createWorkspace',args:[]}),false)
   assert.equal(requestAllowed('/api/rpc','POST',{version:1,action:'workspace-settings.deleteWorkspace',args:[]}),false)
   assert.equal(requestAllowed('/api/workspace','GET'),true)
