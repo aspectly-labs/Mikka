@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { registerHooks } from 'node:module'
@@ -162,7 +162,7 @@ test('mobile Settings and confirmed browser handoff require a current team admin
     assert.equal(await available({ cookie: memberCookie }), false)
     process.env.MIKKA_EDITION = 'cloud'
   })
-  await t.test('Organization settings requires the paired human session and confirms the selected workspace', async () => {
+  await t.test('Organization settings requires both a paired human session and a bound organization on the selected workspace', async () => {
     const target = `/settings?section=organization&workspace=${first.id}`
     const available = async (headers: Record<string, string>) => {
       const response = await fetch(api + 'mobile/settings?view=profile', { headers: { ...headers, 'x-mikka-workspace-id': first.id } })
@@ -170,17 +170,26 @@ test('mobile Settings and confirmed browser handoff require a current team admin
       return (await response.json()).organizationSettingsAvailable
     }
     process.env.MIKKA_UI_OVERLAY_SHA = 'a'.repeat(40)
-    assert.equal(await available({ cookie: memberCookie }), true)
-    assert.equal(await available({ authorization: 'Bearer ' + pat.token }), false)
-    const bare = await fetch(api + 'mobile/open?' + new URLSearchParams({ to: target }), { redirect: 'manual' })
-    assert.equal(bare.status, 403)
-    const accepted = await confirm(await open(memberCookie, first.id, target))
-    assert.equal(accepted.status, 303)
-    assert.equal(accepted.headers.get('location'), origin + withBasePath(target))
-    assert.equal((await open(memberCookie, second.id, `/settings?section=organization&workspace=${second.id}`)).status, 403)
-    delete process.env.MIKKA_UI_OVERLAY_SHA
+    // Unbound team workspace must not advertise Organization settings.
     assert.equal(await available({ cookie: memberCookie }), false)
-    assert.equal((await open(memberCookie, first.id, target)).status, 403)
+    const orgId = randomUUID()
+    await pool.query('INSERT INTO mikka_organizations (id, name, "createdBy") VALUES ($1, $2, $3)', [orgId, 'Mobile Bound Org', owner])
+    await pool.query('INSERT INTO mikka_organization_workspaces ("workspaceId", "organizationId") VALUES ($1, $2)', [first.id, orgId])
+    try {
+      assert.equal(await available({ cookie: memberCookie }), true)
+      assert.equal(await available({ authorization: 'Bearer ' + pat.token }), false)
+      const bare = await fetch(api + 'mobile/open?' + new URLSearchParams({ to: target }), { redirect: 'manual' })
+      assert.equal(bare.status, 403)
+      const accepted = await confirm(await open(memberCookie, first.id, target))
+      assert.equal(accepted.status, 303)
+      assert.equal(accepted.headers.get('location'), origin + withBasePath(target))
+      assert.equal((await open(memberCookie, second.id, `/settings?section=organization&workspace=${second.id}`)).status, 403)
+      delete process.env.MIKKA_UI_OVERLAY_SHA
+      assert.equal(await available({ cookie: memberCookie }), false)
+      assert.equal((await open(memberCookie, first.id, target)).status, 403)
+    } finally {
+      await pool.query('DELETE FROM mikka_organizations WHERE id=$1', [orgId])
+    }
   })
   const patSettings = await fetch(api + 'mobile/settings', { headers: { authorization: 'Bearer ' + pat.token, 'x-mikka-workspace-id': first.id } })
   assert.equal(patSettings.status, 200)

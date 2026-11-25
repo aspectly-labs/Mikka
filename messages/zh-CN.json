@@ -249,7 +249,7 @@
       },
       "mcp": {
         "keywords": "MCP 插件 工具 市场",
-        "title": "MCP 服务器"
+        "title": "自定义 MCP"
       },
       "models": {
         "keywords": "模型订阅 订阅 额度 API Key 服务商 模型 优先使用的模型 顺序 派发 运行位置 云端 本地 Bot Agent",
@@ -295,8 +295,8 @@
         "title": "工作区常规"
       },
       "connections": {
-        "keywords": "连接 应用",
-        "title": "集成"
+        "keywords": "插件 集成 连接 应用 自定义 MCP 服务器",
+        "title": "插件"
       },
       "usage": {
         "title": "用量"
@@ -746,7 +746,7 @@
       "amountLabel": "单次充值档位",
       "saveButton": "保存自动充值配置",
       "amountOption": "{points} 点",
-      "providerUnsupportedBadge": "Stripe Managed Payments 暂不支持自动扣款 · 待接入",
+      "providerUnsupportedBadge": "Stripe Managed Payments 暂不支持自动扣款",
       "quotaNoPlan": "0 / 0 点",
       "readOnlyNote": "仅付款账户所有者可修改自动充值限额。",
       "workspaceKind": "工作区类型",
@@ -1016,7 +1016,14 @@
       "deliveryBadgeProtected": "受保护",
       "deliveryBadgeDirect": "环境变量直传",
       "runtimeSecretsHeading": "运行时密钥",
-      "savedLoginsHeading": "网站登录凭证"
+      "savedLoginsHeading": "网站登录凭证",
+      "protectionModeLabel": "类型与保护级别",
+      "modeProtected": "受保护密钥（推荐）",
+      "modeProtectedHint": "写入后不可读；经出口代理注入，Agent 无法读取明文。",
+      "modeDirect": "环境变量密钥（直传兼容）",
+      "modeDirectHint": "写入后不可读；注入进程环境变量以兼容旧 SDK（长度 ≥ 8 字符的值自动脱敏）。",
+      "modePlainEnv": "普通环境变量",
+      "modePlainEnvHint": "非敏感配置变量，Agent 可直接读取。"
     },
     "audit": {
       "actions": {
@@ -1233,7 +1240,7 @@
       "columnActions": "操作",
       "labelsSourceTasks": "任务",
       "auditRange90d": "过去 90 天",
-      "noMatchingEnvironments": "没有匹配的运行环境",
+      "noMatchingEnvironments": "没有匹配的云端环境",
       "workspaceSecretsHeading": "工作区密钥",
       "personalSecretsAndLoginsHeading": "个人密钥与登录",
       "statesCount": "{count} 个状态",
@@ -1254,7 +1261,7 @@
       "serviceAccountsAdminOnly": "只有管理员可以管理服务账号。",
       "secretKindPlain": "环境变量（明文输出）",
       "environmentsLead": "仓库、初始化脚本、环境变量和密钥。",
-      "environmentsSearchPlaceholder": "搜索运行环境",
+      "environmentsSearchPlaceholder": "搜索云端环境",
       "apiKeysEmpty": "暂无 API 密钥",
       "loginEnabled": "已启用",
       "permanentDelete": "永久删除",
@@ -1276,10 +1283,10 @@
       "serviceAccountNameRequired": "填写服务账号名称。",
       "noMatchingSecrets": "没有匹配的密钥",
       "close": "关闭",
-      "envColumnRepos": "仓库",
+      "envColumnRepos": "关联仓库",
       "envVariables": "环境变量（每行 KEY=VALUE）",
       "labelsColumnSource": "来源",
-      "newEnvironment": "新建运行环境",
+      "newEnvironment": "新建云端环境",
       "envSetupDefault": "默认",
       "createApiKey": "创建 API 密钥",
       "workspaceNamePlaceholder": "工作区名称",
@@ -1716,7 +1723,7 @@
       "layer": {
         "bot": "Bot",
         "memory": "记忆",
-        "environment": "运行环境",
+        "environment": "云端环境",
         "personal": "个人",
         "workspace": "工作区"
       },
@@ -1731,14 +1738,14 @@
       "previewLoadError": "预览加载失败。",
       "workspaceFallback": "当前工作区",
       "scopePersonal": "个人",
-      "previewEnvLabel": "预览运行环境",
+      "previewEnvLabel": "预览云端环境",
       "pendingBadge": "待接入",
       "loadError": "指令加载失败。",
       "lead": "用于各个作用域中的线程。",
       "filesTitle": "指令文件",
       "previewBotLabel": "预览 Bot",
-      "scopeEnvironment": "运行环境",
-      "previewEnvNone": "未选运行环境",
+      "scopeEnvironment": "云端环境",
+      "previewEnvNone": "未选云端环境",
       "scopeWorkspace": "工作区",
       "charLimit": "{count} / {max} 字符",
       "readOnlyBadge": "只读",
@@ -1829,12 +1836,12 @@
     },
     "usagePage": {
       "historyHeading": "历史与外部账户",
-      "byEnvironmentHeading": "按运行环境",
+      "byEnvironmentHeading": "按云端环境",
       "sorts": {
         "duration": "时长优先",
         "runs": "次数优先"
       },
-      "emptyEnvironments": "所选时间段暂无按运行环境的调用记录。",
+      "emptyEnvironments": "所选时间段暂无按云端环境的调用记录。",
       "quotaPlan": "Mikka Pro",
       "resetFilters": "重置筛选",
       "sources": {
@@ -1846,7 +1853,7 @@
       "byModelHeading": "按模型",
       "dimensions": {
         "total": "总计",
-        "environment": "按运行环境",
+        "environment": "按云端环境",
         "model": "按模型",
         "byok": "BYOK",
         "member": "按成员"
@@ -1861,7 +1868,7 @@
         "source": "来源",
         "remaining": "剩余",
         "cost": "费用",
-        "environment": "运行环境",
+        "environment": "云端环境",
         "model": "模型",
         "threads": "新线程",
         "used": "已用",
@@ -1876,7 +1883,7 @@
       },
       "emptyModelsMemberScope": "模型费用明细仅对工作区管理员可见。",
       "sortLabel": "排序方式",
-      "emptyEnvironmentsNoEntitlement": "当前套餐未包含按运行环境的用量明细报表。",
+      "emptyEnvironmentsNoEntitlement": "当前套餐未包含按云端环境的用量明细报表。",
       "neverResets": "不重置",
       "unattributedMember": "未归属成员",
       "periods": {
@@ -1891,11 +1898,11 @@
       "monthUtc": "{month} · UTC",
       "settledLegend": "已结算",
       "periodLabel": "时间范围",
-      "unassignedEnvironment": "未绑定运行环境",
+      "unassignedEnvironment": "未绑定云端环境",
       "quotaFree": "免费版（未订阅）",
       "emptyQuota": "当前没有生效的套餐或充值额度。",
       "dimensionLabel": "用量维度",
-      "subtitle": "查看模型、成员与运行环境的用量和费用。",
+      "subtitle": "查看模型、成员与云端环境的用量和费用。",
       "manageBilling": "管理计费",
       "dailyRunsHeading": "每日新线程",
       "emptyRuns": "所选时间段暂无运行记录。",
@@ -1905,7 +1912,8 @@
       "dailySpendHeading": "每日费用",
       "chartMetricLabel": "图表指标",
       "emptyModels": "所选时间段暂无模型调用记录。",
-      "sourceLabel": "计费来源"
+      "sourceLabel": "计费来源",
+      "creditRate": "100 额度 = US$1.00"
     },
     "notificationsMatrix": {
       "dndRowHint": "免打扰期间不发送推送提醒",
@@ -2395,7 +2403,7 @@
       "copyFiles": "复制到工作树的文件，每行一个",
       "historyFor": "{name} 的设置历史",
       "archiveNamed": "归档 {name}？",
-      "add": "添加环境",
+      "add": "新建云端环境",
       "none": "无默认环境",
       "restore": "恢复",
       "confirmSetup": "在{name}中恢复第 {revision} 版？",
@@ -2408,7 +2416,7 @@
       "projectDefaults": "项目默认环境",
       "restoreSetup": "恢复准备设置",
       "setup": "准备命令",
-      "empty": "暂无运行环境。",
+      "empty": "暂无云端环境。",
       "history": "设置历史",
       "archived": "已归档环境",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
@@ -2449,7 +2457,33 @@
       },
       "advancedSettings": "高级设置",
       "machineSizeStandardDefault": "Mikka 标准规格（默认，2 vCPU · 8 GiB · $0.20/小时）",
-      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/小时"
+      "machineSizePriceOption": "{vcpu} vCPU · {gib} GiB · ${price}/小时",
+      "searchPlaceholder": "搜索云端环境",
+      "cardRepositoriesBase": "仓库与运行底座",
+      "cardConfiguration": "脚本与网络",
+      "cardVariablesSecrets": "环境变量与密钥",
+      "cardAdditional": "关联与高级设置",
+      "baseImageLabel": "基础镜像",
+      "baseImageValue": "Mikka 标准 Linux 沙盒 · Node / Python / Git",
+      "searchRepositoriesPlaceholder": "搜索仓库…",
+      "selectRepositories": "选择仓库",
+      "searchSecretsPlaceholder": "搜索密钥…",
+      "selectSecrets": "选择密钥",
+      "addVariable": "添加变量",
+      "pasteEnv": "粘贴 .env",
+      "variableNamePlaceholder": "变量名",
+      "variableValuePlaceholder": "变量值",
+      "mcpAllowlist": "MCP 白名单",
+      "environmentHistory": "变更历史",
+      "manageSecrets": "管理密钥",
+      "manageMcp": "管理 MCP",
+      "columnRepositories": "关联仓库",
+      "columnNetwork": "网络访问",
+      "columnConfiguration": "配置概要",
+      "summaryScripts": "{count} 个脚本",
+      "summarySecrets": "{count} 个密钥",
+      "summaryMcp": "{count} 个 MCP",
+      "summaryVars": "{count} 个变量"
     },
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
     "teamSkills": {
@@ -2755,7 +2789,13 @@
       "userName": "预览用户"
     },
     "title": "设置",
-    "workspaceLoading": "正在读取工作区…"
+    "workspaceLoading": "正在读取工作区…",
+    "sharedLinks": {
+      "revokeConfirmTitle": "撤销分享链接？",
+      "revokeConfirmBody": "撤销后，持有该链接的人将立即失去访问权限。",
+      "revokeConfirmAction": "确认撤销",
+      "cancel": "取消"
+    }
   },
   "Organization": {
     "identity": {
@@ -3216,7 +3256,12 @@
     "id": "ID",
     "copied": "ID 已复制",
     "created": "创建",
-    "copyFailed": "复制失败"
+    "copyFailed": "复制失败",
+    "repoPlaceholder": "选择仓库",
+    "branchPlaceholder": "选择分支",
+    "environmentPlaceholder": "云端环境",
+    "modelPlaceholder": "选择模型",
+    "searchPlaceholder": "搜索…"
   },
   "IssueThreads": {
     "executionIdentity": {
@@ -3915,7 +3960,7 @@
     "scheduledOffline": "已排期 · 上线后运行",
     "notScheduling": "未参与调度",
     "allowSchedulingTo": "{name} 参与调度",
-    "description": "查看已连接的电脑与运行环境。",
+    "description": "查看已连接的设备与云端环境。",
     "actions": {
       "editDescription": "编辑说明",
       "rename": "重命名",
@@ -4681,9 +4726,9 @@
     "continue": "继续",
     "codeMatches": "终端里显示的也是这个验证码",
     "expires": "到期时间",
-    "device": "电脑",
+    "device": "设备",
     "scope": "运行你的线程",
-    "title": "连接这台电脑",
+    "title": "连接这台设备",
     "approved": "已批准",
     "retry": "重试",
     "back": "返回设备列表"
@@ -7766,7 +7811,13 @@
     "less": "收起",
     "perTenOne": "次 / 10 分钟",
     "nextRun": "下次",
-    "runningNow": "正在运行"
+    "runningNow": "正在运行",
+    "cardBasics": "基础信息与触发",
+    "cardTarget": "执行目标",
+    "cardPrompt": "执行指令",
+    "cardDelivery": "通知与权限",
+    "searchTimezonePlaceholder": "搜索时区…",
+    "noMatchingTimezone": "没有匹配的时区"
   },
   "AiElements": {
     "message": {
@@ -8032,7 +8083,9 @@
     "addMore": "在插件中添加",
     "connectApp": "连接 {name}",
     "emptyNote": "在插件中连接 GitHub、Linear、Slack 等应用后，会在这里出现。",
-    "tabAll": "全部"
+    "tabAll": "全部",
+    "tabCustomMcp": "自定义 MCP",
+    "searchMcpPlaceholder": "搜索 MCP 服务器…"
   },
   "Billing": {
     "balance": {
@@ -8727,7 +8780,10 @@
     "search": "搜索项目",
     "emptyTitle": "还没有项目",
     "savingProperties": "正在保存属性…",
-    "loading": "正在加载项目"
+    "loading": "正在加载项目",
+    "createTitle": "新建项目",
+    "createAction": "创建项目",
+    "noMatches": "没有匹配的项目"
   },
   "HostedThread": {
     "needsCount": "{count} 个等你",
@@ -9188,7 +9244,9 @@
     "connectApp": "连接 {name}",
     "storeLoadFailed": "暂时无法加载应用目录。",
     "noSkillsYet": "还没有技能",
-    "browseSkills": "打开 skills.sh"
+    "browseSkills": "打开 skills.sh",
+    "customMcpTab": "自定义 MCP",
+    "searchMcpPlaceholder": "搜索 MCP 服务器…"
   },
   "IssueDetail": {
     "breadcrumbMore": "更多位置",
@@ -10031,7 +10089,11 @@
     "forgotPassword": "忘记密码？",
     "mobileProviderUnavailable": "此登录方式暂不可用。",
     "switchAccount": "换个账号",
-    "verificationPending": "请先完成人机验证后再继续。"
+    "verificationPending": "请先完成人机验证后再继续。",
+    "continuePasskey": "使用通行密钥继续",
+    "passkeyFailed": "通行密钥登录未完成，请重试。",
+    "showPassword": "显示密码",
+    "hidePassword": "隐藏密码"
   },
   "DesktopServer": {
     "cancel": "取消",
@@ -10137,7 +10199,7 @@
     "pendingCount": "{count} 位待邀请",
     "switchAccount": "切换账号",
     "description": "邀请同事加入{workspace}，可输入邮箱或拖入 CSV 批量导入。",
-    "viewServerAndApps": "查看服务器和可用客户端",
+    "viewServerAndApps": "查看服务器信息与客户端下载",
     "inviteLinkFor": "{email} 的邀请链接",
     "createLinks": "创建邀请链接",
     "linksDescription": "尚未发送邮件。请将链接私下发送给对应成员；7 天内有效，仅限对应邮箱登录后接受。",
@@ -10157,7 +10219,7 @@
     "creating": "正在创建…",
     "skippedDuplicate": "重复填写",
     "createAccount": "创建账号",
-    "backToWorkspace": "返回工作台",
+    "backToWorkspace": "进入工作区",
     "invalidToken": "邀请链接格式无效，请向管理员索取完整链接。",
     "signInToAccept": "登录并接受邀请",
     "joined": "已加入工作区。",
@@ -10266,7 +10328,10 @@
     "title": "允许 {name} 使用 Mikka？",
     "scopeRead": "查看你的任务和线程记录",
     "scopeCoordinator": "给你的 Coordinator 发消息并读取它的回复",
-    "failed": "授权未完成，请回到应用重新连接。"
+    "failed": "授权未完成，请回到应用重新连接。",
+    "scopesHeading": "请求的权限",
+    "scopeOfflineAccess": "在你离线时保持访问权限",
+    "scopeFallback": "访问权限：{scope}"
   },
   "Artifact": {
     "roles": {
@@ -10339,7 +10404,7 @@
     "open": "打开任务",
     "happened": "最近的进展",
     "noTask": "没有打开的任务",
-    "factoryStage": "Factory 阶段",
+    "factoryStage": "执行阶段",
     "emptyActive": "没有进行中的任务",
     "noTaskText": "在左侧选一个任务，查看它到哪一步了。",
     "tasks": "任务",
@@ -10357,7 +10422,7 @@
       "title": "推荐",
       "heading": "值得打开的几项",
       "linearText": "在 Linear 里把 Issue 交给 Mikka",
-      "thisComputer": "这台电脑",
+      "thisComputer": "这台设备",
       "text": "都是可选的，之后都能在设置里打开。"
     },
     "workspace": {
@@ -10375,7 +10440,7 @@
     "plan": {
       "time": "不到 1 分钟",
       "title": "套餐",
-      "machines": "Cloudflare 云端机器，按小时从额度里扣",
+      "machines": "Mikka Cloud 云端沙盒，按小时从额度扣费",
       "credits": "每月 $20 Mikka 额度，按厂商原价付模型",
       "price": "$20/月",
       "subscribe": "订阅",
@@ -10404,7 +10469,7 @@
     "skipped": "已跳过，随时可以回来",
     "model": {
       "needed": "选一个模型再继续。",
-      "pick": "Coordinator 用的模型",
+      "pick": "默认模型",
       "text": "用你已经付费的订阅或 Key，或者先用 Mikka 额度。之后随时可以换。",
       "apiKey": "API Key",
       "time": "约 1 分钟",
@@ -10416,7 +10481,7 @@
     "emails": "邮箱地址",
     "page": "开始使用",
     "count": "已完成 {done}/{total}",
-    "computerText": "填上 E2B Key 后，Bot 能浏览网页，线程也能在云端运行",
+    "computerText": "线程默认运行在 Mikka Cloud 云端沙盒中，也可在设置中配置自有 E2B Key。",
     "nameError": "给工作区起个名字再继续。",
     "enter": "开始使用",
     "continue": "继续",
@@ -10432,14 +10497,14 @@
     "personLabel": "你的名字",
     "finish": "完成",
     "checklist": "设置清单",
-    "nextComputerText": "填上 E2B Key，在设置 › 密钥与环境。",
+    "nextComputerText": "可在「设置 › 密钥与凭证」管理自有 E2B Key，或在「云端环境」配置沙盒。",
     "doneKicker": "准备好了",
-    "nextSubscriptionText": "Claude、ChatGPT 订阅或 API Key，在设置 › 模型与订阅。",
+    "nextSubscriptionText": "在「设置 › 模型」绑定 Claude / ChatGPT 订阅或配置 API Key。",
     "root": "Mikka",
     "nextTaskText": "写下要做的事，Mikka 派给 Agent。",
     "skip": "先跳过",
     "roleAdmin": "管理员",
-    "sub": "四步设置好工作区、模型和套餐。",
+    "sub": "大约两分钟。",
     "computer": "云电脑"
   },
   "GroupTask": {
@@ -10891,7 +10956,23 @@
     "tabHome": "首页",
     "tabSettings": "设置",
     "reloadPage": "重新加载",
-    "reopenClosedTab": "重新打开已关闭的标签页"
+    "reopenClosedTab": "重新打开已关闭的标签页",
+    "tabTask": "任务",
+    "tabThread": "线程",
+    "tabChat": "聊天",
+    "tabGroup": "群聊",
+    "tabThreads": "线程",
+    "tabTasks": "任务",
+    "tabProjects": "项目",
+    "tabPulls": "拉取请求",
+    "tabInbox": "收件箱",
+    "tabPlugins": "插件",
+    "tabAutomations": "自动化",
+    "tabArtifacts": "文件",
+    "tabMemory": "记忆",
+    "tabDevices": "设备",
+    "tabTeams": "团队",
+    "tabMembers": "成员"
   },
   "ConversationDirectory": {
     "loading": "正在加载线程…",
@@ -11572,5 +11653,14 @@
     "noDevServer": "没有运行中的开发服务器",
     "previewStartMissing": "尚未接入启动预览接口",
     "startPreview": "启动预览"
+  },
+  "SharedThread": {
+    "badge": "公开分享的线程",
+    "readOnly": "只读",
+    "loading": "正在加载分享线程…",
+    "notFoundTitle": "无法访问此分享线程",
+    "notFoundBody": "该分享链接已撤销，或该线程已不可用。",
+    "backHome": "前往 Mikka",
+    "emptyMessages": "该线程暂无消息。"
   }
 }
