@@ -14,7 +14,14 @@ export const maxDuration = 30
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
 
 export const POST = defineRoute<'session', 'pat-scoped', { runId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'pat-scoped', freshSession: true, write: true },
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    freshSession: true,
+    write: true,
+    onWorkspaceError: () => Response.json({ ok: false, code: 'workspace_not_found' }, { status: 404, headers }),
+  },
   async ({ request, params, session, user }) => {
     if (!session.tokenWorkspaceId && request.headers.get('origin') !== new URL(request.url).origin)
       return Response.json({ ok: false, code: 'workspace_not_found' }, { status: 403, headers })

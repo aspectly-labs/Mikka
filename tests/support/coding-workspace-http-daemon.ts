@@ -304,12 +304,12 @@ export function registerHTTPDaemonAcceptance(kind: 'shared' | 'personal') {
     await t.test('identity discovery and Files auth refusals reach no daemon source request', async () => {
       const before = deliveries.length
       assert.equal((await getIdentity()).status, 401)
-      assert.equal((await getIdentity(memberToken.token)).status, kind === 'personal' ? 403 : 404)
-      assert.equal((await getIdentity(otherToken.token)).status, 403)
-      assert.equal((await getIdentity(ownerToken.token, otherWorkspace)).status, 403)
+      assert.equal((await getIdentity(memberToken.token)).status, 404)
+      assert.equal((await getIdentity(otherToken.token)).status, 404)
+      assert.equal((await getIdentity(ownerToken.token, otherWorkspace)).status, 404)
       assert.equal((await getFile()).status, 401)
-      assert.equal((await getFile(memberToken.token)).status, kind === 'personal' ? 403 : 404)
-      assert.equal((await getFile(otherToken.token)).status, 403)
+      assert.equal((await getFile(memberToken.token)).status, 404)
+      assert.equal((await getFile(otherToken.token)).status, 404)
       assert.equal(deliveries.length, before)
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM coding_workspace_requests')).rows[0].n, 0)
     })
@@ -345,8 +345,8 @@ export function registerHTTPDaemonAcceptance(kind: 'shared' | 'personal') {
       })
       const before = deliveries.length
       assert.equal((await getTree()).status, 401)
-      assert.equal((await getTree(memberToken.token)).status, kind === 'personal' ? 403 : 404)
-      assert.equal((await getTree(otherToken.token)).status, 403)
+      assert.equal((await getTree(memberToken.token)).status, 404)
+      assert.equal((await getTree(otherToken.token)).status, 404)
       assert.equal(deliveries.length, before)
 
       const response = await getTree(ownerToken.token)
