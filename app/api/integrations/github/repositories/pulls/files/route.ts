@@ -23,11 +23,14 @@ const unguardedGET = withRequestLog(
     if (!session?.user)
       return Response.json({ error: "authRequired" }, { status: 401, headers });
     const params = new URL(request.url).searchParams;
-    const allowed = new Set(["repo", "number"]);
+    const allowed = new Set(["repo", "number", "format"]);
     if (
       [...params.keys()].some((key) => !allowed.has(key)) ||
       [...allowed].some((key) => params.getAll(key).length > 1)
     )
+      return Response.json({ error: "invalidInput" }, { status: 400, headers });
+    const format = params.get("format");
+    if (format !== null && format !== "patch")
       return Response.json({ error: "invalidInput" }, { status: 400, headers });
     const input = pullFilesQuery.safeParse({
       repo: params.get("repo"),
@@ -41,6 +44,7 @@ const unguardedGET = withRequestLog(
         input.data.repo,
         Number(input.data.number),
         { deadline: Date.now() + 25_000, signal: request.signal },
+        format === "patch" ? { includePatch: true } : undefined,
       );
       return Response.json(files, { headers });
     } catch (error) {

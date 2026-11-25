@@ -5,6 +5,7 @@ import type { RequestBudget } from "../request-budget";
 import {
   pullReviewInput,
   type PullDetail,
+  type PullReviewEvent,
   type PullReviewInput,
   type PullReviewResult,
 } from "../pull-directory";
@@ -14,14 +15,21 @@ export type PullReviewDependencies = {
   detail: (userId: string, repo: string, number: number) => Promise<PullDetail>;
   /** The person's own GitHub user-to-server token: reviews post as them, never as an app. */
   userToken: (userId: string) => Promise<string>;
-  review: (token: string, repo: string, number: number, headSha: string | null, body: string) => Promise<number | null>;
+  review: (
+    token: string,
+    repo: string,
+    number: number,
+    headSha: string | null,
+    body: string,
+    event: PullReviewEvent,
+  ) => Promise<number | null>;
 };
 
 export function pullReviewDependencies(budget: RequestBudget): PullReviewDependencies {
   return {
     detail: (userId, repo, number) => readPullDetail(userId, repo, number, budget),
     userToken: async (userId) => (await githubTokenForUser(userId, { budget })).token,
-    review: async (token, repo, number, headSha, body) => {
+    review: async (token, repo, number, headSha, body, event) => {
       const response = await fetch(`https://api.github.com/repos/${repo}/pulls/${number}/reviews`, {
         method: "POST",
         headers: {
@@ -32,7 +40,7 @@ export function pullReviewDependencies(budget: RequestBudget): PullReviewDepende
         },
         // commit_id binds the review to the head the reader saw — a later push
         // must not catch feedback written against an older diff.
-        body: JSON.stringify({ event: "REQUEST_CHANGES", body, ...(headSha ? { commit_id: headSha } : {}) }),
+        body: JSON.stringify({ event, ...(body ? { body } : {}), ...(headSha ? { commit_id: headSha } : {}) }),
         signal: budget.signal,
       });
       if (response.status === 422) {
@@ -73,7 +81,7 @@ export async function requestPullChanges(
     throw error;
   }
   try {
-    return { kind: "submitted", id: await deps.review(token, detail.repo, input.number, detail.headSha, input.body) };
+    return { kind: "submitted", id: await deps.review(token, detail.repo, input.number, detail.headSha, input.body, input.event) };
   } catch (error) {
     if (error instanceof ReviewRefused) return { kind: "refused", code: error.code };
     throw error;

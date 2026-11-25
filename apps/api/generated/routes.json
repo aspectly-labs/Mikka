@@ -1513,7 +1513,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "70652a311b5b2595beb8f92df54f3287dc4e760865ffd7427ba28deefa87e0de"
+      "sourceHash": "d769a96085ea04e3a11a42486613d15be956cb4281b44015ed783a5532d93411"
     },
     {
       "path": "/mikka/api/integrations/github/repositories/pulls/merge",

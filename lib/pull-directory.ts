@@ -419,11 +419,23 @@ export type PullMergeResult =
   | { kind: "needs_confirm"; failing: number }
   | { kind: "refused"; code: string };
 
-/** Requesting changes on a PR, as the person (app/api/integrations/github/repositories/pulls/review). */
+export const pullReviewEvents = ["APPROVE", "REQUEST_CHANGES", "COMMENT"] as const;
+export type PullReviewEvent = (typeof pullReviewEvents)[number];
+
+/** Submitting a review on a PR, as the person (app/api/integrations/github/repositories/pulls/review). */
 export const pullReviewInput = z.strictObject({
   repo: pullPageInput.shape.repo,
   number: z.number().int().positive().max(9_999_999_999),
-  body: z.string().trim().min(1).max(65_536),
+  event: z.enum(pullReviewEvents).default("REQUEST_CHANGES"),
+  body: z.string().trim().max(65_536).default(""),
+}).superRefine((value, ctx) => {
+  if (value.event !== "APPROVE" && value.body.length === 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: "Review body is required unless approving.",
+    });
+  }
 });
 export type PullReviewInput = z.input<typeof pullReviewInput>;
 export type PullReviewResult = { kind: "submitted"; id: number | null } | { kind: "refused"; code: string };

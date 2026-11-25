@@ -6,6 +6,7 @@ import {
   linkedPullDirectory,
   pullDirectoryState,
   pullFilesQuery,
+  pullReviewInput,
   pullFromAddress,
   pullPageHref,
   pullPageInput,
@@ -330,4 +331,38 @@ test("a saved pulls view reads back with defaults for fields it predates and nev
   });
   assert.equal(readSavedPullView({ id: "v", name: "x", filters: { automation: "a" } }), null);
   assert.equal(readSavedPullView({ id: "v", name: "x", filters: { filters: {}, repo: "../x", grouping: "nope" } })?.repo, "");
+});
+
+test("pullReviewInput supports APPROVE, REQUEST_CHANGES, and COMMENT with backward-compatible defaults", () => {
+  assert.deepEqual(
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, body: "Please add a test" }),
+    { repo: "Owner/Repo", number: 7, event: "REQUEST_CHANGES", body: "Please add a test" },
+  );
+  assert.deepEqual(
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE" }),
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "" },
+  );
+  assert.deepEqual(
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE", body: "   " }),
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "" },
+  );
+  assert.deepEqual(
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE", body: "LGTM" }),
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "LGTM" },
+  );
+  assert.deepEqual(
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "COMMENT", body: "Question on line 10" }),
+    { repo: "Owner/Repo", number: 7, event: "COMMENT", body: "Question on line 10" },
+  );
+  for (const bad of [
+    { repo: "Owner/Repo", number: 7, body: "" },
+    { repo: "Owner/Repo", number: 7, body: "   " },
+    { repo: "Owner/Repo", number: 7, event: "REQUEST_CHANGES", body: "" },
+    { repo: "Owner/Repo", number: 7, event: "COMMENT", body: "   " },
+    { repo: "Owner/Repo", number: 7, event: "COMMENT" },
+    { repo: "Owner/Repo", number: 7, event: "DISMISS", body: "no" },
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", extra: true },
+  ]) {
+    assert.equal(pullReviewInput.safeParse(bad).success, false, JSON.stringify(bad));
+  }
 });

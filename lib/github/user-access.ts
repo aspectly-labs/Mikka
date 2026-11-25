@@ -299,6 +299,8 @@ export interface PullRequestFiles {
   head: { ref: string; sha: string }
   /** The diff, parsed by lib/thread-changes.ts. */
   changes: ThreadChanges
+  /** Raw unified diff text when requested via `?format=patch`. */
+  patch?: string
   /** GitHub had changed files this read did not reach: the page cap or the patch-byte cap stopped it. */
   moreFiles: boolean
   /** Files GitHub sent no patch for — binary, or a diff it truncated — so they list with no lines. */
@@ -311,7 +313,13 @@ export interface PullRequestFiles {
  * verified immutable ID, so a call can never name another repository's pull request, and never
  * takes a URL. Nothing provider-specific leaves here: no token, no response body.
  */
-export async function readPullRequestFiles(userId: string, fullName: string, number: number, budget: RequestBudget): Promise<PullRequestFiles> {
+export async function readPullRequestFiles(
+  userId: string,
+  fullName: string,
+  number: number,
+  budget: RequestBudget,
+  options?: { includePatch?: boolean },
+): Promise<PullRequestFiles> {
   const { token, repository } = await githubRepositoryReadCredential(userId, 'v2/github.com/' + fullName.toLowerCase(), budget)
   const path = `/repositories/${repository.id}/pulls/${number}`
   const { data: pr } = await githubGet(token, path, budget)
@@ -346,11 +354,12 @@ export async function readPullRequestFiles(userId: string, fullName: string, num
   // A page cap reached with another page waiting is still a change we did not read.
   if (next) moreFiles = true
   const merged = typeof pr.merged_at === 'string' || pr.merged === true
+  const patch = pullRequestDiffText(files)
   return {
     repository: repository.fullName, number, url, title: pr.title.slice(0, 1000),
     state: pr.state === 'closed' && merged ? 'merged' : pr.state,
     base: { ref: base.ref, sha: base.sha }, head: { ref: head.ref, sha: head.sha },
-    changes: parseUnifiedDiff(pullRequestDiffText(files)), moreFiles, patchUnavailable,
+    changes: parseUnifiedDiff(patch), ...(options?.includePatch ? { patch } : {}), moreFiles, patchUnavailable,
   }
 }
 /** For server code acting for a user id with no browser request (the Coordinator). Never returns the token. */
