@@ -3,6 +3,7 @@
  * Integrations for now; translated words come from `Settings.sections.<id>.keywords`. */
 export const SETTINGS_SECTION_KEYWORDS: Partial<Record<string, readonly string[]>> = {
   models: ['model subscriptions', 'subscription', 'quota', 'usage', 'ChatGPT', 'OpenAI', 'Codex', 'Claude', 'Anthropic'],
+  connections: ['plugins', 'integrations', 'apps', 'MCP Servers', 'Custom MCP', 'MCP'],
 }
 
 /** Whether a settings sidebar item stays visible for the current search query. */

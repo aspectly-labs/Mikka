@@ -18,7 +18,7 @@ import {
 
 test('every nav item has exactly one section, grouped by true ownership scope (Personal / Agent & Compute / Workspace)', () => {
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !s.withheld && !s.unbuilt && s.sidebar !== false).map(s => s.id), ['preferences', 'appearance', 'account', 'security', 'notifications', 'shortcuts'])
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld).map(s => s.id), ['models', 'environments', 'computers', 'secrets', 'mcp', 'connections', 'instructions', 'team-skills', 'threads', 'git', 'memory'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['models', 'environments', 'computers', 'secrets', 'connections', 'instructions', 'team-skills', 'threads', 'git', 'memory'])
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'review' && !s.unbuilt && !s.withheld).map(s => s.id), [])
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'issue-states', 'members', 'teams', 'permissions', 'audit', 'developer', 'activity', 'billing', 'usage', 'organization', 'cloud'])
 })
@@ -51,7 +51,7 @@ test('hrefs keep the workspace, support extra query params, and use the routed p
 
 const PENDING_SECTIONS = []
 const SKIPPED_SECTIONS = ['review-repositories', 'review-config', 'referrals', 'experiments', 'cloud-credentials']
-const SIDEBAR_OFF = ['logins']
+const SIDEBAR_OFF = ['logins', 'mcp']
 
 test('centralized 3-tier status governs section and item presentation', () => {
   for (const id of PENDING_SECTIONS) assert.equal(settingSectionStatus(id), 'pending', id)
@@ -120,9 +120,12 @@ test('skipped pages (05/06/13 and UI-only 20/21) are not links and never appear'
   }
 })
 
-test('sidebar names reflect Wave 4 scope-honest English search titles', () => {
+test('sidebar names reflect Wave 5 unified Plugins and scope-honest English search titles', () => {
   const title = id => SETTINGS_SECTIONS.find(s => s.id === id).title
-  assert.deepEqual(['computers', 'developer', 'environments', 'secrets', 'mcp', 'permissions', 'logins'].map(title), ['Devices', 'API', 'Cloud environments', 'Secrets & Credentials', 'MCP Servers', 'Team permissions', 'Secrets and logins'])
+  assert.deepEqual(['computers', 'developer', 'environments', 'secrets', 'connections', 'mcp', 'permissions', 'logins'].map(title), ['Devices', 'API', 'Cloud environments', 'Secrets & Credentials', 'Plugins', 'Custom MCP', 'Team permissions', 'Secrets and logins'])
+  // `?section=mcp` stays a valid direct URL opening the unified Plugins Custom MCP tab.
+  assert.equal(isSettingsSectionParam('mcp'), true)
+  assert.equal(resolveSettingsSection('/settings', 'mcp'), 'mcp')
 })
 
 test('a current id wins over a legacy alias with the same name', () => {

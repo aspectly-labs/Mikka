@@ -166,8 +166,9 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'environments', group: 'agent', title: 'Cloud environments' },
   { id: 'computers', group: 'agent', title: 'Devices' },
   { id: 'secrets', group: 'agent', title: 'Secrets & Credentials' },
-  { id: 'mcp', group: 'agent', title: 'MCP Servers' },
-  { id: 'connections', group: 'agent', title: 'Integrations' },
+  // Direct `?section=mcp` links open the unified Plugins page on its Custom MCP tab.
+  { id: 'mcp', group: 'agent', title: 'Custom MCP', sidebar: false },
+  { id: 'connections', group: 'agent', title: 'Plugins' },
   { id: 'instructions', group: 'agent', title: 'Instructions' },
   { id: 'team-skills', group: 'agent', title: 'Skills' },
   { id: 'threads', group: 'agent', title: 'Threads' },
