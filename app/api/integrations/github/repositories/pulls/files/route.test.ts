@@ -16,7 +16,7 @@ stub("../../../../../../../lib/auth.ts", {
     api: {
       getSession: async ({ headers }: { headers: Headers }) => {
         calls.push(["session", headers]);
-        return owner ? { user: { id: owner } } : null;
+        return owner ? { user: { id: owner }, session: { id: 'owner-session' } } : null;
       },
     },
   },
@@ -25,7 +25,7 @@ stub("../../../../../../../lib/desktop-rpc/handler.ts", {
   humanSessionHeaders: (request: Request) => request.headers,
 });
 stub("../../../../../../../lib/request-log.ts", {
-  withRequestLog: (_path: string, handler: unknown) => handler,
+  noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler,
 });
 stub("../../../../../../../lib/github/user-access.ts", {
   GitHubAccessError: class GitHubAccessError extends Error {

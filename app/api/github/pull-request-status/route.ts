@@ -1,10 +1,10 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
-import { auth } from '@/lib/api-auth'
+import { type ApiSession } from '@/lib/api-auth'
 import { issueForUser } from '@/lib/issue-access'
 import { pullRequestSchema, readIssueMetadata } from '@/lib/issue-metadata'
 import { GitHubAccessError, readAuthorizedPullRequest } from '@/lib/github/user-access'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const inputSchema = z.object({ issueId: z.uuid(), url: pullRequestSchema.shape.url }).strict()
 const canonicalUrl = (url: string) => url.replace(/\/$/, '').toLowerCase()
@@ -19,10 +19,7 @@ async function liveWorkspace(issueId: string, viewerId: string) {
   } catch { return null }
 }
 
-async function handlePOST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers })
-  noteLogUser(session?.user?.id)
-  if (!session?.user) return fail('authRequired', 401)
+async function handlePOST(request: Request, session: ApiSession) {
   if (request.headers.get('origin') !== new URL(request.url).origin) return fail('originNotAllowed', 403)
   const input = inputSchema.safeParse(await request.json().catch(() => null))
   if (!input.success) return fail('githubPullRequestInvalid', 400)
@@ -42,4 +39,12 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withRequestLog('/api/github/pull-request-status', handlePOST)
+export const POST = defineRoute(
+  {
+    route: '/api/github/pull-request-status',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request, session }) => handlePOST(request, session),
+)

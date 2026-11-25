@@ -6,6 +6,7 @@ import { GitHubAccessError, githubUserToken } from "@/lib/github/user-access";
 import { handleFactoryApproval } from "@/lib/factory/approval-http";
 import { FactoryMergeRefused } from "@/lib/factory/merge";
 import { factoryBrowserSession } from "@/lib/factory/browser-human";
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function respond(
   request: Request,
@@ -52,5 +53,24 @@ async function respond(
   });
 
 }
-export const GET = respond;
-export const POST = respond;
+export const GET = defineRoute<'public','none',{ taskId: string }>(
+  {
+    route: '/api/factory/tasks/[taskId]/approval',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
+)
+
+export const POST = defineRoute<'public','none',{ taskId: string }>(
+  {
+    route: '/api/factory/tasks/[taskId]/approval',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
+)

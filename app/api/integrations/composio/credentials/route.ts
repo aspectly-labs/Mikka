@@ -6,6 +6,7 @@ import { pluginBody, pluginResponse } from '@/lib/plugins/http'
 import { PluginError } from '@/lib/plugins/contracts'
 import { connectWithCredentials, credentialConnectInput } from '@/lib/plugins/credential-connect'
 import { credentialConnectDeps } from '@/lib/plugins/credential-connect-server'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
  * Connects an app with the person's own credentials (an API key, a token, a
@@ -21,4 +22,13 @@ const POSTBody = withRequestLog('/api/integrations/composio/credentials', reques
 }, 201))
 
 // Credentials, permissions, money and deletion: the session is read from the database, not the cookie cache.
-export const POST = freshSessionRoute(POSTBody)
+const unguardedPOST = freshSessionRoute(POSTBody)
+export const POST = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPOST(request),
+)

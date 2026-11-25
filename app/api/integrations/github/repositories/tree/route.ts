@@ -4,10 +4,11 @@ import { humanSessionHeaders } from '@/lib/desktop-rpc/handler'
 import { repositorySchema } from '@/lib/github/repository-input'
 import { GitHubAccessError, readRepositoryTree } from '@/lib/github/user-access'
 import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const headers = { 'Cache-Control': 'private, no-store' }
 
-export const GET = withRequestLog('/api/integrations/github/repositories/tree', async (request: Request) => {
+const unguardedGET = withRequestLog('/api/integrations/github/repositories/tree', async (request: Request) => {
   const sessionHeaders = humanSessionHeaders(request)
   const session = sessionHeaders && await auth.api.getSession({ headers: sessionHeaders, query: { disableCookieCache: true } })
   if (!session?.user) return Response.json({ error: 'authRequired' }, { status: 401, headers })
@@ -24,3 +25,12 @@ export const GET = withRequestLog('/api/integrations/github/repositories/tree', 
     return Response.json({ error: failure.code }, { status: failure.status, headers })
   }
 })
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)

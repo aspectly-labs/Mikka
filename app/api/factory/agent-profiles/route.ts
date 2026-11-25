@@ -1,3 +1,23 @@
 import { agentProfileHandler } from '@/lib/factory/agent-profile-server'
-export const GET = (request: Request) => agentProfileHandler(request)
-export const POST = (request: Request) => agentProfileHandler(request)
+import { defineRoute } from '@/lib/primitives/define-route'
+
+export const GET = defineRoute(
+  {
+    route: '/api/factory/agent-profiles',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, session }) => agentProfileHandler(request, undefined, session),
+)
+export const POST = defineRoute(
+  {
+    route: '/api/factory/agent-profiles',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, session }) => agentProfileHandler(request, undefined, session),
+)

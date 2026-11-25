@@ -6,8 +6,9 @@ import { pluginBody, pluginResponse } from '@/lib/plugins/http'
 import { personalPlugins } from '@/lib/plugins/runtime'
 import { PluginError } from '@/lib/plugins/contracts'
 import { z } from 'zod'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const GET = withRequestLog('/api/integrations/mcp', request => pluginResponse(async () => {
+const unguardedGET = withRequestLog('/api/integrations/mcp', request => pluginResponse(async () => {
   const userId = await pluginActor(request)
   const workspaceId = new URL(request.url).searchParams.get('workspaceId')
   if (workspaceId !== null) {
@@ -32,6 +33,45 @@ const DELETEBody = withRequestLog('/api/integrations/mcp', request => pluginResp
 }))
 
 // Credentials, permissions, money and deletion: the session is read from the database, not the cookie cache.
-export const POST = freshSessionRoute(POSTBody)
-export const PATCH = freshSessionRoute(PATCHBody)
-export const DELETE = freshSessionRoute(DELETEBody)
+const unguardedPOST = freshSessionRoute(POSTBody)
+const unguardedPATCH = freshSessionRoute(PATCHBody)
+const unguardedDELETE = freshSessionRoute(DELETEBody)
+export const GET = defineRoute(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)
+
+export const POST = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPOST(request),
+)
+
+export const PATCH = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPATCH(request),
+)
+
+export const DELETE = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    freshSession: true,
+  },
+  ({ request }) => unguardedDELETE(request),
+)

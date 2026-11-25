@@ -115,8 +115,15 @@ test('the money, permission, credential and deletion entry points read the sessi
     'app/api/workspaces/[workspaceId]/computer-policy/route.ts': ['POST'],
     'app/api/workspaces/[workspaceId]/model-admission/route.ts': ['POST'],
   }
+  const guarded = new Set(['app/api/integrations/composio/credentials/route.ts', 'app/api/integrations/mcp/route.ts'])
   for (const [file, methods] of Object.entries(routes)) {
     const source = await readFile(file, 'utf8')
-    for (const method of methods) assert.match(source, new RegExp(`export const ${method} = freshSessionRoute\\(${method}Body\\)`), `${file} ${method}`)
+    for (const method of methods) {
+      if (guarded.has(file)) {
+        assert.match(source, new RegExp(`export const ${method} = defineRoute(?:<[^>]+>)?\\(\\s*\\{[\\s\\S]*?freshSession: true`), `${file} ${method}`)
+      } else {
+        assert.match(source, new RegExp(`export const ${method} = freshSessionRoute\\(${method}Body\\)`), `${file} ${method}`)
+      }
+    }
   }
 })

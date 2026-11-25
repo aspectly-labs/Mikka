@@ -6,6 +6,7 @@ import { withRequestLog } from '@/lib/request-log'
 import { withTaskWorkspace } from '@/lib/task-workspace'
 import { authorizeSlack, installPlatform, SLACK_CALLBACK_PATH, SLACK_INSTALL_RETURN_PATH, SLACK_STATE_COOKIE } from '@/lib/slack/install-provider'
 import { consumeInstall, startInstall } from '@/lib/slack/installation-store'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const path = '/api/integrations/slack/connect'
 async function handle(request: Request) {
@@ -40,4 +41,12 @@ async function handle(request: Request) {
     return RouteResponse.redirect(back)
   }
 }
-export const GET = withRequestLog(path, handle)
+const unguardedGET = withRequestLog(path, handle)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

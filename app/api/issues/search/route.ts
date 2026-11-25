@@ -1,10 +1,11 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
-import { auth } from '@/lib/api-auth'
+import { type ApiSession } from '@/lib/api-auth'
 import { actAs } from '@/lib/acting-user'
 import { ActionFailureError } from '@/lib/action-error'
 import { db } from '@/lib/db'
 import { parseSearchParams, searchIssues, SearchInputError } from '@/lib/issue-search'
 import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
  * GET /api/issues/search — relation picker search (MIK-16). See lib/issue-search.ts for the
@@ -21,9 +22,7 @@ import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
  * Response: { items, nextCursor, truncated }. truncated = the ancestor/descendant walk hit the
  * 20-level cap, so some deeper relatives may not be excluded; nextCursor = more rows exist.
  */
-export async function GET(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers })
-  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } })
+async function unguardedGET(request: Request, session: ApiSession) {
   const userId = session.user.id
   try {
     const params = parseSearchParams(new URL(request.url).searchParams)
@@ -40,3 +39,12 @@ export async function GET(request: Request) {
     return RouteResponse.json({ error: 'issueSearchFailed' }, { status: 500 })
   }
 }
+export const GET = defineRoute(
+  {
+    route: '/api/issues/search',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request, session }) => unguardedGET(request, session),
+)

@@ -5,12 +5,13 @@ import { GitHubAccessError } from "@/lib/github/user-access";
 import { mergePullRequest, pullMergeDependencies } from "@/lib/github/pull-merge";
 import { pullMergeInput } from "@/lib/pull-directory";
 import { withRequestLog } from "@/lib/request-log";
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 60;
 const headers = { "Cache-Control": "private, no-store" };
 const permission = new Set(["githubMergeAuthorizationRequired", "githubMergeForbidden"]);
 /** Merges one pull request as the signed-in person (lib/github/pull-merge.ts). */
-export const POST = withRequestLog(
+const unguardedPOST = withRequestLog(
   "/api/integrations/github/repositories/pulls/merge",
   async (request: Request) => {
     const sessionHeaders = humanSessionHeaders(request);
@@ -69,3 +70,12 @@ export const POST = withRequestLog(
     }
   },
 );
+export const POST = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPOST(request),
+)
