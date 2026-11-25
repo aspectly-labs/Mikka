@@ -9,7 +9,7 @@ export const GET = defineRoute(
     workspace: 'none',
     freshSession: true,
   },
-  ({ request, session }) => agentProfileHandler(request, undefined, session),
+  ({ request }) => agentProfileHandler(request),
 )
 export const POST = defineRoute(
   {
@@ -19,5 +19,5 @@ export const POST = defineRoute(
     workspace: 'none',
     freshSession: true,
   },
-  ({ request, session }) => agentProfileHandler(request, undefined, session),
+  ({ request }) => agentProfileHandler(request),
 )

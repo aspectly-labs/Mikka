@@ -1144,7 +1144,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "9a6a8c13daae8f5b7763c4a7b140d72f96ebdb4873b1367d0cce5c3ca269de37"
+      "sourceHash": "1f8d801753a6d142eb620ca172ad79e0aed2d4c0049fb147e59fdda921d04bd6"
     },
     {
       "path": "/mikka/api/factory/agent-profiles/[profileId]",
@@ -1155,7 +1155,7 @@
         "GET",
         "PATCH"
       ],
-      "sourceHash": "e8be8d46a14ac7492ad764ea5cc74d1d2dd853323b355ce9abf531f78352d7bb"
+      "sourceHash": "19c05b28a93d7fa52c8dea51526a9be15a2ac2834f2250c6f04e8f5962d01c74"
     },
     {
       "path": "/mikka/api/factory/monitor-incidents/[incidentId]/links",

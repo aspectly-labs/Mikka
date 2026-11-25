@@ -1,7 +1,7 @@
 import { agentProfileHandler } from '@/lib/factory/agent-profile-server'
 import { defineRoute } from '@/lib/primitives/define-route'
 
-const handle = ({ request, params, session }: { request: Request; params: { profileId: string }; session: Parameters<typeof agentProfileHandler>[2] }) => agentProfileHandler(request, params.profileId, session)
+const handle = ({ request, params }: { request: Request; params: { profileId: string } }) => agentProfileHandler(request, params.profileId)
 
 export const GET = defineRoute(
   {
