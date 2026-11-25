@@ -56,7 +56,7 @@ test('actual Vite resolution rejects server runtime and unregistered action cons
     // resolution.
     'import { getTranslations } from "@/lib/intl/i18n-server"; export const read = () => getTranslations("Common")',
   ]) await assert.rejects(compile(source), /FRONTEND_SERVER_(?:IMPORT|MODULE)/)
-  await assert.rejects(compile('export { shareCapture } from "@/app/actions/captures"'), /FRONTEND_ACTION_NOT_ALLOWED: captures.shareCapture/)
+  await assert.rejects(compile('export { createIssueForTeam } from "@/app/actions/issues"'), /FRONTEND_ACTION_NOT_ALLOWED: issues.createIssueForTeam/)
 })
 
 test('actual emitted CommonJS and ESM syntax themes retain their conditional export semantics', async () => {
