@@ -1,6 +1,6 @@
 // Bot chats: one AI SDK model message per coordinator_messages row of that bot
-// (lib/coordinator/context.ts reads them). Assistant text with a `root = …`
-// line renders as OpenUI (lib/agent-ui-source.ts); anything else is Markdown.
+// (lib/coordinator/context.ts reads them). Historical OpenUI sample entries are
+// projected into read-only Markdown by lib/legacy-chat-content.ts.
 // Placeholders the seed replaces: {{issue:<key>}}, {{run:<key>}}, {{bot:<key>}}, {{artifact:<key>}}.
 
 const user = content => ({ role: 'user', content })

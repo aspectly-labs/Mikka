@@ -316,7 +316,7 @@ test('filesystem-based i18n and generated catalog policies cannot disappear from
   const commands = JSON.parse(readFileSync('scripts/ci/tasks.json','utf8'))
   for (const file of ['messages/en.json']) {
     const result = await pick(file)
-    for (const command of ['pnpm test:i18n','pnpm i18n:check','pnpm check:agent-ui']) {
+    for (const command of ['pnpm test:i18n','pnpm i18n:check']) {
       const key = Object.entries(commands).find(([,task])=>task.command===command)?.[0]
       assert(result.units.includes(`ci-${key}`), `${file}: ${command}`)
     }

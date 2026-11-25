@@ -86,7 +86,6 @@ jobs:
         run: node scripts/test-accounts/bootstrap.mjs --output "$MIKKA_TEST_ENVIRONMENT_FILE"
       - name: Compile the local API and Eve around the verified official renderer
         run: |
-          pnpm generate:agent-ui
           node scripts/build-eve.mjs
           node apps/api/scripts/build.mjs
           node scripts/package-eve.mjs

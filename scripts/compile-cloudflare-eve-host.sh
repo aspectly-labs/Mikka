@@ -2,7 +2,6 @@
 set -euo pipefail
 
 # The trusted caller provides a frozen workspace and network-isolated Node 24.
-node --experimental-strip-types scripts/generate-agent-ui-prompt.mjs
 node scripts/build-eve.mjs
 case "${1:-}" in
   '')

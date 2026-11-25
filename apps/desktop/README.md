@@ -56,7 +56,7 @@ The dev shell loads local assets and sends backend requests to
 `http://localhost:3000/mikka`. It uses the separate `Mikka Dev` data directory
 and `persist:mikka-dev` partition, matching the daemon's dev flavor.
 `MIKKA_DESKTOP_APP_URL` selects the backend at build time. Compiled-backend
-acceptance prepares the isolated database, runs `pnpm generate:agent-ui` and
+acceptance prepares the isolated database and
 `pnpm build:app`, then starts the Node output with `pnpm start`. See the
 [shared runtime guide](../../docs/operations/web-runtime.md).
 

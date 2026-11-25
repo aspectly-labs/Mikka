@@ -2470,12 +2470,12 @@
     "test": "tests/mobile-service-members.db.test.ts",
     "suite": "test:web-auth-db"
   },
-  "lib/openui-lang.ts": {
+  "lib/legacy-chat-content.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Parse generated reply documents locally and count their root assignments so a streamed answer retains its identity when the same turn is read from storage.",
-    "test": "lib/openui-lang.test.ts",
-    "suite": "test:mobile"
+    "behavior": "Project historical stored OpenUI replies into read-only Markdown or plain text locally without any external OpenUI runtime dependency.",
+    "test": "lib/legacy-chat-content.test.ts",
+    "suite": "test:agent"
   },
   "lib/platform/public-origin.ts": {
     "mode": "built-in",
