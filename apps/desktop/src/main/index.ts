@@ -392,7 +392,12 @@ function openFromTray(href: string): void {
 /** A menu command for a window that is only now opening: sent once its page has loaded and subscribed. */
 function commandWhenOpen(command: DesktopMenuCommand): void {
   createMainWindow()
-  mainWindow?.webContents.once('did-finish-load', () => { setTimeout(() => sendMenuCommand(command), 1_500) })
+  const contents = mainWindow?.webContents
+  contents?.once('did-finish-load', () => {
+    if (!gate && !contents.isDestroyed() && isTrustedFrame(contents.getURL(), PAGE_URL)) {
+      contents.send(IPC.appMenuCommand, command)
+    }
+  })
 }
 
 function renderTray(): void {
@@ -530,13 +535,7 @@ let gate: UpdateGate | null = null
 const BACKGROUND_UPDATE_DELAY_MS = 10_000
 const BACKGROUND_UPDATE_INTERVAL_MS = 4 * 60 * 60_000
 
-/**
- * The update gate (launch-update.ts), only for a server that requires a newer desktop: a small window that
- * checks for an update and, when there is one, installs it before `open` lets the person in.
- * Closing the window while it holds the door quits the app; there is no way
- * in on the old version.
- */
-function runUpdateGate(open: (retryCheck: boolean) => void): void {
+function runUpdateGate(minimum: string): void {
   if (gate) return
   const copy = gateCopy(app.getLocale())
   const win = new BrowserWindow({
@@ -555,7 +554,6 @@ function runUpdateGate(open: (retryCheck: boolean) => void): void {
   gateWindow = win
   let loaded = false
   let pending: GateState | null = null
-  let opened = false
   const render = (state: GateState) => {
     if (win.isDestroyed()) return
     if (!loaded) { pending = state; return }
@@ -571,16 +569,11 @@ function runUpdateGate(open: (retryCheck: boolean) => void): void {
   })
   win.on('closed', () => {
     gateWindow = null
-    if (!opened) app.quit()
+    app.quit()
   })
   gate = new UpdateGate(autoUpdater, {
     onState: render,
-    onProceed: retryCheck => {
-      opened = true
-      gate = null
-      if (!win.isDestroyed()) win.close()
-      open(retryCheck)
-    },
+    minimum,
   })
   const lang = /^zh\b/i.test(app.getLocale()) ? 'zh-CN' : 'en'
   void win.loadFile(join(__dirname, 'update.html'), { query: { lang } })
@@ -594,12 +587,14 @@ function runUpdateGate(open: (retryCheck: boolean) => void): void {
  */
 async function enforceMinimumVersion(): Promise<void> {
   if (!app.isPackaged || FLAVOR === 'dev' || gate) return
+  let minimum: string
   try {
     const server = currentServer()
     const response = await session.fromPartition(PARTITION).fetch(`${server.replace(/\/$/, '')}/api/version`, { headers: { origin: new URL(server).origin }, redirect: 'error', cache: 'no-store' })
     if (!response.ok) return
     const { minDesktopVersion } = await response.json() as { minDesktopVersion?: unknown }
     if (typeof minDesktopVersion !== 'string' || meetsMinimumVersion(APP_VERSION, minDesktopVersion)) return
+    minimum = minDesktopVersion
   } catch {
     return
   }
@@ -607,11 +602,8 @@ async function enforceMinimumVersion(): Promise<void> {
   const children = BrowserWindow.getAllWindows().filter(win => win !== mainWindow && win.isVisible())
   for (const win of children) win.hide()
   mainWindow?.hide()
-  runUpdateGate(() => {
-    for (const win of children) if (!win.isDestroyed()) win.showInactive()
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show()
-    else createMainWindow()
-  })
+  runUpdateGate(minimum)
+  if (updates.ready && meetsMinimumVersion(updates.ready, minimum)) updates.install()
 }
 
 async function checkForUpdates(interactive: boolean): Promise<void> {

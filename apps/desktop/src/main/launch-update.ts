@@ -1,11 +1,7 @@
-// The update gate: when the server requires a newer desktop (/api/version's
-// minDesktopVersion) the app checks for an update, and a newer version is
-// installed before the person gets back in. It no longer runs on every cold
-// start (decision C7, 2026-11-25, overturning Alex 2026-11-02): updates
-// download in the background instead. No update, no network, or no answer within CHECK_TIMEOUT_MS: the
-// app opens as usual; a failed check never locks anyone out. A failed
-// download shows why and offers 重试, but not "use the old version".
+import { meetsMinimumVersion } from '@mikka/protocol/version'
 
+// This gate runs after the server has confirmed the installed desktop is too old.
+// Only restarting with a compatible update can satisfy the minimum version.
 export const CHECK_TIMEOUT_MS = 5_000
 
 /** The part of electron-updater's `autoUpdater` the gate listens to. */
@@ -28,8 +24,7 @@ export type GateState =
 export interface GateOptions {
   /** Each state the window shows. */
   onState(state: GateState): void
-  /** Open once. Retry in the background only if the launch check was inconclusive. */
-  onProceed(retryCheck: boolean): void
+  minimum: string
   timeoutMs?: number
   setTimer?: (run: () => void, ms: number) => unknown
   clearTimer?: (timer: unknown) => void
@@ -54,10 +49,11 @@ export class UpdateGate {
     this.clearTimer = options.clearTimer ?? (timer => { clearTimeout(timer as ReturnType<typeof setTimeout>) })
     this.listen('update-available', (info: { version: string }) => {
       if (this.state.kind !== 'checking') return
+      if (!meetsMinimumVersion(info.version, options.minimum)) return this.fail('')
       this.stopTimer()
       this.show({ kind: 'downloading', version: info.version, percent: 0 })
     })
-    this.listen('update-not-available', () => { if (this.state.kind === 'checking') this.proceed(false) })
+    this.listen('update-not-available', () => { if (this.state.kind === 'checking') this.fail('') })
     this.listen('download-progress', (progress: { percent: number }) => {
       if (this.state.kind !== 'downloading') return
       const percent = Math.max(0, Math.min(100, Math.floor(progress.percent)))
@@ -65,6 +61,7 @@ export class UpdateGate {
     })
     this.listen('update-downloaded', (info: { version: string }) => {
       if (this.finished || this.state.kind === 'installing') return
+      if (!meetsMinimumVersion(info.version, options.minimum)) return this.fail('')
       this.stopTimer()
       this.show({ kind: 'installing', version: info.version })
       this.finished = true
@@ -77,15 +74,14 @@ export class UpdateGate {
   /** Starts the check; the timeout applies only until an update is found. */
   start(): void {
     this.show({ kind: 'checking' })
-    this.timer = this.setTimer(() => { if (this.state.kind === 'checking') this.proceed(true) }, this.options.timeoutMs ?? CHECK_TIMEOUT_MS)
+    this.timer = this.setTimer(() => { if (this.state.kind === 'checking') this.fail('ETIMEDOUT') }, this.options.timeoutMs ?? CHECK_TIMEOUT_MS)
     this.check()
   }
 
-  /** 重试 after a failed download: the same version, downloaded again. */
+  /** Retry also rechecks the feed if it did not yet contain a compatible release. */
   retry(): void {
     if (this.state.kind !== 'failed' || this.finished) return
-    this.show({ kind: 'downloading', version: this.state.version, percent: 0 })
-    this.check()
+    this.start()
   }
 
   private check(): void {
@@ -94,18 +90,10 @@ export class UpdateGate {
 
   private fail(error: unknown): void {
     if (this.finished) return
-    // A check that cannot reach the server lets the person in; only a found
-    // update that will not download holds the door.
-    if (this.state.kind === 'checking') return this.proceed(true)
-    if (this.state.kind === 'downloading') this.show({ kind: 'failed', version: this.state.version, reason: failureReason(error) })
-  }
-
-  private proceed(retryCheck: boolean): void {
-    if (this.finished) return
-    this.finished = true
+    if (this.state.kind !== 'checking' && this.state.kind !== 'downloading') return
     this.stopTimer()
-    this.detach()
-    this.options.onProceed(retryCheck)
+    const version = this.state.kind === 'downloading' ? this.state.version : this.options.minimum
+    this.show({ kind: 'failed', version, reason: failureReason(error) })
   }
 
   private show(state: GateState): void {
@@ -139,6 +127,8 @@ export function gateCopy(locale: string) {
     downloading: (version: string) => zh ? `正在更新到 v${version}` : `Updating to v${version}`,
     installing: (version: string) => zh ? `正在安装 v${version}` : `Installing v${version}`,
     failed: (version: string) => zh ? `无法更新到 v${version}` : `Could not update to v${version}`,
+    unavailable: zh ? '更新源尚未提供所需版本' : 'The required version is not available from the update server yet.',
+    timedOut: zh ? '检查更新超时' : 'The update check timed out.',
     retry: zh ? '重试' : 'Retry',
   }
 }
@@ -149,6 +139,6 @@ export function gateView(state: GateState, copy: ReturnType<typeof gateCopy>) {
     case 'checking': return { heading: copy.checking, detail: '', percent: null, retry: null, busy: true }
     case 'downloading': return { heading: copy.downloading(state.version), detail: `${state.percent}%`, percent: state.percent, retry: null, busy: true }
     case 'installing': return { heading: copy.installing(state.version), detail: '', percent: 100, retry: null, busy: true }
-    case 'failed': return { heading: copy.failed(state.version), detail: state.reason, percent: null, retry: copy.retry, busy: false }
+    case 'failed': return { heading: copy.failed(state.version), detail: state.reason === 'ETIMEDOUT' ? copy.timedOut : state.reason || copy.unavailable, percent: null, retry: copy.retry, busy: false }
   }
 }

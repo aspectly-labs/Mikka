@@ -20,59 +20,57 @@ class FakeUpdater extends EventEmitter {
 function setup() {
   const updater = new FakeUpdater()
   const states: GateState[] = []
-  const earlyRetries: boolean[] = []
   let fire: (() => void) | null = null
   let delay = 0
   let cleared = 0
   const gate = new UpdateGate(updater as unknown as GateUpdater, {
     onState: state => states.push(state),
-    onProceed: retryCheck => { earlyRetries.push(retryCheck) },
+    minimum: '2.0.0',
     setTimer: (run, ms) => { fire = run; delay = ms; return 'timer' },
     clearTimer: () => { cleared += 1 },
   })
-  return { updater, gate, states, earlyRetries, proceeded: () => earlyRetries.length, timeout: () => fire?.(), delay: () => delay, cleared: () => cleared }
+  return { updater, gate, states, timeout: () => fire?.(), delay: () => delay, cleared: () => cleared }
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve))
 
-test('no update: the app opens and the gate stops listening', async () => {
+test('a required version missing from the feed can be retried but cannot open the old app', async () => {
   const t = setup()
   t.updater.next = u => { u.emit('update-not-available') }
   t.gate.start()
   await flush()
-  assert.equal(t.proceeded(), 1)
-  assert.deepEqual(t.states, [{ kind: 'checking' }])
-  assert.deepEqual(t.earlyRetries, [false])
+  assert.equal(t.states.at(-1)?.kind, 'failed')
   assert.equal(t.delay(), CHECK_TIMEOUT_MS)
-  assert.equal(t.updater.listenerCount('update-downloaded'), 0)
+  t.updater.next = u => { u.emit('update-downloaded', { version: '2.0.1' }) }
+  t.gate.retry()
+  await flush()
+  assert.equal(t.updater.installs, 1)
 })
 
-test('offline or a failed check: the app opens; a failed check never locks anyone out', async () => {
-  const t = setup()
-  t.updater.rejectWith = new Error('net::ERR_INTERNET_DISCONNECTED')
-  t.gate.start()
-  await flush()
-  assert.equal(t.proceeded(), 1)
-
-  assert.deepEqual(t.earlyRetries, [true])
-  const e = setup()
-  e.updater.next = u => { u.emit('error', new Error('getaddrinfo ENOTFOUND')) }
-  e.gate.start()
-  await flush()
-  assert.equal(e.proceeded(), 1)
-  assert.deepEqual(e.earlyRetries, [true])
+test('check failures and timeouts keep the minimum version on screen and offer retry', async () => {
+  for (const cause of ['reject', 'error', 'timeout']) {
+    const t = setup()
+    if (cause === 'reject') t.updater.rejectWith = new Error('offline')
+    if (cause === 'error') t.updater.next = u => { u.emit('error', new Error('offline')) }
+    t.gate.start()
+    if (cause === 'timeout') t.timeout()
+    await flush()
+    assert.equal(t.gate.state.kind, 'failed', cause)
+    assert.equal(t.updater.installs, 0)
+    t.updater.rejectWith = null
+    t.updater.next = u => { u.emit('update-available', { version: '2.0.0' }) }
+    t.gate.retry()
+    await flush()
+    assert.equal(t.gate.state.kind, 'downloading')
+  }
 })
 
-test('no answer within five seconds: the app opens, and a late answer is ignored', async () => {
+test('a cached download below the required version cannot release the gate', () => {
   const t = setup()
   t.gate.start()
-  t.timeout()
-  assert.deepEqual(t.earlyRetries, [true])
-  assert.equal(t.proceeded(), 1)
-  t.updater.emit('update-available', { version: '2.0.0' })
-  t.updater.emit('update-downloaded', { version: '2.0.0' })
+  t.updater.emit('update-downloaded', { version: '1.9.1' })
+  assert.equal(t.gate.state.kind, 'failed')
   assert.equal(t.updater.installs, 0)
-  assert.deepEqual(t.states, [{ kind: 'checking' }])
 })
 
 test('a new version: progress, then install and restart; no way in on the old version', async () => {
@@ -82,7 +80,6 @@ test('a new version: progress, then install and restart; no way in on the old ve
   await flush()
   assert.equal(t.cleared(), 1, 'the check timeout stops once an update is found')
   t.timeout()
-  assert.equal(t.proceeded(), 0)
   t.updater.emit('download-progress', { percent: 41.7 })
   t.updater.emit('download-progress', { percent: 41.9 })
   t.updater.emit('download-progress', { percent: 100 })
@@ -95,7 +92,6 @@ test('a new version: progress, then install and restart; no way in on the old ve
     { kind: 'installing', version: '2.0.0' },
   ])
   assert.equal(t.updater.installs, 1)
-  assert.equal(t.proceeded(), 0)
 })
 
 test('a failed download shows why and offers 重试; 重试 downloads again', async () => {
@@ -105,16 +101,14 @@ test('a failed download shows why and offers 重试; 重试 downloads again', as
   await flush()
   t.updater.emit('error', new Error('Error: sha512 checksum mismatch\n    at verify (updater.js:1:1)'))
   assert.deepEqual(t.states.at(-1), { kind: 'failed', version: '2.0.0', reason: 'Error: sha512 checksum mismatch' })
-  assert.equal(t.proceeded(), 0, 'a known update that will not download keeps the door shut')
 
   // 重试 while still offline fails again rather than letting the old version in.
   t.updater.next = () => {}
   t.updater.rejectWith = new Error('net::ERR_INTERNET_DISCONNECTED')
   t.gate.retry()
   await flush()
-  assert.deepEqual(t.states.at(-2), { kind: 'downloading', version: '2.0.0', percent: 0 })
+  assert.deepEqual(t.states.at(-2), { kind: 'checking' })
   assert.equal(t.states.at(-1)?.kind, 'failed')
-  assert.equal(t.proceeded(), 0)
 
   t.updater.rejectWith = null
   t.updater.next = u => { u.emit('update-available', { version: '2.0.0' }); u.emit('update-downloaded', { version: '2.0.0' }) }
