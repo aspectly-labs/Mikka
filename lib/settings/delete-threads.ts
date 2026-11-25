@@ -21,8 +21,8 @@ export async function deleteOwnedWorkspaceThreads(userId: string, workspaceId: s
     if (rows.length) {
       await tx.query(`UPDATE agent_runs SET "deletedAt"=now(),"deletedBy"=$1,"updatedAt"=now()
         WHERE "userId"=$1 AND "workspaceId"=$2 AND id=ANY($3::uuid[])`, [userId, workspaceId, rows.map(row => row.id)])
-      if (count) await recordAudit(drizzle(tx), { workspaceId, actor: { type: 'user', id: userId, name: userId },
-        action: 'thread.bulk_deleted', metadata: { count } })
+      await recordAudit(drizzle(tx), { workspaceId, actor: { type: 'user', id: userId, name: userId },
+        action: 'thread.bulk_deleted', metadata: { count, runs: rows.length } })
       for (const row of rows) {
         await runListChanged(tx, row.id)
         await runChanged(tx, row.id)

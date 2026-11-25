@@ -4417,6 +4417,8 @@
     "emptyHint": "{name} 会开任务、派 Agent 去做，PR 准备好时叫你"
   },
   "Errors": {
+    "skillReviewRequired": "请提交技能审核。",
+    "skillPublishingDisabled": "工作区已关闭技能发布。",
     "issueScopeInLinear": "请先确认如何处理 Linear 中的任务，再转为个人任务。",
     "sharedWorkNotAllowed": "个人工作区的线程和 Bot 只能设为私有。",
     "inviteInvalidEmails": "邮箱地址无效、为空或数量过多，请检查后重试。",

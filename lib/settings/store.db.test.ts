@@ -742,4 +742,12 @@ dbTest('workspace security and approval settings apply to the actual workspace p
   assert.equal((await workspace.PATCH(request('workspace', 'PATCH', patch({ requireTwoFactor: true })), context())).status, 200)
   assert.ok((await readPersonalSecurity(member, 'no-session')).workspaces.some(row => row.workspaceId === workspaceId && row.status === 'enrollment_required'))
   assert.ok(!(await readPersonalSecurity(outsider, 'no-session')).workspaces.some(row => row.workspaceId === workspaceId))
+  const { enterpriseWorkspaceAllowed } = await import('../enterprise/access')
+  const oldSession = randomUUID(), newSession = randomUUID()
+  await pool.query(`INSERT INTO session(id,token,"userId","createdAt","updatedAt","expiresAt") VALUES
+    ($1,$1,$3,now()-interval '1 day',now(),now()+interval '1 day'),
+    ($2,$2,$3,now(),now(),now()+interval '1 day')`, [oldSession, newSession, member])
+  assert.equal(await enterpriseWorkspaceAllowed(member, workspaceId, { kind: 'session', sessionId: oldSession }), true)
+  assert.equal(await enterpriseWorkspaceAllowed(member, workspaceId, { kind: 'session', sessionId: newSession }), false)
+  assert.equal(await enterpriseWorkspaceAllowed(member, otherWorkspaceId, { kind: 'session', sessionId: newSession }), true)
 })

@@ -4511,6 +4511,8 @@
     "emptyHint": "{name} opens tasks, sends Agents to do them and calls you when a pull request is ready"
   },
   "Errors": {
+    "skillReviewRequired": "Submit this skill for review.",
+    "skillPublishingDisabled": "Skill publishing is turned off in this workspace.",
     "issueScopeInLinear": "Confirm how to handle the Linear issue before moving this task to personal.",
     "sharedWorkNotAllowed": "Threads and Bots in a personal workspace stay private.",
     "inviteInvalidEmails": "The email addresses are invalid, empty, or too many. Check them and try again.",

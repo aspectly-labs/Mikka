@@ -108,7 +108,7 @@ export const AUDIT_METADATA = {
     dataRegion: z.literal('unknown') }).strict(),
   'model.denied': z.object({ revision: z.string().regex(/^[a-f0-9]{64}$/),
     reason: z.enum(['modelRouteDenied', 'modelPolicyRevoked', 'modelRegionUnverified', 'modelPrincipalUnavailable', 'modelPolicyInvalid']) }).strict(),
-  'thread.bulk_deleted': z.object({ count: z.number().int().positive() }).strict(),
+  'thread.bulk_deleted': z.object({ count: z.number().int().nonnegative(), runs: z.number().int().positive() }).strict(),
   'skill.registered': z.object({ versionId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/), format: z.literal('single-skill-md-v1') }).strict(),
   'skill.reviewed': z.object({ versionId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/), format: z.literal('single-skill-md-v1') }).strict(),
   'skill.withdrawn': z.object({ versionId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/), format: z.literal('single-skill-md-v1') }).strict(),

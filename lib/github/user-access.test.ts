@@ -615,6 +615,7 @@ test('admitted repository returns matching recent PR openers, independent of rev
 })
 
 test('workspace merge totals count both periods and withhold a partial or inaccessible denominator', async () => {
+  connected = { token: expectedToken, githubAccountId: '42' }
   const previous = answer
   const queries: string[] = []
   answer = url => {
