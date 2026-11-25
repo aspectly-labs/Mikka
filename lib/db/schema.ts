@@ -378,7 +378,6 @@ export const linearIssueDetachments = pgTable('linear_issue_detachments', {
 export const linearCommentLinks = pgTable('linear_comment_links', {
   id: uuid('id').primaryKey(), issueLinkId: uuid('issueLinkId').notNull().references(() => linearIssueLinks.id, { onDelete: 'cascade' }),
   threadId: text('threadId').notNull(), messageId: text('messageId').notNull(), authorUserId: text('authorUserId'), linearCommentId: text('linearCommentId').notNull().unique(),
-  localDeletedAt: timestamp('localDeletedAt', { withTimezone: true }),
   parentLinearCommentId: text('parentLinearCommentId'), bodyHash: text('bodyHash').notNull(), syncStatus: text('syncStatus').notNull().default('pending'), lastError: text('lastError'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('linear_comment_links_local_key').on(table.issueLinkId, table.threadId, table.messageId)])

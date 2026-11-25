@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import * as Y from 'yjs'
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
 import type { JSONContent } from '@tiptap/core'
@@ -7,13 +7,12 @@ import { ActionFailureError } from '@/lib/action-error'
 import type { ActionErrorCode } from '@/lib/action-result'
 import { recordAudit } from '@/lib/audit/write'
 import { db } from '@/lib/db'
-import { issueDocuments, issues, linearCommentLinks, linearIssueLinks } from '@/lib/db/schema'
+import { issueDocuments, issues } from '@/lib/db/schema'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { requireIssueAccessWithoutBody } from '@/lib/issue-access'
 import { readIssueMetadata } from '@/lib/issue-metadata'
 import { requireCurrentIssueWorkspace, requireLockedIssueScope, withIssueWorkspace } from '@/lib/issue-scope-authorization'
 import { issueAttrsContent } from '@/lib/issue-summary-columns'
-import { dispatchLinearIssueSync } from '@/lib/linear-sync/dispatch'
 import { issueListChanged } from '@/lib/live/lists'
 import { documentChanged, taskCommentsChanged } from '@/lib/live/panels'
 import { resourceActionAllowed } from '@/lib/resource-access/store'
@@ -30,7 +29,7 @@ import { deleteThreadMessage, editThreadMessage, findThreadMessage, referencedTa
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type Refusal = { error: ActionErrorCode }
 type User = Awaited<ReturnType<typeof requireIssueAccessWithoutBody>>['user']
-type Locked = { id: string; userId: string; workspaceId: string | null; scopeVersion: number; content: unknown; issuedIdentifier: string | null; linearSyncPolicy: string; linearSyncBlocked: boolean }
+type Locked = { id: string; userId: string; workspaceId: string | null; scopeVersion: number; content: unknown; issuedIdentifier: string | null }
 
 /** A workspace admin (lib/resource-access/store.ts reads the same row) may delete anyone's comment. */
 async function workspaceAdmin(userId: string, workspaceId: string) {
@@ -51,10 +50,9 @@ type Discussion = { tx: Transaction; user: User; task: Locked & { workspaceId: s
  */
 async function withDiscussion<T>(taskId: string, lock: 'update' | 'share', work: (discussion: Discussion) => Promise<T | Refusal>): Promise<T | Refusal> {
   const { issue, user } = await requireIssueAccessWithoutBody(taskId)
-  let syncEligible = false
-  const result = await withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canReadContent' }, async (_workspace, tx) => {
+  return withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canReadContent' }, async (_workspace, tx) => {
     const [locked] = await tx.select({ id: issues.id, userId: issues.userId, workspaceId: issues.workspaceId, scopeVersion: issues.scopeVersion, content: issueAttrsContent,
-      issuedIdentifier: issues.issuedIdentifier, linearSyncPolicy: issues.linearSyncPolicy, linearSyncBlocked: issues.linearSyncBlocked })
+      issuedIdentifier: issues.issuedIdentifier })
       .from(issues).where(and(eq(issues.id, issue.id), eq(issues.userId, issue.userId))).for(lock)
     requireLockedIssueScope(locked, user.id, issue.scopeVersion, issue.workspaceId)
     if (readIssueMetadata(locked.content as Parameters<typeof readIssueMetadata>[0]).deletedAt) throw new ActionFailureError('issueNotFound')
@@ -80,16 +78,9 @@ async function withDiscussion<T>(taskId: string, lock: 'update' | 'share', work:
       await syncTaskInlineFileReferences(tx, issue.id, referencedTaskFileIds(description, readDocumentThreads(doc)))
       await documentChanged(tx, issue.id)
       await issueListChanged(tx, issue.id)
-      if (locked.linearSyncPolicy === 'explicit' && !locked.linearSyncBlocked) {
-        const [link] = await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks)
-          .where(and(eq(linearIssueLinks.issueId, issue.id), eq(linearIssueLinks.ownerId, issue.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1)
-        syncEligible = Boolean(link)
-      }
       return outcome
     } finally { doc.destroy() }
   })
-  if (syncEligible) dispatchLinearIssueSync(issue.id)
-  return result
 }
 
 /** Edits a comment's body (and optionally its files). Only its author, while they may still write on the task. */
@@ -123,20 +114,6 @@ export async function deleteTaskComment(input: TaskCommentRef) {
     const author = Boolean(located.message.authorUserId) && located.message.authorUserId === user.id
     const allowed = author ? await mayWrite(tx, user, task) : await workspaceAdmin(user.id, task.workspaceId)
     if (!allowed) return { error: 'taskCommentDeleteForbidden' as const }
-    if (task.linearSyncPolicy === 'explicit' && !task.linearSyncBlocked) {
-      const [link] = await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(
-        eq(linearIssueLinks.issueId, taskId), eq(linearIssueLinks.ownerId, task.userId), eq(linearIssueLinks.externalTargetVerified, true),
-      )).limit(1)
-      if (link) {
-        // Reserve the address if a publication is racing its first upload. Only
-        // a mapping already reserved by the publisher can name a remote comment.
-        const localDeletedAt = new Date(at)
-        await tx.insert(linearCommentLinks).values({ id: crypto.randomUUID(), issueLinkId: link.id, threadId, messageId,
-          linearCommentId: crypto.randomUUID(), authorUserId: located.message.authorUserId, bodyHash: '', syncStatus: 'remote_removed', localDeletedAt,
-        }).onConflictDoUpdate({ target: [linearCommentLinks.issueLinkId, linearCommentLinks.threadId, linearCommentLinks.messageId],
-          set: { localDeletedAt }, setWhere: located.message.authorUserId ? eq(linearCommentLinks.authorUserId, located.message.authorUserId) : isNull(linearCommentLinks.authorUserId) })
-      }
-    }
     const deleted = deleteThreadMessage(doc, threadId, located, user.id, at)
     await forgetCommentReactions(tx, taskId, deleted.messageIds)
     if (!author) await recordAudit(tx, { workspaceId: task.workspaceId, actor: { type: 'user', id: user.id, name: user.name || user.email },
