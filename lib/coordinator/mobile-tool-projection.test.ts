@@ -71,6 +71,12 @@ test('classifyShellCommand aligns with Codex CommandAction exploration vs exec i
   assert.equal(multilineScript.commandActions[0].type, 'listFiles')
   assert.equal(multilineScript.commandActions[1].type, 'unknown')
 
+  // Wrapped read-only pipelines across `|\n` stay grouped as exploration.
+  const wrappedPipeline = classifyShellCommand('ls -la |\n  sort |\n  head -n 20')
+  assert.equal(wrappedPipeline.kind, 'listFiles')
+  assert.equal(wrappedPipeline.commandActions.length, 1)
+  assert.equal(wrappedPipeline.commandActions[0].type, 'listFiles')
+
   const testCmd = classifyShellCommand('pnpm test:unit')
   assert.equal(testCmd.kind, 'exec')
   assert.deepEqual(testCmd.commandActions, [{ type: 'unknown', command: 'pnpm test:unit' }])
@@ -148,6 +154,18 @@ test('enrichMobileChatTool classifies MCP, edit, web, search, agent, think and e
   assert.equal(searchDenied.kind, 'search')
   assert.equal(searchDenied.status, 'completed')
   assert.equal(searchDenied.aggregatedOutput, 'server.log:14:Permission denied')
+
+  // Successful `get_run` reading a failed run must stay completed and keep its structured result.
+  const failedRunLookup = enrichMobileChatTool(makeChatTool({
+    name: 'get_run',
+    state: 'done',
+    input: JSON.stringify({ runId: '11111111-2222-3333-4444-555555555555' }),
+    output: JSON.stringify({ id: '11111111-2222-3333-4444-555555555555', status: 'failed', error: null }),
+  }))
+  assert.equal(failedRunLookup.kind, 'search')
+  assert.equal(failedRunLookup.status, 'completed')
+  assert.equal(failedRunLookup.codexStatus, 'completed')
+  assert.deepEqual(failedRunLookup.result, { id: '11111111-2222-3333-4444-555555555555', status: 'failed', error: null })
 
   const web = enrichMobileChatTool(makeChatTool({
     name: 'web_search',

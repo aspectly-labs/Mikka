@@ -385,7 +385,18 @@ function splitShellTopLevel(command: string, mode: 'chain' | 'pipe'): string[] {
     }
     if (ch === "'" || ch === '"') { current += ch; quote = ch; continue }
     if (mode === 'chain') {
-      if (ch === ';' || ch === '\n' || ch === '\r') {
+      if (ch === ';') {
+        if (current.trim()) parts.push(current.trim())
+        current = ''
+        continue
+      }
+      if (ch === '\n' || ch === '\r') {
+        const trimmed = current.trimEnd()
+        // Shells continue a pipeline or logical chain across an unquoted newline after `|`, `&&`, or `||`.
+        if (trimmed.endsWith('|') || trimmed.endsWith('&&')) {
+          current += ' '
+          continue
+        }
         if (current.trim()) parts.push(current.trim())
         current = ''
         continue
@@ -1199,7 +1210,7 @@ export function enrichMobileChatTool(
     : { aggregatedOutput: undefined, exitCode: validExitCode(outputFields.exitCode ?? outputFields.exit_code) }
 
   const failure = toolFailure(baseTool)
-  const outStatus = !isShellDerived ? structuredOutputStatus(baseTool.output) : undefined
+  const outStatus = lower === 'apply_patch' ? structuredOutputStatus(baseTool.output) : undefined
   const rawErrorText = baseTool.errorCode && baseTool.errorDetail
     ? `${baseTool.errorCode} (${baseTool.errorDetail})`
     : baseTool.errorCode ?? failure.reason ?? (baseTool.state === 'error' ? nonEmptyString(baseTool.output, MAX_ERROR_CHARS, false) : undefined)
@@ -1371,7 +1382,7 @@ export function enrichMobileThreadStep(
     ? truncateMiddle(rawOutput, MAX_OUTPUT_CHARS)
     : undefined
 
-  const outStatus = !isShellStep ? structuredOutputStatus(rawOutput) : undefined
+  const outStatus = lower === 'apply_patch' ? structuredOutputStatus(rawOutput) : undefined
   const hasFailed = step.failed || step.status === 'failed' || (typeof exitCode === 'number' && exitCode !== 0) || Boolean(ctx?.errorText)
 
   let codexStatus: CodexToolStatus
