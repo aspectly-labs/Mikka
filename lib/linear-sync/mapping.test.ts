@@ -88,6 +88,73 @@ test('rejects deleting another writer\'s comment and thread aliases', () => {
   alias.destroy()
 })
 
+type BoundMessage = { id: string; author: string; authorUserId?: string; body: string; at?: string; editedAt?: string; deletedAt?: string; deletedBy?: string; attachments?: unknown }
+function oneThread(...seed: BoundMessage[]) {
+  const doc = new Y.Doc()
+  const thread = new Y.Map<unknown>()
+  const messages = new Y.Array<BoundMessage>()
+  messages.push(seed)
+  thread.set('id', 'discussion-1')
+  thread.set('messages', messages)
+  doc.getMap<Y.Map<unknown>>('threads').set('discussion-1', thread)
+  const replace = (index: number, next: BoundMessage) => { messages.delete(index, 1); messages.insert(index, [next]) }
+  return { doc, messages, replace }
+}
+const EDITED_AT = '2026-11-25T12:00:00.000Z'
+
+test('an author\'s own edit is stamped editedAt by the server; edit fields cannot be forged', () => {
+  const { doc, messages, replace } = oneThread({ id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first' }, { id: 'm2', author: 'Member', authorUserId: 'member', body: 'second' })
+  let before = snapshotCommentAuthorship(doc)
+  replace(0, { id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first, edited', editedAt: '1999-01-01T00:00:00.000Z' })
+  bindCommentAuthorship(doc, before, { id: 'owner', name: 'Owner' }, EDITED_AT)
+  assert.deepEqual([messages.get(0).body, messages.get(0).editedAt], ['first, edited', EDITED_AT])
+
+  // A writer who leaves the body alone cannot set or clear the stamp, or claim a deletion.
+  before = snapshotCommentAuthorship(doc)
+  replace(0, { id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first, edited' })
+  replace(1, { id: 'm2', author: 'Member', authorUserId: 'member', body: 'second', editedAt: '2030-01-01T00:00:00.000Z', deletedBy: 'member' })
+  bindCommentAuthorship(doc, before, { id: 'member', name: 'Member' }, '2026-11-25T13:00:00.000Z')
+  assert.equal(messages.get(0).editedAt, EDITED_AT)
+  assert.deepEqual([messages.get(1).editedAt, messages.get(1).deletedBy], [undefined, undefined])
+
+  // A new message starts unedited and undeleted, whatever the update says.
+  before = snapshotCommentAuthorship(doc)
+  messages.push([{ id: 'm3', author: 'x', body: 'new', editedAt: EDITED_AT, deletedAt: EDITED_AT, deletedBy: 'owner' }])
+  bindCommentAuthorship(doc, before, { id: 'member', name: 'Member' })
+  assert.deepEqual(messages.get(2), { id: 'm3', author: 'Member', body: 'new', authorUserId: 'member' })
+
+  // Files count as content: another writer's are not theirs to change, and their shape is checked.
+  before = snapshotCommentAuthorship(doc)
+  replace(0, { id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first, edited', editedAt: EDITED_AT, attachments: [{ id: '0f8c7b1e-5d2a-4c3b-9a1f-2e3d4c5b6a79', name: 'a', size: 1, mediaType: null }] })
+  assert.throws(() => bindCommentAuthorship(doc, before, { id: 'member', name: 'Member' }), /cannot edit another user/)
+  doc.destroy()
+
+  const invalid = oneThread({ id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first' })
+  const snapshot = snapshotCommentAuthorship(invalid.doc)
+  invalid.replace(0, { id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first', attachments: [{ id: 'not-a-uuid' }] })
+  assert.throws(() => bindCommentAuthorship(invalid.doc, snapshot, { id: 'owner', name: 'Owner' }), /Invalid comment attachments/)
+  invalid.doc.destroy()
+})
+
+test('an author deletes their own comment to a tombstone through the document; a tombstone never changes again', () => {
+  const { doc, replace } = oneThread({ id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first', editedAt: EDITED_AT }, { id: 'm2', author: 'Member', authorUserId: 'member', body: 'second' })
+  let before = snapshotCommentAuthorship(doc)
+  replace(1, { id: 'm2', author: 'Member', authorUserId: 'member', body: 'second', deletedAt: 'whenever' })
+  assert.throws(() => bindCommentAuthorship(doc, before, { id: 'owner', name: 'Owner' }), /cannot remove another user/)
+  doc.destroy()
+
+  const own = oneThread({ id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'first', editedAt: EDITED_AT, attachments: [] }, { id: 'm2', author: 'Member', authorUserId: 'member', body: 'second' })
+  before = snapshotCommentAuthorship(own.doc)
+  own.replace(0, { id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'still here', deletedAt: 'whenever' })
+  bindCommentAuthorship(own.doc, before, { id: 'owner', name: 'Owner' }, EDITED_AT)
+  assert.deepEqual(own.messages.get(0), { id: 'm1', author: 'Owner', authorUserId: 'owner', body: '', deletedAt: EDITED_AT, deletedBy: 'owner' })
+  before = snapshotCommentAuthorship(own.doc)
+  own.replace(0, { id: 'm1', author: 'Owner', authorUserId: 'owner', body: 'restored' })
+  bindCommentAuthorship(own.doc, before, { id: 'owner', name: 'Owner' })
+  assert.deepEqual(own.messages.get(0), { id: 'm1', author: 'Owner', authorUserId: 'owner', body: '', deletedAt: EDITED_AT, deletedBy: 'owner' })
+  own.doc.destroy()
+})
+
 test('keeps an existing Linear comment bound to its original app writer', () => {
   assert.equal(persistedCommentAuthorMatches('owner', 'owner'), true)
   assert.equal(persistedCommentAuthorMatches('owner', 'attacker'), false)

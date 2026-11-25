@@ -23,6 +23,7 @@ import { issueListChanged } from '@/lib/live/lists'
 import { readDocumentThreads } from '@/lib/task-activity-wake'
 import { recordTaskActivityWakes } from '@/lib/task-activity-wake-store'
 import { issueMembersChanged } from '@/lib/live/issue-detail'
+import { discussionSaveEffects } from '@/lib/task-comments/save-effects'
 import { mayGrantOwnerRole, mayManageMembers, mayMuteMember, maySetSubscription, type MembershipCaller } from '@/lib/issue-member-role'
 
 const encodedState = z.string().max(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
@@ -76,9 +77,12 @@ export async function exchangeDocument(input: z.infer<typeof syncSchema>): Promi
         await tx.update(issues).set({ content, updatedAt: new Date() }).where(and(eq(issues.id, issue.id), eq(issues.userId, issue.userId)))
         await documentChanged(tx, issue.id)
         await issueListChanged(tx, issue.id)
+        const threadsAfter = readDocumentThreads(doc)
+        // A comment its author removed or deleted takes its reactions; inline files follow what still names them.
+        await discussionSaveEffects(tx, issue.id, { content: locked.content as JSONContent, threads: threadsBefore }, { content, threads: threadsAfter })
         // A new comment or a Bot chip wakes the Bot it concerns (Capy's issue_activity), with this save.
         await recordTaskActivityWakes(tx, { task: { id: locked.id, workspaceId: locked.workspaceId, title: locked.title, identifier: locked.issuedIdentifier },
-          writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: readDocumentThreads(doc), content },
+          writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: threadsAfter, content },
           version: documentVersion(state) })
       }
       const [link] = locked.linearSyncPolicy === 'explicit' && !locked.linearSyncBlocked ? await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(eq(linearIssueLinks.issueId, locked.id), eq(linearIssueLinks.ownerId, issue.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1) : []

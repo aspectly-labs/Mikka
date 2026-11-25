@@ -1109,6 +1109,9 @@
         },
         "integration": {
           "permission_changed": "set {integration} to {to}"
+        },
+        "task": {
+          "comment_deleted": "deleted a comment on {target}"
         }
       },
       "actorTypes": {
@@ -4734,7 +4737,15 @@
     "chatRevisionUnavailable": "This message can no longer be edited or regenerated.",
     "chatRevisionBusy": "Wait for the reply to finish, then try again.",
     "threadWorking": "The thread is still working. Stop it first.",
-    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again."
+    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again.",
+    "taskCommentNotFound": "This comment no longer exists.",
+    "taskCommentInvalid": "This comment can't be saved. Check its text and files.",
+    "taskCommentAuthorOnly": "Only the comment's author can edit it.",
+    "taskCommentDeleteForbidden": "Only the comment's author or a workspace admin can delete it.",
+    "taskCommentDeleted": "This comment was deleted.",
+    "taskCommentReadOnly": "You can read this task but not comment on it.",
+    "taskCommentReactionInvalid": "Choose one emoji.",
+    "taskCommentReactionLimit": "This comment has the most reactions it can hold."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",
@@ -9116,7 +9127,18 @@
       "createdTask": "created the task",
       "estimateRemoved": "removed the estimate",
       "merged": "Merged {pull} {title}",
-      "subtitle": "Updates and discussion"
+      "subtitle": "Updates and discussion",
+      "commentEdited": "Edited",
+      "commentDeleted": "Comment deleted",
+      "editComment": "Edit",
+      "deleteComment": "Delete",
+      "deleteCommentConfirm": "Delete this comment?",
+      "saveComment": "Save",
+      "cancelEdit": "Cancel",
+      "addReaction": "Add reaction",
+      "reactedBy": "{names} reacted with {emoji}",
+      "attachFile": "Attach file",
+      "dropFiles": "Drop files to attach"
     },
     "projectLinkFailed": "The task was created, but linking it to the project failed. Link it manually from the project.",
     "listView": "List view",
