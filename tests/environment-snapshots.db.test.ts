@@ -131,6 +131,8 @@ test(
     // without contacting the provider or replacing the last successful image.
     const attempt = await insert('building', null)
     delete process.env.E2B_API_KEY
+    assert.equal(await readyEnvironmentSnapshot(input), null)
+    assert.notEqual((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'ready')
     await buildEnvironmentSnapshot(attempt)
     process.env.E2B_API_KEY = 'fixture-no-provider-requests'
     const failed = (await readEnvironmentSnapshot(owner, readInput)).snapshot
@@ -210,5 +212,110 @@ test(
     assert.equal(await count(owner), 0)
     assert.equal(await count(peer), 1)
     assert.deepEqual(killed, [source])
+  },
+)
+
+test(
+  'locked E2B SDK builds a filesystem-only image, creates independent tasks, and kills unsuccessful builders',
+  { skip: !dbUrl },
+  async (t) => {
+    const { Sandbox } = await import('e2b')
+    const { LOCAL_E2B_KEY } = await import('./fakes/e2b.mjs')
+    const { startExternalServices } = await import('./fakes/external-services.mjs')
+    const sha = 'd'.repeat(40),
+      commit = 'c'.repeat(40)
+    const services = await startExternalServices({
+      e2b: {
+        commands(command: string) {
+          if (command.startsWith('bash -s -- '))
+            return {
+              stdout: 'mikka-official-instance-ready ' + commit + ' ' + sha,
+              files: { '/opt/mikka/worker-source-sha': sha },
+            }
+          if (command === 'prepare-dependencies') return { files: { '/fixture/dependency': 'prepared' } }
+          return { exitCode: 0 }
+        },
+      },
+    })
+    t.after(() => services.close())
+    const env = {
+      NODE_ENV: 'test',
+      E2B_API_KEY: LOCAL_E2B_KEY,
+      E2B_TEAM_ID: 'sdk-team',
+      E2B_API_URL: services.e2bOptions.apiUrl,
+      E2B_SANDBOX_URL: services.e2bOptions.sandboxUrl,
+      E2B_HTTP_VERSION: '1.1',
+      HTTPS_PROXY: '',
+      https_proxy: '',
+      MIKKA_CLOUD_WORKER_SHA: sha,
+      MIKKA_CLOUD_WORKER_SOURCE_COMMIT: commit,
+      MIKKA_FLAG_OVERRIDES: '{"mikka-environment-snapshots":true}',
+    }
+    const original = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]))
+    Object.assign(process.env, env)
+    t.after(() => {
+      for (const [key, value] of Object.entries(original))
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+    })
+    const db = new Pool({ connectionString: dbUrl })
+    t.after(() => db.end())
+    const user = await seedUser(db, 'environment-image-sdk'),
+      ws = await seedWorkspace(db, user, [{ userId: user, role: 'admin' }])
+    const { buildEnvironmentSnapshot } = await import('../lib/project-resources/environment-snapshot-build')
+    const { saveEnvironment } = await import('../lib/project-resources/store')
+    const { environmentSnapshotScope } = await import('../lib/secrets/e2b-runtime')
+    const key = 'v2/github.com/fixture/project'
+    const { id: environmentId, revision } = await saveEnvironment(user, {
+      workspaceId: ws.id,
+      name: 'SDK build',
+      repositories: [{ key }],
+      configuration: {
+        setup: { approved: true, command: 'prepare-dependencies', copyFiles: [] },
+        variables: { BUILD_LABEL: 'sdk' },
+      },
+    })
+    const build = async () => {
+      const id = randomUUID()
+      await db.query(
+        `INSERT INTO environment_snapshots(id,"workspaceId","environmentId",revision,"requestedBy","providerScope","templateKind","templateId","workerSha",state)
+      VALUES($1,$2,$3,$4,$5,$6,'codex','codex',$7,'building')`,
+        [id, ws.id, environmentId, revision, user, environmentSnapshotScope(), sha],
+      )
+      await buildEnvironmentSnapshot(id, async (actor, repository) => {
+        assert.equal(actor, user)
+        assert.equal(repository, key)
+        return { token: 'fixture-read-only', repository: { id: '42' } }
+      })
+      return (
+        await db.query('SELECT state,"providerId","sandboxId","logTail" FROM environment_snapshots WHERE id=$1', [id])
+      ).rows[0]
+    }
+    const ready = await build()
+    assert.equal(ready.state, 'ready', ready.logTail)
+    assert.equal(services.e2b.sandboxes.get(ready.sandboxId).state, 'killed')
+    const task = await Sandbox.create(ready.providerId, services.e2bOptions)
+    const second = await Sandbox.create(ready.providerId, services.e2bOptions)
+    assert.notEqual(task.sandboxId, second.sandboxId)
+    assert.equal(await task.files.read('/fixture/dependency'), 'prepared')
+    await task.files.write('/fixture/dependency', 'task-one')
+    assert.equal(await second.files.read('/fixture/dependency'), 'prepared')
+    await Promise.all([task.kill(), second.kill()])
+    services.e2b.state.filesystemSnapshotsEnabled = false
+    const failed = await build()
+    assert.equal(failed.state, 'failed')
+    assert.match(failed.logTail, /snapshot/)
+    assert.equal(services.e2b.sandboxes.get(failed.sandboxId).state, 'killed')
+    const captures = services.e2b.requests.filter((item) => item.path.endsWith('/snapshots') && item.method === 'POST')
+    assert.deepEqual(
+      captures.map((item) => item.body.memory),
+      [false, false],
+    )
+    const setups = services.e2b.requests.filter((item) => item.body?.process?.args?.at(-1) === 'prepare-dependencies')
+    assert.equal(setups.length, 2)
+    assert.doesNotMatch(
+      JSON.stringify(setups),
+      /Authorization: Basic|GIT_CONFIG_VALUE_0|fixture-read-only|mikka-local-e2b/,
+    )
   },
 )

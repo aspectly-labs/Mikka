@@ -153,7 +153,13 @@ async function allowed(row: Build) {
   return eligible && environment.revision === row.revision ? environment : null
 }
 
-export async function buildEnvironmentSnapshot(id: string) {
+export async function buildEnvironmentSnapshot(
+  id: string,
+  repositoryCredential: (
+    userId: string,
+    key: string,
+  ) => Promise<{ token: string; repository: { id: string } }> = githubRepositoryReadCredential,
+) {
   const result = await withBuild(id, async (client, row) => {
     if (!row) return null
     if (row.state !== 'building') {
@@ -211,7 +217,7 @@ export async function buildEnvironmentSnapshot(id: string) {
         const repositoryIds: Record<string, string> = {}
         for (const repo of startRows) {
           const { remote, directory } = repositorySeed(repo.key)
-          const { token, repository } = await githubRepositoryReadCredential(row.requestedBy, repo.key)
+          const { token, repository } = await repositoryCredential(row.requestedBy, repo.key)
           repositoryIds[repo.key] = repository.id
           const headers = {
             GIT_CONFIG_COUNT: '1',

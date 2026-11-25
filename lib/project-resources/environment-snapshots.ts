@@ -7,7 +7,7 @@ import { workspacePool } from '@/lib/workspace-db'
 import { gatedFeatures } from '@/lib/feature-flags'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import { cloudTemplateOrigin } from '@/lib/cloud-template-models'
-import { taskTemplate, environmentSnapshotScope } from '@/lib/secrets/e2b-runtime'
+import { taskTemplate, environmentSnapshotApiKey, environmentSnapshotScope } from '@/lib/secrets/e2b-runtime'
 import { pool as appPool } from '@/lib/db'
 import { cliPolicyLayerSchema, mergeCliPolicyValues } from '@/lib/agent-tool-approval/policy-store'
 import { resolveTrustedRunPolicy } from '@/lib/agent-tool-approval/policy-snapshot'
@@ -24,6 +24,14 @@ import {
 type Reader = Parameters<typeof listProjectResources>[0]
 const userOf = (reader: Reader) => (typeof reader === 'string' ? reader : reader.id)
 const enabled = (reader: Reader) => serverFlagEnabled(gatedFeatures.environmentSnapshots, userOf(reader))
+
+function configuredProvider() {
+  try {
+    return Boolean(environmentSnapshotApiKey())
+  } catch {
+    return false
+  }
+}
 
 export async function snapshotConfiguration(reader: Reader, input: SnapshotInput) {
   const resources = await listProjectResources(reader, input.workspaceId)
@@ -99,7 +107,7 @@ export async function readEnvironmentSnapshot(
       environment.revision,
       templateId,
       process.env.MIKKA_CLOUD_WORKER_SHA ?? null,
-      eligible,
+      eligible && configuredProvider(),
     ],
   )
   const row = result.rows[0]
@@ -118,7 +126,7 @@ export async function readEnvironmentSnapshot(
 
 export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotInput) {
   const input = snapshotInput.parse(raw)
-  if (!(await enabled(reader))) throw new ActionFailureError('projectEnvironmentUnavailable')
+  if (!(await enabled(reader)) || !configuredProvider()) throw new ActionFailureError('projectEnvironmentUnavailable')
   const { environment, eligible } = await snapshotConfiguration(reader, input)
   if (!eligible || !environment.repositories.some((repo) => repo.clone === 'start'))
     throw new ActionFailureError('projectEnvironmentUnavailable')
@@ -150,7 +158,7 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
 }
 
 export async function buildSnapshotsOnSave(reader: Reader, workspaceId: string, environmentId: string) {
-  if (!(await enabled(reader))) return
+  if (!(await enabled(reader)) || !configuredProvider()) return
   const { environments } = await listProjectResources(reader, workspaceId)
   const row = environments.find((item) => item.id === environmentId && !item.archivedAt)
   if (!row || !row.repositories.some((repo) => repo.clone === 'start')) return
@@ -169,7 +177,7 @@ export async function buildSnapshotsOnSave(reader: Reader, workspaceId: string, 
 }
 
 export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templateKind' | 'workerSha'>) {
-  if (!(await enabled(input.userId))) return null
+  if (!(await enabled(input.userId)) || !configuredProvider()) return null
   const kind = cloudTemplateOrigin(input.templateId)?.kind
   if (!kind || kind === 'desktop' || !process.env.MIKKA_CLOUD_WORKER_SHA) return null
   const { eligible, environment } = await snapshotConfiguration(input.userId, {
