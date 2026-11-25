@@ -8,7 +8,7 @@ import { GitHubAccessError } from './user-access-error'
 import { noteGitHubRequest } from '@/lib/dispatch-timing'
 import { remainingRequestBudget, requestBudgetSignal, type RequestBudget } from '../request-budget'
 import { githubRepository } from './run-pull-request'
-import { pullRequestDiffText, type PullFileEntry } from '../pull-request-diff'
+import { pullRequestDiffText, pullRequestUnifiedPatch, type PullFileEntry } from '../pull-request-diff'
 import { parseUnifiedDiff, type ThreadChanges } from '../thread-changes'
 
 export type AuthorizedGitHubRepository = { id: string; installationId: string; fullName: string; htmlUrl: string; private: boolean; description?: string | null; homepage?: string | null; pushedAt?: string | null }
@@ -354,12 +354,13 @@ export async function readPullRequestFiles(
   // A page cap reached with another page waiting is still a change we did not read.
   if (next) moreFiles = true
   const merged = typeof pr.merged_at === 'string' || pr.merged === true
-  const patch = pullRequestDiffText(files)
   return {
     repository: repository.fullName, number, url, title: pr.title.slice(0, 1000),
     state: pr.state === 'closed' && merged ? 'merged' : pr.state,
     base: { ref: base.ref, sha: base.sha }, head: { ref: head.ref, sha: head.sha },
-    changes: parseUnifiedDiff(patch), ...(options?.includePatch ? { patch } : {}), moreFiles, patchUnavailable,
+    changes: parseUnifiedDiff(pullRequestDiffText(files)),
+    ...(options?.includePatch ? { patch: pullRequestUnifiedPatch(files) } : {}),
+    moreFiles, patchUnavailable,
   }
 }
 /** For server code acting for a user id with no browser request (the Coordinator). Never returns the token. */

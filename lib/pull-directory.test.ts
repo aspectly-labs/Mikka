@@ -334,21 +334,22 @@ test("a saved pulls view reads back with defaults for fields it predates and nev
 });
 
 test("pullReviewInput supports APPROVE, REQUEST_CHANGES, and COMMENT with backward-compatible defaults", () => {
+  const headSha = "a".repeat(40);
   assert.deepEqual(
     pullReviewInput.parse({ repo: "Owner/Repo", number: 7, body: "Please add a test" }),
     { repo: "Owner/Repo", number: 7, event: "REQUEST_CHANGES", body: "Please add a test" },
   );
   assert.deepEqual(
-    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE" }),
-    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "" },
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE", expectedHeadSha: headSha }),
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "", expectedHeadSha: headSha },
   );
   assert.deepEqual(
-    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE", body: "   " }),
-    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "" },
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE", body: "   ", expectedHeadSha: headSha }),
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "", expectedHeadSha: headSha },
   );
   assert.deepEqual(
-    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE", body: "LGTM" }),
-    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "LGTM" },
+    pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "APPROVE", body: "LGTM", expectedHeadSha: headSha }),
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", body: "LGTM", expectedHeadSha: headSha },
   );
   assert.deepEqual(
     pullReviewInput.parse({ repo: "Owner/Repo", number: 7, event: "COMMENT", body: "Question on line 10" }),
@@ -360,8 +361,10 @@ test("pullReviewInput supports APPROVE, REQUEST_CHANGES, and COMMENT with backwa
     { repo: "Owner/Repo", number: 7, event: "REQUEST_CHANGES", body: "" },
     { repo: "Owner/Repo", number: 7, event: "COMMENT", body: "   " },
     { repo: "Owner/Repo", number: 7, event: "COMMENT" },
+    { repo: "Owner/Repo", number: 7, event: "APPROVE" },
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", expectedHeadSha: "not-a-sha" },
     { repo: "Owner/Repo", number: 7, event: "DISMISS", body: "no" },
-    { repo: "Owner/Repo", number: 7, event: "APPROVE", extra: true },
+    { repo: "Owner/Repo", number: 7, event: "APPROVE", expectedHeadSha: headSha, extra: true },
   ]) {
     assert.equal(pullReviewInput.safeParse(bad).success, false, JSON.stringify(bad));
   }

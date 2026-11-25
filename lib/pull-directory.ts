@@ -428,12 +428,21 @@ export const pullReviewInput = z.strictObject({
   number: z.number().int().positive().max(9_999_999_999),
   event: z.enum(pullReviewEvents).default("REQUEST_CHANGES"),
   body: z.string().trim().max(65_536).default(""),
+  /** Required on APPROVE (and verified whenever supplied) so a review never lands on an unseen push. */
+  expectedHeadSha: z.string().regex(/^[a-f0-9]{40}$/).optional(),
 }).superRefine((value, ctx) => {
   if (value.event !== "APPROVE" && value.body.length === 0) {
     ctx.addIssue({
       code: "custom",
       path: ["body"],
       message: "Review body is required unless approving.",
+    });
+  }
+  if (value.event === "APPROVE" && !value.expectedHeadSha) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["expectedHeadSha"],
+      message: "Approvals must pin the viewed head commit SHA.",
     });
   }
 });

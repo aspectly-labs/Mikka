@@ -72,6 +72,8 @@ export async function requestPullChanges(
   const detail = await deps.detail(userId, input.repo, input.number);
   if (detail.state !== "open" && detail.state !== "draft")
     return { kind: "refused", code: "githubReviewClosed" };
+  if (input.expectedHeadSha && detail.headSha?.toLowerCase() !== input.expectedHeadSha)
+    return { kind: "refused", code: "githubReviewHeadMoved" };
   let token: string;
   try {
     token = await deps.userToken(userId);
@@ -80,8 +82,9 @@ export async function requestPullChanges(
       return { kind: "refused", code: "githubReviewAuthorizationRequired" };
     throw error;
   }
+  const commitSha = input.expectedHeadSha ?? detail.headSha;
   try {
-    return { kind: "submitted", id: await deps.review(token, detail.repo, input.number, detail.headSha, input.body, input.event) };
+    return { kind: "submitted", id: await deps.review(token, detail.repo, input.number, commitSha, input.body, input.event) };
   } catch (error) {
     if (error instanceof ReviewRefused) return { kind: "refused", code: error.code };
     throw error;

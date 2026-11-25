@@ -5,6 +5,7 @@ import { GitHubAccessError } from "./user-access";
 import type { PullDetail, PullReviewEvent } from "../pull-directory";
 
 const HEAD_SHA = "a".repeat(40);
+const OTHER_SHA = "b".repeat(40);
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
@@ -13,24 +14,23 @@ afterEach(() => {
 
 function sampleDetail(overrides: Partial<PullDetail> = {}): PullDetail {
   return {
-    repo: "Owner/Repo",
-    number: 12,
     url: "https://github.com/Owner/Repo/pull/12",
     title: "Add native PR screen",
     state: "open",
+    repo: "Owner/Repo",
+    number: 12,
     author: "octocat",
+    authorAvatar: null,
+    updatedAt: "2026-11-25T01:00:00Z",
+    createdAt: "2026-11-25T00:00:00Z",
+    body: "",
     head: "feat/pr",
     base: "main",
     headSha: HEAD_SHA,
-    createdAt: "2026-11-25T00:00:00Z",
-    updatedAt: "2026-11-25T01:00:00Z",
-    additions: 10,
-    deletions: 2,
-    labels: [],
-    ci: "passing",
-    review: "none",
+    checks: "SUCCESS",
     mergeState: "CLEAN",
-    draft: false,
+    reviewDecision: null,
+    labels: [],
     changedFiles: 1,
     mergeable: "MERGEABLE",
     checkRuns: [],
@@ -40,7 +40,7 @@ function sampleDetail(overrides: Partial<PullDetail> = {}): PullDetail {
   };
 }
 
-test("requestPullChanges forwards default REQUEST_CHANGES, APPROVE, and COMMENT events cleanly", async () => {
+test("requestPullChanges forwards default REQUEST_CHANGES, APPROVE (head-pinned), and COMMENT events cleanly", async () => {
   const recorded: Array<{ repo: string; number: number; headSha: string | null; body: string; event: PullReviewEvent }> = [];
   const deps: PullReviewDependencies = {
     detail: async () => sampleDetail(),
@@ -56,7 +56,7 @@ test("requestPullChanges forwards default REQUEST_CHANGES, APPROVE, and COMMENT 
     { kind: "submitted", id: 101 },
   );
   assert.deepEqual(
-    await requestPullChanges("u1", { repo: "Owner/Repo", number: 12, event: "APPROVE" }, deps),
+    await requestPullChanges("u1", { repo: "Owner/Repo", number: 12, event: "APPROVE", expectedHeadSha: HEAD_SHA }, deps),
     { kind: "submitted", id: 102 },
   );
   assert.deepEqual(
@@ -71,14 +71,26 @@ test("requestPullChanges forwards default REQUEST_CHANGES, APPROVE, and COMMENT 
   ]);
 });
 
-test("requestPullChanges refuses closed PRs and missing GitHub user tokens", async () => {
+test("requestPullChanges refuses when head commit moved after diff was loaded, PR is closed, or user token missing", async () => {
+  let reviewCalled = false;
+  const movedDeps: PullReviewDependencies = {
+    detail: async () => sampleDetail({ headSha: OTHER_SHA }),
+    userToken: async () => "user-token",
+    review: async () => { reviewCalled = true; return 1; },
+  };
+  assert.deepEqual(
+    await requestPullChanges("u1", { repo: "Owner/Repo", number: 12, event: "APPROVE", expectedHeadSha: HEAD_SHA }, movedDeps),
+    { kind: "refused", code: "githubReviewHeadMoved" },
+  );
+  assert.equal(reviewCalled, false);
+
   const closedDeps: PullReviewDependencies = {
     detail: async () => sampleDetail({ state: "merged" }),
     userToken: async () => "unused",
     review: async () => 1,
   };
   assert.deepEqual(
-    await requestPullChanges("u1", { repo: "Owner/Repo", number: 12, event: "APPROVE" }, closedDeps),
+    await requestPullChanges("u1", { repo: "Owner/Repo", number: 12, event: "APPROVE", expectedHeadSha: HEAD_SHA }, closedDeps),
     { kind: "refused", code: "githubReviewClosed" },
   );
 
@@ -88,7 +100,7 @@ test("requestPullChanges refuses closed PRs and missing GitHub user tokens", asy
     review: async () => 1,
   };
   assert.deepEqual(
-    await requestPullChanges("u1", { repo: "Owner/Repo", number: 12, event: "APPROVE" }, noTokenDeps),
+    await requestPullChanges("u1", { repo: "Owner/Repo", number: 12, event: "APPROVE", expectedHeadSha: HEAD_SHA }, noTokenDeps),
     { kind: "refused", code: "githubReviewAuthorizationRequired" },
   );
 });
@@ -114,7 +126,7 @@ test("pullReviewDependencies sends exact GitHub review payload and maps 422/403 
   nextJson = { message: "Can not approve your own pull request" };
   const selfRes = await requestPullChanges(
     "u1",
-    { repo: "Owner/Repo", number: 12, event: "APPROVE" },
+    { repo: "Owner/Repo", number: 12, event: "APPROVE", expectedHeadSha: HEAD_SHA },
     { ...deps, detail: async () => sampleDetail(), userToken: async () => "tok" },
   );
   assert.deepEqual(selfRes, { kind: "refused", code: "githubReviewSelf" });

@@ -185,7 +185,9 @@ test('a pull request’s files are read inside the admitted repository ID and co
   assert.equal(patchRes.status, 200)
   const patchFiles = await patchRes.json()
   assert.equal(typeof patchFiles.patch, 'string')
-  assert.match(patchFiles.patch, /diff --git a\/src\/app\.ts b\/src\/app\.ts/)
+  assert.match(patchFiles.patch, /diff --git a\/src\/app\.ts b\/src\/app\.ts\n--- a\/src\/app\.ts\n\+\+\+ b\/src\/app\.ts\n@@/)
+  assert.match(patchFiles.patch, /--- \/dev\/null\n\+\+\+ b\/\.github\/workflows\/ci\.yml\n@@/)
+  assert.match(patchFiles.patch, /--- a\/src\/old\.ts\n\+\+\+ b\/src\/new\.ts\n@@/)
   assert.match(patchFiles.patch, /\+added/)
   assert.equal((await call('repo=Owner/Project&number=7&format=invalid')).status, 400)
   // Another repository than the admitted one never receives a pull request read.
