@@ -96,6 +96,9 @@ const apiProcess = watch(spawn(process.execPath, ['apps/api/scripts/dev.mjs', '-
   env: { ...childEnv, NODE_ENV: 'development', NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${preload}`.trim(),
     RESEND_API_KEY: LOCAL_RESEND_KEY,
     CRON_SECRET: cronSecret,
+    // dev:local already runs the production-shaped quarter-hour worker below;
+    // enabling the in-process built-in gateway must not duplicate that cron.
+    MIKKA_EXTERNAL_CRON: '1',
     // Saving a workspace's own model key needs it (lib/secrets/crypto.ts).
     WORKSPACE_SECRETS_KEY: secretsKey,
     GITHUB_APP_ID: '123', GITHUB_APP_PRIVATE_KEY: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString() },

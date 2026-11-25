@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { request as httpRequest } from 'node:http'
+import { Agent, createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createConnection } from 'node:net'
@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { developmentPages, developmentRequest } from './dev-http.mjs'
+import { WebSocket, WebSocketServer } from 'ws'
+import { apiProxyOptions, developmentPages, developmentRequest } from './dev-http.mjs'
 
 const frontendRequire = createRequire(new URL('../../frontend/package.json', import.meta.url))
 const { createServer } = await import(pathToFileURL(frontendRequire.resolve('vite')).href)
@@ -117,6 +118,95 @@ test('the real Vite base middleware preserves the bare application mount and its
       })
       assert.equal(closed, true)
     }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('only machine gateway socket upgrades cross the real Vite proxy; Vite HMR stays local', { timeout: 20_000 }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mikka-vite-gateway-ws-'))
+  const frontend = join(root, 'apps/frontend')
+  await mkdir(frontend, { recursive: true })
+  await writeFile(join(frontend, 'index.html'), '<!doctype html><html lang="zh-CN"><head></head><body>development-page</body></html>')
+  const upstreamUrls = []
+  const upstream = createHttpServer((_request, response) => { response.writeHead(404); response.end() })
+  const sockets = new WebSocketServer({ noServer: true })
+  sockets.on('connection', (socket, request) => {
+    upstreamUrls.push(request.url)
+    socket.on('message', data => socket.send(`echo:${data}`))
+  })
+  upstream.on('upgrade', (request, socket, head) => {
+    sockets.handleUpgrade(request, socket, head, upgraded => sockets.emit('connection', upgraded, request))
+  })
+  await new Promise((resolve, reject) => { upstream.once('error', reject); upstream.listen(0, '127.0.0.1', resolve) })
+  const upstreamAddress = upstream.address()
+  assert.ok(upstreamAddress && typeof upstreamAddress !== 'string')
+  const proxyAgent = new Agent({ keepAlive: true, maxSockets: 256, maxTotalSockets: 256, maxFreeSockets: 64 })
+  let vite
+  const clients = new Set()
+  try {
+    vite = await createServer({
+      configFile: false,
+      root: frontend,
+      base: '/mikka/',
+      appType: 'custom',
+      logLevel: 'silent',
+      cacheDir: join(root, 'cache'),
+      optimizeDeps: { noDiscovery: true, include: [] },
+      server: {
+        host: '127.0.0.1', port: 0, strictPort: true, open: false, cors: false,
+        proxy: apiProxyOptions(`http://127.0.0.1:${upstreamAddress.port}`, proxyAgent),
+      },
+    })
+    await vite.listen()
+    const address = vite.httpServer.address()
+    assert.ok(address && typeof address !== 'string')
+    const received = new WeakMap()
+    const open = (path, protocol) => new Promise((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}`, protocol)
+      const queue = []
+      received.set(socket, queue)
+      socket.on('message', data => queue.push(String(data)))
+      clients.add(socket)
+      const timer = setTimeout(() => { socket.terminate(); reject(new Error('VITE_GATEWAY_WS_TIMEOUT')) }, 5_000)
+      socket.once('open', () => { clearTimeout(timer); resolve(socket) })
+      socket.once('error', error => { clearTimeout(timer); reject(error) })
+    })
+    const message = socket => new Promise((resolve, reject) => {
+      const queue = received.get(socket)
+      let settled = false
+      const finish = (error, value) => { if (!settled) { settled = true; clearTimeout(timer); error ? reject(error) : resolve(value) } }
+      const timer = setTimeout(() => finish(new Error('VITE_GATEWAY_WS_MESSAGE_TIMEOUT')), 5_000)
+      const take = () => {
+        if (settled) return
+        if (queue.length) finish(null, queue.shift())
+        else setImmediate(take)
+      }
+      take()
+      socket.once('error', error => finish(error))
+    })
+
+    for (const path of ['/mikka/v1/devices/device-one/socket?presence=1', '/mikka/v1/live/live-channel/socket']) {
+      const gateway = await open(path, 'mikka-ticket-fixture')
+      const echoed = message(gateway)
+      gateway.send('probe')
+      assert.equal(await echoed, 'echo:probe')
+      gateway.close()
+    }
+    assert.deepEqual(upstreamUrls, ['/mikka/v1/devices/device-one/socket?presence=1', '/mikka/v1/live/live-channel/socket'])
+
+    // The catchall API proxy remains HTTP-only. A real Vite HMR upgrade is
+    // answered by Vite itself and is never captured into the API upstream.
+    const hmr = await open('/mikka/', 'vite-hmr')
+    assert.equal(JSON.parse(await message(hmr)).type, 'connected')
+    hmr.close()
+    assert.deepEqual(upstreamUrls, ['/mikka/v1/devices/device-one/socket?presence=1', '/mikka/v1/live/live-channel/socket'])
+  } finally {
+    for (const client of clients) client.terminate()
+    await vite?.close()
+    proxyAgent.destroy()
+    sockets.close()
+    upstream.closeAllConnections()
+    await new Promise(resolve => upstream.close(resolve))
     await rm(root, { recursive: true, force: true })
   }
 })

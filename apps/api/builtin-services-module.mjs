@@ -1,9 +1,11 @@
 import { fileURLToPath } from 'node:url'
 
-/** Use the resolved preset, including build.mjs's node-server default. An env
- * variable alone must not change Vercel or the separate Vite development host. */
+/** Use the resolved preset, including build.mjs's node-server default and the
+ * known Vite + Nitro development composition. An env variable alone must not
+ * change Vercel or any other development host. */
 export function builtinServices(nitro) {
-  if (nitro.options.dev || nitro.options.preset !== 'node-server') return
+  const enabled = nitro.options.dev ? nitro.options.preset === 'nitro-dev' : nitro.options.preset === 'node-server'
+  if (!enabled) return
   const plugin = fileURLToPath(new URL('./plugins/builtin-services.ts', import.meta.url))
   const handler = fileURLToPath(new URL('./routes/builtin-gateway.ts', import.meta.url))
   nitro.options.features ??= {}

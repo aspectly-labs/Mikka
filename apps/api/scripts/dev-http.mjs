@@ -8,11 +8,16 @@ export function apiProxyOptions(target, agent) {
   if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
     || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('API_DEV_PROXY_TARGET_INVALID')
   if (!(agent instanceof Agent) || !agent.keepAlive) throw new Error('API_DEV_PROXY_AGENT_INVALID')
+  // Only the machine gateway's socket route is a WebSocket proxy. The HTTP
+  // catchall must stay ws:false: Vite HMR/browser upgrades are not API traffic.
+  const gatewaySocket = { target: url.origin, changeOrigin: false, ws: true, agent }
   // Vite's default no-Agent path forces Connection: close. Forwarding that
   // into Nitro's pooled worker proxy rejects the next MCP POST at Node's
   // parser. This HTTP hop owns its connection policy, including when the
   // incoming client asks to close its separate connection.
-  return { '^/': { target: url.origin, changeOrigin: false, ws: false, agent, headers: { connection: 'keep-alive' },
+  return {
+    '^/mikka/v1/(?:live|devices)/[^/]+/socket(?:\\?|$)': gatewaySocket,
+    '^/': { target: url.origin, changeOrigin: false, ws: false, agent, headers: { connection: 'keep-alive' },
     configure(proxy) {
       proxy.on('proxyRes', response => {
         // Let Vite reconstruct the downstream connection policy from its
@@ -21,7 +26,8 @@ export function apiProxyOptions(target, agent) {
         delete response.headers['keep-alive']
       })
     },
-    bypass: request => isMachinePath(new URL(request.url, 'http://local.invalid').pathname) ? undefined : request.url } }
+    bypass: request => isMachinePath(new URL(request.url, 'http://local.invalid').pathname) ? undefined : request.url },
+  }
 }
 
 export function developmentRequest(incoming, origin) {
