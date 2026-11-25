@@ -2576,7 +2576,7 @@
       "newPasswordPlaceholder": "至少 8 位字符",
       "confirmPasswordPlaceholder": "再次输入新密码",
       "emailPlaceholder": "name@example.com",
-      "activeSessions": "活跃登录会话"
+      "activeSessions": "活跃登录"
     },
     "issueStates": {
       "cancel": "取消",
