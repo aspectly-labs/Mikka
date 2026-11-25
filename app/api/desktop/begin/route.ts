@@ -2,9 +2,9 @@ import { RouteResponse } from '@/lib/server-runtime/server'
 
 import { db } from '@/lib/db'
 import { desktopAuthRequests } from '@/lib/db/schema'
-import { DESKTOP_AUTH_PENDING_TTL_MS, desktopAuthChallenge, desktopAuthState, desktopLoopbackCallback, desktopSameOriginRequest } from '@/lib/desktop-auth'
+import { DESKTOP_AUTH_PENDING_TTL_MS, desktopAuthChallenge, desktopAuthState, desktopLoopbackCallback } from '@/lib/desktop-auth'
 import { sha256Hex } from '@/lib/desktop-auth-server'
-import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 /**
@@ -14,29 +14,28 @@ import { withRequestLog } from '@/lib/request-log'
  * desktop knows. The browser that finishes OAuth binds it once (/return), and
  * only the holder of the verifier can trade the result for a token (/exchange).
  */
-async function handlePOST(request: Request) {
-  if (!desktopSameOriginRequest(request)) return new RouteResponse(null, { status: 403 })
+export const POST = defineRoute(
+  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', route: '/api/desktop/begin' },
+  async ({ request }) => {
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return RouteResponse.json({ error: 'invalidRequest' }, { status: 400 })
+    }
+    const value = body && typeof body === 'object' ? body as Record<string, unknown> : {}
+    const state = desktopAuthState(value.state)
+    const callback = desktopLoopbackCallback(value.callback)
+    const challenge = desktopAuthChallenge(value.challenge)
+    if (!state || !callback || !challenge) return RouteResponse.json({ error: 'invalidRequest' }, { status: 400 })
 
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return RouteResponse.json({ error: 'invalidRequest' }, { status: 400 })
-  }
-  const value = body && typeof body === 'object' ? body as Record<string, unknown> : {}
-  const state = desktopAuthState(value.state)
-  const callback = desktopLoopbackCallback(value.callback)
-  const challenge = desktopAuthChallenge(value.challenge)
-  if (!state || !callback || !challenge) return RouteResponse.json({ error: 'invalidRequest' }, { status: 400 })
-
-  const result = await db.insert(desktopAuthRequests).values({
-    stateHash: sha256Hex(state),
-    callback,
-    codeChallenge: challenge,
-    expiresAt: new Date(Date.now() + DESKTOP_AUTH_PENDING_TTL_MS),
-  }).onConflictDoNothing()
-  if (!result.rowCount) return RouteResponse.json({ error: 'stateUnavailable' }, { status: 409 })
-  return new RouteResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
-}
-
-export const POST = withRequestLog('/api/desktop/begin', handlePOST)
+    const result = await db.insert(desktopAuthRequests).values({
+      stateHash: sha256Hex(state),
+      callback,
+      codeChallenge: challenge,
+      expiresAt: new Date(Date.now() + DESKTOP_AUTH_PENDING_TTL_MS),
+    }).onConflictDoNothing()
+    if (!result.rowCount) return RouteResponse.json({ error: 'stateUnavailable' }, { status: 409 })
+    return new RouteResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+  },
+)

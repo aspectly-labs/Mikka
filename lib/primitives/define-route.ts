@@ -1,11 +1,10 @@
 import type { ApiSession } from '@/lib/api-auth'
 import { ACTION_ERROR_CODES } from '@/lib/action-result'
-import { cronUnauthorized } from '@/lib/cron-auth'
-import { desktopSameOriginRequest } from '@/lib/desktop-auth'
-import { humanSessionHeaders } from '@/lib/desktop-rpc/handler'
+import * as cronAuth from '@/lib/cron-auth'
+import * as desktopAuth from '@/lib/desktop-auth'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
-import { withFreshSession } from '@/lib/fresh-session'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import * as freshSessionModule from '@/lib/fresh-session'
+import * as requestLog from '@/lib/request-log'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { WorkspaceError } from '@/lib/workspace-error'
 import { selectedWorkspaceId, workspaceSelection } from '@/lib/workspace-selection'
@@ -38,7 +37,8 @@ export type RouteAuthMode = (typeof ROUTE_AUTH_MODES)[number]
 export type RouteOriginPolicy = (typeof ROUTE_ORIGIN_POLICIES)[number]
 export type RouteWorkspacePolicy = (typeof ROUTE_WORKSPACE_POLICIES)[number]
 
-export type RouteHandlerParams = Record<string, string | string[]>
+export type RouteHandlerParams = Record<string, string | string[] | undefined>
+export type RouteAuthFailureReason = 'unauthenticated' | 'patNotAllowed' | 'humanSessionRequired'
 export type RouteHandlerContext<P extends RouteHandlerParams = RouteHandlerParams> = {
   params: Promise<P>
 }
@@ -85,6 +85,11 @@ type RouteSpecBase<P extends RouteHandlerParams> = {
   freshSession?: boolean
   /** Optional extractor for routes whose target workspace ID comes from URL params or query string. */
   workspaceId?: (input: { request: Request; params: P }) => string | null | undefined
+  /**
+   * Optional legacy refusal formatter for auth failures (must return a 401 or 403 Response;
+   * any non-401/403 return value is ignored fail-closed so auth can never be bypassed).
+   */
+  onAuthFailure?: (reason: RouteAuthFailureReason) => Response
 }
 
 export type RouteSpec<
@@ -247,16 +252,33 @@ const defaultDependencies: RouteGuardDependencies = {
   writeAllowed: request => {
     // Synchronous fallback is never hit before `checkOrigin` lazily primes mobileApi when needed;
     // replaced below via async origin helper so module mocks of `@/lib/mobile-api` are honored.
-    return desktopSameOriginRequest(request)
+    return desktopAuth.desktopSameOriginRequest(request)
   },
-  desktopSameOrigin: desktopSameOriginRequest,
-  cronUnauthorized,
+  desktopSameOrigin: request => desktopAuth.desktopSameOriginRequest(request),
+  cronUnauthorized: request => cronAuth.cronUnauthorized(request),
   loadWorkspaceContext: async (requestedId, authenticatedUser) => {
     const workspaceAccess = await import('@/lib/workspace-access')
     return workspaceAccess.loadWorkspaceContext(requestedId, authenticatedUser)
   },
-  noteLogUser,
+  noteLogUser: userId => {
+    if (typeof requestLog.noteLogUser === 'function') requestLog.noteLogUser(userId)
+  },
   mobileAppOrigin: 'mikka://',
+}
+
+function authFailureResponse<P extends RouteHandlerParams>(
+  spec: RouteSpecBase<P>,
+  reason: RouteAuthFailureReason,
+): Response {
+  if (spec.onAuthFailure) {
+    const custom = spec.onAuthFailure(reason)
+    if (custom instanceof Response && (custom.status === 401 || custom.status === 403)) {
+      return custom
+    }
+  }
+  return reason === 'unauthenticated'
+    ? routeJson({ error: 'authRequired' }, 401)
+    : routeJson({ error: reason }, 403)
 }
 
 async function isNativeMobileOriginAllowed(
@@ -394,12 +416,13 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
       } else if (spec.auth === 'human-session-only') {
         // Explicit PAT bearer is refused immediately; ambient browser cookies cannot rescue it.
         if (PAT_BEARER_PATTERN.test(request.headers.get('authorization') ?? '')) {
-          return routeJson({ error: 'patNotAllowed' }, 403)
+          return authFailureResponse(spec, 'patNotAllowed')
         }
+        const { humanSessionHeaders } = await import('@/lib/desktop-rpc/handler')
         const headers = humanSessionHeaders(request)
         if (!headers) {
           logUser(null)
-          return routeJson({ error: 'authRequired' }, 401)
+          return authFailureResponse(spec, 'unauthenticated')
         }
         session = await getSession({
           headers,
@@ -407,14 +430,14 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
         })
         logUser(session?.user?.id)
         if (!session?.user) {
-          return routeJson({ error: 'authRequired' }, 401)
+          return authFailureResponse(spec, 'unauthenticated')
         }
         if (isPatSession(session)) {
-          return routeJson({ error: 'patNotAllowed' }, 403)
+          return authFailureResponse(spec, 'patNotAllowed')
         }
         const principal = session.user[enterprisePrincipal]
         if (principal && principal.kind !== 'session') {
-          return routeJson({ error: 'humanSessionRequired' }, 403)
+          return authFailureResponse(spec, 'humanSessionRequired')
         }
       } else if (spec.auth === 'mobile-or-session') {
         if (spec.freshSession) {
@@ -429,7 +452,7 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
           session = user ? sessionFromUser(user) : null
         }
         if (!session?.user) {
-          return routeJson({ error: 'authRequired' }, 401)
+          return authFailureResponse(spec, 'unauthenticated')
         }
       } else if (spec.auth === 'session') {
         session = await getSession({
@@ -438,7 +461,7 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
         })
         logUser(session?.user?.id)
         if (!session?.user) {
-          return routeJson({ error: 'authRequired' }, 401)
+          return authFailureResponse(spec, 'unauthenticated')
         }
       }
 
@@ -537,10 +560,16 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
     }
 
     const withFreshness: RouteHandler<P> = spec.freshSession
-      ? (request, context) => withFreshSession(() => execute(request, context))
+      ? (request, context) => (
+          typeof freshSessionModule.withFreshSession === 'function'
+            ? freshSessionModule.withFreshSession(() => execute(request, context))
+            : execute(request, context)
+        )
       : execute
 
-    return spec.route ? withRequestLog(spec.route, withFreshness) : withFreshness
+    return spec.route && typeof requestLog.withRequestLog === 'function'
+      ? requestLog.withRequestLog(spec.route, withFreshness)
+      : withFreshness
   }
 }
 

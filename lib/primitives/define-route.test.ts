@@ -550,3 +550,49 @@ test('WorkspaceError is always mapped to canonical 403/409 JSON and never leaks 
   )
   await assert.rejects(() => crashingRoute(req()), error => error === unexpected)
 })
+
+test('onAuthFailure customizes 401/403 refusal envelopes fail-closed and optional catch-all params type-check', async () => {
+  const harness = makeHarness()
+  harness.setSession(null)
+
+  const governanceRoute = harness.guard(
+    {
+      auth: 'session',
+      origin: 'any',
+      workspace: 'none',
+      onAuthFailure: () => Response.json(
+        { error: { code: 'governance_denied', detail: 'access_denied' } },
+        { status: 403, headers: { 'cache-control': 'private, no-store' } },
+      ),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const denied = await governanceRoute(req('/api/me/security'))
+  assert.equal(denied.status, 403)
+  assert.deepEqual(await denied.json(), { error: { code: 'governance_denied', detail: 'access_denied' } })
+
+  // A non-401/403 return from onAuthFailure is ignored fail-closed so auth can never be bypassed.
+  const bypassAttempt = harness.guard(
+    {
+      auth: 'session',
+      origin: 'any',
+      workspace: 'none',
+      onAuthFailure: () => routeJson({ leaked: true }, 200),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const closed = await bypassAttempt(req('/api/me/security'))
+  assert.equal(closed.status, 401)
+  assert.deepEqual(await closed.json(), { error: 'authRequired' })
+
+  // Optional catch-all route params (`[[...resource]]`) are accepted by RouteHandlerParams.
+  const scimRoute = harness.guard<'public', 'none', { connectionId: string; resource?: string[] }>(
+    { auth: 'public', origin: 'any', workspace: 'none' },
+    async ({ params }) => routeJson({ connectionId: params.connectionId, resource: params.resource ?? [] }),
+  )
+  const scimRes = await scimRoute(req('/api/scim/v2/conn-1'), {
+    params: Promise.resolve({ connectionId: 'conn-1' }),
+  })
+  assert.equal(scimRes.status, 200)
+  assert.deepEqual(await scimRes.json(), { connectionId: 'conn-1', resource: [] })
+})

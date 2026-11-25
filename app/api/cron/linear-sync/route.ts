@@ -1,13 +1,13 @@
 import { withRequestLog } from '@/lib/request-log'
 import { cronJob } from '@/lib/background'
-import { cronUnauthorized } from '@/lib/cron-auth'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { processLinearSyncBatch } from '@/lib/linear-sync/worker'
 
 export const maxDuration = 60
 
-async function handleGET(request: Request) {
-  const refused = await cronUnauthorized(request); if (refused) return refused
-  return Response.json(await processLinearSyncBatch())
-}
+const handleGET = defineRoute(
+  { auth: 'cron-secret', origin: 'any', workspace: 'none' },
+  async () => Response.json(await processLinearSyncBatch()),
+)
 
 export const GET = withRequestLog('/api/cron/linear-sync', cronJob('linear-sync', handleGET))

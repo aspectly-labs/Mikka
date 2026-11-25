@@ -1,6 +1,7 @@
 import { freshSessionRoute } from '@/lib/fresh-session'
 import { auth } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { authorizeSubscriptionWorkspace } from '@/lib/subscription-runtime'
 import { EnrollmentClient, enrollmentOperator } from '@/lib/subscription-enrollment'
 import { enrollmentConfiguration } from '@/lib/subscription-enrollment-runtime'
@@ -9,9 +10,13 @@ import { byosEnrollmentEnabled } from '@/lib/cloud-computer-flag'
 import { enrollmentBindingDatabaseIdentity, enrollmentBindingPage, verifyEnrollmentBindingProof } from '@/lib/subscription-enrollment-binding-proof'
 
 export const maxDuration = 120
-export const GET = () => byosEnrollmentEnabled() ? enrollmentBindingPage() : new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } })
+export const GET = defineRoute(
+  { auth: 'public', origin: 'any', workspace: 'none' },
+  () => byosEnrollmentEnabled() ? enrollmentBindingPage() : new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } }),
+)
 
-const POSTBody = enrollmentBindHTTP({
+// Accepts operator bearer token or authenticated user session + HMAC binding proof inside enrollmentBindHTTP.
+const handleBind = enrollmentBindHTTP({
   operator: async request => byosEnrollmentEnabled() ? enrollmentOperator(request, process.env.MIKKA_BYOS_ENROLLMENT_OPERATOR_TOKEN) : null,
   session: async request => {
     const session = await auth.api.getSession({ headers: request.headers })
@@ -34,6 +39,11 @@ const POSTBody = enrollmentBindHTTP({
     return new EnrollmentClient({ ...enrollmentConfiguration(), databaseUrl, canonicalGrantPath, accessPath, accessProject: process.env.MIKKA_BYOS_ACCESS_INFISICAL_PROJECT })
   },
 })
+
+const POSTBody = defineRoute(
+  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none' },
+  ({ request }) => handleBind(request),
+)
 
 // Credentials, permissions, money and deletion: the session is read from the database, not the cookie cache.
 export const POST = freshSessionRoute(POSTBody)
