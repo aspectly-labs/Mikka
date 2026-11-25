@@ -82,10 +82,12 @@ App, Eve and local-device build and startup on Node 24.
 See [test ownership and CI cost](../../docs/ci/test-ownership.md) before
 adding or duplicating regression suites.
 
-Mark a same-repository mobile PR Ready or apply the `mobile-preview` label to
-publish a preview of the current PR to its `pr-<n>` EAS branch. Remove and reapply the
-label to publish a newer head. Production OTA still runs on its main push, after a successful automatic
-Cloudflare deployment (`workflow_run`), or by existing manual dispatch.
+The active iOS app lives in the private `mikka-hosted-ui` repository
+(`mobile-next/apps/mobile/`). Native iOS builds (`mobile-next-ios.yml`) and OTA
+updates (`mobile-next-update.yml`) are dispatched from `main` against a
+reviewed `mikka-hosted-ui` commit. Legacy 1.x `apps/mobile/**`,
+`mobile-update.yml`, `mobile-native.yml`, and `mobile-screenshots.yml` were
+deleted on 2026-11-25.
 
 ## Draft pull requests
 
@@ -177,42 +179,13 @@ product regression. Main pushes and merge groups continue normal full coverage.
   their existing dispatch and authorization conditions. The unified
   protected Cloudflare publisher continues to own main image builds.
 
-## Production mobile OTA
+## Production mobile releases
 
-- `mobile-update.yml` keeps its mobile type check on main pushes. Production
-  OTA waits for the private deployment policy's explicit owner window, merged
-  compatibility change and authenticated automatic staging receipts. It reads
-  that policy at a fixed private main commit through the existing read-only
-  source App, then calls the same read-only eligibility gate before reading
-  Expo/UI credentials and again before publication. The official overlay comes
-  from the verified staging manifest. A completed automatic Cloudflare
-  deployment supplies the next opportunity; no polling or new release identity
-  is introduced. A declined gate explicitly records that no OTA was published.
-  Main events do not cancel an active OTA; PR preview cancellation stays local
-  to its PR ref. After the policy permits the candidate, production OTA compares
-  the actual Git trees of `apps/mobile`, `packages/protocol`, and the reviewed
-  private mobile layer with the most recent verified publication. A later
-  Web-only merge therefore preserves an earlier, unpublished mobile change;
-  unchanged mobile inputs do not read an Expo credential or publish an update.
-  The immutable `mobile-production-ota-source` artifact records only source and
-  tree identities and is uploaded before Expo access. It becomes publication
-  evidence only when the original run attempt's later `Publish to production`
-  step succeeded, with both policy and input checks intact. Overall workflow
-  success alone is insufficient. Only the latest trusted source artifact is
-  considered: failed/cancelled publication or expired evidence cannot borrow an
-  older baseline. With no verified baseline, automatic events explicitly decline;
-  an owner must use the existing manual dispatch with valid staging references
-  and the same policy/window checks for the first publication or recovery.
-  Receipts are retained for 90 days. Recovery uses a fresh manual run, because
-  reruns cannot overwrite an existing immutable source artifact. Malformed
-  provenance fails closed even on manual dispatch. Tests verify this contract;
-  they do not prove that an Expo production update or a device install occurred.
-- `mobile-next-ios.yml` (dispatch only, from main) builds the new iOS app from
+- `mobile-next-ios.yml` (dispatch only, from main) builds the active iOS app from
   `mikka-hosted-ui` `mobile-next` at an exact `overlay_sha` that is already on its `main`, on the `xcode-27` runner (iOS 27 SDK), signs it
   manually with one persistent Apple Distribution identity (`APPLE_IOS_DISTRIBUTION_P12_BASE64`, `APPLE_IOS_DISTRIBUTION_P12_PASSWORD` in Infisical `prod:/platform`) imported into a temporary runner keychain, reuses or creates only the matching App Store provisioning profile through the existing App Store Connect API key (never creating or revoking certificates), and uploads
   it to TestFlight. It keeps no build artifact (this repository is public) and uses no EAS build; its runtime version
-  (`mikka-next-*`) and update channel (`next`) keep it apart from today's app and
-  `mobile-update.yml`.
+  (`mikka-next-*`) and update channel (`next`) identify the active 2.0 release line.
 - `mobile-next-update.yml` (dispatch only, from main on `ubuntu-24.04`) publishes JS/asset EAS Updates
   from `mikka-hosted-ui` `mobile-next` at `hosted_ui_ref` (`main` or an exact 40-char commit SHA verified
   on `mikka-hosted-ui` `main`) to the isolated **`next`** channel (`runtimeVersion: mikka-next-1`,
@@ -420,9 +393,7 @@ which captured that build's settings pages, was removed on 2026-11-08.)
 `cloudflare-api-image.yml`, `desktop-release.yml`, `mobile-next-ios.yml` and `mobile-next-update.yml` read the private UI, with the
 GitHub read-only deploy key `HOSTED_UI_READ_KEY` on `alexj11324/mikka-hosted-ui` only. They set
 `MIKKA_UI_OVERLAY_DIR` and record `MIKKA_UI_OVERLAY_SHA`; public and fork PRs still build with the
-default slots without either variable or any private secret. Today's phone app also reads it, with
-the same key and without recording an overlay: `mobile-native.yml`, `mobile-screenshots.yml` and
-`mobile-update.yml` take its `mobile/` slot. No other workflow reads the private UI.
+default slots without either variable or any private secret. No other workflow reads the private UI.
 
 Web verifies `/mikka/api/version`'s `build` and `overlaySha`. Desktop uses the
 existing matching-Web source gate and checks out **that Web overlay SHA**, then

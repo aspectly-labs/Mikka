@@ -74,35 +74,9 @@ then the public one.
 
 ## iOS app
 
-Both App Store profiles select the private mobile checkout, including the default `production` profile used by the EAS CLI. The official release workflow also checks the contents of the source archive before invoking EAS. To recover a completed build, provide its EAS build ID and main source commit. The workflow finds the original native run and checks its protected archive, private revision and runtime fingerprint against the EAS build before submitting. A failed TestFlight submission remains recoverable while the original artifact is available.
+The iOS app (`mobile-next/apps/mobile`) lives exclusively in the private `mikka-hosted-ui` repository ([decision 2026-11-25-0915](design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)); the legacy 1.x `apps/mobile` client, `@ui-slot/*` mobile overlay mechanism, and `mobile-update.yml` / `mobile-native.yml` / `mobile-screenshots.yml` workflows have been removed from this public repository.
 
-The iOS app (`apps/mobile`) has its own slots, filled from the layer's
-`mobile/` folder. They are React Native components, so they share nothing with
-the web slots but the idea.
-
-| | Build without `mikka-hosted-ui` | Official OTA |
-| --- | --- | --- |
-| `MIKKA_MOBILE_OVERLAY_DIR` | unset | `.hosted-ui/mobile`, relative to the repository root and inside it |
-| `@ui-slot/<name>` | `apps/mobile/slots/<name>.tsx` | `$MIKKA_MOBILE_OVERLAY_DIR/slots/<name>.tsx` (required in a configured layer) |
-| `@hosted/*` | does not resolve | `$MIKKA_MOBILE_OVERLAY_DIR/*` |
-
-`apps/mobile/ui-overlay.js` decides this and `apps/mobile/metro.config.js`
-applies it as Metro's `resolveRequest`. Every other import in a layer file
-resolves as if from `apps/mobile`, so the layer uses the app's `react`,
-`react-native`, `react-native-svg` and `react-native-reanimated` and installs
-no packages of its own. `@/` in the layer is `apps/mobile` (for example
-`@/lib/bot-look`, `@/slots/bot-avatar-contract`). `apps/mobile/tsconfig.json`
-maps `@ui-slot/*` to the defaults, so typecheck always sees the open-source
-build. A set but missing directory fails the bundle.
-
-| Slot | Surface | Props | Callers import |
-| --- | --- | --- | --- |
-| `bot-avatar` | the still blob with one eye | `BotAvatarProps` in `apps/mobile/slots/bot-avatar-contract.ts` (`color`, `shape`, `size`; `id` and `coordinator` when the caller has them, as on the web); colours and shapes in `apps/mobile/lib/bot-look.ts` | `BotAvatar` from `@/components/icons` |
-
-Required exports are `MOBILE_SLOT_EXPORTS` in `apps/mobile/ui-overlay.js`;
-the same rule as the web applies (merge the layer's export first).
-
-`mobile-update.yml` obtains the production Expo and UI-checkout credentials through the trusted main workflow. A production OTA requires the private mobile folder and its native slots. The native TestFlight workflow selects a reviewed overlay revision for its hosted production build. The public native source and contract tests can run without private credentials.
+This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.ts`, `tests/mobile-*.test.ts`) and the trusted release entry workflows (`.github/workflows/mobile-next-ios.yml` for TestFlight native builds and `.github/workflows/mobile-next-update.yml` for EAS OTA updates). Both release workflows check out `mikka-hosted-ui` via OIDC (`HOSTED_UI_READ_KEY`) and build or publish from `mobile-next/apps/mobile`.
 
 ## Rules for the layer
 

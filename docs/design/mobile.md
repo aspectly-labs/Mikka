@@ -6,9 +6,10 @@
 - **GitHub:** #1296
 - **Figma:** `zPe5LKycb2XuT1ivCLRw07`; page `268:4750` is archived per #1296 and is not a design authority. Page `358:9186` is a reference to verify. Current main and accepted decisions govern; do not redesign from archived or unaccepted frames.
 - **Owner thread:** `claude/mikka-mobile-tech-choice-jrtbd3`
-- **Code:** `apps/mobile` (Expo SDK 58) on the server's `app/api/mobile/*`
-  routes. Earlier Expo Web acceptance belongs to its recorded revision;
-  native behavior requires its own compatible build and device evidence.
+- **Code:** `mikka-hosted-ui/mobile-next/apps/mobile` on the server's `app/api/mobile/*`
+  routes. The legacy 1.x `apps/mobile` workspace in this public repository was
+  deleted on 2026-11-25 ([decision](decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)).
+  Native behavior requires its own compatible build and device evidence.
 
 Decisions behind this spec are the 2026-10-27 rows in `decisions.md` and
 R-20 / R-21 in `rules.md`.
@@ -22,8 +23,8 @@ briefing in the morning and see what is waiting on me.
 
 ## Platform and stack
 
-- Expo (React Native) with Expo Router, in the main repository at
-  `apps/mobile`, using `@mikka/protocol` from the pnpm workspace.
+- Expo (React Native) in private `mikka-hosted-ui/mobile-next/apps/mobile`,
+  connecting to this public repository's `app/api/mobile/*` backend routes.
 - iOS ships first. Android builds from the same code later; Android pushes in
   mainland China need a vendor push service (FCM is not available there).
 - Builds run on EAS, not on the developer's Mac (`AGENTS.md`).
@@ -330,15 +331,8 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   still use `pickImages` resizing before becoming scoped files. The legacy
   unscoped transport retains its two-image/text-file path in source.
 - **现状（非决定）:** thread filters 待审阅 and 已归档, and dictation remain outside the implemented first-version flow. Pins are implemented. Appearance follows the system ([decision](decisions/2026-11-02-1410-mobile-follows-system-appearance.md)); changing the native appearance configuration requires a compatible EAS build.
-- **App icon:** the Mikka mark, the same file as the desktop app's
-  (`apps/mobile/assets/icon.icon`, Icon Composer; `icon.png` is the opaque
-  1024 fallback). Two layers on the dark fill: the lit dots (Liquid Glass,
-  specular) and the unlit dots (white at 14%), so iOS 26 draws the default,
-  dark, tinted and clear looks itself; actool also writes flat icons for
-  earlier iOS. `.github/workflows/app-icon.yml` compiles it for iOS and macOS
-  and renders each look on a pull request. A new icon needs a new build,
-  dispatched by hand (`mobile-native.yml` does not watch `assets/`).
-- **Updates:** `.github/workflows/mobile-update.yml` publishes JavaScript to the production OTA channel on main. Native configuration changes use `.github/workflows/mobile-native.yml`: exact-commit main CI, a completed EAS iOS build, then submission of that exact build id to App Store Connect/TestFlight. The workflow's automatic path filters cover `app.json`, `app.config.ts` and `eas.json`; native dependency or asset changes outside those filters need manual dispatch on main. A different runtime needs a compatible binary. TestFlight processing, installation and device acceptance remain separate from publication; see `apps/mobile/README.md`.
+- **App icon:** the Mikka mark (`apps/desktop/build/icon.icon` in this repo and `mobile-next/apps/mobile/assets/mikka/icon.icon` in `mikka-hosted-ui`, Icon Composer; `icon.png` is the opaque 1024 fallback). `.github/workflows/app-icon.yml` compiles `apps/desktop/build/icon.icon` for iOS and macOS and renders each look on a pull request.
+- **Updates:** `.github/workflows/mobile-next-update.yml` publishes JavaScript OTA updates for `mikka-hosted-ui/mobile-next/apps/mobile` via EAS Update, and `.github/workflows/mobile-next-ios.yml` builds and submits native iOS TestFlight releases from a reviewed `mikka-hosted-ui` commit. Legacy 1.x `mobile-update.yml`, `mobile-native.yml`, and `mobile-screenshots.yml` are retired ([decision](decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)). TestFlight processing, installation and device acceptance remain separate from publication.
 
 ## Out of scope (first version)
 

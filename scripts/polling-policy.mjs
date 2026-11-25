@@ -33,7 +33,6 @@ const db = (replaceWith, reason, hits) => ({
   reason,
   hits,
 });
-const ui = (reason, hits) => ({ kind: "ui-timer", reason, hits });
 const external = (reason, hits) => ({ kind: "external", reason, hits });
 const local = (reason, hits) => ({ kind: "local", reason, hits });
 const harness = (reason, hits) => ({ kind: "harness", reason, hits });
@@ -356,23 +355,7 @@ export const pollingAllowlist = {
       "pings the device gateway WebSocket so live push stays connected; reads no data",
     hits: 1,
   },
-  // UI timers: read no data.
-  "apps/mobile/components/beui/components/loader/loader.tsx": ui(
-    "loader animation frames",
-    3,
-  ),
-  "apps/mobile/components/beui/components/loading-states/agent-progress.tsx":
-    ui("progress animation", 1),
-  "apps/mobile/components/beui/components/loading-states/reasoning-text.tsx":
-    ui("reasoning text animation", 2),
-  "apps/mobile/components/beui/components/tool-result/tool-result.tsx": ui(
-    "elapsed-time clock",
-    1,
-  ),
-  "apps/mobile/features/chat/screens/chat-screen.tsx": ui(
-    "the 1 s elapsed clock of a reply in progress; the chat and its proposals are pushed (lib/live.ts)",
-    1,
-  ),
+  // UI timers: read no data. (Legacy apps/mobile UI timers retired with apps/mobile.)
 }
 
 const delayCall =

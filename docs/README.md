@@ -61,7 +61,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 - [GitHub App setup](github-app-manifest.md), [Telegram](telegram.md),
   [Slack](slack-bot.md) covers integrations. [Linear sync](linear-sync.md) is retired (2026-11-24) and kept for reference.
 - [Desktop](../apps/desktop/README.md) covers the Electron client.
-- [Mobile](../apps/mobile/README.md) covers the Expo client.
+- [Mobile](design/mobile.md) covers the iOS client specification (the app source lives in private `mikka-hosted-ui/mobile-next/apps/mobile`; legacy 1.x `apps/mobile` is deleted per [decision 2026-11-25-0915](design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)).
 
 ## Verify and operate
 

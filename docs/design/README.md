@@ -87,7 +87,7 @@ Notes:
 | Decisions | `docs/design/decisions/`, one file each (`decisions.md` is frozen) | Whoever hears the decision, the same day |
 | Brand mark | `docs/design/brand.md` | Any thread, after Alex decides |
 | Figma file | `zPe5LKycb2XuT1ivCLRw07`, style guide section `98:2` | Any thread; new work goes on its own page, named with the feature and date |
-| Tokens in code | `mikka-hosted-ui/styles/palette.css` (`apps/mobile/styles/tokens.css` on iOS), mapped in `design-system.md` §1 | Frontend and mobile threads |
+| Tokens in code | `mikka-hosted-ui/styles/palette.css` (`mikka-hosted-ui/mobile-next/apps/mobile` on iOS), mapped in `design-system.md` §1 | Frontend and mobile threads |
 | Enforced rules | `scripts/lint-ui.mjs`, `scripts/*-policy.mjs`, `ui-policy.json`, `mikka-hosted-ui/scripts/{paid-overrides.mjs,design-system-geometry.test.mjs,copy-budget.test.mjs}` | Frontend threads |
 | UI copy | `messages/zh-CN.json`, `messages/en.json` | The thread that writes the UI |
 | Objects, owners, settings levels and the navigation tree | `docs/design/information-architecture.md` | Whoever adds an object, a settings section or a global entry, in the same PR |

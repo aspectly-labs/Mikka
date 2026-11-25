@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import yaml from 'js-yaml'
-import { select, diffRange, area } from './select.mjs'
+import { select, diffRange } from './select.mjs'
 import { buildGraph, dbId, sourceId, strictCommand } from './graph.mjs'
 import { selectScripts, shardScripts } from '../run-db-tests.mjs'
 
@@ -14,17 +14,13 @@ const change = (file, extra = {}) => ({file, status:'M', mode:'100644', oldMode:
 const plan = buildGraph()
 const pick = (file, extra) => select(plan, [change(file, extra)])
 
-test('mobile does not select server DB, daemon, Docker or macOS', async () => {
-  const result = await pick('apps/mobile/lib/theme.ts')
-  assert.equal(result.full, false)
-  for (const key of ['daemon','desktop','analytics']) assert.equal(result[key], false, key)
-  assert.deepEqual(result.db_suites, [])
-  assert.deepEqual(result.db_matrix.shard, [])
-  assert(result.mobile)
+test('the legacy iOS app is retired and no longer selected in public Mikka', async () => {
+  const result = await pick('messages/en.json')
+  assert.equal('mobile' in result, false)
 })
 test('non-documentation plans keep the suite that actually exercises the docs classifier', async () => {
-  const planForMobile = await pick('apps/mobile/lib/theme.ts')
-  const owners = planForMobile.units.filter(unit =>
+  const planForWeb = await pick('apps/frontend/src/headless.ts')
+  const owners = planForWeb.units.filter(unit =>
     plan.graph.dependencies[unit]?.some(edge => edge.target === sourceId('scripts/ci-docs-only.test.mjs')))
   assert.deepEqual(owners, ['ci-core-7'])
 })
@@ -109,7 +105,7 @@ test('enrolled billing fixture edits retain their real DB consumers without unre
     'test:onboarding-db', 'test:scope-detachment-db', 'test:workspace-admin-db',
   ])
   assert(result.source)
-  for (const flag of ['daemon', 'desktop', 'mobile', 'analytics']) assert.equal(result[flag], false, flag)
+  for (const flag of ['daemon', 'desktop', 'analytics']) assert.equal(result[flag], false, flag)
   for (const script of ['test:release-security', 'test:credentials', 'test:test-accounts', 'test:abuse']) {
     assert(result.unit_tasks.some(task => task.command.includes(`pnpm ${script}`)), script)
   }
@@ -202,7 +198,6 @@ test('selected DB suites remain a nonempty subset and dynamic shards are exhaust
   assert.throws(()=>shardScripts(scripts,'3/3'))
 })
 test('shared aliases and glob imports become graph edges rather than missed test inputs', () => {
-  assert(plan.graph.dependencies[sourceId('apps/mobile/app/(tabs)/(chats)/_layout.tsx')].some(e=>e.target===sourceId('apps/mobile/lib/theme.ts')))
   assert(Object.values(plan.graph.dependencies).some(edges=>edges.some(e=>e.target.startsWith('source:packages/protocol/'))))
 })
 test('every heavy consumer uses the same trusted triage and required names remain', () => {
@@ -215,7 +210,6 @@ test('every heavy consumer uses the same trusted triage and required names remai
   assert(ci.includes('name: UI policy (strict)'))
   assert(ci.includes('name: Production build and browser interactions'))
   assert(!ci.includes('playwright install'))
-  assert.equal(area('apps/mobile/lib/theme.ts'),'mobile')
 })
 
 test('the actual required gate scripts reject drafts, unselected failures and selected skips', () => {
@@ -320,7 +314,7 @@ for (const [name, source] of [
 
 test('filesystem-based i18n and generated catalog policies cannot disappear from import-only selection', async () => {
   const commands = JSON.parse(readFileSync('scripts/ci/tasks.json','utf8'))
-  for (const file of ['messages/en.json','apps/mobile/lib/theme.ts']) {
+  for (const file of ['messages/en.json']) {
     const result = await pick(file)
     for (const command of ['pnpm test:i18n','pnpm i18n:check','pnpm check:agent-ui']) {
       const key = Object.entries(commands).find(([,task])=>task.command===command)?.[0]

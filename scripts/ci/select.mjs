@@ -11,7 +11,6 @@ export const GLOBAL = /^(?:\.github\/(?!workflows\/README\.md$)|scripts\/|tests\
 // Keep the expression readable without a trailing whitespace token.
 const globalPath = file => !isDocsOnly([file]) && (GLOBAL.test(file) || /(?:^|\/)(?:package\.json|tsconfig[^/]*\.json)$/.test(file))
 export function area(file, plan) {
-  if (file.startsWith('apps/mobile/')) return 'mobile'
   if (file.startsWith('apps/desktop/')) return 'desktop'
   if (file.startsWith('packages/daemon/')) return 'daemon'
   if (file.startsWith('packages/subscription-worker/')) return 'e2b/runtime'
@@ -72,7 +71,6 @@ export async function select(plan, changes, { force = false } = {}) {
   const shardCount = Math.min(4, Math.ceil(suites.length / 8))
   const flags = {
     source: !docs, daemon: !docs && (full || selected.has('@mikka/daemon') || areas.includes('daemon')),
-    mobile: !docs && (full || selected.has('@mikka/mobile') || areas.includes('mobile')),
     desktop: !docs && (full || selected.has('@mikka/desktop') || areas.includes('desktop')),
     analytics: !docs && (full || files.some(f => /analytics|posthog|instrumentation|^apps\/frontend\/|^app\/globals/.test(f))),
   }

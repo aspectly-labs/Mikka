@@ -1960,8 +1960,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Groups visible conversation publications by canonical GitHub pull request and filters locally by published state.",
-    "test": "apps/mobile/tests/conversation-directory-read.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/dispatch-delegate.ts": {
     "mode": "built-in",
@@ -2071,8 +2071,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "The conversation composer uses the existing model selector only for a single responding Bot present in the current owner’s authorized Bot list. It requires no external service.",
-    "test": "apps/mobile/tests/thread-composer-options.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/eve/product-rpc.ts": {
     "mode": "operator-configured",
@@ -2326,15 +2326,15 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Journal immutable browser commands before preflight, retain failed or interrupted sends, and retry the same command without a hosted service.",
-    "test": "tests/mobile-app.test.ts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/hooks/use-task-continuation.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Paged task lists fetch the next authorized cursor on demand and discard previous pages when the current view changes.",
-    "test": "apps/mobile/tests/ui-overlay.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/inbox/client.ts": {
     "mode": "built-in",
@@ -2696,8 +2696,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Web and native clients use the same chronological task history, discussion and run facts.",
-    "test": "apps/mobile/tests/task-groups.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/task-activity-timeline.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-activity-versions.ts": {
     "mode": "built-in",
@@ -2738,8 +2738,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "The shared task form preserves its create or dispatch intent and accepts the matching server receipt.",
-    "test": "apps/mobile/tests/eve-client.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-create-only.ts": {
     "mode": "built-in",
@@ -2766,15 +2766,15 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Classifies existing task content locally for display on supported clients.",
-    "test": "apps/mobile/tests/task-description.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-discussion.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "A typed discussion carries the author, creation time, resolution state and messages into the shared activity view.",
-    "test": "apps/mobile/tests/task-groups.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/task-activity-wake.test.ts",
+    "suite": "test:coordinator-events"
   },
   "lib/task-dispatch-lock.ts": {
     "mode": "built-in",
@@ -2815,8 +2815,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Native and Web readers request at most 200 distinct tasks per page and reject a workspace mismatch.",
-    "test": "apps/mobile/tests/server-api.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-presentation-read.ts": {
     "mode": "built-in",

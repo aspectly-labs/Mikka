@@ -61,13 +61,13 @@ test('real trusted Nx selection parses candidate files without loading candidate
   const f = fixture(t)
   f.write('package.json',JSON.stringify({type:'module',scripts:{'test:fixture-db':'node --test tests/fixture.db.test.ts'}}))
   f.write('tests/fixture.db.test.ts','')
-  f.write('apps/mobile/lib/theme.ts','export const color = 1\n')
+  f.write('apps/frontend/src/theme.ts','export const color = 1\n')
   f.write('nx.json',JSON.stringify({plugins:['./poison.cjs']}))
   f.write('poison.cjs',"require('node:fs').writeFileSync('plugin-executed','unsafe');module.exports={}")
   f.git('add','.');f.git('commit','-qm','candidate base')
   const base = f.git('rev-parse','HEAD')
-  f.write('apps/mobile/lib/theme.ts','export const color = 2\n')
-  f.git('add','.');f.git('commit','-qm','mobile edit')
+  f.write('apps/frontend/src/theme.ts','export const color = 2\n')
+  f.git('add','.');f.git('commit','-qm','web edit')
   const result = join(f.root,'selection.json')
   execFileSync(process.execPath,[resolve('scripts/ci/select.mjs')],{
     cwd:f.root,env:{...f.env,CI_BASE:base,CI_HEAD:f.git('rev-parse','HEAD'),CI_CANDIDATE_ROOT:f.root,CI_SELECTION_FILE:result,GITHUB_EVENT_PATH:'',GITHUB_OUTPUT:'',GITHUB_STEP_SUMMARY:'',NX_DAEMON:'false'},stdio:'pipe',
@@ -75,7 +75,6 @@ test('real trusted Nx selection parses candidate files without loading candidate
   assert(!existsSync(join(f.root,'plugin-executed')))
   const selection = JSON.parse(readFileSync(result,'utf8'))
   assert.equal(selection.full,false)
-  assert.equal(selection.mobile,true)
   assert.deepEqual(selection.db_suites,[])
 })
 

@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
-import { frozenMobileFiles } from './mobile-i18n-baseline.mjs'
 
 const ROOT = process.cwd()
 const LOCALES = ['zh-CN', 'en']
@@ -123,22 +122,6 @@ function resolveImport(specifier, fromFile) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate
   }
   return null
-}
-
-/** Every mobile source file, as absolute paths: the app's own entry points, not a web import graph. */
-function collectMobileFiles() {
-  const root = path.join(ROOT, 'apps', 'mobile')
-  const found = []
-  const walk = directory => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name === 'node_modules' || entry.name === 'tests') continue
-      const full = path.join(directory, entry.name)
-      if (entry.isDirectory()) walk(full)
-      else if (/\.(tsx?|jsx?)$/.test(entry.name) && !/\.test\.|\.d\.ts$/.test(entry.name)) found.push(full)
-    }
-  }
-  if (fs.existsSync(root)) walk(root)
-  return found
 }
 
 function collectEntryPoints() {
@@ -332,24 +315,7 @@ export function checkRepository() {
     problems.push(...findHardcodedText(file, source))
     problems.push(...findMissingTranslationKeys(file, source, reference))
   }
-  // The mobile app is a second entry point into the same catalog (R-42). Its
-  // legacy hardcoded-string baseline was burned to 0 and is permanently locked.
-  const frozen = frozenMobileFiles()
-  if (frozen.size > 0) {
-    problems.push(`scripts/mobile-i18n-baseline.mjs must remain empty (locked at 0; found ${frozen.size} entries)`)
-  }
-  for (const file of collectMobileFiles()) {
-    const source = fs.readFileSync(file, 'utf8')
-    const relative = path.relative(ROOT, file)
-    const hits = findHardcodedText(file, source)
-    const allowed = frozen.get(relative)
-    if (allowed === undefined) problems.push(...hits)
-    else if (hits.length > allowed) problems.push(...hits, `${relative} holds ${hits.length} hardcoded strings; the baseline allows ${allowed} (migrate the new one, never raise the number)`)
-    // A frozen file that shrank must lower its count, or the allowance slowly loosens
-    // and a later new string slips in under it. At zero the entry goes.
-    else if (hits.length < allowed) problems.push(`scripts/mobile-i18n-baseline.mjs: "${relative}" is down to ${hits.length} (from ${allowed}); ${hits.length ? 'lower its number' : 'remove its entry'}`)
-    problems.push(...findMissingTranslationKeys(file, source, reference))
-  }
+  // The active iOS app lives in private mikka-hosted-ui (mobile-next/) and enforces its own i18n checks there.
   return problems
 }
 

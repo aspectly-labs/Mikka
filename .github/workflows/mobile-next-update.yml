@@ -1,8 +1,7 @@
 name: Mobile next OTA update
 
-# Publishes JS/asset OTA updates for Mikka's new iOS app (mikka-hosted-ui/mobile-next)
-# to EAS Update on the isolated `next` channel (`runtimeVersion: mikka-next-1`).
-# Today's app (mobile-update.yml -> `production` channel) is completely untouched.
+# Publishes JS/asset OTA updates for Mikka's iOS app (mikka-hosted-ui/mobile-next)
+# to EAS Update on the `next` channel (`runtimeVersion: mikka-next-1`).
 #
 # Credentials are Infisical prod:/platform names read through OIDC only:
 # HOSTED_UI_READ_KEY and EXPO_TOKEN. Private install, test, and Metro bundler

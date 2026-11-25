@@ -27,8 +27,8 @@ Do not redraw or approximate the path:
 | `public/favicon.ico` | Browser fallback with `16px`, `32px`, and `48px` sizes. |
 | `public/apple-icon.png` / `app/apple-icon.png` | `180px` unmasked `#FFFFFF` / `#080808` home-screen icon. |
 | `app/icon.svg` | Canonical theme-switching inline square SVG (`viewBox="0 0 24 24"`, `#080808` light / `#FFFFFF` dark). |
-| `apps/mobile/assets/icon.icon/` & `apps/desktop/build/icon.icon/` | Byte-identical Apple Icon Composer bundle (`Assets/mark.svg` + `icon.json` `fill-specializations`: Default `#FFFFFF`/`#080808`, Dark `#1C1C1E`/`#FFFFFF`, Tinted/Clear `#FFFFFF`). |
-| `apps/mobile/assets/icon.png` & `apps/desktop/build/icon.png` | `1024×1024` unmasked opaque RGB Default master (`#FFFFFF` background, `#080808` mark). |
+| `apps/desktop/build/icon.icon/` | Apple Icon Composer bundle (`Assets/mark.svg` + `icon.json` `fill-specializations`: Default `#FFFFFF`/`#080808`, Dark `#1C1C1E`/`#FFFFFF`, Tinted/Clear `#FFFFFF`), also verified for iOS by `.github/workflows/app-icon.yml`. |
+| `apps/desktop/build/icon.png` | `1024×1024` unmasked opaque RGB Default master (`#FFFFFF` background, `#080808` mark). |
 
 In product UI, inline the SVG using the `viewBox="0 0 24 24"` square path (or
 the pure `0 0 630 420` path when laying out at 3:2) instead of rendering the
@@ -56,20 +56,19 @@ block's own size and placement win
 | --- | --- | --- |
 | Bot list / rail header (top left) | 28px | Mark only, no "Mikka" wordmark. Same height as the header's `+` button (`h-7`). |
 | Sign-in / sign-up (`auth-logo.tsx`) | 24px | Mark plus "Mikka" in `text-lg font-semibold`, gap 10px (`gap-2.5`). |
-| Native sign-in (`SignIn.tsx`) | 56pt | Geometric ribbon mark (`apps/mobile/components/MikkaMark.tsx`) above the 30pt "Mikka" wordmark, gap 12pt. |
+| Native sign-in | 56pt | Geometric ribbon mark (`mobile-next/apps/mobile/src/components/BrandMark.tsx` in `mikka-hosted-ui`) above the 30pt "Mikka" wordmark, gap 12pt. |
 | Onboarding welcome | 56px | Mark only, centered above the "欢迎来到 Mikka" title. |
 | Browser tab | 16 / 32 / 48px | ICO fallback and PNG sizes 48, 96, and 192px. |
 
 ## Implementation status
 
-- Public `apps/mobile/components/MikkaMark.tsx` renders the canonical
-  `viewBox="0 0 24 24"` ribbon path using `react-native-svg` (`Path`) and
-  dynamic `colors.text` at 56pt; `apps/mobile/tests/mikka-mark.test.mts`
-  verifies parity with `app/icon.svg` and the `icon.icon` bundles.
-- Official Web and Mobile-Next mark components live in `mikka-hosted-ui`
+- Official Web and iOS (`mobile-next`) mark components live in `mikka-hosted-ui`
   (`components/mikka/brand-mark.tsx`, `core/components/brand/mikka-mark.tsx`,
   `mobile-next/apps/mobile/src/components/BrandMark.tsx`) and share the exact
-  same Figma `12Yn4bNPchBdDvdIb83KER` vector coordinates and `icon.icon` bundle.
+  same Figma `12Yn4bNPchBdDvdIb83KER` vector coordinates and `icon.icon` bundle
+  with `app/icon.svg` and `apps/desktop/build/icon.icon/`. Legacy 1.x
+  `apps/mobile` was deleted from the public repository
+  ([decision 2026-11-25-0915](decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)).
 
 ## Clear space
 

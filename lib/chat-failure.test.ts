@@ -11,27 +11,24 @@ test('native admission and quiet completion require an explicit native failure',
   assert.equal(chatFailure({working:false,error:'turn_failed',items})?.kind,'failed')
   assert.equal(chatFailure({working:false,error:null,items:[{from:'person'}]})?.kind,'failed','historical legacy failures retain their existing presentation')
 })
+import { readFileSync } from 'node:fs'
 import { chatBalanceRefusal } from './chat-balance'
-import { failureLine } from '../apps/mobile/lib/chat-failure'
-import { getMobileMessages, mobileMessages } from '../apps/mobile/lib/messages'
 
-// The line is read from the phone's catalog, not repeated here: the test then holds
-// under any device locale instead of only under zh-CN.
-const copy = mobileMessages.MobileCore.failure
+const enMessages = JSON.parse(readFileSync(new URL('../messages/en.json', import.meta.url), 'utf8'))
+const zhMessages = JSON.parse(readFileSync(new URL('../messages/zh-CN.json', import.meta.url), 'utf8'))
 
 const person = { from: 'person' }, reply = { from: 'coordinator' }, event = { from: 'event' }
 const balance = 'Step "step//@ai-sdk/workflow@2.0.80//doStreamStep" failed after 0 retries: Insufficient Balance (request_id: 11111111-1111-4111-8111-111111111111)'
 
-test('model-required copy names the state beside the settings action in both mobile catalogs', () => {
-  assert.equal(getMobileMessages('en').Coordinator.modelRequired, 'No task started: no model selected.')
-  assert.equal(getMobileMessages('zh-CN').Coordinator.modelRequired, '任务未启动：未选择模型。')
+test('model-required copy names the state beside the settings action in both catalogs', () => {
+  assert.equal(enMessages.Coordinator.modelRequired, 'No task started: no model selected.')
+  assert.equal(zhMessages.Coordinator.modelRequired, '任务未启动：未选择模型。')
 })
 
-test('missing preparation model keeps the installed mobile discriminator with model settings recovery', () => {
+test('missing preparation model keeps the installed discriminator with model settings recovery', () => {
   const failure = chatFailure({ working: false, error: 'executionModelUnknown' })!
   assert.deepEqual(JSON.parse(JSON.stringify(failure)), { kind: 'failed', reason: 'modelRequired', raw: 'executionModelUnknown' })
   assert.deepEqual(failureMessageKey(failure), { namespace: 'Coordinator', key: 'modelRequired' })
-  assert.deepEqual(failureLine(failure), { text: mobileMessages.Coordinator.modelRequired, retry: false, recovery: 'models' })
   assert.equal(chatFailure({ working: true, error: 'executionModelUnknown' }), null)
 })
 
@@ -57,7 +54,6 @@ test('exhausted tool recovery has a stable friendly failure and retry',()=>{
   const failure=chatFailure({working:false,error:'model_tool_unavailable'})!
   assert.deepEqual(failure,{kind:'failed',reason:'tools',raw:'model_tool_unavailable'})
   assert.deepEqual(failureMessageKey(failure),{namespace:'Coordinator',key:'replyToolUnavailable'})
-  assert.deepEqual(failureLine(failure),{text:copy.replyIncomplete,retry:true,recovery:null})
   assert.equal(chatFailure({working:true,error:'model_tool_unavailable'}),null)
 })
 
@@ -65,7 +61,6 @@ test('the observed model streaming balance refusal has safe copy and a model rec
   const failure = chatFailure({ working: false, error: balance })!
   assert.deepEqual(failure, { kind: 'failed', reason: 'balance' })
   assert.deepEqual(failureMessageKey(failure), { namespace: 'Coordinator', key: 'apiBalance' })
-  assert.deepEqual(failureLine(failure), { text: copy.apiBalance, retry: false, recovery: 'model' })
   assert.doesNotMatch(JSON.stringify(failure), /request_id|11111111|doStreamStep/)
   assert.equal(chatFailure({ working: true, error: balance }), null)
 })
@@ -89,7 +84,6 @@ test('generic, quoted and tool errors never become a balance state from credit o
     assert.equal(chatBalanceRefusal(error), false, error)
     const failure = chatFailure({ working: false, error })!
     assert.deepEqual(failure, chatBalanceRefusal(error) ? { kind: 'failed', reason: 'balance' } : { kind: 'failed', raw: error }, error)
-    assert.equal(failureLine(failure).retry, true, error)
   }
 })
 
@@ -109,11 +103,11 @@ test('nothing while a turn works; a turn that ended with no reply and nothing re
   assert.equal(chatFailure({ working: false, error: null, items: [reply, { from: 'person', pending: true }] }), null, 'a message still waiting is not unanswered')
 })
 
-test('every actionable server subscription error remains readable in the mobile contract', () => {
+test('every actionable server subscription error remains readable in the shared contract', () => {
   for (const code of ['binding_required', 'account_unavailable', 'reconnect_required', 'quota_exhausted', 'backend_unavailable', 'quota_unknown', 'subscription_rate_limited', 'provider_access_denied', 'provider_request_rejected', 'provider_route_unavailable']) {
     const failure = chatFailure({ working: false, error: code })
     assert.equal(failure?.kind, 'subscription', code)
-    assert.ok(failure && failureLine(failure).text, code)
+    assert.ok(failure && failureMessageKey(failure), code)
   }
 })
 
@@ -148,7 +142,6 @@ test('optional cloud recovery and main structured failure details survive the co
   assert.equal(failure?.kind === 'failed' && failure.cloudCode, 'cloud_quota_exhausted')
   assert.deepEqual(failure?.failureDetails, failureDetails)
   assert.deepEqual(failureMessageKey(failure!), { namespace: 'RunErrors', key: 'cloud_quota_exhausted.default' })
-  assert.equal(failureLine(failure!).recovery, 'cloudBilling')
   assert.equal(chatFailure({ working: true, error: 'cloud_quota_exhausted', failureDetails }), null)
 })
 
@@ -164,10 +157,6 @@ test('a cloud refusal crossing the model streaming step keeps its code and billi
       assert.deepEqual(failure, { kind: 'failed', cloudCode: code, raw: `${code} (response)` })
       assert.deepEqual(failureMessageKey(failure), { namespace: 'RunErrors', key: `${code}.default` })
       assert.equal(chatFailure({ working: true, error }), null)
-      if (code === 'cloud_quota_exhausted') {
-        assert.equal(failureLine(failure).recovery, 'cloudBilling')
-        assert.equal(failureLine(failure).retry, false)
-      }
     }
   }
 })
@@ -187,6 +176,5 @@ test('quoted cloud codes, tool bodies and other steps never become cloud recover
     const failure = chatFailure({ working: false, error })!
     assert.equal(failure.kind, 'failed', error)
     assert.equal(failure.kind === 'failed' ? failure.cloudCode : undefined, undefined, error)
-    assert.notEqual(failureLine(failure).recovery, 'cloudBilling', error)
   }
 })

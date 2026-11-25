@@ -143,7 +143,7 @@ export function threadStepStatus(step: Pick<ThreadStep, 'status'>, runActive: bo
 }
 
 /** Claude Code's `Bash`, Codex's `bash`/`shell` and Cursor's `execute` run a command; every other step is a tool (as iOS
- * apps/mobile/features/tasks/model/thread-steps.ts counts them, #1770). */
+ * mikka-hosted-ui/mobile-next counts them, #1770). */
 export const isCommandStep = (step: Pick<ThreadStep, 'name'>) => threadStepKind(step.name) === 'shell'
 
 /** Codex records its combined output and exit code in a single result. */
