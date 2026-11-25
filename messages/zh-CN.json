@@ -3698,7 +3698,27 @@
     "tool": {
       "exitCode": "退出码 {code}",
       "search": "\"{target}\"",
-      "searchIn": "\"{target}\" in {scope}"
+      "searchIn": "\"{target}\" in {scope}",
+      "read": "已读取 {target}",
+      "reading": "正在读取 {target}",
+      "searched": "已对“{query}”进行搜索",
+      "searchedIn": "已在 {path} 中搜索“{query}”",
+      "searching": "正在搜索“{query}”",
+      "searchingIn": "正在 {path} 中搜索“{query}”",
+      "ran": "已运行 {command}",
+      "running": "正在运行 {command}",
+      "ranGeneric": "已运行命令",
+      "runningGeneric": "正在运行命令",
+      "commandFailed": "命令执行失败（{command}）",
+      "commandStopped": "已停止 {command}",
+      "edited": "已编辑 {target}",
+      "editing": "正在编辑 {target}",
+      "webSearched": "已搜索网页",
+      "webSearching": "正在搜索网页",
+      "webSearchedDetail": "已搜索网页：{target}",
+      "webSearchingDetail": "正在搜索网页：{target}",
+      "called": "已调用 {tool}",
+      "calling": "正在调用 {tool}"
     },
     "lifecycle": {
       "fork": "分叉",
@@ -3716,6 +3736,13 @@
       "undo": "撤销",
       "deleteFailed": "线程没删除",
       "restoreFailed": "线程恢复失败"
+    },
+    "diff": {
+      "editedFiles": "{count, plural, other {已编辑 # 个文件}}",
+      "editedFile": "已编辑 {file}",
+      "review": "查看变更",
+      "more": "{count, plural, other {再显示 # 个文件}}",
+      "less": "收起文件"
     }
   },
   "FactoryFlow": {
@@ -8906,15 +8933,33 @@
       "step": "第 {step} / {total} 步"
     },
     "turnFold": {
-      "working": "工作中 {duration}",
-      "workingNow": "工作中",
-      "worked": "工作了 {duration}",
-      "workedNoTime": "工作过程",
+      "working": "处理中，已用时 {duration}",
+      "workingNow": "处理中",
+      "worked": "用时 {duration}",
+      "workedNoTime": "已完成",
       "stopped": "已停止",
-      "failed": "失败"
+      "failed": "失败",
+      "stoppedAfter": "你已停止，已用时 {duration}",
+      "stoppedNoTime": "你已停止"
     },
     "olderFailed": "加载失败，重试",
-    "readFullOptions": "查看完整选项"
+    "readFullOptions": "查看完整选项",
+    "toolSummary": {
+      "read": "读取文件",
+      "readLead": "已读取文件",
+      "command": "{count, plural, one {运行了命令} other {运行了命令}}",
+      "commandLead": "{count, plural, one {运行了命令} other {运行了命令}}",
+      "edit": "{count, plural, one {编辑了一个文件} other {编辑了多个文件}}",
+      "editLead": "{count, plural, one {编辑了一个文件} other {编辑了文件}}",
+      "web": "已搜索网页",
+      "webLead": "已搜索网页",
+      "other": "{count, plural, one {调用了一个工具} other {调用了工具}}",
+      "otherLead": "{count, plural, one {调用了一个工具} other {调用了工具}}",
+      "todo": "更新了计划",
+      "todoLead": "更新了计划",
+      "delegate": "派出了子 Agent",
+      "delegateLead": "派出了子 Agent"
+    }
   },
   "Board": {
     "scrollRight": "向右滚动看板",
@@ -11271,7 +11316,11 @@
     "activate": "启用已批准的 Skill",
     "positive": "有帮助",
     "feedback": "反馈",
-    "saved": "反馈已保存"
+    "saved": "反馈已保存",
+    "good": "回复优秀",
+    "bad": "回复不佳",
+    "undo": "撤销反馈",
+    "send": "发送"
   },
   "Reactions": {
     "mine": "{emoji}：{others, plural, =0 {你} other {你和另外 # 人}}",

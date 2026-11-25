@@ -3698,7 +3698,27 @@
     "tool": {
       "exitCode": "exit {code}",
       "search": "\"{target}\"",
-      "searchIn": "\"{target}\" in {scope}"
+      "searchIn": "\"{target}\" in {scope}",
+      "read": "Read {target}",
+      "reading": "Reading {target}",
+      "searched": "Searched for {query}",
+      "searchedIn": "Searched for {query} in {path}",
+      "searching": "Searching for {query}",
+      "searchingIn": "Searching for {query} in {path}",
+      "ran": "Ran {command}",
+      "running": "Running {command}",
+      "ranGeneric": "Ran command",
+      "runningGeneric": "Running command",
+      "commandFailed": "Command failed ({command})",
+      "commandStopped": "Stopped {command}",
+      "edited": "Edited {target}",
+      "editing": "Editing {target}",
+      "webSearched": "Searched the web",
+      "webSearching": "Searching the web",
+      "webSearchedDetail": "Searched the web: {target}",
+      "webSearchingDetail": "Searching the web: {target}",
+      "called": "Called {tool}",
+      "calling": "Calling {tool}"
     },
     "lifecycle": {
       "fork": "Fork",
@@ -3716,6 +3736,13 @@
       "undo": "Undo",
       "deleteFailed": "Thread not deleted",
       "restoreFailed": "Couldn't restore the thread"
+    },
+    "diff": {
+      "editedFiles": "{count, plural, one {Edited a file} other {Edited # files}}",
+      "editedFile": "Edited {file}",
+      "review": "Review changes",
+      "more": "{count, plural, one {Show # more file} other {Show # more files}}",
+      "less": "Collapse files"
     }
   },
   "FactoryFlow": {
@@ -8911,10 +8938,28 @@
       "worked": "Worked for {duration}",
       "workedNoTime": "Worked",
       "stopped": "stopped",
-      "failed": "failed"
+      "failed": "failed",
+      "stoppedAfter": "You stopped after {duration}",
+      "stoppedNoTime": "You stopped"
     },
     "olderFailed": "Couldn't load. Retry",
-    "readFullOptions": "Read full options"
+    "readFullOptions": "Read full options",
+    "toolSummary": {
+      "read": "read files",
+      "readLead": "Read files",
+      "command": "{count, plural, one {ran a command} other {ran commands}}",
+      "commandLead": "{count, plural, one {Ran a command} other {Ran commands}}",
+      "edit": "{count, plural, one {edited a file} other {edited files}}",
+      "editLead": "{count, plural, one {Edited a file} other {Edited files}}",
+      "web": "searched the web",
+      "webLead": "Searched the web",
+      "other": "{count, plural, one {called a tool} other {called tools}}",
+      "otherLead": "{count, plural, one {Called a tool} other {Called tools}}",
+      "todo": "updated the plan",
+      "todoLead": "Updated the plan",
+      "delegate": "started subagents",
+      "delegateLead": "Started subagents"
+    }
   },
   "Board": {
     "scrollRight": "Scroll board right",
@@ -11271,7 +11316,11 @@
     "activate": "Activate approved Skill",
     "positive": "Helpful",
     "feedback": "Feedback",
-    "saved": "Feedback saved"
+    "saved": "Feedback saved",
+    "good": "Good response",
+    "bad": "Bad response",
+    "undo": "Undo feedback",
+    "send": "Send"
   },
   "Reactions": {
     "mine": "{emoji}: {others, plural, =0 {just you} one {you and # other} other {you and # others}}",
