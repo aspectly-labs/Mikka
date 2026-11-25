@@ -62,7 +62,7 @@ Quota, rate-limit, and model-unavailable strips default to a **neutral `--card` 
 
 ## 2. Restricted Primitives and TypeScript Slot Contracts
 
-Build Mikka's own surfaces from a small, closed set of primitives so layout, density, and escape hatches are enforced at compile time rather than by code review alone. Paid blocks (BoardUI Pro, affectUI, beUI Pro) stay as shipped (R-90) and are tracked by `mikka-hosted-ui/scripts/paid-overrides.mjs`.
+Build Mikka's own surfaces from a small, closed set of primitives so layout, density, and escape hatches are enforced at compile time rather than by code review alone. Paid blocks (BoardUI Pro, affectUI, beUI Pro) are themed by Mikka's tokens through their own hooks ([2026-11-25-1630](decisions/2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md)); patches beyond theme hooks are tracked by `mikka-hosted-ui/scripts/paid-overrides.mjs`.
 
 | Primitive | Purpose | Mandatory TypeScript Contract & Constraints |
 | --- | --- | --- |

@@ -1,7 +1,7 @@
 # Design rules
 
 These are decisions Alex has already made. Designs, specs and code follow
-them without asking again. Scope: these rules govern Mikka's own UI. Paid blocks and components (BoardUI Pro, affectUI, beUI Pro) in the hosted layer are used as shipped, and where a rule here would change one's look (icons, avatars, logos, layout, spacing, colours, type, borders, motion, subtitles), the block wins ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)). To change a rule, Alex decides, the change is
+them without asking again. Scope: these rules govern Mikka's own UI. Paid blocks and components (BoardUI Pro, affectUI, beUI Pro) in the hosted layer are a component source, not a visual standard: they are themed through their own hooks onto Mikka's tokens, and what a hook cannot reach is changed by a recorded patch ([2026-11-25-1630](decisions/2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md), superseding 2026-11-09-0050). Whether a page or control should exist, and how it looks, is decided against top agent products, not by precedent. To change a rule, Alex decides, the change is
 recorded as a file in [`decisions/`](decisions/README.md), and this file is
 edited in the same PR. A new rule's id (`R-xx`) is assigned by the
 coordinator when the work is dispatched ([dev workflow](../dev-workflow.md)
