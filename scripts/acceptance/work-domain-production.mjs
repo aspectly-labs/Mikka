@@ -555,10 +555,15 @@ async function runCase(client, shared, options, item, deps, pin) {
     record.phase = 'task_create'
     const { issue } = await createDomainIssue(client, shared, item, document)
     check(uuid(issue?.id) && Number.isInteger(issue.revision), 'task_invalid'); record.issueId = issue.id
-    await client.rpc('environments.setTaskEnvironment', [{ workspaceId: shared.workspaceId, issueId: issue.id, revision: issue.revision, environmentId: options.scope.environmentId }])
+    // The acceptance Project retains its reports. Its membership does not select an Environment.
+    const { issue: grouped } = await client.rpc('projects.moveIssueToProject', [{ workspaceId: shared.workspaceId,
+      issueId: issue.id, revision: issue.revision, projectId: options.scope.projectId }])
+    check(grouped?.id === issue.id && grouped.projectId === options.scope.projectId && Number.isInteger(grouped.revision), 'task_scope_mismatch')
+    await client.rpc('environments.setTaskEnvironment', [{ workspaceId: shared.workspaceId, issueId: issue.id,
+      revision: grouped.revision, environmentId: options.scope.environmentId }])
     const saved = (await client.rpc('issues.getIssue', [issue.id])).issue
     check(saved?.id === issue.id && saved.userId === shared.ownerId && saved.workspaceId === shared.workspaceId
-      && saved.environmentId === options.scope.environmentId && typeof saved.identifier === 'string' && saved.identifier.length > 0
+      && saved.projectId === options.scope.projectId && saved.environmentId === options.scope.environmentId && typeof saved.identifier === 'string' && saved.identifier.length > 0
       && textOf(saved.content).includes('fingerprint=' + document.fingerprint), 'task_scope_mismatch')
     record.identifier = saved.identifier
     check(!deps.signal?.aborted, 'interrupted')
@@ -572,7 +577,7 @@ async function runCase(client, shared, options, item, deps, pin) {
       client.rpc('issues.getIssue', [record.issueId]), client.rpc('task-domain.getTaskPresentation', [record.issueId]),
     ])
     check(settled?.id === record.issueId && settled.userId === shared.ownerId && settled.workspaceId === shared.workspaceId
-      && settled.environmentId === options.scope.environmentId && settled.identifier === record.identifier, 'task_scope_mismatch')
+      && settled.projectId === options.scope.projectId && settled.environmentId === options.scope.environmentId && settled.identifier === record.identifier, 'task_scope_mismatch')
     const closed = ['done', 'canceled', 'duplicate'].includes(settled.status)
     check(presentation.version === 1 && ['backlog', 'todo', 'doing', 'review', 'done', 'canceled', 'duplicate'].includes(settled.status)
       && presentation.primaryStatus === settled.status
