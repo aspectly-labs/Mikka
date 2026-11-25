@@ -38,7 +38,6 @@ export async function readFilePath(path: string): Promise<ReviewFileRead> {
   if (ref && (!sameReviewReference(ref, file.reviewRef) || file.file.path !== new URL(path, 'https://mikka.invalid').searchParams.get('path'))) throw new Error('Review file changed')
   return file
 }
-export const readReview = (taskId: string) => readReviewPath(reviewPath(taskId))
 export const readChecks = (taskId: string) => readChecksPath(checksPath(taskId))
 export const readFile = (taskId: string, path: string) => readFilePath(filePath(taskId, path))
 
