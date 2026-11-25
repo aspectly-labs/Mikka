@@ -213,6 +213,16 @@ product regression. Main pushes and merge groups continue normal full coverage.
   it to TestFlight. It keeps no build artifact (this repository is public) and uses no EAS build; its runtime version
   (`mikka-next-*`) and update channel (`next`) keep it apart from today's app and
   `mobile-update.yml`.
+- `mobile-next-update.yml` (dispatch only, from main on `ubuntu-24.04`) publishes JS/asset EAS Updates
+  from `mikka-hosted-ui` `mobile-next` at `hosted_ui_ref` (`main` or an exact 40-char commit SHA verified
+  on `mikka-hosted-ui` `main`) to the isolated **`next`** channel (`runtimeVersion: mikka-next-1`,
+  `APP_VARIANT=production`, `--platform ios`). It reads only `HOSTED_UI_READ_KEY` and `EXPO_TOKEN` from
+  Infisical `prod:/platform` via OIDC, scrubs `HOSTED_UI_READ_KEY` via `scripts/release/hosted-ui.mjs record`
+  before installing dependencies, verifying the resolved `APP_VARIANT=production` Expo config and running
+  `mobile-next` typecheck/adapter tests, verifies `app.config.ts`, `eas.json`, and the live EAS `next`
+  channel→branch mapping before publishing explicitly to that dedicated branch (never `production`), keeps
+  private logs in `$RUNNER_TEMP`, and reports only public-safe update metadata (update group ID, runtime
+  version, channel, branch, and resolved `mikka-hosted-ui` SHA).
 
 ## Cloud worker template release
 
@@ -407,7 +417,7 @@ Public and fork PRs build without the private repository, and that build only
 has to compile; no workflow screenshots it. (`community-settings-ui.yml`,
 which captured that build's settings pages, was removed on 2026-11-08.)
 
-`cloudflare-api-image.yml`, `desktop-release.yml` and `mobile-next-ios.yml` read the private UI, with the
+`cloudflare-api-image.yml`, `desktop-release.yml`, `mobile-next-ios.yml` and `mobile-next-update.yml` read the private UI, with the
 GitHub read-only deploy key `HOSTED_UI_READ_KEY` on `alexj11324/mikka-hosted-ui` only. They set
 `MIKKA_UI_OVERLAY_DIR` and record `MIKKA_UI_OVERLAY_SHA`; public and fork PRs still build with the
 default slots without either variable or any private secret. Today's phone app also reads it, with

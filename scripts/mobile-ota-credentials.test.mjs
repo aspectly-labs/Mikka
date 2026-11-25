@@ -33,3 +33,16 @@ for (const [file, names] of [
     for (const text of ['method: oidc', 'identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac', 'secret-path: /platform', 'secret-name: ' + name, 'recursive: false', 'include-imports: false']) assert.ok(block.includes(text), name + ':' + text)
   }
 })
+
+test('mobile-next-update.yml reads only canonical OIDC platform credentials without static secrets', () => {
+  const source = readFileSync(new URL('../.github/workflows/mobile-next-update.yml', import.meta.url), 'utf8')
+  assert.ok(!source.includes('secrets.'))
+  assert.ok(source.includes('id-token: write'))
+  for (const name of ['HOSTED_UI_READ_KEY', 'EXPO_TOKEN']) {
+    const label = '- name: Read existing ' + name + ' through OIDC'
+    const start = source.indexOf(label); assert.ok(start >= 0, name)
+    const end = source.indexOf('\n      - ', start + label.length)
+    const block = source.slice(start, end < 0 ? source.length : end)
+    for (const text of ['uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d', 'method: oidc', 'identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac', 'oidc-audience: mikka-infisical', 'project-id: 89850d6a-f020-4936-863e-df77380dfe40', 'env-slug: prod', 'secret-path: /platform', 'secret-name: ' + name, 'recursive: false', 'include-imports: false']) assert.ok(block.includes(text), name + ':' + text)
+  }
+})

@@ -218,7 +218,7 @@ test('native release admission requires a coherent official identity before cred
   }
 })
 test('native private UI selection rejects unknown owners before reading credentials', async () => {
-  for (const [file, job] of [['desktop-release', 'macos'], ['mobile-update', 'update'], ['mobile-native', 'release'], ['mobile-screenshots', 'screenshots']]) {
+  for (const [file, job] of [['desktop-release', 'macos'], ['mobile-update', 'update'], ['mobile-next-update', 'update'], ['mobile-native', 'release'], ['mobile-screenshots', 'screenshots']]) {
     const workflow = yaml.load(await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), 'utf8'))
     const steps = workflow.jobs[job].steps
     const check = steps.find(step => step.name === 'Validate the selected private UI owner before credential access')
