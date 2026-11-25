@@ -94,5 +94,7 @@ export function visibleThreadMessages(thread: Pick<ThreadRecord, 'messages'>): T
   return thread.messages.filter((message, index) => !isDeletedMessage(message) || index === 0 || answered.has(message.id))
 }
 
-/** A description node for an inline task file (the UI's editor must declare the same node). */
+/** Hosted editor contract: inline atom inside a paragraph, without child content.
+ * { type: 'taskFile', attrs: { id, name, size, mediaType } } uses the inline upload
+ * response (omit placement). Resolve bytes against the current task at display time. */
 export const TASK_FILE_NODE = 'taskFile'

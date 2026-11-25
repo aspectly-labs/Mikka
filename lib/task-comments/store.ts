@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import * as Y from 'yjs'
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
 import type { JSONContent } from '@tiptap/core'
@@ -7,7 +7,7 @@ import { ActionFailureError } from '@/lib/action-error'
 import type { ActionErrorCode } from '@/lib/action-result'
 import { recordAudit } from '@/lib/audit/write'
 import { db } from '@/lib/db'
-import { issueDocuments, issues, linearIssueLinks } from '@/lib/db/schema'
+import { issueDocuments, issues, linearCommentLinks, linearIssueLinks } from '@/lib/db/schema'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { requireIssueAccessWithoutBody } from '@/lib/issue-access'
 import { readIssueMetadata } from '@/lib/issue-metadata'
@@ -123,6 +123,20 @@ export async function deleteTaskComment(input: TaskCommentRef) {
     const author = Boolean(located.message.authorUserId) && located.message.authorUserId === user.id
     const allowed = author ? await mayWrite(tx, user, task) : await workspaceAdmin(user.id, task.workspaceId)
     if (!allowed) return { error: 'taskCommentDeleteForbidden' as const }
+    if (task.linearSyncPolicy === 'explicit' && !task.linearSyncBlocked) {
+      const [link] = await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(
+        eq(linearIssueLinks.issueId, taskId), eq(linearIssueLinks.ownerId, task.userId), eq(linearIssueLinks.externalTargetVerified, true),
+      )).limit(1)
+      if (link) {
+        // Reserve the address if a publication is racing its first upload. Only
+        // a mapping already reserved by the publisher can name a remote comment.
+        const localDeletedAt = new Date(at)
+        await tx.insert(linearCommentLinks).values({ id: crypto.randomUUID(), issueLinkId: link.id, threadId, messageId,
+          linearCommentId: crypto.randomUUID(), authorUserId: located.message.authorUserId, bodyHash: '', syncStatus: 'remote_removed', localDeletedAt,
+        }).onConflictDoUpdate({ target: [linearCommentLinks.issueLinkId, linearCommentLinks.threadId, linearCommentLinks.messageId],
+          set: { localDeletedAt }, setWhere: located.message.authorUserId ? eq(linearCommentLinks.authorUserId, located.message.authorUserId) : isNull(linearCommentLinks.authorUserId) })
+      }
+    }
     const deleted = deleteThreadMessage(doc, threadId, located, user.id, at)
     await forgetCommentReactions(tx, taskId, deleted.messageIds)
     if (!author) await recordAudit(tx, { workspaceId: task.workspaceId, actor: { type: 'user', id: user.id, name: user.name || user.email },

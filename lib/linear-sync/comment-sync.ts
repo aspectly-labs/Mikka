@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { issueDocuments, issues, linearCommentLinks, linearConnections, linearIssueLinks } from '@/lib/db/schema'
 import { requireCurrentPublication, withCurrentPublication, type Publication } from './publication'
 import { hashValue } from './crypto'
-import { createLinearComment, linearComment, updateLinearComment } from './client'
+import { createLinearComment, deleteMirroredLinearComment, linearComment, updateLinearComment } from './client'
 import { linearAccessToken } from './tokens'
 import { loadIssueDocument, readIssueThreadMessage, readIssueThreads } from './document'
 import { linearMarkdownToPlainText, plainTextToLinearMarkdown } from './markdown'
@@ -36,16 +36,23 @@ export async function linearCommentSync(issue: IssueRow, issueLink: IssueLink, s
   const doc = loadIssueDocument(state, issue.content)
   try {
     const threads = readIssueThreads(doc)
-    if (!threads.length) return
     const existing = await db.select().from(linearCommentLinks).where(eq(linearCommentLinks.issueLinkId, issueLink.id))
     const byLocalId = new Map(existing.map(link => [`${link.threadId}\0${link.messageId}`, link]))
+
+    for (const link of existing) {
+      if (!link.localDeletedAt || !link.authorUserId || link.syncStatus === 'remote_removed') continue
+      const token = await commentToken(issue.userId, link.authorUserId, organizationId, ownerToken)
+      await deleteMirroredLinearComment(token, link.linearCommentId, issueLink.linearIssueId, guard)
+      await withCurrentPublication(snapshot, tx => tx.update(linearCommentLinks).set({ syncStatus: 'remote_removed', lastError: null, updatedAt: new Date() })
+        .where(eq(linearCommentLinks.id, link.id)))
+    }
 
     for (const thread of threads) {
       let rootCommentId: string | undefined
       for (const [index, message] of thread.messages.entries()) {
         if (!message.body.trim()) continue
         let link = byLocalId.get(`${thread.id}\0${message.id}`)
-        if (link?.syncStatus === 'remote_removed') continue
+        if (link?.localDeletedAt || link?.syncStatus === 'remote_removed') continue
         const parentId = index === 0 ? undefined : rootCommentId
         if (link) {
           rootCommentId ??= index === 0 ? link.linearCommentId : undefined
@@ -141,6 +148,11 @@ export async function applyLinearCommentToApp(input: {
       return
     }
     if (existing && existing.issueLinkId !== currentLink.id) return
+    // Re-read under the issue lock. A delayed create/update webhook must not
+    // restore a comment after its author or an administrator deletes it here.
+    const [mapping] = await tx.select({ localDeletedAt: linearCommentLinks.localDeletedAt }).from(linearCommentLinks)
+      .where(eq(linearCommentLinks.linearCommentId, input.id)).limit(1)
+    if (mapping?.localDeletedAt) return
     const nextUpdatedAt = new Date()
     const [stored] = await tx.select({ state: issueDocuments.state }).from(issueDocuments).where(eq(issueDocuments.issueId, input.issue.id)).for('update').limit(1)
     const doc = loadIssueDocument(stored?.state ?? null, input.issue.content)

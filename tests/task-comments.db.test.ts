@@ -216,4 +216,43 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     const due = await (await import('../lib/account-deletions-due')).nextAccountDeletionsDue(pool)
     assert.ok(due === null || Number.isFinite(due))
   })
+
+  await t.test('deleting the last mirrored comment survives a lost provider response and delayed inbound update', async t => {
+    const { reserveLinearPublication } = await import('../lib/linear-sync/publication')
+    const { linearCommentSync, applyLinearCommentToApp } = await import('../lib/linear-sync/comment-sync')
+    const syncId = randomUUID(), linkId = randomUUID(), externalIssue = randomUUID(), externalComment = randomUUID()
+    const threadId = 'discussion-mirror', messageId = threadId + '-1'
+    await write(owner, doc => {
+      addThread(doc, { id: threadId, author: '', createdAt: new Date().toISOString(), messages: [{ author: '', body: 'Mirrored', at: new Date().toISOString() }] }, 'test')
+    })
+    await pool.query(`insert into linear_team_syncs(id,"ownerId","linearTeamId","linearTeamKey","linearTeamName","workspaceId") values($1,$2,$3,'MIK','fixture',$4)`, [syncId, owner, randomUUID(), team.id])
+    await pool.query(`update issues set "linearSyncPolicy"='explicit', "linearSyncBlocked"=false where id=$1`, [task])
+    await pool.query(`insert into linear_issue_links(id,"issueId","ownerId","teamSyncId","linearIssueId","linearIdentifier","externalTargetVerified") values($1,$2,$3,$4,$5,'MIK-1',true)`, [linkId, task, owner, syncId, externalIssue])
+    await pool.query(`insert into linear_comment_links(id,"issueLinkId","threadId","messageId","authorUserId","linearCommentId","bodyHash","syncStatus") values(gen_random_uuid(),$1,$2,$3,$4,$5,'fixture','synced')`, [linkId, threadId, messageId, owner, externalComment])
+    assert.deepEqual(await as(owner, () => actions.deleteTaskComment({ taskId: task, threadId, messageId })), { deleted: 'removed', threadRemoved: true })
+    const snapshot = await reserveLinearPublication(task)
+    assert.ok(snapshot?.link)
+    const link = snapshot.link
+    const publish = () => linearCommentSync(snapshot.issue, link, snapshot.documentState, 'fixture', 'fixture', snapshot)
+    let exists = true, deletes = 0
+    t.mock.method(globalThis, 'fetch', async (url: string, options: RequestInit) => {
+      assert.equal(url, 'https://api.linear.app/graphql')
+      const { query, variables } = JSON.parse(String(options.body))
+      assert.equal(variables.id, externalComment)
+      if (query.includes('MikkaLinearCommentDeletionTarget')) {
+        return Response.json({ data: { comments: { nodes: exists ? [{ id: externalComment, issue: { id: externalIssue } }] : [] } } })
+      }
+      assert.match(query, /mutation MikkaLinearDeleteComment/)
+      exists = false
+      deletes++
+      throw new Error('response lost after commit')
+    })
+    await assert.rejects(publish, /Linear could not be reached/)
+    await publish()
+    await publish()
+    assert.equal(deletes, 1)
+    assert.equal((await pool.query('select "syncStatus" from linear_comment_links where "linearCommentId"=$1', [externalComment])).rows[0].syncStatus, 'remote_removed')
+    await applyLinearCommentToApp({ issue: snapshot.issue, issueLink: link, id: externalComment, body: 'late edit', author: 'Linear', parentId: null, createdAt: new Date().toISOString(), action: 'update' })
+    assert.deepEqual(await threads(), [])
+  })
 })

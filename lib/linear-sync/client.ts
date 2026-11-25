@@ -192,3 +192,17 @@ export async function updateLinearComment(token: string, id: string, body: strin
   }`, { id, input: { body } })
   if (!data.commentUpdate.success) throw new Error('Linear did not update the comment')
 }
+
+/** Query the collection so an already deleted comment is a successful empty
+ * result, while a failed lookup still retries through the publication outbox. */
+export async function deleteMirroredLinearComment(token: string, id: string, issueId: string, guard: () => Promise<void>) {
+  const { comments } = await linearGraphQL<{ comments: { nodes: { id: string; issue: { id: string } | null }[] } }>(token,
+    `query MikkaLinearCommentDeletionTarget($id: ID!) { comments(first: 1, filter: { id: { eq: $id } }) { nodes { id issue { id } } } }`, { id })
+  const [remote] = comments.nodes
+  if (!remote) return
+  if (remote.id !== id || remote.issue?.id !== issueId) throw new Error('Linear comment belongs to a different issue')
+  await guard()
+  const { commentDelete } = await linearGraphQL<{ commentDelete: { success: boolean } }>(token,
+    `mutation MikkaLinearDeleteComment($id: String!) { commentDelete(id: $id) { success } }`, { id })
+  if (!commentDelete.success) throw new Error('Linear did not delete the comment')
+}

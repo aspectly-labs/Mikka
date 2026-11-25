@@ -1,10 +1,11 @@
 import 'server-only'
-import { getSchema } from '@tiptap/core'
+import { getSchema, Node } from '@tiptap/core'
 import { Highlight } from '@tiptap/extension-highlight'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { TextAlign } from '@tiptap/extension-text-align'
 import { StarterKit } from '@tiptap/starter-kit'
 import { prosemirrorJSONToYXmlFragment } from '@tiptap/y-tiptap'
+import { TASK_FILE_NODE } from '@/lib/task-comments/contract'
 import { CommentMark, THREADS_FIELD } from '@/lib/rich-text/comment-mark'
 import type { ThreadMessage, ThreadRecord } from '@/lib/rich-text/comments-model'
 import type { JSONContent } from '@tiptap/core'
@@ -17,6 +18,10 @@ const schema = getSchema([
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
   Highlight.configure({ multicolor: true }),
   CommentMark,
+  Node.create({
+    name: TASK_FILE_NODE, inline: true, group: 'inline', atom: true,
+    addAttributes: () => ({ id: { default: null }, name: { default: '' }, size: { default: null }, mediaType: { default: null } }),
+  }),
 ])
 
 export function loadIssueDocument(state: string | null, content: JSONContent) {

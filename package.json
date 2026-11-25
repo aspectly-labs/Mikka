@@ -271,7 +271,7 @@
     "screenshots": "node scripts/screenshots.mjs",
     "test:ui-fixture-guards": "node --test scripts/fixtures/guard.test.mjs scripts/fixtures/proxy.test.mjs scripts/fixtures/bundle-check.test.mjs",
     "test:activity-page-cache": "node --import tsx --test lib/activity-page-cache.test.ts",
-    "test:task-attachments-db": "node --test-force-exit --experimental-test-module-mocks --import ./scripts/server-test.mjs --import tsx --test --test-concurrency=1 tests/task-attachments-storage.db.test.ts tests/task-comments.db.test.ts",
+    "test:task-attachments-db": "node --test-force-exit --experimental-test-module-mocks --import ./scripts/server-test.mjs --import tsx --test --test-concurrency=1 tests/task-attachments-storage.db.test.ts tests/task-comments.db.test.ts tests/task-inline-attachments-route.db.test.ts",
     "test:zero-residency": "pnpm --filter @mikka/zero-residency test"
   },
   "dependencies": {
