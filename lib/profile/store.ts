@@ -205,12 +205,6 @@ export async function deleteFact(userId: string, id: string): Promise<boolean> {
   })
 }
 
-/** How many active facts the person has (listFacts shows at most 500). */
-export async function countFacts(userId: string): Promise<number> {
-  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(userFacts).where(and(eq(userFacts.userId, userId), eq(userFacts.state, 'active')))
-  return row?.count ?? 0
-}
-
 /**
  * Removes every fact from 记忆 the way deleteFact removes one: rows stay as
  * `deleted` with details and evidence cleared, so they are not learnt again.

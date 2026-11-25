@@ -1,6 +1,6 @@
 import 'server-only'
 import { eq, sql } from 'drizzle-orm'
-import type { ResolvedSetting, SettingScope, SettingValue, SettingsView } from '@mikka/protocol/settings'
+import type { SettingScope, SettingValue, SettingsView } from '@mikka/protocol/settings'
 import { db } from '@/lib/db'
 import { users } from '@/lib/db/schema'
 import { workspaceDb } from '@/lib/workspace-db'
@@ -44,11 +44,6 @@ export async function readSettings(context: SettingsContext, scope: SettingScope
     const { workspace } = await requireWorkspace(tx, context.workspaceId, context.userId)
     return readValues(context, workspace.kind, db, scope)
   })
-}
-
-export async function resolveSetting(key: string, context: SettingsContext): Promise<ResolvedSetting> {
-  settingDefinition(key)
-  return (await readSettings(context)).values[key]!
 }
 
 async function writeRows(tx: Transaction, scope: SettingScope, context: SettingsContext, values: Record<string, SettingValue | null>) {

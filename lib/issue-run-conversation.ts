@@ -65,14 +65,6 @@ export function runStopTimeoutRemaining(requestedAt: number, now = Date.now()) {
   return Math.max(0, Math.min(RUN_STOP_TIMEOUT_MS, requestedAt + RUN_STOP_TIMEOUT_MS - now))
 }
 
-export function runStatusKey(status: string) {
-  switch (status) {
-    case 'queued': case 'preparing': case 'running': case 'waiting_input': case 'finishing':
-    case 'succeeded': case 'stopped': case 'failed': case 'cancelled': case 'paused': return status
-    default: return null
-  }
-}
-
 /** One line about what a finished run did: the report's summary, else the first line of its error. */
 export function runSummaryText(run: { report: unknown; error: string | null }): string | null {
   return runSummaryView(run).summary
