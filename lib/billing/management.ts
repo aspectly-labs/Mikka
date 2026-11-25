@@ -11,7 +11,7 @@ import { deploymentMode } from '@/lib/governance/edition'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
 import { requireOrganizationAdmin } from '@/lib/governance/organizations'
 import type { EnterprisePrincipal } from '@/lib/enterprise/principal'
-import { currentMonth, monthBounds, monthDays } from '@/lib/usage/month'
+import { currentMonth, monthBounds, monthDays, usageMonth } from '@/lib/usage/month'
 import { readBillingAccount, billingPortalUrl, planCheckoutUrl } from './service'
 import { readCreditBillingAccount } from './history'
 import { readResourceBudgets } from './resource-budgets'
@@ -29,10 +29,11 @@ export const billingScopeSchema = z.object({ kind: z.enum(['workspace', 'organiz
 
 /** Finance metadata only. Never reads a title, prompt, output, file or credential reference. */
 export async function billingManagementView(actorId: string, target: BillingScope, selectedWorkspaceId?: string | null,
-  principal?: EnterprisePrincipal, usageMemberId?: string | null): Promise<BillingManagementView> {
+  principal?: EnterprisePrincipal, usageMemberId?: string | null, requestedMonth?: string | null): Promise<BillingManagementView> {
   billingScopeSchema.parse(target)
   if (selectedWorkspaceId) z.uuid().parse(selectedWorkspaceId)
   if (usageMemberId != null) z.string().min(1).max(256).parse(usageMemberId)
+  const month = requestedMonth != null ? usageMonth.parse(requestedMonth) : currentMonth()
   if (target.kind === 'workspace') {
     await workspaceDb.transaction(tx => requireWorkspace(tx, target.id, actorId, true, principal))
     await ensureLegacyVerification(target.id)
@@ -96,7 +97,7 @@ export async function billingManagementView(actorId: string, target: BillingScop
     const platformAccountWorkspaceId = target.kind === 'workspace' ? payer?.id ?? target.id : accountId
     const attributionMembers = target.kind === 'organization' ? await tx.select({ id: organizationMembers.userId, name: organizationMembers.name }).from(organizationMembers)
       .where(and(eq(organizationMembers.organizationId, target.id), eq(organizationMembers.status, 'active'))) : members
-    const month = currentMonth(), { start, end } = monthBounds(month)
+    const { start, end } = monthBounds(month)
     const usageIds = available.map(row => row.id)
     const dayExpression = `to_char("createdAt" at time zone 'UTC','YYYY-MM-DD')`
     const usageGrouping = effective.usageExport ? `grouping sets (("actorId"), (${dayExpression}))` : '"actorId"'
