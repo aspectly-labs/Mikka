@@ -53,4 +53,7 @@ test('复制 preserves all lines of a saved multiline code block and leaves fenc
 
   const pythonFence = '```python\nroot = Stack()\nroot.push(1)\n```'
   assert.equal(replyCopyText(pythonFence), pythonFence)
+
+  const textFencedCard = '```text\nroot = Stack([TextContent("Your report is ready.")])\n```'
+  assert.equal(replyCopyText(textFencedCard), 'Your report is ready.')
 })

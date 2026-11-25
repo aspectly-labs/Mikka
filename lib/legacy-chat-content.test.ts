@@ -21,6 +21,8 @@ test('ordinary code blocks mentioning root = are never misclassified as legacy O
   for (const sample of [
     '```python\nroot = Path(__file__).parent\n```',
     '```python\nroot = Stack()\nroot.push(1)\n```',
+    '```python\nroot = Stack([TextContent("not a card")])\n```',
+    '```text\nroot = Stack()\nroot.push(1)\n```',
     '```\nroot = Stack()\nroot.push(1)\n```',
     'Set `root = /var/www` in nginx.conf.',
     '```\nroot = 1\n```',
@@ -31,6 +33,13 @@ test('ordinary code blocks mentioning root = are never misclassified as legacy O
     assert.equal(extractLegacyOpenUIMarkdown(sample), null, sample)
     assert.equal(legacyChatContent(sample).format, 'markdown', sample)
   }
+
+  // A plain-text fence wrapping a complete recognized OpenUI card still projects cleanly.
+  const textFencedCard = '```text\nroot = Stack([TextContent("Your report is ready.")])\n```'
+  assert.equal(isLegacyOpenUIReply(textFencedCard), true)
+  assert.equal(extractLegacyOpenUIText(textFencedCard), 'Your report is ready.')
+  assert.equal(extractLegacyOpenUIMarkdown(textFencedCard), 'Your report is ready.')
+  assert.deepEqual(legacyChatContent(textFencedCard), { format: 'markdown', text: 'Your report is ready.' })
 })
 
 test('legacyChatContent projects historical controls, tabs, accordions, tables, code and ComputerCard safely', () => {
@@ -108,6 +117,17 @@ form = Form("release-checklist", Buttons([Button("Confirm checklist", Action([@T
     assert.ok(projected.text.includes(expected), expected)
   }
   assert.doesNotMatch(projected.text, /@ToAssistant|Confirm the v2\.4 release checklist|Action\(|root =/)
+})
+
+test('saved EditableTable select columns map option values to visible labels with unmatched fallback', () => {
+  const tableWithSelect = `root = Stack([Form("status-board", Buttons([Button("Save", Action([@ToAssistant("Save status")]), "primary")]), [FormControl("Release status", EditableTable("status", [{type: "text", key: "task", header: "Task"}, {type: "select", key: "status", header: "Status", options: [{value: "in_progress", label: "In progress"}, {value: "done", label: "Done"}]}], [{id: "1", values: ["Webhook replay", "in_progress"]}, {id: "2", values: ["Legacy row", "custom_raw"]}]))])])`
+  const projected = legacyChatContent(tableWithSelect)
+  assert.equal(projected.format, 'markdown')
+  assert.match(projected.text, /\| Task \| Status \|/)
+  assert.match(projected.text, /\| Webhook replay \| In progress \|/)
+  assert.match(projected.text, /\| Legacy row \| custom_raw \|/)
+  assert.doesNotMatch(projected.text, /in_progress|@ToAssistant|Save status/)
+  assert.ok(extractLegacyOpenUIText(tableWithSelect)?.includes('In progress'))
 })
 
 test('saved BeQuestions preserve both question and option descriptions without emitting action identifiers', () => {

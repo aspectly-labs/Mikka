@@ -96,6 +96,7 @@ function withoutFences(source: string): string {
 }
 
 const EXPLICIT_OPENUI_FENCE_LANGS = new Set(['openui', 'openui-lang', 'openui_lang'])
+const PLAIN_FENCE_LANGS = new Set(['', 'text', 'txt', 'plaintext'])
 
 function unfenceWholeReply(text: string): { lang: string; body: string } | null {
   const trimmed = text.trim()
@@ -140,8 +141,9 @@ function splitLegacySource(text: string): { prose: string; source: string; parse
   const unfenced = unfenceWholeReply(text)
   if (unfenced !== null) {
     const explicitOpenUI = EXPLICIT_OPENUI_FENCE_LANGS.has(unfenced.lang)
-    // A typed code fence (e.g. ```python, ```ts) is ordinary Markdown code, never historical OpenUI.
-    if (unfenced.lang !== '' && !explicitOpenUI) return null
+    // A real-language code fence (e.g. ```python, ```ts) is ordinary Markdown code, never historical OpenUI.
+    // Bare and plain-text fences are still checked for a complete, recognized OpenUI program.
+    if (!PLAIN_FENCE_LANGS.has(unfenced.lang) && !explicitOpenUI) return null
     const body = unfenced.body
     let extracted: { prose: string; source: string } | null = null
     if (ROOT_ASSIGNMENT.test(body)) {
@@ -483,7 +485,24 @@ function renderNode(value: LegacyValue | undefined, options: { omitCharts: boole
         const rawCols = arr(node.props.columns)
         const rawRows = arr(node.props.rows)
         const headers = rawCols.map(col => typeof col === 'string' ? col : (str(obj(col).header) || str(obj(col).label) || str(obj(col).key))).filter(Boolean)
-        const rowArrays = rawRows.map(row => Array.isArray(row) ? row : arr(obj(row).values)).filter(row => row.length > 0)
+        const optionLabels = rawCols.map(col => {
+          const map = new Map<string, string>()
+          for (const option of arr(obj(col).options)) {
+            const entry = obj(option)
+            const value = str(entry.value)
+            const label = str(entry.label)
+            if (value && label) map.set(value, label)
+          }
+          return map
+        })
+        const mapCell = (cell: LegacyValue, index: number): LegacyValue => {
+          if (typeof cell === 'string') return optionLabels[index]?.get(cell) ?? cell
+          if (typeof cell === 'number') return String(cell)
+          return cell
+        }
+        const rowArrays = rawRows
+          .map(row => (Array.isArray(row) ? row : arr(obj(row).values)).map(mapCell))
+          .filter(row => row.length > 0)
         if (options.markdownBlocks && headers.length) {
           const cellText = (cell: LegacyValue) => renderNode(cell, options).join(' ').replace(/\|/g, '\\|').replace(/\n/g, ' ')
           const rowLine = (cells: LegacyValue[]) => `| ${cells.map(cellText).join(' | ')} |`
