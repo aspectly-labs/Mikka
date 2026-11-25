@@ -2,6 +2,7 @@ import { RouteResponse } from '@/lib/server-runtime/server'
 import type { ApiSession } from '@/lib/api-auth'
 import { defineRoute, isPatSession } from '@/lib/primitives/define-route'
 import { selectedWorkspaceId } from '@/lib/workspace-selection'
+import { WorkspaceError } from '@/lib/workspace-error'
 import { withDatabaseOperation } from '@/lib/db/egress-sample'
 import { singleFlight } from '@/lib/single-flight'
 import { getPasswordStatus, listSessions } from '@/app/actions/account'
@@ -117,11 +118,23 @@ export const GET = defineRoute<'session', 'pat-scoped', { read: string }>(
         ? undefined
         : new URL(request.url).searchParams.get('workspace'),
   },
-  async ({ request, params, session }) => {
+  async ({ request, params, session, tokenWorkspaceId, requestedWorkspaceId, assertWorkspaceAllowed }) => {
     const { read } = params
     if (!Object.hasOwn(READS, read)) return RouteResponse.json({ error: 'notFound' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } })
+    const query = new URL(request.url).searchParams
+    // Actions re-auth with Better Auth, which ignores mkp_ and falls through to
+    // the Cookie. Without ?workspace=, they would load the cookie home instead of
+    // the PAT pin. Forward the already-fenced tenant so a PAT+Cookie request
+    // cannot read another workspace of the same account.
+    if (tokenWorkspaceId && !ACCOUNT_READS.has(read) && read !== 'sessions') {
+      const pinned = workspace(query)
+        ?? selectedWorkspaceId(requestedWorkspaceId)
+        ?? selectedWorkspaceId(tokenWorkspaceId)
+      if (!pinned) throw new WorkspaceError('workspaceAccessDenied')
+      assertWorkspaceAllowed(pinned)
+      if (!query.get('workspace')) query.set('workspace', pinned)
+    }
     const body = await cacheReadAction(() => withDatabaseOperation(`/api/settings/${read}`, async () => {
-      const query = new URL(request.url).searchParams
       const run = () => READS[read as SettingsRead](query)
       const key = await shareKey(read, query, session)
       return key ? singleFlight(key, run) : run()
