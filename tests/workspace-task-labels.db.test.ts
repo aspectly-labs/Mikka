@@ -8,7 +8,7 @@ import type { CreateOnlyCommand } from '../lib/task-create-command'
 import type { WorkspaceTaskLabel } from '@mikka/protocol/task-labels'
 
 test('workspace task label HTTP management and real task writers preserve tenant, role and reference boundaries', { skip: !dbUrl }, async t => {
-  const [{ db, pool }, { workspacePool }, collection, item, merge, actions, tasks] = await Promise.all([
+  const [{ pool }, { workspacePool }, collection, item, merge, actions, tasks] = await Promise.all([
     import('../lib/db'), import('../lib/workspace-db'), import('../app/api/workspaces/[workspaceId]/task-labels/route'),
     import('../app/api/workspaces/[workspaceId]/task-labels/[labelId]/route'),
     import('../app/api/workspaces/[workspaceId]/task-labels/[labelId]/merge/route'),

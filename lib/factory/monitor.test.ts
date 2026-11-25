@@ -171,7 +171,6 @@ test(
     const { appendMonitorEvidence } = await import("./monitor-evidence");
     const { loadIssueDocument, readIssueThreads } =
       await import("../task-comments/issue-document");
-    const { withDatabaseClient } = await import("../db");
     marker.deregister();
     const previousWake = coordinatorWakeTransport.wake;
     coordinatorWakeTransport.wake = async () => undefined;

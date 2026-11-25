@@ -9,7 +9,6 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { readIssueMetadata } from '../lib/issue-metadata'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
@@ -90,8 +89,6 @@ test('provider policy preserves task tenancy and independent membership gates on
   const complete = await import('../app/v1/runs/[runId]/complete/route')
   const claim = await import('../app/v1/devices/[deviceId]/runs/[runId]/claim/route')
   const { db } = await import('../lib/db')
-  const { linearTeamSyncs, linearIssueLinks } = await import('../lib/db/schema')
-  const { eq } = await import('drizzle-orm')
   const owner = `scope-owner-${randomUUID()}`, member = `scope-member-${randomUUID()}`
   const workspace = randomUUID(), team = randomUUID(), sync = randomUUID(), device = randomUUID(), agent = randomUUID(), repo = randomUUID()
   const ownerDevice=randomUUID(),ownerAgent=randomUUID(),ownerRepo=randomUUID()
@@ -138,8 +135,6 @@ test('provider policy preserves task tenancy and independent membership gates on
   await pool.query('insert into device_repos (id,"deviceId","userId","repoPath","remoteUrl") values ($1,$2,$3,$4,$5)', [ownerRepo,ownerDevice,owner,remoteKey(ownerRemote),ownerRemote])
   const deviceToken = `synthetic-${randomUUID()}`
   await pool.query('insert into device_tokens (id,"userId","tokenHash") values ($1,$2,$3)', [randomUUID(),member,hashDeviceToken(deviceToken)])
-  const [teamSync] = await db.select().from(linearTeamSyncs).where(eq(linearTeamSyncs.id,sync))
-  const remote = (id: string) => ({ id, identifier:'MIK-184', title:'Stale external title', description:'Old workspace description', dueDate:null, priority:0, url:'https://example.invalid/synthetic',updatedAt:new Date(Date.now()+60000).toISOString(),state:null,team:{id:team,key:'MIK',name:'Synthetic'},assignee:null,labels:[] })
   const { loadIssueDocument, encodedIssueDocument } = await import('../lib/task-comments/issue-document')
   async function seed(id: string, remoteId = id, linked = true) {
     if (!fixtureIds.includes(id)) fixtureIds.push(id)
@@ -170,7 +165,6 @@ test('provider policy preserves task tenancy and independent membership gates on
   }
   const setMembership = (userId: string,status: 'active' | 'suspended',workspaceId: string=workspace) => pool.query('update mikka_workspace_members set status=$3 where "workspaceId"=$1 and "userId"=$2',[workspaceId,userId,status])
   await seed(issue)
-  const [originalLink] = await db.select().from(linearIssueLinks).where(eq(linearIssueLinks.issueId, issue))
   for (const [id,user] of [[memberRun,member],[ownerRun,owner]]) await pool.query('insert into agent_runs (id,"userId","issueId","agentId","deviceId","deviceRepoId",status,"leaseExpiresAt") values ($1,$2,$3,$4,$5,$6,\'queued\',now()+interval \'1 minute\')', [id,user,issue,user===owner?ownerAgent:agent,user===owner?ownerDevice:device,user===owner?ownerRepo:repo])
   await pool.query('update agent_runs set status=\'running\' where id=$1',[ownerRun])
   const memberToken = (await issueRunToken({id:memberRun,userId:member})).token

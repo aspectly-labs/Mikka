@@ -22,7 +22,7 @@ export const mobileTaskEditInput = z.strictObject({
   .refine(input => input.stateId === undefined || input.status !== undefined)
 export type MobileTaskEdit = z.infer<typeof mobileTaskEditInput>
 
-/** Linear's comments are the longest Mikka keeps in a discussion (lib/linear-sync/comment-sync.ts). */
+/** Existing discussions can contain historical Linear comments of this length. */
 export const MOBILE_COMMENT_MAX = 2000
 
 /** `POST /api/mobile/tasks/:id/comments`. `clientId` makes a retried post land once. */

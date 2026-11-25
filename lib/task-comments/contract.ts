@@ -9,7 +9,7 @@ import type { ThreadMessage, ThreadRecord } from '@/lib/task-discussion'
 export const TASK_COMMENT_FEATURES = { version: 1, edit: true, delete: true, reactions: true, inlineFiles: true } as const
 export type TaskCommentFeatures = typeof TASK_COMMENT_FEATURES
 
-/** Linear's comments are the longest Mikka keeps in a discussion (lib/linear-sync/comment-sync.ts). */
+/** Existing discussions can contain historical Linear comments of this length. */
 export const TASK_COMMENT_BODY_MAX = 2000
 /** Files one comment can carry, as GitHub's and Linear's composers allow several. */
 export const TASK_COMMENT_ATTACHMENTS_MAX = 10
