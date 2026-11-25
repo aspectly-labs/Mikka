@@ -10,13 +10,13 @@ export const GET = defineRoute<'session', 'none'>(
     origin: 'any',
     workspace: 'none',
   },
-  async ({ request, user }) => {
+  async ({ request, session }) => {
     const headers = { 'Cache-Control': 'private, no-store' }
     const params = new URL(request.url).searchParams
     const id = params.get('sessionId')
     if (id && !z.uuid().safeParse(id).success) return Response.json({ error: agentCopy.invalidConversationID }, { status: 400, headers })
     try {
-      return Response.json(await getAgentHistory(user.id, id ?? undefined, params.get('new') === '1'), { headers })
+      return Response.json(await getAgentHistory(session.user.id, id ?? undefined, params.get('new') === '1'), { headers })
     } catch (error) {
       return Response.json({ error: error instanceof AgentStoreError ? error.message : agentCopy.unableToLoadChatHistoryPleaseTry }, {
         status: error instanceof AgentStoreError ? error.status : 503, headers,

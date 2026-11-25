@@ -3,7 +3,7 @@ import { agentImageQuery } from '@/lib/agent-images'
 import { findCachedAgentImage } from '@/lib/agent-images-server'
 import { defineRoute } from '@/lib/primitives/define-route'
 
-export async function handleAgentImagesGET(request: Request) {
+async function handleAgentImagesGET(request: Request) {
   const headers = { 'Cache-Control': 'private, no-store' }
   if (request.headers.get('sec-fetch-site') === 'cross-site') return Response.json({ error: agentCopy.crosssiteRequestsAreNotAllowed }, { status: 403, headers })
   const query = agentImageQuery.safeParse(new URL(request.url).searchParams.get('q'))

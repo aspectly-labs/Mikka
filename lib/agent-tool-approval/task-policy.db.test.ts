@@ -112,20 +112,21 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
     // the shared implementation, while the policy assertions below still execute
     // the real route body and PostgreSQL store.
     '@/lib/primitives/define-route': { defineRoute: (spec: unknown, handler: (context: { request: Request; user: { id: string } }) => Promise<Response>) => {
-      assert.deepEqual({ ...(spec as Record<string, unknown>) }, {
+      const { onAuthFailure, ...declared } = spec as Record<string, unknown> & { onAuthFailure?: (reason: string) => Response }
+      assert.deepEqual(declared, {
         auth: 'human-session-only',
-        origin: 'same-origin-or-desktop',
+        origin: 'any',
         workspace: 'none',
         freshSession: true,
-        write: true,
       })
+      assert.equal(typeof onAuthFailure, 'function')
+      const refuse = (reason: string) => onAuthFailure!(reason)
       return async (request: Request) => {
-        if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return Response.json({ error: 'patNotAllowed' }, { status: 403 })
-        if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'originNotAllowed' }, { status: 403 })
+        if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return refuse('patNotAllowed')
         const headers = humanSessionHeaders(request)
-        if (!headers) return Response.json({ error: 'authRequired' }, { status: 401 })
+        if (!headers) return refuse('unauthenticated')
         const session = await settingsAuth.api.getSession({ headers, query: { disableCookieCache: true } })
-        if (!session?.user) return Response.json({ error: 'authRequired' }, { status: 401 })
+        if (!session?.user) return refuse('unauthenticated')
         return handler({ request, user: session.user })
       }
     } },
@@ -167,14 +168,13 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
       assert.equal(response.status, 200)
       assert.deepEqual(await response.json(), JSON.parse(JSON.stringify(expected)))
     }
-    for (const authorization of [`Bearer ${'C'.repeat(32)}`, 'Bearer invalid']) {
+    for (const authorization of [`Bearer ${'C'.repeat(32)}`, `Bearer mkp_${'a'.repeat(43)}`, 'Bearer invalid']) {
       assert.equal((await readSettings({ authorization, cookie: 'owner=1' })).status, 401)
     }
-    assert.equal((await readSettings({ authorization: `Bearer mkp_${'a'.repeat(43)}`, cookie: 'owner=1' })).status, 403, 'explicit PATs are rejected before cookie fallback')
     assert.equal((await readSettings({ authorization: `Bearer ${foreignSessionToken}`, cookie: 'owner=1' })).status, 409)
     assert.equal((await readSettings({ cookie: 'other=1' })).status, 409)
-    assert.equal((await readSettings({ authorization: `Bearer ${ownerSessionToken}`, origin: 'https://foreign.example.invalid' })).status, 403)
-    assert.equal((await readSettings({ cookie: 'owner=1', origin: '' })).status, 403)
+    assert.equal((await readSettings({ authorization: `Bearer ${ownerSessionToken}`, origin: 'https://foreign.example.invalid' })).status, 401)
+    assert.equal((await readSettings({ cookie: 'owner=1', origin: '' })).status, 401)
     assert.equal((await readSettings({})).status, 401)
   })
   await t.test('signed policy HTTP context and renewal bind the current run and retain final restrictions', async () => {

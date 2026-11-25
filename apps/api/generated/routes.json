@@ -58,7 +58,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "b146a4bc850c71eebcca0fe8e8af20e7f97cdcdce6695681c76a03afe551cfae"
+      "sourceHash": "162086055032c63beb21b8080aa86274c409f41d2bbb14c6d6716f705ed86bda"
     },
     {
       "path": "/mikka/api/agent-cli-policy",
@@ -67,7 +67,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "14905a5bb50cf0381016c94b0fbe571009c06a426a8c623d182bd460d0770c37"
+      "sourceHash": "0fd8fe7fb3d2ca8b37d0966c8fa7e0289c1933407e8dd04baf8e635fe6bf8043"
     },
     {
       "path": "/mikka/api/agent/images",
@@ -76,7 +76,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "b1c8d3cc5a7fe718019f5c0fa071c9fe115e5a9b20cd7d31a65e8e13d6b5d726"
+      "sourceHash": "c6b4d4dc33aad05335b9156b0c818e4a800fc795b7edfbe43f3a50db0fddb24f"
     },
     {
       "path": "/mikka/api/agent/sessions",
@@ -85,7 +85,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "e0ce8b6ee4b67800014aeae91ba74c3b6e07095c148e9a2be8128105de6cca7a"
+      "sourceHash": "d6ec7cca45a0329f7ef6dbcf11a5ffce4a9d286682e163784659a6e2367a176c"
     },
     {
       "path": "/mikka/api/agent/sessions/active",
@@ -429,7 +429,7 @@
         "DELETE",
         "GET"
       ],
-      "sourceHash": "0c919fd2d2e08b33b732c783756235e663fb82ab79a42842bbc9dd05d52e9751"
+      "sourceHash": "30f4b878904b6ef684aabedd67121056644f89a70dc359ed1158845401b585a2"
     },
     {
       "path": "/mikka/api/cloud/callback",
@@ -2334,7 +2334,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "c4767b7516c52c8e75da25f5d566a3af8f6263535d586c1231f4a3521be520e5"
+      "sourceHash": "ff735154b970d7010417ea8cbf6bf49c614f26bff9decf9ee2620a8adeecaf2f"
     },
     {
       "path": "/mikka/api/organizations/[organizationId]/drive",
@@ -3777,7 +3777,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "e536a794bf89b517c71e79a2159fb2c47b192fb87d0938b437b834e01c67e307"
+      "sourceHash": "6f4d136d18406afd5e6d196249372362ab436f01b926c4feb39b04112db6603a"
     },
     {
       "path": "/mikka/api/webhooks/telegram",

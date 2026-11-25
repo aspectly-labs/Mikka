@@ -11,18 +11,20 @@ const schema = z.discriminatedUnion('operation', [
   z.object({ operation:z.literal('set'), runId:z.uuid(), target:z.enum(['workspace','team','project']), expectedRevision:z.string().regex(/^[a-f0-9]{64}$/), policy:z.unknown() }).strict(),
 ])
 
+const unauthorized = () => Response.json({ error: 'unauthorized' }, { status: 401 })
+
 export const POST = defineRoute<'human-session-only', 'none'>(
   {
     auth: 'human-session-only',
-    origin: 'same-origin-or-desktop',
+    origin: 'any',
     workspace: 'none',
     freshSession: true,
-    write: true,
+    onAuthFailure: unauthorized,
   },
   async ({ request, user }) => {
-    // Preserve strict browser-origin binding: reject requests that omit Origin too.
+    // Preserve exact strict same-origin + 401 unauthorized contract for installed clients.
     if (request.headers.get('origin') !== new URL(request.url).origin) {
-      return Response.json({ error: 'originNotAllowed' }, { status: 403 })
+      return unauthorized()
     }
     const result = schema.safeParse(await request.json().catch(() => null))
     if (!result.success) return Response.json({ error:'invalidRequest' }, { status:400 })

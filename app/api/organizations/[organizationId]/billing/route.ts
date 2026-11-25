@@ -1,11 +1,5 @@
-import { freshSessionRoute } from '@/lib/fresh-session'
 import { billingManagementResponse } from '@/lib/billing/management-http'
 import { defineRoute } from '@/lib/primitives/define-route'
-type Context = { params: Promise<{ organizationId: string }> }
-const handle = freshSessionRoute(async (request: Request, context: Context) =>
-  billingManagementResponse(request, { kind: 'organization', id: (await context.params).organizationId }))
-const GETBody = handle
-const POSTBody = handle
 
 export const GET = defineRoute<'session', 'none', { organizationId: string }>(
   {
@@ -15,7 +9,8 @@ export const GET = defineRoute<'session', 'none', { organizationId: string }>(
     workspace: 'none',
     freshSession: true,
   },
-  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+  ({ request, params, session }) =>
+    billingManagementResponse(request, { kind: 'organization', id: params.organizationId }, session),
 )
 
 export const POST = defineRoute<'session', 'none', { organizationId: string }>(
@@ -26,5 +21,6 @@ export const POST = defineRoute<'session', 'none', { organizationId: string }>(
     workspace: 'none',
     freshSession: true,
   },
-  ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
+  ({ request, params, session }) =>
+    billingManagementResponse(request, { kind: 'organization', id: params.organizationId }, session),
 )

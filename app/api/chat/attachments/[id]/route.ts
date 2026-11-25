@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { apiWorkspaceAllowed } from '@/lib/api-auth'
 import { ChatFileError } from '@/lib/chat-attachments/extract'
-import { writeAllowed } from '@/lib/mobile-api'
 import {
   authorizeFileScope,
   chatFileBytes,
@@ -20,7 +19,7 @@ function fileErrorResponse(error: unknown) {
 type P = { id: string }
 
 export const GET = defineRoute<'mobile-or-session', 'pat-scoped', P>(
-  { auth: 'mobile-or-session', origin: 'native-mobile-allowed', workspace: 'pat-scoped' },
+  { auth: 'mobile-or-session', origin: 'any', workspace: 'pat-scoped' },
   async ({ request, params, session, user }) => {
     const parsed = z.uuid().safeParse(params.id)
     if (!parsed.success) return Response.json({ error: 'notFound' }, { status: 404, headers })
@@ -50,9 +49,14 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped', P>(
 )
 
 export const DELETE = defineRoute<'mobile-or-session', 'pat-scoped', P>(
-  { auth: 'mobile-or-session', origin: 'native-mobile-allowed', workspace: 'pat-scoped', write: true },
-  async ({ request, params, session, user }) => {
-    if (!writeAllowed(request)) return Response.json({ error: 'originNotAllowed' }, { status: 403, headers })
+  {
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped',
+    write: true,
+    onOriginFailure: () => Response.json({ error: 'originNotAllowed' }, { status: 403, headers }),
+  },
+  async ({ params, session, user }) => {
     const parsed = z.uuid().safeParse(params.id)
     if (!parsed.success) return Response.json({ error: 'notFound' }, { status: 404, headers })
     try {

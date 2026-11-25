@@ -9,7 +9,10 @@ const noStore = { 'Cache-Control': 'no-store' }
  * body and signature headers. The signature is checked here again with the same signing secret, and the event must be
  * this app's; nothing else is trusted. 200 once queued (or nothing matched); 503 when the automations could not be queued.
  */
-export async function handleSlackAutomations(request: Request, env: NodeJS.ProcessEnv = process.env): Promise<Response> {
+export async function verifySlackAutomations(
+  request: Request,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ ok: true; payload: unknown } | Response> {
   const secret = env.SLACK_SIGNING_SECRET, app = env.SLACK_APP_ID
   if (!secret || !app) return Response.json({ error: 'Slack is not configured' }, { status: 503, headers: noStore })
   const raw = await readGitHubWebhookBody(request, MAX_BYTES)
@@ -17,12 +20,25 @@ export async function handleSlackAutomations(request: Request, env: NodeJS.Proce
   if (!validSlackSignature(raw, request.headers.get('x-slack-request-timestamp'), request.headers.get('x-slack-signature'), secret)) {
     return Response.json({ error: 'Invalid signature' }, { status: 401, headers: noStore })
   }
-  let payload: unknown
-  try { payload = JSON.parse(raw) } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400, headers: noStore }) }
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || (payload as { api_app_id?: unknown }).api_app_id !== app) {
+  try { return { ok: true, payload: JSON.parse(raw) } }
+  catch { return Response.json({ error: 'Invalid JSON' }, { status: 400, headers: noStore }) }
+}
+
+export async function dispatchSlackAutomations(
+  payload: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<Response> {
+  const app = env.SLACK_APP_ID
+  if (!app || !payload || typeof payload !== 'object' || Array.isArray(payload) || (payload as { api_app_id?: unknown }).api_app_id !== app) {
     return Response.json({ queued: 0 }, { headers: noStore })
   }
   const { fireSlackAutomations } = await import('@/lib/schedules/runtime')
   try { return Response.json({ queued: await fireSlackAutomations(payload as Record<string, unknown>) }, { headers: noStore }) }
   catch { return Response.json({ error: 'Could not queue automations' }, { status: 503, headers: noStore }) }
+}
+
+export async function handleSlackAutomations(request: Request, env: NodeJS.ProcessEnv = process.env): Promise<Response> {
+  const verified = await verifySlackAutomations(request, env)
+  if (verified instanceof Response) return verified
+  return dispatchSlackAutomations(verified.payload, env)
 }
