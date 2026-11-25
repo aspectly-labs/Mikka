@@ -92,8 +92,8 @@ type RouteSpecBase<P extends RouteHandlerParams> = {
   /** Optional extractor for routes whose target workspace ID comes from URL params or query string. */
   workspaceId?: (input: { request: Request; params: P }) => string | null | undefined
   /**
-   * Optional legacy refusal formatter for origin/CSRF failures (must return a 403 Response;
-   * any non-403 return value is ignored fail-closed so origin checks can never be bypassed).
+   * Optional legacy refusal formatter for origin/CSRF failures (must return a 401 or 403 Response;
+   * any non-401/403 return value is ignored fail-closed so origin checks can never be bypassed).
    */
   onOriginFailure?: () => Response
   /**
@@ -287,7 +287,7 @@ function originFailureResponse<P extends RouteHandlerParams>(
 ): Response {
   if (spec.onOriginFailure) {
     const custom = spec.onOriginFailure()
-    if (custom instanceof Response && custom.status === 403) {
+    if (custom instanceof Response && (custom.status === 401 || custom.status === 403)) {
       return custom
     }
   }

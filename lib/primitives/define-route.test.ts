@@ -609,7 +609,7 @@ test('disableRefresh, fail-closed onOriginFailure/onAuthError, and zero-arg publ
   assert.equal(ok.status, 200)
   assert.deepEqual(harness.sessionCalls.at(-1)?.query, { disableCookieCache: true, disableRefresh: true })
 
-  // onOriginFailure preserves route-specific 403 contract and ignores non-403 bypass attempts fail-closed.
+  // onOriginFailure preserves route-specific 401/403 contracts BEFORE auth runs and ignores bypass attempts fail-closed.
   const customOrigin = harness.guard(
     {
       auth: 'public',
@@ -623,6 +623,29 @@ test('disableRefresh, fail-closed onOriginFailure/onAuthError, and zero-arg publ
   assert.equal(rejected.status, 403)
   assert.deepEqual(await rejected.json(), { error: 'originRejected' })
   assert.equal(rejected.headers.get('x-custom'), '1')
+
+  const sessionCallsBeforeForeignOrigin = harness.sessionCalls.length
+  const legacy401Origin = harness.guard(
+    {
+      auth: 'human-session-only',
+      origin: 'same-origin-or-desktop',
+      workspace: 'none',
+      freshSession: true,
+      write: true,
+      onOriginFailure: () => Response.json({ error: 'unauthorized' }, { status: 401 }),
+      onAuthFailure: () => Response.json({ error: 'unauthorized' }, { status: 401 }),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const foreignOriginRefused = await legacy401Origin(
+    req('/api/agent-cli-policy', {
+      method: 'POST',
+      headers: { origin: 'https://evil.example', cookie: 'better-auth.session_token=abc' },
+    }),
+  )
+  assert.equal(foreignOriginRefused.status, 401)
+  assert.deepEqual(await foreignOriginRefused.json(), { error: 'unauthorized' })
+  assert.equal(harness.sessionCalls.length, sessionCallsBeforeForeignOrigin, 'foreign-origin writes must fail before session lookup')
 
   const badOriginHook = harness.guard(
     {

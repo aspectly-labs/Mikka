@@ -112,21 +112,28 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
     // the shared implementation, while the policy assertions below still execute
     // the real route body and PostgreSQL store.
     '@/lib/primitives/define-route': { defineRoute: (spec: unknown, handler: (context: { request: Request; user: { id: string } }) => Promise<Response>) => {
-      const { onAuthFailure, ...declared } = spec as Record<string, unknown> & { onAuthFailure?: (reason: string) => Response }
+      const { onOriginFailure, onAuthFailure, ...declared } = spec as Record<string, unknown> & {
+        onOriginFailure?: () => Response
+        onAuthFailure?: (reason: string) => Response
+      }
       assert.deepEqual(declared, {
         auth: 'human-session-only',
-        origin: 'any',
+        origin: 'same-origin-or-desktop',
         workspace: 'none',
         freshSession: true,
+        write: true,
       })
+      assert.equal(typeof onOriginFailure, 'function')
       assert.equal(typeof onAuthFailure, 'function')
-      const refuse = (reason: string) => onAuthFailure!(reason)
+      const refuseAuth = (reason: string) => onAuthFailure!(reason)
       return async (request: Request) => {
-        if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return refuse('patNotAllowed')
+        const originHeader = request.headers.get('origin')
+        if (originHeader !== null && originHeader !== new URL(request.url).origin) return onOriginFailure!()
+        if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return refuseAuth('patNotAllowed')
         const headers = humanSessionHeaders(request)
-        if (!headers) return refuse('unauthenticated')
+        if (!headers) return refuseAuth('unauthenticated')
         const session = await settingsAuth.api.getSession({ headers, query: { disableCookieCache: true } })
-        if (!session?.user) return refuse('unauthenticated')
+        if (!session?.user) return refuseAuth('unauthenticated')
         return handler({ request, user: session.user })
       }
     } },

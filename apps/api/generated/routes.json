@@ -67,7 +67,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "0fd8fe7fb3d2ca8b37d0966c8fa7e0289c1933407e8dd04baf8e635fe6bf8043"
+      "sourceHash": "501951b90a7e2c763707295580512ffbedb5b7509ef5f79b74424d8a4f5f0254"
     },
     {
       "path": "/mikka/api/agent/images",

@@ -16,13 +16,15 @@ const unauthorized = () => Response.json({ error: 'unauthorized' }, { status: 40
 export const POST = defineRoute<'human-session-only', 'none'>(
   {
     auth: 'human-session-only',
-    origin: 'any',
+    origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    write: true,
+    onOriginFailure: unauthorized,
     onAuthFailure: unauthorized,
   },
   async ({ request, user }) => {
-    // Preserve exact strict same-origin + 401 unauthorized contract for installed clients.
+    // Reject omitted Origin as well while preserving the established 401 unauthorized contract.
     if (request.headers.get('origin') !== new URL(request.url).origin) {
       return unauthorized()
     }
