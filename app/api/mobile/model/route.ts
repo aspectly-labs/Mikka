@@ -1,6 +1,5 @@
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { ActionFailureError } from '@/lib/action-error'
 import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { pool } from '@/lib/db'
@@ -8,6 +7,8 @@ import { ExecutionSettings } from '@/lib/execution-settings'
 import { botModelMenu, botModelScope, chooseBotModel, refreshBotModelMenu } from '@/lib/bot-model-menu'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { openChatBotId } from '@/lib/coordinator/coordinator-bot'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 
 const botParam = z.uuid().nullable()
@@ -27,10 +28,7 @@ function failed(error: unknown) {
 }
 
 /** `GET /api/mobile/model?bot=<id>`: the composer's model menu for a bot, or the Coordinator (no `bot`). */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const bot = botParam.safeParse(new URL(request.url).searchParams.get('bot'))
   if (!bot.success) return json({ error: 'invalidBot' }, 400)
   try {
@@ -47,11 +45,7 @@ async function handleGET(request: Request) {
  * runs and returns the menu. 409 `modelUnavailable` when the credential is not
  * usable here any more.
  */
-async function handlePUT(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePUT(request: Request, user: ApiSession['user']) {
   const body = putChoice.safeParse(await request.json().catch(() => null))
   if (!body.success) return json({ error: 'invalidModel' }, 400)
   try {
@@ -73,11 +67,7 @@ async function handlePUT(request: Request) {
 }
 
 /** `POST /api/mobile/model` with `{ bot }`: 刷新, re-reads the menu after asking each subscription for its models. */
-async function handlePOST(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePOST(request: Request, user: ApiSession['user']) {
   const body = z.strictObject({ bot: botParam }).safeParse(await request.json().catch(() => null))
   if (!body.success) return json({ error: 'invalidBot' }, 400)
   try {
@@ -87,6 +77,32 @@ async function handlePOST(request: Request) {
   } catch (error) { return failed(error) }
 }
 
-export const GET = withRequestLog('/api/mobile/model', handleGET)
-export const PUT = withRequestLog('/api/mobile/model', handlePUT)
-export const POST = withRequestLog('/api/mobile/model', handlePOST)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/model',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)
+
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/model',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user }) => handlePOST(request, user),
+)
+
+export const PUT = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/model',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user }) => handlePUT(request, user),
+)

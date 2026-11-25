@@ -94,18 +94,49 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
   // Execute the real route, human-session header boundary and store against PG.
   // Only session identity is synthetic; this is not login/OAuth acceptance.
   const ownerSessionToken = 'A'.repeat(32), foreignSessionToken = 'B'.repeat(32)
+  const settingsAuth = { api: { getSession: async ({ headers, query }: { headers: Headers; query?: { disableCookieCache?: boolean } }) => {
+    assert.equal(query?.disableCookieCache, true, 'settings must revalidate the human session')
+    const authorization = headers.get('authorization')
+    if (authorization) {
+      assert.equal(headers.has('cookie'), false, 'browser cookies must never rescue a bearer')
+      const id = authorization === `Bearer ${ownerSessionToken}` ? owner : authorization === `Bearer ${foreignSessionToken}` ? 'other-owner' : null
+      return id ? { user: { id } } : null
+    }
+    const cookie = headers.get('cookie')
+    return cookie === 'owner=1' ? { user: { id: owner } } : cookie === 'other=1' ? { user: { id: 'other-owner' } } : null
+  } } }
   const settingsModules: Record<string, unknown> = { 'zod': { z }, '@/lib/db': { pool },
-    '@/lib/api-auth': { auth: { api: { getSession: async ({ headers, query }: { headers: Headers; query?: { disableCookieCache?: boolean } }) => {
-      assert.equal(query?.disableCookieCache, true, 'settings must revalidate the human session')
-      const authorization = headers.get('authorization')
-      if (authorization) {
-        assert.equal(headers.has('cookie'), false, 'browser cookies must never rescue a bearer')
-        const id = authorization === `Bearer ${ownerSessionToken}` ? owner : authorization === `Bearer ${foreignSessionToken}` ? 'other-owner' : null
-        return id ? { user: { id } } : null
+    '@/lib/api-auth': { auth: settingsAuth },
+    // The VM harness cannot link defineRoute's production dependency graph. Bind
+    // the route's actual declaration here; the primitive's own unit tests cover
+    // the shared implementation, while the policy assertions below still execute
+    // the real route body and PostgreSQL store.
+    '@/lib/primitives/define-route': { defineRoute: (spec: unknown, handler: (context: { request: Request; user: { id: string } }) => Promise<Response>) => {
+      const { onOriginFailure, onAuthFailure, ...declared } = spec as Record<string, unknown> & {
+        onOriginFailure?: () => Response
+        onAuthFailure?: (reason: string) => Response
       }
-      const cookie = headers.get('cookie')
-      return cookie === 'owner=1' ? { user: { id: owner } } : cookie === 'other=1' ? { user: { id: 'other-owner' } } : null
-    } } } },
+      assert.deepEqual(declared, {
+        auth: 'human-session-only',
+        origin: 'same-origin-or-desktop',
+        workspace: 'none',
+        freshSession: true,
+        write: true,
+      })
+      assert.equal(typeof onOriginFailure, 'function')
+      assert.equal(typeof onAuthFailure, 'function')
+      const refuseAuth = (reason: string) => onAuthFailure!(reason)
+      return async (request: Request) => {
+        const originHeader = request.headers.get('origin')
+        if (originHeader !== null && originHeader !== new URL(request.url).origin) return onOriginFailure!()
+        if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return refuseAuth('patNotAllowed')
+        const headers = humanSessionHeaders(request)
+        if (!headers) return refuseAuth('unauthenticated')
+        const session = await settingsAuth.api.getSession({ headers, query: { disableCookieCache: true } })
+        if (!session?.user) return refuseAuth('unauthenticated')
+        return handler({ request, user: session.user })
+      }
+    } },
     '@/lib/desktop-rpc/handler': { humanSessionHeaders },
     '@/lib/agent-tool-approval/policy-store': { readCliRunPolicy, readCliAgentPolicy },
     '@/lib/agent-tool-approval/policy-settings': { setCliPolicy, setCliAgentPolicy },

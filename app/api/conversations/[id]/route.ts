@@ -1,3 +1,12 @@
 import { respondGroup } from '@/lib/group-conversations-route'
-type Context = { params: Promise<{ id: string }> }
-export async function PATCH(request: Request, { params }: Context) { return respondGroup(request, 'conversations', (await params).id) }
+import { defineRoute } from '@/lib/primitives/define-route'
+
+export const PATCH = defineRoute<'session', 'pat-scoped', { id: string }>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    write: true,
+  },
+  ({ request, params }) => respondGroup(request, 'conversations', params.id),
+)

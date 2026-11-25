@@ -6,6 +6,7 @@ import { actAs } from '@/lib/acting-user'
 import { getApiSession, apiWorkspaceAllowed } from '@/lib/api-auth'
 import { loadTeamDirectory } from '@/app/actions/teams'
 import { WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function handleGET(request: Request) {
   const i18nText = await getTranslations();
@@ -23,4 +24,13 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/teams/directory', handleGET)
+const GETBody = withRequestLog('/api/teams/directory', handleGET)
+
+export const GET = defineRoute<'public', 'none'>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => GETBody(request),
+)

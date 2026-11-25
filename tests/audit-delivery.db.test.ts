@@ -83,7 +83,15 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
   const pending = (id: string) => workspace.query('SELECT * FROM workspace_audit_outbox WHERE "workspaceId"=$1 AND "deliveredAt" IS NULL ORDER BY "createdAt",id', [id]).then(result => result.rows)
   const restart = async () => {
     const child = await exec(process.execPath, ['--import', './tests/support/server-only.mjs', '--import', 'tsx', 'tests/fixtures/audit-delivery-process.mts'], { cwd: process.cwd(), env: { ...process.env, MIKKA_DATABASE_URL: mainURL!, DATABASE_URL: workspaceURL }, timeout: 30_000 })
-    return JSON.parse(child.stdout) as { delivered: number; failed: number }
+    // Database diagnostics can share this stdout. Only the fixture's own line is its result.
+    const results = child.stdout.split('\n').flatMap(line => {
+      try {
+        const value: unknown = JSON.parse(line)
+        return value && typeof value === 'object' && 'delivered' in value && 'failed' in value ? [value as { delivered: number; failed: number }] : []
+      } catch { return [] }
+    })
+    assert.equal(results.length, 1, child.stdout)
+    return results[0]
   }
   await t.test('main failure cannot lose a committed role change; a real new process delivers its original ID once', async () => {
     const ws = await seed(), constraint = `audit_delivery_fail_${randomUUID().replaceAll('-', '')}`

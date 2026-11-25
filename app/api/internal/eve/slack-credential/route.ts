@@ -6,7 +6,7 @@ import { withTaskWorkspace } from '@/lib/task-workspace'
 import { pool } from '@/lib/db'
 import { installationCredential } from '@/lib/slack/installation-store'
 import { slackTeamId, slackUserId } from '@/lib/slack/install-provider'
-import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const shape = z
   .object({
@@ -49,4 +49,13 @@ async function handle(request: Request) {
     return refuse()
   }
 }
-export const POST = withRequestLog('/api/internal/eve/slack-credential', handle)
+
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/internal/eve/slack-credential',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handle(request),
+)

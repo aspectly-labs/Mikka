@@ -130,7 +130,7 @@ test('disabled actions and availability endpoint do not authenticate or query in
   assert.deepEqual(await actions.retryLinearIssue('issue'), { error: 'linearSyncDisabled' })
   assert.deepEqual(await actions.retryLinearDelivery('delivery'), { error: 'linearSyncDisabled' })
   await assert.rejects(actions.startLinearOAuth(), /disabled/)
-  const response = await status.GET()
+  const response = await status.GET(new Request('https://app.invalid/mikka/api/integrations/linear/status'))
   assert.deepEqual(await response.json(), { enabled: false, state: 'disabled' })
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.equal((await callback.GET(new Request('https://app.invalid/mikka/api/integrations/linear/callback'))).status, 503)

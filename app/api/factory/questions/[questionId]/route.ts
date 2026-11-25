@@ -6,6 +6,7 @@ import { auth } from '@/lib/api-auth';
 import { pool } from '@/lib/db';
 import { factoryLifecycleEnabled, factoryRuntimeForBot } from '@/lib/factory/runtime';
 import { handleFactoryQuestion } from '@/lib/factory/questions/http';
+import { defineRoute } from '@/lib/primitives/define-route'
 async function handle(request: Request,{params}:{params:Promise<{questionId:string}>}) {
   if (!factoryLifecycleEnabled()) return RouteResponse.json({error:'factoryLifecycleUnavailable'},{status:404});
   const sessionHeaders=request.headers.has('authorization')?humanSessionHeaders(request):request.headers;
@@ -28,5 +29,22 @@ async function handle(request: Request,{params}:{params:Promise<{questionId:stri
   });
 
 }
-export const GET=handle;
-export const POST=handle;
+export const GET = defineRoute<'public','none',{ questionId: string }>(
+  {
+    route: '/api/factory/questions/[questionId]',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => handle(request, { params: Promise.resolve(params) }),
+)
+
+export const POST = defineRoute<'public','none',{ questionId: string }>(
+  {
+    route: '/api/factory/questions/[questionId]',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => handle(request, { params: Promise.resolve(params) }),
+)

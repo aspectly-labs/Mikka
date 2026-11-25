@@ -1,10 +1,11 @@
 import { Pool } from 'pg'
 import { deploymentAttestation, environmentFingerprint, loadEnvironment, readIdentityMaterial } from '@/scripts/test-accounts/environment.mjs'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 // Read-only proof for a runner-owned disposable environment. There is no login,
 // session creation, reset, provisioning or mutation operation on this endpoint.
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   let pool: Pool | undefined
   try {
     const environment = await loadEnvironment()
@@ -25,3 +26,13 @@ export async function GET(request: Request) {
     return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } })
   } finally { await pool?.end() }
 }
+
+export const GET = defineRoute(
+  {
+    route: '/api/test-environment',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handleGET(request),
+)

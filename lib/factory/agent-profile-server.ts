@@ -1,5 +1,5 @@
 import 'server-only'
-import { auth } from '@/lib/api-auth'
+import { auth, type ApiSession } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { taskReaderScope } from '@/lib/task-workspace'
 import { AgentProfileStore } from './agent-profile-store'
@@ -13,8 +13,12 @@ const store = new AgentProfileStore(pool)
 
 /** Current workspace admission precedes Profile transactions and bounds every
  * explicit body/query workspace; a different owned tenant is not a bypass. */
-export async function agentProfileHandler(request: Request, profileId?: string): Promise<Response> {
-  const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
+export async function agentProfileHandler(
+  request: Request,
+  profileId?: string,
+  authenticatedSession?: ApiSession,
+): Promise<Response> {
+  const session = authenticatedSession ?? await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
   return factoryHumanMembershipResponse(session?.user, async () => {
     const handle = createAgentProfileHandler({
       authenticate: async () => {

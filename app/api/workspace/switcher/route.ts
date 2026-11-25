@@ -4,6 +4,7 @@ import { RouteResponse } from '@/lib/server-runtime/server'
 import { getApiSession } from '@/lib/api-auth'
 import { loadWorkspaceSwitcher } from '@/lib/workspace-switcher'
 import { WorkspaceError } from '@/lib/workspace-error'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function handleGET(request: Request) {
   const i18nText = await getTranslations();
@@ -20,4 +21,13 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/workspace/switcher', handleGET)
+const GETBody = withRequestLog('/api/workspace/switcher', handleGET)
+
+export const GET = defineRoute<'public', 'none'>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => GETBody(request),
+)

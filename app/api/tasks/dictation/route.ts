@@ -1,7 +1,8 @@
-import { auth, apiWorkspaceAllowed } from '@/lib/api-auth'
+import { apiWorkspaceAllowed, type ApiSession } from '@/lib/api-auth'
 import { writeAllowed } from '@/lib/mobile-api'
 import { ChatFileError } from '@/lib/chat-attachments/extract'
 import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 120
 /** A spoken task description: a few minutes of compressed audio. */
@@ -13,9 +14,7 @@ const failure = (error: string, status: number) => Response.json({ error }, { st
  * 新建任务's 语音 (Capy's dictation): the recorded audio becomes text for the description. It reuses chat transcription
  * (lib/chat-attachments/transcribe.ts), so it runs only on the person's own authorized OpenAI key and stores nothing.
  */
-export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers })
-  if (!session) return failure('authRequired', 401)
+async function unguardedPOST(request: Request, session: ApiSession) {
   if (!writeAllowed(request)) return failure('originNotAllowed', 403)
   if (!request.headers.get('content-type')?.startsWith('audio/')) return failure('invalid', 400)
   const reader = request.body?.getReader()
@@ -47,3 +46,13 @@ export async function POST(request: Request) {
     throw new Error('taskDictationFailed', { cause: error })
   }
 }
+export const POST = defineRoute(
+  {
+    route: '/api/tasks/dictation',
+    auth: 'session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped',
+    onWorkspaceError: () => failure('notFound', 404),
+  },
+  ({ request, session }) => unguardedPOST(request, session),
+)

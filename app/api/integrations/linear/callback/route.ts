@@ -7,6 +7,7 @@ import { exchangeLinearCode, LINEAR_OAUTH_CALLBACK_PATH, LINEAR_OAUTH_STATE_COOK
 import { withBasePath } from '@/lib/base-path'
 import { bootstrapSuggestions } from '@/lib/suggestions/sources'
 import { linearSyncDisabledResponse, linearSyncEnabled } from '@/lib/linear-sync/flags'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 async function handleGET(request: Request) {
@@ -34,4 +35,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/linear/callback', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/linear/callback', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

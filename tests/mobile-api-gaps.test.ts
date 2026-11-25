@@ -53,10 +53,14 @@ mock.module(new URL('../lib/request-log.ts', import.meta.url).href, {
   },
 })
 
+let freshSessionScopes = 0
 mock.module(new URL('../lib/fresh-session.ts', import.meta.url).href, {
   namedExports: {
     freshSessionRoute: (handler: unknown) => handler,
-    withFreshSession: (fn: () => unknown) => fn(),
+    withFreshSession: (fn: () => unknown) => {
+      freshSessionScopes += 1
+      return fn()
+    },
   },
 })
 
@@ -617,6 +621,7 @@ test('Gap 5 routes: profile read/edit and avatar upload enforce human session, o
   resetAuth()
 
   // Avatar upload succeeds for human session and maps MobileAvatarError cleanly.
+  const freshBeforeAvatar = freshSessionScopes
   const uploaded = await avatar.POST(
     new Request('https://mikka.test/api/mobile/profile/avatar', {
       method: 'POST',
@@ -624,6 +629,7 @@ test('Gap 5 routes: profile read/edit and avatar upload enforce human session, o
       body: PNG_BYTES,
     }),
   )
+  assert.equal(freshSessionScopes, freshBeforeAvatar + 1, 'avatar writes keep the revoked-session freshness boundary')
   assert.equal(uploaded.status, 200)
   assert.match(uploaded.headers.get('set-cookie') ?? '', /mikka\.session_data=refreshed-avatar/)
   assert.ok(((await uploaded.json()) as { image: string }).image.startsWith('/api/avatars/user-1/'))

@@ -1,7 +1,19 @@
 import { driveResponse } from '@/lib/drive/server'
 import { freshSessionRoute } from '@/lib/fresh-session'
 import { governanceResponse } from '@/lib/governance/http'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
-export const GET = freshSessionRoute(async (request: Request, context: { params: Promise<{ organizationId: string; volumeId: string }> }) =>
+const GETBody = freshSessionRoute(async (request: Request, context: { params: Promise<{ organizationId: string; volumeId: string }> }) =>
   governanceResponse(async () => driveResponse(request, 'organizationFileHistory', await context.params)))
+
+export const GET = defineRoute<'public', 'none', { organizationId: string; volumeId: string }>(
+  {
+    route: '/api/organizations/[organizationId]/drive/[volumeId]/file-versions',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)

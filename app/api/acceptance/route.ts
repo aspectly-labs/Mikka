@@ -1,9 +1,10 @@
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { isAcceptanceEnabled } from '@/lib/acceptance'
 import { withBasePath } from '@/lib/base-path'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 function redirectWithinPreview(path: '/' | '/?acceptance=1' | '/acceptance') {
@@ -40,4 +41,12 @@ async function handleGET(request: RouteRequest) {
   }
 }
 
-export const GET = withRequestLog('/api/acceptance', handleGET)
+export const GET = defineRoute<'public', 'none'>(
+  {
+    route: '/api/acceptance',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handleGET(request as RouteRequest),
+)
