@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3323 Retire queue-producing triggers and preserve local detachment and membership handling.
 DROP TRIGGER IF EXISTS linear_issue_sync_outbox ON issues;
 DROP TRIGGER IF EXISTS linear_document_sync_outbox ON issue_documents;
 DROP FUNCTION IF EXISTS enqueue_linear_issue_sync();
