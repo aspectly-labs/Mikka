@@ -266,7 +266,7 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
       await noPlaintext()
     } finally {
       rmSync(root, { recursive: true, force: true })
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "projectId"=$1', [projectId])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "workspaceId"=$1', [p.workspaceId])
       await workspacePool.query('DELETE FROM workspace_projects WHERE id=$1', [projectId])
       await workspacePool.query('DELETE FROM workspace_environments WHERE "workspaceId"=$1', [p.workspaceId])
       await workspacePool.query('DELETE FROM workspace_repository_policies WHERE "workspaceId"=$1', [p.workspaceId])

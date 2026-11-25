@@ -19,7 +19,7 @@ const keysOf = (value: unknown) => Array.isArray(value) ? value.filter((key): ke
 /** The repositories of a live Environment in this workspace, or null when it is missing or archived. */
 export async function environmentRepositories(workspaceId: string, environmentId: string): Promise<string[] | null> {
   const { rows: [row] } = await workspaceDb.execute<{ repositoryKeys: unknown }>(sql`select configuration->'repositoryKeys' as "repositoryKeys"
-    from workspace_environments where id=${environmentId} and "workspaceId"=${workspaceId} and "archivedAt" is null`)
+    from workspace_environments where id=${environmentId} and "workspaceId"=${workspaceId} and "archivedAt" is null and scope='workspace'`)
   if (!row) return null
   return keysOf(row.repositoryKeys)
 }

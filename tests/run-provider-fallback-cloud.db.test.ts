@@ -6,7 +6,6 @@ import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mock, test } from 'node:test'
 import { emptyRunReport } from '@mikka/protocol/run'
-import { normalizeRepository } from '@mikka/protocol/repository'
 import type { OrderEntry } from '../lib/model-order-plan'
 import { dbUrl, seedBot, seedIssue, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { fakeThreadMachines } from './support/thread-machine-fake'
@@ -97,7 +96,7 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
       await pool.query('DELETE FROM issues WHERE "userId"=ANY($1)', [users])
       await pool.query('DELETE FROM bots WHERE "ownerId"=ANY($1)', [users])
       await pool.query('DELETE FROM user_e2b_keys WHERE "userId"=ANY($1)', [users])
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "workspaceId"=ANY($1)', [workspaces])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "workspaceId"=ANY($1)', [workspaces])
       await workspacePool.query('DELETE FROM workspace_projects WHERE "workspaceId"=ANY($1)', [workspaces])
       await workspacePool.query('DELETE FROM workspace_environments WHERE "workspaceId"=ANY($1)', [workspaces])
       await pool.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=ANY($1)', [workspaces])

@@ -485,7 +485,7 @@ export async function readCurrentProjectSetup(reader: Reader, input: z.input<typ
     if (defaultEnvironmentId) ids.add(defaultEnvironmentId)
     const rows = ids.size ? (await tx.execute<{ id: string; revision: number; setup: unknown }>(sql`
       select id, revision, configuration->'setup' as setup from workspace_environments
-      where "workspaceId"=${workspaceId} and "archivedAt" is null
+      where "workspaceId"=${workspaceId} and "archivedAt" is null and ${visibleEnvironment(actorId(reader))}
         and id in (${sql.join([...ids].map(id => sql`${id}::uuid`), sql`, `)})
       order by id`)).rows : []
     const environments = rows.map(row => {
