@@ -41,8 +41,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 - [Effective design and product rules](design/README.md) are read first. Tier 2
   dated [decision records](design/decisions/README.md) preserve immutable
   provenance with explicit `Status:` headers (`Accepted` or `Superseded by`);
-  superseded entries and the [frozen decision log](design/decisions.md) are not
-  active instructions.
+  superseded entries and the [legacy decision log](design/decisions.md) are not active instructions.
 - [Feature specification template](design/spec-template.md) supplies the
   structure for a feature specification.
 - [Execution rules](execution-rules.md) describe model and machine selection.
