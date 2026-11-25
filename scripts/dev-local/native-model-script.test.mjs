@@ -33,6 +33,7 @@ test('native fixture renders verification output, submits it as a capture, and d
   assert.equal(render.toolName, 'Bash')
   assert.match(render.input.command, /npm test 2>&1/)
   assert.match(render.input.command, /ffmpeg .*drawtext/)
+  assert.ok(render.input.command.includes('receipt="$TMPDIR/mikka-local-acceptance-evidence.txt"'), 'capture input stays in the daemon-owned temp root rather than dirtying the candidate worktree')
   assert.ok(render.input.command.includes('textfile=${receipt}:expansion=none'), 'zsh-compatible shell expansion keeps the receipt path intact')
   assert.match(render.input.command, /FIXTURE_CAPTURE_READY/)
   assert.ok(render.input.command.includes(`marker: ${marker}`))

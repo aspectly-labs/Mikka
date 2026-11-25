@@ -21,6 +21,7 @@ import { verifyFactoryWatchdog } from './factory-watchdog-acceptance.mjs'
 import { verifyWorkspaceGovernance } from './workspace-governance-acceptance.mjs'
 import { assertFlashTestModel, assertTestModelRequest } from '../test-model-policy.mjs'
 import { prepareCloudAcceptance } from '../e2b/cloud-acceptance-release.mjs'
+import { REPOSITORY_KEY } from '../../tests/mvp/isolated-env.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
 const selectedItems = process.env.LOCAL_LOOP_ITEMS?.split(',') ?? ['1', '2', '3', '4', '5', '6', '7']
@@ -255,6 +256,8 @@ async function setup() {
   }))
   assert.equal(new URL(runtime.server ?? runtime.appUrl).origin, origin, 'runtime origin mismatch')
   accounts = await step('account-lease', 120_000, () => acquireTestAccounts({ environment, database: pool, runId, workerId: 'local-loop', requestId: runId }))
+  if (needsDaemon) await query(`INSERT INTO repository_settings("userId","remoteKey","verifyCommand") VALUES($1,$2,'npm test')
+    ON CONFLICT ("userId","remoteKey") DO UPDATE SET "verifyCommand"=excluded."verifyCommand","updatedAt"=now()`, [accounts.owner.userId, REPOSITORY_KEY])
   if (needsModels) await step('local-account-ready', 120_000, signal => until(signal, async () => {
     const refreshed = await fetch('http://127.0.0.1:3191/refresh', { method: 'POST', signal: AbortSignal.timeout(90_000) })
     if (!refreshed.ok) return false
