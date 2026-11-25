@@ -1182,6 +1182,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
         } catch (error) {
           if (!snapshotUnusable(error)) throw error
           machine = await replaceGoneSandbox(pool, runId, freshTemplate(), leaseId)
+          // error-cause: the 409 reports a lost provisioning lease during the template fallback.
           if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
         }
       }
