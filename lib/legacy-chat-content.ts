@@ -95,16 +95,19 @@ function withoutFences(source: string): string {
   return source.replace(/(^|\n)[ \t]*(```|~~~)[^\n]*\n[\s\S]*?(?:\n[ \t]*\2[^\n]*(?=\n|$)|$)/g, '$1')
 }
 
-function unfenceWholeReply(text: string): string {
+const EXPLICIT_OPENUI_FENCE_LANGS = new Set(['openui', 'openui-lang', 'openui_lang'])
+
+function unfenceWholeReply(text: string): { lang: string; body: string } | null {
   const trimmed = text.trim()
-  const open = /^(```|~~~)[^\n]*\n/.exec(trimmed)
-  if (!open) return text
+  const open = /^(```|~~~)([^\n]*)\n/.exec(trimmed)
+  if (!open) return null
   const marker = open[1]!
+  const lang = open[2]!.trim().toLowerCase()
   const rest = trimmed.slice(open[0].length).trimEnd()
-  if (!rest.endsWith(marker)) return text
+  if (!rest.endsWith(marker)) return null
   const inner = rest.slice(0, -marker.length)
-  if (/(^|\n)[ \t]*(```|~~~)/.test(inner)) return text
-  return inner.replace(/\n$/, '')
+  if (/(^|\n)[ \t]*(```|~~~)/.test(inner)) return null
+  return { lang, body: inner.replace(/\n$/, '') }
 }
 
 function normalizeEscapes(source: string): string {
@@ -133,21 +136,46 @@ function normalizeEscapes(source: string): string {
   })
 }
 
-function splitLegacySource(text: string): { prose: string; source: string } | null {
+function splitLegacySource(text: string): { prose: string; source: string; parsed?: LegacyValue | null } | null {
   const unfenced = unfenceWholeReply(text)
-  const candidate = unfenced !== text ? unfenced : text
-  const uncode = unfenced !== text ? candidate : withoutFences(candidate)
+  if (unfenced !== null) {
+    const explicitOpenUI = EXPLICIT_OPENUI_FENCE_LANGS.has(unfenced.lang)
+    // A typed code fence (e.g. ```python, ```ts) is ordinary Markdown code, never historical OpenUI.
+    if (unfenced.lang !== '' && !explicitOpenUI) return null
+    const body = unfenced.body
+    let extracted: { prose: string; source: string } | null = null
+    if (ROOT_ASSIGNMENT.test(body)) {
+      const match = /(^|\n)[ \t]*root[ \t]*=/.exec(body)
+      if (!match) return null
+      const at = match.index + match[1]!.length
+      extracted = { prose: body.slice(0, at).trim(), source: normalizeEscapes(body.slice(at)) }
+    } else if (TOP_LEVEL_CALL.test(body)) {
+      extracted = { prose: '', source: normalizeEscapes(`root = ${body.trimStart()}`) }
+    } else if (explicitOpenUI && /(?:^|\n)[ \t]*root[ \t]*=[ \t]*[A-Z]\w*[ \t]*\(/.test(body)) {
+      const match = /(^|\n)[ \t]*root[ \t]*=/.exec(body)
+      if (!match) return null
+      const at = match.index + match[1]!.length
+      extracted = { prose: body.slice(0, at).trim(), source: normalizeEscapes(body.slice(at)) }
+    }
+    if (!extracted) return null
+    const parsed = parseProgram(extracted.source)
+    if (!explicitOpenUI && (!parsed || (isComponent(parsed) && !KNOWN_COMPONENTS.has(parsed.name)))) {
+      return null
+    }
+    return { ...extracted, parsed }
+  }
 
+  const uncode = withoutFences(text)
   if (ROOT_ASSIGNMENT.test(uncode)) {
-    const match = /(^|\n)[ \t]*root[ \t]*=/.exec(candidate)
+    const match = /(^|\n)[ \t]*root[ \t]*=/.exec(text)
     if (!match) return null
     const at = match.index + match[1]!.length
-    const before = candidate.slice(0, at)
-    if (unfenced === text && (before.match(/(^|\n)[ \t]*(```|~~~)/g) ?? []).length % 2) return null
-    return { prose: before.trim(), source: normalizeEscapes(candidate.slice(at)) }
+    const before = text.slice(0, at)
+    if ((before.match(/(^|\n)[ \t]*(```|~~~)/g) ?? []).length % 2) return null
+    return { prose: before.trim(), source: normalizeEscapes(text.slice(at)) }
   }
-  if (TOP_LEVEL_CALL.test(candidate)) {
-    return { prose: '', source: normalizeEscapes(`root = ${candidate.trimStart()}`) }
+  if (TOP_LEVEL_CALL.test(text)) {
+    return { prose: '', source: normalizeEscapes(`root = ${text.trimStart()}`) }
   }
   return null
 }
@@ -233,6 +261,16 @@ class Reader {
     }
     const number = /^-?\d+(\.\d+)?/.exec(this.text.slice(this.i))
     if (number) { this.i += number[0].length; return Number(number[0]) }
+    if (c === '@') {
+      this.i++
+      const directive = this.identifier()
+      if (directive === null) throw new Error(`expected directive after @ at ${this.i}`)
+      if (this.peek() === '(') {
+        this.i++
+        this.list(')')
+      }
+      return { kind: 'component', name: '$action', props: {}, args: [] }
+    }
     const name = this.identifier()
     if (name === null) throw new Error(`unexpected ${c ?? 'end'} at ${this.i}`)
     if (name === 'true' || name === 'false') return name === 'true'
@@ -377,10 +415,14 @@ function renderNode(value: LegacyValue | undefined, options: { omitCharts: boole
         return
       case 'BeQuestions':
         for (const question of arr(node.props.questions)) {
-          walk(obj(question).title)
-          for (const option of arr(obj(question).options)) {
-            const label = str(obj(option).label)
-            if (label) lines.push(`- ${label}`)
+          const entry = obj(question)
+          walk(entry.title)
+          walk(entry.description)
+          for (const option of arr(entry.options)) {
+            const opt = obj(option)
+            const label = str(opt.label)
+            const description = str(opt.description)
+            if (label) lines.push(description ? `- ${label} — ${description}` : `- ${label}`)
           }
         }
         return
@@ -416,7 +458,9 @@ function renderNode(value: LegacyValue | undefined, options: { omitCharts: boole
         return
       case 'BeCodeBlock':
       case 'CodeBlock': {
+        const title = str(node.props.title)
         const code = str(node.props.code)
+        if (title) push(title)
         if (!code) return
         if (options.markdownBlocks) {
           const lang = str(node.props.language)
@@ -427,6 +471,33 @@ function renderNode(value: LegacyValue | undefined, options: { omitCharts: boole
         }
         return
       }
+      case 'Form':
+        walk(node.props.fields)
+        return
+      case 'FormControl':
+        walk(node.props.label)
+        walk(node.props.input)
+        walk(node.props.hint)
+        return
+      case 'EditableTable': {
+        const rawCols = arr(node.props.columns)
+        const rawRows = arr(node.props.rows)
+        const headers = rawCols.map(col => typeof col === 'string' ? col : (str(obj(col).header) || str(obj(col).label) || str(obj(col).key))).filter(Boolean)
+        const rowArrays = rawRows.map(row => Array.isArray(row) ? row : arr(obj(row).values)).filter(row => row.length > 0)
+        if (options.markdownBlocks && headers.length) {
+          const cellText = (cell: LegacyValue) => renderNode(cell, options).join(' ').replace(/\|/g, '\\|').replace(/\n/g, ' ')
+          const rowLine = (cells: LegacyValue[]) => `| ${cells.map(cellText).join(' | ')} |`
+          lines.push([rowLine(headers), rowLine(headers.map(() => '---')), ...rowArrays.map(rowLine)].join('\n'))
+        } else {
+          headers.forEach(push)
+          rowArrays.forEach(walk)
+        }
+        return
+      }
+      case 'Action':
+      case 'Buttons':
+      case '$action':
+        return
       case 'BeFileDiff': {
         const path = str(node.props.path)
         const diff = str(node.props.diff)
@@ -525,7 +596,7 @@ export function isLegacyOpenUIReply(text: string): boolean {
 export function extractLegacyOpenUIMarkdown(text: string, options?: { omitCharts?: boolean }): string | null {
   const split = splitLegacySource(text)
   if (!split) return null
-  const parsed = parseProgram(split.source)
+  const parsed = split.parsed !== undefined ? split.parsed : parseProgram(split.source)
   const body = parsed === null
     ? ''
     : renderNode(parsed, { omitCharts: options?.omitCharts ?? false, rawChipIds: false, markdownBlocks: true }).join('\n\n')
@@ -533,15 +604,15 @@ export function extractLegacyOpenUIMarkdown(text: string, options?: { omitCharts
 }
 
 /**
- * Extracts readable plain lines from a historical OpenUI reply for copy,
- * sidebar previews, and mobile push notifications. Returns `null` when `text`
- * is not historical OpenUI, or `''` when a historical OpenUI reply contains no
+ * Extracts readable plain lines from a historical OpenUI reply for sidebar
+ * previews and mobile push notifications. Returns `null` when `text` is not
+ * historical OpenUI, or `''` when a historical OpenUI reply contains no
  * readable text (e.g. a chart-only or unparseable interactive form card).
  */
 export function extractLegacyOpenUIText(text: string, options?: { omitCharts?: boolean }): string | null {
   const split = splitLegacySource(text)
   if (!split) return null
-  const parsed = parseProgram(split.source)
+  const parsed = split.parsed !== undefined ? split.parsed : parseProgram(split.source)
   const body = parsed === null
     ? ''
     : renderNode(parsed, { omitCharts: options?.omitCharts ?? false, rawChipIds: false, markdownBlocks: false }).join('\n')
@@ -559,7 +630,7 @@ export function legacyChatContent(response: string): { format: 'markdown' | 'sou
     }
     return { format: 'markdown', text: response }
   }
-  const parsed = parseProgram(split.source)
+  const parsed = split.parsed !== undefined ? split.parsed : parseProgram(split.source)
   if (!parsed || (isComponent(parsed) && !KNOWN_COMPONENTS.has(parsed.name))) {
     return { format: 'source', text: response }
   }

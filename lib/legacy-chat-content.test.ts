@@ -20,12 +20,15 @@ test('legacyChatContent leaves ordinary Markdown unchanged', () => {
 test('ordinary code blocks mentioning root = are never misclassified as legacy OpenUI', () => {
   for (const sample of [
     '```python\nroot = Path(__file__).parent\n```',
+    '```python\nroot = Stack()\nroot.push(1)\n```',
+    '```\nroot = Stack()\nroot.push(1)\n```',
     'Set `root = /var/www` in nginx.conf.',
     '```\nroot = 1\n```',
     'Talk about Stack(1) in prose.',
   ]) {
     assert.equal(isLegacyOpenUIReply(sample), false, sample)
     assert.equal(extractLegacyOpenUIText(sample), null, sample)
+    assert.equal(extractLegacyOpenUIMarkdown(sample), null, sample)
     assert.equal(legacyChatContent(sample).format, 'markdown', sample)
   }
 })
@@ -84,4 +87,38 @@ test('extractLegacyOpenUIText & extractLegacyOpenUIMarkdown preserve prose, inli
     extractLegacyOpenUIText('Stack([TextContent("没写 root 也是历史卡片")])'),
     '没写 root 也是历史卡片',
   )
+})
+
+test('saved forms with @ToAssistant directives and EditableTable project cleanly without leaking action payloads', () => {
+  const releaseChecklist = `root = Stack([timeline, form])
+timeline = Steps([StepsItem("Wednesday", "Freeze main, tag v2.4.0-rc.1"), StepsItem("Friday 10 AM", "Ship web; run the migration off-peak")])
+form = Form("release-checklist", Buttons([Button("Confirm checklist", Action([@ToAssistant("Confirm the v2.4 release checklist")]), "primary")]), [FormControl("Release checklist", EditableTable("checklist", [{type: "text", key: "item", header: "Item"}, {type: "text", key: "owner", header: "Owner"}], [{id: "1", values: ["Multi-currency migration rehearsed on a production snapshot", "Jordan Lee"]}, {id: "2", values: ["Stripe webhook fix is live", "Jordan Lee"]}, {id: "3", values: ["Rollback plan and feature flag", "Alex"]}]))])`
+  const projected = legacyChatContent(releaseChecklist)
+  assert.equal(projected.format, 'markdown')
+  for (const expected of [
+    'Wednesday',
+    'Freeze main, tag v2.4.0-rc.1',
+    'Friday 10 AM',
+    'Release checklist',
+    '| Item | Owner |',
+    'Multi-currency migration rehearsed on a production snapshot',
+    'Rollback plan and feature flag',
+    'Jordan Lee',
+  ]) {
+    assert.ok(projected.text.includes(expected), expected)
+  }
+  assert.doesNotMatch(projected.text, /@ToAssistant|Confirm the v2\.4 release checklist|Action\(|root =/)
+})
+
+test('saved BeQuestions preserve both question and option descriptions without emitting action identifiers', () => {
+  const savedQuestions = `root = Stack([intro, questions])
+intro = TextContent("Two blockers left.")
+questions = BeQuestions("v2.4 release", [{id: "ios", title: "Should iOS wait?", description: "Affects the Friday mobile cut.", options: [{value: "wait", label: "Wait and ship together", description: "Could slip to next Tuesday"}, {value: "web-first", label: "Web first, iOS next week"}]}])`
+  const projected = legacyChatContent(savedQuestions)
+  assert.equal(projected.format, 'markdown')
+  assert.ok(projected.text.includes('Should iOS wait?'))
+  assert.ok(projected.text.includes('Affects the Friday mobile cut.'))
+  assert.ok(projected.text.includes('- Wait and ship together — Could slip to next Tuesday'))
+  assert.ok(projected.text.includes('- Web first, iOS next week'))
+  assert.doesNotMatch(projected.text, /web-first|v2\.4 release|root =/)
 })

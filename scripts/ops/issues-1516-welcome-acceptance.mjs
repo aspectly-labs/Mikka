@@ -38,7 +38,11 @@ export function verifySharedSelection(row, scope) {
   return { bindingId: row.bindingId, connectionRevision: Number(row.connectionRevision), route: row.route }
 }
 
-/** Parse bulleted Markdown starting options from a Coordinator welcome reply (OpenUI removed 2026-11-25). */
+export function pickWelcomeOption(choices, desired) {
+  const chosen = choices.get(desired) ?? [...choices.values()].at(-1)
+  check(chosen && typeof chosen.label === 'string' && chosen.label.trim(), 'welcome_options_invalid')
+  return chosen
+}
 export function welcomeOptions(text) {
   check(typeof text === 'string' && text.trim() && !isLegacyOpenUIReply(text), 'welcome_options_missing')
   const bullets = [...text.matchAll(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(.+)$/gm)]
@@ -398,8 +402,8 @@ export async function runAcceptance() {
         const welcome = await streamTurn(botId); result.welcome = welcome.evidence
         passTurn(welcome.evidence)
         check(welcome.evidence.toolNames.length===0,'welcome_business_tool_called')
-        const choices=welcomeOptions(welcome.text),label=choices.get(item.option).label
-        result.option={value:item.option,labelSha256:hash(label),labelChars:label.length,count:choices.size}
+        const choices=welcomeOptions(welcome.text),pickedChoice=pickWelcomeOption(choices,item.option),label=pickedChoice.label
+        result.option={requested:item.option,value:pickedChoice.value,labelSha256:hash(label),labelChars:label.length,count:choices.size}
         check(fixtures.has(botId) && !baselineBotIds.includes(botId), 'acceptance_fixture_mismatch')
         authorizedSubmission = { botId, message: label, id: randomUUID(), ownerId, workspaceId: teamScope.workspaceId }
         try {
@@ -502,8 +506,11 @@ if (process.argv.includes('--self-test')) {
   assert.equal(requestAllowed(selectionPath, 'POST', { ...selectionBody, turnPolicy: 'steer' }, submission), false)
   assert.equal(requestAllowed('/api/rpc', 'POST', { version: 1, action: 'coordinator.sendCoordinatorMessage', args: [] }), false)
   const text = 'Hi Alex!\n\nWhat would you like to start with?\n- A\n- B\n- C\n- D'
-  assert.equal(welcomeOptions(text).get('d').label, 'D')
-  assert.equal(welcomeOptions(text).get('a').label, 'A')
+  assert.equal(pickWelcomeOption(welcomeOptions(text), 'd').label, 'D')
+  assert.equal(pickWelcomeOption(welcomeOptions(text), 'a').label, 'A')
+  const threeChoice = 'Hi Alex!\n\nPick a starting point:\n- First\n- Second\n- Third'
+  assert.equal(pickWelcomeOption(welcomeOptions(threeChoice), 'd').label, 'Third')
+  assert.equal(pickWelcomeOption(welcomeOptions(threeChoice), 'd').value, 'c')
   assert.throws(() => welcomeOptions('root = Stack([TextContent("Hi")])'), /welcome_options_missing/)
   assert.throws(() => welcomeOptions('Hi Alex! Just one line.'), /welcome_options_missing/)
   assert.equal(requestAllowed('/api/rpc','POST',{version:1,action:'workspace.createWorkspace',args:[]}),false)

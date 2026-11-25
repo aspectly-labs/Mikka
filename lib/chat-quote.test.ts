@@ -43,3 +43,14 @@ test('复制 on a card copies its prose and words, not the program that draws it
   assert.match(copied, /修好登录/)
   assert.doesNotMatch(copied, /root =|BeCard\(/)
 })
+
+test('复制 preserves all lines of a saved multiline code block and leaves fenced Python code unchanged', () => {
+  const savedCode = 'root = Stack([BeCodeBlock("const count = 1;\\nconsole.log(count);", "ts")])'
+  const copied = replyCopyText(savedCode)
+  assert.ok(copied.includes('const count = 1;'))
+  assert.ok(copied.includes('console.log(count);'))
+  assert.doesNotMatch(copied, /root =|BeCodeBlock\(/)
+
+  const pythonFence = '```python\nroot = Stack()\nroot.push(1)\n```'
+  assert.equal(replyCopyText(pythonFence), pythonFence)
+})
