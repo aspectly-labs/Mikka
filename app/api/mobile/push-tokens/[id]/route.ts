@@ -2,11 +2,12 @@ import { z } from 'zod'
 import { pool } from '@/lib/db'
 import { forbiddenOrigin, json, unauthorized, writeAllowed } from '@/lib/mobile-api'
 import { pushSession, removePushBinding, withPushSession } from '@/lib/mobile-push-session'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 const changes = z.object({ label: z.string().trim().min(1).max(80) }).strict()
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await pushSession(request)
   if (!session) return unauthorized()
   if (!writeAllowed(request)) return forbiddenOrigin()
@@ -24,7 +25,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   })
 }
 
-export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleDELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await pushSession(request)
   if (!session) return unauthorized()
   if (!writeAllowed(request)) return forbiddenOrigin()
@@ -32,3 +33,23 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (!z.uuid().safeParse(id).success) return json({ error: 'invalidRequest' }, 400)
   return removePushBinding(session, { id })
 }
+
+export const PATCH = defineRoute<'mobile-or-session', 'none', { id: string }>(
+  {
+    route: '/api/mobile/push-tokens/[id]',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request, params }) => handlePATCH(request, { params: Promise.resolve(params) }),
+)
+
+export const DELETE = defineRoute<'mobile-or-session', 'none', { id: string }>(
+  {
+    route: '/api/mobile/push-tokens/[id]',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request, params }) => handleDELETE(request, { params: Promise.resolve(params) }),
+)

@@ -1,20 +1,17 @@
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { getTranslations } from '@/lib/intl/i18n-server'
-import { auth } from '@/lib/api-auth'
+import type { ApiSession } from '@/lib/api-auth'
 import { loadWorkspaceSettings, WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
+import { selectedWorkspaceId } from '@/lib/workspace-selection'
 
-async function handleGET(request: Request) {
-  const started = performance.now()
-  const session = await auth.api.getSession({ headers: request.headers })
-  noteLogUser(session?.user?.id)
+async function handleGET(request: Request, session: ApiSession) {
   const authenticated = performance.now()
-  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401 })
   try {
     const data = await loadWorkspaceSettings(new URL(request.url).searchParams.get('workspace') ?? undefined, session.user)
     return RouteResponse.json(data, { headers: {
       'Cache-Control': 'private, no-store',
-      'Server-Timing': `auth;dur=${(authenticated - started).toFixed(1)}, workspace;dur=${(performance.now() - authenticated).toFixed(1)}`,
+      'Server-Timing': `auth;dur=0.0, workspace;dur=${(performance.now() - authenticated).toFixed(1)}`,
     } })
   } catch (error) {
     if (error instanceof WorkspaceError) {
@@ -26,4 +23,13 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/workspace', handleGET)
+export const GET = defineRoute<'session', 'pat-scoped'>(
+  {
+    route: '/api/workspace',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ request }) => selectedWorkspaceId(new URL(request.url).searchParams.get('workspace')) ?? undefined,
+  },
+  ({ request, session }) => handleGET(request, session),
+)

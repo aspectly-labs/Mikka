@@ -5,8 +5,9 @@ import { bots } from '@/lib/db/schema'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { openChatBotId } from '@/lib/coordinator/coordinator-bot'
 import { coordinatorEnabled } from '@/lib/coordinator/wake'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 
 /**
@@ -14,11 +15,7 @@ import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@
  * same turn again, as the web's retryCoordinatorTurn. `queued` false when
  * nothing failed or a turn is already running.
  */
-async function handlePOST(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePOST(request: Request, user: ApiSession['user']) {
   const parsed = z.object({ botId: z.uuid().nullable().optional() }).safeParse(await request.json().catch(() => ({})))
   if (!parsed.success) return json({ error: 'invalidBot' }, 400)
   const botId = parsed.data.botId ?? null
@@ -34,4 +31,12 @@ async function handlePOST(request: Request) {
   return json(await (await import('@/lib/eve/retry')).retryEveTurn(user.id,resolved,request.headers))
 }
 
-export const POST = withRequestLog('/api/mobile/chat/retry', handlePOST)
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/chat/retry',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user }) => handlePOST(request, user),
+)

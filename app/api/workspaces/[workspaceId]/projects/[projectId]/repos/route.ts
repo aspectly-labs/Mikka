@@ -4,10 +4,11 @@ import { GovernanceError } from '@/lib/governance/errors'
 import { governanceJson, governanceMutationSession, governanceResponse } from '@/lib/governance/http'
 import { addProjectRepositoriesBody } from '@/lib/project-resources/contracts'
 import { saveProjectResources } from '@/lib/project-resources/store'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 type Context = { params: Promise<{ workspaceId: string; projectId: string }> }
 
-export const POST = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const POSTBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const params = await context.params
   const session = await governanceMutationSession(request, params.workspaceId)
   const body = addProjectRepositoriesBody.parse(await governanceJson(request))
@@ -21,3 +22,14 @@ export const POST = freshSessionRoute(async (request: Request, context: Context)
     throw error
   }
 }))
+
+export const POST = defineRoute<'public', 'none', { workspaceId: string; projectId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/projects/[projectId]/repos',
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
+)

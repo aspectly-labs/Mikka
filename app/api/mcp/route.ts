@@ -23,6 +23,7 @@ import { ARTIFACT_TITLE_MAX } from '@/lib/artifacts/limits'
 import { ProjectMapError } from '@/lib/project-map/contracts'
 import { RECORD_DECISION_TOOL } from '@/lib/project-map/mcp-tool'
 import { INTEROP_TOOLS, INTEROP_TOOL_IDS, WORKER_RUN_TOOLS } from '@/lib/interop/tool-schemas'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 // Leaves room for read_coordinator_messages to wait for a reply.
 export const maxDuration = 120
@@ -414,5 +415,8 @@ function route(request: Request) {
   const bearer = request.headers.get('authorization')?.match(/^Bearer\s+(\S+)/i)?.[1]
   return bearer?.startsWith(worker.RUN_TOKEN_PREFIX) ? workerAuthed(request) : authed(request)
 }
+const mcpSpec = { route: '/api/mcp', auth: 'public', origin: 'any', workspace: 'none' } as const
 
-export { route as GET, route as POST, route as DELETE }
+export const GET = defineRoute(mcpSpec, ({ request }) => route(request))
+export const POST = defineRoute(mcpSpec, ({ request }) => route(request))
+export const DELETE = defineRoute(mcpSpec, ({ request }) => route(request))

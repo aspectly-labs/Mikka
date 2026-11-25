@@ -64,6 +64,12 @@ const jsonRequest = (url: string, method = 'GET', body?: unknown, extraHeaders?:
 
 before(async () => {
   if (!available) return
+  mock.module('@/lib/api-auth', { namedExports: {
+    auth: { api: { getSession: async () => currentUser ? { user: currentUser, session: { id: `wsf-session-${currentUser.id}` } } : null } },
+    getApiSession: async () => currentUser ? { user: currentUser, session: { id: `wsf-session-${currentUser.id}` } } : null,
+    apiWorkspaceAllowed: (session: { tokenWorkspaceId?: string }, workspaceId: string) =>
+      !session.tokenWorkspaceId || session.tokenWorkspaceId === workspaceId,
+  } })
   mock.module('@/lib/server-runtime/headers', {
     namedExports: {
       headers: async () => new Headers(),

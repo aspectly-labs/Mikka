@@ -6,6 +6,7 @@ import { getApiSession } from '@/lib/api-auth'
 import { actAs } from '@/lib/acting-user'
 import { listTeamMembers } from '@/app/actions/teams'
 import { WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function handleGET(request: Request, { params }: { params: Promise<{ teamId: string }> }) {
   const i18nText = await getTranslations();
@@ -21,4 +22,13 @@ async function handleGET(request: Request, { params }: { params: Promise<{ teamI
   }
 }
 
-export const GET = withRequestLog('/api/teams/[teamId]/members', handleGET)
+const GETBody = withRequestLog('/api/teams/[teamId]/members', handleGET)
+
+export const GET = defineRoute<'public', 'none', { teamId: string }>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)

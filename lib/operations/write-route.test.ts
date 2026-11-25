@@ -15,7 +15,7 @@ test('public availability reports only the server gate as 200 no-store without r
   try {
     for (const enabled of [false, true]) {
       overrideDeploymentSwitch('personalWrites', enabled)
-      const response = GET()
+      const response = await GET(new Request('https://candidate.invalid/api/approved-writes'))
       assert.equal(response.status, 200)
       assert.equal(response.headers.get('cache-control'), 'no-store')
       assert.deepEqual(await response.json(), { enabled })

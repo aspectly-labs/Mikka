@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
 import { actAs } from '@/lib/acting-user'
 import { ActionFailureError } from '@/lib/action-error'
 import { withTaskWorkspace } from '@/lib/task-workspace'
@@ -9,12 +8,14 @@ import { tokenWorkspace } from '@/lib/tokens/principal'
 import { nextTaskListCursor, taskListPageInput } from '@/lib/task-list-page'
 import { countAssignedWorkspaceTasks, pollIssues, listWorkspaceIssues, listWorkspaceTaskPage } from '@/app/actions/issues'
 import { getTaskPresentations } from '@/app/actions/task-domain'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { boardBlocks } from '@/lib/kanban-board-data'
 import { newestTaskRuns, taskScheduleLabels } from '@/lib/task-block-runs'
 import { taskStateOf } from '@/lib/task-state'
 import { taskReviewSummaries } from '@/lib/coding-workspace/task-review/summaries'
 import { readTaskRefreshFailure, TASK_PRESENTATION_PARAM, TASK_PRESENTATION_VERSION, TASK_REFRESH_FAILURE_HEADER } from '@/lib/mobile-task-refresh'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 
 function recordMobileRefreshFailure(request: Request) {
@@ -33,12 +34,9 @@ function recordMobileRefreshFailure(request: Request) {
 }
 
 /** `GET /api/mobile/tasks`: the 任务 list: the person's tasks in this workspace, newest change first, each with its 受阻 (lib/task-blocked.ts). No board on mobile. */
-async function handleGET(request: Request) {
+async function handleGET(request: Request, user: ApiSession['user']) {
   const span = trace.getActiveSpan()
   span?.setAttribute('mikka.task_refresh.server_stage', 'authentication')
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
   try {
     return await actAs(user, async () => {
       const tokenWorkspaceId = (user as typeof user & { [tokenWorkspace]?: string })[tokenWorkspace]
@@ -110,4 +108,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/mobile/tasks', handleGET)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/tasks',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

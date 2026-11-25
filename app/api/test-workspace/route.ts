@@ -1,7 +1,7 @@
-import { withRequestLog } from '@/lib/request-log'
 import { getTranslations } from '@/lib/intl/i18n-server'
 import { createHmac } from 'node:crypto'
 import { auth, authBaseURL } from '@/lib/auth'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function handlePOST(request: Request) {
   const i18nText = await getTranslations();
@@ -35,4 +35,12 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withRequestLog('/api/test-workspace', handlePOST)
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/test-workspace',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handlePOST(request),
+)

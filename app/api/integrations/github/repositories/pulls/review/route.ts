@@ -5,12 +5,13 @@ import { GitHubAccessError } from "@/lib/github/user-access";
 import { pullReviewDependencies, requestPullChanges } from "@/lib/github/pull-review";
 import { pullReviewInput } from "@/lib/pull-directory";
 import { withRequestLog } from "@/lib/request-log";
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 60;
 const headers = { "Cache-Control": "private, no-store" };
 
 /** Requesting changes on a pull request as the signed-in person (lib/github/pull-review.ts). */
-export const POST = withRequestLog(
+const unguardedPOST = withRequestLog(
   "/api/integrations/github/repositories/pulls/review",
   async (request: Request) => {
     const sessionHeaders = humanSessionHeaders(request);
@@ -54,3 +55,12 @@ export const POST = withRequestLog(
     }
   },
 );
+export const POST = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPOST(request),
+)

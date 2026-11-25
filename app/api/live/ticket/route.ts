@@ -1,12 +1,12 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/api-auth'
 import { activeTaskWorkspaces } from '@/lib/task-workspace'
-import { withRequestLog } from '@/lib/request-log'
 import { LIVE_ID } from '@/lib/live/events'
 import { liveGatewayConfig } from '@/lib/live/scope'
 import { workspaceLiveTicket } from '@/lib/enterprise/live-authority'
 import { desktopBearerHeaders } from '@/lib/desktop-rpc/handler'
 import { homeScopeProof } from '@/lib/live/home-scope-proof'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const headers = { 'cache-control': 'private, no-store' }
 
@@ -33,4 +33,12 @@ async function ticket(request: Request) {
   return RouteResponse.json({ ...issued, ...(homeScope ? { homeScope } : {}) }, { headers })
 }
 
-export const GET = withRequestLog('/api/live/ticket', ticket)
+export const GET = defineRoute<'public', 'none'>(
+  {
+    route: '/api/live/ticket',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => ticket(request),
+)

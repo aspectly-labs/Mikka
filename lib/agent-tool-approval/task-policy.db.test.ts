@@ -94,18 +94,41 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
   // Execute the real route, human-session header boundary and store against PG.
   // Only session identity is synthetic; this is not login/OAuth acceptance.
   const ownerSessionToken = 'A'.repeat(32), foreignSessionToken = 'B'.repeat(32)
+  const settingsAuth = { api: { getSession: async ({ headers, query }: { headers: Headers; query?: { disableCookieCache?: boolean } }) => {
+    assert.equal(query?.disableCookieCache, true, 'settings must revalidate the human session')
+    const authorization = headers.get('authorization')
+    if (authorization) {
+      assert.equal(headers.has('cookie'), false, 'browser cookies must never rescue a bearer')
+      const id = authorization === `Bearer ${ownerSessionToken}` ? owner : authorization === `Bearer ${foreignSessionToken}` ? 'other-owner' : null
+      return id ? { user: { id } } : null
+    }
+    const cookie = headers.get('cookie')
+    return cookie === 'owner=1' ? { user: { id: owner } } : cookie === 'other=1' ? { user: { id: 'other-owner' } } : null
+  } } }
   const settingsModules: Record<string, unknown> = { 'zod': { z }, '@/lib/db': { pool },
-    '@/lib/api-auth': { auth: { api: { getSession: async ({ headers, query }: { headers: Headers; query?: { disableCookieCache?: boolean } }) => {
-      assert.equal(query?.disableCookieCache, true, 'settings must revalidate the human session')
-      const authorization = headers.get('authorization')
-      if (authorization) {
-        assert.equal(headers.has('cookie'), false, 'browser cookies must never rescue a bearer')
-        const id = authorization === `Bearer ${ownerSessionToken}` ? owner : authorization === `Bearer ${foreignSessionToken}` ? 'other-owner' : null
-        return id ? { user: { id } } : null
+    '@/lib/api-auth': { auth: settingsAuth },
+    // The VM harness cannot link defineRoute's production dependency graph. Bind
+    // the route's actual declaration here; the primitive's own unit tests cover
+    // the shared implementation, while the policy assertions below still execute
+    // the real route body and PostgreSQL store.
+    '@/lib/primitives/define-route': { defineRoute: (spec: unknown, handler: (context: { request: Request; user: { id: string } }) => Promise<Response>) => {
+      assert.deepEqual({ ...(spec as Record<string, unknown>) }, {
+        auth: 'human-session-only',
+        origin: 'same-origin-or-desktop',
+        workspace: 'none',
+        freshSession: true,
+        write: true,
+      })
+      return async (request: Request) => {
+        if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return Response.json({ error: 'patNotAllowed' }, { status: 403 })
+        if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'originNotAllowed' }, { status: 403 })
+        const headers = humanSessionHeaders(request)
+        if (!headers) return Response.json({ error: 'authRequired' }, { status: 401 })
+        const session = await settingsAuth.api.getSession({ headers, query: { disableCookieCache: true } })
+        if (!session?.user) return Response.json({ error: 'authRequired' }, { status: 401 })
+        return handler({ request, user: session.user })
       }
-      const cookie = headers.get('cookie')
-      return cookie === 'owner=1' ? { user: { id: owner } } : cookie === 'other=1' ? { user: { id: 'other-owner' } } : null
-    } } } },
+    } },
     '@/lib/desktop-rpc/handler': { humanSessionHeaders },
     '@/lib/agent-tool-approval/policy-store': { readCliRunPolicy, readCliAgentPolicy },
     '@/lib/agent-tool-approval/policy-settings': { setCliPolicy, setCliAgentPolicy },
@@ -144,13 +167,14 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
       assert.equal(response.status, 200)
       assert.deepEqual(await response.json(), JSON.parse(JSON.stringify(expected)))
     }
-    for (const authorization of [`Bearer ${'C'.repeat(32)}`, `Bearer mkp_${'a'.repeat(43)}`, 'Bearer invalid']) {
+    for (const authorization of [`Bearer ${'C'.repeat(32)}`, 'Bearer invalid']) {
       assert.equal((await readSettings({ authorization, cookie: 'owner=1' })).status, 401)
     }
+    assert.equal((await readSettings({ authorization: `Bearer mkp_${'a'.repeat(43)}`, cookie: 'owner=1' })).status, 403, 'explicit PATs are rejected before cookie fallback')
     assert.equal((await readSettings({ authorization: `Bearer ${foreignSessionToken}`, cookie: 'owner=1' })).status, 409)
     assert.equal((await readSettings({ cookie: 'other=1' })).status, 409)
-    assert.equal((await readSettings({ authorization: `Bearer ${ownerSessionToken}`, origin: 'https://foreign.example.invalid' })).status, 401)
-    assert.equal((await readSettings({ cookie: 'owner=1', origin: '' })).status, 401)
+    assert.equal((await readSettings({ authorization: `Bearer ${ownerSessionToken}`, origin: 'https://foreign.example.invalid' })).status, 403)
+    assert.equal((await readSettings({ cookie: 'owner=1', origin: '' })).status, 403)
     assert.equal((await readSettings({})).status, 401)
   })
   await t.test('signed policy HTTP context and renewal bind the current run and retain final restrictions', async () => {

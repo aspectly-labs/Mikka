@@ -6,6 +6,7 @@ import { parseInput, UnsupportedSourceError } from '@/lib/federated-search/input
 import { readSearchPage, SearchAccessError } from '@/lib/federated-search/store'
 import { pool } from '@/lib/db'
 import { z } from 'zod'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 30
 const headers = { 'Cache-Control': 'private, no-store', Vary: 'Cookie, Authorization' }
@@ -13,7 +14,7 @@ const headers = { 'Cache-Control': 'private, no-store', Vary: 'Cookie, Authoriza
 /** #2941 item 1: one mention search for every reference type. `type=task`
  * reuses the site-search store; the other types are owner/workspace-scoped
  * reads shaped like a picker page. */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true, disableRefresh: true } })
     if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401, headers })
@@ -73,3 +74,13 @@ export async function GET(request: Request) {
     return RouteResponse.json({ error: 'searchFailed' }, { status: 500, headers })
   }
 }
+
+export const GET = defineRoute(
+  {
+    route: '/api/mentions',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handleGET(request),
+)

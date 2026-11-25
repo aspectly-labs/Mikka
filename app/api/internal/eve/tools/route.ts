@@ -1,5 +1,13 @@
 import { handleEveProductRequest } from '@/lib/eve/product-gateway'
-import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 300
-export const POST = withRequestLog('/api/internal/eve/tools', request => handleEveProductRequest(request))
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/internal/eve/tools',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handleEveProductRequest(request),
+)

@@ -277,7 +277,7 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
     await t.test('real API handlers reject unauthenticated, delegated, nonowner and cross-workspace calls before mutations', async () => {
       let actor: string | null = owner
       mock.module('../api-auth.ts', { namedExports: { auth: { api: { getSession: async () => actor ? { user: { id: actor } } : null } } } })
-      mock.module('../request-log.ts', { namedExports: { noteLogUser() {}, noteLogRpcAction() {} } })
+      mock.module('../request-log.ts', { namedExports: { noteLogUser() {}, noteLogRpcAction() {}, withRequestLog: (_name: string, handler: unknown) => handler } })
       mock.module('./runtime.ts', { namedExports: { personalPlugins: personal, workspaceMcp: shares, mcpConnections: connections, mcpDeviceChecks: deviceChecks } })
       // The directory uses real HTTP payloads; public DNS protection is owned by plugins.test.ts.
       mock.module('./public-fetch.ts', { namedExports: { publicMcpFetch: () => transport() } })

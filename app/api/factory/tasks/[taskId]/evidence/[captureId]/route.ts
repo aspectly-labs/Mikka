@@ -4,9 +4,10 @@ import { readCapture } from "@/lib/captures/store";
 import { factoryApprovals } from "@/lib/factory/server";
 import { factoryBrowserSession } from "@/lib/factory/browser-human";
 import { factoryEvidenceMedia } from "@/lib/factory/evidence-media";
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /** `GET /api/factory/tasks/:taskId/evidence/:captureId`: a screenshot or recording the task's evidence names. */
-export async function GET(
+async function unguardedGET(
   request: Request,
   context: { params: Promise<{ taskId: string; captureId: string }> },
 ) {
@@ -28,3 +29,13 @@ export async function GET(
   });
 
 }
+export const GET = defineRoute<'public','none',{ taskId: string; captureId: string }>(
+  {
+    route: '/api/factory/tasks/[taskId]/evidence/[captureId]',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
+)

@@ -4,9 +4,10 @@ import { GitHubAccessError } from "@/lib/github/user-access";
 import { repositoryPullDirectory } from "@/lib/github/pull-directory";
 import { pullPageInput } from "@/lib/pull-directory";
 import { withRequestLog } from "@/lib/request-log";
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const headers = { "Cache-Control": "private, no-store" };
-export const GET = withRequestLog(
+const unguardedGET = withRequestLog(
   "/api/integrations/github/repositories/pulls",
   async (request: Request) => {
     const sessionHeaders = humanSessionHeaders(request);
@@ -52,3 +53,12 @@ export const GET = withRequestLog(
     }
   },
 );
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)

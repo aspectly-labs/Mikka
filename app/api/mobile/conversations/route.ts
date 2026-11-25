@@ -1,12 +1,12 @@
 import { directoryInput } from '@/lib/conversation-directory-input'
 import { conversationDirectory, conversationSidebar } from '@/lib/conversation-directory'
 import { pool } from '@/lib/db'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { effectiveRequestWorkspace } from '@/lib/request-workspace'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
-export async function GET(request: Request) {
-  const user = await mobileUser(request)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const params = new URL(request.url).searchParams
   const workspaceId = await effectiveRequestWorkspace(user)
   if (!workspaceId || params.get('workspaceId') !== workspaceId) return json({ error: 'workspaceAccessDenied' }, 403)
@@ -31,3 +31,13 @@ export async function GET(request: Request) {
   if (!input.success) return json({ error: 'invalidInput' }, 422)
   return json({ workspaceId, ...await conversationDirectory(pool, user, workspaceId, input.data) })
 }
+
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/conversations',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

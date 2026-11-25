@@ -5,11 +5,12 @@ import {
   readPullRequestFiles,
   type PullRequestFiles,
 } from "@/lib/github/user-access";
+import { defineRoute } from '@/lib/primitives/define-route'
 import { pullFilesQuery } from "@/lib/pull-directory";
 import { withRequestLog } from "@/lib/request-log";
 
 const headers = { "Cache-Control": "private, no-store" };
-export const GET = withRequestLog(
+const unguardedGET = withRequestLog(
   "/api/integrations/github/repositories/pulls/files",
   async (request: Request) => {
     const sessionHeaders = humanSessionHeaders(request);
@@ -55,3 +56,12 @@ export const GET = withRequestLog(
     }
   },
 );
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)

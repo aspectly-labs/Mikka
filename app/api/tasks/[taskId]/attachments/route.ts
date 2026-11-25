@@ -1,20 +1,17 @@
 import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
-import { auth } from '@/lib/api-auth'
-import { writeAllowed } from '@/lib/mobile-api'
+import type { ApiSession } from '@/lib/api-auth'
 import { TASK_FILE_MAX_BYTES } from '@/lib/task-attachments/contract'
 import { listTaskFiles, readTaskFile, removeTaskFile, requireTaskFileDownload, saveTaskFile, TaskFileError } from '@/lib/task-attachments/store'
 import { resolveTaskIdentifierAlias } from '@/lib/task-identity-store'
 import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
 const failure = (error: string, status: number) => Response.json({ error }, { status, headers })
 type Context = { params: Promise<{ taskId: string }> }
 
-async function attachments(request: Request, context: Context) {
-  const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true, disableRefresh: true } })
-  if (!session) return failure('authRequired', 401)
-  if (request.method !== 'GET' && !writeAllowed(request)) return failure('originNotAllowed', 403)
+async function attachments(request: Request, context: Context, session: ApiSession) {
   const { taskId: reference } = await context.params
   const params = new URL(request.url).searchParams
   const id = params.get('id')
@@ -79,6 +76,29 @@ async function attachments(request: Request, context: Context) {
     throw error
   }
 }
-export const GET = attachments
-export const POST = attachments
-export const DELETE = attachments
+
+export const GET = defineRoute<'session', 'pat-scoped', { taskId: string }>(
+  {
+    route: '/api/tasks/[taskId]/attachments',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    freshSession: true,
+    disableRefresh: true,
+    onAuthFailure: () => failure('authRequired', 401),
+  },
+  ({ request, params, session }) => attachments(request, { params: Promise.resolve(params) }, session),
+)
+const writeSpec = {
+  route: '/api/tasks/[taskId]/attachments',
+  auth: 'session',
+  origin: 'native-mobile-allowed',
+  workspace: 'pat-scoped',
+  write: true,
+  freshSession: true,
+  disableRefresh: true,
+  onAuthFailure: () => failure('authRequired', 401),
+  onOriginFailure: () => failure('originNotAllowed', 403),
+} as const
+export const POST = defineRoute<'session', 'pat-scoped', { taskId: string }>(writeSpec, ({ request, params, session }) => attachments(request, { params: Promise.resolve(params) }, session))
+export const DELETE = defineRoute<'session', 'pat-scoped', { taskId: string }>(writeSpec, ({ request, params, session }) => attachments(request, { params: Promise.resolve(params) }, session))
