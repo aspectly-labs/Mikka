@@ -172,6 +172,7 @@ The files below are **Mikka-authored procedural adapters**, not verbatim vendore
 | Mikka skill | Function | Upstream reference |
 | --- | --- | --- |
 | `mikka-ux-quality-audit` | Cross-domain router, severity, evidence and issue/PR lifecycle | Mikka-owned synthesis of the preexisting skills |
+| `mikka-competitor-redteam-gate` | Competitor-benchmarked pre-ship UI/UX red-team gate (Mobbin, Electron FE+BE, Kubai, Apple HIG, rendered visual proof); linked from `.agents/skills/mikka-competitor-redteam-gate` | Mikka-owned gate |
 | `mikka-action-coverage` | Two-way backend command ↔ authorized UI affordance and durable effect | Mikka-owned, linked to #2212/#1979/#1980 |
 | `mikka-browser-qa` | Source-pinned official renderer/browser observations; optional CLI when already installed | [agent-browser at f88c40b](https://github.com/vercel-labs/agent-browser/tree/f88c40b7ed7c2344af54b804b440b11169f98906), Apache-2.0 |
 | `web-design-guidelines` | Accessibility, forms, feedback, responsive/focus review, subordinated to Mikka rules | [web-interface-guidelines at 434b7f9](https://github.com/vercel-labs/web-interface-guidelines/tree/434b7f91364665f2f733b310ec54809bf8f37937), MIT. The [agent-skill wrapper at 1a2c79d](https://github.com/vercel-labs/agent-skills/blob/1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62/skills/web-design-guidelines/SKILL.md) declares no license and is linked only. |
