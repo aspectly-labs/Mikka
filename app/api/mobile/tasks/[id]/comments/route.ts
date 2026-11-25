@@ -38,6 +38,7 @@ export const POST = defineRoute<'mobile-or-session', 'pat-scoped', { id: string 
     auth: 'mobile-or-session',
     origin: 'native-mobile-allowed',
     workspace: 'pat-scoped', write: true,
+    onWorkspaceError: () => json({ error: 'issueNotFound' }, 404),
   },
   async ({ request, user, params }) => handlePOST(request, user, { params: Promise.resolve(params) }),
 )

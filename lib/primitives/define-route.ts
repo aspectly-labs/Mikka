@@ -106,6 +106,12 @@ type RouteSpecBase<P extends RouteHandlerParams> = {
    * any non-5xx return value rethrows the underlying error so auth errors can never fail open).
    */
   onAuthError?: (error: unknown) => Response
+  /**
+   * Optional fail-closed formatter when workspace resolution, PAT fencing, or the handler throws
+   * `WorkspaceError` (must return a 403, 404, or 409 Response; e.g. anti-enumeration 404 routes).
+   * Any other status is ignored fail-closed and falls back to canonical `workspaceErrorResponse`.
+   */
+  onWorkspaceError?: (error: WorkspaceError) => Response
 }
 
 export type RouteSpec<
@@ -256,10 +262,26 @@ function sessionFromUser(user: ApiSession['user']): ApiSession {
   }
 }
 
+export async function resolveApiAuthSession(
+  apiAuth: {
+    auth?: { api?: { getSession?: RouteGuardDependencies['getSession'] } }
+    getApiSession?: RouteGuardDependencies['getSession']
+  },
+  options: Parameters<RouteGuardDependencies['getSession']>[0],
+): Promise<ApiSession | null> {
+  if (typeof apiAuth.auth?.api?.getSession === 'function') {
+    return apiAuth.auth.api.getSession(options)
+  }
+  if (typeof apiAuth.getApiSession === 'function') {
+    return apiAuth.getApiSession(options)
+  }
+  throw new Error('api-auth session getter unavailable')
+}
+
 const defaultDependencies: RouteGuardDependencies = {
   getSession: async options => {
     const apiAuth = await import('@/lib/api-auth')
-    return apiAuth.auth.api.getSession(options)
+    return resolveApiAuthSession(apiAuth, options)
   },
   mobileUser: async request => {
     const mobileApi = await import('@/lib/mobile-api')
@@ -307,6 +329,22 @@ function authFailureResponse<P extends RouteHandlerParams>(
   return reason === 'unauthenticated'
     ? routeJson({ error: 'authRequired' }, 401)
     : routeJson({ error: reason }, 403)
+}
+
+function routeWorkspaceErrorResponse<P extends RouteHandlerParams>(
+  spec: RouteSpecBase<P>,
+  error: WorkspaceError,
+): Response {
+  if (spec.onWorkspaceError) {
+    const custom = spec.onWorkspaceError(error)
+    if (
+      custom instanceof Response
+      && (custom.status === 403 || custom.status === 404 || custom.status === 409)
+    ) {
+      return custom
+    }
+  }
+  return workspaceErrorResponse(error)
 }
 
 function authErrorResponse<P extends RouteHandlerParams>(
@@ -633,7 +671,7 @@ export function createRouteGuard(deps: Partial<RouteGuardDependencies> = {}) {
         return await handler(routeCtx)
       } catch (error) {
         if (error instanceof WorkspaceError) {
-          return workspaceErrorResponse(error)
+          return routeWorkspaceErrorResponse(spec, error)
         }
         throw error
       }

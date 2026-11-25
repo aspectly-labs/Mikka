@@ -68,6 +68,7 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }
     auth: 'mobile-or-session',
     origin: 'any',
     workspace: 'pat-scoped',
+    onWorkspaceError: () => json({ error: 'issueNotFound' }, 404),
   },
   async ({ request, user, params }) => handleGET(request, user, { params: Promise.resolve(params) }),
 )
@@ -78,6 +79,7 @@ export const PATCH = defineRoute<'mobile-or-session', 'pat-scoped', { id: string
     auth: 'mobile-or-session',
     origin: 'native-mobile-allowed',
     workspace: 'pat-scoped', write: true,
+    onWorkspaceError: () => json({ error: 'issueNotFound' }, 404),
   },
   async ({ request, user, params }) => handlePATCH(request, user, { params: Promise.resolve(params) }),
 )

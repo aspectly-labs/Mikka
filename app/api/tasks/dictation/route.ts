@@ -52,6 +52,7 @@ export const POST = defineRoute(
     auth: 'session',
     origin: 'native-mobile-allowed',
     workspace: 'pat-scoped',
+    onWorkspaceError: () => failure('notFound', 404),
   },
   ({ request, session }) => unguardedPOST(request, session),
 )

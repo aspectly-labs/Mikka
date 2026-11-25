@@ -32,6 +32,7 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }
     auth: 'mobile-or-session',
     origin: 'any',
     workspace: 'pat-scoped',
+    onWorkspaceError: () => json({ error: 'runNotFound' }, 404),
   },
   async ({ request, user, params }) => handleGET(request, user, { params: Promise.resolve(params) }),
 )
