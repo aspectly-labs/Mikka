@@ -178,7 +178,18 @@ test('a pull request’s files are read inside the admitted repository ID and co
   assert.deepEqual([files.changes.additions, files.changes.deletions], [3, 1])
   // A file GitHub sent no patch for lists and draws no lines; the rest of the change is not claimed.
   assert.deepEqual([files.patchUnavailable, files.moreFiles], [1, false])
+  assert.equal('patch' in files, false)
   assert.equal(paths().filter(path => path.endsWith('/pulls/7/files')).length, 2)
+  // Opt-in ?format=patch exposes the raw unified diff text alongside parsed changes.
+  const patchRes = await call('repo=Owner/Project&number=7&format=patch')
+  assert.equal(patchRes.status, 200)
+  const patchFiles = await patchRes.json()
+  assert.equal(typeof patchFiles.patch, 'string')
+  assert.match(patchFiles.patch, /diff --git a\/src\/app\.ts b\/src\/app\.ts\n--- a\/src\/app\.ts\n\+\+\+ b\/src\/app\.ts\n@@/)
+  assert.match(patchFiles.patch, /--- \/dev\/null\n\+\+\+ b\/\.github\/workflows\/ci\.yml\n@@/)
+  assert.match(patchFiles.patch, /--- a\/src\/old\.ts\n\+\+\+ b\/src\/new\.ts\n@@/)
+  assert.match(patchFiles.patch, /\+added/)
+  assert.equal((await call('repo=Owner/Project&number=7&format=invalid')).status, 400)
   // Another repository than the admitted one never receives a pull request read.
   assert.equal((await call('repo=Other/Repo&number=7')).status, 403)
   assert.equal((await call('repo=Owner/Project&number=0')).status, 400)
