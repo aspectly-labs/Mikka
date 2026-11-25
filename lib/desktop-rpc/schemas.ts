@@ -1,3 +1,4 @@
+import { snapshotInput } from '@/lib/project-resources/environment-snapshot-contract'
 import { settingsPatchInput, settingsResetInput } from '@/lib/settings/registry'
 import { reviewRepositoryInput, reviewRepositoryKey } from '@/lib/code-review/settings-contract'
 import { artifactShareInput } from '@/lib/artifacts/share-input'
@@ -143,6 +144,8 @@ export const desktopActionSchemas = {
   'project-resources.listProjectResources': tuple(uuid, uuid.optional()),
   'environments.listEnvironments': z.union([none, tuple(uuid)]),
   'environments.setTaskEnvironment': tuple(taskEnvironmentInput),
+  'environments.getSnapshot': tuple(snapshotInput),
+  'environments.buildSnapshot': tuple(snapshotInput),
   'environments.listTaskEnvironments': tuple(taskEnvironmentsInput),
   'project-resources.setProjectDefaultEnvironment': tuple(projectDefaultEnvironmentInput),
   'project-resources.saveEnvironment': tuple(saveEnvironmentInput),
