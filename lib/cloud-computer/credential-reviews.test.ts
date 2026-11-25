@@ -56,7 +56,13 @@ before(async () => {
     executeCredentialLease: async () => ({ status: 'guarded' }),
   } })
   mock.module('./subagent-browser', { namedExports: { resolveSubagentBrowserTarget: async () => freshTarget } })
+  mock.module('@/lib/secrets/e2b-resource', { namedExports: {
+    e2bResourceAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+    e2bCreateAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+    bindE2BResource: async () => {},
+  } })
   mock.module('@/lib/secrets/e2b-runtime', { namedExports: {
+    environmentSnapshotScope: () => 'team:test',
     sandboxKeyOwner: async () => userId,
     e2bApiKey: async () => LOCAL_E2B_KEY,
     computerTemplate: () => 'desktop',

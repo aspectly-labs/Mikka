@@ -78,7 +78,13 @@ before(async()=>{
   grant:async(_sandbox:unknown,_row:unknown,_role:unknown,action:any)=>{assert.equal(action.operation,'submit');submissions++;return {endpoint:'https://owned-broker.invalid',expiresAt:Date.now()+60000}},
   endpointPath:(endpoint:string,path:string)=>endpoint+path,
  }})
+ mock.module('@/lib/secrets/e2b-resource', { namedExports: {
+   e2bResourceAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+   e2bCreateAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+   bindE2BResource: async () => {},
+ } })
  mock.module('@/lib/secrets/e2b-runtime',{namedExports:{
+   environmentSnapshotScope: () => 'team:test',
   sandboxKeyOwner:async(workspaceId:string,sandboxId:string)=>(await pool.query<{ownerId:string}>('SELECT "ownerId" FROM cloud_machines WHERE "sandboxId"=$1 AND "workspaceId"=$2 LIMIT 1',[sandboxId,workspaceId])).rows[0]?.ownerId??null,
   e2bApiKey:async()=>LOCAL_E2B_KEY,
   computerTemplate:()=>'desktop',

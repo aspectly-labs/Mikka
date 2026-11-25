@@ -1,4 +1,5 @@
 import 'server-only'
+import { bindE2BResource, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import type { Pool } from 'pg'
 import { randomUUID } from 'node:crypto'
 import { observePoolCommits } from '@/lib/db/commit-effects'
@@ -15,21 +16,20 @@ export interface AccountCloudProvider {
 const ownerProvider = (ownerId: string): AccountCloudProvider => ({
   async kill(_workspaceId, sandboxId) {
     const { Sandbox } = await import('e2b')
-    const { e2bApiKey } = await import('@/lib/secrets/e2b-runtime')
-    await Sandbox.kill(sandboxId, { apiKey: await e2bApiKey(ownerId, 'Cloud cleanup unavailable'), requestTimeoutMs: 20_000 })
+    await Sandbox.kill(sandboxId, { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey, requestTimeoutMs: 20_000 })
   },
   async snapshots(_workspaceId, sandboxId) {
     const { Sandbox } = await import('e2b')
-    const { e2bApiKey } = await import('@/lib/secrets/e2b-runtime')
-    const options = { apiKey: await e2bApiKey(ownerId, 'Cloud cleanup unavailable'), requestTimeoutMs: 20_000 }
+    const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
+    const options = { apiKey: account.apiKey, requestTimeoutMs: 20_000 }
     const pages = Sandbox.listSnapshots({ ...options, sandboxId }), ids: string[] = []
     while (pages.hasNext) ids.push(...(await pages.nextItems(options)).map(row => row.snapshotId))
+    for (const id of ids) await bindE2BResource(ownerId, 'snapshot', id, account.scope)
     return ids
   },
   async deleteSnapshot(_workspaceId, snapshotId) {
     const { Sandbox } = await import('e2b')
-    const { e2bApiKey } = await import('@/lib/secrets/e2b-runtime')
-    await Sandbox.deleteSnapshot(snapshotId, { apiKey: await e2bApiKey(ownerId, 'Cloud cleanup unavailable'), requestTimeoutMs: 20_000 })
+    await Sandbox.deleteSnapshot(snapshotId, { apiKey: (await e2bResourceAccount(ownerId, 'snapshot', snapshotId)).apiKey, requestTimeoutMs: 20_000 })
   },
   async endRuns(userId, runIds) {
     if (!runIds.length) return

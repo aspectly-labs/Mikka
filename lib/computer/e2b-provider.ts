@@ -1,9 +1,10 @@
 import 'server-only'
+import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Sandbox, SandboxNotFoundError } from 'e2b'
-import { computerTemplate, e2bApiKey, sandboxKeyOwner, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { computerTemplate, sandboxKeyOwner, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { bootstrapOfficialInstance, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from './official-runtime'
 import type { ProcessedCaptureVideo, RecordingStep } from '../../packages/daemon/src/agents/capture-video.mjs'
@@ -12,9 +13,9 @@ const lifetime = 15 * 60_000
 export type DesktopLease = { botId: string; ownerId: string; display: number; epoch: number; controlledBy: string | null; controlUntil: number; computerAllowed: boolean;
   /** Compat: pre-upgrade lease drivers still compare the stored version. */
   policyVersion: number }
-// A sandbox belongs to the E2B team whose key created it: its owner's own key (orchestration § 2).
+// A sandbox belongs to the E2B account that allocated it.
 // Every call resolves the owner from the machine's record, never from whoever is asking.
-const options = async (ownerId: string) => ({ apiKey: await e2bApiKey(ownerId, 'Cloud computer is not configured'), timeoutMs: lifetime, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy })
+const options = (apiKey: string) => ({ apiKey, timeoutMs: lifetime, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy })
 const ownerOf = async (workspaceId: string, id: string) => {
   const owner = await sandboxKeyOwner(workspaceId, id)
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'sandbox has no owner record')
@@ -23,7 +24,7 @@ const ownerOf = async (workspaceId: string, id: string) => {
 
 export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget) {
   const owner = await ownerOf(workspaceId, id)
-  const base = await options(owner)
+  const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
   const request = runtimeRequestOptions(budget)
   const boundedSignal = signal && request.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request.signal
   return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
@@ -36,7 +37,7 @@ export function computerGone(error: unknown) {
 
 /** Static provider observation. Unlike connect(), this cannot resume a paused machine. */
 export async function readComputerMetrics(ownerId: string, sandboxId: string, start: Date, end: Date, signal: AbortSignal) {
-  const base = await options(ownerId)
+  const base = options((await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey)
   return withE2BErrors(ownerId, false, () => Sandbox.getMetrics(sandboxId, {
     ...base, start, end, signal, retries: 0, requestTimeoutMs: 10_000,
   }))
@@ -49,13 +50,13 @@ export async function computerWorkerSha(sandbox: Sandbox) {
 
 export async function killComputer(workspaceId: string, id: string) {
   const owner = await ownerOf(workspaceId, id)
-  const base = await options(owner)
+  const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
   await withE2BErrors(owner, false, () => Sandbox.kill(id, base))
 }
 
 export async function computerState(workspaceId: string, id: string, observed?: (expiresAt: Date) => void) {
   const owner = await ownerOf(workspaceId, id)
-  const base = await options(owner)
+  const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
   const info = await withE2BErrors(owner, false, () => Sandbox.getInfo(id, base))
   if (info.state !== 'paused') observed?.(info.endAt)
   return info.state === 'paused' ? 'sleeping' : 'running'
@@ -69,11 +70,13 @@ export async function createComputer(workspaceId: string, operationId: string) {
   const { pool } = await import('@/lib/db')
   const owner = (await pool.query<{ ownerId: string }>('SELECT "ownerId" FROM cloud_machines WHERE "workspaceId"=$1 AND "operationId"=$2', [workspaceId, operationId])).rows[0]?.ownerId
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'cloud machine has no owner record')
-  const base = await options(owner)
+  const account = await e2bCreateAccount(owner, operationId)
+  const base = options(account.apiKey)
   const sandbox = await withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, idempotencyKey: operationId,
     metadata: { application: 'mikka', workspaceId },
     lifecycle: { onTimeout: 'pause', autoResume: false },
   }))
+  await bindE2BResource(owner, 'sandbox', sandbox.sandboxId, account.scope)
   if (template === 'desktop') await bootstrapOfficialInstance(sandbox, 'desktop')
   return sandbox
 }
