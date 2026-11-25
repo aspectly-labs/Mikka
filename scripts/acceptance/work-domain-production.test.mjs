@@ -80,15 +80,10 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
   const factoryReads = new Map()
   if (unsafeProfile) profiles.push({ id: id(80), version: 1, digest: 'c'.repeat(64), enabled: true, harness: 'auto',
     model: { mode: 'inherit' }, instructions: 'PRIVATE_PROFILE_INSTRUCTIONS', archivedAt: null })
-  const environments = emptyDomain ? [] : [{ id: environmentId, workspaceId, revision: 2, archivedAt: null, name: 'PRIVATE_ENVIRONMENT_NAME',
+  const environments = emptyDomain ? [] : [{ id: environmentId, workspaceId, scope: 'workspace', repositories: [{ key: scope().repositoryKey, clone: 'start', baseBranch: 'main', primary: true }], revision: 2, archivedAt: null, name: 'PRIVATE_ENVIRONMENT_NAME',
       configuration: { runtime: 'cloud', harness: badEnvironment ? 'cursor' : 'any', setup: { approved: true, commands: ['PRIVATE_SETUP'] },
         variables: { PRIVATE_ENV: 'PRIVATE_ENV_VALUE' }, secretIds: ['PRIVATE_SECRET_REFERENCE'], repositoryKeys: [] } }]
-  const bindings = new Map(emptyDomain ? [] : [[projectId, {
-    repositories: [{ repositoryKey: scope().repositoryKey, baseBranch: 'main', environmentId, isPrimary: true }],
-    environmentBindings: [{ environmentId, isDefault: true }],
-  }]])
-  const resources = selectedProject => ({ policy: { mode: 'inherit', repositoryKeys: [], revision: 0 }, environments,
-    ...(bindings.get(selectedProject) ?? { repositories: [], environmentBindings: [] }) })
+  const resources = () => ({ policy: { mode: 'inherit', repositoryKeys: [], revision: 0 }, environments })
   const management = () => ({ profiles: profiles.filter(row => !row.archivedAt), catalog: { models: CASES.map(item => ({
     harness: item.harness, model: item.model, source: fixed(item).source, available: quotaCase !== item.id,
   })) } })
@@ -161,7 +156,7 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
       assert.equal(body.clientContext.expectedWorkspaceId, workspaceId)
       const args = [body.message, null, url.searchParams.get('botId'), init.headers['x-mikka-submission-id'], body.clientContext.taskDestination, null, [], null, body.clientContext.profileId]
         const issue = issues.find(row => args[0].includes(row.id)); assert.ok(issue)
-        assert.ok(projects.some(row => row.id === issue.projectId))
+        assert.ok(environments.some(row => row.id === issue.environmentId))
         assert.deepEqual(args[4], { kind: 'cloud' }); assert.match(args[0], /"readOnly":true/)
         const profile = profiles.find(row => row.id === args[8]); assert.ok(profile)
         const item = CASES.find(row => row.harness === profile.harness); assert.ok(item)
@@ -232,7 +227,7 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
       const { action, args } = body
       if (action === 'workspace.switchWorkspace') { workspace = args[0]; return rpc({ ok: true, data: { workspaceId: workspace } }) }
       if (action === 'projects.listWorkspaceProjects') return rpc(projects)
-      if (action === 'project-resources.listProjectResources') return rpc(resources(args[1]))
+      if (action === 'project-resources.listProjectResources') return rpc(resources())
       if (action === 'projects.saveProject') {
         assert.equal(args[0].id, undefined); assert.equal(args[0].workspaceId, workspaceId)
         assert.equal(args[0].leadUserId, ownerId); assert.deepEqual(args[0].memberIds, [ownerId])
@@ -247,19 +242,11 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
       }
       if (action === 'project-resources.saveEnvironment') {
         assert.equal(workspaceRole, 'admin'); assert.equal(args[0].id, undefined)
-        assert.deepEqual(args[0].configuration, { runtime: 'cloud', harness: 'any', variables: {}, secretIds: [], repositoryKeys: [scope().repositoryKey] })
+        assert.deepEqual(args[0].configuration, { runtime: 'cloud', harness: 'any', variables: {}, secretIds: [] })
         const environment = { ...args[0], id: id(700 + environments.length), revision: 1, archivedAt: null }
         environments.push(environment)
         if (loseEnvironmentResponse) throw new Error('PRIVATE lost response after successful create')
         return rpc({ id: environment.id, revision: 1 })
-      }
-      if (action === 'project-resources.saveProjectResources') {
-        const project = projects.find(row => row.id === args[0].projectId); assert.ok(project)
-        assert.equal(workspaceRole, 'admin'); assert.equal(args[0].revision, project.revision)
-        assert.ok(!bindings.has(project.id), 'an existing binding must never be overwritten')
-        assert.deepEqual(args[0].environmentIds, [args[0].defaultEnvironmentId])
-        bindings.set(project.id, { repositories: args[0].repositories, environmentBindings: [{ environmentId: args[0].defaultEnvironmentId, isDefault: true }] })
-        project.revision++; return rpc({ revision: project.revision })
       }
       if (action === 'bots.listBots') return rpc([{ id: botId, name: 'PRIVATE_BOT_NAME' }])
       if (action === 'model-order.getModelOrder') return rpc({ candidates: CASES.filter(item => item.id !== missingSource).map(item => ({ harness: item.harness, model: item.model,
@@ -275,10 +262,10 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
           projectId: null, identifier: 'WS-1687-' + (issues.length + 1) }
         issues.push(issue); return rpc({ issue })
       }
-      if (action === 'projects.moveIssueToProject') {
+      if (action === 'environments.setTaskEnvironment') {
         const issue = issues.find(row => row.id === args[0].issueId); assert.ok(issue)
         assert.equal(args[0].workspaceId, workspaceId); assert.equal(args[0].revision, issue.revision)
-        issue.projectId = args[0].projectId; issue.revision++; return rpc({ issue })
+        issue.environmentId = args[0].environmentId; issue.revision++; return rpc({ revision: issue.revision, environmentId: issue.environmentId })
       }
       if (action === 'issues.getIssue') { const issue = issues.find(row => row.id === args[0]); assert.ok(issue); return rpc({ issue }) }
       if (action === 'task-domain.getTaskPresentation') {
@@ -302,7 +289,7 @@ function fixture({ badProject = false, badEnvironment = false, unsafeProfile = f
     }
     assert.fail('Unexpected HTTP ' + path)
   }
-  return { calls, issues, profiles, runs, factories, machineEnds, projects, environments, bindings, fetchImpl, evidence,
+  return { calls, issues, profiles, runs, factories, machineEnds, projects, environments, fetchImpl, evidence,
     run: options => runDomainAcceptance({ env: env(options?.mode ?? 'active', options?.scope === undefined ? scope() : options.scope), fetchImpl,
       now: () => now() + elapsed, WebSocketImpl: class { constructor() { assert.fail('A terminal fixture must not open a socket') } } }) }
 }
@@ -350,7 +337,7 @@ test('provision creates retained useful objects only after full admission, then 
   assert.equal(report.provision.objectsRetained, true)
   const selected = report.provision.activeScope
   assert.equal(selected.projectId, f.projects[0].id); assert.equal(selected.environmentId, f.environments[0].id)
-  assert.equal(f.bindings.get(selected.projectId).repositories[0].baseBranch, 'main')
+  assert.equal(f.environments[0].repositories[0].baseBranch, 'main')
   assert.equal(f.projects[0].leadUserId, ownerId); assert.deepEqual(f.projects[0].memberIds, [ownerId])
   const before = f.calls.filter(call => /saveProject|saveEnvironment|updateProject/.test(call.body?.action ?? '')).length
   assert.equal((await f.run({ mode: 'provision', scope: provisionScope() })).status, 'provisioned')
@@ -361,7 +348,7 @@ test('provision creates retained useful objects only after full admission, then 
 
 test('provision reuses only an explicitly selected compatible Environment and leaves every prior object intact', async () => {
   const f = fixture({ emptyDomain: true, workspaceRole: 'admin' })
-  const existing = { id: id(799), workspaceId, revision: 7, archivedAt: null, name: 'Existing review environment',
+  const existing = { id: id(799), workspaceId, scope: 'workspace', repositories: [{ key: scope().repositoryKey, clone: 'start', baseBranch: 'main', primary: true }], revision: 7, archivedAt: null, name: 'Existing review environment',
     configuration: { runtime: 'cloud', harness: 'any', variables: {}, secretIds: [], repositoryKeys: [] } }
   f.environments.push(existing)
   const before = structuredClone(existing)
@@ -408,18 +395,18 @@ test('a lost Environment receipt blocks blind retries; an explicit authorized ID
   assert.equal(f.environments.length, 1)
 })
 
-test('a changed retained resource binding is rejected rather than overwritten by provisioning', async () => {
+test('a changed retained environment repository is rejected rather than overwritten by provisioning', async () => {
   const f = fixture({ emptyDomain: true, workspaceRole: 'admin' })
   const first = await f.run({ mode: 'provision', scope: provisionScope() })
-  f.bindings.get(first.provision.projectId).repositories[0].baseBranch = 'different-existing-branch'
-  const before = f.calls.filter(call => call.body?.action === 'project-resources.saveProjectResources').length
+  f.environments.find(row => row.id === first.provision.environmentId).repositories[0].baseBranch = 'different-existing-branch'
+  const before = f.calls.filter(call => call.body?.action === 'project-resources.saveEnvironment').length
   const repeated = await f.run({ mode: 'provision', scope: provisionScope() })
   assert.equal(repeated.failure?.code, 'provision_conflict')
-  assert.equal(f.calls.filter(call => call.body?.action === 'project-resources.saveProjectResources').length, before)
-  assert.equal(f.bindings.get(first.provision.projectId).repositories[0].baseBranch, 'different-existing-branch')
+  assert.equal(f.calls.filter(call => call.body?.action === 'project-resources.saveEnvironment').length, before)
+  assert.equal(f.environments.find(row => row.id === first.provision.environmentId).repositories[0].baseBranch, 'different-existing-branch')
 })
 
-test('active runs one useful retained Task per subscription through canonical Project and real observer helpers', async () => {
+test('active sets each retained task environment before dispatch and observes both subscriptions', async () => {
   const f = fixture(), report = await f.run()
   assert.equal(report.status, 'execution_observed_pending_snapshot_review', JSON.stringify(report))
   assert.equal(report.cases.length, 2); assert.equal(f.issues.length, 2); assert.equal(f.runs.length, 2)

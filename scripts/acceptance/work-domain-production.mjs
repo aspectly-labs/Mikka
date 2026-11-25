@@ -137,7 +137,8 @@ async function inventory(client, shared) {
   check(management.profiles.length < 101, 'profile_inventory_truncated')
   const sources = order.candidates.filter(row => row.source?.kind === 'subscription' && uuid(row.source.connectionId)
     && row.credentialOwnerId === shared.ownerId && CASES.some(item => row.harness === item.harness && row.model === item.model))
-  return { projects, bots, resources, github, management, sources, keys }
+  const sharedEnvironments = resources.environments.filter(row => row.scope === 'workspace')
+  return { projects, bots, resources: { ...resources, environments: sharedEnvironments }, github, management, sources, keys }
 }
 const sameSource = (row, item, connectionId) => row?.harness === item.harness && row?.model === item.model
   && row.source?.kind === 'subscription' && row.source.connectionId === connectionId
@@ -188,20 +189,17 @@ async function selectedScope(client, shared, state, scope) {
   const { repository, chatModelId } = await basicScope(client, shared, state, scope)
   const project = state.projects.find(row => row.id === scope.projectId && row.workspaceId === scope.workspaceId)
   check(project, 'project_missing'); check(!project.archivedAt, 'project_archived')
-  const selected = await client.rpc('project-resources.listProjectResources', [scope.workspaceId, scope.projectId])
-  const repo = selected.repositories?.find(row => row.repositoryKey === scope.repositoryKey)
-  const environmentId = repo?.environmentId ?? selected.environmentBindings?.find(row => row.isDefault)?.environmentId
-  const environment = selected.environments?.find(row => row.id === environmentId && row.workspaceId === scope.workspaceId && !row.archivedAt)
-  check(repo && (scope.baseBranch === undefined || scope.baseBranch === repo.baseBranch)
-    && (selected.policy?.mode === 'inherit' || selected.policy?.mode === 'restricted' && selected.policy.repositoryKeys?.includes(scope.repositoryKey)), 'repository_denied')
-  check(environment && environmentId === scope.environmentId
-    && selected.environmentBindings.some(row => row.environmentId === environmentId), 'environment_missing')
+  const environmentId = scope.environmentId
+  const environment = state.resources.environments.find(row => row.id === environmentId && row.workspaceId === scope.workspaceId
+    && row.scope === 'workspace' && !row.archivedAt)
+  check(environment, 'environment_missing')
+  const repo = environment.repositories.find(row => row.key === scope.repositoryKey)
+  check(scope.baseBranch === undefined || scope.baseBranch === repo?.baseBranch, 'repository_denied')
   const config = environment.configuration
-  check(config && ['any', 'cloud'].includes(config.runtime) && Array.isArray(config.repositoryKeys)
-    && (!config.repositoryKeys.length || config.repositoryKeys.includes(scope.repositoryKey)), 'environment_incompatible')
+  check(config && ['any', 'cloud'].includes(config.runtime), 'environment_incompatible')
   return { project, environment, repository, summary: { projectId: project.id, projectRevision: project.revision,
     coordinatorModel: chatModelId,
-    policyRevision: selected.policy.revision, repositoryKey: scope.repositoryKey, baseBranch: repo.baseBranch,
+    policyRevision: state.resources.policy.revision, repositoryKey: scope.repositoryKey, baseBranch: repo?.baseBranch ?? null,
     environmentId, environmentRevision: environment.revision, runtime: config.runtime, harness: config.harness } }
 }
 
@@ -241,9 +239,9 @@ async function provisionScope(client, shared, state, options, report, pin) {
   let environmentId = scope.environmentId ?? receipt.environmentId
   const compatibleEnvironment = environment => {
     const config = environment?.configuration
-    check(environment?.workspaceId === scope.workspaceId && !environment.archivedAt && config?.runtime === 'cloud' && config.harness === 'any'
+    check(environment?.workspaceId === scope.workspaceId && environment.scope === 'workspace' && !environment.archivedAt && config?.runtime === 'cloud' && config.harness === 'any'
       && !config.setup && Object.keys(config.variables ?? {}).length === 0 && (config.secretIds ?? []).length === 0
-      && Array.isArray(config.repositoryKeys) && (!config.repositoryKeys.length || config.repositoryKeys.includes(scope.repositoryKey)), 'provision_conflict', 'environment')
+      && environment.repositories.some(row => row.key === scope.repositoryKey && row.baseBranch === scope.baseBranch && row.primary), 'provision_conflict', 'environment')
   }
   if (environmentId) compatibleEnvironment(state.resources.environments.find(row => row.id === environmentId))
   await pin()
@@ -256,30 +254,19 @@ async function provisionScope(client, shared, state, options, report, pin) {
       && project.leadUserId === shared.ownerId && project.description === description(environmentId), 'provision_conflict')
   }
   receipt.projectId = project.id
-  const existing = await client.rpc('project-resources.listProjectResources', [scope.workspaceId, project.id])
-  check(Array.isArray(existing.repositories) && Array.isArray(existing.environmentBindings), 'response_invalid')
-  const empty = existing.repositories.length === 0 && existing.environmentBindings.length === 0
   if (!environmentId) {
-    check(createdNow && empty, 'provision_ambiguous', 'environment_receipt_required')
+    check(createdNow, 'provision_ambiguous', 'environment_receipt_required')
     const created = await client.rpc('project-resources.saveEnvironment', [{ workspaceId: scope.workspaceId, name: '领域模型只读审阅',
-      configuration: { runtime: 'cloud', harness: 'any', variables: {}, secretIds: [], repositoryKeys: [scope.repositoryKey] } }])
+      scope: 'workspace', repositories: [{ key: scope.repositoryKey, clone: 'start', baseBranch: scope.baseBranch, primary: true }],
+      configuration: { runtime: 'cloud', harness: 'any', variables: {}, secretIds: [] } }])
     check(uuid(created.id), 'provision_conflict'); environmentId = created.id; receipt.environmentId = environmentId
   }
   if (project.description !== description(environmentId)) {
-    check(empty && !(project.issueIds?.length), 'provision_conflict')
+    check(!(project.issueIds?.length), 'provision_conflict')
     project = (await client.rpc('projects.updateProjectProperties', [{ workspaceId: scope.workspaceId, id: project.id,
       revision: project.revision, changes: { description: description(environmentId) } }])).project
     check(project?.id === receipt.projectId && project.description === description(environmentId), 'provision_conflict')
   }
-  if (empty) {
-    check(!(project.issueIds?.length), 'provision_conflict')
-    await client.rpc('project-resources.saveProjectResources', [{ workspaceId: scope.workspaceId, projectId: project.id, revision: project.revision,
-      repositories: [{ repositoryKey: scope.repositoryKey, baseBranch: scope.baseBranch, environmentId, isPrimary: true }],
-      environmentIds: [environmentId], defaultEnvironmentId: environmentId }])
-  } else check(existing.repositories.length === 1 && existing.repositories[0].repositoryKey === scope.repositoryKey
-    && existing.repositories[0].baseBranch === scope.baseBranch && existing.repositories[0].environmentId === environmentId
-    && existing.repositories[0].isPrimary === true && existing.environmentBindings.length === 1
-    && existing.environmentBindings[0].environmentId === environmentId && existing.environmentBindings[0].isDefault === true, 'provision_conflict')
   const activeScope = { ...scope, projectId: project.id, environmentId }
   const verified = await selectedScope(client, shared, await inventory(client, shared), activeScope)
   compatibleEnvironment(verified.environment)
@@ -568,10 +555,10 @@ async function runCase(client, shared, options, item, deps, pin) {
     record.phase = 'task_create'
     const { issue } = await createDomainIssue(client, shared, item, document)
     check(uuid(issue?.id) && Number.isInteger(issue.revision), 'task_invalid'); record.issueId = issue.id
-    await client.rpc('projects.moveIssueToProject', [{ workspaceId: shared.workspaceId, issueId: issue.id, revision: issue.revision, projectId: options.scope.projectId }])
+    await client.rpc('environments.setTaskEnvironment', [{ workspaceId: shared.workspaceId, issueId: issue.id, revision: issue.revision, environmentId: options.scope.environmentId }])
     const saved = (await client.rpc('issues.getIssue', [issue.id])).issue
     check(saved?.id === issue.id && saved.userId === shared.ownerId && saved.workspaceId === shared.workspaceId
-      && saved.projectId === options.scope.projectId && typeof saved.identifier === 'string' && saved.identifier.length > 0
+      && saved.environmentId === options.scope.environmentId && typeof saved.identifier === 'string' && saved.identifier.length > 0
       && textOf(saved.content).includes('fingerprint=' + document.fingerprint), 'task_scope_mismatch')
     record.identifier = saved.identifier
     check(!deps.signal?.aborted, 'interrupted')
@@ -585,7 +572,7 @@ async function runCase(client, shared, options, item, deps, pin) {
       client.rpc('issues.getIssue', [record.issueId]), client.rpc('task-domain.getTaskPresentation', [record.issueId]),
     ])
     check(settled?.id === record.issueId && settled.userId === shared.ownerId && settled.workspaceId === shared.workspaceId
-      && settled.projectId === options.scope.projectId && settled.identifier === record.identifier, 'task_scope_mismatch')
+      && settled.environmentId === options.scope.environmentId && settled.identifier === record.identifier, 'task_scope_mismatch')
     const closed = ['done', 'canceled', 'duplicate'].includes(settled.status)
     check(presentation.version === 1 && ['backlog', 'todo', 'doing', 'review', 'done', 'canceled', 'duplicate'].includes(settled.status)
       && presentation.primaryStatus === settled.status
@@ -621,12 +608,7 @@ async function preflightSummary(client, shared, state, options) {
   const projects = []
   for (const project of state.projects.toSorted((a, b) => a.id.localeCompare(b.id)).slice(0, 25)) {
     check(uuid(project.id) && project.workspaceId === shared.workspaceId, 'response_invalid')
-    const resources = await client.rpc('project-resources.listProjectResources', [shared.workspaceId, project.id])
-    projects.push({ projectId: project.id, revision: project.revision, archived: Boolean(project.archivedAt),
-      repositories: resources.repositories.map(row => ({ repositoryKey: row.repositoryKey, baseBranch: row.baseBranch,
-        environmentId: row.environmentId ?? resources.environmentBindings.find(binding => binding.isDefault)?.environmentId ?? null,
-        githubAuthorized: state.github.repositories.some(repo => row.repositoryKey === 'v2/github.com/' + repo.fullName?.toLowerCase()),
-        policyAllowed: resources.policy.mode === 'inherit' || resources.policy.repositoryKeys.includes(row.repositoryKey) })) })
+    projects.push({ projectId: project.id, revision: project.revision, archived: Boolean(project.archivedAt) })
   }
   const summary = { workspaceId: shared.workspaceId, workspaceRole: context.role, canProvision: ['owner', 'admin'].includes(context.role),
     selectionRequired: !options.scope?.projectId || !options.scope?.environmentId,
@@ -637,7 +619,8 @@ async function preflightSummary(client, shared, state, options) {
     projectsTruncated: state.projects.length > 25, projects, botIds: state.bots.map(row => row.id).filter(uuid).sort().slice(0, 25),
     botsTruncated: state.bots.length > 25, environmentsTruncated: state.resources.environments.length > 25,
     environments: state.resources.environments.slice(0, 25).map(row => ({ environmentId: row.id, revision: row.revision, archived: Boolean(row.archivedAt),
-      runtime: row.configuration.runtime, harness: row.configuration.harness, repositoryCount: row.configuration.repositoryKeys.length })),
+      scope: row.scope, runtime: row.configuration.runtime, harness: row.configuration.harness, repositoryCount: row.repositories.length,
+      repositories: row.repositories.map(({ key, baseBranch, primary, clone }) => ({ repositoryKey: key, baseBranch, primary, clone })) })),
     sources: state.sources.map(row => ({ harness: row.harness, model: row.model, connectionId: row.source.connectionId,
       cloudAvailable: state.management.catalog.models.some(model => sameSource(model, CASES.find(item => item.harness === row.harness), row.source.connectionId) && model.available === true) })),
     profiles: state.management.profiles.map(row => ({ profileId: row.id, version: row.version, enabled: row.enabled,

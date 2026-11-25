@@ -252,7 +252,7 @@ test('provider failure continues the same task through its own Agent\'s authoriz
       assert.deepEqual((await row(check.runId)).report.modelFallback, original.report.modelFallback)
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM factory_attempts WHERE "taskId"=$1 AND stage=\'review\'', [routed.task.id])).rows[0].n, 2)
     } finally {
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "projectId"=$1', [projectId])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "environmentId"=$1', [environment.id])
       await workspacePool.query('DELETE FROM workspace_projects WHERE id=$1', [projectId])
       await workspacePool.query('DELETE FROM workspace_environments WHERE id=$1', [environment.id])
     }
