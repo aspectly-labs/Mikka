@@ -279,10 +279,16 @@ test('installed Organization invitations expose only listing, issuing, revoking 
   const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
   const collection = `/api/organizations/${org}/invitations`
   const accept = '/api/organization-invitations/accept'
+  const token = 'a'.repeat(64)
   for (const method of ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']) {
     assert.equal(allowedApiPath(collection, method), ['GET', 'POST', 'DELETE'].includes(method))
     assert.equal(allowedApiPath(accept, method), method === 'POST')
-    for (const path of [collection.replace(org, 'unknown'), `${collection}/accept`, `${collection}/${org}`, `${accept}/extra`]) {
+    assert.equal(allowedApiPath(`/api/invitations/${token}`, method), method === 'GET')
+    assert.equal(allowedApiPath(`/api/organization-invitations/${token}`, method), method === 'GET')
+    for (const path of [
+      collection.replace(org, 'unknown'), `${collection}/accept`, `${collection}/${org}`, `${accept}/extra`,
+      '/api/invitations/not-hex', `/api/invitations/${token}/extra`, `/api/organization-invitations/${token}/extra`,
+    ]) {
       assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
     }
   }

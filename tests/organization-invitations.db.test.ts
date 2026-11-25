@@ -361,11 +361,12 @@ test('Organization invitations grant only a verified Member without inheriting W
   })
 
   await t.test('public invitation preview endpoints return only non-sensitive fields and uniform 404 on invalid states', async () => {
-    const [{ GET: getOrgPreview }, { GET: getWorkspacePreview }, { hashInvitationToken }] = await Promise.all([
-      import('../app/api/organization-invitations/[token]/route'),
-      import('../app/api/invitations/[token]/route'),
+    const [{ createApiHandler }, { routes }, { hashInvitationToken }] = await Promise.all([
+      import('../apps/api/src/application'),
+      import('../apps/api/generated/routes'),
       import('../lib/invitation-preview-token'),
     ])
+    const api = createApiHandler(routes)
     const previewRecipient = `${randomUUID()}@preview.example.invalid`
     const issued = await invite.issueOrganizationInvitations(organizationId, owner.id, {
       emails: [previewRecipient],
@@ -374,9 +375,7 @@ test('Organization invitations grant only a verified Member without inheriting W
     const created = issued.outcomes[0]
     if (!created?.created) throw new Error('preview org invitation fixture missing')
     const orgToken = created.path.split('/').at(-1)!
-    const orgOk = await getOrgPreview(new Request(`http://localhost/mikka/api/organization-invitations/${orgToken}`), {
-      params: Promise.resolve({ token: orgToken }),
-    })
+    const orgOk = await api.fetch(new Request(`http://localhost/mikka/api/organization-invitations/${orgToken}`))
     assert.equal(orgOk.status, 200)
     assert.equal(orgOk.headers.get('cache-control'), 'no-store')
     assert.equal(orgOk.headers.get('referrer-policy'), 'no-referrer')
@@ -389,9 +388,7 @@ test('Organization invitations grant only a verified Member without inheriting W
 
     await invite.revokeOrganizationInvitation(organizationId, owner.id, { invitationId: created.id })
     for (const badToken of [orgToken, 'bad-token', '0'.repeat(64)]) {
-      const denied = await getOrgPreview(new Request(`http://localhost/mikka/api/organization-invitations/${badToken}`), {
-        params: Promise.resolve({ token: badToken }),
-      })
+      const denied = await api.fetch(new Request(`http://localhost/mikka/api/organization-invitations/${badToken}`))
       assert.equal(denied.status, 404)
       assert.equal(denied.headers.get('cache-control'), 'no-store')
       assert.deepEqual(await denied.json(), { error: 'invitationNotFound' })
@@ -405,9 +402,7 @@ test('Organization invitations grant only a verified Member without inheriting W
       [wsInviteId, workspaceId, owner.id, wsRecipient, 'member', hashInvitationToken(wsToken)],
     )
     try {
-      const wsOk = await getWorkspacePreview(new Request(`http://localhost/mikka/api/invitations/${wsToken}`), {
-        params: Promise.resolve({ token: wsToken }),
-      })
+      const wsOk = await api.fetch(new Request(`http://localhost/mikka/api/invitations/${wsToken}`))
       assert.equal(wsOk.status, 200)
       assert.equal(wsOk.headers.get('cache-control'), 'no-store')
       assert.equal(wsOk.headers.get('referrer-policy'), 'no-referrer')
@@ -420,9 +415,7 @@ test('Organization invitations grant only a verified Member without inheriting W
 
       await check.query('update mikka_workspace_invitations set "expiresAt"=now()-interval \'1 minute\' where id=$1', [wsInviteId])
       for (const badToken of [wsToken, 'bad-token', 'f'.repeat(64)]) {
-        const denied = await getWorkspacePreview(new Request(`http://localhost/mikka/api/invitations/${badToken}`), {
-          params: Promise.resolve({ token: badToken }),
-        })
+        const denied = await api.fetch(new Request(`http://localhost/mikka/api/invitations/${badToken}`))
         assert.equal(denied.status, 404)
         assert.equal(denied.headers.get('cache-control'), 'no-store')
         assert.deepEqual(await denied.json(), { error: 'invitationNotFound' })

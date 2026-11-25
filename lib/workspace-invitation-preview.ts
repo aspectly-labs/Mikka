@@ -15,6 +15,8 @@ export type { WorkspaceInvitationPreview }
 /**
  * Non-sensitive preview for a pending, unexpired team-workspace invitation.
  * Never returns recipient email, workspaceId, userId, or expiry metadata.
+ * Matches acceptHumanInvitation: suspended workspace issuers remain acceptable
+ * with `inviterName: null` while archived-org workspaces return `null`.
  */
 export async function previewWorkspaceInvitation(token: string): Promise<WorkspaceInvitationPreview | null> {
   const valid = parseInvitationToken(token)
