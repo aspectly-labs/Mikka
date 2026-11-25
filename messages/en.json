@@ -3493,7 +3493,7 @@
     "stepsTools": "{count, plural, one {Called # tool} other {Called # tools}}",
     "sendFailed": "Send outcome unconfirmed. Draft kept",
     "acceptanceTab": "Acceptance",
-    "composer": "Tell {agent} what to do next…",
+    "composer": "Ask for follow-up changes",
     "changesTab": "Changes",
     "pullTab": "Pull request",
     "filesTab": "Files",
@@ -8902,7 +8902,8 @@
       "progress": "{completed} of {total} to-dos done",
       "pending": "Pending",
       "inProgress": "In progress",
-      "completed": "Done"
+      "completed": "Done",
+      "step": "Step {step} / {total}"
     },
     "turnFold": {
       "working": "Working for {duration}",
@@ -11482,6 +11483,7 @@
   "AgentMessageRow": {
     "dispatched": "{name} dispatched the task",
     "sent": "Message from {name}",
+    "sentBy": "Sent by {name}",
     "reply": "Reply from {name}",
     "message": "Message from {name}",
     "question": "Question from {name}",
