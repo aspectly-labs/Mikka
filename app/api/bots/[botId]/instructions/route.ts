@@ -1,25 +1,34 @@
 import { getBotInstructions, updateBotInstructions } from '@/app/actions/instructions'
-import { freshSessionRoute } from '@/lib/fresh-session'
-import { withRequestLog } from '@/lib/request-log'
 import { settingsBody } from '@/lib/settings/http'
 import { runInstructionRoute } from '@/lib/settings/instructions-http'
 import { ActionFailureError } from '@/lib/action-error'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-type Context = { params: Promise<{ botId: string }> }
+const workspaceId = ({ request }: { request: Request }) => new URL(request.url).searchParams.get('workspaceId')
 
-export const GET = withRequestLog(
-  '/api/bots/[botId]/instructions',
-  (request: Request, context: Context) => runInstructionRoute(request, async () => {
-    const { botId } = await context.params
-    const workspaceId = new URL(request.url).searchParams.get('workspaceId') ?? undefined
-    return getBotInstructions(botId, workspaceId)
-  }),
+export const GET = defineRoute<'session', 'pat-scoped', { botId: string }>(
+  {
+    route: '/api/bots/[botId]/instructions',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId,
+  },
+  ({ request, params }) => runInstructionRoute(request, async () =>
+    getBotInstructions(params.botId, new URL(request.url).searchParams.get('workspaceId') ?? undefined)),
 )
 
-export const PATCH = freshSessionRoute(withRequestLog(
-  '/api/bots/[botId]/instructions',
-  (request: Request, context: Context) => runInstructionRoute(request, async () => {
-    const { botId } = await context.params
+export const PATCH = defineRoute<'session', 'pat-scoped', { botId: string }>(
+  {
+    route: '/api/bots/[botId]/instructions',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    workspaceId,
+    freshSession: true,
+    write: true,
+  },
+  ({ request, params }) => runInstructionRoute(request, async () => {
     const queryWorkspaceId = new URL(request.url).searchParams.get('workspaceId') ?? undefined
     const body = await settingsBody(request)
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -35,9 +44,9 @@ export const PATCH = freshSessionRoute(withRequestLog(
       throw new ActionFailureError('validationGeneric')
     }
     return updateBotInstructions({
-      botId,
+      botId: params.botId,
       instructions,
       workspaceId: (bodyWorkspaceId as string | undefined) ?? queryWorkspaceId,
     })
   }),
-))
+)
