@@ -194,6 +194,7 @@ export async function bindAgentToConnection(pool: Pick<Pool, 'query'>, scope: Or
 
 /** No E2B key of their own, or one E2B refused: 填入 E2B Key would let 云端 run. A failed read offers nothing. */
 async function e2bKeyWouldFix(query: Pick<Pool, 'query'>, ownerId: string) {
+  if (!(await import('./secrets/flag')).byoE2BKeyEnabled()) return false
   const { ownE2BKeySql } = await import('./secrets/e2b-owner-sql')
   try {
     const { rows: [row] } = await query.query<{ fixes: boolean }>(`SELECT NOT ${ownE2BKeySql('$1::text')} OR EXISTS (SELECT 1 FROM user_e2b_keys uk WHERE uk."userId"=$1::text AND uk."lastErrorCode"='invalid') AS fixes`, [ownerId])

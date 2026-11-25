@@ -56,6 +56,42 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
     } finally { if (previous === undefined) delete process.env.MIKKA_BYO_E2B_KEY; else process.env.MIKKA_BYO_E2B_KEY = previous }
   })
 
+  await t.test('Cloud uses only its instance account and refuses legacy machines, cross-owner access and account changes', async t => {
+    const { bindE2BResource, e2bCreateAccount, e2bResourceAccount } = await import('../lib/secrets/e2b-resource')
+    const { environmentSnapshotScope } = await import('../lib/secrets/e2b-runtime')
+    const operation = randomUUID(), sandbox = randomUUID(), snapshot = randomUUID()
+    const previous = { ...process.env }
+    t.after(() => { for (const name of ['MIKKA_EDITION', 'E2B_API_KEY', 'E2B_TEAM_ID']) {
+      if (previous[name] === undefined) delete process.env[name]
+      else process.env[name] = previous[name]
+    } })
+    const personalKey = 'e2b_' + randomBytes(24).toString('hex')
+    process.env.MIKKA_EDITION = 'community'
+    await e2b.setE2BKey(member, ws.id, { apiKey: personalKey }, { verify: async () => ({ ok: true }) })
+    assert.equal((await e2bCreateAccount(member, randomUUID())).apiKey, personalKey)
+    process.env.MIKKA_EDITION = 'cloud'
+    delete process.env.E2B_API_KEY
+    await assert.rejects(e2bCreateAccount(member, operation), /e2b_key_missing/)
+    await rejects(e2b.setE2BKey(member, ws.id, { apiKey: personalKey }, { verify: async () => assert.fail('no provider verification') }), 'workspaceAccessDenied')
+    assert.equal((await e2b.getE2BKeyCapabilityForUser(member, ws.id)).byoEnabled, false)
+    process.env.E2B_API_KEY = 'synthetic-instance-key'
+    process.env.E2B_TEAM_ID = 'synthetic-team'
+    const created = await e2bCreateAccount(member, operation)
+    assert.equal(created.apiKey, process.env.E2B_API_KEY)
+    await bindE2BResource(member, 'sandbox', sandbox, created.scope)
+    await bindE2BResource(member, 'snapshot', snapshot, created.scope)
+    await assert.rejects(e2bResourceAccount(member, 'sandbox', randomUUID()), /e2b_unavailable/)
+    await assert.rejects(e2bResourceAccount(admin, 'sandbox', sandbox), /e2b_unavailable/)
+    process.env.E2B_API_KEY = 'synthetic-rotated-key'
+    assert.equal((await e2bResourceAccount(member, 'sandbox', sandbox)).apiKey, process.env.E2B_API_KEY)
+    process.env.E2B_TEAM_ID = 'another-team'
+    await assert.rejects(e2bResourceAccount(member, 'snapshot', snapshot), /e2b_unavailable/)
+    await assert.rejects(e2bCreateAccount(member, operation, environmentSnapshotScope()), /e2b_unavailable/)
+    process.env.MIKKA_EDITION = 'community'
+    assert.equal((await e2bCreateAccount(member, randomUUID())).apiKey, personalKey)
+    await e2b.removeE2BKey(member, ws.id)
+  })
+
   await t.test('the recordAudit hook writes name-only rows inside the write transaction', async () => {
     const { secretAuditHook } = await import('../lib/secrets/audit')
     const auditWs = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }])

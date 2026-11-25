@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
-import { E2BKeyError, type E2BKeyErrorCode } from './flag'
+import { byoE2BKeyEnabled, E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
 
 type Env = Record<string, string | undefined>
@@ -20,8 +20,9 @@ export function environmentSnapshotScope(env: Env = process.env): string {
   return key ? 'key:' + createHash('sha256').update(key).digest('hex') : 'unconfigured'
 }
 
-/** The sandbox owner's own key; the unused argument keeps the existing caller signature. */
+/** Credential lookup for callers without an existing provider resource. */
 export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = process.env): Promise<string> {
+  if (!byoE2BKeyEnabled(env) || env.E2B_API_KEY?.trim()) return environmentSnapshotApiKey(env)
   return (await import('./e2b')).getUserE2BApiKey(ownerId, env)
 }
 
@@ -88,7 +89,7 @@ export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: 
     if (error instanceof E2BKeyError) throw error
     const code = classifyE2BError(error, creating)
     if (!code) throw error
-    if (code in CARD_CODE) await (await import('./e2b')).recordE2BKeyError(ownerId, CARD_CODE[code as keyof typeof CARD_CODE]).catch(() => undefined)
+    if (byoE2BKeyEnabled(_env) && !_env.E2B_API_KEY?.trim() && code in CARD_CODE) await (await import('./e2b')).recordE2BKeyError(ownerId, CARD_CODE[code as keyof typeof CARD_CODE]).catch(() => undefined)
     throw Object.assign(new E2BKeyError(code), { cause: error })
   }
 }
