@@ -29,7 +29,7 @@ test('the exact existing file/module count is allowed, while added mocks, baseli
 })
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { trustedPolicyBase } from './external-client-mock-policy.mjs'
@@ -60,4 +60,9 @@ test('the merge-queue checkout resolves the base side, never the candidate itsel
   git('checkout', '-q', 'pr')
   writeFileSync(join(dir, '.git', 'FETCH_HEAD'), `${git('rev-parse', 'HEAD')}\t\t\n`)
   assert.equal(trustedPolicyBase(dir), '')
+})
+
+test('the checked-in external-client mock baseline is permanently empty at 0', () => {
+  const baseline = JSON.parse(readFileSync(new URL('./external-client-mock-baseline.json', import.meta.url), 'utf8'))
+  assert.deepEqual(baseline, {})
 })

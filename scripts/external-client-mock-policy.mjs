@@ -94,6 +94,9 @@ export function trustedPolicyBase(root = process.cwd()) {
 
 export function runExternalClientMockPolicy(root = process.cwd()) {
   const baseline = JSON.parse(readFileSync(resolve(root, baselinePath), 'utf8'))
+  if (Object.keys(baseline).length > 0) {
+    return [`${baselinePath}: permanently locked at 0 entries (found ${Object.keys(baseline).length}); use tests/fakes HTTP service instead of provider module mocks`]
+  }
   // Compare against the merge base so the same PR cannot enlarge its allowance.
   // On the introducing PR there is no older allowance; later PRs can only remove.
   const base = trustedPolicyBase(root)
