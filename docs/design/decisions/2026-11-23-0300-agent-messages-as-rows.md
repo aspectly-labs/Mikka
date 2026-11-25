@@ -1,7 +1,7 @@
 # Agent messages as collapsed rows; author headers in group chat only
 
 - Date: 2026-11-23 03:00 UTC
-- Status: accepted (Alex, 2026-11-23, corrections on the integrated batch's Agent thread and Bot chat captures)
+- **Status:** Accepted (Alex, 2026-11-23, corrections on the integrated batch's Agent thread and Bot chat captures)
 - Amends: [2026-11-22-2000-chat-look-as-lobehub](2026-11-22-2000-chat-look-as-lobehub.md): author headers in group chat only.
 - Amends: [2026-11-22-2300-tool-calls-as-claude-and-lobehub](2026-11-22-2300-tool-calls-as-claude-and-lobehub.md): an Agent's message takes the tool rows' look.
 - Restores: 2026-11-15 (Capy's thread, hosted `agent-thread.reply-like-capy.patch`): a single chat's reply is quiet.

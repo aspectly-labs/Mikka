@@ -1,6 +1,7 @@
 # The iOS home: avatar and drawer at the top left, 「+」 at the top right, search at the bottom
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-05-1300](2026-11-05-1300-ios-no-drawer.md)
 - Source: Alex, in the mobile session. He sent a screenshot of the Grok-style
   bot list and of ours with 对话 and the search field circled: 「你上边那个对话
   跟搜索框什么鬼啊？你看人家没有啊…然后我们抽屉也没了，添加按钮也没有」

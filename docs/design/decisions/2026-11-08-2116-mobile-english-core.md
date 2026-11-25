@@ -1,5 +1,6 @@
 # English mobile core screens for App Store screenshots
 
+- **Status:** Accepted
 - Date 2026-11-08
 - Source Alex requested English screenshots of the updated iOS interface in the App Store release task, issue #1766.
 - Rules R-42 and the existing mobile component ownership.

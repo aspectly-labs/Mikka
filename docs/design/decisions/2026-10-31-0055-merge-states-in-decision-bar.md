@@ -1,6 +1,7 @@
 # The merge states live in the decision bar
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, 「可以这样去做」 and 「我是觉得有点丑呀，你能够把它做好看一点吗？」
 - Rule: R-40, R-74
 - Replaces: a floating destructive Alert; an empty pane after merge; a check mark for 已合并

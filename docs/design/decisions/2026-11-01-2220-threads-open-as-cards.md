@@ -1,6 +1,7 @@
 # Thread lists show cards; every thread opens
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md)
 - Source: Alex, through the coordinator session, on a bug where a thread in a
   bot's 资料 › 线程 tab, and its card in the chat, could not be clicked: the
   thread list should show cards that look like the chat's thread card, and a

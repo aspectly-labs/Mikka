@@ -1,6 +1,7 @@
 # Computer viewer handoff and click targets
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, current desktop bug report and screenshots, relayed by the coordinator: keep the desktop picture continuous during takeover and handback, remove the orange/yellow perimeter, close from all outer margins, and open the right-panel preview from anywhere inside it.
 - Rule: —
 - Replaces: viewer border and button-only preview opening in the merged implementation

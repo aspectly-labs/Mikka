@@ -1,6 +1,7 @@
 # Orchestration has one spec
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: the rules of 2026-10-31
   on personal workspaces, account-bound subscriptions and shares, model
   resolution, who pays, machines (「Mikka 不托管沙盒」, own E2B → own device →

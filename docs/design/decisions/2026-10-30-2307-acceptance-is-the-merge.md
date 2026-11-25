@@ -1,6 +1,7 @@
 # Acceptance is the merge
 
 - Date: 2026-10-30
+- **Status:** Accepted
 - Source: Alex, #528 「我验收成功之后立刻 merge 啊，怎么还会有时间限制呢？」; the backend was handed to this session (「可以的，批准。这部分后端由你来接」)
 - Rule: R-40, R-56
 - Replaces: the `decisions.md` row 「Approving publishes at once」 (#494 「批准并发布」) and 「批准发布」 with 「1 小时内有效」

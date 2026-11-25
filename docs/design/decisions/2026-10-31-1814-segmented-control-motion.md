@@ -1,6 +1,7 @@
 # One segmented control with a gliding pill; motion audit answers
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, 2026-10-31, comparing Claude Code's theme switcher: 「人家这个按钮点击是有 motion 的，我们为什么没有 motion 呢？就很生硬地一下子切过去…人家是做了个有点圆滑的矩形」 and 「你能查一遍吗？到底哪些地方应该加 motion 却没有加？」; audit answers relayed by the coordinator the same day
 - Rule: R-31, R-33, R-37
 - Replaces: `ToggleGroup variant="outline" spacing={0}` joined blocks with a straight inner edge and no motion; the shadcn tab list's per-trigger fill

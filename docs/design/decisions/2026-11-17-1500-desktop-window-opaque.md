@@ -1,5 +1,7 @@
 # 桌面窗口不再用毛玻璃
 
+- **Status:** Accepted
+
 2026-11-17：Alex 决定，macOS 桌面窗口去掉毛玻璃（`sidebar` vibrancy），和 Windows、Linux 一样用不透明窗口。
 
 ## 决定

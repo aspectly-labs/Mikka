@@ -1,6 +1,7 @@
 # iOS chat: no message drag, long press selects, times as separators, a glass title pill
 
 - Date: 2026-11-08
+- **Status:** Accepted
 - Source: Alex on TestFlight, relayed by the coordinator with screenshots of a bot chat (「iOS 助手」), a reference app whose header is a glass pill with the bot's avatar and name, and Grok's header.
 - Rule: `apps/mobile/components/chat.tsx` (`MessageRow`, `TimeSeparator`, `MessageActions`), `apps/mobile/lib/chat-time.ts`, `apps/mobile/features/chat/components/chat-title-pill.tsx`
 - Replaces: swipe-to-quote and the swipe-left times (Figma 01b), and the long-press reactions sheet

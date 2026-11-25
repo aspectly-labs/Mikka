@@ -1,6 +1,7 @@
 # Every thread ends in the composer, finished or not
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session, on an Artifact window whose
   thread (已完成) showed no input box: 「这里怎么又没有这个对话框啊…你统一的查一遍」
 - Rule: R-10 (states it for ended threads and every place a thread opens)

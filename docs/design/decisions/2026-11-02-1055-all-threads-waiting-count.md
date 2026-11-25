@@ -1,6 +1,7 @@
 # 全部线程's button counts the threads waiting on you
 
 - Date: 2026-11-02
+- **Status:** Superseded in part by [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md)
 - Source: Alex, in this session, on the Figma draft 802:56 (「待 Alex 确认 · 全部线程等你计数」): 「可以呢，做吧」
 - Rule: R-82
 - Superseded in part by: [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md) (the window-bar entry lists tasks) and [2026-11-07-2300](2026-11-07-2300-one-conversation-per-task.md) (its hand count includes only tasks needing the person, excluding blocked tasks).

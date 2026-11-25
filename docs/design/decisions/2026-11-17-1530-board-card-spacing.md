@@ -1,6 +1,7 @@
 # 看板 cards keep their distance from the tray
 
 - Date: 2026-11-17
+- **Status:** Accepted
 - Source: Alex, 2026-11-17, on 看板 cards sitting against their column's edge with an empty line reserved under a short title: 「这个怎么靠边缘这么近」「肯定不能贴边搞呀」, and to follow other products and best practice.
 - Exception to: [2026-11-09-0050](2026-11-09-0050-paid-blocks-as-shipped.md), for the affectUI Kanban's column and card spacing only. Its parts, glyphs and colours stay.
 

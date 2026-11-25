@@ -1,6 +1,7 @@
 # Factory candidate commit label
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, reviewing the actual Factory acceptance screenshot in #1118:
   “那个不是有个两条线中间一个圆吗？跟后边的那个 hash 怎么隔这么远啊？而且还出现两个 hash 值”
 - Rule: —

@@ -2,7 +2,7 @@
 
 - Date: 2026-11-20
 - Source: Alex, [#2896](https://github.com/alexj11324/Mikka/issues/2896) and deployment epic [#2897](https://github.com/alexj11324/Mikka/issues/2897).
-- Status: accepted compatibility rule; implementation and release evidence are tracked on #2896 and #2897.
+- **Status:** Accepted compatibility rule; implementation and release evidence are tracked on #2896 and #2897.
 - Reference: the three-stage rollout in [vespin's “Breaking the hosted wire”](https://github.com/ReviewStage/vespin/blob/main/AGENTS.md). Mikka reuses its own protocol and clients.
 
 ## 为什么

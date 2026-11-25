@@ -1,6 +1,7 @@
 # An app's page shows Composio's description, tools and facts, connected or not
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-11-01-0338](2026-11-01-0338-github-plugin-page.md)
 - Source: Alex, relayed by the coordinator with screenshots (our 插件 › Supabase page next to Codex's 插件 › Outlook Email): 「你这里不连接，什么东西都不显示啊，这个不对吧？你看人家这个是有命令的，读写都在这上面，还有开发者信息都在这上面。中间那个图你可能很难模仿，但下面的这些介绍之类你得补齐吧」
 - Rule: R-40 (data, not filler)
 - Superseded in part by: [2026-11-01-0338](2026-11-01-0338-github-plugin-page.md) (GitHub's own plugin page)

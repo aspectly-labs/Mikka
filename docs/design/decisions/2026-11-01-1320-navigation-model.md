@@ -1,6 +1,7 @@
 # One address for what is on screen; every object opens in one place
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md)
 - Source: Alex, after the navigation audit (artifact 「Mikka 导航审计」, relayed
   by the coordinating session): 「整个网页的设计里面，路径和跳转是有问题的…
   严查页面跳转的问题：到底哪个路径应该在哪里，页面应该怎么样去跳转。」 On the

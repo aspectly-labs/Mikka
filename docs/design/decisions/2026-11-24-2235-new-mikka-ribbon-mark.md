@@ -1,6 +1,7 @@
 # Replace 5×5 dot-grid logo with geometric ribbon M
 
 - Date: 2026-11-24
+- **Status:** Accepted
 - Source: Alex's directive ("我们的新图标，麻烦替换之前旧logo，旧logo删掉") and authoritative Figma source `12Yn4bNPchBdDvdIb83KER` (`Page 1`, nodes `1:127`, `1:128`, `1:154`, `1:158`).
 - Rule: `docs/design/brand.md`
 - Replaces: the 5×5 dot-grid M mark across Web, Desktop, and iOS, and supersedes the black-background dot-grid artwork in [2026-11-12-0449-browser-app-icon.md](2026-11-12-0449-browser-app-icon.md) (while retaining the static PNG + ICO browser and home-screen delivery contract under `/mikka/`).

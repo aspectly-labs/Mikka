@@ -1,6 +1,7 @@
 # The iOS app uses the system's own controls
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-11-05-1300](2026-11-05-1300-ios-no-drawer.md)
 - Source: Alex, in the mobile session, on build 4: 「按钮、输入框之类的都不是原生的，也不支持手势。左侧的抽屉感觉就他妈像假的」, 「目前不支持上传附件，这个也不对吧」, and 「有原生能力的要用原生能力」 with the `ios-design` skill (uizze.sh)
 - Superseded in part by: [2026-11-05-1300](2026-11-05-1300-ios-no-drawer.md) (no drawer)
 - Rule: —

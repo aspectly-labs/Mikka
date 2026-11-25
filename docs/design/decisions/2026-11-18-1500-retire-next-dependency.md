@@ -1,5 +1,7 @@
 # 彻底退役 Next.js 依赖
 
+- **Status:** Accepted
+
 2026-11-18：Alex「之前我说要退役 next js, 好像并没有做完, 这次把 nextjs 完整退役, 制定计划」。
 
 2026-11-10 的 `072722bdc`（PR #1898）删掉了页面层——27 个 `page.tsx`、`app/[locale]/layout.tsx`、`proxy.ts`、`next.config.mjs`——但明确保留了 `next` 依赖本身、`app/api`、`app/actions`、`next-intl` 和 `apps/api/compat/**`。这次处理的就是剩下的依赖层与兼容层。

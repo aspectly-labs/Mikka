@@ -1,6 +1,7 @@
 # A task is a circle, a thread is a bubble
 
 - Date: 2026-11-04
+- **Status:** Superseded by [2026-11-19-1630-one-mark-registry.md](2026-11-19-1630-one-mark-registry.md) (lists show tasks only under [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md); threads share the unified state-mark registry)
 - Source: Alex, in the Claude Code session that redesigned the chat's tool calls and citations
   (https://claude.ai/code/session_01XDndLPgmtUBPajCU43rJKp), looking at the chat on a phone:
   「现在你的 issue 状态跟 chat 状态，我是有点分不清楚的。你画得太像了」，then

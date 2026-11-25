@@ -1,7 +1,7 @@
 # Chat look as LobeHub (except avatars and composer tools)
 
 - Date: 2026-11-22 20:00 UTC
-- Status: accepted (Alex, 2026-11-22: an explicit approval for the paid-block changes it needs)
+- **Status:** Superseded in part by [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) (§1 bordered action-bar pill and §5 960px column overrides retired)
 - Supersedes: [2026-11-22-1500-chat-reply-actions-on-hover](2026-11-22-1500-chat-reply-actions-on-hover.md), part 2 (the two-step rhythm). Its parts 1 (every action line waits for hover, keeping its space) and 3 (the read end adds no row) stand.
 - Amends: [2026-11-22-1510-group-chat-as-bot-chat](2026-11-22-1510-group-chat-as-bot-chat.md), part 1: the 680px reading column and the time dividers are gone. Its part 2 stands: only a group's replies have a header.
 - Amended 2026-11-23 (Alex; [2026-11-23-0300-agent-messages-as-rows](2026-11-23-0300-agent-messages-as-rows.md)): **author headers in group chat only.** A single chat (a Bot chat, the Coordinator chat, an Agent thread) keeps the quiet reply of 2026-11-15 (Capy's thread, hosted `agent-thread.reply-like-capy.patch`, `author.quiet`): no Bot or Agent mark and no name line over a reply. Everything else here applies to every chat.

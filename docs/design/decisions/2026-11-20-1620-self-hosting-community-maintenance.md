@@ -1,5 +1,7 @@
 # Self-hosting becomes community-maintained
 
+- **Status:** Accepted
+
 **Accepted November 20, 2026 by Alex.**
 
 Mikka maintains Mikka Cloud. Self-hosting is community-maintained. Remove

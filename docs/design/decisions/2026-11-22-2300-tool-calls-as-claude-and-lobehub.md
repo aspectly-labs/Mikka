@@ -1,7 +1,7 @@
 # Tool calls as Claude, ChatGPT and LobeHub show them
 
 - Date: 2026-11-22 23:00 UTC
-- Status: accepted (Alex, 2026-11-22, a series of requests on the Bot chat's tool group; approval for the paid Thread block's tool rows)
+- **Status:** Accepted (Alex, 2026-11-22, a series of requests on the Bot chat's tool group; approval for the paid Thread block's tool rows)
 - Amends: [2026-11-05-0330-error-causes](2026-11-05-0330-error-causes.md) for tool calls only: a tool call no longer keeps its raw input and output under 「原始数据」. A run's failure line keeps its code under 详情, as that record says.
 - Amends: [2026-11-22-2000-chat-look-as-lobehub](2026-11-22-2000-chat-look-as-lobehub.md): the tool rows and their opened panels.
 

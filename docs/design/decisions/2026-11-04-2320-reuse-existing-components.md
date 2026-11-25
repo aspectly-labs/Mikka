@@ -1,6 +1,7 @@
 # Reuse existing components in every design and build
 
 - Date: 2026-11-04
+- **Status:** Superseded in part by [2026-11-09-0050](2026-11-09-0050-paid-blocks-as-shipped.md)
 - Source: Alex, in the coordinator session. He first asked about the Factory question screen: 「这里没有现成的组件可以用吗？比如 Questionnaire 之类的组件没有吗？」 He then asked for the rule to be written into every relevant document: 「有现成组件应该复用这条原则……没有的话你加进去，你看还有哪些文档里面需要加这个东西的，你麻烦你都加进去一下。」
 - Rule: adds R-90 and extends R-84 (`rules.md`, Design review); adds a Questionnaire row to `components.md`; updates `README.md`, `spec-template.md`, `docs/review-checklist.md`, `AGENTS.md` and `.claude/skills/README.md`.
 - Replaces: —

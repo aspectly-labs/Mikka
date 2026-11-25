@@ -1,5 +1,7 @@
 # Git 提交身份、GPG 签名边界与内置审阅角色边界
 
+- **Status:** Accepted
+
 来源：#3110 WS-A（帧 19 Git 与发布，对齐 #2957 前端设置页，独立于 P5 #2973 的 PR 默认值与自动审阅仓库开关）。
 
 ## 1. 提交作者与邮箱（`gitAuthorName` / `gitAuthorEmail`）

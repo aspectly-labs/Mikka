@@ -1,6 +1,7 @@
 # Development is local first; CI is the final gate
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-20-1640](2026-11-20-1640-sdlc-delivery.md)
 - Source: Alex, relayed by the coordinator session: write the development
   speed-up rules into the docs as standing rules and change every old rule
   that conflicts with them.

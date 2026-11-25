@@ -1,6 +1,7 @@
 # 等待你 is the first group of every thread list
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: the coordinating Claude session, 2026-11-02, deciding under Alex's instruction to settle such questions from HCI principles, after the usability review (findings D6, T2): 「需要用户行动的优先」
 - Rule: R-52
 - Replaces: the group order in [2026-11-01-1250](2026-11-01-1250-five-thread-groups.md)

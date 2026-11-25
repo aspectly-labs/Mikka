@@ -1,6 +1,7 @@
 # The cloud worker template is public and released by CI
 
 - Date: 2026-11-01
+- **Status:** Superseded by [2026-11-01-2335 E2B official templates](2026-11-01-2335-e2b-official-templates.md)
 - Source: Alex, relayed by the coordinator session: every new cloud worker
   template is made public directly, and its release becomes automatic in CI.
 - Rule: —

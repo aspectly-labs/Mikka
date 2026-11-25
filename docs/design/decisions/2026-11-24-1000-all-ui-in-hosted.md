@@ -1,6 +1,6 @@
 # All interface code lives in mikka-hosted-ui
 
-Status: accepted (Alex, 2026-11-24: 「主仓库里面的 UI 不是应该全部删掉的吗？」). Completes phase 4 of
+**Status:** Accepted (Alex, 2026-11-24: 「主仓库里面的 UI 不是应该全部删掉的吗？」). Completes phase 4 of
 [2026-11-22-2205](2026-11-22-2205-headless-public-engine-and-ui-decoupling.md) and supersedes its first point where
 it kept public authentication, server-status and connection pages in this repository. Builds on
 [2026-11-08-2133](2026-11-08-2133-one-ui.md) (one UI; a build without the private repository only has to compile).

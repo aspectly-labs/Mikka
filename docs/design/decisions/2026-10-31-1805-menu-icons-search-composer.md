@@ -1,6 +1,7 @@
 # Account menu icons, a visible settings search, no dark composer stroke
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, on 2026-10-31 screenshots: 「pop over 出来，它仍然是没有图标的呀，就不太对吧」 (account menu); 「你这样看你觉得好看吗？这都看不见了」 (设置 search field); 「没有输入字的时候是没有线的，应该是阴影吧。但是我输入字以后，突然之间会加上一条黑色的描线」 (composer)
 - Rule: R-75, R-31
 - Replaces: account menu rows without icons; `SidebarInput` with `bg-background`; the composer's `focus-visible:border-ring`

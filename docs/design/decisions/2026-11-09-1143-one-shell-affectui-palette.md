@@ -1,6 +1,7 @@
 # One app shell (affectUI App Shell) and affectUI's palette
 
 - Date: 2026-11-09
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator: "use affectUI's own palette everywhere", with one shell around the app.
 - Rule: —
 - Replaces: the icon rail plus window card as the hosted app's outer frame; Mikka's own colour values in the hosted edition.

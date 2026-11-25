@@ -1,6 +1,7 @@
 # iOS: Comma frames accepted; four tabs and a search tab
 
 - Date: 2026-11-06
+- **Status:** Superseded in part by [2026-11-07-2045-tasks-only-threads-inside.md](2026-11-07-2045-tasks-only-threads-inside.md)
 - Source: Alex, relayed by the coordinator on 2026-11-06, answering §八 of [`mobile-comma-redesign.md`](../mobile-comma-redesign.md).
 - Rule: —
 - Builds on: [2026-11-06-1200](2026-11-06-1200-ios-drop-drawer-comma-redesign.md).

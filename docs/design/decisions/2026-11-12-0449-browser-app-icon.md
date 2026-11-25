@@ -1,6 +1,7 @@
 # One black app icon for the website and app
 
 - Date: 2026-11-12
+- **Status:** Superseded in part by [2026-11-24-2235-new-mikka-ribbon-mark.md](2026-11-24-2235-new-mikka-ribbon-mark.md) (black 5×5 dot-grid artwork replaced by geometric ribbon M; static PNG/ICO delivery under `/mikka/` retained)
 - Source: Alex's SEO cleanup request: keep the black PNG app icon consistent across the website and app.
 - Rule: `brand.md` browser and home-screen assets
 - Replaces: `brand.md` browser SVG and theme-switching icon requirement

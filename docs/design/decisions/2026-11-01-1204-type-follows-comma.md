@@ -1,6 +1,7 @@
 # Type follows Comma
 
 - Date: 2026-11-01
+- **Status:** Superseded by [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) (Comma retired as typography and look authority)
 - Source: Alex, after Chinese looked wrong on the web app next to Notion: 「去查查comma的做法,我们的字体规则和他们的百分之百对齐」; the sizes too, relayed by the coordinating session the same day (xs 12/18, xl 20/30, -0.01em on lg and xl, chat 13)
 - Rule: R-32
 - Replaces: Geist with a named Chinese fallback (`"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei"`), weight 400; Tailwind's default size tokens; chat at 14/22 from `2026-11-01-0140-document-type-scale`

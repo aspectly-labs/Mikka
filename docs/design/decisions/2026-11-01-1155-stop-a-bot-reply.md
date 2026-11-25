@@ -1,6 +1,7 @@
 # A bot's reply can be stopped from its chat
 
 - Date: 2026-11-01
+- **Status:** Accepted (extended to every chat by [2026-11-22-1600](2026-11-22-1600-stop-in-the-send-button.md))
 - Source: Alex, on a production screenshot of the Coordinator chat showing
   「Coordinator is working…」 with only a grey send button:
   「为什么没有办法终止？按照道理来说，聊天过程中我可以直接终止掉。」

@@ -1,6 +1,7 @@
 # Workspace owns work; teams, projects, responsibility and execution are independent
 
 - Date: 2026-11-07
+- **Status:** Accepted
 - Source: Alex, [#1687](https://github.com/alexj11324/Mikka/issues/1687), and the implementation instruction to complete end-to-end verification and merge.
 - Rule: T1–T6 in [0231](2026-11-02-0231-workspace-is-the-tenant.md).
 - Replaces: account/Team-Link-derived Project ownership, project names as task relationships, and the glossary clause that a shared task belongs to its Team. The existing Factory completion and frozen-run contracts remain authoritative.

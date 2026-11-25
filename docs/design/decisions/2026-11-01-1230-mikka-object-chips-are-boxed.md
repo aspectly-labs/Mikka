@@ -1,6 +1,7 @@
 # Mikka object chips are boxed
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, looking at a reply that showed a task as a status ring, an
   underlined 「ZHIX-4」 and an underlined title: 「这个应该是要用一个 chip 把它框住
   的，怎么没有框住呢？你看看人家做得多好。」 He attached a reference: light,

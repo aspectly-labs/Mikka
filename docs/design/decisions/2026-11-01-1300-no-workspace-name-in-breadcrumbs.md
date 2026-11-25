@@ -1,6 +1,7 @@
 # No workspace name in breadcrumbs
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, on the task page's breadcrumb 「Zhixuan Jiang的工作区 > Board > ZHIX-2 …」, relayed by the coordinating session: 「你前面不应该加"工作区"，那点都点不动。工作区只有这一个。切换工作区必须在左下角头像那里去切换。你这里写这个东西没有任何意义。」
 - Rule: R-79
 - Replaces: —

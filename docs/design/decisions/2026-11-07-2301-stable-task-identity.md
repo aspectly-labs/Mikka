@@ -1,6 +1,7 @@
 # Task identifiers survive grouping, ownership lifecycle and external sync
 
 - Date: 2026-11-07
+- **Status:** Accepted
 - Source: Alex's implementation request for [#1687](https://github.com/alexj11324/Mikka/issues/1687), section C; coordinated with [#1503](https://github.com/alexj11324/Mikka/issues/1503).
 - Rule: Workspace tenancy from [0231](2026-11-02-0231-workspace-is-the-tenant.md); [work domain model](2026-11-07-2300-work-domain-model.md).
 - Replaces: recomputing an existing task's displayed identifier from its current Team key, Team number, owner email or personal prefix. Frozen Run and publication contracts remain authoritative.

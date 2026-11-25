@@ -1,6 +1,7 @@
 # Align reply retry with its failure state
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, reviewing a failed Claude subscription reply: 「而且重试按钮感觉有点靠下」。
 - Rule: R-40; existing chat refusal layout in `components/coordinator/composer-notice.ts`.
 - Replaces: —

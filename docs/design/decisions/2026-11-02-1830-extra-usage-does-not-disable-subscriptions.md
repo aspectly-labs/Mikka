@@ -1,6 +1,7 @@
 # Extra usage does not disable a subscription
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, in the subscription repair session: 「额外用量开启，这和我们的订阅有什么关系吗？……只要使用订阅，只要是能用就可以用啊」
 - Rule: —
 - Replaces: the implementation's requirement that Codex credits and Claude extra usage be explicitly disabled before any subscription use.

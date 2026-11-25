@@ -1,6 +1,7 @@
 # A reply's tools read as one summary line; an object shows once
 
 - Date: 2026-11-04
+- **Status:** Accepted
 - Source: Alex, reviewing the Coordinator chat on a phone, relayed by the coordinator session
   (session_01XDndLThEHgcdfvzQakrYDT): 「为什么你那里会出现两个 mention chips？正常情况下应该是几个，你看看同类型的产品，
   它到底还会有几个 chips 总是显示在 chat 界面上？」 and 「上面全是 error 也算是一个工具吗？你的工具调用到底该怎么写？

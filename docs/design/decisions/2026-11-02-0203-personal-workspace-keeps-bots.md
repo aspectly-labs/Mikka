@@ -1,6 +1,7 @@
 # A personal workspace keeps Bot 与 Agents
 
 - Date: 2026-11-02
+- **Status:** Superseded in part by [2026-11-02-0216](2026-11-02-0216-personal-workspace-has-workspace-settings.md)
 - Source: Alex, relayed by the coordinator session: 「个人工作区也要保留『Bot 与 Agents』设置项。个人工作区和团队工作区只差团队相关的内容（成员、共享额度、共享工作等），Bot 和 Agent 两边都要有。」
 - Rule: R-26
 - Superseded in part by: [2026-11-02-0216](2026-11-02-0216-personal-workspace-has-workspace-settings.md) (常规 and 密钥与环境 show in a personal workspace too)

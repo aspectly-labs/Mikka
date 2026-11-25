@@ -1,6 +1,7 @@
 # Link GitHub from the desktop: the app's account, back through its loopback
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: the coordinator session, confirmed point by point: follow RFC 8252 for the desktop app; authorize in the system browser; bind the link to the account signed in to the app, not the browser's Mikka session; return to the app automatically; (a) a loopback, no custom URL scheme; (b) the answer waits until the return reaches this computer and the app sends a verifier only it holds; (c) an older desktop keeps the browser-session check with an update hint, no forced update; (d) PKCE where GitHub supports it, checked against GitHub's documentation.
 - Rule: —
 - Partly replaces: [2026-11-03-0230](2026-11-03-0230-github-link-from-desktop.md) for desktop builds that have the loopback return

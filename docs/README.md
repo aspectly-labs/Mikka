@@ -1,11 +1,18 @@
 # Mikka documentation
 
-Use this index to find the setup, design, integration and operations documents
-for the part of Mikka you are changing. Development and acceptance rules live in
-[`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
+Start with the [Engineering Handbook](engineering/HANDBOOK.md) for Mikka's
+authoritative 6-stage SDLC and Three-Tier Documentation Architecture across
+`Mikka`, `mikka-hosted-ui`, and `mikka-cloud`. Development and agent rules live
+in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 
 ## Set up and contribute
 
+- [Engineering Handbook](engineering/HANDBOOK.md) is the Tier 1 Living Standard
+  covering specification, architecture primitives, static gates, verification,
+  fail-closed promotion, and blameless COE. Use its templates for
+  [design docs](engineering/templates/design-doc.md),
+  [UI specs](engineering/templates/ui-spec.md), and
+  [COE postmortems](engineering/templates/coe-postmortem.md).
 - [Development workflow](dev-workflow.md) covers issue ownership, local work,
   pull requests, merging and release follow-through.
 - [Cloud Linux bootstrap](local-bootstrap.md) prepares the isolated database,
@@ -31,9 +38,10 @@ for the part of Mikka you are changing. Development and acceptance rules live in
 - [Glossary](design/glossary.md) defines bots, chats, threads and Agents.
 - [Rules](design/rules.md), [components](design/components.md) and
   [copy](design/copy.md) guide product and UI changes.
-- [Effective design and product rules](design/README.md) are read first. Dated
-  [decision records](design/decisions/README.md) explain provenance; superseded
-  entries and the [legacy decision log](design/decisions.md) are not active instructions.
+- [Effective design and product rules](design/README.md) are read first. Tier 2
+  dated [decision records](design/decisions/README.md) preserve immutable
+  provenance with explicit `Status:` headers (`Accepted` or `Superseded by`);
+  superseded entries and the [legacy decision log](design/decisions.md) are not active instructions.
 - [Feature specification template](design/spec-template.md) supplies the
   structure for a feature specification.
 - [Execution rules](execution-rules.md) describe model and machine selection.

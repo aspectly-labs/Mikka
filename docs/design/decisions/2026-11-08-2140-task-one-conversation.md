@@ -1,6 +1,7 @@
 # A task is one conversation; a divider only where the Agent changed
 
 - Date: 2026-11-08
+- **Status:** Superseded by [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md)
 - Source: Alex, relayed by the coordinator: a factory task's conversation said 「第 2 次尝试结束 · 再试」 where the next run was the factory's independent review, and the task page's 活动 listed 「第 1/2/3 次尝试 · 等你回复 · Codex」 for runs that were one conversation.
 - Rule: `apps/mobile/features/tasks/model/task-conversation.ts` (`boundary`, `activityEntries`)
 - Superseded by: [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md) on the divider's words and, as amended there the same day, on 「换」: a change of Agent is labelled with the next Agent's mark and name, as Warp does

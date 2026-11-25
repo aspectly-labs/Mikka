@@ -1,6 +1,7 @@
 # Code diffs on the web use Pierre's @pierre/diffs
 
 - Date: 2026-11-04
+- **Status:** Accepted
 - Source: Alex, GitHub issue #1226: "网页端显示代码改动的地方，改用 Pierre Computer 的开源库 `@pierre/diffs` … 直接用它原本的样子，不要按我们现在的样式重新调。"
 - Rule: —
 - Replaces: —

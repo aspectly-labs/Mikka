@@ -1,6 +1,7 @@
 # A task has one conversation; the hand is only on the task; 受阻 has its own icon
 
 - Date: 2026-11-07
+- **Status:** Superseded in part by [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md)
 - Source: Alex, 2026-11-07, on the iOS build of [2230](2026-11-07-2230-one-icon-per-task-state.md):
   - on the two attempts in 活动, newest first, each opening its own thread: 「为什么这里第二次尝试会分给两个不同的 thread？你第二次尝试明显应该在第一次之后呀！」;
   - on the hand on the second attempt: 「举手符号是在待处理的时候，需要我去处理时才会用到……怎么会用到这个举手符号呢？」. He also said that a blocked item needs its own symbol, not the hand;

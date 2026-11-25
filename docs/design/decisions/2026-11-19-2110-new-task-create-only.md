@@ -1,5 +1,7 @@
 # 新建任务只登记；指派给 Bot 会唤醒它
 
+- **Status:** Accepted
+
 2026-11-19。Alex 指出新建任务逻辑和 Capy 不一致，要求按 Capy 的 Electron 源码做。
 
 ## Capy 怎么做（0.9.2 源码）

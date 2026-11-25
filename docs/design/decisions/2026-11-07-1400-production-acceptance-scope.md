@@ -1,6 +1,7 @@
 # Production acceptance only for what cannot be tested locally
 
 - Date: 2026-11-07
+- **Status:** Accepted
 - Source: Alex, 2026-11-07, after #1603's refresh fixes waited on a shared-account sign-in to finish: 「你是对桌面这个进行刷新的测试，你为什么需要真实账号呢？」 He then approved: 能在本地生产构建上测的不再做生产验收；只有本地测不了的才上生产验；另加一个上线后自动跑的冒烟测试。
 - Rule: AGENTS.md「After the merge」, `docs/acceptance.md`「Production acceptance after a merge」, `docs/dev-workflow.md` § 5
 - Replaces: the rule that every merged change is accepted in production with the shared test account

@@ -1,6 +1,7 @@
 # 模型与额度: two rows, sign-in stays in the row
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex: 「只显示两排」; on the reviewed Artifact of seven states: 「可以,照这个实现」
 - Rule: R-39, R-40
 - Replaces: the 「连接订阅」 button and dialog in Figma V06 and ST-10; S-AF's 查看用量

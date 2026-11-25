@@ -1,5 +1,7 @@
 # Organization security and scoped invitations
 
+- **Status:** Accepted
+
 Scope: [settings backend P7](https://github.com/alexj11324/Mikka/issues/2956).
 This decision defines the backend contract for the frontend in
 [#2957](https://github.com/alexj11324/Mikka/issues/2957); implementation and

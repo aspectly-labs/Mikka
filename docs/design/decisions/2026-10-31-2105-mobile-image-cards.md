@@ -1,6 +1,7 @@
 # Image cards draw natively in the iOS app
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator: 「我们不是有图片显示吗？但在网页端能够显示，手机端却无法正常显示」; 「不要过度设计」
 - Rule: —
 - Replaces: —

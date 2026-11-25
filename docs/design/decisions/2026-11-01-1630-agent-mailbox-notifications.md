@@ -1,6 +1,7 @@
 # Agent mailbox delivery notifies its receiver
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, Codex takeover: 「这个东西如果说是主动调用的话，是不是不合适啊？应该他能够收到提醒才对啊」
 - Rule: —
 - Replaces: the personal mailbox core's explicit-inbox-pull-only notification behavior

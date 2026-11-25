@@ -1,5 +1,7 @@
 # Bot sidebar threads open in the main chat
 
+- **Status:** Accepted
+
 On Web and Electron, selecting a conversation thread under a Bot opens it in
 the main chat and highlights its sidebar row. Opening an independent review or
 verification from within that conversation shows the child in the right pane.

@@ -1,6 +1,7 @@
 # Where a run executes: own E2B, own auto-schedule device, else an immediate warning
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-11-02-1400](2026-11-02-1400-model-order-dispatch.md)
 - Source: Alex, relayed by the coordinator session. A newly signed-up person may have no card, no E2B and no device; chat must never fail. Corrections the same day: 「MVP 不提供 Mikka 自己的 E2B/云沙箱」 (cloud only on the person's own E2B key); then the 「允许自动调度」 switch, and an immediate warning the person can act on.
 - Rule: —
 - Superseded in part by: [2026-11-02-1400](2026-11-02-1400-model-order-dispatch.md) and [2026-11-02-2330](2026-11-02-2330-cloud-first-dispatch.md) (how a new run picks its machine: 云端 first, then a server, then a computer)

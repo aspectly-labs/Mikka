@@ -1,6 +1,7 @@
 # No 「尝试」 in the UI: a task is one conversation
 
 - Date: 2026-11-09
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator: drop the word 「尝试」 entirely, everywhere on iOS; then the same on the web (2026-11-09).
 - Rule: iOS `apps/mobile/features/tasks/model/task-conversation.ts` (`boundary`, `agentRunTitle`); web: `components/workspace/issue-threads.tsx` (`useAgentActivity`) and the hosted task-conversation, thread-header and task-column slots
 - Amended: 2026-11-09, Alex, relayed by the coordinator: no 「换 X」 wording. A change of Agent is labelled with the next Agent's mark and name, as Warp labels each run by its agent; see "Agent labels, not switch verbs" below.

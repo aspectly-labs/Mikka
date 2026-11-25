@@ -1,6 +1,7 @@
 # The workspace 电脑 policy gates computer tasks only
 
 - Date: 2026-11-02
+- **Status:** Superseded in part by [2026-11-02-1232](2026-11-02-1232-computer-policy-binds-agents-not-people.md)
 - Source: the coordinating Claude session's decision, relayed in the E2B
   templates session on 2026-11-02: 「工作区电脑策略只限制电脑/桌面任务，代码任务不受它约束（领取和排队两处都一样）」. Based on
   [2026-11-02-0231 workspace is the tenant](2026-11-02-0231-workspace-is-the-tenant.md)

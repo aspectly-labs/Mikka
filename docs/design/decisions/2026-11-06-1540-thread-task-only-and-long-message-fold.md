@@ -1,6 +1,7 @@
 # A thread shows only its task; long messages fold
 
 - Date: 2026-11-06
+- **Status:** Accepted
 - Source: Alex, Mac desktop, about 15:40 UTC, on the thread 「测试派发流程：在 Mikka-handoff 新建测试文件」: 「我怎么感觉把 system instruction 也发进去了呢？……按照道理来说，只应该发中间的那段话才对，上下的 system instruction 为什么会一起发出来呢？不应该隐藏一下吗？」 and 「这么长的文字，难道不应该缩成一段折叠起来，显示 Show less / Show more 吗？」
 - Rule: —
 - Replaces: —

@@ -1,6 +1,7 @@
 # UI changes: Figma first, skill review second, code last
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-01-1440-dev-workflow-local-first](2026-11-01-1440-dev-workflow-local-first.md)
 - Source: Alex, after a GitHub plugin page shipped with repository names piled
   into the connection card: 「这些东西都要用那个技能去审过，不能够直接做。你先画
   Figma，画完之后交给那个技能，包括这些 UI 美观的技能，你要让他们审过之后，才能够去

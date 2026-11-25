@@ -1,6 +1,7 @@
 # One icon per task state; the hand is only 等你处理
 
 - Date: 2026-11-07
+- **Status:** Superseded in part by [2026-11-13-1405](2026-11-13-1405-one-task-status.md)
 - Source: Alex, 2026-11-07, on the web build of [2045](2026-11-07-2045-tasks-only-threads-inside.md), where every row under 待处理 showed a raised hand: 「应该是 waiting for you 的时候，需要我处理的时候才会举手」, 「我明确要求过，每一个状态都要有不同的符号」 and 「你有去做过调研吗？……依据是哪一个竞品」. After the research below he approved the seven-state model: 「可以按照你新的这个东西去做」.
 - Rule: R-52; `mobile.md` 「Where it lives」
 - Superseded in part by: [2026-11-13-1405](2026-11-13-1405-one-task-status.md) (a task row shows its status field's icon; the run states are the Agent mark beside it, and lists are no longer grouped 等待你 · 进行中 · 待办 · 已完成).

@@ -1,6 +1,7 @@
 # One component per concept, one ladder per control family
 
 - Date: 2026-11-19 20:12 UTC
+- **Status:** Accepted
 - Source: the 2026-11-19 competitor audit, read back against our own tree. The
   badge evidence below is measured in this repository, not in the competitor.
 - Rule: R-37, R-99, R-103 and R-104 stand as written; this adds the badge ladder

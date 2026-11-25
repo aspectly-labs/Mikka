@@ -1,6 +1,7 @@
 # Threads group in five, and an outcome judge decides resolved
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md)
 - Source: Alex, on the Coordinator's 已解决（16）holding ZHIX-2 README runs that
   failed or stalled ("Not logged in · Please run /login", "I couldn't open the
   PR", 「我没有创建 PR，gh 拿不到凭证」): 「这明明是 block，你为什么分到了 resolve

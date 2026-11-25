@@ -2,7 +2,7 @@
 
 - Date: 2026-11-20 18:55 UTC
 - Source: Alex, [#2891](https://github.com/alexj11324/Mikka/issues/2891) and [#2884](https://github.com/alexj11324/Mikka/issues/2884).
-- Status: accepted; implementation and execution evidence are tracked on #2884 and #2891.
+- **Status:** Accepted; implementation and execution evidence are tracked on #2884 and #2891.
 - Supersedes: live Claude Code, Codex and DeepSeek inference as development, CI or merge acceptance requirements in `AGENTS.md` and older acceptance guides. The routing requirement in [2026-11-20-0530](2026-11-20-0530-litellm-only-model-egress.md) remains in force.
 
 ## Decision

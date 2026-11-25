@@ -1,5 +1,7 @@
 # 图标统一用 affectUI 的 Hugeicons
 
+- **Status:** Accepted
+
 2026-11-18：Alex 的原话是「Unify the icons on affectUI's icons, except the task status icons.」，中文原话是「统一 affectui 里面的 icon，除开任务的 status 的 icon 以外」。
 
 在此之前官方界面同时有三种画法：`mikka` 用 `lucide-react`（246 个文件），`mikka-hosted-ui` 的手写页面用 `@remixicon/react`，只有 affectUI 的 `components/mikka/*` 用 Hugeicons。三套线宽和字形比例混在一起，是「看着毛糙」的一部分。

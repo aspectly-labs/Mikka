@@ -1,6 +1,7 @@
 # iOS headers: one centred title, no bar slab
 
 - Date: 2026-11-08
+- **Status:** Accepted
 - Source: Alex on TestFlight after OTA 8e208aa5, relayed by the coordinator with Comma's Inbox as the reference: the Bot and 任务 tabs showed the title twice (a big left-hand title and the native centred one), and a chat's top was an opaque grey slab with a back button and no name.
 - Rule: `apps/mobile/components/NavBar.tsx`, `apps/mobile/components/nav-bar-options.ts` (pinned by `apps/mobile/tests/nav-bar-options.test.mts`)
 - Replaces: the top-row left title of 2026-11-07-2045 and the material bar of 2026-11-07 on tab roots and chats
