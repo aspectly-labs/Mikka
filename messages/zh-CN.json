@@ -1002,7 +1002,7 @@
       "repositoryPlaceholder": "例如：owner/repo",
       "bulkPlaceholder": "API_KEY=sk-...\nWEBHOOK_SECRET=whsec_...",
       "backToSecrets": "密钥与环境",
-      "environmentsCrossLink": "非敏感的启动环境变量可在「运行环境」中配置。",
+      "environmentsCrossLink": "启动脚本与运行变量",
       "openEnvironmentsAction": "前往运行环境"
     },
     "audit": {
@@ -1981,7 +1981,7 @@
       "loadError": "无法读取个人任务编号。",
       "taken": "和已连接的 Linear 团队 key 重名，请换一个。",
       "saved": "已保存，个人任务现在显示为 {example}。",
-      "prefixPlaceholder": "MIK"
+      "prefixPlaceholder": "ALEX"
     },
     "privacy": {
       "sharedLinksNone": "没有公开访问的链接。",
@@ -2032,7 +2032,7 @@
       "expires": "{date} 过期",
       "revoke": "撤销",
       "namePlaceholder": "例如：CI 部署令牌",
-      "modelsCrossLink": "要配置模型服务商 API Key？前往「模型」管理。",
+      "modelsCrossLink": "模型服务商 API Key",
       "openModelsAction": "前往模型"
     },
     "mcpIntegrations": {
@@ -2108,13 +2108,13 @@
       "testConnectionButton": "测试",
       "mikkaIntegrationsHeading": "Mikka 集成",
       "connectedAppsHeading": "已连接应用",
-      "connectedAppsDescription": "已连接到工作区或个人的第三方应用账号。",
+      "connectedAppsDescription": "工作区与个人 OAuth 账号",
       "emptyConnectedApps": "暂无已连接应用",
       "browseAppsAction": "浏览应用",
       "mcpOnlyEmptyShared": "暂无工作区共享 MCP 服务器",
       "mcpOnlyEmptyPersonal": "暂无个人 MCP 服务器",
       "mcpServersCount": "{count} 个 MCP 服务器",
-      "manageSkillsHint": "技能统一在「设置 › 技能」中管理。",
+      "manageSkillsHint": "工作区与个人技能",
       "openSkillsAction": "前往技能",
       "backToMcp": "MCP 与插件",
       "backToIntegrations": "集成",
@@ -2398,7 +2398,7 @@
       "setupPlaceholder": "pnpm install --frozen-lockfile",
       "copyFilesPlaceholder": ".env.local\n.npmrc",
       "backToEnvironments": "运行环境",
-      "secretsCrossLink": "需要加密存储的密钥？前往「密钥与环境」管理。",
+      "secretsCrossLink": "加密密钥",
       "openSecretsAction": "前往密钥"
     },
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
@@ -10659,7 +10659,7 @@
       "modelIdPlaceholder": "例如：gpt-5.4",
       "apiKeyPlaceholder": "sk-...",
       "baseUrlPlaceholder": "https://api.example.com/v1",
-      "apiCrossLink": "要管理 Mikka 访问令牌？前往「API」设置。",
+      "apiCrossLink": "Mikka 访问令牌",
       "openApiAction": "前往 API"
     },
     "memory": {

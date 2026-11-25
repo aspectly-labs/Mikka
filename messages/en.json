@@ -1002,7 +1002,7 @@
       "repositoryPlaceholder": "e.g. owner/repo",
       "bulkPlaceholder": "API_KEY=sk-...\nWEBHOOK_SECRET=whsec_...",
       "backToSecrets": "Secrets and environment",
-      "environmentsCrossLink": "Non-secret startup variables live in Run environments.",
+      "environmentsCrossLink": "Startup scripts and runtime variables",
       "openEnvironmentsAction": "Open Run environments"
     },
     "audit": {
@@ -1981,7 +1981,7 @@
       "loadError": "Could not load your personal task ids.",
       "taken": "That matches a connected Linear team key. Choose another.",
       "saved": "Saved. Personal tasks now show as {example}.",
-      "prefixPlaceholder": "MIK"
+      "prefixPlaceholder": "ALEX"
     },
     "privacy": {
       "sharedLinksNone": "No public links.",
@@ -2032,7 +2032,7 @@
       "expires": "Expires {date}",
       "revoke": "Revoke",
       "namePlaceholder": "e.g. CI deploy token",
-      "modelsCrossLink": "Looking for model provider API keys? Manage them in Models.",
+      "modelsCrossLink": "Model provider API keys",
       "openModelsAction": "Open Models"
     },
     "mcpIntegrations": {
@@ -2108,13 +2108,13 @@
       "testConnectionButton": "Test",
       "mikkaIntegrationsHeading": "Mikka integrations",
       "connectedAppsHeading": "Connected apps",
-      "connectedAppsDescription": "Third-party accounts connected to your workspace or profile.",
+      "connectedAppsDescription": "Workspace and personal OAuth accounts",
       "emptyConnectedApps": "No connected apps yet",
       "browseAppsAction": "Browse apps",
       "mcpOnlyEmptyShared": "No shared MCP servers",
       "mcpOnlyEmptyPersonal": "No personal MCP servers",
       "mcpServersCount": "{count, plural, one {# MCP server} other {# MCP servers}}",
-      "manageSkillsHint": "Skills are managed in Settings › Skills.",
+      "manageSkillsHint": "Workspace and personal skills",
       "openSkillsAction": "Open Skills",
       "backToMcp": "MCP & plugins",
       "backToIntegrations": "Integrations",
@@ -2398,7 +2398,7 @@
       "setupPlaceholder": "pnpm install --frozen-lockfile",
       "copyFilesPlaceholder": ".env.local\n.npmrc",
       "backToEnvironments": "Run environments",
-      "secretsCrossLink": "Need encrypted credentials? Manage them in Secrets.",
+      "secretsCrossLink": "Encrypted credentials",
       "openSecretsAction": "Open Secrets"
     },
     "workspaceUnavailable": "Couldn't load the workspace. Refresh and try again.",
@@ -10659,7 +10659,7 @@
       "modelIdPlaceholder": "e.g. gpt-5.4",
       "apiKeyPlaceholder": "sk-...",
       "baseUrlPlaceholder": "https://api.example.com/v1",
-      "apiCrossLink": "Looking for Mikka API tokens? Manage them in API.",
+      "apiCrossLink": "Mikka API tokens",
       "openApiAction": "Open API"
     },
     "memory": {
