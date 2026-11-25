@@ -357,7 +357,7 @@ function policyMask(policy: string, secrets: Array<{ name: string; value: string
   mask.sourcePolicy = digest(policy)
   return mask
 }
-function integration(t: TestContext, kind: Credential['kind'] = 'installation') {
+function integration(t: TestContext, kind: 'installation' | 'user' = 'installation') {
   const f = fixture(t), actor: ReviewActor = { userId: viewer, workspaceId: f.saved.identity.workspaceId,
     credential: { kind: 'session', id: randomUUID() } }
   const scope: ReviewScope = { identity: f.saved.identity, taskId: f.saved.taskId, boardId: digest('native board'), status: 'stopped', stopped: true }

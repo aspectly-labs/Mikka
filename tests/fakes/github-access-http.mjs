@@ -2,8 +2,20 @@ import { createServer } from 'node:http'
 import { json } from './http.mjs'
 
 /**
+ * @typedef {{ id: number | string, login: string }} GitHubFakeUser
+ * @typedef {{ id: number | string, full_name: string, private: boolean, description?: string | null, homepage?: string | null, pushed_at?: string | null }} GitHubFakeRepository
+ * @typedef {{ method: string | undefined, pathname: string, search: string, headers: import('node:http').IncomingHttpHeaders, bodyText: string }} GitHubFakeRequestRecord
+ * @typedef {(request: import('node:http').IncomingMessage) => GitHubFakeUser | null | Promise<GitHubFakeUser | null>} GitHubUserHandler
+ * @typedef {(request: import('node:http').IncomingMessage) => GitHubFakeRepository[] | null | Promise<GitHubFakeRepository[] | null>} GitHubRepositoriesHandler
+ * @typedef {(url: URL, request: import('node:http').IncomingMessage, bodyText: string, response: import('node:http').ServerResponse) => Response | boolean | undefined | void | Promise<Response | boolean | undefined | void>} GitHubCustomRequestHandler
+ * @typedef {{ appId?: number, installationId?: number, getUser?: GitHubUserHandler, getRepositories?: GitHubRepositoriesHandler, onRequest?: GitHubCustomRequestHandler | null }} GitHubAccessHttpOptions
+ */
+
+/**
  * Loopback GitHub HTTP fake for tests that retain real lib/github/user-access.ts
  * instead of mocking the provider module (#2886).
+ *
+ * @param {GitHubAccessHttpOptions} [options]
  */
 export async function startGitHubAccessHttp({
   appId = 4840908,
@@ -12,10 +24,11 @@ export async function startGitHubAccessHttp({
   getRepositories = () => [],
   onRequest = null,
 } = {}) {
+  /** @type {GitHubFakeRequestRecord[]} */
   const requests = []
   const state = { appId, installationId, getUser, getRepositories, onRequest }
   const server = createServer(async (request, response) => {
-    const url = new URL(request.url, 'http://127.0.0.1')
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
     const bodyText = Buffer.concat(chunks).toString('utf8')
@@ -63,9 +76,15 @@ export async function startGitHubAccessHttp({
       return json(response, { message: 'Fixture server error' }, 500)
     }
   })
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
-  const origin = `http://127.0.0.1:${server.address().port}`
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve(undefined)) })
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Loopback GitHub fake failed to bind TCP port')
+  const origin = `http://127.0.0.1:${address.port}`
   const realFetch = globalThis.fetch
+  /**
+   * @param {typeof fetch} [fallback]
+   * @returns {(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>}
+   */
   const routeFetch = (fallback = realFetch) => async (input, init) => {
     const rawUrl = input instanceof Request ? input.url : String(input)
     const parsed = new URL(rawUrl)
@@ -83,7 +102,7 @@ export async function startGitHubAccessHttp({
     routeFetch,
     async close() {
       server.closeAllConnections()
-      await new Promise(resolve => server.close(resolve))
+      await new Promise(resolve => server.close(() => resolve(undefined)))
     },
   }
 }
