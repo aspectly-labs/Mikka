@@ -218,6 +218,12 @@ test('GitHub fixture human merge preserves exact Git bytes and rejects unauthori
       body: `Fixture candidate\n<!-- mikka-issue:${randomUUID()} -->` })
     assert.equal(created.status, 201)
     const path = `${repo}/pulls/${created.body.number}`, input = { sha, merge_method: 'merge' }
+    const patchedBody = `Fixture candidate\n\nPublic evidence: fixture capture\n<!-- mikka-issue:${created.body.body.match(/<!-- mikka-issue:([a-f0-9-]{36}) -->$/)?.[1]} -->`
+    const patched = await call(path, { body: patchedBody, title: 'Handoff artifact with evidence' }, userToken, 'PATCH')
+    assert.equal(patched.status, 200, JSON.stringify(patched.body))
+    assert.equal(patched.body.body, patchedBody)
+    assert.equal(patched.body.title, 'Handoff artifact with evidence')
+    assert.equal(patched.body.head.sha, sha)
     for (const token of ['mvp-synthetic-installation-run', 'mvp-synthetic-installation-write', 'mvp-synthetic-installation-read']) {
       assert.equal((await call(`${path}/merge`, input, token, 'PUT')).status, 403)
     }

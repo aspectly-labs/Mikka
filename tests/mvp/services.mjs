@@ -204,6 +204,25 @@ export async function startMvpServices(port = 3191, { routes } = {}) {
         if (!pr) return reply({ message: 'Fixture pull request not found' }, 404)
         return reply({ ...pr, head: { ...pr.head, sha: await currentCommit(pr.head.ref) } })
       }
+      if (new RegExp(`^${REPO_PATH}/pulls/[0-9]+$`).test(path) && method === 'PATCH') {
+        writeAccess()
+        const pr = pullRequests.find(value => value.number === Number(path.split('/').at(-1)))
+        if (!pr) return reply({ message: 'Fixture pull request not found' }, 404)
+        const input = await readBody(request)
+        assert.ok(Object.keys(input).length > 0 && Object.keys(input).every(key => ['body', 'title'].includes(key)), 'Fixture PR patch accepts only body/title')
+        if (Object.hasOwn(input, 'body')) {
+          assert.equal(typeof input.body, 'string')
+          assert.match(input.body, /<!-- mikka-issue:[a-f0-9-]{36} -->$/)
+          pr.body = input.body
+        }
+        if (Object.hasOwn(input, 'title')) {
+          assert.equal(typeof input.title, 'string')
+          assert.ok(input.title.trim().length > 0 && input.title.length <= 256)
+          pr.title = input.title
+        }
+        observe({ kind: 'pull-request-updated', requestId, number: pr.number, fields: Object.keys(input).sort() })
+        return reply({ ...pr, head: { ...pr.head, sha: await currentCommit(pr.head.ref) } })
+      }
       if (new RegExp(`^${REPO_PATH}/pulls/[0-9]+/merge$`).test(path) && method === 'PUT') {
         // Factory acceptance acts as the person; installation/run tokens may
         // publish a PR but cannot stand in for the person's merge decision.
