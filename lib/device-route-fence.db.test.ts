@@ -23,10 +23,10 @@ async function routeFiles(dir: string): Promise<string[]> {
 
 test('every device route refuses a token revoked after authentication before it calls out or issues anything', { skip: !url }, async t => {
   // The issuing steps of the three routes that hand out credentials record any call.
-  const [githubAccess, runtime] = await Promise.all([import('./github/user-access'), import('./subscription-runtime')])
-  mock.module(new URL('./github/user-access.ts', import.meta.url).href, { namedExports: {
-    ...githubAccess,
-    githubTokenForUser: async () => { issued.push('github-token'); return { token: 'fixture', expiresAt: null } },
+  const [githubConnection, runtime] = await Promise.all([import('./github/connection'), import('./subscription-runtime')])
+  mock.module(new URL('./github/connection.ts', import.meta.url).href, { namedExports: {
+    ...githubConnection,
+    githubConnectionToken: async () => { issued.push('github-token'); return { token: 'fixture', githubAccountId: '42', expiresAt: null } },
   } })
   mock.module(new URL('./subscription-runtime.ts', import.meta.url).href, { namedExports: {
     ...runtime,

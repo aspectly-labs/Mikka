@@ -41,7 +41,7 @@ export const SESSION_OPTIONS = {
  * reaches the request's cookie journal on every read. Passing `returnHeaders`
  * would change the result shape the caller receives.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- better-auth's getSession is overloaded; the wrapper only adds a query flag.
+// better-auth's getSession is overloaded; the wrapper only adds a query flag.
 export function readFreshSessionsInScope(api: { getSession: (context: any) => Promise<unknown> }, native?: { cookieName: () => Promise<string> }) {
   const read = api.getSession
   api.getSession = (input: { headers?: Headers; query?: Record<string, unknown> } | undefined) => {
