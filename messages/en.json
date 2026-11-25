@@ -2795,7 +2795,8 @@
     },
     "preferences": {
       "languageHeading": "Language"
-    }
+    },
+    "phoneDesktopOnly": "View only · edit on a computer"
   },
   "Organization": {
     "identity": {
@@ -11286,7 +11287,9 @@
     "mainMenu": "Main menu",
     "dismiss": "Dismiss",
     "resizeSidebar": "Resize sidebar",
-    "resizeWorkArea": "Resize the right column"
+    "resizeWorkArea": "Resize the right column",
+    "phoneBack": "Back",
+    "phoneColumnMenu": "Work area contents"
   },
   "DeviceSetup": {
     "path": "Local repository path",
