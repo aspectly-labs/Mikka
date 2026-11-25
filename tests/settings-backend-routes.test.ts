@@ -256,21 +256,23 @@ test('workspace PATs never join an owner human session in-flight saved-logins si
     new Request('https://mikka.example/api/settings/saved-logins'),
     { params: Promise.resolve({ read: 'saved-logins' }) },
   ))
+  let patPromise: Promise<Response> | undefined
   try {
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(savedLoginReads, 1)
-    const patResponse = await currentTokenWorkspace.run(workspaceId, () => settingsRoute.GET(
+    patPromise = currentTokenWorkspace.run(workspaceId, () => settingsRoute.GET(
       new Request('https://mikka.example/api/settings/saved-logins'),
       { params: Promise.resolve({ read: 'saved-logins' }) },
     ))
+    await new Promise(resolve => setImmediate(resolve))
     assert.equal(savedLoginReads, 2, 'PAT read must execute independently without joining the human singleFlight read')
+    release()
+    const [patResponse, humanResponse] = await Promise.all([patPromise, humanPromise])
     assert.equal(patResponse.status, 401)
     assert.deepEqual(await patResponse.json(), { error: 'authRequired' })
-    release()
-    const humanResponse = await humanPromise
     assert.equal(humanResponse.status, 200)
     assert.deepEqual(await humanResponse.json(), { logins: [{ id: 'human-only-login' }] })
-  } finally { release(); savedLoginGate = Promise.resolve(); await Promise.allSettled([humanPromise]) }
+  } finally { release(); savedLoginGate = Promise.resolve(); await Promise.allSettled([humanPromise, ...(patPromise ? [patPromise] : [])]) }
 })
 
 test('workspace-bots GET preserves auth and membership refusals and never substitutes an empty activity list', async () => {

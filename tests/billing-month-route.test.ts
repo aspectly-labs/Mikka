@@ -9,7 +9,7 @@ const WORKSPACE_A = '11111111-1111-4111-8111-111111111111'
 const WORKSPACE_B = '22222222-2222-4222-8222-222222222222'
 
 let actor: { id: string; tokenWorkspaceId?: string } | null = { id: 'owner-1' }
-let lastSessionOptions: { query?: { disableCookieCache?: boolean } } | undefined
+const sessionOptionsLog: Array<{ query?: { disableCookieCache?: boolean } }> = []
 const viewCalls: unknown[][] = []
 const mutateCalls: unknown[][] = []
 let billingRoute: typeof import('../app/api/workspaces/[workspaceId]/billing/route')
@@ -20,7 +20,7 @@ before(async () => {
       auth: {
         api: {
           getSession: async (options: { headers: Headers; query?: { disableCookieCache?: boolean } }) => {
-            lastSessionOptions = options
+            sessionOptionsLog.push(options)
             if (!actor) return null
             return {
               user: { id: actor.id, name: 'Owner', email: 'owner@example.invalid' },
@@ -81,7 +81,7 @@ test('billingManagementPath and billingManagementRequest forward optional ?month
 test('GET /api/workspaces/[workspaceId]/billing forwards ?month=YYYY-MM and rejects invalid months with 400', async () => {
   actor = { id: 'owner-1' }
   viewCalls.length = 0
-  lastSessionOptions = undefined
+  sessionOptionsLog.length = 0
   const ctx = { params: Promise.resolve({ workspaceId: WORKSPACE_A }) }
 
   const pastRes = await billingRoute.GET(
@@ -90,7 +90,7 @@ test('GET /api/workspaces/[workspaceId]/billing forwards ?month=YYYY-MM and reje
   )
   assert.equal(pastRes.status, 200)
   assert.equal(pastRes.headers.get('cache-control'), 'private, no-store')
-  assert.equal(lastSessionOptions?.query?.disableCookieCache, true)
+  assert.equal(sessionOptionsLog.at(-1)?.query?.disableCookieCache, true)
   const pastBody = await pastRes.json() as { usage: { month: string } }
   assert.equal(pastBody.usage.month, '2026-08')
   assert.equal(viewCalls.at(-1)?.[5], '2026-08')
