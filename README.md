@@ -130,6 +130,18 @@ Mikka is proudly developed with support from the [Codex for Open Source](https:/
 Thanks to [Neon](https://neon.com) for supporting Mikka through the Neon Open
 Source Program.
 
+<a href="https://e2b.dev/startups">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/e2b-for-startups-dark.svg">
+    <img src="docs/assets/e2b-for-startups-light.svg" alt="E2B for Startups" width="151" height="32">
+  </picture>
+</a>
+
+Thanks to [E2B](https://e2b.dev) for supporting Mikka through
+[E2B for Startups](https://e2b.dev/startups). E2B's sandboxes let Mikka run many
+agents side by side on isolated cloud machines, so we can focus on the product
+instead of the infrastructure.
+
 ## License
 
 Mikka is copyright © 2026 Aspectly Labs and licensed under
