@@ -21,7 +21,7 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `308` dated decision records carry verified `Status:` headers (`222` Accepted, `24` Superseded, `62` Superseded in part).
+All `308` dated decision records carry verified `Status:` headers (`222` Accepted, `23` Superseded, `63` Superseded in part).
 
 ### Key active architectural decisions
 

@@ -113,6 +113,107 @@ function checkMarkdownLinks(root, relFile, text, errors) {
   }
 }
 
+const PNPM_BUILTINS = new Set(['install', 'i', 'exec', 'run', 'test', 'add', 'remove', 'dlx', 'up', 'update'])
+const SHELL_FENCE_LANGS = new Set(['bash', 'sh', 'shell', 'zsh', 'console'])
+
+function loadWorkspaceScripts(root) {
+  const rootPkgPath = resolve(root, 'package.json')
+  const rootScripts = existsSync(rootPkgPath)
+    ? new Set(Object.keys(JSON.parse(readFileSync(rootPkgPath, 'utf8')).scripts ?? {}))
+    : new Set()
+  const workspaceScripts = new Map()
+  for (const parent of ['apps', 'packages', 'cloudflare']) {
+    const parentAbs = resolve(root, parent)
+    if (!existsSync(parentAbs)) continue
+    for (const entry of readdirSync(parentAbs, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const pkgPath = join(parentAbs, entry.name, 'package.json')
+      if (!existsSync(pkgPath)) continue
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+      if (pkg.name) {
+        workspaceScripts.set(pkg.name, new Set(Object.keys(pkg.scripts ?? {})))
+      }
+    }
+  }
+  return { rootScripts, workspaceScripts }
+}
+
+function validateCommandSegment(root, relFile, segment, manifests, errors) {
+  const trimmed = segment.trim()
+  const filterMatch = /^pnpm\s+(?:--silent\s+)?--filter\s+([^\s]+)\s+([a-z0-9][a-z0-9:_-]*)(?=\s|$)/i.exec(trimmed)
+  if (filterMatch) {
+    const [, pkgName, script] = filterMatch
+    if (!PNPM_BUILTINS.has(script)) {
+      const pkgScripts = manifests.workspaceScripts.get(pkgName)
+      if (!pkgScripts) {
+        errors.push(`${relFile}: referenced workspace package '${pkgName}' not found`)
+      } else if (!pkgScripts.has(script)) {
+        errors.push(`${relFile}: referenced package script '${pkgName}#${script}' does not exist`)
+      }
+    }
+    return
+  }
+
+  const rootMatch = /^pnpm\s+(?:--silent\s+)?([a-z0-9][a-z0-9:_-]*)(?=\s|$)/i.exec(trimmed)
+  if (rootMatch) {
+    const script = rootMatch[1]
+    if (!PNPM_BUILTINS.has(script) && !manifests.rootScripts.has(script)) {
+      errors.push(`${relFile}: referenced pnpm script '${script}' does not exist in package.json`)
+    }
+    return
+  }
+
+  const nodeMatch = /^node\s+(?:(?:--[a-z0-9-]+(?:=\S+)?|\S+\.mjs)\s+)*((?:scripts|apps|packages|lib|tests)\/[^\s'"]+\.[mc]?[jt]s)\b/.exec(trimmed)
+  if (nodeMatch) {
+    const scriptPath = nodeMatch[1]
+    if (!existsSync(resolve(root, scriptPath))) {
+      errors.push(`${relFile}: referenced node script '${scriptPath}' does not exist`)
+    }
+  }
+}
+
+function checkPnpmScripts(root, relFile, text, errors) {
+  const manifests = loadWorkspaceScripts(root)
+  const stripped = stripFencedCodeBlocks(text)
+  for (const m of stripped.matchAll(/`([^`\n]+)`/g)) {
+    const token = m[1].trim()
+    if (!/^(?:pnpm|node)\s+/.test(token)) continue
+    for (const part of token.split(/\s*(?:&&|\|\||;)\s*/)) {
+      validateCommandSegment(root, relFile, part, manifests, errors)
+    }
+  }
+
+  let inFence = false
+  let fenceChar = ''
+  let fenceLen = 0
+  let isShell = false
+  for (const line of text.split(/\r?\n/)) {
+    const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
+    if (fence) {
+      if (!inFence) {
+        inFence = true
+        fenceChar = fence[1][0]
+        fenceLen = fence[1].length
+        isShell = SHELL_FENCE_LANGS.has(fence[2].trim().split(/\s+/)[0]?.toLowerCase() ?? '')
+        continue
+      }
+      if (fence[1][0] === fenceChar && fence[1].length >= fenceLen && fence[2].trim() === '') {
+        inFence = false
+        fenceChar = ''
+        fenceLen = 0
+        isShell = false
+        continue
+      }
+    }
+    if (!inFence || !isShell) continue
+    const clean = line.replace(/(?:^|\s)#.*$/, '').replace(/^\$\s*/, '').trim()
+    if (!clean) continue
+    for (const part of clean.split(/\s*(?:&&|\|\||;)\s*/)) {
+      validateCommandSegment(root, relFile, part, manifests, errors)
+    }
+  }
+}
+
 function checkBacktickPaths(root, relFile, text, errors) {
   const stripped = stripFencedCodeBlocks(text)
   const codeRe = /`([^`\n]+)`/g
@@ -173,6 +274,7 @@ export function auditEngineeringHandbook(root) {
 
   checkMarkdownLinks(root, HANDBOOK_PATH, handbook, errors)
   checkBacktickPaths(root, HANDBOOK_PATH, handbook, errors)
+  checkPnpmScripts(root, HANDBOOK_PATH, handbook, errors)
 
   // Verify top-level pointers and markdown links in AGENTS.md and docs/README.md
   for (const entry of ['AGENTS.md', 'docs/README.md']) {
@@ -268,11 +370,14 @@ test('Engineering Handbook, templates, pointers, and all ADRs pass Tier 3 audit'
   )
 })
 
-test('auditEngineeringHandbook rejects missing ADR Status headers, broken supersession links, and missing handbook paths', () => {
+test('auditEngineeringHandbook rejects missing ADR Status headers, broken supersession links, missing paths, and unknown pnpm scripts', () => {
   const dir = mkdtempSync(join(tmpdir(), 'handbook-audit-'))
   try {
     mkdirSync(join(dir, 'docs/engineering/templates'), { recursive: true })
     mkdirSync(join(dir, 'docs/design/decisions'), { recursive: true })
+    mkdirSync(join(dir, 'apps/mobile'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { typecheck: 'echo ok' } }))
+    writeFileSync(join(dir, 'apps/mobile/package.json'), JSON.stringify({ name: '@mikka/mobile', scripts: { typecheck: 'echo ok' } }))
     writeFileSync(join(dir, 'AGENTS.md'), 'See `docs/engineering/HANDBOOK.md`.\n')
     writeFileSync(join(dir, 'docs/README.md'), 'See [Handbook](engineering/HANDBOOK.md).\n')
     writeFileSync(join(dir, 'docs/design/decisions.md'), '# Decisions\n\nFrozen archive through 2026-10-31.\n')
@@ -290,6 +395,7 @@ test('auditEngineeringHandbook rejects missing ADR Status headers, broken supers
         'See `scripts/does-not-exist.mjs`, [Broken](../nope.md), and [`code-link`](../also-missing.md).',
         'Example syntax: `- **Status:** Superseded by [<placeholder>](<placeholder>.md)`.',
         '## Stage 3: Static',
+        'Run `pnpm typecheck`, `pnpm --filter @mikka/mobile typecheck`, `pnpm test:nonexistent-script`, `pnpm --filter @mikka/mobile ghost-script`, and `node scripts/missing-runner.mjs`.',
         '## Stage 4: Verify',
         '## Stage 5: Release',
         '## Stage 6: COE',
@@ -310,6 +416,10 @@ test('auditEngineeringHandbook rejects missing ADR Status headers, broken supers
     assert.ok(errors.some(e => e.includes("broken markdown link target '../nope.md'")))
     assert.ok(errors.some(e => e.includes("broken markdown link target '../also-missing.md'")))
     assert.ok(!errors.some(e => e.includes('<placeholder>')))
+    assert.ok(errors.some(e => e.includes("referenced pnpm script 'test:nonexistent-script' does not exist in package.json")))
+    assert.ok(errors.some(e => e.includes("referenced package script '@mikka/mobile#ghost-script' does not exist")))
+    assert.ok(errors.some(e => e.includes("referenced node script 'scripts/missing-runner.mjs' does not exist")))
+    assert.ok(!errors.some(e => e.includes("'typecheck'")))
     assert.ok(errors.some(e => e.includes('2026-11-01-0000-no-status.md: missing canonical Status header')))
     assert.ok(errors.some(e => e.includes("2026-11-02-0000-bad-target.md: Status supersession target '2026-11-03-0000-missing.md' does not exist")))
     assert.ok(errors.some(e => e.includes("2026-11-05-0000-older-target.md: Status supersession target '2026-11-01-0000-no-status.md' predates this ADR")))
