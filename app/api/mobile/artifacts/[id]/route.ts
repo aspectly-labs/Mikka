@@ -1,11 +1,10 @@
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { forbiddenOrigin, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
 import { artifactOutsideToken } from '@/lib/tokens/scope'
 import { deleteOwnArtifact } from '@/lib/artifacts/delete'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 const notFound = () => Response.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } })
@@ -17,17 +16,20 @@ const notFound = () => Response.json({ error: 'Not found' }, { status: 404, head
  * workspace's artifacts. Someone else's, one outside the token, an unknown id
  * and one already deleted all read as 404.
  */
-async function handleDELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  if (!writeAllowed(request)) return forbiddenOrigin()
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  const id = z.uuid().safeParse((await params).id)
-  if (!id.success) return notFound()
-  if (await artifactOutsideToken(user, id.data)) return notFound()
-  const context = await loadWorkspaceContext(undefined, user)
-  if (!await deleteOwnArtifact({ id: user.id, [tokenWorkspace]: context.workspace.id, [enterprisePrincipal]: user[enterprisePrincipal] }, id.data)) return notFound()
-  return new Response(null, { status: 204 })
-}
-
-export const DELETE = withRequestLog('/api/mobile/artifacts/[id]', handleDELETE)
+export const DELETE = defineRoute<'mobile-or-session', 'none', { id: string }>(
+  {
+    route: '/api/mobile/artifacts/[id]',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none',
+    write: true,
+  },
+  async ({ user, params }) => {
+    const id = z.uuid().safeParse(params.id)
+    if (!id.success) return notFound()
+    if (await artifactOutsideToken(user, id.data)) return notFound()
+    const context = await loadWorkspaceContext(undefined, user)
+    if (!await deleteOwnArtifact({ id: user.id, [tokenWorkspace]: context.workspace.id, [enterprisePrincipal]: user[enterprisePrincipal] }, id.data)) return notFound()
+    return new Response(null, { status: 204 })
+  },
+)
