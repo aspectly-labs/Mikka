@@ -288,7 +288,8 @@ function showOffline(reason: 'network' | 'server'): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   const delay = offlineRetryDelay(offlineAttempt++)
   if (!mainWindow.webContents.getURL().startsWith('file:')) {
-    void mainWindow.loadFile(join(__dirname, 'offline.html'), { query: { app: APP_URL, reason } })
+    const lang = /^zh\b/i.test(app.getLocale()) ? 'zh-CN' : 'en'
+    void mainWindow.loadFile(join(__dirname, 'offline.html'), { query: { app: APP_URL, reason, lang } })
   }
   if (retrying) clearTimeout(retrying)
   retrying = setTimeout(() => { retrying = null; loadApp() }, delay)
@@ -443,7 +444,8 @@ function runUpdateGate(open: (retryCheck: boolean) => void): void {
       open(retryCheck)
     },
   })
-  void win.loadFile(join(__dirname, 'update.html'))
+  const lang = /^zh\b/i.test(app.getLocale()) ? 'zh-CN' : 'en'
+  void win.loadFile(join(__dirname, 'update.html'), { query: { lang } })
   gate.start()
 }
 

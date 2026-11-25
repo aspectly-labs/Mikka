@@ -360,6 +360,78 @@ test('Organization invitations grant only a verified Member without inheriting W
     }
   })
 
+  await t.test('public invitation preview endpoints return only non-sensitive fields and uniform 404 on invalid states', async () => {
+    const [{ GET: getOrgPreview }, { GET: getWorkspacePreview }, { hashInvitationToken }] = await Promise.all([
+      import('../app/api/organization-invitations/[token]/route'),
+      import('../app/api/invitations/[token]/route'),
+      import('../lib/invitation-preview-token'),
+    ])
+    const previewRecipient = `${randomUUID()}@preview.example.invalid`
+    const issued = await invite.issueOrganizationInvitations(organizationId, owner.id, {
+      emails: [previewRecipient],
+      role: 'admin',
+    })
+    const created = issued.outcomes[0]
+    if (!created?.created) throw new Error('preview org invitation fixture missing')
+    const orgToken = created.path.split('/').at(-1)!
+    const orgOk = await getOrgPreview(new Request(`http://localhost/mikka/api/organization-invitations/${orgToken}`), {
+      params: Promise.resolve({ token: orgToken }),
+    })
+    assert.equal(orgOk.status, 200)
+    assert.equal(orgOk.headers.get('cache-control'), 'no-store')
+    assert.equal(orgOk.headers.get('referrer-policy'), 'no-referrer')
+    const orgBody = await orgOk.json()
+    assert.deepEqual(Object.keys(orgBody).sort(), ['inviterName', 'organizationName', 'role'])
+    assert.equal(orgBody.organizationName, 'Member-only invitation test')
+    assert.equal(orgBody.inviterName, owner.name)
+    assert.equal(orgBody.role, 'admin')
+    assert.equal(JSON.stringify(orgBody).includes(previewRecipient), false, 'recipient email must never leak')
+
+    await invite.revokeOrganizationInvitation(organizationId, owner.id, { invitationId: created.id })
+    for (const badToken of [orgToken, 'bad-token', '0'.repeat(64)]) {
+      const denied = await getOrgPreview(new Request(`http://localhost/mikka/api/organization-invitations/${badToken}`), {
+        params: Promise.resolve({ token: badToken }),
+      })
+      assert.equal(denied.status, 404)
+      assert.equal(denied.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(await denied.json(), { error: 'invitationNotFound' })
+    }
+
+    const wsToken = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '')
+    const wsInviteId = randomUUID()
+    const wsRecipient = `${randomUUID()}@ws-preview.example.invalid`
+    await check.query(
+      'insert into mikka_workspace_invitations(id,"workspaceId","userId",email,role,"tokenHash",status,"expiresAt") values ($1,$2,$3,$4,$5,$6,\'pending\',now()+interval \'1 day\')',
+      [wsInviteId, workspaceId, owner.id, wsRecipient, 'member', hashInvitationToken(wsToken)],
+    )
+    try {
+      const wsOk = await getWorkspacePreview(new Request(`http://localhost/mikka/api/invitations/${wsToken}`), {
+        params: Promise.resolve({ token: wsToken }),
+      })
+      assert.equal(wsOk.status, 200)
+      assert.equal(wsOk.headers.get('cache-control'), 'no-store')
+      assert.equal(wsOk.headers.get('referrer-policy'), 'no-referrer')
+      const wsBody = await wsOk.json()
+      assert.deepEqual(Object.keys(wsBody).sort(), ['inviterName', 'role', 'workspaceName'])
+      assert.equal(wsBody.workspaceName, 'Private shared workspace')
+      assert.equal(wsBody.inviterName, owner.name)
+      assert.equal(wsBody.role, 'member')
+      assert.equal(JSON.stringify(wsBody).includes(wsRecipient), false, 'recipient email must never leak')
+
+      await check.query('update mikka_workspace_invitations set "expiresAt"=now()-interval \'1 minute\' where id=$1', [wsInviteId])
+      for (const badToken of [wsToken, 'bad-token', 'f'.repeat(64)]) {
+        const denied = await getWorkspacePreview(new Request(`http://localhost/mikka/api/invitations/${badToken}`), {
+          params: Promise.resolve({ token: badToken }),
+        })
+        assert.equal(denied.status, 404)
+        assert.equal(denied.headers.get('cache-control'), 'no-store')
+        assert.deepEqual(await denied.json(), { error: 'invitationNotFound' })
+      }
+    } finally {
+      await check.query('delete from mikka_workspace_invitations where id=$1', [wsInviteId])
+    }
+  })
+
   const [active] = await workspaceDb.select({ role: organizationMembers.role }).from(organizationMembers)
     .where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, invitee.id)))
   assert.equal(active.role, 'member')

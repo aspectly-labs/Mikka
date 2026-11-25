@@ -449,7 +449,6 @@
       "newWorkHint": "新建线程或 Bot 时预选。",
       "transferNoMembers": "没有其他成员",
       "address": "工作区地址",
-      "pendingBadge": "待接入",
       "deleteWorkspace": "删除工作区",
       "workspaceWorkVisibility": "工作区新工作默认可见性",
       "allowPrivate": "允许私有工作",
@@ -484,7 +483,6 @@
       "hardwareHostLabel": "主机名",
       "localPathMustBeAbsolute": "本地路径必须是绝对路径。",
       "descriptionPlaceholder": "添加说明，例如这台设备的用途",
-      "pendingBadge": "待接入",
       "deviceScopeDescription": "控制哪些线程可以使用此设备。",
       "myDevicesHeading": "我的设备",
       "onlineStatusLabel": "在线状态",
@@ -871,7 +869,6 @@
       "requirePasskey": "要求使用通行密钥",
       "deleting": "正在删除…",
       "rename": "重命名",
-      "pendingBadge": "待接入",
       "requirePasskeyEmptyHint": "添加通行密钥后才能要求使用。"
     },
     "usage": {
@@ -1187,7 +1184,8 @@
       "filter": "筛选",
       "categoryFilter": "类别",
       "exportCsv": "导出 CSV",
-      "empty": "最近 90 天没有记录。"
+      "empty": "最近 90 天没有记录。",
+      "loadedFilterNotice": "筛选当前已加载记录"
     },
     "memory": {
       "correct": "更正",
@@ -1277,7 +1275,6 @@
       "statesHeading": "状态",
       "manage": "管理",
       "addLabel": "添加标签",
-      "pendingBadge": "待接入",
       "serviceAccountsTeamOnly": "仅在共享工作区中可用。",
       "searchSecrets": "搜索密钥",
       "serviceAccountNameRequired": "填写服务账号名称。",
@@ -1320,7 +1317,6 @@
       "hiddenAll": "全部折叠",
       "theme_sakura": "暖灰",
       "theme_lilac": "淡紫",
-      "pendingBadge": "待接入",
       "theme_contrast": "高对比",
       "diffColorHint": "蓝色／橙色可用于红绿色觉差异",
       "theme_codeCyan": "代码浅色",
@@ -1484,10 +1480,8 @@
         "contributions": "工作区贡献热力图"
       },
       "opsObservedAt": "采样于 {time}",
-      "pendingAnalyticsNote": "统计聚合接口待接入，暂不展示示例数据。",
       "loadMore": "加载更多",
       "dailyThreadsHeading": "每日新线程活动",
-      "pendingTag": "待接入",
       "timelineLoadFailed": "活动记录读取失败。",
       "timelineEmpty": "当前筛选条件下暂无活动记录。",
       "subtitle": "查看工作区运行队列、渠道存储与 Agent 工时。",
@@ -1552,7 +1546,6 @@
       "recordShortcut": "修改快捷键",
       "disableRow": "停用快捷键",
       "invalidShortcut": "不支持此按键组合",
-      "pendingBadge": "待接入",
       "holdToTalk": "按住说话",
       "loadError": "快捷键读取失败",
       "columnActions": "操作",
@@ -1565,7 +1558,10 @@
       "optionAsMetaHint": "关闭时 Option 输入特殊字符，配合方向键按词移动。",
       "terminalTitle": "终端",
       "columnCommand": "命令",
-      "columnKeys": "按键"
+      "columnKeys": "按键",
+      "scopeAll": "全部",
+      "scopeGlobal": "全局",
+      "scopeWorkspace": "工作区"
     },
     "threadTitles": {
       "triggers": "重新生成标题的时机",
@@ -1601,7 +1597,6 @@
       "triggersHint": "手动设置的标题会保留",
       "parallel": "并行子代理",
       "subagents": "子代理",
-      "pendingBadge": "待接入",
       "instructions": "标题说明",
       "lead": "设置线程的命名、运行和归档行为。",
       "archive": "归档",
@@ -1739,7 +1734,6 @@
       "workspaceFallback": "当前工作区",
       "scopePersonal": "个人",
       "previewEnvLabel": "预览云端环境",
-      "pendingBadge": "待接入",
       "loadError": "指令加载失败。",
       "lead": "用于各个作用域中的线程。",
       "filesTitle": "指令文件",
@@ -1788,7 +1782,6 @@
       "authorName": "提交作者",
       "conflictHandling": "冲突处理",
       "titlePrefixHint": "应用于新建拉取请求标题",
-      "pendingBadge": "待接入",
       "titlePrefixPlaceholder": "[team]",
       "resetInherit": "恢复继承",
       "signedCommitsHint": "运行环境禁用 GPG 私钥签名",
@@ -1832,7 +1825,8 @@
       "openInMikkaHint": "在 Mikka 创建的拉取请求内显示",
       "authorEmailHint": "留空时沿用仓库本地配置或运行默认邮箱",
       "prAutoMerge": "自动合并",
-      "gitTitle": "Git"
+      "gitTitle": "Git",
+      "saved": "已保存"
     },
     "usagePage": {
       "historyHeading": "历史与外部账户",
@@ -1967,7 +1961,6 @@
       "matrixHeading": "推送通知",
       "category_decide": "需要你决策",
       "dndEndLabel": "结束时间",
-      "pendingBadge": "待接入",
       "sound_chime": "清脆",
       "devicesHeading": "设备",
       "dndRow": "定时免打扰",
@@ -2503,7 +2496,6 @@
       "loadError": "无法读取团队技能注册表。"
     },
     "memoryPage": {
-      "pendingBadge": "待接入",
       "fromThread": "来自线程",
       "sectionTitle": "记忆与建议",
       "scopePersonal": "个人",
@@ -2583,7 +2575,8 @@
       "currentPasswordPlaceholder": "当前密码",
       "newPasswordPlaceholder": "至少 8 位字符",
       "confirmPasswordPlaceholder": "再次输入新密码",
-      "emailPlaceholder": "name@example.com"
+      "emailPlaceholder": "name@example.com",
+      "activeSessions": "活跃登录会话"
     },
     "issueStates": {
       "cancel": "取消",
@@ -2618,7 +2611,8 @@
       "icon": "图标",
       "actions": "{name} 的操作",
       "moveUp": "上移",
-      "namePlaceholder": "例如：审阅中"
+      "namePlaceholder": "例如：审阅中",
+      "mergeLabel": "合并标签"
     },
     "subscriptions": {
       "enabled": "启用",
@@ -2794,7 +2788,13 @@
       "revokeConfirmTitle": "撤销分享链接？",
       "revokeConfirmBody": "撤销后，持有该链接的人将立即失去访问权限。",
       "revokeConfirmAction": "确认撤销",
-      "cancel": "取消"
+      "cancel": "取消",
+      "copyLink": "复制链接",
+      "openLink": "打开",
+      "searchPlaceholder": "搜索分享链接…"
+    },
+    "preferences": {
+      "languageHeading": "语言"
     }
   },
   "Organization": {
@@ -3149,7 +3149,10 @@
       "links": "复制邀请链接",
       "joined": "已作为普通成员加入组织，工作区权限不变。",
       "accept": "加入组织",
-      "emailPlaceholder": "alice@example.com"
+      "emailPlaceholder": "alice@example.com",
+      "invitedToOrganization": "加入 {organization}",
+      "invitedBy": "由 {inviter} 邀请",
+      "invitedRole": "角色：{role}"
     },
     "tabs": {
       "audit": "组织审计",
@@ -7817,7 +7820,11 @@
     "cardPrompt": "执行指令",
     "cardDelivery": "通知与权限",
     "searchTimezonePlaceholder": "搜索时区…",
-    "noMatchingTimezone": "没有匹配的时区"
+    "noMatchingTimezone": "没有匹配的时区",
+    "cronPresetHourly": "每小时",
+    "cronPresetDaily": "每天 09:00",
+    "cronPresetWeekdays": "工作日 09:00",
+    "cronPresetWeekly": "每周一 09:00"
   },
   "AiElements": {
     "message": {
@@ -9874,7 +9881,9 @@
     "emptyPending": "没有待处理的条目",
     "handOver": "交给 Coordinator",
     "open": "待处理",
-    "handle": "去处理"
+    "handle": "去处理",
+    "markAllRead": "全部标为已读",
+    "customTime": "自定义时间"
   },
   "PersonalFiles": {
     "moreFolders": "更多文件夹",
@@ -10224,7 +10233,10 @@
     "signInToAccept": "登录并接受邀请",
     "joined": "已加入工作区。",
     "joinTitle": "加入工作区",
-    "linksCreated": "已创建 {count} 个邀请链接"
+    "linksCreated": "已创建 {count} 个邀请链接",
+    "invitedToWorkspace": "加入 {workspace}",
+    "invitedBy": "由 {inviter} 邀请",
+    "invitedRole": "角色：{role}"
   },
   "Common": {
     "undo": "撤销",
@@ -11652,7 +11664,43 @@
     "previewChecking": "正在检查预览…",
     "noDevServer": "没有运行中的开发服务器",
     "previewStartMissing": "尚未接入启动预览接口",
-    "startPreview": "启动预览"
+    "startPreview": "启动预览",
+    "fileKeys": "J / K 切换文件 · V 标为已看",
+    "tellAgentPlaceholder": "告诉 Agent 这里怎么改…",
+    "filesCount": "{count} 个文件",
+    "collapseAll": "全部收起",
+    "expandAll": "全部展开",
+    "unifiedView": "单栏视图",
+    "splitView": "并排视图",
+    "wrapOn": "开启自动换行",
+    "wrapOff": "关闭自动换行",
+    "showTree": "显示文件树",
+    "hideTree": "隐藏文件树",
+    "shortcuts": "快捷键",
+    "sendHint": "⌘/Ctrl ↩ 发送",
+    "diffStat": "新增 {additions} 行，删除 {deletions} 行",
+    "statusAdded": "新增",
+    "statusModified": "修改",
+    "statusDeleted": "删除",
+    "statusRenamed": "重命名",
+    "statusUnavailable": "不可用",
+    "collapseFolders": "收起所有文件夹",
+    "expandFolders": "展开所有文件夹",
+    "resizeTree": "调整文件树宽度",
+    "statusFailing": "检查未通过",
+    "statusPending": "检查进行中",
+    "statusReady": "可以合并",
+    "statusClosed": "PR 已关闭",
+    "checksOfTotal": "{passed}/{total} 项通过",
+    "viewChecks": "{message}，查看检查",
+    "moreMergeActions": "更多合并操作",
+    "copyBranch": "复制分支名",
+    "prOpen": "开启",
+    "prChangesRequested": "需要修改",
+    "prApproved": "已批准",
+    "prClosed": "已关闭",
+    "prNumber": "PR #{number}",
+    "checksEmpty": "没有检查"
   },
   "SharedThread": {
     "badge": "公开分享的线程",
