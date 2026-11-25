@@ -102,24 +102,6 @@ export async function updateApiKeyFeatures(id: string, features: import('@/lib/m
   })
 }
 
-/**
- * The model picker's 「API Key」 group: the keys the signed-in person's bots
- * may use in this workspace, their own first, then teammates' keys shared
- * with 分享给团队成员 (with the teammate's name). Never the key itself.
- */
-export async function listUsableApiKeys(workspaceId?: string): Promise<SettingsActionResult<{ keys: (UsableApiKey & { ownerName: string | null })[] }>> {
-  return settingsWorkspaceAction(async () => {
-    const { userId, workspace } = await actor(workspaceId)
-    const keys = await usableApiKeys(pool, userId, workspace.id)
-    const owners = [...new Set(keys.filter(key => !key.mine).map(key => key.ownerId))]
-    const members = owners.length ? await workspaceDb.select({ userId: workspaceMembers.userId, name: workspaceMembers.name }).from(workspaceMembers)
-      .where(and(eq(workspaceMembers.workspaceId, workspace.id), inArray(workspaceMembers.userId, owners), eq(workspaceMembers.status, 'active'))) : []
-    const names = new Map(members.map(member => [member.userId, member.name]))
-    // A teammate who is no longer an active member here does not lend a key.
-    return { keys: keys.filter(key => key.mine || names.has(key.ownerId)).map(key => ({ ...key, ownerName: key.mine ? null : names.get(key.ownerId)! })) }
-  })
-}
-
 // Money, permissions, credentials and deletion: the session is read from the database, not the cookie cache.
 export async function createApiKey(...args: Parameters<typeof createApiKeyBody>) { return withFreshSession(() => createApiKeyBody(...args)) }
 export async function updateApiKey(...args: Parameters<typeof updateApiKeyBody>) { return withFreshSession(() => updateApiKeyBody(...args)) }
