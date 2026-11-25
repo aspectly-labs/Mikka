@@ -7,7 +7,7 @@ export const GET = defineRoute<'session', 'pat-scoped'>(
     origin: 'any',
     workspace: 'pat-scoped',
   },
-  ({ request, params }) => respondGroup(request, 'conversations'),
+  ({ request }) => respondGroup(request, 'conversations'),
 )
 
 export const POST = defineRoute<'session', 'pat-scoped'>(
@@ -17,5 +17,5 @@ export const POST = defineRoute<'session', 'pat-scoped'>(
     workspace: 'pat-scoped',
     write: true,
   },
-  ({ request, params }) => respondGroup(request, 'conversations'),
+  ({ request }) => respondGroup(request, 'conversations'),
 )

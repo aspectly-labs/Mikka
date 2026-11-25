@@ -107,18 +107,27 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
   } } }
   const settingsModules: Record<string, unknown> = { 'zod': { z }, '@/lib/db': { pool },
     '@/lib/api-auth': { auth: settingsAuth },
-    // The VM harness cannot link defineRoute's production dependency graph. This
-    // seam mirrors the guard decisions relevant here; the primitive's own unit
-    // tests cover the shared implementation, while the policy assertions below
-    // still execute the real route body and PostgreSQL store.
-    '@/lib/primitives/define-route': { defineRoute: (_spec: unknown, handler: (context: { request: Request; user: { id: string } }) => Promise<Response>) => async (request: Request) => {
-      if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return Response.json({ error: 'patNotAllowed' }, { status: 403 })
-      if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'originNotAllowed' }, { status: 403 })
-      const headers = humanSessionHeaders(request)
-      if (!headers) return Response.json({ error: 'authRequired' }, { status: 401 })
-      const session = await settingsAuth.api.getSession({ headers, query: { disableCookieCache: true } })
-      if (!session?.user) return Response.json({ error: 'authRequired' }, { status: 401 })
-      return handler({ request, user: session.user })
+    // The VM harness cannot link defineRoute's production dependency graph. Bind
+    // the route's actual declaration here; the primitive's own unit tests cover
+    // the shared implementation, while the policy assertions below still execute
+    // the real route body and PostgreSQL store.
+    '@/lib/primitives/define-route': { defineRoute: (spec: unknown, handler: (context: { request: Request; user: { id: string } }) => Promise<Response>) => {
+      assert.deepEqual({ ...(spec as Record<string, unknown>) }, {
+        auth: 'human-session-only',
+        origin: 'same-origin-or-desktop',
+        workspace: 'none',
+        freshSession: true,
+        write: true,
+      })
+      return async (request: Request) => {
+        if (/^Bearer mkp_[A-Za-z0-9_-]{43}$/i.test(request.headers.get('authorization') ?? '')) return Response.json({ error: 'patNotAllowed' }, { status: 403 })
+        if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'originNotAllowed' }, { status: 403 })
+        const headers = humanSessionHeaders(request)
+        if (!headers) return Response.json({ error: 'authRequired' }, { status: 401 })
+        const session = await settingsAuth.api.getSession({ headers, query: { disableCookieCache: true } })
+        if (!session?.user) return Response.json({ error: 'authRequired' }, { status: 401 })
+        return handler({ request, user: session.user })
+      }
     } },
     '@/lib/desktop-rpc/handler': { humanSessionHeaders },
     '@/lib/agent-tool-approval/policy-store': { readCliRunPolicy, readCliAgentPolicy },

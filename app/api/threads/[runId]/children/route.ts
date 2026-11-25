@@ -10,13 +10,13 @@ export const GET = defineRoute<'session', 'pat-scoped', { runId: string }>(
     origin: 'any',
     workspace: 'pat-scoped',
   },
-  async ({ request, params, user }) => {
+  async ({ params, user }) => {
     const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
     try {
-    const runId = z.uuid().parse(params.runId)
-    const children = await listThreadChildren(user, runId)
-    if (!children) return respond({ error: 'threadNotFound' }, 404)
-    return respond({ children }, 200)
+      const runId = z.uuid().parse(params.runId)
+      const children = await listThreadChildren(user, runId)
+      if (!children) return respond({ error: 'threadNotFound' }, 404)
+      return respond({ children }, 200)
     } catch (error) {
       if (error instanceof z.ZodError) return respond({ error: 'Invalid request' }, 400)
       return respond({ error: 'Thread children unavailable' }, 503)

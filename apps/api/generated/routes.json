@@ -58,7 +58,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "3608f4da66ece1a10c6da4dd513fd83f350df6becff446fe658caa30777e959e"
+      "sourceHash": "b146a4bc850c71eebcca0fe8e8af20e7f97cdcdce6695681c76a03afe551cfae"
     },
     {
       "path": "/mikka/api/agent-cli-policy",
@@ -76,7 +76,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "4f1b04745384285c12e468bec9bb95a922b31d3ab7fb65bd02e0d3cab110e573"
+      "sourceHash": "b1c8d3cc5a7fe718019f5c0fa071c9fe115e5a9b20cd7d31a65e8e13d6b5d726"
     },
     {
       "path": "/mikka/api/agent/sessions",
@@ -530,7 +530,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "953c39bea494c93ae4d7db72639af0d6deb1a04c109a3bae76dfb828414887fd"
+      "sourceHash": "afe9059e18da5efa096a661b513dc9678fdd751b56388ae25bb057304091725d"
     },
     {
       "path": "/mikka/api/conversations/read-state",
@@ -2665,7 +2665,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "0e178ba2537b4b5c077527c9a7a6ecbc64f6ed085adc0de547bc8cce3cc32a81"
+      "sourceHash": "8679e7feabb3e2ed13a8d507d39fa3a51d637423522eca5ab76b5b185a14d806"
     },
     {
       "path": "/mikka/api/runs/[runId]/workspace/diff",
@@ -3367,7 +3367,7 @@
         "GET"
       ],
       "maxDuration": 60,
-      "sourceHash": "62ea4ab08409106ba0349db3ad85a42bc67c528df720664962ce5a7ed75800fd"
+      "sourceHash": "873083c785ae07d5b4e00e4bda8783552618cc66a7472bc618740f79aa7331e3"
     },
     {
       "path": "/mikka/api/threads/[runId]/credentials",

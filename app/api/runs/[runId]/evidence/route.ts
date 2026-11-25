@@ -12,7 +12,7 @@ import { defineRoute } from '@/lib/primitives/define-route'
  */
 export const GET = defineRoute<'session', 'pat-scoped', { runId: string }>(
   { auth: 'session', origin: 'any', workspace: 'pat-scoped' },
-  async ({ request, params, session, user }) => {
+  async ({ request, params, user }) => {
     const headers = { 'cache-control': 'private, no-store' }
     const found = z.uuid().safeParse(params.runId).success && !await runOutsideToken(user, params.runId)
       ? await runEvidence(user.id, params.runId) : null

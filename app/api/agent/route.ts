@@ -4,10 +4,10 @@ import { handleAgentImagesGET } from './images/route'
 
 export const GET = defineRoute<'session', 'none'>(
   {
-    route: '/api/agent/images',
+    route: '/api/agent',
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
   },
-  ({ request, user }) => handleAgentImagesGET(request, user.id),
+  ({ request }) => handleAgentImagesGET(request),
 )
