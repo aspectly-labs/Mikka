@@ -11,6 +11,11 @@ export interface LinearTeamOption {
 
 const CONNECTION_PAGE = 50
 
+export async function linearIdentity(token: string) {
+  const data = await linearGraphQL<{ viewer: { id: string; name: string }; organization: { id: string; name: string } }>(token, `query MikkaLinearIdentity { viewer { id name } organization { id name } }`)
+  return { user: data.viewer, organization: data.organization }
+}
+
 export async function linearTeams(token: string): Promise<LinearTeamOption[]> {
   const result: LinearTeamOption[] = []
   let after: string | null = null

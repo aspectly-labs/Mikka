@@ -1,6 +1,7 @@
 'use server'
 import { requireUser } from '@/lib/issue-access'
-import { disconnectLinear } from '@/lib/linear-sync/oauth'
+import { cookies } from '@/lib/server-runtime/headers'
+import { createLinearAuthorizationUrl, disconnectLinear, stateCookieOptions, LINEAR_OAUTH_STATE_COOKIE } from '@/lib/linear-sync/oauth'
 import { runAction } from '@/lib/action-error'
 
 // Older desktop clients still call these RPCs.
@@ -13,7 +14,10 @@ export async function getLinearBoardSync(_workspaceId?: string) {
 }
 
 export async function startLinearOAuth() {
-  throw new Error('Linear sync is disabled')
+  const user = await requireUser()
+  const authorization = await createLinearAuthorizationUrl(user.id)
+  ;(await cookies()).set(LINEAR_OAUTH_STATE_COOKIE, authorization.state, stateCookieOptions(600))
+  return { url: authorization.url }
 }
 
 export async function listLinearTeamOptions() {

@@ -528,7 +528,7 @@ export async function previewIssuePersonalScope(id: string) {
   })
 }
 
-/** The owner's confirmation retires the active link and queues its archive. */
+/** The owner's confirmation retires the local link. */
 export async function confirmIssuePersonalScope(input: { id: string; revision: number; confirmation: string }) {
   return runAction(async () => {
     const userId = await getUserId()
@@ -641,7 +641,7 @@ export async function loadEarlierIssueActivity(id: string, beforeRevision: numbe
 /**
  * The one-click scope change (MIK-47). The person's choice wins over the
  * agent's and becomes an example for its next judgment. Linked transitions
- * retain the team's history through the existing archive outbox.
+ * retain historical provider associations through local detachment records.
  */
 export async function setIssueScope(input: { id: string; revision: number; scope: string }): Promise<ActionResult<{ issue: IssueView }>> {
   return runAction(async () => {

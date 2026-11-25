@@ -1764,7 +1764,7 @@
       "teamLabel": "Linear 团队",
       "syncDisabled": "同步已暂停",
       "title": "Linear",
-      "oauthSuccess": "Linear 已连接。选择一个团队以开始同步。",
+      "oauthSuccess": "Linear 已连接。",
       "connected": "已连接",
       "operationError": "Linear 同步操作失败，请重试。",
       "inboundFailures": "需要处理的 Linear 更新",
@@ -6327,7 +6327,7 @@
         "labelsError": "Linear 标签没加载出来",
         "noTeams": "你的 Linear 里没有团队",
         "add": "添加 Linear 事件",
-        "notConnected": "先在设置里连接 Linear",
+        "notConnected": "尚未连接 Linear",
         "event": "事件",
         "runWhen": "条件",
         "labels": "标签（可选，逗号分隔）",
@@ -7777,7 +7777,7 @@
       "confirm": {
         "action": "改为个人",
         "checking": "正在检查 Linear 同步记录…",
-        "archiveIsNotErasure": "在 Linear 中归档不等于隐私擦除，标题、描述和评论仍可能被看到。",
+        "archiveIsNotErasure": "原工单和评论仍可能在 Linear 中可见。",
         "alreadyPersonal": "这个任务已经是个人任务。",
         "linearCopy": "已同步到 Linear 的副本可能仍对团队可见；没有同步记录也不能证明不存在历史副本。",
         "description": "改为个人后，团队成员在 Mikka 中将不再看到这个任务。",
@@ -7793,9 +7793,9 @@
       "judgedByAgent": "自动判断",
       "workspace": "工作区",
       "disableLinear": "关闭 Linear 同步",
-      "disableLinkedLinear": "关闭同步并归档关联的 Linear Issue",
+      "disableLinkedLinear": "解除关联的 Linear 工单",
       "label": "归属",
-      "movedToWorkspace": "已改为工作区任务，会同步到 Linear。",
+      "movedToWorkspace": "已移到工作区。",
       "personal": "个人"
     },
     "status": {

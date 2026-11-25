@@ -1579,7 +1579,16 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "50ff852abbfd2ad53b923a74b6cb5ab16ef71e15ee0edefa1434acc869fc89a8"
+      "sourceHash": "07a925be51de1bc561615aa4975ade9dd2267d566849a56ebf34563a09a1015c"
+    },
+    {
+      "path": "/mikka/api/integrations/linear/connect",
+      "template": "/api/integrations/linear/connect",
+      "source": "app/api/integrations/linear/connect/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "0ecf87ade6616b4545416495b0e32d888a9c225ad36ca7b0640fa15756ff2f92"
     },
     {
       "path": "/mikka/api/integrations/linear/status",

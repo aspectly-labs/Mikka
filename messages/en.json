@@ -1764,7 +1764,7 @@
       "teamLabel": "Linear team",
       "syncDisabled": "Sync paused",
       "title": "Linear",
-      "oauthSuccess": "Linear is connected. Choose a team to start syncing.",
+      "oauthSuccess": "Linear is connected.",
       "connected": "Connected",
       "operationError": "The Linear sync action failed. Try again.",
       "inboundFailures": "Linear updates that need attention",
@@ -6327,7 +6327,7 @@
         "labelsError": "Could not load your Linear labels",
         "noTeams": "Your Linear has no teams",
         "add": "Add a Linear event",
-        "notConnected": "Connect Linear in Settings first",
+        "notConnected": "Linear is not connected",
         "event": "Event",
         "runWhen": "Condition",
         "labels": "Labels (optional, comma-separated)",
@@ -7777,7 +7777,7 @@
       "confirm": {
         "action": "Make personal",
         "checking": "Checking Linear sync records…",
-        "archiveIsNotErasure": "Archiving in Linear is not a privacy erase. The title, description and comments may still be seen.",
+        "archiveIsNotErasure": "The existing issue and its comments stay visible in Linear.",
         "alreadyPersonal": "This task is already personal.",
         "linearCopy": "A copy already synced to Linear may still be visible to the team. No sync record does not prove no earlier copy exists.",
         "description": "Once it is personal, teammates will no longer see this task in Mikka.",
@@ -7793,9 +7793,9 @@
       "judgedByAgent": "Set automatically",
       "workspace": "Workspace",
       "disableLinear": "Turn off Linear sync",
-      "disableLinkedLinear": "Turn off sync and archive the linked Linear issue",
+      "disableLinkedLinear": "Detach the linked Linear issue",
       "label": "Scope",
-      "movedToWorkspace": "Now a workspace task; it will sync to Linear.",
+      "movedToWorkspace": "Moved to the workspace.",
       "personal": "Personal"
     },
     "status": {
