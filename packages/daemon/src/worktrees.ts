@@ -85,12 +85,13 @@ function collectSafeRepoFiles(repoPath: string, repoReal: string): string[] {
  * ignored files such as `.env.local` or `.npmrc`) with strict repo-boundary,
  * non-symlink, and native-credential exclusion checks.
  */
-export function readWorktreeInclude(repoPath: string): string[] {
-  const repoReal = realpathSync(repoPath)
-  const includePath = join(repoPath, WORKTREE_INCLUDE_FILE)
+export function readWorktreeInclude(manifestRoot: string, matchRoot = manifestRoot): string[] {
+  const manifestReal = realpathSync(manifestRoot)
+  const matchReal = matchRoot === manifestRoot ? manifestReal : realpathSync(matchRoot)
+  const includePath = join(manifestRoot, WORKTREE_INCLUDE_FILE)
   const stat = lstatSync(includePath, { throwIfNoEntry: false })
   if (!stat) return []
-  if (!stat.isFile() || !isInside(repoReal, realpathSync(includePath))) {
+  if (!stat.isFile() || !isInside(manifestReal, realpathSync(includePath))) {
     throw new Error(`${WORKTREE_INCLUDE_FILE} must be a regular file inside the repository`)
   }
   if (stat.size > WORKTREE_INCLUDE_MAX_BYTES) {
@@ -138,7 +139,7 @@ export function readWorktreeInclude(repoPath: string): string[] {
       matched.add(pattern)
       continue
     }
-    if (!allFiles) allFiles = collectSafeRepoFiles(repoPath, repoReal)
+    if (!allFiles) allFiles = collectSafeRepoFiles(matchRoot, matchReal)
     const re = globToRegExp(pattern)
     for (const file of allFiles) {
       if (re.test(file)) {
@@ -344,60 +345,69 @@ export class WorktreeManager {
     repoPath: string,
     recipe: SetupRecipe | undefined,
     taskEnv?: Record<string, string>,
-    options?: { includeWorktreeFile?: boolean }
+    options?: { includeWorktreeFile?: boolean; copySource?: string }
   ): Promise<"skipped" | "done"> {
     if (recipe && !recipe.approved) return "skipped"
-    const includeFiles = options?.includeWorktreeFile === false ? [] : readWorktreeInclude(repoPath)
+    const sourceRoot = options?.copySource ?? repoPath
+    const includeFiles = options?.includeWorktreeFile === false
+      ? []
+      : existsSync(join(sourceRoot, WORKTREE_INCLUDE_FILE))
+        ? readWorktreeInclude(sourceRoot, sourceRoot)
+        : existsSync(join(worktree, WORKTREE_INCLUDE_FILE))
+          ? readWorktreeInclude(worktree, sourceRoot)
+          : []
     if (!recipe && includeFiles.length === 0) return "skipped"
-    const repoReal = realpathSync(repoPath)
+    const sourceReal = realpathSync(sourceRoot)
     const worktreeReal = realpathSync(worktree)
     const filesToCopy = [...new Set([...includeFiles, ...(recipe?.copyFiles ?? [])])]
-    for (const file of filesToCopy) {
-      const normalized = file.replace(/\\/g, "/")
-      if (FORBIDDEN_COPY_PATH.test(normalized)) {
-        throw new Error(`setup recipe cannot copy forbidden path: ${file}`)
-      }
-      const rel = relative(repoPath, resolve(repoPath, file))
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        throw new Error(`setup recipe copies a file outside the repo: ${file}`)
-      }
-      const from = join(repoPath, rel)
-      const fromStat = lstatSync(from, { throwIfNoEntry: false })
-      if (!fromStat) continue
-      // Symlinks (the file itself or a parent dir) could pull in or overwrite
-      // files outside the repo and the worktree; both ends must stay inside.
-      if (!fromStat.isFile() || !isInside(repoReal, realpathSync(from))) {
-        throw new Error(
-          `setup recipe copies a symlink or non-file, or leaves the repo: ${file}`
-        )
-      }
-      const to = join(worktree, rel)
-      // Verify every existing parent directory inside the worktree before mkdirSync
-      // so a committed symlink directory cannot cause mkdirSync to write outside worktreeReal.
-      let probe = dirname(to)
-      while (probe !== worktree && probe !== dirname(probe)) {
-        const probeStat = lstatSync(probe, { throwIfNoEntry: false })
-        if (probeStat) {
-          if (!probeStat.isDirectory() || !isInside(worktreeReal, realpathSync(probe))) {
-            throw new Error(
-              `setup recipe would write through a symlink or outside the worktree: ${file}`
-            )
-          }
-          break
+    if (sourceReal !== worktreeReal) {
+      for (const file of filesToCopy) {
+        const normalized = file.replace(/\\/g, "/")
+        if (FORBIDDEN_COPY_PATH.test(normalized)) {
+          throw new Error(`setup recipe cannot copy forbidden path: ${file}`)
         }
-        probe = dirname(probe)
+        const rel = relative(sourceRoot, resolve(sourceRoot, file))
+        if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+          throw new Error(`setup recipe copies a file outside the repo: ${file}`)
+        }
+        const from = join(sourceRoot, rel)
+        const fromStat = lstatSync(from, { throwIfNoEntry: false })
+        if (!fromStat) continue
+        // Symlinks (the file itself or a parent dir) could pull in or overwrite
+        // files outside the repo and the worktree; both ends must stay inside.
+        if (!fromStat.isFile() || !isInside(sourceReal, realpathSync(from))) {
+          throw new Error(
+            `setup recipe copies a symlink or non-file, or leaves the repo: ${file}`
+          )
+        }
+        const to = join(worktree, rel)
+        // Verify every existing parent directory inside the worktree before mkdirSync
+        // so a committed symlink directory cannot cause mkdirSync to write outside worktreeReal.
+        let probe = dirname(to)
+        while (probe !== worktree && probe !== dirname(probe)) {
+          const probeStat = lstatSync(probe, { throwIfNoEntry: false })
+          if (probeStat) {
+            if (!probeStat.isDirectory() || !isInside(worktreeReal, realpathSync(probe))) {
+              throw new Error(
+                `setup recipe would write through a symlink or outside the worktree: ${file}`
+              )
+            }
+            break
+          }
+          probe = dirname(probe)
+        }
+        mkdirSync(dirname(to), { recursive: true })
+        const toStat = lstatSync(to, { throwIfNoEntry: false })
+        if (
+          !isInside(worktreeReal, realpathSync(dirname(to))) ||
+          (toStat && !toStat.isFile())
+        ) {
+          throw new Error(
+            `setup recipe would write through a symlink or outside the worktree: ${file}`
+          )
+        }
+        copyFileSync(from, to)
       }
-      mkdirSync(dirname(to), { recursive: true })
-      const toStat = lstatSync(to, { throwIfNoEntry: false })
-      if (
-        !isInside(worktreeReal, realpathSync(dirname(to))) ||
-        (toStat && !toStat.isFile())
-      ) {
-        throw new Error(
-          `setup recipe would write through a symlink or outside the worktree: ${file}`
-        )
-      }
-      copyFileSync(from, to)
     }
     if (recipe?.command) {
       await execa(recipe.command, {

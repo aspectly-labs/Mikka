@@ -1429,9 +1429,23 @@ export class RunSupervisor {
           "checkpoint from the earlier attempt",
         )
       }
-      const setup = runPolicy(assignment.policy).readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree,repo) : await this.deps.worktrees.bootstrap(worktree, repo.path, repo.setup)
-      if (!continued && !runPolicy(assignment.policy).readOnly && assignment.projectEnvironment?.setup?.approved) {
-        if (runPolicy(assignment.policy).permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
+      const policy = runPolicy(assignment.policy)
+      // Enforce workspace install_dependency policy on repository setup shell commands:
+      // strip setup.command when install_dependency !== 'allow' while keeping approved:false
+      // skip semantics and safe file-copy behavior intact.
+      const repoSetupCommandBlocked = Boolean(
+        repo.setup?.approved && repo.setup.command && policy.permissions.install_dependency !== 'allow'
+      )
+      if (repoSetupCommandBlocked) {
+        log.warn({ runId, repoId: repo.repoId }, 'Skipping repository setup command because install_dependency is not allowed')
+      }
+      const effectiveRepoSetup = repoSetupCommandBlocked && repo.setup
+        ? { ...repo.setup, command: undefined }
+        : repo.setup
+      const effectiveRepo = effectiveRepoSetup === repo.setup ? repo : { ...repo, setup: effectiveRepoSetup }
+      const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, effectiveRepo) : await this.deps.worktrees.bootstrap(worktree, repo.path, effectiveRepoSetup)
+      if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup?.approved) {
+        if (policy.permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
         await this.deps.worktrees.bootstrap(worktree, repo.path, assignment.projectEnvironment.setup, assignment.taskEnv, { includeWorktreeFile: false })
       }
       log.info({ worktree, setup }, "worktree ready")

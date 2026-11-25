@@ -1,6 +1,7 @@
 'use server'
 
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { daemonTestMode, normalizeRepository } from '@mikka/protocol/repository'
 import { requireUser } from '@/lib/issue-access'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { accessibleProjects } from '@/lib/project-access'
@@ -11,11 +12,11 @@ import { workspaceSecrets } from '@/lib/db/secrets-schema'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { withTaskWorkspace } from '@/lib/task-workspace'
 import { listProjectResources } from '@/lib/project-resources/store'
-import { projectRepositoryKey, type EnvironmentConfiguration } from '@/lib/project-resources/contracts'
+import { projectRepositoryKey, type EnvironmentConfiguration, type EnvironmentNetworkAccess } from '@/lib/project-resources/contracts'
 import { isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 import type { SecretDelivery } from '@/lib/secrets/delivery'
 
-export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null }
+export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration & { networkAccess: EnvironmentNetworkAccess }; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null }
 export type EnvironmentProject = { id: string; name: string; revision: number; environmentId: string | null; canEditProperties: boolean }
 export type EnvironmentAvailableRepository = { key: string; label: string }
 export type EnvironmentAvailableSecret = {
@@ -73,7 +74,7 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
       db.select({ remoteKey: githubRepositoryInstallations.remoteKey })
         .from(githubRepositoryInstallations)
         .where(eq(githubRepositoryInstallations.userId, user.id)),
-      db.select({ repoPath: deviceRepos.repoPath })
+      db.select({ repoPath: deviceRepos.repoPath, remoteUrl: deviceRepos.remoteUrl })
         .from(deviceRepos)
         .where(eq(deviceRepos.userId, user.id)),
       // The context can predate a role change. Membership is now locked; expose
@@ -83,14 +84,25 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
     ])
     const defaults = new Map(bindings.rows.map(row => [row.projectId, row.environmentId]))
     const member = memberRows[0]
-    const restrictedAllowlist = resources.policy.mode === 'restricted' ? new Set(resources.policy.repositoryKeys) : null
+    const policyKeys = Array.isArray(resources.policy.repositoryKeys) ? resources.policy.repositoryKeys : []
+    const restrictedAllowlist = resources.policy.mode === 'restricted' ? new Set(policyKeys) : null
+    const normalizeOptions = { allowFile: daemonTestMode(process.env) }
+    const deviceRepoKeys = deviceRepoRows.flatMap(row => {
+      if (row.repoPath.startsWith('v2/')) return [row.repoPath]
+      if (!row.remoteUrl) return []
+      try {
+        return [normalizeRepository(row.remoteUrl, normalizeOptions).key]
+      } catch {
+        return []
+      }
+    })
     const candidateKeys = new Set<string>()
     for (const rawKey of [
-      ...resources.policy.repositoryKeys,
+      ...policyKeys,
       ...resources.environments.flatMap(env => env.configuration.repositoryKeys ?? []),
       ...projectRepos.rows.map(row => row.repositoryKey),
       ...githubRows.map(row => row.remoteKey),
-      ...deviceRepoRows.map(row => row.repoPath),
+      ...deviceRepoKeys,
     ]) {
       const parsed = projectRepositoryKey.safeParse(rawKey)
       if (!parsed.success) continue

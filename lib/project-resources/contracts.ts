@@ -23,8 +23,8 @@ export const environmentConfiguration = z.object({
   setup: setupRecipeSchema.optional(),
   /** Optional start command (e.g. dev server / preview) run inside Cloud Environments. */
   startScript: z.string().max(2_000).optional(),
-  /** Outbound network access policy for Cloud Environments; 'inherit' follows default policy. */
-  networkAccess: z.enum(ENVIRONMENT_NETWORK_ACCESS).default('inherit'),
+  /** Outbound network access policy for Cloud Environments; omitted defaults to 'inherit'. */
+  networkAccess: z.enum(ENVIRONMENT_NETWORK_ACCESS).optional(),
   variables: z.record(envName, z.string().max(32_768)).default({}),
   /** Existing encrypted workspace_secrets IDs. Values never enter this object or a Run snapshot. */
   secretIds: z.array(z.uuid()).max(100).default([]),

@@ -314,6 +314,7 @@ async function persistRepositorySetup(
   userId: string,
   remoteKey: string,
   setupInput: DeviceRepositorySetupInput | null,
+  fallbackVerifyCommand: string | null,
 ): Promise<StoredSetupRecipe | null> {
   const stored = normalizeSetupForStorage(setupInput)
   if (!stored) {
@@ -323,14 +324,43 @@ async function persistRepositorySetup(
     )
     return null
   }
+  // Seed verifyCommand on first insert from the repository's configured verification
+  // command (falling back to any existing non-null verifyCommand on another device for
+  // the same owner/repo) so creating a repository_settings row for setup never turns
+  // into a NULL verifyCommand override on cloud claims.
   await client.query(
-    `INSERT INTO repository_settings ("userId", "remoteKey", setup, "updatedAt")
-     VALUES ($1, $2, $3::jsonb, now())
+    `INSERT INTO repository_settings ("userId", "remoteKey", "verifyCommand", setup, "updatedAt")
+     VALUES (
+       $1,
+       $2,
+       COALESCE(
+         $3::text,
+         (SELECT dr."verifyCommand" FROM device_repos dr
+          WHERE dr."userId"=$1 AND dr."repoPath"=$2 AND dr."verifyCommand" IS NOT NULL
+          ORDER BY dr."createdAt" DESC LIMIT 1)
+       ),
+       $4::jsonb,
+       now()
+     )
      ON CONFLICT ("userId", "remoteKey")
      DO UPDATE SET setup=excluded.setup, "updatedAt"=now()`,
-    [userId, remoteKey, JSON.stringify(stored)],
+    [userId, remoteKey, fallbackVerifyCommand, JSON.stringify(stored)],
   )
   return stored
+}
+
+async function syncRepositorySettingsVerifyCommand(
+  client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
+  userId: string,
+  remoteKey: string,
+  verifyCommand: string | null,
+): Promise<void> {
+  // Keep an already-present repository_settings row aligned when the owner edits
+  // verifyCommand on a device repo, without creating a row where none existed.
+  await client.query(
+    `UPDATE repository_settings SET "verifyCommand"=$3, "updatedAt"=now() WHERE "userId"=$1 AND "remoteKey"=$2`,
+    [userId, remoteKey, verifyCommand],
+  )
 }
 
 async function readRepositorySetup(
@@ -480,8 +510,11 @@ export async function upsertDeviceRepository(
       saved = row!
     }
     const setupKey = resolveRepositorySetupKey(saved.repoPath, saved.remoteUrl)
+    if (parsed.verifyCommand !== undefined) {
+      await syncRepositorySettingsVerifyCommand(client, actor.userId, setupKey, saved.verifyCommand)
+    }
     const nextSetup = parsed.setup !== undefined
-      ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup)
+      ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup, saved.verifyCommand)
       : await readRepositorySetup(client, actor.userId, setupKey)
     await ownerListChanged(client, actor.userId, ['device_list'])
     await client.query('COMMIT')
@@ -535,8 +568,11 @@ export async function patchDeviceRepository(
       [existing.id, deviceId, actor.userId, nextLocalPath, nextBaseBranch, nextVerifyCommand],
     )
     const setupKey = resolveRepositorySetupKey(updated!.repoPath, updated!.remoteUrl)
+    if (parsed.verifyCommand !== undefined) {
+      await syncRepositorySettingsVerifyCommand(client, actor.userId, setupKey, updated!.verifyCommand)
+    }
     const nextSetup = parsed.setup !== undefined
-      ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup)
+      ? await persistRepositorySetup(client, actor.userId, setupKey, parsed.setup, updated!.verifyCommand)
       : await readRepositorySetup(client, actor.userId, setupKey)
     await ownerListChanged(client, actor.userId, ['device_list'])
     await client.query('COMMIT')

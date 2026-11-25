@@ -2,6 +2,7 @@
 // show its Environment in the right column's Setup tab. The workspace's members read its Environments; anyone else is
 // refused by the store's own membership check, even with a stale workspace context.
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { mock, test } from 'node:test'
 import { Pool } from 'pg'
 import { ActionFailureError } from '../lib/action-error'
@@ -37,6 +38,29 @@ test('listEnvironments reads only the reader\'s own workspace, for its members',
       setup: { copyFiles: [], command: 'pnpm install', approved: true },
     },
   })
+  // Older editor round-trip: omitting startScript & networkAccess preserves saved values.
+  await store.saveEnvironment(owner, {
+    workspaceId: workspace.id,
+    id: mine.id,
+    revision: mine.revision,
+    name: 'mikka-dev',
+    configuration: {
+      runtime: 'cloud',
+      repositoryKeys: ['v2/github.com/acme/mikka'],
+      setup: { copyFiles: [], command: 'pnpm install', approved: true },
+    },
+  })
+  // Legacy checkout-path device_repos row for the reader should still surface via remoteUrl normalization.
+  const deviceId = randomUUID()
+  const repoId = randomUUID()
+  await fixture.query(
+    `INSERT INTO devices (id, "ownerId", name) VALUES ($1, $2, 'legacy-laptop')`,
+    [deviceId, member],
+  )
+  await fixture.query(
+    `INSERT INTO device_repos (id, "deviceId", "userId", "repoPath", "remoteUrl") VALUES ($1, $2, $3, '/Users/dev/acme-legacy', 'https://github.com/acme/legacy.git')`,
+    [repoId, deviceId, member],
+  )
   const theirs = await store.saveEnvironment(peer, { workspaceId: foreign.id, name: 'other-team', configuration: {} })
   const { listEnvironments } = await import('../app/actions/environments')
   const as = (id: string) => { current = { id, name: id, email: `${id}@example.invalid` } }
@@ -47,7 +71,10 @@ test('listEnvironments reads only the reader\'s own workspace, for its members',
   assert.equal(read.environments[0]?.configuration.setup?.command, 'pnpm install')
   assert.equal(read.environments[0]?.configuration.startScript, 'pnpm dev')
   assert.equal(read.environments[0]?.configuration.networkAccess, 'restricted')
-  assert.deepEqual(read.availableRepositories, [{ key: 'v2/github.com/acme/mikka', label: 'acme/mikka' }])
+  assert.deepEqual(read.availableRepositories, [
+    { key: 'v2/github.com/acme/legacy', label: 'acme/legacy' },
+    { key: 'v2/github.com/acme/mikka', label: 'acme/mikka' },
+  ])
   assert.deepEqual(read.availableSecrets, [])
   assert.equal(read.canManage, false)
   assert.ok(!JSON.stringify(read).includes(theirs.id), 'never another workspace\'s Environment')

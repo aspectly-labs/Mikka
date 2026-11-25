@@ -259,4 +259,19 @@ describe(".worktreeinclude local worktree copy", () => {
     symlinkSync(outside, join(repo, "escape.env"))
     await expect(trees.bootstrap(wt, repo, undefined)).rejects.toThrow(/symlink/)
   })
+
+  it("reads committed .worktreeinclude from the worktree when copySource is a separate checkout", async () => {
+    const repo = await makeRepo()
+    writeFileSync(join(repo, ".worktreeinclude"), ".env.local\n")
+    git(repo, "add", ".worktreeinclude")
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@mikka.invalid", "commit", "-q", "-m", "add worktreeinclude")
+
+    const copySource = tempDir("copy-src-")
+    writeFileSync(join(copySource, ".env.local"), "FROM_SOURCE=1\n")
+
+    const trees = new WorktreeManager(tempDir())
+    const wt = await trees.create("inc-source", repo, "main")
+    expect(await trees.bootstrap(wt, repo, undefined, undefined, { copySource })).toBe("done")
+    expect(readFileSync(join(wt, ".env.local"), "utf8")).toBe("FROM_SOURCE=1\n")
+  })
 })
