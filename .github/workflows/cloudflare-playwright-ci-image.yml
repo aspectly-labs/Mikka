@@ -1,0 +1,155 @@
+name: Cloudflare Playwright CI image
+# Public tooling container (Playwright 1.64.1 Chromium + WebKit, Node 24.22.1, pnpm 10.34.3)
+# pushed to Cloudflare Containers Registry for private hosted-ui Cloudflare Container CI.
+# Zero private UI source and zero credentials inside the image.
+on:
+  pull_request:
+    paths:
+      - 'deploy/playwright-ci/**'
+      - '.github/workflows/cloudflare-playwright-ci-image.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Optional extra image tag (defaults to playwright-1.64.1)
+        type: string
+        required: false
+        default: playwright-1.64.1
+
+permissions:
+  contents: read
+
+env:
+  CF_ACCOUNT_ID: d8f6630c7869111a5139bc5ed4d24ace
+  CF_IMAGE_REPO: mikka-hosted-ui-ci
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.1'
+      - name: Run Playwright CI image contract tests
+        run: node --test deploy/playwright-ci/playwright-ci-image.test.mjs
+      - name: Build and verify the Playwright CI container image offline
+        run: |
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "com.mikka.playwright=1.64.1" \
+            --label "com.mikka.node=24.22.1" \
+            --label "com.mikka.pnpm=10.34.3" \
+            -t mikka-hosted-ui-ci:verify \
+            deploy/playwright-ci
+          bash deploy/playwright-ci/verify.sh mikka-hosted-ui-ci:verify
+
+  publish:
+    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '183887963' && github.triggering_actor == 'alexj11324'
+    runs-on: ubuntu-latest
+    environment: cloudflare-runtime-release
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.1'
+      - name: Validate tag input and contract tests
+        env:
+          EXTRA_TAG: ${{ inputs.tag }}
+        run: |
+          node --test deploy/playwright-ci/playwright-ci-image.test.mjs
+          if [[ ! "$EXTRA_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo "Invalid image tag: $EXTRA_TAG" >&2
+            exit 1
+          fi
+      - name: Build and qualify the linux/amd64 Playwright CI image
+        run: |
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "com.mikka.playwright=1.64.1" \
+            --label "com.mikka.node=24.22.1" \
+            --label "com.mikka.pnpm=10.34.3" \
+            -t mikka-hosted-ui-ci:publish \
+            deploy/playwright-ci
+          bash deploy/playwright-ci/verify.sh mikka-hosted-ui-ci:publish
+      - name: Issue a short-lived Cloudflare Registry publication credential
+        id: registry
+        uses: ./.github/actions/cloudflare-registry-credentials
+        with:
+          mode: publish
+      - name: Push Playwright CI image to Cloudflare Containers Registry
+        env:
+          CF_REGISTRY_USERNAME: ${{ steps.registry.outputs.username }}
+          CF_REGISTRY_PASSWORD: ${{ steps.registry.outputs.password }}
+          EXTRA_TAG: ${{ inputs.tag }}
+        run: |
+          docker_cfg="$(mktemp -d "$RUNNER_TEMP/playwright-ci-docker-XXXXXX")"
+          echo "PLAYWRIGHT_CI_DOCKER_CONFIG=$docker_cfg" >> "$GITHUB_ENV"
+          export DOCKER_CONFIG="$docker_cfg"
+          printf '%s' "$CF_REGISTRY_PASSWORD" | docker login registry.cloudflare.com --username "$CF_REGISTRY_USERNAME" --password-stdin >/dev/null
+
+          repo="registry.cloudflare.com/${CF_ACCOUNT_ID}/${CF_IMAGE_REPO}"
+          sha_tag="sha-${GITHUB_SHA:0:12}"
+          docker tag mikka-hosted-ui-ci:publish "${repo}:${sha_tag}"
+          docker tag mikka-hosted-ui-ci:publish "${repo}:${EXTRA_TAG}"
+          docker push "${repo}:${sha_tag}"
+          docker push "${repo}:${EXTRA_TAG}"
+
+          digest_ref="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${repo}:${sha_tag}" | grep "^${repo}@sha256:" | head -n 1)"
+          if [[ -z "$digest_ref" ]]; then
+            echo "Failed to resolve pushed OCI digest for ${repo}:${sha_tag}" >&2
+            exit 1
+          fi
+
+          REPO="$repo" \
+          DIGEST_REF="$digest_ref" \
+          SHA_TAG="$sha_tag" \
+          EXTRA_TAG="$EXTRA_TAG" \
+          RECEIPT_PATH="$RUNNER_TEMP/playwright-ci-image-receipt.json" \
+          node -e '
+            const fs = require("node:fs");
+            const receipt = {
+              schema: 1,
+              repository: process.env.REPO,
+              image: process.env.DIGEST_REF,
+              tags: [process.env.SHA_TAG, process.env.EXTRA_TAG],
+              sourceSha: process.env.GITHUB_SHA,
+              playwright: "1.64.1",
+              node: "24.22.1",
+              pnpm: "10.34.3",
+              runId: process.env.GITHUB_RUN_ID,
+              runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+              publishedAt: new Date().toISOString(),
+            };
+            fs.writeFileSync(process.env.RECEIPT_PATH, JSON.stringify(receipt, null, 2) + "\n");
+            console.log(JSON.stringify(receipt, null, 2));
+          '
+
+          {
+            echo "### Published Cloudflare Playwright CI image"
+            echo "- Immutable image: \`${digest_ref}\`"
+            echo "- Tags: \`${sha_tag}\`, \`${EXTRA_TAG}\`"
+            echo "- Runtime: Playwright \`1.64.1\` (Chromium + WebKit), Node \`24.22.1\`, pnpm \`10.34.3\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Playwright CI image OCI receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: playwright-ci-image-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/playwright-ci-image-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Clean up temporary Docker registry credentials
+        if: always()
+        run: |
+          if [[ -n "${PLAYWRIGHT_CI_DOCKER_CONFIG:-}" && -d "$PLAYWRIGHT_CI_DOCKER_CONFIG" ]]; then
+            rm -rf "$PLAYWRIGHT_CI_DOCKER_CONFIG"
+          fi
