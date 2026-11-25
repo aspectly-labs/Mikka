@@ -18,9 +18,6 @@ export const inboxLive = (workspace: string | undefined) => ({
   minIntervalMs: LIST_MERGE_MS, refs: [listRef('pending_actions', workspace), listRef('issue_list', workspace)],
 })
 
-/** A read that refreshes only by the minute fallback, never by push. */
-export const minuteRef = (kind: LiveRef['kind']): LiveRef => ({ kind, id: UNRESOLVED_LIVE_ID, scope: null })
-
 /**
  * 线程: the threads (thread_list) and the machines (device_list). A machine coming online
  * writes (its heartbeat route pushes device_list); the gateway acknowledges the
