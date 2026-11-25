@@ -17,20 +17,11 @@ import { issueView, syncWorkspaceTaskPrefix, taskIdentifiers } from '@/lib/task-
 import { issueRestoreDeadline, readIssueMetadata, withIssueMetadata, type IssueMetadata } from '@/lib/issue-metadata'
 import { allocateIssueNumbers } from '@/lib/issue-numbering'
 import { createsIssueCycle } from '@/lib/issue-relations'
-import { dispatchLinearIssueSync, dispatchLinearWork } from '@/lib/linear-sync/dispatch'
 import { activityActor } from '@/lib/activity-actor'
 import { requireCurrentIssueWorkspace, requireLockedIssueScope, withIssueWorkspace } from '@/lib/issue-scope-authorization'
 
 const relationSchema = z.object({ id: z.uuid(), revision: z.number().int().positive(), targetId: z.uuid().nullable(), kind: z.enum(['parent', 'child', 'related', 'blockedBy', 'blocks', 'duplicate']), remove: z.boolean().default(false) })
 
-/**
- * Runs after the write has committed. Scheduling Linear sync can throw (e.g. `after` outside a
- * request); that must not turn a saved change into a "save failed" response, so it only logs.
- */
-function scheduleLinearWork() {
-  try { dispatchLinearWork() }
-  catch (error) { console.error('Linear background sync could not be scheduled', error instanceof Error ? error.name : 'UnknownError') }
-}
 
 /** The task's relations panel and subtasks: the task itself and the tasks it links to or that link to it. */
 export async function listIssueConnections(id: string) {
@@ -174,7 +165,6 @@ export async function updateIssueRelation(input: z.input<typeof relationSchema>)
         await issueRelationsChanged(tx, [...patches.keys()].flatMap(id => [id, ...relationIds(rows.find(row => row.id === id)!.content)]))
         return { issue: await issueView(savedCurrent, tx) }
       }))
-      if ('issue' in result) scheduleLinearWork()
       return result
     } catch (error) {
       if (error instanceof ActionFailureError) throw error
@@ -270,7 +260,6 @@ export async function createLinkedIssue(input: { id: string; revision: number; k
         await tx.insert(issueVersions).values(versions)
         return { issue: await issueView(created, tx) }
       })
-      if ('issue' in result) scheduleLinearWork()
       return result
     } catch (error) {
       if (error instanceof ActionFailureError) throw error
@@ -342,7 +331,6 @@ export async function setIssueDeleted(input: { id: string; revision?: number; re
       }))
       // A deleted task's running work stops now; nothing rechecks it later (decision 2026-11-17-2215).
       if (!input.restore && 'issue' in result) await (await import('@/lib/run-authority-stop')).stopRunsWithoutAuthority({ issueId: issue.id })
-      if (input.restore && 'issue' in result && result.issue?.scope === 'workspace' && !result.issue.linearSyncBlocked && result.issue.linearTargetVerified) dispatchLinearIssueSync(issue.id)
       return result
     } catch (error) {
       if (error instanceof ActionFailureError) throw error

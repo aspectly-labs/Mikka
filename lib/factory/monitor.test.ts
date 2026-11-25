@@ -170,8 +170,7 @@ test(
     });
     const { appendMonitorEvidence } = await import("./monitor-evidence");
     const { loadIssueDocument, readIssueThreads } =
-      await import("../linear-sync/document");
-    const { createAppIssueFromLinear } = await import("../linear-sync/issue-sync");
+      await import("../task-comments/issue-document");
     const { withDatabaseClient } = await import("../db");
     marker.deregister();
     const previousWake = coordinatorWakeTransport.wake;
@@ -728,23 +727,12 @@ test(
       // rows live in its isolated schema, as in a split-database deployment.
       const workspaceId = await seedFixtureWorkspace(pool, 'owner', 'team');
       workspaceFixtures.set(JSON.stringify(['owner', 'workspace:a']), workspaceId);
-      const { rows: [linearTeam] } = await pool.query<Parameters<typeof createAppIssueFromLinear>[0]>(
+      const { rows: [linearTeam] } = await pool.query(
         "INSERT INTO linear_team_syncs (id,\"ownerId\",\"linearTeamId\",\"linearTeamKey\",\"linearTeamName\",\"workspaceId\") VALUES ($1,'owner','fixture-team','FIX','Fixture team',$2) RETURNING *",
         [teamId, workspaceId],
       );
-      const importClient = await pool.connect();
-      try {
-        const imported = await withDatabaseClient(importClient, () => createAppIssueFromLinear(linearTeam, {
-          id: linearIssueId, identifier: "FIX-195", title: "Monitor layer fixture", description: "Synthetic remote issue for monitor evidence.",
-          dueDate: null, priority: 0, url: `https://linear.app/fixture/issue/FIX-195`, updatedAt: new Date().toISOString(),
-          state: { id: "fixture-state", name: "Todo", type: "unstarted" },
-          team: { id: "fixture-team", key: "FIX", name: "Fixture team" }, assignee: null, labels: [],
-        }));
-        assert.ok(imported);
-        issueId = imported.id;
-        assert.notEqual(issueId, linearIssueId, 'the imported provider id does not choose the local task identity');
-        assert.equal(imported.workspaceId, workspaceId);
-      } finally { importClient.release(); }
+      const { historicalLinearTask } = await import('../../tests/helpers/historical-linear-task');
+      issueId = (await historicalLinearTask(pool, 'owner', workspaceId, linearTeam.id, linearIssueId, 'FIX-195', 'Monitor layer fixture')).id;
       scopes.set(issueId, "workspace:a");
       assert.deepEqual((await pool.query('SELECT "externalTargetVerified","linearIssueId" FROM linear_issue_links WHERE "issueId"=$1', [issueId])).rows[0], { externalTargetVerified: true, linearIssueId });
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM linear_sync_outbox WHERE "issueId"=$1', [issueId])).rows[0].n, 0, "an incoming import must not enqueue itself");

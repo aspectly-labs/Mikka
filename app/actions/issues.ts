@@ -358,7 +358,7 @@ export async function pollIssue(id: string, known?: string): Promise<ActionResul
         // A reader may view discussions without sending the editor's initial Yjs seed or an update.
         const [document] = await tx.select({ state: issueDocuments.state }).from(issueDocuments)
           .where(and(eq(issueDocuments.issueId, id), eq(issueDocuments.userId, issue.userId)))
-        const { loadIssueDocument, readIssueThreads } = await import('@/lib/linear-sync/document')
+        const { loadIssueDocument, readIssueThreads } = await import('@/lib/task-comments/issue-document')
         const doc = document ? loadIssueDocument(document.state, body.content) : null
         try { return { viewerId: user.id, version, issue: { ...view, content: body.content, readOnlyDiscussions: doc ? readIssueThreads(doc) : [] } } }
         finally { doc?.destroy() }
@@ -453,7 +453,6 @@ async function persistIssue(input: SaveIssueInput, block?: BlockFlag, state?: Ch
         return { issue: await issueView(issue, tx) }
       })
       const result = existing ? await withIssueWorkspace(user, context.workspace.id, { issueId: existing.id, action: 'canSteer' }, save) : await withTaskWorkspace(user, context.workspace.id, save)
-      if ('issue' in result && result.issue?.linearSyncPolicy === 'explicit' && !result.issue.linearSyncBlocked && result.issue.linearTargetVerified) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
       return result
     } catch (error) {
       if (error instanceof ActionFailureError) throw error
@@ -538,7 +537,6 @@ export async function confirmIssuePersonalScope(input: { id: string; revision: n
     if (!parsed.success) return { error: 'issueScopeInvalid' as const }
     await requireIssueAccess(parsed.data.id)
     const result = await changeIssueScopeLocally(userId, { id: parsed.data.id, revision: parsed.data.revision, scope: 'personal' }, { allowLinkedPersonal: true, confirmation: parsed.data.confirmation })
-    if ('issue' in result && result.issue) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
     return result
   })
 }
@@ -657,7 +655,6 @@ export async function setIssueScope(input: { id: string; revision: number; scope
     // not infer the owner's active Linear team or publish an unassigned task.
     if (parsed.data.scope === 'workspace') return { error: 'issueScopeTeamRequired' }
     const result = await changeIssueScopeLocally(userId, parsed.data, { allowLinkedPersonal: true })
-    if ('issue' in result && result.issue) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
     return result
 
   })

@@ -2398,18 +2398,11 @@
     "test": "lib/linear-sync/label-options.test.ts",
     "suite": "test:linear-sync"
   },
-  "lib/linear-sync/markdown.ts": {
+  "lib/task-comments/markdown.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Converts Mikka task content to and from Linear Markdown locally and escapes plain text for comments.",
-    "test": "lib/linear-sync/markdown.test.ts",
-    "suite": "test:linear-sync"
-  },
-  "lib/linear-sync/run-comment.ts": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Formats localized run comments, derives repeatable comment IDs, and builds task links from the installation origin and base path supplied by the caller.",
-    "test": "lib/linear-sync/run-comment.test.ts",
+    "test": "lib/task-comments/markdown.test.ts",
     "suite": "test:linear-sync"
   },
   "lib/live/lists.ts": {

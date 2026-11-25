@@ -26,26 +26,12 @@ export function loadIssueDocument(state: string | null, content: JSONContent) {
   return doc
 }
 
-export function replaceIssueDescription(doc: Y.Doc, content: JSONContent) {
-  const fragment = doc.getXmlFragment('default')
-  doc.transact(() => {
-    if (fragment.length) fragment.delete(0, fragment.length)
-    prosemirrorJSONToYXmlFragment(schema, content, fragment)
-  }, 'linear-sync')
-}
-
 export function readIssueThreads(doc: Y.Doc): ThreadRecord[] {
   const value = doc.getMap<Y.Map<unknown>>(THREADS_FIELD).toJSON() as Record<string, ThreadRecord>
   return Object.values(value).filter(thread => typeof thread?.id === 'string' && Array.isArray(thread.messages))
 }
 
-export function readIssueThreadMessage(doc: Y.Doc, threadId: string, messageId: string) {
-  const messages = doc.getMap<Y.Map<unknown>>(THREADS_FIELD).get(threadId)?.get('messages')
-  if (!(messages instanceof Y.Array)) return null
-  return (messages.toArray() as ThreadMessage[]).find(message => message.id === messageId) ?? null
-}
-
-export function upsertLinearComment(doc: Y.Doc, input: { threadId: string; messageId: string; author: string; authorUserId?: string; body: string; at: string }) {
+export function upsertThreadMessage(doc: Y.Doc, input: { threadId: string; messageId: string; author: string; authorUserId?: string; body: string; at: string }) {
   const threads = doc.getMap<Y.Map<unknown>>(THREADS_FIELD)
   const thread = threads.get(input.threadId)
   if (!thread) {
@@ -57,7 +43,7 @@ export function upsertLinearComment(doc: Y.Doc, input: { threadId: string; messa
     record.set('createdAt', input.at)
     record.set('resolved', false)
     record.set('messages', messages)
-    doc.transact(() => threads.set(input.threadId, record), 'linear-sync')
+    doc.transact(() => threads.set(input.threadId, record), 'discussion')
     return
   }
   const messages = thread.get('messages')
@@ -74,7 +60,7 @@ export function upsertLinearComment(doc: Y.Doc, input: { threadId: string; messa
         messages.insert(index, [{ ...previous, ...next }])
       }
     }
-  }, 'linear-sync')
+  }, 'discussion')
 }
 
 export function encodedIssueDocument(doc: Y.Doc) {

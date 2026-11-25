@@ -728,7 +728,7 @@
         "GET"
       ],
       "maxDuration": 60,
-      "sourceHash": "04d7c948cf736481a93419804b17eeca6d1922f731a8b9990d47a9e7a16541e9"
+      "sourceHash": "1e9ac19a58a54d86474f135e54aa1875ba54495d774bf268e24d90d8f7e92a13"
     },
     {
       "path": "/mikka/api/cron/ops-monitor",
@@ -1579,7 +1579,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "606d930f5a509677879a9daa681dd03ada0c354b513bffc91223a29905c8f44e"
+      "sourceHash": "50ff852abbfd2ad53b923a74b6cb5ab16ef71e15ee0edefa1434acc869fc89a8"
     },
     {
       "path": "/mikka/api/integrations/linear/status",
@@ -1588,7 +1588,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "dd5c0c9c0181999b7e1416572a975b99c27e2ac54b42df8ca12fc7b01911b03d"
+      "sourceHash": "3949c5caa765c9ee9df448f3a07b46720c150ad8491aca472a32787750c13e83"
     },
     {
       "path": "/mikka/api/integrations/mcp",
@@ -3767,7 +3767,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "ff16b88d926018591f3dcacfa4bef23ec9eac66faad31222bb4d020586ed1eeb"
+      "sourceHash": "8e2bda0a8b41c4af7f242c9b22d478154537987c346ffee83208f35a715c9ade"
     },
     {
       "path": "/mikka/api/webhooks/linear/automations",
@@ -4333,7 +4333,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "d84eb402a34e87bee40844f512ffc5cf2d575b59d30ff14be583e2f0f1a4f8e9"
+      "sourceHash": "c2ead6cc7713f4edfa3ed253794eead9a1d0082f7cd334c2f821393b298179a8"
     },
     {
       "path": "/mikka/v1/runs/[runId]/events",

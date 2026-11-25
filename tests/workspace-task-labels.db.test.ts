@@ -146,21 +146,6 @@ test('workspace task label HTTP management and real task writers preserve tenant
     assert.deepEqual(await refs(created.id), [review.id, bug.id])
     assert.ok('id' in await scoped(() => mcp.updateIssue(owner, { issueId: privateTask, labels: ['Review', 'BUG'] })))
     assert.deepEqual(await refs(privateTask), [review.id, bug.id])
-    const { linearTeamSyncs } = await import('../lib/db/schema')
-    const { createAppIssueFromLinear, applyLinearIssueToApp, LinearSyncConflictError } = await import('../lib/linear-sync/issue-sync')
-    const [binding] = await db.insert(linearTeamSyncs).values({ id: randomUUID(), ownerId: owner, workspaceId: workspace.id,
-      linearTeamId: randomUUID(), linearTeamKey: 'LBL', linearTeamName: 'Labels' }).returning()
-    const remote = { id: randomUUID(), identifier: 'LBL-1', title: 'Imported task', description: '', dueDate: null, priority: 0,
-      url: 'https://example.invalid/linear', updatedAt: new Date().toISOString(), state: null,
-      team: { id: binding.linearTeamId, key: binding.linearTeamKey, name: binding.linearTeamName }, assignee: null, labels: [{ id: 'provider-label', name: 'BUG', color: '#000000' }] }
-    const imported = await createAppIssueFromLinear(binding, remote)
-    assert.ok(imported)
-    assert.deepEqual(await refs(imported.id), [bug.id])
-    assert.deepEqual((await taskRow(imported.id)).content.attrs.mikka.labels, [{ name: 'Bug', color: 'red' }])
-    await assert.rejects(createAppIssueFromLinear(binding, { ...remote, id: randomUUID(), labels: [{ id: 'unknown', name: 'Unregistered', color: null }] }), LinearSyncConflictError)
-    const importedBefore = await taskRow(imported.id)
-    await assert.rejects(applyLinearIssueToApp(binding, { ...remote, updatedAt: new Date(Date.now() + 60_000).toISOString(), title: 'Must not apply', labels: [{ id: 'unknown', name: 'Unregistered', color: null }] }, true), LinearSyncConflictError)
-    assert.deepEqual(await taskRow(imported.id), importedBefore)
   })
 
   await t.test('rename, merge and deletion atomically update task references, display snapshots and new history without rewriting old versions', async () => {

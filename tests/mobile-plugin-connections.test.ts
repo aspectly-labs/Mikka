@@ -17,7 +17,6 @@ stub('../lib/composio.ts', { getComposio: () => ({ connectedAccounts: { list: as
 stub('../lib/composio-account-store.ts', { listComposioAccountRecords: async (userId: string) => userId === 'owner' ? [{ accountId: 'g', toolkit: 'denied_by_provider', needsReconnect: true }] : [] })
 stub('../lib/db/index.ts', { db: {} })
 stub('../lib/db/schema.ts', { linearConnections: {} })
-stub('../lib/linear-sync/flags.ts', { linearSyncState: async () => linearAvailability })
 stub('../lib/linear-sync/oauth.ts', { linearOAuthConfigured: () => true })
 class GitHubAccessError extends Error { constructor(readonly code: string, readonly status: number) { super(code) } }
 stub('../lib/github/user-access.ts', { GitHubAccessError, listAuthorizedRepositories: async () => ({ userId: returnedOwner, installations: ['one'] }) })

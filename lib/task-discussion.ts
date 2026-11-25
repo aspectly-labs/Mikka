@@ -6,7 +6,7 @@ export interface ThreadMessage {
   replyToMessageId?: string
   body: string
   at: string
-  /** When its author last changed the body or files; the server stamps it (lib/linear-sync/comment-authorship.ts). */
+  /** When its author last changed the body or files; the server stamps it (lib/task-comments/authorship.ts). */
   editedAt?: string
   /** A deleted message keeps its place (empty body, no files) while its thread has replies; the server stamps both. */
   deletedAt?: string
