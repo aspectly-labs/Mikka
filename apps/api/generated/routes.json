@@ -3003,7 +3003,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "972a624d00e2186eb368d3d2bc0aa7510affaab5ff86ec750c5a11eb7a91fcf6"
+      "sourceHash": "b79bcccda96edf6ecf64744034a7a110694802143a739d1f2147f3f8d1a8fd92"
     },
     {
       "path": "/mikka/api/skills",
@@ -3843,7 +3843,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "bd60a94023cce9abde48be48eb86f2951369ef5c65fb0fc77402e61880fddc24"
+      "sourceHash": "4fc5a114c19f182cf339a820f9abca9d4632db0731d79710fcf6b2e4b8a7fdc4"
     },
     {
       "path": "/mikka/api/workspaces/[workspaceId]/billing/settings",

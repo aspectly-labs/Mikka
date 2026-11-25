@@ -328,8 +328,8 @@
         "keywords": "cloud Mikka 云服务 自托管 self-hosted"
       },
       "organization": {
-        "nav": "身份与访问",
-        "keywords": "Organization SSO SAML OIDC SCIM 单点登录 企业 身份 目录 策略 审批 法律保留",
+        "nav": "组织",
+        "keywords": "Organization 身份 访问 SSO SAML OIDC SCIM 单点登录 企业 目录 策略 审批 法律保留",
         "title": "组织"
       },
       "activity": {

@@ -1,5 +1,6 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
-import { withRequestLog } from '@/lib/request-log'
+import type { ApiSession } from '@/lib/api-auth'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { withDatabaseOperation } from '@/lib/db/egress-sample'
 import { singleFlight } from '@/lib/single-flight'
 import { getPasswordStatus, listSessions } from '@/app/actions/account'
@@ -54,8 +55,8 @@ const READS: Record<SettingsRead, (query: URLSearchParams) => Promise<unknown>> 
   // listWorkspaceAudit validates the filter and cursor.
   // 模型与订阅: the allowed models in order and 运行位置 (decision 2026-11-02-1400).
   'model-order': query => getModelOrder(workspace(query)),
-  bots: () => listBots(),
-  'workspace-bots': () => listWorkspaceBots(),
+  bots: query => listBots(workspace(query)),
+  'workspace-bots': query => listWorkspaceBots(workspace(query)),
   'api-keys': query => getApiKeys(workspace(query)),
   environments: query => listEnvironments(workspace(query)),
   // The workspace's task states (decision 2026-11-19-2115): the settings page, the board and every status picker.
@@ -71,13 +72,11 @@ const READS: Record<SettingsRead, (query: URLSearchParams) => Promise<unknown>> 
  * or is refused). Identical concurrent reads with the same authorization share
  * one read, which still runs its own checks. Any failure here reads unshared.
  */
-async function shareKey(read: string, query: URLSearchParams) {
+async function shareKey(read: string, query: URLSearchParams, user: ApiSession['user']) {
   // The same account's devices mark different sessions as current. This read
   // has request/session-specific output, not just an account/workspace input.
   if (read === 'sessions') return null
   try {
-    const { requireUser } = await import('@/lib/issue-access')
-    const user = await requireUser()
     if (ACCOUNT_READS.has(read)) return ['/api/settings', read, user.id, query.toString()]
     const { loadWorkspaceContext } = await import('@/lib/workspace-access')
     const context = await loadWorkspaceContext(workspace(query), user)
@@ -89,21 +88,31 @@ async function shareKey(read: string, query: URLSearchParams) {
 const ACCOUNT_READS = new Set<string>(['password', 'preferences', 'issue-prefix', 'saved-logins', 'activity'])
 
 function workspace(query: URLSearchParams) {
-  return query.get('workspace') ?? undefined
+  return query.get('workspace') || undefined
 }
 
-async function handleGET(request: Request, { params }: { params: Promise<{ read: string }> }) {
-  const { read } = await params
-  if (!Object.hasOwn(READS, read)) return RouteResponse.json({ error: 'notFound' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } })
-  const body = await cacheReadAction(() => withDatabaseOperation(`/api/settings/${read}`, async () => {
-    const query = new URL(request.url).searchParams
-    const run = () => READS[read as SettingsRead](query)
-    const key = await shareKey(read, query)
-    return key ? singleFlight(key, run) : run()
-  }))
-  const code = body && typeof body === 'object' && 'error' in body ? body.error : undefined
-  const status = code === 'authRequired' ? 401 : code === 'workspaceAccessDenied' || code === 'workspaceMembershipSuspended' ? 403 : 200
-  return RouteResponse.json(body ?? null, { status, headers: { 'Cache-Control': 'private, no-store' } })
-}
-
-export const GET = withRequestLog('/api/settings/[read]', handleGET)
+export const GET = defineRoute<'session', 'pat-scoped', { read: string }>(
+  {
+    route: '/api/settings/[read]',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ request, params }) =>
+      !Object.hasOwn(READS, params.read) || ACCOUNT_READS.has(params.read) || params.read === 'sessions'
+        ? undefined
+        : new URL(request.url).searchParams.get('workspace'),
+  },
+  async ({ request, params, user }) => {
+    const { read } = params
+    if (!Object.hasOwn(READS, read)) return RouteResponse.json({ error: 'notFound' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } })
+    const body = await cacheReadAction(() => withDatabaseOperation(`/api/settings/${read}`, async () => {
+      const query = new URL(request.url).searchParams
+      const run = () => READS[read as SettingsRead](query)
+      const key = await shareKey(read, query, user)
+      return key ? singleFlight(key, run) : run()
+    }))
+    const code = body && typeof body === 'object' && 'error' in body ? body.error : undefined
+    const status = code === 'authRequired' ? 401 : code === 'workspaceAccessDenied' || code === 'workspaceMembershipSuspended' ? 403 : 200
+    return RouteResponse.json(body ?? null, { status, headers: { 'Cache-Control': 'private, no-store' } })
+  },
+)

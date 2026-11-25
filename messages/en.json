@@ -328,8 +328,8 @@
         "keywords": "cloud Mikka 云服务 自托管 self-hosted"
       },
       "organization": {
-        "nav": "Identity and access",
-        "keywords": "SSO SAML OIDC SCIM single sign-on enterprise identity directory policy approvals legal hold",
+        "nav": "Organization",
+        "keywords": "identity access SSO SAML OIDC SCIM single sign-on enterprise directory policy approvals legal hold",
         "title": "Organization"
       },
       "activity": {

@@ -25,6 +25,9 @@ const switcherResult = { workspace: { id: workspaceId }, accounts: [] }
 const switcherCalls: unknown[][] = []
 let switcherFailure: Error | null = null
 const workspaceBotCalls: unknown[][] = []
+const ownerBotCalls: unknown[][] = []
+let ownerBotResult: unknown = []
+let tokenWorkspaceId: string | undefined
 let workspaceBotResult: unknown = { bots: [] }
 let workspaceBotFailure: Error | null = null
 const currentSession = new AsyncLocalStorage<string>()
@@ -35,7 +38,7 @@ let sessionReads = 0
 before(async () => {
   mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () => {
     if (sessionFailure) throw sessionFailure
-    return user ? { user, session: { id: currentSession.getStore() ?? syntheticSessionId, userId: user.id } } : null
+    return user ? { user, session: { id: currentSession.getStore() ?? syntheticSessionId, userId: user.id }, ...(tokenWorkspaceId ? { tokenWorkspaceId } : {}) } : null
   } } } } })
   mock.module('@/lib/intl/i18n-server', { namedExports: { getTranslations: async () => (key: string) => key } })
   mock.module('@/lib/workspace-switcher', { namedExports: { loadWorkspaceSwitcher: async (...args: unknown[]) => {
@@ -89,7 +92,10 @@ before(async () => {
     '@/app/actions/issue-states': ['getIssueStates'],
   })) mock.module(module, { namedExports: Object.fromEntries(names.map(name => [name, () => { throw new Error('unexpected settings read') }])) })
   mock.module('@/app/actions/bots', { namedExports: {
-    listBots: () => { throw new Error('owner-only Bot list cannot replace workspace activity') },
+    listBots: async (...args: unknown[]) => {
+      ownerBotCalls.push(args)
+      return ownerBotResult
+    },
     listWorkspaceBots: async (...args: unknown[]) => {
       workspaceBotCalls.push(args)
       if (workspaceBotFailure) throw workspaceBotFailure
@@ -164,16 +170,57 @@ test('workspace switcher keeps an unknown session lookup failure retryable witho
   } finally { sessionFailure = null }
 })
 
-test('workspace-bots GET preserves the full workspace activity result and delegates scope to the existing action', async () => {
+test('workspace-bots and bots GET honor validated ?workspace=, ignore caller userId, and enforce PAT fencing', async () => {
   workspaceBotCalls.length = 0
+  ownerBotCalls.length = 0
   workspaceBotFailure = null
   workspaceBotResult = { bots: [{ id: workspaceId, ownerId: 'another-member', status: 'running', runningThreads: 2 }] }
-  const response = await settingsRoute.GET(new Request('https://mikka.example/api/settings/workspace-bots?workspace=untrusted&userId=other'),
+  ownerBotResult = [{ id: 'bot-1', name: 'Scout', color: 'encre', shape: 'cercle' }]
+  const response = await settingsRoute.GET(new Request(`https://mikka.example/api/settings/workspace-bots?workspace=${workspaceId}&userId=other`),
     { params: Promise.resolve({ read: 'workspace-bots' }) })
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('cache-control'), 'private, no-store')
   assert.deepEqual(await response.json(), workspaceBotResult)
-  assert.deepEqual(workspaceBotCalls, [[]], 'no caller-supplied owner/workspace replaces the authenticated action context')
+  assert.deepEqual(workspaceBotCalls, [[workspaceId]], 'validated ?workspace= is forwarded while untrusted userId is ignored')
+  assert.equal(ownerBotCalls.length, 0, 'owner-only Bot list cannot replace workspace activity')
+
+  const botsRes = await settingsRoute.GET(new Request(`https://mikka.example/api/settings/bots?workspace=${workspaceId}`),
+    { params: Promise.resolve({ read: 'bots' }) })
+  assert.equal(botsRes.status, 200)
+  assert.deepEqual(await botsRes.json(), ownerBotResult)
+  assert.deepEqual(ownerBotCalls, [[workspaceId]])
+
+  const defaultBotsRes = await settingsRoute.GET(new Request('https://mikka.example/api/settings/bots'),
+    { params: Promise.resolve({ read: 'bots' }) })
+  assert.equal(defaultBotsRes.status, 200)
+  assert.deepEqual(ownerBotCalls, [[workspaceId], [undefined]])
+
+  // Malformed ?workspace= is refused at the route boundary before calling the action.
+  const malformed = await settingsRoute.GET(new Request('https://mikka.example/api/settings/workspace-bots?workspace=untrusted'),
+    { params: Promise.resolve({ read: 'workspace-bots' }) })
+  assert.equal(malformed.status, 403)
+  assert.deepEqual(await malformed.json(), { error: 'workspaceAccessDenied' })
+  assert.equal(workspaceBotCalls.length, 1)
+
+  // Scoped PAT cannot read another workspace via ?workspace=.
+  tokenWorkspaceId = '22222222-2222-4222-8222-222222222222'
+  try {
+    const crossTenant = await settingsRoute.GET(new Request(`https://mikka.example/api/settings/bots?workspace=${workspaceId}`),
+      { params: Promise.resolve({ read: 'bots' }) })
+    assert.equal(crossTenant.status, 403)
+    assert.deepEqual(await crossTenant.json(), { error: 'workspaceAccessDenied' })
+    assert.equal(ownerBotCalls.length, 2)
+  } finally { tokenWorkspaceId = undefined }
+
+  // Missing session is refused before calling any settings action.
+  user = null
+  try {
+    const unauth = await settingsRoute.GET(new Request('https://mikka.example/api/settings/workspace-bots'),
+      { params: Promise.resolve({ read: 'workspace-bots' }) })
+    assert.equal(unauth.status, 401)
+    assert.deepEqual(await unauth.json(), { error: 'authRequired' })
+    assert.equal(workspaceBotCalls.length, 1)
+  } finally { user = { id: 'admin' } }
 })
 
 test('workspace-bots GET preserves auth and membership refusals and never substitutes an empty activity list', async () => {
