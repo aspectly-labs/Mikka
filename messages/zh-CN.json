@@ -42,7 +42,13 @@
       "selectedSkillLabel": "当前技能",
       "sourcePlaceholder": "owner/repo",
       "backToSkills": "技能",
-      "addTitle": "添加技能"
+      "addTitle": "添加技能",
+      "policyHeading": "工作区技能",
+      "policyLabel": "发布到工作区",
+      "policyOpen": "开放",
+      "policyReview": "需管理员审核",
+      "policyOff": "关闭",
+      "pendingTag": "待接入"
     },
     "agentProfiles": {
       "reasons": {
@@ -342,7 +348,8 @@
         "title": "团队权限"
       },
       "privacy": {
-        "title": "数据与隐私"
+        "title": "数据与隐私",
+        "keywords": "数据 隐私 导出 共享链接 归档 删除"
       },
       "security": {
         "title": "安全"
@@ -358,6 +365,22 @@
       },
       "secrets": {
         "title": "密钥与凭证"
+      },
+      "integrations": {
+        "title": "集成",
+        "keywords": "集成 GitHub Linear Slack Telegram 账号 连接"
+      },
+      "agent-configs": {
+        "title": "Agent 配置",
+        "keywords": "Agent 配置 角色 模型 指令 Bot 任务"
+      },
+      "agent-permissions": {
+        "title": "Agent 权限",
+        "keywords": "权限 审批 策略 模板 网络 操作电脑"
+      },
+      "identity": {
+        "title": "身份与访问",
+        "keywords": "身份 访问 域名 单点登录 SSO SAML 两步验证"
       }
     },
     "mcpConnections": {
@@ -790,7 +813,8 @@
       "subscribe": "订阅 Mikka Pro",
       "team": "Mikka Pro",
       "pointsValue": "{points} 点",
-      "notConfiguredTitle": "此服务器未设置计费"
+      "notConfiguredTitle": "此服务器未设置计费",
+      "paymentAndInvoices": "付款方式与发票"
     },
     "passkeys": {
       "loadError": "通行密钥读取失败",
@@ -1020,7 +1044,9 @@
       "modeDirect": "环境变量密钥（直传兼容）",
       "modeDirectHint": "写入后不可读；注入进程环境变量以兼容旧 SDK（长度 ≥ 8 字符的值自动脱敏）。",
       "modePlainEnv": "普通环境变量",
-      "modePlainEnvHint": "非敏感配置变量，Agent 可直接读取。"
+      "modePlainEnvHint": "非敏感配置变量，Agent 可直接读取。",
+      "mineGroup": "个人",
+      "scopeLabel": "范围"
     },
     "audit": {
       "actions": {
@@ -1132,7 +1158,8 @@
         "time": "时间",
         "place": "地点",
         "actor": "操作人",
-        "category": "类别"
+        "category": "类别",
+        "target": "对象"
       },
       "unknownAction": "记录了「{action}」",
       "access": {
@@ -1185,7 +1212,10 @@
       "categoryFilter": "类别",
       "exportCsv": "导出 CSV",
       "empty": "最近 90 天没有记录。",
-      "loadedFilterNotice": "筛选当前已加载记录"
+      "loadedFilterNotice": "筛选当前已加载记录",
+      "title": "审计日志",
+      "allActors": "全部操作人",
+      "eventId": "事件 ID"
     },
     "memory": {
       "correct": "更正",
@@ -1408,7 +1438,20 @@
       "modEnterHint": "运行过程中按 ⌘ / Ctrl + Enter 时的行为。",
       "diffBlue": "蓝色／橙色",
       "synced": "已同步",
-      "theme_forest": "森林"
+      "theme_forest": "森林",
+      "enterRow": "Enter 键行为",
+      "modEnterRow": "⌘ / Ctrl + Enter 键行为",
+      "altEnterRow": "⌥ / Alt + Enter 键行为",
+      "sidebarPagesCount": "已显示 {count} / {total} 个页面",
+      "systemMode": "跟随系统",
+      "editSidebarPages": "编辑侧栏页面",
+      "chatFont": "线程字体",
+      "chatFontDefault": "默认",
+      "chatFontSans": "无衬线",
+      "chatFontSystem": "系统",
+      "chatFontReadable": "易读",
+      "chatSection": "线程",
+      "chatFontRow": "字体"
     },
     "activityPage": {
       "allBots": "全部 Bot",
@@ -1456,7 +1499,8 @@
         "onlineDevices": "在线设备",
         "onlineDevicesSub": "已绑定 {bound} 台 · {bots} 个活跃 Bot",
         "storage": "工作区存储",
-        "mergedPrs": "合并的拉取请求"
+        "mergedPrs": "合并的拉取请求",
+        "contributionChange": "{points} 个百分点"
       },
       "filterMemberLabel": "筛选成员",
       "filterKindLabel": "活动类型",
@@ -1561,7 +1605,9 @@
       "columnKeys": "按键",
       "scopeAll": "全部",
       "scopeGlobal": "全局",
-      "scopeWorkspace": "工作区"
+      "scopeWorkspace": "工作区",
+      "fixedHeading": "固定快捷键",
+      "resetDescription": "{count, plural, other {# 项自定义快捷键将恢复为默认按键。}}"
     },
     "threadTitles": {
       "triggers": "重新生成标题的时机",
@@ -1826,7 +1872,23 @@
       "authorEmailHint": "留空时沿用仓库本地配置或运行默认邮箱",
       "prAutoMerge": "自动合并",
       "gitTitle": "Git",
-      "saved": "已保存"
+      "saved": "已保存",
+      "pendingTag": "待接入",
+      "commitAuthorship": "提交署名",
+      "authorshipYouCoauthor": "你，Mikka 共同署名",
+      "authorshipYou": "你",
+      "authorshipMikkaCoauthor": "Mikka，你共同署名",
+      "authorshipMikka": "Mikka",
+      "commitInstructions": "提交说明指令",
+      "addInstructions": "添加",
+      "mergeMethod": "合并方式",
+      "mergeSquash": "压缩合并",
+      "mergeCommit": "合并提交",
+      "mergeRebase": "变基合并",
+      "wakeOnReview": "收到评审评论时继续",
+      "wakeOnCi": "CI 失败时继续",
+      "reviewBots": "评审 Bot",
+      "addBot": "添加"
     },
     "usagePage": {
       "historyHeading": "历史与外部账户",
@@ -1907,7 +1969,8 @@
       "chartMetricLabel": "图表指标",
       "emptyModels": "所选时间段暂无模型调用记录。",
       "sourceLabel": "计费来源",
-      "creditRate": "100 额度 = US$1.00"
+      "creditRate": "100 额度 = US$1.00",
+      "spendKpi": "费用"
     },
     "notificationsMatrix": {
       "dndRowHint": "免打扰期间不发送推送提醒",
@@ -2015,7 +2078,10 @@
       "manage": "管理",
       "manageNone": "目前没有共享中的链接",
       "linksLoading": "正在读取共享链接…",
-      "exportButton": "导出"
+      "exportButton": "导出",
+      "archivedThreads": "已归档线程",
+      "archivedManage": "查看",
+      "noTraining": "Mikka 不使用你的内容训练模型"
     },
     "tokens": {
       "noExpiry": "永不过期",
@@ -2476,7 +2542,26 @@
       "summaryScripts": "{count} 个脚本",
       "summarySecrets": "{count} 个密钥",
       "summaryMcp": "{count} 个 MCP",
-      "summaryVars": "{count} 个变量"
+      "summaryVars": "{count} 个变量",
+      "columnEnvironment": "环境",
+      "columnSetup": "安装",
+      "setupConfigured": "已配置",
+      "setupNone": "未配置",
+      "scopeDefault": "默认",
+      "scopePersonal": "仅我",
+      "scopeWorkspace": "工作区",
+      "anyRepository": "任意仓库",
+      "onDemandCount": "按需 {count} 个",
+      "actionsNamed": "{name} 的操作",
+      "computeHeading": "算力",
+      "computeRow": "云端机器",
+      "computeMikka": "Mikka 云",
+      "computeOwn": "你的 E2B 账号",
+      "computeUseOwn": "用自己的 E2B 账号",
+      "lazyRepositories": "按需克隆的仓库",
+      "lazyRepositoriesEmpty": "线程用到时才克隆",
+      "scopeLabel": "谁可以使用",
+      "pendingTag": "待接入"
     },
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
     "teamSkills": {
@@ -2546,7 +2631,8 @@
       "block": "禁止{name}",
       "decisionDeny": "禁止",
       "decisionAsk": "询问",
-      "decisionAllow": "允许"
+      "decisionAllow": "允许",
+      "membersHeading": "成员"
     },
     "security": {
       "saving": "正在保存…",
@@ -2740,7 +2826,8 @@
       "review": "审阅",
       "agent": "Agent 与计算",
       "workspace": "工作区",
-      "personal": "个人"
+      "personal": "个人",
+      "compute": "连接与计算"
     },
     "loadingPage": "正在加载设置",
     "creditShare": {
@@ -2796,7 +2883,14 @@
     "preferences": {
       "languageHeading": "语言"
     },
-    "phoneDesktopOnly": "只读 · 在电脑上编辑"
+    "phoneDesktopOnly": "只读 · 在电脑上编辑",
+    "identityPage": {
+      "title": "身份与访问",
+      "ssoTitle": "单点登录与域名",
+      "unboundTitle": "先把工作区绑定到组织",
+      "unboundNote": "单点登录、域名验证和 SCIM 在组织上设置。",
+      "openOrganization": "前往组织"
+    }
   },
   "Organization": {
     "identity": {
@@ -4053,7 +4147,8 @@
     "online": "在线",
     "noAgentYet": "还没装 Agent",
     "lastHeartbeat": "最后心跳 {time}",
-    "namePlaceholder": "例如：MacBook Pro"
+    "namePlaceholder": "例如：MacBook Pro",
+    "yourDevices": "你的设备"
   },
   "Coordinator": {
     "modelRequired": "任务未启动：未选择模型。",
@@ -6361,7 +6456,7 @@
       "triggers": "满足任一条件就运行",
       "misfireSkip": "跳过",
       "content": "内容",
-      "deleteBody": "之后不再运行；过去的运行和它们的线程会保留。",
+      "deleteBody": "之后不再运行。历史运行记录和线程会保留。",
       "notify": "运行后发到 Slack",
       "batches": {
         "confirmTitle": "取消这个批次？",
@@ -8564,6 +8659,10 @@
     "newWorkVisibility": {
       "label": "新线程与 Bot 的默认可见性",
       "keywords": "新工作|创建|可见性|私有|共享|线程|Bot"
+    },
+    "chatFont": {
+      "label": "线程字体",
+      "keywords": "线程|字体|阅读|易读"
     }
   },
   "MobilePush": {
@@ -9751,7 +9850,7 @@
     "messageActions": "消息操作",
     "newBot": {
       "nameTaken": "已有同名 Bot",
-      "failed": "没能创建",
+      "failed": "创建失败",
       "creating": "创建中"
     },
     "openFile": "打开 {name}",
@@ -9766,7 +9865,7 @@
       "switching": "正在切换模型…"
     },
     "retrying": "正在重试",
-    "notSentRetry": "没发出去，再试一次。",
+    "notSentRetry": "发送失败，请重试。",
     "openUI": {
       "submitted": "已提交",
       "answerPrompt": "任务背景：{context}\n我的回答：\n{response}\n请根据以上信息继续提供建议，不要执行工作区操作。",
@@ -9830,7 +9929,7 @@
     },
     "listSeparator": "、",
     "review": {
-      "githubPermission": "GitHub 权限不足，没能合并",
+      "githubPermission": "GitHub 权限不足，无法合并",
       "files": "{count} 个文件",
       "filesOne": "{count} 个文件",
       "failedShort": "{count} 项失败",
@@ -9848,9 +9947,9 @@
         "checkpoint": "最后一次检查点"
       },
       "commentOne": "{count} 条评论",
-      "sendFailed": "没能发给 Agent",
+      "sendFailed": "发送给 Agent 失败",
       "mergeConfirmGeneric": "检查未通过，确定合并？",
-      "mergeFailed": "没能合并",
+      "mergeFailed": "合并失败",
       "pendingLabel": "待发送：{line}",
       "noteValue": "修改意见：{note}",
       "writeNote": "写修改意见",
@@ -10834,7 +10933,13 @@
   "HostedSettings": {
     "account": {
       "pictureHint": "PNG、JPEG 或 WebP",
-      "note": "账户信息对你所在的所有团队都生效。"
+      "note": "账户信息对你所在的所有团队都生效。",
+      "nameHint": "团队成员可见",
+      "userId": "用户 ID",
+      "userIdHint": "用于支持请求和 API",
+      "copyId": "复制",
+      "copiedId": "已复制",
+      "emailHint": "团队成员可见，也用于登录"
     },
     "models": {
       "readOnly": "暂时不能逐个停用模型",
