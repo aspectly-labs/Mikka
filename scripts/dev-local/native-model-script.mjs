@@ -74,7 +74,7 @@ png="$PWD/.mikka-local-acceptance-evidence.png"
   printf 'commit: %s\\n' "$commit"
   printf '\\nnpm test output (exit 0):\\n%s\\n' "$check_output"
 } > "$receipt"
-ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=0x111827:s=1200x675 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=$receipt:expansion=none:fontcolor=white:fontsize=28:x=48:y=48:line_spacing=10" -frames:v 1 "$png"
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=0x111827:s=1200x675 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=\${receipt}:expansion=none:fontcolor=white:fontsize=28:x=48:y=48:line_spacing=10" -frames:v 1 "$png"
 test -s "$png"
 printf '\\nFIXTURE_CAPTURE_PATH=%s\\nFIXTURE_CAPTURE_READY\\n' "$png"`,
         description: 'Render the actual verification output as inspectable visual evidence',
