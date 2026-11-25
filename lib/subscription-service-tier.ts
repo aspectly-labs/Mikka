@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import type { ModelSpeedMode } from './model-routing'
 
 /** Internal Coordinator / Bot request policy, independent of the frozen model and effort. */
 export const subscriptionModelRequestPolicySchema = z.strictObject({
@@ -57,20 +56,4 @@ export function codexUltrafastSupport(catalogue: unknown, revision: number, mode
 /** Only the current credential epoch's advertised capability can enable Claude Fast mode. */
 export function claudeFastSupport(catalogue: unknown, revision: number, modelId: string): CodexPrioritySupport {
   return readCatalogueFlag(catalogue, revision, modelId, 'fastSupport', false)
-}
-
-/** Projects verified speed modes from a subscription's current-epoch catalogue. Zero model-name guessing. */
-export function subscriptionCatalogueSpeedModes(
-  provider: 'codex' | 'claude',
-  catalogue: unknown,
-  revision: number,
-  modelId: string,
-): readonly ModelSpeedMode[] {
-  if (provider === 'codex') {
-    const modes: ModelSpeedMode[] = []
-    if (codexPrioritySupport(catalogue, revision, modelId) === 'supported') modes.push('fast')
-    if (codexUltrafastSupport(catalogue, revision, modelId) === 'supported') modes.push('ultrafast')
-    return modes
-  }
-  return claudeFastSupport(catalogue, revision, modelId) === 'supported' ? ['fast'] : []
 }

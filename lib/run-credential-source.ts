@@ -82,11 +82,6 @@ async function keyOnlyModel(query: Query, ownerId: string, keys: RunKey[], harne
   return rowCount ? undefined : { keyId: key.id, model }
 }
 
-/** Whether a rule's model is one only an API key serves, so its run takes no subscription (rule-dispatch). */
-export async function ruleApiKey(query: Query, input: { ownerId: string; botWorkspaceId: string | null; harness: string; model: string }): Promise<RunApiKey | undefined> {
-  if (input.harness !== 'codex' && input.harness !== 'claude_code') return
-  return keyOnlyModel(query, input.ownerId, await runKeys(query, input.ownerId, input.botWorkspaceId), input.harness, input.model)
-}
 
 /** Connected, not paused, on the binding's revision: what a subscription run can be leased now. */
 async function subscriptionState(query: Query, binding: Binding, harness: string, model: string): Promise<'usable' | 'exhausted' | 'unusable'> {

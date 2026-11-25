@@ -25,12 +25,6 @@ const database = drizzle(pool, { schema })
 type Transaction = Parameters<Parameters<typeof database.transaction>[0]>[0]
 type HeldWorkspace = { client: PoolClient; transaction: Transaction; lease: { active: boolean }; boundary: object | undefined }
 const heldWorkspace = new AsyncLocalStorage<HeldWorkspace>()
-/** A job started by an APP commit can run before the outer Workspace writer
- * releases its connection. Start that job with its own Workspace checkout. */
-export function withoutWorkspaceClient<T>(work: () => T): T {
-  return heldWorkspace.exit(work)
-}
-
 const currentWorkspace = () => {
   const held = heldWorkspace.getStore()
   return held?.lease.active && held.boundary === currentTransactionBoundary() ? held : undefined
