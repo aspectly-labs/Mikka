@@ -54,6 +54,7 @@ const ORGANIZATION_KEY = new RegExp(`^/api/organizations/${UUID}/api-keys/${UUID
 const WORKSPACE_GOVERNANCE = new RegExp(`^/api/workspaces/${UUID}/governance(?:/usage)?$`)
 const ORGANIZATION_MEMBERS = new RegExp(`^/api/organizations/${UUID}/members$`)
 const ORGANIZATION_INVITATIONS = new RegExp(`^/api/organizations/${UUID}/invitations$`)
+const INVITATION_PREVIEW = /^\/api\/(?:organization-)?invitations\/[a-f0-9]{64}$/
 const SERVICE_IDENTITY_DIRECTORY = `/api/workspaces/${UUID}/service-identities`
 const SERVICE_IDENTITY_ROUTES: ReadonlyArray<readonly [RegExp, string]> = [
   [new RegExp(`^${SERVICE_IDENTITY_DIRECTORY}$`), 'POST'],
@@ -159,6 +160,7 @@ export function allowedApiPath(path: string, method: string): boolean {
   if (ORGANIZATION_MEMBERS.test(path)) return method === 'GET' || method === 'POST' || method === 'PATCH' || method === 'DELETE'
   if (ORGANIZATION_INVITATIONS.test(path)) return method === 'GET' || method === 'POST' || method === 'DELETE'
   if (path === '/api/organization-invitations/accept') return method === 'POST'
+  if (INVITATION_PREVIEW.test(path)) return method === 'GET'
   // Viewer grants are capabilities and must be obtained through owner-bound IPC.
   if (/^\/api\/bots\/[^/]+\/(?:computer\/(?:viewer|takeover)|subagents\/[^/]+\/viewer)$/.test(path)) return false
   return ROUTES.some(([pattern, methods]) => pattern.test(path) && methods.includes(method === 'HEAD' ? 'GET' : method))
