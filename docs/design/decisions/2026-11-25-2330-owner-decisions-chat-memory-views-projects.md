@@ -15,9 +15,11 @@
 2. **Feedback as Codex asks for it.** No feedback card in the transcript; thumbs up/down sit in the reply's action row and
    a comment box appears only after a click.
 3. **Cost is not shown in the thread header.** A run's cost sits in the row under the composer, beside the context ring.
-4. **Memory is deferred.** The memory feature is not being developed for now. Its sidebar entry stays behind the `memory`
+4. **Memory is deferred.** The memory feature does not work yet (Alex, 2026-11-20, recorded on its flag in
+   `lib/feature-flags.ts`) and is not being developed for now (Alex, 2026-11-25). Its sidebar entry stays behind the `memory`
    feature flag, which is off by default; do not turn the flag on or treat the hidden page as a bug. The memory settings
-   section and page code stay in place until the feature is picked up again.
+   section and page code stay in place until Alex picks the feature up again. Before asking Alex whether a hidden
+   feature should be shown, read the reason on its flag in `gatedFeatures` (`lib/feature-flags.ts`) and the decision records.
 5. **Task views are removed.** The `views` section had no entry and could not be opened (`TaskViews`,
    `countWorkspaceTaskViews`); its code is deleted.
 6. **The old task frame is removed.** The task page (Capy layout) is the only task view; `_LegacyKanbanTaskFrame` and
