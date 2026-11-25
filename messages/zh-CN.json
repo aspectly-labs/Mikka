@@ -4761,7 +4761,8 @@
     "title": "连接这台设备",
     "approved": "已批准",
     "retry": "重试",
-    "back": "返回设备列表"
+    "back": "返回设备列表",
+    "expiresIn": "{time}过期"
   },
   "Shell": {
     "searchEmptyFor": "没有与「{query}」匹配的结果",
@@ -10176,7 +10177,8 @@
     "selfHosted": "自托管服务器",
     "disconnect": "断开",
     "connecting": "正在连接…",
-    "change": "更改"
+    "change": "更改",
+    "connectionTitle": "Mikka 服务器"
   },
   "TeamSettings": {
     "createHeading": "创建新团队",
@@ -11030,7 +11032,16 @@
     "tabMemory": "记忆",
     "tabDevices": "设备",
     "tabTeams": "团队",
-    "tabMembers": "成员"
+    "tabMembers": "成员",
+    "tabMenuLabel": "{title} 的标签页菜单",
+    "closeTabItem": "关闭标签页",
+    "closeOtherTabs": "关闭其他标签页",
+    "closeTabsToLeft": "关闭左侧标签页",
+    "closeTabsToRight": "关闭右侧标签页",
+    "duplicateTab": "复制标签页",
+    "copyUrl": "复制链接",
+    "moveToNewWindow": "移至新窗口",
+    "currentVersion": "当前版本 v{version}"
   },
   "ConversationDirectory": {
     "loading": "正在加载线程…",
@@ -11761,5 +11772,17 @@
     "notFoundBody": "该分享链接已撤销，或该线程已不可用。",
     "backHome": "前往 Mikka",
     "emptyMessages": "该线程暂无消息。"
+  },
+  "DesktopNotificationAccess": {
+    "title": "Mikka 的系统通知已关闭",
+    "description": "打开后，线程等你、失败、有人 @ 你或拉取请求合并时会提醒你",
+    "open": "打开系统设置",
+    "notNow": "以后再说"
+  },
+  "DesktopLocalRuns": {
+    "title": "允许在这台电脑上运行线程？",
+    "description": "你的线程可以在这台电脑上运行，直到你在「设置 › 设备」里移除它。",
+    "allow": "允许运行",
+    "cancel": "取消"
   }
 }
