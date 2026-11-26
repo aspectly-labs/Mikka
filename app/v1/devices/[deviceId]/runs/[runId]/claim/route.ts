@@ -280,8 +280,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   let factoryClaim: Record<string, unknown> = {}
   let factoryToken: Awaited<ReturnType<typeof issueRunToken>> | undefined
   let portableTaskWorkspace: ReturnType<typeof portableTaskWorkspaceReceiptSchema.parse> | undefined
-  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl) && !run.agentDefinition?.readOnly
-  const canCapturePortableTask = portableTask &&
+  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl)
+  const canCapturePortableTask = portableTask && !run.agentDefinition?.readOnly &&
     (await import('@/lib/cloud-computer/e2b-task-workspace-archive')).portableTaskArchiveEnabled()
   const beforeClaim = async (tx: import('pg').PoolClient) => {
     // Same lock order as a `disconnected` report (device, then run): either it

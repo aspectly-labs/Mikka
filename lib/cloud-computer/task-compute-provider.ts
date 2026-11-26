@@ -31,6 +31,7 @@ type PreviousTaskSource = {
   snapshotId: string
   capture: string | null
   size: string | null
+  hardwareVerified: boolean
 }
 
 /** Read the last incarnation that may contain task files. A never-started
@@ -44,7 +45,8 @@ export async function previousTaskComputeSource(query: Pick<import('pg').Pool, '
 }): Promise<PreviousTaskSource | null> {
   const { rows: [source] } = await query.query<PreviousTaskSource>(`
     SELECT m."runId",m.state,m."snapshotId",m.lifecycle->>'portableWorkspaceCapture' AS capture,
-      COALESCE(m.lifecycle->>'sponsoredSize', l.size, r."agentDefinition"#>>'{taskCompute,size}') AS size
+      COALESCE(m.lifecycle->>'sponsoredSize', l.size, r."agentDefinition"#>>'{taskCompute,size}') AS size,
+      (l."operationId" IS NOT NULL OR COALESCE(r."agentDefinition"#>'{taskCompute,requireVerifiedHardware}'='true'::jsonb,false)) AS "hardwareVerified"
     FROM thread_machines m
     JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."ownerId"
     JOIN agent_runs target ON target.id=$4 AND target."userId"=m."ownerId"

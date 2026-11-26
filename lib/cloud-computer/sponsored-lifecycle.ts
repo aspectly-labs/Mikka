@@ -4,7 +4,7 @@ import type { Pool, PoolClient } from 'pg'
 import { assertRunProjectResources } from '../project-resources/run-lease'
 import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution-identity'
 import { matchesRepositoryAdmission } from '../repository-admission'
-import { ComputerError } from '../computer/store'
+import { ComputerError, TaskWorkspaceArchiveUnavailable } from '../computer/store'
 import { connectForCommitEffects } from '../db/commit-effects'
 import { armDueTimerAfterCommit } from '../due-timer'
 import { runChanged } from '../live/panels'
@@ -156,7 +156,7 @@ async function reserve(tx: PoolClient, actor: TaskMachineActor, runId: string): 
     ? await previousTaskComputeSource(tx, { ...scope, runId }) : null
   const needsSource = source && (allocatedTaskProvider(source) !== 'cloudflare' || (source.size !== null && source.size !== size) || source.capture === 'ready')
   if (needsSource && (source.capture !== 'ready' || !portableTaskArchiveEnabled()))
-    throw new ComputerError(503, 'Cloudflare task machine is waiting for the portable workspace archive')
+    throw new TaskWorkspaceArchiveUnavailable()
   const portableSource = needsSource ? { scope, runId: source.runId } : undefined
   const issued = await prepareThreadRegistration(tx, {
     runId,
@@ -293,7 +293,7 @@ export async function ensureSponsoredTaskMachine(pool: Pool, actor: TaskMachineA
     const archive = handoff.portableSource
       ? await loadTaskWorkspaceArchive(pool, handoff.portableSource.scope, archiveSignal) : null
     if (handoff.portableSource && archive?.source.runId !== handoff.portableSource.runId)
-      throw new ComputerError(503, 'Cloudflare task machine portable workspace archive is unavailable')
+      throw new TaskWorkspaceArchiveUnavailable()
     try {
       const { connection, instanceId, portableWorkspace } = await openOwnedCloudflareTaskMachine(pool, actor, runId, archive ?? undefined, archiveSignal)
       await recordSponsoredTaskAllocation(pool, actor, runId, handoff, instanceId, portableWorkspace)
@@ -469,6 +469,14 @@ export async function reconcileSponsoredTaskMachine(
     if (renewed.until === until && !renewed.unfunded) break
     ;({ until, unfunded } = renewed)
     row = { ...row, lifecycle: { ...row.lifecycle, sponsoredUntil: new Date(until).toISOString(), sponsoredChunks: (typeof row.lifecycle.sponsoredChunks === 'number' ? row.lifecycle.sponsoredChunks : 1) + 1 } }
+  }
+  if (unfunded && metered) {
+    // No next interval was authorized. Stop immediately after measurement;
+    // the provider alarm remains the shutdown backstop for a lost response.
+    const { threadMachineAction } = await import('./thread-machines')
+    await threadMachineAction(pool, actor, runId, 'end', fence)
+    await settleStopped()
+    return false
   }
   // Unfunded: wake at the paid deadline to end the machine. Otherwise wake to renew (never sooner than 5 s).
   const wake = !Number.isFinite(until) ? NaN : unfunded ? until : Math.max(now + 5_000, until - MACHINE_RENEW_BEFORE_MS)

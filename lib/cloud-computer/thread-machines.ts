@@ -23,7 +23,7 @@ import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { z } from 'zod'
 import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import { matchesRepositoryAdmission } from '@/lib/repository-admission'
-import { ComputerError } from '@/lib/computer/store'
+import { ComputerError, TaskWorkspaceArchiveUnavailable } from '@/lib/computer/store'
 import { computerPermission } from '@/lib/computer/permission'
 import { connectComputer, connectRunningComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
@@ -556,7 +556,7 @@ async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string,
  * The daemon must have closed the native session first; a status string alone
  * never authorizes moving a still executing VM. */
 async function retainThreadMachineForHandoffLocked(client: PoolClient, actor: Actor, runId: string, nextRunId: string): Promise<boolean> {
-    const { rows: [run] } = await client.query(`SELECT r.id FROM agent_runs r JOIN issues i ON i.id=r."issueId"
+    const { rows: [run] } = await client.query(`SELECT r.id,r."agentDefinition" FROM agent_runs r JOIN issues i ON i.id=r."issueId"
       WHERE r.id=$1 AND r."userId"=$2 AND r.status IN ('succeeded','failed','stopped','cancelled')
         AND r."stopRequestedAt" IS NULL AND r.report->'safePoint'->>'session'='exited'
         AND (r."leaseExpiresAt" IS NULL OR r."leaseExpiresAt"<=now())
@@ -587,8 +587,12 @@ async function retainThreadMachineForHandoffLocked(client: PoolClient, actor: Ac
       JOIN device_repos source ON source.id=$3 AND source."userId"=n."userId"
       WHERE n.id=$1 AND n."userId"=$2`, [nextRunId, actor.userId, machine.repoId])
     const nextKind = placement?.targetRemote ? placement.harness === 'claude_code' ? 'claude' : placement.harness === 'codex' ? 'codex' : null : 'desktop'
+    const targetCompute = admittedTaskCompute(placement?.agentDefinition)
+    const sourceCompute = admittedTaskCompute(run.agentDefinition)
     if (!placement || placement.threadRelation === 'fork' || placement.threadRelation === 'side' ||
-      admittedTaskCompute(placement.agentDefinition)?.provider !== 'e2b' || placement.sourcePath !== placement.targetPath || placement.sourceRemote !== placement.targetRemote || threadMachineTemplateKind(machine) !== nextKind) {
+      targetCompute?.provider !== 'e2b' || placement.sourcePath !== placement.targetPath || placement.sourceRemote !== placement.targetRemote || threadMachineTemplateKind(machine) !== nextKind ||
+      (targetCompute.sku && sourceCompute?.sku && targetCompute.sku.size !== sourceCompute.sku.size) ||
+      (placement.agentDefinition?.taskCompute?.requireVerifiedHardware === true && run.agentDefinition?.taskCompute?.requireVerifiedHardware !== true)) {
       return false
     }
     await client.query(`UPDATE thread_machines SET epoch=epoch+CASE WHEN lifecycle->>'handoffRunId'=$2 THEN 0 ELSE 1 END,
@@ -1074,13 +1078,15 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     const compute = admittedTaskCompute(run.agentDefinition)
     if (!compute || compute.provider !== 'e2b') throw new ComputerError(409, 'Task machine provider changed')
     const machineSize = compute.sku?.provider === 'e2b' ? compute.sku.size : run.agentDefinition?.projectExecution?.environment?.e2bMachineSize ?? undefined
+    const requireVerifiedHardware = run.agentDefinition?.taskCompute?.requireVerifiedHardware === true
     const priorSource = compute.sku && !exactQuestionMachine && !refreshRuntime && !run.retryOf && !run.questionContinuation && repositoryTask && run.issueId
       ? await previousTaskComputeSource(client, { ownerId: actor.userId, workspaceId: actor.workspaceId, issueId: run.issueId, runId, repositoryKey: run.repoPath })
       : null
-    const requiresPortableSource = priorSource && (allocatedTaskProvider(priorSource) !== 'e2b' || (priorSource.size !== null && priorSource.size !== machineSize))
+    const requiresPortableSource = priorSource && (allocatedTaskProvider(priorSource) !== 'e2b' ||
+      (priorSource.size !== null && priorSource.size !== machineSize) || (requireVerifiedHardware && !priorSource.hardwareVerified))
     if (requiresPortableSource && (priorSource.capture !== 'ready' || !portableTaskArchiveEnabled()))
-      throw new ComputerError(503, 'E2B task machine is waiting for the portable workspace archive')
-    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize) : computerTemplate()
+      throw new TaskWorkspaceArchiveUnavailable()
+    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize, process.env, requireVerifiedHardware) : computerTemplate()
     let machine = (await client.query('SELECT * FROM thread_machines WHERE "runId"=$1 FOR UPDATE', [runId])).rows[0]
     if (machine?.snapshotId === hostedSnapshot || run.agentDefinition?.taskMachine) throw new ComputerError(409,'Task machine provider changed')
     // Stop check 1 shares the explicit Stop path's native-history and lease
@@ -1258,7 +1264,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     // workspace, repository and template kind before any provider I/O.
     const pendingPortableRestore = machine.lifecycle?.portableWorkspaceRestorePending === true
     if ((!connected || pendingPortableRestore) && !refreshRuntime && !exactQuestionMachine && !run.retryOf && !run.questionContinuation && repositoryTask && run.issueId
-      && !run.agentDefinition?.readOnly && portableTaskArchiveEnabled()) {
+      && (!run.agentDefinition?.readOnly || requiresPortableSource || pendingPortableRestore) && portableTaskArchiveEnabled()) {
       const { rows: [last] } = await client.query<{ state: string; runId: string; epoch: string | null; operationId: string | null }>(`
         SELECT m.lifecycle->>'portableWorkspaceCapture' AS state, m."runId",
           m.lifecycle->>'portableWorkspaceSourceEpoch' AS epoch, m.lifecycle->>'portableWorkspaceSourceOperationId' AS "operationId"
@@ -1278,7 +1284,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     }
     const portableWorkspace = portableTransfer.archive
     if (requiresPortableSource && !connected && portableWorkspace?.source.runId !== priorSource.runId)
-      throw new ComputerError(503, 'E2B task machine portable workspace archive is unavailable')
+      throw new TaskWorkspaceArchiveUnavailable()
     if (pendingPortableRestore && !portableWorkspace)
       throw new ComputerError(409, 'Pending task workspace restore is unavailable')
     const restoreCandidate = !portableWorkspace && machine.snapshotId !== hostedSnapshot && !refreshRuntime && !exactQuestionMachine && threadSnapshotsEnabled() &&
