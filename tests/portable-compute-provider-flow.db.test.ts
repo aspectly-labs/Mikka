@@ -12,7 +12,7 @@ import { text } from 'node:stream/consumers'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { CLIENT_VERSION_HEADER, HOSTED_API_HEADERS } from '@mikka/protocol/version'
-import { DEVICE_SESSION_HEADER, DEVICE_SESSION_VERSION, PORTABLE_TASK_WORKSPACE_HEADER, PROJECT_ENVIRONMENT_HEADER, REPO_ORIGIN_HEADER, runAssignmentSchema } from '@mikka/protocol/device'
+import { DEVICE_SESSION_HEADER, DEVICE_SESSION_VERSION, MODEL_CREDENTIAL_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, PROJECT_ENVIRONMENT_HEADER, REPO_ORIGIN_HEADER, RUN_CREDENTIALS_HEADER, runAssignmentSchema } from '@mikka/protocol/device'
 import { DAEMON_VERSION } from '../packages/daemon/src/paths'
 import { orderMigrations } from '../scripts/migration-order.mjs'
 import { disposableDatabase } from './helpers/e2e-target.mjs'
@@ -27,6 +27,7 @@ else if (process.env.REQUIRE_DB === '1') assert.fail('Provider test requires Pos
 
 const repositoryKey = 'v2/github.com/mikka-fixtures/provider-choice'
 const remoteUrl = 'https://github.com/mikka-fixtures/provider-choice.git'
+const creditsModel = 'openai/gpt-5.5'
 type Provider = 'cloudflare' | 'e2b'
 const sizes = { e2b: 'medium', cloudflare: 'standard-3' } as const
 const variant = (provider?: Provider) => {
@@ -106,7 +107,8 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     E2B_BYO_COMPUTER_TEMPLATE: templates.desktop.templateId, E2B_TEAM_ID: 'fixture-team', MIKKA_CLOUD_WORKER_SHA: workerSha,
     MIKKA_CLOUD_TEMPLATE_MODELS: templateReceipt, MIKKA_THREAD_SNAPSHOTS: '0', MIKKA_CLOUD_WORKER_URL: 'https://fixture-worker.example.invalid',
     WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
-    MIKKA_CLOUDFLARE_TASKS_DISABLED: '0', MIKKA_BYOS_ENABLED: '1', HTTPS_PROXY: '', https_proxy: '',
+    MIKKA_CLOUDFLARE_TASKS_DISABLED: '0', HTTPS_PROXY: '', https_proxy: '',
+    MIKKA_LITELLM_URL: 'http://127.0.0.1:1', MIKKA_LITELLM_MASTER_KEY: 'fixture-gateway-key',
   })
   appPool = (await import('../lib/db')).pool
   workspacePool = (await import('../lib/workspace-db')).workspacePool
@@ -116,7 +118,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
   let gateway: InstanceType<typeof H3>
   const route = (request: Request) => /^\/mikka\/v1\/(?:live\/|devices\/[^/]+\/(?:socket|push|status)$)/.test(new URL(request.url).pathname)
     ? gateway.fetch(request) : application.fetch(request)
-  const listener = serve({ manual: true, silent: true, gracefulShutdown: false, fetch: route }).node
+  const listener = serve({ manual: true, silent: true, gracefulShutdown: false, trustProxy: 'loopback', fetch: route }).node
   assert.ok(listener)
   const server = createServer(listener.handler)
   const require = createRequire(import.meta.url)
@@ -141,6 +143,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
   const { queueCloudRun } = await import('../lib/computer/queue-run')
   const { startThreadMachine } = await import('../lib/run-leases')
   const { applyDeviceSessionReport } = await import('../lib/device-session')
+  const { verifyGatewayToken } = await import('../lib/model-gateway/token')
   const { readEnvironmentSnapshot } = await import('../lib/project-resources/environment-snapshots')
   const { ensureThreadMachine, parkThreadMachine } = await import('../lib/cloud-computer/thread-machines')
   const sourceAt = (issueId: string) => pool.query('SELECT "archiveId","sourceRunId",size,sha256,"headSha" FROM task_workspace_archives WHERE "issueId"=$1', [issueId])
@@ -150,7 +153,6 @@ test('provider-selected task runs keep their pin and restore the same workspace 
   const { id: workspaceId } = await seedWorkspace(pool, ownerId, [{ userId: ownerId, role: 'admin' }])
   const botId = await seedBot(pool, workspaceId, ownerId)
   const deviceId = randomUUID(), agentId = randomUUID(), deviceRepoId = randomUUID()
-  const bindingId = randomUUID(), connectionId = randomUUID()
   await pool.query(`INSERT INTO devices (id,"ownerId",name,kind) VALUES ($1,$2,'Parent cloud fixture','cloud')`, [deviceId, ownerId])
   await pool.query(`INSERT INTO agents (id,"userId","deviceId",name,harness) VALUES ($1,$2,$3,'Provider fixture','codex')`, [agentId, ownerId, deviceId])
   await pool.query(`INSERT INTO device_repos (id,"userId","deviceId","repoPath","remoteUrl","baseBranch") VALUES ($1,$2,$3,$4,$5,'main')`,
@@ -160,11 +162,6 @@ test('provider-selected task runs keep their pin and restore the same workspace 
   await pool.query(`INSERT INTO bot_desktops("botId","workspaceId","ownerId",display) VALUES($1,$2,$3,1)`, [botId, workspaceId, ownerId])
   await pool.query(`INSERT INTO bot_cloud_runtimes("botId","workspaceId","ownerId",harness,"agentId","repoId") VALUES($1,$2,$3,'codex',$4,$5)`,
     [botId, workspaceId, ownerId, agentId, deviceRepoId])
-  await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog")
-    VALUES ($1,$2,$3,'codex','connected',1,$4,$5,'synthetic',$6)`,
-    [connectionId, ownerId, workspaceId, 'fixture-' + connectionId, 'a'.repeat(64), { revision: '1', models: ['gpt-5'] }])
-  await pool.query(`INSERT INTO byos_bindings(id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId")
-    VALUES($1,$2,$3,$4,$5,1,'codex_cli','gpt-5')`, [bindingId, ownerId, workspaceId, agentId, connectionId])
   await pool.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,500,'purchased','test',$3)`,
     [randomUUID(), workspaceId, randomUUID()])
   const actor = { userId: ownerId, workspaceId }
@@ -174,7 +171,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       VALUES($1,$2,$3,$4,'user_message',$5,'{"taskDestination":{"kind":"cloud","provider":"cloudflare"}}',now()) ON CONFLICT (id) DO NOTHING`,
     [sourceEventId, ownerId, botId, issueId, 'fixture:' + sourceEventId])
     return (await queueCloudRun(pool, actor, { botId, issueId, agentId, deviceRepoId, sourceEventId, idempotencyKey: requestId,
-      title: 'Portable checkout fixture', body: '', model: 'gpt-5', subscriptionBindingId: bindingId })).runId
+      title: 'Portable checkout fixture', body: '', model: creditsModel, credits: { model: creditsModel } })).runId
   }
   const claim = async (machine: { sandboxId: string; deviceId: string; runId: string }, provider: Provider) => {
     const dataDir = registrationDirs.get(services.guest(provider, machine.sandboxId))
@@ -191,6 +188,9 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       ...HOSTED_API_HEADERS,
       [CLIENT_VERSION_HEADER]: DAEMON_VERSION,
       [DEVICE_SESSION_HEADER]: String(DEVICE_SESSION_VERSION),
+      [MODEL_CREDENTIAL_HEADER]: '1',
+      [RUN_CREDENTIALS_HEADER]: '1',
+      'x-forwarded-proto': 'https',
       [PROJECT_ENVIRONMENT_HEADER]: '1',
       [REPO_ORIGIN_HEADER]: '1',
       authorization: 'Bearer ' + credential,
@@ -200,7 +200,17 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     assert.equal((await row(machine.runId)).status, 'queued')
     const accepted = await fetch(url, { method: 'POST', headers: { ...headers, [PORTABLE_TASK_WORKSPACE_HEADER]: '1' } })
     assert.equal(accepted.status, 200, accepted.ok ? undefined : await accepted.text())
-    return runAssignmentSchema.parse(await accepted.json())
+    const assignment = runAssignmentSchema.parse(await accepted.json())
+    assert.ok(assignment.modelCredential?.kind === 'provider')
+    assert.equal(assignment.modelCredential.protocol, 'openai')
+    assert.equal(assignment.modelCredential.baseUrl, applicationOrigin.replace('http:', 'https:') + '/mikka/api/model-gateway/openai/v1')
+    const grant = await verifyGatewayToken(pool, assignment.modelCredential.key)
+    assert.ok(grant)
+    assert.deepEqual(grant.source, { kind: 'credits' })
+    assert.equal(grant.runId, machine.runId)
+    assert.equal(grant.workspaceId, workspaceId)
+    assert.equal(grant.model, creditsModel)
+    return assignment
   }
   const daemon = async (machine: { sandboxId: string; runId: string }, provider: Provider, operation: 'write'|'verify', receipt: unknown) => {
     const guest = services.guest(provider, machine.sandboxId)
