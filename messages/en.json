@@ -1214,8 +1214,7 @@
       "loadedFilterNotice": "Filtering loaded entries",
       "title": "Audit log",
       "allActors": "All actors",
-      "eventId": "Event ID",
-      "unknownAction": "recorded “{action}”"
+      "eventId": "Event ID"
     },
     "memory": {
       "correct": "Correct",
@@ -1653,7 +1652,8 @@
       "countWorkspace": "{count} · workspace",
       "archiveDays": "{days} days",
       "scopeMine": "Personal",
-      "archiveOff": "Off"
+      "archiveOff": "Off",
+      "workspaceDefaults": "Workspace defaults"
     },
     "modelOrder": {
       "add": "Add models",
@@ -2561,7 +2561,7 @@
       "actionsNamed": "{name} actions",
       "computeHeading": "Compute",
       "computeRow": "Cloud machines",
-      "computeMikka": "Mikka cloud",
+      "computeMikka": "Not set",
       "computeOwn": "Your E2B account",
       "computeUseOwn": "Use your E2B account",
       "lazyRepositories": "Cloned on demand",
@@ -5553,7 +5553,7 @@
     "close": "Close",
     "stage": {
       "review": "Review",
-      "verify": "Verify",
+      "verify": "Check",
       "execute": "Execute"
     },
     "verifyThread": "Check",
@@ -5572,7 +5572,7 @@
       "preview": "Preview"
     },
     "passed": "Passed",
-    "retryVerify": "Retry verification",
+    "retryVerify": "Retry check",
     "checkRetryFailed": "Retry did not complete",
     "production": "Production",
     "copySha": "Copy full sha {sha}",
@@ -5583,7 +5583,7 @@
     },
     "rejectNote": "Note for changes",
     "blocked": "Blocked",
-    "verify": "Verify",
+    "verify": "Check",
     "previous": "Previous evidence",
     "cannotMerge": "Can't merge",
     "review": "Review",
@@ -11409,7 +11409,7 @@
     "resizeSidebar": "Resize sidebar",
     "resizeWorkArea": "Resize the right column",
     "phoneBack": "Back",
-    "phoneColumnMenu": "Work area contents"
+    "phoneColumnMenu": "Right column contents"
   },
   "DeviceSetup": {
     "path": "Local repository path",
