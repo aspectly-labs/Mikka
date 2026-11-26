@@ -19,7 +19,6 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/task-presentation-read.ts', file: 'tests/task-presentation.db.test.ts', script: 'test:task-presentation-db' },
   { marker: 'lib/issue-states-store.ts', file: 'tests/workspace-issue-states.db.test.ts', script: 'test:task-presentation-db' },
   { marker: 'lib/telegram/handler.ts', file: 'tests/telegram-task-link.db.test.ts', script: 'test:task-identity-db' },
-  { marker: 'lib/linear-sync/issue-sync.ts', file: 'tests/linear-responsibility.db.test.ts', script: 'test:task-identity-db' },
   { marker: 'lib/project-lifecycle.ts', file: 'tests/project-lifecycle.db.test.ts', script: 'test:project-v2-db' },
   { marker: 'lib/issue-delegation.test.ts', file: 'tests/task-responsibility.db.test.ts', script: 'test:task-identity-db' },
   { marker: 'lib/project-resources/run-lease.ts', file: 'tests/project-resource-lease.db.test.ts', script: 'test:project-resources-db' },
@@ -212,7 +211,6 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/account/deletion-jobs.ts', file: 'lib/account/deletion-restore.db.test.ts', script: 'test:account-db' },
   { marker: 'lib/ops/monitor.ts', file: 'lib/ops/monitor.db.test.ts', script: 'test:ops-db' },
   { marker: 'lib/ops/egress-fallback.ts', file: 'lib/ops/egress-fallback.db.test.ts', script: 'test:ops-db' },
-  { marker: 'lib/linear-sync/archive.ts', file: 'tests/linear-archive.db.test.ts', script: 'test:scope-detachment-db' },
 ]
 // Suites that provision their own throwaway database and refuse the shared mikka_e2e service.
 // Each entry names its dedicated runner; the runner must exist and still invoke the file.

@@ -11,11 +11,10 @@ import type { ActionResult } from '@/lib/action-result'
 import { db, pool } from '@/lib/db'
 import { workspacePool } from '@/lib/workspace-db'
 import { documentChanged, documentLiveWorkspace } from '@/lib/live/panels'
-import { issues, issueDocuments, issueMembers, issueVersions, linearIssueLinks, users } from '@/lib/db/schema'
+import { issues, issueDocuments, issueMembers, issueVersions, users } from '@/lib/db/schema'
 import { requireIssueAccess, requireIssueAccessWithoutBody } from '@/lib/issue-access'
 import { readIssueMetadata, withIssueMetadata } from '@/lib/issue-metadata'
-import { dispatchLinearIssueSync } from '@/lib/linear-sync/dispatch'
-import { bindCommentAuthorship, snapshotCommentAuthorship } from '@/lib/linear-sync/comment-authorship'
+import { bindCommentAuthorship, snapshotCommentAuthorship } from '@/lib/task-comments/authorship'
 import { activityActor } from '@/lib/activity-actor'
 import { requireCurrentIssueWorkspace, requireLockedIssueScope, withIssueWorkspace } from '@/lib/issue-scope-authorization'
 import { readableIssueContentOnServer as readableIssueContent } from '@/lib/issue-editor-schema-snapshot'
@@ -93,12 +92,10 @@ export async function exchangeDocument(input: z.infer<typeof syncSchema>): Promi
           writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: threadsAfter, content },
           version: documentVersion(state) })
       }
-      const [link] = locked.linearSyncPolicy === 'explicit' && !locked.linearSyncBlocked ? await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(eq(linearIssueLinks.issueId, locked.id), eq(linearIssueLinks.ownerId, issue.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1) : []
-      return { changed, syncEligible: Boolean(link), version: documentVersion(state), update: Buffer.from(Y.encodeStateAsUpdate(doc, parsed.vector ? Buffer.from(parsed.vector, 'base64') : undefined)).toString('base64') }
+      return { version: documentVersion(state), update: Buffer.from(Y.encodeStateAsUpdate(doc, parsed.vector ? Buffer.from(parsed.vector, 'base64') : undefined)).toString('base64') }
     } finally { doc.destroy() }
   })
   const result = writing ? await withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canSteer' }, exchange) : await exchange()
-  if (result.changed && result.syncEligible) dispatchLinearIssueSync(issue.id)
   return { update: result.update, version: result.version, workspaceId }
 }
 export async function listMembers(id: string) {
@@ -199,7 +196,7 @@ export async function removeMember(id: string, memberId: string): Promise<Action
     if (issue.userId !== user.id) return { error: 'memberOwnerOnly' }
     const parsed = z.string().min(1).max(128).safeParse(memberId)
     if (!parsed.success) return { error: 'validationGeneric' }
-    const clearedAssignee = await withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canManageAccess' }, () => db.transaction(async tx => {
+    await withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canManageAccess' }, () => db.transaction(async tx => {
       const [latest] = await tx.select().from(issues).where(and(eq(issues.id, id), eq(issues.userId, user.id))).for('update')
       requireLockedIssueScope(latest, user.id, issue.scopeVersion, issue.workspaceId)
       const removed = await tx.delete(issueMembers).where(and(eq(issueMembers.issueId, id), eq(issueMembers.userId, user.id), eq(issueMembers.memberId, parsed.data))).returning({ memberId: issueMembers.memberId })
@@ -210,13 +207,8 @@ export async function removeMember(id: string, memberId: string): Promise<Action
         ;(await import('@/lib/coding-workspace/review-sessions')).reviewTaskChanged(tx, latest, saved)
         await tx.insert(issueVersions).values({ id: crypto.randomUUID(), issueId: id, userId: user.id, revision: saved.revision, title: saved.title, content: saved.content, status: saved.status, priority: saved.priority, ...activityActor(user.id) })
         await issueListChanged(tx, id)
-        if (saved.linearSyncPolicy !== 'explicit' || saved.linearSyncBlocked) return false
-        const [link] = await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(eq(linearIssueLinks.issueId, saved.id), eq(linearIssueLinks.ownerId, saved.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1)
-        return Boolean(link)
       }
-      return false
     }))
-    if (clearedAssignee) dispatchLinearIssueSync(id)
     return { success: true }
   })
 }

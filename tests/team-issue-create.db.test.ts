@@ -145,8 +145,6 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
     })
   }
   const {retryLinearIssue}=await import('../app/actions/linear-sync')
-  const {syncAppIssueToLinear}=await import('../lib/linear-sync/issue-sync')
-  const {processLinearIssueOutbox,processLinearInboxDelivery}=await import('../lib/linear-sync/worker')
   const owner=`team-owner-${randomUUID()}`, racer=`team-racer-${randomUUID()}`, stranger=`team-stranger-${randomUUID()}`
   const workspaceId=randomUUID(), personalWorkspaceId=randomUUID(), teamId=randomUUID(), raceTeam=randomUUID(), badTeam=randomUUID()
   for(const user of [owner,racer,stranger]) await app.query('insert into "user" (id,name,email,"emailVerified","createdAt","updatedAt") values ($1,\'Synthetic\',$2,true,now(),now())',[user,`${user}@example.invalid`])
@@ -321,8 +319,7 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
       const seed=Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64')
       await withAfter(()=>actAs(owner,()=>exchangeDocument({id,seed})))
     } finally {ydoc.destroy()}
-    assert.deepEqual(await actAs(owner,()=>retryLinearIssue(id)),{error:'linearIssueInvalid'})
-    await syncAppIssueToLinear(id);await processLinearIssueOutbox(id)
+    assert.deepEqual(await actAs(owner,()=>retryLinearIssue(id)),{error:'linearSyncDisabled'})
     assert.equal((await app.query('select scope from issues where id=$1',[id])).rows[0].scope,'personal')
     for(const table of ['linear_sync_outbox','linear_issue_publications','linear_issue_links']) {
       assert.equal((await app.query(`select count(*)::int n from ${table} where "issueId"=$1`,[id])).rows[0].n,0)
@@ -351,7 +348,6 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
     assert.deepEqual(result.issue.content,original.content);assert.deepEqual(result.linearSync,{enabled:false,reason:'no_explicit_target'})
     const repeat=await promoteIssueToTeam(request);assert.ok('issue' in repeat && repeat.issue);assert.equal(repeat.issue.id,original.id)
     await app.query('update issues set title=\'Promoted title update\' where id=$1',[original.id])
-    await syncAppIssueToLinear(original.id);await processLinearIssueOutbox(original.id)
     for(const table of ['linear_sync_outbox','linear_issue_publications','linear_issue_links']) assert.equal((await app.query(`select count(*)::int n from ${table} where "issueId"=$1`,[original.id])).rows[0].n,0)
     assert.equal((await workspace.query('select count(*)::int n from team_issue_promotion_receipts where "requestId"=$1',[request.requestId])).rows[0].n,1)
     await workspace.query('update mikka_team_issues set "teamId"=$2 where "issueId"=$1',[original.id,badTeam])
@@ -521,8 +517,7 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
     await app.query('insert into issue_documents ("issueId","userId",state) values ($1,$2,\'synthetic\')',[id,owner])
     await app.query('insert into linear_sync_outbox (id,"issueId","scopeVersion") values ($1,$2,1)',[randomUUID(),id])
     assert.equal((await app.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1',[id])).rows[0].n,0)
-    await assert.rejects(actAs(owner,()=>retryLinearIssue(id)),{message:'issueNotFound'})
-    assert.equal(await syncAppIssueToLinear(id),null)
+    await assert.deepEqual(await actAs(owner,()=>retryLinearIssue(id)),{error:'linearSyncDisabled'})
     assert.equal((await app.query('select count(*)::int n from linear_issue_publications where "issueId"=$1',[id])).rows[0].n,0)
     assert.equal((await app.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
     assert.equal(externalCalls,0)
@@ -533,52 +528,9 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
     await assert.rejects(app.query('insert into linear_issue_publications (id,"issueId","ownerId","teamSyncId","scopeVersion","linearIssueId") values ($1,$2,$3,$4,1,$5)',[publication,id,owner,team,remote]),(error:unknown)=>(error as {code:string}).code==='23514')
     await assert.rejects(app.query('insert into linear_issue_links (id,"issueId","ownerId","teamSyncId","linearIssueId","linearIdentifier","externalTargetVerified") values ($1,$2,$3,$4,$5,\'EXT-2\',true)',[randomUUID(),id,owner,team,remote]),(error:unknown)=>(error as {code:string}).code==='23514')
     await assert.rejects(app.query('insert into linear_issue_links (id,"issueId","ownerId","teamSyncId","linearIssueId","linearIdentifier") values ($1,$2,$3,$4,$5,\'EXT-2\')',[randomUUID(),id,owner,team,remote]),(error:unknown)=>(error as {code:string}).code==='23514')
-    assert.equal(await syncAppIssueToLinear(id),null)
     await app.query('update issues set title=\'Unverified linked update\' where id=$1',[id])
     assert.equal((await app.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1',[id])).rows[0].n,0)
     assert.equal((await app.query('select count(*)::int n from linear_issue_publications where id=$1',[publication])).rows[0].n,0)
-    assert.equal(externalCalls,0)
-  })
-  await scopeSubtest(t, 'unverified historical issue and comment removal webhooks cannot mutate retained links',async()=>{
-    const id=randomUUID(),remoteId=randomUUID(),linkId=randomUUID(),commentId=randomUUID(),commentLinkId=randomUUID()
-    const team=(await app.query('select id from linear_team_syncs where "ownerId"=$1',[owner])).rows[0].id
-    await app.query('insert into linear_connections ("userId","linearUserId","organizationId","organizationName","accessToken","refreshToken","expiresAt") values ($1,\'synthetic\',\'synthetic-unknown\',\'Synthetic\',\'unused\',\'unused\',now()+interval \'1 hour\')',[owner])
-    await app.query('insert into issues (id,"userId","workspaceId","ownershipState","linearSyncPolicy",title,content,status,priority,scope) values ($1,$2,$4,\'bound\',\'explicit\',\'Unverified inbound fixture\',$3,\'todo\',\'normal\',\'workspace\')',[id,owner,JSON.stringify(content),workspaceId])
-    await app.query('insert into linear_issue_links (id,"issueId","ownerId","teamSyncId","linearIssueId","linearIdentifier") values ($1,$2,$3,$4,$5,\'EXT-unknown\')',[linkId,id,owner,team,remoteId])
-    await app.query('insert into linear_comment_links (id,"issueLinkId","threadId","messageId","linearCommentId","bodyHash") values ($1,$2,\'thread\',\'message\',$3,\'synthetic\')',[commentLinkId,linkId,commentId])
-    for (const event of [{type:'Issue',data:{id:remoteId}},{type:'Comment',data:{id:commentId,issueId:remoteId}}]) {
-      const deliveryId=`unknown-remove-${randomUUID()}`
-      await app.query('insert into linear_sync_inbox ("deliveryId","organizationId","eventType",payload) values ($1,\'synthetic-unknown\',$2,$3)',[deliveryId,event.type,JSON.stringify({...event,action:'remove',organizationId:'synthetic-unknown'})])
-      await processLinearInboxDelivery(deliveryId)
-    }
-    assert.deepEqual((await app.query('select "externalTargetVerified","remoteRemovedAt","syncStatus" from linear_issue_links where id=$1',[linkId])).rows[0],{externalTargetVerified:false,remoteRemovedAt:null,syncStatus:'synced'})
-    assert.equal((await app.query('select "syncStatus" from linear_comment_links where id=$1',[commentLinkId])).rows[0].syncStatus,'pending')
-    assert.equal(externalCalls,0)
-  })
-  await scopeSubtest(t, 'an explicitly imported external task retains its verified link and can enqueue',async()=>{
-    const remoteId=randomUUID()
-    const {linearTeamSyncs}=await import('../lib/db/schema')
-    const {eq}=await import('drizzle-orm')
-    const [team]=await db.select().from(linearTeamSyncs).where(eq(linearTeamSyncs.ownerId,owner)).limit(1)
-    const remote={id:remoteId,identifier:'EXT-1',title:'Existing imported workspace',description:'Synthetic',dueDate:null,priority:0,url:'https://example.invalid/synthetic',updatedAt:new Date().toISOString(),state:null,team:{id:team.linearTeamId,key:team.linearTeamKey,name:team.linearTeamName},assignee:null,labels:[]}
-    const {createAppIssueFromLinear}=await import('../lib/linear-sync/issue-sync')
-    const imported=await createAppIssueFromLinear(team,remote);assert.ok(imported)
-    const id=imported.id
-    assert.notEqual(id,remoteId);assert.equal(imported.workspaceId,workspaceId);assert.equal(imported.linearSyncPolicy,'explicit')
-    assert.equal((await createAppIssueFromLinear(team,remote))?.id,id)
-    assert.equal((await app.query('select "externalTargetVerified" from linear_issue_links where "issueId"=$1',[id])).rows[0].externalTargetVerified,true)
-    await app.query('update issues set title=\'Authorized linked update\' where id=$1',[id])
-    assert.equal((await app.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and status=\'queued\'',[id])).rows[0].n,1)
-    const {reserveLinearPublication}=await import('../lib/linear-sync/publication')
-    const reserved=await reserveLinearPublication(id)
-    assert.ok(reserved);assert.equal(reserved.publication.linearIssueId,remoteId);assert.equal(reserved.team.id,team.id)
-    // Emulate a link losing verification while an old queued worker exists.
-    // The DB claim fence keeps the row as failed and never releases a token.
-    await app.query('update linear_issue_links set "externalTargetVerified"=false where "issueId"=$1',[id])
-    await processLinearIssueOutbox(id)
-    const pending=(await app.query('select status,"claimToken","lastError" from linear_sync_outbox where "issueId"=$1',[id])).rows[0]
-    assert.equal(pending.status,'failed');assert.equal(pending.claimToken,null);assert.match(pending.lastError,/No active verified Linear/)
-    assert.equal((await app.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,1)
     assert.equal(externalCalls,0)
   })
   await scopeSubtest(t, 'explicit authorized team succeeds once with durable provider gate and no outbox',async()=>{
@@ -594,8 +546,7 @@ test('explicit team task creation across two real PostgreSQL databases', { skip:
     await app.query('insert into issue_documents ("issueId","userId",state) values ($1,$2,\'synthetic\')',[id,owner])
     const externalTeam=(await app.query('select id from linear_team_syncs where "ownerId"=$1',[owner])).rows[0].id
     await assert.rejects(app.query('insert into linear_issue_links (id,"issueId","ownerId","teamSyncId","linearIssueId","linearIdentifier") values ($1,$2,$3,$4,$5,\'EXT-1\')',[randomUUID(),id,owner,externalTeam,randomUUID()]),(error:unknown)=>(error as {code:string}).code==='23514')
-    await syncAppIssueToLinear(id);await processLinearIssueOutbox(id)
-    assert.deepEqual(await actAs({id:owner,[tokenWorkspace]:workspaceId},()=>retryLinearIssue(id)),{error:'linearIssueInvalid'})
+    assert.deepEqual(await actAs({id:owner,[tokenWorkspace]:workspaceId},()=>retryLinearIssue(id)),{error:'linearSyncDisabled'})
     assert.equal((await app.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1',[id])).rows[0].n,0)
     assert.equal((await app.query('select count(*)::int n from linear_issue_publications where "issueId"=$1',[id])).rows[0].n,0)
     await assert.rejects(app.query('update issues set "linearSyncBlocked"=false where id=$1',[id]),(error:unknown)=>(error as {code:string}).code==='23514')

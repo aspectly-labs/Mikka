@@ -99,10 +99,11 @@ test('enrolled billing fixture edits retain their real DB consumers without unre
   ].map(file => change(file)))
   assert.equal(result.full, false)
   // Keep both explicit package owners and the existing source-contract callers.
+  // The scope suite no longer imports the Linear archive fixtures.
   assert.deepEqual(result.db_suites, [
     'test:abuse-db', 'test:approved-writes-db', 'test:bot-threads-db',
     'test:coordinator-task-binding-db', 'test:migration-steps-db',
-    'test:onboarding-db', 'test:scope-detachment-db', 'test:workspace-admin-db',
+    'test:onboarding-db', 'test:workspace-admin-db',
   ])
   assert(result.source)
   for (const flag of ['daemon', 'desktop', 'analytics']) assert.equal(result[flag], false, flag)
