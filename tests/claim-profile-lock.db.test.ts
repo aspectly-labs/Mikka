@@ -21,7 +21,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
   await createTestDatabase(admin, database, 'template0')
   console.info(JSON.stringify({ event: 'claim_locked_run_owned_database', database }))
   const target = new URL(dbUrl); target.pathname = '/' + database
-  const saved = Object.fromEntries(['E2E_DATABASE_URL', 'DATABASE_URL', 'MIKKA_DATABASE_URL', 'MIKKA_BYOS_ENABLED', 'MIKKA_BYOS_VALIDATED_MODEL_ROUTES'].map(k => [k, process.env[k]]))
+  const saved = Object.fromEntries(['E2E_DATABASE_URL', 'DATABASE_URL', 'MIKKA_DATABASE_URL', 'MIKKA_BYOS_ENABLED', 'MIKKA_BYOS_VALIDATED_MODEL_ROUTES', 'E2B_API_KEY'].map(k => [k, process.env[k]]))
   const pool = new Pool({ connectionString: target.toString(), max: 6, options: '-c statement_timeout=15000 -c lock_timeout=5000' })
   // As the application's pool is: a claim's after-commit effects (the task moving to 进行中) see its COMMIT.
   observePoolCommits(pool)
@@ -34,7 +34,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
   })
   const migrations = new URL('../drizzle/', import.meta.url)
   for (const file of orderMigrations((await readdir(migrations)).filter(f => f.endsWith('.sql')))) await pool.query(await readFile(new URL(file, migrations), 'utf8'))
-  Object.assign(process.env, { E2E_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), MIKKA_DATABASE_URL: target.toString(), MIKKA_BYOS_ENABLED: '1', MIKKA_BYOS_VALIDATED_MODEL_ROUTES: 'claude_cpa,codex_cpa' })
+  Object.assign(process.env, { E2E_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), MIKKA_DATABASE_URL: target.toString(), MIKKA_BYOS_ENABLED: '1', MIKKA_BYOS_VALIDATED_MODEL_ROUTES: 'claude_cpa,codex_cpa', E2B_API_KEY: 'synthetic-profile-lock-e2b' })
   const runtime = await import('../lib/subscription-runtime')
   let allowanceCalls = 0
   t.mock.module(new URL('../lib/subscription-runtime.ts', import.meta.url).href, { namedExports: {

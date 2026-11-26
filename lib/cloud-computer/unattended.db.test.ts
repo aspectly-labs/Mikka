@@ -34,12 +34,16 @@ function judgment(effect:BrowserEffect='browse'):Awaited<ReturnType<typeof judge
 }
 const realFetch=globalThis.fetch
 let services:Awaited<ReturnType<typeof startExternalServices>>|null=null
-const savedE2BEnv={edition:process.env.MIKKA_EDITION,apiUrl:process.env.E2B_API_URL,sandboxUrl:process.env.E2B_SANDBOX_URL,httpVersion:process.env.E2B_HTTP_VERSION}
+const savedE2BEnv={edition:process.env.MIKKA_EDITION,apiKey:process.env.E2B_API_KEY,apiUrl:process.env.E2B_API_URL,sandboxUrl:process.env.E2B_SANDBOX_URL,httpVersion:process.env.E2B_HTTP_VERSION}
+const savedProxyEnv={HTTPS_PROXY:process.env.HTTPS_PROXY,https_proxy:process.env.https_proxy}
 before(async()=>{
  if(!enabled)return
- // This fixture's key and existing Bot sandbox belong to the installation owner.
+ // This fixture uses the installation owner’s key and existing Bot sandbox.
  process.env.MIKKA_EDITION='community'
  services=await startExternalServices()
+ delete process.env.HTTPS_PROXY
+ delete process.env.https_proxy
+ process.env.E2B_API_KEY=LOCAL_E2B_KEY
  process.env.E2B_API_URL=services.e2bOptions.apiUrl
  process.env.E2B_SANDBOX_URL=services.e2bOptions.sandboxUrl
  process.env.E2B_HTTP_VERSION='1.1'
@@ -103,7 +107,7 @@ beforeEach(async()=>{
  effects=0;mode='success';receipt=new Map();executableInputs=new Map();leaseCalls=0;submissions=0;loginMode='session_applied'
  await pool.query(`UPDATE bot_subagents SET status='running',needs=NULL,"activeActionId"=NULL,epoch=1,"targetId"='chromium-target';UPDATE pending_actions SET status='declined' WHERE status IN ('running','pending');UPDATE agent_kit_heads SET external_write_permissions='{}',external_write_policy_version=0;UPDATE workspace_computer_policies SET permission='allow',version=0,external_write_permissions='{}',external_write_policy_version=0;UPDATE credentials SET revoked_at=NULL;UPDATE credential_secrets SET nonce='secret-version-1'`)
 })
-after(async()=>{if(enabled){console.log(`Retained unattended DB schema: ${schema}`);globalThis.fetch=realFetch;for(const [k,v] of [['MIKKA_EDITION',savedE2BEnv.edition],['E2B_API_URL',savedE2BEnv.apiUrl],['E2B_SANDBOX_URL',savedE2BEnv.sandboxUrl],['E2B_HTTP_VERSION',savedE2BEnv.httpVersion]] as const){if(v===undefined)delete process.env[k];else process.env[k]=v}await services?.close();await pool.end();await admin.end()}})
+after(async()=>{if(enabled){console.log(`Retained unattended DB schema: ${schema}`);globalThis.fetch=realFetch;for(const [k,v] of Object.entries({MIKKA_EDITION:savedE2BEnv.edition,E2B_API_KEY:savedE2BEnv.apiKey,E2B_API_URL:savedE2BEnv.apiUrl,E2B_SANDBOX_URL:savedE2BEnv.sandboxUrl,E2B_HTTP_VERSION:savedE2BEnv.httpVersion,...savedProxyEnv})){if(v===undefined)delete process.env[k];else process.env[k]=v}await services?.close();await pool.end();await admin.end()}})
 async function propose(effect:BrowserEffect='browse') {return browserAction(pool,actor,botId,subagentId,{action:'click',x:20,y:40},'Open the requested control',observation(),judgment(effect))}
 async function stored(id:string){return (await pool.query('SELECT * FROM pending_actions WHERE id=$1',[id])).rows[0]}
 function inputFor(actionId:string,effect:BrowserEffect='browse',mutation:BrowserMutation={action:'click',x:20,y:40}):import('./action-reviews').BrowserActionInput {
@@ -214,16 +218,18 @@ test('ambiguous, revoked, foreign and denied login grants cannot fill credential
  await pool.query(`UPDATE workspace_computer_policies SET permission='deny'`)
  await assert.rejects(proposeLogin(pool,{...actor,botId,subagentId},target));assert.equal(leaseCalls,0)
 })
-test('machine allocation does not hold a SQL connection while the provider is creating it',{skip:!enabled},async()=>{
+test('machine allocation does not hold a SQL connection while the provider is creating it',{skip:!enabled},async t=>{
  const single=new Pool({connectionString:database,options:`-c search_path=${schema}`,max:1,connectionTimeoutMillis:1000})
+ t.after(()=>single.end())
  const owner={userId:'bob',workspaceId:actor.workspaceId}
  let entered!:()=>void,release!:()=>void
  const started=new Promise<void>(resolve=>{entered=resolve}),wait=new Promise<void>(resolve=>{release=resolve})
  const call=provision(single,owner,{createComputer:async()=>{entered();await wait;return {sandboxId:'owned-bob'} as never},connectComputer:async()=>({sandboxId:'owned-bob'} as never),installComputerRuntime:async()=>undefined})
- await started
- assert.equal((await single.query('SELECT 1 AS reachable')).rows[0].reachable,1)
- release();assert.equal((await call)?.sandboxId,'owned-bob')
- await single.end()
+ try {
+  await Promise.race([started,call.then(()=>{throw new Error('provisioning ended before allocation')})])
+  assert.equal((await single.query('SELECT 1 AS reachable')).rows[0].reachable,1)
+ } finally {release()}
+ assert.equal((await call)?.sandboxId,'owned-bob')
 })
 
 test('saved login covers guarded fill and one same-document submission, never two approval cards',{skip:!enabled},async()=>{

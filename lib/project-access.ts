@@ -136,7 +136,8 @@ export async function projectViewsForTasks(tasks: readonly { id: string; workspa
       from unnest(${sql.param(ids.slice(offset, offset + 200))}::uuid[]) as task(id)
       left join workspace_project_tasks t on t."issueId"=task.id
       left join workspace_projects p on p.id=t."projectId" and p."workspaceId"=t."workspaceId"
-      left join workspace_task_environments e on e."issueId"=task.id`)
+      left join workspace_task_environments e on e."issueId"=task.id
+      where p.id is not null or e."environmentId" is not null`)
     for (const row of rows) {
       const tenant = tenants.get(row.issueId)
       const inProject = row.projectId !== null && row.projectWorkspaceId === tenant

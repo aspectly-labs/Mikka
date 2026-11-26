@@ -22,6 +22,12 @@ mock.module(new URL('../lib/api-auth.ts',import.meta.url).href,{namedExports:{au
 const harnesses = [{ harness: 'codex', installed: true, subscriptionBroker: true, computerBroker: true }]
 
 test('cloud runs: the bot runtime is created on dispatch, once; the kill switch falls back to the card', { skip: !dbUrl }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+  })
   delete process.env.MIKKA_CLOUD_COMPUTER_TASKS
   process.env.MIKKA_BYOS_ENABLED = '1'
   const coordinator = await isolateCoordinatorWakes(t)
