@@ -288,10 +288,25 @@ const sources = new Map([
       assert.equal(personalWorkerMailboxScopeMatches(p.run.agentDefinition?.harness??p.agent.harness,p.run.agentDefinition,{botId:p.run.botId??null,workspaceId:p.run.workspaceId}),false)
       p.mailboxLookups.push([owner,runId]);return []
     }`],
+  ['/lib/cloud-computer/e2b-task-workspace-archive.ts', 'export function portableTaskArchiveEnabled(){return Boolean(globalThis.claimResponseProbe.portableMachine)}'],
   ['/lib/computer/claim.ts', `
+    import assert from 'node:assert/strict'
     function claimTransaction(){
       const p=globalThis.claimResponseProbe
       return {query(sql,args){
+        if(p.portableMachine && sql==='SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE'){
+          assert.deepEqual(args,[p.run.id,p.run.userId]);p.portableOperations.push('lock-run')
+          return Promise.resolve({rows:[{id:p.run.id}],rowCount:1})
+        }
+        if(p.portableMachine && sql.startsWith("SELECT lifecycle->'portableWorkspaceRestore' AS receipt")){
+          assert.match(sql,/FROM thread_machines/);assert.match(sql,/FOR UPDATE$/)
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId]);p.portableOperations.push('lock-machine')
+          return Promise.resolve({rows:[p.portableMachine],rowCount:1})
+        }
+        if(p.portableMachine && sql.startsWith('UPDATE thread_machines SET lifecycle=')){
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId]);p.portableOperations.push('writer-ready')
+          return Promise.resolve({rows:[],rowCount:1})
+        }
         if(!sql.startsWith('UPDATE agent_runs SET "deviceTokenId"=$2')||args[0]!==p.run.id||args[1]!=="synthetic-device-token"||args[2]!=="member")throw new Error("unexpected SQL in claim fixture")
         p.run.deviceTokenId=args[1]
         p.run.machineAuthority=args[3]

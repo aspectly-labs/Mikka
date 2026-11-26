@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib'
 import { defaultRunPolicy } from '@mikka/protocol/agent-policy'
 import { CodedError } from '@mikka/protocol/coded-error'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
-import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
+import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
 import { SUBSCRIPTION_GATEWAY_HEADER } from '@mikka/protocol/subscription'
 import { normalizeRepository } from '@mikka/protocol/repository'
 import { SKILL_ARTIFACT_HEADER } from '@mikka/protocol/skill'
@@ -58,6 +58,9 @@ function fixture() {
     customBranchCapability: false,
     subscriptionGatewayCapability: true,
     withoutSubscriptionCredentialCapability: false,
+    portableWorkspaceCapability: false,
+    portableMachine: undefined as { receipt: { size: number; sha256: string; headSha: string }; restorePending: boolean } | undefined,
+    portableOperations: [] as string[],
     secretCapability: undefined as string | undefined,
     nativeMcpServers: undefined as TaskMcpServer[] | undefined,
     taskMcpVersion: TASK_MCP_VERSION as string,
@@ -114,6 +117,7 @@ async function claim(probe: ReturnType<typeof fixture>, preparation = ['skill-pr
     ...((probe.credentialCapability || (subscription && !probe.withoutSubscriptionCredentialCapability)) && { [RUN_CREDENTIALS_HEADER]: '1' }),
     ...(probe.modelCredentialCapability && { [MODEL_CREDENTIAL_HEADER]: '1' }),
     ...(probe.subscriptionGatewayCapability && { [SUBSCRIPTION_GATEWAY_HEADER]: '1' }),
+    ...(probe.portableWorkspaceCapability && { [PORTABLE_TASK_WORKSPACE_HEADER]: '1' }),
     ...(probe.environmentCapability && { [PROJECT_ENVIRONMENT_HEADER]: probe.environmentCapability }),
     ...(probe.secretCapability && { [TASK_SECRETS_HEADER]: probe.secretCapability }),
     ...(probe.nativeMcpServers && { [TASK_MCP_HEADER]: probe.taskMcpVersion }),
@@ -786,6 +790,37 @@ test('a cloud subscription requires gateway and credential support before leasin
     assert.equal(probe.run.leaseExpiresAt, null)
     assert.deepEqual(probe.nativeContextCalls, [])
     assert.deepEqual(probe.subscriptionGatewayGrants, [])
+  }
+})
+
+test('a portable restore fences subscription gateway credentials until its receipt is safe to deliver', async t => {
+  const keys = ['MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'MIKKA_BYO_E2B_KEY'] as const
+  const saved = keys.map(key => process.env[key])
+  Object.assign(process.env, { MIKKA_CLOUD_COMPUTER_TASKS: '1', MIKKA_BYOS_ENABLED: '1', MIKKA_BYO_E2B_KEY: '1' })
+  t.after(() => keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index] }))
+  const receipt = { size: 1024, sha256: '1'.repeat(64), headSha: '2'.repeat(40) }
+  for (const scenario of ['restoring', 'old-daemon', 'ready'] as const) {
+    const probe = fixture()
+    const ready = scenario === 'ready'
+    probe.portableMachine = { receipt, restorePending: scenario === 'restoring' }
+    probe.portableWorkspaceCapability = scenario !== 'old-daemon'
+    Object.assign(probe, { caller: { userId: 'member', scopeDeviceId: 'device', scopeWorkspaceId: workspaceId },
+      cloud: { subscription: { id: 'binding', consumerId: 'agent', workspaceId, route: 'codex_cli', modelId: 'gpt-6-luna' } } })
+    Object.assign(probe.device, { kind: 'cloud', harnesses: [{ harness: 'codex', installed: true, toolApproval: true, subscriptionBroker: true }] })
+    const response = await claim(probe, ['skill-preflight', 'policy', 'model-admission', 'secrets',
+      ...(ready ? ['claim', 'skill-claim', 'benchmark-claim', 'token', 'settings'] : [])])
+    assert.equal(response.status, ready ? 200 : 409, scenario)
+    assert.deepEqual(probe.portableOperations, ['lock-run', 'lock-machine', ...(ready ? ['writer-ready'] : [])])
+    assert.equal(probe.subscriptionGatewayGrants.length, ready ? 1 : 0)
+    const body = await response.json()
+    if (ready) {
+      assert.deepEqual(body.portableTaskWorkspace, receipt)
+      assert.equal(body.subscriptionContext.modelId, 'gpt-6-luna')
+      assert.equal(body.modelCredential.key, fixtureGatewayToken)
+    } else {
+      assert.equal(probe.run.leaseExpiresAt, null)
+      assert.equal(body.modelCredential, undefined)
+    }
   }
 })
 
