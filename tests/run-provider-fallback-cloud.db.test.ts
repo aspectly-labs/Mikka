@@ -188,7 +188,7 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
   await t.test('forks and side threads admit their own machine and preserve idempotent placement after a flag change', async t => {
     const f = await fixture('provider-thread-children')
     await threadMachineAction(pool, f.actor, f.runId, 'end')
-    const { spawnThread, ThreadSpawnConflictError } = await import('../lib/thread-lifecycle')
+    const { moveThread, spawnThread, ThreadSpawnConflictError } = await import('../lib/thread-lifecycle')
     const { tokenWorkspace } = await import('../lib/tokens/principal')
     const user = { id: f.actor.userId, [tokenWorkspace]: f.actor.workspaceId }
     const messageId = randomUUID()
@@ -229,6 +229,13 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
     assert.ok(launchPlacements.has(side!.id))
     const source = await row(f.runId)
     assert.deepEqual(source.agentDefinition.taskCompute, f.admitted.agentDefinition.taskCompute)
+
+    assert.equal(await moveThread(user, f.runId, { deviceId: f.localDeviceId }), true)
+    const localFork = await spawnThread(user, f.runId, { relation: 'fork', mode: 'summary' })
+    assert.equal(localFork?.deviceId, f.localDeviceId)
+    assert.equal(localFork?.agentDefinition.executionIdentity.billingAccount.runtime.kind, 'local_device')
+    assert.equal(localFork?.agentDefinition.taskCompute, undefined)
+    assert.deepEqual((await row(f.runId)).agentDefinition.taskCompute, f.admitted.agentDefinition.taskCompute)
   })
 
   for (const change of ['environment', 'repository'] as const) await t.test(`${change} withdrawal preserves terminal completion and stops provider recovery before runtime preparation, including replay`, async () => {

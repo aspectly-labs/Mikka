@@ -15,6 +15,7 @@ import type { RequestWorkspaceUser } from '@/lib/request-workspace'
 import type { Pool, PoolClient } from 'pg'
 import { ComputerError } from './computer/store'
 import { taskProviderUnavailableMessage } from './cloud-computer/task-provider-admission'
+import { workerDefinitionDigest } from './agent-kit/worker-digest'
 
 // #2936 thread lifecycle. A "thread" is its run chain rooted at the root run:
 // every relation column (`parentRunId`, `threadRelation`) anchors to that root so
@@ -67,6 +68,13 @@ async function transcriptExcerpt(sourceRootId: string, limit = 20, cutoff?: stri
     `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt" DESC LIMIT $2`,
     [sourceRootId, limit, cutoff ?? null])
   return rows.reverse().map(row => String(row.text)).join('\n')
+}
+
+function isMovedE2BThread(run: Run) {
+  const definition = run.agentDefinition
+  if (definition?.taskCompute?.provider !== 'e2b' || definition.taskMachine) return false
+  const runtime = run.agentDefinition?.executionIdentity?.billingAccount?.runtime
+  return runtime?.kind === 'local_device' && runtime.resourceId === run.deviceId && runtime.ownerId === run.userId
 }
 
 async function cloudThreadBinding(database: Pick<Pool | PoolClient, 'query'>, ownerId: string, source: Run, lock = false) {
@@ -150,7 +158,8 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
     : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20, cutoff)).slice(0, 6000)}`
   const cloudChild = Boolean(await cloudThreadBinding(pool, user.id, source))
   if (!cloudChild && (source.agentDefinition?.taskCompute || source.agentDefinition?.taskMachine) &&
-      source.agentDefinition?.executor !== 'eve_factory') throw new ComputerError(409, 'Cloud thread authority unavailable')
+      source.agentDefinition?.executor !== 'eve_factory' && !isMovedE2BThread(source))
+    throw new ComputerError(409, 'Cloud thread authority unavailable')
 
   const writeChild = async (): Promise<{ run: Run; replayed: boolean } | null> => {
     const id = randomUUID()
@@ -195,6 +204,15 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
         await client.query('ROLLBACK')
         inTx = false
         return null
+      }
+      // A terminal cloud thread can be explicitly moved to a local device.
+      // Its old provider remains historical evidence. The new local child has no cloud SKU.
+      if (!replayed && !cloudChild && isMovedE2BThread(run)) {
+        const definition = { ...run.agentDefinition }
+        delete definition.taskCompute
+        definition.definitionDigest = workerDefinitionDigest(definition)
+        await client.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [run.id, JSON.stringify(definition)])
+        run.agentDefinition = definition
       }
       // A full fork replays the bounded newest transcript up to `fromMessageId`
       // (or all of it) inside the same transaction so workers never claim a
