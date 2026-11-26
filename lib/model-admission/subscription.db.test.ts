@@ -1,4 +1,4 @@
-import { fixtureSubscriptionChat } from '../../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../../tests/fixtures/subscription-chat'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'

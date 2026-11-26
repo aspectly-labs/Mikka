@@ -4,7 +4,8 @@ import { APICallError, InvalidResponseDataError } from 'ai'
 import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
 import { generationFailureCode, subscriptionGenerationError, SubscriptionService } from './subscription-service'
-import { fixtureSubscriptionChat, subscriptionFixture } from '../tests/fixtures/subscription'
+import { subscriptionFixture } from '../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../tests/fixtures/subscription-chat'
 
 test('a failed subscription turn logs only its fixed code, never the message', () => {
   assert.equal(generationFailureCode(new WorkerRefusal('provider_operation_failed')), 'provider_operation_failed')

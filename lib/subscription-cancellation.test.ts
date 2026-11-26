@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
 import { SubscriptionService } from './subscription-service'
-import { fixtureSubscriptionChat, subscriptionFixture } from '../tests/fixtures/subscription'
+import { subscriptionFixture } from '../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../tests/fixtures/subscription-chat'
 
 function controlledSubscription() {
   const { use, access } = subscriptionFixture('claude_cpa')

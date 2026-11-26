@@ -4,7 +4,8 @@ import { WORKFLOW_SERIALIZE, WORKFLOW_DESERIALIZE } from '@workflow/serde'
 import { SubscriptionService } from './subscription-service'
 import { SubscriptionWorkflowModel } from './subscription-workflow-model'
 import { ExecutionSettings } from './execution-settings'
-import { fixtureSubscriptionChat, subscriptionFixture } from '../tests/fixtures/subscription'
+import { subscriptionFixture } from '../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../tests/fixtures/subscription-chat'
 
 const priority = { codexServiceTier: 'priority' as const }
 const catalogue = (supported: boolean) => ({ revision: '1', models: ['fixture-model'], priorityVersion: 1, prioritySupport: { 'fixture-model': supported } })

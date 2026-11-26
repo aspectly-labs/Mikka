@@ -3,7 +3,8 @@ import { test } from 'node:test'
 import type { createMCPClient } from '@ai-sdk/mcp'
 import { createGitHubMcpRuntime } from './mcp'
 import { SubscriptionService } from '../subscription-service'
-import { fixtureSubscriptionChat, subscriptionFixture } from '../../tests/fixtures/subscription'
+import { subscriptionFixture } from '../../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../../tests/fixtures/subscription-chat'
 import { withCoordinatorPresentation } from '../coordinator/native-prompt'
 
 // The retained production catalogue measured 53 tools / 152,260 JSON bytes.
