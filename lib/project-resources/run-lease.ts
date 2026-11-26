@@ -29,7 +29,7 @@ export async function withRunProjectExecution<T>(input: ProjectExecutionInput, f
   // Factory checks execute an independently verified candidate SHA in
   // Run.baseBranch. The resource snapshot still names the Project checkout
   // target; current Project bindings may override and revoke that target.
-  return withProjectExecution({ ...input, baseBranch: frozen ? frozen.baseBranch : input.baseBranch,
+  return withProjectExecution({ ...input, botId: frozen?.environment ? input.botId : undefined, baseBranch: frozen ? frozen.baseBranch : input.baseBranch,
     ...(frozen?.environment?.chosen ? { environmentId: frozen.environment.id } : {}) }, async admitted => {
     assertRunProjectExecution(input, frozen, admitted)
     return operation()

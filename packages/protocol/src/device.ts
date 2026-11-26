@@ -605,6 +605,7 @@ export const runAssignmentSchema = z.object({
   continuesRunId: id.optional(),
   /** A same-device retry with no usable snapshot must reuse its real worktree. */
   requireWorktreeContinuation: z.literal(true).optional(),
+  freshEnvironmentCheckout: z.literal(true).optional(),
   /**
    * The latest checkpoint of the attempt this run takes over after its
    * machine went offline. Used only for a new worktree (another machine, or

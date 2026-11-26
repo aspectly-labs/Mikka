@@ -586,7 +586,7 @@ export async function withProjectExecution<T>(input: ProjectExecutionInput, oper
       select "environmentId" from bots where id=${input.botId} and "workspaceId"=${input.workspaceId}
       and "ownerId"=${input.userId} and "archivedAt" is null`)).rows[0] : null
     const environmentId = selectedId ?? bot?.environmentId
-    let baseBranch = environmentId ? input.baseBranch : taskSettings.legacyBranch ?? input.baseBranch
+    let baseBranch = input.baseBranch
     let repositoryClone: ProjectExecutionSnapshot['repositoryClone'] = null
     let environment: ProjectExecutionSnapshot['environment'] = null
     if (environmentId) {
@@ -608,6 +608,9 @@ export async function withProjectExecution<T>(input: ProjectExecutionInput, oper
       environment = { id: row.id, revision: row.revision, name: row.name, ...config, scope: row.scope, repositories, ...(input.environmentId ? { chosen: true as const } : {}),
         ...(isMachineSize(row.defaultMachineSize) ? { defaultMachineSize: row.defaultMachineSize } : {}) }
     }
+    // Explicit task edits discard historical branches. Bot defaults and migrated task
+    // environments preserve the task's original checkout independently of public settings.
+    if (!input.environmentId && taskSettings.legacyBranch) baseBranch = taskSettings.legacyBranch
     return operation({ version: 1, workspaceId: input.workspaceId, projectId: selected?.id ?? null, projectRevision: selected?.revision ?? null, policyRevision: policy.rows[0]?.revision ?? 0,
       repositoryKey: input.repositoryKey, baseBranch, ...(repositoryClone ? { repositoryClone } : {}), environment })
   }, requireExisting)

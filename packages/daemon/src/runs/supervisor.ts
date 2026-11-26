@@ -1082,7 +1082,7 @@ export class RunSupervisor {
     }
     const branch = assignment.pushBranch
     const base = await this.deps.baseRef(assignment)
-    if (!branch || !pushDecision(runPolicy(assignment.policy)).push) return base
+    if (assignment.freshEnvironmentCheckout || !branch || !pushDecision(runPolicy(assignment.policy)).push) return base
     try {
       return await withRunGitCredentials(assignment, runPaths(this.deps.adapterStateDir ?? join(tmpdir(), "mikka-run-state"), runId).privateDir,
         env => this.deps.worktrees.fetchBranch(
