@@ -271,7 +271,8 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
     const { rows: [target] } = await pool.query<{ agentId: string; deviceId: string }>(`SELECT a.id AS "agentId",a."deviceId"
       FROM bot_cloud_runtimes r JOIN agents a ON a.id=r."agentId" WHERE r."botId"=$1 AND r.harness='claude_code'`, [f.botId])
     const repository = await ensureDeviceRepository(f.actor.userId, target.deviceId, f.remote!)
-    const variables = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_TASK_MACHINE_PLAN_LIMITS', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN'] as const
+    const variables = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_TASK_MACHINE_PLAN_LIMITS', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN',
+      'E2B_BYO_COMPUTER_TEMPLATE', 'MIKKA_CLOUD_TEMPLATE_MODELS'] as const
     const saved = variables.map(key => process.env[key])
     t.after(() => variables.forEach((key, index) => {
       const value = saved[index]
@@ -287,10 +288,21 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
         model: 'fixture-claude-a', apiKeyId: f.first.id })
       return (await row(runId)).agentDefinition.taskCompute
     }
-    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'small' })
+    delete process.env.MIKKA_CLOUD_TEMPLATE_MODELS
+    await assert.rejects(queueFor('e2b'), { status: 503, message: 'E2B coding task unavailable. Retry the run.' })
+    process.env.E2B_BYO_COMPUTER_TEMPLATE = 'desktop'
+    process.env.MIKKA_CLOUD_TEMPLATE_MODELS = JSON.stringify({
+      version: 1, workerSha: process.env.MIKKA_CLOUD_WORKER_SHA, templates: Object.fromEntries(
+        ['desktop', 'claude', 'codex'].map(kind => [kind, { templateId: kind, models: [] }])),
+      machineVariants: [
+        ...['desktop', 'claude', 'codex'].map(kind => ({ kind, templateId: kind, size: 'medium', cpuCount: 2, memoryMB: 8192 })),
+        { kind: 'claude', templateId: 'claude-small', size: 'small', cpuCount: 1, memoryMB: 4096 },
+      ],
+    })
+    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'small', requireVerifiedHardware: true })
     assert.deepEqual(await queueFor('cloudflare'), { provider: 'cloudflare', size: 'standard-1' })
     await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,'enterprise','license')`, [f.actor.workspaceId])
-    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'medium' })
+    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'medium', requireVerifiedHardware: true })
     assert.deepEqual(await queueFor('cloudflare'), { provider: 'cloudflare', size: 'standard-3' })
     process.env.MIKKA_TASK_MACHINE_PLAN_LIMITS = JSON.stringify({ enterprise: { vcpu: 0.5, ramGib: 4 } })
     await assert.rejects(queueFor('e2b'), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })

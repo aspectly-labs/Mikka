@@ -10,8 +10,9 @@ export const taskProviderUnavailableMessage = (provider: MachineProvider) =>
   `${provider === 'cloudflare' ? 'Cloudflare' : 'E2B'} coding task unavailable. Retry the run.`
 
 export class TaskProviderAdmissionUnavailable extends ComputerError {
-  constructor(readonly provider: MachineProvider, readonly allowLocalRecovery = false) {
+  constructor(readonly provider: MachineProvider, readonly allowLocalRecovery = false, options?: ErrorOptions) {
     super(503, taskProviderUnavailableMessage(provider))
+    this.cause = options?.cause
   }
 }
 

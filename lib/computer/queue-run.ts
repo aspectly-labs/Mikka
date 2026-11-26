@@ -199,6 +199,16 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
           ...(provision && provision.requested !== compute.size
             ? { requestedSize: provision.requested, sizeReason: compute.size !== provision.size ? 'plan_limit' : provision.adjusted ?? undefined } : {}) }
       } else {
+        if (planLimit && compute.provider === 'e2b') {
+          const { sizedTaskTemplate } = await import('../secrets/e2b-runtime')
+          const { E2BKeyError } = await import('../secrets/flag')
+          try { sizedTaskTemplate(target.harness, compute.size, process.env, true) }
+          catch (error) {
+            if (!(error instanceof E2BKeyError)) throw error
+            throw new TaskProviderAdmissionUnavailable('e2b', frozen.allowLocalRecovery === true, { cause: error })
+          }
+          frozen.taskCompute = { ...compute, requireVerifiedHardware: true }
+        }
         if (!await hasE2BRuntimeCredential(client, actor.userId)) throw new TaskProviderAdmissionUnavailable('e2b', frozen.allowLocalRecovery === true)
       }
     } else if (sponsored) {
