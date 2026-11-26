@@ -41,6 +41,7 @@ import { agentLogins } from './agent-logins'
 import { openBundledWebPage } from './bundled-web'
 import { applicationMenu, unresponsiveChoice, unresponsiveCopy } from './window-menu'
 import type { DesktopMenuCommand, DesktopNotificationAccess, DesktopTrayState } from '@mikka/protocol/bridge'
+import { guardAppAction, closeWindowTarget } from './window-actions'
 import { trayCopy, trayMenu } from './tray'
 import { TRAY_ICON_1X, TRAY_ICON_2X } from './tray-icon'
 import { markStartup } from '../startup'
@@ -128,9 +129,7 @@ async function prepareAuth(rawState: unknown): Promise<string> {
       authServer = null
       if (authTimer) { clearTimeout(authTimer); authTimer = null }
       if (!mainWindow || mainWindow.isDestroyed()) return
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
+      bringToFront()
       void mainWindow.loadURL(finish)
     },
   })
@@ -159,9 +158,7 @@ async function prepareReturn(rawState: string): Promise<string> {
       returnListener = null
       if (returnTimer) { clearTimeout(returnTimer); returnTimer = null }
       if (!mainWindow || mainWindow.isDestroyed()) return
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
+      bringToFront()
       const contents = mainWindow.webContents
       if (!contents.isDestroyed() && isTrustedFrame(contents.getURL(), PAGE_URL)) contents.send(IPC.appReturned, { state: rawState, result })
     },
@@ -172,6 +169,7 @@ async function prepareReturn(rawState: string): Promise<string> {
 }
 
 function deliverClick(href: string): void {
+  if (gate) { bringToFront(); return }
   if (!mainWindow || mainWindow.isDestroyed()) {
     pendingClick = href
     return
@@ -271,6 +269,7 @@ function openOutside(url: string): void {
 }
 
 function openChild(url: string): void {
+  if (gate) { bringToFront(); return }
   const trusted = isTrustedFrame(url, PAGE_URL)
   const child = new BrowserWindow({
     width: 1100,
@@ -393,20 +392,25 @@ function openFromTray(href: string): void {
 /** A menu command for a window that is only now opening: sent once its page has loaded and subscribed. */
 function commandWhenOpen(command: DesktopMenuCommand): void {
   createMainWindow()
-  mainWindow?.webContents.once('did-finish-load', () => { setTimeout(() => sendMenuCommand(command), 1_500) })
+  const contents = mainWindow?.webContents
+  contents?.once('did-finish-load', () => {
+    if (!gate && !contents.isDestroyed() && isTrustedFrame(contents.getURL(), PAGE_URL)) {
+      contents.send(IPC.appMenuCommand, command)
+    }
+  })
 }
 
 function renderTray(): void {
   if (!tray || tray.isDestroyed()) return
   const locale = app.getLocale()
   tray.setContextMenu(Menu.buildFromTemplate(trayMenu(trayState, locale, {
-    openHref: openFromTray,
-    newThread: () => {
+    openHref: guardAppAction(() => gate !== null, bringToFront, openFromTray),
+    newThread: guardAppAction(() => gate !== null, bringToFront, () => {
       if (!mainWindow || mainWindow.isDestroyed()) { commandWhenOpen({ type: 'thread.new' }); return }
       bringToFront()
       sendMenuCommand({ type: 'thread.new' })
-    },
-    openApp: () => { if (!mainWindow || mainWindow.isDestroyed()) createMainWindow(); else bringToFront() },
+    }),
+    openApp: bringToFront,
   })))
   // The menu bar shows the waiting count beside the mark on macOS, as Capy's tray item does.
   if (process.platform === 'darwin') tray.setTitle(trayState.signedIn && trayState.waiting > 0 ? String(trayState.waiting) : '')
@@ -432,8 +436,8 @@ function updateTray(raw: unknown): void {
 function closeTabOrWindow(): void {
   const target = commandTarget()
   if (!target) return
-  if (target === mainWindow && isTrustedFrame(target.webContents.getURL(), PAGE_URL)) target.webContents.send(IPC.appMenuCommand, { type: 'tab.close' } satisfies DesktopMenuCommand)
-  else target.close()
+  closeWindowTarget(target === mainWindow, isTrustedFrame(target.webContents.getURL(), PAGE_URL),
+    () => target.webContents.send(IPC.appMenuCommand, { type: 'tab.close' } satisfies DesktopMenuCommand), () => target.close())
 }
 
 function createMainWindow(): void {
@@ -466,7 +470,7 @@ function createMainWindow(): void {
   })
   markStartup('main.window.created')
   mainWindow.setMenuBarVisibility(false)
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.once('ready-to-show', () => { if (!gate) mainWindow?.show() })
   mainWindow.on('closed', () => { mainWindow = null })
   watchResponsiveness(mainWindow)
   mainWindow.webContents.setWindowOpenHandler(details => {
@@ -531,13 +535,7 @@ let gate: UpdateGate | null = null
 const BACKGROUND_UPDATE_DELAY_MS = 10_000
 const BACKGROUND_UPDATE_INTERVAL_MS = 4 * 60 * 60_000
 
-/**
- * The update gate (launch-update.ts), only for a server that requires a newer desktop: a small window that
- * checks for an update and, when there is one, installs it before `open` lets the person in.
- * Closing the window while it holds the door quits the app; there is no way
- * in on the old version.
- */
-function runUpdateGate(open: (retryCheck: boolean) => void): void {
+function runUpdateGate(minimum: string): void {
   if (gate) return
   const copy = gateCopy(app.getLocale())
   const win = new BrowserWindow({
@@ -556,7 +554,6 @@ function runUpdateGate(open: (retryCheck: boolean) => void): void {
   gateWindow = win
   let loaded = false
   let pending: GateState | null = null
-  let opened = false
   const render = (state: GateState) => {
     if (win.isDestroyed()) return
     if (!loaded) { pending = state; return }
@@ -572,20 +569,15 @@ function runUpdateGate(open: (retryCheck: boolean) => void): void {
   })
   win.on('closed', () => {
     gateWindow = null
-    if (!opened) app.quit()
+    app.quit()
   })
   gate = new UpdateGate(autoUpdater, {
     onState: render,
-    onProceed: retryCheck => {
-      opened = true
-      gate = null
-      if (!win.isDestroyed()) win.close()
-      open(retryCheck)
-    },
+    minimum,
   })
   const lang = /^zh\b/i.test(app.getLocale()) ? 'zh-CN' : 'en'
   void win.loadFile(join(__dirname, 'update.html'), { query: { lang } })
-  gate.start()
+  gate.start(updates.beginRequiredUpdate())
 }
 
 /**
@@ -595,20 +587,22 @@ function runUpdateGate(open: (retryCheck: boolean) => void): void {
  */
 async function enforceMinimumVersion(): Promise<void> {
   if (!app.isPackaged || FLAVOR === 'dev' || gate) return
+  let minimum: string
   try {
     const server = currentServer()
     const response = await session.fromPartition(PARTITION).fetch(`${server.replace(/\/$/, '')}/api/version`, { headers: { origin: new URL(server).origin }, redirect: 'error', cache: 'no-store' })
     if (!response.ok) return
     const { minDesktopVersion } = await response.json() as { minDesktopVersion?: unknown }
     if (typeof minDesktopVersion !== 'string' || meetsMinimumVersion(APP_VERSION, minDesktopVersion)) return
+    minimum = minDesktopVersion
   } catch {
     return
   }
+  if (gate) return
+  const children = BrowserWindow.getAllWindows().filter(win => win !== mainWindow && win.isVisible())
+  for (const win of children) win.hide()
   mainWindow?.hide()
-  runUpdateGate(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show()
-    else createMainWindow()
-  })
+  runUpdateGate(minimum)
 }
 
 async function checkForUpdates(interactive: boolean): Promise<void> {
@@ -642,11 +636,11 @@ function installMenu(): void {
     locale: app.getLocale(),
     appName: app.name,
     packaged: app.isPackaged,
-    command: sendMenuCommand,
-    closeTab: closeTabOrWindow,
-    newWindow: () => openChild(PAGE_URL),
+    command: guardAppAction(() => gate !== null, bringToFront, sendMenuCommand),
+    closeTab: guardAppAction(() => gate !== null, bringToFront, closeTabOrWindow),
+    newWindow: guardAppAction(() => gate !== null, bringToFront, () => openChild(PAGE_URL)),
     reload: reloadApp,
-    checkForUpdates: () => { void checkForUpdates(true) },
+    checkForUpdates: guardAppAction(() => gate !== null, bringToFront, () => { void checkForUpdates(true) }),
     openWebsite: () => { void shell.openExternal('https://aspectlylabs.com/mikka') },
     showLogs: () => { void showLogs() },
     zoomItems: ZOOM_ITEMS,
@@ -687,8 +681,7 @@ async function start(): Promise<void> {
       scopeChanged: () => { bundledLive?.closeAll(); bundledViewer?.closeAll() },
       returned: async next => {
         if (!mainWindow || mainWindow.isDestroyed()) return
-        if (mainWindow.isMinimized()) mainWindow.restore()
-        mainWindow.show(); mainWindow.focus()
+        bringToFront()
         const path = next === '/' ? '/mikka' : next === '/mikka' || next.startsWith('/mikka/') || next.startsWith('/mikka?') ? next : `/mikka${next}`
         await mainWindow.loadURL(`${RENDERER_ORIGIN}${path}`)
       },
