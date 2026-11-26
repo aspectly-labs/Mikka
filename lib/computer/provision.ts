@@ -48,7 +48,9 @@ export async function ensureCloudMachine(pool:Pool,actor:Actor,runtime:Runtime=p
         if (runtime.computerGone?.(error)) return null
         throw error
       }) : null
-    if (machine.sandboxId && (!sandbox || (observed === undefined || observed === 'unknown') && await stale(pool, actor, sandbox, runtime))) {
+    // An unverifiable hosted desktop can use its purchased interval. A
+    // subsequent observation of its running worker can safely retire it.
+    if (machine.sandboxId && (!sandbox || (observed === undefined || !isCloudEdition()) && await stale(pool, actor, sandbox, runtime))) {
       // Gone at E2B, or built from a worker commit production no longer runs (every template
       // release): start over on the current template. The old desktop and files go with it.
       if (sandbox || retireBeforeWake) await runtime.killComputer?.(actor.workspaceId, machine.sandboxId)

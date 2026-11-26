@@ -366,6 +366,8 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     observed.state = 'paused'
     const pausedAt = policyFixture.e2b.requests.length
     const { observeComputerWorker } = await import('../computer/e2b-provider')
+    assert.equal(await observeComputerWorker(policyWorkspace, booted.sandboxId), 'unknown')
+    Object.assign(observed.metadata, { application: 'mikka', workspaceId: policyWorkspace, workerSha: 'b'.repeat(40) })
     assert.equal(await observeComputerWorker(policyWorkspace, booted.sandboxId), 'stale')
     assert.equal((await store.setPolicy(policyWorkspace, 'allow')).permission, 'allow')
     assert.equal(observed.state, 'paused')

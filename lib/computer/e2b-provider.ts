@@ -1,7 +1,7 @@
 import 'server-only'
 import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, withE2BProviderTime, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { isCloudEdition } from '@/lib/edition'
-import { cloudTemplateModels } from '@/lib/cloud-template-models'
+import { releasedDesktopWorker } from '@/lib/cloud-template-models'
 import { armDueTimerSoon } from '@/lib/due-timer'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
@@ -124,9 +124,11 @@ export async function observeComputerWorker(workspaceId: string, id: string): Pr
       throw error
     }
   }
-  const current = cloudTemplateModels()?.templates.desktop
-  if (info.state !== 'paused' || !current?.preinstalled) return 'unknown'
-  return info.templateId === current.templateId ? 'current' : 'stale'
+  const recordedWorker = info.metadata.application === 'mikka' && info.metadata.workspaceId === workspaceId
+    && /^[a-f0-9]{40}$/.test(info.metadata.workerSha ?? '') ? info.metadata.workerSha : undefined
+  const knownWorker = recordedWorker ?? releasedDesktopWorker(info.templateId)
+  if (info.state !== 'paused' || !knownWorker) return 'unknown'
+  return knownWorker === process.env.MIKKA_CLOUD_WORKER_SHA ? 'current' : 'stale'
 }
 
 /** Verified additive desktop image, or the original official base for rollback. */
@@ -139,7 +141,8 @@ export async function createComputer(workspaceId: string, operationId: string) {
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'cloud machine has no owner record')
   const account = await e2bCreateAccount(owner, operationId)
   const base = options(account.apiKey)
-  const metadata = { application: 'mikka', workspaceId, operationId }
+  const workerSha = isCloudEdition() ? releasedDesktopWorker(template) : undefined
+  const metadata = { application: 'mikka', workspaceId, operationId, ...(workerSha ? { workerSha } : {}) }
   if (await e2bInitialAllocationNeedsRecovery(owner, operationId)) {
     const recovered = await reconcileInitialComputerAllocation(workspaceId, owner, operationId)
     if (!recovered) throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation recovery pending')
