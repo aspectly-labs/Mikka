@@ -281,11 +281,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     // waits for this claim and ends its lease, or this claim sees the session closed.
     if (!await deviceSessionHeld(tx, deviceId)) return false
     if (portableTask) {
-      const { rows: [machine] } = await tx.query<{ receipt: unknown; capture: string | null }>(
-        `SELECT lifecycle->'portableWorkspaceRestore' AS receipt, lifecycle->>'portableWorkspaceCapture' AS capture FROM thread_machines
+      const { rows: [machine] } = await tx.query<{ receipt: unknown; capture: string | null; captureUntil: string | null }>(
+        `SELECT lifecycle->'portableWorkspaceRestore' AS receipt, lifecycle->>'portableWorkspaceCapture' AS capture,
+           lifecycle->>'portableWorkspaceCaptureUntil' AS "captureUntil" FROM thread_machines
          WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
            AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
-      if (machine?.capture === 'pending') return false
+      if (machine?.capture === 'pending' && Number(machine.captureUntil) > Date.now()) return false
       if (machine?.receipt != null) {
         if (request.headers.get(PORTABLE_TASK_WORKSPACE_HEADER) !== '1') return false
         portableTaskWorkspace = portableTaskWorkspaceReceiptSchema.parse(machine.receipt)
@@ -303,7 +304,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const afterClaim = async (tx: import('pg').PoolClient) => {
     await tx.query('UPDATE agent_runs SET "deviceTokenId"=$2,"machineAuthority"=$4 WHERE id=$1 AND "userId"=$3', [runId, caller.tokenId, caller.userId, receivesRunCredentials])
     if (portableTask) {
-      await tx.query(`UPDATE thread_machines SET lifecycle=lifecycle||'{"portableWorkspaceCapture":"writing"}'::jsonb
+      await tx.query(`UPDATE thread_machines SET lifecycle=(lifecycle-'portableWorkspaceCaptureId'-'portableWorkspaceCaptureUntil')
+          ||'{"portableWorkspaceCapture":"writing"}'::jsonb
         WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
           AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended'`, [runId, deviceId, caller.userId, run.workspaceId])
     }
