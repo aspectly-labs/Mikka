@@ -70,6 +70,13 @@ export function command(bin, args, options = {}) {
   } catch (error) {
     console.error('MIKKA_CF_OCI_STAGE=' + JSON.stringify({ stage, status: 'failed', elapsedMs: Date.now() - started, exit: error.status ?? null,
       code: /^[A-Z0-9_]+$/.test(error.code ?? '') ? error.code : null }))
+    // The pipe captures the failure's evidence and then discards it; print the
+    // tail so the CI log names the actual error instead of a bare exit code.
+    for (const [label, value] of [['stderr', error.stderr], ['stdout', error.stdout]]) {
+      const text = Buffer.isBuffer(value) ? value.toString('utf8') : String(value ?? '')
+      const tail = text.trimEnd().split('\n').slice(-40).join('\n').slice(-4000)
+      if (tail) console.error('MIKKA_CF_OCI_STAGE_' + stage + '_' + label.toUpperCase() + '_TAIL_BEGIN\n' + tail + '\nMIKKA_CF_OCI_STAGE_' + stage + '_' + label.toUpperCase() + '_TAIL_END')
+    }
     fail('CF_OCI_STAGE_' + stage + '_FAILED')
   }
   console.log('MIKKA_CF_OCI_STAGE=' + JSON.stringify({ stage, status: 'passed', elapsedMs: Date.now() - started }))
