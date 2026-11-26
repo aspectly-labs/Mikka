@@ -67,10 +67,12 @@ test('official jobs keep private code out of public artifacts and pin desktop to
     assert.ok(!job.steps.some(step => /web-deploy\.mjs|hosted-ui\.mjs production/.test(step.run ?? '')))
     assert.equal(job.permissions.issues, 'read')
   }
-  const proof = 'node scripts/release/cloudflare-promoted-web.mjs desktop'
-  const approved = job => job.steps.filter(step => step.run === proof)
-  assert.equal(approved(desktop.jobs.preflight).length, 1)
-  assert.equal(approved(desktop.jobs.macos).length, 2)
+  const preflightProof = 'node scripts/release/cloudflare-promoted-web.mjs desktop'
+  const macosProof = 'node "$RUNNER_TEMP/release-verifier/scripts/release/cloudflare-promoted-web.mjs" desktop'
+  const approvedPreflight = desktop.jobs.preflight.steps.filter(step => step.run === preflightProof)
+  const approvedMacos = desktop.jobs.macos.steps.filter(step => step.run === macosProof)
+  assert.equal(approvedPreflight.length, 1)
+  assert.equal(approvedMacos.length, 2)
   const { preflight, macos } = desktop.jobs
   // A push builds nothing. A dispatch's receipt, or the receipt of the Cloudflare gateway observation
   // that started this run, is verified in preflight, and only that unlocks macOS.
@@ -79,11 +81,11 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   const trigger = preflight.steps.find(step => step.id === 'trigger')
   assert.equal(trigger.if, "github.event_name == 'workflow_run'")
   assert.equal(trigger.run, 'node scripts/release/cloudflare-promoted-web.mjs trigger desktop')
-  assert.equal(approved(preflight)[0].env.CLOUDFLARE_RECEIPT, '${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}')
-  assert.equal(approved(preflight)[0].if, "github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'")
-  assert.ok(preflight.steps.indexOf(trigger) < preflight.steps.indexOf(approved(preflight)[0]))
+  assert.equal(approvedPreflight[0].env.CLOUDFLARE_RECEIPT, '${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}')
+  assert.equal(approvedPreflight[0].if, "github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'")
+  assert.ok(preflight.steps.indexOf(trigger) < preflight.steps.indexOf(approvedPreflight[0]))
   assert.equal(preflight.outputs.receipt, '${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}')
-  for (const step of approved(macos)) {
+  for (const step of approvedMacos) {
     assert.equal(step.if, undefined)
     assert.equal(step.env.CLOUDFLARE_RECEIPT, '${{ needs.preflight.outputs.receipt }}')
   }
@@ -92,14 +94,23 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   const missing = preflight.steps.find(step => step.name === 'Require the Cloudflare promotion receipt')
   assert.equal(missing.if, "github.event_name == 'workflow_dispatch' && github.event.inputs.cloudflare_receipt == ''")
   assert.match(missing.run, /exit 1/)
-  assert.ok(preflight.steps.indexOf(missing) < preflight.steps.indexOf(approved(preflight)[0]))
+  assert.ok(preflight.steps.indexOf(missing) < preflight.steps.indexOf(approvedPreflight[0]))
   assert.equal(preflight.outputs['overlay-sha'], '${{ steps.promoted.outputs.overlay-sha }}')
   assert.equal(preflight.env.EXPECTED_UI_OVERLAY_SHA, '${{ inputs.overlay-sha }}')
   assert.equal(macos.env.MIKKA_UI_OVERLAY_SHA, '${{ needs.preflight.outputs.overlay-sha }}')
   const signing = macos.steps
-  assert.ok(signing.findIndex(step => step.run?.includes('evidence.mjs verify')) < signing.indexOf(approved(macos)[1]))
-  assert.ok(signing.indexOf(approved(desktop.jobs.macos)[0]) < signing.findIndex(step => step.uses?.startsWith('Infisical/')))
-  assert.equal(signing.indexOf(approved(desktop.jobs.macos)[1]) + 1, signing.findIndex(step => step.uses?.startsWith('softprops/')))
+  const stageVerifier = signing.find(step => step.name === 'Stage the trusted release verifier from the workflow revision')
+  const copyVerifier = signing.find(step => step.name === 'Copy the trusted release verifier outside the build workspace')
+  const productCheckout = signing.find(step => step.uses?.startsWith('actions/checkout@') && step.with?.ref === '${{ needs.preflight.outputs.product }}')
+  assert.equal(stageVerifier?.with?.ref, '${{ github.sha }}')
+  assert.equal(stageVerifier?.with?.['persist-credentials'], false)
+  assert.ok(copyVerifier && productCheckout)
+  assert.ok(signing.indexOf(stageVerifier) < signing.indexOf(copyVerifier))
+  assert.ok(signing.indexOf(copyVerifier) < signing.indexOf(productCheckout))
+  assert.ok(signing.indexOf(productCheckout) < signing.indexOf(approvedMacos[0]))
+  assert.ok(signing.findIndex(step => step.run?.includes('evidence.mjs verify')) < signing.indexOf(approvedMacos[1]))
+  assert.ok(signing.indexOf(approvedMacos[0]) < signing.findIndex(step => step.uses?.startsWith('Infisical/')))
+  assert.equal(signing.indexOf(approvedMacos[1]) + 1, signing.findIndex(step => step.uses?.startsWith('softprops/')))
   assert.ok(signing.some(step => step.run?.includes('evidence.mjs verify')))
   const checkout = desktop.jobs.macos.steps.find(step => step.with?.path === '.hosted-ui')
   assert.equal(checkout.with.ref, '${{ needs.preflight.outputs.overlay-sha }}')
@@ -107,6 +118,14 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   assert.equal(checkout.with['ssh-key'], '${{ env.HOSTED_UI_READ_KEY }}')
   assert.equal(checkout.with.token, undefined)
   assert.ok(desktop.jobs.macos.steps.some(step => step.run?.includes('audit "$RUNNER_TEMP/official-packaged-app"')))
+  // Verify the sparse-checked-out verifier tree imports cleanly outside the repo workspace.
+  const isolated = await mkdtemp(join(tmpdir(), 'release-verifier-'))
+  try {
+    execFileSync('bash', ['-e', '-c', copyVerifier.run], { cwd: new URL('../../', import.meta.url), env: { ...process.env, RUNNER_TEMP: isolated }, stdio: 'pipe' })
+    execFileSync(process.execPath, ['--input-type=module', '-e', `import { verifyDesktopPromotedWeb } from ${JSON.stringify(join(isolated, 'release-verifier/scripts/release/cloudflare-promoted-web.mjs'))}; if (typeof verifyDesktopPromotedWeb !== 'function') throw Error('missing')`], { cwd: isolated, stdio: 'pipe' })
+  } finally {
+    await rm(isolated, { force: true, recursive: true })
+  }
 })
 
 test('native release admission requires a coherent official identity before credentials or paid work', async () => {
