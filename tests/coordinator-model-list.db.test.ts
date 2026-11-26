@@ -132,6 +132,12 @@ test('allowed models: every entry in every Bot\'s cached prompt, and a model out
 })
 
 test('an untouched list keeps each Agent\'s default order over connected models, dispatched where an Agent can receive its credentials; nothing connected is noModels', { skip: !dbUrl }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+  })
   process.env.MIKKA_BYOS_ENABLED = '1'
   const { Pool } = await import('pg')
   const pool = new Pool({ connectionString: dbUrl, max: 3 })

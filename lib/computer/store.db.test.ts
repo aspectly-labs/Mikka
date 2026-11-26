@@ -23,6 +23,12 @@ import type * as provider from './e2b-provider'
 const databaseURL = process.env.COMPUTER_TEST_DATABASE_URL ?? process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !databaseURL) throw new Error('Computer database test URL required')
 test('real PostgreSQL: allocation, owner boundary, control generations and recovery', { skip: !databaseURL }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+  })
   const schema = `computer_${randomUUID().replaceAll('-', '')}`
   assert.ok(['127.0.0.1', 'localhost'].includes(new URL(databaseURL!).hostname))
   const admin = new Pool({ connectionString: databaseURL })
