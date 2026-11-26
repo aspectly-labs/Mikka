@@ -2887,7 +2887,7 @@
     "identityPage": {
       "title": "身份与访问",
       "ssoTitle": "单点登录与域名",
-      "unboundTitle": "先把工作区绑定到组织",
+      "unboundTitle": "工作区所属组织",
       "unboundNote": "单点登录、域名验证和 SCIM 在组织上设置。",
       "openOrganization": "前往组织"
     }

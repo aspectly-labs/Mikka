@@ -4,10 +4,45 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
 import { frontendRuntimeSource } from '../../frontend/scripts/frontend-runtime.mjs'
 import { needsOfficialUi, officialRenderer, officialUi, officialUiResolution } from './official-ui.mjs'
 
 const repository = fileURLToPath(new URL('../../..', import.meta.url))
+
+test('the native preload replays cold-start menu commands in order when the renderer subscribes', async () => {
+  const { outputFiles } = await build({
+    absWorkingDir: repository,
+    entryPoints: ['apps/desktop/src/preload/index.ts'],
+    write: false, bundle: true, format: 'cjs', platform: 'node', external: ['electron'],
+    define: { __MIKKA_APP_VERSION__: '"test"', __MIKKA_FLAVOR__: '"test"', __MIKKA_APP_URL__: '"https://app.example"' },
+  })
+  const ipcHandlers = new Map()
+  let app
+  const window = { location: new URL('https://app.example/mikka/en') }
+  window.top = window
+  runInNewContext(outputFiles[0].text, {
+    window,
+    document: { documentElement: { dataset: {} } },
+    process: { argv: ['--mikka-app-origin=https://app.example'], platform: 'linux' },
+    require: name => {
+      assert.equal(name, 'electron')
+      return {
+        contextBridge: { exposeInMainWorld: (_name, bridge) => { app = bridge.app } },
+        ipcRenderer: { on: (channel, handler) => ipcHandlers.set(channel, handler) },
+      }
+    },
+  })
+  const dispatch = ipcHandlers.values().next().value
+  dispatch(undefined, { type: 'thread.new' })
+  dispatch(undefined, { type: 'settings.open' })
+  const commands = []
+  const unsubscribe = app.onMenuCommand(command => commands.push(command.type))
+  unsubscribe()
+  app.onMenuCommand(command => commands.push(command.type))
+  assert.deepEqual(commands, ['thread.new', 'settings.open'])
+})
+
 let sequence = 0
 const names = ['window', 'fetch', '__earlyWorkspaceImports', '__earlyWorkspaceRenders', '__earlyAppStarts', '__earlyAppGate', '__earlyStartupApi']
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail }); return { promise, resolve, reject } }

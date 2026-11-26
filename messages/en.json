@@ -2887,7 +2887,7 @@
     "identityPage": {
       "title": "Identity & access",
       "ssoTitle": "Single sign-on and domains",
-      "unboundTitle": "Bind this workspace to an organization first",
+      "unboundTitle": "Workspace organization",
       "unboundNote": "Single sign-on, domain verification and SCIM are set on the organization.",
       "openOrganization": "Open organization"
     }
