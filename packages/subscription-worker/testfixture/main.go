@@ -77,17 +77,18 @@ func run() error {
 		return w.ErrUnsupported
 	}
 	var c struct {
-		Scope         w.Scope       `json:"scope"`
-		Use           *w.RuntimeUse `json:"use"`
-		ExecutionOnly bool          `json:"executionOnly"`
-		AccessPath    string        `json:"accessPath"`
-		AccessToken   string        `json:"accessToken"`
-		DatabaseURL   string        `json:"databaseUrl"`
-		Origin        string        `json:"infisicalOrigin"`
-		Project       string        `json:"project"`
-		Environment   string        `json:"environment"`
-		Path          string        `json:"path"`
-		Token         string        `json:"workloadToken"`
+		Scope          w.Scope           `json:"scope"`
+		Use            *w.RuntimeUse     `json:"use"`
+		ExecutionOnly  bool              `json:"executionOnly"`
+		AccessSnapshot *w.AccessSnapshot `json:"accessSnapshot"`
+		AccessPath     string            `json:"accessPath"`
+		AccessToken    string            `json:"accessToken"`
+		DatabaseURL    string            `json:"databaseUrl"`
+		Origin         string            `json:"infisicalOrigin"`
+		Project        string            `json:"project"`
+		Environment    string            `json:"environment"`
+		Path           string            `json:"path"`
+		Token          string            `json:"workloadToken"`
 	}
 	if json.Unmarshal(line, &c) != nil {
 		return w.ErrUnsupported
@@ -105,7 +106,15 @@ func run() error {
 	if c.ExecutionOnly {
 		grantPath, grantToken = c.AccessPath, c.AccessToken
 	}
-	secrets, err := w.NewInfisical(w.InfisicalConfig{Origin: c.Origin, ProjectID: c.Project, Environment: c.Environment, Path: grantPath, Token: func(context.Context) (string, error) { return grantToken, nil }})
+	var secrets w.SecretStore
+	if c.AccessSnapshot != nil {
+		if !c.ExecutionOnly || c.AccessToken != "" || c.Token != "" {
+			return w.ErrUnsupported
+		}
+		secrets, err = w.NewAccessSnapshot(*c.AccessSnapshot)
+	} else {
+		secrets, err = w.NewInfisical(w.InfisicalConfig{Origin: c.Origin, ProjectID: c.Project, Environment: c.Environment, Path: grantPath, Token: func(context.Context) (string, error) { return grantToken, nil }})
+	}
 	if err != nil {
 		return err
 	}
