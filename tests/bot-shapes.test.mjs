@@ -28,4 +28,6 @@ test('the API accepts every body and every old id, and nothing else', () => {
   for (const shape of [...BOT_SHAPES, ...Object.keys(LEGACY_BOT_SHAPES)]) assert.ok(ACCEPTED_BOT_SHAPES.includes(shape), shape)
   assert.equal(new Set(ACCEPTED_BOT_SHAPES).size, ACCEPTED_BOT_SHAPES.length)
   assert.equal(botShapeOf({ shape: 'heart' }), 'clover')
+  const id = '00000000-0000-4000-8000-000000000003'
+  assert.equal(botShapeOf({ id, shape: 'heart' }), botShapeOf({ id, shape: 'cercle' }), 'an unknown value with an id gets the id\'s body')
 })
