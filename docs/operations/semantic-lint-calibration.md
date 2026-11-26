@@ -62,17 +62,17 @@ Excluded directories and paths:
 
 Measured on branch `feat/3342-wave3-semantic-gate-and-docs` (after Wave 2 PR #3348 merged into `main`):
 
-- **Default repository scan (all workspaces including `apps/desktop/`, `apps/eve/`, `packages/`, and `tests/`):** **4,475 files scanned** with 100%-recall prefilters across all 4 rules, **0 findings** in enforcing `--mode=error`.
-- **End-to-end runtime:** **~6.0–7.0 seconds** across all 4,475 files (zero network calls; AST-backed directive parser, within `< 10s` budget).
-- **Initial calibration breakdown (pre-`tests/`/`packages/`/`apps/desktop/`/`apps/eve/` merge baseline: 3,573 scanned + 902 workspace/test files):**
+- **Default repository scan (all workspaces including `apps/desktop/`, `apps/eve/`, `packages/`, and `tests/`):** **4,475 files scanned** (out of 4,787 candidate source files) with 100%-recall prefilters across all 4 rules, **0 findings** in enforcing `--mode=error`.
+- **End-to-end runtime:** **~5.2–6.3 seconds** across all 4,475 files (zero network calls; AST-backed directive parser, within `< 10s` budget).
+- **Post-expansion per-rule breakdown (4,787 candidate files across all 11 default scan roots, 4,475 scanned by at least one rule):**
 
 | Rule | Eligible files | Allowlisted files | AST-parsed files | Initial live findings | Post-calibration findings |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `no-hardcoded-business-policy` | 2,420 | 1,165 | 8 | 1 | 0 |
-| `no-mode-flags` | 2,437 | 1,148 | 47 | 0 | 0 |
-| `no-provider-or-plan-special-casing` | 2,285 | 1,300 | 28 | 5 | 0 |
-| `no-constant-stub-tests` | 1,117 | 0 | 154 | 0 | 0 |
-| **Total** | **3,573 initial / 4,475 full** | — | **237+ rule-parses** | **6** | **0** |
+| `no-hardcoded-business-policy` | 2,768 | 2,019 | 52 | 1 | 0 |
+| `no-mode-flags` | 2,785 | 2,002 | 80 | 0 | 0 |
+| `no-provider-or-plan-special-casing` | 2,631 | 2,156 | 113 | 5 | 0 |
+| `no-constant-stub-tests` | 1,671 | 0 | 1,257 | 0 | 0 |
+| **Total** | **4,475 scanned** | — | **1,502 rule-parses** | **6** | **0** |
 
 ## Audit of initial live findings
 

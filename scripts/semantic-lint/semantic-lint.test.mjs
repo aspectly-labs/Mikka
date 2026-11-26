@@ -472,7 +472,12 @@ test('focused repo scans preserve allowlists, missing --root fails closed, and l
   assert.equal(missingCli.status, 2)
   assert.match(missingCli.stderr, /Failed to stat target/)
 
-  // Large piped JSON output (>128KB) must drain completely and remain valid JSON in warn mode
+  // Empty --root= must also fail closed with exit 2 (never resolve to cwd)
+  const emptyRootEq = runCli(['--root='])
+  assert.equal(emptyRootEq.status, 2)
+  assert.match(emptyRootEq.stderr, /--root requires a directory path/)
+
+  // Large piped JSON output (>64KB) must drain completely and remain valid JSON in both warn and error modes
   const manyViolations = {}
   for (let i = 0; i < 160; i += 1) {
     manyViolations[`lib/batch_${String(i).padStart(3, '0')}.ts`] = [
@@ -482,24 +487,26 @@ test('focused repo scans preserve allowlists, missing --root fails closed, and l
     ].join('\n')
   }
   withTempWorkspace(manyViolations, dir => {
-    const piped = spawnSync(
-      process.execPath,
-      [CLI_PATH, '--mode=warn', '--json', '--root', dir],
-      { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
-    )
-    assert.equal(piped.error, undefined)
-    assert.equal(piped.status, 0)
-    assert.ok(piped.stdout.length > 65_536, `expected >64KB JSON output, got ${piped.stdout.length}`)
-    const parsed = JSON.parse(piped.stdout)
-    assert.equal(parsed.totalFindings, 480)
-    assert.equal(parsed.findings.length, 480)
+    for (const [mode, expectedStatus] of [['warn', 0], ['error', 1]]) {
+      const piped = spawnSync(
+        process.execPath,
+        [CLI_PATH, `--mode=${mode}`, '--json', '--root', dir],
+        { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
+      )
+      assert.equal(piped.error, undefined)
+      assert.equal(piped.status, expectedStatus)
+      assert.ok(piped.stdout.length > 65_536, `expected >64KB JSON output, got ${piped.stdout.length}`)
+      const parsed = JSON.parse(piped.stdout)
+      assert.equal(parsed.totalFindings, 480)
+      assert.equal(parsed.findings.length, 480)
+    }
   })
 })
 
 test('lexical shadowing, extracted mixed arrays, bare price names, beforeEach hooks, and mock housekeeping behave accurately', () => {
   withTempWorkspace(
     {
-      // Shadowing parameters and block locals must not inherit outer provider/plan tables
+      // Shadowing parameters, block locals, namespace/static blocks, and bare var redeclaration
       'lib/shadowing.ts': [
         'const cfg: Record<string, number> = { openai: 5000, anthropic: 8000 }',
         "const targets = ['openai', 'internal']",
@@ -514,6 +521,27 @@ test('lexical shadowing, extracted mixed arrays, bare price names, beforeEach ho
         '}',
         'export function unshadowed(provider: string) {',
         '  return cfg[provider]',
+        '}',
+        'export namespace Isolated {',
+        '  var nsCfg = { openai: 1, anthropic: 2 }',
+        '  export const count = Object.keys(nsCfg).length',
+        '}',
+        'declare const nsCfg: Record<string, number>',
+        'export function readOuterNsCfg(provider: string) {',
+        '  return nsCfg[provider]',
+        '}',
+        'declare const provider: string',
+        'declare function getDynamic(): Record<string, number>',
+        'export class StaticHolder {',
+        '  static {',
+        '    var cfg = getDynamic()',
+        '    void cfg[provider]',
+        '  }',
+        '}',
+        'export function bareVarRedecl(provider: string) {',
+        "  var mixed = ['openai', 'internal']",
+        '  var mixed',
+        '  return mixed.includes(provider)',
         '}',
       ].join('\n'),
 
@@ -537,14 +565,32 @@ test('lexical shadowing, extracted mixed arrays, bare price names, beforeEach ho
         "export const ANNUAL_PRICE = '$192/yr'",
       ].join('\n'),
 
-      // Mutable binding populated in beforeEach must NOT flag as tautological
+      // Mutable binding populated in beforeEach, callback fixture params, and nested loop/block shadowing
       'lib/hook-populated.test.ts': [
         "import test, { beforeEach } from 'node:test'",
         "import assert from 'node:assert/strict'",
-        "import { getLimit } from './real-limits'",
-        'let limit = 0',
-        'beforeEach(() => { limit = getLimit() })',
-        "test('reads hook-populated limit', () => { assert.equal(limit, 14) })",
+        "import { getLimit, getLimits } from './real-limits'",
+        'const limit = 14',
+        'let resolved = 0',
+        'let limits: number[] = []',
+        'beforeEach(() => { resolved = getLimit(); limits = getLimits() })',
+        "test('reads hook-populated limit', () => { assert.equal(resolved, 14) })",
+        "test('fixture param shadows outer const', ({ limit }: { limit: number }) => { assert.equal(limit, 14) })",
+        "test('for-of variable shadows outer const', () => {",
+        '  for (const limit of limits) { assert.equal(limit, 14) }',
+        '})',
+        "test('nested block non-static const shadows outer const', () => {",
+        '  if (limits.length > 0) { const limit = limits[0]; assert.equal(limit, 14) }',
+        '})',
+      ].join('\n'),
+
+      // Nested block tautology inside if (true) SHOULD be flagged
+      'lib/nested-tautology.test.ts': [
+        "import test from 'node:test'",
+        "import assert from 'node:assert/strict'",
+        "test('nested block tautology', () => {",
+        '  if (true) { const limit = 14; assert.equal(limit, 14) }',
+        '})',
       ].join('\n'),
 
       // mock.restoreAll() and t.mock.restoreAll() must NOT mask tautological tests,
@@ -577,10 +623,9 @@ test('lexical shadowing, extracted mixed arrays, bare price names, beforeEach ho
         byFile.set(f.file, (byFile.get(f.file) ?? []).concat(f))
       }
 
-      // Shadowing: only the unshadowed cfg[provider] on line 13 should be flagged
+      // Shadowing: only unshadowed cfg[provider] (line 13) and bare-var-redecl mixed.includes(provider) (line 34)
       const shadowFindings = byFile.get('lib/shadowing.ts') ?? []
-      assert.equal(shadowFindings.length, 1)
-      assert.equal(shadowFindings[0].line, 13)
+      assert.deepEqual(shadowFindings.map(f => f.line), [13, 34])
 
       // Mixed arrays: all 4 (inline + extracted for providers and plans) must flag
       const mixedFindings = byFile.get('lib/mixed-arrays.ts') ?? []
@@ -590,8 +635,12 @@ test('lexical shadowing, extracted mixed arrays, bare price names, beforeEach ho
       const barePriceFindings = byFile.get('lib/bare-pricing.ts') ?? []
       assert.equal(barePriceFindings.length, 4)
 
-      // Hook-populated mutable binding: 0 findings
+      // Hook-populated, fixture-param shadowed, loop-shadowed, and block-shadowed tests: 0 findings
       assert.equal(byFile.get('lib/hook-populated.test.ts'), undefined)
+
+      // Nested block tautology: 1 finding on line 4
+      const nestedTautology = byFile.get('lib/nested-tautology.test.ts') ?? []
+      assert.deepEqual(nestedTautology.map(f => f.line), [4])
 
       // Mock housekeeping: 2 findings (mock.restoreAll and t.mock.restoreAll), NOT mock.method(realService)
       const mockFindings = byFile.get('lib/mock-housekeeping.test.ts') ?? []

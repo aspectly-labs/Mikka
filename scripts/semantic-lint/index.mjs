@@ -290,7 +290,7 @@ function isExcludedRelPath(relPath) {
 
 function isPathInside(targetPath, basePath) {
   const rel = path.relative(basePath, targetPath)
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
 }
 
 /**
@@ -552,7 +552,9 @@ export function parseArgs(argv) {
       opts.mode = next
       i += 1
     } else if (arg.startsWith('--root=')) {
-      opts.root = arg.slice('--root='.length)
+      const value = arg.slice('--root='.length)
+      if (!value) throw new Error('--root requires a directory path.')
+      opts.root = value
     } else if (arg === '--root') {
       const next = argv[i + 1]
       if (!next) throw new Error('--root requires a directory path.')

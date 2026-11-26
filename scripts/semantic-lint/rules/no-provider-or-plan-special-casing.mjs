@@ -291,13 +291,24 @@ function isFunctionLikeNode(node) {
   )
 }
 
+function isVarScopeBoundary(node) {
+  return (
+    isFunctionLikeNode(node)
+    || ts.isModuleBlock(node)
+    || ts.isClassStaticBlockDeclaration(node)
+  )
+}
+
 function isBlockScopedVarList(declList) {
   return Boolean(declList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using))
 }
 
-function recordDeclarationList(declList, scope) {
+function recordDeclarationList(declList, scope, preserveExistingOnEmpty = false) {
   for (const decl of declList.declarations) {
     if (ts.isIdentifier(decl.name)) {
+      if (!decl.initializer && preserveExistingOnEmpty && scope.has(decl.name.text)) {
+        continue
+      }
       scope.set(decl.name.text, classifyInitializer(decl.initializer))
     } else {
       for (const name of collectBindingNames(decl.name)) {
@@ -309,9 +320,9 @@ function recordDeclarationList(declList, scope) {
 
 function populateHoistedVars(rootNode, targetScope) {
   const walk = node => {
-    if (node !== rootNode && isFunctionLikeNode(node)) return
+    if (node !== rootNode && isVarScopeBoundary(node)) return
     if (ts.isVariableDeclarationList(node) && !isBlockScopedVarList(node)) {
-      recordDeclarationList(node, targetScope)
+      recordDeclarationList(node, targetScope, true)
     }
     ts.forEachChild(node, walk)
   }
@@ -327,6 +338,8 @@ function populateStatementScope(statements, scope) {
     } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
       scope.set(stmt.name.text, EMPTY_BINDING)
     } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+      scope.set(stmt.name.text, EMPTY_BINDING)
+    } else if (ts.isEnumDeclaration(stmt) && stmt.name) {
       scope.set(stmt.name.text, EMPTY_BINDING)
     } else if (ts.isImportDeclaration(stmt) && stmt.importClause && !stmt.importClause.isTypeOnly) {
       const clause = stmt.importClause
@@ -550,7 +563,39 @@ export const noProviderOrPlanSpecialCasingRule = Object.freeze({
         return
       }
 
-      if (ts.isBlock(node) || ts.isModuleBlock(node)) {
+      if (ts.isModuleBlock(node)) {
+        const scope = new Map()
+        populateHoistedVars(node, scope)
+        populateStatementScope(node.statements, scope)
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node)
+        })
+        return
+      }
+
+      if (ts.isClassStaticBlockDeclaration(node)) {
+        const scope = new Map()
+        populateHoistedVars(node.body, scope)
+        populateStatementScope(node.body.statements, scope)
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node.body)
+        })
+        return
+      }
+
+      if (ts.isClassExpression(node) && node.name) {
+        const scope = new Map()
+        scope.set(node.name.text, EMPTY_BINDING)
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node)
+        })
+        return
+      }
+
+      if (ts.isBlock(node)) {
         const scope = new Map()
         populateStatementScope(node.statements, scope)
         withScope(scope, () => {
