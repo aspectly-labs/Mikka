@@ -6,6 +6,7 @@ import {
   createCompositeRuntimeConfigAdapter,
   createKeyValueRuntimeConfigAdapter,
   createPostHogRuntimeConfigAdapter,
+  ensureRuntimeConfigLoaded,
   evaluateRuntimeConfigDefinition,
   evaluateRuntimeConfigPayload,
   getRuntimeConfig,
@@ -904,5 +905,95 @@ test('getRuntimeConfig schedules throttled background refresh only for default r
   assert.equal(
     getRuntimeConfig('operationalCaps', { now: 1_000 + RUNTIME_CONFIG_REFRESH_MS + 10 }).maxWorkspaceBudgets,
     202,
+  )
+})
+
+test('ensureRuntimeConfigLoaded performs single-flight cold load, skips when warm or unconfigured, and throttles outages', async () => {
+  // Unconfigured (no adapter, no PostHog key) returns false immediately with zero I/O.
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: 1_000 }), false)
+
+  let calls = 0
+  let releaseFetch!: () => void
+  const gate = new Promise<void>(resolve => { releaseFetch = resolve })
+  setRuntimeConfigAdapter({
+    name: 'deferred-cold-adapter',
+    async fetchPayloads() {
+      calls += 1
+      await gate
+      return {
+        'mikka-config-billing-active-offer': VALID_OFFER,
+      }
+    },
+  })
+
+  const activeNow = Date.parse('2026-11-26T12:00:00Z')
+  const first = ensureRuntimeConfigLoaded({ env: {}, now: activeNow })
+  const second = ensureRuntimeConfigLoaded({ env: {}, now: activeNow + 5 })
+  releaseFetch()
+  assert.deepEqual(await Promise.all([first, second]), [true, true])
+  assert.equal(calls, 1)
+  assert.deepEqual(getRuntimeConfig('billingActiveOffer', { env: {}, now: activeNow }), VALID_OFFER)
+
+  // Warm within RUNTIME_CONFIG_REFRESH_MS -> zero additional fetches.
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: activeNow + RUNTIME_CONFIG_REFRESH_MS - 1 }), true)
+  assert.equal(calls, 1)
+
+  // Past RUNTIME_CONFIG_REFRESH_MS -> refreshes cleanly.
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: activeNow + RUNTIME_CONFIG_REFRESH_MS }), true)
+  assert.equal(calls, 2)
+
+  // Outage throttles retries for RUNTIME_CONFIG_REFRESH_MS even when a concurrent caller passes a slightly earlier now.
+  resetRuntimeConfig()
+  let outageCalls = 0
+  setRuntimeConfigAdapter({
+    name: 'outage-adapter',
+    async fetchPayloads() {
+      outageCalls += 1
+      return null
+    },
+  })
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: 5_000 }), false)
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: 5_010 }), false)
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: 4_950 }), false)
+  assert.equal(outageCalls, 1)
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: 5_000 + RUNTIME_CONFIG_REFRESH_MS }), false)
+  assert.equal(outageCalls, 2)
+
+  // Malformed MIKKA_DEPLOYMENT_STAGE must not poison state.at or throttle a subsequent valid cold-start load.
+  resetRuntimeConfig()
+  let validCalls = 0
+  setRuntimeConfigAdapter({
+    name: 'valid-after-malformed-adapter',
+    async fetchPayloads() {
+      validCalls += 1
+      return { 'mikka-config-billing-active-offer': VALID_OFFER }
+    },
+  })
+  assert.equal(await ensureRuntimeConfigLoaded({ env: { MIKKA_DEPLOYMENT_STAGE: 'staging' }, now: activeNow }), false)
+  assert.equal(validCalls, 0)
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: activeNow + 1 }), true)
+  assert.equal(validCalls, 1)
+  // A slightly earlier timestamp after a fresher successful load stays warm and does not re-fetch.
+  assert.equal(await ensureRuntimeConfigLoaded({ env: {}, now: activeNow - 500 }), true)
+  assert.equal(validCalls, 1)
+})
+
+test('billingActiveOfferPayloadSchema trims offer IDs and rejects whitespace-only or >120-char IDs (audit label limit)', () => {
+  const now = Date.parse('2026-11-26T12:00:00Z')
+  assert.equal(
+    evaluateRuntimeConfigPayload('billingActiveOffer', { ...VALID_OFFER, id: '  promo-trimmed  ' }, { now })?.id,
+    'promo-trimmed',
+  )
+  assert.equal(
+    evaluateRuntimeConfigPayload('billingActiveOffer', { ...VALID_OFFER, id: '   ' }, { now }),
+    null,
+  )
+  assert.equal(
+    evaluateRuntimeConfigPayload('billingActiveOffer', { ...VALID_OFFER, id: 'a'.repeat(120) }, { now })?.id,
+    'a'.repeat(120),
+  )
+  assert.equal(
+    evaluateRuntimeConfigPayload('billingActiveOffer', { ...VALID_OFFER, id: 'a'.repeat(121) }, { now }),
+    null,
   )
 })

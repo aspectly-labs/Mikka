@@ -7,6 +7,7 @@ import { billingCheckoutRequests, workspaceBilling } from '@/lib/db/schema'
 import { recordAudit } from '@/lib/audit/write'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { stripeGet, stripePost, type StripeConfig } from './stripe'
+import { MIN_OFFER_CHECKOUT_WINDOW_MS } from './catalog'
 import { ensureBillingCustomer } from './customer'
 import type { resourcePrice } from './resource-plan'
 
@@ -87,7 +88,7 @@ async function recoverSession(request: Request, get: (path: string) => Promise<u
  */
 export type CheckoutOfferResolver = (
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-) => Promise<{ readonly id: string; readonly introCreditCents: number; readonly stripeCouponId?: string } | null>
+) => Promise<{ readonly id: string; readonly introCreditCents: number; readonly stripeCouponId?: string; readonly endsAt?: string } | null>
 
 export async function resourcePlanCheckout(actorId: string, workspaceId: string, back: string, price: Price,
   config: StripeConfig, fetchImpl: typeof fetch, resolveOffer?: CheckoutOfferResolver) {
@@ -102,8 +103,20 @@ export async function resourcePlanCheckout(actorId: string, workspaceId: string,
       const [prior] = await tx.select().from(billingCheckoutRequests)
         .where(and(eq(billingCheckoutRequests.workspaceId, workspaceId), isNull(billingCheckoutRequests.closedAt))).limit(1)
       if (prior) return prior
-      const offer = resolveOffer ? await resolveOffer(tx) : null
-      const requestId = randomUUID(), now = new Date(), expiresAt = new Date((Math.floor(now.getTime() / 1000) + 7200) * 1000)
+      const rawOffer = resolveOffer ? await resolveOffer(tx) : null
+      const requestId = randomUUID(), now = new Date()
+      const nowSec = Math.floor(now.getTime() / 1000)
+      let offer = rawOffer
+      let expiresSec = nowSec + 7200
+      if (offer?.endsAt) {
+        const offerEndSec = Math.floor(Date.parse(offer.endsAt) / 1000)
+        if (!Number.isFinite(offerEndSec) || offerEndSec * 1000 - now.getTime() < MIN_OFFER_CHECKOUT_WINDOW_MS) {
+          offer = null
+        } else {
+          expiresSec = Math.min(expiresSec, offerEndSec)
+        }
+      }
+      const expiresAt = new Date(expiresSec * 1000)
       const metadata = {
         workspaceId,
         billingModel: price.version,
@@ -126,7 +139,7 @@ export async function resourcePlanCheckout(actorId: string, workspaceId: string,
         metadata,
         success_url: back,
         cancel_url: back,
-        expires_at: Math.floor(expiresAt.getTime() / 1000),
+        expires_at: expiresSec,
       }
       const [created] = await tx.insert(billingCheckoutRequests).values({ id: requestId, workspaceId, actorId, customerId,
         priceId: price.id, params, createdAt: now, expiresAt }).returning()
