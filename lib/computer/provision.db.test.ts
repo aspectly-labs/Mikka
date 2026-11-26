@@ -97,6 +97,17 @@ test('real PostgreSQL: a gone or out-of-date machine is replaced, unless a run l
     assert.equal((await machine(goneActor)).sandboxId, replaced?.sandboxId)
     assert.equal((await machine(goneActor)).state, 'running')
 
+    const stalePaused = await setup('stale-paused-box')
+    await pool.query(`UPDATE cloud_machines SET state='sleeping' WHERE "workspaceId"=$1`, [stalePaused.workspaceId])
+    const observedStale = runtime({ 'stale-paused-box': 'old' })
+    await ensureCloudMachine(pool, stalePaused, {
+      ...observedStale.provider,
+      observeComputerWorker: async () => 'stale',
+      connectComputer: async () => assert.fail('The stale desktop must not resume before replacement'),
+    } as never)
+    assert.deepEqual(observedStale.calls.killed, ['stale-paused-box'])
+    assert.equal(observedStale.calls.created.length, 1)
+
     // Built from an older worker and idle: killed, then rebuilt on the current template.
     const staleActor = await setup('old-box')
     const stale = runtime({ 'old-box': OLD })

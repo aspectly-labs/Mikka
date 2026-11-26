@@ -178,7 +178,7 @@ export async function reconcileE2BKeepAlivePayments() {
       if (!row.renewalBaselineDeadline) continue
       if (observed.endAt.getTime() !== row.renewalBaselineDeadline.getTime()) {
         await useE2BKeepAlivePayment(pool, ownerId, { operationId, index }, true)
-      } else if (observed.state !== 'running') {
+      } else if (observed.state !== 'running' && observed.state !== 'paused') {
         continue
       } else if (row.renewalUnchangedAt) {
         await refundUnusedRenewal(ownerId, operationId, index, renewalDispatchId)
@@ -192,9 +192,9 @@ export async function reconcileE2BKeepAlivePayments() {
 }
 
 export async function e2bCreationTimeout(ownerId: string, providerScope: string, operationId: string, templateId: string,
-  target: Target, requestedMs: number): Promise<number> {
+  target: Target, requestedMs: number, verifiedSnapshot?: E2BComputeSpec): Promise<number> {
   if (!isCloudEdition()) return requestedMs
-  const price = e2bTemplatePricing(templateId)
+  const price = verifiedSnapshot ?? e2bTemplatePricing(templateId)
   if (!price) throw new E2BKeyError('e2b_template_unavailable', 'Verified E2B compute tier required')
   const { rows: [lease] } = await pool.query<Lease>(`INSERT INTO e2b_compute_leases AS l
     ("operationId","workspaceId","ownerId","providerScope","templateId",size,"hourlyMicroUsd","pricingVersion","cpuCount","memoryMB") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -302,6 +302,17 @@ export async function e2bCanReplaceOperation(query: Pick<Pool, 'query'>, ownerId
     AND (("sandboxId" IS NULL AND "chunkIndex"=0 AND "paidUntil" IS NULL)
       OR ("creationMissingAt"<=now()-interval '30 seconds' AND "paidUntil"<=now()))`, [operationId, ownerId])
   return existing.rowCount === 1
+}
+
+/** Before metering, Bot requests used a different create body and did not
+ * identify the operation in provider metadata. Retire that exact, unmetered
+ * key without attempting to adopt an unidentifiable sandbox. */
+export async function canReplaceLegacyBotOperation(query: Pick<Pool, 'query'>, ownerId: string, operationId: string) {
+  if (!isCloudEdition()) return false
+  const result = await query.query(`SELECT 1 FROM e2b_resource_accounts a
+    WHERE a.kind='operation' AND a.id=$1::uuid::text AND a."ownerId"=$2 AND a.scope<>'personal'
+      AND NOT EXISTS (SELECT 1 FROM e2b_compute_leases l WHERE l."operationId"=$1::uuid)`, [operationId, ownerId])
+  return result.rowCount === 1
 }
 
 function definitiveE2BRefusal(error: unknown) {
@@ -459,17 +470,19 @@ export async function withE2BProviderTime<T>(ownerId: string, sandboxId: string,
 
 export async function recordE2BComputeSnapshot(ownerId: string, sandboxId: string, snapshotId: string) {
   if (!isCloudEdition()) return
-  const result = await pool.query(`UPDATE e2b_resource_accounts a SET "computeTemplateId"=l."templateId"
+  const result = await pool.query(`UPDATE e2b_resource_accounts a SET "computeTemplateId"=l."templateId",
+    "computeCpuCount"=l."cpuCount","computeMemoryMB"=l."memoryMB"
     FROM e2b_compute_leases l WHERE a.kind='snapshot' AND a.id=$1 AND a."ownerId"=$2 AND l."ownerId"=$2
-      AND l."sandboxId"=$3 AND a.scope=l."providerScope" AND (a."computeTemplateId" IS NULL OR a."computeTemplateId"=l."templateId")`,
+      AND l."sandboxId"=$3 AND a.scope=l."providerScope" AND (a."computeTemplateId" IS NULL OR (a."computeTemplateId",a."computeCpuCount",a."computeMemoryMB")
+        IS NOT DISTINCT FROM (l."templateId",l."cpuCount",l."memoryMB"))`,
     [snapshotId,ownerId,sandboxId])
   if (result.rowCount !== 1) throw unavailable()
 }
 
-export async function e2bSnapshotComputeTemplate(ownerId: string, snapshotId: string) {
-  if (!isCloudEdition()) return ''
-  const { rows: [row] } = await pool.query<{templateId: string}>(
-    `SELECT "computeTemplateId" AS "templateId" FROM e2b_resource_accounts WHERE kind='snapshot' AND id=$1 AND "ownerId"=$2`,
-    [snapshotId,ownerId])
-  return row?.templateId ?? null
+export async function e2bSnapshotCompute(ownerId: string, snapshotId: string, scope: string) {
+  const { rows: [row] } = await pool.query<{ templateId: string | null; cpuCount: number | null; memoryMB: number | null }>(
+    `SELECT "computeTemplateId" AS "templateId", "computeCpuCount" AS "cpuCount", "computeMemoryMB" AS "memoryMB"
+      FROM e2b_resource_accounts WHERE kind='snapshot' AND id=$1 AND "ownerId"=$2 AND scope=$3`, [snapshotId,ownerId,scope])
+  const price = row?.cpuCount && row.memoryMB ? e2bPricingForHardware(row.cpuCount, row.memoryMB) : null
+  return row?.templateId && price ? { templateId: row.templateId, price } : null
 }

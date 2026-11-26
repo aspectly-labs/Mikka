@@ -1,6 +1,7 @@
 import 'server-only'
 import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, withE2BProviderTime, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { isCloudEdition } from '@/lib/edition'
+import { cloudTemplateModels } from '@/lib/cloud-template-models'
 import { armDueTimerSoon } from '@/lib/due-timer'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
@@ -99,6 +100,33 @@ export async function computerState(workspaceId: string, id: string, observed?: 
   const info = await withE2BErrors(owner, false, () => Sandbox.getInfo(id, base))
   if (info.state !== 'paused') observed?.(info.endAt)
   return info.state === 'paused' ? 'sleeping' : 'running'
+}
+
+/** Check a desktop before a connection can buy time or wake it. An immutable
+ * released template identifies a paused desktop without resuming its guest. */
+export async function observeComputerWorker(workspaceId: string, id: string): Promise<'current' | 'stale' | 'gone' | 'unknown'> {
+  if (!isCloudEdition() || !process.env.MIKKA_CLOUD_WORKER_SHA) return 'unknown'
+  const owner = await ownerOf(workspaceId, id)
+  const account = await e2bResourceAccount(owner, 'sandbox', id)
+  const info = await withE2BErrors(owner, false, () => Sandbox.getInfo(id, {
+    ...options(account.apiKey), requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+  })).catch(error => {
+    if (computerGone(error)) return null
+    throw error
+  })
+  if (!info) return 'gone'
+  if (info.state === 'running') {
+    try {
+      const running = await connectRunningComputer(owner, id)
+      return await computerWorkerSha(running) === process.env.MIKKA_CLOUD_WORKER_SHA ? 'current' : 'stale'
+    } catch (error) {
+      if (error instanceof PolicySandboxUnavailable) return 'unknown'
+      throw error
+    }
+  }
+  const current = cloudTemplateModels()?.templates.desktop
+  if (info.state !== 'paused' || !current?.preinstalled) return 'unknown'
+  return info.templateId === current.templateId ? 'current' : 'stale'
 }
 
 /** Verified additive desktop image, or the original official base for rollback. */

@@ -44,7 +44,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   workspacePool.options.max = 1
   workspacePool.options.connectionTimeoutMillis = 5_000
   t.after(() => Promise.allSettled([pool.end(), workspacePool.end()]))
-  const { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, readPaidE2BTimeout, withE2BProviderTime, verifyE2BAllocation } = await import('./e2b-compute-billing')
+  const { canReplaceLegacyBotOperation, createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, recordE2BComputeSnapshot, readPaidE2BTimeout, withE2BProviderTime, verifyE2BAllocation } = await import('./e2b-compute-billing')
   const operationId = randomUUID()
   const sandboxId = `sandbox-${operationId}`
   const observe = { providerScope: 'team:fixture', inspect: async () => ({
@@ -199,8 +199,9 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   // Crash after funding but before checking out the lifecycle connection.
   // The durable scheduler releases the unused receipt without a provider call.
   let observedDeadline = Date.now() + 30_000
+  let observedState: 'running' | 'paused' = 'running'
   const recoveryInfo = t.mock.method(Sandbox, 'getInfo', async () => ({
-    sandboxId, state: 'running', endAt: new Date(observedDeadline), cpuCount: 2, memoryMB: 8192,
+    sandboxId, state: observedState, endAt: new Date(observedDeadline), cpuCount: 2, memoryMB: 8192,
   }) as Awaited<ReturnType<typeof Sandbox.getInfo>>)
   const renewAtProvider = t.mock.method(Sandbox, 'setTimeout', async (_id: string, duration: number) => {
     observedDeadline = Date.now() + duration
@@ -256,7 +257,9 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     await fixture.query(`UPDATE e2b_compute_leases SET "renewalUnchangedAt"=now()-interval '31 seconds' WHERE "operationId"=$1`,
       [operationId])
     await makeRenewalDue()
+    observedState = 'paused'
     await reconcileCloudMachines(pool)
+    observedState = 'running'
     assert.deepEqual(await remainingReceipt(7), { ...expected(7, successorId), state: 'failed', cost: 0 })
     await resetRenewal()
     await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"="previousPaidUntil","chunkIndex"=7,"activeChunkIndex"="previousActiveChunkIndex",
@@ -319,6 +322,8 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.equal(kill.mock.calls[0].arguments[0], 'wrong-hardware')
   assert.ok((await receipts()).some(row => row.id === `machine:e2b:${mismatchOperation}:0` && row.state === 'failed' && row.cost === 0))
   assert.equal((await fixture.query('SELECT "sandboxId" FROM e2b_compute_leases WHERE "operationId"=$1', [mismatchOperation])).rows[0].sandboxId, null)
+  wrongHardware.mock.restore()
+  kill.mock.restore()
 
   const refusedOperation = randomUUID()
   await e2bCreationTimeout(ownerId, 'team:fixture', refusedOperation, templates.codex.templateId, { workspaceId, runId }, 900_000)
@@ -360,6 +365,8 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     assert.ok(policyFixture.e2b.requests.slice(providerStart).some(request => request.path.startsWith('/e2b/envd/')))
     observed.state = 'paused'
     const pausedAt = policyFixture.e2b.requests.length
+    const { observeComputerWorker } = await import('../computer/e2b-provider')
+    assert.equal(await observeComputerWorker(policyWorkspace, booted.sandboxId), 'stale')
     assert.equal((await store.setPolicy(policyWorkspace, 'allow')).permission, 'allow')
     assert.equal(observed.state, 'paused')
     assert.ok(!policyFixture.e2b.requests.slice(pausedAt).some(request => request.path.startsWith('/e2b/envd/')))
@@ -372,6 +379,15 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     }
     await policyFixture.close()
   }
+
+  const historicalBotOperation = randomUUID()
+  await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture')`,
+    [historicalBotOperation, ownerId])
+  assert.equal(await canReplaceLegacyBotOperation(fixture, ownerId, historicalBotOperation), true)
+  assert.equal(await canReplaceLegacyBotOperation(fixture, 'different-owner', historicalBotOperation), false)
+  await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture')`,
+    [operationId, ownerId])
+  assert.equal(await canReplaceLegacyBotOperation(fixture, ownerId, operationId), false, 'never rotate an operation carrying a prepaid receipt')
 
   const legacyRun = await seedRun(fixture, { userId: ownerId, agentId, workspaceId, status: 'queued' })
   const legacyOperation = randomUUID()
@@ -393,6 +409,31 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   } finally {
     listLegacy.mock.restore()
     pauseLegacy.mock.restore()
+  }
+
+  const rotatedSnapshot = 'rotated-template-snapshot'
+  const rotatedRun = await seedRun(fixture, { userId: ownerId, agentId, workspaceId, status: 'queued' })
+  const restoreOperation = randomUUID()
+  await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('snapshot',$1,$2,'team:fixture')`,
+    [rotatedSnapshot, ownerId])
+  await recordE2BComputeSnapshot(ownerId, sandboxId, rotatedSnapshot)
+  await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,
+    [randomUUID(), workspaceId, randomUUID()])
+  const restoreId = 'restored-' + restoreOperation
+  const restoreCall = t.mock.method(Sandbox, 'create', async (snapshot: string) => {
+    assert.equal(snapshot, rotatedSnapshot)
+    return { sandboxId: restoreId } as Sandbox
+  })
+  const restoreInfo = t.mock.method(Sandbox, 'getInfo', async () => ({ sandboxId: restoreId, cpuCount: 2, memoryMB: 8192 } as Awaited<ReturnType<typeof Sandbox.getInfo>>))
+  try {
+    process.env.E2B_CODEX_TEMPLATE = 'new-codex-template'
+    assert.equal((await threadLifecycleProvider.createFromSnapshot(rotatedSnapshot, restoreOperation, { workspaceId, runId: rotatedRun }, ownerId)).sandboxId, restoreId)
+    const receipt = (await receipts()).find(candidate => candidate.id === `machine:e2b:${restoreOperation}:0`)
+    assert.equal(receipt?.cost, 19_200)
+  } finally {
+    process.env.E2B_CODEX_TEMPLATE = templates.codex.templateId
+    restoreCall.mock.restore()
+    restoreInfo.mock.restore()
   }
 
   const requests: { key: string | undefined; body: string; path: string | undefined }[] = []

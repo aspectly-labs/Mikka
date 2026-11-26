@@ -1,7 +1,8 @@
 import type { PoolClient } from 'pg'
 import 'server-only'
+import { isCloudEdition } from '@/lib/edition'
 import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation,
-  prepareE2BProviderTime, isLegacyE2BThreadAllocation, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
+  prepareE2BProviderTime, isLegacyE2BThreadAllocation, recordE2BComputeSnapshot, e2bSnapshotCompute } from './e2b-compute-billing'
 import { bindE2BResource, e2bCreateAccount, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { environmentSnapshotScope, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -139,9 +140,10 @@ export const threadLifecycleProvider = {
     if (!snapshotIdPattern.test(snapshotId)) throw new Error('Thread filesystem snapshot unavailable')
     const scope = environmentTemplate ? environmentSnapshotScope() : (await e2bResourceAccount(ownerId, 'snapshot', snapshotId)).scope
     const account = await e2bCreateAccount(ownerId, operationId, scope)
-    const template = environmentTemplate ?? await e2bSnapshotComputeTemplate(ownerId, snapshotId)
-    if (template === null) throw new E2BKeyError('e2b_template_unavailable', 'E2B snapshot has no verified compute record')
-    const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, template, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
+    const saved = !environmentTemplate && isCloudEdition() ? await e2bSnapshotCompute(ownerId, snapshotId, scope) : null
+    if (!environmentTemplate && isCloudEdition() && !saved) throw new E2BKeyError('e2b_template_unavailable', 'E2B snapshot has no verified compute record')
+    const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, environmentTemplate ?? saved?.templateId ?? '',
+      { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000, saved?.price)
     const prepared = options(account.apiKey)
     const sandbox = await createPrepaidE2B(ownerId, operationId, () => withE2BErrors(ownerId, false, () => Sandbox.create(snapshotId, {
       ...prepared, retries: 0, idempotencyKey: operationId, timeoutMs, metadata,

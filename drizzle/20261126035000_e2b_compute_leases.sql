@@ -32,4 +32,6 @@ CREATE TABLE IF NOT EXISTS e2b_compute_leases (
   "renewalBaselineDeadline" timestamptz
 );
 CREATE INDEX IF NOT EXISTS e2b_compute_renewal_due_idx ON e2b_compute_leases("renewalReviewAt") WHERE "renewalReviewAt" IS NOT NULL;
-ALTER TABLE e2b_resource_accounts ADD COLUMN IF NOT EXISTS "computeTemplateId" text;
+ALTER TABLE e2b_resource_accounts ADD COLUMN IF NOT EXISTS "computeTemplateId" text,
+  ADD COLUMN IF NOT EXISTS "computeCpuCount" integer,
+  ADD COLUMN IF NOT EXISTS "computeMemoryMB" integer;
