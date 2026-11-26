@@ -154,8 +154,14 @@ export async function listArchivedOwnBots(workspaceId?: string): Promise<ActionR
 }
 
 /** 设置 › 工作区 › Bot: the defaults a new bot starts with, and the choices. Any member may read. */
-export async function getWorkspaceBotDefaults(workspaceId?: string): Promise<ActionResult<BotDefaultOptions>> {
-  return workspaceAction(async () => botDefaultOptions((await currentWorkspaceActor(workspaceId)).workspaceId))
+export async function getWorkspaceBotDefaults(workspaceId?: string): Promise<ActionResult<BotDefaultOptions & { personal: { location: 'cloud' | 'local'; effort: string } }>> {
+  return workspaceAction(async () => {
+    const actor = await currentWorkspaceActor(workspaceId)
+    const { personalRunDefaults } = await import('@/lib/model-order')
+    // 新建 Bot shows what the Bot will really use: the person's own 运行位置 and reasoning effort (decision 2026-11-25-1500).
+    const [options, personal] = await Promise.all([botDefaultOptions(actor.workspaceId), personalRunDefaults(pool, { ownerId: actor.userId, workspaceId: actor.workspaceId })])
+    return { ...options, personal }
+  })
 }
 
 /** Set or clear (null) the default model and repository for new bots. Admins only. */
