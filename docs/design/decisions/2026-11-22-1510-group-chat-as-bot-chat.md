@@ -1,6 +1,6 @@
 # 群聊就是 Bot 聊天的那一个线程
 
-- **Status:** Superseded in part by [2026-11-26-0110](2026-11-26-0110-pages-environments-from-benchmark.md)
+- **Status:** Accepted
 
 > 已修订：[2026-11-22-2000-chat-look-as-lobehub](2026-11-22-2000-chat-look-as-lobehub.md)。阅读列铺满对话区（最宽 960px），不再有时间分隔；同一作者连续发言仍按 Slack 合并。作者头部只在群聊（Alex，2026-11-23）：Bot 聊天、Coordinator 和 Agent 线程的回复不带头像和名字。
 

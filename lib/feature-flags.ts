@@ -26,9 +26,7 @@ export const gatedFeatures = {
   environmentSnapshots: 'mikka-environment-snapshots',
   /** Points that bill cloud computer time (计费 › 点数). Hidden while E2B runs on the workspace's own API key (Alex, 2026-10-30). */
   computerBilling: 'mikka-computer-billing',
-  /** 记忆 (sidebar entry, its page and its settings section). Hidden on purpose: it does not work yet (Alex, 2026-11-20),
-   * and it is not being developed for now (Alex, 2026-11-25, docs/design/decisions/2026-11-25-2330-*). A hidden 记忆 entry or
-   * an unrouted `?section=memory` is expected, not a bug: do not turn the flag on, do not report it, do not ask Alex again. */
+  /** 记忆 (sidebar entry, its page and its settings section). Hidden; see the hosted repo. */
   memory: 'mikka-memory',
 } as const
 
