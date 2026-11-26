@@ -11,6 +11,9 @@ import type { AddressInfo } from 'node:net'
 import { text } from 'node:stream/consumers'
 import test from 'node:test'
 import { Pool } from 'pg'
+import { CLIENT_VERSION_HEADER, HOSTED_API_HEADERS } from '@mikka/protocol/version'
+import { DEVICE_SESSION_HEADER, DEVICE_SESSION_VERSION, PORTABLE_TASK_WORKSPACE_HEADER, PROJECT_ENVIRONMENT_HEADER, REPO_ORIGIN_HEADER, runAssignmentSchema } from '@mikka/protocol/device'
+import { DAEMON_VERSION } from '../packages/daemon/src/paths'
 import { orderMigrations } from '../scripts/migration-order.mjs'
 import { disposableDatabase } from './helpers/e2e-target.mjs'
 import { assignTaskEnvironment, seedRunProjectResources } from './helpers/run-project-resources'
@@ -69,13 +72,17 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       kind, size: 'medium', templateId: template.templateId, cpuCount: 2, memoryMB: 8192,
     })) })
   type Guest = ReturnType<typeof import('./support/portable-compute-guest.mjs').portableComputeGuest>
-  const startRegistration = (guest: Guest) =>
-    guest.daemon(['tests/support/portable-compute-register.mts'], {
+  const registrationDirs = new WeakMap<Guest, string>()
+  const startRegistration = (guest: Guest) => {
+    // Keep the daemon's Unix socket below the platform path limit.
+    const dataDir = join(scratch, 'reg-' + randomUUID().slice(0, 8))
+    registrationDirs.set(guest, dataDir)
+    return guest.daemon(['tests/support/portable-compute-register.mts'], {
       MIKKA_TEST_REGISTER_URL: applicationOrigin + '/mikka',
-      // Keep the daemon's Unix socket below the platform path limit.
-      MIKKA_TEST_DATA_DIR: join(scratch, 'reg-' + randomUUID().slice(0, 8)),
+      MIKKA_TEST_DATA_DIR: dataDir,
       HOME: guest.local('/home/fixture'),
     })
+  }
   const options = {
     root: scratch,
     e2bRegisteredMessage: 'mikka-worker-registered',
@@ -99,7 +106,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     E2B_BYO_COMPUTER_TEMPLATE: templates.desktop.templateId, E2B_TEAM_ID: 'fixture-team', MIKKA_CLOUD_WORKER_SHA: workerSha,
     MIKKA_CLOUD_TEMPLATE_MODELS: templateReceipt, MIKKA_THREAD_SNAPSHOTS: '0', MIKKA_CLOUD_WORKER_URL: 'https://fixture-worker.example.invalid',
     WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
-    MIKKA_CLOUDFLARE_TASKS_DISABLED: '0', HTTPS_PROXY: '', https_proxy: '',
+    MIKKA_CLOUDFLARE_TASKS_DISABLED: '0', MIKKA_BYOS_ENABLED: '1', HTTPS_PROXY: '', https_proxy: '',
   })
   appPool = (await import('../lib/db')).pool
   workspacePool = (await import('../lib/workspace-db')).workspacePool
@@ -133,6 +140,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
 
   const { queueCloudRun } = await import('../lib/computer/queue-run')
   const { startThreadMachine } = await import('../lib/run-leases')
+  const { applyDeviceSessionReport } = await import('../lib/device-session')
   const { readEnvironmentSnapshot } = await import('../lib/project-resources/environment-snapshots')
   const { ensureThreadMachine, parkThreadMachine } = await import('../lib/cloud-computer/thread-machines')
   const sourceAt = (issueId: string) => pool.query('SELECT "archiveId","sourceRunId",size,sha256,"headSha" FROM task_workspace_archives WHERE "issueId"=$1', [issueId])
@@ -167,6 +175,32 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     [sourceEventId, ownerId, botId, issueId, 'fixture:' + sourceEventId])
     return (await queueCloudRun(pool, actor, { botId, issueId, agentId, deviceRepoId, sourceEventId, idempotencyKey: requestId,
       title: 'Portable checkout fixture', body: '', model: 'gpt-5', subscriptionBindingId: bindingId })).runId
+  }
+  const claim = async (machine: { sandboxId: string; deviceId: string; runId: string }, provider: Provider) => {
+    const dataDir = registrationDirs.get(services.guest(provider, machine.sandboxId))
+    assert.ok(dataDir)
+    const { credential } = JSON.parse(await readFile(join(dataDir, 'device.json'), 'utf8'))
+    assert.equal(typeof credential, 'string')
+    // The registration subprocess exits after bootstrap. Open the session at
+    // the same application boundary used by the gateway before claiming.
+    assert.deepEqual(await applyDeviceSessionReport(machine.deviceId, {
+      state: 'connected', at: new Date().toISOString(), socketId: randomUUID(),
+    }), { applied: true })
+    const url = applicationOrigin + '/mikka/v1/devices/' + machine.deviceId + '/runs/' + machine.runId + '/claim'
+    const headers = {
+      ...HOSTED_API_HEADERS,
+      [CLIENT_VERSION_HEADER]: DAEMON_VERSION,
+      [DEVICE_SESSION_HEADER]: String(DEVICE_SESSION_VERSION),
+      [PROJECT_ENVIRONMENT_HEADER]: '1',
+      [REPO_ORIGIN_HEADER]: '1',
+      authorization: 'Bearer ' + credential,
+    }
+    const refused = await fetch(url, { method: 'POST', headers })
+    assert.equal(refused.status, 409, 'archive-capable daemon required')
+    assert.equal((await row(machine.runId)).status, 'queued')
+    const accepted = await fetch(url, { method: 'POST', headers: { ...headers, [PORTABLE_TASK_WORKSPACE_HEADER]: '1' } })
+    assert.equal(accepted.status, 200, accepted.ok ? undefined : await accepted.text())
+    return runAssignmentSchema.parse(await accepted.json())
   }
   const daemon = async (machine: { sandboxId: string; runId: string }, provider: Provider, operation: 'write'|'verify', receipt: unknown) => {
     const guest = services.guest(provider, machine.sandboxId)
@@ -235,7 +269,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       assert.equal(snapshot.state, 'building')
       assert.equal((await pool.query('SELECT "buildRunId" FROM environment_snapshots WHERE id=$1', [snapshot.id])).rows[0].buildRunId, next)
       assert.deepEqual(services.boots.at(-1), { provider: to, runId: next })
-      const receipt = restored.lifecycle.portableWorkspaceRestore
+      const { portableTaskWorkspace: receipt } = await claim(restored, to)
       assert.deepEqual(receipt, { size: Number(pointer.size), sha256: pointer.sha256, headSha: pointer.headSha })
       assert.deepEqual(restored.agentDefinition.projectExecution.environment, original.agentDefinition.projectExecution.environment)
       await daemon(restored, to, 'verify', receipt)
