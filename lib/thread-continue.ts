@@ -386,7 +386,7 @@ async function queueNextSideRun(
           origin: 'web',
           originRef: null,
           ...(control ? { followUpControl: control } : {}),
-          ...(sourceEventId ? { idempotencyKey: `side:${run.id}:${sourceEventId}` } : {}),
+          ...(sourceEventId ? { idempotencyKey: `thread:${run.id}:${sourceEventId}` } : {}),
         }, client)
         await client.query(
           `UPDATE agent_runs SET "continuesRunId"=$2,"threadRelation"='side',"updatedAt"=now() WHERE id=$1 AND "userId"=$3`,
@@ -421,7 +421,8 @@ async function queueNextSideRun(
   if (control) nextDef.followUpControl = control
   else delete nextDef.followUpControl
 
-  const dispatchKey = sourceEventId ? `side-continue:${run.id}:${sourceEventId}` : null
+  // Standard dispatch key lets submitThreadOnce recover committed side continuations if the display write is interrupted.
+  const dispatchKey = sourceEventId ? `thread:${run.id}:${sourceEventId}` : null
   const dispatchFingerprint = dispatchKey
     ? createHash('sha256').update(JSON.stringify([run.id, promptText, runModel.model, control ?? null])).digest('hex')
     : null
@@ -460,6 +461,24 @@ async function queueNextSideRun(
     }
     if (typeof nextDef.harness === 'string' && nextDef.harness && typeof nextDef.instructions === 'string') {
       nextDef.definitionDigest = workerDefinitionDigest(nextDef as Parameters<typeof workerDefinitionDigest>[0])
+    }
+    // Re-freeze executionIdentity after credential/model updates (or revalidate when unchanged) so local daemon claim matches.
+    if (run.deviceId && run.workspaceId && (modelChoice || nextDef.executionIdentity)) {
+      const { freezeExecutionIdentity, revalidateExecutionIdentity, ExecutionIdentityError } = await import('@/lib/execution-identity')
+      const authority = {
+        userId,
+        botId: run.botId,
+        deviceId: run.deviceId,
+        agentDefinition: nextDef as unknown as NonNullable<typeof run.agentDefinition>,
+      }
+      try {
+        nextDef.executionIdentity = modelChoice
+          ? await freezeExecutionIdentity(client, authority, undefined, run.workspaceId)
+          : await revalidateExecutionIdentity(client, authority)
+      } catch (error) {
+        if (error instanceof ExecutionIdentityError) throw new ActionFailureError('executionAccountUnavailable')
+        throw error
+      }
     }
     if (dispatchKey) {
       const { rows: [inserted] } = await client.query<{ id: string }>(
@@ -512,8 +531,8 @@ async function queueNextSideRun(
 /** `fork`: queue a new thread instead (#2936), keeping the run's place and model; its value names the request. */
 async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, previous: TaskThreadRun, note: string | undefined, request?: { sourceEventId: string; botId: string | null }, modelChoice?: ThreadModelChoice, fork?: string, control?: ThreadMessageControl) {
   const issueId = run.issueId!
-  const { latestThreadRunModel, chooseCloudRunModel, chooseLocalRunModel } = await import('@/lib/computer/run-model')
-  const prior = await latestThreadRunModel(pool, userId, issueId, run.agentId)
+  const { threadRunModel, latestThreadRunModel, chooseCloudRunModel, chooseLocalRunModel } = await import('@/lib/computer/run-model')
+  const prior = threadRunModel(run.agentDefinition) ?? await latestThreadRunModel(pool, userId, issueId, run.agentId)
   let runModel = prior
   if (modelChoice) {
     const harness = previous.harness

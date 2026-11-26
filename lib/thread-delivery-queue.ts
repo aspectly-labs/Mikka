@@ -6,7 +6,7 @@ import { runChanged } from './live/panels'
 import { readRunChain, type RunChain } from './run-chain'
 import { UNFINISHED_RUN_STATUSES } from './agent-run-statuses'
 import { withFactoryBackgroundWorkspace } from './factory/background-workspace'
-import { jsonbSafeUuidSql } from './primitives/jsonb-predicates'
+import { jsonbSafeUuidSql, jsonbTextSql } from './primitives/jsonb-predicates'
 
 type QueueRow = {
   id: string
@@ -131,7 +131,7 @@ export async function threadDeliveryView(pool: Pool, ownerId: string, rootRunId:
   const { rows } = await pool.query<Pick<QueueRow,'id'|'text'|'status'|'failureCode'|'requestId'> & { canSendNow: boolean }>(
     `SELECT id,text,status,"failureCode","requestId","canSendNow" FROM (
        SELECT q.id,q.text,q.status,q."failureCode",q."requestId",
-         coalesce(ce.payload->'threadQueuedControl'->>'kind' <> 'compact', true) AS "canSendNow",
+         coalesce(${jsonbTextSql(`ce.payload->'threadQueuedControl'`, 'kind')} <> 'compact', true) AS "canSendNow",
          q."createdAt"
        FROM thread_queued_messages q
        LEFT JOIN coordinator_events ce ON ce."userId"=q."userId" AND ce."dedupeKey"=('thread-queue-control:' || q.id::text)
@@ -174,27 +174,33 @@ export async function editQueuedThreadReply(pool: Pool, userId: string, runId: s
         await client.query('ROLLBACK')
         return 'tooLate' as const
       }
-      const slashProtocol = await import('@mikka/protocol/slash-commands')
-      const leadingSlash = slashProtocol.parseLeadingSlashCommand(text)
+      const existingControl = await readQueuedControl(client, userId, messageId)
       let nextControl: QueuedControl | undefined
-      if (leadingSlash) {
-        const { readThreadRuntimeCommands } = await import('./thread-commands')
-        const runtime = await readThreadRuntimeCommands(client, userId, chain.latestRunId)
-        if (runtime) {
-          if (runtime.harness === 'claude_code' && slashProtocol.isBlockedClaudeCommand(leadingSlash.name, runtime.terminalSlashCommands).blocked) {
-            await client.query('ROLLBACK')
-            return 'invalid' as const
-          }
-          const cmdLower = leadingSlash.name.toLowerCase()
-          if (cmdLower === 'compact') {
-            const instructions = leadingSlash.args.trim().slice(0, 4_000)
-            nextControl = { kind: 'compact', ...(instructions ? { instructions } : {}) }
-          } else {
-            const matched = runtime.commands.find(
-              c => c.name.toLowerCase() === cmdLower || c._meta.aliases?.some(a => a.toLowerCase() === cmdLower),
-            )
-            if (matched) {
-              nextControl = { kind: 'slash', name: matched.name, ...(leadingSlash.args ? { args: leadingSlash.args } : {}) }
+      if (existingControl?.kind === 'client_composed') {
+        // Preserve explicit "Send as text" literal delivery through text edits.
+        nextControl = existingControl
+      } else {
+        const slashProtocol = await import('@mikka/protocol/slash-commands')
+        const leadingSlash = slashProtocol.parseLeadingSlashCommand(text)
+        if (leadingSlash) {
+          const { readThreadRuntimeCommands } = await import('./thread-commands')
+          const runtime = await readThreadRuntimeCommands(client, userId, chain.latestRunId)
+          if (runtime) {
+            if (runtime.harness === 'claude_code' && slashProtocol.isBlockedClaudeCommand(leadingSlash.name, runtime.terminalSlashCommands).blocked) {
+              await client.query('ROLLBACK')
+              return 'invalid' as const
+            }
+            const cmdLower = leadingSlash.name.toLowerCase()
+            if (cmdLower === 'compact') {
+              const instructions = leadingSlash.args.trim().slice(0, 4_000)
+              nextControl = { kind: 'compact', ...(instructions ? { instructions } : {}) }
+            } else {
+              const matched = runtime.commands.find(
+                c => c.name.toLowerCase() === cmdLower || c._meta.aliases?.some(a => a.toLowerCase() === cmdLower),
+              )
+              if (matched) {
+                nextControl = { kind: 'slash', name: matched.name, ...(leadingSlash.args ? { args: leadingSlash.args } : {}) }
+              }
             }
           }
         }

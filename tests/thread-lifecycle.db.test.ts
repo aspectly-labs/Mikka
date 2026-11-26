@@ -350,10 +350,16 @@ test('continuing a completed side thread preserves its side chain and leaves the
   // Primary task latestTaskRun must still return rootId, never the side continuation.
   const { latestTaskRun } = await import('../lib/thread-dispatch.js')
   assert.equal((await latestTaskRun(pool, owner.id, issueId))?.id, rootId)
+  // Even if the side continuation switches models, latestThreadRunModel for the primary task retains rootId's model.
+  await pool.query(`UPDATE agent_runs SET "agentDefinition"=$2::jsonb WHERE id=$1`, [
+    followUp.runId, JSON.stringify({ harness: 'codex', model: 'gpt-5.4-pro' }),
+  ])
+  const { latestThreadRunModel } = await import('../lib/computer/run-model.js')
+  assert.equal((await latestThreadRunModel(pool, owner.id, issueId, agentId))?.model, 'gpt-5.4')
 })
 
 test('queued /compact preserves replay across jsonb key order, blocks Send Now without failing, and syncs control on edit', async () => {
-  const { rootId, workspace, agentId } = await fixture()
+  const { rootId, agentId } = await fixture()
   const deviceId = randomUUID(), repoId = randomUUID()
   const remote = 'https://github.com/acme/queue-ctrl.git'
   await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,harnesses) VALUES ($1,$2,'local-q','local',true,'[{"harness":"claude_code","installed":true}]'::jsonb)`, [deviceId, owner.id])
@@ -403,5 +409,20 @@ test('queued /compact preserves replay across jsonb key order, blocks Send Now w
   const viewAfter = await threadDeliveryView(pool, owner.id, chain.rootRunId, chain.latestRunId)
   assert.equal(viewAfter.queued[0]!.text, 'Summarize open questions')
   assert.equal(viewAfter.queued[0]!.canSendNow, true)
+
+  // Editing a reply queued with Send as text (`client_composed`) preserves literal delivery even if text starts with `/compact`.
+  const literalReqId = randomUUID()
+  await queueThreadReply(pool, owner.id, chain, '/compact refers to the command', literalReqId, rootId, { kind: 'client_composed' })
+  const viewWithLiteral = await threadDeliveryView(pool, owner.id, chain.rootRunId, chain.latestRunId)
+  const literalRow = viewWithLiteral.queued.find(row => row.requestId === literalReqId)
+  assert.ok(literalRow)
+  assert.equal(literalRow.canSendNow, true)
+  const editedLiteral = await editQueuedThreadReply(pool, owner.id, rootId, literalRow.id, '/compact explains how compaction works')
+  assert.equal(editedLiteral, 'edited')
+  const { rows: [literalControl] } = await pool.query<{ kind: string }>(
+    `SELECT payload->'threadQueuedControl'->>'kind' AS kind FROM coordinator_events WHERE "userId"=$1 AND "dedupeKey"=$2`,
+    [owner.id, `thread-queue-control:${literalRow.id}`],
+  )
+  assert.equal(literalControl?.kind, 'client_composed')
 })
 
