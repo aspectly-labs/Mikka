@@ -101,7 +101,7 @@ export async function editTaskComment(input: EditTaskCommentInput) {
 /**
  * Deletes a comment: its author (while they may write on the task) or a
  * workspace admin. With replies left in its thread it stays as a tombstone
- * (「评论已删除」); otherwise its thread goes. Its reactions go with it. An
+ * (「评论已删除」); otherwise its thread is hidden. Its reactions go with it. An
  * admin deleting someone else's comment is written to the audit log.
  */
 export async function deleteTaskComment(input: TaskCommentRef) {
@@ -112,7 +112,7 @@ export async function deleteTaskComment(input: TaskCommentRef) {
     const located = findThreadMessage(doc, threadId, messageId)
     if (!located || isDeletedMessage(located.message)) return { error: 'taskCommentNotFound' as const }
     const author = Boolean(located.message.authorUserId) && located.message.authorUserId === user.id
-    const allowed = author ? await mayWrite(tx, user, task) : await workspaceAdmin(user.id, task.workspaceId)
+    const allowed = (author && await mayWrite(tx, user, task)) || await workspaceAdmin(user.id, task.workspaceId)
     if (!allowed) return { error: 'taskCommentDeleteForbidden' as const }
     const deleted = deleteThreadMessage(doc, located, user.id, at)
     await forgetCommentReactions(tx, taskId, threadId, deleted.messageIds)

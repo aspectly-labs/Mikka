@@ -61,7 +61,7 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
       return exchangeDocument({ id: task, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64') })
     } finally { doc.destroy() }
   })
-  const reactionRows = async () => (await pool.query('select "messageId","userId",emoji from task_comment_reactions where "taskId"=$1 order by "messageId","userId",emoji', [task])).rows
+  const reactionRows = async () => (await pool.query('select "threadId","messageId","userId",emoji from task_comment_reactions where "taskId"=$1 order by "threadId","messageId","userId",emoji', [task])).rows
 
   // The owner's first comment initializes the document; the member replies.
   const first = mobileCommentExchange({ id: task, content: (await pool.query('select content from issues where id=$1', [task])).rows[0].content, initialized: false,
@@ -156,7 +156,7 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
   })
 
   await t.test('identical message ids in different threads have independent reactions', async () => {
-    const copies = ['copy-left', 'copy-right']
+    const copies = ['copy-left', 'copy-middle', 'copy-right']
     const at = new Date().toISOString()
     await write(owner, doc => {
       for (const id of copies) {
@@ -175,13 +175,18 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     for (const id of copies) assert.equal(view.reactionsByThread[id]['shared-id'][0].count, 1)
     assert.equal(view.reactions?.['shared-id'], undefined)
     await as(member, () => actions.setTaskCommentReaction({ ...ref(copies[0]), emoji: '👍', reacted: false }))
-    assert.equal((await reactionRows()).filter(row => row.messageId === 'shared-id').length, 1)
+    assert.equal((await reactionRows()).filter(row => row.messageId === 'shared-id').length, 2)
     await as(member, () => actions.setTaskCommentReaction({ ...ref(copies[0]), emoji: '👍', reacted: true }))
     await as(owner, () => actions.deleteTaskComment(ref(copies[0])))
     const survivor = await as(member, () => actions.getTaskCommentState(task))
     assert.ok('reactionsByThread' in survivor)
     assert.equal(survivor.reactionsByThread[copies[1]]['shared-id'][0].count, 1)
-    await write(owner, doc => { for (const id of copies) doc.getMap('threads').delete(id) })
+    await write(owner, doc => { doc.getMap('threads').delete(copies[1]) })
+    assert.deepEqual((await reactionRows()).filter(row => row.messageId === 'shared-id').map(row => row.threadId), [copies[2]])
+    await write(owner, doc => {
+      doc.getMap('threads').delete(copies[0])
+      doc.getMap('threads').delete(copies[2])
+    })
     assert.equal((await reactionRows()).filter(row => row.messageId === 'shared-id').length, 0)
   })
 
@@ -268,5 +273,42 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     assert.equal(await row(inline), undefined)
     const due = await (await import('../lib/account-deletions-due')).nextAccountDeletionsDue(pool)
     assert.ok(due === null || Number.isFinite(due))
+  })
+
+  await t.test('an offline reply reconnects to a hidden thread and is saved with its author', async () => {
+    const threadId = 'offline-discussion'
+    const at = new Date().toISOString()
+    await write(owner, doc => addThread(doc, { id: threadId, author: '', createdAt: at, messages: [{ author: '', body: 'Original', at }] }, 'test'))
+    const offline = new Y.Doc()
+    let update: string
+    try {
+      Y.applyUpdate(offline, Buffer.from((await state())!, 'base64'))
+      const vector = Y.encodeStateVector(offline)
+      replyToThread(offline, threadId, { id: 'offline-reply', author: '', body: 'Offline reply', at })
+      update = Buffer.from(Y.encodeStateAsUpdate(offline, vector)).toString('base64')
+    } finally { offline.destroy() }
+    assert.deepEqual(await as(owner, () => actions.deleteTaskComment({ taskId: task, threadId, messageId: threadId + '-1' })),
+      { deleted: 'removed', threadRemoved: true })
+    assert.deepEqual(taskDiscussionEvents((await threads()).filter(thread => thread.id === threadId)), [])
+    await as(member, () => exchangeDocument({ id: task, update }))
+    const saved = (await threads()).find(thread => thread.id === threadId)
+    assert.deepEqual(saved?.messages.map(message => [message.body, message.authorUserId]), [['', owner], ['Offline reply', member]])
+    assert.deepEqual(taskDiscussionEvents(saved ? [saved] : []).map(event => [event.kind, event.deleted ?? false]), [['comment', true], ['reply', false]])
+  })
+
+  await t.test('a workspace admin with read-only task access can delete their own comment', async () => {
+    const threadId = 'admin-own-comment'
+    const at = new Date().toISOString()
+    await write(member, doc => addThread(doc, { id: threadId, author: '', createdAt: at, messages: [{ author: '', body: 'Own comment', at }] }, 'test'))
+    await workspacePool.query('update mikka_workspace_members set role=\'admin\' where "workspaceId"=$1 and "userId"=$2', [team.id, member])
+    await pool.query(`update resource_access_grants set capabilities=ARRAY['canReadContent']
+      where "resourceKind"='task' and "resourceId"=$1 and "subjectKind"='account' and "subjectId"=$2`, [task, member])
+    const view = await as(member, () => actions.getTaskCommentState(task))
+    assert.ok('canComment' in view)
+    assert.equal(view.canComment, false)
+    assert.equal(view.canModerate, true)
+    const ref = { taskId: task, threadId, messageId: threadId + '-1' }
+    assert.equal(errorOf(await as(member, () => actions.editTaskComment({ ...ref, body: 'No longer editable' }))), 'taskCommentAuthorOnly')
+    assert.deepEqual(await as(member, () => actions.deleteTaskComment(ref)), { deleted: 'removed', threadRemoved: true })
   })
 })
