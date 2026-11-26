@@ -4740,6 +4740,8 @@
     "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。",
     "taskCommentNotFound": "这条评论已不存在。",
     "taskCommentInvalid": "无法保存这条评论，请检查文字和文件。",
+    "taskInlineFilesEditorRequired": "请使用新版编辑器修改任务描述中的内嵌文件。",
+    "taskInlineFilesDuplicateUnavailable": "暂时无法复制描述中含有内嵌文件的任务。",
     "taskCommentAuthorOnly": "只有评论的作者可以编辑。",
     "taskCommentDeleteForbidden": "只有评论的作者或工作区管理员可以删除。",
     "taskCommentDeleted": "这条评论已删除。",

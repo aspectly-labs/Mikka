@@ -68,6 +68,28 @@ export function liveMessageIds(threads: readonly ThreadRecord[]): Set<string> {
 }
 
 const TASK_FILE_HREF = /\/api\/tasks\/[^/?#]+\/attachments\?(?:[^#]*&)?id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[&#]|$)/i
+const TASK_FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function collectDescriptionFileIds(content: JSONContent | null | undefined, includeLinks: boolean): Set<string> {
+  const ids = new Set<string>()
+  const visit = (node: JSONContent | null | undefined, depth: number) => {
+    if (!node || typeof node !== 'object' || depth > 200) return
+    if (node.type === TASK_FILE_NODE && typeof node.attrs?.id === 'string' && TASK_FILE_ID.test(node.attrs.id)) ids.add(node.attrs.id.toLowerCase())
+    if (includeLinks) for (const mark of node.marks ?? []) {
+      const href = mark?.type === 'link' ? mark.attrs?.href : undefined
+      const match = typeof href === 'string' ? TASK_FILE_HREF.exec(href) : null
+      if (match) ids.add(match[1].toLowerCase())
+    }
+    if (Array.isArray(node.content)) for (const child of node.content) visit(child, depth + 1)
+  }
+  visit(content, 0)
+  return ids
+}
+
+/** The files represented by atoms an older editor may discard when it saves. */
+export function taskFileNodeIds(content: JSONContent | null | undefined): Set<string> {
+  return collectDescriptionFileIds(content, false)
+}
 
 /**
  * Inline files the description and the live comments still show: `taskFile`
@@ -76,21 +98,10 @@ const TASK_FILE_HREF = /\/api\/tasks\/[^/?#]+\/attachments\?(?:[^#]*&)?id=([0-9a
  * (lib/task-attachments/store.ts cleanupTaskInlineFiles).
  */
 export function referencedTaskFileIds(content: JSONContent | null | undefined, threads: readonly ThreadRecord[]): string[] {
-  const ids = new Set<string>()
-  const visit = (node: JSONContent | undefined, depth: number) => {
-    if (!node || typeof node !== 'object' || depth > 200) return
-    if (node.type === TASK_FILE_NODE && typeof node.attrs?.id === 'string') ids.add(node.attrs.id.toLowerCase())
-    for (const mark of node.marks ?? []) {
-      const href = mark?.type === 'link' ? mark.attrs?.href : undefined
-      const match = typeof href === 'string' ? TASK_FILE_HREF.exec(href) : null
-      if (match) ids.add(match[1].toLowerCase())
-    }
-    if (Array.isArray(node.content)) for (const child of node.content) visit(child, depth + 1)
-  }
-  visit(content ?? undefined, 0)
+  const ids = collectDescriptionFileIds(content, true)
   for (const thread of threads) for (const message of thread.messages) {
     if (!message || isDeletedMessage(message) || !Array.isArray(message.attachments)) continue
-    for (const file of message.attachments) if (typeof file?.id === 'string') ids.add(file.id.toLowerCase())
+    for (const file of message.attachments) if (typeof file?.id === 'string' && TASK_FILE_ID.test(file.id)) ids.add(file.id.toLowerCase())
   }
-  return [...ids].filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))
+  return [...ids]
 }

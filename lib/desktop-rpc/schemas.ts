@@ -298,7 +298,7 @@ export const desktopActionSchemas = {
   'automations.cancelAutomationRun': tuple(object({ scheduleId: uuid, version: positive, runId: uuid }), workspace),
   'automations.runAutomationNow': tuple(object({ scheduleId: uuid, version: positive, requestId: uuid }), workspace),
   'bots.listBotsForWorkspace': oneId,
-  'collaboration.exchangeDocument': tuple(object({ id: uuid, vector: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), update: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), seed: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), known: version.optional() })),
+  'collaboration.exchangeDocument': tuple(object({ id: uuid, vector: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), update: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), seed: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), known: version.optional(), inlineFiles: z.literal(1).optional() })),
   'collaboration.listMembers': oneId,
   'collaboration.inviteMember': tuple(uuid, z.email().max(254)),
   'collaboration.removeMember': tuple(uuid, id),

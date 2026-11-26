@@ -148,6 +148,8 @@ export const ACTION_ERROR_CODES = [
   'issueScopeOwnerOnly',
   'taskCommentNotFound',
   'taskCommentInvalid',
+  'taskInlineFilesEditorRequired',
+  'taskInlineFilesDuplicateUnavailable',
   'taskCommentAuthorOnly',
   'taskCommentDeleteForbidden',
   'taskCommentDeleted',

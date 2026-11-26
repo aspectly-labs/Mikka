@@ -52,13 +52,13 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     try { Y.applyUpdate(doc, Buffer.from((await state())!, 'base64')); return readDocumentThreads(doc) } finally { doc.destroy() }
   }
   /** A client's own document write, as the editor sends it. */
-  const write = (userId: string, change: (doc: Y.Doc) => void) => as(userId, async () => {
+  const write = (userId: string, change: (doc: Y.Doc) => void, inlineFiles?: 1) => as(userId, async () => {
     const doc = new Y.Doc()
     try {
       Y.applyUpdate(doc, Buffer.from((await state())!, 'base64'))
       const vector = Y.encodeStateVector(doc)
       change(doc)
-      return exchangeDocument({ id: task, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64') })
+      return exchangeDocument({ id: task, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), inlineFiles })
     } finally { doc.destroy() }
   })
   const reactionRows = async () => (await pool.query('select "threadId","messageId","userId",emoji from task_comment_reactions where "taskId"=$1 order by "threadId","messageId","userId",emoji', [task])).rows
@@ -260,7 +260,14 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     // an upload the description names (saved before the upload committed) is kept.
     await files.saveTaskFile(actor(member), { id: pending, name: 'p.txt', size: 3 }, new Uint8Array([1, 2, 3]), 'inline')
     await files.saveTaskFile(actor(member), { id: described, name: 'd.png', size: PNG.byteLength }, PNG, 'inline')
-    await pool.query('update issues set content=$2 where id=$1', [task, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'taskFile', attrs: { id: described, name: 'd.png' } }] }] }])
+    await write(member, doc => {
+      const file = new Y.XmlElement('taskFile')
+      file.setAttribute('id', described)
+      file.setAttribute('name', 'd.png')
+      file.setAttribute('size', String(PNG.byteLength))
+      file.setAttribute('mediaType', 'image/png')
+      ;(doc.getXmlFragment('default').get(0) as Y.XmlElement).push([file])
+    }, 1)
     await pool.query(`update task_attachments set "unreferencedAt"=now()-interval '25 hours' where "taskId"=$1 and id=any($2::uuid[])`, [task, [pending, described]])
     await pool.query(`update task_attachments set "unreferencedAt"=now()-interval '29 days' where "taskId"=$1 and id=$2`, [task, inline])
     await files.cleanupTaskInlineFiles()
@@ -273,6 +280,22 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     assert.equal(await row(inline), undefined)
     const due = await (await import('../lib/account-deletions-due')).nextAccountDeletionsDue(pool)
     assert.ok(due === null || Number.isFinite(due))
+
+    const { createLinkedIssue } = await import('../app/actions/issue-operations')
+    const { revision } = (await pool.query('select revision from issues where id=$1', [task])).rows[0]
+    assert.equal(errorOf(await as(owner, () => createLinkedIssue({ id: task, revision, kind: 'duplicate' }))), 'taskInlineFilesDuplicateUnavailable')
+
+    const removeInlineFile = (doc: Y.Doc) => {
+      const paragraph = doc.getXmlFragment('default').get(0) as Y.XmlElement
+      paragraph.delete(paragraph.length - 1, 1)
+    }
+    const beforeLegacyEdit = await state()
+    await assert.rejects(write(member, removeInlineFile), /taskInlineFilesEditorRequired/)
+    await assert.rejects(write(reader, removeInlineFile, 1), /issueNotFound/)
+    assert.equal(await state(), beforeLegacyEdit)
+    assert.equal((await row(described)).unreferencedAt, null)
+    await write(member, removeInlineFile, 1)
+    assert.ok((await row(described)).unreferencedAt, 'an upgraded editor can remove the file')
   })
 
   await t.test('an offline reply reconnects to a hidden thread and is saved with its author', async () => {
