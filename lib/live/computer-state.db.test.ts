@@ -30,6 +30,12 @@ async function loadRuntime() {
 after(() => mock.restoreAll())
 
 test('real PG: computer changes publish committed owner state without heartbeat polling', { skip: !url, timeout: 120_000 }, async t => {
+  const edition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (edition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = edition
+  })
   const connectionString = await isolatedPostgresURL(url!)
   const admin = new Pool({ connectionString })
   const schema = `computer_live_${randomUUID().replaceAll('-', '')}`

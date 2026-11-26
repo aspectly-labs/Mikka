@@ -8,7 +8,8 @@ import { dbUrl, seedBot, seedUser, seedWorkspace } from './support/workspace-adm
 import { createTestDatabase, dropTestDatabase } from './support/drop-test-database'
 
 test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
-  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, flag: process.env.MIKKA_BYO_E2B_KEY }
+  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, flag: process.env.MIKKA_BYO_E2B_KEY, edition: process.env.MIKKA_EDITION }
+  process.env.MIKKA_EDITION = 'community'
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.MIKKA_BYO_E2B_KEY = '1'
   const { Pool } = await import('pg')
@@ -16,7 +17,7 @@ test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
   const { pool: appPool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')
   t.after(async () => {
-    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYO_E2B_KEY', saved.flag]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
+    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYO_E2B_KEY', saved.flag], ['MIKKA_EDITION', saved.edition]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])
   })
   const store = await import('../lib/secrets/store')

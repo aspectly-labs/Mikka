@@ -687,7 +687,7 @@ test("acceptance merges the PR as the person", { skip: !db, timeout: 180000 }, a
         CREATE TABLE device_tokens (id uuid PRIMARY KEY,"boundDeviceId" uuid,"revokedAt" timestamptz);
         CREATE TABLE suggestion_executions ("runId" uuid,status text,"endedAt" timestamptz);
         CREATE TABLE thread_machines ("runId" uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid,"issueId" uuid,
-          "sandboxId" text,"snapshotId" text NOT NULL,state text,"deviceId" uuid,epoch integer NOT NULL DEFAULT 1,"operationId" uuid,
+          "sandboxId" text,"snapshotId" text NOT NULL,state text,"deviceId" uuid,"repoId" uuid,epoch integer NOT NULL DEFAULT 1,"operationId" uuid,
           "workerLeaseId" uuid,"workerLeaseUntil" timestamptz,"lastActiveAt" timestamptz NOT NULL DEFAULT now(),
           "runningSince" timestamptz,"computeSeconds" bigint NOT NULL DEFAULT 0,
           "snapshotState" text NOT NULL DEFAULT 'none',"snapshotOperationId" uuid,"filesystemSnapshotId" text,"restoreStartedAt" timestamptz,

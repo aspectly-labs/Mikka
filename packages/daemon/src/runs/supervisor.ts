@@ -1297,7 +1297,9 @@ export class RunSupervisor {
       run.observedModel = observedModel
       this.push(runId, { kind: "run", patch: { state: "running", sessionId, observedModel } })
     }
-    const startupDirectory = assignment.projectEnvironment?.startupRepositories?.length ? '.mikka-repositories-' + randomUUID() : null
+    const startupDirectory = assignment.projectEnvironment?.startupRepositories?.length
+      ? '.mikka-repositories-' + (assignment.projectEnvironment.fromSnapshot ? assignment.projectEnvironment.id : randomUUID())
+      : null
     const taskEnv = startupDirectory ? { ...assignment.taskEnv, ENVIRONMENT_REPOSITORIES: startupDirectory } : assignment.taskEnv
     const baseOptions = {
       traceContext,
@@ -1406,14 +1408,36 @@ export class RunSupervisor {
       )
     if (assignment.requireWorktreeContinuation && !entry.worktree && !continued)
       throw new CheckpointRecoveryError('Original worktree is unavailable and there is no usable recovery snapshot.')
+    let usedEnvironmentSnapshot = false
+    let portableCheckoutBase: string | undefined
     const worktree =
       entry.worktree ??
       continued ??
-      (await this.stage(runId, "worktree", async () => this.deps.worktrees.create(
-        runId,
-        repo.path,
-        await this.startPoint(runId, repo, assignment),
-      )))
+      (await this.stage(runId, "worktree", async () => {
+        const requestedStart = await this.startPoint(runId, repo, assignment)
+        if (assignment.portableTaskWorkspace) {
+          portableCheckoutBase = await this.deps.worktrees.portableWorktreeBase(repo.path, requestedStart, assignment.portableTaskWorkspace.headSha)
+          if (portableCheckoutBase !== assignment.portableTaskWorkspace.headSha)
+            log.info({ runId, archivedHead: assignment.portableTaskWorkspace.headSha, checkoutHead: portableCheckoutBase },
+              'Restoring archived task files on the current authorized checkout')
+        }
+        const start = portableCheckoutBase ?? requestedStart
+        if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly &&
+          (!startupDirectory || !assignment.projectEnvironment.setup?.command || assignment.projectEnvironment.setup.maintenance?.trim())) {
+          const prepared = await this.deps.worktrees.createFromEnvironmentSnapshot(runId, repo.path, start, Boolean(assignment.projectEnvironment.setup?.maintenance?.trim()))
+          if (prepared) {
+            usedEnvironmentSnapshot = true
+            return prepared
+          }
+        }
+        return this.deps.worktrees.create(runId, repo.path, start)
+      }))
+    const restoredPortable = !entry.worktree && Boolean(assignment.portableTaskWorkspace)
+    if (restoredPortable && assignment.portableTaskWorkspace) {
+      if (!portableCheckoutBase || continued || assignment.requireSessionResume || assignment.resumeFrom || fixedCandidateCheck(assignment))
+        throw new CheckpointRecoveryError('Portable task workspace conflicts with the original worktree or recovery snapshot.')
+      await this.deps.worktrees.restorePortableWorkspace(runId, assignment.portableTaskWorkspace, portableCheckoutBase)
+    }
     if (startupDirectory) {
       if (!this.deps.prepareEnvironmentRepositories) throw new Error('Environment repository checkout unavailable')
       run.removeEnvironmentRepositories = await this.deps.prepareEnvironmentRepositories(assignment, join(worktree, startupDirectory), preparationSignal)
@@ -1429,7 +1453,7 @@ export class RunSupervisor {
           : undefined) ?? (await headCommit(repo.path, worktree))
       // Taking over from a machine that went offline: its saved work goes
       // on as uncommitted changes, before setup sees the tree.
-      if (!continued && assignment.resumeFrom) {
+      if (!continued && !restoredPortable && assignment.resumeFrom) {
         const applied = await applyCheckpoint({
           repoPath: repo.path,
           worktree,
@@ -1458,10 +1482,13 @@ export class RunSupervisor {
       const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, effectiveRepo) : await this.deps.worktrees.bootstrap(worktree, repo.path, effectiveRepoSetup)
       if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup?.approved) {
         if (policy.permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
-        await this.deps.worktrees.bootstrap(worktree, repo.path, assignment.projectEnvironment.setup, taskEnv, { includeWorktreeFile: false })
+        const { setup } = assignment.projectEnvironment
+        const recipe = usedEnvironmentSnapshot ? { ...setup, command: setup.maintenance } : setup
+        await this.deps.worktrees.bootstrap(worktree, repo.path, recipe, taskEnv, { includeWorktreeFile: false })
       }
       log.info({ worktree, setup }, "worktree ready")
       this.deps.journal.update(runId, { worktree, baseCommit })
+      if (restoredPortable) await this.deps.worktrees.clearPortableWorkspace(runId)
     }
     if (this.stopping) return
 

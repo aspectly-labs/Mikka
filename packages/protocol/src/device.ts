@@ -354,12 +354,21 @@ export const setupRecipeSchema = z.object({
   copyFiles: z.array(z.string().max(1_000)).max(200),
   /** Shell command run in the worktree, e.g. `bun install`. */
   command: z.string().max(2_000).optional(),
+  /** Optional command to refresh an environment restored from its prebuilt snapshot. */
+  maintenance: z.string().max(2_000).optional(),
   /** Approved once per repo by the user; unapproved recipes never run. */
   approved: z.boolean(),
 })
 export type SetupRecipe = z.infer<typeof setupRecipeSchema>
 
 export const REPO_ORIGIN_HEADER = "x-mikka-repo-origin-check"
+export const ENVIRONMENT_SNAPSHOT_HEADER = "x-mikka-environment-snapshot"
+export const PORTABLE_TASK_WORKSPACE_HEADER = "x-mikka-portable-task-workspace"
+export const portableTaskWorkspaceReceiptSchema = z.strictObject({
+  size: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  headSha: z.string().regex(/^[a-f0-9]{40}$/),
+})
 export const ENVIRONMENT_REPOSITORIES_HEADER = 'x-mikka-environment-repositories'
 export const PROJECT_ENVIRONMENT_HEADER = "x-mikka-project-environment"
 
@@ -480,6 +489,7 @@ export type RunKind = (typeof RUN_KINDS)[number]
 
 /** `POST /v1/devices/:deviceId/runs/:runId/claim`: what the daemon gets. */
 export const runAssignmentSchema = z.object({
+  portableTaskWorkspace: portableTaskWorkspaceReceiptSchema.optional(),
   /** The server handles native model observations without transitioning run state. */
   acceptsModelObservations: z.literal(true).optional(),
   runId: id,
@@ -495,7 +505,7 @@ export const runAssignmentSchema = z.object({
   /** Absent means origin/HEAD after fetch. */
   baseBranch: z.string().min(1).max(500).optional(),
   /** Frozen configuration, not a VM or a credential. Requires PROJECT_ENVIRONMENT_HEADER. */
-  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), setup: setupRecipeSchema.optional(),
+  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), fromSnapshot: z.literal(true).optional(), setup: setupRecipeSchema.optional(),
     startupRepositories: z.array(z.object({ key: z.string().max(1000), baseBranch: z.string().min(1).max(250).nullable() }).strict()).max(100).optional(),
   }).strict().optional(),
   expectedRepoRemote: z.string().max(2_000).optional(),

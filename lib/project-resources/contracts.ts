@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { setupRecipeSchema } from '@mikka/protocol/device'
 import { isReservedEnvName, SECRET_NAME } from '@/lib/secrets/format'
 import { MACHINE_SIZES, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
+import { E2B_MACHINE_SIZES } from '@/lib/cloud-computer/e2b-template-pricing'
 
 /** The normalized key already used by device_repos, never a credential or a URL. */
 export const projectRepositoryKey = z.string().trim().toLowerCase()
@@ -15,12 +16,17 @@ export const projectBranch = z.string().trim().min(1).max(250)
 const envName = z.string().regex(SECRET_NAME).refine(name => !isReservedEnvName(name))
 export const ENVIRONMENT_NETWORK_ACCESS = ['inherit', 'full', 'restricted', 'none'] as const
 export type EnvironmentNetworkAccess = (typeof ENVIRONMENT_NETWORK_ACCESS)[number]
+export const PORTABLE_ENVIRONMENT_BASE = 'mikka-runtime-v1'
 
 export const environmentConfiguration = z.object({
+  /** Portable base runtime. Provider image and snapshot IDs are only cache references. */
+  baseImage: z.literal(PORTABLE_ENVIRONMENT_BASE).optional(),
   runtime: z.enum(['any', 'local', 'cloud']).default('any'),
   /** An official task harness constraint; this is not an independently provisioned machine. */
   harness: z.enum(['any', 'claude_code', 'codex', 'cursor']).default('any'),
   setup: setupRecipeSchema.optional(),
+  /** Hosted E2B sizing is independent of the legacy Cloudflare template names. */
+  e2bMachineSize: z.enum(E2B_MACHINE_SIZES).nullable().optional(),
   /** Optional start command (e.g. dev server / preview) run inside Cloud Environments. */
   startScript: z.string().max(2_000).optional(),
   /** Outbound network access policy for Cloud Environments; omitted defaults to 'inherit'. */
@@ -31,6 +37,15 @@ export const environmentConfiguration = z.object({
   repositoryKeys: z.array(projectRepositoryKey).max(100).default([]),
 }).strict().refine(value => Object.keys(value.variables).length <= 100)
 export type EnvironmentConfiguration = z.infer<typeof environmentConfiguration>
+
+export function portableEnvironmentDefinition(configuration: EnvironmentConfiguration) {
+  return {
+    baseImage: configuration.baseImage ?? PORTABLE_ENVIRONMENT_BASE,
+    setup: configuration.setup,
+    variables: configuration.variables,
+    secretIds: configuration.secretIds,
+  }
+}
 
 /** 'personal' (「仅我」): visible to and usable by its owner only. 'workspace': shared with every member. */
 export const ENVIRONMENT_SCOPES = ['personal', 'workspace'] as const

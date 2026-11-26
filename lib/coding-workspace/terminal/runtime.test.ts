@@ -49,7 +49,13 @@ const state = {
   },
 }
 
+mock.module('../../secrets/e2b-resource', { namedExports: {
+  e2bResourceAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+  e2bCreateAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+  bindE2BResource: async () => {},
+} })
 mock.module('../../secrets/e2b-runtime', { namedExports: {
+  environmentSnapshotScope: () => 'team:test',
   e2bApiKey: async () => LOCAL_E2B_KEY,
   withE2BErrors: async (_owner: string, _creating: boolean, run: () => Promise<unknown>) => run(),
 } })

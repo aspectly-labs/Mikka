@@ -16,7 +16,7 @@ import type { WorkspaceTransaction } from '@/lib/workspace-access'
 import { ActionFailureError } from '@/lib/action-error'
 import { GovernanceError } from '@/lib/governance/errors'
 import { isMachineSize } from '@/lib/cloud-computer/machine-pricing'
-import { ENVIRONMENT_INSTRUCTIONS_MAX, environmentConfiguration, environmentInstructionsScope, environmentRepositories, environmentShareInput, projectEnvironmentVariableInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, type projectSetupScope, type EnvironmentInstructionsView, type EnvironmentRepository, type EnvironmentScope, type ProjectSetupHistory, type ProjectSetupRecipe, repositoryBindingInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, workspaceRepositoryPolicyInput, type EnvironmentConfiguration, type ProjectExecutionSnapshot } from './contracts'
+import { ENVIRONMENT_INSTRUCTIONS_MAX, portableEnvironmentDefinition, environmentConfiguration, environmentInstructionsScope, environmentRepositories, environmentShareInput, projectEnvironmentVariableInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, type projectSetupScope, type EnvironmentInstructionsView, type EnvironmentRepository, type EnvironmentScope, type ProjectSetupHistory, type ProjectSetupRecipe, repositoryBindingInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, workspaceRepositoryPolicyInput, type EnvironmentConfiguration, type ProjectExecutionSnapshot } from './contracts'
 
 type Reader = Parameters<typeof withTaskWorkspace>[0]
 const actorId = (reader: Reader) => typeof reader === 'string' ? reader : reader.id
@@ -239,7 +239,8 @@ export async function saveWorkspaceRepositoryPolicy(reader: Reader, raw: z.input
 
 function setupRecipe(configuration: EnvironmentConfiguration): ProjectSetupRecipe | null {
   const setup = configuration.setup
-  return setup ? { copyFiles: setup.copyFiles, ...(setup.command !== undefined ? { command: setup.command } : {}) } : null
+  return setup ? { copyFiles: setup.copyFiles, ...(setup.command !== undefined ? { command: setup.command } : {}),
+    ...(setup.maintenance !== undefined ? { maintenance: setup.maintenance } : {}) } : null
 }
 
 async function recordSetupVersion(tx: WorkspaceTransaction, workspaceId: string, id: string, revision: number, configuration: EnvironmentConfiguration) {
@@ -308,8 +309,12 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
       ? (typeof existingConfig?.startScript === 'string' && existingConfig.startScript.trim() ? existingConfig.startScript.trim() : undefined)
       : (input.configuration.startScript.trim() || undefined)
     const nextNetworkAccess = input.configuration.networkAccess ?? existingConfig?.networkAccess ?? 'inherit'
+    const selectedE2BSize = input.configuration.e2bMachineSize === undefined
+      ? existingConfig?.e2bMachineSize : input.configuration.e2bMachineSize
     const configuration: EnvironmentConfiguration = {
       ...input.configuration,
+      baseImage: portableEnvironmentDefinition(input.configuration).baseImage,
+      ...(selectedE2BSize !== undefined ? { e2bMachineSize: selectedE2BSize } : {}),
       networkAccess: nextNetworkAccess,
       ...(nextStartScript ? { startScript: nextStartScript } : { startScript: undefined }),
       secretIds: [...new Set(input.configuration.secretIds)],

@@ -46,6 +46,13 @@ export async function recoverRuns(groupTurns: (work: () => Promise<unknown>) => 
   // The same durable owner follows create/resume, pause retries and retention,
   // including running machines whose individual Workflow ended or disappeared.
   const taskMachines = runs('taskMachines') ? await swept('taskMachines', reconcileDueThreadMachines(pool)) : null
+  if (!only) await swept('taskWorkspaceArchives', (async () => {
+    const { portableTaskArchiveEnabled } = await import('@/lib/cloud-computer/e2b-task-workspace-archive')
+    if (!portableTaskArchiveEnabled()) return
+    const { pruneTaskWorkspaceArchives } = await import('@/lib/cloud-computer/task-workspace-archive-store')
+    const signal = AbortSignal.timeout(15_000)
+    for (let index = 0; index < 10 && await pruneTaskWorkspaceArchives(pool, signal); index++) { /* bounded cleanup */ }
+  })())
   // Sandboxes of deleted workspaces whose kill did not go through are killed again.
   const sandboxKills = runs('sandboxKills') ? await swept('sandboxKills', retrySandboxKills(pool)) : null
   // Durable task progress, independent of a device session or an open client.

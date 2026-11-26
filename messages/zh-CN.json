@@ -2460,6 +2460,12 @@
       "baseUrlPlaceholder": "https://api.example.com/v1"
     },
     "environments": {
+      "snapshotBuild": "构建快照",
+      "snapshotBuilding": "构建中",
+      "snapshotReady": "就绪",
+      "snapshotFailed": "构建失败",
+      "snapshotOutdated": "已过期",
+      "snapshotMaintenance": "维护命令",
       "machineSize": "默认机器规格",
       "version": "版本 {revision}",
       "title": "云端环境",

@@ -1,13 +1,30 @@
 import 'server-only'
-// Every sandbox runs on its owner's own E2B key (orchestration § 2): never a teammate's, never the platform's.
+import { createHash } from 'node:crypto'
 import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
-import { E2BKeyError, type E2BKeyErrorCode } from './flag'
+import { byoE2BKeyEnabled, E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
+import { e2bTemplateForSize, type E2BMachineSize } from '../cloud-computer/e2b-template-pricing'
+import { isCloudEdition } from '../edition'
 
 type Env = Record<string, string | undefined>
 
-/** The sandbox owner's own key; the unused argument keeps the existing caller signature. */
+export function environmentSnapshotApiKey(env: Env = process.env): string {
+  const key = env.E2B_API_KEY?.trim()
+  if (!key) throw new E2BKeyError('e2b_key_missing', 'Instance E2B API key required')
+  return key
+}
+
+/** A configured team ID survives credential rotation. Without one, fail closed on a key change. */
+export function environmentSnapshotScope(env: Env = process.env): string {
+  const team = env.E2B_TEAM_ID?.trim()
+  if (team) return 'team:' + team
+  const key = env.E2B_API_KEY?.trim()
+  return key ? 'key:' + createHash('sha256').update(key).digest('hex') : 'unconfigured'
+}
+
+/** Credential lookup for callers without an existing provider resource. */
 export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = process.env): Promise<string> {
+  if (!byoE2BKeyEnabled(env) || env.E2B_API_KEY?.trim()) return environmentSnapshotApiKey(env)
   return (await import('./e2b')).getUserE2BApiKey(ownerId, env)
 }
 
@@ -47,6 +64,15 @@ export function taskTemplate(harness: string, env: Env = process.env): string {
   return selectedTemplate(official, key, env)
 }
 
+/** Hosted task tiers come from the verified release hardware inventory. */
+export function sizedTaskTemplate(harness: string, size?: E2BMachineSize, env: Env = process.env): string {
+  const medium = taskTemplate(harness, env)
+  if (!isCloudEdition(env) || !size) return medium
+  const variant = e2bTemplateForSize(harness === 'codex' ? 'codex' : 'claude', size, env)
+  if (!variant) throw new E2BKeyError('e2b_template_unavailable', 'Verified E2B compute tier required')
+  return variant
+}
+
 const status = (error: unknown): number | undefined => {
   const value = error && typeof error === 'object' ? (error as { status?: unknown; statusCode?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode : undefined
   return typeof value === 'number' ? value : undefined
@@ -74,7 +100,7 @@ export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: 
     if (error instanceof E2BKeyError) throw error
     const code = classifyE2BError(error, creating)
     if (!code) throw error
-    if (code in CARD_CODE) await (await import('./e2b')).recordE2BKeyError(ownerId, CARD_CODE[code as keyof typeof CARD_CODE]).catch(() => undefined)
+    if (byoE2BKeyEnabled(_env) && !_env.E2B_API_KEY?.trim() && code in CARD_CODE) await (await import('./e2b')).recordE2BKeyError(ownerId, CARD_CODE[code as keyof typeof CARD_CODE]).catch(() => undefined)
     throw Object.assign(new E2BKeyError(code), { cause: error })
   }
 }

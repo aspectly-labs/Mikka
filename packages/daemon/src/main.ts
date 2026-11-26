@@ -379,7 +379,8 @@ export class Daemon {
       this.options.retainResources,
       runId => this.journal.get(runId)?.assignment.traceContext,
     )
-    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees, this.options.retainResources)
+    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees,
+      this.options.retainResources, Boolean(this.options.taskRegistered || this.options.e2bContainerRuntime))
     this.repositories = new RepositoryCache(this.options.taskRegistered ? '/workspace/repos' : paths.repos, undefined, this.options.retainResources)
     // Hosted subscriptions start their CLIs through the hosted runner.
     this.sandbox = this.options.hostedSubscriptions ? null : await this.createAgentSandbox()

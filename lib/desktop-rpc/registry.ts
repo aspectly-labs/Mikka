@@ -426,6 +426,8 @@ const functions = {
   'project-resources.listProjectResources': projectResourcesActions.listProjectResources,
   'environments.listEnvironments': environmentActions.listEnvironments,
   'environments.setTaskEnvironment': environmentActions.setTaskEnvironment,
+  'environments.getSnapshot': environmentActions.getEnvironmentSnapshot,
+  'environments.buildSnapshot': environmentActions.buildEnvironmentSnapshot,
   'environments.listTaskEnvironments': environmentActions.listTaskEnvironments,
   'project-resources.setProjectDefaultEnvironment': projectResourcesActions.setProjectDefaultEnvironment,
   'project-resources.saveEnvironment': projectResourcesActions.saveEnvironment,
