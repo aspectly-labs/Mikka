@@ -289,6 +289,15 @@ test('operator admission binds the real OIDC producer before any private credent
   assert.equal(operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'verify'}).action, 'verify')
   assert.equal(operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'deploy'}).action, 'deploy')
   assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'remove'}))
+  for (const action of ['inspect', 'provision', 'deploy', 'verify']) {
+    assert.deepEqual(
+      operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:action, WORLD_ENVIRONMENT:'production'}),
+      {operation:'open-artifact-host', action, target:'production'},
+    )
+  }
+  assert.equal(operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:'inspect'}).target, 'staging')
+  assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:'remove'}))
+  assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:'inspect', WORLD_ENVIRONMENT:'invalid'}))
 })
 
 test('the public operator scopes source credentials, keeps provider delivery private and never publishes raw evidence', async () => {
@@ -303,7 +312,9 @@ test('the public operator scopes source credentials, keeps provider delivery pri
   assert.ok(admission > 0 && admission < credentials && credentials < scrub && scrub < checkout && checkout < sourceCheck && sourceCheck < install && install < execute)
   assert.match(workflow, /environment: cloudflare-runtime-release/)
   assert.match(workflow, /hosted-ui-ci-workers/)
+  assert.match(workflow, /open-artifact-host/)
   assert.match(workflow, /options: \[[^\]]*\bdeploy\b[^\]]*\]/)
+  assert.match(workflow, /options: \[[^\]]*\bprovision\b[^\]]*\]/)
   assert.match(workflow, /permission-contents: read\n\s+permission-actions: read\n\s+permission-issues: read/)
   assert.match(workflow, /repositories: mikka-cloud/)
   assert.match(workflow, /MIKKA_PUBLIC_ACTIONS_TOKEN: \$\{\{ github.token \}\}/)

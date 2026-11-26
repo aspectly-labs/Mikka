@@ -9,13 +9,13 @@ on:
       operation:
         description: Existing Cloudflare operator capability
         type: choice
-        options: [operator-identity, capture-retention, eve-world-resources, github-webhook-prepare, cloudflare-billing-evidence, container-identity-metadata, private-source-download, vercel-project-billing, vercel-workflow-inventory, marketing-cloudflare-release, observe-cloudflare-runtime, runtime-native-alert, product-task-canary, production-daemon-qualification, hosted-ui-ci-workers]
+        options: [operator-identity, capture-retention, eve-world-resources, github-webhook-prepare, cloudflare-billing-evidence, container-identity-metadata, private-source-download, vercel-project-billing, vercel-workflow-inventory, marketing-cloudflare-release, observe-cloudflare-runtime, runtime-native-alert, product-task-canary, production-daemon-qualification, hosted-ui-ci-workers, open-artifact-host]
         default: operator-identity
         required: true
       action:
         description: Action validated by the selected private operator
         type: choice
-        options: [verify, inspect, enable, disable, remove, authorize, prepare, read, deliver, release, rollback, inspect-legacy, release-legacy, rollback-legacy, cleanup-legacy, run, deploy]
+        options: [verify, inspect, enable, disable, remove, authorize, prepare, read, deliver, release, rollback, inspect-legacy, release-legacy, rollback-legacy, cleanup-legacy, run, deploy, provision]
         default: verify
         required: true
       target:
