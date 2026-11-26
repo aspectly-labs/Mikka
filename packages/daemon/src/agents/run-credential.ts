@@ -13,6 +13,9 @@ export type RunCredential =
   | { kind: "api_key"; key: string }
   | { kind: "provider"; protocol: "anthropic" | "openai"; baseUrl: string; key: string }
 
+/** Public marker recognized by adapters when decoding legacy broker credentials. */
+export const NATIVE_AUTH_PLACEHOLDER = "mikka-native-broker-placeholder"
+
 const KEY_ENV = "MIKKA_MODEL_API_KEY"
 function checked(credential: RunCredential) {
   if (credential.kind !== "provider") throw new Error("Run credential unavailable")

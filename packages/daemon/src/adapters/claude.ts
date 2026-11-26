@@ -66,13 +66,12 @@ import { nativeMcpProcess, type RunApps } from "../agents/run-apps"
 import { taskMcpSecretValues } from '@mikka/protocol'
 import type { AgentSandbox } from "../agents/sandbox"
 import { carryHistory, ownDir, wipeRunCredentials } from "../agents/harness-home"
-import { claudeCredentialEnv, credentialDomain } from "../agents/run-credential"
+import { claudeCredentialEnv, credentialDomain, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
 import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
 import { mailboxInputs } from '@mikka/protocol/mailbox'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
 import { mailboxToolResult, type RunMailbox } from '../run-mailbox'
-import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
 import { toolOutputTail, type RunChunk } from "../chunks"
 import { CLI_EXITED_EARLY, redactDiagnostic, resultDiagnostics, subscriptionFailureCategory } from "./claude-failure"
 import {
