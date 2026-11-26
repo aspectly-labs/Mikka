@@ -48,6 +48,7 @@ export const RUN_RECOVERY_DUE_SQL = `
         AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':0' AND u.state='settled')))
     -- A crashed or ambiguous renewal retains its own durable review deadline.
     UNION ALL SELECT min("renewalReviewAt"), 'machines' FROM e2b_compute_leases
+    UNION ALL SELECT min("machineComputeReviewAt"), 'machines' FROM hosted_usage
     UNION ALL SELECT min(coalesce(l."fundingOpenedAt",l."pendingAt")+interval '5 minutes'), 'machines' FROM e2b_compute_leases l
       WHERE l."sandboxId" IS NOT NULL AND coalesce(l."fundingOpenedAt",l."pendingAt") IS NOT NULL
         AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||(l."chunkIndex"+1)

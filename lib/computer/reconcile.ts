@@ -40,6 +40,7 @@ export async function reconcileCloudMachines(pool: Pick<Pool, 'query'>, probe?: 
   if (!probe && isCloudEdition()) {
     const { reconcileE2BKeepAlivePayments } = await import('../cloud-computer/e2b-compute-billing')
     await reconcileE2BKeepAlivePayments()
+    await (await import('../cloud-computer/cloudflare-compute-billing')).reconcileCloudflareCompute(pool)
     changed += await recoverInitialCloudMachines(pool, limit)
   }
   return changed

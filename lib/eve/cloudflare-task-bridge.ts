@@ -172,8 +172,9 @@ export async function captureOwnedCloudflareTaskWorkspace(pool: Pool, actor: Tas
 export async function releaseOwnedCloudflareTaskMachine(db:Pick<PoolClient,'query'>, actor:TaskMachineActor, runId:string, operationId:string) {
   const grant = await releaseGrant(db, actor, runId, operationId)
   const status = await (await post('status', { grant })).json()
-  if (status.state === 'absent') return null
+  if (status.state === 'absent' && !grant.metered) return null
   const receipt = status.state === 'stopped' ? status : await (await post('park', { grant })).json()
+  if (grant.metered && receipt.state === 'absent') return null
   if (receipt.state !== 'stopped' || !receipt.stoppedAt) throw Error('Cloudflare task stop unconfirmed')
   if (receipt.outcome !== 'settled' || typeof receipt.instanceId !== 'string' ||
       typeof receipt.checkpoint?.id !== 'string' || typeof receipt.checkpoint.sha256 !== 'string' ||
@@ -184,8 +185,9 @@ export async function releaseOwnedCloudflareTaskMachine(db:Pick<PoolClient,'quer
 }
 
 /** Re-opens the same grant with its later, paid deadline: the DO extends the lease and its alarm. */
-export function extendOwnedTaskMachine(pool:Pool,actor:TaskMachineActor,runId:string) {
+export function extendOwnedTaskMachine(pool:Pool,actor:TaskMachineActor,runId:string,operationId:string) {
   return withSponsoredTaskGrant(pool, actor, runId, async grant=>{
+    if (grant.operationId !== operationId) throw Error('Cloudflare task machine lease changed')
     const opened=await (await post('open',{grant})).json()
     if(opened.state!=='running') throw Error('Cloudflare task is no longer running')
   })

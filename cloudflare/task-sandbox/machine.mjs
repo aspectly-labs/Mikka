@@ -286,7 +286,17 @@ export class TaskMachine extends DurableObject {
   }
   park(identity) {
     const grant = machineGrant(identity)
-    return this.exclusive(async () => this.stop(await this.current(grant), 'settled', true))
+    return this.exclusive(async () => {
+      await this.verifyScope(grant)
+      const store = this.ctx.storage
+      const run = await store.get('run')
+      if (run && sameGrant(run.grant, grant)) return this.stop(run, 'settled', true)
+      if (!(grant.metered && grant.expiresAt === 0)) throw Error('Task machine run mismatch')
+      // Fence the exact abandoned operation even if its open request has
+      // not arrived. Never disturb another run in the same workspace.
+      await store.put('closed-operation:' + grant.operationId, true)
+      return { state: 'absent' }
+    })
   }
   meter(identity, index, rollover) {
     const grant = machineGrant(identity)
@@ -300,6 +310,7 @@ export class TaskMachine extends DurableObject {
         if (await store.get('closed-operation:' + grant.operationId)) {
           const active = await store.get('compute-meter:' + grant.operationId)
           if (!active || index > active.index || (active.final && index >= active.index)) return { notStarted: true }
+          if (index === active.index) return { measurementUnavailable: true }
         }
         return null
       }

@@ -44,6 +44,12 @@ test('parking a native writer prunes archives once, after persisting its stop an
   assert.deepEqual(result.checkpoint, checkpoint)
   assert.equal(result.state, 'stopped')
   assert.deepEqual(events, ['quiesce', 'backup', 'destroy', 'release', 'prune'])
+
+  const abandoned = { ...grant, operationId: randomUUID(), expiresAt: 0, metered: true }
+  assert.deepEqual(await machine.park(abandoned), { state: 'absent' })
+  assert.deepEqual(await machine.meter(abandoned, 0, false), { notStarted: true })
+  assert.equal(data.get('closed-operation:' + abandoned.operationId), true)
+  assert.equal(data.get('run').grant.operationId, grant.operationId)
 })
 
 test('the machine starts the billed instance type its grant carries, defaulting to standard-3', async () => {

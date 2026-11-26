@@ -156,8 +156,9 @@ export async function releaseGrant(query: Query, actor: TaskMachineActor, runId:
   // human event and repository. Revocation or repository removal must not
   // strand paid compute. expiresAt=0 prevents this cleanup tuple from opening
   // a machine or using any live filesystem or process capability.
-  const result = await query.query<{ taskId: string; repositoryKey: string | null }>(
-    `SELECT "issueId" AS "taskId", lifecycle->>'sponsoredRepositoryKey' AS "repositoryKey"
+  const result = await query.query<{ taskId: string; repositoryKey: string | null; metered: boolean }>(
+    `SELECT "issueId" AS "taskId", lifecycle->>'sponsoredRepositoryKey' AS "repositoryKey",
+       ${jsonbFlagIsTrueSql('lifecycle', 'portableCompute')} AS metered
      FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3
        AND "snapshotId"=$4 AND "operationId"=$5`,
     [runId, actor.userId, actor.workspaceId, hostedSnapshot, operationId],
@@ -166,7 +167,8 @@ export async function releaseGrant(query: Query, actor: TaskMachineActor, runId:
   if (!target) throw denied()
   if (target.repositoryKey) {
     return {ownerId: actor.userId, workspaceId: actor.workspaceId, taskId: target.taskId,
-      repositoryKey: target.repositoryKey, runId, operationId, expiresAt: 0}
+      repositoryKey: target.repositoryKey, runId, operationId, expiresAt: 0,
+      ...(target.metered ? { metered: true as const } : {})}
   }
   // In-flight rows created by the earlier provider still use their frozen Run.
   const previous = await query.query<BoundRun>(bindingSql + ' AND m."operationId"=$5', [
