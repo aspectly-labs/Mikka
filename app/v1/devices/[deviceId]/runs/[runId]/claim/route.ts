@@ -143,8 +143,20 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const claimAuthorizedProject = async () => {
   const projectEnvironment = run.agentDefinition?.projectExecution?.environment
   if (projectEnvironment && request.headers.get(PROJECT_ENVIRONMENT_HEADER) !== '1') return RouteResponse.json({ error: 'Device update required for the selected environment.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
+  const version = !run.retryOf && run.continuesRunId && (await pool.query(
+    'SELECT 1 FROM thread_reply_versions WHERE "resultRunId"=$1 AND "userId"=$2 AND "workspaceId"=$3',
+    [run.id,caller.userId,run.workspaceId])).rowCount
+  const [source] = !version && !run.retryOf && run.continuesRunId
+    ? await db.select({ baseBranch: agentRuns.baseBranch, sessionId: agentRuns.sessionId, deviceId: agentRuns.deviceId, agentId: agentRuns.agentId, agentDefinition: agentRuns.agentDefinition }).from(agentRuns).where(and(eq(agentRuns.id, run.continuesRunId), eq(agentRuns.userId, caller.userId), eq(agentRuns.issueId, issueId))).limit(1)
+    : []
+  // Keep the recorded thread ancestry. A different environment or base needs its
+  // own checkout and setup; an earlier worktree can still contain uncommitted work.
+  const previousEnvironment = source?.agentDefinition?.projectExecution?.environment
+  const freshEnvironmentCheckout = Boolean(source && (source.baseBranch !== run.baseBranch ||
+    previousEnvironment?.id !== projectEnvironment?.id || previousEnvironment?.revision !== projectEnvironment?.revision))
+  const earlier = freshEnvironmentCheckout ? undefined : source
   const startup = startupRepositories(projectEnvironment, repo.repoPath)
-  if (startup.length && request.headers.get(ENVIRONMENT_REPOSITORIES_HEADER) !== '1')
+  if ((startup.length || freshEnvironmentCheckout) && request.headers.get(ENVIRONMENT_REPOSITORIES_HEADER) !== '1')
     return RouteResponse.json({ error: 'Device update required for environment repositories.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
   const rejectProfile = async (error: AgentProfileAdmissionError) => {
     logCodedError(error, { runId })
@@ -496,12 +508,6 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   // A historical version keeps its conversation lineage but starts a fresh
   // native session and worktree. Resuming the latest session would leak later
   // turns back into the historical prefix or overwrite its working files.
-  const version = !run.retryOf && run.continuesRunId && (await pool.query(
-    'SELECT 1 FROM thread_reply_versions WHERE "resultRunId"=$1 AND "userId"=$2 AND "workspaceId"=$3',
-    [run.id,caller.userId,run.workspaceId])).rowCount
-  const [earlier] = !version && !run.retryOf && run.continuesRunId
-    ? await db.select({ sessionId: agentRuns.sessionId, deviceId: agentRuns.deviceId, agentId: agentRuns.agentId, agentDefinition: agentRuns.agentDefinition }).from(agentRuns).where(and(eq(agentRuns.id, run.continuesRunId), eq(agentRuns.userId, caller.userId), eq(agentRuns.issueId, issueId))).limit(1)
-    : []
   const earlierHarness = earlier?.agentDefinition?.harness ?? (earlier?.agentDefinition == null && earlier?.agentId === run.agentId ? agent.harness : undefined)
   const followUp = earlier ? run.agentDefinition?.workspaceReview
     ? await (await import('@/lib/coding-workspace/diff/feedback-brief')).reviewBatchFollowUp(pool, run)
@@ -624,6 +630,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(Object.keys(assignedEnv).length ? { taskEnv: assignedEnv } : {}),
     ...(taskSecretNames.length ? { taskSecretNames } : {}),
     ...(taskSecrets ? { taskSecrets } : {}),
+    ...(freshEnvironmentCheckout ? { freshEnvironmentCheckout: true as const } : {}),
     ...threadContinuation,
     ...retry,
     ...withFactoryQuestionDeliveryContext(factoryClaim, {

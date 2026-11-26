@@ -62,10 +62,14 @@ ON CONFLICT ("issueId") DO NOTHING
 --    A branch is kept only when every binding of that environment and repository agrees; a primary
 --    only when exactly one repository of the environment was primary. Start rows follow
 --    repositoryKeys in order. Other bound repositories become on-demand rows.
-, selected AS (
+, public_projects AS (
+  SELECT * FROM jsonb_to_recordset(coalesce(nullif(current_setting('mikka.shared_project_backfill',true),''),'[]')::jsonb)
+    AS acl(id uuid,"workspaceId" uuid)
+), selected AS (
   SELECT r."workspaceId", coalesce(r."environmentId", d."environmentId") AS "environmentId",
     r."repositoryKey", r."baseBranch", r."isPrimary"
   FROM workspace_project_repositories r
+  JOIN public_projects allowed ON (allowed.id,allowed."workspaceId")=(r."projectId",r."workspaceId")
   LEFT JOIN chosen d ON d."projectId"=r."projectId" AND d."workspaceId"=r."workspaceId"
 ), per_key AS (
   SELECT "workspaceId","environmentId","repositoryKey",
@@ -84,12 +88,16 @@ ON CONFLICT ("issueId") DO NOTHING
   SELECT e.id, 1000 + row_number() OVER (PARTITION BY e.id ORDER BY pk."repositoryKey") AS ord, pk."repositoryKey", 'demand', pk."baseBranch", pk."isPrimary"
   FROM envs e JOIN per_key pk ON pk."environmentId"=e.id AND pk."workspaceId"=e."workspaceId"
   WHERE NOT (e.keys ? pk."repositoryKey")
+), ranked AS (
+  SELECT rows.*, row_number() OVER (PARTITION BY id ORDER BY ord) AS position FROM rows
+), retained AS (
+  SELECT * FROM ranked WHERE position<=100
 ), primaries AS (
-  SELECT id, count(*) FILTER (WHERE "isPrimary") AS n FROM rows GROUP BY id
+  SELECT id, count(*) FILTER (WHERE "isPrimary") AS n FROM retained GROUP BY id
 ), built AS (
   SELECT r.id, jsonb_agg(jsonb_build_object('key', r.key, 'clone', r.clone, 'baseBranch', r."baseBranch",
     'primary', r."isPrimary" AND p.n=1) ORDER BY r.ord) AS repositories
-  FROM rows r JOIN primaries p ON p.id=r.id GROUP BY r.id HAVING count(*)<=100
+  FROM retained r JOIN primaries p ON p.id=r.id GROUP BY r.id
 )
 UPDATE workspace_environments w SET repositories=built.repositories
 FROM built WHERE w.id=built.id AND w.repositories='[]'::jsonb;
@@ -106,7 +114,7 @@ INSERT INTO workspace_task_legacy_repository_branches ("issueId","workspaceId","
 SELECT t."issueId", t."workspaceId", r."repositoryKey", r."baseBranch"
 FROM workspace_project_tasks t
 JOIN workspace_project_repositories r ON (r."workspaceId",r."projectId")=(t."workspaceId",t."projectId")
-WHERE r."baseBranch" IS NOT NULL AND r."environmentId" IS NULL
-  AND NOT EXISTS (SELECT 1 FROM workspace_project_environments b WHERE (b."workspaceId",b."projectId")=(t."workspaceId",t."projectId"))
-  AND NOT EXISTS (SELECT 1 FROM workspace_task_environments e WHERE (e."workspaceId",e."issueId")=(t."workspaceId",t."issueId"))
+LEFT JOIN workspace_task_environments e ON (e."workspaceId",e."issueId")=(t."workspaceId",t."issueId")
+WHERE r."baseBranch" IS NOT NULL AND (e."issueId" IS NULL OR e."updatedBy" IS NULL)
+  AND (r."environmentId" IS NULL OR r."environmentId"=e."environmentId")
 ON CONFLICT DO NOTHING;
