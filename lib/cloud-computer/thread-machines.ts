@@ -10,7 +10,6 @@ import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
 import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, verifyE2BAllocation, e2bSnapshotFallbackSafe } from './e2b-compute-billing'
-import { E2BKeyError } from '@/lib/secrets/flag'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
 import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution-identity'
@@ -244,11 +243,11 @@ async function takeThreadSnapshot(client: PoolClient, actor: Actor, runId: strin
 /** Record an unusable snapshot and delete it best-effort, then let the caller
  * rebuild from the official template. The row keeps `unavailable` so no later
  * wake retries a snapshot E2B already rejected. */
-async function releaseUnusableSnapshot(pool: Pool, actor: Actor, runId: string, epoch: number, operationId: string, preserveSnapshot = false) {
+async function releaseUnusableSnapshot(pool: Pool, actor: Actor, runId: string, epoch: number, operationId: string) {
   const row = (await pool.query<{ filesystemSnapshotId: string | null }>(`UPDATE thread_machines SET "snapshotState"='unavailable',"restoreStartedAt"=NULL
     WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND "operationId"=$5 AND state='restore'
     RETURNING "filesystemSnapshotId"`, [runId, actor.userId, actor.workspaceId, epoch, operationId])).rows[0]
-  if (!row?.filesystemSnapshotId || preserveSnapshot) return
+  if (!row?.filesystemSnapshotId) return
   try {
     await threadLifecycleProvider.deleteSnapshot(row.filesystemSnapshotId, actor.userId)
     await pool.query(`UPDATE thread_machines SET "filesystemSnapshotId"=NULL,"snapshotOperationId"=NULL,"snapshotTakenAt"=NULL
@@ -298,11 +297,11 @@ export async function restoreThreadMachineFromSnapshot(pool: Pool, actor: Actor,
     const sandbox = await threadLifecycleProvider.createFromSnapshot(transition.filesystemSnapshotId, transition.operationId, metadata, actor.userId)
     return { sandbox, machine: transition }
   } catch (error) {
-    const missingHardware = error instanceof E2BKeyError && error.code === 'e2b_template_unavailable'
-      && error.detail === 'E2B snapshot has no verified compute record'
-    if (!missingHardware && !snapshotUnusable(error)) throw error
+    // Missing geometry is an unresolved historical snapshot, not a provider
+    // refusal. Preserve its filesystem and stop before replacing its checkout.
+    if (!snapshotUnusable(error)) throw error
     if (!await e2bSnapshotFallbackSafe(pool, actor.userId, transition.operationId)) throw error
-    await releaseUnusableSnapshot(pool, actor, runId, transition.epoch, transition.operationId, missingHardware)
+    await releaseUnusableSnapshot(pool, actor, runId, transition.epoch, transition.operationId)
     const replaced = await replaceGoneSandbox(pool, runId, template, leaseId)
     // error-cause: the unusable snapshot is already recorded; this new error reports that the lease moved away
     if (!replaced) throw new ComputerError(409, 'Thread provisioning cancelled')

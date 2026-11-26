@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS e2b_compute_leases (
   "creationAttempts" integer NOT NULL DEFAULT 0,
   "chunkIndex" integer NOT NULL DEFAULT -1,
   "pendingAt" timestamptz,
+  "fundingOpenedAt" timestamptz,
   "pendingRunId" uuid,
   "usedChunkIndex" integer NOT NULL DEFAULT -1,
   "previousPaidUntil" timestamptz,

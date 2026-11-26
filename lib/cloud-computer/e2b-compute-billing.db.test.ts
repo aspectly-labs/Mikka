@@ -4,6 +4,8 @@ import { createServer } from 'node:http'
 import { test } from 'node:test'
 import { Sandbox } from 'e2b'
 import { Pool, type PoolClient } from 'pg'
+import { startExternalServices } from '../../tests/fakes/external-services.mjs'
+import { LOCAL_E2B_KEY } from '../../tests/fakes/e2b.mjs'
 import { dbUrl, seedAgent, seedRun, seedUser, seedWorkspace } from '../../tests/support/workspace-admin-db'
 
 test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUrl }, async t => {
@@ -64,7 +66,26 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.deepEqual(await receipts(), [])
   await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=NULL WHERE id=$1', [runId])
 
-  const first = await workspaceDb.transaction(() => create())
+  const { hostedUsage } = await import('../abuse/runtime')
+  const reserve = hostedUsage.reserve.bind(hostedUsage)
+  const debited = Promise.withResolvers<void>(), continueFunding = Promise.withResolvers<void>()
+  const heldReceipt = t.mock.method(hostedUsage, 'reserve', async (...args: Parameters<typeof reserve>) => {
+    const result = await reserve(...args)
+    debited.resolve()
+    await continueFunding.promise
+    return result
+  })
+  const funding = workspaceDb.transaction(() => create())
+  let first: number
+  try {
+    await Promise.race([debited.promise, funding.then(() => assert.fail('The reservation did not reach the commit barrier'))])
+    // The competing refusal cleared its mutable payer claim after the other
+    // transaction settled. The durable timestamp independently owns recovery.
+    await fixture.query(`UPDATE e2b_compute_leases SET "pendingAt"=NULL,"pendingRunId"=NULL WHERE "operationId"=$1`, [operationId])
+  } finally {
+    continueFunding.resolve()
+    try { first = await funding } finally { heldReceipt.mock.restore() }
+  }
   const initial = [first, ...await Promise.all(Array.from({ length: 4 }, create))]
   await fixture.query(`UPDATE e2b_compute_leases SET "pricingVersion"='previous-list-version' WHERE "operationId"=$1`, [operationId])
   assert.equal(await create(), 300_000)
@@ -308,6 +329,72 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw refused }), error => error === refused)
   assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), false)
 
+  // Use the real ComputerStore and pinned E2B SDK on an APP pool with one
+  // connection. Policy uses raw GET plus the existing envd bearer token.
+  const policyFixture = await startExternalServices({ e2b: { commands: () => ({ exitCode: 0, stdout: '' }) } })
+  const savedProviderEnv = { E2B_API_KEY: process.env.E2B_API_KEY, E2B_API_URL: process.env.E2B_API_URL,
+    E2B_SANDBOX_URL: process.env.E2B_SANDBOX_URL, E2B_HTTP_VERSION: process.env.E2B_HTTP_VERSION }
+  Object.assign(process.env, { E2B_API_KEY: LOCAL_E2B_KEY, E2B_API_URL: policyFixture.e2bOptions.apiUrl,
+    E2B_SANDBOX_URL: policyFixture.e2bOptions.sandboxUrl, E2B_HTTP_VERSION: '1.1' })
+  try {
+    const policyOwner = await seedUser(fixture, 'e2b-policy')
+    const { id: policyWorkspace } = await seedWorkspace(fixture, policyOwner, [{ userId: policyOwner, role: 'admin' }])
+    const booted = await Sandbox.create('desktop', policyFixture.e2bOptions)
+    const policyBot = randomUUID()
+    await fixture.query(`INSERT INTO bots (id,"workspaceId","ownerId",name) VALUES ($1,$2,$3,'Policy fixture')`,
+      [policyBot, policyWorkspace, policyOwner])
+    await fixture.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","sandboxId","operationId",state,"runtimeReady")
+      VALUES ($1,$2,$3,$4,'running',true)`, [policyWorkspace, policyOwner, booted.sandboxId, randomUUID()])
+    await fixture.query(`INSERT INTO bot_desktops ("botId","workspaceId","ownerId",display) VALUES ($1,$2,$3,1)`,
+      [policyBot, policyWorkspace, policyOwner])
+    await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('sandbox',$1,$2,'team:fixture')`,
+      [booted.sandboxId, policyOwner])
+    const { ComputerStore } = await import('../computer/store')
+    const store = new ComputerStore(pool)
+    const providerStart = policyFixture.e2b.requests.length
+    const observed = policyFixture.e2b.sandboxes.get(booted.sandboxId)!
+    const deadline = observed.expires
+    assert.equal((await store.setPolicy(policyWorkspace, 'deny')).permission, 'deny')
+    assert.equal(JSON.parse(observed.files.get('/run/mikka-viewer/1.next')!.toString()).computerAllowed, false)
+    assert.equal(observed.expires, deadline)
+    assert.ok(policyFixture.e2b.requests.slice(providerStart).some(request => request.path.startsWith('/e2b/envd/')))
+    observed.state = 'paused'
+    const pausedAt = policyFixture.e2b.requests.length
+    assert.equal((await store.setPolicy(policyWorkspace, 'allow')).permission, 'allow')
+    assert.equal(observed.state, 'paused')
+    assert.ok(!policyFixture.e2b.requests.slice(pausedAt).some(request => request.path.startsWith('/e2b/envd/')))
+    assert.ok(!policyFixture.e2b.requests.slice(providerStart).some(request => request.method === 'POST' && request.path.startsWith('/e2b/api/')))
+    assert.equal((await fixture.query('SELECT count(*)::int AS n FROM hosted_usage WHERE "usageWorkspaceId"=$1', [policyWorkspace])).rows[0].n, 0)
+  } finally {
+    for (const [key, value] of Object.entries(savedProviderEnv)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    await policyFixture.close()
+  }
+
+  const legacyRun = await seedRun(fixture, { userId: ownerId, agentId, workspaceId, status: 'queued' })
+  const legacyOperation = randomUUID()
+  await fixture.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","snapshotId","operationId",state)
+    VALUES ($1,$2,$3,$4,$5,'starting')`, [legacyRun, workspaceId, ownerId, templates.codex.templateId, legacyOperation])
+  await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture')`,
+    [legacyOperation, ownerId])
+  const legacyId = `historical-${legacyOperation}`
+  const legacyInfo = { sandboxId: legacyId, state: 'running', startedAt: new Date(Date.now()-5_000), endAt: new Date(Date.now()+60_000),
+    cpuCount: 2, memoryMB: 8192, metadata: { application: 'mikka-thread', workspaceId, runId: legacyRun, operationId: legacyOperation } }
+  const listLegacy = t.mock.method(Sandbox, 'list', () => ({ nextItems: async () => [legacyInfo], hasNext: false }) as never)
+  const pauseLegacy = t.mock.method(Sandbox, 'pause', async () => true)
+  try {
+    const beforeLegacy = await receipts()
+    assert.deepEqual(await threadLifecycleProvider.findCreated(legacyRun, workspaceId, legacyOperation, ownerId),
+      { sandboxId: legacyId, state: 'paused', startedAt: legacyInfo.startedAt.getTime(), endAt: null })
+    assert.equal(pauseLegacy.mock.callCount(), 1)
+    assert.deepEqual(await receipts(), beforeLegacy)
+  } finally {
+    listLegacy.mock.restore()
+    pauseLegacy.mock.restore()
+  }
+
   const requests: { key: string | undefined; body: string; path: string | undefined }[] = []
   const discovered: URL[] = []
   const originalApiUrl = process.env.E2B_API_URL
@@ -318,6 +405,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   let responseStatus = 422
   const provider = createServer(async (req, res) => {
     if (req.method === 'GET') {
+      if (req.url?.startsWith('/sandboxes/')) { res.writeHead(404); res.end(); return }
       discovered.push(new URL(req.url ?? '/', 'http://127.0.0.1'))
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end('[]')

@@ -50,7 +50,7 @@ async function recoverInitialCloudMachines(pool: Pick<Pool, 'query'>, limit: num
   const { rows } = await pool.query<{ workspaceId: string; ownerId: string; operationId: string }>(`WITH due AS (
     SELECT m."workspaceId",m."ownerId",m."operationId" FROM cloud_machines m
     JOIN e2b_compute_leases l ON l."operationId"=m."operationId" AND l."ownerId"=m."ownerId"
-    WHERE m."sandboxId" IS NULL AND m.state IN ('error','waking') AND (l."paidUntil"<=now() OR (l."chunkIndex"=-1 AND l."pendingAt"<=now()-interval '5 minutes'
+    WHERE m."sandboxId" IS NULL AND m.state IN ('error','waking') AND (l."paidUntil"<=now() OR (l."chunkIndex"=-1 AND coalesce(l."fundingOpenedAt",l."pendingAt")<=now()-interval '5 minutes'
       AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':0' AND u.state='settled')))
       AND m."lastActiveAt"+interval '30 seconds'<=now()
       AND (m."provisionLeaseUntil" IS NULL OR m."provisionLeaseUntil"<=now())

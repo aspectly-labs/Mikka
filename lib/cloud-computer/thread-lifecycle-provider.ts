@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg'
 import 'server-only'
 import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation,
-  prepareE2BProviderTime, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
+  prepareE2BProviderTime, isLegacyE2BThreadAllocation, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
 import { bindE2BResource, e2bCreateAccount, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { environmentSnapshotScope, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -52,12 +52,23 @@ export const threadLifecycleProvider = {
     if (found.length > 1 || pages.hasNext || found.some(item => Object.entries(metadata).some(([key, value]) => item.metadata[key] !== value)))
       throw new Error('Thread allocation identity unavailable')
     const item = found[0]
-    if (item) {
-      await verifyE2BAllocation(ownerId, operationId, item.sandboxId, options(account.apiKey), item)
-      await bindE2BResource(ownerId, 'sandbox', item.sandboxId, account.scope)
+    if (!item) return null
+    const prepared = options(account.apiKey)
+    let state = item.state
+    if (await isLegacyE2BThreadAllocation(ownerId, workspaceId, runId, operationId, account.scope, item)) {
+      if (state === 'running') {
+        // An installation-owned historical sandbox must stop using compute
+        // until the next duly funded wake. Never debit this old interval.
+        const paused = await Sandbox.pause(item.sandboxId, { ...prepared, retries: 0 })
+        if (!paused) throw new E2BKeyError('e2b_unavailable', 'Historical thread pause was not confirmed')
+        state = 'paused'
+      }
+    } else {
+      await verifyE2BAllocation(ownerId, operationId, item.sandboxId, prepared, item)
     }
-    return item ? { sandboxId: item.sandboxId, state: item.state, startedAt: item.startedAt.getTime(),
-      endAt: item.state === 'paused' ? null : item.endAt.getTime() } : null
+    await bindE2BResource(ownerId, 'sandbox', item.sandboxId, account.scope)
+    return { sandboxId: item.sandboxId, state, startedAt: item.startedAt.getTime(),
+      endAt: state === 'paused' ? null : item.endAt.getTime() }
   },
   async info(sandboxId: string, ownerId: string): Promise<ThreadProviderInfo> {
     try {

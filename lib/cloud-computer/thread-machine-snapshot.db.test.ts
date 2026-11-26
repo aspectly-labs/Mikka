@@ -52,7 +52,7 @@ test("thread filesystem snapshots park once and restore only the same task machi
     process.env.MIKKA_CLOUD_WORKER_SHA = 'a'.repeat(40);
     const db = await import("../db");
     appPool = db.pool;
-    const { ensureThreadMachine, parkThreadMachine, threadMachineAction, threadMachineProvider } = await import("./thread-machines");
+    const { ensureThreadMachine, parkThreadMachine, restoreThreadMachineFromSnapshot, threadMachineAction, threadMachineProvider } = await import("./thread-machines");
     const { threadLifecycleProvider } = await import("./thread-lifecycle-provider");
 
     const owner = "owner", workspaceId = randomUUID(), botId = randomUUID(), botDevice = randomUUID(), agentId = randomUUID(), repoId = randomUUID();
@@ -119,6 +119,31 @@ test("thread filesystem snapshots park once and restore only the same task machi
       };
       return { calls, provider };
     };
+
+    await t.test('legacy snapshots with missing geometry retain their checkout and never fall back to a fresh template', async () => {
+      const prior = { MIKKA_EDITION: process.env.MIKKA_EDITION, E2B_API_KEY: process.env.E2B_API_KEY, E2B_TEAM_ID: process.env.E2B_TEAM_ID }
+      Object.assign(process.env, { MIKKA_EDITION: 'cloud', E2B_API_KEY: 'synthetic-only', E2B_TEAM_ID: 'fixture' })
+      try {
+        const snapshotId = 'fixture-legacy-snapshot'
+        const row = await seeded(await task(), { sandboxId: null, snapshotState: 'ready', snapshotId, status: 'queued' })
+        const leaseId = randomUUID()
+        await pool.query('UPDATE thread_machines SET "workerLeaseId"=$2 WHERE "runId"=$1', [row.runId, leaseId])
+        await pool.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('snapshot',$1,$2,'team:fixture')`, [snapshotId, owner])
+        const { provider, calls } = fakeProvider()
+        await assert.rejects(restoreThreadMachineFromSnapshot(pool, actor, row.runId, leaseId, { sandboxId: null }, 'codex', provider),
+          { code: 'e2b_template_unavailable', detail: 'E2B snapshot has no verified compute record' })
+        const retained = await machine(row.runId)
+        assert.equal(retained.filesystemSnapshotId, snapshotId)
+        assert.equal(retained.snapshotState, 'ready')
+        assert.equal(retained.sandboxId, null)
+        assert.deepEqual(calls, [])
+      } finally {
+        for (const [name, value] of Object.entries(prior)) {
+          if (value === undefined) delete process.env[name]
+          else process.env[name] = value
+        }
+      }
+    });
 
     await t.test('park takes one snapshot, and a lost create ACK is reconciled instead of repeated', async () => {
       const issueId = await task(), seededRun = await seeded(issueId, { state: 'running', snapshotState: 'none' });

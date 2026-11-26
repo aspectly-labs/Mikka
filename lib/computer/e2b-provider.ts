@@ -6,7 +6,8 @@ import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/sec
 import { createHash, createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Sandbox, SandboxNotFoundError } from 'e2b'
+import { ApiClient, ConnectionConfig, Sandbox, SandboxNotFoundError } from 'e2b'
+import type { PoolClient } from 'pg'
 import { computerTemplate, sandboxKeyOwner, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { bootstrapOfficialInstance, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from './official-runtime'
@@ -26,10 +27,8 @@ const ownerOf = async (workspaceId: string, id: string) => {
 }
 
 export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget, policyOnly = false) {
-  // E2B connect can resume after a concurrent pause. Apply the saved policy
-  // when the normal runtime path next opens an authorized computer.
-  if (policyOnly) throw new PolicySandboxUnavailable()
   const owner = await ownerOf(workspaceId, id)
+  if (policyOnly) return connectComputerForPolicy(owner, id)
   const account = await e2bResourceAccount(owner, 'sandbox', id)
   const base = options(account.apiKey)
   const request = runtimeRequestOptions(budget)
@@ -43,8 +42,29 @@ export async function connectComputer(workspaceId: string, id: string, signal?: 
       ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) })))
 }
 
+/** Open only the existing envd data plane. The authenticated GET exposes the
+ * envd token that Sandbox.getInfo projects away. The Sandbox constructor does
+ * no provider I/O, so a concurrent pause cannot be undone by this path. */
+export async function connectComputerForPolicy(owner: string, id: string, client?: PoolClient): Promise<Sandbox> {
+  const read = () => e2bResourceAccount(owner, 'sandbox', id)
+  const account = client ? await (await import('@/lib/db')).withDatabaseClient(client, read) : await read()
+  const prepared = { ...options(account.apiKey), requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 }
+  const config = new ConnectionConfig(prepared)
+  const { data, response } = await new ApiClient(config).api.GET('/sandboxes/{sandboxID}', {
+    params: { path: { sandboxID: id } }, signal: config.getSignal(E2B_TIMEOUT_REQUEST_BUDGET_MS),
+  })
+  if (response.status === 404 || data?.state === 'paused' || data?.lifecycle?.autoResume === true)
+    throw new PolicySandboxUnavailable()
+  if (!data || data.sandboxID !== id || data.state !== 'running' || !data.envdVersion || !data.envdAccessToken)
+    throw new E2BKeyError('e2b_unavailable', 'Running E2B policy data plane unavailable')
+  const end = Date.parse(data.endAt)
+  if (!Number.isFinite(end) || end <= Date.now()) throw new PolicySandboxUnavailable()
+  return new Sandbox({ ...prepared, sandboxId: id, sandboxDomain: data.domain ?? undefined,
+    envdVersion: data.envdVersion, envdAccessToken: data.envdAccessToken })
+}
+
 export class PolicySandboxUnavailable extends Error {
-  constructor() { super('No running prepaid sandbox to synchronize') }
+  constructor() { super('No safely addressable running sandbox to synchronize') }
 }
 
 /** The machine's sandbox no longer exists at E2B (killed, or expired while paused). */

@@ -23,7 +23,8 @@ type KeepAlivePayment = { operationId?: string; index?: number; activated?: numb
 async function paidTimeout(lease: Lease, target: Target, requestedMs: number, renew = true, creation = false, beforeRenew?: () => Promise<unknown>, payment?: KeepAlivePayment): Promise<number> {
   const claim = renew ? (await pool.query<{ chunkIndex: number; pendingRunId: string | null }>(
     `UPDATE e2b_compute_leases SET "pendingAt"=coalesce("pendingAt",greatest(now(),"paidUntil")),
-        "pendingRunId"=CASE WHEN "pendingAt" IS NULL THEN $2 ELSE "pendingRunId" END
+        "pendingRunId"=CASE WHEN "pendingAt" IS NULL THEN $2 ELSE "pendingRunId" END,
+        "fundingOpenedAt"=coalesce("fundingOpenedAt",clock_timestamp())
       WHERE "operationId"=$1 AND ("paidUntil" IS NULL OR "paidUntil"<=now()+$3::int*interval '1 millisecond')
         AND (NOT $4::boolean OR "chunkIndex"=-1) AND "renewalReviewAt" IS NULL
         AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE id=$2 AND "stopRequestedAt" IS NOT NULL)
@@ -43,13 +44,15 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
         "paidUntil"=greatest(now(),"paidUntil")+$3::int*interval '1 millisecond',
         "renewalReviewAt"=CASE WHEN "sandboxId" IS NOT NULL THEN clock_timestamp()+interval '30 seconds' ELSE NULL END,
         "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL,
-        "pendingAt"=NULL,"pendingRunId"=NULL WHERE "operationId"=$1 AND "chunkIndex"=$2-1
-        AND "pendingAt" IS NOT NULL`, [lease.operationId, index, MACHINE_CHUNK_MS])
+        "pendingAt"=NULL,"pendingRunId"=NULL,"fundingOpenedAt"=NULL
+        WHERE "operationId"=$1 AND "chunkIndex"=$2-1`, [lease.operationId, index, MACHINE_CHUNK_MS])
       if (activation.rowCount && !creation) {
         if (payment) payment.activated = index
         armDueTimerSoon('run-recovery')
       }
     }
+    // A concurrent refusal may clear admission for the next attempt but must
+    // leave evidence that this exact interval could already have settled.
     else await pool.query(`UPDATE e2b_compute_leases SET "pendingAt"=NULL,"pendingRunId"=NULL
       WHERE "operationId"=$1 AND "chunkIndex"=$2-1 AND "pendingRunId" IS NOT DISTINCT FROM $3::uuid`,
     [lease.operationId, index, claim.pendingRunId])
@@ -140,12 +143,12 @@ export async function reconcileE2BKeepAlivePayments() {
   // A settled but unactivated interval never authorized an external request.
   await pool.query(`WITH due AS (
     SELECT l."operationId" FROM e2b_compute_leases l WHERE l."sandboxId" IS NOT NULL
-      AND l."pendingAt"<=clock_timestamp()-interval '5 minutes'
+      AND coalesce(l."fundingOpenedAt",l."pendingAt")<=clock_timestamp()-interval '5 minutes'
       AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||(l."chunkIndex"+1)
         AND u."executionOwnerId"=l."ownerId" AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')
-    ORDER BY l."pendingAt" LIMIT 20 FOR UPDATE SKIP LOCKED
+    ORDER BY coalesce(l."fundingOpenedAt",l."pendingAt") LIMIT 20 FOR UPDATE SKIP LOCKED
   ), cancelled AS (
-    UPDATE e2b_compute_leases l SET "chunkIndex"="chunkIndex"+1,"pendingAt"=NULL,"pendingRunId"=NULL
+    UPDATE e2b_compute_leases l SET "chunkIndex"="chunkIndex"+1,"pendingAt"=NULL,"pendingRunId"=NULL,"fundingOpenedAt"=NULL
     FROM due WHERE l."operationId"=due."operationId" RETURNING l."operationId",l."ownerId",l."workspaceId",l."chunkIndex"
   ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
     FROM cancelled l WHERE u.id='machine:e2b:'||l."operationId"||':'||l."chunkIndex"
@@ -242,7 +245,8 @@ export async function e2bInitialAllocationNeedsRecovery(ownerId: string, operati
   if (!isCloudEdition()) return false
   const result = await pool.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2
     AND ("sandboxId" IS NOT NULL OR ("chunkIndex"=0 AND "paidUntil"<=now())
-      OR ("chunkIndex"=-1 AND "pendingAt"<=now()-interval '5 minutes'))`, [operationId, ownerId])
+      OR ("chunkIndex"=-1 AND coalesce("fundingOpenedAt","pendingAt")<=now()-interval '5 minutes'
+        AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||"operationId"||':0' AND u.state='settled')))`, [operationId, ownerId])
   return result.rowCount === 1
 }
 
@@ -252,9 +256,9 @@ export async function releaseInterruptedE2BCreation(ownerId: string, operationId
   if (!isCloudEdition()) return false
   const id = `machine:e2b:${operationId}:0`
   const result = await pool.query(`WITH interrupted AS (
-      UPDATE e2b_compute_leases l SET "chunkIndex"=0,"pendingAt"=NULL,"pendingRunId"=NULL
+      UPDATE e2b_compute_leases l SET "chunkIndex"=0,"pendingAt"=NULL,"pendingRunId"=NULL,"fundingOpenedAt"=NULL
       WHERE l."operationId"=$1 AND l."ownerId"=$2 AND l."sandboxId" IS NULL AND l."chunkIndex"=-1
-      AND l."paidUntil" IS NULL AND l."creationAttempts"=0 AND l."pendingAt"<=now()-interval '5 minutes'
+      AND l."paidUntil" IS NULL AND l."creationAttempts"=0 AND coalesce(l."fundingOpenedAt",l."pendingAt")<=now()-interval '5 minutes'
       AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id=$3 AND u."executionOwnerId"=$2
         AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')
       RETURNING l."workspaceId"
@@ -266,15 +270,18 @@ export async function releaseInterruptedE2BCreation(ownerId: string, operationId
 
 export async function e2bCreationRecoveryAt(ownerId: string, operationId: string): Promise<number | undefined> {
   if (!isCloudEdition()) return
-  const result = await pool.query<{ recoveryAt: Date | null }>(`SELECT coalesce("paidUntil","pendingAt"+interval '5 minutes') AS "recoveryAt"
-    FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2 AND "sandboxId" IS NULL`, [operationId, ownerId])
+  const result = await pool.query<{ recoveryAt: Date | null }>(`SELECT coalesce(l."paidUntil",CASE WHEN EXISTS (SELECT 1 FROM hosted_usage u
+      WHERE u.id='machine:e2b:'||l."operationId"||':0' AND u.state='settled')
+      THEN coalesce(l."fundingOpenedAt",l."pendingAt")+interval '5 minutes' END) AS "recoveryAt"
+    FROM e2b_compute_leases l WHERE "operationId"=$1 AND "ownerId"=$2 AND "sandboxId" IS NULL`, [operationId, ownerId])
   return result.rows[0]?.recoveryAt?.getTime()
 }
 
 export async function e2bSnapshotFallbackSafe(query: Pick<Pool, 'query'>, ownerId: string, operationId: string) {
   if (!isCloudEdition()) return true
   const result = await query.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2
-    AND ("paidUntil" IS NOT NULL OR "pendingAt" IS NOT NULL OR "sandboxId" IS NOT NULL)`, [operationId, ownerId])
+    AND ("paidUntil" IS NOT NULL OR "sandboxId" IS NOT NULL OR "pendingAt" IS NOT NULL
+      OR EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||"operationId"||':0' AND u.state='settled'))`, [operationId, ownerId])
   return !result.rowCount
 }
 
@@ -334,6 +341,18 @@ export async function verifyE2BAllocation(ownerId: string, operationId: string, 
   }
   const startedAt = specs.startedAt && Number.isFinite(specs.startedAt.getTime()) ? specs.startedAt : undefined
   await recordE2BComputeSandbox(ownerId, operationId, sandboxId, startedAt)
+}
+
+/** Historical create intents have no charge to verify. Their exact provider
+ * listing and a recognised allocation permit pausing under the old scope. */
+export async function isLegacyE2BThreadAllocation(ownerId: string, workspaceId: string, runId: string, operationId: string,
+  scope: string, hardware: Pick<SandboxInfo, 'cpuCount' | 'memoryMB'>) {
+  if (!isCloudEdition() || scope === 'personal' || !e2bPricingForHardware(hardware.cpuCount, hardware.memoryMB)) return false
+  const result = await pool.query(`SELECT 1 FROM thread_machines m JOIN e2b_resource_accounts a
+    ON a.kind='operation' AND a.id=m."operationId"::text AND a."ownerId"=m."ownerId" AND a.scope=$5
+    WHERE m."runId"=$1 AND m."workspaceId"=$2 AND m."ownerId"=$3 AND m."operationId"=$4 AND m."sandboxId" IS NULL
+      AND NOT EXISTS (SELECT 1 FROM e2b_compute_leases l WHERE l."operationId"=m."operationId")`, [runId, workspaceId, ownerId, operationId, scope])
+  return result.rowCount === 1
 }
 
 /** Existing hosted sandboxes predate the compute ledger. Only a bound
