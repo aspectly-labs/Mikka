@@ -12,9 +12,11 @@ import { sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import { z } from 'zod'
 import { abuseLimits } from '@/lib/abuse/policy'
+import { looksLikeSecretValue } from '@/lib/audit/events'
 import { runtimeEnv, type EnvMap } from '@/lib/env'
 import {
   billingActiveOfferPayloadSchema,
+  ensureRuntimeConfigLoaded,
   getRuntimeConfig,
   type BillingActiveOfferPayload,
 } from '@/lib/runtime-config'
@@ -52,17 +54,61 @@ export {
 }
 
 export const BILLING_CATALOG_PRICE_CACHE_TTL_MS = 60_000
+/**
+ * Minimum remaining offer validity required to admit an offer into catalog or
+ * Checkout. Kept strictly above `plan-checkout.ts`'s 31m post-transaction
+ * Stripe POST cutoff (4m headroom for floor truncation + `requireNoSubscription`).
+ */
+export const MIN_OFFER_CHECKOUT_WINDOW_MS = 35 * 60_000
+
+const STRIPE_PRODUCT_ID_RE = /^prod_[A-Za-z0-9_]+$/
+
+/** Extracts the Stripe product ID from a raw Stripe Price object (string or expanded object). */
+export function extractStripeProductId(rawPrice: unknown): string | null {
+  if (!rawPrice || typeof rawPrice !== 'object') return null
+  const product = (rawPrice as { product?: unknown }).product
+  if (typeof product === 'string' && STRIPE_PRODUCT_ID_RE.test(product)) return product
+  if (product && typeof product === 'object') {
+    const id = (product as { id?: unknown }).id
+    if (typeof id === 'string' && STRIPE_PRODUCT_ID_RE.test(id)) return id
+  }
+  return null
+}
+
+const stripeCouponSchema = z.object({
+  id: z.string().min(1),
+  valid: z.boolean(),
+  duration: z.enum(['forever', 'once', 'repeating']),
+  amount_off: z.number().int().positive().nullish(),
+  percent_off: z.number().gt(0).lte(100).nullish(),
+  currency: z.string().min(1).nullish(),
+  redeem_by: z.number().int().positive().nullish(),
+  max_redemptions: z.number().int().positive().nullish(),
+  times_redeemed: z.number().int().nonnegative().nullish(),
+  applies_to: z.object({ products: z.array(z.string().min(1)).optional() }).loose().nullish(),
+  deleted: z.boolean().optional(),
+}).loose()
+
+type StripeCoupon = z.infer<typeof stripeCouponSchema>
 
 interface CachedPriceEntry {
   plan: BillingPlanCatalogEntry
+  productId: string | null
+  fetchedAtMs: number
+}
+
+interface CachedCouponEntry {
+  coupon: StripeCoupon
   fetchedAtMs: number
 }
 
 const priceCache = new Map<string, CachedPriceEntry>()
+const couponCache = new Map<string, CachedCouponEntry>()
 
-/** Clears the in-memory Stripe price catalog cache (primarily for deterministic tests). */
+/** Clears the in-memory Stripe price and coupon catalog caches (primarily for deterministic tests). */
 export function clearBillingCatalogCache(): void {
   priceCache.clear()
+  couponCache.clear()
 }
 
 const DEFAULT_PLAN_DISPLAY_NAMES: Readonly<Record<'pro' | 'enterprise', string>> = {
@@ -103,27 +149,24 @@ async function fetchCachedResourcePlan(
   nowMs: number,
   fetchImpl: typeof fetch,
   bypassCache: boolean,
-): Promise<BillingPlanCatalogEntry | null> {
+): Promise<{ plan: BillingPlanCatalogEntry; productId: string | null } | null> {
   if (!STRIPE_PRICE_ID_RE.test(priceId)) {
     console.error('[billing] catalog price lookup rejected invalid price id')
     return null
   }
   if (!bypassCache) {
     const cached = priceCache.get(priceId)
-    if (
-      cached
-      && nowMs >= cached.fetchedAtMs
-      && nowMs - cached.fetchedAtMs < BILLING_CATALOG_PRICE_CACHE_TTL_MS
-    ) {
-      return cached.plan
+    if (cached && Math.abs(nowMs - cached.fetchedAtMs) < BILLING_CATALOG_PRICE_CACHE_TTL_MS) {
+      return { plan: cached.plan, productId: cached.productId }
     }
   }
 
   try {
     const raw = await stripeGet<unknown>(config, `prices/${encodeURIComponent(priceId)}`, fetchImpl)
     const entry = toPlanCatalogEntry(raw, priceId)
-    priceCache.set(priceId, { plan: entry, fetchedAtMs: nowMs })
-    return entry
+    const productId = extractStripeProductId(raw)
+    priceCache.set(priceId, { plan: entry, productId, fetchedAtMs: nowMs })
+    return { plan: entry, productId }
   } catch (error) {
     console.error('[billing] catalog price lookup failed', {
       name: error instanceof Error ? error.name : 'UnknownError',
@@ -299,35 +342,136 @@ export async function checkWorkspaceOfferEligibility(
   }
 }
 
-function offerMatchesActivePlan(
+const STRIPE_COUPON_ID_RE = /^[A-Za-z0-9_-]{1,255}$/
+
+async function fetchCachedStripeCoupon(
+  config: StripeConfig,
+  couponId: string,
+  nowMs: number,
+  fetchImpl: typeof fetch,
+  bypassCache: boolean,
+): Promise<StripeCoupon | null> {
+  if (!STRIPE_COUPON_ID_RE.test(couponId)) {
+    console.error('[billing] catalog coupon lookup rejected invalid coupon id')
+    return null
+  }
+  if (!bypassCache) {
+    const cached = couponCache.get(couponId)
+    if (cached && Math.abs(nowMs - cached.fetchedAtMs) < BILLING_CATALOG_PRICE_CACHE_TTL_MS) {
+      return cached.coupon
+    }
+  }
+
+  try {
+    const raw = await stripeGet<unknown>(
+      config,
+      `coupons/${encodeURIComponent(couponId)}?expand[]=applies_to`,
+      fetchImpl,
+    )
+    const parsed = stripeCouponSchema.safeParse(raw)
+    if (!parsed.success || parsed.data.deleted || !parsed.data.valid) {
+      couponCache.delete(couponId)
+      return null
+    }
+    couponCache.set(couponId, { coupon: parsed.data, fetchedAtMs: nowMs })
+    return parsed.data
+  } catch (error) {
+    couponCache.delete(couponId)
+    console.error('[billing] catalog coupon lookup failed', {
+      name: error instanceof Error ? error.name : 'UnknownError',
+      status: error instanceof StripeRequestError ? error.status : null,
+    })
+    return null
+  }
+}
+
+function couponMatchesOffer(
+  coupon: StripeCoupon,
+  offer: BillingActiveOfferPayload,
+  plan: BillingPlanCatalogEntry,
+  planProductId: string | null,
+  nowMs: number,
+): { ok: true; effectiveEndMs: number } | { ok: false } {
+  if (coupon.deleted || !coupon.valid) return { ok: false }
+  if (coupon.max_redemptions != null && (coupon.times_redeemed ?? 0) >= coupon.max_redemptions) {
+    return { ok: false }
+  }
+  if (coupon.id !== offer.stripeCouponId) return { ok: false }
+  // First-invoice intro offers must never attach repeating/forever coupons.
+  if (coupon.duration !== 'once') return { ok: false }
+
+  const restrictedProducts = coupon.applies_to?.products
+  if (restrictedProducts && restrictedProducts.length > 0) {
+    if (!planProductId || !restrictedProducts.includes(planProductId)) return { ok: false }
+  }
+
+  const offerEndMs = Date.parse(offer.endAt)
+  const effectiveEndMs = coupon.redeem_by != null
+    ? Math.min(offerEndMs, coupon.redeem_by * 1000)
+    : offerEndMs
+  if (!Number.isFinite(effectiveEndMs) || effectiveEndMs - nowMs < MIN_OFFER_CHECKOUT_WINDOW_MS) {
+    return { ok: false }
+  }
+
+  const hasAmountOff = coupon.amount_off != null
+  const hasPercentOff = coupon.percent_off != null
+  if (hasAmountOff === hasPercentOff) return { ok: false }
+
+  let discountedAmountCents: number
+  if (hasAmountOff) {
+    if (!coupon.currency || coupon.currency.toLowerCase() !== plan.currency.toLowerCase()) {
+      return { ok: false }
+    }
+    discountedAmountCents = Math.max(0, plan.amountCents - coupon.amount_off!)
+  } else {
+    // Stripe stores percent_off to 2 decimal places (basis points); use exact integer
+    // half-up rounding to avoid IEEE-754 float drift (e.g. 100 * (14.5 / 100) < 14.5).
+    const scaled = coupon.percent_off! * 100
+    const percentBps = Math.round(scaled)
+    if (!Number.isSafeInteger(percentBps) || Math.abs(scaled - percentBps) > 1e-6) {
+      return { ok: false }
+    }
+    const discountCents = Math.floor((plan.amountCents * percentBps + 5_000) / 10_000)
+    discountedAmountCents = Math.max(0, plan.amountCents - discountCents)
+  }
+
+  if (discountedAmountCents !== offer.introAmountCents) return { ok: false }
+  return { ok: true, effectiveEndMs }
+}
+
+function matchActivePlanForOffer(
   offer: BillingActiveOfferPayload,
   plans: readonly BillingPlanCatalogEntry[],
-): boolean {
+): BillingPlanCatalogEntry | null {
   const matchedPlan = plans.find(
     plan => plan.active && (plan.id === offer.planId || plan.plan === offer.planId),
   )
-  if (!matchedPlan) return false
+  if (!matchedPlan) return null
   // Coupon-only Checkout on a recurring resourcePriceId can only fulfill
   // intro_period / discount offers whose billing cadence matches the plan's
   // recurring interval (no separate intro price or trial_period_days yet).
-  if (offer.kind === 'trial') return false
-  if (offer.stripeIntroPriceId) return false
-  if (offer.introInterval !== matchedPlan.interval) return false
-  // Discounted intro offers are advertised only when Stripe Checkout can honor
-  // them via a configured coupon ID (prevents catalog/checkout price mismatch).
-  if (offer.introAmountCents < matchedPlan.amountCents && !offer.stripeCouponId) return false
-  return (
-    offer.regularAmountCents === matchedPlan.amountCents
-    && offer.regularInterval === matchedPlan.interval
-    && offer.introCreditCents <= matchedPlan.includedCreditCents
-    && offer.introAmountCents <= matchedPlan.amountCents
-  )
+  if (offer.kind === 'trial') return null
+  if (offer.stripeIntroPriceId) return null
+  if (offer.introInterval !== matchedPlan.interval) return null
+  // Discounted intro offers require a verified coupon; un-discounted offers
+  // must NEVER attach a coupon (prevents catalog/Checkout price mismatch).
+  if (offer.introAmountCents < matchedPlan.amountCents && !offer.stripeCouponId) return null
+  if (offer.introAmountCents === matchedPlan.amountCents && offer.stripeCouponId) return null
+  if (
+    offer.regularAmountCents !== matchedPlan.amountCents
+    || offer.regularInterval !== matchedPlan.interval
+    || offer.introCreditCents > matchedPlan.includedCreditCents
+    || offer.introAmountCents > matchedPlan.amountCents
+  ) {
+    return null
+  }
+  return matchedPlan
 }
 
 function isOfferWindowActive(offer: BillingActiveOfferPayload, nowMs: number): boolean {
   if (!Number.isFinite(nowMs)) return false
   const endMs = Date.parse(offer.endAt)
-  if (Number.isNaN(endMs) || nowMs >= endMs) return false
+  if (Number.isNaN(endMs) || endMs - nowMs < MIN_OFFER_CHECKOUT_WINDOW_MS) return false
   if (offer.startAt !== undefined) {
     const startMs = Date.parse(offer.startAt)
     if (Number.isNaN(startMs) || startMs >= endMs || nowMs < startMs) return false
@@ -335,43 +479,167 @@ function isOfferWindowActive(offer: BillingActiveOfferPayload, nowMs: number): b
   return true
 }
 
+export interface VerifiedCandidateOffer {
+  readonly payload: BillingActiveOfferPayload
+  readonly endsAt: string
+  readonly endsAtMs: number
+}
+
+async function verifyCandidateOffer(input: {
+  rawCandidate: unknown
+  plans: readonly BillingPlanCatalogEntry[]
+  planProductIds?: ReadonlyMap<string, string | null>
+  config: StripeConfig | null
+  fetchImpl: typeof fetch
+  nowMs: number
+  bypassCache: boolean
+}): Promise<VerifiedCandidateOffer | null> {
+  if (input.rawCandidate === null || input.rawCandidate === undefined) return null
+  const parsedOffer = billingActiveOfferPayloadSchema.safeParse(input.rawCandidate)
+  if (!parsedOffer.success) return null
+  const offer = parsedOffer.data
+  // Reject secret-shaped offer IDs up front so `recordAudit` never throws during Checkout.
+  if (looksLikeSecretValue(offer.id)) return null
+  if (!isOfferWindowActive(offer, input.nowMs)) return null
+  const matchedPlan = matchActivePlanForOffer(offer, input.plans)
+  if (!matchedPlan) return null
+
+  const offerEndMs = Date.parse(offer.endAt)
+  let effectiveEndMs = offerEndMs
+  if (offer.stripeCouponId) {
+    if (!input.config) return null
+    const coupon = await fetchCachedStripeCoupon(
+      input.config,
+      offer.stripeCouponId,
+      input.nowMs,
+      input.fetchImpl,
+      input.bypassCache,
+    )
+    if (!coupon) return null
+    const planProductId = matchedPlan.stripePriceId
+      ? (input.planProductIds?.get(matchedPlan.stripePriceId) ?? null)
+      : null
+    const matched = couponMatchesOffer(coupon, offer, matchedPlan, planProductId, input.nowMs)
+    if (!matched.ok) return null
+    effectiveEndMs = matched.effectiveEndMs
+  }
+
+  const endsAt = effectiveEndMs === offerEndMs
+    ? offer.endAt
+    : new Date(effectiveEndMs).toISOString()
+
+  return { payload: offer, endsAt, endsAtMs: effectiveEndMs }
+}
+
+/**
+ * Warms runtime config on cold containers and Stripe-verifies any active
+ * promotional offer BEFORE entering `resourcePlanCheckout`'s advisory-locked DB
+ * transaction so no network I/O ever runs while holding a DB lock.
+ */
+export async function prepareCheckoutOfferCandidate(input: {
+  plan: BillingPlanCatalogEntry
+  planProductId?: string | null
+  config: StripeConfig
+  env?: EnvMap
+  fetchImpl?: typeof fetch
+  now?: Date | number
+  activeOfferOverride?: BillingActiveOfferPayload | null
+  bypassCache?: boolean
+}): Promise<VerifiedCandidateOffer | null> {
+  const env = input.env ?? runtimeEnv()
+  const explicitNow = input.now !== undefined
+  const initialNowMs = input.now instanceof Date ? input.now.getTime() : (input.now ?? Date.now())
+  if (input.activeOfferOverride === undefined) {
+    await ensureRuntimeConfigLoaded({ env, ...(explicitNow ? { now: initialNowMs } : {}) })
+  }
+  const nowMs = explicitNow ? initialNowMs : Date.now()
+  const rawCandidate = input.activeOfferOverride !== undefined
+    ? input.activeOfferOverride
+    : getRuntimeConfig('billingActiveOffer', { env, now: nowMs })
+  const planProductIds = input.planProductId !== undefined && input.plan.stripePriceId
+    ? new Map<string, string | null>([[input.plan.stripePriceId, input.planProductId]])
+    : undefined
+  return verifyCandidateOffer({
+    rawCandidate,
+    plans: [input.plan],
+    planProductIds,
+    config: input.config,
+    fetchImpl: input.fetchImpl ?? fetch,
+    nowMs,
+    bypassCache: input.bypassCache ?? true,
+  })
+}
+
 export interface CheckoutOfferTerms {
   readonly id: string
   readonly introCreditCents: number
   readonly stripeCouponId?: string
+  readonly endsAt: string
 }
 
 /**
  * Resolves server-verified promotional offer terms for an active Checkout
  * creation using the exact same validation and eligibility rules as
  * `resolveBillingCatalog`. Must be called inside `resourcePlanCheckout`'s
- * `pg_advisory_xact_lock` transaction (`queryTx`) so eligibility and Checkout
- * creation are serialized atomically.
+ * `pg_advisory_xact_lock` transaction (`queryTx`) with a `preverifiedOffer`
+ * prepared before the transaction so eligibility and Checkout creation are
+ * serialized atomically without network I/O inside the lock.
  */
 export async function resolveEligibleCheckoutOffer(input: {
   workspaceId: string
   plan: BillingPlanCatalogEntry
+  planProductId?: string | null
   env?: EnvMap
   now?: Date | number
   queryTx?: DrizzleExecuteLike
   skipOrgScopeCheck?: boolean
   activeOfferOverride?: BillingActiveOfferPayload | null
+  preverifiedOffer?: VerifiedCandidateOffer | null
+  stripeConfig?: StripeConfig | null
+  fetchImpl?: typeof fetch
+  bypassCache?: boolean
   checkOfferEligibility?: (workspaceId: string) => Promise<boolean> | boolean
 }): Promise<CheckoutOfferTerms | null> {
   const env = input.env ?? runtimeEnv()
+  const explicitNow = input.now !== undefined
   const nowMs = input.now instanceof Date ? input.now.getTime() : (input.now ?? Date.now())
-  const rawCandidate = input.activeOfferOverride !== undefined
-    ? input.activeOfferOverride
-    : getRuntimeConfig('billingActiveOffer', { env, now: nowMs })
-  if (rawCandidate === null || rawCandidate === undefined) return null
-  const parsedOffer = billingActiveOfferPayloadSchema.safeParse(rawCandidate)
-  if (
-    !parsedOffer.success
-    || !isOfferWindowActive(parsedOffer.data, nowMs)
-    || !offerMatchesActivePlan(parsedOffer.data, [input.plan])
-  ) {
-    return null
+
+  let verified: VerifiedCandidateOffer | null
+  if (input.preverifiedOffer !== undefined) {
+    if (
+      input.preverifiedOffer === null
+      || !Number.isFinite(nowMs)
+      || input.preverifiedOffer.endsAtMs - nowMs < MIN_OFFER_CHECKOUT_WINDOW_MS
+      || looksLikeSecretValue(input.preverifiedOffer.payload.id)
+      || !matchActivePlanForOffer(input.preverifiedOffer.payload, [input.plan])
+    ) {
+      return null
+    }
+    verified = input.preverifiedOffer
+  } else {
+    if (input.activeOfferOverride === undefined) {
+      await ensureRuntimeConfigLoaded({ env, ...(explicitNow ? { now: nowMs } : {}) })
+    }
+    const evalNowMs = explicitNow ? nowMs : Date.now()
+    const rawCandidate = input.activeOfferOverride !== undefined
+      ? input.activeOfferOverride
+      : getRuntimeConfig('billingActiveOffer', { env, now: evalNowMs })
+    const config = input.stripeConfig !== undefined ? input.stripeConfig : stripeConfig(env)
+    const planProductIds = input.planProductId !== undefined && input.plan.stripePriceId
+      ? new Map<string, string | null>([[input.plan.stripePriceId, input.planProductId]])
+      : undefined
+    verified = await verifyCandidateOffer({
+      rawCandidate,
+      plans: [input.plan],
+      planProductIds,
+      config,
+      fetchImpl: input.fetchImpl ?? fetch,
+      nowMs: evalNowMs,
+      bypassCache: input.bypassCache ?? false,
+    })
   }
+  if (!verified) return null
+
   const eligibilityCheck = input.checkOfferEligibility
     ?? ((id: string) => checkWorkspaceOfferEligibility(id, {
       env,
@@ -389,9 +657,10 @@ export async function resolveEligibleCheckoutOffer(input: {
   }
   if (!eligible) return null
   return {
-    id: parsedOffer.data.id,
-    introCreditCents: parsedOffer.data.introCreditCents,
-    ...(parsedOffer.data.stripeCouponId ? { stripeCouponId: parsedOffer.data.stripeCouponId } : {}),
+    id: verified.payload.id,
+    introCreditCents: verified.payload.introCreditCents,
+    endsAt: verified.endsAt,
+    ...(verified.payload.stripeCouponId ? { stripeCouponId: verified.payload.stripeCouponId } : {}),
   }
 }
 
@@ -415,37 +684,51 @@ export async function resolveBillingCatalog(
 ): Promise<BillingCatalogView> {
   const env = options.env ?? runtimeEnv()
   const fetchImpl = options.fetchImpl ?? fetch
+  const explicitNow = options.now !== undefined
   const nowMs = options.now instanceof Date ? options.now.getTime() : (options.now ?? Date.now())
   const config = stripeConfig(env)
   const plans: BillingPlanCatalogEntry[] = []
+  const planProductIds = new Map<string, string | null>()
 
   if (config?.resourcePriceId) {
-    const entry = await fetchCachedResourcePlan(
+    const fetched = await fetchCachedResourcePlan(
       config,
       config.resourcePriceId,
       nowMs,
       fetchImpl,
       options.bypassCache ?? false,
     )
-    if (entry) plans.push(entry)
+    if (fetched) {
+      plans.push(fetched.plan)
+      if (fetched.plan.stripePriceId) {
+        planProductIds.set(fetched.plan.stripePriceId, fetched.productId)
+      }
+    }
   }
 
   let activeOffer: BillingActiveOffer | null = null
-  const rawCandidate = options.activeOfferOverride !== undefined
-    ? options.activeOfferOverride
-    : getRuntimeConfig('billingActiveOffer', { env, now: nowMs })
-
-  if (rawCandidate !== null && rawCandidate !== undefined && plans.length > 0 && options.workspaceId) {
-    const parsedOffer = billingActiveOfferPayloadSchema.safeParse(rawCandidate)
-    if (
-      parsedOffer.success
-      && isOfferWindowActive(parsedOffer.data, nowMs)
-      && offerMatchesActivePlan(parsedOffer.data, plans)
-    ) {
+  if (plans.length > 0 && options.workspaceId) {
+    if (options.activeOfferOverride === undefined) {
+      await ensureRuntimeConfigLoaded({ env, ...(explicitNow ? { now: nowMs } : {}) })
+    }
+    const offerNowMs = explicitNow ? nowMs : Date.now()
+    const rawCandidate = options.activeOfferOverride !== undefined
+      ? options.activeOfferOverride
+      : getRuntimeConfig('billingActiveOffer', { env, now: offerNowMs })
+    const verified = await verifyCandidateOffer({
+      rawCandidate,
+      plans,
+      planProductIds,
+      config,
+      fetchImpl,
+      nowMs: offerNowMs,
+      bypassCache: options.bypassCache ?? false,
+    })
+    if (verified) {
       const eligibilityCheck = options.checkOfferEligibility
         ?? ((id: string) => checkWorkspaceOfferEligibility(id, {
           env,
-          matchingOfferId: parsedOffer.data.id,
+          matchingOfferId: verified.payload.id,
         }))
       let eligible = false
       try {
@@ -458,15 +741,15 @@ export async function resolveBillingCatalog(
       }
       if (eligible) {
         activeOffer = billingActiveOfferSchema.parse({
-          id: parsedOffer.data.id,
-          kind: parsedOffer.data.kind,
-          planId: parsedOffer.data.planId,
-          introAmountCents: parsedOffer.data.introAmountCents,
-          introInterval: parsedOffer.data.introInterval,
-          regularAmountCents: parsedOffer.data.regularAmountCents,
-          regularInterval: parsedOffer.data.regularInterval,
-          introCreditCents: parsedOffer.data.introCreditCents,
-          endsAt: parsedOffer.data.endAt,
+          id: verified.payload.id,
+          kind: verified.payload.kind,
+          planId: verified.payload.planId,
+          introAmountCents: verified.payload.introAmountCents,
+          introInterval: verified.payload.introInterval,
+          regularAmountCents: verified.payload.regularAmountCents,
+          regularInterval: verified.payload.regularInterval,
+          introCreditCents: verified.payload.introCreditCents,
+          endsAt: verified.endsAt,
         })
       }
     }

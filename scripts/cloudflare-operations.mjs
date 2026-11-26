@@ -32,6 +32,7 @@ export function operationsInput(env) {
     'runtime-native-alert': ['prepare', 'enable', 'disable'],
     'product-task-canary': ['verify', 'run'],
     'production-daemon-qualification': ['verify', 'run'],
+    'hosted-ui-ci-workers': ['verify', 'deploy'],
   }
   check(Object.hasOwn(actions, operation) && actions[operation].includes(action), 'PUBLIC_OPERATIONS_INPUT_REQUIRED')
   check(sha.test(env.MIKKA_CF_OPERATIONS_SHA ?? ''), 'PUBLIC_OPERATIONS_INPUT_REQUIRED')

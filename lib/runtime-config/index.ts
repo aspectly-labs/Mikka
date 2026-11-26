@@ -42,6 +42,7 @@ type OverridesMap = Map<RuntimeConfigKey, unknown>
 interface RuntimeConfigState {
   payloads: Record<string, unknown>
   at: number | null
+  loaded: boolean
   pending: Promise<boolean> | null
   adapter: RuntimeConfigAdapter | null
   epoch: number
@@ -50,6 +51,7 @@ interface RuntimeConfigState {
 const state: RuntimeConfigState = {
   payloads: {},
   at: null,
+  loaded: false,
   pending: null,
   adapter: null,
   epoch: 0,
@@ -217,18 +219,30 @@ function resolveAdapter(options: RefreshRuntimeConfigOptions, env: EnvMap): Runt
   })
 }
 
-function scheduleRefresh(now: number, env: EnvMap): void {
-  if (!Number.isFinite(now)) return
-  if (state.pending || (state.at !== null && now - state.at < RUNTIME_CONFIG_REFRESH_MS)) return
-  const adapter = resolveAdapter({}, env)
-  if (!adapter) return
+function isWarm(now: number): boolean {
+  return state.at !== null && Math.abs(now - state.at) < RUNTIME_CONFIG_REFRESH_MS
+}
+
+function startSingleFlightRefresh(options: RefreshRuntimeConfigOptions, now: number): Promise<boolean> | null {
+  const env = options.env ?? runtimeEnv()
+  if (resolveRuntimeEnvironmentName(env) === null) return null
+  const adapter = resolveAdapter(options, env)
+  if (!adapter) return null
   const refreshEpoch = state.epoch
-  state.at = now
-  state.pending = refreshRuntimeConfig({ adapter, env, now })
+  state.at = state.at === null ? now : Math.max(state.at, now)
+  const work = refreshRuntimeConfig({ ...options, adapter, env, now })
     .catch(() => false)
     .finally(() => {
-      if (state.epoch === refreshEpoch) state.pending = null
+      if (state.epoch === refreshEpoch && state.pending === work) state.pending = null
     })
+  state.pending = work
+  return work
+}
+
+function scheduleRefresh(now: number, env: EnvMap): void {
+  if (!Number.isFinite(now)) return
+  if (state.pending || isWarm(now)) return
+  startSingleFlightRefresh({ env }, now)
 }
 
 export interface GetRuntimeConfigOptions {
@@ -268,6 +282,25 @@ export function getRuntimeConfig<K extends RuntimeConfigKey>(
 }
 
 /**
+ * Ensures remote runtime config has completed an initial load (or fresh refresh
+ * within `RUNTIME_CONFIG_REFRESH_MS`) for async server entrypoints such as
+ * billing catalog and Checkout on a cold container. Joins any in-flight refresh
+ * (single-flight), returns immediately when warm or unconfigured, and throttles
+ * outage retries for `RUNTIME_CONFIG_REFRESH_MS`.
+ */
+export async function ensureRuntimeConfigLoaded(
+  options: RefreshRuntimeConfigOptions = {},
+): Promise<boolean> {
+  if (state.pending) return state.pending
+  const now = options.now ?? Date.now()
+  if (!Number.isFinite(now)) return false
+  if (isWarm(now)) return state.loaded
+  const work = startSingleFlightRefresh(options, now)
+  if (!work) return state.loaded
+  return work
+}
+
+/**
  * Fetches fresh payloads from the active adapter and updates the in-memory
  * cache. When the adapter returns `null` or fails, previously cached values
  * are preserved intact.
@@ -294,8 +327,10 @@ export async function refreshRuntimeConfig(options: RefreshRuntimeConfigOptions 
   }
 
   if (!payloads || state.epoch !== refreshEpoch) return false
+  const fetchedAt = options.now ?? Date.now()
   state.payloads = { ...payloads }
-  state.at = options.now ?? Date.now()
+  state.at = state.at === null ? fetchedAt : Math.max(state.at, fetchedAt)
+  state.loaded = true
   return true
 }
 
@@ -309,6 +344,7 @@ export function resetRuntimeConfig(): void {
   state.epoch += 1
   state.payloads = {}
   state.at = null
+  state.loaded = false
   state.pending = null
   state.adapter = null
 }

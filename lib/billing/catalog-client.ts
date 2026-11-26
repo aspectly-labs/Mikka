@@ -58,7 +58,7 @@ export const machineSkuCatalogEntrySchema = z.object({
 export type MachineSkuCatalogEntry = z.infer<typeof machineSkuCatalogEntrySchema>
 
 export const billingActiveOfferSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().trim().min(1).max(120),
   kind: z.enum(['intro_period', 'discount', 'trial']),
   planId: z.string().min(1),
   introAmountCents: z.number().int().nonnegative(),

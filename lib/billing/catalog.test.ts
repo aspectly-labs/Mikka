@@ -6,12 +6,14 @@ import {
   clearRuntimeConfigOverrides,
   overrideRuntimeConfig,
   resetRuntimeConfig,
+  setRuntimeConfigAdapter,
   type BillingActiveOfferPayload,
 } from '@/lib/runtime-config'
 import {
   BILLING_CATALOG_PRICE_CACHE_TTL_MS,
   checkWorkspaceOfferEligibility,
   clearBillingCatalogCache,
+  prepareCheckoutOfferCandidate,
   resolveBillingCatalog,
   resolveEligibleCheckoutOffer,
 } from './catalog'
@@ -68,10 +70,40 @@ const SAMPLE_OFFER: BillingActiveOfferPayload = {
   endAt: '2026-12-01T00:00:00Z',
 }
 
-function makeStripeFetch(price: unknown = STRIPE_RESOURCE_PRICE, status = 200) {
+const MATCHING_STRIPE_COUPON = {
+  id: 'coupon_internal_secret',
+  valid: true,
+  duration: 'once',
+  amount_off: 1500,
+  currency: 'usd',
+}
+
+function makeStripeFetch(
+  price: unknown = STRIPE_RESOURCE_PRICE,
+  status = 200,
+  coupons: Record<string, { body: unknown; status?: number }> = {
+    coupon_internal_secret: { body: MATCHING_STRIPE_COUPON },
+  },
+) {
   const seenUrls: string[] = []
   const fetchImpl = (async (input: string | URL | Request) => {
-    seenUrls.push(String(input))
+    const rawUrl = String(input)
+    seenUrls.push(rawUrl)
+    const parsed = new URL(rawUrl)
+    if (parsed.pathname.startsWith('/v1/coupons/')) {
+      const couponId = decodeURIComponent(parsed.pathname.slice('/v1/coupons/'.length))
+      const entry = coupons[couponId]
+      if (!entry) {
+        return new Response(JSON.stringify({ error: { message: 'No such coupon' } }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify(entry.body), {
+        status: entry.status ?? 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
     return new Response(JSON.stringify(price), {
       status,
       headers: { 'content-type': 'application/json' },
@@ -682,7 +714,7 @@ test('subscription webhook enforces intro credit cap on subscription_create and 
   )
 })
 
-test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCouponId for discounted intro offers and honor eligibility', async () => {
+test('resolveBillingCatalog and resolveEligibleCheckoutOffer require verified Stripe coupons for discounted intro offers and honor eligibility', async () => {
   clearBillingCatalogCache()
   const { fetchImpl } = makeStripeFetch()
   const now = new Date('2026-11-15T12:00:00Z')
@@ -716,6 +748,7 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
       workspaceId: WORKSPACE_ID,
       plan,
       env: TEST_ENV,
+      fetchImpl,
       now,
       activeOfferOverride: discountedWithoutCoupon,
       checkOfferEligibility: () => true,
@@ -723,11 +756,56 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
     null,
   )
 
-  // Valid discounted offer with stripeCouponId returns full checkout terms when eligible.
+  // Un-discounted offer with a stray stripeCouponId must fail closed (never discount silently).
+  const undiscountedWithCoupon: BillingActiveOfferPayload = {
+    ...SAMPLE_OFFER,
+    id: 'undiscounted-with-coupon',
+    introAmountCents: 2000,
+    stripeCouponId: 'coupon_internal_secret',
+  }
+  const catalogUndiscountedWithCoupon = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl,
+    now,
+    activeOfferOverride: undiscountedWithCoupon,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(catalogUndiscountedWithCoupon.activeOffer, null)
+  assert.equal(
+    await resolveEligibleCheckoutOffer({
+      workspaceId: WORKSPACE_ID,
+      plan,
+      env: TEST_ENV,
+      fetchImpl,
+      now,
+      activeOfferOverride: undiscountedWithCoupon,
+      checkOfferEligibility: () => true,
+    }),
+    null,
+  )
+
+  // Un-discounted offer WITHOUT stripeCouponId passes cleanly without fetching Stripe coupons.
+  const { fetchImpl: noCouponFetch, seenUrls: noCouponUrls } = makeStripeFetch(STRIPE_RESOURCE_PRICE, 200, {})
+  const { stripeCouponId: _unused, ...undiscountedClean } = { ...SAMPLE_OFFER, id: 'credit-cap-only', introAmountCents: 2000 }
+  const catalogUndiscounted = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl: noCouponFetch,
+    now,
+    activeOfferOverride: undiscountedClean,
+    checkOfferEligibility: () => true,
+    bypassCache: true,
+  })
+  assert.equal(catalogUndiscounted.activeOffer?.id, 'credit-cap-only')
+  assert.equal(noCouponUrls.some(url => url.includes('/coupons/')), false)
+
+  // Valid discounted offer with verified Stripe coupon returns full checkout terms including endsAt.
   const eligibleTerms = await resolveEligibleCheckoutOffer({
     workspaceId: WORKSPACE_ID,
     plan,
     env: TEST_ENV,
+    fetchImpl,
     now,
     activeOfferOverride: SAMPLE_OFFER,
     checkOfferEligibility: () => true,
@@ -736,6 +814,7 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
     id: 'intro-month-1',
     introCreditCents: 500,
     stripeCouponId: 'coupon_internal_secret',
+    endsAt: '2026-12-01T00:00:00Z',
   })
 
   // Unfulfillable offer cadence/kind/introPrice must fail closed in both catalog and checkout.
@@ -759,6 +838,7 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
         workspaceId: WORKSPACE_ID,
         plan,
         env: TEST_ENV,
+        fetchImpl,
         now,
         activeOfferOverride: badOffer,
         checkOfferEligibility: () => true,
@@ -768,14 +848,28 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
     )
   }
 
-  // queryTx + skipOrgScopeCheck runs inside caller's advisory-locked Drizzle tx without hitting workspacePool.
+  // queryTx + skipOrgScopeCheck runs inside caller's advisory-locked Drizzle tx without hitting workspacePool or Stripe when preverified.
+  const preverified = await prepareCheckoutOfferCandidate({
+    plan,
+    config: {
+      secretKey: TEST_ENV.STRIPE_SECRET_KEY,
+      teamPriceId: null,
+      resourcePriceId: TEST_ENV.STRIPE_TEAM_RESOURCE_PRICE_ID,
+      webhookSecret: null,
+    },
+    env: TEST_ENV,
+    fetchImpl,
+    now,
+    activeOfferOverride: SAMPLE_OFFER,
+  })
+  assert.ok(preverified)
   let txExecutions = 0
   const lockedTerms = await resolveEligibleCheckoutOffer({
     workspaceId: WORKSPACE_ID,
     plan,
     env: TEST_ENV,
     now,
-    activeOfferOverride: SAMPLE_OFFER,
+    preverifiedOffer: preverified,
     skipOrgScopeCheck: true,
     queryTx: {
       execute: async () => {
@@ -797,6 +891,7 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
     id: 'intro-month-1',
     introCreditCents: 500,
     stripeCouponId: 'coupon_internal_secret',
+    endsAt: '2026-12-01T00:00:00Z',
   })
 
   // matchingOfferId is passed cleanly to open-checkout SQL so catalog parity holds for an open Checkout.
@@ -812,12 +907,13 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
   )
   assert.deepEqual(parityPool.calls[0].params, [WORKSPACE_ID, 'intro-month-1'])
 
-  // Ineligible workspace or expired offer returns null.
+  // Ineligible workspace or expired/soon-expiring (<31m) offer returns null in both catalog and checkout.
   assert.equal(
     await resolveEligibleCheckoutOffer({
       workspaceId: WORKSPACE_ID,
       plan,
       env: TEST_ENV,
+      fetchImpl,
       now,
       activeOfferOverride: SAMPLE_OFFER,
       checkOfferEligibility: () => false,
@@ -829,10 +925,385 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCoupo
       workspaceId: WORKSPACE_ID,
       plan,
       env: TEST_ENV,
+      fetchImpl,
       now: new Date('2026-12-02T00:00:00Z'),
       activeOfferOverride: SAMPLE_OFFER,
       checkOfferEligibility: () => true,
     }),
     null,
   )
+  const twentyMinutesBeforeEnd = new Date(Date.parse(SAMPLE_OFFER.endAt) - 20 * 60_000)
+  const soonExpiringCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl,
+    now: twentyMinutesBeforeEnd,
+    activeOfferOverride: SAMPLE_OFFER,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(soonExpiringCatalog.activeOffer, null)
+  assert.equal(
+    await resolveEligibleCheckoutOffer({
+      workspaceId: WORKSPACE_ID,
+      plan,
+      env: TEST_ENV,
+      fetchImpl,
+      now: twentyMinutesBeforeEnd,
+      activeOfferOverride: SAMPLE_OFFER,
+      checkOfferEligibility: () => true,
+    }),
+    null,
+  )
+})
+
+test('resolveBillingCatalog and resolveEligibleCheckoutOffer verify Stripe coupon terms (percent_off, duration, amount, currency, valid, redeem_by)', async () => {
+  const now = new Date('2026-11-15T12:00:00Z')
+  const plan = {
+    id: 'pro',
+    plan: 'pro' as const,
+    name: 'Pro Plan',
+    stripePriceId: 'price_resource_pro',
+    amountCents: 2000,
+    currency: 'usd',
+    interval: 'month' as const,
+    includedCreditCents: 2000,
+    includedPoints: 2000,
+    seatModel: 'per_workspace' as const,
+    active: true,
+  }
+
+  // percent_off: 75 on $20.00 yields $5.00 -> passes and clamps endsAt to coupon.redeem_by when earlier than offer.endAt.
+  clearBillingCatalogCache()
+  const earlyRedeemBySec = Math.floor(Date.parse('2026-11-20T00:00:00Z') / 1000)
+  const percentFetch = makeStripeFetch(STRIPE_RESOURCE_PRICE, 200, {
+    coupon_pct75: {
+      body: {
+        id: 'coupon_pct75',
+        valid: true,
+        duration: 'once',
+        percent_off: 75,
+        redeem_by: earlyRedeemBySec,
+      },
+    },
+  })
+  const percentOffer: BillingActiveOfferPayload = { ...SAMPLE_OFFER, stripeCouponId: 'coupon_pct75' }
+  const percentCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl: percentFetch.fetchImpl,
+    now,
+    activeOfferOverride: percentOffer,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(percentCatalog.activeOffer?.endsAt, '2026-11-20T00:00:00.000Z')
+  const percentCheckout = await resolveEligibleCheckoutOffer({
+    workspaceId: WORKSPACE_ID,
+    plan,
+    env: TEST_ENV,
+    fetchImpl: percentFetch.fetchImpl,
+    now,
+    activeOfferOverride: percentOffer,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(percentCheckout?.endsAt, '2026-11-20T00:00:00.000Z')
+
+  // Reject invalid, deleted, repeating/forever, wrong-amount, wrong-percent, wrong-currency, expired redeem_by, missing, and invalid-id coupons.
+  const badCouponCases: Array<{ label: string; couponId: string; response?: { body: unknown; status?: number } }> = [
+    { label: 'invalid/exhausted coupon', couponId: 'coupon_exhausted', response: { body: { id: 'coupon_exhausted', valid: false, duration: 'once', amount_off: 1500, currency: 'usd' } } },
+    { label: 'deleted coupon', couponId: 'coupon_deleted', response: { body: { id: 'coupon_deleted', valid: true, deleted: true, duration: 'once', amount_off: 1500, currency: 'usd' } } },
+    { label: 'repeating duration', couponId: 'coupon_repeating', response: { body: { id: 'coupon_repeating', valid: true, duration: 'repeating', amount_off: 1500, currency: 'usd' } } },
+    { label: 'forever duration', couponId: 'coupon_forever', response: { body: { id: 'coupon_forever', valid: true, duration: 'forever', amount_off: 1500, currency: 'usd' } } },
+    { label: 'mismatched amount_off', couponId: 'coupon_wrong_amt', response: { body: { id: 'coupon_wrong_amt', valid: true, duration: 'once', amount_off: 1000, currency: 'usd' } } },
+    { label: 'mismatched percent_off', couponId: 'coupon_wrong_pct', response: { body: { id: 'coupon_wrong_pct', valid: true, duration: 'once', percent_off: 50 } } },
+    { label: 'mismatched currency', couponId: 'coupon_eur', response: { body: { id: 'coupon_eur', valid: true, duration: 'once', amount_off: 1500, currency: 'eur' } } },
+    { label: 'expired redeem_by', couponId: 'coupon_past_redeem', response: { body: { id: 'coupon_past_redeem', valid: true, duration: 'once', amount_off: 1500, currency: 'usd', redeem_by: Math.floor(now.getTime() / 1000) + 600 } } },
+    { label: 'missing 404 coupon', couponId: 'coupon_missing' },
+    { label: 'path traversal coupon id', couponId: '../prices/price_123' },
+  ]
+
+  for (const testCase of badCouponCases) {
+    clearBillingCatalogCache()
+    const coupons = testCase.response ? { [testCase.couponId]: testCase.response } : {}
+    const { fetchImpl: badFetch, seenUrls } = makeStripeFetch(STRIPE_RESOURCE_PRICE, 200, coupons)
+    const offer: BillingActiveOfferPayload = { ...SAMPLE_OFFER, stripeCouponId: testCase.couponId }
+    const cat = await resolveBillingCatalog({
+      workspaceId: WORKSPACE_ID,
+      env: TEST_ENV,
+      fetchImpl: badFetch,
+      now,
+      activeOfferOverride: offer,
+      checkOfferEligibility: () => true,
+      bypassCache: true,
+    })
+    assert.equal(cat.activeOffer, null, `expected catalog activeOffer=null for ${testCase.label}`)
+    if (testCase.couponId.includes('..')) {
+      assert.equal(seenUrls.some(url => url.includes('/coupons/')), false, 'must reject invalid coupon id before Stripe request')
+    }
+    const checkout = await resolveEligibleCheckoutOffer({
+      workspaceId: WORKSPACE_ID,
+      plan,
+      env: TEST_ENV,
+      fetchImpl: badFetch,
+      now,
+      activeOfferOverride: offer,
+      checkOfferEligibility: () => true,
+      bypassCache: true,
+    })
+    assert.equal(checkout, null, `expected checkout offer=null for ${testCase.label}`)
+  }
+})
+
+test('resolveBillingCatalog and prepareCheckoutOfferCandidate warm cold runtime config before reading billingActiveOffer', async () => {
+  clearBillingCatalogCache()
+  resetRuntimeConfig()
+  clearRuntimeConfigOverrides(TEST_ENV)
+  const { fetchImpl } = makeStripeFetch()
+  const now = new Date('2026-11-15T12:00:00Z')
+  let adapterCalls = 0
+  try {
+    setRuntimeConfigAdapter({
+      name: 'cold-start-offer-adapter',
+      async fetchPayloads() {
+        adapterCalls += 1
+        return {
+          'mikka-config-billing-active-offer': SAMPLE_OFFER,
+        }
+      },
+    })
+
+    // Cold catalog read must await runtime config load and immediately surface activeOffer.
+    const catalog = await resolveBillingCatalog({
+      workspaceId: WORKSPACE_ID,
+      env: TEST_ENV,
+      fetchImpl,
+      now,
+      checkOfferEligibility: () => true,
+    })
+    assert.equal(adapterCalls, 1)
+    assert.equal(catalog.activeOffer?.id, SAMPLE_OFFER.id)
+
+    // Cold checkout candidate preparation on a fresh process must also await runtime config load.
+    resetRuntimeConfig()
+    adapterCalls = 0
+    setRuntimeConfigAdapter({
+      name: 'cold-start-checkout-adapter',
+      async fetchPayloads() {
+        adapterCalls += 1
+        return {
+          'mikka-config-billing-active-offer': SAMPLE_OFFER,
+        }
+      },
+    })
+    const candidate = await prepareCheckoutOfferCandidate({
+      plan: catalog.plans[0],
+      config: {
+      secretKey: TEST_ENV.STRIPE_SECRET_KEY,
+      teamPriceId: null,
+      resourcePriceId: TEST_ENV.STRIPE_TEAM_RESOURCE_PRICE_ID,
+      webhookSecret: null,
+    },
+      env: TEST_ENV,
+      fetchImpl,
+      now,
+    })
+    assert.equal(adapterCalls, 1)
+    assert.equal(candidate?.payload.id, SAMPLE_OFFER.id)
+    assert.equal(candidate?.endsAt, SAMPLE_OFFER.endAt)
+  } finally {
+    clearRuntimeConfigOverrides(TEST_ENV)
+    resetRuntimeConfig()
+    clearBillingCatalogCache()
+  }
+})
+
+test('resolveBillingCatalog and resolveEligibleCheckoutOffer enforce applies_to.products, integer bps percent_off, max_redemptions, audit-safe offer IDs, and 35m expiry margin', async () => {
+  const now = new Date('2026-11-15T12:00:00Z')
+  const priceWithProduct = { ...STRIPE_RESOURCE_PRICE, product: 'prod_resource_pro' }
+  const plan = {
+    id: 'pro',
+    plan: 'pro' as const,
+    name: 'Pro Plan',
+    stripePriceId: 'price_resource_pro',
+    amountCents: 2000,
+    currency: 'usd',
+    interval: 'month' as const,
+    includedCreditCents: 2000,
+    includedPoints: 2000,
+    seatModel: 'per_workspace' as const,
+    active: true,
+  }
+
+  // 1. Coupon with applies_to.products matching plan product passes and requests ?expand[]=applies_to.
+  clearBillingCatalogCache()
+  const scopedFetch = makeStripeFetch(priceWithProduct, 200, {
+    coupon_scoped: {
+      body: {
+        id: 'coupon_scoped',
+        valid: true,
+        duration: 'once',
+        amount_off: 1500,
+        currency: 'usd',
+        applies_to: { products: ['prod_resource_pro'] },
+      },
+    },
+  })
+  const scopedOffer: BillingActiveOfferPayload = { ...SAMPLE_OFFER, stripeCouponId: 'coupon_scoped' }
+  const scopedCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl: scopedFetch.fetchImpl,
+    now,
+    activeOfferOverride: scopedOffer,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(scopedCatalog.activeOffer?.id, SAMPLE_OFFER.id)
+  assert.ok(scopedFetch.seenUrls.some(url => url.includes('/v1/coupons/coupon_scoped?expand[]=applies_to')))
+
+  // 2. Coupon restricted to a different product (or missing product on price) fails closed.
+  clearBillingCatalogCache()
+  const wrongProductFetch = makeStripeFetch(priceWithProduct, 200, {
+    coupon_other_prod: {
+      body: {
+        id: 'coupon_other_prod',
+        valid: true,
+        duration: 'once',
+        amount_off: 1500,
+        currency: 'usd',
+        applies_to: { products: ['prod_different'] },
+      },
+    },
+  })
+  const wrongProductOffer: BillingActiveOfferPayload = { ...SAMPLE_OFFER, stripeCouponId: 'coupon_other_prod' }
+  const wrongProductCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl: wrongProductFetch.fetchImpl,
+    now,
+    activeOfferOverride: wrongProductOffer,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(wrongProductCatalog.activeOffer, null)
+  assert.equal(
+    await resolveEligibleCheckoutOffer({
+      workspaceId: WORKSPACE_ID,
+      plan,
+      planProductId: null,
+      env: TEST_ENV,
+      fetchImpl: scopedFetch.fetchImpl,
+      now,
+      activeOfferOverride: scopedOffer,
+      checkOfferEligibility: () => true,
+    }),
+    null,
+  )
+
+  // 3. Fractional percent_off uses exact integer basis-points half-up math (avoiding IEEE-754 14.499999999999998 drift).
+  clearBillingCatalogCache()
+  const tenDollarPrice = { ...STRIPE_RESOURCE_PRICE, unit_amount: 1000 }
+  const fracFetch = makeStripeFetch(tenDollarPrice, 200, {
+    coupon_frac_pct: {
+      body: {
+        id: 'coupon_frac_pct',
+        valid: true,
+        duration: 'once',
+        percent_off: 1.45, // 1.45% of 1000c = 14.5c -> rounds half-up to 15c -> 985c
+      },
+    },
+  })
+  const fracOffer: BillingActiveOfferPayload = {
+    ...SAMPLE_OFFER,
+    regularAmountCents: 1000,
+    introAmountCents: 985,
+    stripeCouponId: 'coupon_frac_pct',
+  }
+  const fracCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl: fracFetch.fetchImpl,
+    now,
+    activeOfferOverride: fracOffer,
+    checkOfferEligibility: () => true,
+    bypassCache: true,
+  })
+  assert.equal(fracCatalog.activeOffer?.introAmountCents, 985)
+
+  // 4. amount_off exceeding plan.amountCents clamps to 0 and matches introAmountCents: 0; times_redeemed >= max_redemptions fails closed.
+  clearBillingCatalogCache()
+  const fullDiscountFetch = makeStripeFetch(STRIPE_RESOURCE_PRICE, 200, {
+    coupon_full: {
+      body: {
+        id: 'coupon_full',
+        valid: true,
+        duration: 'once',
+        amount_off: 2500,
+        currency: 'usd',
+      },
+    },
+    coupon_maxed: {
+      body: {
+        id: 'coupon_maxed',
+        valid: true,
+        duration: 'once',
+        amount_off: 1500,
+        currency: 'usd',
+        max_redemptions: 10,
+        times_redeemed: 10,
+      },
+    },
+  })
+  const freeFirstMonth = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl: fullDiscountFetch.fetchImpl,
+    now,
+    activeOfferOverride: { ...SAMPLE_OFFER, introAmountCents: 0, stripeCouponId: 'coupon_full' },
+    checkOfferEligibility: () => true,
+    bypassCache: true,
+  })
+  assert.equal(freeFirstMonth.activeOffer?.introAmountCents, 0)
+  const maxedCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl: fullDiscountFetch.fetchImpl,
+    now,
+    activeOfferOverride: { ...SAMPLE_OFFER, stripeCouponId: 'coupon_maxed' },
+    checkOfferEligibility: () => true,
+    bypassCache: true,
+  })
+  assert.equal(maxedCatalog.activeOffer, null)
+
+  // 5. Secret-shaped, whitespace-only, and 31m+500ms-expiring offers fail closed; padded IDs trim cleanly.
+  clearBillingCatalogCache()
+  const { fetchImpl } = makeStripeFetch()
+  for (const badId of ['   ', 'sk-promo-2026-november-launch']) {
+    const res = await resolveBillingCatalog({
+      workspaceId: WORKSPACE_ID,
+      env: TEST_ENV,
+      fetchImpl,
+      now,
+      activeOfferOverride: { ...SAMPLE_OFFER, id: badId },
+      checkOfferEligibility: () => true,
+    })
+    assert.equal(res.activeOffer, null, `expected null for offer id: ${JSON.stringify(badId)}`)
+  }
+  const paddedCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl,
+    now,
+    activeOfferOverride: { ...SAMPLE_OFFER, id: '  intro-padded  ' },
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(paddedCatalog.activeOffer?.id, 'intro-padded')
+
+  const thirtyOneMinPlusHalfSec = new Date(Date.parse(SAMPLE_OFFER.endAt) - (31 * 60_000 + 500))
+  const boundaryCatalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl,
+    now: thirtyOneMinPlusHalfSec,
+    activeOfferOverride: SAMPLE_OFFER,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(boundaryCatalog.activeOffer, null)
 })

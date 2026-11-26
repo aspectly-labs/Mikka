@@ -140,7 +140,7 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
     const configuredPrice = await provider(() => stripeGet<unknown>(config, `prices/${config.resourcePriceId}`, fetchImpl))
     try { price = resourcePrice(configuredPrice, config.resourcePriceId) }
     catch (error) { throw new WorkspaceError('billingResourcePlanUnavailable', { cause: error }) }
-    const { resolveEligibleCheckoutOffer } = await import('./catalog')
+    const { extractStripeProductId, prepareCheckoutOfferCandidate, resolveEligibleCheckoutOffer } = await import('./catalog')
     const { pointsToCreditCents } = await import('./hosted-usage')
     const planEntry = {
       id: price.plan,
@@ -155,6 +155,14 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
       seatModel: 'per_workspace' as const,
       active: true,
     }
+    const verifiedOffer = await prepareCheckoutOfferCandidate({
+      plan: planEntry,
+      planProductId: extractStripeProductId(configuredPrice),
+      config,
+      env,
+      fetchImpl,
+      bypassCache: true,
+    })
     return provider(() => resourcePlanCheckout(
       actorId,
       workspaceId,
@@ -162,13 +170,16 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
       price,
       config,
       fetchImpl,
-      tx => resolveEligibleCheckoutOffer({
-        workspaceId,
-        plan: planEntry,
-        env,
-        queryTx: tx,
-        skipOrgScopeCheck: true,
-      }),
+      verifiedOffer
+        ? tx => resolveEligibleCheckoutOffer({
+            workspaceId,
+            plan: planEntry,
+            env,
+            queryTx: tx,
+            skipOrgScopeCheck: true,
+            preverifiedOffer: verifiedOffer,
+          })
+        : undefined,
     ))
   }, { ownPlatformAccount: true })
 }

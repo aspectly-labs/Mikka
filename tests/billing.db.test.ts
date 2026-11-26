@@ -24,6 +24,7 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
   const requests: Array<{ url: string; body: string; method: string; key: string | null }> = []
   const subscriptions = new Map<string, Record<string, unknown>>(), invoices = new Map<string, Record<string, unknown>>()
   const customers = new Map<string, string>(), checkoutKeys = new Map<string, string>(), sessions = new Map<string, Record<string, unknown>>()
+  const coupons = new Map<string, Record<string, unknown>>()
   let loseCheckoutResponse = false
   const payments = new Map<string, { id: string; amount_received: number; currency: string; metadata: Record<string, string> }>()
   const invoicePayments = new Map<string, Array<{ id: string; amount_paid: number; currency: string; invoice: string; status: string; payment: { type: string; payment_intent: string } }>>()
@@ -32,6 +33,7 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
     requests.push({ url: input, body: body.toString(), method: init.method ?? 'GET', key })
     let result: unknown
     if (url.pathname === '/v1/prices/price_resource') result = price
+    else if (url.pathname.startsWith('/v1/coupons/')) result = coupons.get(decodeURIComponent(url.pathname.slice('/v1/coupons/'.length)))
     else if (url.pathname === '/v1/customers') {
       const target = body.get('metadata[workspaceId]')!
       if (!customers.has(target)) customers.set(target, target === ws.id ? customer : id('cus'))
@@ -340,7 +342,7 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
     }
   })
 
-  await t.test('locked intro-offer Checkout applies coupon/cap metadata and stays consistent with catalog while open or after expiry', async () => {
+  await t.test('locked intro-offer Checkout verifies coupon, clamps expires_at to endAt, and stays consistent with catalog', async () => {
     const { overrideRuntimeConfig, clearRuntimeConfigOverrides, resetRuntimeConfig } = await import('../lib/runtime-config')
     const { resolveBillingCatalog, clearBillingCatalogCache } = await import('../lib/billing/catalog')
     const target = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }])
@@ -360,6 +362,13 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
       startAt,
       endAt,
     }
+    coupons.set('coupon_pg17_intro', {
+      id: 'coupon_pg17_intro',
+      valid: true,
+      duration: 'once',
+      amount_off: 1500,
+      currency: 'usd',
+    })
     try {
       clearBillingCatalogCache()
       overrideRuntimeConfig('billingActiveOffer', offer, offerEnv)
@@ -373,6 +382,8 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
       assert.equal(body.get('discounts[0][coupon]'), 'coupon_pg17_intro')
       assert.equal(body.get('metadata[mikka_offer_id]'), offer.id)
       assert.equal(body.get('subscription_data[metadata][mikka_intro_credit_cents]'), '500')
+      // Checkout session expires_at must be clamped to offer endAt (1h < standard 2h).
+      assert.equal(Number(body.get('expires_at')), Math.floor(Date.parse(endAt) / 1000))
 
       // While that Checkout is open, catalog still surfaces the exact matching offer, but hides a different offer ID.
       const openCatalog = await resolveBillingCatalog({ workspaceId: target.id, env: offerEnv, fetchImpl: fake })
@@ -394,7 +405,46 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
         activeOfferOverride: { ...offer, id: 'pg17-different-offer' },
       })
       assert.equal(afterCloseCatalog.activeOffer?.id, 'pg17-different-offer')
+
+      // If the Stripe coupon becomes exhausted/invalid, Checkout re-checks live and omits the broken coupon/offer cleanly.
+      coupons.set('coupon_pg17_intro', {
+        id: 'coupon_pg17_intro',
+        valid: false,
+        duration: 'once',
+        amount_off: 1500,
+        currency: 'usd',
+      })
+      const exhaustedLen = requests.length
+      await billing.planCheckoutUrl(admin, target.id, back, fake, offerEnv)
+      const exhaustedReq = requests.slice(exhaustedLen).find(row => row.url.endsWith('/checkout/sessions') && row.method === 'POST')!
+      const exhaustedBody = new URLSearchParams(exhaustedReq.body)
+      assert.equal(exhaustedBody.get('discounts[0][coupon]'), null)
+      assert.equal(exhaustedBody.get('metadata[mikka_offer_id]'), null)
+      assert.equal(exhaustedBody.get('subscription_data[metadata][mikka_intro_credit_cents]'), null)
+
+      // An offer expiring in 31m+500ms (< 35m admission margin) must drop cleanly rather than
+      // persisting an un-postable Checkout request that locks the workspace for 32 minutes.
+      await pool.query('update billing_checkout_requests set "closedAt"=now() where "workspaceId"=$1', [target.id])
+      coupons.set('coupon_pg17_intro', {
+        id: 'coupon_pg17_intro',
+        valid: true,
+        duration: 'once',
+        amount_off: 1500,
+        currency: 'usd',
+      })
+      const boundaryOffer = { ...offer, endAt: new Date(Date.now() + 31 * 60_000 + 500).toISOString() }
+      overrideRuntimeConfig('billingActiveOffer', boundaryOffer, offerEnv)
+      const boundaryCatalog = await resolveBillingCatalog({ workspaceId: target.id, env: offerEnv, fetchImpl: fake, bypassCache: true })
+      assert.equal(boundaryCatalog.activeOffer, null)
+      const boundaryLen = requests.length
+      const boundaryRes = await billing.planCheckoutUrl(admin, target.id, back, fake, offerEnv)
+      assert.equal(boundaryRes.url, 'https://checkout.stripe.com/c/pay_synthetic')
+      const boundaryReq = requests.slice(boundaryLen).find(row => row.url.endsWith('/checkout/sessions') && row.method === 'POST')!
+      const boundaryBody = new URLSearchParams(boundaryReq.body)
+      assert.equal(boundaryBody.get('discounts[0][coupon]'), null)
+      assert.equal(boundaryBody.get('metadata[mikka_offer_id]'), null)
     } finally {
+      coupons.delete('coupon_pg17_intro')
       clearRuntimeConfigOverrides(offerEnv)
       resetRuntimeConfig()
       clearBillingCatalogCache()

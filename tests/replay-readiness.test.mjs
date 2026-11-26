@@ -101,7 +101,7 @@ for (const optedIn of [false, true]) test(`real bootstrap keeps masking and natu
   const client = { ...f.client, register() {}, capture() {} }
   const target = { location: { hostname: 'example.invalid' } }
   if (optedIn) Object.defineProperty(target, ACCEPTANCE_REPLAY_MARKER, { value: Date.now() + 60_000 })
-  runInNewContext(source, { window: target, process: { env: { NODE_ENV: 'test' } },
+  runInNewContext(source, { window: target, process: { env: { NODE_ENV: 'test' } }, getNodeEnv: () => 'test',
     posthogConfig: { token: 'SYNTHETIC_PUBLIC_PROJECT_TOKEN', apiHost: 'https://example.invalid', uiHost: 'https://example.invalid' },
     posthog: { init(_token, value) { config = value } },
     setLiveTelemetrySink() {}, acceptanceReplayOptIn, installReplayReadiness, sanitizeAnalyticsEvent, redactReplayRequest })
