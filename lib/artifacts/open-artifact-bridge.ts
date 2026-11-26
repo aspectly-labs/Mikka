@@ -22,6 +22,7 @@ import { db } from '@/lib/db'
 import { agentRuns, artifactShares, artifacts, type ArtifactKind } from '@/lib/db/schema'
 import { cleanTitle } from '@/lib/artifacts/limits'
 import { submissionWorkspace } from '@/lib/artifacts/access'
+import { ActionFailureError } from '@/lib/action-error'
 import { isOpenArtifactTypeEnabled, readOpenArtifactConfig } from '@/lib/artifacts/open-artifact-config'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { tokenWorkspace } from '@/lib/tokens/principal'
@@ -759,18 +760,40 @@ export async function syncOpenArtifactCatalog(
   }
 
   const candidateType: RichArtifactType = input.artifactType ?? existing?.artifactType ?? 'docs'
+  if (!existing && input.event === 'updated') {
+    return { ok: false, status: 404, error: 'artifactNotFound' }
+  }
   if (!existing && !isOpenArtifactTypeEnabled(candidateType)) {
     return { ok: false, status: 403, error: 'artifactTypeDisabled' }
   }
 
+  const effectiveRunId = input.runId ?? existing?.runId ?? null
+  let effectiveIssueId = input.issueId ?? existing?.issueId ?? null
+  if (effectiveRunId && !effectiveIssueId) {
+    const [runRow] = await db
+      .select({ issueId: agentRuns.issueId })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.id, effectiveRunId), eq(agentRuns.userId, subject)))
+      .limit(1)
+    if (runRow?.issueId) effectiveIssueId = runRow.issueId
+  }
+
   let workspaceId: string | null = existing?.workspaceId ?? input.workspaceId ?? null
   if (input.runId || input.issueId) {
-    const validatedWorkspaceId = await submissionWorkspace({
-      userId: subject,
-      workspaceId: workspaceId ?? undefined,
-      runId: input.runId ?? existing?.runId ?? null,
-      issueId: input.issueId ?? existing?.issueId ?? null,
-    })
+    let validatedWorkspaceId: string
+    try {
+      validatedWorkspaceId = await submissionWorkspace({
+        userId: subject,
+        workspaceId: workspaceId ?? undefined,
+        runId: effectiveRunId,
+        issueId: effectiveIssueId,
+      })
+    } catch (error) {
+      if (error instanceof ActionFailureError) {
+        return { ok: false, status: 403, error: 'workspaceAccessDenied' }
+      }
+      throw error
+    }
     if (workspaceId && validatedWorkspaceId !== workspaceId) {
       return { ok: false, status: 403, error: 'workspaceAccessDenied' }
     }
@@ -809,11 +832,15 @@ export async function syncOpenArtifactCatalog(
         if (locked.userId !== subject || locked.workspaceId !== workspaceId) {
           return { ok: false as const, status: 403 as const, error: 'artifactOwnershipMismatch' }
         }
+        // Ignore stale out-of-order sync events so older metadata/links never overwrite newer state.
+        if (input.version !== undefined && input.version < locked.latestVersion) {
+          return { ok: true as const, artifactId: locked.id, version: locked.latestVersion }
+        }
         const artifactType: RichArtifactType = input.artifactType ?? locked.artifactType ?? 'docs'
         const title = cleanTitle(input.title ?? locked.title) || input.externalId.slice(0, 200)
         const nextVersion = Math.max(locked.latestVersion, input.version ?? locked.latestVersion)
-        const resolvedRunId = input.runId ?? locked.runId ?? null
-        const resolvedIssueId = input.issueId ?? locked.issueId ?? null
+        const resolvedRunId = effectiveRunId ?? locked.runId ?? null
+        const resolvedIssueId = effectiveIssueId ?? locked.issueId ?? null
         await tx
           .update(artifacts)
           .set({
@@ -831,12 +858,17 @@ export async function syncOpenArtifactCatalog(
         return { ok: true as const, artifactId: locked.id, version: nextVersion }
       }
 
+      // Never resurrect a deleted artifact from an in-flight update event.
+      if (input.event === 'updated') {
+        return { ok: false as const, status: 404 as const, error: 'artifactNotFound' }
+      }
+
       const artifactId = crypto.randomUUID()
       const version = input.version ?? 1
       const artifactType: RichArtifactType = candidateType
       const title = cleanTitle(input.title ?? input.externalId) || input.externalId.slice(0, 200)
-      const resolvedRunId = input.runId ?? null
-      const resolvedIssueId = input.issueId ?? null
+      const resolvedRunId = effectiveRunId
+      const resolvedIssueId = effectiveIssueId
       await tx.insert(artifacts).values({
         id: artifactId,
         userId: subject,

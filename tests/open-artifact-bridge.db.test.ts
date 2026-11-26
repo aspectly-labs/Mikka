@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import {
   OPEN_ARTIFACT_BRIDGE_SIGNATURE_HEADER,
@@ -55,10 +56,13 @@ test('Open Artifact signed bridge and wake routes round-trip against PostgreSQL 
     try {
       await pool.query('DELETE FROM coordinator_events WHERE "userId"=ANY($1::text[])', [users])
       await pool.query('DELETE FROM coordinator_bots WHERE "ownerId"=ANY($1::text[])', [users])
-      await pool.query('DELETE FROM bots WHERE "ownerId"=ANY($1::text[])', [users])
       await pool.query('DELETE FROM artifacts WHERE "userId"=ANY($1::text[])', [users])
+      await pool.query('DELETE FROM agent_runs WHERE "userId"=ANY($1::text[])', [users])
+      await pool.query('DELETE FROM agents WHERE "userId"=ANY($1::text[])', [users])
+      await pool.query('DELETE FROM issues WHERE "userId"=ANY($1::text[])', [users])
+      await pool.query('DELETE FROM bots WHERE "ownerId"=ANY($1::text[])', [users])
       await pool.query('DELETE FROM workspace_setting_values WHERE "workspaceId"=ANY($1::uuid[])', [workspaces])
-      await workspacePool.query('DELETE FROM mikka_workspaces WHERE id=ANY($1::uuid[])', [workspaces])
+      await workspacePool.query('DELETE FROM mikka_workspaces WHERE id=ANY($1::uuid[]) OR "userId"=ANY($2::text[])', [workspaces, users])
       await pool.query('DELETE FROM "user" WHERE id=ANY($1::text[])', [users])
     } finally {
       await (await import('../lib/builtin-gateway/runtime')).builtinGateway()?.stop()
@@ -214,11 +218,14 @@ test('Open Artifact signed bridge and wake routes round-trip against PostgreSQL 
         event: 'updated',
         subject: owner,
         externalId,
+        title: 'Stale Title Should Not Overwrite',
         version: 2,
       }),
     )
   ).json()
   assert.equal(staleV2Res.version, 3)
+  const afterStaleV2 = await store.readArtifact(owner, artifactId)
+  assert.equal(afterStaleV2?.title, 'Q4 Deck Final')
 
   // 8. Signed wake persists owner_turn as user_message and collaborator as fenced run_report
   const ownerWake = await (
@@ -257,15 +264,84 @@ test('Open Artifact signed bridge and wake routes round-trip against PostgreSQL 
   assert.equal(events[1].kind, 'run_report')
   assert.equal(events[1].payload.source, 'open_artifact_fenced_notice')
 
-  // 9. Signed delete removes catalog row and subsequent authorize fails closed
+  // 9. Signed delete removes catalog row; subsequent update returns 404 without resurrecting and authorize fails closed
   const deleteRes = await bridgeRoute.POST(
     signedJsonRequest(bridgeUrl, { action: 'sync', event: 'deleted', subject: owner, externalId }),
   )
   assert.equal(deleteRes.status, 200)
+  const updateAfterDelete = await bridgeRoute.POST(
+    signedJsonRequest(bridgeUrl, {
+      action: 'sync',
+      event: 'updated',
+      subject: owner,
+      externalId,
+      title: 'Ghost Update',
+      version: 4,
+    }),
+  )
+  assert.equal(updateAfterDelete.status, 404)
   const afterDelete = await (
     await bridgeRoute.POST(
       signedJsonRequest(bridgeUrl, { action: 'authorize', subject: owner, externalId }),
     )
   ).json()
   assert.equal(afterDelete.role, null)
+
+  // 10. Signed create with runId only resolves the run's issueId; conflicting issueId fails closed (403)
+  const linkedIssueId = randomUUID()
+  const otherIssueId = randomUUID()
+  const agentId = randomUUID()
+  const linkedRunId = randomUUID()
+  await pool.query(
+    `INSERT INTO issues (id,"userId","workspaceId","ownershipState",scope,title,content,status,priority)
+     VALUES ($1,$2,$3,'bound','workspace','Run-linked task','{"type":"doc"}','todo','normal'),
+            ($4,$2,$3,'bound','workspace','Conflicting task','{"type":"doc"}','todo','normal')`,
+    [linkedIssueId, owner, workspace.id, otherIssueId],
+  )
+  await pool.query(
+    `INSERT INTO agents (id,"userId",name,harness) VALUES ($1,$2,'Bridge fixture','codex')`,
+    [agentId, owner],
+  )
+  await pool.query(
+    `INSERT INTO agent_runs (id,"userId","workspaceId","issueId","agentId",status)
+     VALUES ($1,$2,$3,$4,$5,'running')`,
+    [linkedRunId, owner, workspace.id, linkedIssueId, agentId],
+  )
+
+  const runOnlyExternalId = `${externalId}_run_only`
+  const runOnlyRes = await bridgeRoute.POST(
+    signedJsonRequest(bridgeUrl, {
+      action: 'sync',
+      event: 'created',
+      subject: owner,
+      workspaceId: workspace.id,
+      externalId: runOnlyExternalId,
+      title: 'Run-Only Spec',
+      artifactType: 'docs',
+      version: 1,
+      runId: linkedRunId,
+    }),
+  )
+  assert.equal(runOnlyRes.status, 200)
+  const runOnlyBody = await runOnlyRes.json()
+  assert.equal(runOnlyBody.ok, true)
+  const runOnlyRow = await store.readArtifact(owner, runOnlyBody.artifactId)
+  assert.equal(runOnlyRow?.runId, linkedRunId)
+  assert.equal(runOnlyRow?.issueId, linkedIssueId)
+
+  const conflictRes = await bridgeRoute.POST(
+    signedJsonRequest(bridgeUrl, {
+      action: 'sync',
+      event: 'created',
+      subject: owner,
+      workspaceId: workspace.id,
+      externalId: `${externalId}_conflict`,
+      title: 'Conflicting Task Spec',
+      artifactType: 'docs',
+      version: 1,
+      runId: linkedRunId,
+      issueId: otherIssueId,
+    }),
+  )
+  assert.equal(conflictRes.status, 403)
 })
