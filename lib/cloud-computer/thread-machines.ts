@@ -985,11 +985,9 @@ export async function ensureThreadMachine(...args: Parameters<typeof ensureThrea
       resourceRefused = isProjectExecutionRefusal(error)
       if (compute?.sku && !resourceRefused) {
         const { CloudflareTaskProviderError } = await import('../eve/cloudflare-task-bridge')
-        const status = error && typeof error === 'object' ? (error as { status?: number; statusCode?: number }).status
-          ?? (error as { statusCode?: number }).statusCode : undefined
-        const unavailable = error instanceof CloudflareTaskProviderError && (error.status === 429 || error.status >= 500)
-          || error instanceof E2BKeyError && ['e2b_unavailable', 'e2b_template_unavailable', 'e2b_limit_reached'].includes(error.code)
-          || status === 429 || status !== undefined && status >= 500
+        const unavailable = compute.provider === 'cloudflare'
+          ? error instanceof CloudflareTaskProviderError && (error.status === 429 || error.status >= 500)
+          : error instanceof E2BKeyError && ['e2b_unavailable', 'e2b_template_unavailable', 'e2b_limit_reached'].includes(error.code)
         if (unavailable) {
           const retryable = new TaskComputeUnavailable(compute.provider, error)
           const failed = threadMachineStartFailure(error)
