@@ -9,7 +9,8 @@ import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from 
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
-import { e2bCreationTimeout, verifyE2BAllocation, voidUnallocatedE2BCompute } from './e2b-compute-billing'
+import { createPrepaidE2B, e2bComputeWasVoided, e2bCreationTimeout, verifyE2BAllocation, voidUnallocatedE2BCompute } from './e2b-compute-billing'
+import { E2BKeyError } from '@/lib/secrets/flag'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
 import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution-identity'
@@ -243,11 +244,11 @@ async function takeThreadSnapshot(client: PoolClient, actor: Actor, runId: strin
 /** Record an unusable snapshot and delete it best-effort, then let the caller
  * rebuild from the official template. The row keeps `unavailable` so no later
  * wake retries a snapshot E2B already rejected. */
-async function releaseUnusableSnapshot(pool: Pool, actor: Actor, runId: string, epoch: number, operationId: string) {
+async function releaseUnusableSnapshot(pool: Pool, actor: Actor, runId: string, epoch: number, operationId: string, preserveSnapshot = false) {
   const row = (await pool.query<{ filesystemSnapshotId: string | null }>(`UPDATE thread_machines SET "snapshotState"='unavailable',"restoreStartedAt"=NULL
     WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND "operationId"=$5 AND state='restore'
     RETURNING "filesystemSnapshotId"`, [runId, actor.userId, actor.workspaceId, epoch, operationId])).rows[0]
-  if (!row?.filesystemSnapshotId) return
+  if (!row?.filesystemSnapshotId || preserveSnapshot) return
   try {
     await threadLifecycleProvider.deleteSnapshot(row.filesystemSnapshotId, actor.userId)
     await pool.query(`UPDATE thread_machines SET "filesystemSnapshotId"=NULL,"snapshotOperationId"=NULL,"snapshotTakenAt"=NULL
@@ -297,9 +298,11 @@ export async function restoreThreadMachineFromSnapshot(pool: Pool, actor: Actor,
     const sandbox = await threadLifecycleProvider.createFromSnapshot(transition.filesystemSnapshotId, transition.operationId, metadata, actor.userId)
     return { sandbox, machine: transition }
   } catch (error) {
-    if (!snapshotUnusable(error)) throw error
+    const missingHardware = error instanceof E2BKeyError && error.code === 'e2b_template_unavailable'
+      && error.detail === 'E2B snapshot has no verified compute record'
+    if (!missingHardware && !snapshotUnusable(error)) throw error
     await voidUnallocatedE2BCompute(actor.userId, transition.operationId)
-    await releaseUnusableSnapshot(pool, actor, runId, transition.epoch, transition.operationId)
+    await releaseUnusableSnapshot(pool, actor, runId, transition.epoch, transition.operationId, missingHardware)
     const replaced = await replaceGoneSandbox(pool, runId, template, leaseId)
     // error-cause: the unusable snapshot is already recorded; this new error reports that the lease moved away
     if (!replaced) throw new ComputerError(409, 'Thread provisioning cancelled')
@@ -330,7 +333,9 @@ export const threadMachineProvider = {
     const account = await cloudStartupSpan('cloud.sandbox.credentials', attributes, () => e2bCreateAccount(ownerId, operationId))
     const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, snapshotId, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
     const base = { apiKey: account.apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
-    const sandbox = await cloudStartupSpan('cloud.sandbox.create', attributes, () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, idempotencyKey: operationId, timeoutMs, metadata, lifecycle: { onTimeout: 'pause', autoResume: false } })))
+    const sandbox = await createPrepaidE2B(ownerId, operationId, () => cloudStartupSpan('cloud.sandbox.create', attributes,
+      () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, idempotencyKey: operationId, timeoutMs,
+        metadata, lifecycle: { onTimeout: 'pause', autoResume: false } }))))
     await verifyE2BAllocation(ownerId, operationId, sandbox.sandboxId, base)
     await bindE2BResource(ownerId, 'sandbox', sandbox.sandboxId, account.scope)
     if (isOfficialE2BTemplate(snapshotId)) await cloudStartupSpan('cloud.sandbox.bootstrap', attributes, () => bootstrapOfficialInstance(sandbox, snapshotId))
@@ -1065,8 +1070,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       machine.state = 'paused'
     }
     if (machine?.workerLeaseUntil && new Date(machine.workerLeaseUntil).getTime() > Date.now() && machine.state !== 'paused') throw new ComputerError(409, 'Thread provisioning in progress')
-    // No Mikka caps: the person's own E2B account sets the limit (orchestration.md § 5).
-    if (!machine || machine.snapshotId === 'pending' || (!machine.sandboxId && !cloudTemplateOrigin(machine.snapshotId))) {
+    if (!machine || machine.snapshotId === 'pending' || (!machine.sandboxId && (!cloudTemplateOrigin(machine.snapshotId)
+      || await e2bComputeWasVoided(client, actor.userId, machine.operationId)))) {
       // A follow-up keeps this task's own machine. A new repository task starts
       // from the anonymous ready template of its harness (E2B's claude or codex
       // with Mikka's worker, decision 2026-11-01-2335): the daemon clones its admitted

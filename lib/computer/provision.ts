@@ -6,6 +6,7 @@ import { connectForCommitEffects } from '../db/commit-effects'
 import { machineChanged, machineCommitted } from '@/lib/live/computer-state'
 import { armDueTimerSoon } from '@/lib/due-timer'
 import { ownE2BKeySql } from '@/lib/secrets/e2b-owner-sql'
+import { e2bComputeWasVoided } from '@/lib/cloud-computer/e2b-compute-billing'
 import { E2BKeyError } from '@/lib/secrets/flag'
 
 type Actor={userId:string;workspaceId:string}
@@ -25,6 +26,11 @@ export async function ensureCloudMachine(pool:Pool,actor:Actor,runtime:Runtime=p
     await client.query('INSERT INTO cloud_machines("workspaceId","ownerId","operationId") VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[actor.workspaceId,actor.userId,randomUUID()])
     const row=(await client.query(`SELECT * FROM cloud_machines WHERE "workspaceId"=$1 AND "ownerId"=$2 FOR UPDATE`,[actor.workspaceId,actor.userId])).rows[0]
     if(row.provisionLeaseUntil && new Date(row.provisionLeaseUntil).getTime()>Date.now()) {await client.query('COMMIT');return null}
+    if (!row.sandboxId && await e2bComputeWasVoided(client, actor.userId, row.operationId)) {
+      row.operationId = randomUUID()
+      await client.query('UPDATE cloud_machines SET "operationId"=$3 WHERE "workspaceId"=$1 AND "ownerId"=$2',
+        [actor.workspaceId, actor.userId, row.operationId])
+    }
     machine=row
     await client.query(`UPDATE cloud_machines SET "provisionLeaseId"=$3,"provisionLeaseUntil"=now()+interval '3 minutes',state='waking',"errorCode"=NULL WHERE "workspaceId"=$1 AND "ownerId"=$2`,[actor.workspaceId,actor.userId,leaseId])
     await machineChanged(client, pool, actor.userId, actor.workspaceId)

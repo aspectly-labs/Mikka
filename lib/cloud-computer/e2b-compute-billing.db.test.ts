@@ -37,7 +37,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   const { pool } = await import('@/lib/db')
   const { workspacePool } = await import('@/lib/workspace-db')
   t.after(() => Promise.allSettled([pool.end(), workspacePool.end()]))
-  const { e2bCreationTimeout, e2bSandboxTimeout, verifyE2BAllocation } = await import('./e2b-compute-billing')
+  const { createPrepaidE2B, e2bComputeWasVoided, e2bCreationTimeout, e2bSandboxTimeout, verifyE2BAllocation } = await import('./e2b-compute-billing')
   const operationId = randomUUID()
   const sandboxId = `sandbox-${operationId}`
   const create = () => e2bCreationTimeout(ownerId, 'team:fixture', operationId, templates.codex.templateId,
@@ -93,6 +93,15 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.equal(kill.mock.calls[0].arguments[0], 'wrong-hardware')
   assert.ok((await receipts()).some(row => row.id === `machine:e2b:${mismatchOperation}:0` && row.state === 'failed' && row.cost === 0))
   assert.equal((await fixture.query('SELECT "sandboxId" FROM e2b_compute_leases WHERE "operationId"=$1', [mismatchOperation])).rows[0].sandboxId, null)
+
+  const refusedOperation = randomUUID()
+  await e2bCreationTimeout(ownerId, 'team:fixture', refusedOperation, templates.codex.templateId, { workspaceId, runId }, 900_000)
+  const uncertain = Object.assign(new Error('response lost'), { status: 503 })
+  await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw uncertain }), error => error === uncertain)
+  assert.equal(await e2bComputeWasVoided(fixture, ownerId, refusedOperation), false)
+  const refused = Object.assign(new Error('template gone'), { status: 404 })
+  await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw refused }), error => error === refused)
+  assert.equal(await e2bComputeWasVoided(fixture, ownerId, refusedOperation), true)
 
   const afterMismatch = await receipts()
   process.env.MIKKA_EDITION = 'community'

@@ -34,9 +34,11 @@ function judgment(effect:BrowserEffect='browse'):Awaited<ReturnType<typeof judge
 }
 const realFetch=globalThis.fetch
 let services:Awaited<ReturnType<typeof startExternalServices>>|null=null
-const savedE2BEnv={apiUrl:process.env.E2B_API_URL,sandboxUrl:process.env.E2B_SANDBOX_URL,httpVersion:process.env.E2B_HTTP_VERSION}
+const savedE2BEnv={edition:process.env.MIKKA_EDITION,apiUrl:process.env.E2B_API_URL,sandboxUrl:process.env.E2B_SANDBOX_URL,httpVersion:process.env.E2B_HTTP_VERSION}
 before(async()=>{
  if(!enabled)return
+ // This fixture's key and existing Bot sandbox belong to the installation owner.
+ process.env.MIKKA_EDITION='community'
  services=await startExternalServices()
  process.env.E2B_API_URL=services.e2bOptions.apiUrl
  process.env.E2B_SANDBOX_URL=services.e2bOptions.sandboxUrl
@@ -101,7 +103,7 @@ beforeEach(async()=>{
  effects=0;mode='success';receipt=new Map();executableInputs=new Map();leaseCalls=0;submissions=0;loginMode='session_applied'
  await pool.query(`UPDATE bot_subagents SET status='running',needs=NULL,"activeActionId"=NULL,epoch=1,"targetId"='chromium-target';UPDATE pending_actions SET status='declined' WHERE status IN ('running','pending');UPDATE agent_kit_heads SET external_write_permissions='{}',external_write_policy_version=0;UPDATE workspace_computer_policies SET permission='allow',version=0,external_write_permissions='{}',external_write_policy_version=0;UPDATE credentials SET revoked_at=NULL;UPDATE credential_secrets SET nonce='secret-version-1'`)
 })
-after(async()=>{if(enabled){console.log(`Retained unattended DB schema: ${schema}`);globalThis.fetch=realFetch;for(const [k,v] of [['E2B_API_URL',savedE2BEnv.apiUrl],['E2B_SANDBOX_URL',savedE2BEnv.sandboxUrl],['E2B_HTTP_VERSION',savedE2BEnv.httpVersion]] as const){if(v===undefined)delete process.env[k];else process.env[k]=v}await services?.close();await pool.end();await admin.end()}})
+after(async()=>{if(enabled){console.log(`Retained unattended DB schema: ${schema}`);globalThis.fetch=realFetch;for(const [k,v] of [['MIKKA_EDITION',savedE2BEnv.edition],['E2B_API_URL',savedE2BEnv.apiUrl],['E2B_SANDBOX_URL',savedE2BEnv.sandboxUrl],['E2B_HTTP_VERSION',savedE2BEnv.httpVersion]] as const){if(v===undefined)delete process.env[k];else process.env[k]=v}await services?.close();await pool.end();await admin.end()}})
 async function propose(effect:BrowserEffect='browse') {return browserAction(pool,actor,botId,subagentId,{action:'click',x:20,y:40},'Open the requested control',observation(),judgment(effect))}
 async function stored(id:string){return (await pool.query('SELECT * FROM pending_actions WHERE id=$1',[id])).rows[0]}
 function inputFor(actionId:string,effect:BrowserEffect='browse',mutation:BrowserMutation={action:'click',x:20,y:40}):import('./action-reviews').BrowserActionInput {

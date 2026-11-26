@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ThreadMachineFence } from './thread-machines'
 import { threadLifecycleProvider, type ThreadProviderInfo } from './thread-lifecycle-provider'
-import { E2B_RENEW_LEAD_MS } from './e2b-compute-billing'
+import { E2B_RENEW_LEAD_MS, voidUnallocatedE2BCompute } from './e2b-compute-billing'
 import { logThreadLifecycle, threadLifecycleErrorKind } from './thread-lifecycle-log'
 import { taskActivityChanged } from '../factory/activity-live'
 import { jsonbSafeBigIntSql, jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
@@ -324,6 +324,8 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         [runId, actor.userId, actor.workspaceId, row.epoch, token, row.operationId, observedAt])
         if (!missing.rowCount) return now + 1
         row.state = missing.rows[0].state
+        if (observedAt >= missingAt + THREAD_MACHINE_STOP_GRACE_MS)
+          await voidUnallocatedE2BCompute(actor.userId, row.operationId, true)
         providerOutcome = 'missing'
         await (await import('@/lib/live/panels')).runChanged(pool, runId)
         return await finish({ phase: 'needs_reconciliation', reason: 'creation_cleanup_unconfirmed', creationMissingAt: missingAt },

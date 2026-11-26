@@ -1,5 +1,5 @@
 import 'server-only'
-import { e2bCreationTimeout, e2bSandboxTimeout, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
+import { createPrepaidE2B, e2bCreationTimeout, e2bSandboxTimeout, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -76,10 +76,10 @@ export async function createComputer(workspaceId: string, operationId: string) {
   const account = await e2bCreateAccount(owner, operationId)
   const base = options(account.apiKey)
   base.timeoutMs = await e2bCreationTimeout(owner, account.scope, operationId, template, { workspaceId, runId: null }, lifetime)
-  const sandbox = await withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, idempotencyKey: operationId,
+  const sandbox = await createPrepaidE2B(owner, operationId, () => withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, idempotencyKey: operationId,
     metadata: { application: 'mikka', workspaceId },
     lifecycle: { onTimeout: 'pause', autoResume: false },
-  }))
+  })))
   await verifyE2BAllocation(owner, operationId, sandbox.sandboxId, base)
   await bindE2BResource(owner, 'sandbox', sandbox.sandboxId, account.scope)
   if (template === 'desktop') await bootstrapOfficialInstance(sandbox, 'desktop')

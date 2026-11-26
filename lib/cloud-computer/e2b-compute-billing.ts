@@ -1,5 +1,6 @@
 import 'server-only'
-import { Sandbox, type SandboxApiOpts } from 'e2b'
+import { NotFoundError, Sandbox, SandboxNotFoundError, type SandboxApiOpts } from 'e2b'
+import type { Pool } from 'pg'
 import { pool } from '@/lib/db'
 import { isCloudEdition } from '@/lib/edition'
 import { E2BKeyError } from '@/lib/secrets/flag'
@@ -74,15 +75,39 @@ async function e2bAllocationMatches(ownerId: string, operationId: string, info: 
 }
 
 /** A terminal provider refusal or a killed, unexposed mismatch used no task compute. */
-export async function voidUnallocatedE2BCompute(ownerId: string, operationId: string) {
+export async function voidUnallocatedE2BCompute(ownerId: string, operationId: string, expiredOnly = false) {
   if (!isCloudEdition()) return
   await pool.query(`WITH refused AS (
       UPDATE e2b_compute_leases SET "paidUntil"=NULL WHERE "operationId"=$1 AND "ownerId"=$2
         AND "sandboxId" IS NULL AND "chunkIndex"=0 AND "paidUntil" IS NOT NULL
+        AND (NOT $4::boolean OR "paidUntil"<=now())
       RETURNING "workspaceId"
     ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
     FROM refused WHERE u.id=$3 AND u."usageWorkspaceId"=refused."workspaceId" AND u."executionOwnerId"=$2 AND u.state='settled'`,
-  [operationId, ownerId, `machine:e2b:${operationId}:0`])
+  [operationId, ownerId, `machine:e2b:${operationId}:0`, expiredOnly])
+}
+
+/** Only a confirmed-unused operation permits rotating its provider idempotency key. */
+export async function e2bComputeWasVoided(query: Pick<Pool, 'query'>, ownerId: string, operationId: string) {
+  if (!isCloudEdition()) return false
+  const existing = await query.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2
+    AND "sandboxId" IS NULL AND "chunkIndex"=0 AND "paidUntil" IS NULL`, [operationId, ownerId])
+  return existing.rowCount === 1
+}
+
+/** Void only unambiguous invalid create requests. Lost responses keep the paid
+ * operation so the existing provider reconciliation can safely look it up. */
+export async function createPrepaidE2B<T>(ownerId: string, operationId: string, create: () => Promise<T>): Promise<T> {
+  try {
+    return await create()
+  } catch (error) {
+    const cause = error instanceof E2BKeyError && error.cause ? error.cause : error
+    const status = cause && typeof cause === 'object' ? (cause as { status?: unknown; statusCode?: unknown }).status
+      ?? (cause as { statusCode?: unknown }).statusCode : undefined
+    if (cause instanceof NotFoundError || cause instanceof SandboxNotFoundError || status === 400 || status === 404 || status === 422)
+      await voidUnallocatedE2BCompute(ownerId, operationId)
+    throw error
+  }
 }
 
 export async function verifyE2BAllocation(ownerId: string, operationId: string, sandboxId: string,
@@ -122,6 +147,5 @@ export async function e2bSnapshotComputeTemplate(ownerId: string, snapshotId: st
   const { rows: [row] } = await pool.query<{templateId: string}>(
     `SELECT "computeTemplateId" AS "templateId" FROM e2b_resource_accounts WHERE kind='snapshot' AND id=$1 AND "ownerId"=$2`,
     [snapshotId,ownerId])
-  if (!row?.templateId) throw unavailable()
-  return row.templateId
+  return row?.templateId ?? null
 }

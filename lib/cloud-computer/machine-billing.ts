@@ -85,9 +85,8 @@ export async function fundE2BChunk(chunk: { ownerId: string; workspaceId: string
     if (prior === 'settled') return true
     if (prior) return false
     const run = chunk.runId ? (await pool.query<{ projectId: string | null }>(
-      `SELECT p."projectId" FROM agent_runs r LEFT JOIN workspace_project_tasks p
-        ON p."issueId"=r."issueId" AND p."workspaceId"=r."workspaceId"
-        WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3 AND r."stopRequestedAt" IS NULL`,
+      `SELECT r."agentDefinition"#>>'{projectExecution,projectId}' AS "projectId"
+      FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3 AND r."stopRequestedAt" IS NULL`,
       [chunk.runId, chunk.ownerId, chunk.workspaceId])).rows[0] : null
     if (chunk.runId && !run) return false
     const threadId = chunk.runId ? (await readRunChain(pool, chunk.ownerId, chunk.runId))?.rootRunId : null

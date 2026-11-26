@@ -118,6 +118,7 @@ export const threadLifecycleProvider = {
     const scope = environmentTemplate ? environmentSnapshotScope() : (await e2bResourceAccount(ownerId, 'snapshot', snapshotId)).scope
     const account = await e2bCreateAccount(ownerId, operationId, scope)
     const template = environmentTemplate ?? await e2bSnapshotComputeTemplate(ownerId, snapshotId)
+    if (template === null) throw new E2BKeyError('e2b_template_unavailable', 'E2B snapshot has no verified compute record')
     const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, template, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
     const prepared = options(account.apiKey)
     const sandbox = await withE2BErrors(ownerId, false, () => Sandbox.create(snapshotId, {
