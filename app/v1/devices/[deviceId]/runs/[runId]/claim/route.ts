@@ -280,7 +280,18 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     // Same lock order as a `disconnected` report (device, then run): either it
     // waits for this claim and ends its lease, or this claim sees the session closed.
     if (!await deviceSessionHeld(tx, deviceId)) return false
+    // Scope may change while publication/policy preparation awaits. Recheck the same frozen
+    // binding, including both members and the share, before taking the lease.
+    if (subscription && !await nativeRunBinding(tx, caller.userId, agent.id, harness, subscription.workspaceId, subscription.id)) return false
+    if (deploymentSwitch('factoryRouting') && deploymentSwitch('factoryLifecycle')) {
+      const { guardFactoryClaim } = await import('@/lib/factory/runtime')
+      try { factoryClaim = await guardFactoryClaim(tx,caller.userId,deviceId,runId,leaseExpiresAt) }
+      catch (error) { if (error instanceof FactoryError) return false; throw error }
+    }
     if (portableTask) {
+      // Park locks the run before its machine. Take those locks in that
+      // order before returning a receipt or authorizing a new writer.
+      await tx.query('SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE', [runId, caller.userId])
       const { rows: [machine] } = await tx.query<{ receipt: unknown; capture: string | null; captureUntil: string | null }>(
         `SELECT lifecycle->'portableWorkspaceRestore' AS receipt, lifecycle->>'portableWorkspaceCapture' AS capture,
            lifecycle->>'portableWorkspaceCaptureUntil' AS "captureUntil" FROM thread_machines
@@ -292,13 +303,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         portableTaskWorkspace = portableTaskWorkspaceReceiptSchema.parse(machine.receipt)
       }
     }
-    // Scope may change while publication/policy preparation awaits. Recheck the same frozen
-    // binding, including both members and the share, before taking the lease.
-    if (subscription && !await nativeRunBinding(tx, caller.userId, agent.id, harness, subscription.workspaceId, subscription.id)) return false
-    if (!deploymentSwitch('factoryRouting') || !deploymentSwitch('factoryLifecycle')) return true
-    const { guardFactoryClaim } = await import('@/lib/factory/runtime')
-    try { factoryClaim = await guardFactoryClaim(tx,caller.userId,deviceId,runId,leaseExpiresAt); return true }
-    catch (error) { if (error instanceof FactoryError) return false; throw error }
+    return true
   }
   let fromEnvironmentSnapshot = false
   const afterClaim = async (tx: import('pg').PoolClient) => {

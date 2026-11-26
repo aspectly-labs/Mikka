@@ -998,7 +998,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
   let runtimeRollback: (() => Promise<void>) | undefined
   let verifyRefreshedRuntime: (() => Promise<unknown>) | undefined
   let workerBroker: WorkerBootstrapBroker | undefined
-  let portableWorkspace: Awaited<ReturnType<typeof loadTaskWorkspaceArchive>> = null
+  const portableTransfer: { archive: Awaited<ReturnType<typeof loadTaskWorkspaceArchive>> } = { archive: null }
   try {
     await client.query('BEGIN')
     if (refreshBudget) await client.query("SELECT set_config('lock_timeout',$1,true),set_config('statement_timeout',$1,true)", [`${refreshBudget(5_000)}ms`])
@@ -1219,13 +1219,15 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
           AND m.lifecycle ? 'portableWorkspaceCapture' ORDER BY r."createdAt" DESC, r.id DESC LIMIT 1`,
       [actor.userId, actor.workspaceId, run.issueId, run.repoPath])
       if (last?.state === 'pending' || last?.state === 'writing') throw new ComputerError(409, 'Latest task workspace archive is incomplete')
-      portableWorkspace = await loadTaskWorkspaceArchive(client, {
+      portableTransfer.archive = await loadTaskWorkspaceArchive(client, {
         ownerId: actor.userId, workspaceId: actor.workspaceId, issueId: run.issueId, repositoryKey: run.repoPath,
       }, AbortSignal.timeout(120_000))
-      if (last?.state === 'ready' && (!portableWorkspace || portableWorkspace.source.runId !== last.runId
-        || portableWorkspace.source.epoch !== Number(last.epoch) || portableWorkspace.source.operationId !== last.operationId))
+      const source = portableTransfer.archive?.source
+      if (last?.state === 'ready' && (!source || source.runId !== last.runId
+        || source.epoch !== Number(last.epoch) || source.operationId !== last.operationId))
         throw new ComputerError(409, 'Latest task workspace archive is unavailable')
     }
+    const portableWorkspace = portableTransfer.archive
     const restoreCandidate = !portableWorkspace && machine.snapshotId !== hostedSnapshot && !refreshRuntime && !exactQuestionMachine && threadSnapshotsEnabled() &&
       machine.snapshotState === 'ready' && Boolean(machine.filesystemSnapshotId) &&
       (machine.sandboxId ? !connected : ['restore', 'error'].includes(machine.state))
@@ -1239,7 +1241,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       restored = await restoreThreadMachineFromSnapshot(pool, actor, runId, leaseId,
         { sandboxId: machine.sandboxId ?? null, kind: restoreKind }, restoreTemplate, provider)
     }
-    if (retainedSandboxId && portableWorkspace) retainedSandboxId = null
+    if (retainedSandboxId && portableWorkspace) retainedSandboxId = undefined
     if (retainedSandboxId && (!connected || connected.sandboxId !== retainedSandboxId) && !restored)
       throw new ComputerError(409, 'Retained task machine unavailable')
     if (machine.sandboxId && !connected && !restored) {
@@ -1676,7 +1678,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     }
     throw error
   } finally {
-    await portableWorkspace?.stream.cancel().catch(() => undefined)
+    await portableTransfer.archive?.stream.cancel().catch(() => undefined)
     timings.end()
     client.release()
   }
