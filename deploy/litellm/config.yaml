@@ -78,6 +78,27 @@ general_settings:
       methods: ["GET"]
       forward_headers: false
       auth: true
+    - path: /v1/mikka/subscription/claude/messages
+      target: https://api.anthropic.com/v1/messages?beta=true
+      methods: ["POST"]
+      forward_headers: true
+      headers:
+        x-litellm-api-key: ""
+      auth: true
+    - path: /v1/mikka/subscription/claude/count_tokens
+      target: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+      methods: ["POST"]
+      forward_headers: true
+      headers:
+        x-litellm-api-key: ""
+      auth: true
+    - path: /v1/mikka/subscription/codex/responses
+      target: https://chatgpt.com/backend-api/codex/responses
+      methods: ["POST"]
+      forward_headers: true
+      headers:
+        x-litellm-api-key: ""
+      auth: true
 litellm_settings:
   include_cost_in_streaming_usage: true
   drop_params: true

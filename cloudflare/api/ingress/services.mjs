@@ -38,6 +38,11 @@ export function liteLlmRequest(request, binding) {
   for (const name of ['accept', 'content-type', 'authorization', 'x-litellm-api-key', 'x-litellm-call-id', 'anthropic-version', 'anthropic-beta', 'openai-beta', 'x-litellm-num-retries']) {
     if (request.headers.has(name)) headers.set(name, request.headers.get(name))
   }
+  if (url.pathname.startsWith('/v1/mikka/subscription/claude/') || url.pathname === '/v1/mikka/subscription/codex/responses') {
+    for (const name of ['user-agent', 'originator', 'chatgpt-account-id']) {
+      if (request.headers.has(name)) headers.set(name, request.headers.get(name))
+    }
+  }
   return binding.fetch(new Request(request, { headers, redirect: 'manual' }))
 }
 

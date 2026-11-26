@@ -86,8 +86,8 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 				if decoder.Decode(&native) != nil || decoder.Decode(new(any)) != io.EOF {
 					err = ErrUnsupported
 				} else {
-					err = w.NativeStream(callCtx, request.Revision, native, func(contentType string) error {
-						return encoder.Encode(map[string]any{"id": request.ID, "head": map[string]any{"contentType": contentType}})
+					err = w.NativeStream(callCtx, request.Revision, native, func(contentType, generationID string) error {
+						return encoder.Encode(map[string]any{"id": request.ID, "head": map[string]any{"contentType": contentType, "generationId": generationID}})
 					}, func(chunk []byte) error {
 						return encoder.Encode(map[string]any{"id": request.ID, "binaryChunk": base64.StdEncoding.EncodeToString(chunk)})
 					})

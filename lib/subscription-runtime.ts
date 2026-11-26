@@ -1,3 +1,4 @@
+import { gatewayLiteLlm } from './model-gateway/config'
 import 'server-only'
 import type { SubscriptionModelRequestPolicy } from './subscription-service-tier'
 import { deploymentSwitch } from '@/lib/deployment-switches'
@@ -103,7 +104,10 @@ export function subscriptionRuntime(nativeBroker = false, custodyOnly = false, o
         throw error
       }
     } : undefined
-    return new SubscriptionWorkerClient({ binary }, { scope, databaseUrl, infisicalOrigin, project, environment, path, workloadToken: sharedCustodyIdentity ? '' : workloadToken ?? '', accessPath, accessProject, accessToken: custodyOnly || sharedCustodyIdentity ? undefined : accessToken, retainEnrollmentSources: retainEnrollmentSourcesForAcceptance(), enrollmentAttemptPath: process.env.MIKKA_BYOS_ENROLLMENT_ATTEMPT_PATH, enrollmentClaimPath: process.env.MIKKA_BYOS_ENROLLMENT_CLAIM_PATH, enrollmentGrantPath: process.env.MIKKA_BYOS_ENROLLMENT_GRANT_PATH, enableRuntime: !custodyOnly, // Plain model calls run only after access() found the route ready for this owner (subscriptionRouteReady).
+    const nativeLiteLlm = nativeBroker && !custodyOnly ? gatewayLiteLlm() : null
+    const nativeCa = nativeLiteLlm && new URL(nativeLiteLlm.url).hostname === 'litellm.internal'
+      ? process.env.NODE_EXTRA_CA_CERTS : undefined
+    return new SubscriptionWorkerClient({ binary, ...(nativeCa ? { env: { SSL_CERT_FILE: nativeCa } } : {}) }, { scope, ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.masterKey } : {}), databaseUrl, infisicalOrigin, project, environment, path, workloadToken: sharedCustodyIdentity ? '' : workloadToken ?? '', accessPath, accessProject, accessToken: custodyOnly || sharedCustodyIdentity ? undefined : accessToken, retainEnrollmentSources: retainEnrollmentSourcesForAcceptance(), enrollmentAttemptPath: process.env.MIKKA_BYOS_ENROLLMENT_ATTEMPT_PATH, enrollmentClaimPath: process.env.MIKKA_BYOS_ENROLLMENT_CLAIM_PATH, enrollmentGrantPath: process.env.MIKKA_BYOS_ENROLLMENT_GRANT_PATH, enableRuntime: !custodyOnly, // Plain model calls run only after access() found the route ready for this owner (subscriptionRouteReady).
       enablePlainModels: !custodyOnly, enableCodexOAuth: deploymentSwitch('byosCodexOAuth'), enableClaudeOAuth: deploymentSwitch('byosClaudeOAuth'), ...(options.exportAccessLease && !custodyOnly ? { exportAccessLease: true } : {}) }, resolve, streamIdentity)
   }, {
     ready: async (route: SubscriptionRoute, ownerId: string) => !custodyOnly && await subscriptionRouteReady(route, ownerId),

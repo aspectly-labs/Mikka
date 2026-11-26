@@ -4,6 +4,8 @@ const postPaths = new Set([
   '/v1/chat/completions', '/v1/decisions', '/v1/audio/transcriptions',
   '/v1/messages', '/v1/messages/count_tokens', '/v1/responses',
   '/v1/mikka/subscription/chat',
+  '/v1/mikka/subscription/claude/messages', '/v1/mikka/subscription/claude/count_tokens',
+  '/v1/mikka/subscription/codex/responses',
 ])
 
 export function isLiteLlmRoute(method, path) {
