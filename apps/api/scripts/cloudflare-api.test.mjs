@@ -173,6 +173,7 @@ test('the private API receives its sign-in and product bindings without inheriti
     ...preserved,
     SLACK_APP_ID: 'AEXAMPLE', SLACK_CLIENT_ID: 'client-fixture', SLACK_CLIENT_SECRET: 'oauth-fixture',
     E2B_API_KEY: 'platform-only', E2B_TEAM_ID: 'test-account',
+    MIKKA_CLOUDFLARE_TASK_WORKSPACES: 'legacy-cloudflare-workspace',
     MIKKA_TASK_MACHINE_PLAN_LIMITS: '{"free":{"vcpu":1,"ramGib":4}}',
     E2B_BYO_COMPUTER_TEMPLATE: 'desktop-release', E2B_CLAUDE_TEMPLATE: 'claude-release', E2B_CODEX_TEMPLATE: 'codex-release',
     MIKKA_CLOUD_TEMPLATE_MODELS: 'verified-catalogue', MIKKA_CLOUD_WORKER_SHA: 'a'.repeat(40),
