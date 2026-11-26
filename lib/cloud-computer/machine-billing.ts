@@ -1,6 +1,7 @@
 import 'server-only'
 import { PaidResourceError } from '@/lib/abuse/policy'
-import { machineChunkMicroUsd, type MachineSize } from './machine-pricing'
+import { MACHINE_CHUNK_MS, machineChunkMicroUsd, type MachineSize } from './machine-pricing'
+import { readRunChain } from '@/lib/run-chain'
 
 const FUNDING_REFUSALS = new Set(['verification_required', 'free_allowance_used', 'points_exhausted', 'usage_budget_exhausted', 'billing_authorization_revoked', 'platform_paused', 'billing_scope_missing', 'billing_owner_missing'])
 
@@ -59,4 +60,49 @@ const runtime: MachineBillingDependencies = {
     // Prepaid: the chunk is charged in full when it starts, as Capy holds machine time ahead.
     await hostedUsage.settle(id, cost)
   },
+}
+
+/** Five minutes on a verified E2B SKU. Its receipt namespace cannot consume
+ * a Cloudflare reservation for the same machine or run. */
+export async function fundE2BChunk(chunk: { ownerId: string; workspaceId: string; runId: string | null;
+  operationId: string; index: number; size: string; hourlyMicroUsd: number }): Promise<boolean> {
+  const [{ pool }, { hostedUsage }, { withSharedCredits }, { hostedBillingScope }] = await Promise.all([
+    import('@/lib/db'), import('@/lib/abuse/runtime'), import('@/lib/credit-shares'), import('@/lib/abuse/context'),
+  ])
+  if (!hostedUsage.metered) return false
+  const id = `machine:e2b:${chunk.operationId}:${chunk.index}`
+  const cost = Math.ceil(chunk.hourlyMicroUsd * MACHINE_CHUNK_MS / 3_600_000)
+  const model = `machine/e2b-${chunk.size}`
+  async function receipt() {
+    const { rows: [row] } = await pool.query<{state: string}>(`SELECT CASE WHEN state='settled' AND (coalesce("unpaidMicroUsd",0)>0 OR "costMicroUsd" IS DISTINCT FROM $3)
+      THEN 'unfunded' ELSE state END AS state FROM hosted_usage WHERE id=$1 AND model=$2
+      AND "holdMicroUsd"=$3 AND "usageWorkspaceId"=$4 AND "executionOwnerId"=$5
+      AND "usageRunId" IS NOT DISTINCT FROM $6::uuid`, [id,model,cost,chunk.workspaceId,chunk.ownerId,chunk.runId])
+    return row?.state
+  }
+  try {
+    const prior = await receipt()
+    if (prior === 'settled') return true
+    if (prior) return false
+    const run = chunk.runId ? (await pool.query<{ projectId: string | null }>(
+      `SELECT p."projectId" FROM agent_runs r LEFT JOIN workspace_project_tasks p
+        ON p."issueId"=r."issueId" AND p."workspaceId"=r."workspaceId"
+        WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3 AND r."stopRequestedAt" IS NULL`,
+      [chunk.runId, chunk.ownerId, chunk.workspaceId])).rows[0] : null
+    if (chunk.runId && !run) return false
+    const threadId = chunk.runId ? (await readRunChain(pool, chunk.ownerId, chunk.runId))?.rootRunId : null
+    if (chunk.runId && !threadId) return false
+    try {
+      await hostedBillingScope.run({ workspaceId: chunk.workspaceId, ownerId: chunk.ownerId,
+        runId: chunk.runId, actorId: chunk.ownerId, billingSource: 'credits', projectId: run?.projectId ?? null,
+        threadId, attributionComplete: true },
+      () => withSharedCredits(chunk.workspaceId, payer => hostedUsage.reserve(payer, model, id, process.env, cost, true)))
+    } catch (error) {
+      if (!(error instanceof PaidResourceError) || error.code !== 'usage_in_progress') throw error
+    }
+    return await receipt() === 'settled'
+  } catch (error) {
+    if (error instanceof PaidResourceError && FUNDING_REFUSALS.has(error.code)) return false
+    throw error
+  }
 }

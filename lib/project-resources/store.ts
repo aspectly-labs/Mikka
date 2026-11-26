@@ -309,8 +309,11 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
       ? (typeof existingConfig?.startScript === 'string' && existingConfig.startScript.trim() ? existingConfig.startScript.trim() : undefined)
       : (input.configuration.startScript.trim() || undefined)
     const nextNetworkAccess = input.configuration.networkAccess ?? existingConfig?.networkAccess ?? 'inherit'
+    const selectedE2BSize = input.configuration.e2bMachineSize === undefined
+      ? existingConfig?.e2bMachineSize : input.configuration.e2bMachineSize
     const configuration: EnvironmentConfiguration = {
       ...input.configuration,
+      ...(selectedE2BSize !== undefined ? { e2bMachineSize: selectedE2BSize } : {}),
       networkAccess: nextNetworkAccess,
       ...(nextStartScript ? { startScript: nextStartScript } : { startScript: undefined }),
       secretIds: [...new Set(input.configuration.secretIds)],

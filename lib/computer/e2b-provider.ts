@@ -1,4 +1,5 @@
 import 'server-only'
+import { e2bCreationTimeout, e2bSandboxTimeout, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -25,6 +26,7 @@ const ownerOf = async (workspaceId: string, id: string) => {
 export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget) {
   const owner = await ownerOf(workspaceId, id)
   const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
+  base.timeoutMs = await e2bSandboxTimeout(owner, id, base.timeoutMs)
   const request = runtimeRequestOptions(budget)
   const boundedSignal = signal && request.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request.signal
   return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
@@ -72,10 +74,12 @@ export async function createComputer(workspaceId: string, operationId: string) {
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'cloud machine has no owner record')
   const account = await e2bCreateAccount(owner, operationId)
   const base = options(account.apiKey)
+  base.timeoutMs = await e2bCreationTimeout(owner, account.scope, operationId, template, { workspaceId, runId: null }, lifetime)
   const sandbox = await withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, idempotencyKey: operationId,
     metadata: { application: 'mikka', workspaceId },
     lifecycle: { onTimeout: 'pause', autoResume: false },
   }))
+  await verifyE2BAllocation(owner, operationId, sandbox.sandboxId, base)
   await bindE2BResource(owner, 'sandbox', sandbox.sandboxId, account.scope)
   if (template === 'desktop') await bootstrapOfficialInstance(sandbox, 'desktop')
   return sandbox

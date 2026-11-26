@@ -2,6 +2,7 @@ import 'server-only'
 import type { Pool } from 'pg'
 import { deviceIsOnline } from '@/lib/device-presence'
 import { cloudMachineState, deviceMachineKind, type ThreadMachine } from '@/lib/thread-machine'
+import type { E2BComputeSpec } from '@/lib/cloud-computer/e2b-template-pricing'
 import { isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 
 type Row = {
@@ -9,7 +10,7 @@ type Row = {
   hostname: string | null; deviceId: string | null; lastSeenAt: Date | null
   sessionOpenedAt: Date | null; sessionClosedAt: Date | null
   sandboxId: string | null; template: string | null; machineState: string | null; machineCreatedAt: Date | null; endedAt: Date | null
-  workerLeaseId: string | null; workerLeaseUntil: Date | null; size: string | null
+  workerLeaseId: string | null; workerLeaseUntil: Date | null; size: string | null; e2bCompute: E2BComputeSpec | null
 }
 
 /**
@@ -31,10 +32,13 @@ export async function readThreadMachinePlacement(pool: Pick<Pool, 'query'>, owne
   if (!runIds.length) return null
   const { rows } = await pool.query<Row>(`SELECT r.id AS "runId", d.kind, d."deviceType", d.name, d.platform, d.arch, d.hostname,
       d.id AS "deviceId", d."lastSeenAt", d."sessionOpenedAt", d."sessionClosedAt", tm."sandboxId", tm."snapshotId" AS template, tm.state AS "machineState",
-      tm."createdAt" AS "machineCreatedAt", tm."endedAt", tm."workerLeaseId", tm."workerLeaseUntil", tm.lifecycle->>'sponsoredSize' AS size
+      tm."createdAt" AS "machineCreatedAt", tm."endedAt", tm."workerLeaseId", tm."workerLeaseUntil", tm.lifecycle->>'sponsoredSize' AS size,
+      CASE WHEN eb."operationId" IS NOT NULL THEN jsonb_build_object(
+        'size',eb.size,'cpuCount',eb."cpuCount",'memoryMB',eb."memoryMB",'hourlyMicroUsd',eb."hourlyMicroUsd") END AS "e2bCompute"
     FROM agent_runs r
     LEFT JOIN devices d ON d.id = r."deviceId"
     LEFT JOIN thread_machines tm ON tm."runId" = r.id AND tm."ownerId" = r."userId"
+    LEFT JOIN e2b_compute_leases eb ON eb."sandboxId"=tm."sandboxId" AND eb."ownerId"=tm."ownerId" AND eb."workspaceId"=tm."workspaceId"
     WHERE r.id = ANY($1::uuid[]) AND r."userId" = $2`, [runIds, ownerId])
   const byId = new Map(rows.map(row => [row.runId, row]))
   // Newest first: the live end of the chain decides, an earlier attempt only stands in.
@@ -45,7 +49,8 @@ export async function readThreadMachinePlacement(pool: Pick<Pool, 'query'>, owne
     return { size: isMachineSize(row.size) ? row.size : null, machine: {
       kind: 'cloud', state, name: null,
       platform: null, arch: null, hostname: null, lastSeenAt: null,
-      cloud: row.sandboxId ? { sandboxId: row.sandboxId, template: row.template ?? '', createdAt: (row.machineCreatedAt ?? new Date(0)).toISOString(), endedAt: state === 'ended' ? row.endedAt?.toISOString() ?? null : null } : null,
+      cloud: row.sandboxId ? { sandboxId: row.sandboxId, template: row.template ?? '', createdAt: (row.machineCreatedAt ?? new Date(0)).toISOString(), endedAt: state === 'ended' ? row.endedAt?.toISOString() ?? null : null,
+        ...(row.e2bCompute ? { compute: row.e2bCompute } : {}) } : null,
     } }
   }
   const online = row.deviceId ? deviceIsOnline(row) : false

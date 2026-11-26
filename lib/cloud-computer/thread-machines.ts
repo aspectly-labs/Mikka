@@ -9,6 +9,7 @@ import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from 
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
+import { e2bCreationTimeout, verifyE2BAllocation, voidUnallocatedE2BCompute } from './e2b-compute-billing'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
 import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution-identity'
@@ -25,7 +26,7 @@ import { computerPermission } from '@/lib/computer/permission'
 import { connectComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
 import { cloudTemplateOrigin, threadMachineTemplateKind } from '@/lib/cloud-template-models'
-import { computerTemplate, taskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { computerTemplate, sizedTaskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { bootstrapOfficialInstance, isOfficialE2BTemplate, stageOfficialWorkerRelease, switchOfficialWorkerRelease, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from '@/lib/computer/official-runtime'
 import type { Actor } from './subagents'
 import { afterRunEnded } from '@/lib/run-completion-effects'
@@ -297,6 +298,7 @@ export async function restoreThreadMachineFromSnapshot(pool: Pool, actor: Actor,
     return { sandbox, machine: transition }
   } catch (error) {
     if (!snapshotUnusable(error)) throw error
+    await voidUnallocatedE2BCompute(actor.userId, transition.operationId)
     await releaseUnusableSnapshot(pool, actor, runId, transition.epoch, transition.operationId)
     const replaced = await replaceGoneSandbox(pool, runId, template, leaseId)
     // error-cause: the unusable snapshot is already recorded; this new error reports that the lease moved away
@@ -326,8 +328,10 @@ export const threadMachineProvider = {
     if (!cloudTemplateOrigin(snapshotId)) throw new ComputerError(409, 'Verified cloud template required')
     const attributes = metadata.runId ? cloudStartupRunAttributes(metadata.runId) : {}
     const account = await cloudStartupSpan('cloud.sandbox.credentials', attributes, () => e2bCreateAccount(ownerId, operationId))
+    const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, snapshotId, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
     const base = { apiKey: account.apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
-    const sandbox = await cloudStartupSpan('cloud.sandbox.create', attributes, () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, idempotencyKey: operationId, timeoutMs: 15 * 60_000, metadata, lifecycle: { onTimeout: 'pause', autoResume: false } })))
+    const sandbox = await cloudStartupSpan('cloud.sandbox.create', attributes, () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, idempotencyKey: operationId, timeoutMs, metadata, lifecycle: { onTimeout: 'pause', autoResume: false } })))
+    await verifyE2BAllocation(ownerId, operationId, sandbox.sandboxId, base)
     await bindE2BResource(ownerId, 'sandbox', sandbox.sandboxId, account.scope)
     if (isOfficialE2BTemplate(snapshotId)) await cloudStartupSpan('cloud.sandbox.bootstrap', attributes, () => bootstrapOfficialInstance(sandbox, snapshotId))
     return sandbox
@@ -962,7 +966,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
 
     exactQuestionMachine = run.questionContinuation?.requireSessionResume === true
     const repositoryTask = Boolean(run.remoteUrl)
-    const freshTemplate = () => repositoryTask ? taskTemplate(run.runHarness) : computerTemplate()
+    const machineSize = run.agentDefinition?.projectExecution?.environment?.e2bMachineSize ?? undefined
+    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize) : computerTemplate()
     let machine = (await client.query('SELECT * FROM thread_machines WHERE "runId"=$1 FOR UPDATE', [runId])).rows[0]
     if (machine?.snapshotId === hostedSnapshot || run.agentDefinition?.taskMachine) throw new ComputerError(409,'Task machine provider changed')
     // Stop check 1 shares the explicit Stop path's native-history and lease
@@ -1184,9 +1189,10 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
         if (!reserved.rowCount) throw new ComputerError(409, 'Thread provisioning cancelled')
         machine.environmentSnapshotId = candidate.id
         try {
-          started = await threadLifecycleProvider.createFromSnapshot(candidate.providerId, machine.operationId, metadata(), actor.userId, true)
+          started = await threadLifecycleProvider.createFromSnapshot(candidate.providerId, machine.operationId, metadata(), actor.userId, machine.snapshotId)
         } catch (error) {
           if (!snapshotUnusable(error)) throw error
+          await voidUnallocatedE2BCompute(actor.userId, machine.operationId)
           machine = await replaceGoneSandbox(pool, runId, freshTemplate(), leaseId)
           // error-cause: the 409 reports a lost provisioning lease during the template fallback.
           if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')

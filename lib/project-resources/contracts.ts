@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { setupRecipeSchema } from '@mikka/protocol/device'
 import { isReservedEnvName, SECRET_NAME } from '@/lib/secrets/format'
 import { MACHINE_SIZES, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
+import { E2B_MACHINE_SIZES } from '@/lib/cloud-computer/e2b-template-pricing'
 
 /** The normalized key already used by device_repos, never a credential or a URL. */
 export const projectRepositoryKey = z.string().trim().toLowerCase()
@@ -21,6 +22,8 @@ export const environmentConfiguration = z.object({
   /** An official task harness constraint; this is not an independently provisioned machine. */
   harness: z.enum(['any', 'claude_code', 'codex', 'cursor']).default('any'),
   setup: setupRecipeSchema.optional(),
+  /** Hosted E2B sizing is independent of the legacy Cloudflare template names. */
+  e2bMachineSize: z.enum(E2B_MACHINE_SIZES).nullable().optional(),
   /** Optional start command (e.g. dev server / preview) run inside Cloud Environments. */
   startScript: z.string().max(2_000).optional(),
   /** Outbound network access policy for Cloud Environments; omitted defaults to 'inherit'. */

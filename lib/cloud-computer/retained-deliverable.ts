@@ -41,7 +41,9 @@ const defaultRuntime: RetainedDeliverableRuntime = {
   },
   async connect(scope, budget) {
     const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])
-    return withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...options, timeoutMs: 60_000, ...requestOptions(budget, 10_000) }))
+    const { e2bSandboxTimeout } = await import("./e2b-compute-billing")
+    const timeoutMs = await e2bSandboxTimeout(scope.ownerId, scope.sandboxId, 60_000, false)
+    return withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...options, timeoutMs, ...requestOptions(budget, 10_000) }))
   },
   async pause(scope, budget) {
     const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])

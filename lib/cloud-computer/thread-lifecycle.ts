@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ThreadMachineFence } from './thread-machines'
 import { threadLifecycleProvider, type ThreadProviderInfo } from './thread-lifecycle-provider'
+import { E2B_RENEW_LEAD_MS } from './e2b-compute-billing'
 import { logThreadLifecycle, threadLifecycleErrorKind } from './thread-lifecycle-log'
 import { taskActivityChanged } from '../factory/activity-live'
 import { jsonbSafeBigIntSql, jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
@@ -53,7 +54,9 @@ export type ThreadLifecycleRow = {
   keepAwake?: boolean
 }
 type Dependencies = {
-  provider: Pick<typeof threadLifecycleProvider, 'info' | 'keepAlive'> & Partial<Pick<typeof threadLifecycleProvider, 'findCreated'>>
+  provider: Pick<typeof threadLifecycleProvider, 'info'> & {
+    keepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew?: boolean): Promise<number | void>
+  } & Partial<Pick<typeof threadLifecycleProvider, 'findCreated'>>
   park: (pool: Pool, actor: Actor, runId: string, fence: ThreadMachineFence) => Promise<unknown>
   end: (pool: Pool, actor: Actor, runId: string, fence: ThreadMachineFence) => Promise<unknown>
   acknowledgeStop: (pool: Pool, actor: Actor, runId: string) => Promise<boolean>
@@ -69,8 +72,7 @@ const fenceOf = (row: ThreadLifecycleRow): ThreadMachineFence => ({ epoch: row.e
 const pendingCreation = (row: ThreadLifecycleRow) => Boolean(row.workerLeaseId || row.workerLeaseUntil
   || row.lifecycle.phase === 'create_requested' || row.lifecycle.phase === 'restore_requested' || row.lifecycle.creationMissingAt != null)
 
-// E2B runs on the user's own key: Mikka sets no execution budget on it. A machine
-// pauses when its run ends or it sits unclaimed, and the provider timeout pauses it as a safety net.
+// The provider timeout pauses a running machine when its authorized interval expires.
 type StopCause = 'task_closed' | 'execution_lease_lost' | 'provider_paused'
 type Decision = { action: 'stop' | 'recover'; at: number; reason: StopCause }
   | { action: 'keep' | 'pause' | 'retire' | 'wait' | 'missing'; at: number | null; reason: string }
@@ -284,9 +286,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
           return next
         }
       }
-      await deps.provider.keepAlive(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS)
+      const stopping = Boolean(run?.stopRequestedAt)
+      const providerDeadline = await deps.provider.keepAlive(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping)
+        ?? deps.now() + THREAD_MACHINE_PROVIDER_MS
+      const renewalAt = stopping ? due : Math.max(deps.now() + 5_000, providerDeadline - E2B_RENEW_LEAD_MS + 3_000)
       providerOutcome = 'timeout_renewed'
-      const next = await finish({ phase: reason === 'human_review' ? 'review_resumed' : reason === 'provisioning' ? 'provisioning' : 'active', reason, failures: 0, providerDeadline: deps.now() + THREAD_MACHINE_PROVIDER_MS }, due, client)
+      const next = await finish({ phase: reason === 'human_review' ? 'review_resumed' : reason === 'provisioning' ? 'provisioning' : 'active', reason, failures: 0, providerDeadline }, Math.min(due, renewalAt), client)
       await client.query('COMMIT')
       committedTransition?.()
       committedTransition = undefined
