@@ -686,7 +686,7 @@ export async function dispatchComputerThread(userId: string, input: { brief?: st
           const runtime = (await pool.query<{ agentId: string }>(`SELECT "agentId" FROM bot_cloud_runtimes
             WHERE "botId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND harness=$4`, [request.botId, userId, bot.workspaceId, harness])).rows[0]
           if (!runtime) return { error: 'cloudComputerUnavailable' as const }
-          const selected = await chooseCloudRunModel(pool, { ownerId: userId, workspaceId: bot.workspaceId, botId: request.botId }, runtime.agentId, harness, asked)
+          const selected = await chooseCloudRunModel(pool, { ownerId: userId, workspaceId: bot.workspaceId, botId: request.botId }, runtime.agentId, harness, asked, previous.remoteUrl ? 'repository_admission' : 'desktop')
           if ('error' in selected) return { ...selected, issueId: request.issueId }
           runModel = { ...selected, ...(selected.modelDispatch?.entry ? { agentProfile: namedThreadProfile(kept, selected, previous.harness, { ownerId: userId, workspaceId: bot.workspaceId }) } : {}) }
         } else {
