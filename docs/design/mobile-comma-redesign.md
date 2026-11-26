@@ -14,7 +14,7 @@
 - **起因：** Alex 觉得抽屉版（#1408、#1446、#1453）不好看，不要抽屉，参照 Comma 的移动端重做
   （[决定 2026-11-06-1200](decisions/2026-11-06-1200-ios-drop-drawer-comma-redesign.md)）。
 - **图（源）：** Figma 文件 `zPe5LKycb2XuT1ivCLRw07` 的页面
-  「待 Alex 确认 · iOS 按 Comma 重做（2026-11-06）」（[打开](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07/?node-id=1020-1346)），
+  「iOS 按 Comma 重做」评审页（[打开](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07/?node-id=1020-1346)），
   上排浅色、下排深色。系统控件全部是 **Apple 官方 Figma 库「iOS and iPadOS 27」** 的组件实例（见下面「Figma 里用的 Apple 组件」），
   颜色绑定该库的 `Color Scheme` 变量（Light / Dark 两个模式），文字用该库的文字样式（SF Pro；中文字符用 Noto Sans SC，
   因为 Figma 网页端、服务端和 Mac 都有它，三处排版一致；真机上是 PingFang SC）。
@@ -72,7 +72,7 @@ badge；部分高度的 sheet 用系统默认外观。
 | 「Include tab labels… Use single words whenever possible」（Tab bars） | ❌ 只有图标 | ✅ 对话 · 线程 · 建议 · 设置 |
 | 「Prefer filled symbols」（Tab bars） | ✅ 选中时用 `-fill` | ✅ 选中用填充版 SF Symbol |
 | Badge：红底白字，只留给关键信息（Tab bars） | ⚠️ 用 8 pt 小蓝点 | ✅ 「建议」有新简报时用系统 badge；不滥用 |
-| 「Don’t disable or hide tab bar buttons」「Make sure the tab bar is visible…」（Tab bars） | ✅ | ⚠️ 进入聊天/线程页时 tab bar 收起（push 的详情页底部是输入框）。返回按钮保留位置感，这是 Messages 之外常见聊天应用的做法；列为待 Alex 确认的取舍 |
+| 「Don’t disable or hide tab bar buttons」「Make sure the tab bar is visible…」（Tab bars） | ✅ | ⚠️ 进入聊天/线程页时 tab bar 收起（push 的详情页底部是输入框）。返回按钮保留位置感，这是 Messages 之外常见聊天应用的做法；取舍登记在 `docs/decisions/pending.yaml` 的 `comma-mobile-tab-bar-tradeoff` |
 | 「Use a large title to help people stay oriented」（Toolbars） | ❌ 全部 20 pt 行内标题 | ✅ 四个 tab 根页和插件、工作区用大标题，滚动后收成行内标题；聊天、线程页用行内标题 |
 | 标题短于 15 个字符、不用 App 名做标题（Toolbars） | ✅ | ✅ |
 | 工具栏分组不超过三组；关键动作单独一组（Toolbars） | ✅ | ✅ 每个导航栏最多左右两组 |

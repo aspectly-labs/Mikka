@@ -165,9 +165,9 @@ test('all upcoming features fail closed, even if the remote switch is accidental
 })
 
 test('gated features are on only when the remote flag is exactly true', () => {
-  assert.equal(gatedFeatures.cloudComputer, 'mikka-cloud-computer')
-  assert.equal(gatedFeatures.computerBilling, 'mikka-computer-billing')
-  assert.equal(gatedFeatures.memory, 'mikka-memory')
+  assert.equal(gatedFeatures.cloudComputer.key, 'mikka-cloud-computer')
+  assert.equal(gatedFeatures.computerBilling.key, 'mikka-computer-billing')
+  assert.equal(gatedFeatures.memory.key, 'mikka-memory')
   assert.deepEqual(proactiveFeatures, { profile: 'mikka-proactive-profile', research: 'mikka-proactive-research' })
   for (const remote of [undefined, false, 'control', 'true']) assert.equal(gatedFeatureEnabled(remote), false)
   assert.equal(gatedFeatureEnabled(true), true)
@@ -181,7 +181,7 @@ test('gated features are on only when the remote flag is exactly true', () => {
 
 test('the 电脑 tab has its own kill switch, apart from the cloud computer rollout flag', () => {
   assert.equal(killSwitches.computerTab, 'mikka-computer-tab-off')
-  assert.notEqual(killSwitches.computerTab, gatedFeatures.cloudComputer)
+  assert.notEqual(killSwitches.computerTab, gatedFeatures.cloudComputer.key)
   const desktopHook = readFileSync(new URL('../apps/desktop/src/renderer/feature-availability.ts', import.meta.url), 'utf8')
   assert.match(desktopHook, /export function useComputerTab\(\)[\s\S]*?killSwitches\.computerTab[\s\S]*?!== true/)
   const webHookPath = new URL('../.hosted-ui/web/hooks/use-feature-availability.ts', import.meta.url)

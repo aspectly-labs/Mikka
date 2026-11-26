@@ -341,8 +341,7 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   editing.
 - A bot's computer screen.
 - Device and daemon management; most of Settings stays on the web.
-- Watches on sources without webhooks (polling), pending Alex's decision on
-  watches.
+- Watches on sources without webhooks (polling); the product decision is registered in `docs/decisions/pending.yaml` as `mobile-webhook-polling-decision`.
 
 ## Done when
 

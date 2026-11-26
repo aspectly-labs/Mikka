@@ -42,10 +42,52 @@ open the sidebar from the page header.
 ## Sections
 
 The section list is `SETTINGS_SECTIONS` in `lib/settings-sections.ts`; the
-sidebar, URL parsing and page body all read it.
+sidebar, URL parsing and page body all read it. The table below is generated
+from that source; edit the source, then run `pnpm docs:generate`.
 
-- **Personal (account):** Account, Security, Preferences, Threads, Notifications, Memory, Connections, 模型与订阅 (subscriptions, API keys, 运行位置 and 优先使用的模型; it replaced API 与订阅 and Bot 与 Agents), Secrets and logins, Data and privacy, Devices. Threads holds the current workspace's personal and shared title settings; the other account settings are the same in every workspace. Personal access tokens are built but hidden (`unbuilt`).
-- **Workspace:** General, Run permissions, Members, Teams, Team permissions (admins), Secrets and environment, Run environments, Audit log (admins), Usage, Billing, Mikka Cloud (server administrators). A personal workspace has its own workspace settings ([decision 2026-11-02-0216](design/decisions/2026-11-02-0216-personal-workspace-has-workspace-settings.md), with the full table).
+<!-- generated:settings-sections -->
+Source: `SETTINGS_SECTIONS` in `lib/settings-sections.ts`.
+
+| Group | Section id | Title |
+| --- | --- | --- |
+| `personal` | `preferences` | General |
+| `personal` | `appearance` | Appearance |
+| `personal` | `account` | Profile |
+| `personal` | `security` | Security |
+| `personal` | `notifications` | Notifications |
+| `personal` | `shortcuts` | Shortcuts |
+| `personal` | `logins` | Secrets and logins |
+| `agent` | `models` | Models and subscriptions |
+| `agent` | `environments` | Cloud environments |
+| `agent` | `computers` | Devices |
+| `agent` | `secrets` | Secrets & Credentials |
+| `agent` | `mcp` | Custom MCP |
+| `agent` | `connections` | Plugins |
+| `agent` | `instructions` | Instructions |
+| `agent` | `team-skills` | Skills |
+| `agent` | `threads` | Threads |
+| `agent` | `git` | Git and pull requests |
+| `agent` | `memory` | Memory |
+| `review` | `review-repositories` | Review repositories |
+| `review` | `review-config` | Review config |
+| `workspace` | `general` | Workspace general |
+| `workspace` | `issue-states` | Task states |
+| `workspace` | `members` | Members |
+| `workspace` | `teams` | Teams |
+| `workspace` | `permissions` | Team permissions |
+| `workspace` | `audit` | Audit log |
+| `workspace` | `developer` | API |
+| `workspace` | `activity` | Activity |
+| `workspace` | `billing` | Billing |
+| `workspace` | `usage` | Usage |
+| `workspace` | `organization` | Organization |
+| `workspace` | `cloud` | Mikka Cloud |
+| `personal` | `referrals` | Referrals |
+| `personal` | `experiments` | Experiments |
+| `personal` | `cloud-credentials` | Cloud credentials |
+<!-- /generated:settings-sections -->
+
+A personal workspace has its own workspace settings ([decision 2026-11-02-0216](design/decisions/2026-11-02-0216-personal-workspace-has-workspace-settings.md), with the full table).
 
 Account and Security hold how the person signs in, including linking Google
 to the Mikka account. Connections holds connected apps (Gmail, Calendar,
