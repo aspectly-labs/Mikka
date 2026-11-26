@@ -11297,7 +11297,7 @@
     "resizeSidebar": "调整侧栏宽度",
     "resizeWorkArea": "调整右栏宽度",
     "phoneBack": "返回",
-    "phoneColumnMenu": "工作区内容"
+    "phoneColumnMenu": "右栏内容"
   },
   "DeviceSetup": {
     "path": "本地仓库路径",
