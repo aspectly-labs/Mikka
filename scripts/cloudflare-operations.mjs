@@ -33,7 +33,7 @@ export function operationsInput(env) {
     'product-task-canary': ['verify', 'run'],
     'production-daemon-qualification': ['verify', 'run'],
     'hosted-ui-ci-workers': ['verify', 'deploy'],
-    'open-artifact-host': ['inspect', 'provision', 'deploy', 'verify'],
+    'open-artifact-host': ['inspect', 'provision', 'deploy', 'verify', 'enable'],
   }
   check(Object.hasOwn(actions, operation) && actions[operation].includes(action), 'PUBLIC_OPERATIONS_INPUT_REQUIRED')
   check(sha.test(env.MIKKA_CF_OPERATIONS_SHA ?? ''), 'PUBLIC_OPERATIONS_INPUT_REQUIRED')
