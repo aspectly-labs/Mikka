@@ -23,8 +23,6 @@ function checked(credential: RunCredential) {
   return credential
 }
 
-export { isSubscriptionGatewayCredential } from "@mikka/protocol/device"
-
 /** The gateway's host, which the run's network policy must allow. */
 export function credentialDomain(credential: RunCredential | undefined): string | undefined {
   return credential?.kind === "provider" ? new URL(credential.baseUrl).hostname : undefined

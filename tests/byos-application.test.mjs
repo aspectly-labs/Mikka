@@ -396,7 +396,7 @@ test(scenario, { timeout: 90_000 }, async t => {
         assert.equal(contextResponse.status,200)
         const metadata=await contextResponse.json();assert.equal(metadata.route,nativeRoute);assert.equal(metadata.revision,revision);assert.ok(!JSON.stringify(metadata).includes('accessToken'));assert.ok(!JSON.stringify(metadata).includes('fixture-access'))
         const payload={path:provider==='codex'?'/responses':'/v1/messages',headers:{'user-agent':'Mikka/1.0',originator:'Mikka',authorization:'Bearer caller-placeholder'},body:provider==='codex'?{model:'fixture-model',stream:true,store:false,input:[{role:'user',content:'HELLO'}]}:{model:'fixture-model',stream:true,max_tokens:16,messages:[{role:'user',content:'HELLO'}]}}
-        if (nativeLiteLlm && task === 0) await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model' })
+        if (nativeLiteLlm && task === 0) await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model', metadata, bindingId: agentBinding.body.bindingId, consumerId: agentId })
         const callsBeforeRetiredRoute = providerCalls
         const retired = await nativePost(runId, { action: 'request', payload })
         assert.equal(retired.status, 410)

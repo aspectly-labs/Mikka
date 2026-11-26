@@ -1,3 +1,4 @@
+import { isSubscriptionGatewayCredential } from '@mikka/protocol/device'
 import type { AnonymousClaudeCandidate, FreshCandidate } from '../anonymous-claude-spare'
 import { captureRunFailure, failureFrom, type RunFailure, type RunFailureContext } from "@mikka/protocol/run-failure"
 import { DAEMON_VERSION } from "../paths"
@@ -66,7 +67,7 @@ import { nativeMcpProcess, type RunApps } from "../agents/run-apps"
 import { taskMcpSecretValues } from '@mikka/protocol'
 import type { AgentSandbox } from "../agents/sandbox"
 import { carryHistory, ownDir, wipeRunCredentials } from "../agents/harness-home"
-import { claudeCredentialEnv, credentialDomain, isSubscriptionGatewayCredential, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
+import { claudeCredentialEnv, credentialDomain, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
 import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
 import { mailboxInputs } from '@mikka/protocol/mailbox'

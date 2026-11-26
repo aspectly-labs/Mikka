@@ -60,11 +60,11 @@ export async function startNativeLiteLlm(root, directory, vendor, certificate) {
   throw new Error('Local LiteLLM did not become ready: ' + Buffer.concat(output).toString().replaceAll(key, '<redacted>').slice(-2400))
 }
 
-export async function runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model }) {
+export async function runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model, metadata, bindingId, consumerId }) {
   const path = provider === 'claude' ? process.env.MIKKA_NATIVE_CLAUDE_BIN : process.env.MIKKA_NATIVE_CODEX_BIN
   assert.ok(path, 'supply the actual official CLI binary in the native proof')
   const { handleModelGateway, modelGatewayDependencies, forwardNativeSubscription } = await import('../../lib/model-gateway/handler.ts')
-  const { mintGatewayToken } = await import('../../lib/model-gateway/token.ts')
+  const { mintGatewayToken, verifyGatewayToken } = await import('../../lib/model-gateway/token.ts')
   const { token } = await mintGatewayToken(pool, { runId, ownerId: 'alice', workspaceId, harness: provider === 'claude' ? 'claude_code' : 'codex',
     model, source: { kind: 'subscription', deviceId } })
   const deps = modelGatewayDependencies()
@@ -90,31 +90,51 @@ export async function runNativeCliThroughGateway({ provider, directory, service,
   gateway.listen(0, '127.0.0.1')
   await once(gateway, 'listening')
   try {
-    const root = 'http://127.0.0.1:' + gateway.address().port + '/api/model-gateway/'
-    const env = { PATH: process.env.PATH, HOME: join(directory, 'native-cli-' + provider), LANG: 'C.UTF-8' }
-    await mkdir(env.HOME)
-    const command = provider === 'claude' ?
-      ['--print', '--output-format', 'stream-json', '--verbose', '--model', model, 'Reply with a short marker.'] :
-      ['exec', '--skip-git-repo-check', '--json',
-        '-c', 'model_provider="mikka"', '-c', 'model_providers.mikka.name="Mikka"',
-        '-c', 'model_providers.mikka.base_url=' + JSON.stringify(root + 'openai/v1'),
-        '-c', 'model_providers.mikka.env_key="MIKKA_MODEL_API_KEY"', '-c', 'model_providers.mikka.wire_api="responses"',
-        '-c', 'check_for_update_on_startup=false', '-c', 'analytics.enabled=false', '-m', model, 'Reply with a short marker.']
-    if (provider === 'claude') Object.assign(env, { ANTHROPIC_BASE_URL: root + 'anthropic', ANTHROPIC_API_KEY: token, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' })
-    else Object.assign(env, { CODEX_HOME: env.HOME, MIKKA_MODEL_API_KEY: token })
-    let stdout
-    try {
-      const pending = exec(path, command, { cwd: env.HOME, env, timeout: 30_000 })
-      pending.child.stdin.end()
-      ;({ stdout } = await pending)
-    } catch (error) {
-      throw new Error('Official CLI invocation failed: ' + String(error.stderr || error.stdout || error.message).replaceAll(token, '<redacted>').slice(-2200))
+    const origin = 'http://127.0.0.1:' + gateway.address().port
+    const cwd = join(directory, 'native-cli-' + provider)
+    await mkdir(cwd)
+    await exec('git', ['init', '-q', cwd])
+    const [{ createLocalSubscriptionRunner }, { ToolApprovalGate }, { NoSandbox }, { createLogger }, { buildChildEnv }] = await Promise.all([
+      import('../../packages/daemon/src/subscription-local-runner.ts'),
+      import('../../packages/daemon/src/agents/tool-approval.ts'),
+      import('../../packages/daemon/src/agents/sandbox.ts'),
+      import('../../packages/daemon/src/log.ts'),
+      import('../../packages/daemon/src/env.ts'),
+    ])
+    const stateDir = join(cwd, 'daemon')
+    const runner = createLocalSubscriptionRunner({ stateDir,
+      claude: { stateDir, sandbox: new NoSandbox(), ...(provider === 'claude' ? { binary: path } : {}) },
+      codex: { stateDir, sandbox: new NoSandbox(), ...(provider === 'codex' ? { binary: path } : {}) },
+    })
+    const harness = provider === 'claude' ? 'claude_code' : 'codex'
+    const protocol = provider === 'claude' ? 'anthropic' : 'openai'
+    const assignment = {
+      runId, deviceId, harness, model, subscriptionContext: metadata,
+      subscriptionBinding: { bindingId, ownerId: 'alice', workspaceId, consumerId, route: metadata.route },
+      modelCredential: { kind: 'provider', protocol, baseUrl: origin + '/api/model-gateway/' + (provider === 'claude' ? 'anthropic' : 'openai/v1'), key: token },
     }
-    assert.match(stdout, /subscription fixture/, 'the actual CLI consumed the streamed vendor reply')
+    const session = await runner.start(assignment, {
+      cwd, runId, model, prompt: 'Reply with a short marker.', log: createLogger({ level: 'silent' }),
+      env: buildChildEnv({ host: { PATH: process.env.PATH, HOME: cwd } }),
+      toolApproval: new ToolApprovalGate(runId, { isLive: async () => (await verifyGatewayToken(pool, token))?.runId === runId }),
+    })
+    let text = '', outcome
+    const deadline = setTimeout(() => { void session.cancel().catch(() => undefined) }, 30_000)
+    try {
+      for await (const event of session.events()) {
+        if (event.type === 'chunk' && event.chunk.type === 'text-delta') text += event.chunk.delta
+        if (event.type === 'exit') outcome = event.outcome
+      }
+    } finally {
+      clearTimeout(deadline)
+      await session.cancel()
+    }
+    assert.equal(outcome, 'succeeded', 'the daemon finished the official CLI session')
+    assert.match(text, /subscription fixture/, 'the actual CLI consumed the streamed vendor reply')
     const rows = await pool.query(`SELECT "billingSource","inputTokens","outputTokens","generationId" FROM hosted_usage WHERE "usageRunId"=$1`, [runId])
     assert.ok(rows.rows.some(row => row.billingSource === 'subscription' && Number(row.inputTokens) > 0 && Number(row.outputTokens) > 0 && /^[a-f0-9-]{36}$/.test(row.generationId)),
       'the actual gateway recorded subscription usage with a LiteLLM generation ID for this run')
-    console.log('Official native subscription fixture passed', provider, 'gateway, LiteLLM stream and usage receipt')
+    console.log('Official native subscription fixture passed', provider, 'daemon, gateway, LiteLLM stream and usage receipt')
   } finally {
     gateway.closeAllConnections()
     await new Promise(resolve => gateway.close(resolve))

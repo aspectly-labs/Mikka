@@ -127,10 +127,9 @@ it.each(['ordinary', 'task', 'host'] as const)('emits the earlier task-owned clo
     const { startupTiming, preparationTiming } = stages[2].data
     expect(startupTiming).toMatchObject({ runIdHash: runIdHash(f.assignment.runId), outcome: 'ok', phases: [] })
     expect(preparationTiming).toMatchObject({ source: 'prepared_agent_start', runIdHash: runIdHash(f.assignment.runId), harness: 'claude_code', outcome: 'ok', truncated: false })
-    expect(preparationTiming?.phases).toEqual(expect.arrayContaining([
+    expect(preparationTiming?.phases).toEqual([
       expect.objectContaining({ name: 'daemon.adapter.cli_init.prewarm', outcome: 'ok' }),
-      expect.objectContaining({ name: 'daemon.adapter.cli_init', outcome: 'ok' }),
-    ]))
+    ])
     expect(preparationTiming!.startedAt).toBeLessThanOrEqual(startupTiming!.startedAt)
     expect(preparationTiming!.endedAt).toBeLessThanOrEqual(startupTiming!.endedAt)
   }

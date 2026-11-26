@@ -6,7 +6,7 @@ import type { UserErrorDetail } from "@mikka/protocol/user-error-codes"
 import { ClaudeAdapter, type ClaudeAdapterOptions } from "./adapters/claude"
 import { CodexAdapter, type CodexAdapterOptions } from "./adapters/codex"
 import type { AgentSession, StartOptions } from "./adapters/types"
-import { isSubscriptionGatewayCredential } from './agents/run-credential'
+import { isSubscriptionGatewayCredential } from '@mikka/protocol/device'
 import { requireRunToolApproval } from "./agents/tool-approval"
 import { buildChildEnv } from "./env"
 import { taskExecutionEnv } from './task-env'
