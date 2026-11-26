@@ -1,7 +1,7 @@
 # A personal workspace has every setting of the workspace itself
 
 - Date: 2026-11-02
-- **Status:** Superseded in part by [2026-11-02-1500-personal-first-team-needs-two](2026-11-02-1500-personal-first-team-needs-two.md); [2026-11-26-0100](2026-11-26-0100-settings-structure-from-benchmark.md)
+- **Status:** Superseded in part by [2026-11-02-1500-personal-first-team-needs-two](2026-11-02-1500-personal-first-team-needs-two.md)
 - Source: Alex, relayed by the coordinator session: a personal workspace must use shared secrets and environment variables in its tasks too, or its bots and agents get none when they run. 「个人工作区和团队工作区的区别只在『人与人之间』的东西（成员、团队、团队权限、审计日志、共享额度、离开成员的 Bot、转让）。凡是工作区自身的能力，两边都要有。」
 - Rule: R-26
 - Superseded in part by: [2026-11-02-1500-personal-first-team-needs-two](2026-11-02-1500-personal-first-team-needs-two.md) (sharing a subscription or credits with a team is set in the person's own settings; a team's settings only show it, read-only)
