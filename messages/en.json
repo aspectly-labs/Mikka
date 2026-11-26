@@ -1652,7 +1652,8 @@
       "countWorkspace": "{count} · workspace",
       "archiveDays": "{days} days",
       "scopeMine": "Personal",
-      "archiveOff": "Off"
+      "archiveOff": "Off",
+      "workspaceDefaults": "Workspace defaults"
     },
     "modelOrder": {
       "add": "Add models",
@@ -2554,7 +2555,7 @@
       "actionsNamed": "{name} actions",
       "computeHeading": "Compute",
       "computeRow": "Cloud machines",
-      "computeMikka": "Mikka cloud",
+      "computeMikka": "Not set",
       "computeOwn": "Your E2B account",
       "computeUseOwn": "Use your E2B account",
       "lazyRepositories": "Cloned on demand",
