@@ -1,4 +1,4 @@
--- migrate: reviewed-data #3326 Create prepaid E2B lease receipts and add nullable snapshot compute template metadata; no existing debit or resource row is rewritten.
+-- migrate: reviewed-data #3332 Create prepaid E2B lease receipts and add nullable snapshot compute template metadata; no existing debit or resource row is rewritten.
 -- target: MIKKA_DATABASE_URL
 -- Store the provider template and the paid interval separately from run ownership.
 -- A task's sandbox may be adopted by a later run while its paid time is still usable.
