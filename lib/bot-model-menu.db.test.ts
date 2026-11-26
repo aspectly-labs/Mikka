@@ -39,6 +39,15 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
       CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,"modelId" text,route text,"createdAt" timestamptz DEFAULT now())`);
     for (const file of ["20261030193000_device_enrollment_management.sql", "20261030200610_execution_rules.sql", "20261030233002_byos_model_catalog.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101020201_workspace_personal_policies.sql", "20261101020202_bot_archive.sql", "20261101021000_model_api_keys.sql", "20261101021100_bot_api_key_choice.sql", "20261102120000_model_api_key_models_error.sql", "20261102190000_model_api_key_responses_api.sql", "20261115175552_bot_model_choices_credits_model.sql", "20261115204738_model_gateway_tokens.sql", "20261120044916_bot_settings.sql", "20261108120101_enabled_models.sql", "20261031050732_workspace_deletion_guards.sql", "20261125212629_bot_model_choices_service_tier.sql", "20261125223407_model_favorites.sql", "20261125234000_chat_model_modes_and_preferred_routes.sql"])
       await pool.query(await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8"));
+    // Upgrade path: existing favorite rows are dropped cleanly by 20261126125352_drop_model_favorites.sql.
+    await pool.query('INSERT INTO model_favorites ("ownerId", slots, "slotDetails", "preferredRoutes") VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb)', [
+      "alice",
+      JSON.stringify([{ optionId: "credits:anthropic/claude-sonnet-5.5", effort: "high", serviceTier: "fast" }]),
+      JSON.stringify([{ optionId: "credits:anthropic/claude-sonnet-5.5", effort: "high", serviceTier: "fast", modelKey: "anthropic/claude-sonnet-5-5" }]),
+      JSON.stringify({ "anthropic/claude-sonnet-5-5": "credits:anthropic/claude-sonnet-5.5" }),
+    ]);
+    await pool.query(await readFile(new URL("../drizzle/20261126125352_drop_model_favorites.sql", import.meta.url), "utf8"));
+    assert.equal((await pool.query("SELECT to_regclass('model_favorites') AS rel")).rows[0].rel, null);
     // Resource policy still runs against real non-Org rows in this isolated schema.
     await pool.query(await readFile(new URL("../drizzle/20261109035020_organization_governance.sql", import.meta.url), "utf8"));
 
@@ -121,7 +130,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const inspected = await botModelMenu(countedPool, settings, alice, botA, Date.now(), true);
     assert.equal(inspected.preferenceState, "absent");
     assert.equal(calls.length, ordinaryQueryCount, "opt-in presence reuses the existing preference read");
-    assert.deepEqual(Object.keys(menu).sort(), ["chat", "current", "favorites", "groups", "models", "preferredRoutes"], "ordinary menu exposes additive picker fields");
+    assert.deepEqual(Object.keys(menu).sort(), ["chat", "current", "groups", "models", "preferredRoutes"], "ordinary menu exposes additive picker fields without favorites");
     await t.test("an empty menu reuses raw credential reads in the real points fallback", async () => {
       await pool.query(`CREATE TABLE model_order_settings ("ownerId" text,"workspaceId" uuid,location text,customized boolean,"preferredHarness" text,"autoModelRouting" boolean)`);
       await pool.query(`INSERT INTO "user" VALUES ('empty')`);
@@ -172,12 +181,10 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
         catalogServer.resetModelCatalogForTests();
       }
     });
-    const { chooseBotModel, setPreferredRoute } = await import("./bot-model-menu");
+    const { chooseBotModel, setPreferredRoute, setChatModelSettings } = await import("./bot-model-menu");
     await t.test("two devices validate independent routes without changing the account or the chat", async () => {
       const second = await binding("alice", elsewhere, otherWs, "claude-sonnet-fixture", "claude_cpa");
       const modelKey = menu.models!.find(model => model.routes.some(route => route.id === sonnet))!.key;
-      const historical = { [modelKey]: opus };
-      await pool.query('INSERT INTO model_favorites ("ownerId","preferredRoutes") VALUES ($1,$2)', [alice.ownerId, historical]);
       try {
         const secondEntry = (await botModelMenu(pool, settings, alice, botA)).models!.find(model => model.key === modelKey)!.routes.find(route => route.id === second)!;
         const [deviceA, deviceB] = await Promise.all([
@@ -191,29 +198,44 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
         const next = await botModelMenu(pool, settings, alice, botA);
         assert.deepEqual(next.preferredRoutes, {});
         assert.equal(next.current.id, menu.current.id);
-        const { rows: [stored] } = await pool.query('SELECT "preferredRoutes" FROM model_favorites WHERE "ownerId"=$1', [alice.ownerId]);
-        assert.deepEqual(stored.preferredRoutes, historical);
+        assert.equal("favorites" in next, false);
       } finally {
         await pool.query('DELETE FROM byos_bindings WHERE id=$1', [second]);
       }
     });
-    await t.test("a historical favorite uses an available route for the same model and remains stored when no route is visible", async () => {
-      const { addModelFavorite, removeModelFavorite } = await import("./model-favorites");
-      const second = await binding("alice", elsewhere, otherWs, "claude-sonnet-fixture", "claude_cpa");
-      const before = await addModelFavorite(pool, settings, alice, botA, { optionId: sonnet, effort: null, serviceTier: "standard" });
-      const slot = before.favorites!.find(item => item.optionId === sonnet)!.slot;
+    await t.test("Mikka credits lists every authorized catalogue model without featured subset filtering", async () => {
+      const extra = {
+        id: "acme/unfeatured-credit-model",
+        vendor: "acme",
+        name: "Unfeatured Credit Model",
+        contextWindow: 128000,
+        maxTokens: 16384,
+        pricing: { input: 1.5, output: 3 },
+        tags: ["tool-use"],
+        reasoning: ["low", "high"],
+      };
+      const bot = randomUUID();
+      await pool.query('INSERT INTO bots (id,"ownerId","workspaceId") VALUES ($1,$2,$3)', [bot, alice.ownerId, workspace]);
+      readCatalogue = async () => [...CATALOG_SNAPSHOT, extra];
       try {
-        await pool.query('UPDATE byos_connections SET paused=true WHERE id=$1', [claude]);
-        const replacement = await botModelMenu(pool, settings, alice, botA);
-        assert.equal(replacement.favorites?.find(item => item.slot === slot)?.optionId, second);
-        await pool.query('DELETE FROM byos_bindings WHERE id=$1', [second]);
-        assert.equal((await botModelMenu(pool, settings, alice, botA)).favorites?.some(item => item.slot === slot), false);
-        const { rows: [stored] } = await pool.query('SELECT slots FROM model_favorites WHERE "ownerId"=$1', [alice.ownerId]);
-        assert.equal(stored.slots[slot].optionId, sonnet);
+        const listedMenu = await botModelMenu(pool, settings, alice, bot);
+        const hosted = listedMenu.groups.find(group => group.kind === "hosted");
+        assert.ok(hosted);
+        assert.equal(hosted.options.length, CATALOG_SNAPSHOT.length + 1);
+        const extraOption = hosted.options.find(option => option.modelId === extra.id);
+        assert.ok(extraOption, "non-FEATURED_MODELS catalogue model is included in Mikka credits");
+        assert.equal(hosted.options.every(option => option.featured === true), true,
+          "every authorized Mikka-credit option sets compatibility featured=true so no consumer filters by a featured subset");
+        assert.ok(listedMenu.models?.some(model => model.routes.some(route => route.id === extraOption.id)));
+        const chosen = await chooseBotModel(pool, settings, alice, bot, extraOption.id);
+        assert.equal(chosen.current.id, extraOption.id);
+        assert.equal(chosen.current.featured, true);
+        assert.deepEqual(await freezeBotModel({ ownerId: "alice", botId: bot, workspaceId: workspace }, {
+          service: () => ({ repository: new SubscriptionRepository(pool) }) as never,
+          workspace: async () => {},
+        }), { harness: "ai_sdk", model: extra.id });
       } finally {
-        await pool.query('UPDATE byos_connections SET paused=false WHERE id=$1', [claude]);
-        await pool.query('DELETE FROM byos_bindings WHERE id=$1', [second]);
-        await removeModelFavorite(pool, settings, alice, botA, slot);
+        readCatalogue = async () => [...CATALOG_SNAPSHOT];
       }
     });
     await t.test("known subscription health is visible on saved picks and stale writes only to the owner", async () => {
@@ -241,34 +263,28 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
         await pool.query("UPDATE byos_connections SET paused=false,state='connected' WHERE id=$1", [claude]);
       }
     });
-    await t.test("a Pro favorite survives a route switch while the chat only reports runnable modes", async () => {
-      const { addModelFavorite, chooseModelFavorite } = await import("./model-favorites");
+    await t.test("Pro mode applies on eligible credits routes and clears when switching to a subscription route", async () => {
       const bot = randomUUID();
       await pool.query('INSERT INTO bots (id,"ownerId","workspaceId") VALUES ($1,$2,$3)', [bot, alice.ownerId, workspace]);
       const pro = menu.groups.flatMap(group => group.options).find(route => route.route?.kind === "credits" && route.capabilities?.pro);
       assert.ok(pro);
       const modes = { fast: false, ultrafast: false, pro: true, daybreak: false as const };
-      const favorites = await addModelFavorite(pool, settings, alice, bot, { optionId: pro.id, effort: "high", modes });
-      const slot = favorites.favorites?.find(favorite => favorite.optionId === pro.id);
-      assert.ok(slot);
-      assert.equal(slot.effort, null);
-      assert.equal((await chooseModelFavorite(pool, settings, alice, bot, slot.slot)).chat?.modes?.pro, true);
+      await chooseBotModel(pool, settings, alice, bot, pro.id);
+      await setChatModelSettings(pool, alice, bot, { effort: "high", modes }, pro.capabilities);
+      const proMenu = await botModelMenu(pool, settings, alice, bot);
+      assert.equal(proMenu.chat?.modes?.pro, true);
+      assert.equal(proMenu.chat?.effort, null);
       await settings.setBotModel(alice, bot, gpt);
       const seat = await botModelMenu(pool, settings, alice, bot);
       assert.equal(seat.chat?.modes?.pro, false);
-      const { setChatModelSettings } = await import("./bot-model-menu");
       await setChatModelSettings(pool, alice, bot, { effort: "high" }, seat.current.capabilities);
       assert.equal((await botModelMenu(pool, settings, alice, bot)).chat?.effort, "high");
-      assert.equal(seat.favorites?.find(favorite => favorite.optionId === pro.id)?.modes?.pro, true);
     });
     await t.test("a stable subscription entry selects the same route after a bot binding rotates", async () => {
-      const { addModelFavorite, chooseModelFavorite } = await import("./model-favorites");
       const bot = randomUUID();
       await pool.query('INSERT INTO bots (id,"ownerId","workspaceId") VALUES ($1,$2,$3)', [bot, alice.ownerId, workspace]);
       const source = await botModelMenu(pool, settings, alice, bot);
       const route = source.groups.flatMap(group => group.options).find(item => item.route?.connectionId === codex)!;
-      const menu = await addModelFavorite(pool, settings, alice, bot, { optionId: route.id, effort: null, serviceTier: "standard" });
-      const slot = menu.favorites!.find(item => item.optionId === route.id)!;
       const selected = await chooseBotModel(pool, settings, alice, bot, route.entryId!);
       assert.notEqual(selected.current.id, route.id);
       assert.equal(selected.current.entryId, route.entryId);
@@ -279,10 +295,6 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
       });
       assert.equal(frozen.model, selected.current.modelId);
       assert.equal(frozen.modelSelection?.type === "subscription" && frozen.modelSelection.connectionId, codex);
-      assert.equal(selected.favorites!.find(item => item.slot === slot.slot)?.optionId, selected.current.id);
-      assert.equal((await chooseModelFavorite(pool, settings, alice, bot, slot.slot)).chat?.serviceTier, "standard");
-      const { rows: [stored] } = await pool.query('SELECT slots FROM model_favorites WHERE "ownerId"=$1', [alice.ownerId]);
-      assert.ok(stored.slots.every((item: object) => Object.keys(item).sort().join(",") === "effort,optionId,serviceTier"));
     });
     // Another person's bot is not this person's to pick for.
     await assert.rejects(settings.setBotModel(alice, bobBot, gpt), { code: "botNotFound" });
@@ -652,3 +664,63 @@ test("mobile model API keeps normal selection and authenticates every temporary 
     }
   } finally { for (const handle of mocks.reverse()) handle.restore(); }
 });
+
+test("drop_model_favorites upgrades a PG17 schema with existing favorites while preserving bot_model_choices", { skip: !databaseURL }, async () => {
+  assert.ok(["127.0.0.1", "localhost"].includes(new URL(databaseURL!).hostname));
+  assert.equal(new URL(databaseURL!).pathname, "/mikka_e2e");
+  const admin = new Pool({ connectionString: databaseURL });
+  const schema = `drop_favorites_${randomUUID().replaceAll("-", "")}`;
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new Pool({ connectionString: databaseURL, options: `-c search_path=${schema}` });
+  try {
+    await pool.query(`CREATE TABLE "user" (id text PRIMARY KEY); INSERT INTO "user" VALUES ('alice'),('bob');
+      CREATE TABLE bots (id uuid PRIMARY KEY, "ownerId" text, "workspaceId" uuid);
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, kind text NOT NULL DEFAULT 'team');
+      CREATE TABLE byos_bindings (id uuid PRIMARY KEY, "ownerId" text, "workspaceId" text);`);
+    for (const file of [
+      "20261030200610_execution_rules.sql",
+      "20261101001200_bot_model_hosted_choice.sql",
+      "20261101021000_model_api_keys.sql",
+      "20261101021100_bot_api_key_choice.sql",
+      "20261115175552_bot_model_choices_credits_model.sql",
+      "20261120044916_bot_settings.sql",
+      "20261031050732_workspace_deletion_guards.sql",
+      "20261125212629_bot_model_choices_service_tier.sql",
+      "20261125223407_model_favorites.sql",
+      "20261125234000_chat_model_modes_and_preferred_routes.sql",
+    ]) {
+      await pool.query(await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8"));
+    }
+    const workspace = randomUUID();
+    await pool.query('INSERT INTO mikka_workspaces(id) VALUES ($1)', [workspace]);
+    await pool.query(
+      'INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","creditsModel",effort,"serviceTier",pro) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      ["alice", workspace, "coordinator", "openai/gpt-6.1-sol", null, "standard", true],
+    );
+    await pool.query(
+      'INSERT INTO model_favorites ("ownerId",slots,"slotDetails","preferredRoutes") VALUES ($1,$2::jsonb,$3::jsonb,$4::jsonb), ($5,$6::jsonb,$6::jsonb,$7::jsonb)',
+      [
+        "alice",
+        JSON.stringify([{ optionId: "credits:openai/gpt-6.1-sol", effort: null, serviceTier: "standard" }]),
+        JSON.stringify([{ optionId: "credits:openai/gpt-6.1-sol", effort: null, serviceTier: "standard", modes: { fast: false, ultrafast: false, pro: true, daybreak: false }, modelKey: "openai/gpt-6.1-sol" }]),
+        JSON.stringify({ "openai/gpt-6.1-sol": "credits:openai/gpt-6.1-sol" }),
+        "bob",
+        JSON.stringify([]),
+        JSON.stringify({}),
+      ],
+    );
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM model_favorites")).rows[0].n, 2);
+    const dropSql = await readFile(new URL("../drizzle/20261126125352_drop_model_favorites.sql", import.meta.url), "utf8");
+    await pool.query(dropSql);
+    await pool.query(dropSql);
+    assert.equal((await pool.query("SELECT to_regclass('model_favorites') AS rel")).rows[0].rel, null);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='model_favorites'`, [schema])).rows[0].n, 0);
+    const { rows: [choice] } = await pool.query('SELECT "creditsModel",effort,"serviceTier",pro FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3', ["alice", workspace, "coordinator"]);
+    assert.deepEqual(choice, { creditsModel: "openai/gpt-6.1-sol", effort: null, serviceTier: "standard", pro: true });
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end();
+  }
+});
+

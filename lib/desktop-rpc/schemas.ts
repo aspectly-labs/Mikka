@@ -24,8 +24,6 @@ import { taskDestinationSchema } from '@/lib/task-destination'
 import { BOT_DEFAULT_AGENTS, botRunsOnSchema } from '@/lib/bot-settings'
 import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS } from '@/lib/model-routing'
 import { chatModelOptionsSchema } from '@/lib/model-picker-options'
-import { favoriteIndex, modelFavoriteSlot } from '@/lib/model-favorites'
-import { MODEL_FAVORITES_MAX } from '@/lib/bot-model-menu-view'
 import { API_KEY_PRESETS } from '@/lib/model-api-key-providers'
 import { gatewayFeaturesSchema } from '@/lib/model-gateway/features'
 import { setAppPolicyInput } from '@/lib/app-policy/apps'
@@ -338,11 +336,6 @@ export const desktopActionSchemas = {
   'execution-settings.chooseBotModel': tuple(bot, text(1000).min(1)),
   'execution-settings.setPreferredModelRoute': tuple(bot, text(500).min(1), text(300).min(1)),
   'execution-settings.setChatModelOptions': tuple(bot, chatModelOptionsSchema),
-  'execution-settings.addModelFavorite': tuple(bot, modelFavoriteSlot, favoriteIndex.optional()),
-  'execution-settings.updateModelFavorite': tuple(bot, favoriteIndex, modelFavoriteSlot),
-  'execution-settings.removeModelFavorite': tuple(bot, favoriteIndex),
-  'execution-settings.reorderModelFavorites': tuple(bot, z.array(favoriteIndex).max(MODEL_FAVORITES_MAX)),
-  'execution-settings.chooseModelFavorite': tuple(bot, favoriteIndex),
   'execution-settings.getUsageLimits': tuple(workspace),
   'issue-metadata.getIssuePropertyOptions': oneId,
   'issue-metadata.getNewTaskOptions': oneId,

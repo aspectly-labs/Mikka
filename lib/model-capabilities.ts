@@ -57,7 +57,7 @@ const LAB: Readonly<Record<string, string>> = { claude: 'anthropic', anthropic: 
 
 /**
  * One model, whatever runs it (Capy's `lab/id-without-prefix`): the routes of the same model — Mikka 额度, a plan, a
- * key — share this key, so the picker lists the model once and a favorite holds one slot per model. The lab is the
+ * key — share this key, so the picker lists the model once. The lab is the
  * catalogue's vendor, else the provider's lab, else (a custom provider) the route's label, as Capy's; the id is the
  * bare model id as the CLIs name it (`builtinKey`).
  */

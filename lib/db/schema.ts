@@ -298,14 +298,6 @@ export const botModelChoices = pgTable('bot_model_choices', {
   pro: boolean('pro').notNull().default(false),
   serviceTier:text('serviceTier').$type<import('@/lib/model-routing').ModelServiceTier>(),
 }, table=>[primaryKey({columns:[table.ownerId,table.workspaceId,table.botKey]})])
-/** The model picker's favorites, per person (lib/model-favorites.ts): ordered whole setups, model + route + level + speed. */
-export const modelFavorites = pgTable('model_favorites', {
-  ownerId: text('ownerId').primaryKey().references(()=>users.id,{onDelete:'cascade'}),
-  slotDetails: jsonb('slotDetails').$type<import('@/lib/model-favorites').ModelFavoriteSlot[]>().notNull().default(sql`'[]'::jsonb`),
-  preferredRoutes: jsonb('preferredRoutes').$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
-  slots: jsonb('slots').$type<import('@/lib/model-favorites').ModelFavoriteSlot[]>().notNull().default(sql`'[]'::jsonb`),
-  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
-}, table=>[check('model_favorites_slots_list', sql`jsonb_typeof(${table.slots}) = 'array' AND jsonb_array_length(${table.slots}) <= 10`)])
 
 export const agentSessions = pgTable('agent_sessions', {
   id: uuid('id').primaryKey(), userId: text('userId').notNull(), title: varchar('title', { length: 200 }).notNull(),

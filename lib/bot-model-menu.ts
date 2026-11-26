@@ -11,7 +11,6 @@ import { isCloudEdition } from "./edition";
 import { defaultModelTarget } from "./default-model";
 import { modelKeyOf, modesFor, modesFromTier, supportedModes, tierForModes, type ModelCapabilities, type ModelModes } from "./model-capabilities";
 import { modelDisplayName } from "./model-display-name";
-import { readModelFavorites, menuFavorites } from "./model-favorites";
 import { modelEnabled, type ModelSettings } from "./enabled-models-policy";
 import { modelRouteRejection, ModelRouteUnavailable, type ModelRouteHealth } from "./model-route-rejection";
 
@@ -129,18 +128,17 @@ export async function botModelMenu(
   // (decision 2026-11-15-1900). A self-hosted server lists its LiteLLM default alias.
   const usable = enabled && (local || points > 0);
   const hostedSource = local ? "self-hosted" as const : undefined;
-  const creditsOption = (model: { id: string; name?: string; pricing?: { input: number; output: number } | null }, featured?: boolean): BotModelMenuOption => ({
+  const creditsOption = (model: { id: string; name?: string; pricing?: { input: number; output: number } | null }): BotModelMenuOption => ({
     id: creditsOptionId(model.id), modelId: model.id, provider: "mikka", ...(model.name ? { name: model.name } : {}),
     ...(model.pricing ? { price: { input: model.pricing.input, output: model.pricing.output } } : {}),
-    ...(featured ? { featured } : {}), ...(hostedSource ? { hostedSource } : {}),
+    // No server-side featured subset (#3315); keep featured: true for remaining consumers (Onboarding / older clients) so every authorized Mikka-credit model is shown.
+    featured: true, ...(hostedSource ? { hostedSource } : {}),
     route: { source: "credits", connectionId: null, label: "" },
     ...(usable ? {} : { unavailable: { reason: "points" as const }, health: modelRouteRejection("balance")?.health }),
   });
-  const { FEATURED_MODELS } = await import("./model-catalog");
-  const featured = new Set<string>(FEATURED_MODELS);
   const groups = orderedRouteGroups([
     ...(catalogue.length ? [{ kind: "hosted" as const, ...(hostedSource ? { hostedSource } : { points }),
-      options: catalogue.map((model) => creditsOption(model, local || featured.has(model.id))) }] : []),
+      options: catalogue.map((model) => creditsOption(model)) }] : []),
     ...subscriptions.values(),
     ...ownKeys.map((key) => ({ kind: "apiKey" as const, credentialLabel: keyLabel(key), options: keyOptions(key) })),
     ...keys.filter((key) => !key.mine && ownerNames.has(key.ownerId)).map((key) => ({
@@ -153,7 +151,7 @@ export async function botModelMenu(
     current = { ...NO_MODEL, ...state };
   } else if (choice.kind === "hosted") {
     const model = catalogue.find((item) => item.id === choice.model) ?? { id: choice.model };
-    current = { ...creditsOption(model, featured.has(choice.model)), kind: "hosted", ...state, available: usable, availability: usable ? "available" : "exhausted" };
+    current = { ...creditsOption(model), kind: "hosted", ...state, available: usable, availability: usable ? "available" : "exhausted" };
   } else if (choice.kind === "apiKey") {
     current = {
       id: apiKeyOptionId(choice.key.id, choice.model), modelId: choice.model, provider: choice.key.provider,
@@ -199,17 +197,14 @@ export async function botModelMenu(
   };
   for (const group of groups) group.options = group.options.map(withCapabilities);
   current = withCapabilities(current);
-  const favoriteSlots = await readModelFavorites(pool, scope.ownerId);
   const models = groupModelOptions(groups);
-  // The person's favorites, as Capy's: whole setups first in the picker; one this workspace cannot use stays, unavailable.
-  const favorites = menuFavorites(favoriteSlots, { groups });
   const modes = current.capabilities ? modesFor(current.capabilities, preference.chat.modes) : modesFromTier(null);
   const chat = { ...preference.chat, modes, effort: modes.pro ? null : preference.chat.effort };
   const savedKey = preference.key && keys.find(key => key.id === preference.key?.keyId && (key.mine || ownerNames.has(key.ownerId)));
   const unavailableSelection = choice.fallback === "preference" && preference.selected
     ? await subscriptionPickerHealth(pool, scope.ownerId, preference.selected)
     : savedKey?.modelsError === "invalid" ? modelRouteRejection("keyRefused")?.health : undefined;
-  return { groups, models, preferredRoutes: {}, current, chat, favorites,
+  return { groups, models, preferredRoutes: {}, current, chat,
     ...(unavailableSelection ? { unavailableSelection } : {}),
     ...(inspectPreference ? { preferenceState: !preference.key && preference.selected === undefined ? "absent" as const : "present" as const } : {}) };
 }
