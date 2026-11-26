@@ -292,12 +292,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       // Park locks the run before its machine. Take those locks in that
       // order before returning a receipt or authorizing a new writer.
       await tx.query('SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE', [runId, caller.userId])
-      const { rows: [machine] } = await tx.query<{ receipt: unknown; capture: string | null; captureUntil: string | null }>(
-        `SELECT lifecycle->'portableWorkspaceRestore' AS receipt, lifecycle->>'portableWorkspaceCapture' AS capture,
+      const { rows: [machine] } = await tx.query<{ receipt: unknown; restorePending: boolean; capture: string | null; captureUntil: string | null }>(
+        `SELECT lifecycle->'portableWorkspaceRestore' AS receipt, lifecycle ? 'portableWorkspaceRestorePending' AS "restorePending",
+           lifecycle->>'portableWorkspaceCapture' AS capture,
            lifecycle->>'portableWorkspaceCaptureUntil' AS "captureUntil" FROM thread_machines
          WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
            AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
-      if (machine?.capture === 'pending' && Number(machine.captureUntil) > Date.now()) return false
+      if (machine?.restorePending || (machine?.capture === 'pending' && Number(machine.captureUntil) > Date.now())) return false
       if (machine?.receipt != null) {
         if (request.headers.get(PORTABLE_TASK_WORKSPACE_HEADER) !== '1') return false
         portableTaskWorkspace = portableTaskWorkspaceReceiptSchema.parse(machine.receipt)
