@@ -32,8 +32,6 @@ export interface WorkerConfiguration {
   executionOnly?: boolean
   nativeLiteLlmUrl?: string
   nativeLiteLlmKey?: string
-  /** The worker may export one live run's access lease (never the refresh grant) for a device runner. */
-  exportAccessLease?: boolean
   enableCodexOAuth?: boolean
   enableRuntime?: boolean
   enablePlainModels?: boolean

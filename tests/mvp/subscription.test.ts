@@ -10,7 +10,6 @@ import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'
 import { streamText, stepCountIs, tool } from 'ai'
 import { z } from 'zod'
-import { nativeLeaseSchema } from '@mikka/protocol/subscription'
 import { SubscriptionService } from '../../lib/subscription-service'
 import type { SubscriptionRepository } from '../../lib/subscription-repository'
 import { SubscriptionWorkerClient } from '../../packages/daemon/src/subscription-worker-client'
@@ -22,7 +21,7 @@ import { preflightLocalSubscription } from '../../packages/daemon/src/subscripti
 import { HARNESS_PINS } from '../../packages/daemon/src/harness-install'
 import { answerModel, tracePublicationReady } from './model.mjs'
 
-test('trace subscription fixture supports the current catalogue and native lease ABI, scoped to a run', async () => {
+test('trace subscription fixture supports the catalogue and native metadata ABI, scoped to a run', async () => {
   const config = { scope: { ownerId: 'mvp-owner', workspaceId: randomUUID(), connectionId: randomUUID(), provider: 'codex' as const },
     databaseUrl: 'postgresql://ci:fixture@127.0.0.1:5432/mikka_e2e', infisicalOrigin: MVP_SERVICES,
     project: 'mvp-synthetic', environment: 'test', path: '/custody', workloadToken: 'mvp-synthetic-custody', accessPath: '/access', accessToken: 'mvp-synthetic-access' }
@@ -37,18 +36,6 @@ test('trace subscription fixture supports the current catalogue and native lease
   assert.equal(context.accountId, MVP_NATIVE_ACCOUNT)
   assert.ok(Date.parse(context.expiresAt) > Date.now())
   await assert.rejects(scoped.call('nativeAuth', { revision: 1 }), { code: 'subscription_fixture_refused' })
-  const exportable = new SubscriptionWorkerClient(launch, { ...config, exportAccessLease: true })
-  await assert.rejects(exportable.call('nativeAuth', { revision: 1 }), { code: 'subscription_fixture_refused' })
-  const auth = await exportable.forUse(use)
-    .call<{ accessToken: string; expiresAt: string; chatgptAccountId: string; chatgptPlanType?: string }>('nativeAuth', { revision: 1 })
-  // The claim's nativeLease now obtains identity and access in one nativeAuth call.
-  const lease = nativeLeaseSchema.parse({ route: 'codex_cli', modelId: MVP_SUBSCRIPTION_MODEL, revision: 1,
-    accountId: auth.chatgptAccountId, ...(typeof auth.chatgptPlanType === 'string' ? { plan: auth.chatgptPlanType } : {}),
-    accessToken: auth.accessToken, expiresAt: auth.expiresAt })
-  assert.equal(lease.accountId, MVP_NATIVE_ACCOUNT)
-  assert.equal(lease.plan, 'plus')
-  assert.equal(lease.accessToken, MVP_NATIVE_TOKEN)
-  assert.ok(Date.parse(lease.expiresAt) > Date.now())
   await assert.rejects(scoped.call('models', { revision: 2 }), { code: 'subscription_fixture_refused' })
 })
 

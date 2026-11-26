@@ -31,6 +31,7 @@ import { authorizeSubscriptionUse } from '../lib/subscription-runtime.ts'
 import { authorizedAccessName } from '../lib/subscription-access-snapshot.ts'
 import { readSubscriptionQuota } from '../packages/daemon/src/subscription-quota.ts'
 import { signSubscriptionChat, verifySubscriptionChat } from '../lib/subscription-chat-ticket.ts'
+import { runNativeCliThroughGateway, startNativeLiteLlm } from './support/native-cli-litellm.mjs'
 import { seedFixtureWorkspace } from './helpers/task-workspace.ts'
 
 const workspaceId = '20000000-0000-4000-8000-000000000001'
@@ -84,17 +85,22 @@ test(scenario, { timeout: 90_000 }, async t => {
   async function nativeProvider(request, response) {
     providerCalls++
     assert.equal(request.headers['user-agent'], 'Mikka/1.0')
+    assert.ok(!request.headers['x-litellm-api-key'])
     assert.ok(request.headers.authorization.startsWith('Bearer fixture-'))
     const chunks = []; for await (const chunk of request) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString())
+    if (request.url.endsWith('/count')) {
+      response.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":13}')
+      return
+    }
     assert.equal(body.stream, true)
-    assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
+    if (!process.env.MIKKA_NATIVE_LITELLM_BIN) assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
     const provider = request.url.endsWith('/codex') ? 'codex' : 'claude'
     if (provider === 'codex') { assert.equal(body.store, false); assert.equal(request.headers.originator, 'Mikka'); assert.equal(request.headers['chatgpt-account-id'], 'fixture-account') }
     const raw = JSON.stringify(body)
     const toolResult = provider === 'codex' ? body.input.some(item => item.type === 'function_call_output') : body.messages.some(message => Array.isArray(message.content) && message.content.some(item => item.type === 'tool_result'))
     response.writeHead(200, { 'content-type': 'text/event-stream' })
-    const emit = event => response.write(`data: ${JSON.stringify(event)}\n\n`)
+    const emit = event => response.write(`${provider === 'claude' ? 'event: ' + event.type + '\n' : ''}data: ${JSON.stringify(event)}\n\n`)
     if (raw.includes('ERROR')) { emit({ type: 'error', error: { message: 'fixture-access private diagnostic' } }); response.end(); return }
     const text = raw.includes('HANG') ? 'partial' : toolResult ? 'tool result accepted' : 'subscription fixture'
     const asksTool = raw.includes('TOOL') && !toolResult
@@ -115,7 +121,11 @@ test(scenario, { timeout: 90_000 }, async t => {
         emit({ type: 'response.function_call_arguments.delta', item_id: item.id, output_index: 0, delta: item.arguments })
         emit({ type: 'response.function_call_arguments.done', item_id: item.id, output_index: 0, arguments: item.arguments })
         emit({ type: 'response.output_item.done', output_index: 0, item })
-      } else emit({ type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: 'fixture-text', delta: text })
+      } else {
+        emit({ type: 'response.output_item.added', output_index: 0, item: { type: 'message', id: 'fixture-text', role: 'assistant', status: 'in_progress', content: [] } })
+        emit({ type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: 'fixture-text', delta: text })
+        if (!raw.includes('HANG')) emit({ type: 'response.output_item.done', output_index: 0, item: { type: 'message', id: 'fixture-text', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text }] } })
+      }
       if (raw.includes('HANG')) return
       emit({ type: 'response.completed', response: { ...base, status: 'completed', output: asksTool ? [item] : [],
         ...(raw.includes('NO_USAGE') ? {} : { usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }) } })
@@ -159,6 +169,16 @@ test(scenario, { timeout: 90_000 }, async t => {
   })
   await new Promise(resolve => infisical.listen(0, '127.0.0.1', resolve))
   const origin = `https://127.0.0.1:${infisical.address().port}`
+  let nativeLiteLlm
+  try {
+    nativeLiteLlm = await startNativeLiteLlm(root, directory, origin, certificate)
+  } catch (error) {
+    infisical.closeAllConnections()
+    await new Promise(resolve => infisical.close(resolve))
+    await pool.end()
+    throw error
+  }
+  if (nativeLiteLlm) t.after(nativeLiteLlm.close)
   const repository = new SubscriptionRepository(pool)
   let workerStarts = 0
   let service
@@ -184,7 +204,7 @@ test(scenario, { timeout: 90_000 }, async t => {
           return snapshot(...args)
         }, snapshot)
     }
-    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token' })
+    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token', ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.key } : {}) })
   }, { ready: () => true, nativeIsolation: 'verified_runtime', oauth: { codex: true, claude: true } }, undefined, chatOnly ? authorizeSubscriptionUse : async (_owner, workspace) => assert.equal(workspace, workspaceId), undefined, undefined, undefined, chat.fixtureTransport)
   const dependencies = {
     session: async request => {
@@ -382,6 +402,7 @@ test(scenario, { timeout: 90_000 }, async t => {
         assert.equal(contextResponse.status,200)
         const metadata=await contextResponse.json();assert.equal(metadata.route,nativeRoute);assert.equal(metadata.revision,revision);assert.ok(!JSON.stringify(metadata).includes('accessToken'));assert.ok(!JSON.stringify(metadata).includes('fixture-access'))
         const payload={path:provider==='codex'?'/responses':'/v1/messages',headers:{'user-agent':'Mikka/1.0',originator:'Mikka',authorization:'Bearer caller-placeholder'},body:provider==='codex'?{model:'fixture-model',stream:true,store:false,input:[{role:'user',content:'HELLO'}]}:{model:'fixture-model',stream:true,max_tokens:16,messages:[{role:'user',content:'HELLO'}]}}
+        if (nativeLiteLlm && task === 0) await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model' })
         const nativeResponse=await nativePost(runId,{action:'request',payload});assert.equal(nativeResponse.status,200);const output=await nativeResponse.text();assert.ok(output.includes('subscription fixture'));assert.ok(!output.includes('fixture-access'))
         const before=providerCalls
         await pool.query('update devices set enabled=false where id=$1',[deviceId])

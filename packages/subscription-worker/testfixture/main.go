@@ -77,18 +77,20 @@ func run() error {
 		return w.ErrUnsupported
 	}
 	var c struct {
-		Scope          w.Scope           `json:"scope"`
-		Use            *w.RuntimeUse     `json:"use"`
-		ExecutionOnly  bool              `json:"executionOnly"`
-		AccessSnapshot *w.AccessSnapshot `json:"accessSnapshot"`
-		AccessPath     string            `json:"accessPath"`
-		AccessToken    string            `json:"accessToken"`
-		DatabaseURL    string            `json:"databaseUrl"`
-		Origin         string            `json:"infisicalOrigin"`
-		Project        string            `json:"project"`
-		Environment    string            `json:"environment"`
-		Path           string            `json:"path"`
-		Token          string            `json:"workloadToken"`
+		Scope            w.Scope           `json:"scope"`
+		Use              *w.RuntimeUse     `json:"use"`
+		ExecutionOnly    bool              `json:"executionOnly"`
+		AccessSnapshot   *w.AccessSnapshot `json:"accessSnapshot"`
+		AccessPath       string            `json:"accessPath"`
+		AccessToken      string            `json:"accessToken"`
+		DatabaseURL      string            `json:"databaseUrl"`
+		Origin           string            `json:"infisicalOrigin"`
+		Project          string            `json:"project"`
+		Environment      string            `json:"environment"`
+		Path             string            `json:"path"`
+		Token            string            `json:"workloadToken"`
+		NativeLiteLLMURL string            `json:"nativeLiteLlmUrl"`
+		NativeLiteLLMKey string            `json:"nativeLiteLlmKey"`
 	}
 	if json.Unmarshal(line, &c) != nil {
 		return w.ErrUnsupported
@@ -149,7 +151,26 @@ func run() error {
 		worker.OAuth = w.CPAClaudeOAuth{Client: client}
 	}
 	worker.QuotaClient = client
-	worker.NativeClient = client
+	if c.NativeLiteLLMURL != "" {
+		base, err := url.Parse(c.NativeLiteLLMURL)
+		if err != nil || base.Scheme != "http" || base.Hostname() != "127.0.0.1" {
+			return w.ErrUnsupported
+		}
+		worker.NativeLiteLLMURL, worker.NativeLiteLLMKey = c.NativeLiteLLMURL, c.NativeLiteLLMKey
+	} else {
+		worker.NativeLiteLLMURL, worker.NativeLiteLLMKey = "http://127.0.0.1:40123", "fixture-llm-proxy"
+		worker.NativeClient = &http.Client{Transport: fixtureTransport(func(request *http.Request) (*http.Response, error) {
+			if request.URL.Hostname() != "127.0.0.1" || !strings.HasPrefix(request.URL.Path, "/v1/mikka/subscription/") {
+				return nil, w.ErrUnsupported
+			}
+			clone := request.Clone(request.Context())
+			clone.Header.Del("X-Litellm-Api-Key")
+			target := *upstream
+			target.Path = "/provider/" + c.Scope.Provider
+			clone.URL, clone.Host = &target, upstream.Host
+			return http.DefaultTransport.RoundTrip(clone)
+		})}
+	}
 	if c.ExecutionOnly {
 		worker.Secrets = nil
 	}

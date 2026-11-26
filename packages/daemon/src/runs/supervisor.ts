@@ -1556,12 +1556,10 @@ export class RunSupervisor {
     const previousExecution = entry.execution
     const previousRuntime = entry.runtime
     let session: AgentSession
-    if (assignment.subscriptionBinding && assignment.modelCredential) throw new Error("A run has one model credential")
+    if (assignment.subscriptionBinding && !assignment.subscriptionContext) throw new Error("Subscription gateway credential required")
     try {
       session = await this.stage(runId, "agent_start", async () => preparedSession
       ? await preparedSession.start({ ...options, prompt })
-      : assignment.modelCredential && this.deps.startCredential
-      ? await this.deps.startCredential(assignment,{...options,prompt})
       : assignment.subscriptionBinding
       ? this.deps.startSubscription
         ? await (async () => {
@@ -1571,6 +1569,8 @@ export class RunSupervisor {
               ...(assignment.requireSessionResume && continueSession ? { continueSession } : {}) })
           })()
         : (()=>{throw new CodedError('subscription_hosted_runtime_unavailable', { detail: 'runner_missing' })})()
+      : assignment.modelCredential && this.deps.startCredential
+      ? await this.deps.startCredential(assignment, { ...options, prompt })
       : resuming
       ? await adapter.resume(entry.sessionId as string, options)
       : await (async () => {

@@ -531,7 +531,6 @@ export class Daemon {
       adapters,
       startSubscription: hosted?.start ?? this.localSubscriptions()?.start,
       startCredential: hosted?.start,
-      prepareSubscription: hosted?.prepare,
       prepareRunMailbox: this.options.link.prepareRunMailbox?.bind(this.options.link),
       prepareRunDrive: this.options.link.prepareRunDrive?.bind(this.options.link),
       prepareRunToolApproval: this.options.link.prepareRunToolApproval?.bind(this.options.link),
@@ -1243,10 +1242,10 @@ export class Daemon {
     return info.harness === 'claude_code' || info.harness === 'codex' ? true : undefined
   }
 
-  /** A subscription run here takes a per-run access lease (subscription-local-runner.ts). */
+  /** A subscription run here uses the run-bound model gateway (subscription-local-runner.ts). */
   private localSubscriptionCapable(info: HarnessInfo) {
     return (info.harness === "claude_code" || info.harness === "codex") && info.installed &&
-      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeLease)
+      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeContext)
   }
 
   /** Advertise only a checked local runner, replacing any old readiness or failure. */
@@ -1444,12 +1443,10 @@ export class Daemon {
    * short-lived access token, never the refresh grant (subscription-local-runner.ts).
    */
   private localSubscriptions() {
-    const link = this.options.link
     const options = this.adapterOptions()
-    if (!options || !link.nativeLease) return undefined
+    if (!options) return undefined
     return createLocalSubscriptionRunner({
       stateDir: this.paths.adapterState,
-      link: { nativeLease: link.nativeLease.bind(link) },
       claude: options.claude,
       codex: options.codex,
     })

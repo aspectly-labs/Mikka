@@ -30,7 +30,7 @@ import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-
 import { verifyPolicySnapshot } from '@mikka/protocol/node-policy-snapshot'
 import { SKILL_ARTIFACT_HEADER, TEAM_SKILL_HEADER, skillReceiptRevalidationSchema } from '@mikka/protocol/skill'
 import { TASK_MCP_HEADER, TASK_MCP_TOOL_FILTER_HEADER, TASK_MCP_VERSION } from '@mikka/protocol'
-import { nativeBrokerContextSchema, nativeLeaseSchema, SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeBrokerRequest } from '@mikka/protocol/subscription'
+import { nativeBrokerContextSchema, SUBSCRIPTION_GATEWAY_HEADER, SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeBrokerRequest } from '@mikka/protocol/subscription'
 import { captureCompleteResponse, capturePaths, captureUploadResponse, screenCaptureResponse, type CaptureUploadRequest, type CaptureUploadResponse, type ScreenCaptureRequest } from '@mikka/protocol/capture'
 
 import {
@@ -344,6 +344,7 @@ export class HttpServerLink implements ServerLink {
           [TASK_MCP_TOOL_FILTER_HEADER]: '1',
           ...(initialRepository ? { [INITIAL_REPOSITORY_HEADER]: '1' } : {}),
           [SUBSCRIPTION_MODEL_CATALOGUE_HEADER]: '1',
+          [SUBSCRIPTION_GATEWAY_HEADER]: '1',
           [MAILBOX_NOTICE_HEADER]: '1',
           [ACTIVE_TURN_STEER_HEADER]: '1',
           [WORKSPACE_REQUEST_HEADER]: '1',
@@ -493,9 +494,7 @@ export class HttpServerLink implements ServerLink {
   async nativeContext(deviceId:string,runId:string,signal?:AbortSignal,requireModelCatalogue?:boolean) {
     return this.call('POST', `${devicePaths.claim(checkId(deviceId),checkId(runId)).replace(/\/claim$/, '')}/subscription`, {body:{action:'context',...(requireModelCatalogue ? {requireModelCatalogue:true} : {})},schema:nativeBrokerContextSchema,signal})
   }
-  async nativeLease(deviceId:string,runId:string,signal?:AbortSignal) {
-    return this.call('POST', `${devicePaths.claim(checkId(deviceId),checkId(runId)).replace(/\/claim$/, '')}/subscription-lease`, {schema:nativeLeaseSchema,signal})
-  }
+
   async githubLease(deviceId: string, runId: string, signal?: AbortSignal, startupRepository?: string) {
     const query = new URLSearchParams({runId: checkId(runId)})
     if (startupRepository) query.set('startupRepository',startupRepository)

@@ -20,6 +20,14 @@ function checked(credential: RunCredential) {
   return credential
 }
 
+/** Native subscriptions never accept a provider secret or provider endpoint. */
+export function isSubscriptionGatewayCredential(credential: RunCredential | undefined, protocol: 'anthropic' | 'openai'): credential is Extract<RunCredential, { kind: 'provider' }> {
+  if (credential?.kind !== 'provider' || credential.protocol !== protocol ||
+      !/^mkg_[A-Za-z0-9_-]{43}$/.test(credential.key) || !runModelCredentialSchema.safeParse(credential).success) return false
+  const path = protocol === 'anthropic' ? '/api/model-gateway/anthropic' : '/api/model-gateway/openai/v1'
+  return new URL(credential.baseUrl).pathname.endsWith(path)
+}
+
 /** The gateway's host, which the run's network policy must allow. */
 export function credentialDomain(credential: RunCredential | undefined): string | undefined {
   return credential?.kind === "provider" ? new URL(credential.baseUrl).hostname : undefined

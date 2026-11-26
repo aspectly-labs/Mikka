@@ -148,16 +148,11 @@ and [Infisical setup](../../docs/infisical-cloud.md) for the supported combinati
 Source checks establish these code paths. Effective IAM and credential delivery
 require evidence from the deployment being tested.
 
-Production `nativeAuth` may return the access-only lease when the trusted
-launcher explicitly sets `exportAccessLease: true` for an owner-bound run with
-its frozen model and machine authority. The initial native task claim uses this
-path. Ordinary RPC configurations, execution-only children and requests without
-that explicit grant cannot export it. The provider refresh grant remains in
-the custody worker and has no field in the native response. Metadata and
-server-side model operations retain their ordinary authenticated interfaces;
-they are not a mandatory proxy for the assigned machine's provider traffic.
-Real official CLI/subscription execution and production timing remain distinct
-release evidence; synthetic tests do not establish either.
+A device claim receives a run-bound Mikka model gateway credential and
+non-secret account metadata. Official native CLI traffic is routed through
+LiteLLM and the trusted custody worker, which supplies the provider access token
+at the provider boundary. Both the access token and refresh grant remain in
+custody. The retired device lease endpoint returns HTTP 410.
 
 ## Credential deletion
 

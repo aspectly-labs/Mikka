@@ -13,7 +13,7 @@ const flag = (key) => {
   const at = args.indexOf(key)
   return at < 0 ? undefined : args[at + 1]
 }
-const apiKey = process.env.FIXTURE_MACHINE_AUTH && process.env.ANTHROPIC_API_KEY === 'fixture-direct-provider-key'
+const apiKey = (process.env.FIXTURE_MACHINE_AUTH && process.env.ANTHROPIC_API_KEY === 'fixture-direct-provider-key') || /^mkg_[A-Za-z0-9_-]{43}$/.test(process.env.ANTHROPIC_API_KEY ?? '')
 if (!apiKey && (process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR !== "3")) process.exit(2)
 const token = apiKey ? process.env.ANTHROPIC_API_KEY : readFileSync(3, "utf8")
 if (!apiKey) closeSync(3)
