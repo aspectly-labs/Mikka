@@ -181,7 +181,7 @@ export class SubscriptionWorkerClient {
   async call<T>(method: "status" | "oauthStart" | "oauthResume" | "oauthComplete" | "oauthPoll" | "oauthHandoff" | "refresh" | "recover" | "disconnect" | "clone" | "nativeAuth" | "nativeContext" | "prepare" | "prepareStream" | "quota" | "usage" | "allowance" | "models" | "cleanup", input: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
     return await this.start({ ...input, method }, signal).result as T
   }
-  async nativeRequest(revision: number, payload: {path: string; headers: Record<string, string>; body: unknown}, signal?: AbortSignal): Promise<{contentType: string; body: ReadableStream<Uint8Array>}> {
+  async nativeRequest(revision: number, payload: {path: string; headers: Record<string, string>; body: unknown}, signal?: AbortSignal): Promise<NativeResponseHead & {body: ReadableStream<Uint8Array>}> {
     await this.call('prepare', { revision }, signal)
     let resolveHead!: (head: NativeResponseHead) => void
     let rejectHead!: (error: Error) => void

@@ -32,6 +32,7 @@ const fixtureGatewayToken = 'mkg_' + 'a'.repeat(43)
 function fixture() {
   const repository = normalizeRepository('https://github.com/synthetic/claim-fixture.git')
   const probe = {
+    cloud: undefined as { subscription?: unknown } | undefined,
     workspace: { id: workspaceId, kind: 'team', ownerId: 'owner' },
     run: { id:'run',userId:'member',workspaceId,issueId:'issue',agentId:'agent',deviceId:'device',deviceRepoId:'repo',botId:null,attempt:1,baseBranch:null as string|null,status:'queued',prompt:'private claim instructions',kind:'implement',retryOf:null as string|null,stopReason:null as string|null,stopRequestedAt:null as Date|null,leaseExpiresAt:null as Date|null },
     issue: {id:'issue',userId:'owner',workspaceId,ownershipState:'bound',scope:'workspace',linearSyncPolicy:'explicit',linearSyncBlocked:false,content:{type:'doc'}},
