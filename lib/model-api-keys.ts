@@ -378,12 +378,12 @@ export interface ApiKeyDaybreakRefreshResult {
 }
 
 const DAYBREAK_CYBER_MODEL_PATTERN = /(?:^|\/)gpt-[a-z0-9.-]+-cyber$/i
-const DAYBREAK_PROBE_CANDIDATES = [
-  'gpt-6.2-astra', 'gpt-6-astra', 'gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-sol',
-  'gpt-6-luna', 'gpt-6.1-terra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5',
-] as const
+const DAYBREAK_REPORTED_GPT_PATTERN = /^gpt-[5-9](?:\.\d+)?(?:-[a-z0-9.-]+)?$/i
+const DAYBREAK_NON_CHAT_SUFFIX = /(?:audio|realtime|image|tts|transcribe|search|embedding|moderation|instruct)/i
 
-function extractCatalogueDaybreakTiers(item: unknown, id: string): { tiers: DaybreakTier[]; explicit: boolean } {
+const DAYBREAK_DENIED_AVAILABILITIES = new Set(['unavailable', 'enrollment_required', 'unavailable_for_model'])
+
+function extractCatalogueDaybreakTiers(item: unknown, id: string): { tiers: DaybreakTier[]; explicit: boolean; denied: boolean } {
   const tiers = new Set<DaybreakTier>()
   let explicit = false
   if (item && typeof item === 'object') {
@@ -391,7 +391,10 @@ function extractCatalogueDaybreakTiers(item: unknown, id: string): { tiers: Dayb
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       explicit = true
       const programs = raw as { cyber?: unknown; daybreak_availability?: unknown }
-      if (programs.daybreak_availability !== 'unavailable' && Array.isArray(programs.cyber)) {
+      if (typeof programs.daybreak_availability === 'string' && DAYBREAK_DENIED_AVAILABILITIES.has(programs.daybreak_availability)) {
+        return { tiers: [], explicit: true, denied: true }
+      }
+      if (Array.isArray(programs.cyber)) {
         for (const entry of programs.cyber) {
           if (entry === 'daybreak_blue') tiers.add('blue')
           else if (entry === 'daybreak_red') tiers.add('red')
@@ -399,8 +402,8 @@ function extractCatalogueDaybreakTiers(item: unknown, id: string): { tiers: Dayb
       }
     }
   }
-  if (DAYBREAK_CYBER_MODEL_PATTERN.test(id)) tiers.add('red')
-  return { tiers: DAYBREAK_TIERS.filter(tier => tiers.has(tier)), explicit }
+  if (!explicit && DAYBREAK_CYBER_MODEL_PATTERN.test(id)) tiers.add('red')
+  return { tiers: DAYBREAK_TIERS.filter(tier => tiers.has(tier)), explicit, denied: false }
 }
 
 /**
@@ -451,25 +454,32 @@ export async function refreshApiKeyDaybreak(
   const blue = new Set<string>()
   const red = new Set<string>()
   const listedIds = new Set<string>()
-  let sawExplicitCatalogue = false
+  const explicitModels = new Set<string>()
   for (const item of modelsBody.data) {
     const rawId = item && typeof item === 'object' ? (item as { id?: unknown }).id : undefined
     if (typeof rawId !== 'string' || !modelId.safeParse(rawId).success) continue
     const trimmed = rawId.trim()
     listedIds.add(trimmed)
     const extracted = extractCatalogueDaybreakTiers(item, trimmed)
-    if (extracted.explicit) sawExplicitCatalogue = true
+    if (extracted.explicit) explicitModels.add(trimmed)
+    if (extracted.denied) {
+      blue.delete(trimmed)
+      red.delete(trimmed)
+      continue
+    }
     if (extracted.tiers.includes('blue')) blue.add(trimmed)
     if (extracted.tiers.includes('red')) red.add(trimmed)
   }
 
-  // When OpenAI /v1/models omits `available_access_programs`, run bounded Responses capability
-  // checks against listed Daybreak-candidate models for blue and red tiers.
-  if (!sawExplicitCatalogue && options.probeResponses !== false) {
+  // For listed candidate models where OpenAI /v1/models omitted `available_access_programs`,
+  // run bounded Responses capability checks for blue and red tiers.
+  if (options.probeResponses !== false) {
     const responsesUrl = preset.chatBaseUrl.replace(/\/+$/, '') + '/responses'
+    const reportedCandidates = [...listedIds].filter(model =>
+      !explicitModels.has(model) && DAYBREAK_REPORTED_GPT_PATTERN.test(model) && !DAYBREAK_NON_CHAT_SUFFIX.test(model))
     const candidates = (options.probeModels?.length
-      ? options.probeModels.filter(model => listedIds.has(model))
-      : DAYBREAK_PROBE_CANDIDATES.filter(model => listedIds.has(model))).slice(0, 8)
+      ? options.probeModels.filter(model => listedIds.has(model) && !explicitModels.has(model))
+      : reportedCandidates).slice(0, 8)
     for (const model of candidates) {
       for (const tier of DAYBREAK_TIERS) {
         try {
@@ -513,11 +523,22 @@ export async function refreshApiKeyDaybreak(
     ...(grants.length ? { grants } : {}),
     checkedAt: now.toISOString(),
   }
+  // Fence the write to the exact sealed credential read before provider IO so a concurrent
+  // key rotation can never be overwritten with stale grants from the previous key.
   const { rows: [saved] } = await query.query<Row>(
-    `UPDATE model_api_keys SET daybreak=$3::jsonb,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
-    [id, ownerId, JSON.stringify(access)],
+    `UPDATE model_api_keys SET daybreak=$3::jsonb,"updatedAt"=now()
+     WHERE id=$1 AND "ownerId"=$2 AND ciphertext=$4 AND iv=$5 AND "keyVersion"=$6
+     RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
+    [id, ownerId, JSON.stringify(access), row.ciphertext, row.iv, row.keyVersion],
   )
-  if (!saved) throw new WorkspaceError('apiKeyNotFound')
+  if (!saved) {
+    const { rows: [current] } = await query.query<Row>(
+      `SELECT ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`,
+      [id, ownerId],
+    )
+    if (!current) throw new WorkspaceError('apiKeyNotFound')
+    return { access: parseDaybreakAccess(current.daybreak) ?? { granted: [] }, key: view(current) }
+  }
   return { access, key: view(saved) }
 }
 

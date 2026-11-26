@@ -402,16 +402,62 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
       checkedAt: '2026-11-26T12:05:00.000Z',
     })
 
-    // 4. 401 returns invalid failure without mutating stored access.
+    // 4. Explicit denials (`enrollment_required`, `unavailable_for_model`, `unavailable`) override cyber tier lists
+    // and `*-cyber` model-name fallback; mixed catalogues only probe models without explicit metadata.
+    const mixedProbes: string[] = []
+    const deniedRefreshed = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      now: new Date('2026-11-26T12:10:00.000Z'),
+      probeModels: ['gpt-6-cyber', 'gpt-6.1-sol'],
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/models')) {
+          return Response.json({
+            data: [
+              { id: 'gpt-6-cyber', available_access_programs: { cyber: ['daybreak_red'], daybreak_availability: 'enrollment_required' } },
+              { id: 'gpt-6-cyber-beta', available_access_programs: { cyber: ['daybreak_blue'], daybreak_availability: 'unavailable_for_model' } },
+              { id: 'gpt-6-cyber-off', available_access_programs: { cyber: ['daybreak_red'], daybreak_availability: 'unavailable' } },
+              { id: 'gpt-6.1-sol' },
+            ],
+          })
+        }
+        const body = JSON.parse(String(init?.body)) as { model?: string; access_programs?: { cyber?: string } }
+        mixedProbes.push(`${body.model}:${body.access_programs?.cyber}`)
+        return body.access_programs?.cyber === 'daybreak_blue' ? Response.json({ id: 'resp_mixed' }) : new Response('forbidden', { status: 403 })
+      }) as typeof fetch,
+    })
+    assert.deepEqual(mixedProbes, ['gpt-6.1-sol:daybreak_blue', 'gpt-6.1-sol:daybreak_red'], 'explicitly denied cyber models are never probed')
+    assert.deepEqual(deniedRefreshed.access, {
+      granted: ['gpt-6.1-sol'],
+      tiers: ['blue'],
+      grants: [{ tier: 'blue', granted: ['gpt-6.1-sol'] }],
+      checkedAt: '2026-11-26T12:10:00.000Z',
+    })
+
+    // 5. 401 returns invalid failure without mutating stored access.
     const invalid = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
       env,
       fetch: (async () => new Response('unauthorized', { status: 401 })) as typeof fetch,
     })
     assert.equal(invalid.failure, 'invalid')
 
-    // 5. Rotating the secret key clears stored Daybreak entitlement so the new key cannot inherit old grants.
+    // 6. Rotating the secret key clears stored Daybreak entitlement so the new key cannot inherit old grants.
     const rotated = await store.updateApiKey(pool, 'alice', openaiKey.id, { apiKey: fakeKey('openai-rotated') }, { env, fetch: async () => models(['gpt-6.1-sol']) })
     assert.equal(rotated.daybreak, undefined)
+    assert.equal((await store.openApiKeyForChat(pool, 'alice', team.id, openaiKey.id, env)).daybreak, undefined)
+
+    // 7. Concurrent key rotation during refreshApiKeyDaybreak fences the stale write so the rotated key stays clean.
+    const staleRefresh = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      now: new Date('2026-11-26T12:15:00.000Z'),
+      fetch: (async () => {
+        await store.updateApiKey(pool, 'alice', openaiKey.id, { apiKey: fakeKey('openai-rotated-mid-refresh') }, { env, fetch: async () => models(['gpt-6-cyber']) })
+        return Response.json({
+          data: [{ id: 'gpt-6-cyber', available_access_programs: { cyber: ['daybreak_red'] } }],
+        })
+      }) as typeof fetch,
+    })
+    assert.deepEqual(staleRefresh.access, { granted: [] }, 'stale refresh must discard grants when key rotated concurrently')
+    assert.equal(staleRefresh.key.daybreak, undefined)
     assert.equal((await store.openApiKeyForChat(pool, 'alice', team.id, openaiKey.id, env)).daybreak, undefined)
     await store.removeApiKey(pool, 'alice', openaiKey.id)
   } finally {

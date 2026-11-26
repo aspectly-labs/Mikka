@@ -608,21 +608,50 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
       assert.equal((await freezeBotModel({ ...alice, botId: botA }, dependencies)).cyberAccessProgram, undefined);
       await pool.query(`UPDATE byos_connections SET epoch=1 WHERE id=$1`, [codex]);
 
-      // OpenAI BYOK key with verified Daybreak red unlocks Daybreak and freezes daybreak_red.
+      // OpenAI BYOK key with verified Daybreak red unlocks Daybreak and freezes daybreak_red,
+      // but switching from Daybreak-enabled Codex subscription must reset daybreak=false until re-enabled.
       await pool.query(`DELETE FROM model_api_keys WHERE id=$1`, [rejectedFallback.id]);
-      const openaiFetch = (async () => new Response(JSON.stringify({ data: [{ id: "gpt-6-cyber" }] }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+      const openaiFetch = (async () => new Response(JSON.stringify({ data: [{ id: "gpt-6-cyber" }, { id: "gpt-6-luna" }] }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
       const openaiKey = await addApiKey(pool, "alice", { provider: "openai", apiKey: `test-openai-${randomUUID()}` }, { env, fetch: openaiFetch });
-      const daybreakGrant = { checkedAt: new Date().toISOString(), granted: ["gpt-6-cyber"], tiers: ["red"], grants: [{ tier: "red", granted: ["gpt-6-cyber"] }] };
+      const daybreakGrant = { checkedAt: new Date().toISOString(), granted: ["gpt-6-cyber", "gpt-6-luna"], tiers: ["red"], grants: [{ tier: "red", granted: ["gpt-6-cyber", "gpt-6-luna"] }] };
       await pool.query(`UPDATE model_api_keys SET daybreak=$2::jsonb WHERE id=$1`, [openaiKey.id, JSON.stringify(daybreakGrant)]);
       const byokOption = `apikey:${openaiKey.id}:gpt-6-cyber`;
       await chooseBotModel(pool, settings, alice, botA, byokOption);
       const preByokMenu = await botModelMenu(pool, settings, alice, botA);
+      assert.equal(preByokMenu.chat?.modes?.daybreak, false, "switching to another Daybreak-eligible route clears Daybreak opt-in");
+      assert.equal((await freezeBotModel({ ...alice, botId: botA }, dependencies)).cyberAccessProgram, undefined, "switched route must not inherit Daybreak before explicit opt-in");
       await setChatModelSettings(pool, alice, botA, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }, preByokMenu.current.capabilities);
       const byokMenu = await botModelMenu(pool, settings, alice, botA);
       assert.equal(byokMenu.current.capabilities?.daybreak, "red");
       assert.equal(byokMenu.chat?.modes?.daybreak, true);
       const frozenByok = await freezeBotModel({ ...alice, botId: botA }, dependencies);
       assert.equal(frozenByok.cyberAccessProgram, "daybreak_red");
+
+      // Re-selecting the same already-chosen route preserves Daybreak; switching model on the same key resets it.
+      const reselected = await chooseBotModel(pool, settings, alice, botA, byokOption);
+      assert.equal(reselected.chat?.modes?.daybreak, true, "re-selecting the same route keeps Daybreak");
+      const switchedModel = await chooseBotModel(pool, settings, alice, botA, `apikey:${openaiKey.id}:gpt-6-luna`);
+      assert.equal(switchedModel.chat?.modes?.daybreak, false, "switching model on the same key clears Daybreak");
+
+      // Automatic quota fallback from Daybreak-enabled Codex subscription to a Daybreak-eligible OpenAI BYOK key
+      // must suppress Daybreak on the fallback run without erasing the subscription's opt-in once quota recovers.
+      await chooseBotModel(pool, settings, alice, botA, luna);
+      const readyCodexMenu = await botModelMenu(pool, settings, alice, botA);
+      await setChatModelSettings(pool, alice, botA, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }, readyCodexMenu.current.capabilities);
+      assert.equal((await freezeBotModel({ ...alice, botId: botA }, dependencies)).cyberAccessProgram, "daybreak_blue");
+      await pool.query(`UPDATE byos_connections SET quota=$2::jsonb WHERE id=$1`, [codex, quota(1, FUTURE, "codex")]);
+      const fallbackMenu = await botModelMenu(pool, settings, alice, botA);
+      assert.equal(fallbackMenu.current.kind, "apiKey");
+      assert.equal(fallbackMenu.current.fallback, "quota");
+      assert.equal(fallbackMenu.chat?.modes?.daybreak, false, "quota fallback menu must not show Daybreak active for the fallback key");
+      const frozenFallback = await freezeBotModel({ ...alice, botId: botA }, dependencies);
+      assert.equal(frozenFallback.modelSelection?.type, "api_key");
+      assert.equal(frozenFallback.cyberAccessProgram, undefined, "quota fallback run must never inherit subscription Daybreak");
+      await pool.query(`UPDATE byos_connections SET quota=$2::jsonb WHERE id=$1`, [codex, quota(0.2, FUTURE, "codex")]);
+      const recoveredMenu = await botModelMenu(pool, settings, alice, botA);
+      assert.equal(recoveredMenu.current.kind, "subscription");
+      assert.equal(recoveredMenu.chat?.modes?.daybreak, true, "restoring quota restores the subscription's saved Daybreak opt-in");
+      assert.equal((await freezeBotModel({ ...alice, botId: botA }, dependencies)).cyberAccessProgram, "daybreak_blue");
 
       // Switching back to an unapproved route clears effective Daybreak in both menu and freeze.
       await chooseBotModel(pool, settings, alice, botA, CREDITS);

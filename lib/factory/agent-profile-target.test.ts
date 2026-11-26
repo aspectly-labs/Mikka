@@ -87,6 +87,8 @@ function fixture() {
       kind = 'shared_keys'; rows = keys.filter(row => row.ownerId !== scope.ownerId && keyShares.has(row.id) && (params.length === 2 || row.id === params[2]))
     } else if (sql.includes('FROM model_api_keys WHERE "ownerId"=$1')) {
       kind = 'own_keys'; rows = keys.filter(row => row.ownerId === params[0] && (params.length === 1 || row.id === params[1]))
+    } else if (sql.includes('FROM bot_model_choices c')) {
+      kind = 'daybreak_choice'; rows = []
     } else assert.fail(`Unrecognized query: ${sql}`)
     calls.push({ kind, params: structuredClone(params), rows: rows.length })
     return { rows, rowCount: rows.length }

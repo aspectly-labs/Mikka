@@ -198,7 +198,9 @@ export async function botModelMenu(
   for (const group of groups) group.options = group.options.map(withCapabilities);
   current = withCapabilities(current);
   const models = groupModelOptions(groups);
-  const modes = current.capabilities ? modesFor(current.capabilities, preference.chat.modes) : modesFromTier(null);
+  const modes = current.capabilities
+    ? modesFor(current.capabilities, choice.fallback ? { ...preference.chat.modes, daybreak: false } : preference.chat.modes)
+    : modesFromTier(null);
   const chat = { ...preference.chat, modes, effort: modes.pro ? null : preference.chat.effort };
   const savedKey = preference.key && keys.find(key => key.id === preference.key?.keyId && (key.mine || ownerNames.has(key.ownerId)));
   const unavailableSelection = choice.fallback === "preference" && preference.selected
@@ -316,6 +318,39 @@ export async function refreshBotModelMenu(
   return botModelMenu(pool, settings, scope, botId);
 }
 
+type StoredRouteIdentity = {
+  connectionId: string | null;
+  bindingModelId: string | null;
+  apiKeyId: string | null;
+  apiKeyModel: string | null;
+  creditsModel: string | null;
+};
+
+async function storedBotModelRoute(
+  pool: Pick<Pool, "query">,
+  scope: ExecutionSettingsScope,
+  botId: string | null,
+): Promise<StoredRouteIdentity | null> {
+  const { rows: [row] } = await pool.query<StoredRouteIdentity>(
+    `SELECT b."connectionId"::text AS "connectionId", b."modelId" AS "bindingModelId",
+            c."apiKeyId"::text AS "apiKeyId", c."apiKeyModel", c."creditsModel"
+     FROM bot_model_choices c
+     LEFT JOIN byos_bindings b ON b.id = c."bindingId"
+     WHERE c."ownerId"=$1 AND c."workspaceId"=$2 AND c."botKey"=$3`,
+    [scope.ownerId, scope.workspaceId, botId ?? "coordinator"],
+  );
+  return row ?? null;
+}
+
+function sameStoredRoute(a: StoredRouteIdentity | null, b: StoredRouteIdentity | null): boolean {
+  if (!a || !b) return false;
+  return a.connectionId === b.connectionId
+    && a.bindingModelId === b.bindingModelId
+    && a.apiKeyId === b.apiKeyId
+    && a.apiKeyModel === b.apiKeyModel
+    && a.creditsModel === b.creditsModel;
+}
+
 /**
  * Saves a chat's model pick for the bot's next runs (a run already going keeps
  * its model) and returns the menu: a binding id, a Mikka 额度 model (`credits:<vendor/model>`), or
@@ -330,6 +365,7 @@ export async function chooseBotModel(
   botId: string | null,
   id: string,
 ): Promise<BotModelMenu> {
+  const priorRoute = await storedBotModelRoute(pool, scope, botId);
   if (id.startsWith("subscription:")) {
     const menu = await botModelMenu(pool, settings, scope, botId);
     const route = menu.models?.flatMap(model => model.routes).find(option => option.entryId === id);
@@ -365,6 +401,15 @@ export async function chooseBotModel(
       }
       throw error;
     }
+  }
+  // Daybreak opt-in is bound to the active credential/model route: switching routes clears it
+  // so another eligible key or subscription never silently sends `access_programs.cyber`.
+  const nextRoute = await storedBotModelRoute(pool, scope, botId);
+  if (!sameStoredRoute(priorRoute, nextRoute)) {
+    await pool.query(
+      'UPDATE bot_model_choices SET daybreak=false WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3 AND daybreak=true',
+      [scope.ownerId, scope.workspaceId, botId ?? "coordinator"],
+    );
   }
   return botModelMenu(pool, settings, scope, botId);
 }
