@@ -14,6 +14,12 @@ Cloud execution authority stays on the task's machine ([2026-11-06-1800](../desi
 - **Protected third-party Secrets:** Do not inject unrelated user, workspace, or repository third-party API Secrets into Agent-readable environment variables or files. Protected Secrets use run-scoped sealed grants and non-readable egress/tool handling where supported; explicit direct delivery stays compatibility-only for existing env-dependent SDKs.
 - **Revocation and local daemon boundaries:** Revocation pushes stop and reclaim affected VMs while natural token renewal runs in the background. Local daemon safeguards preserve unrelated files on the host machine.
 
+### Subscription chat release prerequisites
+
+The LiteLLM runtime needs the stage-matched `MIKKA_SUBSCRIPTION_CPA_CHAT_URL` for its `/v1/mikka/subscription/chat` pass-through. The target is the product API's `/mikka/api/internal/subscription/chat` callback. The API signs each call with the LiteLLM master key and binds its model, payload, scope and expiry. The callback rejects unsigned requests and rechecks subscription access before opening the private CPA worker stream. OAuth credentials stay with CPA.
+
+The private release must supply the callback URL, verify the stage pairing and prove LiteLLM can reach the route. For a private Cloudflare origin, configure the LiteLLM-to-Business API service binding and outbound HTTPS interception. The signed callback by itself does not configure network reachability. Verify successful streaming, replay rejection and one linked usage receipt on the stage-matched runtime before the authorized cutover in [#1954](https://github.com/aspectly-labs/Mikka/issues/1954).
+
 ## Native Task MCP delivery
 
 Task MCP uses native CLI configuration and credential delivery ([2026-11-11-0534](../design/decisions/2026-11-11-0534-eve-and-native-mcp.md)):
