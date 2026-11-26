@@ -11,11 +11,26 @@ const providerModule = /^(?:@ai-sdk\/(?:gateway|openai|anthropic|openai-compatib
 const inferenceFunctions = new Set(['generateText', 'streamText', 'generateObject', 'streamObject', 'embed', 'embedMany', 'transcribe'])
 const modelDomain = /(?:api\.openai\.com|api\.anthropic\.com|ai-gateway\.vercel\.sh|api\.deepseek\.com|api\.moonshot\.(?:cn|ai)|zero\.cat|chatgpt\.com\/backend-api\/codex|api\.cloudflare\.com\/client\/v4\/accounts\/[^\s]*\/ai)/i
 
-// Official subscription OAuth remains the explicit #2869 exception. Quota
-// endpoints are account metadata; provider catalogue URLs are routing metadata
-// passed to LiteLLM, never authorization to issue a direct model request.
-const metadata = new Set(['lib/model-gateway/provider-config.ts', 'lib/model-admission/contract.ts', 'lib/audit/events.ts',
-  'packages/daemon/src/quota/codex.ts', 'packages/daemon/src/quota/claude.ts'])
+// The gateway passes provider catalogue and routing metadata to LiteLLM.
+const metadata = new Set(['lib/model-gateway/provider-config.ts', 'lib/audit/events.ts'])
+const quotaEndpoints = new Map([
+  ['packages/daemon/src/quota/claude.ts', 'https://api.anthropic.com/api/oauth/usage'],
+  ['packages/daemon/src/quota/codex.ts', 'https://chatgpt.com/backend-api/wham/usage'],
+])
+const subscriptionEndpoints = new Map([
+  ['CLAUDE_SUBSCRIPTION_ENDPOINT', 'https://api.anthropic.com/v1/messages'],
+  ['CODEX_SUBSCRIPTION_ENDPOINT', 'https://chatgpt.com/backend-api/codex/responses'],
+])
+
+function isAllowedMetadata(file, node) {
+  if (metadata.has(file)) return true
+  if (!ts.isStringLiteralLike(node)) return false
+  if (quotaEndpoints.get(file) === node.text) return true
+  const declaration = node.parent
+  return file === 'lib/model-admission/contract.ts'
+    && ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name)
+    && declaration.initializer === node && subscriptionEndpoints.get(declaration.name.text) === node.text
+}
 
 export function auditLiteLlmSource(file, source) {
   if (file === client) return []
@@ -29,14 +44,13 @@ export function auditLiteLlmSource(file, source) {
     // Reject provider imports too: renaming a factory cannot bypass the guard.
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const module = node.moduleSpecifier.text
-      const subscription = file === 'lib/subscription-service.ts' && module === '@ai-sdk/openai-compatible'
       const bindings = node.importClause?.namedBindings
       const factory = bindings && ts.isNamedImports(bindings)
         && bindings.elements.some(item => constructors.has((item.propertyName ?? item.name).text))
       const runtimeImport = !node.importClause?.isTypeOnly && (node.importClause?.name
         || (bindings && ts.isNamespaceImport(bindings))
         || (bindings && ts.isNamedImports(bindings) && bindings.elements.some(item => !item.isTypeOnly && !(item.propertyName ?? item.name).text.endsWith('Error'))))
-      if (!subscription && ((providerModule.test(module) && runtimeImport) || (module === 'ai' && factory))) {
+      if ((providerModule.test(module) && runtimeImport) || (module === 'ai' && factory)) {
         report(node, 'provider SDK imports belong in the LiteLLM client')
       }
     }
@@ -47,11 +61,7 @@ export function auditLiteLlmSource(file, source) {
       report(node, 'dynamic provider imports belong in the LiteLLM client')
     }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && constructors.has(node.expression.text)) {
-      // The subscription worker supplies the transport; this placeholder URL
-      // cannot reach a provider and preserves the approved OAuth exception.
-      const subscription = file === 'lib/subscription-service.ts' && node.expression.text === 'createOpenAICompatible'
-        && node.arguments[0]?.getText(tree).includes("baseURL: 'https://mikka.invalid/v1'")
-      if (!subscription) report(node, 'model SDK construction belongs in the LiteLLM client')
+      report(node, 'model SDK construction belongs in the LiteLLM client')
     }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && inferenceFunctions.has(node.expression.text)) {
       const options = node.arguments[0]
@@ -60,7 +70,7 @@ export function auditLiteLlmSource(file, source) {
         report(node, 'string model IDs select the SDK default gateway; pass a LiteLLM model')
       }
     }
-    if ((ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) && modelDomain.test(node.getText(tree)) && !metadata.has(file)) {
+    if ((ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) && modelDomain.test(node.getText(tree)) && !isAllowedMetadata(file, node)) {
       report(node, 'provider model domains belong in LiteLLM configuration')
     }
     ts.forEachChild(node, visit)
