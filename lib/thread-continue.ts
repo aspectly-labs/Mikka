@@ -28,7 +28,9 @@ const isActionErrorCode = (code: string): code is ActionErrorCode => (ACTION_ERR
  * any dispatch (the device or cloud computer, the credential and its quota).
  * Only the thread's owner may send, as for a working thread.
  */
-export async function sendThreadMessage(userId: string, runId: string, text: string, source: Source = 'user', requestId?: string, delivery?: 'queue' | 'steer' | 'interrupt' | 'afterRun' | 'version', modelChoice?: ThreadModelChoice): Promise<{ runId: string; continued: boolean }> {
+export type ThreadMessageControl = NonNullable<import('@mikka/protocol/device').RunAssignment['followUpControl']>
+
+export async function sendThreadMessage(userId: string, runId: string, text: string, source: Source = 'user', requestId?: string, delivery?: 'queue' | 'steer' | 'interrupt' | 'afterRun' | 'version', modelChoice?: ThreadModelChoice, control?: ThreadMessageControl): Promise<{ runId: string; continued: boolean }> {
   const parsed = z.object({ runId: z.uuid(), text: z.string().trim().min(1).max(10_000), requestId: z.uuid().optional(), modelChoice: threadModelChoice.optional() }).safeParse({ runId, text, requestId, modelChoice })
   if (!parsed.success) throw new ActionFailureError('messageRequired')
   // The owner's chain only: a teammate who can see a shared thread cannot run it.
@@ -72,14 +74,14 @@ export async function sendThreadMessage(userId: string, runId: string, text: str
       if (delivery === 'queue' && (chain.latestRunId !== parsed.data.runId || chain.attempts.at(-1)?.status !== 'succeeded')) throw new ActionFailureError('threadDeliveryUnavailable')
       if (delivery === 'afterRun' && chain.attempts.at(-1)?.status !== 'succeeded') throw new ActionFailureError('threadDeliveryUnavailable')
       if ((delivery === 'steer' || delivery === 'interrupt') && (!active || chain.latestRunId !== parsed.data.runId)) throw new ActionFailureError('runNotActive')
-      return continueThread(userId, parsed.data.text, source, chain, sourceEventId, delivery, parsed.data.modelChoice)
+      return continueThread(userId, parsed.data.text, source, chain, sourceEventId, delivery, parsed.data.modelChoice, control)
     },
     !parsed.data.modelChoice && typeof source === 'object' && source.source === 'human'
       ? (sourceEventId, previousRunId, receiptOnly) => recoverThreadQuestionAnswer(userId, previousRunId, parsed.data.text, source.sessionId, sourceEventId, scope, receiptOnly)
       : undefined)
   }
   if (active && parsed.data.modelChoice) throw new ActionFailureError('threadCannotContinue')
-  return continueThread(userId, parsed.data.text, source, chain, undefined, delivery, parsed.data.modelChoice)
+  return continueThread(userId, parsed.data.text, source, chain, undefined, delivery, parsed.data.modelChoice, control)
 }
 
 /**
@@ -183,8 +185,30 @@ async function threadDeleted(rootRunId: string) {
   return Boolean((await pool.query('SELECT 1 FROM agent_runs WHERE id=$1 AND "deletedAt" IS NOT NULL', [rootRunId])).rowCount)
 }
 
+async function attachMessageControl(userId: string, runId: string, eventId: string, control: ThreadMessageControl) {
+  const { rows: [run] } = await pool.query<{ issueId: string | null; botId: string | null }>(
+    `SELECT "issueId", "botId" FROM agent_runs WHERE id=$1 AND "userId"=$2`,
+    [runId, userId],
+  )
+  const payload = JSON.stringify({ threadSubmission: { control } })
+  const updated = await pool.query(
+    `UPDATE coordinator_events
+     SET payload = jsonb_set(coalesce(payload, '{}'::jsonb), '{threadSubmission,control}', $3::jsonb, true)
+     WHERE id=$1 AND "userId"=$2`,
+    [eventId, userId, JSON.stringify(control)],
+  )
+  if (!updated.rowCount) {
+    await pool.query(
+      `INSERT INTO coordinator_events (id, "userId", "botId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt")
+       VALUES ($1, $2, $3, $4, 'user_message', $5, $6::jsonb, 'background', now())
+       ON CONFLICT (id) DO UPDATE SET payload = jsonb_set(coalesce(coordinator_events.payload, '{}'::jsonb), '{threadSubmission,control}', $7::jsonb, true)`,
+      [eventId, userId, run?.botId ?? null, run?.issueId ?? null, `thread-control:${eventId}`, payload, JSON.stringify(control)],
+    )
+  }
+}
+
 async function continueThread(userId: string, text: string, source: Source,
-  chain: NonNullable<Awaited<ReturnType<typeof readRunChain>>>, sourceEventId?: string, delivery?: 'queue' | 'steer' | 'interrupt' | 'afterRun' | 'version', modelChoice?: ThreadModelChoice): Promise<{ runId: string; continued: boolean }> {
+  chain: NonNullable<Awaited<ReturnType<typeof readRunChain>>>, sourceEventId?: string, delivery?: 'queue' | 'steer' | 'interrupt' | 'afterRun' | 'version', modelChoice?: ThreadModelChoice, control?: ThreadMessageControl): Promise<{ runId: string; continued: boolean }> {
   const latest = chain.attempts.find(attempt => attempt.runId === chain.latestRunId)!
   if (UNFINISHED_RUN_STATUSES.some(status => status === latest.status)) {
     if (modelChoice) throw new ActionFailureError('threadCannotContinue')
@@ -199,11 +223,13 @@ async function continueThread(userId: string, text: string, source: Source,
       await addRunMessage(userId, { runId: latest.runId, text }, source, sourceEventId)
       return { runId: latest.runId, continued: false }
     }
-    if (source === 'user' || (typeof source === 'object' && source.source === 'human'))
+    if (!control && (source === 'user' || (typeof source === 'object' && source.source === 'human')))
       if (await (await import('@/lib/factory/request-epoch')).continueActiveFactoryRequest(pool, userId, latest.runId, text, sourceEventId, sourceEventId ? { recordOwnerMessage: true, interrupt: delivery === 'interrupt' } : undefined))
         return { runId: latest.runId, continued: false }
     if (delivery === 'interrupt') throw new ActionFailureError('threadDeliveryUnavailable')
-    await addRunMessage(userId, { runId: latest.runId, text }, source, sourceEventId)
+    const messageId = sourceEventId ?? (control ? crypto.randomUUID() : undefined)
+    if (control && messageId) await attachMessageControl(userId, latest.runId, messageId, control)
+    await addRunMessage(userId, { runId: latest.runId, text }, source, messageId)
     return { runId: latest.runId, continued: false }
   }
   // An ended run that asked a Factory question is answered there, as before.
@@ -213,7 +239,9 @@ async function continueThread(userId: string, text: string, source: Source,
     // had not seen when they wrote it.
     if (delivery === 'afterRun' || delivery === 'version') throw new ActionFailureError('factoryQuestionNeedsAnswerTool')
     if (modelChoice) throw new ActionFailureError('threadCannotContinue')
-    await addRunMessage(userId, { runId: latest.runId, text }, source, sourceEventId)
+    const messageId = sourceEventId ?? (control ? crypto.randomUUID() : undefined)
+    if (control && messageId) await attachMessageControl(userId, latest.runId, messageId, control)
+    await addRunMessage(userId, { runId: latest.runId, text }, source, messageId)
     return { runId: latest.runId, continued: false }
   }
   const [run] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, latest.runId), eq(agentRuns.userId, userId))).limit(1)
@@ -255,6 +283,13 @@ async function continueThread(userId: string, text: string, source: Source,
   // A dispatch the person can act on (no machine, say) queued nothing.
   if ('error' in result) throw new ActionFailureError(isActionErrorCode(result.error) ? result.error : 'runInvalid')
   if (result.thread === 'message') return { runId: result.runId, continued: false }
+  if (control) {
+    await pool.query(
+      `UPDATE agent_runs SET "agentDefinition" = jsonb_set(coalesce("agentDefinition", '{}'::jsonb), '{followUpControl}', $2::jsonb, true)
+       WHERE id=$1 AND "userId"=$3`,
+      [result.runId, JSON.stringify(control), userId],
+    )
+  }
   // The words are already in the new run's note; this row shows them in the thread and is never delivered again.
   // A peer's or orchestrator's words stay theirs, as addRunMessage records them: never the owner's, never editable.
   const origin = source === 'user' || (typeof source === 'object' && source.source === 'human') ? 'owner' : 'peer'

@@ -348,7 +348,8 @@ export async function createHostedBotRunner(host: {
               }
             } finally { await close() }
           },
-          send: async (text, mode) => { assertOpen(); await session.send(text, mode) },
+          send: async (text, modeOrOptions) => { assertOpen(); await session.send(text, modeOrOptions) },
+          ...(session.compact ? { compact: async (instructions?: string) => { assertOpen(); await session.compact!(instructions) } } : {}),
           cancel: async () => { try { await session.cancel() } finally { await close() } },
           detach: async () => { try { await session.detach?.() } finally { await close() } },
         }

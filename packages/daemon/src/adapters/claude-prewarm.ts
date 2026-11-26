@@ -75,10 +75,11 @@ class ClaimedPromptQueue implements AsyncIterable<SDKUserMessage> {
   private wake: (() => void) | undefined
   private closed = false
   constructor(private readonly sessionId: string) {}
-  push(text: string) {
+  push(text: string, opts?: { clientComposed?: true }) {
     if (this.closed) throw Error('Claude prepared session is closed')
     const uuid = randomUUID()
     this.items.push({ type: 'user', uuid, session_id: this.sessionId, parent_tool_use_id: null,
+      ...(opts?.clientComposed ? { client_composed: true } : {}),
       message: { role: 'user', content: [{ type: 'text', text }] } })
     this.wake?.(); this.wake = undefined
     return uuid
@@ -200,8 +201,8 @@ export function prepareClaudeSession(options: PreparedOptions) {
         await verification
         assertOpen()
         state = 'ready'
-        return { query, close: cancel, send(text: string) {
-          try { assertOpen(); return prompts.push(text) }
+        return { query, close: cancel, send(text: string, opts?: { clientComposed?: true }) {
+          try { assertOpen(); return prompts.push(text, opts) }
           catch (error) { abort(); throw error }
         } }
       } catch (error) { return fail(error) }

@@ -23,6 +23,9 @@ export interface IssueThread {
   kind?: string
   /** agent_runs.threadRelation when the read carries it ('fork' | 'side' | 'subagent'). */
   threadRelation?: 'fork' | 'side' | 'subagent' | null
+  /** Optional thread tags and folder from agent_runs (#2936, #3333). */
+  tags?: string[]
+  folder?: string | null
   createdAt: Date
   /** When it started working, for its activity line's duration; absent on reads that do not carry it. */
   startedAt?: Date | null
@@ -142,6 +145,8 @@ export interface IssueThreadRow {
   /** agent_runs.kind: `implement` and `plan` are the conversation; `acceptance` is a Factory check. */
   kind?: string | null
   threadRelation?: 'fork' | 'side' | 'subagent' | null
+  tags?: string[] | null
+  folder?: string | null
   botColor?: string | null; botShape?: string | null; botId?: string | null
   startedAt?: Date | null
   /** The run's frozen Agent Profile summary with its current mark (app/actions/agents.ts); read by threadProfile. */
@@ -192,7 +197,7 @@ export function projectIssueThreads(rows: readonly (IssueThreadRow | IssueThread
     .slice(0, ISSUE_THREAD_LIMIT)
     .map(row => ({
       failureDetails: readCompactRunFailure(row.failureDetails),
-      ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), id: row.id, status: row.status, outcome: row.outcome ?? null, ...(row.kind ? { kind: row.kind } : {}), ...(row.threadRelation ? { threadRelation: row.threadRelation } : {}), createdAt: row.createdAt, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}), finishedAt: row.finishedAt, ownedByCurrentUser: row.userId === viewerId,
+      ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), id: row.id, status: row.status, outcome: row.outcome ?? null, ...(row.kind ? { kind: row.kind } : {}), ...(row.threadRelation ? { threadRelation: row.threadRelation } : {}), ...(Array.isArray(row.tags) ? { tags: row.tags } : {}), ...(row.folder !== undefined ? { folder: row.folder } : {}), createdAt: row.createdAt, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}), finishedAt: row.finishedAt, ownedByCurrentUser: row.userId === viewerId,
       stopping: runIsActive(row.status) && !!row.stopRequestedAt,
       ownerName: row.userId === viewerId ? null : row.ownerName ?? null,
       detail: canReadThread(row.userId, viewerId, memberIds)

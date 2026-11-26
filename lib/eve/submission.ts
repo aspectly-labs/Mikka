@@ -12,12 +12,15 @@ import { taskTitleInputSchema } from '../task-title-input'
 import { agentProfileReferenceSchema } from '../factory/agent-profile-reference'
 import { personalSubmissionInput, recordPersonalSubmission,personalSubmissionEventId,SubmissionConflictError } from '../coordinator-submission'
 
+import { resolveSkillMentionsForHarness, structuredMentionsSchema } from '@mikka/protocol/slash-commands'
+
 const quote = z.object({ artifactId:z.uuid(),version:z.number().int().positive(),kind:z.enum(['text','element']),text:z.string().min(1).max(QUOTE_TEXT_MAX),label:z.string().max(200).optional(),selector:z.string().max(1000).optional() })
 const notes = z.array(z.object({n:z.number().int().positive(),kind:z.enum(['element','region']),url:z.url({protocol:/^https?$/}).max(2000),label:z.string().min(1).max(200),note:z.string().min(1).max(NOTE_MAX),selector:z.string().max(1000).optional(),rect:z.object({x:z.number(),y:z.number(),width:z.number().nonnegative(),height:z.number().nonnegative(),viewportWidth:z.number().nonnegative(),viewportHeight:z.number().nonnegative()}).optional()})).max(NOTES_MAX)
 export const eveProductContext = z.object({
   taskCommand:dispatchTaskIntent.optional(),confirmTaskAccess:z.boolean().optional(),quote:quote.nullish(),notes:notes.nullish(),taskDestination:taskDestinationSchema.optional(),
   profileId:agentProfileReferenceSchema.optional(),taskTitle:taskTitleInputSchema.optional(),
   expectedOwnerId:z.string().min(1).max(256).optional(),expectedWorkspaceId:z.uuid().transform(value=>value.toLowerCase()).optional(),retryOf:z.number().int().positive().optional(),botId:z.uuid().nullish(),
+  mentions:structuredMentionsSchema.optional(),
 }).strict()
 
 const ingress = new WeakMap<Request, { scope:EveScope; eventId:string }>()
@@ -87,6 +90,29 @@ export async function acceptEveMessage(scope:EveScope,message:MessageContent,con
     : await accept()
   ingress.set(request,{scope,eventId})
   const contextual = text === input.text ? [] : [withQuote(withBrowserNotes('',product.notes) ?? '',product.quote)]
+  if (product.mentions?.length) {
+    const { pool } = await import('../db')
+    const { resolveStructuredMentions, expandStructuredMentions } = await import('../thread-references-server')
+    const resolved = await resolveStructuredMentions(pool, scope.ownerId, scope.workspaceId, product.mentions)
+    const block = expandStructuredMentions(resolved).trim()
+    if (block) contextual.push(block)
+  }
+  // Bug 4: translate `$skill` mentions (and explicit skill mentions) into Eve `load_skill` / `read_personal_skill` instructions.
+  const explicitSkills = (product.mentions ?? []).filter(m => m.kind === 'skill').map(m => m.id)
+  if (explicitSkills.length || /\$[a-z][a-z0-9-]*/.test(input.text)) {
+    const { pool } = await import('../db')
+    const { rows } = await pool.query<{ slug: string }>(
+      `SELECT slug FROM personal_skills WHERE user_id=$1 AND enabled=true LIMIT 100`,
+      [scope.ownerId],
+    ).catch(() => ({ rows: [] as { slug: string }[] }))
+    const knownSkills = [...new Set([...explicitSkills, ...rows.map(r => r.slug).filter(Boolean)])]
+    const resolved = resolveSkillMentionsForHarness('eve', input.text, knownSkills)
+    const allSkills = [...new Set([...explicitSkills, ...resolved.skills])]
+    if (allSkills.length) {
+      const list = allSkills.map(s => `"${s}"`).join(', ')
+      contextual.push(`The person explicitly invoked skill(s) ${list}. Load and apply each requested skill via read_personal_skill or load_skill before answering.`)
+    }
+  }
   if (createdTaskId) contextual.push(`The person selected Create and dispatch. The host has created Task ${createdTaskId} for this request. Dispatch that Task with the existing Machine, Profile, approval and resource checks. Reuse any execution receipt for this request.`)
   if(retry)contextual.push('The person explicitly retried this failed request. Continue from the conversation and its completed tool receipts. Do not repeat actions that already succeeded. Keep the original task identity and selected destination, profile and title.')
   return {eventId,context:contextual}

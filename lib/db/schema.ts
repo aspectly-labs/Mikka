@@ -605,6 +605,8 @@ export const agentRuns = pgTable('agent_runs', {
   sourceMessageId: uuid('sourceMessageId'),
   /** The thread's own labels, kept on the chain's root run (#2936). */
   tags: jsonb('tags').$type<string[] | null>(),
+  /** The thread's optional folder name, kept on the chain's root run (#3333). */
+  folder: text('folder'),
   /** Soft delete: hidden from every list for 30 days, restorable inside them (#2936). */
   deletedAt: timestamp('deletedAt', { withTimezone: true }), deletedBy: text('deletedBy'),
   /** Sub-agent card fields (F #2939): the child's display name, its mark and the parent's one-line brief. */

@@ -707,10 +707,11 @@ export class RunSupervisor {
     await this.send(runId, mailboxNoticeText(runId, messageIds))
   }
 
-  async send(runId: string, text: string, mode?: "steer") {
+  async send(runId: string, text: string, modeOrOptions?: "steer" | import("../adapters/types").SendOptions) {
     const run = this.active.get(runId)
     const adapter = this.adapterFor(runId)
     if (!run?.session) throw new RunNotFoundError(runId)
+    const mode = typeof modeOrOptions === "string" ? modeOrOptions : modeOrOptions?.mode
     if (mode === "steer" && adapter.harness !== "codex") throw new Error("Active turn steering unavailable")
     if (!adapter.capabilities.supportsInterject) {
       throw new Error(
@@ -724,7 +725,17 @@ export class RunSupervisor {
       if (!entry || !this.deps.downloadChatFile || !this.deps.adapterStateDir) throw Error('Run attachments unavailable')
       text = await materializeChatFiles(text, join(this.deps.adapterStateDir, 'inputs', runId), id => this.deps.downloadChatFile!(entry.assignment, id, run.abort.signal))
     }
-    await run.session.send(text, mode)
+    await run.session.send(text, modeOrOptions)
+  }
+
+  async compact(runId: string, instructions?: string) {
+    const run = this.active.get(runId)
+    if (!run?.session) throw new RunNotFoundError(runId)
+    if (typeof run.session.compact !== "function") {
+      throw new Error(`Harness "${this.adapterFor(runId).harness}" does not support compaction`)
+    }
+    if (this.openMessages.has(runId)) this.cutMessages.add(runId)
+    await run.session.compact(instructions)
   }
 
   async cancel(runId: string): Promise<RunSummary> {
@@ -1533,6 +1544,7 @@ export class RunSupervisor {
             sessionId: assignment.resumeSessionId,
             runId: assignment.continuesRunId,
             message: followUp ?? prompt,
+            ...(assignment.followUpControl ? { followUpControl: assignment.followUpControl } : {}),
           }
         : undefined
     if (assignment.requireSessionResume &&

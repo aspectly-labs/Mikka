@@ -58,11 +58,13 @@ import { mailboxToolResult } from '../run-mailbox'
 import { codexMailboxCatalogue, codexMailboxResumeVersion, recordCodexMailboxSession, verifyCodexMailboxResume } from './codex-mailbox'
 import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
+import { normalizeCodexCommands, normalizeCommandName } from "@mikka/protocol/slash-commands"
 import type {
   DeltaNotification,
   ErrorNotification,
   ItemNotification,
   RateLimitsNotification,
+  SkillsListResponse,
   ThreadItem,
   ThreadResponse,
   ThreadResumeParams,
@@ -72,11 +74,12 @@ import type {
   UserInput,
   ChatGPTAuthTokens
 } from "./codex-protocol"
-import type {
-  AgentAdapter,
-  AgentSession,
-  SessionOptions,
-  StartOptions,
+import {
+  normalizeSendOptions,
+  type AgentAdapter,
+  type AgentSession,
+  type SessionOptions,
+  type StartOptions,
 } from "./types"
 
 export interface CodexAdapterOptions {
@@ -344,9 +347,42 @@ export function codexItemChunks(
             },
       ]
     }
+    case "contextCompaction":
+      return phase === "started"
+        ? [{ type: "data-system-event", data: { kind: "status", status: "compacting" } }]
+        : [{ type: "data-system-event", data: { kind: "compact_boundary", harness: "codex", trigger: "manual" } }]
+    case "exitedReviewMode": {
+      const review = (item as Extract<ThreadItem, { type: "exitedReviewMode" }>).review
+      return phase === "completed" && typeof review === "string" && review.trim()
+        ? [{ type: "data-system-event", data: { kind: "local_command_output", command: "review", text: review } }]
+        : []
+    }
     default:
       return []
   }
+}
+
+const CODEX_INIT_PROMPT =
+  "Create or update AGENTS.md in the repository root with concise guidance on project structure, build/test commands, and conventions."
+
+function extractCodexSkills(response: SkillsListResponse): { name: string; description?: string }[] {
+  const entries = [
+    ...(response.skills ?? []),
+    ...(response.data ?? []).flatMap(group => group.skills ?? []),
+  ]
+  const seen = new Set<string>()
+  const skills: { name: string; description?: string }[] = []
+  for (const entry of entries) {
+    if (!entry || entry.enabled === false || typeof entry.name !== "string") continue
+    const name = entry.name.trim()
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    const description = (entry.shortDescription ?? entry.description ?? "").trim()
+    skills.push({ name, ...(description ? { description } : {}) })
+  }
+  return skills
 }
 
 /**
@@ -1021,8 +1057,64 @@ export class CodexAdapter implements AgentAdapter {
       runtimeModel = typeof response.model === "string" && response.model ? response.model : null
       if (runtimeModel) options.onRuntimeModel?.(sessionId, runtimeModel)
       if(managedAuth)await this.options.onHostedSession?.(sessionId)
+
+      // Emit curated Codex slash commands immediately, then enrich best-effort from `skills/list`
+      // (preserving isolated CODEX_HOME for personal runs; non-blocking so fakes without skills/list stay fast).
+      queue.chunk({
+        type: "data-available-commands",
+        id: "available-commands",
+        data: { harness: "codex", commands: normalizeCodexCommands() },
+      })
+      void rpc
+        .sendRequest<SkillsListResponse>("skills/list", { cwds: [ctx.worktree] })
+        .then(res => {
+          if (ending || !res) return
+          const skills = extractCodexSkills(res)
+          if (skills.length) {
+            queue.chunk({
+              type: "data-available-commands",
+              id: "available-commands",
+              data: { harness: "codex", commands: normalizeCodexCommands(skills) },
+            })
+          }
+        })
+        .catch(() => undefined)
+
+      const startCompact = async () => {
+        if (ending) throw new Error("The Codex session already ended")
+        queue.chunk({ type: "data-system-event", data: { kind: "status", status: "compacting" } })
+        try {
+          await rpc.sendRequest("thread/compact/start", { threadId: sessionId })
+        } catch (error) {
+          queue.chunk({
+            type: "data-system-event",
+            data: { kind: "status", status: "idle", compactResult: "failed", compactError: errorMessage(error) },
+          })
+          throw error
+        }
+      }
+      const startReview = async (instructions?: string) => {
+        if (ending) throw new Error("The Codex session already ended")
+        const trimmed = instructions?.trim()
+        await rpc.sendRequest("review/start", {
+          threadId: sessionId,
+          target: trimmed ? { type: "custom", instructions: trimmed } : { type: "uncommittedChanges" },
+        })
+      }
+
       startupPhase = 'turn_start'
-      await ready(startTurn(firstMessage), "turn/start")
+      const followUpControl = mode === "continue" ? options.continueSession?.followUpControl : undefined
+      if (followUpControl?.kind === "compact") {
+        await ready(startCompact(), "thread/compact/start")
+      } else if (followUpControl?.kind === "slash") {
+        const cmd = normalizeCommandName(followUpControl.name).toLowerCase()
+        if (cmd === "compact") await ready(startCompact(), "thread/compact/start")
+        else if (cmd === "review") await ready(startReview(followUpControl.args), "review/start")
+        else if (cmd === "init") await ready(startTurn(CODEX_INIT_PROMPT), "turn/start")
+        else await ready(startTurn(firstMessage), "turn/start")
+      } else {
+        await ready(startTurn(firstMessage), "turn/start")
+      }
     } catch (error) {
       if (managedAuth) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
@@ -1040,13 +1132,47 @@ export class CodexAdapter implements AgentAdapter {
     }
     log.info({ session_id: sessionId, mode }, "codex session started")
 
+    const runCompact = async () => {
+      if (ending) throw new Error("The Codex session already ended")
+      queue.chunk({ type: "data-system-event", data: { kind: "status", status: "compacting" } })
+      try {
+        await rpc.sendRequest("thread/compact/start", { threadId: sessionId })
+      } catch (error) {
+        queue.chunk({
+          type: "data-system-event",
+          data: { kind: "status", status: "idle", compactResult: "failed", compactError: errorMessage(error) },
+        })
+        throw error
+      }
+    }
+
     return {
       sessionId,
       runtimeModel,
       events: () => queue.drain(),
-      async send(message, mode) {
+      async send(message, modeOrOptions) {
+        const sendOpts = normalizeSendOptions(modeOrOptions)
         sensitiveText.push(message)
         if (ending) throw new Error("The Codex session already ended")
+        if (sendOpts.slashCommand) {
+          const cmd = normalizeCommandName(sendOpts.slashCommand.name).toLowerCase()
+          if (cmd === "compact") {
+            await runCompact()
+            return
+          }
+          if (cmd === "review") {
+            const trimmed = sendOpts.slashCommand.args?.trim()
+            await rpc.sendRequest("review/start", {
+              threadId: sessionId,
+              target: trimmed ? { type: "custom", instructions: trimmed } : { type: "uncommittedChanges" },
+            })
+            return
+          }
+          if (cmd === "init") {
+            await startTurn(CODEX_INIT_PROMPT)
+            return
+          }
+        }
         if (activeTurn) {
           try {
             await rpc.sendRequest("turn/steer", {
@@ -1065,8 +1191,11 @@ export class CodexAdapter implements AgentAdapter {
           }
         }
         if (ending) throw new Error("The Codex session already ended")
-        if (mode === "steer") throw new Error("The Codex turn is no longer active")
+        if (sendOpts.mode === "steer") throw new Error("The Codex turn is no longer active")
         await startTurn(message)
+      },
+      async compact() {
+        await runCompact()
       },
       async cancel() {
         // Revoking the gate tears down the owned proxy/CLI immediately. Mark

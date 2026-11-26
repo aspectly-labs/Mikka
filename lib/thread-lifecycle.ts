@@ -70,7 +70,7 @@ async function transcriptExcerpt(sourceRootId: string, limit = 20, cutoff?: stri
  * keeps the excerpt small. The run insert and bounded history copy commit in
  * one transaction so workers never claim a half-copied thread. */
 export async function spawnThread(user: ApiUser, runId: string, input: {
-  relation: Exclude<ThreadRelation, 'subagent'>, mode?: 'full' | 'summary', fromMessageId?: string | null, idempotencyKey?: string | null,
+  relation: Exclude<ThreadRelation, 'subagent'>, mode?: 'full' | 'summary', fromMessageId?: string | null, idempotencyKey?: string | null, question?: string | null,
 }): Promise<Run | null> {
   const source = await ownedRun(user, runId)
   if (!source) return null
@@ -80,7 +80,7 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   const normalizedKey = input.idempotencyKey?.trim() || null
   const dispatchKey = normalizedKey ? `thread_spawn:${relation}:${normalizedKey}` : null
   const dispatchFingerprint = dispatchKey
-    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null })).digest('hex')
+    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null, question: input.question?.trim() || null })).digest('hex')
     : null
   // `fromMessageId` is the branch point: nothing after it joins the copy or the prompt.
   let cutoff: string | null = null
@@ -91,9 +91,12 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   }
   // A full replay also carries the person's follow-up inputs, not just the first prompt.
   const replay = relation === 'fork' && input.mode !== 'summary' ? (await transcriptExcerpt(root, 50, cutoff)).slice(0, 8000) : ''
+  const sideQuestion = relation === 'side' ? input.question?.trim() : ''
   const prompt = relation === 'fork' && input.mode !== 'summary'
     ? `${source.prompt}${replay ? `\n\n${replay}` : ''}`
-    : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20, cutoff)).slice(0, 6000)}`
+    : sideQuestion
+      ? `Side question on "${source.title ?? 'untitled thread'}" (do not alter the main thread's task state; answer concisely):\n\nQuestion: ${sideQuestion}\n\nRecent context:\n${(await transcriptExcerpt(root, 8, cutoff)).slice(0, 6000)}`
+      : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20, cutoff)).slice(0, 6000)}`
   const id = randomUUID()
   let run: Run | undefined
   let replayed = false
@@ -232,8 +235,8 @@ export async function sharedThread(token: string): Promise<Run | null> {
 const QUESTION_ORIGIN_SQL = `(CASE WHEN r."questionContinuation"->>'originRunId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN (r."questionContinuation"->>'originRunId')::uuid END)`
 const LOCKED_FACTORY_PREDICATE = `(a.stage IN ('review','verify','monitor') OR (t."attemptId"=a.id AND (a.status IN ('pending','running','waiting') OR t.status IN ('pending','running','waiting'))))`
 
-/** PATCH: retarget the thread's task and/or its tags (on the root the lists read). */
-export async function patchThread(user: ApiUser, runId: string, input: { taskId?: string | null, tags?: string[] }): Promise<Run | null | 'forbidden'> {
+/** PATCH: retarget the thread's task, tags, and/or folder (on the root the lists read). */
+export async function patchThread(user: ApiUser, runId: string, input: { taskId?: string | null, tags?: string[], folder?: string | null }): Promise<Run | null | 'forbidden'> {
   const source = await ownedRun(user, runId)
   if (!source) return null
   const chain = await readRunChain(pool, user.id, runId)
@@ -275,7 +278,16 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
     }
   }
   if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 20 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 60))) return null
-  if (input.taskId === undefined && input.tags === undefined) return source
+  let normalizedFolder: string | null | undefined
+  if (input.folder !== undefined) {
+    if (input.folder === null) normalizedFolder = null
+    else if (typeof input.folder === 'string') {
+      const cleaned = input.folder.normalize('NFC').replace(/\s+/g, ' ').trim()
+      if ([...cleaned].length > 60) return null
+      normalizedFolder = cleaned || null
+    } else return null
+  }
+  if (input.taskId === undefined && input.tags === undefined && input.folder === undefined) return source
   // Task retarget discovers the scoped chain inside the mutation statement so
   // concurrent retries/continuations/question-resumes move with the root
   // instead of splitting. Re-check Factory lock atomically and keep the root
@@ -314,6 +326,8 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
   }
   if (input.tags !== undefined)
     await pool.query(`UPDATE agent_runs SET tags=$2::jsonb WHERE id=$1 AND "userId"=$3`, [root, JSON.stringify(input.tags), user.id])
+  if (input.folder !== undefined)
+    await pool.query(`UPDATE agent_runs SET folder=$2 WHERE id=$1 AND "userId"=$3`, [root, normalizedFolder ?? null, user.id])
   await runListChanged(pool, root); await runChanged(pool, root)
   if (input.taskId !== undefined && previousIssueId && previousIssueId !== input.taskId)
     await issueThreadsChanged(pool, previousIssueId)

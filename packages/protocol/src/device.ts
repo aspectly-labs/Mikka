@@ -625,6 +625,12 @@ export const runAssignmentSchema = z.object({
    * a new session gets `prompt`, which already includes it.
    */
   followUp: z.string().max(100_000).optional(),
+  /** Optional control directive for `followUp` (compact, allowed slash command, or literal client_composed). */
+  followUpControl: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('compact'), instructions: z.string().max(10_000).optional() }).strict(),
+    z.object({ kind: z.literal('slash'), name: z.string().trim().min(1).max(160), args: z.string().max(10_000).optional() }).strict(),
+    z.object({ kind: z.literal('client_composed') }).strict(),
+  ]).optional(),
   /**
    * The workspace's agent permissions and network allow-list (ADR 0028).
    * Absent from an older server: the daemon applies the ADR 0009 defaults.
@@ -745,6 +751,13 @@ export const COMMANDS_MAX_SKIP_DEVICE_COMMANDS = 10
 /** Older daemons reject unknown command kinds; advertise this extension. */
 export const ACTIVE_TURN_STEER_HEADER = 'x-mikka-active-turn-steer'
 export const MAILBOX_NOTICE_HEADER = 'x-mikka-mailbox-notices'
+/** Advertises support for `compact` commands and `clientComposed` / `slashCommand` input flags (#3333). */
+export const RUN_CONTROL_COMMANDS_HEADER = 'x-mikka-run-control-commands'
+
+const slashCommandRefSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  args: z.string().max(10_000).optional(),
+})
 
 export const runCommandSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -752,8 +765,18 @@ export const runCommandSchema = z.discriminatedUnion("kind", [
     runId: id,
     messageId: z.uuid(),
     text: z.string().min(1).max(100_000),
+    /** Deliver text literally with no slash-command dispatch (`client_composed: true` on Claude SDK). */
+    clientComposed: z.literal(true).optional(),
+    /** Execute an allowed harness slash command directly without Mikka JSON source wrapper. */
+    slashCommand: slashCommandRefSchema.optional(),
   }),
   z.object({ kind: z.literal("steer"), runId: id, messageId: z.uuid(), text: z.string().min(1).max(100_000) }),
+  z.object({
+    kind: z.literal("compact"),
+    runId: id,
+    messageId: z.uuid(),
+    instructions: z.string().max(10_000).optional(),
+  }),
   z.object({ kind: z.literal("stop"), runId: id }),
   // A host notification carries addresses only; peer content remains behind
   // the authenticated mailbox read and retains its original provenance.

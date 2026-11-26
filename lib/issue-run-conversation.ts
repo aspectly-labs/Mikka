@@ -257,7 +257,21 @@ export type ThreadItem =
   | { kind: 'error'; id: string; text: string; at: number }
   | { kind: 'stages'; id: string; stages: ThreadStage[]; at: number }
   | { kind: 'computer'; id: string; botId: string; runId: string; task: string; at: number }
+  | { kind: 'system_event'; id: string; event: import('@mikka/protocol/slash-commands').SystemEventData; at: number }
   | { kind: 'person'; id: string; text: string; author: string; image?: string | null; mine: boolean; at: number }
+
+/** Extract the newest `data-available-commands` payload from a thread's streamed chunks (#3333). */
+export function latestAvailableCommandsFromChunks(
+  chunks: readonly { chunk: Record<string, unknown> }[],
+): import('@mikka/protocol/slash-commands').AvailableCommandsChunkData | null {
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const chunk = chunks[i]?.chunk
+    if (chunk?.type === 'data-available-commands' && chunk.data && typeof chunk.data === 'object') {
+      return chunk.data as import('@mikka/protocol/slash-commands').AvailableCommandsChunkData
+    }
+  }
+  return null
+}
 
 /** A person's message in a thread (`run_messages`): keyed by the id the client minted when it sent it, else its own. */
 export type ThreadPersonMessage = { id: string; submissionId?: string | null; text: string; author: string; image?: string | null; mine: boolean; at: Date | string }
@@ -355,6 +369,12 @@ export function conversationItems(conversation: readonly ConversationMessage[], 
       } else if (part.type === 'data-error') {
         steps = null; stages = null
         items.push({ kind: 'error', id: `error:${part.id ?? id}`, text: part.data.text, at })
+      } else if (part.type === 'data-system-event') {
+        steps = null; stages = null
+        const data = part.data as Record<string, unknown> | undefined
+        if (data && typeof data.kind === 'string') {
+          items.push({ kind: 'system_event', id: `sysevt:${part.id ?? id}`, event: data as import('@mikka/protocol/slash-commands').SystemEventData, at })
+        }
       } else if (part.type === 'data-computer' && expectedRunId) {
         const data = part.data as Record<string, unknown>
         if (data?.runId === expectedRunId && typeof data.botId === 'string' && typeof data.task === 'string' && data.task.length <= 200 && !items.some(item => item.kind === 'computer' && item.runId === expectedRunId))

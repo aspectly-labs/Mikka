@@ -432,6 +432,16 @@
       "sourceHash": "30f4b878904b6ef684aabedd67121056644f89a70dc359ed1158845401b585a2"
     },
     {
+      "path": "/mikka/api/chat/dictation",
+      "template": "/api/chat/dictation",
+      "source": "app/api/chat/dictation/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 120,
+      "sourceHash": "38b35c2a77eca81af2f974f333c83f5d4acc5e72453c642d949be0a597d4584e"
+    },
+    {
       "path": "/mikka/api/cloud/callback",
       "template": "/api/cloud/callback",
       "source": "app/api/cloud/callback/route.ts",
@@ -3160,7 +3170,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "2db052dd899e71eac8b2314f8a1c27f7e7421baa9dcbde032db61c3716758535"
+      "sourceHash": "c6da3f530786a1808738abe10cf62494c36d6c99be6908d98eacc1e14146d0fe"
     },
     {
       "path": "/mikka/api/tasks/[taskId]/attachments",
@@ -3365,7 +3375,7 @@
         "PATCH"
       ],
       "maxDuration": 60,
-      "sourceHash": "00c09b044f21730be12d694fbb343969adadc8e4531cc88c14f478aab3b48633"
+      "sourceHash": "8a79922c0884c93a5d4ed52103a2e8eebd8b2c462a42bd025a5b6ce665120ffb"
     },
     {
       "path": "/mikka/api/threads/[runId]/automation",
@@ -4121,7 +4131,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "30e176d139d385b833c802455ce05cb5f9b41398b265bd008e9913fb726e245d"
+      "sourceHash": "5244c5c15bd94b0e4cfbdd3c39f8405a0bb104855ff7a5f07d66e5e6a0256651"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/commands/ack",
@@ -4220,7 +4230,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "f7d7c5cd8b1b6487b20c69d304ae292fe839f27ec39d5f921d07520cf43695bd"
+      "sourceHash": "8ce117e036789ef12325f740c5d85caa745d65a7c336fc4f2aaa170f338ef812"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
