@@ -26,8 +26,6 @@ export async function deliverResult(runId: string) {
   const { publicationDelivery } = await import('@/lib/run-publications')
   const row = await publicationDelivery(runId)
   if (!row) return
-  const { processLinearIssueOutbox } = await import('@/lib/linear-sync/worker')
   const { wakeCoordinator } = await import('@/lib/coordinator/wake')
-  await processLinearIssueOutbox(row.issueId)
   await wakeCoordinator(row.userId)
 }

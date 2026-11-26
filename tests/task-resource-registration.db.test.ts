@@ -100,20 +100,6 @@ test('Task registration works with legacy and private SQL defaults; kind authori
         const allowed = (await app.query(`SELECT mikka_resource_acl_allowed('account',$1,$2,'task',$3,'canReadContent') AS allowed`, [peer, team, teamTask.id])).rows[0].allowed
         assert.equal(allowed, true, 'ordinary Team collaborators retain the existing shared Task policy')
       })
-      await t.test(label + ': the real incoming Linear writer registers Team sharing and keeps personal imports private', async () => {
-        const { linearTeamSyncs } = await import('../lib/db/schema')
-        const { createAppIssueFromLinear } = await import('../lib/linear-sync/issue-sync')
-        for (const workspaceId of [personal, team]) {
-          const [binding] = await db.insert(linearTeamSyncs).values({ id: randomUUID(), ownerId: owner, workspaceId, linearTeamId: randomUUID(), linearTeamKey: 'ACL', linearTeamName: 'ACL import' }).returning()
-          const imported = await createAppIssueFromLinear(binding, {
-            id: randomUUID(), identifier: 'ACL-1', title: 'Imported task', description: '', dueDate: null, priority: 0,
-            url: 'https://example.invalid/linear', updatedAt: new Date().toISOString(), state: null,
-            team: { id: binding.linearTeamId, key: binding.linearTeamKey, name: binding.linearTeamName }, assignee: null, labels: [],
-          })
-          assert.ok(imported)
-          assert.equal(await visibility(imported.id), workspaceId === personal ? 'private' : 'shared')
-        }
-      })
       await t.test(label + ': actual child and duplicate actions preserve personal privacy and Team ancestry', async () => {
         const { actAs } = await import('../lib/acting-user')
         const { createLinkedIssue } = await import('../app/actions/issue-operations')

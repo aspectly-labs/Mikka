@@ -1,13 +1,10 @@
 import 'server-only'
-import { and, eq, isNull, lt } from 'drizzle-orm'
+import { lt } from 'drizzle-orm'
 import { db, pool } from '@/lib/db'
-import { linearConnections, linearIssueLinks, suggestionTriggerChecks } from '@/lib/db/schema'
+import { suggestionTriggerChecks } from '@/lib/db/schema'
 import { getComposio, runComposioAction } from '@/lib/composio'
 import { listComposioPages } from '@/lib/composio-pagination'
-import { linearGraphQL } from '@/lib/linear-sync/graphql'
-import { linearAccessToken } from '@/lib/linear-sync/tokens'
-import { linearSyncEnabled } from '@/lib/linear-sync/flags'
-import { githubCandidateIds, githubNotification, gmailNotification, linearCommentNotification, linearIssueNotification, type ExternalNotification } from './notification'
+import { githubCandidateIds, githubNotification, gmailNotification, type ExternalNotification } from './notification'
 import { disabledSuggestionSources } from './source-settings'
 import { ingestNotifications, recordTimeZone, writeFirstBriefing } from './store'
 import { manualTimeZone } from './time-zone'
@@ -17,26 +14,6 @@ import { missingTriggers, TRIGGER_CHECK_INTERVAL_MS, TRIGGER_PATTERNS, triggerSl
 // payloads; Gmail, Slack and Notion arrive as Composio trigger events, which Composio
 // polls for us. Right after the person connects an app, its current data is
 // read once so the first briefing has something in it.
-
-/** Notifications for everyone a Linear webhook concerns. */
-export async function linearWebhookNotifications(organizationId: string, payload: Record<string, unknown>): Promise<ExternalNotification[]> {
-  if (!await linearSyncEnabled()) return []
-  if (payload.type === 'Issue') {
-    const recipients = await db.select({ userId: linearConnections.userId, linearUserId: linearConnections.linearUserId }).from(linearConnections)
-      .where(and(eq(linearConnections.organizationId, organizationId), isNull(linearConnections.revokedAt)))
-    return recipients.flatMap(recipient => linearIssueNotification(recipient, payload) ?? [])
-  }
-  if (payload.type === 'Comment') {
-    const issueId = (payload.data as Record<string, unknown> | undefined)?.issueId
-    if (typeof issueId !== 'string') return []
-    // The person who owns the synced issue in Mikka hears about comments on it.
-    const recipients = await db.select({ userId: linearConnections.userId, linearUserId: linearConnections.linearUserId }).from(linearIssueLinks)
-      .innerJoin(linearConnections, eq(linearConnections.userId, linearIssueLinks.ownerId))
-      .where(and(eq(linearIssueLinks.linearIssueId, issueId), eq(linearConnections.organizationId, organizationId), isNull(linearConnections.revokedAt)))
-    return recipients.flatMap(recipient => linearCommentNotification(recipient, payload) ?? [])
-  }
-  return []
-}
 
 /** Notifications for every Mikka person a GitHub event is about, matched by their GitHub sign-in. */
 export async function githubWebhookNotifications(event: string, payload: Record<string, unknown>): Promise<ExternalNotification[]> {
@@ -122,21 +99,6 @@ async function currentGmail(userId: string): Promise<ExternalNotification[]> {
   return Array.isArray(messages) ? messages.flatMap(message => ((notification => notification ? { ...notification, connectedAccountId: result.accountId } : [])(gmailNotification(userId, message as Record<string, unknown>)))) : []
 }
 
-/** Open Linear issues assigned to the person that moved in the last three days. */
-async function currentLinear(userId: string): Promise<ExternalNotification[]> {
-  type Wire = { viewer: { assignedIssues: { nodes: { id: string; identifier: string; title: string; url: string; updatedAt: string; description: string | null }[] } } }
-  const data = await linearGraphQL<Wire>(await linearAccessToken(userId), `query MikkaFirstBriefing {
-    viewer { assignedIssues(first: 20, orderBy: updatedAt, filter: { updatedAt: { gt: "-P3D" }, state: { type: { nin: ["completed", "canceled"] } } }) {
-      nodes { id identifier title url updatedAt description }
-    } }
-  }`)
-  return data.viewer.assignedIssues.nodes.map(issue => ({
-    userId, source: 'linear', externalId: `issue:${issue.id}:assigned`, matterKey: `linear:${issue.id}`, action: 'handle', title: issue.title, url: issue.url, actor: null,
-    occurredAt: new Date(issue.updatedAt), required: true, direct: true, fromSelf: false, automated: false,
-    excerpt: `${issue.identifier} ${issue.title}\n${issue.description ?? ''}`.slice(0, 2000),
-  }))
-}
-
 /**
  * Runs right after the person connects an app: subscribes its triggers, reads
  * what is there now, rates it like any webhook (without handing it to the
@@ -144,7 +106,7 @@ async function currentLinear(userId: string): Promise<ExternalNotification[]> {
  * Coordinator then delivers in its chat. Never throws; a source that fails just adds nothing.
  */
 export async function bootstrapSuggestions(userId: string, app: 'composio' | 'linear', timeZone: string | null) {
-  if (app === 'linear' && !await linearSyncEnabled()) return
+  if (app === 'linear') return
   const read = async <T,>(label: string, load: () => Promise<T[]>): Promise<T[]> => {
     try { return await load() } catch (error) {
       console.error(`First briefing could not read ${label}`, error instanceof Error ? error.message : error)
@@ -156,9 +118,7 @@ export async function bootstrapSuggestions(userId: string, app: 'composio' | 'li
     await recordTimeZone(userId, timeZone, { replace: false }).catch((error: unknown) => console.error('Time zone could not be saved', error instanceof Error ? error.message : error))
     // A source the person turned off in Settings is not read (lib/suggestions/source-settings.ts).
     const gmailOn = async () => !(await disabledSuggestionSources(userId)).has('gmail')
-    const notifications = app === 'linear'
-      ? await read('Linear', () => currentLinear(userId))
-      : (await read('Composio', () => ensureComposioTriggers(userId, { force: true }))).includes('gmail') && await gmailOn() ? await read('Gmail', () => currentGmail(userId)) : []
+    const notifications = (await read('Composio', () => ensureComposioTriggers(userId, { force: true }))).includes('gmail') && await gmailOn() ? await read('Gmail', () => currentGmail(userId)) : []
     // What was already there goes into the first briefing, not to the Coordinator one by one.
     await ingestNotifications(notifications, { route: false })
     await writeFirstBriefing(userId, await manualTimeZone(userId) ?? timeZone)

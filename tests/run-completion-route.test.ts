@@ -34,7 +34,6 @@ const select = { from: () => select, innerJoin: () => select, where: () => selec
 stub('../lib/db/index.ts', { db: { select: () => select } })
 stub('../lib/coordinator/wake.ts', { wakeCoordinator: async () => { effects.push('wake') } })
 stub('../lib/run-outcome-judge.ts', { judgeRunOutcome: async () => { effects.push('outcome'); return null } })
-stub('../lib/linear-sync/dispatch.ts', { dispatchLinearIssueSync: () => { effects.push('sync') } })
 mock.module('@/lib/server-runtime/server', { namedExports: { RouteResponse: Response, after: (callback: () => Promise<void>) => callback() } })
 let route: typeof import('../app/v1/runs/[runId]/complete/route')
 before(async () => { route = await import('../app/v1/runs/[runId]/complete/route') })
@@ -73,12 +72,12 @@ test('enqueue failure returns retryable 503; replay resumes the same stored comp
   assert.deepEqual(effects, ['captures', 'captures', 'enqueued'])
 })
 
-test('non-publication completion dispatches through its scope-generation guard', async () => {
+test('non-publication completion wakes the coordinator once', async () => {
   persisted = { userId: 'owner', issueId: 'issue', publicationPending: false, review: { id: 'issue', scopeVersion: 3 } }
   assert.equal((await post({ stopReason: 'cancelled' })).status, 204)
   assert.equal(enqueue.mock.callCount(), 0)
-  assert.equal(dispatch.mock.calls[0]?.arguments[0], persisted)
-  assert.deepEqual(effects, ['captures', 'sync', 'wake', 'outcome'])
+  assert.equal(dispatch.mock.callCount(), 0)
+  assert.deepEqual(effects, ['captures', 'wake', 'outcome'])
 })
 
 test('retirement or a non-review completion wakes its chat without task dispatch', async () => {
