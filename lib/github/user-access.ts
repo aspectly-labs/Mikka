@@ -423,7 +423,8 @@ export async function authorizedPullWake(userId: string, repo: string, repositor
     if (!conflict) return true
     const { number, head } = conflict
     const { data } = await githubGet(credential.token, `/repositories/${repositoryId}/pulls/${number}`, budget)
-    return data.state === 'open' && data.number === number && object(data.head).sha === head && data.mergeable === false
+    if (data.state !== 'open' || data.number !== number || object(data.head).sha !== head) return false
+    return data.mergeable === null ? null : data.mergeable === false
   } catch (error) {
     if (error instanceof GitHubAccessError && error.status < 500 || error instanceof CloudServiceError && [401, 403].includes(cloudErrorStatus(error.code))) return false
     throw error

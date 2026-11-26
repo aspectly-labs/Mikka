@@ -646,4 +646,7 @@ test('unknown webhook mergeability uses the same authorized repository, installa
   assert.equal(await check(12), false)
   assert.equal(await access.authorizedPullWake('person-1', 'owner/project', 91, 12), false)
   assert.equal(await check(11, '2'.repeat(40)), false)
+  answer = url => url.pathname === '/repositories/91/pulls/7' ? json({ number: 7, state: 'open', head: { sha: head }, mergeable: null }) : original(url)
+  assert.equal(await check(11), null)
+  assert.equal(await check(11, '2'.repeat(40)), false, 'a different head cannot schedule a recheck')
 })

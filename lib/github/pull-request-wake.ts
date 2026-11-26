@@ -28,7 +28,10 @@ export function pullWakeEvent(event: string, payload: unknown) {
   return { preference, repository: repository.full_name, repositoryId: repository.id, installationId: installation.id, numbers: [pull.number], headSha: pull.head?.sha.toLowerCase(), checkConflict: preference === 'prWakeOnConflict' && pull.mergeable == null }
 }
 
-export async function wakePullRequestThreads(event: NonNullable<ReturnType<typeof pullWakeEvent>>, deliveryKey: string) {
+export type PullWakeEvent = NonNullable<ReturnType<typeof pullWakeEvent>>
+
+/** Returns true while at least one authorized PR on this head is still being evaluated by GitHub. */
+export async function wakePullRequestThreads(event: PullWakeEvent, deliveryKey: string) {
   const repo = event.repository.toLowerCase()
   const urls = event.numbers.map(number => `https://github.com/${repo}/pull/${number}`)
   const { rows } = await pool.query<{ runId: string; userId: string; workspaceId: string; url: string; head: string | null; locale: string | null }>(`
@@ -43,6 +46,7 @@ export async function wakePullRequestThreads(event: NonNullable<ReturnType<typeo
       AND (r."botId" IS NULL OR EXISTS (SELECT 1 FROM bots b WHERE b.id=r."botId" AND b."workspaceId"=r."workspaceId" AND b."ownerId"=p."userId"))
     ORDER BY lower(p."pullRequest"->>'url'),r."workspaceId",p."userId",p."createdAt" DESC,p."runId"`,
   [`v2/github.com/${repo}`, urls, event.headSha ?? null, `https://github.com/${repo}/pull/`])
+  let pending = false
   for (const row of rows) {
     const number = Number(row.url.slice(row.url.lastIndexOf('/') + 1))
     const expectedHead = 'heads' in event ? event.heads[number] ?? event.headSha : event.headSha
@@ -50,7 +54,9 @@ export async function wakePullRequestThreads(event: NonNullable<ReturnType<typeo
     if (!(await readRuntimeSettings(pool, [event.preference], row))[event.preference].value) continue
     const conflict = 'checkConflict' in event && event.checkConflict && row.head ? { number, head: row.head } : undefined
     const { authorizedPullWake } = await import('./user-access')
-    if (!await authorizedPullWake(row.userId, repo, event.repositoryId, event.installationId, conflict)) continue
+    const authorized = await authorizedPullWake(row.userId, repo, event.repositoryId, event.installationId, conflict)
+    if (authorized === null) pending = true
+    if (!authorized) continue
     // The thread delivery ledger expects a UUID and reuses the receipt on redelivery.
     const hex = createHash('sha256').update(JSON.stringify([deliveryKey, event.preference, row.url, row.workspaceId, row.userId])).digest('hex')
     const requestId = `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`
@@ -62,10 +68,13 @@ export async function wakePullRequestThreads(event: NonNullable<ReturnType<typeo
       payload#>>'{threadSubmission,requestedRunId}' AS anchor,payload->>'text' AS text FROM coordinator_events
       WHERE id=$1 AND "userId"=$2 AND kind='user_message' AND payload->>'source'='thread_continuation'`, [receiptId, row.userId])
     try {
-      await withTaskWorkspace(row.userId, row.workspaceId, () => sendThreadMessage(row.userId, receipt?.anchor ?? row.runId,
-        receipt?.text ?? `${messages[event.preference]} ${row.url}`, { source: 'orchestrator' }, requestId))
+      const { withWorkspaceFactorJob } = await import('@/lib/enterprise/workspace-factor-job')
+      await withWorkspaceFactorJob(row.userId, row.workspaceId, () => withTaskWorkspace(row.userId, row.workspaceId,
+        () => sendThreadMessage(row.userId, receipt?.anchor ?? row.runId,
+          receipt?.text ?? `${messages[event.preference]} ${row.url}`, { source: 'orchestrator' }, requestId)))
     } catch (error) {
       if (!(error instanceof ActionFailureError && ['threadReplaced', 'runNotFound', 'workspaceAccessDenied'].includes(error.code))) throw error
     }
   }
+  return pending
 }

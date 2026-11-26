@@ -62,7 +62,13 @@ export async function dispatchVerifiedGitHubWebhook(event: string | null, rawBod
   if (suite) await (await import('./ci-suite-wake')).wakeLinkedCiSuite(suite)
   // A synchronize event must update the qualified publication head before checking conflict.
   if (wake && refresh) await (await import('./publication-webhook')).refreshPublishedPullRequest(event, payload)
-  if (wake) await wakePullRequestThreads(wake, deliveryKey)
+  if (wake && await wakePullRequestThreads(wake, deliveryKey)) {
+    // The durable workflow rechecks only the authorized PR and original head.
+    // Start it before acknowledgement so this delivery can be retried if it fails to start.
+    const { start } = await import('workflow/api')
+    const { wakeConflictingPullRequest } = await import('@/workflows/pull-request-wake/workflow')
+    await start(wakeConflictingPullRequest, [wake, deliveryKey])
+  }
   const work = async () => {
     if (refresh && !wake) await (await import('./publication-webhook')).refreshPublishedPullRequest(event, payload)
     if (review) await (await import('./publication-webhook')).invalidatePublishedPullReview(payload)
