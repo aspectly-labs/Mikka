@@ -61,9 +61,11 @@ test('a cloud run\'s subscription context read stays within its statement budget
   const threadMachines = await fakeThreadMachines(pool, harnesses)
   const userId = await seedUser(pool, 'route-queries')
   const organizationId = randomUUID(), providerId = `route-budget-${randomUUID()}`, directoryConnectionId = randomUUID(), directoryUserId = randomUUID()
+  let workspaceId: string | undefined
   t.after(async () => {
     for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value
     threadMachines.restore()
+    if (workspaceId) await pool.query('DELETE FROM mikka_workspace_entitlements WHERE "workspaceId"=$1', [workspaceId])
     await pool.query('DELETE FROM enterprise_scim_user WHERE id=$1', [directoryUserId])
     await pool.query('DELETE FROM enterprise_scim_connection WHERE id=$1', [directoryConnectionId])
     await pool.query('DELETE FROM enterprise_sso_provider WHERE "providerId"=$1', [providerId])
@@ -80,7 +82,8 @@ test('a cloud run\'s subscription context read stays within its statement budget
   })
 
   // The person's own subscription, a workspace Bot and its task: the shape of the traced runs.
-  const workspaceId = (await seedWorkspace(pool, userId, [{ userId, role: 'admin' }])).id
+  workspaceId = (await seedWorkspace(pool, userId, [{ userId, role: 'admin' }])).id
+  await pool.query('INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,\'pro\',\'cloud\')', [workspaceId])
   const botId = await seedBot(pool, workspaceId, userId), issueId = await seedIssue(pool, userId, workspaceId)
   const connectionId = randomUUID(), model = 'fixture-opus'
   const quota = { vendor: 'claude_code', source: 'official', status: 'ok', plan: null, observedAt: new Date().toISOString(), windows: [{ kind: 'five_hour', used: .2, resetsAt: new Date(Date.now() + 3_600_000).toISOString() }] }

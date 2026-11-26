@@ -69,9 +69,15 @@ test('provider-selected task runs keep their pin and restore the same workspace 
   const templates = Object.fromEntries(['codex', 'claude', 'desktop'].map(kind => [kind,
     { templateId: kind + '-fixture', models: [], baseTemplate: kind, preinstalled: true }]))
   const templateReceipt = JSON.stringify({ version: 1, workerSha, templates,
-    machineVariants: Object.entries(templates).map(([kind, template]) => ({
-      kind, size: 'medium', templateId: template.templateId, cpuCount: 2, memoryMB: 8192,
-    })) })
+    machineVariants: [
+      { kind: 'desktop', size: 'medium', templateId: templates.desktop.templateId, cpuCount: 2, memoryMB: 8192 },
+      ...(['codex', 'claude'] as const).flatMap(kind => [
+        { kind, size: 'small', templateId: `${kind}-small-fixture`, cpuCount: 1, memoryMB: 4096 },
+        { kind, size: 'medium', templateId: templates[kind].templateId, cpuCount: 2, memoryMB: 8192 },
+        { kind, size: 'large', templateId: `${kind}-large-fixture`, cpuCount: 4, memoryMB: 16384 },
+        { kind, size: 'ultra', templateId: `${kind}-ultra-fixture`, cpuCount: 8, memoryMB: 32768 },
+      ]),
+    ] })
   type Guest = ReturnType<typeof import('./support/portable-compute-guest.mjs').portableComputeGuest>
   const registrationDirs = new WeakMap<Guest, string>()
   const startRegistration = (guest: Guest) => {
@@ -221,6 +227,74 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     const [, error, result] = await Promise.all([text(remote.stdout), text(remote.stderr), remote.wait()])
     assert.equal(result.exitCode, 0, error)
   }
+  const expectedCompute = (provider: Provider, size: string = sizes[provider]) =>
+    provider === 'e2b' ? { provider, size, requireVerifiedHardware: true } : { provider, size }
+  await t.test('Mikka Cloud blocks Free workspaces from cloud machines and enforces Pro/Enterprise geometry limits by default', async () => {
+    const { ensureCloudMachine } = await import('../lib/computer/provision')
+    const { saveEnvironment } = await import('../lib/project-resources/store')
+    const freeIssue = await seedIssue(pool, ownerId, workspaceId)
+    for (const provider of ['e2b', 'cloudflare'] as const) {
+      variant(provider)
+      await assert.rejects(enqueue(freeIssue), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+    }
+    await assert.rejects(ensureCloudMachine(pool, actor), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+
+    // Paid Personal workspaces unlock cloud machines during their active paid period while
+    // keeping Personal seat/concurrency governance intact, and block again once expired.
+    const personalWorkspaceId = randomUUID()
+    const personalActor = { userId: ownerId, workspaceId: personalWorkspaceId }
+    await workspacePool.query(`INSERT INTO mikka_workspaces (id,"userId",name,kind) VALUES ($1,$2,'Personal cloud fixture','personal')`, [personalWorkspaceId, ownerId])
+    await workspacePool.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,$2,$2,'personal-cloud@example.invalid','admin','active')`, [personalWorkspaceId, ownerId])
+    const { acquireHostedQuota } = await import('../lib/governance/hosted-quota')
+    const { taskMachinePlanLimit } = await import('../lib/cloud-computer/task-provider-admission')
+    assert.equal(await taskMachinePlanLimit(personalWorkspaceId), null)
+    await assert.rejects(ensureCloudMachine(pool, personalActor), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+
+    const future = new Date(Date.now() + 3_600_000)
+    await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source,"billingPlan","billingExpiresAt","billingRevision") VALUES ($1,'free','cloud','pro',$2,1)`, [personalWorkspaceId, future])
+    const paidPersonalLease = await acquireHostedQuota(personalWorkspaceId)
+    try {
+      assert.equal(paidPersonalLease.plan, 'free', 'Personal governance plan/concurrency rules stay unchanged')
+      assert.equal(paidPersonalLease.limit, 8)
+      assert.equal(paidPersonalLease.cloudMachinePlan, 'pro', 'active paid Personal billing unlocks Pro cloud machines')
+    } finally { await paidPersonalLease.close() }
+    assert.deepEqual(await taskMachinePlanLimit(personalWorkspaceId), { vcpu: 4, ramGib: 16 })
+    let personalCreated = 0
+    const fakeSandbox = { sandboxId: 'personal-pro-box' } as Awaited<ReturnType<NonNullable<Parameters<typeof ensureCloudMachine>[2]>['createComputer']>>
+    const provisioned = await ensureCloudMachine(pool, personalActor, {
+      createComputer: async () => { personalCreated++; return fakeSandbox },
+      connectComputer: async () => fakeSandbox,
+      installComputerRuntime: async () => {},
+    })
+    assert.equal(personalCreated, 1)
+    assert.equal(provisioned?.sandboxId, 'personal-pro-box')
+
+    await workspacePool.query(`UPDATE mikka_workspace_entitlements SET "billingExpiresAt"=$2 WHERE "workspaceId"=$1`, [personalWorkspaceId, new Date(Date.now() - 60_000)])
+    assert.equal(await taskMachinePlanLimit(personalWorkspaceId), null)
+    await assert.rejects(ensureCloudMachine(pool, personalActor), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+
+    // Pro ($20) unlocks cloud machines up to Large (4 vCPU / 16 GiB) and clamps Ultra down to Large.
+    await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,'pro','cloud')`, [workspaceId])
+    const env = await saveEnvironment(ownerId, {
+      workspaceId, name: 'Ultra request',
+      configuration: { runtime: 'cloud', harness: 'codex', e2bMachineSize: 'ultra' },
+    })
+    const proIssue = await seedIssue(pool, ownerId, workspaceId)
+    await assignTaskEnvironment(pool, ownerId, workspaceId, [proIssue], env.id)
+    variant('e2b')
+    const proRun = await enqueue(proIssue)
+    assert.deepEqual((await row(proRun)).agentDefinition.taskCompute, expectedCompute('e2b', 'large'))
+
+    // Enterprise unlocks Ultra (8 vCPU / 32 GiB).
+    await workspacePool.query(`UPDATE mikka_workspace_entitlements SET plan='enterprise' WHERE "workspaceId"=$1`, [workspaceId])
+    const entIssue = await seedIssue(pool, ownerId, workspaceId)
+    await assignTaskEnvironment(pool, ownerId, workspaceId, [entIssue], env.id)
+    const entRun = await enqueue(entIssue)
+    assert.deepEqual((await row(entRun)).agentDefinition.taskCompute, expectedCompute('e2b', 'ultra'))
+
+    // Return workspace to Pro for the bidirectional restore tests below.
+    await workspacePool.query(`UPDATE mikka_workspace_entitlements SET plan='pro' WHERE "workspaceId"=$1`, [workspaceId])
+  })
   await t.test('an unset flag keeps the legacy explicit Cloudflare placement', async () => {
     variant()
     const id = await enqueue(await seedIssue(pool, ownerId, workspaceId))
@@ -276,15 +350,15 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       variant(from)
       const requestId = randomUUID()
       const first = await enqueue(issueId, requestId)
-      assert.deepEqual((await row(first)).agentDefinition.taskCompute, { provider: from, size: sizes[from] })
+      assert.deepEqual((await row(first)).agentDefinition.taskCompute, expectedCompute(from))
       variant(to)
       assert.equal(await enqueue(issueId, requestId), first)
-      assert.deepEqual((await row(first)).agentDefinition.taskCompute, { provider: from, size: sizes[from] })
+      assert.deepEqual((await row(first)).agentDefinition.taskCompute, expectedCompute(from))
       await ensureThreadMachine(pool, actor, first)
       const original = await row(first)
       assert.equal(original.state, 'running')
       assert.equal((await preparation(from)).snapshot?.state, 'building')
-      assert.deepEqual(original.agentDefinition.taskCompute, { provider: from, size: sizes[from] })
+      assert.deepEqual(original.agentDefinition.taskCompute, expectedCompute(from))
       assert.deepEqual(services.boots.at(-1), { provider: from, runId: first })
       await daemon(original, from, 'write', null)
       await pool.query(`UPDATE agent_runs SET status='succeeded',report='{"safePoint":{"session":"exited"}}',"startedAt"=now(),"finishedAt"=now() WHERE id=$1`, [first])
@@ -293,7 +367,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       assert.equal(pointer.sourceRunId, first)
       assert.ok(Number(pointer.size) > 0)
       assert.match(pointer.sha256, /^[a-f0-9]{64}$/)
-      assert.deepEqual((await row(first)).agentDefinition.taskCompute, { provider: from, size: sizes[from] })
+      assert.deepEqual((await row(first)).agentDefinition.taskCompute, expectedCompute(from))
 
       const denied = await enqueue(issueId)
       assert.equal((await row(denied)).agentDefinition.taskCompute.provider, to)
@@ -310,7 +384,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
 
       const readOnly = to === 'cloudflare'
       const next = await enqueue(issueId, randomUUID(), readOnly)
-      assert.deepEqual((await row(next)).agentDefinition.taskCompute, { provider: to, size: sizes[to] })
+      assert.deepEqual((await row(next)).agentDefinition.taskCompute, expectedCompute(to))
       await ensureThreadMachine(pool, actor, next)
       const restored = await row(next)
       assert.equal(restored.state, 'running')

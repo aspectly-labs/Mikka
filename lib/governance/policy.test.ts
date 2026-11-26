@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { deploymentMode } from './edition'
-import { ORGANIZATION_MODEL_PROVIDERS, csvCell, resolveEntitlements, seatAdmissionAllowed } from './policy'
+import { ORGANIZATION_MODEL_PROVIDERS, csvCell, resolveEntitlements, resolvePlanFromGrants, seatAdmissionAllowed } from './policy'
 
 test('governance follows the canonical deployment edition, independent of hosting and billing', () => {
   assert.equal(deploymentMode({}), 'selfhost')
@@ -57,6 +57,10 @@ test('Stripe projection combines with operator grants, expires independently, an
   assert.equal(resolveEntitlements({ mode: 'cloud', kind: 'team', grant: billing, now: future }).hostedMaxInFlight, 8)
   assert.equal(resolveEntitlements({ mode: 'selfhost', kind: 'team', grant: billing, now }).hostedMaxInFlight, 8)
   assert.equal(resolveEntitlements({ mode: 'cloud', kind: 'personal', grant: billing, now }).hostedMaxInFlight, 8)
+  assert.equal(resolvePlanFromGrants({ mode: 'cloud', grant: billing, now }), 'pro')
+  assert.equal(resolvePlanFromGrants({ mode: 'cloud', grant: { ...billing, billingExpiresAt: null }, now }), 'free')
+  assert.equal(resolvePlanFromGrants({ mode: 'cloud', grant: billing, now: future }), 'free')
+  assert.equal(resolvePlanFromGrants({ mode: 'selfhost', grant: billing, now }), 'free')
   assert.equal(resolveEntitlements({ mode: 'cloud', kind: 'team', grants: [billing, { ...billing, plan: 'enterprise', billingPlan: 'free' }], now }).hostedMaxInFlight, 128)
 })
 

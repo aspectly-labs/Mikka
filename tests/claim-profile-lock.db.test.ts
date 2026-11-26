@@ -55,7 +55,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
     import('../lib/execution-identity'), import('../lib/run-claim-response'),
   ])
   appPool = app; workspacePool = workspace
-  const template = templateModelsFixture(['claude-haiku-5-5', 'gpt-6-luna']); t.after(() => template.restore())
+  const template = templateModelsFixture(['claude-haiku-5-5', 'gpt-6-luna'], { hostedSizes: true }); t.after(() => template.restore())
   const profileStore = new profiles.AgentProfileStore(pool)
   const clients = new Set<PoolClient>()
   const wrapped = new WeakSet<PoolClient>()
@@ -114,6 +114,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
     // A subscription serves its owner only (decision 2026-11-17): the requester pays with their own.
     const ownerId = await seedUser(pool, 'locked-requester'), payer = ownerId
     const { id: workspaceId } = await seedWorkspace(pool, ownerId, [{ userId: ownerId, role: 'admin' }])
+    await pool.query('INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,\'pro\',\'cloud\')', [workspaceId])
     const payerWorkspace = workspaceId
     const botId = await seedBot(pool, workspaceId, ownerId), issueId = await seedIssue(pool, ownerId, workspaceId)
     const deviceId = randomUUID(), repoId = randomUUID(), agentId = randomUUID(), connection = randomUUID()

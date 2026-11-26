@@ -18,6 +18,11 @@ const LIVE_RUNS=['preparing','running','paused','waiting_input','finishing']
  * Provider idempotency uses the persisted operationId across process loss.
  * The provision lease is not the daemon/worker lease or a permission grant. */
 export async function ensureCloudMachine(pool:Pool,actor:Actor,runtime:Runtime=provider) {
+  const { taskMachinePlanLimit } = await import('@/lib/cloud-computer/task-provider-admission')
+  if (await taskMachinePlanLimit(actor.workspaceId) === null) {
+    const { ComputerError } = await import('./store')
+    throw new ComputerError(409, 'Task machine size is unavailable on this workspace plan.')
+  }
   const { rows: [key] } = await pool.query<{ configured: boolean }>(`SELECT ${ownE2BKeySql('$1::text')} AS configured`, [actor.userId])
   if (!key.configured) throw new E2BKeyError('e2b_key_missing')
   const client=await connectForCommitEffects(pool),leaseId=randomUUID()

@@ -84,14 +84,18 @@ let runCredentialSource: typeof import('./run-credential-source')['runCredential
 let quotaFallbackApiKey: typeof import('./run-credential-source')['quotaFallbackApiKey']
 let queueCloudRun: typeof import('./computer/queue-run')['queueCloudRun']
 const originalE2BKey = process.env.E2B_API_KEY
+const originalEdition = process.env.MIKKA_EDITION
 before(async () => {
   process.env.E2B_API_KEY = 'synthetic-credential-source-e2b-key'
+  process.env.MIKKA_EDITION = 'community'
   ;({ runCredentialSource, quotaFallbackApiKey } = await import('./run-credential-source'))
   ;({ queueCloudRun } = await import('./computer/queue-run'))
 })
 after(() => {
   if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
   else process.env.E2B_API_KEY = originalE2BKey
+  if (originalEdition === undefined) delete process.env.MIKKA_EDITION
+  else process.env.MIKKA_EDITION = originalEdition
 })
 const scope = { ownerId: 'alice', botId: id(1), harness: 'claude_code', botWorkspaceId: id(2), choiceWorkspaceId: id(2) }
 beforeEach(() => {

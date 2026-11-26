@@ -41,6 +41,7 @@ test('real claim, MCP tools, key disclosure and artifacts enforce the frozen exe
     for (const user of [requester, other, resourceOwner]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES ($1,$1,$2,true,now(),now())', [user, `${user}@example.invalid`])
     const workspace = randomUUID(), bot = randomUUID(), device = randomUUID(), agent = randomUUID(), issue = randomUUID(), ownKey = randomUUID(), sharedKey = randomUUID(), runId = randomUUID()
     await pool.query('INSERT INTO mikka_workspaces(id,"userId",name) VALUES($1,$2,\'Identity fixture\')', [workspace, requester])
+    await pool.query('INSERT INTO mikka_workspace_entitlements("workspaceId",plan,source) VALUES($1,\'pro\',\'cloud\')', [workspace])
     for (const user of [requester, other, resourceOwner]) await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'member\',\'active\')', [workspace, user, `${user}@example.invalid`])
     await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Identity fixture\')', [bot, requester, workspace])
     await pool.query('INSERT INTO devices(id,"ownerId",name) VALUES($1,$2,\'Identity fixture\')', [device, requester])

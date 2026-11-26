@@ -299,6 +299,10 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
         { kind: 'claude', templateId: 'claude-small', size: 'small', cpuCount: 1, memoryMB: 4096 },
       ],
     })
+    process.env.MIKKA_TASK_MACHINE_PLAN_LIMITS = JSON.stringify({ free: null, enterprise: { vcpu: 2, ramGib: 8 } })
+    await assert.rejects(queueFor('e2b'), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+    await assert.rejects(queueFor('cloudflare'), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+    process.env.MIKKA_TASK_MACHINE_PLAN_LIMITS = JSON.stringify({ free: { vcpu: 1, ramGib: 4 }, enterprise: { vcpu: 2, ramGib: 8 } })
     assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'small', requireVerifiedHardware: true })
     assert.deepEqual(await queueFor('cloudflare'), { provider: 'cloudflare', size: 'standard-1' })
     await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,'enterprise','license')`, [f.actor.workspaceId])
