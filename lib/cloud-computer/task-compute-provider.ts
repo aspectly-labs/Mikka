@@ -52,6 +52,7 @@ export async function previousTaskComputeSource(query: Pick<import('pg').Pool, '
     LEFT JOIN e2b_compute_leases l ON l."sandboxId"=m."sandboxId" AND l."ownerId"=m."ownerId"
     WHERE m."ownerId"=$1 AND m."workspaceId"=$2 AND m."issueId"=$3
       AND r."workspaceId"=$2 AND repo."repoPath"=$5
+      AND r."agentDefinition"->'readOnly' IS DISTINCT FROM 'true'::jsonb
       AND (r."createdAt",r.id)<(target."createdAt",target.id)
       AND (m."sandboxId" IS NOT NULL OR m."runningSince" IS NOT NULL OR m.lifecycle ? 'portableWorkspaceCapture')
     ORDER BY r."createdAt" DESC,r.id DESC LIMIT 1`,

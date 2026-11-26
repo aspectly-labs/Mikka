@@ -226,6 +226,40 @@ async function waitForRegistration(stdout: ReadableStream<Uint8Array>, signal: A
   }
 }
 
+/** Record a provider-confirmed address under the exact provisioning lease. */
+export async function recordSponsoredTaskAllocation(pool: Pool, actor: TaskMachineActor, runId: string,
+  fence: Pick<Handoff, 'operationId' | 'leaseId'>, instanceId: string,
+  portableWorkspace?: Awaited<ReturnType<typeof openOwnedCloudflareTaskMachine>>['portableWorkspace'],
+) {
+  const allocation = await pool.connect()
+  try {
+    await allocation.query('BEGIN')
+    const { rows: [current] } = await allocation.query<{ issueId: string }>(`SELECT "issueId" FROM thread_machines
+      WHERE "runId"=$1 AND "operationId"=$2 AND "workerLeaseId"=$3 AND state='starting'
+      AND "ownerId"=$4 AND "workspaceId"=$5 AND "snapshotId"=$6 FOR UPDATE`,
+    [runId, fence.operationId, fence.leaseId, actor.userId, actor.workspaceId, hostedSnapshot])
+    if (!current) throw unavailable()
+    // A Cloudflare DO instance is stable for the task/repository. The
+    // provider has already fenced the old writer before opening this one.
+    // Transfer its address while preserving the old operation/checkpoint.
+    await allocation.query(`UPDATE thread_machines old SET "sandboxId"=NULL
+      WHERE old."sandboxId"=$1 AND old."runId"<>$2 AND old."ownerId"=$3 AND old."workspaceId"=$4
+        AND old."issueId"=$5 AND old."snapshotId"=$6 AND old.state IN ('paused','ended')
+        AND NOT EXISTS (SELECT 1 FROM coding_review_sessions review WHERE review."runId"=old."runId"
+          AND review."ownerId"=old."ownerId" AND review."workspaceId"=old."workspaceId"
+          AND review."machineOperationId"=old."operationId" AND review."revokedAt" IS NULL AND review."expiresAt">now())`,
+    [instanceId, runId, actor.userId, actor.workspaceId, current.issueId, hostedSnapshot])
+    await allocation.query(`UPDATE thread_machines SET "sandboxId"=$2,"runningSince"=clock_timestamp(),
+      lifecycle=lifecycle||jsonb_build_object('sponsoredInstanceId',$2::text,'sponsoredAppliedChunks',1)
+        ||CASE WHEN $3::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('portableWorkspaceRestore',$3::jsonb) END
+      WHERE "runId"=$1`, [runId, instanceId, portableWorkspace ? JSON.stringify(portableWorkspace) : null])
+    await allocation.query('COMMIT')
+  } catch (error) {
+    await allocation.query('ROLLBACK')
+    throw error
+  } finally { allocation.release() }
+}
+
 export async function ensureSponsoredTaskMachine(pool: Pool, actor: TaskMachineActor, runId: string) {
   const reservation = await connectForCommitEffects(pool)
   let handoff: Handoff | null
@@ -258,14 +292,7 @@ export async function ensureSponsoredTaskMachine(pool: Pool, actor: TaskMachineA
       throw new ComputerError(503, 'Cloudflare task machine portable workspace archive is unavailable')
     try {
       const { connection, instanceId, portableWorkspace } = await openOwnedCloudflareTaskMachine(pool, actor, runId, archive ?? undefined, archiveSignal)
-      const changed = await pool.query(
-        `UPDATE thread_machines SET "sandboxId"=$2,"runningSince"=clock_timestamp(),
-          lifecycle=lifecycle||jsonb_build_object('sponsoredInstanceId',$2::text,'sponsoredAppliedChunks',1)
-            ||CASE WHEN $5::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('portableWorkspaceRestore',$5::jsonb) END
-        WHERE "runId"=$1 AND "operationId"=$3 AND "workerLeaseId"=$4 AND state='starting'`,
-        [runId, instanceId, handoff.operationId, handoff.leaseId, portableWorkspace ? JSON.stringify(portableWorkspace) : null],
-      )
-      if (!changed.rowCount) throw unavailable()
+      await recordSponsoredTaskAllocation(pool, actor, runId, handoff, instanceId, portableWorkspace)
       const signal = AbortSignal.timeout(60_000)
       const proc = await connection.spawn({ command: fixedWorker, workingDirectory: '/workspace', env: {}, stdin: true })
       if (!proc.stdin) throw unavailable()
@@ -276,10 +303,10 @@ export async function ensureSponsoredTaskMachine(pool: Pool, actor: TaskMachineA
       await writer.close()
       await waitForRegistration(proc.stdout, signal)
       void proc.stdout.pipeTo(new WritableStream({ write() {} })).catch(() => {})
-      const registration = await pool.connect()
+      const registered = await pool.connect()
       try {
         const result = await finishThreadRegistration(
-          registration,
+          registered,
           runId,
           handoff.leaseId,
           handoff.deviceId,
@@ -288,7 +315,7 @@ export async function ensureSponsoredTaskMachine(pool: Pool, actor: TaskMachineA
         )
         if (!result.rowCount) throw unavailable()
       } finally {
-        registration.release()
+        registered.release()
       }
       await runChanged(pool, runId)
       return { runId, state: 'running' }
@@ -456,9 +483,11 @@ async function renewSponsoredMachine(pool: Pool, actor: TaskMachineActor, runId:
   const index = typeof row.lifecycle.sponsoredChunks === 'number' ? row.lifecycle.sponsoredChunks : 1
   const { fundMachineChunk } = await import('./machine-billing')
   const chunk = { provider: 'cloudflare' as const, ownerId: actor.userId, workspaceId: actor.workspaceId, runId, operationId: row.operationId!, index, size }
+  // Finalize the prior interval before asking the ledger for another hold.
+  // Until renewal succeeds the existing provider deadline still applies.
+  const sample = metered && index > 0 ? await settleCloudflareCompute(pool, { ...chunk, index: index - 1 }, true) : null
+  if (metered && !sample) throw new ComputerError(503, 'Cloudflare compute measurement unavailable')
   const funded = metered ? await holdCloudflareCompute(pool, chunk) : await fundMachineChunk(chunk)
-  const sample = funded && metered && index > 0 ? await settleCloudflareCompute(pool, { ...chunk, index: index - 1 }, true) : null
-  if (funded && metered && !sample) throw new ComputerError(503, 'Cloudflare compute measurement unavailable')
   if (!funded) {
     // Out of Mikka 额度: the run stops at the end of what is paid, with its reason in the thread.
     await pool.query(

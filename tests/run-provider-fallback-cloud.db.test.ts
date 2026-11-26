@@ -7,7 +7,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mock, test } from 'node:test'
 import { emptyRunReport } from '@mikka/protocol/run'
 import type { OrderEntry } from '../lib/model-order-plan'
-import { dbUrl, seedBot, seedIssue, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
+import { dbUrl, seedBot, seedIssue, seedProjectTasks, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { fakeThreadMachines } from './support/thread-machine-fake'
 import { assignTaskEnvironment } from './helpers/run-project-resources'
 
@@ -183,6 +183,31 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
   const complete = (actor: { userId: string }, runId: string) => persistRunCompletion(actor.userId, runId, {
     stopReason: 'provider_failure', report: { ...emptyRunReport('Synthetic terminal provider payment failure.'),
       providerFailure: { kind: 'balance', retryable: false, status: 402, code: 'payment_required' } },
+  })
+
+  await t.test('portable workspace authority skips read-only runs and transfers a stopped Cloudflare address', async () => {
+    const { previousTaskComputeSource, cloudflareTaskMachineSource } = await import('../lib/cloud-computer/task-compute-provider')
+    const { recordSponsoredTaskAllocation } = await import('../lib/cloud-computer/sponsored-lifecycle')
+    const f = await fixture('portable-compute-source')
+    const { rows: [repository] } = await pool.query('SELECT id,"repoPath" FROM device_repos WHERE id=$1', [f.admitted.deviceRepoId])
+    const sameTask = { ...f.actor, issueId: f.issueId, agentId: f.admitted.agentId, botId: f.botId }
+    const prior = await seedRun(pool, { ...sameTask, status: 'succeeded' })
+    const next = await seedRun(pool, { ...sameTask, status: 'queued' })
+    const instanceId = 'c'.repeat(64), priorOperationId = randomUUID(), operationId = randomUUID(), leaseId = randomUUID()
+    await pool.query('UPDATE agent_runs SET "createdAt"=now()-interval \'1 hour\' WHERE id=$1', [prior])
+    await pool.query(`INSERT INTO thread_machines ("runId","ownerId","workspaceId","botId","issueId","repoId","operationId",
+      "snapshotId","sandboxId",state,"workerLeaseId",lifecycle)
+      VALUES ($1,$3,$4,$5,$6,$7,$8,$12,$11,'paused',NULL,'{"portableWorkspaceCapture":"ready"}'),
+        ($2,$3,$4,$5,$6,$7,$9,$12,NULL,'starting',$10,'{}')`,
+    [prior, next, f.actor.userId, f.actor.workspaceId, f.botId, f.issueId, repository.id, priorOperationId, operationId, leaseId, instanceId, cloudflareTaskMachineSource])
+    assert.equal((await previousTaskComputeSource(pool, { ownerId: f.actor.userId, workspaceId: f.actor.workspaceId,
+      issueId: f.issueId, runId: next, repositoryKey: repository.repoPath }))?.runId, prior)
+    await assert.rejects(recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId: randomUUID() }, instanceId), { status: 409 })
+    const machine = async (runId: string) => (await pool.query('SELECT "sandboxId","operationId",lifecycle FROM thread_machines WHERE "runId"=$1', [runId])).rows[0]
+    assert.equal((await machine(prior)).sandboxId, instanceId)
+    await recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId }, instanceId)
+    assert.equal((await machine(next)).sandboxId, instanceId)
+    assert.deepEqual(await machine(prior), { sandboxId: null, operationId: priorOperationId, lifecycle: { portableWorkspaceCapture: 'ready' } })
   })
 
   await t.test('forks and side threads admit their own machine and preserve idempotent placement after a flag change', async t => {
