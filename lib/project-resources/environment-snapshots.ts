@@ -8,11 +8,13 @@ import { workspacePool } from '@/lib/workspace-db'
 import { gatedFeatures } from '@/lib/feature-flags'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import { cloudTemplateOrigin } from '@/lib/cloud-template-models'
-import { taskTemplate, environmentSnapshotApiKey, environmentSnapshotScope } from '@/lib/secrets/e2b-runtime'
+import { sizedTaskTemplate, environmentSnapshotApiKey, environmentSnapshotScope } from '@/lib/secrets/e2b-runtime'
+import { E2BKeyError } from '@/lib/secrets/flag'
 import { pool as appPool } from '@/lib/db'
 import { cliPolicyLayerSchema, mergeCliPolicyValues } from '@/lib/agent-tool-approval/policy-store'
 import { resolveTrustedRunPolicy } from '@/lib/agent-tool-approval/policy-snapshot'
 import { githubRepositoryReadCredential } from '@/lib/github/user-access'
+import type { EnvironmentConfiguration } from './contracts'
 import { listProjectResources } from './store'
 import {
   snapshotInput,
@@ -86,6 +88,18 @@ async function hasRepositoryAccess(
   return true
 }
 
+export function environmentSnapshotTemplate(
+  kind: SnapshotInput['templateKind'],
+  configuration: EnvironmentConfiguration,
+): string | null {
+  try {
+    return sizedTaskTemplate(kind === 'claude' ? 'claude_code' : 'codex', configuration.e2bMachineSize ?? undefined)
+  } catch (error) {
+    if (error instanceof E2BKeyError && error.code === 'e2b_template_unavailable') return null
+    throw error
+  }
+}
+
 export async function readEnvironmentSnapshot(
   reader: Reader,
   raw: SnapshotInput,
@@ -93,7 +107,7 @@ export async function readEnvironmentSnapshot(
   const input = snapshotInput.parse(raw)
   if (!(await enabled(reader))) return { enabled: false, snapshot: null }
   const { environment, eligible } = await snapshotConfiguration(reader, input)
-  const templateId = taskTemplate(input.templateKind === 'claude' ? 'claude_code' : 'codex')
+  const templateId = environmentSnapshotTemplate(input.templateKind, environment.configuration)
   const result = await workspacePool.query<SnapshotView & { repositoryIds: Record<string, string> }>(
     `SELECT id,revision,"templateKind",
     CASE WHEN revision<>$5 OR "expiresAt"<=now() OR "templateId"<>$6 OR "workerSha" IS DISTINCT FROM $7 OR NOT $8 THEN 'outdated' ELSE state END AS state,
@@ -108,7 +122,7 @@ export async function readEnvironmentSnapshot(
       environment.revision,
       templateId,
       process.env.MIKKA_CLOUD_WORKER_SHA ?? null,
-      eligible && configuredProvider(),
+      eligible && Boolean(templateId) && configuredProvider(),
     ],
   )
   const row = result.rows[0]
@@ -193,7 +207,8 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
   const { environment, eligible } = await snapshotConfiguration(reader, input)
   if (!eligible || !environment.repositories.some((repo) => repo.clone === 'start'))
     throw new ActionFailureError('projectEnvironmentUnavailable')
-  const templateId = taskTemplate(input.templateKind === 'claude' ? 'claude_code' : 'codex')
+  const templateId = environmentSnapshotTemplate(input.templateKind, environment.configuration)
+  if (!templateId) throw new ActionFailureError('projectEnvironmentUnavailable')
   const workerSha = process.env.MIKKA_CLOUD_WORKER_SHA
   if (!workerSha || !/^[a-f0-9]{40}$/.test(workerSha)) throw new ActionFailureError('projectEnvironmentUnavailable')
   if (!(await hasRepositoryAccess(userOf(reader), environment.repositories))) throw new ActionFailureError('projectEnvironmentUnavailable')
@@ -229,7 +244,8 @@ export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templa
     ...input,
     templateKind: kind,
   })
-  if (!eligible || environment.revision !== input.revision) return null
+  if (!eligible || environment.revision !== input.revision ||
+      environmentSnapshotTemplate(kind, environment.configuration) !== input.templateId) return null
   const { rows } = await workspacePool.query<{
     id: string
     providerId: string

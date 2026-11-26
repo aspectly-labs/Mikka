@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
 import { byoE2BKeyEnabled, E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
+import { e2bTemplateForSize, type E2BMachineSize } from '../cloud-computer/e2b-template-pricing'
+import { isCloudEdition } from '../edition'
 
 type Env = Record<string, string | undefined>
 
@@ -60,6 +62,15 @@ export function taskTemplate(harness: string, env: Env = process.env): string {
   if (!key) throw new E2BKeyError('e2b_template_unavailable', 'Official task template required')
   const official = harness === 'codex' ? 'codex' : 'claude'
   return selectedTemplate(official, key, env)
+}
+
+/** Hosted task tiers come from the verified release hardware inventory. */
+export function sizedTaskTemplate(harness: string, size?: E2BMachineSize, env: Env = process.env): string {
+  const medium = taskTemplate(harness, env)
+  if (!isCloudEdition(env) || !size || size === 'medium') return medium
+  const variant = e2bTemplateForSize(harness === 'codex' ? 'codex' : 'claude', size, env)
+  if (!variant) throw new E2BKeyError('e2b_template_unavailable', 'Verified E2B compute tier required')
+  return variant
 }
 
 const status = (error: unknown): number | undefined => {

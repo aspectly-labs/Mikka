@@ -2,6 +2,7 @@ import { cloudTemplateModels, type CloudTemplateKind } from '@/lib/cloud-templat
 import sizes from '../../scripts/e2b/machine-sizes.json'
 
 export type E2BMachineSize = keyof typeof sizes
+export const E2B_MACHINE_SIZES = Object.keys(sizes) as [E2BMachineSize, ...E2BMachineSize[]]
 type Env = Record<string,string|undefined>
 
 /** Only hardware observed from the provider in the approved release qualifies for metering. */

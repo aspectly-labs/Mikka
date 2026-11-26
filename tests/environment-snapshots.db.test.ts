@@ -151,6 +151,68 @@ test(
     assert.equal(await readyEnvironmentSnapshot(input), null)
     await expireEnvironmentSnapshot(attempt)
     assert.equal((await fixture.query('SELECT id FROM environment_snapshots WHERE id=$1', [attempt])).rowCount, 0)
+
+    const templates = Object.fromEntries(['desktop', 'claude', 'codex'].map(kind => [
+      kind, { templateId: `fixture-${kind}`, baseTemplate: kind, preinstalled: true, models: [] },
+    ]))
+    const catalogue = {
+      version: 1,
+      workerSha: process.env.MIKKA_CLOUD_WORKER_SHA,
+      templates,
+      machineVariants: [
+        ...Object.entries(templates).map(([kind, { templateId }]) => ({
+          kind, templateId, size: 'medium', cpuCount: 2, memoryMB: 8192,
+        })),
+        { kind: 'codex', templateId: 'fixture-codex-small', size: 'small', cpuCount: 1, memoryMB: 4096 },
+      ],
+    }
+    const sizedEnv = {
+      MIKKA_EDITION: 'cloud',
+      E2B_BYO_COMPUTER_TEMPLATE: templates.desktop.templateId,
+      E2B_CLAUDE_TEMPLATE: templates.claude.templateId,
+      E2B_CODEX_TEMPLATE: templates.codex.templateId,
+      MIKKA_CLOUD_TEMPLATE_MODELS: JSON.stringify(catalogue),
+    }
+    const previous = Object.fromEntries(Object.keys(sizedEnv).map(key => [key, process.env[key]]))
+    t.after(() => {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    })
+    Object.assign(process.env, sizedEnv)
+    const changeTier = (revision: number, e2bMachineSize?: 'small' | null) =>
+      saveEnvironment(owner, {
+        id: environmentId, workspaceId: ws.id, name: 'snapshot', revision,
+        configuration: e2bMachineSize === undefined ? {} : { e2bMachineSize },
+      })
+    const selected = await changeTier(revision, 'small')
+    const preserved = await changeTier(selected.revision)
+    const addSizedReceipt = async (templateId: string, state: 'building' | 'ready', providerId: string | null) => {
+      const snapshotId = randomUUID()
+      await fixture.query(
+        `INSERT INTO environment_snapshots
+          (id,"workspaceId","environmentId",revision,"requestedBy","providerScope","templateKind","templateId","workerSha",state,"providerId")
+          VALUES($1,$2,$3,$4,$5,$6,'codex',$7,$8,$9,$10)`,
+        [snapshotId, ws.id, environmentId, preserved.revision, owner, environmentSnapshotScope(),
+          templateId, catalogue.workerSha, state, providerId],
+      )
+      return snapshotId
+    }
+    const mediumBuild = await addSizedReceipt('fixture-codex', 'building', null)
+    await buildEnvironmentSnapshot(mediumBuild)
+    assert.equal((await fixture.query('SELECT state FROM environment_snapshots WHERE id=$1', [mediumBuild])).rows[0].state, 'outdated')
+    await addSizedReceipt('fixture-codex', 'ready', 'unexpected-medium-image')
+    const sized = await addSizedReceipt('fixture-codex-small', 'ready', 'fixture-small-image')
+    const sizedInput = { ...input, revision: preserved.revision, templateId: 'fixture-codex-small' }
+    assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.id, sized)
+    assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'ready')
+    assert.deepEqual(await readyEnvironmentSnapshot(sizedInput), { id: sized, providerId: 'fixture-small-image' })
+    assert.equal(await readyEnvironmentSnapshot({ ...sizedInput, templateId: 'fixture-codex' }), null)
+    const cleared = await changeTier(preserved.revision, null)
+    assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'outdated')
+    assert.equal(await readyEnvironmentSnapshot({ ...sizedInput, revision: cleared.revision }), null)
+
   },
 )
 

@@ -9,7 +9,7 @@ import { quoteShell } from '@/lib/computer/registration-command'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import { githubRepositoryReadCredential } from '@/lib/github/user-access'
 import { gatedFeatures } from '@/lib/feature-flags'
-import { snapshotConfiguration } from './environment-snapshots'
+import { environmentSnapshotTemplate, snapshotConfiguration } from './environment-snapshots'
 import { repositorySeed, type SnapshotSeed, type SnapshotState } from './environment-snapshot-contract'
 
 type Build = Omit<SnapshotSeed, 'userId'> & {
@@ -150,7 +150,9 @@ async function allowed(row: Build) {
   )
     return null
   const { environment, eligible } = await snapshotConfiguration(row.requestedBy, row)
-  return eligible && environment.revision === row.revision ? environment : null
+  if (!eligible || environment.revision !== row.revision ||
+      environmentSnapshotTemplate(row.templateKind, environment.configuration) !== row.templateId) return null
+  return environment
 }
 
 export async function buildEnvironmentSnapshot(

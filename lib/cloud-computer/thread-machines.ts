@@ -25,7 +25,7 @@ import { computerPermission } from '@/lib/computer/permission'
 import { connectComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
 import { cloudTemplateOrigin, threadMachineTemplateKind } from '@/lib/cloud-template-models'
-import { computerTemplate, taskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { computerTemplate, sizedTaskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { bootstrapOfficialInstance, isOfficialE2BTemplate, stageOfficialWorkerRelease, switchOfficialWorkerRelease, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from '@/lib/computer/official-runtime'
 import type { Actor } from './subagents'
 import { afterRunEnded } from '@/lib/run-completion-effects'
@@ -962,7 +962,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
 
     exactQuestionMachine = run.questionContinuation?.requireSessionResume === true
     const repositoryTask = Boolean(run.remoteUrl)
-    const freshTemplate = () => repositoryTask ? taskTemplate(run.runHarness) : computerTemplate()
+    const machineSize = run.agentDefinition?.projectExecution?.environment?.e2bMachineSize ?? undefined
+    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize) : computerTemplate()
     let machine = (await client.query('SELECT * FROM thread_machines WHERE "runId"=$1 FOR UPDATE', [runId])).rows[0]
     if (machine?.snapshotId === hostedSnapshot || run.agentDefinition?.taskMachine) throw new ComputerError(409,'Task machine provider changed')
     // Stop check 1 shares the explicit Stop path's native-history and lease
