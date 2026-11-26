@@ -119,7 +119,7 @@ test(
     const ready = { id, providerId: 'fixture-good' }
     assert.deepEqual(await readyEnvironmentSnapshot(input), ready)
     await t.test('Cloudflare preparation is scoped independently and needs the exact authenticated guest', async () => {
-      const { beginCloudflareEnvironmentBuild, finishCloudflareEnvironmentBuild } = await import('../lib/project-resources/cloudflare-environment-snapshot')
+      const { beginCloudflareEnvironmentBuild, failCloudflareEnvironmentBuild, finishTaskEnvironmentPreparation } = await import('../lib/project-resources/cloudflare-environment-snapshot')
       const cloudInput = { ...readInput, provider: 'cloudflare' } as const
       const actor = { userId: owner, workspaceId: ws.id }
       const issueId = await seedIssue(fixture, owner, ws.id)
@@ -134,21 +134,64 @@ test(
         taskCompute: { provider: 'cloudflare', size: 'standard-3' }, projectExecution: { environment: next },
       }])
       await setEnvironment({ ...environment, baseImage: 'debian:custom' })
+      const operationId = randomUUID()
       await fixture.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","issueId","deviceId","snapshotId","sandboxId","operationId",state)
-        VALUES($1,$2,$3,$4,$5,'cloudflare-task-v1','fixture-cloudflare-' || $6::uuid::text,$6::uuid,'running')`, [runId, ws.id, owner, issueId, deviceId, randomUUID()])
+        VALUES($1,$2,$3,$4,$5,'cloudflare-task-v1','fixture-cloudflare-' || $6::uuid::text,$6::uuid,'running')`, [runId, ws.id, owner, issueId, deviceId, operationId])
       await assert.rejects(beginCloudflareEnvironmentBuild(fixture, actor, runId), /base image is unavailable/)
       await setEnvironment(environment)
       await beginCloudflareEnvironmentBuild(fixture, actor, runId)
       assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
       assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.id, id)
-      await finishCloudflareEnvironmentBuild(fixture, actor, runId, token, 'ready')
+      await failCloudflareEnvironmentBuild(actor, runId, operationId)
+      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
+      await fixture.query("UPDATE thread_machines SET state='error' WHERE \"runId\"=$1", [runId])
+      await failCloudflareEnvironmentBuild(actor, runId, randomUUID())
+      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
+      await failCloudflareEnvironmentBuild(actor, runId, operationId)
+      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'failed')
+      await fixture.query("UPDATE thread_machines SET state='running' WHERE \"runId\"=$1", [runId])
+      await beginCloudflareEnvironmentBuild(fixture, actor, runId)
+      await finishTaskEnvironmentPreparation(fixture, actor, runId, token, 'ready')
       assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
       await fixture.query(`UPDATE agent_runs SET status='running',"worktreePath"='/workspace/worktrees/fixture' WHERE id=$1`, [runId])
-      await finishCloudflareEnvironmentBuild(fixture, actor, runId, randomUUID(), 'ready')
+      await finishTaskEnvironmentPreparation(fixture, actor, runId, randomUUID(), 'ready')
       assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
-      await finishCloudflareEnvironmentBuild(fixture, actor, runId, token, 'ready')
-      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'ready')
+      await finishTaskEnvironmentPreparation(fixture, actor, runId, token, 'ready')
+      const cloudReady = (await readEnvironmentSnapshot(owner, cloudInput)).snapshot
+      assert.equal(cloudReady?.state, 'ready')
+      await beginCloudflareEnvironmentBuild(fixture, actor, runId)
+      assert.deepEqual((await readEnvironmentSnapshot(owner, cloudInput)).snapshot, cloudReady)
       assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.id, id)
+
+      const { beginTaskEnvironmentPreparation, failE2BEnvironmentPreparation } = await import('../lib/project-resources/cloudflare-environment-snapshot')
+      const e2bRun = await seedRun(fixture, { userId: owner, workspaceId: ws.id, agentId, issueId, status: 'preparing' })
+      const leaseId = randomUUID()
+      await fixture.query(`UPDATE agent_runs SET "deviceId"=$2,"deviceTokenId"=$3,"agentDefinition"=$4::jsonb WHERE id=$1`,
+        [e2bRun, deviceId, token, { taskCompute: { provider: 'e2b', size: 'medium' }, projectExecution: { environment } }])
+      await fixture.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","issueId","deviceId","snapshotId","sandboxId","operationId","workerLeaseId",state)
+        VALUES($1,$2,$3,$4,$5,'codex','fixture-e2b',$6,$7,'starting')`, [e2bRun, ws.id, owner, issueId, deviceId, randomUUID(), leaseId])
+      const e2bInput = { ...readInput, provider: 'e2b' } as const
+      process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-environment-snapshots":false}'
+      try {
+        assert.equal((await readEnvironmentSnapshot(owner, e2bInput)).snapshot, null)
+        assert.equal(await beginTaskEnvironmentPreparation(fixture, actor, e2bRun, 'cloudflare'), false)
+        assert.equal(await beginTaskEnvironmentPreparation(fixture, actor, e2bRun, 'e2b'), true)
+        assert.equal((await readEnvironmentSnapshot(owner, e2bInput)).snapshot?.state, 'building')
+        await failE2BEnvironmentPreparation(actor, e2bRun, randomUUID())
+        assert.equal((await readEnvironmentSnapshot(owner, e2bInput)).snapshot?.state, 'building')
+        await failE2BEnvironmentPreparation(actor, e2bRun, leaseId)
+        assert.equal((await readEnvironmentSnapshot(owner, e2bInput)).snapshot?.state, 'failed')
+        assert.equal(await beginTaskEnvironmentPreparation(fixture, actor, e2bRun, 'e2b'), true)
+        await fixture.query(`UPDATE agent_runs SET status='running',"worktreePath"='/home/user/.mikka/worker/worktrees/fixture' WHERE id=$1`, [e2bRun])
+        await finishTaskEnvironmentPreparation(fixture, actor, e2bRun, token, 'ready')
+        const e2bReady = (await readEnvironmentSnapshot(owner, e2bInput)).snapshot
+        assert.equal(e2bReady?.state, 'ready')
+        assert.equal(await beginTaskEnvironmentPreparation(fixture, actor, e2bRun, 'e2b'), false)
+        assert.deepEqual((await readEnvironmentSnapshot(owner, e2bInput)).snapshot, e2bReady)
+        assert.deepEqual((await readEnvironmentSnapshot(owner, cloudInput)).snapshot, cloudReady)
+      } finally {
+        process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-environment-snapshots":true}'
+      }
     })
     await fixture.query('UPDATE environment_snapshots SET "repositoryIds"=$2 WHERE id=$1', [id, { revoked: '123' }])
     assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'outdated')

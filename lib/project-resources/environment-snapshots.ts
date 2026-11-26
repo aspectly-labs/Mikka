@@ -16,7 +16,7 @@ import { resolveTrustedRunPolicy } from '@/lib/agent-tool-approval/policy-snapsh
 import { githubRepositoryReadCredential } from '@/lib/github/user-access'
 import type { EnvironmentConfiguration } from './contracts'
 import { listProjectResources } from './store'
-import { CLOUDFLARE_ENVIRONMENT_SCOPE, CLOUDFLARE_ENVIRONMENT_TEMPLATE } from './cloudflare-environment-snapshot'
+import { CLOUDFLARE_ENVIRONMENT_SCOPE, CLOUDFLARE_ENVIRONMENT_TEMPLATE, E2B_ENVIRONMENT_RUNTIME_SCOPE, E2B_ENVIRONMENT_RUNTIME_TEMPLATE } from './cloudflare-environment-snapshot'
 import {
   snapshotInput,
   eligibleConfiguration,
@@ -106,33 +106,32 @@ export async function readEnvironmentSnapshot(
   raw: SnapshotInput,
 ): Promise<{ enabled: boolean; snapshot: SnapshotView | null }> {
   const input = snapshotInput.parse(raw)
-  if (!(await enabled(reader))) return { enabled: false, snapshot: null }
-  const { environment, eligible } = await snapshotConfiguration(reader, input)
   const cloudflare = input.provider === 'cloudflare'
-  const templateId = cloudflare ? CLOUDFLARE_ENVIRONMENT_TEMPLATE : environmentSnapshotTemplate(input.templateKind, environment.configuration)
-  const result = await workspacePool.query<SnapshotView & { repositoryIds: Record<string, string> }>(
-    `SELECT id,revision,"templateKind",
-    CASE WHEN revision<>$5 OR "expiresAt"<=now() OR "templateId"<>$6 OR "workerSha" IS DISTINCT FROM $7 OR NOT $8 THEN 'outdated' ELSE state END AS state,
-    "logTail","expiresAt","repositoryIds" FROM environment_snapshots
-    WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "providerScope"=$3 AND "templateKind"=$4
-    ORDER BY "createdAt" DESC LIMIT 1`,
-    [
-      input.workspaceId,
-      input.environmentId,
-      cloudflare ? CLOUDFLARE_ENVIRONMENT_SCOPE : environmentSnapshotScope(),
-      input.templateKind,
-      environment.revision,
-      templateId,
-      process.env.MIKKA_CLOUD_WORKER_SHA ?? null,
-      cloudflare ? environment.configuration.runtime !== 'local' : eligible && Boolean(templateId) && configuredProvider(),
-    ],
-  )
-  const row = result.rows[0]
-  if (!row) return { enabled: true, snapshot: null }
+  const paid = !cloudflare && await enabled(reader)
+  if (!paid && !input.provider) return { enabled: false, snapshot: null }
+  const { environment, eligible } = await snapshotConfiguration(reader, input)
+  const latest = async (scope: string, templateId: string | null, current: boolean) =>
+    (await workspacePool.query<SnapshotView & { repositoryIds: Record<string, string> }>(
+      `SELECT id,revision,"templateKind",
+      CASE WHEN revision<>$5 OR "expiresAt"<=now() OR "templateId"<>$6 OR "workerSha" IS DISTINCT FROM $7 OR NOT $8 THEN 'outdated' ELSE state END AS state,
+      "logTail","expiresAt","repositoryIds" FROM environment_snapshots
+      WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "providerScope"=$3 AND "templateKind"=$4
+      ORDER BY "createdAt" DESC LIMIT 1`,
+      [input.workspaceId, input.environmentId, scope, input.templateKind, environment.revision,
+        templateId, process.env.MIKKA_CLOUD_WORKER_SHA ?? null, current],
+    )).rows[0]
+  const template = paid ? environmentSnapshotTemplate(input.templateKind, environment.configuration) : null
+  const image = paid ? await latest(environmentSnapshotScope(), template, eligible && Boolean(template) && configuredProvider()) : undefined
+  const runtime = input.provider && image?.state !== 'building' && image?.state !== 'ready'
+    ? await latest(cloudflare ? CLOUDFLARE_ENVIRONMENT_SCOPE : E2B_ENVIRONMENT_RUNTIME_SCOPE,
+      cloudflare ? CLOUDFLARE_ENVIRONMENT_TEMPLATE : E2B_ENVIRONMENT_RUNTIME_TEMPLATE, environment.configuration.runtime !== 'local')
+    : undefined
+  const row = runtime ?? image
+  if (!row) return { enabled: cloudflare || paid, snapshot: null }
   const { repositoryIds, ...snapshot } = row
   if (
     snapshot.state === 'ready' &&
-    !(await hasRepositoryAccess(userOf(reader), environment.repositories, cloudflare ? undefined : repositoryIds))
+    !(await hasRepositoryAccess(userOf(reader), environment.repositories, runtime ? undefined : repositoryIds))
   )
     snapshot.state = 'outdated'
   return {

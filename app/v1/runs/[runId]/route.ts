@@ -59,8 +59,8 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ run
         .returning({ id: agentRuns.id })
       if (changed.length) {
         if (caller.scopeDeviceId && caller.scopeWorkspaceId) {
-          const { finishCloudflareEnvironmentBuild } = await import('@/lib/project-resources/cloudflare-environment-snapshot')
-          await finishCloudflareEnvironmentBuild(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId }, runId, caller.tokenId, 'failed').catch(() => undefined)
+          const { finishTaskEnvironmentPreparation } = await import('@/lib/project-resources/cloudflare-environment-snapshot')
+          await finishTaskEnvironmentPreparation(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId }, runId, caller.tokenId, 'failed').catch(() => undefined)
         }
         await runListChanged(db, runId); await runChanged(db, runId)
       }
@@ -86,8 +86,8 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ run
   // heartbeat and streaming chunks have separate writers and send no list key.
   if (changed.length) {
     if (patch.state === 'running' && patch.worktree && caller.scopeDeviceId && caller.scopeWorkspaceId) {
-      const { finishCloudflareEnvironmentBuild } = await import('@/lib/project-resources/cloudflare-environment-snapshot')
-      await finishCloudflareEnvironmentBuild(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId }, runId, caller.tokenId, 'ready').catch(() => undefined)
+      const { finishTaskEnvironmentPreparation } = await import('@/lib/project-resources/cloudflare-environment-snapshot')
+      await finishTaskEnvironmentPreparation(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId }, runId, caller.tokenId, 'ready').catch(() => undefined)
     }
     await runListChanged(db, runId); await runChanged(db, runId)
   }
