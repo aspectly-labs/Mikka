@@ -402,16 +402,16 @@ async function dispatchRunBody(userId: string, input: { issueId: string; profile
   // A new thread runs on the Agent the dispatch names; nothing picks one (decision 2026-11-17-1800).
   // The thread's next run keeps the thread's own Agent, never the other one.
   const byRules = (note: string | undefined, place: import('@/lib/dispatch-target').DispatchTarget | undefined, named: string | null | undefined,
-    previous?: { id: string; harness: string | null }, recovery?: BillingLocalRecovery) => {
+    previous?: Pick<import('@/lib/thread-dispatch').TaskThreadRun, 'id' | 'harness' | 'readOnly'>, recovery?: BillingLocalRecovery) => {
     if (!named?.trim()) return Promise.resolve({ error: 'repositoryRequired' as const, issueId: request.issueId })
     const own: { harness: 'claude_code' | 'codex' } | undefined = previous?.harness === 'claude_code' || previous?.harness === 'codex' ? { harness: previous.harness } : undefined
     // A new thread falls back on the Bot's defaults for what the task left open; a thread's next run keeps its own (never a move).
     const asked = previous
-      ? { place, model: request.model ?? own, profileId: request.profileId, agentId: request.agentId }
+      ? { place, model: recovery && own ? { ...own, model: recovery.model } : request.model ?? own, profileId: request.profileId, agentId: request.agentId }
       : withBotDispatchDefaults({ place, model: request.model, profileId: request.profileId, agentId: request.agentId }, botDefaults)
     if (!asked.model && !asked.agentId) return Promise.resolve({ error: 'agentRequired' as const, issueId: request.issueId })
     const sponsoredDefault = 'sponsored' in asked && asked.sponsored === true
-    return withResolvedRepository(userId, request.issueId, named, repo => dispatchByRules(userId, { ...request, ...(asked.model ? { model: asked.model } : {}), ...(asked.profileId ? { profileId: asked.profileId } : {}), ...(asked.agentId ? { agentId: asked.agentId } : {}), repo, note, threadRunId: previous?.id, recovery,
+    return withResolvedRepository(userId, request.issueId, named, repo => dispatchByRules(userId, { ...request, ...(asked.model ? { model: asked.model } : {}), ...(asked.profileId ? { profileId: asked.profileId } : {}), ...(asked.agentId ? { agentId: asked.agentId } : {}), repo, note, threadRunId: previous?.id, recovery, readOnly: Boolean(request.readOnly || previous?.readOnly),
       ...(sponsoredDefault ? { sponsoredDefault: true as const } : {}) }, scope, botId, execution, requestEventId, asked.place))
   }
   // The thread's repository is not the one named: a different one, or a name that is not one repository yet (its card comes from the new thread's lookup).
@@ -448,7 +448,7 @@ async function dispatchRunBody(userId: string, input: { issueId: string; profile
         if (!('error' in cloud)) return cloud
         if (cloud.error !== 'cloudComputerUnavailable') return { ...cloud, issueId: request.issueId }
         if ('billingRefusal' in cloud && cloud.billingRefusal && cloud.failedRunId) {
-          const receipt = { billingRefusal: cloud.billingRefusal, failedRunId: cloud.failedRunId }
+          const receipt = { billingRefusal: cloud.billingRefusal, failedRunId: cloud.failedRunId, model: runModel.model }
           if (customProfile || target !== undefined) return { error: receipt.billingRefusal, issueId: request.issueId, failedRunId: receipt.failedRunId }
           return byRules(note, undefined, previous.remoteUrl, previous, receipt)
         }
@@ -494,7 +494,7 @@ async function namedDeviceAgent(userId: string, deviceId: string, agentId: strin
   return (await import('@/lib/dispatch-target')).chooseDeviceAgent(rows, installed, agentId, harness)
 }
 
-type BillingLocalRecovery = { billingRefusal: import('@/lib/abuse/policy').PaidResourceCode; failedRunId: string }
+type BillingLocalRecovery = { billingRefusal: import('@/lib/abuse/policy').PaidResourceCode; failedRunId: string; model: string }
 
 async function dispatchByRules(userId: string, { followed, sponsoredDefault, recovery, ...input }: { recovery?: BillingLocalRecovery; threadRunId?: string; issueId: string; profileId?: string; agentId?: string; repo: string; note?: string; requestKey?:string; readOnly?: boolean; needsSpec?: boolean; origin?: RunOrigin; originRef?: RunOriginRef | null; model?: { harness: 'claude_code' | 'codex'; model?: string }; followed?: true; /** The Bot's default is the Cloudflare coding machine and the task named no place. */ sponsoredDefault?: true }, scope: NativeToolScope | undefined, botId: string, execution?: AgentExecution, requestEventId?: string, place?: import('@/lib/dispatch-target').DispatchTarget) {
   if (!input.threadRunId) input = { ...input, needsSpec: await (await import('@/lib/factory/task-dispatch')).factoryTaskNeedsSpec(pool, userId, { issueId: input.issueId, botId, needsSpec: input.needsSpec }) }
