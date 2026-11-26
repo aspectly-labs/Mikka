@@ -32,6 +32,10 @@ export interface BridgeOptions {
   localOwner(): Promise<Pick<LocalDeviceAccount, 'ownerId'>>
   quota(): Promise<QuotaSnapshotReport>
   notifications: NotificationCenter
+  /** Opens the OS notification settings for Mikka (the page's "notifications are off" banner). */
+  openNotificationSettings?(): Promise<void>
+  /** The page's waiting count and recent threads for the tray menu (validated in main). */
+  updateTray?(state: unknown): void
   consumePendingClick(): string | null
   updates: Pick<Updates, 'ready' | 'install'>
   /** The page saw a minimum desktop version above this build; main checks the server itself. */
@@ -96,4 +100,7 @@ export function registerBridge(options: BridgeOptions, sshInstaller?: SshInstall
   handle(IPC.notificationsShow, notification => options.notifications.show(notification))
   handle(IPC.notificationsSetBadge, count => options.notifications.setBadge(count))
   handle(IPC.notificationsConsumePendingClick, () => options.consumePendingClick())
+  handle(IPC.notificationsAccess, () => options.notifications.access())
+  handle(IPC.notificationsOpenSettings, () => options.openNotificationSettings?.())
+  handle(IPC.trayUpdate, state => options.updateTray?.(state))
 }

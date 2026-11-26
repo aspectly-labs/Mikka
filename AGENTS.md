@@ -2,6 +2,16 @@
 
 Apply the universal invariants below on every task, then load the matching Tier 1 standard or skill from the branch table before acting.
 
+## Standing rules (Alex, 2026-11-25; [2026-11-26-0200](docs/design/decisions/2026-11-26-0200-best-practice-review-copy.md))
+
+These apply to every session and every agent, in this repository and in `mikka-hosted-ui`. Do not ask Alex about them again.
+
+1. **Best practice wins.** Everything follows frontend/UX best practice and what top products ship. When an existing rule, decision record or `AGENTS.md` exception conflicts with best practice, replace that rule in the same change (supersede the record); do not work around it. Do not ask Alex what best practice or top products already answer; ask only what has no evidence.
+2. **Independent screenshot review.** Before any UI screenshot goes to Alex, a separate subagent — not the agent that made the change — reviews it against the reference (Capy/Codex source and the top-product screenshots), `docs/design/` and [copy.md](docs/design/copy.md); its findings are fixed or listed with the screenshot. Self-review does not count ([Handbook](docs/engineering/HANDBOOK.md#independent-screenshot-review)).
+3. **UI copy: no padding.** Labels are only labels and values only values: no parenthetical notes, no restating what is already on screen, no sentences or full stops in labels; what a person needs to act stays visible in one short line, other explanation goes in a tooltip or nowhere; write it as Capy/Codex ship it ([C-11](docs/design/copy.md), ratcheted by `node scripts/check-copy.mjs`). Review UI copy with the skills listed in copy.md.
+4. **Benchmark agent products first:** Capy, ChatGPT/Codex, Claude, Cursor, Devin, Perplexity. Category leaders (Linear, Jira, GitHub, Vercel …) are a reference only for a surface no agent product has. A feature no agent product has is not built unless Alex asks for it.
+5. **No sprints or cycles (迭代).** No agent product has them, so Mikka does not build them.
+
 ## Authority and boundaries
 
 - **Three-Tier precedence ([Handbook](docs/engineering/HANDBOOK.md#three-tier-documentation-architecture)):** (1) Alex's explicit decision → (2) Tier 3 CI gates → (3) Tier 1 Living Standards → (4) current `main` → (5) Tier 2 dated ADRs (`docs/design/decisions/`). Keep ADRs immutable (edit only a superseded ADR's top `Status:` header), leave frozen [decisions.md](docs/design/decisions.md) untouched, and ignore dated audits, old screenshots, handoffs, or `publication=none` builds as policy.

@@ -28,15 +28,18 @@ const appHref = z
 
 /**
  * The kinds that become a desktop system notification (interaction spec 8.3):
- * the ones where an agent is waiting on the person, and a finished thread
- * (线程完成, on by default; Alex, 2026-10-31). Everything else stays in the
- * inbox.
+ * the ones where an agent is waiting on the person, a finished thread
+ * (线程完成, on by default; Alex, 2026-10-31), someone @-mentioning the person
+ * in a group chat, and a thread's pull request merging (as Capy's Mentioned you
+ * and PR merged). Everything else stays in the inbox.
  */
 export const DESKTOP_NOTIFICATION_KINDS = [
   "review",
   "awaiting",
   "failed",
   "finished",
+  "mentioned",
+  "merged",
 ] as const
 export type DesktopNotificationKind =
   (typeof DESKTOP_NOTIFICATION_KINDS)[number]
@@ -57,6 +60,36 @@ export const desktopNotification = z.object({
   href: appHref,
 })
 export type DesktopNotification = z.infer<typeof desktopNotification>
+
+/** Whether the OS shows Mikka's notifications, as main last saw it: 'unknown' until one was shown or refused. */
+export const desktopNotificationAccess = z.enum(["granted", "denied", "unknown"])
+export type DesktopNotificationAccess = z.infer<typeof desktopNotificationAccess>
+
+/**
+ * A command from the native application menu (as Capy's and Codex's menus): main sends it to the focused
+ * window, so its accelerator (⌘W, ⌘T, ⇧⌘T, ⌘1–9 …) works while focus is in the composer or any text field.
+ * `tab.select` 9 is the last tab, as in browsers.
+ */
+export const desktopMenuCommand = z.discriminatedUnion("type", [
+  z.object({ type: z.enum([
+    "tab.new", "tab.close", "tab.closeOthers", "tab.reopen", "tab.duplicate", "tab.copyUrl", "tab.next", "tab.previous",
+    "history.back", "history.forward", "settings.open", "thread.new", "computer.add",
+  ]) }),
+  z.object({ type: z.literal("tab.select"), index: z.number().int().min(1).max(9) }),
+])
+export type DesktopMenuCommand = z.infer<typeof desktopMenuCommand>
+
+/**
+ * The tray / menu bar menu (decision C6, as Capy's and Codex's trays): how many threads wait for the person,
+ * and the most recent threads. The renderer reads them; main only lists them. `threads: null` is still loading.
+ */
+export const desktopTrayState = z.object({
+  signedIn: z.boolean(),
+  waiting: z.number().int().min(0).max(9_999),
+  threads: z.array(z.object({ title: z.string().max(300), href: appHref })).max(5).nullable(),
+  hasMore: z.boolean(),
+})
+export type DesktopTrayState = z.infer<typeof desktopTrayState>
 
 /** The Dock badge: the inbox's unread pending count; 0 hides it. */
 export const desktopBadgeCount = z.number().int().min(0).max(9_999)
@@ -293,6 +326,8 @@ export interface MikkaBridge {
      * installs the update before the person can go on.
      */
     requireUpdate?(): Promise<void>
+    /** Called with each native menu command for this window; returns an unsubscribe. Absent on older desktop builds. */
+    onMenuCommand?(listener: (command: DesktopMenuCommand) => void): () => void
   }
   /**
    * Login. The long-lived session token stays in the main process (macOS
@@ -344,6 +379,16 @@ export interface MikkaBridge {
      * none. A click is handed over at most once.
      */
     consumePendingClick(): Promise<string | null>
+    /** Whether the OS shows Mikka's notifications, as far as main has seen. Absent on older desktop builds. */
+    access?(): Promise<DesktopNotificationAccess>
+    /** Called when that access changes; returns an unsubscribe. */
+    onAccessChange?(listener: (access: DesktopNotificationAccess) => void): () => void
+    /** Opens the system's notification settings for Mikka. */
+    openSystemSettings?(): Promise<void>
+  }
+  /** The tray / menu bar menu. Absent on older desktop builds and in the browser. */
+  tray?: {
+    update(state: DesktopTrayState): Promise<void>
   }
   /**
    * This computer as a device (ADR 0026). Main signs the daemon in with the

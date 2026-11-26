@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
-import { Updates, updateCopy, type Updater } from './updates'
+import { Updates, updateCopy, updateFailure, type Updater } from './updates'
 
 class FakeUpdater extends EventEmitter {
   autoDownload = false
@@ -92,4 +92,13 @@ test('the menu check speaks Chinese unless the system language is not', () => {
   assert.equal(updateCopy('zh-CN').restart('2026.10000.290'), '重启以更新到 v2026.10000.290')
   assert.equal(updateCopy('zh-Hans-CN').restartNow, '立即重启')
   assert.equal(updateCopy('en-US').later, 'Later')
+})
+
+test('a failed update says why: a full disk asks for space, anything else to check the connection', () => {
+  const zh = updateCopy('zh-CN')
+  const disk = Object.assign(new Error('write failed'), { code: 'ENOSPC' })
+  assert.deepEqual(updateFailure(zh, disk), { message: '磁盘空间不足，无法更新', detail: '腾出一些空间后再检查更新' })
+  assert.deepEqual(updateFailure(zh, new Error('ENOSPC: no space left on device')), { message: zh.diskFull, detail: zh.diskFullHint })
+  const en = updateCopy('en')
+  assert.deepEqual(updateFailure(en, new Error('net::ERR_INTERNET_DISCONNECTED')), { message: 'Could not check for updates', detail: 'Check your connection and try again' })
 })

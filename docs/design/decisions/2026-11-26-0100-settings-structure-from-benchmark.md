@@ -6,7 +6,8 @@
   that evidence, not handed to Alex ([2026-11-25-2330](2026-11-25-2330-owner-decisions-chat-memory-views-projects.md)
   rule 9). Every open settings question from the page-by-page benchmark was checked against Capy, ChatGPT/Codex (one
   product), Claude (with Claude Code), Cursor, Devin and Perplexity; Linear, GitHub or Vercel were consulted only where
-  none of the six has the surface. Only the rows the evidence settles are recorded here.
+  none of the six has the surface. Rows the evidence settles are recorded here; Alex then answered the three it left
+  open (R-S03, R-S10, R-S24; relayed by the coordinator), recorded as rules 25–27.
 - Rule: [2026-11-25-1630](2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md) 「benchmark first, not precedent」.
 - Count: 「n/m」 is n of the m products that have the surface. Research IDs (R-S…) refer to the resolved-settings
   benchmark table.
@@ -25,14 +26,15 @@
    权限 (rule 25). Evidence 3 place policies in situ (Capy, Claude, Devin) vs 2 on one page (Cursor, ChatGPT Business);
    none calls it team permissions or hangs workspace policy on a team.
 3. **Members and teams are two sidebar entries, not two tabs of one page (R-S04).** Keep the sidebar 「团队」 entry and
-   remove the 「成员 | 团队」 tabs on the members page. Conditional on the team layer staying (R-S03, still with Alex).
+   remove the 「成员 | 团队」 tabs on the members page (the team layer stays, rule 25).
    Evidence 2/2 products with a teams surface (Linear Administration › Members / Teams; GitHub People / Teams).
 4. **Two groups: 「Agent」 and an unnamed connections-and-compute group (R-S06).** Agent = 指令 · 技能 · 线程 · Git 与拉取请求
    · Agent 配置 · Agent 权限. The unnamed group (模型 · 云端环境 · 设备 · 密钥与凭证 · 集成 · 连接器与 MCP · API) is separated by
    a divider only; 「Agent 与计算」 is retired. Evidence: Capy names the group 「Agent」; 3/4 leave the connections group
    unnamed (Capy, Cursor, Devin; only Codex names it).
 5. **New personal page 「数据与隐私」 (R-S05).** Order: 导出我的数据 · 共享链接 (manage / revoke) · 已归档线程 · 删除全部线程
-   (destructive, confirmed). Export and share links move here from 个人资料. Evidence 5/6 (ChatGPT Data controls, Codex
+   (destructive, confirmed). Export and share links move here from 个人资料; the page carries no data-use switch
+   (rule 27). Evidence 5/6 (ChatGPT Data controls, Codex
    Data & Privacy, Claude Privacy, Cursor Privacy, Perplexity data retention; not Capy).
 
 ### 常规, 外观, 个人资料, 安全, 通知
@@ -60,7 +62,7 @@
 14. **No global 「运行位置（云端/本地）」 preference on 设备 (R-S16).** The composer's machine picker chooses per thread and
     remembers the last choice. Evidence 4/4 products with local and cloud runs choose per thread (Codex, Capy, Cursor,
     Claude Code).
-15. **E2B key and 「Mikka Cloud Worker」 leave 设备 (R-S17)** for the 「算力」 section of 云端环境: 「Mikka 云 / 你的 E2B 账号」,
+15. **E2B key and 「Mikka Cloud Worker」 leave 设备 (R-S17)** for the 「算力」 section of 云端环境: 「Mikka Cloud / 你的 E2B 账号」,
     the provider named only in the option. The key stays the person's and is not shared with the team. Evidence 0/6
     put a compute provider's key in the device list; Cursor keeps self-hosted workers beside environments.
 16. **No 「云凭证」 (OIDC / workload identity) section for now (R-S18).** Evidence 1/6 (Capy).
@@ -97,12 +99,17 @@
     existing backend ([2026-11-20-1900](2026-11-20-1900-settings-organization-security.md)). Evidence 6/6 business plans
     have SSO and domain verification.
 
-## Not decided here (still with Alex)
+### Alex's answers to the open rows
 
-- R-S03 whether Mikka keeps a team layer and the sidebar 「你的团队」 group (0/6 agent products have sub-teams).
-- R-S10 a 「对话字体」 row in 外观 (3:3).
-- R-S24 a data-use switch (「帮助改进 Mikka」 / workspace 数据使用): placement is settled (数据与隐私 / 常规), the business
-  question of whether Mikka uses content for training or evaluation is not.
+25. **Teams: one 「团队」 page, no per-team list in the settings sidebar (R-S03, option B, as GitHub).** The sidebar's
+    dynamic 「你的团队」 group and its 「创建团队」 row go; a team's settings open from the 团队 list. Navigation no longer
+    grows with the number of teams.
+26. **外观 gains a chat-font row, Alex's 「对话字体」 (R-S10):** 默认 / 无衬线 / 系统 / 易读字体. Its Chinese label follows C-09
+    and never says 对话 (`pnpm i18n:check` rejects 「对话字体」); name it for threads, e.g. 「线程字体」. Evidence 3/6 (Codex,
+    Claude, Perplexity).
+27. **No data-use switch (R-S24, option A).** Mikka does not use user content for training. Neither 数据与隐私 nor workspace
+    常规 has a 「帮助改进 Mikka」 / 数据使用 switch; 数据与隐私 carries one line (「Mikka 不使用你的内容训练模型」) and a link to
+    the privacy policy.
 
 ## Supersedes
 
