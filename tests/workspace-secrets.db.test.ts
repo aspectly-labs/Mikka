@@ -6,6 +6,8 @@ import { dbUrl, seedAgent, seedPersonalWorkspace, seedUser, seedWorkspace } from
 
 test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
   const previousKey = process.env.WORKSPACE_SECRETS_KEY
+  const previousEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   const { Pool } = await import('pg')
   const pool = new Pool({ connectionString: dbUrl, max: 2 })
@@ -16,6 +18,7 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
   const { workspacePool } = await import('../lib/workspace-db')
   t.after(async () => {
     if (previousKey === undefined) delete process.env.WORKSPACE_SECRETS_KEY; else process.env.WORKSPACE_SECRETS_KEY = previousKey
+    if (previousEdition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = previousEdition
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])
   })
   const rejects = (promise: Promise<unknown>, code: string) => assert.rejects(promise, (error: unknown) => error instanceof WorkspaceError && error.code === code)
