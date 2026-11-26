@@ -4206,7 +4206,7 @@
       "label": "Model: {name}",
       "noCreditsOrConnections": "No Mikka credits or usable model connections",
       "route": {
-        "via": "Runs through {label}",
+        "via": "Runs on {label}",
         "favorites": "Favorites",
         "free": "Free",
         "usedUntil": "Used up until {time}",
@@ -11073,6 +11073,8 @@
       "emptyPersonal": "No personal connections yet",
       "emptyWorkspace": "No shared workspace connections yet",
       "effortLabel": "Effort",
+      "faster": "Faster",
+      "smarter": "Smarter",
       "effortFaster": "Faster",
       "effortSmarter": "Smarter",
       "effort": {
