@@ -11,7 +11,6 @@ import { freezeWorkerDefinition } from './agent-kit/worker'
 import { freezeExecutionIdentity, ExecutionIdentityError } from './execution-identity'
 import { createExecutionClaim } from '../tests/helpers/factory-execution-claim'
 import { sealSecret } from './secrets/crypto'
-import machineSizes from '../scripts/e2b/machine-sizes.json'
 
 const url = process.env.E2E_DATABASE_URL
 if (url) assert.ok(isE2eTarget(url), E2E_DB_RULE)
@@ -202,12 +201,6 @@ test('real claim, MCP tools, key disclosure and artifacts enforce the frozen exe
       process.env.E2B_API_KEY = 'synthetic-execution-identity-fixture'
       const machines = await fakeThreadMachines(pool, harnesses)
       try {
-        const templates = JSON.parse(process.env.MIKKA_CLOUD_TEMPLATE_MODELS!)
-        const { cpuCount, memoryMB } = machineSizes.medium
-        templates.machineVariants = ['desktop', 'claude', 'codex'].map(kind => ({
-          kind, size: 'medium', templateId: templates.templates[kind].templateId, cpuCount, memoryMB,
-        }))
-        process.env.MIKKA_CLOUD_TEMPLATE_MODELS = JSON.stringify(templates)
         const actor = { userId: requester, workspaceId: workspace }
         const source = await queueCloudRun(pool, actor, { botId: bot, issueId: cloudIssue, agentId: cloudAgent, deviceRepoId: cloudRepo, title: 'Cloud quota', body: '', model: 'gpt-5', subscriptionBindingId: binding })
         const scheduled = (await pool.query('SELECT "workspaceId","agentDefinition" FROM agent_runs WHERE id=$1', [source.runId])).rows[0]

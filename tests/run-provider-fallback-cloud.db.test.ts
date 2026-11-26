@@ -204,7 +204,10 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
       issueId: f.issueId, runId: next, repositoryKey: repository.repoPath }))?.runId, prior)
     await assert.rejects(recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId: randomUUID() }, instanceId), { status: 409 })
     const machine = async (runId: string) => (await pool.query('SELECT "sandboxId","operationId",lifecycle FROM thread_machines WHERE "runId"=$1', [runId])).rows[0]
+    await pool.query("UPDATE agent_runs SET status='waiting_input' WHERE id=$1", [prior])
+    await assert.rejects(recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId }, instanceId), { status: 409 })
     assert.equal((await machine(prior)).sandboxId, instanceId)
+    await pool.query("UPDATE agent_runs SET status='succeeded' WHERE id=$1", [prior])
     await recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId }, instanceId)
     assert.equal((await machine(next)).sandboxId, instanceId)
     assert.deepEqual(await machine(prior), { sandboxId: null, operationId: priorOperationId, lifecycle: { portableWorkspaceCapture: 'ready' } })

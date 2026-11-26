@@ -238,7 +238,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "90d926a9f590dd465110bd6cdc7fd5c993242bfaf68311d5d6dd2a20acbf7c7b"
+      "sourceHash": "c5aa6ceb5711b87a6035a7192e6f5fb808bfb33330b9b9bd079b2b95b64987b1"
     },
     {
       "path": "/mikka/api/bots/[botId]/computer/runtimes",

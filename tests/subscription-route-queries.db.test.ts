@@ -22,9 +22,9 @@ test('a cloud run\'s subscription context read stays within its statement budget
   const saved = Object.fromEntries(['WORKSPACE_SECRETS_KEY', 'MIKKA_BYOS_ENABLED', 'MIKKA_BYOS_VALIDATED_MODEL_ROUTES', 'MIKKA_BYOS_VALIDATED_NATIVE_ROUTES',
     'MIKKA_BYOS_INFISICAL_ORIGIN', 'MIKKA_BYOS_INFISICAL_PROJECT', 'MIKKA_BYOS_INFISICAL_ENVIRONMENT', 'MIKKA_BYOS_INFISICAL_PATH',
     'MIKKA_BYOS_ACCESS_INFISICAL_PATH', 'MIKKA_BYOS_INFISICAL_TOKEN', 'MIKKA_BYOS_ACCESS_INFISICAL_TOKEN', 'MIKKA_BYOS_SHARED_CUSTODY_IDENTITY',
-    'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED'].map(key => [key, process.env[key]]))
+    'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'E2B_API_KEY'].map(key => [key, process.env[key]]))
   Object.assign(process.env, {
-    WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), MIKKA_BYOS_ENABLED: '1',
+    WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), MIKKA_BYOS_ENABLED: '1', E2B_API_KEY: 'synthetic-subscription-query-e2b-key',
     MIKKA_BYOS_VALIDATED_MODEL_ROUTES: 'claude_cpa', MIKKA_BYOS_VALIDATED_NATIVE_ROUTES: 'claude_code_cli',
     // Synthetic custody configuration; the worker client is mocked below and never starts.
     MIKKA_BYOS_INFISICAL_ORIGIN: 'http://127.0.0.1:1', MIKKA_BYOS_INFISICAL_PROJECT: 'synthetic-route-queries',

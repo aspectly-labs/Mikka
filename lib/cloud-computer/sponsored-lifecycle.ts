@@ -245,14 +245,18 @@ export async function recordSponsoredTaskAllocation(pool: Pool, actor: TaskMachi
     await allocation.query(`UPDATE thread_machines old SET "sandboxId"=NULL
       WHERE old."sandboxId"=$1 AND old."runId"<>$2 AND old."ownerId"=$3 AND old."workspaceId"=$4
         AND old."issueId"=$5 AND old."snapshotId"=$6 AND old.state IN ('paused','ended')
+        AND EXISTS (SELECT 1 FROM agent_runs previous WHERE previous.id=old."runId" AND previous."userId"=old."ownerId"
+          AND previous.status IN ('succeeded','failed','stopped','cancelled'))
         AND NOT EXISTS (SELECT 1 FROM coding_review_sessions review WHERE review."runId"=old."runId"
           AND review."ownerId"=old."ownerId" AND review."workspaceId"=old."workspaceId"
           AND review."machineOperationId"=old."operationId" AND review."revokedAt" IS NULL AND review."expiresAt">now())`,
     [instanceId, runId, actor.userId, actor.workspaceId, current.issueId, hostedSnapshot])
-    await allocation.query(`UPDATE thread_machines SET "sandboxId"=$2,"runningSince"=clock_timestamp(),
+    const registered = await allocation.query(`UPDATE thread_machines SET "sandboxId"=$2,"runningSince"=clock_timestamp(),
       lifecycle=lifecycle||jsonb_build_object('sponsoredInstanceId',$2::text,'sponsoredAppliedChunks',1)
         ||CASE WHEN $3::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('portableWorkspaceRestore',$3::jsonb) END
-      WHERE "runId"=$1`, [runId, instanceId, portableWorkspace ? JSON.stringify(portableWorkspace) : null])
+      WHERE "runId"=$1 AND NOT EXISTS (SELECT 1 FROM thread_machines owner WHERE owner."sandboxId"=$2 AND owner."runId"<>$1)`,
+    [runId, instanceId, portableWorkspace ? JSON.stringify(portableWorkspace) : null])
+    if (!registered.rowCount) throw new ComputerError(409, 'Thread provisioning in progress')
     await allocation.query('COMMIT')
   } catch (error) {
     await allocation.query('ROLLBACK')
