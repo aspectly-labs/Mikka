@@ -19,6 +19,8 @@ import { allocateIssueNumbers } from '@/lib/issue-numbering'
 import { createsIssueCycle } from '@/lib/issue-relations'
 import { activityActor } from '@/lib/activity-actor'
 import { requireCurrentIssueWorkspace, requireLockedIssueScope, withIssueWorkspace } from '@/lib/issue-scope-authorization'
+import { taskFileNodeIds } from '@/lib/task-comments/document'
+import type { JSONContent } from '@tiptap/core'
 
 const relationSchema = z.object({ id: z.uuid(), revision: z.number().int().positive(), targetId: z.uuid().nullable(), kind: z.enum(['parent', 'child', 'related', 'blockedBy', 'blocks', 'duplicate']), remove: z.boolean().default(false) })
 
@@ -213,6 +215,11 @@ export async function createLinkedIssue(input: { id: string; revision: number; k
               || original.scopeVersion !== observed.scopeVersion || current.deletedAt || current.parentId !== parentId) continue
             originals.push(original); seen.add(original.id); queue.push(original.id)
           }
+        }
+        // Inline files are owned and retired per task. A duplicate needs independent
+        // file objects to preserve the description and its download authorization.
+        if (!child && [source, ...originals].some(task => taskFileNodeIds(task.content as JSONContent).size)) {
+          return { error: 'taskInlineFilesDuplicateUnavailable' as const }
         }
         const ownership = { workspaceId: workspace.id, ownershipState: 'bound' as const, scope: workspace.kind === 'personal' ? 'personal' as const : 'workspace' as const, scopeSetBy: 'user' as const, linearSyncPolicy: 'disabled' as const, linearSyncBlocked: true }
         // Lock the workspace counter before the owner counter — every other

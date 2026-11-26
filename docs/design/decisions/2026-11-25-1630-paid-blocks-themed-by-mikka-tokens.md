@@ -1,7 +1,7 @@
 # Paid blocks are themed by Mikka's tokens, not kept on their own defaults
 
 - Date: 2026-11-25 16:30 UTC
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-26-0200](2026-11-26-0200-best-practice-review-copy.md) (rule 4: conflicts are resolved by changing the earlier rule, not listed for Alex)
 - Source: Alex, 2026-11-25, after the page-by-page benchmark against Capy and other top agent products: asked whether
   「付费块内部不动」 is right, compared it with Capy (one set of design primitives across the whole app), and approved
   the change: 「去做吧」.

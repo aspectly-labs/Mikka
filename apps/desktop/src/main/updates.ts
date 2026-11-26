@@ -26,23 +26,42 @@ export function updateCopy(locale: string) {
     ? {
       menu: '检查更新…',
       restart: (version: string) => `重启以更新到 v${version}`,
+      ready: 'Mikka 新版本已可安装',
+      readyDetail: (version: string) => `v${version} 会在重启后安装`,
       restartNow: '立即重启',
       later: '稍后',
       upToDate: (version: string) => `Mikka ${version} 已是最新版本`,
       failed: '无法检查更新',
+      failedHint: '检查网络连接后再试一次',
+      diskFull: '磁盘空间不足，无法更新',
+      diskFullHint: '腾出一些空间后再检查更新',
       notInstalled: '安装版才会检查更新',
       ok: '好',
     }
     : {
       menu: 'Check for Updates…',
       restart: (version: string) => `Restart to update to v${version}`,
+      ready: 'A new version of Mikka is ready to install',
+      readyDetail: (version: string) => `Version ${version} installs when the app restarts`,
       restartNow: 'Restart Now',
       later: 'Later',
       upToDate: (version: string) => `Mikka ${version} is up to date`,
       failed: 'Could not check for updates',
+      failedHint: 'Check your connection and try again',
+      diskFull: 'Not enough disk space to update',
+      diskFullHint: 'Free up some space, then check for updates again',
       notInstalled: 'Updates are checked in the installed app',
       ok: 'OK',
     }
+}
+
+/**
+ * A failed check or download, said by its cause as Capy's updater does: a full disk asks for space,
+ * anything else to check the connection. The updater's own error text is never shown.
+ */
+export function updateFailure(copy: ReturnType<typeof updateCopy>, error: Error & { code?: unknown }): { message: string; detail: string } {
+  const diskFull = error.code === 'ENOSPC' || /ENOSPC|no space left|not enough (?:disk )?space/i.test(error.message)
+  return diskFull ? { message: copy.diskFull, detail: copy.diskFullHint } : { message: copy.failed, detail: copy.failedHint }
 }
 
 export class Updates {

@@ -2,9 +2,9 @@
 
 **Audience:** Frontend, mobile, and design contributors shipping UI in `mikka-hosted-ui` (Web and Desktop) and `apps/mobile` (iOS).
 **Scope:** Visual tokens, restricted UI primitives, chat layout and viewport budgets, the 7-state interaction contract, copy density limits, and automated enforcement across Web, Desktop, and iOS.
-**Out of scope:** Backend orchestration (`orchestration.md`), domain terminology definitions (`glossary.md`), and restyling shipped paid blocks (BoardUI Pro, affectUI, beUI Pro keep their shipped visuals under [2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+**Out of scope:** Backend orchestration (`orchestration.md`), domain terminology definitions (`glossary.md`), and a paid block's own source (BoardUI Pro, affectUI, beUI Pro are themed by Mikka's tokens through their hooks under [2026-11-25-1630](decisions/2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md), superseding 2026-11-09-0050).
 
-**Visual authority ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)):**
+**Product and visual authority ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md), [2026-11-25-1630](decisions/2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md)):** benchmark first, not precedent — whether a page or control exists is decided against Capy, ChatGPT/Codex, Claude, Cursor, Devin and Perplexity, and questions their documentation, apps or source answer are decided from that evidence ([2026-11-25-2330](decisions/2026-11-25-2330-owner-decisions-chat-memory-views-projects.md) rule 9; settled sets in [2026-11-26-0100](decisions/2026-11-26-0100-settings-structure-from-benchmark.md), [2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md), [2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md)).
 - **ChatGPT / Codex + Claude Code** govern chat chrome, transcript typography, composer, inline status/quota strips, and quiet error presentation.
 - **Capy** governs the workspace right rail, tab bar, sidebar work tree, and task detail panel.
 - **Linear** applies only to issue and board semantics not already covered above.
@@ -84,7 +84,7 @@ Chat and workspace surfaces follow hard geometric budgets measured on Desktop (`
 - **Reading column width:** `max-width: 896px` (`56rem`) centered with `16px` horizontal gutters (`32px` total), shared by messages, tool rows, code blocks, strips, and composer.
 - **Message rhythm (ChatGPT / Claude Code standard):**
   - **One-to-one Bot, Coordinator, and Agent threads:** Full-width quiet assistant replies with no avatar, no name header, and no background bubble. User messages use a compact subtle neutral bubble (`--secondary`, `rounded-xl`, `px-3 py-2`) aligned right (no loud accent-blue bubble).
-  - **Group chats:** Keep speaker avatar (`28px`) and name header once per same-author run (`2026-11-23-0300`).
+  - **Group chats (threads with members, [2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 6):** Keep speaker avatar (`28px`) and name header once per same-author run (`2026-11-23-0300`).
   - **Message actions:** Hover/focus-revealed lightweight icon row (no heavy bordered pill container), always visible on touch (`@media (hover: none), (pointer: coarse)`), reserving its height at rest (`2026-11-22-1500`).
 - **Minimum scrollable transcript share:** Measured as the share of the thread pane below the `48px` header (`712px` on a `1280×760` desktop window, `672px` on `960×720` compact), the scrollable transcript keeps **`>= 55%`** on desktop (`>= 392px`, which `712 - 320px` `TakeoverCard` satisfies because an active takeover replaces the composer and collapses non-blocking strips) and **`>= 50%`** on compact (`>= 336px`) and mobile (`375×812`) even under worst-case expanded todos, queued rows, or a bottom takeover card.
 
@@ -99,13 +99,28 @@ permission / write-approval  >  question / credential-login  >  blocking-notice 
 1. **Zero unbounded external stacks:** Every approval, write-action, login, and question card mounts inside `ChatBottomSlotProvider`. Never mount sibling approval lists (`ApprovedWriteActions`, etc.) outside `<ThreadScreen>`.
 2. **Non-blocking warnings keep the composer visible:** Quota limits, model-unavailable warnings, offline status, and waiting-thread reminders render as a single `40–44px` `ChatStatusStrip` above the intact composer — never hijacking or hiding the composer.
 3. **Bounded `composer-ground-strip`:** `TodoList` defaults to **collapsed** (1-line `32–36px` progress summary chip). When expanded, the combined `composer-ground-strip` (todos + queued messages) caps at **`max-h-[104px]` (`6.5rem`)** with `overflow-y-auto overscroll-contain`.
-4. **Zero stream↔bottom duplication:** While an interactive card or strip is open in the bottom slot, the transcript renders at most a **1-line muted stub** (`Waiting for approval`, `Waiting on you`, clickable to reopen after `Later`). Never repeat the full question, option list, or quota paragraph in both places.
+4. **Out of credit is a notice card, never a paywall ([2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rule 19):** the blocking-notice card states the cause and reset time, then 「换免费模型 · 等到 {时间} · 用我的订阅接管 · 查看选项」; 查看选项 opens a funding sheet listing free ways out first. Pages outside chat use a top banner. Send never opens a 「选择套餐」 dialog.
+5. **Zero stream↔bottom duplication:** While an interactive card or strip is open in the bottom slot, the transcript renders at most a **1-line muted stub** (`Waiting for approval`, `Waiting on you`, clickable to reopen after `Later`). Never repeat the full question, option list, or quota paragraph in both places.
 
 ### 3.3 Right Column and Task Panel (Capy Standard)
 
 - **Right rail width:** Default `520px`, minimum `320px`, maximum `calc(100% - sidebar - 320px)` so the chat column always retains `>= 320px`. Width persists in `localStorage`; double-clicking the resize handle resets to `520px`; dragging narrower than `160px` collapses the rail.
 - **Tab bar:** `28px` ghost tabs, `12px` Medium, `6px` radius, `14px` status/PR icon, `×` close revealed on hover/focus (always visible at `<= 767px` / coarse pointer with `44px` hit target). Tabs show task code (`SPOT-4`) or PR ref (`mikka#42`), never raw UUIDs or URLs.
-- **Task detail panel:** Large editable title, code + relative age, compact property rows (omitting unset fields), description, subtasks, activity log. No duplicate inner title bar when opened in a right-column tab.
+- **One flat tab level, opening on 概览 ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 10):** 概览 lists 待办, 子 Agent, 分支与 PR, 产出, 自动化, 端口 (a Bot thread: 需要你, 进行中, 线程, 子 Agent, PR); then the kind tabs from ＋ / the launcher and the `task:` / `thread:` tabs the chat opens. A subagent opens as a read-only `thread:` tab and never replaces the main conversation (rule 11). Branch and PR live in 概览 and the composer's status row, not in a bar above the composer (rule 12).
+- **Phones (<768px or touch):** no tab strip; the thread's `…` menu opens each kind as a pushed page or two-detent sheet (rule 20).
+- **Task detail panel:** Large editable title, code + relative age, compact property rows (omitting unset fields; the former 项目 row is 环境), description, subtasks, activity log. No duplicate inner title bar when opened in a right-column tab.
+
+### 3.4 Shell, Navigation and Overlays
+
+- **Sidebar:** bots, threads (group chats are threads with a multi-person mark; no 群聊 section), 任务, PR, 自动化 and a customisable 更多 (hide / pin any page; Artifacts visible by default; 插件 is browse + detail, not top-level). No projects page, no 收件箱: a notification bell beside the avatar holds one list ([2026-11-25-2330](decisions/2026-11-25-2330-owner-decisions-chat-memory-views-projects.md) rule 7; [2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rules 6–9). Sidebar search opens ⌘K with the section preselected ([2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rule 12).
+- **Where work starts:** one picker bar 「环境 · 仓库/分支 · 运行位置」 on new thread, task, Bot and automation ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 3). Task and thread composers carry 「环境 · 机器 · 交给」 chips and Send starts the work; there is no Start work dialog and no Harness pill ([2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rule 14).
+- **Dialogs:** one themed `Dialog` (md / lg, no grey footer, ghost Cancel, 继续新建 and ⌘↵) for 新建任务, 新建 Bot and start-work; no Kanban `CreateWindow` shell and no 新建群聊 dialog ([2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rules 13, 15). Top-up confirms amount, payment method, tax and total before 「购买 ${金额}」 (rule 17).
+- **One workspace-and-account menu** at the bottom left (`rules.md` R-75; [2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rule 16).
+- **Versions never block by default:** web 「有新版本 · 刷新」, desktop 「重启以更新」; only a server-declared minimum opens a blocking dialog ([2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rule 18).
+- **Sign-in and first run:** one page 「登录或注册 Mikka」 (`/sign-up` is an alias), email first, codes for verification and reset in the flow; onboarding asks at most two steps (model source, code access) and the rest is the home 「开始使用 Mikka」 checklist ([2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rules 1–5). Invitation, device approval and OAuth consent are standalone pages (rules 7–9).
+- **Mobile:** the left drawer is the only global navigation; no per-Bot bottom tabs ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 19). Phone settings omit admin pages and keyboard shortcuts (rule 21).
+- **Settings** follow [2026-11-26-0100](decisions/2026-11-26-0100-settings-structure-from-benchmark.md): groups 「Agent」 and an unnamed connections-and-compute group; one 团队 page with no per-team sidebar list; 外观 has a chat-font row (label per C-09, never 对话); 数据与隐私 has no data-use switch, only the line 「Mikka 不使用你的内容训练模型」 and a privacy-policy link; no 团队权限 / 默认 Harness / global run-location rows.
+- **Chat details ([2026-11-25-2330](decisions/2026-11-25-2330-owner-decisions-chat-memory-views-projects.md)):** tool rows speak Chinese (verb + target); feedback is thumbs in the reply's action row; a run's cost sits under the composer beside the context ring.
 
 ---
 
@@ -127,12 +142,13 @@ Every page, list, modal, drawer, and form must implement all seven states before
 
 ## 5. Copy and Information Density Budget
 
-Extends **R-40** (zero filler) and **[`copy.md`](copy.md) (C-01..C-09)** with concrete density caps:
+Extends **R-40** (zero filler) and **[`copy.md`](copy.md) (C-01..C-11)** with concrete density caps:
 
 - **Status strips (`ChatStatusStrip`):** Headline `2–5` words (`已达到 5 小时限额`, `Usage limit`, `Model unavailable`), optional inline detail on the same line (`12:20 重置`), **max `1` primary CTA button**, optional `×` dismiss or `…` overflow. Zero paragraphs, zero toggle switches, zero bullet lists.
 - **Approval / decision cards (`TakeoverCard`):** Max `2–3` footer controls (`Later` / `Deny` + `Allow`, or split primary `Allow once ▾`). Collapse raw payloads, headers, and stack traces inside `<details>` (`max-h-28`–`max-h-36`).
 - **Composer model chip:** Model name (+ subtle warning dot when limited) only. Detailed quota reasons live inside the dropdown row and the 1-line strip above the composer.
 - **Zero internal leakage:** Never render raw UUIDs (`actorId`, `issueId`, `organizationId`, `accountId`), raw enum slugs (`request_changes`, `client_secret_basic`, `timed_out`), or unlocalized separators (use `Intl.ListFormat` / `format.list`, never hardcoded CJK `、` in English).
+- **Labels only labels, values only values (C-11):** no parenthetical notes, no restating what sits beside it, no sentences; an explanation goes in a tooltip or nowhere.
 - **Exact terminology (C-09, `glossary.md`):** Chinese UI uses `线程` (never `对话` except `对话框`, never `会话` for chats), `群聊`, `Bot`, `Agent` (never `harness`/`执行器`), `Mikka Cloud` (never translated), `daemon` (never prefixed with `Mikka`).
 
 ---
@@ -147,5 +163,5 @@ Every pillar above maps to a concrete compile-time or CI check across public `as
 | **2. Restricted primitives & paid-block boundary (R-39, R-90)** | Typed props on `ChatStatusStrip`, `TakeoverCard` (required `onDefer`), `AlertRow`; `WhyDisabled` | `mikka-hosted-ui/scripts/paid-overrides.mjs` (ratcheted drift ceiling), `scripts/ui-policy.mjs` (`style/nested-frame`, `style/secondary-button-fill`, `style/search-input`) |
 | **3. Layout & viewport budget (Chat `>=55%`/`>=50%`, `<=1` takeover, `<=104px` ground strip)** | `ChatBottomSlotProvider` single-slot priority state machine, `TakeoverCard` `max-h-[min(42dvh,320px)]`, `TodoList` default collapsed | `mikka-hosted-ui/scripts/design-system-geometry.test.mjs` (Playwright `1280×760`, `960×720`, `375×812` Light/Dark), `mikka-hosted-ui/scripts/right-column-narrow.test.mjs`, `scripts/control-size-policy.mjs`, `scripts/motion-policy.mjs`, `scripts/split-pane-policy.mjs` |
 | **4. 7-state interaction contract** | Synchronous pending ref, `try/finally`, `InlineLoadError`, `AlertDialog` R-102, `@media (hover: hover)` + `pointer-coarse:opacity-100` | `scripts/interaction-policy.mjs`, `scripts/icon-button-policy.mjs`, `scripts/navigation-policy.mjs`, `scripts/polling-policy.mjs`, `scripts/error-cause-policy.mjs`, `mikka-hosted-ui/scripts/core-ui.test.mjs` |
-| **5. Copy & density budget (R-40..R-44, C-01..C-09)** | `messages/{zh-CN,en}.json`, `ChatStatusStrip` single-CTA prop | `scripts/check-i18n.mjs` (`pnpm i18n:check`), `scripts/check-copy.mjs`, `scripts/copy-policy.mjs`, `mikka-hosted-ui/scripts/copy-budget.test.mjs` |
+| **5. Copy & density budget (R-40..R-44, C-01..C-11)** | `messages/{zh-CN,en}.json`, `ChatStatusStrip` single-CTA prop | `scripts/check-i18n.mjs` (`pnpm i18n:check`), `scripts/check-copy.mjs`, `scripts/copy-policy.mjs`, `mikka-hosted-ui/scripts/copy-budget.test.mjs` |
 | **6. Visual specimen & prod isolation** | Standalone living gallery in `mikka-hosted-ui/preview/design-system/` (all tokens + 7 states + viewport-budget specimen, Light/Dark + Desktop/Compact/Mobile) | `mikka-hosted-ui/scripts/official-build-excludes-preview.test.mjs` (0 bytes in production builds), `scripts/no-public-ui.test.mjs` (0 web/desktop UI in public `Mikka`) |

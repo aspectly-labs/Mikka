@@ -9,6 +9,7 @@ import { DEFAULT_TITLE_TRIGGERS, THREAD_TITLE_TRIGGERS, TITLE_INSTRUCTIONS_MAX }
 import {
   BACKGROUND_EFFECTS,
   CODE_SIZES,
+  CHAT_FONTS,
   COLOR_SCHEMES,
   DEFAULT_UI,
   DIFF_COLORS,
@@ -108,6 +109,11 @@ export const SETTINGS_REGISTRY = {
     ...personalAccount, key: 'codeFontSize', group: 'appearance', page: 'appearance',
     ...settingMetadata('codeFontSize'),
     type: 'string', guard: z.enum(CODE_SIZES), defaultValue: DEFAULT_UI.codeSize, options: [...CODE_SIZES],
+  },
+  chatFont: {
+    ...personalAccount, key: 'chatFont', group: 'appearance', page: 'appearance',
+    ...settingMetadata('chatFont'),
+    type: 'string', guard: z.enum(CHAT_FONTS), defaultValue: DEFAULT_UI.chatFont, options: [...CHAT_FONTS],
   },
   diffView: {
     ...personalAccount, key: 'diffView', group: 'appearance', page: 'appearance',

@@ -127,25 +127,6 @@ export async function countAssignedWorkspaceTasks(workspaceId: string) {
   })
 }
 
-/** Views belongs to the selected workspace. Its totals span the same visible
- * Tasks as the paginated list, including those the client has not loaded. */
-export async function countWorkspaceTaskViews(workspaceId: string) {
-  z.uuid().parse(workspaceId)
-  const user = await requireUser()
-  if (await effectiveRequestWorkspace(user) !== workspaceId) throw new ActionFailureError('workspaceAccessDenied')
-  return withTaskWorkspace(user, workspaceId, async () => {
-    const metadata = sql`coalesce(${issues.content}->'attrs'->'mikka', ${issues.content}->'attrs'->'orvilo')`
-    const statusCount = (status: IssueStatus) => sql<number>`count(*) filter (where ${issues.status} = ${status})::int`
-    const statuses = Object.fromEntries(ISSUE_STATUS_CODES.map(status => [status, statusCount(status)])) as Record<IssueStatus, ReturnType<typeof statusCount>>
-    const [counts] = await db.select({
-      ...statuses,
-      favorites: sql<number>`count(*) filter (where ${metadata}->'favoriteUserIds' @> jsonb_build_array(${user.id}::text))::int`,
-      following: sql<number>`count(*) filter (where ${metadata}->'subscriberUserIds' @> jsonb_build_array(${user.id}::text))::int`,
-    }).from(issues).where(issueVisibilityPredicate(user.id, { allowedIds: [], workspaceIds: [workspaceId] }))
-    return counts
-  })
-}
-
 async function readIssues(workspaceId?: string, known?: string, previous?: ListPosition[]) {
   return withDatabaseOperation('/actions/issues/poll', () => readIssueSnapshot(workspaceId, known, previous))
 }

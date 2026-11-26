@@ -1,6 +1,8 @@
-// The launch gate (Alex, 2026-11-02): on a cold start the app checks for an
-// update before it opens, and a newer version is installed before the person
-// gets in. No update, no network, or no answer within CHECK_TIMEOUT_MS: the
+// The update gate: when the server requires a newer desktop (/api/version's
+// minDesktopVersion) the app checks for an update, and a newer version is
+// installed before the person gets back in. It no longer runs on every cold
+// start (decision C7, 2026-11-25, overturning Alex 2026-11-02): updates
+// download in the background instead. No update, no network, or no answer within CHECK_TIMEOUT_MS: the
 // app opens as usual; a failed check never locks anyone out. A failed
 // download shows why and offers 重试, but not "use the old version".
 
