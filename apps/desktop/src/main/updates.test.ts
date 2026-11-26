@@ -88,6 +88,22 @@ test('install restarts only once an update is downloaded', () => {
   assert.equal(updater.installs, 1)
 })
 
+test('required updates take ownership of cached, ongoing and future downloads', async () => {
+  const { updater, updates, reports, ready } = setup()
+  updater.emit('update-downloaded', { version: '0.2.0' })
+  assert.equal(updates.beginRequiredUpdate(), '0.2.0')
+  assert.equal(updater.autoInstallOnAppQuit, false)
+  updater.emit('update-downloaded', { version: '0.3.0' })
+  await updates.check(true)
+  await updates.check(false)
+  updates.install()
+  assert.equal(updates.ready, null)
+  assert.equal(updater.checks, 0)
+  assert.equal(updater.installs, 0)
+  assert.deepEqual(ready, ['0.2.0'])
+  assert.deepEqual(reports, [])
+})
+
 test('the menu check speaks Chinese unless the system language is not', () => {
   assert.equal(updateCopy('zh-CN').restart('2026.10000.290'), '重启以更新到 v2026.10000.290')
   assert.equal(updateCopy('zh-Hans-CN').restartNow, '立即重启')

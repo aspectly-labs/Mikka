@@ -4872,7 +4872,7 @@
     "approved": "已批准",
     "retry": "重试",
     "back": "返回设备列表",
-    "expiresIn": "{time}过期",
+    "expiresIn": "{time}",
     "entryHint": "批准一台请求连接你 Mikka 账号的机器",
     "codeHint": "你要连接的机器上显示的 8 位字符",
     "unverified": "以下信息由请求连接的机器上报，未经验证",
@@ -9870,7 +9870,7 @@
     "messageActions": "消息操作",
     "newBot": {
       "nameTaken": "已有同名 Bot",
-      "failed": "没能创建",
+      "failed": "创建失败",
       "creating": "创建中"
     },
     "openFile": "打开 {name}",
@@ -9885,7 +9885,7 @@
       "switching": "正在切换模型…"
     },
     "retrying": "正在重试",
-    "notSentRetry": "没发出去，再试一次。",
+    "notSentRetry": "发送失败，请重试。",
     "openUI": {
       "submitted": "已提交",
       "answerPrompt": "任务背景：{context}\n我的回答：\n{response}\n请根据以上信息继续提供建议，不要执行工作区操作。",
@@ -9949,7 +9949,7 @@
     },
     "listSeparator": "、",
     "review": {
-      "githubPermission": "GitHub 权限不足，没能合并",
+      "githubPermission": "GitHub 权限不足，无法合并",
       "files": "{count} 个文件",
       "filesOne": "{count} 个文件",
       "failedShort": "{count} 项失败",
@@ -9967,9 +9967,9 @@
         "checkpoint": "最后一次检查点"
       },
       "commentOne": "{count} 条评论",
-      "sendFailed": "没能发给 Agent",
+      "sendFailed": "发送给 Agent 失败",
       "mergeConfirmGeneric": "检查未通过，确定合并？",
-      "mergeFailed": "没能合并",
+      "mergeFailed": "合并失败",
       "pendingLabel": "待发送：{line}",
       "noteValue": "修改意见：{note}",
       "writeNote": "写修改意见",
