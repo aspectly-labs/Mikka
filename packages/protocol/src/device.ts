@@ -400,6 +400,15 @@ export const runModelCredentialSchema = z.discriminatedUnion("kind", [
 ])
 export type RunModelCredential = z.infer<typeof runModelCredentialSchema>
 
+/** A native subscription uses only a scoped Mikka model gateway credential. */
+export function isSubscriptionGatewayCredential(credential: RunModelCredential | undefined, protocol: 'anthropic' | 'openai'): credential is Extract<RunModelCredential, { kind: 'provider' }> {
+  if (credential?.kind !== 'provider' || credential.protocol !== protocol ||
+      !/^mkg_[A-Za-z0-9_-]{43}$/.test(credential.key)) return false
+  const path = protocol === 'anthropic' ? '/api/model-gateway/anthropic' : '/api/model-gateway/openai/v1'
+  return URL.parse(credential.baseUrl)?.pathname.endsWith(path) === true
+}
+
+
 const hasGitIdentityForbiddenChar = (value: string) =>
   [...value].some(char => {
     const code = char.charCodeAt(0)
@@ -660,11 +669,11 @@ export const runAssignmentSchema = z.object({
   benchmark: runBenchmarkContext.optional(),
   /** Resolved personal/workspace Git commit author & committer identity (#3110). */
   gitIdentity: runGitIdentitySchema.optional(),
-}).refine(value => !(value.modelCredential && value.subscriptionBinding), { message: "A run has one model credential", path: ["modelCredential"] })
+}).refine(value => !(value.modelCredential && value.subscriptionBinding && !value.subscriptionContext), { message: "A run has one model credential", path: ["modelCredential"] })
   .refine(value => !value.subscriptionContext || Boolean(value.subscriptionBinding && !value.subscriptionLease &&
-    value.subscriptionBinding.route === value.subscriptionContext.route && value.modelCredential?.kind === 'provider' &&
-    (value.harness === 'codex' ? value.subscriptionContext.route === 'codex_cli' && value.modelCredential.protocol === 'openai'
-      : value.harness === 'claude_code' && value.subscriptionContext.route === 'claude_code_cli' && value.modelCredential.protocol === 'anthropic')),
+    value.subscriptionBinding.route === value.subscriptionContext.route &&
+    (value.harness === 'codex' ? value.subscriptionContext.route === 'codex_cli' && isSubscriptionGatewayCredential(value.modelCredential, 'openai')
+      : value.harness === 'claude_code' && value.subscriptionContext.route === 'claude_code_cli' && isSubscriptionGatewayCredential(value.modelCredential, 'anthropic'))),
   { message: 'A subscription context requires its binding and model gateway credential', path: ['subscriptionContext'] })
   .refine(value => !value.subscriptionLease || Boolean(value.subscriptionBinding && value.subscriptionBinding.route === value.subscriptionLease.route &&
     (value.harness === 'codex' ? value.subscriptionLease.route === 'codex_cli' : value.harness === 'claude_code' && value.subscriptionLease.route === 'claude_code_cli')),
