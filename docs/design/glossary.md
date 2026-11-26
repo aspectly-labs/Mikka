@@ -10,9 +10,9 @@ The thread and task definitions follow Alex’s [November 13 decision](https://g
 
 | Word | 中文 | What it is | Where it shows | Its name |
 | --- | --- | --- | --- | --- |
-| **Bot** | Bot | Chats with people. Does web tasks itself through sub-agents (分身, R-72), each with its own browser, and dispatches real tasks such as coding to threads. The user creates it (Grok Bot style) and can add it, with other bots and people, to a thread (a group chat is a thread with members). The Coordinator is a bot too. Stored in its own `bots` table (name, colour, shape) and runs on Mikka's own AI SDK on Vercel; it is not a row in `agents`. | **Bot list** (left column), one row per bot. | The bot's own name, e.g. "Mikka Frontend". |
+| **Bot** | Bot | Chats with people. Does web tasks itself through sub-agents (分身, R-72), each with its own browser, and dispatches real tasks such as coding to threads. The user creates it (Grok Bot style) and can put several bots in a group chat. The Coordinator is a bot too. Stored in its own `bots` table (name, colour, shape) and runs on Mikka's own AI SDK on Vercel; it is not a row in `agents`. | **Bot list** (left column), one row per bot or group chat. | The bot's own name, e.g. "Mikka Frontend". |
 | **Thread** | 线程 | What a person opens, names and replies to: an Agent's root run in `agent_runs` and the continuations and retries that keep its `rootRunId` (`lib/run-chain.ts`). It has its own title, per-user read position, pin and archive state, and can exist without a task. Code says `thread`. | The 线程 directory, the Bot sidebar and a task's thread list. | Its stored title or the existing fallback. |
-| **Bot chat** and **group chat** | Bot 线程 / 群聊 | A Bot chat is the message history addressed to the selected Bot or Coordinator. A group chat is a thread with members: people are added from new thread or the thread header's 「成员」 (「添加成员」), it is listed with threads with a multi-person mark, and there is no separate 群聊 section, object or 新建群聊 dialog ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 6). A Bot can take part in other chats. Existing chat storage is the `conversations` table family. | The selected chat or thread. | Its Bot name, or the thread's title. |
+| **Bot or group chat** | Bot 线程 / 群聊 | The message history addressed to the selected Bot, Coordinator or group. A Bot can take part in other chats. Stored in the `conversations` table family. | The selected chat. | Its Bot or group name. |
 | **Task** | 任务 | A unit of work with its own ID, title, assignee and status. It can link to several threads and PRs. | Board, task list and task detail. | Its task title and issued identifier. |
 | **Run** | 运行 | One execution: one row in `agent_runs`. A thread's runs are its root run and its continuations and retries; there is no third word for the chain. | A thread opens through its root run ID, and its transcript keeps the run order. Existing run or thread deep links resolve through their original access checks. Run result (运行结果) and 重试 name one run. | The thread's title for the product entry; the run identity when inspecting execution. |
 
@@ -35,9 +35,9 @@ not on the dispatching bot's machine (`cloud-computer-backend.md` § 2).
 | --- | --- | --- |
 | **Account** | 账号 | The person: 账户, security, 偏好, 通知, profile memory (个人资料类记忆), 密钥与登录, 设备 and 「模型与订阅」. The same in every workspace. |
 | **Personal workspace** | 个人工作区 | One per person. Only that person's bots, chats, tasks, threads and their memory; personal 计费 and 用量; no team settings. |
-| **Shared workspace** | 共享工作区 | Members, 身份与访问, 密钥与环境, 审计日志, team 用量 and 计费. Workspace policies live on the page of the object they govern; there is no 团队权限 page ([2026-11-26-0100](decisions/2026-11-26-0100-settings-structure-from-benchmark.md)). Nothing moves between it and a personal workspace. |
+| **Shared workspace** | 共享工作区 | Members, 团队权限, 密钥与环境, 审计日志, team 用量 and 计费. Nothing moves between it and a personal workspace. |
 | **Organization** | 组织 | Manages membership, organization connections, policies and billing across attached Workspaces. Each Workspace remains an independent tenant; an Organization role does not confer private content access. |
-| **Resource owner** | 所有者 | Manages a Task, Thread, Bot or Artifact's access and controlled ownership transfer. Ownership does not bypass a private ancestor or a revoked Workspace membership. |
+| **Resource owner** | 所有者 | Manages a Project, Task, Thread, Bot or Artifact's access and controlled ownership transfer. Ownership does not bypass a private ancestor or a revoked Workspace membership. |
 | **Actor** | 操作者 | The authenticated person or service principal responsible for a message or operation. Kept separately from the Thread Owner, execution identity, credential owner and payer. |
 
 Decision: [2026-11-01-2310](decisions/2026-11-01-2310-personal-and-team-workspaces-apart.md).
@@ -53,18 +53,10 @@ Collaboration and financial authority: [2026-11-10-0017](decisions/2026-11-10-00
   This navigation does not change the distinction between dispatching Bot,
   task and executing Agent.
 - Task lists show one row per task. The workspace 线程 directory opens threads directly, including those without a task. A task’s thread list opens the same thread with the same access checks.
-- The right column opens on **概览** (Overview), the first tab of one flat
-  tab level: a thread's 待办, 子 Agent, 分支与 PR, 产出, 自动化 and 端口, or a Bot
-  thread's 需要你, 进行中, 线程, 子 Agent and PR. The other tabs are the kinds the
-  ＋ picker opens and the `task:` / `thread:` tabs the chat opens; a subagent
-  opens as a read-only `thread:` tab. Phones have no tab strip ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rules
-  10, 11, 20; `rules.md` R-02, R-50).
-- Where work starts (new thread, task, Bot, automation) one picker bar reads
-  **环境 · 仓库/分支 · 运行位置** ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 3).
-- There is no projects page and no 收件箱 page. What needs the person shows on
-  the Bot's 概览, at the top of 与我相关, as unread dots on thread rows and in
-  the **notification bell** (通知) beside the avatar
-  ([2026-11-25-2330](decisions/2026-11-25-2330-owner-decisions-chat-memory-views-projects.md) rule 7, [2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 7).
+- The right panel's 概览 header is the selected bot (the same avatar and
+  name as its left row), followed by the tabs 详情 / 任务 / PR / 电脑. A
+  task's title appears in its task row and detail, never as that
+  bot header (Alex, 2026-10-28; `rules.md` R-02, R-50).
 - Choosing another bot on the left changes the center chat and the right
   column's dispatched tasks and computer together.
 - Inside one thread, read its runs oldest first and address the latest eligible run when replying. A task can link to several distinct roots. Activity shows human-level changes and comments. Its Work section presents the linked threads, PRs and expandable run progress.
@@ -85,7 +77,7 @@ doing: working, waiting for the person, or error. It belongs to the
 thread (after its title, on its dispatch card, on the board card's
 line), never beside a task's status icon: a task chip has exactly one icon.
 It is not a status and has no group, column or status word. What needs the person is
-in the notification bell and on the Bot's 概览 (no 收件箱 page).
+listed in 收件箱.
 
 受阻 is a board column for a task the person flagged or one blocked by an open
 task. It is not a status either.
@@ -129,10 +121,10 @@ Decided by Alex, 2026-10-28.
 | --- | --- | --- |
 | **Artifact** | Artifact | Something a thread produces for the person to look at or accept, such as an acceptance (验收), a PR, a document or a web page. The word is never translated (not 产物, 工件 or 成果). Lives on the Artifact rail page (R-56). An open thread's header always has an Artifact button, and the message that finishes a thread carries its Artifact card (Alex, 2026-11-06). |
 | **Agent** | Agent | The coding agent that runs a thread: Claude Code, Codex, Cursor (`agents` table, a harness). It does the coding work; a bot never does. Every dispatch names its Agent (none named: `agentRequired`), and a thread keeps that one Agent for life: retries and continuations never switch to another ([2026-11-17-1800](decisions/2026-11-17-1800-one-agent-per-thread.md)). Each Agent has its own 优先使用的模型 list; the other Agent's list is never a fallback. Shown by its own brand mark wherever a thread or run has an icon (R-78). Never called harness or 执行器 in the UI (R-43). |
-| **Agent Profile** | Agent 配置 | A reusable logical coding role owned by a person in a workspace: responsibilities, capabilities, Agent/model policy, effort, private instructions and controlled Skills. Several Profiles may use the same physical Agent/model. Managed in Settings › Agent 配置 (Agent group, [2026-11-26-0100](decisions/2026-11-26-0100-settings-structure-from-benchmark.md)); frozen into each selected run. Has its own mark (a glyph and colour), the main mark of its Agent stretches (R-78). It never becomes a Bot or a left-column row. [Spec](factory-agent-profiles.md). |
-| **Library** | 资料库 | A bot's files, listed in its 「Bot 资料」 sheet; the person can delete their own (R-51). Files are added with the composer's 「+」. |
+| **Agent Profile** | Agent 配置 | A reusable logical coding role owned by a person in a workspace: responsibilities, capabilities, Agent/model policy, effort, private instructions and controlled Skills. Several Profiles may use the same physical Agent/model. Managed in Settings › Models and subscriptions; frozen into each selected run. Has its own mark (a glyph and colour), the main mark of its Agent stretches (R-78). It never becomes a Bot or a left-column row. [Spec](factory-agent-profiles.md). |
+| **Library** | 资料库 | A bot's files, listed under 概览 › 详情; the person can delete their own (R-51). Files are added with the composer's 「+」. |
 | **Browser** | 浏览器 | The person's own local browser, one for the whole app, opened from the globe in the top bar (R-57). |
-| **Computer** | 电脑 | A bot's cloud computer: its own desktop (X display) on its owner's bot machine, which is one per person per workspace (`cloud_machines` keyed by `workspaceId`, `ownerId`; `bot_desktops` keyed by `botId`). Used by that bot only; a thread that needs a desktop gets its own machine ([0251](decisions/2026-11-02-0251-desktop-runs-get-their-own-machine.md)). Shown in the right column's 电脑 tab (R-50). Never called 浏览器. |
+| **Computer** | 电脑 | A bot's cloud computer: its own desktop (X display) on its owner's bot machine, which is one per person per workspace (`cloud_machines` keyed by `workspaceId`, `ownerId`; `bot_desktops` keyed by `botId`). Used by that bot only; a thread that needs a desktop gets its own machine ([0251](decisions/2026-11-02-0251-desktop-runs-get-their-own-machine.md)). Shown in the 电脑 tab of 概览 (R-50). Never called 浏览器. |
 | **Bot machine** | Bot 机器 | The E2B sandbox that hosts one person's bot desktops in a workspace. One per person per workspace, not one per bot. |
 | **Thread machine** | thread 机器 | The E2B sandbox one cloud thread runs on, from the verified official-derived template. Separate from the bot machine. |
 | **Workspace policy** | 工作区策略 | Target contract (Capy parity): the only authorization surface — MCP servers (allow / read-only / disabled), devices (allow), computer use (allow / deny). Never per Bot. Current builds still carry per-Bot rows until the workspace rule lands. |
@@ -154,9 +146,6 @@ Decided by Alex, 2026-10-28.
 - 「Bot 的线程」, 「所属 Bot」, "bot's threads", "a bot's thread" or "the thread
   belongs to a bot". A bot only dispatches threads; an Agent runs them. Say
   「<Bot> 派出的线程」 / 「<Bot> 派出」, "threads a bot dispatched".
-- 项目 for a task's environment or a run's repositories: say **环境**. 收件箱 for
-  the notification list: say **通知**. 新建群聊 as an entry: a group chat is a
-  thread with members, made with 「添加成员」.
 - 「Mikka Cloud」 for the hosted model, or 「Mikka 默认」 for the cloud machine.
   Mikka 默认 is a model, Mikka Cloud is a machine ([orchestration](orchestration.md) § 1).
 
@@ -201,9 +190,8 @@ _Note_: target term (decision D11 of the coordinating session, 2026-11-02). The 
 now says 共享工作区 / shared workspace (2026-11-08); code still says `team` for it until the rename in Known naming debt.
 
 **Team (团队)**:
-A named group of members inside a shared workspace, with its own task prefix
-and tasks (as a Linear team). Teams are managed on one 团队 settings page; the
-settings sidebar does not list teams one by one ([2026-11-26-0100](decisions/2026-11-26-0100-settings-structure-from-benchmark.md) rule 25).
+A named group of members inside a shared workspace, with its own task prefix,
+tasks and projects (as a Linear team).
 _Owner_: the shared workspace (Team aggregate).
 _Avoid_: 团队 for the workspace, group, squad.
 
@@ -237,11 +225,8 @@ _Avoid_: 对话, 会话, 执行线程, 运行链, conversation, session, 任务,
 **Task (任务)**:
 A unit of work with an immutable UUID and issued Mikka identifier, a status,
 and an optional human assignee who is an active member of its Workspace.
-A thread works on it; it is not a thread. Its **环境** property names the
-environment its runs use (default: the assigned Bot's environment); it replaced
-the former 项目 property, and lists group 按环境. The repository and branch a
-run checks out stay run state. A Team is an optional group inside that
-Workspace and does not own the task or change its issued identifier ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rules 4–5).
+A thread works on it; it is not a thread. Team and Project are optional groups
+inside that Workspace and do not own the task or change its issued identifier.
 _Owner_: the workspace (Task aggregate).
 _Avoid_: issue in the UI, ticket, 工单, thread.
 _Note_: 受阻 (Blocked) is a board column a task falls into while its newest
@@ -266,20 +251,6 @@ _Owner_: the Task, within its Workspace.
 _Avoid_: treating the owner of the executing Bot/Agent as the human assignee.
 
 ### Resources
-
-**Environment (环境)**:
-The workspace-level container a run starts from: 1..n repositories (cloned at
-boot, or on demand) with their base branch, setup and start scripts, variables,
-secrets, network access, machine size, instructions and MCP. It is the only
-container: there is no board Project → repository → environment layer, and no
-projects page (Capy's "project" is Mikka's 环境). The default environment needs
-no repository. A repository outside the environment is admitted by workspace
-policy and cloned on demand for that run. A member can keep an environment 「仅我」
-or share it with the workspace; personal variables override shared ones of the
-same name ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rules 1–5a;
-[2026-11-19-2100](decisions/2026-11-19-2100-environment-not-project.md)).
-_Owner_: the workspace (Environment aggregate).
-_Avoid_: 项目 / Project for it.
 
 **Device (设备)**:
 A computer or server of the person's that runs their Agents through the
