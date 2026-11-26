@@ -213,7 +213,7 @@ test("acceptance merges the PR as the person", { skip: !db, timeout: 180000 }, a
       const drain = async () => { await Promise.all(pending.splice(0).map(work => work())); };
       try {
         await pool.query(`
-          CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text,kind text);
+          CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text,kind text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
           CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,status text);
           CREATE TABLE mikka_team_issues ("issueId" uuid,"workspaceId" uuid);
           CREATE TABLE workspace_projects (id uuid PRIMARY KEY,"userId" text NOT NULL,
@@ -694,7 +694,7 @@ test("acceptance merges the PR as the person", { skip: !db, timeout: 180000 }, a
           "lifecycleAt" timestamptz DEFAULT now(),lifecycle jsonb NOT NULL DEFAULT '{}');
         CREATE TABLE coding_review_sessions ("runId" uuid,"taskId" uuid,"ownerId" text,"workspaceId" uuid,"deviceId" uuid,
           "sandboxId" text,"machineEpoch" bigint,"machineOperationId" uuid,"revokedAt" timestamptz,"expiresAt" timestamptz);
-        CREATE TABLE IF NOT EXISTS mikka_workspaces (id uuid PRIMARY KEY,"userId" text,kind text);
+        CREATE TABLE IF NOT EXISTS mikka_workspaces (id uuid PRIMARY KEY,"userId" text,kind text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
         CREATE TABLE IF NOT EXISTS mikka_workspace_members ("workspaceId" uuid,"userId" text,status text);
         CREATE TABLE IF NOT EXISTS mikka_team_issues ("issueId" uuid,"workspaceId" uuid);
         CREATE TABLE IF NOT EXISTS workspace_projects (id uuid PRIMARY KEY,"userId" text NOT NULL,

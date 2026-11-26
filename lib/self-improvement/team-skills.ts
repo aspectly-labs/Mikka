@@ -1,4 +1,4 @@
-import { readRuntimeSetting } from '@/lib/settings/runtime'
+import { lockSkillPublishingPolicy } from '@/lib/settings/runtime'
 import { runChanged } from '../live/panels'
 import 'server-only'
 import { runListChanged } from '../live/lists'
@@ -124,7 +124,7 @@ export class TeamSkillStore {
     if (!parsed.success) throw new ImprovementError('invalid')
     let adminRequired = false
     return writeTransaction(this.pool, async tx => {
-      const policy = await readRuntimeSetting(tx, 'skillPublishingPolicy', scope)
+      const policy = await lockSkillPublishingPolicy(tx, scope)
       if (policy.value === 'off') throw new ImprovementError('runUnavailable')
       adminRequired = policy.value === 'open'
       const value = parsed.data
@@ -163,7 +163,7 @@ export class TeamSkillStore {
     const ended: {id:string;userId:string}[]=[]
     const result=await writeTransaction(this.pool, async tx => {
       const { versionId, sha256 } = parsed.data
-      if (operation === 'approve' && (await readRuntimeSetting(tx, 'skillPublishingPolicy', scope)).value === 'off') throw new ImprovementError('runUnavailable')
+      if (operation === 'approve' && (await lockSkillPublishingPolicy(tx, scope)).value === 'off') throw new ImprovementError('runUnavailable')
       const visible = await tx.query(`SELECT 1 FROM improvement_team_skill_metadata WHERE "versionId"=$1 AND "workspaceId"=$2 FOR SHARE`, [versionId, scope.workspaceId])
       if (!visible.rowCount) throw new ImprovementError('notFound')
       if (operation === 'withdraw') {

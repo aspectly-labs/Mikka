@@ -1,11 +1,13 @@
 import type { AuditRow } from '@/lib/audit/events'
 import type { EnvironmentConfiguration } from '@/lib/project-resources/contracts'
-import { pgTable, text, timestamp, uuid, varchar, primaryKey, unique, index, jsonb, integer } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, uuid, varchar, primaryKey, unique, index, jsonb, integer, boolean } from 'drizzle-orm/pg-core'
 
 export const workspaces = pgTable('mikka_workspaces', {
   id: uuid('id').primaryKey(),
   userId: text('userId').notNull(),
   name: varchar('name', { length: 120 }).notNull(),
+  requireTwoFactor: boolean('requireTwoFactor'),
+  twoFactorRequiredAt: timestamp('twoFactorRequiredAt', { withTimezone: true }),
   slug: varchar('slug', { length: 64 }).unique('mikka_workspaces_slug_unique'),
   /** Four-letter prefix shown for this workspace. Issued task numbers do not change. */
   taskPrefix: varchar('taskPrefix', { length: 4 }),

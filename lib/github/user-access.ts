@@ -1,4 +1,5 @@
 import 'server-only'
+import { CloudServiceError, cloudErrorStatus } from '@/lib/cloud-services/errors'
 import { auth } from '@/lib/auth'
 import { githubConnectionToken } from './connection'
 import { readGitHubAppConfig } from './app-config'
@@ -424,7 +425,7 @@ export async function authorizedPullWake(userId: string, repo: string, repositor
     const { data } = await githubGet(credential.token, `/repositories/${repositoryId}/pulls/${number}`, budget)
     return data.state === 'open' && data.number === number && object(data.head).sha === head && data.mergeable === false
   } catch (error) {
-    if (error instanceof GitHubAccessError && error.status < 500) return false
+    if (error instanceof GitHubAccessError && error.status < 500 || error instanceof CloudServiceError && [401, 403].includes(cloudErrorStatus(error.code))) return false
     throw error
   }
 }
@@ -458,7 +459,7 @@ export async function countWorkspaceMergedPulls(userId: string, repositoryKeys: 
     }
     return { current, previous }
   } catch (error) {
-    if (error instanceof GitHubAccessError || error instanceof DOMException && error.name === 'TimeoutError') return unknown
+    if (error instanceof GitHubAccessError || error instanceof CloudServiceError || error instanceof DOMException && error.name === 'TimeoutError') return unknown
     throw error
   }
 }

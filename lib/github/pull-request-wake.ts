@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { completedCiSuite } from './ci-suite-event'
 import { readRuntimeSettings } from '@/lib/settings/runtime'
+import { ActionFailureError } from '@/lib/action-error'
+import { factoryEventId } from '@/lib/factory/event-id'
 import { pool } from '@/lib/db'
 
 const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -34,14 +36,13 @@ export async function wakePullRequestThreads(event: NonNullable<ReturnType<typeo
     FROM run_publications p JOIN agent_runs r ON r.id=p."runId" AND r."userId"=p."userId" AND r."issueId"=p."issueId"
     LEFT JOIN attention_settings preferences ON preferences."userId"=p."userId"
     JOIN issues i ON i.id=p."issueId" AND i."workspaceId"=r."workspaceId" AND i."ownershipState"='bound'
-    JOIN github_repository_installations g ON g."userId"=p."userId" AND g."remoteKey"=p."remoteKey"
     WHERE p.status='published' AND p."remoteKey"=$1 AND (lower(p."pullRequest"->>'url')=ANY($2::text[])
-      OR (cardinality($2::text[])=0 AND p."pullRequest"->>'headSha'=$5 AND starts_with(lower(p."pullRequest"->>'url'),$6)))
-      AND g."installationId"=$3 AND g."repositoryId"=$4 AND r."workspaceId" IS NOT NULL AND r."deletedAt" IS NULL
+      OR (cardinality($2::text[])=0 AND p."pullRequest"->>'headSha'=$3 AND starts_with(lower(p."pullRequest"->>'url'),$4)))
+      AND r."workspaceId" IS NOT NULL AND r."deletedAt" IS NULL
       AND p."pullRequest"->>'state' IN ('open','draft')
       AND (r."botId" IS NULL OR EXISTS (SELECT 1 FROM bots b WHERE b.id=r."botId" AND b."workspaceId"=r."workspaceId" AND b."ownerId"=p."userId"))
     ORDER BY lower(p."pullRequest"->>'url'),r."workspaceId",p."userId",p."createdAt" DESC,p."runId"`,
-  [`v2/github.com/${repo}`, urls, event.installationId, event.repositoryId, event.headSha ?? null, `https://github.com/${repo}/pull/`])
+  [`v2/github.com/${repo}`, urls, event.headSha ?? null, `https://github.com/${repo}/pull/`])
   for (const row of rows) {
     const number = Number(row.url.slice(row.url.lastIndexOf('/') + 1))
     const expectedHead = 'heads' in event ? event.heads[number] ?? event.headSha : event.headSha
@@ -51,12 +52,20 @@ export async function wakePullRequestThreads(event: NonNullable<ReturnType<typeo
     const { authorizedPullWake } = await import('./user-access')
     if (!await authorizedPullWake(row.userId, repo, event.repositoryId, event.installationId, conflict)) continue
     // The thread delivery ledger expects a UUID and reuses the receipt on redelivery.
-    const hex = createHash('sha256').update(JSON.stringify([deliveryKey, event.preference, row.runId])).digest('hex')
+    const hex = createHash('sha256').update(JSON.stringify([deliveryKey, event.preference, row.url, row.workspaceId, row.userId])).digest('hex')
     const requestId = `${hex.slice(0,8)}-${hex.slice(8,12)}-8${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`
     const { sendThreadMessage } = await import('@/lib/thread-continue')
     const { withTaskWorkspace } = await import('@/lib/task-workspace')
     const messages = row.locale === 'en' ? (await import('@/messages/en.json')).default.PullRequestWake : (await import('@/messages/zh-CN.json')).default.PullRequestWake
-    await withTaskWorkspace(row.userId, row.workspaceId, () =>
-      sendThreadMessage(row.userId, row.runId, `${messages[event.preference]} ${row.url}`, { source: 'orchestrator' }, requestId))
+    const receiptId = factoryEventId('thread-submission', JSON.stringify([row.userId, requestId]))
+    const { rows: [receipt] } = await pool.query<{ anchor: string; text: string }>(`SELECT
+      payload#>>'{threadSubmission,requestedRunId}' AS anchor,payload->>'text' AS text FROM coordinator_events
+      WHERE id=$1 AND "userId"=$2 AND kind='user_message' AND payload->>'source'='thread_continuation'`, [receiptId, row.userId])
+    try {
+      await withTaskWorkspace(row.userId, row.workspaceId, () => sendThreadMessage(row.userId, receipt?.anchor ?? row.runId,
+        receipt?.text ?? `${messages[event.preference]} ${row.url}`, { source: 'orchestrator' }, requestId))
+    } catch (error) {
+      if (!(error instanceof ActionFailureError && ['threadReplaced', 'runNotFound', 'workspaceAccessDenied'].includes(error.code))) throw error
+    }
   }
 }

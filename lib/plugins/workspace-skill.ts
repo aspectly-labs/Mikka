@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
-import { readRuntimeSetting } from '@/lib/settings/runtime'
+import { lockSkillPublishingPolicy, readRuntimeSetting } from '@/lib/settings/runtime'
 import { PluginError } from './contracts'
 import { skillDescription } from './skill-metadata'
 import { assertOrganizationResourceShare, organizationResourceAllowed, workspaceResourcePolicy } from '@/lib/governance/resource-access'
@@ -77,7 +77,7 @@ export class WorkspaceSkillStore {
       const locked = await client.query('SELECT 1 FROM personal_skills WHERE id=$1 AND user_id=$2 FOR UPDATE', [parsed.skillId, userId])
       if (!locked.rowCount) throw new PluginError('skillNotFound', 404)
       if (parsed.shared) {
-        const policy = await readRuntimeSetting(client, 'skillPublishingPolicy', { userId, workspaceId: parsed.workspaceId })
+        const policy = await lockSkillPublishingPolicy(client, { userId, workspaceId: parsed.workspaceId })
         if (policy.value !== 'open') throw new PluginError(policy.value === 'review' ? 'skillReviewRequired' : 'skillPublishingDisabled', 403)
       }
       if (parsed.shared) await assertOrganizationResourceShare(parsed.workspaceId, 'skill', parsed.skillId, userId, await this.members())

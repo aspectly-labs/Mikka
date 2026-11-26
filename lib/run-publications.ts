@@ -449,6 +449,15 @@ async function automaticPublicationPending(runId: string): Promise<boolean> {
   }
 }
 
+export async function withPublicationFactorJob<T>(runId: string, work: () => Promise<T>) {
+  const { rows: [owner] } = await pool.query<{ userId: string; workspaceId: string }>(`SELECT p."userId",r."workspaceId"
+    FROM run_publications p JOIN agent_runs r ON r.id=p."runId" AND r."userId"=p."userId" AND r."issueId"=p."issueId"
+    WHERE p."runId"=$1 AND r."workspaceId" IS NOT NULL`, [runId])
+  if (!owner) return work()
+  const { withWorkspaceFactorJob } = await import('./enterprise/workspace-factor-job')
+  return withWorkspaceFactorJob(owner.userId, owner.workspaceId, work)
+}
+
 /** A Workflow step calls this; the DB lease also protects duplicate workflows. */
 export async function publishRunResult(runId: string, openPullRequest: OwnerPullRequestOpener = openOwnerPullRequest): Promise<{ done: boolean; retryAt?: number }> {
   const claim = await claimPublication(runId)

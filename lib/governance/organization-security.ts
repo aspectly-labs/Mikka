@@ -67,14 +67,10 @@ async function securityOrganizations(userId: string) {
 }
 
 async function workspacesRequiringTwoFactor(userId: string) {
-  const { rows: memberships } = await workspacePool.query<{ workspaceId: string; name: string }>(`SELECT w.id AS "workspaceId", w.name
+  const { rows } = await workspacePool.query<{ workspaceId: string; name: string }>(`SELECT w.id AS "workspaceId", w.name
     FROM mikka_workspace_members m JOIN mikka_workspaces w ON w.id=m."workspaceId"
-    WHERE m."userId"=$1 AND m.status='active' ORDER BY w.id`, [userId])
-  if (!memberships.length) return []
-  const { rows } = await pool.query<{ workspaceId: string }>(`SELECT "workspaceId" FROM workspace_setting_values
-    WHERE key='requireTwoFactor' AND "booleanValue" AND "workspaceId"=ANY($1::uuid[])`, [memberships.map(row => row.workspaceId)])
-  const required = new Set(rows.map(row => row.workspaceId))
-  return memberships.filter(row => required.has(row.workspaceId))
+    WHERE m."userId"=$1 AND m.status='active' AND w."twoFactorRequiredAt" IS NOT NULL ORDER BY w.id`, [userId])
+  return rows
 }
 
 /** Personal access stays available to enroll, step up, or use the native recovery codes. */

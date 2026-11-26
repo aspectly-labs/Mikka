@@ -28,7 +28,7 @@ export type TaskWorkspace = { id: string; kind: 'personal' | 'team' }
 
 type HeldTaskWorkspace = {
   reader: Reader;
-  userId: string; workspaceId: string; kind: TaskWorkspace['kind']; organizationId: string | null; tx: WorkspaceTransaction; active: boolean;
+  userId: string; workspaceId: string; kind: TaskWorkspace['kind']; factorAt: Date | null; organizationId: string | null; tx: WorkspaceTransaction; active: boolean;
   changedOrganizationWorkspaces: Set<string> | null;
   workspaceTransactionKey: object | null;
   boundary: object | undefined;
@@ -97,7 +97,7 @@ export function borrowTaskWorkspaceMembership(userId: string, workspaceId: strin
         [enterprisePrincipal]: acting.enterprisePrincipal } : lease.reader
       const allowed = !lease.changedOrganizationWorkspaces || lease.changedOrganizationWorkspaces.has(workspaceId)
         ? await filterEnterpriseWorkspaces(reader, [{ id: workspaceId }], appExecutor)
-        : await filterEnterpriseWorkspaceLinks(reader, [{ id: workspaceId, organizationId: lease.organizationId }], appExecutor)
+        : await filterEnterpriseWorkspaceLinks(reader, [{ id: workspaceId, organizationId: lease.organizationId, factorAt: lease.factorAt }], appExecutor)
       assertActive()
       if (!allowed.length) throw new ActionFailureError('workspaceAccessDenied')
     },
@@ -146,10 +146,10 @@ export async function activeTaskWorkspaces(reader: Reader, requestedId?: string,
   if (selectedId && lease && leaseActive(lease) && lease.userId === scope.userId && lease.workspaceId === selectedId) {
     if (!lease.changedOrganizationWorkspaces || lease.changedOrganizationWorkspaces.has(selectedId))
       return filterEnterpriseWorkspaces(reader, [{ id: lease.workspaceId, kind: lease.kind }], appExecutor)
-    const rows = await filterEnterpriseWorkspaceLinks(reader, [{ id: lease.workspaceId, kind: lease.kind, organizationId: lease.organizationId }], appExecutor)
+    const rows = await filterEnterpriseWorkspaceLinks(reader, [{ id: lease.workspaceId, kind: lease.kind, organizationId: lease.organizationId, factorAt: lease.factorAt }], appExecutor)
     return rows.map(({ id, kind }) => ({ id, kind }))
   }
-  const rows = await workspaceDb.select({ id: readerWorkspace.id, kind: readerWorkspace.kind, organizationId: readerOrganization.organizationId }).from(readerWorkspace)
+  const rows = await workspaceDb.select({ id: readerWorkspace.id, kind: readerWorkspace.kind, factorAt: readerWorkspace.twoFactorRequiredAt, organizationId: readerOrganization.organizationId }).from(readerWorkspace)
     .innerJoin(readerMember, eq(readerMember.workspaceId, readerWorkspace.id))
     .leftJoin(readerOrganization, eq(readerOrganization.workspaceId, readerWorkspace.id))
     .where(membership(scope.userId, selectedId, readerWorkspace, readerMember)).orderBy(asc(readerWorkspace.createdAt))
@@ -163,7 +163,7 @@ export async function withTaskWorkspace<T>(reader: Reader, workspaceId: string, 
   if (!z.uuid().safeParse(workspaceId).success || (scope.workspaceId && scope.workspaceId !== workspaceId)) throw new ActionFailureError('workspaceAccessDenied')
   return workspaceDb.transaction(async tx => {
     // Every admission locks workspace then member, matching seat/role writes.
-    const [workspace] = await tx.select({ id: workspaces.id, kind: workspaces.kind, ownerId: workspaces.userId }).from(workspaces)
+    const [workspace] = await tx.select({ id: workspaces.id, kind: workspaces.kind, ownerId: workspaces.userId, factorAt: workspaces.twoFactorRequiredAt }).from(workspaces)
       .where(eq(workspaces.id, workspaceId)).for('share')
     if (!workspace || (workspace.kind === 'personal' && workspace.ownerId !== scope.userId)) throw new ActionFailureError('workspaceAccessDenied')
     // Read linkage only after acquiring the Workspace lock: a join in the
@@ -173,7 +173,7 @@ export async function withTaskWorkspace<T>(reader: Reader, workspaceId: string, 
       .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, scope.userId), eq(workspaceMembers.status, 'active'))).for('share', { of: workspaceMembers })
     if (!member) throw new ActionFailureError('workspaceAccessDenied')
     try {
-      if (!(await filterEnterpriseWorkspaceLinks(reader, [{ id: workspaceId, organizationId: member.organizationId }])).length)
+      if (!(await filterEnterpriseWorkspaceLinks(reader, [{ id: workspaceId, organizationId: member.organizationId, factorAt: workspace.factorAt }])).length)
         throw new WorkspaceError('workspaceAccessDenied')
     }
     catch (error) {
@@ -189,7 +189,7 @@ export async function withTaskWorkspace<T>(reader: Reader, workspaceId: string, 
     }
     const parent = taskWorkspaceLease.getStore()
     const changedOrganizationWorkspaces = currentOrganizationChanges()
-    const lease: HeldTaskWorkspace = { reader, userId: scope.userId, workspaceId, kind: workspace.kind, organizationId: member.organizationId, tx, active: true,
+    const lease: HeldTaskWorkspace = { reader, userId: scope.userId, workspaceId, kind: workspace.kind, organizationId: member.organizationId, factorAt: workspace.factorAt, tx, active: true,
       changedOrganizationWorkspaces,
       workspaceTransactionKey: workspaceDatabase.workspaceTransactionKey?.() ?? null,
       boundary: currentTransactionBoundary(),

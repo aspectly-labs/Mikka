@@ -115,7 +115,7 @@ function workspaceSelect(columns?:Record<string,unknown>){
    assert.deepEqual(join.params,[])
    if(table==='mikka_workspaces'){
     assert.equal(join.sql,'"mikka_organization_workspaces"."workspaceId" = "mikka_workspaces"."id"')
-    assert.deepEqual(Object.keys(columns!),['id','kind','organizationId'])
+    assert.deepEqual(Object.keys(columns!),['id','kind','factorAt','organizationId'])
    }else{
     assert.equal(table,'mikka_workspace_members')
     assert.equal(join.sql,'"mikka_organization_workspaces"."workspaceId" = "mikka_workspace_members"."workspaceId"')

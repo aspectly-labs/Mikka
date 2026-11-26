@@ -4778,7 +4778,7 @@
     "memberInvalidEmail": "邮箱格式无效",
     "passwordNotSet": "此账户还没有密码，可以先设置密码。",
     "secretLimitReached": "此工作区的密钥和环境变量已达 500 个上限。",
-    "inviteInvalid": "邀请无效、已过期，或当前登录邮箱不匹配。",
+    "inviteInvalid": "请确认邀请仍有效，并切换到收到邀请的账号。",
     "secretImportTooLarge": ".env 文件超过 2 MB。",
     "usageLimitReached": "已达到用量上限，新任务已暂停，运行中的任务会继续完成。",
     "invalidCron": "cron 表达式无效，需要 5 段。",

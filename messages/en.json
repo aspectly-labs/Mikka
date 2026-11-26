@@ -4778,7 +4778,7 @@
     "memberInvalidEmail": "Enter a valid email address",
     "passwordNotSet": "This account has no password yet. Set one first.",
     "secretLimitReached": "This workspace has reached the limit of 500 secrets and variables.",
-    "inviteInvalid": "This invitation is invalid, expired, or the signed-in email does not match.",
+    "inviteInvalid": "Check that the invitation is still valid and switch to the account that received it.",
     "secretImportTooLarge": "The .env file is over 2 MB.",
     "usageLimitReached": "The usage limit has been reached. New tasks are paused; running tasks will finish.",
     "invalidCron": "The cron expression is invalid; it needs five fields.",

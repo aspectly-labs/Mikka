@@ -64,9 +64,9 @@ export async function loadWorkspaceContext(requestedId?: string, authenticatedUs
   if (patWorkspace && (requestedId && requestedId !== patWorkspace || selection.workspaceId && selection.workspaceId !== patWorkspace)) throw new WorkspaceError('workspaceAccessDenied')
   // An explicit business target keeps its existing access check. A supplied
   // transport selection is exact: inaccessible choices never fall back home.
-  const { organizationId, ...context } = await readWorkspaceContext(user.id, user.email, user.name, user.image ?? null, patWorkspace ?? requestedId ?? selection.workspaceId ?? '', locale, user)
+  const { organizationId, factorAt, ...context } = await readWorkspaceContext(user.id, user.email, user.name, user.image ?? null, patWorkspace ?? requestedId ?? selection.workspaceId ?? '', locale, user)
   if (selection.present && !context.choices.some(choice => choice.id === selection.workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
-  if (!(await filterEnterpriseWorkspaceLinks(user, [{ id: context.workspace.id, organizationId }])).length) throw new WorkspaceError('workspaceAccessDenied')
+  if (!(await filterEnterpriseWorkspaceLinks(user, [{ id: context.workspace.id, organizationId, factorAt }])).length) throw new WorkspaceError('workspaceAccessDenied')
   return patWorkspace ? { ...context, choices: context.choices.filter(choice => choice.id === patWorkspace) } : context
 }
 
@@ -83,7 +83,7 @@ async function readWorkspaceContext(userId: string, email: string, name: string,
     transaction: typeof workspaceDatabase.workspaceTransactionKey !== 'function' || workspaceDatabase.workspaceTransactionKey() !== null,
     identity: { userId, nativeSessionId: desktopHumanSessionId(), requestedId,
       tokenWorkspaceId: reader[tokenWorkspace], principal: reader[enterprisePrincipal], acting: actingContext.getStore() },
-  }, () => workspaceDb.select({ id: workspaces.id, name: workspaces.name, kind: workspaces.kind, role: workspaceMembers.role, organizationId: organizationWorkspaces.organizationId }).from(workspaces)
+  }, () => workspaceDb.select({ id: workspaces.id, name: workspaces.name, kind: workspaces.kind, role: workspaceMembers.role, factorAt: workspaces.twoFactorRequiredAt, organizationId: organizationWorkspaces.organizationId }).from(workspaces)
     .innerJoin(workspaceMembers, eq(workspaceMembers.workspaceId, workspaces.id))
     .leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, workspaces.id))
     .where(and(eq(workspaceMembers.userId, user.id), eq(workspaceMembers.status, 'active'),
@@ -115,7 +115,7 @@ async function readWorkspaceContext(userId: string, email: string, name: string,
   }
   if (!selected) throw new WorkspaceError('workspaceAccessDenied')
   return {
-    organizationId: selected.organizationId,
+    organizationId: selected.organizationId, factorAt: selected.factorAt,
     workspace: { id: selected.id, name: selected.name, kind: selected.kind },
     choices: choices.map(({ id, name, kind }) => ({ id, name, kind })),
     currentUserId: user.id,
