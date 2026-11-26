@@ -103,6 +103,7 @@ export async function readThreadWorkspace(
     // A computer's own name; a sandbox has none.
     name: placement.machine.name,
     startedAt: placement.machine.cloud?.createdAt ?? null, endedAt: placement.machine.cloud?.endedAt ?? null,
+    ...(placement.machine.cloud?.compute ? { e2bCompute: placement.machine.cloud.compute } : {}),
   } : null
 
   return {
