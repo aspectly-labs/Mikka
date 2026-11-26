@@ -40,6 +40,7 @@ export async function hostedModel(
   provider?: Model,
   ownerId?: string,
   metadataOrBilling: AiMetadata | HostedModelBilling = {},
+  pro = false,
 ): Promise<Model> {
   const billingAdapter = 'usage' in metadataOrBilling ? metadataOrBilling as HostedModelBilling : undefined
   const metadata: AiMetadata = billingAdapter ? {} : metadataOrBilling as AiMetadata
@@ -51,8 +52,8 @@ export async function hostedModel(
     return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
   })
   if (provider) throw new ModelAdmissionError('modelRouteDenied')
-  const model = createLiteLLMModel(modelId, { user: workspaceId })
-  const forCall = async (id: string) => createLiteLLMModel(modelId, { user: workspaceId, callId: hostedCallId(id, await stepIdentity()) })
+  const model = createLiteLLMModel(modelId, { user: workspaceId, ...(pro ? { pro } : {}) })
+  const forCall = async (id: string) => createLiteLLMModel(modelId, { user: workspaceId, ...(pro ? { pro } : {}), callId: hostedCallId(id, await stepIdentity()) })
   const reserve = async (id: string, args: CallArgs) => {
     await admitHostedModel(scope, modelId, { signal: args.abortSignal, auditAllowed: false })
     // An input-size boundary, not a prepaid or estimated-cost balance check.

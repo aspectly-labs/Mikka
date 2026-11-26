@@ -48,7 +48,7 @@ export async function resolveFrozenHostedModel(scope: HostedModelScope, runtime:
   cancelled(signal)
   if (runtime.harness !== 'ai_sdk' || !runtime.model) throw refuse()
   if (runtime.modelSelection === undefined) {
-    return resolveDefaultHostedModel(scope,runtime.model)
+    return runtime.pro ? resolveDefaultHostedModel(scope, runtime.model, true) : resolveDefaultHostedModel(scope, runtime.model)
   }
   if (runtime.modelSelection.type === 'api_key') {
     const frozen = hostedApiKeySnapshotSchema.parse(runtime.modelSelection)
@@ -57,6 +57,7 @@ export async function resolveFrozenHostedModel(scope: HostedModelScope, runtime:
     cancelled(signal)
     const { resolveApiKeyChatModel } = await import('./model-api-key-chat')
     const tier = runtime.serviceTier === 'fast' || runtime.serviceTier === 'ultrafast' ? runtime.serviceTier : undefined
+    if (runtime.pro) return resolveApiKeyChatModel(frozen, undefined, true)
     return tier ? resolveApiKeyChatModel(frozen, tier) : resolveApiKeyChatModel(frozen)
   }
   const frozen = hostedSubscriptionSnapshotSchema.parse(runtime.modelSelection)

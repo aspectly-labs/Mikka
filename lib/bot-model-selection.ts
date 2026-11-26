@@ -23,7 +23,7 @@ export async function freezeBotModel(
   const workspaceId = scope.workspaceId ?? (await executionWorkspace(scope.ownerId, scope.botId));
   const snapshot = await freezeBotModelChoice({ ...scope, workspaceId }, dependencies);
   // The Bot's reasoning effort and serving speed tier are frozen with the turn's model.
-  const [botEffort, orderRow] = await Promise.all([
+  const [botEffort, orderRow, chatTier] = await Promise.all([
     botModelEffort(pool, { ownerId: scope.ownerId, workspaceId }, scope.botId),
     pool
       ? pool.query<{ effort: string | null; tier: string | null }>(
@@ -33,10 +33,23 @@ export async function freezeBotModel(
           [scope.ownerId, workspaceId],
         ).then(result => result.rows[0] ?? null, () => null)
       : Promise.resolve(null),
+    pool
+      ? pool.query<{ tier: string | null; pro: boolean }>('SELECT "serviceTier" AS tier, pro FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3',
+          [scope.ownerId, workspaceId, scope.botId ?? "coordinator"]).then(result => result.rows[0] ?? null, () => null)
+      : Promise.resolve(null),
   ]);
   const workspaceEffort = MODEL_ROUTING_EFFORTS.find(item => item === orderRow?.effort);
-  const effort: ModelRoutingEffort | undefined = botEffort ?? (workspaceEffort && workspaceEffort !== "medium" ? workspaceEffort : undefined);
-  const savedTier = MODEL_SERVICE_TIERS.find(item => item === orderRow?.tier);
+  let effort: ModelRoutingEffort | undefined = botEffort ?? (workspaceEffort && workspaceEffort !== "medium" ? workspaceEffort : undefined);
+  // The chat's own speed (bot_model_choices.serviceTier) comes before the workspace's default.
+  const savedTier = MODEL_SERVICE_TIERS.find(item => item === chatTier?.tier) ?? MODEL_SERVICE_TIERS.find(item => item === orderRow?.tier);
+  // A level the frozen model cannot take is left out (its default), checked against the provider's own catalogue
+  // (lib/model-capabilities.ts), so a model the built-in list does not know still gets the level its provider lists.
+  let pro = false;
+  if ((effort || chatTier?.pro) && snapshot.model) {
+    const capabilities = await frozenCapabilities(snapshot).catch(() => null);
+    pro = chatTier?.pro === true && capabilities?.pro === true;
+    if (pro || (effort && capabilities && !capabilities.efforts.includes(effort))) effort = undefined;
+  }
   let serviceTier: ModelServiceTier | undefined = savedTier;
   if (!snapshot.modelSelection && snapshot.model && (savedTier === "fast" || savedTier === "ultrafast")) {
     // Verify Mikka Credits speed capability on the Node server before freezing (keeps Workflow VM free of model-order).
@@ -47,8 +60,21 @@ export async function freezeBotModel(
   return {
     ...snapshot,
     ...(effort ? { effort } : {}),
-    ...(serviceTier ? { serviceTier } : {}),
+    ...(pro ? { pro: true as const } : serviceTier ? { serviceTier } : {}),
   };
+}
+
+/** What the frozen model can be asked for on its route: Mikka 额度, a subscription or a key. */
+async function frozenCapabilities(snapshot: HostedRuntimeSnapshot) {
+  const { modelCapabilityReader } = await import("./model-capabilities-server");
+  const selection = snapshot.modelSelection;
+  if (!selection) return (await modelCapabilityReader(pool, []))({ source: "credits", modelId: snapshot.model! });
+  if (selection.type === "subscription") {
+    return (await modelCapabilityReader(pool, [selection.connectionId]))({ source: "subscription", connectionId: selection.connectionId,
+      provider: selection.route === "claude_cpa" ? "claude" : "codex", modelId: selection.modelId });
+  }
+  const { rows: [key] } = await pool.query<{ provider: string; responsesApi: boolean }>('SELECT provider,"responsesApi" FROM model_api_keys WHERE id=$1', [selection.keyId]);
+  return (await modelCapabilityReader(pool, []))({ source: "byok", provider: key?.provider ?? "custom", modelId: selection.modelId, responsesApi: key?.responsesApi });
 }
 
 async function freezeBotModelChoice(

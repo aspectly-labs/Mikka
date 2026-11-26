@@ -122,7 +122,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     assert.equal((await order.orderView(pool, scope, async () => [])).devices, 0, 'the supplied display snapshot is the one consumed')
   })
 
-  for (const allowed of [false, true]) await t.test(`prompt order facts omit only unused count queries when member sharing is ${allowed}`, async t => {
+  for (const allowed of [false, true]) await t.test(`prompt order facts omit Settings-only counts and capabilities when member sharing is ${allowed}`, async t => {
     const scope = await person('order-context-count')
     await subscribe(scope, 'claude', ['claude-haiku-5-5'])
     await keys.addApiKey(pool, scope.ownerId, { provider: 'deepseek', apiKey: `sk-${randomBytes(12).toString('hex')}` }, { fetch: (async () => Response.json({ data: [{ id: 'count-fixture' }] })) as unknown as typeof fetch })
@@ -137,15 +137,21 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     const full = await order.orderView(tracked(fullStatements), scope, async () => [])
     const context = await order.orderView(tracked(contextStatements), scope, async () => [], 'context')
     const { location, preferredHarness, entries, candidates, cloudReady, cloudModels } = full
-    assert.deepEqual(context, { location, preferredHarness, entries, candidates, cloudReady, cloudModels })
+    assert.ok(candidates.length > 0 && candidates.every(candidate => candidate.capabilities), 'Settings receives populated route capabilities')
+    const promptCandidates = candidates.map(({ capabilities: _capabilities, ...candidate }) => candidate)
+    assert.deepEqual(context, { location, preferredHarness, entries, candidates: promptCandidates, cloudReady, cloudModels })
     assert.equal(full.credentials, 2, 'the page still counts the subscription and key with sharing either allowed or denied')
     assert.equal(Object.hasOwn(context, 'credentials'), false)
     const countStart = fullStatements.findIndex(row => row.sql.startsWith('SELECT id::text AS id FROM byos_connections WHERE'))
     // No shared keys: only the connected-subscription and own/shared-key count reads.
-    const saved = 3
+    const countReads = 3
+    const capabilityRead = fullStatements.findIndex(row => row.sql.includes('AS "effortSupport"'))
     assert.ok(countStart >= 0)
+    assert.ok(capabilityRead >= countStart + countReads)
+    const saved = countReads + 1
     assert.equal(fullStatements.length - contextStatements.length, saved)
-    assert.deepEqual(contextStatements, [...fullStatements.slice(0, countStart), ...fullStatements.slice(countStart + saved)], 'every remaining SQL statement and scoped argument is unchanged')
+    assert.deepEqual(contextStatements, fullStatements.filter((_, i) => (i < countStart || i >= countStart + countReads) && i !== capabilityRead),
+      'every remaining SQL statement and scoped argument is unchanged')
     t.diagnostic(JSON.stringify({ kind: 'order_projection_pg_query_budget', allowed, full: fullStatements.length, context: contextStatements.length, saved }))
   })
 

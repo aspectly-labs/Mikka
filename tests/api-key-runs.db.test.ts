@@ -397,6 +397,20 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
     assert.equal(await recorded(runId), null)
   })
 
+  await t.test('a key newly known rejected refuses the frozen run at claim with credential health', async () => {
+    const p = await person('key-rejected-before-claim')
+    const key = await addKey(p.id, 'anthropic', `sk-ant-${randomBytes(16).toString('hex')}`, ['key-model-a'])
+    const { runId } = await queueRun(p.id, { issueId: p.issueId, agentId: p.agents.claude_code, repo: p.remote, model: 'key-model-a' }, p.botId)
+    assert.equal((await definition(runId)).apiKey.keyId, key.id)
+    await pool.query('UPDATE model_api_keys SET "modelsError"=$2 WHERE id=$1', [key.id, 'invalid'])
+    const response = await claim(p.deviceId, runId, p.token)
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), { error: 'API key unavailable.', code: 'apiKeyUnavailable',
+      health: { reason: 'key_rejected', action: 'replace_key' } })
+    assert.equal((await pool.query('SELECT "stopReason" FROM agent_runs WHERE id=$1', [runId])).rows[0]?.stopReason, 'blocked')
+    assert.equal(await recorded(runId), null)
+  })
+
   await t.test('HTTP local claims use only the configured loopback gateway and require a compatible daemon', async () => {
     const savedOrigin = process.env.BETTER_AUTH_URL
     try {

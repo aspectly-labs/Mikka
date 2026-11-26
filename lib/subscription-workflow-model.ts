@@ -61,7 +61,7 @@ export class SubscriptionWorkflowModel implements V4Model {
     const routePolicy: SubscriptionModelRequestPolicy | undefined = !this.requestPolicy
       ? undefined
       : this.selection.type === 'api_key'
-        ? (this.requestPolicy.apiKeyServiceTier ? { apiKeyServiceTier: this.requestPolicy.apiKeyServiceTier } : undefined)
+        ? (this.requestPolicy.apiKeyPro ? { apiKeyPro: true } : this.requestPolicy.apiKeyServiceTier ? { apiKeyServiceTier: this.requestPolicy.apiKeyServiceTier } : undefined)
         : this.selection.route === 'codex_cpa'
           ? (this.requestPolicy.codexServiceTier ? { codexServiceTier: this.requestPolicy.codexServiceTier } : undefined)
           : this.selection.route === 'claude_cpa'

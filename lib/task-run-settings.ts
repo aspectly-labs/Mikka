@@ -22,6 +22,7 @@ export function storedRunSettings(raw: unknown, eventId?: string | null): TaskRu
 
 /** The requested effort on the run's model dispatch, when that model takes it; otherwise the dispatch as it was. */
 export function withRequestedEffort(dispatch: WorkerModelDispatch, settings: TaskRunSettings, model: string): WorkerModelDispatch {
+  if (dispatch.pro) return dispatch
   const effort = settings.model?.effort
   const harness = dispatch.entry?.harness
   if (!effort || !harness || !supportedModelEfforts(model, harness).includes(effort)) return dispatch

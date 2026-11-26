@@ -1982,7 +1982,7 @@
         "POST",
         "PUT"
       ],
-      "sourceHash": "da65687e89cd602a6d47dba2b18d4f68778435b42f27e00d60fa680edbff2396"
+      "sourceHash": "0cfcd30df3650572037bd75bfe14b4b656ca8cd4b4569347565dc75c1421bca7"
     },
     {
       "path": "/mikka/api/mobile/open",
@@ -4220,7 +4220,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "d586183e277e7ede2939ed88f83badcf73a88a169eff82041a4c0f7e846a244c"
+      "sourceHash": "f7d7c5cd8b1b6487b20c69d304ae292fe839f27ec39d5f921d07520cf43695bd"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

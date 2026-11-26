@@ -26,6 +26,7 @@ export interface WorkerModelDispatch {
   /** The reasoning effort the request asked for (an automation's), host-checked against the model. */
   effort?: import('../model-routing').ModelRoutingEffort
   /** The serving speed tier (fast / ultrafast), server-verified against real model capabilities before dispatch. */
+  pro?: true
   serviceTier?: import('../model-routing').ModelSpeedMode
 }
 
@@ -38,6 +39,7 @@ export function workerModelDispatchFromTarget(
   target: {
     entry: OrderEntry
     effort?: import('../model-routing').ModelRoutingEffort
+    pro?: true
     serviceTier?: import('../model-routing').ModelSpeedMode
   },
   options: {
@@ -48,14 +50,14 @@ export function workerModelDispatchFromTarget(
   },
 ): WorkerModelDispatch {
   // Explicit profile effort wins over workspace defaultEffort (claim reads modelDispatch.effort ?? agentProfile.effort).
-  const effort = options.profileEffort ? undefined : target.effort
+  const effort = target.pro || options.profileEffort ? undefined : target.effort
   return {
     mode: options.mode,
     ...(options.location ? { location: options.location } : {}),
     entry: target.entry,
     ...(options.followed ? { followed: options.followed } : {}),
     ...(effort ? { effort } : {}),
-    ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+    ...(target.pro ? { pro: true } : target.serviceTier ? { serviceTier: target.serviceTier } : {}),
   }
 }
 
@@ -177,6 +179,7 @@ function apiKeyModelDispatch(dispatch: WorkerModelDispatch | undefined, key: { k
   const frozen = structuredClone(dispatch)
   const entry = frozen.entry
   if (entry && (entry.source.kind !== 'api_key' || entry.source.keyId !== key.keyId || entry.model !== key.model)) {
+    delete frozen.pro
     frozen.entry = { ...entry, id: `api_key:${entry.harness}:${key.model}:${key.keyId}`, model: key.model, source: { kind: 'api_key', keyId: key.keyId } }
     if (frozen.routing && frozen.routing.model !== key.model) {
       const { effort, ...previous } = frozen.routing

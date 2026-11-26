@@ -111,6 +111,13 @@ for (const localLogin of [true, false]) {
 test('a missing explicit model cannot turn into a key’s first model', async () => {
   assert.deepEqual(await runCredentialSource(query, { ...scope, model: 'missing-fixture', subscription: null }), { subscription: null })
 })
+test('a run skips rejected keys before matching the model for quota fallback', async () => {
+  const model = 'claude-sonnet-fixture'
+  keys = [{ ...key(3, [model]), modelsError: 'invalid' }, key(4, [model])]
+  assert.deepEqual(await quotaFallbackApiKey(query, { ...scope, model }), { keyId: id(4), model })
+  keys[1] = { ...keys[1], modelsError: 'invalid' }
+  assert.equal(await quotaFallbackApiKey(query, { ...scope, model }), undefined)
+})
 // Decision 2026-11-15-2000: a catalogue model runs on the person's key for that same model, else on Mikka 额度.
 test('a catalogue model runs on Mikka 额度 unless a key of its vendor offers the same model', async () => {
   assert.deepEqual(await runCredentialSource(query, { ...scope, model: 'anthropic/claude-opus-5.5', subscription: null }), { subscription: null, credits: { model: 'anthropic/claude-opus-5.5' } })

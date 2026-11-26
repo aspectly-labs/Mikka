@@ -298,11 +298,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const openRunKey = async (): Promise<RouteResponse | null> => {
     if (!frozenKey && !frozenCredits) return null
     const [{ validateRunApiKey }, { WorkspaceError }] = await Promise.all([import('@/lib/model-api-keys'), import('@/lib/workspace-error')])
-    const refuse = async () => {
+    const refuse = async (health?: import('@/lib/model-route-rejection').ModelRouteHealth) => {
       const { persistRunCompletion } = await import('@/lib/run-publications')
       await persistRunCompletion(caller.userId, runId, { stopReason: 'blocked', report: { summary: 'API key unavailable.', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
       afterJob('after:coordinator-wake', async () => { const { wakeCoordinator } = await import('@/lib/coordinator/wake'); await wakeCoordinator(caller.userId) })
-      return RouteResponse.json({ error: 'API key unavailable.', code: 'apiKeyUnavailable' }, { status: 409 })
+      return RouteResponse.json({ error: 'API key unavailable.', code: 'apiKeyUnavailable', ...(health ? { health } : {}) }, { status: 409 })
     }
     if (harness !== 'claude_code' && harness !== 'codex') return refuse()
     // HTTP is only for a local runner on this server's configured loopback origin.
@@ -312,8 +312,14 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (frozenKey) {
       try { await validateRunApiKey(pool, runId, frozenKey.keyId) }
       catch (error) {
-        if (!(error instanceof WorkspaceError) || error.code !== 'apiKeyNotFound') return RouteResponse.json({ error: 'API key unavailable.' }, { status: 409 })
-        return refuse()
+        if (error instanceof WorkspaceError) {
+          if (error.code === 'apiKeyNotFound') return refuse()
+          if (error.code === 'apiKeyInvalid') {
+            const { modelRouteRejection } = await import('@/lib/model-route-rejection')
+            return refuse(modelRouteRejection('keyRefused')?.health)
+          }
+        }
+        return RouteResponse.json({ error: 'API key unavailable.' }, { status: 409 })
       }
     }
     const { mintGatewayToken } = await import('@/lib/model-gateway/token')
@@ -618,7 +624,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
           (request.headers.get(CUSTOM_TASK_BRANCH_HEADER) === '1' || /^mikka\/[a-z0-9-]+-[1-9][0-9]*$/.test(publication.pushBranch))
           ? { branch: publication.pushBranch } : {}) } } : {}),
     ...(run.agentDefinition?.model ? {model:run.agentDefinition.model} : {}),
-    ...((run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort)
+    ...(!run.agentDefinition?.modelDispatch?.pro && (run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort)
       ? { effort: run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort } : {}),
     ...(run.agentDefinition?.modelDispatch?.serviceTier ? { serviceTier: run.agentDefinition.modelDispatch.serviceTier } : {}),
     ...(modelCredential ? { modelCredential } : {}),

@@ -10,9 +10,10 @@ import { observedModel } from './tracing/ai'
 
 type V4Model = Extract<LanguageModel, { specificationVersion: 'v4' }>
 
-async function open(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode): Promise<V4Model> {
+async function open(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode, pro = false): Promise<V4Model> {
   const { apiKey, baseUrl, provider, modelSpeedModes } = await openApiKeyForChat(pool, frozen.ownerId, frozen.workspaceId, frozen.keyId)
-  const model = createLiteLLMModel(frozen.modelId, { user: frozen.workspaceId, credential: { apiKey, baseUrl, provider: provider === 'anthropic' ? 'anthropic' : 'openai', modelId: frozen.modelId } })
+  if (pro && provider !== 'openai') throw new Error('model_pro_unavailable')
+  const model = createLiteLLMModel(frozen.modelId, { user: frozen.workspaceId, ...(pro ? { pro } : {}), credential: { apiKey, baseUrl, provider: provider === 'anthropic' ? 'anthropic' : 'openai', modelId: frozen.modelId } })
   if (typeof model === 'string' || model.specificationVersion !== 'v4') throw new Error('subscription_model_unavailable')
   if (!serviceTier) return model
   // Verify server-advertised speed support against the exact authorized key and model before encoding the tier.
@@ -37,13 +38,13 @@ async function open(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode):
  * its next call instead of switching to another credential (orchestration.md § 2).
  * The provider bills the key's owner; Mikka charges no credits (§ 7).
  */
-export async function resolveApiKeyChatModel(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode): Promise<LanguageModel> {
-  const first = await open(frozen, serviceTier)
+export async function resolveApiKeyChatModel(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode, pro = false): Promise<LanguageModel> {
+  const first = await open(frozen, serviceTier, pro)
   return observedModel(new Proxy(first, { get(target, property) {
     const member = Reflect.get(target, property, target)
     if (property === 'doStream' || property === 'doGenerate') {
       return async (...args: unknown[]) => {
-        const current = await open(frozen, serviceTier)
+        const current = await open(frozen, serviceTier, pro)
         return Reflect.apply(Reflect.get(current, property, current) as (...a: unknown[]) => unknown, current, args)
       }
     }

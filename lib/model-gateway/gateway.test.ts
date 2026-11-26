@@ -198,3 +198,14 @@ test('frozen run serviceTier injects OpenAI priority/ultrafast and Anthropic fas
   assert.equal(JSON.parse(String(claudeOnOpenAi.calls.fetched[0].init.body)).speed, undefined)
   assert.equal((claudeOnOpenAi.calls.fetched[0].init.headers as Record<string, string>)['anthropic-beta'], undefined)
 })
+
+test('only a frozen Pro choice controls Responses reasoning mode; Pro omits effort and speed', async () => {
+  for (const pro of [false, true]) {
+    const fixture = harness({ verify: async () => grant({ harness: 'codex', ...(pro ? { pro: true } : {}) }),
+      answer: () => Response.json({ ok: true }) })
+    await handleModelGateway(post({ input: 'hello', reasoning: { effort: 'high', mode: 'pro' } }), 'openai', 'responses', fixture.dependencies)
+    const body = JSON.parse(String(fixture.calls.fetched[0].init.body))
+    assert.deepEqual(body.reasoning, pro ? { mode: 'pro' } : { effort: 'high' })
+    assert.equal(body.service_tier, undefined)
+  }
+})
