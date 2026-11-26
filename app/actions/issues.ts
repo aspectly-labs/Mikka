@@ -58,6 +58,8 @@ import { ownerListRead } from '@/lib/live/list-read-server'
 import { beginOwnerListRead } from '@/lib/live/revision-read'
 import { changedListIds, listPositionKey, readListPositions, unchangedList, type ListPosition } from '@/lib/list-poll'
 import { cacheReadAction } from '@/lib/cache-read-action'
+import { referencedTaskFileIds } from '@/lib/task-comments/document'
+import { syncTaskInlineFileReferences } from '@/lib/task-comments/save-effects'
 import { requireTaskWorkspace, taskReaderScope, withTaskWorkspace } from '@/lib/task-workspace'
 
 type IssueRow = typeof issues.$inferSelect
@@ -426,6 +428,8 @@ async function persistIssue(input: SaveIssueInput, block?: BlockFlag, state?: Ch
           if (!source) throw new ActionFailureError('workspaceAccessDenied')
         }
         await tx.insert(issueVersions).values({ id: crypto.randomUUID(), issueId: id, userId: ownerId, revision: issue.revision, title: issue.title, content: issue.content, status: issue.status, priority: issue.priority, ...actor })
+        // A saved (or restored) description keeps the inline files it names; comments' files are the document's to track.
+        await syncTaskInlineFileReferences(tx, id, referencedTaskFileIds(issue.content as JSONContent, []), { onlyAdd: true })
         await issueListChanged(tx, id, latest.title !== issue.title)
         // Title, status and priority show in every connected task's relations panel.
         await issueRelationsChanged(tx, [id])
