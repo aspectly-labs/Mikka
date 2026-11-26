@@ -16,8 +16,8 @@ test('parking a native writer prunes archives once, after persisting its stop an
   try { ({ TaskMachine } = await import('./machine.mjs')) } finally { hooks.deregister() }
 
   const grant = machineGrant({ ownerId: 'owner', workspaceId: randomUUID(), taskId: randomUUID(), runId: randomUUID(),
-    operationId: randomUUID(), repositoryKey: 'v2/github.com/owner/repo', expiresAt: Date.now() + 60_000 })
-  const data = new Map([['nativeWriter', 'writer'], ['run', { grant, admittedAt: Date.now(), state: 'running' }]])
+    operationId: randomUUID(), repositoryKey: 'v2/github.com/owner/repo', expiresAt: Date.now() + 60_000, metered: true })
+  const data = new Map([['nativeWriter', 'writer'], ['run', { grant, expiresAt: grant.expiresAt, admittedAt: Date.now(), state: 'running' }]])
   const checkpoint = { id: randomUUID(), sha256: 'a'.repeat(64), bytes: 3 }
   const events = []
   const container = {
@@ -40,6 +40,9 @@ test('parking a native writer prunes archives once, after persisting its stop an
       },
     },
   })
+  const cleanupGrant = { ...grant, expiresAt: 0 }
+  await assert.rejects(machine.withMachine(cleanupGrant, () => {}), /lease expired/)
+  assert.equal(await machine.withMachine(cleanupGrant, () => 'archive', true), 'archive')
   const result = await machine.park(grant)
   assert.deepEqual(result.checkpoint, checkpoint)
   assert.equal(result.state, 'stopped')

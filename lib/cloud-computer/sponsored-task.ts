@@ -109,9 +109,11 @@ function frozenGrant(run: BoundRun | undefined, actor: TaskMachineActor): TaskMa
     run.agentDefinition.executionIdentity?.billingAccount.runtime.kind !== 'cloudflare_sponsored'
   )
     throw denied()
-  // The machine may only start at the size recorded in its lifecycle, re-checked
-  // against the quota gate so a stored over-limit size never provisions silently.
-  const size = isMachineSize(run.sponsoredSize) ? provisionableMachineSize(run.sponsoredSize, verifiedMachineQuota()).size : undefined
+  // Explicit admission already verified the frozen SKU. Only legacy grants
+  // use the historical runtime quota adjustment.
+  const metered = run.agentDefinition.taskCompute?.provider === 'cloudflare'
+  const size = isMachineSize(run.sponsoredSize)
+    ? metered ? run.sponsoredSize : provisionableMachineSize(run.sponsoredSize, verifiedMachineQuota()).size : undefined
   return {
     ownerId: p.ownerId,
     workspaceId: p.workspaceId,
@@ -120,7 +122,7 @@ function frozenGrant(run: BoundRun | undefined, actor: TaskMachineActor): TaskMa
     runId: run.id,
     operationId: run.operationId,
     expiresAt: run.until?.getTime() ?? 0,
-    ...(run.agentDefinition.taskCompute?.provider === 'cloudflare' ? { metered: true as const } : {}),
+    ...(metered ? { metered: true as const } : {}),
     ...(size ? { size } : {}),
     ...(run.requiredCheckpoint ? { requiredCheckpoint:run.requiredCheckpoint } : {}),
   }

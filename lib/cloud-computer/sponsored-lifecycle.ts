@@ -451,11 +451,11 @@ async function renewSponsoredMachine(pool: Pool, actor: TaskMachineActor, runId:
   // Rows admitted before the quota gate may still carry an over-limit size:
   // they are billed at what can actually start, like new admissions (#3080).
   const stored = isMachineSize(row.lifecycle.sponsoredSize) ? row.lifecycle.sponsoredSize : DEFAULT_MACHINE_SIZE
-  const size = provisionableMachineSize(stored, verifiedMachineQuota()).size
+  const metered = row.lifecycle.portableCompute === true
+  const size = metered ? stored : provisionableMachineSize(stored, verifiedMachineQuota()).size
   const index = typeof row.lifecycle.sponsoredChunks === 'number' ? row.lifecycle.sponsoredChunks : 1
   const { fundMachineChunk } = await import('./machine-billing')
   const chunk = { provider: 'cloudflare' as const, ownerId: actor.userId, workspaceId: actor.workspaceId, runId, operationId: row.operationId!, index, size }
-  const metered = row.lifecycle.portableCompute === true
   const funded = metered ? await holdCloudflareCompute(pool, chunk) : await fundMachineChunk(chunk)
   const sample = funded && metered && index > 0 ? await settleCloudflareCompute(pool, { ...chunk, index: index - 1 }, true) : null
   if (funded && metered && !sample) throw new ComputerError(503, 'Cloudflare compute measurement unavailable')
