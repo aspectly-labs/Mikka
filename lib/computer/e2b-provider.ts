@@ -23,16 +23,28 @@ const ownerOf = async (workspaceId: string, id: string) => {
   return owner
 }
 
-export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget) {
+export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget, policyOnly = false) {
   const owner = await ownerOf(workspaceId, id)
   const account = await e2bResourceAccount(owner, 'sandbox', id)
   const base = options(account.apiKey)
   const request = runtimeRequestOptions(budget)
   const boundedSignal = signal && request.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request.signal
-  base.timeoutMs = await e2bSandboxTimeout(owner, id, base.timeoutMs, true,
-    { providerScope: account.scope,
-      inspect: () => withE2BErrors(owner, false, () => Sandbox.getInfo(id, { ...base, ...request, signal: boundedSignal })) })
-  return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
+  const inspect = () => withE2BErrors(owner, false, () => Sandbox.getInfo(id, { ...base, ...request, signal: boundedSignal }))
+  if (policyOnly && (await inspect()).state !== 'running') throw new PolicySandboxUnavailable()
+  try {
+    base.timeoutMs = await e2bSandboxTimeout(owner, id, base.timeoutMs, !policyOnly, { providerScope: account.scope, inspect })
+  } catch (error) {
+    if (policyOnly && error instanceof E2BKeyError && ['e2b_limit_reached', 'e2b_unavailable'].includes(error.code))
+      throw new PolicySandboxUnavailable()
+    throw error
+  }
+  return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request,
+    ...(policyOnly ? { requestTimeoutMs: 5_000, retries: 0 } : {}),
+    ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
+}
+
+export class PolicySandboxUnavailable extends Error {
+  constructor() { super('No running prepaid sandbox to synchronize') }
 }
 
 /** The machine's sandbox no longer exists at E2B (killed, or expired while paused). */

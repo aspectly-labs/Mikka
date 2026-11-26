@@ -216,8 +216,7 @@ test(
         JSON.stringify(['environment-build-slot', environmentSnapshotScope(), ws.id]),
       ])
       const deferred = await buildEnvironmentSnapshot(waiting)
-      assert.equal(typeof deferred, 'object')
-      assert.ok(deferred && 'retryAt' in deferred)
+      assert.ok(deferred && typeof deferred === 'object' && 'retryAt' in deferred)
     } finally {
       held.release(true)
     }

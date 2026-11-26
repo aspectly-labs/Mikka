@@ -47,17 +47,14 @@ const tx = {
   insert(table: unknown) { assert.equal(table, agentRuns); return { values: async (value: Record<string, unknown>) => { inserted = value } } },
 }
 const database = {
-  async execute(statement: SQL) {
-    const query = queryOf(statement)
-    assert.ok(resourceLocked)
-    assert.equal(query.sql, 'select "environmentId" from bots where id=$1 and "workspaceId"=$2 and "ownerId"=$3 and "archivedAt" is null')
-    assert.deepEqual(query.params, [botId, workspaceId, lost.userId])
-    return { rows: [{ environmentId: null }] }
-  },
   execute: async (statement: SQL) => {
     const query = queryOf(statement)
-    assert.deepEqual(query.params, [lost.id, lost.userId])
     assert.ok(resourceLocked, 'recovery reads hold the live resource lease')
+    if (query.sql === 'select "environmentId" from bots where id=$1 and "workspaceId"=$2 and "ownerId"=$3 and "archivedAt" is null') {
+      assert.deepEqual(query.params, [botId, workspaceId, lost.userId])
+      return { rows: [{ environmentId: null }] }
+    }
+    assert.deepEqual(query.params, [lost.id, lost.userId])
     assert.ok([
       'select b."workspaceId",m."sandboxId",m."operationId",m."deviceId",m."repoId" from computer_run_bindings b left join thread_machines m on m."runId"=b."runId" and m."ownerId"=b."ownerId" and m."workspaceId"=b."workspaceId" where b."runId"=$1 and b."ownerId"=$2',
       'select 1 from computer_run_bindings where "runId"=$1 and "ownerId"=$2',
