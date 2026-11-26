@@ -40,10 +40,12 @@ function objectUrl(config: ObjectStorageConfig, key: string): string {
 
 /** aws4fetch's retry backoff does not observe AbortSignal. Deadline-bound
  * writes sign once and let fetch abort the actual request without late retries. */
-async function writeObject(config: ObjectStorageConfig, key: string, init: RequestInit, signal?: AbortSignal) {
-  if (!signal) return config.client.fetch(objectUrl(config, key), init)
+async function writeObject(config: ObjectStorageConfig, key: string, init: RequestInit, signal?: AbortSignal, query?: Record<string, string>) {
+  const url = new URL(objectUrl(config, key))
+  if (query) for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value)
+  if (!signal) return config.client.fetch(url, init)
   signal.throwIfAborted()
-  const signed = await config.client.sign(objectUrl(config, key), { ...init, signal })
+  const signed = await config.client.sign(url, { ...init, signal })
   signal.throwIfAborted()
   return fetch(signed, { signal })
 }
@@ -57,6 +59,81 @@ export async function putArtifactObject(key: string, body: string | Uint8Array<A
   const response = await writeObject(config, key, { method: 'PUT', body, redirect: 'error', headers: { 'content-type': contentType, 'content-length': String(contentLength), 'if-none-match': '*' } }, signal)
   // 412: the object is already there; keys are content-addressed per version, so it is the same file.
   if (!response.ok && response.status !== 412) throw new Error(`Object storage put failed: ${response.status}`)
+}
+
+/** A known-length immutable binary upload, without reading the stream for signing or retrying it. */
+export async function putArtifactObjectStream(key: string, body: ReadableStream<Uint8Array<ArrayBuffer>>,
+  contentType: string, contentLength: number, sha256: string, signal: AbortSignal): Promise<void> {
+  const config = objectStorageConfig()
+  if (!config) throw new Error('Object storage is not configured')
+  const partSize = Math.max(16 * 1024 * 1024, Math.ceil(contentLength / 10_000))
+  if (contentLength > partSize) {
+    await putArtifactMultipart(config, key, body, contentType, contentLength, partSize, signal)
+    return
+  }
+  const response = await writeObject(config, key, { method: 'PUT', body, redirect: 'error', headers: {
+    'content-type': contentType, 'content-length': String(contentLength), 'x-amz-content-sha256': sha256, 'if-none-match': '*',
+  } }, signal)
+  if (!response.ok && response.status !== 412) throw new Error(`Object storage put failed: ${response.status}`)
+}
+
+const escapeXml = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+
+/** Sequential fixed-length parts share one upstream read cursor and one leftover chunk. */
+async function putArtifactMultipart(config: ObjectStorageConfig, key: string, body: ReadableStream<Uint8Array<ArrayBuffer>>,
+  contentType: string, size: number, partSize: number, signal: AbortSignal) {
+  const start = await writeObject(config, key, { method: 'POST', redirect: 'error', headers: { 'content-type': contentType } }, signal, { uploads: '' })
+  if (!start.ok) throw new Error(`Object storage multipart start failed: ${start.status}`)
+  const uploadId = /<UploadId>([A-Za-z0-9_=+./-]+)<\/UploadId>/.exec(await start.text())?.[1]
+  if (!uploadId) throw new Error('Object storage multipart upload ID missing')
+  const reader = body.getReader()
+  const parts: string[] = []
+  let pending = new Uint8Array(), completed = false
+  try {
+    for (let offset = 0; offset < size; offset += partSize) {
+      const partNumber = parts.length + 1
+      const length = Math.min(size - offset, partSize)
+      let remaining = length
+      const part = new ReadableStream<Uint8Array<ArrayBuffer>>({
+        async pull(controller) {
+          if (!pending.byteLength) {
+            const next = await reader.read()
+            if (next.done) throw new Error('Object storage multipart body ended early')
+            pending = next.value
+          }
+          const bytes = Math.min(remaining, pending.byteLength)
+          if (bytes) controller.enqueue(pending.subarray(0, bytes))
+          pending = pending.subarray(bytes)
+          remaining -= bytes
+          if (!remaining) controller.close()
+        },
+      }, { highWaterMark: 0 })
+      const response = await writeObject(config, key, { method: 'PUT', body: part, redirect: 'error', headers: {
+        'content-length': String(length), 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD',
+      } }, signal, { uploadId, partNumber: String(partNumber) })
+      const etag = response.headers.get('etag')
+      if (!response.ok || remaining || !etag) throw new Error(`Object storage multipart part ${partNumber} failed: ${response.status}`)
+      parts.push(`<Part><PartNumber>${partNumber}</PartNumber><ETag>${escapeXml(etag)}</ETag></Part>`)
+    }
+    // A source verifier may reject on EOF even after supplying the expected length.
+    if (pending.byteLength || !(await reader.read()).done) throw new Error('Object storage multipart body exceeds its length')
+    const manifest = `<CompleteMultipartUpload>${parts.join('')}</CompleteMultipartUpload>`
+    const response = await writeObject(config, key, { method: 'POST', body: manifest, redirect: 'error', headers: {
+      'content-type': 'application/xml', 'if-none-match': '*',
+    } }, signal, { uploadId })
+    if (response.status === 412) return // The caller still checks the old object's bytes.
+    if (!response.ok || !/<CompleteMultipartUploadResult(?:\s|>)/.test(await response.text())) {
+      throw new Error(`Object storage multipart completion failed: ${response.status}`)
+    }
+    completed = true
+  } finally {
+    if (!completed) {
+      await writeObject(config, key, { method: 'DELETE', redirect: 'error' }, AbortSignal.timeout(5_000), { uploadId }).catch(() => undefined)
+      // A transport error can leave a source pull pending. Do not await its cleanup.
+      void reader.cancel().catch(() => undefined)
+    }
+    reader.releaseLock()
+  }
 }
 
 export async function getArtifactObject(key: string): Promise<string> {
