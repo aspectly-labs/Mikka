@@ -487,6 +487,41 @@ test('force-exit node tests run with blocking stdio so the TAP summary is flushe
   assert.deepEqual(args.slice(2), ['--test-force-exit', '--import', 'tsx', '--test', 'tests/one.db.test.mjs'])
 })
 
+test('verbose force-exit test files keep their test counts and status with separate file-backed reporters', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-report-files-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const childEnv = { ...process.env }
+  delete childEnv.NODE_TEST_CONTEXT
+  const files = Array.from({ length: 3 }, (_, index) => {
+    const file = `suite-${index}.test.mjs`
+    writeFileSync(join(root, file), `import test from 'node:test'
+      setInterval(() => {}, 60_000)
+      for (let item = 0; item < 8; item++) test('result-${index}-' + item, () => {
+        console.log('x'.repeat(32768))
+        console.error('stderr-${index}-' + item)
+      })`)
+    return file
+  })
+  const execute = files => {
+    const [bin, args] = launch('test:isolated-db', `node --test-force-exit --test-concurrency=2 --test ${files.join(' ')}`)
+    return runScript(bin, args, { cwd: root, env: childEnv, script: 'test:isolated-db' })
+  }
+  const complete = await execute(files)
+  const report = parseSummary(`${complete.stdout}\n${complete.stderr}`)
+  assert.equal(checkSummary('test:isolated-db', complete.status, report), null)
+  assert.equal(report.tests, 24)
+  for (let index = 0; index < files.length; index++) {
+    assert.match(complete.stdout, new RegExp(`result-${index}-7`))
+    assert.match(complete.stderr, new RegExp(`stderr-${index}-7`))
+  }
+
+  writeFileSync(join(root, 'missing.test.mjs'), 'process.exit(0)')
+  const incomplete = await execute([files[0], 'missing.test.mjs'])
+  assert.equal(incomplete.status, 1)
+  assert.equal(parseSummary(incomplete.stdout).tests, 8, 'the other file reported all of its results')
+  assert.match(incomplete.stderr, /missing\.test\.mjs: no node:test summary found/)
+})
+
 test('parses TAP/spec and rejects missing, zero, skipped, todo, cancelled or failed executions', () => {
   assert.deepEqual(parseSummary('# tests 4\n# pass 4\n# fail 0\n# skipped 0\n'), { tests: 4, pass: 4, fail: 0, skipped: 0 })
   assert.deepEqual(parseSummary('ℹ tests 2\nℹ pass 1\nℹ skipped 1\n'), { tests: 2, pass: 1, skipped: 1 })
