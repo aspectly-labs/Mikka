@@ -4220,7 +4220,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "f7d7c5cd8b1b6487b20c69d304ae292fe839f27ec39d5f921d07520cf43695bd"
+      "sourceHash": "66eaff91bba018d4944fed35dfb7ecde6d15e73b710c273a602451f281a61402"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

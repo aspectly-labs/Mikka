@@ -1297,7 +1297,9 @@ export class RunSupervisor {
       run.observedModel = observedModel
       this.push(runId, { kind: "run", patch: { state: "running", sessionId, observedModel } })
     }
-    const startupDirectory = assignment.projectEnvironment?.startupRepositories?.length ? '.mikka-repositories-' + randomUUID() : null
+    const startupDirectory = assignment.projectEnvironment?.startupRepositories?.length
+      ? '.mikka-repositories-' + (assignment.projectEnvironment.fromSnapshot ? assignment.projectEnvironment.id : randomUUID())
+      : null
     const taskEnv = startupDirectory ? { ...assignment.taskEnv, ENVIRONMENT_REPOSITORIES: startupDirectory } : assignment.taskEnv
     const baseOptions = {
       traceContext,
@@ -1406,14 +1408,22 @@ export class RunSupervisor {
       )
     if (assignment.requireWorktreeContinuation && !entry.worktree && !continued)
       throw new CheckpointRecoveryError('Original worktree is unavailable and there is no usable recovery snapshot.')
+    let usedEnvironmentSnapshot = false
     const worktree =
       entry.worktree ??
       continued ??
-      (await this.stage(runId, "worktree", async () => this.deps.worktrees.create(
-        runId,
-        repo.path,
-        await this.startPoint(runId, repo, assignment),
-      )))
+      (await this.stage(runId, "worktree", async () => {
+        const start = await this.startPoint(runId, repo, assignment)
+        if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly &&
+          (!startupDirectory || !assignment.projectEnvironment.setup?.command || assignment.projectEnvironment.setup.maintenance?.trim())) {
+          const prepared = await this.deps.worktrees.createFromEnvironmentSnapshot(runId, repo.path, start, Boolean(assignment.projectEnvironment.setup?.maintenance?.trim()))
+          if (prepared) {
+            usedEnvironmentSnapshot = true
+            return prepared
+          }
+        }
+        return this.deps.worktrees.create(runId, repo.path, start)
+      }))
     if (startupDirectory) {
       if (!this.deps.prepareEnvironmentRepositories) throw new Error('Environment repository checkout unavailable')
       run.removeEnvironmentRepositories = await this.deps.prepareEnvironmentRepositories(assignment, join(worktree, startupDirectory), preparationSignal)
@@ -1458,7 +1468,9 @@ export class RunSupervisor {
       const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, effectiveRepo) : await this.deps.worktrees.bootstrap(worktree, repo.path, effectiveRepoSetup)
       if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup?.approved) {
         if (policy.permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
-        await this.deps.worktrees.bootstrap(worktree, repo.path, assignment.projectEnvironment.setup, taskEnv, { includeWorktreeFile: false })
+        const { setup } = assignment.projectEnvironment
+        const recipe = usedEnvironmentSnapshot ? { ...setup, command: setup.maintenance } : setup
+        await this.deps.worktrees.bootstrap(worktree, repo.path, recipe, taskEnv, { includeWorktreeFile: false })
       }
       log.info({ worktree, setup }, "worktree ready")
       this.deps.journal.update(runId, { worktree, baseCommit })

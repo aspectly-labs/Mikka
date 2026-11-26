@@ -1,4 +1,5 @@
 import 'server-only'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -29,8 +30,7 @@ const requestOptions = (budget: Budget, maximumMs: number) => {
   return { requestTimeoutMs, signal: AbortSignal.timeout(requestTimeoutMs), retries: 0 }
 }
 async function ownerOptions(scope: RetainedDeliverableScope) {
-  const { e2bApiKey } = await import('../secrets/e2b-runtime')
-  return { apiKey: await e2bApiKey(scope.ownerId, 'Cloud runtime unavailable'), proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+  return { apiKey: (await e2bResourceAccount(scope.ownerId, 'sandbox', scope.sandboxId)).apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
 }
 const defaultRuntime: RetainedDeliverableRuntime = {
   async state(scope, budget) {

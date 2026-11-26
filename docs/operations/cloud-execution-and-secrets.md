@@ -33,5 +33,11 @@ Derived E2B releases are additive and gated ([2026-11-03-1430](../design/decisio
 
 ## Secret hygiene and isolated test cleanup
 
+Mikka Cloud uses its deployment E2B key. Before the cutover, a personal E2B
+account may have created a sandbox or snapshot. Migration records preserve that
+owner and account scope. During account deletion, proven external resources
+stay with their E2B account and the deletion receipt discloses their custody.
+Mikka removes local access through account deletion.
+
 - Store credential values strictly in the deployment's secret manager and established workload delivery. Never commit values, write them to local environment files, or print them in terminal output, screenshots, or reports.
 - Running an authorized test includes setting up and cleaning up only the disposable fixtures, schemas, and temporary files created by that test in an isolated target. Verify target isolation first, never extend cleanup to shared or production data, and honor any explicit preservation hold.

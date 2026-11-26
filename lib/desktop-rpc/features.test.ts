@@ -24,7 +24,8 @@ test('desktop flags use only the public hook keys and the verified user identity
 test('signed-out config uses public defaults without evaluating an anonymous identity', async () => {
   const features = await desktopFeatures(undefined, { evaluate: async () => { throw new Error('anonymous flag evaluation') }, env: {} })
   assert.equal(features.cloudComputer, false)
-  assert.equal(Object.keys(features.flags).length, 8)
+  assert.equal(Object.keys(features.flags).length, 9)
+  assert.equal(features.flags[gatedFeatures.environmentSnapshots], false)
   assert.ok(Object.values(features.flags).every(value => value === false))
 })
 

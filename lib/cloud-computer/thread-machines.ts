@@ -9,6 +9,7 @@ import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from 
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
+import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
 import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution-identity'
 import { botWorkspacePath, initializeBotWorkspace } from '@/lib/computer/bot-workspace'
@@ -23,8 +24,8 @@ import { ComputerError } from '@/lib/computer/store'
 import { computerPermission } from '@/lib/computer/permission'
 import { connectComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
-import { cloudTemplateOrigin, threadMachineTemplateKind } from '@/lib/cloud-template-models'
-import { computerTemplate, e2bApiKey, taskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { cloudTemplateOrigin, threadMachineTemplateKind, type CloudTemplateKind } from '@/lib/cloud-template-models'
+import { computerTemplate, sizedTaskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { bootstrapOfficialInstance, isOfficialE2BTemplate, stageOfficialWorkerRelease, switchOfficialWorkerRelease, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from '@/lib/computer/official-runtime'
 import type { Actor } from './subagents'
 import { afterRunEnded } from '@/lib/run-completion-effects'
@@ -51,9 +52,9 @@ import { unclaimedPlanQuestionContinuation } from '../factory/questions/executio
 import type { FactoryTask } from '../factory/store'
 import type { agentRuns } from '../db/schema'
 import { assertRunProjectResources, isProjectExecutionRefusal, withRunProjectResources } from '../project-resources/run-lease'
-/** A thread machine runs on its owner's own E2B key (orchestration § 2); this module only acts for that owner. */
-async function options(ownerId: string) {
-  return { apiKey: await e2bApiKey(ownerId, 'Cloud runtime unavailable'), proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+/** Resolve the account that allocated this owner's sandbox. */
+async function options(ownerId: string, sandboxId: string) {
+  return { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
 }
 /** Register only while this provisioning lease still owns a non-ended row. */
 export async function recordThreadSandbox(pool: Pick<Pool, 'query'>, runId: string, sandboxId: string, leaseId: string) {
@@ -101,6 +102,7 @@ export function threadMachineStartFailure(error: unknown): FailedThreadStart | n
  */
 async function replaceGoneSandbox(query: Pick<Pool, 'query'>, runId: string, template: string, leaseId?: string) {
   const replaced = (await query.query(`UPDATE thread_machines SET "sandboxId"=NULL,"operationId"=$2,"snapshotId"=$4,"templateKind"=$5,state='starting',"restoreStartedAt"=NULL,
+      "environmentSnapshotId"=NULL,
       "computeSeconds"="computeSeconds"+COALESCE(GREATEST(0,EXTRACT(EPOCH FROM (clock_timestamp()-"runningSince")))::bigint,0),"runningSince"=NULL
     WHERE "runId"=$1 AND state<>'ended' AND ($3::uuid IS NULL OR "workerLeaseId"=$3) RETURNING *`, [runId, randomUUID(), leaseId ?? null, template, cloudTemplateOrigin(template)?.kind ?? null])).rows[0]
   if (replaced) taskActivityChanged(query, runId)
@@ -307,10 +309,13 @@ export async function restoreThreadMachineFromSnapshot(pool: Pool, actor: Actor,
 
 // Prepare the owner's key before a stop holds an APP client. The existing key
 // reader may itself need that pool (including legacy-key adoption).
-const threadMachineStopPreparation: { prepareKill?: (ownerId: string) => Promise<(sandboxId: string) => Promise<void>> } = {
-  prepareKill: async (ownerId) => {
-    const preparedOptions = await options(ownerId)
-    return async (sandboxId) => { await Sandbox.kill(sandboxId, preparedOptions) }
+const threadMachineStopPreparation: { prepareKill?: (ownerId: string, id: string) => Promise<(sandboxId: string) => Promise<void>> } = {
+  prepareKill: async (ownerId, id) => {
+    const preparedOptions = await options(ownerId, id)
+    return async (sandboxId) => {
+      if (sandboxId !== id) throw new ComputerError(409, 'Thread machine changed')
+      await Sandbox.kill(sandboxId, preparedOptions)
+    }
   },
 }
 /** Provider calls of scoped thread operations; tests replace them, production uses E2B. */
@@ -320,12 +325,14 @@ export const threadMachineProvider = {
   create: async (snapshotId: string, operationId: string, metadata: Record<string, string>, ownerId: string) => {
     if (!cloudTemplateOrigin(snapshotId)) throw new ComputerError(409, 'Verified cloud template required')
     const attributes = metadata.runId ? cloudStartupRunAttributes(metadata.runId) : {}
-    const base = await cloudStartupSpan('cloud.sandbox.credentials', attributes, () => options(ownerId))
+    const account = await cloudStartupSpan('cloud.sandbox.credentials', attributes, () => e2bCreateAccount(ownerId, operationId))
+    const base = { apiKey: account.apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
     const sandbox = await cloudStartupSpan('cloud.sandbox.create', attributes, () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, idempotencyKey: operationId, timeoutMs: 15 * 60_000, metadata, lifecycle: { onTimeout: 'pause', autoResume: false } })))
+    await bindE2BResource(ownerId, 'sandbox', sandbox.sandboxId, account.scope)
     if (isOfficialE2BTemplate(snapshotId)) await cloudStartupSpan('cloud.sandbox.bootstrap', attributes, () => bootstrapOfficialInstance(sandbox, snapshotId))
     return sandbox
   },
-  kill: async (sandboxId: string, ownerId: string) => { await Sandbox.kill(sandboxId, await options(ownerId)) },
+  kill: async (sandboxId: string, ownerId: string) => { await Sandbox.kill(sandboxId, await options(ownerId, sandboxId)) },
 }
 
 /**
@@ -395,7 +402,7 @@ async function canAcknowledgeQueuedThreadStop(client: PoolClient, actor: Actor, 
 export async function acknowledgeQueuedThreadStop(pool: Pool, actor: Actor, runId: string, provider: Pick<typeof threadMachineProvider, 'kill' | 'prepareKill'> = threadMachineProvider): Promise<boolean> {
   // This read releases its pool client before credential preparation. It is
   // only a preflight: every authority/native check is repeated under locks.
-  const candidate = await pool.query(`SELECT m."snapshotId",m."operationId" FROM agent_runs r
+  const candidate = await pool.query(`SELECT m."snapshotId",m."operationId",m."sandboxId" FROM agent_runs r
     JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId"
     JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=r."userId" AND m."workspaceId"=b."workspaceId"
     WHERE r.id=$1 AND r."userId"=$2 AND b."workspaceId"=$3 AND r."workspaceId"=b."workspaceId" AND r.status='queued' AND r."stopRequestedAt" IS NOT NULL
@@ -414,7 +421,7 @@ export async function acknowledgeQueuedThreadStop(pool: Pool, actor: Actor, runI
           OR EXISTS(SELECT 1 FROM byos_native_runs n WHERE n."runId"=source.id)))`, [runId, actor.userId, actor.workspaceId])
   if (!candidate.rowCount) return false
   const sponsored = candidate.rows[0]?.snapshotId === hostedSnapshot
-  const kill = sponsored ? undefined : provider.prepareKill ? await provider.prepareKill(actor.userId) : (sandboxId: string) => provider.kill(sandboxId, actor.userId)
+  const kill = sponsored ? undefined : provider.prepareKill ? await provider.prepareKill(actor.userId, candidate.rows[0].sandboxId) : (sandboxId: string) => provider.kill(sandboxId, actor.userId)
   const client = await connectForCommitEffects(pool)
   try {
     await client.query('BEGIN')
@@ -460,7 +467,7 @@ const unconfirmedNativeExitSql = `((m.lifecycle->>'requiresNativeExit' IS NOT DI
  * the worker survive. No other task's machine can match. Caller holds BEGIN
  * and the new run's lock.
  */
-async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string, run: { issueId: string; runtimeBotId: string; repoPath: string; remoteUrl: string | null }, template: string | null) {
+async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string, run: { issueId: string; runtimeBotId: string; repoPath: string; remoteUrl: string | null }, templateKind: CloudTemplateKind) {
   // New-run admission revokes the previous run's review capability. Its VM
   // cannot change hands until the root gateways close PTY/HTTP/WS and ACK.
   const pendingReview = await client.query(`SELECT 1 FROM coding_review_sessions s
@@ -470,7 +477,6 @@ async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string,
   // The run's bot runtime is recorded on the new row; the old row's bot does not have to match.
   // A repository task's machine holds only its harness's CLI. Keep the same
   // harness's VM across additive releases; its private worker upgrades below.
-  const templateKind = template ? cloudTemplateOrigin(template)?.kind ?? template : null
   // A person can continue immediately after the terminal receipt, before the
   // lifecycle parks the VM. Use the same locked handoff as adjacent stages;
   // a terminal status without native exit never authorizes this transfer.
@@ -585,7 +591,7 @@ export async function retainThreadMachineForHandoff(pool: Pool, actor: Actor, ru
  * throws, and the lifecycle tries again on its next tick.
  */
 export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
-  pause: (sandboxId: string) => Promise<unknown> = sandboxId => withE2BErrors(actor.userId, false, async () => Sandbox.pause(sandboxId, { ...await options(actor.userId), requestTimeoutMs: 15_000 })),
+  pause: (sandboxId: string) => Promise<unknown> = sandboxId => withE2BErrors(actor.userId, false, async () => Sandbox.pause(sandboxId, { ...await options(actor.userId, sandboxId), requestTimeoutMs: 15_000 })),
   // Connecting solely to fetch logs can resume an already paused machine.
   // Keep the uploaded run/checkpoint evidence and any previously saved tail.
   readTail: (sandboxId: string) => Promise<string | null> = async () => null,
@@ -897,7 +903,7 @@ export async function ensureThreadMachine(...args: Parameters<typeof ensureThrea
   })
 }
 
-async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: string, provider: typeof threadMachineProvider & { state?: (sandboxId: string, ownerId: string, budget?: RuntimeBudget) => Promise<string> } = threadMachineProvider, desktop = threadDesktop, refreshRuntime = false) {
+async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: string, provider: typeof threadMachineProvider & { selectEnvironmentSnapshot?: typeof import('../project-resources/environment-snapshots').readyEnvironmentSnapshot; state?: (sandboxId: string, ownerId: string, budget?: RuntimeBudget) => Promise<string> } = threadMachineProvider, desktop = threadDesktop, refreshRuntime = false) {
   z.uuid().parse(runId)
   let refreshDeadline = refreshRuntime ? Date.now() + 240_000 : undefined
   const budgetUntil = (deadline: number): RuntimeBudget => maximumMs => {
@@ -917,6 +923,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
   let questionRuntimeUpgrade: QuestionRuntimeUpgrade | undefined
   let unclaimedQuestionRecovery: UnclaimedQuestionRuntimeRecovery | null = null
   let unclaimedRuntimeSwitchStarted = false
+  let selectEnvironmentSnapshot = false
   let reservedStartLease = false
   let runtimeRollback: (() => Promise<void>) | undefined
   let verifyRefreshedRuntime: (() => Promise<unknown>) | undefined
@@ -954,7 +961,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
 
     exactQuestionMachine = run.questionContinuation?.requireSessionResume === true
     const repositoryTask = Boolean(run.remoteUrl)
-    const freshTemplate = () => repositoryTask ? taskTemplate(run.runHarness) : computerTemplate()
+    const machineSize = run.agentDefinition?.projectExecution?.environment?.e2bMachineSize ?? undefined
+    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize) : computerTemplate()
     let machine = (await client.query('SELECT * FROM thread_machines WHERE "runId"=$1 FOR UPDATE', [runId])).rows[0]
     if (machine?.snapshotId === hostedSnapshot || run.agentDefinition?.taskMachine) throw new ComputerError(409,'Task machine provider changed')
     // Stop check 1 shares the explicit Stop path's native-history and lease
@@ -1030,7 +1038,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     if (machine?.state === 'ended') throw new ComputerError(409, 'Thread ended')
     if (!exactQuestionMachine && !retainedSandboxId && machine?.state === 'running' && machine.sandboxId) {
       refreshPhase = timings.next('provider_state')
-      const base = await options(actor.userId)
+      const base = await options(actor.userId, machine.sandboxId!)
       const state = await withE2BErrors(actor.userId, false, () => Sandbox.getInfo(machine.sandboxId, { ...base, ...runtimeRequestOptions(refreshBudget), ...(refreshBudget ? { retries: 0 } : {}) })).catch((error: unknown) => {
         if (sandboxGone(error)) return null
         throw error
@@ -1059,8 +1067,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       // with Mikka's worker, decision 2026-11-01-2335): the daemon clones its admitted
       // remote and creates the task worktree from the configured base branch.
       // Non-repository work starts from the official desktop template too.
-      const template = freshTemplate()
-      const adopted = run.issueId ? await adoptTaskMachine(client, actor, runId, run, template) : null
+      const kind = !repositoryTask ? 'desktop' : run.runHarness === 'claude_code' ? 'claude' : run.runHarness === 'codex' ? 'codex' : null
+      const adopted = run.issueId && kind ? await adoptTaskMachine(client, actor, runId, run, kind) : null
       if (adopted) { machine = adopted; retainedSandboxId = adopted.sandboxId }
       else {
         if (run.issueId) {
@@ -1071,8 +1079,13 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
               AND (m."sandboxId" IS NOT NULL OR m."workerLeaseUntil">now()) LIMIT 1`, [run.issueId, actor.userId, actor.workspaceId, runId])
           if (busy.rowCount) throw new ComputerError(409, 'Thread provisioning in progress')
         }
+        const template = freshTemplate()
+        selectEnvironmentSnapshot = repositoryTask
         machine = (await client.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","botId","issueId","snapshotId","operationId",state,"templateKind")
-          VALUES ($1,$2,$3,$4,$5,$6,$7,'starting',$8) ON CONFLICT ("runId") DO UPDATE SET "snapshotId"=EXCLUDED."snapshotId","templateKind"=EXCLUDED."templateKind","issueId"=EXCLUDED."issueId" RETURNING *`, [runId, actor.workspaceId, actor.userId, run.runtimeBotId, run.issueId ?? null, template, randomUUID(), cloudTemplateOrigin(template)?.kind ?? null])).rows[0]
+          VALUES ($1,$2,$3,$4,$5,$6,$7,'starting',$8) ON CONFLICT ("runId") DO UPDATE SET
+          "snapshotId"=EXCLUDED."snapshotId","templateKind"=EXCLUDED."templateKind","issueId"=EXCLUDED."issueId",
+          "operationId"=EXCLUDED."operationId","environmentSnapshotId"=NULL RETURNING *`,
+          [runId, actor.workspaceId, actor.userId, run.runtimeBotId, run.issueId ?? null, template, randomUUID(), cloudTemplateOrigin(template)?.kind ?? null])).rows[0]
       }
     }
     if (retainedSandboxId && !refreshRuntime) {
@@ -1100,7 +1113,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       // already has its worker; only a paused VM needs bootstrap after connect.
       refreshPhase = timings.next('provider_state')
       const state = provider.state ? await provider.state(machine.sandboxId, actor.userId, refreshBudget) :
-        (await withE2BErrors(actor.userId, false, async () => Sandbox.getInfo(machine.sandboxId, { ...await options(actor.userId), ...runtimeRequestOptions(refreshBudget), ...(refreshBudget ? { retries: 0 } : {}) }))).state
+        (await withE2BErrors(actor.userId, false, async () => Sandbox.getInfo(machine.sandboxId, { ...await options(actor.userId, machine.sandboxId!), ...runtimeRequestOptions(refreshBudget), ...(refreshBudget ? { retries: 0 } : {}) }))).state
       if (state !== 'running' && state !== 'paused') throw new ComputerError(409,'Original question machine unavailable')
       if (state === 'running' && machine.state === 'running' && !refreshRuntime) {
         await pool.query('UPDATE thread_machines SET "workerLeaseId"=NULL,"workerLeaseUntil"=NULL WHERE "runId"=$1 AND "workerLeaseId"=$2',[runId,leaseId])
@@ -1145,8 +1158,45 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
     }
     if (restored) machine = restored.machine
-    const anonymousFreshMachine = !connected && !restored && !machine.sandboxId && !machine.deviceId && ['claude', 'codex'].includes(cloudTemplateOrigin(machine.snapshotId)?.kind ?? '')
-    const sandbox = restored?.sandbox ?? connected ?? await provider.create(machine.snapshotId, machine.operationId, { application: 'mikka-thread', workspaceId: actor.workspaceId, runId, operationId: machine.operationId }, actor.userId)
+    const fresh = !connected && !restored && !machine.sandboxId && !machine.deviceId
+    let started = restored?.sandbox ?? connected
+    if (!started) {
+      const metadata = () => ({ application: 'mikka-thread', workspaceId: actor.workspaceId, runId, operationId: machine.operationId })
+      let candidate: { id: string; providerId: string } | null = null
+      const execution = run.agentDefinition?.projectExecution
+      if ((selectEnvironmentSnapshot || machine.environmentSnapshotId) && execution?.environment && execution.repositoryClone === 'start') {
+        const { readyEnvironmentSnapshot } = await import('../project-resources/environment-snapshots')
+        candidate = await (provider.selectEnvironmentSnapshot ?? readyEnvironmentSnapshot)({
+          workspaceId: actor.workspaceId, userId: actor.userId, environmentId: execution.environment.id,
+          revision: execution.environment.revision, templateId: machine.snapshotId,
+        })
+      }
+      // Before reusing a persisted intent, recheck all cached repository grants,
+      // the worker version, and the flag. An obsolete intent gets a new key.
+      if (machine.environmentSnapshotId && machine.environmentSnapshotId !== candidate?.id) {
+        machine = await replaceGoneSandbox(pool, runId, freshTemplate(), leaseId)
+        if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
+        candidate = null
+      }
+      if (candidate) {
+        const reserved = await pool.query(`UPDATE thread_machines SET "environmentSnapshotId"=$3 WHERE "runId"=$1
+          AND "workerLeaseId"=$2 AND "operationId"=$4 AND state<>'ended' AND "sandboxId" IS NULL RETURNING "runId"`,
+          [runId, leaseId, candidate.id, machine.operationId])
+        if (!reserved.rowCount) throw new ComputerError(409, 'Thread provisioning cancelled')
+        machine.environmentSnapshotId = candidate.id
+        try {
+          started = await threadLifecycleProvider.createFromSnapshot(candidate.providerId, machine.operationId, metadata(), actor.userId, true)
+        } catch (error) {
+          if (!snapshotUnusable(error)) throw error
+          machine = await replaceGoneSandbox(pool, runId, freshTemplate(), leaseId)
+          // error-cause: the 409 reports a lost provisioning lease during the template fallback.
+          if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
+        }
+      }
+      started ??= await provider.create(machine.snapshotId, machine.operationId, metadata(), actor.userId)
+    }
+    const anonymousFreshMachine = fresh && !machine.environmentSnapshotId && ['claude', 'codex'].includes(cloudTemplateOrigin(machine.snapshotId)?.kind ?? '')
+    const sandbox = started
     connected = null
     refreshPhase = timings.next('record_sandbox')
     const recorded = await recordThreadSandbox(pool, runId, sandbox.sandboxId, leaseId)

@@ -15,7 +15,7 @@ import { readRepositorySettings } from '@/lib/device-repositories'
 import { daemonTestMode, repositoryBindingMatches } from '@mikka/protocol/repository'
 import { localExecutionHarnesses } from '@/lib/device-agents'
 import { runTestFixture } from '@/lib/run-test-fixture'
-import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, PROJECT_ENVIRONMENT_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
+import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_SNAPSHOT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
 import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeLease } from '@mikka/protocol/subscription'
 import { POLICY_SNAPSHOT_HEADER, POLICY_SNAPSHOT_VERSION } from '@mikka/protocol/policy-snapshot'
 import { issuePolicySnapshot, policyDistributionContext } from '@/lib/agent-tool-approval/policy-distribution'
@@ -285,8 +285,14 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     try { factoryClaim = await guardFactoryClaim(tx,caller.userId,deviceId,runId,leaseExpiresAt); return true }
     catch (error) { if (error instanceof FactoryError) return false; throw error }
   }
+  let fromEnvironmentSnapshot = false
   const afterClaim = async (tx: import('pg').PoolClient) => {
     await tx.query('UPDATE agent_runs SET "deviceTokenId"=$2,"machineAuthority"=$4 WHERE id=$1 AND "userId"=$3', [runId, caller.tokenId, caller.userId, receivesRunCredentials])
+    if (device.kind === 'cloud' && projectEnvironment && request.headers.get(ENVIRONMENT_SNAPSHOT_HEADER) === '1') {
+      const source = await tx.query(`SELECT 1 FROM thread_machines WHERE "runId"=$1 AND "deviceId"=$2
+        AND "ownerId"=$3 AND "workspaceId"=$4 AND "environmentSnapshotId" IS NOT NULL`, [runId, deviceId, caller.userId, run.workspaceId])
+      fromEnvironmentSnapshot = Boolean(source.rowCount)
+    }
     if (factoryClaim.preserveQuestionWorktree === true) {
       const { withDatabaseClient } = await import('@/lib/db')
       factoryToken = await withDatabaseClient(tx, () => issueRunToken(run))
@@ -632,7 +638,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(subscriptionLease ? { subscriptionLease } : {}),
     ...(computer && assignmentPolicy.permissions.computer_use !== 'deny' ? { computer: { botId: computer.botId, ownerId: computer.ownerId, display: computer.display, policyVersion: computer.policyVersion } } : {}),
     ...(localComputer ? { localComputer } : {}),
-    ...(projectEnvironment ? { projectEnvironment: { id: projectEnvironment.id, revision: projectEnvironment.revision, ...(startup.length ? { startupRepositories: startup } : {}), ...(projectEnvironment.setup ? { setup: projectEnvironment.setup } : {}) } } : {}),
+    ...(projectEnvironment ? { projectEnvironment: { id: projectEnvironment.id, revision: projectEnvironment.revision, ...(fromEnvironmentSnapshot ? { fromSnapshot: true } : {}), ...(startup.length ? { startupRepositories: startup } : {}), ...(projectEnvironment.setup ? { setup: projectEnvironment.setup } : {}) } } : {}),
     ...(Object.keys(assignedEnv).length ? { taskEnv: assignedEnv } : {}),
     ...(taskSecretNames.length ? { taskSecretNames } : {}),
     ...(taskSecrets ? { taskSecrets } : {}),
