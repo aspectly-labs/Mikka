@@ -4206,7 +4206,7 @@
       "label": "模型：{name}",
       "noCreditsOrConnections": "没有 Mikka 额度，也没有可用的模型连接",
       "route": {
-        "via": "通过「{label}」运行",
+        "via": "在 {label} 上运行",
         "favorites": "常用",
         "free": "免费",
         "usedUntil": "额度用完，{time} 恢复",
@@ -11073,6 +11073,8 @@
       "emptyPersonal": "还没有个人连接",
       "emptyWorkspace": "还没有共享的工作区连接",
       "effortLabel": "推理强度",
+      "faster": "更快",
+      "smarter": "更聪明",
       "effortFaster": "更快",
       "effortSmarter": "更强",
       "effort": {
