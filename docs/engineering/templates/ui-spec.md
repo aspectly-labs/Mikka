@@ -68,12 +68,12 @@ Trace every user action both ways (`command × permission × transition × UI en
 
 Copy this table into the PR body and complete every row before merging:
 
-| Reference specification item | Implemented / intentional delta (with reason) | Desktop `1440×900` (Light & Dark) | Mobile `390×844` Chromium + WebKit (Light & Dark) |
+| Reference specification item | Implemented / intentional delta (with reason) | Desktop `1440×900` (Light & Dark) | Mobile `390×844` (Light & Dark) |
 | --- | --- | --- | --- |
 | `<Header / toolbar / row / drawer / contrast / budget>` | `<Implemented or justified delta>` | `[ ] Verified` | `[ ] Verified` |
 
-- [ ] `mikka-hosted-ui` `UI policy` + `ui-visual-evidence` artifact + pixel diff reviewed (zero unintended cross-page shifts).
-- [ ] `mikka-hosted-ui` universal layout audit passed (0 overflow, 0 interactive/text collisions, 0 console/page errors).
+- [ ] Targeted local screenshots captured and visually inspected in cloud Linux (`pnpm --dir mikka-hosted-ui visual:local --target <slug>`, 0 horizontal overflow, 0 console/page errors).
+- [ ] `mikka-hosted-ui` static `Cloudflare UI Policy` (`paid-overrides`, `oxlint`, `frontend-policy`, unit tests) and `Cloudflare UI Fast Gate` (official Web build + `bundle-budget`) passed.
 - [ ] `docs/review-checklist.md` passed end to end.
 
 ## 8. Out of scope
