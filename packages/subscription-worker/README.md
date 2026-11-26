@@ -64,7 +64,7 @@ synthetic canonical publication and deletion tests.
    Mikka's host instructions; omitting it returns 429 even with quota available.
    Errors, retries, cancellation and revocation fail closed without paid fallback.
 7. Task claims pin the selected native binding and machine authority to the run.
-   Under [Alex's #1505 decision](../../docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md),
+   Under [Alex's #1505 decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md),
    the initial claim prepares a real short-lived subscription access lease for
    the assigned machine. Official Claude Code and Codex use it directly with
    their providers, with normal cloud HOME/environment/Git and no extra Docker,
@@ -243,7 +243,7 @@ and explicitly approved direct Secrets enter task environment values. Protected
 Secrets require a configured HTTP policy and a run-bound capability. Missing or
 unsupported policies produce an unavailable result. Legacy metadata defaults to
 protected delivery. See the
-[credential exposure decision](../../docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
+[credential exposure decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
 These are source contracts. Effective protection on a deployed task requires
 runtime evidence for that revision and environment.
 

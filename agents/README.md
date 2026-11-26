@@ -16,7 +16,7 @@ pnpm test:agent-kit
 
 Instructions add guidance below Mikka's host policy. Tools select entries from the shared registered catalog; each tool retains its live actor, lease, ownership and account-approval checks. Skill descriptions enter the prompt, while `load_skill` reads only the body assigned to the current execution snapshot. Hooks are registered host implementations, not user callbacks.
 
-Fixture evaluation exercises the runner with synthetic outputs. It does not measure a model's performance and can never approve an improvement. See `docs/design/agent-as-code.md` for the deployment gate, HTTP contract, evaluation semantics and rollout limits.
+Fixture evaluation exercises the runner with synthetic outputs. It does not measure a model's performance and can never approve an improvement. See `mikka-hosted-ui/docs/design/agent-as-code.md` for the deployment gate, HTTP contract, evaluation semantics and rollout limits.
 
 
 New scopes use the built-in core definition plus computer tools when `cloudComputerRunsEnabled()` is true. It combines the cloud-computer kill switch and the edition-aware BYOS switch in `lib/deployment-switches.ts`. In the cloud edition, the BYOS fallback requires `MIKKA_BYOS_ENABLED=1`; community mode enables BYOS by default. Gmail full reads remain in the core definition. The definition API and execution reservation resolve the same initial profile. The profile does not create a computer, subscription, provider or credential.

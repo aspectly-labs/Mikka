@@ -7,7 +7,7 @@
 不为补齐该路径发出付费重试。共享应用验收使用 Acme Inc. 中的现有 SMOKE 账号。
 
 `model-provider-fallback-acceptance.yml` 及其 driver 已于 2026-11-24（#3238）按
-[2026-11-20-1855](../design/decisions/2026-11-20-1855-scripted-model-acceptance.md)
+[2026-11-20-1855](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1855-scripted-model-acceptance.md)
 退役：验收不发真实模型提示，人工真实检查须另行授权。下列历史授权和回执不扩大后续付费权限。
 
 功能 PR #1232 的合并提交是 `72d30d6179e1e844e8da74edce4523611d200ccc`。

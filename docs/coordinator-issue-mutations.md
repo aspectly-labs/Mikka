@@ -27,7 +27,7 @@ back task changes, history and the tool receipt together.
 ## Independent deployment gate
 
 The issue tools default on (Alex, 2026-10-31: every workspace
-feature is on by default; `docs/design/decisions.md`). The PostHog flag
+feature is on by default; `mikka-hosted-ui/docs/design/decisions.md`). The PostHog flag
 `mikka-issue-tools-off` is the incident kill switch
 (`lib/deployment-switches.ts`); the old `MIKKA_ISSUE_TOOLS_ENABLED` variable is
 no longer read. With the kill switch set, the tools are not exposed to

@@ -82,7 +82,7 @@ export function findThreadOwnership(messages) {
 }
 
 /**
- * A thread is 线程 in Chinese (Alex, 2026-11-15; docs/design/glossary.md). 执行线程 and
+ * A thread is 线程 in Chinese (Alex, 2026-11-15; mikka-hosted-ui/docs/design/glossary.md). 执行线程 and
  * 运行链 have no other meaning in the UI, so they never appear. Nor does 对话: a thread, a
  * Bot chat and the directory are all 线程 (Alex, 2026-11-15); only 对话框 (a dialog box)
  * keeps the characters. 会话 (sign-in sessions) is reviewed by hand.

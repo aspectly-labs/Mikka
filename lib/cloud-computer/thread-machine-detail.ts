@@ -27,7 +27,7 @@ type FrozenEnvironment = {
   variables?: Record<string, string>; secretIds?: string[]
 }
 
-/** The Setup tab's machine detail for one thread (docs/design/thread-run-right-panel.md):
+/** The Setup tab's machine detail for one thread (mikka-hosted-ui/docs/design/thread-run-right-panel.md):
  * state, provider specs, the last metrics sample, session uptime and snapshot/setup recipe.
  * Everything it reports is read, never fabricated: provider calls that find a gone or paused
  * sandbox degrade that section, not the whole response. */

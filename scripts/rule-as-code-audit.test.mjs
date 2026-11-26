@@ -307,8 +307,10 @@ test('the repository itself passes the rule-as-code audit gate', () => {
   assert.ok(result.summary.crossRepoRefs >= 10, `expected >= 10 cross-repo refs, got ${result.summary.crossRepoRefs}`)
   assert.ok(result.summary.checkedScripts >= 1, `expected >= 1 checked script, got ${result.summary.checkedScripts}`)
   assert.ok(result.details.checkedScripts.includes('check:rule-as-code'))
-  assert.ok(result.summary.frozenDecisionRows >= 100, `expected >= 100 frozen rows, got ${result.summary.frozenDecisionRows}`)
-  assert.ok(result.summary.checkedDocsIndexLinks >= 50, `expected >= 50 docs/README links, got ${result.summary.checkedDocsIndexLinks}`)
+  // The frozen archive moved to mikka-hosted-ui/docs/design/decisions.md with the UI docs (2026-11-26).
+  assert.equal(result.summary.frozenDecisionRows, 0, 'the frozen decision archive belongs in mikka-hosted-ui, not here')
+  // Links into docs/design became links to the private hosted repo (not checked locally) on 2026-11-26.
+  assert.ok(result.summary.checkedDocsIndexLinks >= 40, `expected >= 40 docs/README links, got ${result.summary.checkedDocsIndexLinks}`)
 })
 
 test('rule-as-code audit runs once on every non-draft candidate including docs-only PRs and conversation-protocol test is CI-wired', () => {

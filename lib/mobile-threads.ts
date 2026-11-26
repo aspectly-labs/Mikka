@@ -149,7 +149,7 @@ export type MobileSchedule = { id: string; title: string; status: 'active' | 'pa
 export type MobileArtifact = { id: string; title: string; kind: 'markdown' | 'html'; version: number; updatedAt: string }
 
 /**
- * A bot's page (docs/design/mobile.md, 资料): its threads, the pull requests
+ * A bot's page (mikka-hosted-ui/docs/design/mobile.md, 资料): its threads, the pull requests
  * of the tasks they worked on, its scheduled tasks, its 资料库 (what those
  * threads handed over) and the person's 置顶 / 通知 for it, as the web's right
  * panel shows them. The Coordinator is one of the bots: its threads carry its bot row's id.

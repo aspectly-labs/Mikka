@@ -34,7 +34,7 @@ export function isUlidBody(value: unknown): value is string {
 }
 
 /**
- * The three upper bounds, taken from Capy's Drive as shipped: a tree holds at
+ * The three upper bounds: a tree holds at
  * most 100 000 entries, a single file is at most 100 MiB, and a file's mode is
  * one of exactly two values. The file limit is the one the sandbox and the
  * upload path both enforce, so keep the two in step by importing this constant.
@@ -271,7 +271,7 @@ export function conflictedDrivePaths(
  * selected team Workspace, independently of each member and Project.
  *
  * The name is `driveScope` and not `scope`: it is the layer a volume sits in,
- * not a Capy "scope" and not Mikka's tenant. `workspace` is deliberately absent
+ * not a generic "scope" and not Mikka's tenant. `workspace` is deliberately absent
  * for the same reason — that word already means the tenant, and reusing it here
  * would make every later reader guess which one a column holds.
  */

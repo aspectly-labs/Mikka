@@ -6,17 +6,17 @@
 
 ## Cloud execution authority and task Secret exposure
 
-Cloud execution authority stays on the task's machine ([2026-11-06-1800](../design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md)), while user and workspace third-party API Secrets remain isolated from Agent-readable environment variables ([2026-11-08-0240](../design/decisions/2026-11-08-0240-credential-exposure-boundary.md)):
+Cloud execution authority stays on the task's machine ([2026-11-06-1800](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md)), while user and workspace third-party API Secrets remain isolated from Agent-readable environment variables ([2026-11-08-0240](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md)):
 
 - **One task per E2B VM:** Official Claude Code and Codex CLIs keep their ordinary `HOME`, environment, and Git configuration. Deliver only the run's selected CLI subscription OAuth (or short-lived Mikka model gateway token) and authorized GitHub credential when needed.
 - **No control-plane execution proxies:** Do not reintroduce shadow Git, isolated CLI `HOME` directories, or per-tool control-plane authorization proxies.
-- **LiteLLM-only managed model egress ([2026-11-20-0530](../design/decisions/2026-11-20-0530-litellm-only-model-egress.md)):** Every Mikka-managed model request — including credits, daemon BYOK, and self-hosted API-key paths — routes through the backend LiteLLM gateway with no direct-provider fallback. The execution machine holds only a short-lived gateway token. Official subscription OAuth CLIs remain independent pending `#2869`.
+- **LiteLLM-only managed model egress ([2026-11-20-0530](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-0530-litellm-only-model-egress.md)):** Every Mikka-managed model request — including credits, daemon BYOK, and self-hosted API-key paths — routes through the backend LiteLLM gateway with no direct-provider fallback. The execution machine holds only a short-lived gateway token. Official subscription OAuth CLIs remain independent pending `#2869`.
 - **Protected third-party Secrets:** Do not inject unrelated user, workspace, or repository third-party API Secrets into Agent-readable environment variables or files. Protected Secrets use run-scoped sealed grants and non-readable egress/tool handling where supported; explicit direct delivery stays compatibility-only for existing env-dependent SDKs.
 - **Revocation and local daemon boundaries:** Revocation pushes stop and reclaim affected VMs while natural token renewal runs in the background. Local daemon safeguards preserve unrelated files on the host machine.
 
 ## Native Task MCP delivery
 
-Task MCP uses native CLI configuration and credential delivery ([2026-11-11-0534](../design/decisions/2026-11-11-0534-eve-and-native-mcp.md)):
+Task MCP uses native CLI configuration and credential delivery ([2026-11-11-0534](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-11-0534-eve-and-native-mcp.md)):
 
 - Deliver selected HTTP endpoints/headers and STDIO command/environment configuration directly to the task's official CLI (the task can read those configured MCP credentials).
 - Keep Composio service credentials with the provider and preserve the exposure boundary for unrelated Secrets.
@@ -24,7 +24,7 @@ Task MCP uses native CLI configuration and credential delivery ([2026-11-11-0534
 
 ## Derived E2B template releases
 
-Derived E2B releases are additive and gated ([2026-11-03-1430](../design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md)):
+Derived E2B releases are additive and gated ([2026-11-03-1430](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md)):
 
 - Build on top of E2B's official `claude`, `codex`, and `desktop` templates, installing Mikka software strictly under `/opt/mikka` without deleting or overwriting any original files.
 - Keep reusable templates free of task credentials or user identities.

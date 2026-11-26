@@ -13,7 +13,7 @@ description: >-
 Use this skill before finalizing any UI redesign, PR review, or before-and-after report across Mikka Web, Desktop, or `mobile-next` iOS.
 
 ## Gate 1 — Authoritative & Competitor Baseline
-1. Read applicable `docs/design/decisions/` and `docs/design/glossary.md` first (e.g., `2026-11-09-0050` paid blocks as shipped, `2026-11-18-1200` Capy sidebar rows, Bot-managed threads, zero `对话`/`会话`/`Issue` in Chinese UI).
+1. Read applicable `mikka-hosted-ui/docs/design/decisions/` and `mikka-hosted-ui/docs/design/glossary.md` first (e.g., `2026-11-09-0050` paid blocks as shipped, `2026-11-18-1200` Capy sidebar rows, Bot-managed threads, zero `对话`/`会话`/`Issue` in Chinese UI).
 2. Inspect real competitor benchmarks before writing UI code:
    - Query **Mobbin MCP** (`best-practices` → `search` → `search_screens`) for the exact platform (`ios` or `web`) and screen type (ChatGPT, Claude, Cursor, Linear, GitHub, v0).
    - For Agent workflows (tool calls, sidebar/captains/crew, PRs, threads, secrets), inspect the reference Electron **frontend + backend** protocol rather than mimicking surface visuals alone.

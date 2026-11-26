@@ -1,4 +1,4 @@
-// Every dispatch is a Factory task (docs/design/decisions/2026-11-03-0415-all-dispatch-through-factory.md),
+// Every dispatch is a Factory task (mikka-hosted-ui/docs/design/decisions/2026-11-03-0415-all-dispatch-through-factory.md),
 // against a real PostgreSQL with synthetic Acme-like data: one Coordinator dispatch_run creates a Factory task
 // and its execute attempt bound to the run it queued.
 import assert from 'node:assert/strict'

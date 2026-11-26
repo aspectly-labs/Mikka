@@ -74,7 +74,7 @@ claude mcp add --transport http mikka https://app.aspectlylabs.com/mikka/api/mcp
   <img src="docs/assets/task-flow-zh-light.svg" alt="Mikka 任务流程：分诊、Agent 执行、审阅、修复、验收与后续监控。">
 </picture>
 
-Bot、Agent、任务、线程与运行的术语定义，请参见[术语表](docs/design/glossary.md)。
+Bot、Agent、任务、线程与运行的术语定义，请参见[术语表](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/glossary.md)。
 
 ## 客户端与源码范围
 

@@ -22,7 +22,7 @@ const RUNNING = ['queued', 'preparing', 'running', 'finishing'] as const
  * `GET /api/mobile/home`: what the app's home list and drawer show: the person, their
  * workspace, their bots with each chat's latest line as plain text (an empty
  * string for a card with no words; the Coordinator first, marked `coordinator`), and the counts beside
- * 建议 and 线程 (docs/design/mobile.md, "Where it lives"). `live.workspaceId` is the
+ * 建议 and 线程 (mikka-hosted-ui/docs/design/mobile.md, "Where it lives"). `live.workspaceId` is the
  * person's own home channel (lib/live/owner-scope.ts) the app listens on for its
  * owner-wide keys; null when there is none (the app then reads once a minute).
  */

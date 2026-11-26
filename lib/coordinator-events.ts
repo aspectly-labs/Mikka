@@ -163,7 +163,7 @@ export function issueStatusEvent(before: { status: string }, after: { id: string
 }
 
 /**
- * A task was assigned to one of the person's Bots (Capy's `issue_activity`, "X assigned you CAP-12"). It goes into
+ * A task was assigned to one of the person's Bots ("X assigned you SPOT-12"). It goes into
  * that Bot's own chat and wakes it; the Bot reads the task and decides whether to start work. One event per Bot and
  * task revision, so a replayed save does not wake it twice.
  */
@@ -179,8 +179,8 @@ export function issueAssignedEvent(task: { id: string; ownerId: string; identifi
 export const ISSUE_ACTIVITY_TEXT_MAX = 2000
 
 /**
- * Someone commented on a task a Bot is assigned to, or @-mentioned a Bot in a task's comment or description (Capy's
- * `issue_activity` for comments and mentions). Like an assignment it goes into that Bot's chat and wakes it. `key`
+ * Someone commented on a task a Bot is assigned to, or @-mentioned a Bot in a task's comment or description (task
+ * activity for comments and mentions). Like an assignment it goes into that Bot's chat and wakes it. `key`
  * names the comment (thread and message) or the description version, so the same activity wakes a Bot once.
  */
 export function issueActivityEvent(task: { id: string; identifier: string | null; title: string }, bot: { id: string; ownerId: string },

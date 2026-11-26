@@ -13,7 +13,7 @@ type Params = { params: Promise<{ id: string }> }
 
 /**
  * `GET /api/mobile/threads/:id/machine`: which machine the thread runs on, read when the person taps the
- * icon in its title (docs/design/thread-run-location.md). Only the owner's own thread; null when it has none.
+ * icon in its title (mikka-hosted-ui/docs/design/thread-run-location.md). Only the owner's own thread; null when it has none.
  */
 async function handleGET(request: Request, user: ApiSession['user'], { params }: Params) {
   const id = z.uuid().safeParse((await params).id)

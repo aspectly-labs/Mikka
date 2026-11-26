@@ -1,6 +1,6 @@
 /**
  * Where a thread runs, as its header draws it: an icon for the kind, a status
- * dot, and on hover which machine it is (docs/design/thread-run-location.md).
+ * dot, and on hover which machine it is (mikka-hosted-ui/docs/design/thread-run-location.md).
  * Shared by the server read and the browser; nothing here touches the database.
  */
 export type ThreadMachineKind = 'cloud' | 'laptop' | 'server'

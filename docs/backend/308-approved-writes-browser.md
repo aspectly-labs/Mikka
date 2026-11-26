@@ -34,7 +34,7 @@ authorized call dispatches without an additional approval judgment.
 Run-backed records use the `direct` policy version. Records with numeric
 policy versions retain their stored-policy checks. The operation ledger
 continues to pin the account, target, content, execution and invocation.
-See [authorized MCP connections](../design/decisions/2026-11-19-native-mcp-authorization.md).
+See [authorized MCP connections](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-19-native-mcp-authorization.md).
 
 ## Product approval integration
 

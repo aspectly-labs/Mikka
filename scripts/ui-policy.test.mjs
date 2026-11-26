@@ -458,5 +458,4 @@ test('paid blocks used as shipped skip only the colour and type rules (2026-11-0
   assert.equal(exemptAsShipped('components/workspace/x.tsx', diagnostics, policy).length, 3)
   const real = JSON.parse(readFileSync('ui-policy.json', 'utf8'))
   assert.match(real.asShipped.$comment, /2026-11-09-0050-paid-blocks-as-shipped\.md/)
-  assert.ok(readFileSync('docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md', 'utf8').length > 0)
 })

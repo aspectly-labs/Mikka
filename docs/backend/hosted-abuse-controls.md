@@ -110,7 +110,7 @@ and transaction preservation without Stripe calls.
 All Mikka-managed model calls use backend LiteLLM. The default is the
 `mikka-default` alias; title, Decision and Planning calls use their own aliases.
 Actual models and Vercel, Neon or provider upstream credentials are configured
-behind LiteLLM, as [the egress decision](../design/decisions/2026-11-20-0530-litellm-only-model-egress.md)
+behind LiteLLM, as [the egress decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-0530-litellm-only-model-egress.md)
 describes. Application configuration is `MIKKA_LITELLM_URL` plus
 `MIKKA_LITELLM_MASTER_KEY`. There is no application-level direct-provider
 fallback, ZeroCat cooldown or Workers AI switch.
@@ -169,7 +169,7 @@ cannot reject it. There is no new balance freeze or prepayment. Free credit is
 spent before purchased points; `plan` grants are ignored.
 
 Calls in one workspace run concurrently (decision
-`docs/design/decisions/2026-11-01-0400-hosted-calls-run-concurrently.md`).
+`mikka-hosted-ui/docs/design/decisions/2026-11-01-0400-hosted-calls-run-concurrently.md`).
 `reserve` records a receipt ID and a hold of `HOSTED_CALL_HOLD_MICRO_USD`
 (USD 0.10) on the row's `holdMicroUsd`; all reserved-money fields on new rows
 are zero and the hold is never charged. A call is admitted when nothing else is

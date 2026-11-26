@@ -3,7 +3,7 @@ import type { CoordinatorEventKind, CoordinatorEventTier } from '@/lib/db/schema
 
 /**
  * Why a Coordinator reply may go to the person's phone, one per 通知 setting
- * (docs/design/mobile.md): 需要你决策, 待审阅, 线程完成, 每日简报.
+ * (mikka-hosted-ui/docs/design/mobile.md): 需要你决策, 待审阅, 线程完成, 每日简报.
  */
 export type PushReason = 'decide' | 'review' | 'finished' | 'briefing'
 export const PUSH_REASONS: readonly PushReason[] = ['decide', 'review', 'finished', 'briefing']

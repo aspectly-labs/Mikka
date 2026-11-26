@@ -8,7 +8,7 @@
 // Nothing on main is broken by this — but nothing stops the layer from arriving by
 // accident either, half-adopted and unbacked by its decision. This guard is the
 // tripwire. A thread mode is a product decision first: when it is made, it adds its
-// file to `docs/design/decisions/` and registers the new surface here in one commit.
+// file to `mikka-hosted-ui/docs/design/decisions/` and registers the new surface here in one commit.
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'

@@ -1,6 +1,6 @@
 # #1687 领域模型迁移与验收
 
-本说明用于 Project v2、稳定 Task 编号、Team / Project 生命周期和仓库环境绑定的发布。代码与正常迁移入口是执行依据；设计背景见 [领域模型决定](../design/decisions/2026-11-07-2300-work-domain-model.md)，发布规则见 [开发工作流](../dev-workflow.md)，迁移机制见 [migration bootstrap](../migration-bootstrap.md)。
+本说明用于 Project v2、稳定 Task 编号、Team / Project 生命周期和仓库环境绑定的发布。代码与正常迁移入口是执行依据；设计背景见 [领域模型决定](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2300-work-domain-model.md)，发布规则见 [开发工作流](../dev-workflow.md)，迁移机制见 [migration bootstrap](../migration-bootstrap.md)。
 
 本文保留公共迁移、归属和生命周期合同。公司生产观测、发布账号与操作记录见
 [私有运维入口](README.md)；文档说明不表示生产验收已完成。

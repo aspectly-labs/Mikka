@@ -7,7 +7,7 @@
 
 The existing `approve` operation approves and starts the selected publication.
 A verified, live browser or native human session supplies the approval; request
-JSON cannot supply that identity. The [human-session decision](../design/decisions/2026-11-09-1155-factory-human-session-authentication.md)
+JSON cannot supply that identity. The [human-session decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-1155-factory-human-session-authentication.md)
 replaces the older GitHub/Google account-link prerequisite.
 
 ## Transaction and execution

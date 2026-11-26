@@ -5,7 +5,7 @@ They are not application runtime code and contain no scripts. `AGENTS.md`
 and the release and test rules always win over a skill. For product and visual
 rules the two design skills (`unslop`, `interface-design`) win over an R-rule
 by default (decision 2026-10-31): change the code, the R-entry in
-`docs/design/rules.md` and its `lint:ui` / `check-copy` check together. The
+`mikka-hosted-ui/docs/design/rules.md` and its `lint:ui` / `check-copy` check together. The
 exception is a skill rule that does not fit a dense SaaS product (marketing
 hero type, decorative motion, big whitespace in data views); skip it and say
 why. Where the two skills disagree, `interface-design` decides;
@@ -17,7 +17,7 @@ people is intentional (R-36). The example
 code and copy in a skill are illustrations, not Mikka's components or wording.
 No skill restyles a paid block or component (BoardUI Pro, affectUI, beUI Pro):
 their token, icon-set, font and polish rules apply to Mikka's own UI only
-(`docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md`).
+(`mikka-hosted-ui/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md`).
 
 Vendored on 2026-10-29, unmodified, from these pinned commits:
 
@@ -41,7 +41,7 @@ Vendored on 2026-10-29, unmodified, from these pinned commits:
 | [gannonh/skills](https://github.com/gannonh/skills) | `2ef000341d4e60af00e8934ba1d4cfef82b63b13` | MIT, (c) 2026 Gannon Hall | `update-docs` (`skills/update-docs/`, vendored 2026-11-08), unmodified. The optional `documentation-and-adrs` reference uses an available installed skill when relevant |
 | [wondelai/skills](https://github.com/wondelai/skills) | `6621b1f32cca2b9b17d7a18c076bf6e7da83f8a6` | MIT, (c) 2025 Wondel.ai sp. z o.o. Google guide attribution is retained in `SKILL.md` | `technical-documentation` (vendored 2026-11-08), unmodified, including all seven reference pages |
 | [openclaw/openclaw](https://github.com/openclaw/openclaw) | `4947e40db109a28c1fbdcf692eb431db19d46720` | MIT, (c) 2026 OpenClaw Foundation | `test-audit` (vendored 2026-11-12 at Alex's request, from `.agents/skills/test-audit/`), including `CAMPAIGN.md` and `references/audit.md`. Changed: added a Mikka usage pointer to `SKILL.md` and pinned the cross-repository boundary/proof links. Mikka's companion `README.md` routes OpenClaw-specific commands to existing project validation; no scripts or extra framework are included |
-| [anthropics/claude-plugins-public](https://github.com/anthropics/claude-plugins-public) (`plugins/frontend-design/skills/frontend-design/`) | `30202c767cfaf325212b3921ab484f83adaec850` (plugin version 1.1.1) | Apache-2.0, Anthropic | `frontend-design` (vendored 2026-11-18 at Alex's request), `SKILL.md` byte-identical to upstream. Changed: nothing; the skill ships no scripts. Its design-authoring advice (distinct palette, type and layout, and the catalogue of generated-page tells) is a design judgement checklist for Mikka's own UI; it never restyles a paid block and `docs/design/` still decides |
+| [anthropics/claude-plugins-public](https://github.com/anthropics/claude-plugins-public) (`plugins/frontend-design/skills/frontend-design/`) | `30202c767cfaf325212b3921ab484f83adaec850` (plugin version 1.1.1) | Apache-2.0, Anthropic | `frontend-design` (vendored 2026-11-18 at Alex's request), `SKILL.md` byte-identical to upstream. Changed: nothing; the skill ships no scripts. Its design-authoring advice (distinct palette, type and layout, and the catalogue of generated-page tells) is a design judgement checklist for Mikka's own UI; it never restyles a paid block and `mikka-hosted-ui/docs/design/` still decides |
 
 Full license texts are in [`../skill-licenses/`](../skill-licenses/). The
 `update-docs` and `test-audit` licenses are retained in their skill directories:
@@ -65,29 +65,29 @@ text is at [`../skill-licenses/anthropic-frontend-design/LICENSE`](../skill-lice
 - **UI design and review**: `interface-design`, with
   `/interface-design:design-review` (craft review with a pass bar) and
   `/interface-design:design-deslop` (diff-scoped cleanup). Its design-system
-  file is `docs/design/`: record decisions in `docs/design/decisions/`
+  file is `mikka-hosted-ui/docs/design/`: record decisions in `mikka-hosted-ui/docs/design/decisions/`
   instead of `.interface-design/system.md`.
 - **Page-level visual judgement and defect hunting**: `frontend-design`. Read
   it before reshaping a screen and while diagnosing why one looks wrong — its
   two passes (a token/type/layout plan reviewed against the brief, then build
   and self-critique) and its catalogue of generated-page tells are the
   checklist. Where it asks for a new aesthetic direction, Mikka's answer is
-  already `docs/design/` plus the affected paid block's shipped look; the
+  already `mikka-hosted-ui/docs/design/` plus the affected paid block's shipped look; the
   skill judges the page, it does not re-theme the product.
 - **AI-looking UI**: `unslop` as an audit list (`references/signs.md`). Mikka
-  already has a direction (`docs/design/`), so use its polish mode: fix the
+  already has a direction (`mikka-hosted-ui/docs/design/`), so use its polish mode: fix the
   signs it finds and keep Mikka's palette, Geist and layout, as its own
   tokens page says to do for a project with a working system.
 
 - **iOS app UI follows `swiftui-expert-skill`** (Alex, 2026-11-08: 「遵守这个的规范进行开发」). Load it for every iOS UI change in `mikka-hosted-ui/mobile-next`, together with the Expo skills below. It is the binding standard for:
   - every SwiftUI tree the app draws through `@expo/ui/swift-ui` (`*.ios.tsx`: `Host`, menus, segmented controls, symbols, the chat header) and any native Swift module: its Operating Rules, `references/latest-apis.md` (no hard-deprecated APIs), `#available` gating with fallbacks, `Button` for every tappable element with accessibility labels;
   - native iOS behaviour and look in React Native screens too: toolbars (`references/toolbar-patterns.md`), sheets and navigation (`references/sheet-navigation-patterns.md`), lists and scrolling (`references/list-patterns.md`, `references/scroll-patterns.md`), layout and safe areas (`references/layout-best-practices.md`), Liquid Glass (`references/liquid-glass.md`; Mikka uses it for the floating header buttons and tab bar per the 2026-11-08 Comma-style header decision), accessibility and localization.
-  Where it and an Expo skill disagree on how to build something inside Expo / React Native, the Expo skill decides the mechanism and this skill decides the native iOS result. `docs/design/` still decides Mikka's product rules.
+  Where it and an Expo skill disagree on how to build something inside Expo / React Native, the Expo skill decides the mechanism and this skill decides the native iOS result. `mikka-hosted-ui/docs/design/` still decides Mikka's product rules.
 - **iOS app look and feel** (Alex, 2026-11-24: 「根据这个来进行设计」): every design or redesign of an iOS screen in `mikka-hosted-ui/mobile-next` reads `apple-design` and `mobile-native` (Emil Kowalski) and `swiftui-ui-patterns` (OpenAI Build iOS Apps) before drawing it, and checks motion with `review-animations` / `animate-expo` and gestures with `gestures`. Their SwiftUI code applies only to `@expo/ui/swift-ui` trees; in React Native screens they decide the iOS result (hierarchy, spacing, type, controls, motion), and the Expo skills decide how to build it.
 - **iOS app UI** (`mikka-hosted-ui/mobile-next`): load `expo-overview` first and the Expo skills it routes to (`expo-native-ui`, `expo-router`, `expo-animation`, `expo-ui`, `expo-design-system`), with `react-native-skills` for list, animation and UI patterns. An iOS UI PR carries Expo Web screenshots and a checklist of what Alex checks on TestFlight after the OTA. `ios-design` stays a review checklist (native controls first, gestures as springs, keyboard through `react-native-keyboard-controller`); its Uizze MCP steps are optional and not connected here. Where it and the Expo skills differ on how to build something in Expo, the Expo skills decide.
 
-- **Flow usability (glanceable, simple user flow)**: before a design or UI change is handed in, run `ux-heuristics` (score every screen out of 10; below 8 is not ready) and `cognitive-walkthrough` on each key task, counting clicks, scrolls and page switches per step. Report both results with the design. The author's own score is only a reference: the review that decides is done by an independent reviewer that did not author the design, against full-size screenshots and the live product, and it also checks R-84 to R-90 in `docs/design/rules.md` (Design review) one by one, including R-90: every part reuses an existing component.
-- **Product UX checks**: `ux-heuristics` (Nielsen's 10 heuristics with severity ratings and the 10-point score), `ux-information-architecture-audit`, `ux-navigation`, `ux-settings` (with `settings-pages`); `ui-ux-pro-max` references as a UI checklist. `docs/design/` and `interface-design` still decide.
+- **Flow usability (glanceable, simple user flow)**: before a design or UI change is handed in, run `ux-heuristics` (score every screen out of 10; below 8 is not ready) and `cognitive-walkthrough` on each key task, counting clicks, scrolls and page switches per step. Report both results with the design. The author's own score is only a reference: the review that decides is done by an independent reviewer that did not author the design, against full-size screenshots and the live product, and it also checks R-84 to R-90 in `mikka-hosted-ui/docs/design/rules.md` (Design review) one by one, including R-90: every part reuses an existing component.
+- **Product UX checks**: `ux-heuristics` (Nielsen's 10 heuristics with severity ratings and the 10-point score), `ux-information-architecture-audit`, `ux-navigation`, `ux-settings` (with `settings-pages`); `ui-ux-pro-max` references as a UI checklist. `mikka-hosted-ui/docs/design/` and `interface-design` still decide.
 - **Architecture remediation** uses `improve-codebase-architecture` with
   `codebase-design` to trace callers and test whether a layer can be removed.
   Use `domain-modeling` to locate the owning writer, `diagnosing-bugs` and
@@ -180,4 +180,4 @@ The files below are **Mikka-authored procedural adapters**, not verbatim vendore
 | `impeccable-audit` | Visual craft/UX audit without alternative design system or paid UI restyling | [Impeccable at b4bff16](https://github.com/pbakaus/impeccable/tree/b4bff1626c344067788c2679f048a20057c7cc5a), Apache-2.0 |
 | `ui-ux-pro-max` | Existing MIT reference checklists, adapted to use `references/` without absent search scripts | [nextlevelbuilder/ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) pinned above |
 
-Upstream methods are acknowledged, not copied as executable dependencies. For availability, Mikka's built-in `pnpm lint:ui` does not cover every private/native UI: use the role-aware matrix and actual source-pinned official runtime. Browser observations are **not** an automatic main-branch E2E CI gate. See [audit baseline](../../docs/design/ux-quality-audit.md) and [#2212](https://github.com/alexj11324/Mikka/issues/2212).
+Upstream methods are acknowledged, not copied as executable dependencies. For availability, Mikka's built-in `pnpm lint:ui` does not cover every private/native UI: use the role-aware matrix and actual source-pinned official runtime. Browser observations are **not** an automatic main-branch E2E CI gate. See [audit baseline](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/ux-quality-audit.md) and [#2212](https://github.com/alexj11324/Mikka/issues/2212).

@@ -1,8 +1,8 @@
 # The official UI checkout
 
-There is one UI ([decision 2026-11-08-2133](design/decisions/2026-11-08-2133-one-ui.md)), and all of its web and
+There is one UI ([decision 2026-11-08-2133](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-2133-one-ui.md)), and all of its web and
 desktop code lives in the private `mikka-hosted-ui` repository
-([decision 2026-11-24-1000](design/decisions/2026-11-24-1000-all-ui-in-hosted.md)). This repository is the engine,
+([decision 2026-11-24-1000](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-24-1000-all-ui-in-hosted.md)). This repository is the engine,
 API, runtime and build; it carries no interface of its own (`scripts/no-public-ui.test.mjs`).
 
 **Build ownership:** The public Mikka workspace is the source and root of an official build. A trusted release
@@ -74,7 +74,7 @@ then the public one.
 
 ## iOS app
 
-The iOS app (`mobile-next/apps/mobile`) lives exclusively in the private `mikka-hosted-ui` repository ([decision 2026-11-25-0915](design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)); the legacy 1.x `apps/mobile` client, `@ui-slot/*` mobile overlay mechanism, and `mobile-update.yml` / `mobile-native.yml` / `mobile-screenshots.yml` workflows have been removed from this public repository.
+The iOS app (`mobile-next/apps/mobile`) lives exclusively in the private `mikka-hosted-ui` repository ([decision 2026-11-25-0915](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)); the legacy 1.x `apps/mobile` client, `@ui-slot/*` mobile overlay mechanism, and `mobile-update.yml` / `mobile-native.yml` / `mobile-screenshots.yml` workflows have been removed from this public repository.
 
 This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.ts`, `tests/mobile-*.test.ts`) and the trusted release entry workflows (`.github/workflows/mobile-next-ios.yml` for TestFlight native builds and `.github/workflows/mobile-next-update.yml` for EAS OTA updates). Both release workflows check out `mikka-hosted-ui` via OIDC (`HOSTED_UI_READ_KEY`) and build or publish from `mobile-next/apps/mobile`.
 
@@ -98,7 +98,7 @@ This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.
   app's (`--font-sans`, `--color-blue-400`); this app's utilities inline their
   own values, so pages outside the slots look the same in both builds.
   Paid blocks in the layer keep their shipped look and only data and text
-  change ([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)). Because the
+  change ([2026-11-09-0050](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)). Because the
   shadcn token block is left out, affectUI blocks currently resolve shadcn
   token names to this app's values; that is recorded drift, not a rule to
   follow.

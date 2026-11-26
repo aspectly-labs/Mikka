@@ -46,7 +46,7 @@ async function removeTokens(userId: string, tokens: string[]) {
  * or `null` (silent). Arbitrary user-uploaded audio files are unsupported by
  * system push providers and stay client-local; `SETTINGS_REGISTRY.notificationSound`
  * syncs preset choices across Web/Desktop and maps `'none'` to `silent: true`
- * (see `docs/design/decisions/2026-11-22-0050-notification-sound-presets.md`).
+ * (see `mikka-hosted-ui/docs/design/decisions/2026-11-22-0050-notification-sound-presets.md`).
  */
 export async function deliverPhonePush(userId: string, notification: Notification, locale: 'zh-CN' | 'en') {
   let accepted = 0, invalid = 0

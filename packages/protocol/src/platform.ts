@@ -1,5 +1,5 @@
 // Which client is running and what only that client can do (ADR 0004,
-// docs/design/platforms.md). The web client and the Electron desktop shell
+// mikka-hosted-ui/docs/design/platforms.md). The web client and the Electron desktop shell
 // render the same UI; a capability is on only when the bridge that provides it
 // is actually present. Never infer the platform from the user agent.
 import type { MikkaBridge } from "./bridge"

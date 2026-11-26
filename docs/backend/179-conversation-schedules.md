@@ -99,7 +99,7 @@ runtime acceptance; a mocked model response is not that evidence.
 
 ## Automations (v1, 2026-11-15)
 
-Decision [2026-11-15-1337](../design/decisions/2026-11-15-1337-automations-v1.md).
+Decision [2026-11-15-1337](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-1337-automations-v1.md).
 
 - **Page commands.** The 自动化 page's server actions call `executeScheduleCommand`
   with `{ direct: true }` as the signed-in person, in the workspace they have open,
@@ -173,7 +173,7 @@ migration/Worker deployment, real external write or final issue closure is claim
 
 For GitHub PR and review deliveries the editor can restrict `events[].pullAuthors` to up to 20 PR openers. The webhook matches the PR's own author independently of the sender or reviewer. The optional Project selector searches matching logins on the most recently updated 50 pull requests in the event's single selected repository. Suggestions require current Project access, the workspace's repository policy, and the person's authorized GitHub repository. The Project choice applies only to suggestions.
 
-Decision [2026-11-15-1704](../design/decisions/2026-11-15-1704-automation-github-triggers.md).
+Decision [2026-11-15-1704](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-1704-automation-github-triggers.md).
 
 - **Definition.** A `dispatch_task` definition may carry `events`: 1–20 GitHub
   triggers `{ source: 'github', event, repositories, branches?, labels?, runWhen? }`.
@@ -206,7 +206,7 @@ Decision [2026-11-15-1704](../design/decisions/2026-11-15-1704-automation-github
 
 ## Limits and usage (2026-11-15)
 
-Decision [2026-11-15-1730](../design/decisions/2026-11-15-1730-automation-limits-usage.md).
+Decision [2026-11-15-1730](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-1730-automation-limits-usage.md).
 
 - **`maxRunsPerDay`** counts `pending`, `running`, `succeeded` and `failed` runs created
   since local midnight in the definition's time zone. `execute` skips a timed or retried
@@ -229,7 +229,7 @@ Decision [2026-11-15-1730](../design/decisions/2026-11-15-1730-automation-limits
 
 ## Each run: a new task or the same task (2026-11-15)
 
-Decision [2026-11-15-1810](../design/decisions/2026-11-15-1810-automation-each-run.md).
+Decision [2026-11-15-1810](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-1810-automation-each-run.md).
 
 - `eachRun: 'new_task' | 'same_task'` (default `new_task`) on a `dispatch_task` definition. With
   `same_task`, the first run that creates a task for the current creator (its result has
@@ -244,7 +244,7 @@ Decision [2026-11-15-1810](../design/decisions/2026-11-15-1810-automation-each-r
 
 ## 接手: take over (2026-11-15)
 
-Decision [2026-11-15-1840](../design/decisions/2026-11-15-1840-automation-take-over.md).
+Decision [2026-11-15-1840](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-1840-automation-take-over.md).
 
 - Command `{ action: 'take_over', scheduleId, version }`; page action `takeOverAutomation`
   (RPC `automations.takeOverAutomation`). Only on a workspace automation, only by an owner
@@ -262,7 +262,7 @@ Decision [2026-11-15-1840](../design/decisions/2026-11-15-1840-automation-take-o
 
 ## Webhook (2026-11-15)
 
-Decision [2026-11-15-1830](../design/decisions/2026-11-15-1830-automation-webhook.md).
+Decision [2026-11-15-1830](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-1830-automation-webhook.md).
 
 - Definition `webhook: { batchMinutes: 0..60 }` (dispatch_task only). Command
   `{ action: 'webhook_key', scheduleId, version }` (page only, `scheduleWebhookPageOnly`
@@ -295,7 +295,7 @@ Decision [2026-11-15-1830](../design/decisions/2026-11-15-1830-automation-webhoo
 
 ## Linear triggers (2026-11-15)
 
-Decision [2026-11-15-1930](../design/decisions/2026-11-15-1930-automation-linear-triggers.md).
+Decision [2026-11-15-1930](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-1930-automation-linear-triggers.md).
 
 - `events[]` may hold `{ source: 'linear', event, teams (1–20 Linear team IDs), labels?, runWhen? }`;
   events `issue_created`, `issue_status_changed` (`updatedFrom.stateId`), `issue_label_added`
@@ -316,7 +316,7 @@ Decision [2026-11-15-1930](../design/decisions/2026-11-15-1930-automation-linear
 
 ## Slack triggers (2026-11-15)
 
-Decision [2026-11-15-2010](../design/decisions/2026-11-15-2010-automation-slack-triggers.md).
+Decision [2026-11-15-2010](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-2010-automation-slack-triggers.md).
 
 - `events[]` may hold `{ source: 'slack', event: 'message' | 'mention' | 'reaction_added', channels (1–20 IDs), authors?, reactions?, runWhen? }`.
   A message or `app_mention` with no `bot_id`/`bot_profile` and no subtype (or `thread_broadcast`), or a
@@ -334,7 +334,7 @@ Decision [2026-11-15-2010](../design/decisions/2026-11-15-2010-automation-slack-
 
 ## Posting runs to Slack (2026-11-15)
 
-Decision [2026-11-15-2040](../design/decisions/2026-11-15-2040-automation-slack-posts.md).
+Decision [2026-11-15-2040](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-2040-automation-slack-posts.md).
 
 - Definition `notify: { slack: { channel, locale: 'zh-CN' | 'en' } }` (dispatch_task only); `permission` checks the
   channel with the `slackChannels` seam like a Slack trigger's.
@@ -355,7 +355,7 @@ their current state.
 
 ## Templates, pins, folders and tags (2026-11-15)
 
-Decision [2026-11-15-2100](../design/decisions/2026-11-15-2100-automation-templates-organize.md).
+Decision [2026-11-15-2100](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-15-2100-automation-templates-organize.md).
 
 - Templates are client-side drafts (`components/automations/automation-templates.ts`): `automation=new:<template>`
   opens the editor with the template's timing or trigger and the localized `Automations.templates.<key>` title and

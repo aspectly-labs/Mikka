@@ -67,7 +67,7 @@ OIDC RP-initiated logout 的 8 个新增子用例已计入 37 项：真实 OP �
 | 元数据审计、失败不丢、可授权导出 | 配置与 audit intent 同事务；故障重试只投递一次；登录审计失败不能发布 cookie/redirect；导出逐页重验当前角色和 tenant、摘要完整性、数量上限；legal hold/有效导出阻止清理；归档保留历史 | 实际认证事件、故障注入和 PG 导出/清理；不是外部 SIEM 接入或合规认证 |
 | 基础隔离不受套餐控制；Community 核心保留 | Workspace 成员表仍唯一；Org 只是管理层；Cloud/license entitlement 独立于 ACL；个人和无 Org Workspace 不被强制 SSO 套餐门禁影响 | P1 政策/席位和 P2 拒绝用例；独立自托管部署尚未另作验收，不宣称连接 Cloud 才可运行 |
 
-源码证据：[`http.db.test.ts`](https://github.com/alexj11324/Mikka/blob/06e797f5e6eabcc0a30a2b19ecc37fa7ccd456f0/lib/enterprise/http.db.test.ts)、[`governance.db.test.ts`](https://github.com/alexj11324/Mikka/blob/06e797f5e6eabcc0a30a2b19ecc37fa7ccd456f0/lib/enterprise/governance.db.test.ts)、[`protocol.test.ts`](https://github.com/alexj11324/Mikka/blob/06e797f5e6eabcc0a30a2b19ecc37fa7ccd456f0/lib/enterprise/protocol.test.ts)。接口字段、依赖许可和迁移/回滚见 [Enterprise ADR](../design/decisions/2026-11-07-1212-enterprise-identity-and-audit.md)。
+源码证据：[`http.db.test.ts`](https://github.com/alexj11324/Mikka/blob/06e797f5e6eabcc0a30a2b19ecc37fa7ccd456f0/lib/enterprise/http.db.test.ts)、[`governance.db.test.ts`](https://github.com/alexj11324/Mikka/blob/06e797f5e6eabcc0a30a2b19ecc37fa7ccd456f0/lib/enterprise/governance.db.test.ts)、[`protocol.test.ts`](https://github.com/alexj11324/Mikka/blob/06e797f5e6eabcc0a30a2b19ecc37fa7ccd456f0/lib/enterprise/protocol.test.ts)。接口字段、依赖许可和迁移/回滚见 [Enterprise ADR](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-1212-enterprise-identity-and-audit.md)。
 
 ## 当前没有声称完成的事项
 

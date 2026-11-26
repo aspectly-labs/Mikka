@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import test from 'node:test'
 
 /**
- * The Next.js dependency is retired (docs/design/decisions). This test keeps it
+ * The Next.js dependency is retired (mikka-hosted-ui/docs/design/decisions). This test keeps it
  * retired: a reintroduced import, config file or package entry would otherwise
  * pass CI silently, because nothing else reads those names any more.
  *

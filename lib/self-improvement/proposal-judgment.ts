@@ -3,7 +3,7 @@ import { SCORER } from './scorer'
 
 // Whether a bucket's failures are enough to propose an improvement to the
 // agent's Skill is judged by the Decision API, not a fixed count or age
-// (docs/design/decisions/2026-11-01-1500-self-improvement-and-profile-decided-by-decision-api.md).
+// (mikka-hosted-ui/docs/design/decisions/2026-11-01-1500-self-improvement-and-profile-decided-by-decision-api.md).
 // The one rule kept in code is the runaway cap below.
 
 /** Runaway cap: at most one new proposal per bucket in this window, whatever the Decision API answers. Pinned in the frozen scorer definition. */

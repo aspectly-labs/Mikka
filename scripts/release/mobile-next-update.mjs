@@ -74,7 +74,7 @@ export function verifyMobileNextConfig(appConfigSource, easConfigSource) {
   } catch {
     // Redaction boundary: eas.json belongs to private mikka-hosted-ui; drop
     // the raw JSON.parse error cause so private config excerpts cannot leak
-    // into public Actions logs (docs/design/decisions/2026-11-05-0330-error-causes.md).
+    // into public Actions logs (mikka-hosted-ui/docs/design/decisions/2026-11-05-0330-error-causes.md).
     fail('easConfigInvalidJson')
   }
   const nextProfile = easConfig?.build?.next

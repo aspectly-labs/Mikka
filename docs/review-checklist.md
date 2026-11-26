@@ -7,14 +7,14 @@ fails, fix it first; do not show work with known failures.
 A paid block or component (BoardUI Pro, affectUI, beUI Pro) is checked against
 the library's demo instead: attach a side-by-side and list every visual
 difference beyond data and text. The Reuse, Look and Figma items below never
-ask to restyle one ([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+ask to restyle one ([2026-11-09-0050](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
 
 ## Before showing UI
 
 ### Reuse (R-90) & Design System v2
 
 - [ ] Every part of the screen names the existing component it uses
-      (`docs/design/components.md`, `docs/design/design-system.md` §2, the live
+      (`mikka-hosted-ui/docs/design/components.md`, `mikka-hosted-ui/docs/design/design-system.md` §2, the live
       screen for the same job, or a library in `components/reui/`,
       `components/ui/`, `components/motion/`, the OpenUI catalog), drawn or
       coded as that component renders it.
@@ -75,7 +75,7 @@ what they came for. A reviewer who did not build the screen runs this.
 - [ ] For changed business capabilities, the authoritative `command × permission × business transition × promised UI entry` is traced **both ways**; each authorized user job has a discoverable path and every visible action reaches a real command and durable result. Use [mikka-action-coverage](../.claude/skills/mikka-action-coverage/SKILL.md).
 - [ ] Do not confuse derived Task run/Factory states such as `running` with writable Task business status; a compact/read-only view may link to the canonical editor instead of duplicating every action.
 - [ ] A real action has immediate pending/error feedback, an ACK or explicit error, persisted readback/retry and appropriate permission denial. A Toast or callable handler alone is not acceptance.
-- [ ] Every audit labels source-only, runtime-verified, not-tested and intentionally-unavailable states and attaches the exact public/hosted source pair. Follow [UX audit baseline](design/ux-quality-audit.md) and [mikka-ux-quality-audit](../.claude/skills/mikka-ux-quality-audit/SKILL.md); do not revive retired browser E2E CI.
+- [ ] Every audit labels source-only, runtime-verified, not-tested and intentionally-unavailable states and attaches the exact public/hosted source pair. Follow [UX audit baseline](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/ux-quality-audit.md) and [mikka-ux-quality-audit](../.claude/skills/mikka-ux-quality-audit/SKILL.md); do not revive retired browser E2E CI.
 
 ### Model
 
@@ -92,12 +92,12 @@ what they came for. A reviewer who did not build the screen runs this.
 - [ ] Each task row shows its own state's icon. The hand means a task needs
       the person, the octagon means blocked, and the triangle means failed.
       State glyphs use the accepted semantic colours, with no dots or badges
-      ([state icons](design/decisions/2026-11-07-2230-one-icon-per-task-state.md),
-      [colours](design/decisions/2026-11-08-0130-task-state-icon-colours.md)).
+      ([state icons](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2230-one-icon-per-task-state.md),
+      [colours](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0130-task-state-icon-colours.md)).
 - [ ] A task opens its one conversation through task detail. Attempts and
       活动 run oldest first. Selecting an attempt scrolls to its section, the
       composer addresses the newest attempt, and attempts never show a hand
-      ([conversation decision](design/decisions/2026-11-07-2300-one-conversation-per-task.md)).
+      ([conversation decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2300-one-conversation-per-task.md)).
 - [ ] The Artifact rail item uses Mikka's stacked-cards icon, not lucide Copy
       or Library (R-56).
 - [ ] The browser toggle is an icon-only globe with no 「浏览器」 label (R-57).
@@ -112,7 +112,7 @@ more than once.
 - [ ] The only model picker is a bot composer's `BotModelPicker` chip (R-11).
 - [ ] No starter or suggestion cards in a chat (R-12).
 - [ ] No avatar or name on messages in a one-to-one chat (R-13).
-- [ ] Nothing from the "Do not use" table in `docs/design/components.md` is
+- [ ] Nothing from the "Do not use" table in `mikka-hosted-ui/docs/design/components.md` is
       imported by the diff.
 
 ### Look
@@ -132,7 +132,7 @@ more than once.
 
 - [ ] Put the screen next to its accepted Figma frame at the same size and
       compare: widths (dialogs especially), order, grouping, spacing. A
-      mismatch is resolved by `docs/design/README.md` § When sources
+      mismatch is resolved by `mikka-hosted-ui/docs/design/README.md` § When sources
       disagree, and the losing side is fixed or reported.
 - [ ] Groupings and order read exactly as the frame shows (machine picker:
       R-23). When a frame can be read two ways, ask Alex before
@@ -173,7 +173,7 @@ more than once.
 
 1. The checklist above passes.
 2. Alex accepted the review page. Design and accepted-frame requirements
-   follow [the source priority](design/README.md#when-sources-disagree).
+   follow [the source priority](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/README.md#when-sources-disagree).
 3. Then the flow passes local API/CLI acceptance (not before acceptance of
    the screens).
 4. CI is green as the final gate (`CONTRIBUTING.md` § How changes are
@@ -198,11 +198,11 @@ with what ChatGPT / Codex, Claude Code, Capy, Linear and Slack do.
 - [ ] A person can always use, delete and manage their own things:
       subscriptions, keys, computers, bots, files, settings. Switches and
       admin permissions govern only sharing with others
-      ([decision 2026-11-01-2240](design/decisions/2026-11-01-2240-own-credentials-always-usable.md)).
+      ([decision 2026-11-01-2240](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-2240-own-credentials-always-usable.md)).
 - [ ] The value on screen is the value that is stored.
 - [ ] No new polling: data changes arrive by live push; the polling allowlist
       grows only for UI timers and external APIs
-      ([decision 2026-11-05-0200](design/decisions/2026-11-05-0200-no-new-polling.md)).
+      ([decision 2026-11-05-0200](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-05-0200-no-new-polling.md)).
 - [ ] The default works: no unusable option selected by default, and nothing
       shown online that is not.
 - [ ] The same feature behaves the same on the phone and on the web.

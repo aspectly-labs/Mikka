@@ -13,7 +13,7 @@ Existing section links are retained as navigation only.
 See the [private runbook](https://github.com/alexj11324/mikka-cloud/blob/main/docs/operations/device-gateway-release.md).
 
 The Worker reports each device's session to the application
-([decision 2026-11-17-2215](../design/decisions/2026-11-17-2215-device-session-no-heartbeat.md)).
+([decision 2026-11-17-2215](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-17-2215-device-session-no-heartbeat.md)).
 Besides the existing `DEVICE_SESSION` Durable Object binding and the
 `GATEWAY_PUSH_SECRET` secret, it needs one plain text variable:
 

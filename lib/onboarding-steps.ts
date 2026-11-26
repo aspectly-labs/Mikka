@@ -1,6 +1,6 @@
 /**
  * The first-run guide's four steps, as Capy's (decision 2026-11-15-1900,
- * docs/design/onboarding.md): 工作区, 模型, 推荐, 套餐. No server imports, so the
+ * mikka-hosted-ui/docs/design/onboarding.md): 工作区, 模型, 推荐, 套餐. No server imports, so the
  * guide and its tests share the rules.
  */
 export const ONBOARDING_STEPS = ['workspace', 'model', 'recommended', 'plan'] as const

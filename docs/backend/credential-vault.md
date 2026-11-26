@@ -23,7 +23,7 @@ project/team/environment identity before consuming an opaque, database-bound
 30-second single-use lease. When testing together, the app and broker must
 run the same source commit against the same isolated database. Branches have
 no Vercel Preview; pre-merge checks run in CI or a local/Docker production
-build ([decision](../design/decisions/2026-11-05-1632-no-vercel-preview.md)).
+build ([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-05-1632-no-vercel-preview.md)).
 
 Infisical supplies the five AWS settings from `staging:/aws` for Preview and
 `prod:/aws` for Production. The vault is enabled by default; the optional

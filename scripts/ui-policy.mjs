@@ -7,7 +7,7 @@ export function isComponentLibrarySource(file, policy) {
 }
 
 // `Link`, `Script` and `dynamic` are the browser leaf this repository owns
-// (`ui-policy.json` frameworkShims, docs/design/decisions/2026-11-18-1500-retire-next-dependency.md).
+// (`ui-policy.json` frameworkShims, mikka-hosted-ui/docs/design/decisions/2026-11-18-1500-retire-next-dependency.md).
 // A framework shim has to call the JSX factory and create elements by hand, which is exactly
 // what these two rules forbid in business code; every other rule still applies to them.
 const FRAMEWORK_SHIM_RULES = new Set(['components/no-element-factory', 'components/no-custom-implementation'])
@@ -16,7 +16,7 @@ export function exemptFrameworkShims(file, diagnostics, policy) {
   return roots.some(root => file === root || (root.endsWith('/') && file.startsWith(root))) ? diagnostics.filter(d => !FRAMEWORK_SHIM_RULES.has(d.rule)) : diagnostics
 }
 
-// Paid blocks keep their native colours and type (docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md):
+// Paid blocks keep their native colours and type (mikka-hosted-ui/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md):
 // files under ui-policy.json asShipped.public drop only these two rules.
 const AS_SHIPPED_RULES = new Set(['style/semantic-colors', 'typography/preset-only'])
 export function exemptAsShipped(file, diagnostics, policy) {

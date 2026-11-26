@@ -55,7 +55,7 @@ and has no devices. There is no heartbeat and no long-poll fallback. The
 run-recovery cron (every 15 minutes) asks the gateway about devices that hold
 leased runs while the database still holds their session open, so a lost
 `disconnected` report cannot keep a run alive. See the
-[decision](../design/decisions/2026-11-17-2215-device-session-no-heartbeat.md).
+[decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-17-2215-device-session-no-heartbeat.md).
 
 Current daemons no longer poll `GET /v1/devices/:deviceId/fs/requests`. The
 route still answers an authenticated empty list for older daemons. Existing

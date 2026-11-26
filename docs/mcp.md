@@ -137,7 +137,7 @@ issue and its Bot, and only the run's owner reads it (R-62).
 
 Two capture paths use the daemon or the run-bound computer service. Native
 Claude Code/Codex and GitHub requests use the machine's ordinary network and
-selected credentials, as [orchestration](design/orchestration.md) defines.
+selected credentials, as [orchestration](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/orchestration.md) defines.
 
 | Where the thread runs | Tools | Path |
 | --- | --- | --- |
@@ -185,7 +185,7 @@ record the running app, actual test/API result, or rendered document respectivel
 A report, logs, an old candidate's capture, or an `unverified` criterion cannot
 replace visual evidence. Missing media commits a blocked state and returns
 `factory_visual_evidence_required` at handoff, approval and merge entry points.
-See [the visual-evidence decision](design/decisions/2026-11-08-2328-factory-visual-evidence-required.md).
+See [the visual-evidence decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-2328-factory-visual-evidence-required.md).
 
 The daemon and cloud recorder share `capture-video.mjs`. FFmpeg removes only
 idle gaps established by complete action timing, preserves every action and

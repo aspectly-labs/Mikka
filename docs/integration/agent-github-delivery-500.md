@@ -29,7 +29,7 @@ with mode 0600 and uses the real gh binary for Git authentication. Expiring
 auth renews in the background. Git and gh operations use the prepared native
 credential directly. One task owns the VM, including retained state while
 paused. The selected CLI and GitHub credential delivery follows the
-[machine execution decision](../design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md).
+[machine execution decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md).
 
 On a local device, `prepareLocalGitHub` uses a private run-owned gh configuration
 outside the checkout and retains the person's existing native login. Its gh
@@ -38,7 +38,7 @@ Local cleanup removes its own configuration. Cloud cleanup preserves later
 manual edits and can retain the task credential until VM reclamation.
 
 Third-party user, workspace and repository Secrets follow the separate
-[credential exposure decision](../design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
+[credential exposure decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
 The current [task-secret projection](../../lib/secrets/runtime.ts) separates
 protected Secrets from ordinary env and explicitly direct-exposed values.
 Runtime acceptance remains version-bound under [the acceptance guide](../acceptance.md).

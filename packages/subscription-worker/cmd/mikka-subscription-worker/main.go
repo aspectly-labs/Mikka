@@ -133,7 +133,7 @@ func run() error {
 		}
 	}
 	// Native export is only the short-lived access lease for one live run on a
-	// device runner (docs/design/orchestration.md §6; Alex, 2026-11-01): the
+	// device runner (mikka-hosted-ui/docs/design/orchestration.md §6; Alex, 2026-11-01): the
 	// server asks for it per run, never for an execution-only or run-less use.
 	// The refresh grant never leaves the worker; nativeAuth has no field for it.
 	lease := config.ExportAccessLease && !config.ExecutionOnly && config.Use != nil && config.Use.RunID != ""

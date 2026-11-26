@@ -4,7 +4,7 @@
 // user_facts, so the whole extract → merge → decay → evidence pipeline was
 // built and never used.
 //
-// It sits where Capy puts its memoryNote: a named section of the system
+// It is a named section of the system
 // instructions, so it takes part in the system digest and the provider's prefix
 // cache rather than being pasted into the changing per-turn tail. It is a
 // sibling of the "what the person asked you to remember" section (their own

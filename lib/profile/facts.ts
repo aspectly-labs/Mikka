@@ -1,5 +1,5 @@
 // i18n-ignore-file: model prompt text, and pattern subjects stored as data.
-// R-73 phase 1 (docs/design/proactive.md § 2.2): the person's profile is a
+// R-73 phase 1 (mikka-hosted-ui/docs/design/proactive.md § 2.2): the person's profile is a
 // set of facts. After each notification is rated, a small text model reads it
 // once and names zero to three facts; purchase and receipt mail always names
 // what was bought, from whom, for how much and when. Each night the facts are

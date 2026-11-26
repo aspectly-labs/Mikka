@@ -1,7 +1,7 @@
 # Development workflow
 
 Standing rules for how work moves from a branch to `main`. Decision:
-[`2026-11-01-1440-dev-workflow-local-first`](design/decisions/2026-11-01-1440-dev-workflow-local-first.md);
+[`2026-11-01-1440-dev-workflow-local-first`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-1440-dev-workflow-local-first.md);
 ownership as Alex set it on 2026-11-03, with dependency-based delivery under
 [#2984](https://github.com/alexj11324/Mikka/issues/2984) (§ 5).
 Use `AGENTS.md` and the accepted decision hierarchy when another document
@@ -32,9 +32,9 @@ application, a real isolated database and, when the flow uses one, a real
 daemon. Ordinary acceptance goes through the API and CLI
 (`pnpm test:local-loop`, [local-runtime.md](local-runtime.md)), and a UI change
 is checked with screenshots of a local production build of the official UI
-(this repository plus `mikka-hosted-ui`, [one UI](design/decisions/2026-11-08-2133-one-ui.md)) under
-[1520](design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md) and
-[2225](design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md).
+(this repository plus `mikka-hosted-ui`, [one UI](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-2133-one-ui.md)) under
+[1520](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md) and
+[2225](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md).
 The general browser suite is retired. Retained targeted Desktop, Analytics and
 self-hosted jobs keep the scopes in the
 [workflow reference](../.github/workflows/README.md).
@@ -93,7 +93,7 @@ provides:
 
 - **Node 24** is what Mikka builds, tests and ships on. Bootstrap uses **24**
   from `.node-version`; production images stay on 24. CI runs only Node 24
-  ([2026-11-22-1430](design/decisions/2026-11-22-1430-ci-node24-only.md)):
+  ([2026-11-22-1430](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1430-ci-node24-only.md)):
   Node 22 is no longer tested, though `engines` still reads `>=22`.
   `local-device-node22.yml` builds and starts the app and packaged Eve on 24 and
   runs the daemon/installer tests.
@@ -158,8 +158,8 @@ loopback `*_e2e` database) is described in
 ## 5. Ownership and merging
 
 Alex set the ownership rules on 2026-11-03
-([`2026-11-03-2359`](design/decisions/2026-11-03-2359-issue-owner-merges-and-accepts-in-production.md)).
-The [SDLC delivery decision](design/decisions/2026-11-20-1640-sdlc-delivery.md)
+([`2026-11-03-2359`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-03-2359-issue-owner-merges-and-accepts-in-production.md)).
+The [SDLC delivery decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1640-sdlc-delivery.md)
 defines the default for new work. Already approved epic-specific batch rules,
 including #2891 and #2956, remain in force for those owners.
 They replace the coordinator-merges rule, the push-fixes-to-main rule and the
@@ -279,7 +279,7 @@ follow the [current build and release contract](operations/build-source-of-truth
 
 The coordinator assigns rule IDs (`R-xx`) when it writes the issue. Migration
 IDs are generated automatically, following the
-[Rails-style migration decision](design/decisions/2026-11-11-1151-automatic-migration-ids.md).
+[Rails-style migration decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-11-1151-automatic-migration-ids.md).
 
 To add a database migration:
 
@@ -317,7 +317,7 @@ hosted API and internal `API ↔ Eve ↔ Task ↔ World` contracts (three-step
 `HOSTED_API_VERSION` / `HOSTED_API_FLOOR` cutover and immutable old-caller
 release fixtures), see
 [Three-step breaking contracts](engineering/HANDBOOK.md#breaking-contracts-and-database-migrations)
-and [hosted API compatibility](design/decisions/2026-11-20-1300-hosted-api-compatibility.md).
+and [hosted API compatibility](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1300-hosted-api-compatibility.md).
 Independent clones can still collide: regenerate an unexecuted migration with
 the command before merging, while retaining every executed file. Existing
 historical aliases and transaction rules remain in force.
@@ -328,7 +328,7 @@ Build versioned Mikka templates on top of E2B's official `desktop`, `claude`
 and `codex` templates. All preinstalled Mikka software lives under `/opt/mikka`.
 The official CLI packages, Node/npm, system files and their layout remain
 intact: adding files is allowed; deleting or overwriting originals is not
-([Alex's #1505 clarification](design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md)).
+([Alex's #1505 clarification](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md)).
 
 A worker change on `main` is reported by `e2b-official-runtime.yml`. When the
 Cloudflare deployment workflow's serving-release observation shows that commit

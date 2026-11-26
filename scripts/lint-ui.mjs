@@ -54,10 +54,10 @@ for (const file of interactionFiles) {
   diagnostics.push(...auditInteractions(file, text), ...auditIconButtons(file, text))
 }
 // Polling covers web, mobile, daemon and workflows, so it lists its own files; stale allowlist
-// entries fail in scripts/polling-policy.test.mjs (docs/design/decisions/2026-11-05-0200-no-new-polling.md).
+// entries fail in scripts/polling-policy.test.mjs (mikka-hosted-ui/docs/design/decisions/2026-11-05-0200-no-new-polling.md).
 diagnostics.push(...auditPollingRepository())
 // Error causes and copy for user-reachable codes cover web, daemon and workflows too; stale allowlist
-// entries fail in scripts/error-cause-policy.test.mjs (docs/design/decisions/2026-11-05-0330-error-causes.md).
+// entries fail in scripts/error-cause-policy.test.mjs (mikka-hosted-ui/docs/design/decisions/2026-11-05-0330-error-causes.md).
 diagnostics.push(...auditErrorCauseRepository())
 const counts = Object.fromEntries([...new Set(diagnostics.map(d => d.rule))].sort().map(rule => [rule, diagnostics.filter(d => d.rule === rule).length]))
 if (process.argv.includes('--json')) console.log(JSON.stringify({ files: businessFiles.length, libraryFiles: files.length - businessFiles.length, interactionFiles: interactionFiles.length, clientInteractionFiles: clientFiles.length, errors: diagnostics.length, counts, diagnostics }, null, 2))

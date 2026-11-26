@@ -1,7 +1,7 @@
 /**
  * Which devices may take a run's subscription access lease
  * (`/v1/devices/:id/runs/:runId/subscription-lease`): a person's own device
- * running the daemon is a runner like E2B (docs/design/orchestration.md §3,
+ * running the daemon is a runner like E2B (mikka-hosted-ui/docs/design/orchestration.md §3,
  * §6). Both local and cloud runners receive the access token during run
  * preparation, then connect directly to the provider. A cloud token must
  * name this exact task machine. The lease still checks the initial run's

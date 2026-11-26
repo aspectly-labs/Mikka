@@ -10,9 +10,9 @@ const DECISIONS_DIR = 'docs/design/decisions'
 const DECISIONS_README = 'docs/design/decisions/README.md'
 const FROZEN_DECISIONS = 'docs/design/decisions.md'
 
+// The UI spec template moved to the private hosted repo with the design docs (2026-11-26).
 const REQUIRED_TEMPLATES = [
   'docs/engineering/templates/design-doc.md',
-  'docs/engineering/templates/ui-spec.md',
   'docs/engineering/templates/coe-postmortem.md',
 ]
 
@@ -290,6 +290,11 @@ export function auditEngineeringHandbook(root) {
     checkMarkdownLinks(root, entry, content, errors)
   }
 
+  // UI rules, UI decisions and design docs moved to the private hosted repo (mikka-hosted-ui) on 2026-11-26.
+  // When a checkout still carries docs/design/decisions (the hosted repo, or a fixture), audit it in full.
+  const adrCounts = { total: 0, accepted: 0, superseded: 0, supersededInPart: 0 }
+  if (!existsSync(resolve(root, DECISIONS_DIR))) return { errors, adrCounts }
+
   // Verify decisions README links and Status header convention
   const decisionsReadmeAbs = resolve(root, DECISIONS_README)
   if (!existsSync(decisionsReadmeAbs)) {
@@ -301,7 +306,6 @@ export function auditEngineeringHandbook(root) {
 
   // Verify every ADR in docs/design/decisions/20*.md carries a canonical Status header
   const decisionsDirAbs = resolve(root, DECISIONS_DIR)
-  const adrCounts = { total: 0, accepted: 0, superseded: 0, supersededInPart: 0 }
   if (!existsSync(decisionsDirAbs)) {
     errors.push(`Missing ${DECISIONS_DIR}`)
   } else {
@@ -360,10 +364,11 @@ export function auditEngineeringHandbook(root) {
   return { errors, adrCounts }
 }
 
-test('Engineering Handbook, templates, pointers, and all ADRs pass Tier 3 audit', () => {
+test('Engineering Handbook, templates, pointers, and any local ADRs pass Tier 3 audit', () => {
   const result = auditEngineeringHandbook(REPO_ROOT)
   assert.deepEqual(result.errors, [], `Handbook / ADR audit errors:\n${result.errors.join('\n')}`)
-  assert.ok(result.adrCounts.total >= 300, `expected >= 300 ADRs, saw ${result.adrCounts.total}`)
+  // ADRs live in the private hosted repo (mikka-hosted-ui/docs/design/decisions/) since 2026-11-26.
+  assert.equal(existsSync(resolve(REPO_ROOT, DECISIONS_DIR)), false, 'UI decisions belong in mikka-hosted-ui, not here')
   assert.equal(
     result.adrCounts.accepted + result.adrCounts.superseded + result.adrCounts.supersededInPart,
     result.adrCounts.total,

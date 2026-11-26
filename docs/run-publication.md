@@ -27,7 +27,7 @@ GitHub physical-checkout records with a verified equivalent endpoint can reuse
 their record ID, without changing the clone URL. No data migration grants a push.
 
 Pushing needs no approval in Mikka
-([decision](design/decisions/2026-11-02-1600-agents-use-own-github-credential.md)):
+([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-02-1600-agents-use-own-github-credential.md)):
 every run works with its owner's own GitHub credential, the same as
 `gh auth login` on their own computer, for every repository they authorized.
 There is no push grant, no push card and no first-push approval per
@@ -140,5 +140,5 @@ access and PR publication require acceptance on that configured authority.
 The original backend delivery ran no migration against a developer, Preview or
 production database. Its R-66 frame and item-6 handoff are historical.
 `RunSource.pullRequests` supplies owner-filtered output data. New UI evidence
-follows [the design source order](design/README.md), and new GitHub publication
+follows [the design source order](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/README.md), and new GitHub publication
 acceptance follows [the acceptance guide](acceptance.md).

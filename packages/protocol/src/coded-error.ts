@@ -1,6 +1,6 @@
 // An error with a stable code for the UI, a detail from a closed set saying
 // which precondition failed, and the original error kept as `cause`
-// (decision docs/design/decisions/2026-11-05-0330-error-causes.md).
+// (decision mikka-hosted-ui/docs/design/decisions/2026-11-05-0330-error-causes.md).
 //
 // The message is the code, or `code (detail)` when there is a detail, the same
 // shape the run's stored error already uses ("… (child_exit: cli_exited_early)").

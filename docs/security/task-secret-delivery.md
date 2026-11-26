@@ -1,7 +1,7 @@
 # Task Secret delivery
 
 Implementation owner: [#1712](https://github.com/alexj11324/Mikka/issues/1712).
-Architecture authority: [credential exposure ADR](../design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
+Architecture authority: [credential exposure ADR](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
 
 ## Source audit and migration
 

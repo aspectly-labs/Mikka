@@ -10,7 +10,7 @@ caller against the current service. Current-source lint rules remain unchanged.
 - [Eve caller from `64a3a8df`](released-64a3a8df/README.md) covers run creation,
   startup and full/metadata-only reads through the World Worker.
 
-The [hosted API compatibility decision](../design/decisions/2026-11-20-1300-hosted-api-compatibility.md)
+The [hosted API compatibility decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1300-hosted-api-compatibility.md)
 owns the compatibility and retirement rules. Updating a fixture requires a
 successful serving receipt; changing archived source to pass a test would
 invalidate that evidence.

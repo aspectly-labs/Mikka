@@ -10,7 +10,7 @@ import { setAttentionEnabled } from '@/lib/attention/store'
 import { writePersonalArchiveSetting } from '@/lib/settings/archive-preferences'
 
 /**
- * The app's 通知, 偏好 and 记忆 settings (docs/design/mobile.md, "Settings";
+ * The app's 通知, 偏好 and 记忆 settings (mikka-hosted-ui/docs/design/mobile.md, "Settings";
  * docs/settings-backend/prefs.md). `proactive` (主动消息) is lib/attention's
  * switch, kept in attention_settings; the rest live in user_preferences.
  * user_preferences."suggestionSources" is not part of this shape; it has its

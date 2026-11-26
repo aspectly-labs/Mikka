@@ -1,6 +1,6 @@
 // i18n-ignore-file: model prompt fixtures, not UI copy.
 /**
- * Offline presentation fixture (docs/design/decisions/2026-11-25-remove-openui.md):
+ * Offline presentation fixture (mikka-hosted-ui/docs/design/decisions/2026-11-25-remove-openui.md):
  * every Coordinator path carries the Markdown presentation block exactly once,
  * uses native Mikka citations, and emits zero OpenUI DSL instructions.
  */

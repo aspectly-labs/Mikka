@@ -4,7 +4,7 @@ This report records observed engineering results, with the original run,
 attempt, source and sample denominator. The live execution record remains the
 single [#2984 progress comment](https://github.com/alexj11324/Mikka/issues/2984#issuecomment-7050779093).
 The operating procedure is [development workflow § 5](../dev-workflow.md#5-ownership-and-merging),
-with its [delivery decision](../design/decisions/2026-11-20-1640-sdlc-delivery.md).
+with its [delivery decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1640-sdlc-delivery.md).
 This document is evidence, not another validation system or release authority.
 
 ## Scope and measurement boundaries

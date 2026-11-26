@@ -466,7 +466,7 @@ function originalSessionRetryAvailable(question: { recoveryRequest?: unknown; qu
 
 /**
  * Where a thread runs, for the run-location icon after its title
- * (docs/design/thread-run-location.md). Only the thread's owner sees which
+ * (mikka-hosted-ui/docs/design/thread-run-location.md). Only the thread's owner sees which
  * machine; anyone else who may read the thread gets null. Its own read, so the
  * conversation's frequent reads never wait on a device's presence.
  */

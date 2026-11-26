@@ -48,7 +48,7 @@ there is no database reconnect poll.
 ## Device sessions
 
 A daemon works only while it holds its device socket; there is no heartbeat
-and no fallback poll ([decision 2026-11-17-2215](design/decisions/2026-11-17-2215-device-session-no-heartbeat.md)).
+and no fallback poll ([decision 2026-11-17-2215](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-17-2215-device-session-no-heartbeat.md)).
 The daemon pings every 10 seconds and the gateway answers in memory. A device
 is online while its socket is open and it connected or pinged within the last
 40 seconds: the daemon's 30-second silence limit plus one ping.

@@ -7,7 +7,7 @@ description: "Review Mikka's official web interface for accessibility, responsiv
 
 Adapted workflow based on https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines and https://github.com/vercel-labs/web-interface-guidelines . This file is authored for Mikka, not a claim that the upstream rule corpus or browser tooling is vendored.
 
-Always read `docs/design/README.md`, `docs/design/rules.md`, `docs/design/components.md` and `docs/review-checklist.md` first. Do **not** fetch and execute unpinned remote instructions as binding project policy. External guidelines are optional research, subordinate to Mikka's accepted Figma/design decisions and paid components' as-shipped presentation.
+Always read `mikka-hosted-ui/docs/design/README.md`, `mikka-hosted-ui/docs/design/rules.md`, `mikka-hosted-ui/docs/design/components.md` and `docs/review-checklist.md` first. Do **not** fetch and execute unpinned remote instructions as binding project policy. External guidelines are optional research, subordinate to Mikka's accepted Figma/design decisions and paid components' as-shipped presentation.
 
 Check on actual official screens:
 - Semantics and accessible controls (names, role, state, keyboard activation, focus trap/return, non-obscured focus, screen-reader updates).

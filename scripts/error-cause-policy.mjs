@@ -1,5 +1,5 @@
 // Keep the cause, give a sub-code, give user copy for every surfaced code
-// (docs/design/decisions/2026-11-05-0330-error-causes.md). Two checks:
+// (mikka-hosted-ui/docs/design/decisions/2026-11-05-0330-error-causes.md). Two checks:
 //
 // 1. error-cause/copy: every code in the registry of user-reachable codes
 //    (packages/protocol/src/user-error-codes.ts) and every one of its details
@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { officialCoreFiles, readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 
-export const errorCauseMessage = '保留原因：catch 里抛出的新错误要带 `{ cause: error }`（或把 error 传给 helper），给出 detail 子码，并为用户能看到的错误码在 messages/*.json 写文案；见 docs/design/decisions/2026-11-05-0330-error-causes.md。确实要丢弃原因时在同一行或上一行写 `// error-cause: <原因>`。'
+export const errorCauseMessage = '保留原因：catch 里抛出的新错误要带 `{ cause: error }`（或把 error 传给 helper），给出 detail 子码，并为用户能看到的错误码在 messages/*.json 写文案；见 mikka-hosted-ui/docs/design/decisions/2026-11-05-0330-error-causes.md。确实要丢弃原因时在同一行或上一行写 `// error-cause: <原因>`。'
 
 export const registryFile = 'packages/protocol/src/user-error-codes.ts'
 export const catalogues = ['messages/zh-CN.json', 'messages/en.json']

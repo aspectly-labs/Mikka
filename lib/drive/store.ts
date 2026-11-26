@@ -14,8 +14,8 @@ import { createUlidFactory } from './ulid'
  * same `BEGIN` / `SELECT … FOR UPDATE` / compare / write / `COMMIT` that
  * `lib/computer/claim.ts` and the Factory store use, and the same idempotency
  * receipt `lib/factory/monitor-cycle.db.test.ts` proves with ten replays. It is
- * the same idea as Capy's Drive write, with the naming kept Mikka's own: a
- * `driveScope`, not a Capy "scope"; a `volume`, not a "workspace".
+ * the naming kept Mikka's own: a
+ * `driveScope`, not a generic "scope"; a `volume`, not a "workspace".
  *
  * The invariant the whole feature rests on: a write either lands completely or
  * changes nothing. Every check happens under the volume row's lock, and every
@@ -46,7 +46,7 @@ export type DriveErrorCode = (typeof DRIVE_ERROR_CODES)[number]
  * What a conflict tells the caller. A bare 409 says only "you lost the race";
  * `headDigest` and `paths` say which tree to read and which entries differ, so
  * the client can re-read exactly those and retry instead of guessing. This is
- * the part Capy's Drive gets right and a plain optimistic-lock error does not.
+ * what a plain optimistic-lock error does not give.
  */
 export interface DriveConflictDetail {
   /** The digest the client should base its next attempt on. */

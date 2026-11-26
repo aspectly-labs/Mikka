@@ -1,5 +1,5 @@
 // Focus is stale-while-revalidate, never a re-query
-// (docs/design/decisions/2026-11-01-0400-no-refetch-on-focus.md). The site's
+// (mikka-hosted-ui/docs/design/decisions/2026-11-01-0400-no-refetch-on-focus.md). The site's
 // SWR defaults (components/swr-defaults.tsx) revalidate on focus only data
 // older than its freshness threshold, silently; hooks do not turn focus on
 // themselves. Third-party connection status never revalidates on focus.

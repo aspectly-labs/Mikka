@@ -1,4 +1,4 @@
-// The profile's vocabulary (R-73, docs/design/proactive.md § 2.2), kept free
+// The profile's vocabulary (R-73, mikka-hosted-ui/docs/design/proactive.md § 2.2), kept free
 // of imports so 记忆 in the browser can read it without the database schema.
 
 /** What a fact in a person's profile is about. */

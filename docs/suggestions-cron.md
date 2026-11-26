@@ -41,7 +41,7 @@ The briefing is delivered by the Coordinator, not shown in 建议 (R-21). Writin
 
 ## Nightly profile merge from 04:00 local time
 
-Each stored notification is read once for facts about the person after it is rated (`lib/profile/extract.ts`, R-73, `docs/design/proactive.md` § 2.2); the facts go to `user_facts` (`drizzle/20261027231815_user_facts.sql`). Once a local day the merge (`lib/profile/facts.ts` `planConsolidation`) runs a few code rules and asks the Decision API the rest (decision 2026-11-01-1500):
+Each stored notification is read once for facts about the person after it is rated (`lib/profile/extract.ts`, R-73, `mikka-hosted-ui/docs/design/proactive.md` § 2.2); the facts go to `user_facts` (`drizzle/20261027231815_user_facts.sql`). Once a local day the merge (`lib/profile/facts.ts` `planConsolidation`) runs a few code rules and asks the Decision API the rest (decision 2026-11-01-1500):
 
 - code rule: a deadline or subscription past `expiresAt` expires;
 - Decision API: whether a group of purchases, orders or places is a lasting pattern (interest, routine, place); a count alone never makes one;
@@ -49,7 +49,7 @@ Each stored notification is read once for facts about the person after it is rat
 - one answer per slot (for example `home_city`): the person's correction wins, otherwise the Decision API picks;
 - a call without an answer changes nothing; those items are asked again the next night.
 
-Proactive work is behind four switches (`docs/design/proactive.md` § 3), and any one of them off stops it:
+Proactive work is behind four switches (`mikka-hosted-ui/docs/design/proactive.md` § 3), and any one of them off stops it:
 
 1. The deployment switch, PostHog's `mikka-proactive-profile-deployment` (`lib/deployment-switches.ts`; while PostHog gives no answer, the old `PROACTIVE_PROFILE_ENABLED` of `1` or `true`), gates extraction and this merge. Off, the endpoint answers 200 with `{"skipped":"disabled"}`. Self-hosters without PostHog leave it off.
 2. The PostHog flag `mikka-proactive-profile` must be exactly `true` for the person (distinct id = Mikka user id, as in the browser). It is checked on the server with `posthog-node` (`lib/posthog-server.ts`), cached 5 minutes per person, and fails closed: no `MIKKA_PUBLIC_POSTHOG_KEY` (or the old `NEXT_PUBLIC_POSTHOG_KEY`), an error, a 2-second timeout or any other value reads off. With `POSTHOG_SECRET_KEY` (a project secret or personal API key) flags are evaluated locally from polled definitions; without it each uncached check asks PostHog. `mikka-proactive-research` is reserved for phase 2.

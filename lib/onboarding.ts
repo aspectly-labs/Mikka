@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { setupChecklistDismissals, userOnboarding, userOnboardingProgress } from '@/lib/db/schema'
 import { normalizeProgress, type OnboardingProgress } from '@/lib/onboarding-steps'
 
-/** Whether the person has finished or skipped the first-run guide (docs/design/onboarding.md). */
+/** Whether the person has finished or skipped the first-run guide (mikka-hosted-ui/docs/design/onboarding.md). */
 export async function onboardingDone(userId: string) {
   const [row] = await db.select({ userId: userOnboarding.userId }).from(userOnboarding).where(eq(userOnboarding.userId, userId)).limit(1)
   return Boolean(row)

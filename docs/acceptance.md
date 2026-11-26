@@ -81,7 +81,7 @@ For changes involving Google/GitHub OAuth sign-in, provider linking, or OAuth
 proxy/callback routing, verify the relevant real provider flow and exact return
 origin: sign-in proxy flows use the stable HTTPS hub configured by
 `BETTER_AUTH_OAUTH_PROXY_URL`, while GitHub provider linking uses the initiating
-application's own registered callback origin ([2026-11-03-0315](design/decisions/2026-11-03-0315-github-link-callback-origin.md)).
+application's own registered callback origin ([2026-11-03-0315](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-03-0315-github-link-callback-origin.md)).
 Reuse existing authorized provider/browser sessions. If the provider requires
 MFA or reauthentication, hand over that specific provider step once; never
 request passwords or verification codes in chat.
@@ -106,7 +106,7 @@ ordinary functional acceptance.
 
 This anchor is retained for existing links. The former live-subscription test
 instructions are superseded by Alex's
-[scripted model acceptance decision](design/decisions/2026-11-20-1855-scripted-model-acceptance.md)
+[scripted model acceptance decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1855-scripted-model-acceptance.md)
 and [#2891](https://github.com/alexj11324/Mikka/issues/2891).
 
 Development, CI, local-loop, and nightly acceptance use scripted or recorded
@@ -120,7 +120,7 @@ subscription compatibility, model quality, or deployed model mappings.
 
 Follow the accepted [personal-workflow-first decision](https://github.com/alexj11324/Mikka/blob/74ca8e84cd323c24c479bf64937d696d53d32ffb/docs/design/decisions/2026-11-11-1400-personal-workflow-before-channels.md)
 in [#1875](https://github.com/alexj11324/Mikka/pull/1875), with the existing
-[glossary](design/glossary.md) for product terms.
+[glossary](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/glossary.md) for product terms.
 
 Use `scripts/acceptance/personal-workflow.mjs` to select an account's own personal
 Workspace explicitly. The existing shared acceptance drivers keep their team
@@ -177,7 +177,7 @@ lease. Keep the normal identity, membership and cleanup checks.
 
 Issue #1918's one-time owned-account authorization and subscription evidence
 remain historical provenance in the
-[owned Codex Cloud decision](design/decisions/2026-11-11-1405-owned-codex-cloud-mcp-acceptance.md)
+[owned Codex Cloud decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-11-1405-owned-codex-cloud-mcp-acceptance.md)
 and [issue #1415 report](acceptance/issue-1415/final-report.md).
 They do not authorize this workflow to send real model prompts or substitute
 that account for the shared internal acceptance identity.

@@ -10,7 +10,7 @@ export const LOCALE_COOKIE = 'mikka-locale'
 
 /**
  * The same cookie's name from before Next.js was retired
- * (docs/design/decisions/2026-11-18-1500-retire-next-dependency.md). The rename
+ * (mikka-hosted-ui/docs/design/decisions/2026-11-18-1500-retire-next-dependency.md). The rename
  * is an expand/contract migration in three release phases, so that a rollback
  * or a self-hosted server that upgrades late never loses anyone's language:
  *

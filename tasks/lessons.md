@@ -212,7 +212,7 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
   1. 一个 server action / 一列字段 / 只读聚合 → 直接实现，设计里画成可用。
   2. 不可逆或级联（删账户、删工作区、删团队、移除成员）、需要新子系统（计费、导出+邮件、文件存储） → 「即将推出」，并写清缺什么。
   3. 拿不准 → 先查表结构和调用方，再归档，不凭名字猜。
-- 同时：中文文案的「请」不能机械删除，要看旁边有没有按钮承担动作（见 docs/design/copy.md C-04）。
+- 同时：中文文案的「请」不能机械删除，要看旁边有没有按钮承担动作（见 mikka-hosted-ui/docs/design/copy.md C-04）。
 
 ## 2026-10-31 产品自身的运行依赖不能甩给用户
 
@@ -484,7 +484,7 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
 - 复制 Brave profile 也走不通：macOS 上 Chromium 的 cookie 密钥在 Keychain、不在 profile 文件里。
   实测把 Brave 的 `Cookies` + `Local State` 复制给 Chrome，13 条 capy cookie 被当成无效清成 0 条；
   用 `--executable-path` 指到 Brave 内核结果一样。
-- 正确做法：`--profile "$HOME/.cache/mikka-capy-profile"` 固定目录，让 Chrome 自己维护
+- 正确做法：用 `--profile` 指一个固定目录（具体路径见私有仓库 mikka-hosted-ui 的 `docs/tasks/lessons-capy.md`），让 Chrome 自己维护
   `Default/Network/Cookies`（落盘 12 条，含 `__client`）。**关闭重开验证过**仍在 `/new`。
 - 判断是否登录不能看 `document.cookie`（`__session` 是 httpOnly，JS 读不到），要看
   `location.pathname` 有没有被重定向到 `/sign-in`。
@@ -585,9 +585,9 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
 
 ## 2026-11-19 设计稿里的引用 / chip 不能凭印象画
 - 错误：inline chip 画成灰底药丸，把 Claude Code 当成可 @ 的对象，还编了一个 Skill chip（snapshot-update）。用户连续纠正三次。
-- 根因：没先读 Capy 源码就动手；也没核对 Mikka 的名词——Bot 是用户建的派发者，Claude Code / Codex 是 Agent（见 messages/en.json "agentRequired"）。
+- 根因：没先读对标产品的实现就动手；也没核对 Mikka 的名词——Bot 是用户建的派发者，Claude Code / Codex 是 Agent（见 messages/en.json "agentRequired"）。
 - 规则：
-  1. 画任何对标 Capy 的控件前，先在 /Applications/Capy.app/Contents/Resources/renderer/assets 里找到对应组件（按 data-track-owner 路径搜），读清类型、样式 class、交互，再画。
+  1. 画任何对标控件前，先找到对标产品里对应的组件，读清类型、样式和交互，再画（做法见私有仓库 mikka-hosted-ui 的 `docs/tasks/lessons-capy.md`）。
   2. 例句里只出现 Mikka 真实存在的对象：文件 / 任务 / PR / thread / Bot。Agent 不可提及。
   3. 新增的状态不要放在会被相邻 section 盖住的位置；画完截整节确认可见。
 
@@ -604,5 +604,5 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
 ## 2026-11-19 · Figma 对照稿要画交互，并以 main 的实际界面为准
 - 用户纠正：只画了一张静态页面，没画右键菜单、筛选、显示设置、状态选择器、新建弹窗等交互状态；sidebar 入口也还是旧稿。
 - 规则：对照 Capy 画任何页面时，先在内置浏览器里把这一页的每个弹出层点一遍、截图（右键、⋯、筛选、显示、新建、二级菜单），再一页一页画 Mikka 版。
-- 规则：画之前先读 main 上的实际实现。侧栏的真实实现在私有层 `.hosted-ui`（capy-sidebar / app-frame），公开仓库的 `components/app-sidebar.tsx` 和 `nav-main.tsx` 已是死代码。文案取 `messages/en.json`。
+- 规则：画之前先读 main 上的实际实现。侧栏的真实实现在私有层 `.hosted-ui`，公开仓库的 `components/app-sidebar.tsx` 和 `nav-main.tsx` 已是死代码。文案取 `messages/en.json`。
 - 规则：Figma 里用 `resize()` 改过尺寸的 auto-layout 容器，主轴会被锁成 FIXED，要再设 `primaryAxisSizingMode="AUTO"`，否则内容会被裁掉。

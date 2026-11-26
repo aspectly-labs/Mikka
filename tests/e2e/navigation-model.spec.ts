@@ -6,7 +6,7 @@ import { test, expect, register, app, rail, seedTask, openIssueFromSearch, openS
 // R-82: one address says what is on screen, every move is a history entry,
 // and back / forward step through it one move at a time without leaving Mikka.
 // Each test below is one row of the navigation table in
-// docs/design/decisions/2026-11-01-1320-navigation-model.md.
+// mikka-hosted-ui/docs/design/decisions/2026-11-01-1320-navigation-model.md.
 
 const chat = (page: Page) => page.getByRole('textbox', { name: '给 Coordinator 发消息', exact: true })
 const board = (page: Page) => page.getByRole('region', { name: '任务看板', exact: true })

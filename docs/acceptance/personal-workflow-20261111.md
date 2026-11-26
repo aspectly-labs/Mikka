@@ -1,6 +1,6 @@
 # 单人工作流验收记录：2026-11-11
 
-本记录供评审 Capy 对齐改动时核对证据。按照[单人优先决定](../design/decisions/2026-11-11-1400-personal-workflow-before-channels.md)，目标是一个人的发起任务 → 环境与工具 → 执行 → 同一 Run 的 Files/diff → 继续或重试 → 验收。
+本记录供评审 Capy 对齐改动时核对证据。按照[单人优先决定](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-11-1400-personal-workflow-before-channels.md)，目标是一个人的发起任务 → 环境与工具 → 执行 → 同一 Run 的 Files/diff → 继续或重试 → 验收。
 
 截至本次记录，个人环境默认值已验证到真实 Run 冻结落库；共享 Workspace 的 Files/diff/review 已通过真实 HTTP、PostgreSQL 与完整 daemon 传输。真实 Claude Code/Codex 模型执行尚未运行，完整个人订阅闭环**无法验证**。这些结果分别成立，不能拼成同一个个人 Run 的端到端通过结论。
 

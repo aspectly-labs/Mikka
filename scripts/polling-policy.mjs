@@ -1,4 +1,4 @@
-// No new periodic data polling (docs/design/decisions/2026-11-05-0200-no-new-polling.md).
+// No new periodic data polling (mikka-hosted-ui/docs/design/decisions/2026-11-05-0200-no-new-polling.md).
 // Data changes reach the screen by live push (hooks/use-live-key.tsx, lib/live/*),
 // tracked in #1212. Every poller that exists today is listed in pollingAllowlist,
 // with its reason and its hit count, so the list only shrinks: a new poller fails,

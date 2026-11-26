@@ -30,7 +30,7 @@ When `@mikka/daemon` creates commits in `publishRun` or `retainDeliverable` (`pa
 End-to-end GPG commit signing is intentionally not exposed as a setting toggle (`pro:blocked`):
 
 - `publish.ts` (`SAFE_GIT`), `github-runtime.ts:87-88`, and `local-github.ts:62-63` enforce `commit.gpgSign=false` (and `tag.gpgSign=false`) so untrusted worktree config cannot invoke arbitrary `gpg.program` binaries and sandboxed runs do not fail trying to reach unreachable host `gpg-agent` sockets or hardware tokens.
-- Exporting long-lived user GPG private keys and passphrases into E2B VMs or local daemons violates the credential exposure boundary (`docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md`).
+- Exporting long-lived user GPG private keys and passphrases into E2B VMs or local daemons violates the credential exposure boundary (`mikka-hosted-ui/docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md`).
 - No GPG key custody, remote signing service, or GitHub `/user/gpg_keys` synchronization exists in the platform.
 
 ## App Reviewer boundary (`reviewRuleSchema` omitted)

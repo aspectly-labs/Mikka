@@ -13,8 +13,8 @@
 - For changes to a business entity, field, state or command, list its entry points and link the shared implementation and behavior test.
 - Review page (Artifact):
 - Accepted Figma frames:
-- Rules touched (docs/design/rules.md ids):
-- Uses a paid block/component? Attach a side-by-side of library demo vs ours (private page); list any visual difference beyond data and text, with its reason (docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md):
+- Rules touched (mikka-hosted-ui/docs/design/rules.md ids):
+- Uses a paid block/component? Attach a side-by-side of library demo vs ours (private page); list any visual difference beyond data and text, with its reason (mikka-hosted-ui/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md):
 - [ ] `docs/review-checklist.md` passes
 - [ ] Docs updated in this PR (rules / components / decisions / glossary / spec), or not needed
 

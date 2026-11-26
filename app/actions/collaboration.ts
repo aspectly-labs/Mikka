@@ -76,7 +76,7 @@ export async function exchangeDocument(input: z.infer<typeof syncSchema>): Promi
         await tx.update(issues).set({ content, updatedAt: new Date() }).where(and(eq(issues.id, issue.id), eq(issues.userId, issue.userId)))
         await documentChanged(tx, issue.id)
         await issueListChanged(tx, issue.id)
-        // A new comment or a Bot chip wakes the Bot it concerns (Capy's issue_activity), with this save.
+        // A new comment or a Bot chip wakes the Bot it concerns (task activity), with this save.
         await recordTaskActivityWakes(tx, { task: { id: locked.id, workspaceId: locked.workspaceId, title: locked.title, identifier: locked.issuedIdentifier },
           writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: readDocumentThreads(doc), content },
           version: documentVersion(state) })

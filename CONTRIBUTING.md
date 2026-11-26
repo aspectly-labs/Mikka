@@ -7,8 +7,8 @@ Use this guide to prepare, verify and submit changes to Mikka.
 - Read [`AGENTS.md`](AGENTS.md). Its rules apply to every contributor, human or
   coding agent.
 - For design, spec or UI work, start with
-  [`docs/design/README.md`](docs/design/README.md) and use the terms in
-  [`docs/design/glossary.md`](docs/design/glossary.md).
+  [`mikka-hosted-ui/docs/design/README.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/README.md) and use the terms in
+  [`mikka-hosted-ui/docs/design/glossary.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/glossary.md).
 - For anything larger than a small fix, open an issue first so the approach can
   be agreed before you write code.
 
@@ -20,7 +20,7 @@ Use this guide to prepare, verify and submit changes to Mikka.
   Independently verifiable changes merge when their own checks and release
   window permit. Batch only genuine atomic dependencies; an existing epic's
   explicitly approved batch rules still apply. See the
-  [delivery decision](docs/design/decisions/2026-11-20-1640-sdlc-delivery.md).
+  [delivery decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1640-sdlc-delivery.md).
 - Write commit messages in English, in the form `<type>: <description>`, where
   the type is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`
   or `ci`.
@@ -51,7 +51,7 @@ Use this guide to prepare, verify and submit changes to Mikka.
 - Focus is stale-while-revalidate: only data past its freshness threshold
   revalidates, silently, never hiding what is shown; third-party status never
   on focus. See
-  [`docs/design/decisions/2026-11-01-0400-no-refetch-on-focus.md`](docs/design/decisions/2026-11-01-0400-no-refetch-on-focus.md).
+  [`mikka-hosted-ui/docs/design/decisions/2026-11-01-0400-no-refetch-on-focus.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-0400-no-refetch-on-focus.md).
 
 ## Public core and Mikka Cloud ownership
 
@@ -170,11 +170,11 @@ A choice goes to Alex only when leading products (Linear, Slack, GitHub, Figma,
 Claude, ChatGPT, Cursor, Devin and the like) disagree or the choice is about
 Mikka's own strategy, money or brand. When they agree, follow them and record
 which products in the PR. Details:
-`docs/design/decisions/2026-11-01-0400-research-before-asking-alex.md`.
+`mikka-hosted-ui/docs/design/decisions/2026-11-01-0400-research-before-asking-alex.md`.
 
 ### One UI
 
-Mikka has one UI ([decision](docs/design/decisions/2026-11-08-2133-one-ui.md)).
+Mikka has one UI ([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-2133-one-ui.md)).
 Fix a page where its code lives today: in this repository or in the private
 `mikka-hosted-ui`. Don't add a slot or move code only to make a fix possible.
 Paid component source (BoardUI Pro, affectUI, beUI Pro) never enters this
@@ -189,11 +189,11 @@ A change a person can see is drawn in Figma first, reviewed with the
 `interface-design:design-review` and `unslop` skills until nothing blocking
 remains, confirmed by Alex, and only then implemented. The PR shows the built
 screen next to the confirmed frames; green CI alone does not make it
-mergeable. Details: `docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md`.
+mergeable. Details: `mikka-hosted-ui/docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md`.
 A paid block or component (BoardUI Pro, affectUI, beUI Pro) is not redrawn or
 skill-reviewed for look: it is used as shipped, and its PR attaches a
 side-by-side of the library demo and our use
-(`docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md`).
+(`mikka-hosted-ui/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md`).
 
 ### Test logins: never ask for a password
 
@@ -214,7 +214,7 @@ Cloud machines use versioned Mikka templates derived from E2B's official
 `desktop`, `claude` and `codex` templates. Node, the worker and its dependencies
 are preinstalled under `/opt/mikka`. Add files, never delete or overwrite an
 original official CLI, Node/npm or system file
-([decision 2026-11-03-1430, clarified in #1505](docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md)).
+([decision 2026-11-03-1430, clarified in #1505](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md)).
 A worker change on `main` runs the offline input checks in
 `.github/workflows/e2b-official-runtime.yml`; publication starts from an eligible
 Cloudflare serving observation or an authorized dispatch. The release requires

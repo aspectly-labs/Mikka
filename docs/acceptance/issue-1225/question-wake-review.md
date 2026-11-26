@@ -13,7 +13,7 @@
 | Issue / PR | [#1225](https://github.com/alexj11324/Mikka/issues/1225) / [#1287](https://github.com/alexj11324/Mikka/pull/1287) |
 | 分支 / 源码 | `fix/1225-question-wake-recovery` / `2a47d51e856f49a0a2e521319a137a55185507a1` |
 | 源码 tree | `efdbdb696de1b2db134787fe9579ff1540079ddb` |
-| 规则依据 | main `fc2d401b…` 的 [AGENTS.md](../../../AGENTS.md)、[review-checklist](../../review-checklist.md)、[设计来源优先级](../../design/README.md) 与 R-90 |
+| 规则依据 | main `fc2d401b…` 的 [AGENTS.md](../../../AGENTS.md)、[review-checklist](../../review-checklist.md)、[设计来源优先级](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/README.md) 与 R-90 |
 | 环境 | 唯一的 Docker Cloud Sandbox；Linux、8 CPU / 16 GiB；Node 24.22.1、pnpm 10.34.3、隔离 PostgreSQL 17 |
 | 运行方式 | `pnpm build` → `pnpm exec next start`，origin `http://localhost:3110`；没有运行浏览器测试套件 |
 | 生产构建 | exit 0，78,824 ms；Next build ID `ax91jSUdk8TQ40z-gNETM` |
@@ -41,7 +41,7 @@
 
 ## 组件复用（R-90）
 
-按 [components.md](../../design/components.md) 和当前 main 既有线程 UI 核对。没有新增、重画或删除组件，也没有改变布局 token。布局基准为 [main-is-the-design](../../design/decisions/2026-11-01-0015-main-is-the-design.md)；本次没有新增 Figma frame，不声称存在未取得的对应 accepted frame。
+按 [components.md](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md) 和当前 main 既有线程 UI 核对。没有新增、重画或删除组件，也没有改变布局 token。布局基准为 [main-is-the-design](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-0015-main-is-the-design.md)；本次没有新增 Figma frame，不声称存在未取得的对应 accepted frame。
 
 | 屏幕部分 | 复用的既有组件 | 变化 |
 | --- | --- | --- |

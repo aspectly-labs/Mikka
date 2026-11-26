@@ -110,4 +110,4 @@ The migration is additive and repeatable. A code rollback retains both
 tables and personal preferences but restores the old hardcoded bindings.
 Returning to a version that reads saved bindings applies them again. For the verified action
 inventory, conflict scopes, and rationale, see the
-[keyboard shortcut decision](../design/decisions/2026-11-20-1943-keyboard-shortcut-settings.md).
+[keyboard shortcut decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1943-keyboard-shortcut-settings.md).

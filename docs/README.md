@@ -11,7 +11,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
   covering specification, architecture primitives, static gates, verification,
   fail-closed promotion, and blameless COE. Use its templates for
   [design docs](engineering/templates/design-doc.md),
-  [UI specs](engineering/templates/ui-spec.md), and
+  [UI specs](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/templates/ui-spec.md), and
   [COE postmortems](engineering/templates/coe-postmortem.md).
 - [Development workflow](dev-workflow.md) covers issue ownership, local work,
   pull requests, merging and release follow-through.
@@ -29,20 +29,20 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 
 ## Understand the product and design
 
-- [Design entry point](design/README.md) defines source priority and which
+- [Design entry point](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/README.md) defines source priority and which
   document owns each kind of rule.
-- [Design System v2](design/design-system.md) is the executable visual and
+- [Design System v2](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/design-system.md) is the executable visual and
   interaction standard (tokens, restricted primitives, viewport budgets, the
   7-state contract, copy density and automated enforcement) across Web, Desktop
   and iOS.
-- [Glossary](design/glossary.md) defines bots, chats, threads and Agents.
-- [Rules](design/rules.md), [components](design/components.md) and
-  [copy](design/copy.md) guide product and UI changes.
-- [Effective design and product rules](design/README.md) are read first. Tier 2
-  dated [decision records](design/decisions/README.md) preserve immutable
+- [Glossary](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/glossary.md) defines bots, chats, threads and Agents.
+- [Rules](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md), [components](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md) and
+  [copy](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/copy.md) guide product and UI changes.
+- [Effective design and product rules](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/README.md) are read first. Tier 2
+  dated [decision records](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/README.md) preserve immutable
   provenance with explicit `Status:` headers (`Accepted` or `Superseded by`);
-  superseded entries and the [legacy decision log](design/decisions.md) are not active instructions.
-- [Feature specification template](design/spec-template.md) supplies the
+  superseded entries and the [legacy decision log](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions.md) are not active instructions.
+- [Feature specification template](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/spec-template.md) supplies the
   structure for a feature specification.
 - [Execution rules](execution-rules.md) describe model and machine selection.
 - [Settings](settings.md) maps personal and workspace settings.
@@ -61,7 +61,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 - [GitHub App setup](github-app-manifest.md), [Telegram](telegram.md),
   [Slack](slack-bot.md) covers integrations. [Linear sync](linear-sync.md) is retired (2026-11-24) and kept for reference.
 - [Desktop](../apps/desktop/README.md) covers the Electron client.
-- [Mobile](design/mobile.md) covers the iOS client specification (the app source lives in private `mikka-hosted-ui/mobile-next/apps/mobile`; legacy 1.x `apps/mobile` is deleted per [decision 2026-11-25-0915](design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)).
+- [Mobile](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/mobile.md) covers the iOS client specification (the app source lives in private `mikka-hosted-ui/mobile-next/apps/mobile`; legacy 1.x `apps/mobile` is deleted per [decision 2026-11-25-0915](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)).
 
 ## Verify and operate
 

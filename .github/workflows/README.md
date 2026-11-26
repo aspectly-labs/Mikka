@@ -8,7 +8,7 @@ bindings. Current workflow files define the triggers and selected coverage.
 Every ordinary PR push can trigger up to three workflows: CI, Browser gate,
 and Cloudflare API source qualification for PRs targeting main. CI runs
 affected source, unit and daemon checks on Node 24 only
-([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
+([2026-11-22-1430](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
 PRs targeting dev, which has no merge queue, retain selected acceptance in the
 protected UI check.
 
@@ -37,7 +37,7 @@ protected UI check.
 `local-device-node22.yml` now runs an actual app/Eve build and startup smoke
 on Node 24, retaining the daemon and installer tests. The core,
 integration and PG17 database jobs above also run the selected suites on
-Node 24 only ([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-node24-only.md));
+Node 24 only ([2026-11-22-1430](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1430-ci-node24-only.md));
 the original Node 24 protected-check names stay unchanged.
 
 ## Focused governance acceptance and superseded PR runs
@@ -288,7 +288,7 @@ A main push compares the immutable event's before/after inputs and reports the
 result; it never starts candidate builders. Publication and retry use the
 serving-observation or authorized-dispatch paths above. The existing
 no-new-polling rule and task-owner E2B billing apply. See
-[Alex's preservation clarification](../../docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md).
+[Alex's preservation clarification](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md).
 
 ## Factory visual evidence acceptance
 
@@ -385,7 +385,7 @@ and private JIT runner; admitting one does not prove the others work.
 
 ## Official UI overlay
 
-There is one UI ([decision](../../docs/design/decisions/2026-11-08-2133-one-ui.md)).
+There is one UI ([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-2133-one-ui.md)).
 Public and fork PRs build without the private repository, and that build only
 has to compile; no workflow screenshots it. (`community-settings-ui.yml`,
 which captured that build's settings pages, was removed on 2026-11-08.)
@@ -462,7 +462,7 @@ version endpoint and reads that immutable main commit's generated route list.
 Its route probe uses undeclared methods, checking dispatch status and `Allow`
 without credentials or business handlers; a missing route or 5xx fails before
 the existing account sign-in and capability-read smoke. Internal production
-rollout and flag deadlines follow the [production acceptance decision](../../docs/design/decisions/2026-11-20-1905-internal-production-acceptance.md).
+rollout and flag deadlines follow the [production acceptance decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1905-internal-production-acceptance.md).
 
 ## Engineering sandbox
 

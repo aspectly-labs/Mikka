@@ -6,7 +6,7 @@ tokens and Tailwind styles** as the Vite-built web client. The main window loads
 server-render a web page. Main forwards authenticated operations to the backend.
 
 Implementation and acceptance evidence:
-[`docs/design/desktop-bundled-renderer.md`](../../docs/design/desktop-bundled-renderer.md).
+[`mikka-hosted-ui/docs/design/desktop-bundled-renderer.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/desktop-bundled-renderer.md).
 
 ## What differs from the web client
 
@@ -31,7 +31,7 @@ The desktop main window keeps up to 50 in-app tabs and their local navigation hi
 The bundled renderer cannot read the session token, authentication cookies or
 live socket ticket. Main stores the session using OS-backed `safeStorage`,
 scoped to the backend and app profile. Insecure Linux `basic_text` storage is
-rejected; macOS uses Keychain. See `docs/design/platforms.md`.
+rejected; macOS uses Keychain. See `mikka-hosted-ui/docs/design/platforms.md`.
 Updates come from published GitHub Releases through `electron-updater`. The
 cold-start gate checks for five seconds before opening the app. When it finds
 an update, it downloads and installs it before entry. A check timeout or

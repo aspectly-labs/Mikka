@@ -1,6 +1,6 @@
 # Workspace app permissions — execution plan
 
-Spec: `docs/design/decisions/2026-11-10-1730-workspace-app-permissions.md`
+Spec: `mikka-hosted-ui/docs/design/decisions/2026-11-10-1730-workspace-app-permissions.md`
 
 ## Context
 

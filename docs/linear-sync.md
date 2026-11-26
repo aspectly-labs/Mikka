@@ -78,7 +78,7 @@ Operational verification must record the flag state and deployed SHA for
 Vercel production and each existing Linear Worker. The original rollout also
 tracked the unique Preview and old `feat/linear-bidirectional-sync` Preview;
 those references describe historical deployments. Branch Previews are disabled
-([decision](design/decisions/2026-11-05-1632-no-vercel-preview.md)). Old immutable
+([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-05-1632-no-vercel-preview.md)). Old immutable
 deployments do not gain this check when main changes. A disabled setting on
 new code does not establish that an old Preview or unrelated database caller
 has stopped, or that Neon will suspend. Do not suspend/delete Neon resources

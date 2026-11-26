@@ -1,15 +1,15 @@
 # Local thread runtime
 
-A device is a runner like E2B ([`design/orchestration.md`](design/orchestration.md)
+A device is a runner like E2B ([`design/orchestration.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/orchestration.md)
 § 3). Local threads run on a connected computer with the daemon's own pinned
 Claude Code or Codex, without replacing the person's own installed binaries.
 The task uses its real worktree and ordinary process environment; local
 configuration separation is only for preserving concurrent work and the
-person's files. Under [1800](design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md),
+person's files. Under [1800](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md),
 the selected native CLI authentication and authorized GitHub credential are
 prepared before execution, provider calls are direct, and no extra remote
 permission check precedes a model or tool call. Other task Secrets follow the
-separate [credential exposure boundary](design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
+separate [credential exposure boundary](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
 That decision records the remaining injection migration and does not establish
 runtime protection.
 The device reports OS, architecture, free disk, Docker and the install
@@ -110,8 +110,8 @@ production databases for verification.
 
 Repository-backed threads use independent worktrees from the remote branch.
 To include local uncommitted changes, commit and push them first. The original
-pending rows in `docs/design/decisions.md` are superseded by the accepted
-[thread isolation decision](design/decisions/2026-11-01-2245-thread-privacy-and-local-isolation.md).
+pending rows in `mikka-hosted-ui/docs/design/decisions.md` are superseded by the accepted
+[thread isolation decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-2245-thread-privacy-and-local-isolation.md).
 
 ## Local development without GitHub (`pnpm dev:local`)
 
@@ -239,7 +239,7 @@ The items cover real local commit/push with a synthetic GitHub PR receipt,
 a normal read-only model task, repository startup failure and its thread API
 projection, two Bots exchanging messages, and subscribed-task inbox persistence,
 ownership and removal. The older item-2 sandbox push-rejection contract is
-superseded by [1800](design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md):
+superseded by [1800](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md):
 read-only is task intent and does not remove the Agent's real GitHub credential.
 A result from that old rejection case is not acceptance of the direct-credential
 runtime. No browser

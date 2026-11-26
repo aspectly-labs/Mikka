@@ -22,7 +22,7 @@
 | 原生运行能力 | 当前执行面没有 iPhone、iOS 模拟器或已安装本次版本的 TestFlight 设备；原生专有项目尚未验收 |
 | 沙盒清理 | 本报告写入时仍用于本轮开发/回归。最终停止时间与资源状态待 owner 结束工作后追加；没有预先声称已停止 |
 
-采用 [Nielsen 10 条可用性原则](https://www.nngroup.com/articles/ten-usability-heuristics/) 与 [Apple HIG](https://developer.apple.com/design/human-interface-guidelines/)，重点包括 [Motion](https://developer.apple.com/design/human-interface-guidelines/motion)、[Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility)、导航、布局、字体、颜色、反馈和手势。项目设计依据依次遵循 `docs/design/README.md`、已接受的决定、词汇表和当前实现；归档 Figma 不用于强制重设计。
+采用 [Nielsen 10 条可用性原则](https://www.nngroup.com/articles/ten-usability-heuristics/) 与 [Apple HIG](https://developer.apple.com/design/human-interface-guidelines/)，重点包括 [Motion](https://developer.apple.com/design/human-interface-guidelines/motion)、[Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility)、导航、布局、字体、颜色、反馈和手势。项目设计依据依次遵循 `mikka-hosted-ui/docs/design/README.md`、已接受的决定、词汇表和当前实现；归档 Figma 不用于强制重设计。
 
 本报告使用以下证据等级：**源码确认**表示可以指出实际失败机制；**单测通过**表示相应逻辑用例通过；**Web 实测通过**只覆盖明确记录的浏览器场景；**待验收**表示尚无相应运行证据。分数为场景内发生可能性与影响各 1–10 的审计判断，不是线上发生率统计；优先级结合影响判定，不由分数机械转换。相同根因在 UX 表与新增表交叉引用，不重复计数。
 
@@ -58,7 +58,7 @@
 | UX-12 | 发送/停止、色板、卡片动作、引用取消、附件动作、复制/更多/回应的实体目标提高到至少 44pt，去除会重叠的额外 hitSlop；回应内部视觉 chip 可保持 28pt | 源码尺寸与布局检查；具体浏览器目标测量及真实 iOS 触控仍按记录分别验收，不把视觉 28pt 等同热区 28pt | `chat.tsx`、`ui.tsx`、`cards.tsx`、`new-bot.tsx`；发生 8 × 影响 6，P1/P2 |
 | UX-13 | 修改范围内统一 pressed、disabled、busy 和选中语义；复制/更多/回应补按下反馈，卡片/圆按钮禁用与繁忙一致；保留原生 menu/sheet | 通知保存过程中禁用和“正在关闭”有 Web 实测；其余按组件源代码/后续 DOM 回归记录。未声称全 app 触觉反馈已实测 | `chat.tsx`、`ui.tsx`、`cards.tsx`、`settings.tsx`、`SignIn.tsx`；E-WEB-05；P2 |
 | UX-14 | 补登录名称、中文形状/颜色、radio/checkbox、Switch 名称、状态读出、焦点可见和 Drawer 模态隔离；改善 Web 小字对比度与可增高布局 | Drawer 焦点/AX、通知 Switch 已实测。后续实测又发现 RN Web 未把 radio 的 accessibilityState.checked 写入 DOM，已单独登记 N-12，显式 Web ARIA 修复及复测不能省略；VoiceOver/Dynamic Type 原生待验收 | `SignIn.tsx`、`new-bot.tsx`、`new-group.tsx`、`settings.tsx`、`ui.tsx`、`theme.ts`、`Drawer.tsx`、`chat.tsx`；E-WEB-01/03/04/05/06 |
-| UX-15 | 修正移动端说明、真实路由、系统外观与发布边界；Figma 268:4750 标为归档，358:9186 仍是待核验参考，当前 main 与接受的决定优先 | 文档修正完成；未读取归档稿强制重设计，未宣称未核对的 Figma 已被接受 | `docs/design/mobile.md`、`apps/mobile/README.md`、`docs/design/components.md`；P2 |
+| UX-15 | 修正移动端说明、真实路由、系统外观与发布边界；Figma 268:4750 标为归档，358:9186 仍是待核验参考，当前 main 与接受的决定优先 | 文档修正完成；未读取归档稿强制重设计，未宣称未核对的 Figma 已被接受 | `mikka-hosted-ui/docs/design/mobile.md`、`apps/mobile/README.md`、`mikka-hosted-ui/docs/design/components.md`；P2 |
 | UX-16 | 群聊/成员/回应/历史及其它读取页面用统一 ReadNotice；离线、未发送、停止失败有可发现状态和重试；保留草稿 | 代码与mobile测试通过；真实API停机/恢复见E-WEB-08。群聊stop/发送失败的独立恢复和设备离线仍需补证，不能把存在重试按钮视为全部恢复通过 | `app/groups/[id].tsx`、`ReadNotice.tsx`、`OfflineBanner.tsx`、`StopFailed.tsx` 与消费页面；发生 7 × 影响 7，P1 |
 | UX-17 | 消息增加可见操作入口、时间读屏名称与 quote/time accessibilityActions，避免功能只靠隐藏手势；不把整条 Markdown 包成吞掉链接的单一可访问节点 | Web可见消息操作→回复→群聊引用→取消引用已实测通过，消息页关闭也正常，见E-WEB-09；原生VoiceOver替代路径仍待设备 | `components/chat.tsx`；发生 7 × 影响 8，P1/P2 |
 | UX-18 | Web 模型菜单原来是只读文字，改成可操作菜单；iOS 保持原生菜单；不可用/检查中状态明确；读写竞态、重复提交、失败回滚/重试与 context 隔离补齐 | 模型读/视图/写入单测通过；真实API停机期间选择失败保留原模型并显示具体错误/重试。隔离账户读取200但无已配置key/subscription/device/daemon；三条真实模型调用未执行。radio DOM问题与N-12共用根因 | `ModelMenu.tsx`、`ModelMenu.ios.tsx`、`ModelNotice.tsx`、`lib/model-menu*.ts`；发生 10 × 影响 8（Web 无法选择），P1 |
@@ -126,7 +126,7 @@
 | N1 系统状态可见 | 读取失败/缓存、创建/登录/保存 busy、模型检查/不可用、未发送/停止失败、加载 spinner | UX-07/10/13/16/18；通知保存、真实API停机/恢复实测；设备断网仍按独立场景补证 |
 | N2 符合用户语言 | Bot/Thread/Task 保持词汇表；形状/颜色改中文；搜索明确 Bot/群名；状态不暴露内部枚举 | UX-09/14/15；N-07；不改业务实体或扩展搜索语义 |
 | N3 用户控制与自由 | 读历史不被拉底；显式回到最新；抽屉关闭/返回/取消；手势取消不误引用 | UX-01/02/03/04/08/17；群滚动与 Drawer Web 实测，原生手势待验收 |
-| N4 一致性与标准 | 复用原生导航、CardButton、ReadNotice、平台滚动适配；统一名称/状态属性和44pt目标 | UX-11/12/13/15；新增组件登记 `docs/design/components.md`，未删组件库 |
+| N4 一致性与标准 | 复用原生导航、CardButton、ReadNotice、平台滚动适配；统一名称/状态属性和44pt目标 | UX-11/12/13/15；新增组件登记 `mikka-hosted-ui/docs/design/components.md`，未删组件库 |
 | N5 错误预防 | 无效创建不可按、提交 guard、模型写入互斥、旧 context 响应失效、未启用聊天不发送 | UX-10/18；N-09/10/13；真实提供商效果仍待 live |
 | N6 识别优于记忆 | 可见消息操作入口、时间/引用替代操作、搜索范围、radio/checkbox 名称与状态 | UX-09/14/17；N-12 必须用真实 DOM/AX 复测 |
 | N7 灵活高效 | 上拉历史与回到最新并存；保留手势快捷方式及可访问替代；键盘焦点闭环 | UX-04/08/14/17；不把 Web 键盘测试当 VoiceOver 测试 |

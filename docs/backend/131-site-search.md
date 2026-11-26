@@ -95,8 +95,8 @@ configuration in this workflow, verifies database identities and opposite-store
 absence, and puts membership/team rows only in workspace PG and tasks/history/
 groups only in application PG. It is an HTTP API test: Playwright's request
 client only, no browser installed or launched, so it stands under the decisions
-that run no browser tests ([1520](../design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md),
-[2225](../design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md)).
+that run no browser tests ([1520](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md),
+[2225](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md)).
 A single-database local run of this file is not dual-PG proof.
 
 `tests/e2e/site-search.spec.ts` starts a separate built Next process and a loopback
@@ -151,7 +151,7 @@ Claude wires this API; existing browser cases establish the recent archive path.
 
 The original plan used `browser-tests.yml`; that workflow was removed. CI and
 local acceptance run no browser tests
-([decision](../design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md)).
+([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md)).
 The dedicated dual-PG HTTP profile remains separate from the historical
 single-database browser fixture job. Read the candidate and draft references
 here as the original handoff state.

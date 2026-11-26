@@ -34,7 +34,7 @@ async function connectedApps(userId: string): Promise<{ app: string; connected: 
 
 /**
  * `GET /api/mobile/settings`: everything the app's Settings pages show
- * (docs/design/mobile.md, "Settings"): profile, workspaces, 通知 and 记忆
+ * (mikka-hosted-ui/docs/design/mobile.md, "Settings"): profile, workspaces, 通知 and 记忆
  * settings, the Coordinator's memory as Markdown, and connected apps.
  */
 export const GET = defineRoute(

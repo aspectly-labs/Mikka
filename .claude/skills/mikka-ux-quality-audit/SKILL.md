@@ -7,7 +7,7 @@ description: "Run a cross-product Mikka UI/UX and functional-quality audit: disc
 
 ## Preflight
 
-Read `AGENTS.md`, `CONTRIBUTING.md`, `docs/design/README.md`, `docs/review-checklist.md`, `docs/ci/test-ownership.md` and the actual current issue owner. Respect the single official UI and the as-shipped paid-block boundary. The public Server-only build is **not** another UI to review.
+Read `AGENTS.md`, `CONTRIBUTING.md`, `mikka-hosted-ui/docs/design/README.md`, `docs/review-checklist.md`, `docs/ci/test-ownership.md` and the actual current issue owner. Respect the single official UI and the as-shipped paid-block boundary. The public Server-only build is **not** another UI to review.
 
 Before auditing, record exact public `Mikka` and private `mikka-hosted-ui` source SHAs, application/runtime build and tested environment. Search existing #1646/#1979/#1980/#1966 and #2212 findings before assigning new work. Keep one issue/PR owner per affected source path; never race the #1954 production cutover owner.
 
@@ -24,7 +24,7 @@ Before auditing, record exact public `Mikka` and private `mikka-hosted-ui` sourc
 
 1. **Whole-Surface Sweep (Never Whack-a-Mole)**: When the user flags a pattern defect on 1–3 screens (e.g., non-searchable pickers, copy drift, dead actions, small tap targets, grabber collision), audit **every sibling route and active client** (Web Settings, Web Workspace, Standalone/Auth/Error, Desktop Electron, active Mobile iOS) in the same pass — **including upstream/inherited directories** (such as `mobile-next/apps/mobile/src/features/threads/*` and `features/pull-requests/*`). Never assume inherited UI is compliant.
 2. **External Benchmark Before Building or Passing**: Never judge a screen only against "old Mikka". Cross-check every audited or redesigned screen against:
-   - Authoritative Mikka docs (`docs/design/decisions/`, `docs/design/glossary.md`, paid-block law `2026-11-09-0050`).
+   - Authoritative Mikka docs (`mikka-hosted-ui/docs/design/decisions/`, `mikka-hosted-ui/docs/design/glossary.md`, paid-block law `2026-11-09-0050`).
    - Installed craft skills: `.hosted-ui/.claude/skills/kubai-design-tips/`, `ux-heuristics`, `ios-design`, `swiftui-expert-skill`.
    - Real top-tier product references: **Mobbin MCP** (`search_screens` / `search_flows`) and unpacked reference **Electron frontend + backend** code (Codex, Capy, Cursor) to understand both UI anatomy **and** underlying workflow/data contracts.
 3. **Rendered Evidence Only (Never Code-Only Visual PASS)**: Do not claim visual, layout, contrast, glass, or spacing PASS from `.tsx` reading alone. Require compiled screenshots (Desktop + `390×844` Mobile, Light + Dark) compared side-by-side against reference benchmarks. Where native iOS shaders or physical-device gestures cannot run in Linux CI, explicitly label them `unverified-on-device` and attach a physical TestFlight checklist.
@@ -39,6 +39,6 @@ Before auditing, record exact public `Mikka` and private `mikka-hosted-ui` sourc
 
 ## Evidence and reporting
 
-Run the [domain workflow](../../../docs/design/ux-quality-audit.md#run-one-domain) from the public checkout. Attach the command results and observed interaction to the source-bound matrix. Statuses: `verified-missing`, `verified-broken`, `source-only-candidate`, `verified-intentional`, `verified-fixed`, `not-tested`. Never treat an empty result list or an AST pass as full functional coverage.
+Run the [domain workflow](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/ux-quality-audit.md#run-one-domain) from the public checkout. Attach the command results and observed interaction to the source-bound matrix. Statuses: `verified-missing`, `verified-broken`, `source-only-candidate`, `verified-intentional`, `verified-fixed`, `not-tested`. Never treat an empty result list or an AST pass as full functional coverage.
 
 No general browser E2E CI gate, product polling, Vercel preview or new paid UI source. An audit does not authorize production data writes or publishing. If production/physical-device acceptance is unavailable, record the exact remaining gate; continue unrelated actionable work without declaring the entire goal finished.

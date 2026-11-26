@@ -98,7 +98,7 @@ URL a loopback `*_e2e` database. The bootstrap, auth origins
 `MIKKA_TEST_MODE` (`daemonTestMode`) and the MVP acceptance all use it. MVP
 acceptance runs through the API and the CLI: `pnpm test:local-loop`
 ([local-runtime.md](local-runtime.md)), following the
-[ordinary acceptance policy](design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md).
+[ordinary acceptance policy](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md).
 The general `tests/e2e/` browser suite is retired. Retained targeted Desktop,
 Analytics and self-hosted checks keep their explicitly selected scopes in the
 [workflow reference](../.github/workflows/README.md).
@@ -203,7 +203,7 @@ verified lifecycle action.
 ## Browser and HTTP integration
 
 Ordinary acceptance uses HTTP and CLI checks under the
-[accepted policy](design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md).
+[accepted policy](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md).
 The general settings-surface browser adapter is retained for reference.
 Targeted browser jobs retain their own scope and fixture handling, as the
 [workflow reference](../.github/workflows/README.md) records.

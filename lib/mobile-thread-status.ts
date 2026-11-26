@@ -1,4 +1,4 @@
-/** The app's thread states (docs/design/mobile.md, 线程 screen icons). */
+/** The app's thread states (mikka-hosted-ui/docs/design/mobile.md, 线程 screen icons). */
 export type MobileThreadStatus = 'running' | 'waiting' | 'paused' | 'failed' | 'done' | 'stopped'
 
 /** A run's status as the app shows it; a run paused on its quota is 已暂停, not 运行中. */

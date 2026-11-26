@@ -8,7 +8,7 @@ import test from 'node:test'
  * The locale cookie is `mikka-locale`. Its pre-rename name stays in exactly one
  * constant, `LEGACY_LOCALE_COOKIE` in i18n/locale-cookie.mjs, which retires in
  * release phases: expand (read both, write both), stop writing, stop reading
- * (docs/design/decisions/2026-11-18-1500-retire-next-dependency.md). This test
+ * (mikka-hosted-ui/docs/design/decisions/2026-11-18-1500-retire-next-dependency.md). This test
  * keeps the name in that one module: a reader or writer of the old name
  * elsewhere would otherwise pass CI silently and outlive the migration, and
  * each phase would have to find every use again.

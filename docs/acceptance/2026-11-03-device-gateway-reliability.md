@@ -5,7 +5,7 @@
 
 ## 状态与环境
 
-> 已被 [决定 2026-11-17-2215](../design/decisions/2026-11-17-2215-device-session-no-heartbeat.md) 取代：心跳路由、长轮询兜底和按心跳判断在线都已删除。daemon 只在持有网关 socket（设备会话）时可用，在线状态与租约跟随网关上报的 `connected`/`disconnected`。下文的心跳与长轮询核算只是历史记录，不是当前行为。
+> 已被 [决定 2026-11-17-2215](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-17-2215-device-session-no-heartbeat.md) 取代：心跳路由、长轮询兜底和按心跳判断在线都已删除。daemon 只在持有网关 socket（设备会话）时可用，在线状态与租约跟随网关上报的 `connected`/`disconnected`。下文的心跳与长轮询核算只是历史记录，不是当前行为。
 
 本文件将本地证据、代码推导和生产观察分开。生产一小时验收尚未完成，不能据此关闭 issue。
 

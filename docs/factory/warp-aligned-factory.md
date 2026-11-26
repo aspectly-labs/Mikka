@@ -124,10 +124,10 @@ Four boundaries remain separate, as in Warp Factories:
 | Harness authentication | Used inside the execution environment for direct provider calls |
 | Repository identity | `credentialStrategy` selecting creator or executor identity |
 
-Native task execution follows the [machine execution decision](../design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md).
+Native task execution follows the [machine execution decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md).
 Deliver the selected CLI authentication and authorized GitHub credential through
 the native mechanisms. Other third-party Secrets follow the separate
-[credential exposure decision](../design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
+[credential exposure decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0240-credential-exposure-boundary.md).
 The current [task-secret projection](../../lib/secrets/runtime.ts) separates
 protected Secrets from ordinary env and explicit direct-exposure compatibility.
 Record runtime acceptance against the tested revision. Secret names in a
@@ -135,7 +135,7 @@ definition and output masking alone do not establish protected delivery.
 
 ## Execution and budget
 
-Where runs execute is set by [`../design/orchestration.md`](../design/orchestration.md)
+Where runs execute is set by [`../design/orchestration.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/orchestration.md)
 (Mikka Cloud on the person's own E2B key, or the person's own devices as runners
 with the same contract). A runner declares the resource shape; `workerHost` (added when self-hosted
 workers are deployed) selects where it runs. Warp-hosted shapes are bounded by

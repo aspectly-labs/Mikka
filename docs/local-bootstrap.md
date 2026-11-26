@@ -38,7 +38,7 @@ To verify another supported major, put that Node binary first on `PATH` after
 bootstrap, then run `pnpm build:app`, `pnpm start` and the relevant tests.
 The frozen dependency patch for Eve only widens its CLI engine declaration.
 CI verifies its compiled runtime on Node 24 only
-([2026-11-22-1430](design/decisions/2026-11-22-1430-ci-node24-only.md)).
+([2026-11-22-1430](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1430-ci-node24-only.md)).
 
 ## In the cloud environment's setup script
 
@@ -54,7 +54,7 @@ The export line then loads in every login shell.
 
 These notes apply to Cursor Cloud images provisioned with Mikka's `start` script. Verify active services before using them; other cloud environments do not inherit this setup.
 
-- **Node.js versions:** Mikka supports Node.js 22 (latest 22.x) and Node.js 24 everywhere, including app build/start and Eve. `.node-version`, bootstrap, and production images default to 24; CI tests Node 24 only ([2026-11-22-1430](design/decisions/2026-11-22-1430-ci-node24-only.md)), so Node 22 is unverified.
+- **Node.js versions:** Mikka supports Node.js 22 (latest 22.x) and Node.js 24 everywhere, including app build/start and Eve. `.node-version`, bootstrap, and production images default to 24; CI tests Node 24 only ([2026-11-22-1430](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1430-ci-node24-only.md)), so Node 22 is unverified.
 - **Provisioned toolchain and database:** The image runs Node.js `24.22.1`, pnpm `10.34.3`, and PostgreSQL 17 with local database `mikka_e2e` on `127.0.0.1` matching the isolated CI schema. Keep application database URLs on that isolated target.
 - **Local servers:** `start` runs `pnpm test:e2e:setup`, then serves Mikka at `http://127.0.0.1:3000/mikka` (and the separate product site, when checked out, at `http://127.0.0.1:3001/mikka`), reusing responding servers. Default locale is `zh-CN` at `/mikka`; English is `/mikka/en`.
 - **Acceptance credentials and secrets:** Use the shared smoke account documented in private [`mikka-cloud/AGENTS.md`](https://github.com/alexj11324/mikka-cloud/blob/main/AGENTS.md). The image's local auth secret lives outside the repository at `/var/lib/mikka-dev/better-auth-secret`; never print or commit it.

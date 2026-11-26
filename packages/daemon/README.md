@@ -49,7 +49,7 @@ mikka daemon service install --server https://app.aspectlylabs.com/mikka --devic
 ## The device session
 
 The daemon works only while it holds one WebSocket to the server's device
-gateway (decision `docs/design/decisions/2026-11-17-2215-device-session-no-heartbeat.md`).
+gateway (decision `mikka-hosted-ui/docs/design/decisions/2026-11-17-2215-device-session-no-heartbeat.md`).
 The open socket is the device's session: it is how the server knows the device
 is online and that its runs are alive. There is no heartbeat and no fallback.
 

@@ -1,6 +1,6 @@
 import { test, expect, register, conversationPill } from './fixtures'
 
-// The first-run guide (docs/design/onboarding.md): a new account names its
+// The first-run guide (mikka-hosted-ui/docs/design/onboarding.md): a new account names its
 // first Bot in one conversation, lands in that Bot's chat, and never sees the
 // guide again. The workspace has no E2B key yet, so the Bot asks about the
 // cloud computer; Composio is not configured in e2e, so the apps step is skipped.

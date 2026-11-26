@@ -66,7 +66,7 @@ export function localFlagOverride(key: string): boolean | undefined {
 }
 
 /**
- * Who gets proactive work (R-73, docs/design/proactive.md § 3), checked on the
+ * Who gets proactive work (R-73, mikka-hosted-ui/docs/design/proactive.md § 3), checked on the
  * server per person (lib/posthog-server.ts) and only once the deployment's
  * switch is on (lib/profile/flags.ts). `research` is reserved for phase 2.
  */

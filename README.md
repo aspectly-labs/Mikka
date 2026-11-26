@@ -74,7 +74,7 @@ Availability depends on deployment configuration, connected services and feature
   <img src="docs/assets/task-flow-light.svg" alt="Mikka task flow: triage, agent execution, review, fixes, acceptance and follow-up monitoring.">
 </picture>
 
-For definitions of bots, agents, tasks, threads and runs, see the [glossary](docs/design/glossary.md).
+For definitions of bots, agents, tasks, threads and runs, see the [glossary](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/glossary.md).
 
 ## Client and source availability
 

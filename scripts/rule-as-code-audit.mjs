@@ -2,7 +2,7 @@
 // every local repo path, markdown link (including heading fragments), and pnpm script
 // (inline or in runnable shell blocks) cited as an active primitive or CI gate must exist;
 // cross-repo markers (mikka-hosted-ui/, mikka-cloud/) are validated syntactically without
-// requiring local checkouts; frozen historical snapshots (docs/design/decisions.md) retain
+// requiring local checkouts; frozen historical snapshots (docs/design/decisions.md, now in mikka-hosted-ui) retain
 // their non-authoritative warning and stay frozen; and docs/README.md stays free of broken
 // links, broken anchors, and undated/unlinked rule contradictions.
 //
@@ -588,16 +588,9 @@ export function auditPrimitivesMap(root, pkgScripts = null) {
 export function auditFrozenDecisions(root) {
   const findings = []
   const filePath = resolve(root, FROZEN_DECISIONS_DOC)
-  if (!existsSync(filePath)) {
-    findings.push({
-      file: FROZEN_DECISIONS_DOC,
-      line: 1,
-      rule: 'rule-as-code/missing-frozen-decisions',
-      target: FROZEN_DECISIONS_DOC,
-      message: `Frozen decision archive ${FROZEN_DECISIONS_DOC} is missing.`,
-    })
-    return { findings, rowCount: 0 }
-  }
+  // The archive moved with every UI decision and design doc to the private hosted repo
+  // (mikka-hosted-ui/docs/design/decisions.md) on 2026-11-26; audit it where a checkout still has it.
+  if (!existsSync(filePath)) return { findings, rowCount: 0 }
 
   const content = readFileSync(filePath, 'utf8')
   const lines = content.split('\n')

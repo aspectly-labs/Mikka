@@ -1,5 +1,5 @@
 /**
- * Guards the parts of docs/design/copy.md that a script can decide without
+ * Guards the parts of mikka-hosted-ui/docs/design/copy.md that a script can decide without
  * reading the component. Run it with `node scripts/check-copy.mjs`; it exits
  * non-zero and lists every offender.
  *

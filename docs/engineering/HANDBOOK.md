@@ -2,7 +2,7 @@
 
 **Audience:** Engineers, designers, and coding agents shipping product, infrastructure, or operational changes across `aspectly-labs/Mikka`, `aspectly-labs/mikka-hosted-ui`, and `aspectly-labs/mikka-cloud`.
 **Scope:** Mikka's end-to-end 6-stage Software Development Life Cycle (SDLC) and Three-Tier Documentation Architecture across Web, Desktop, iOS, API, Eve, Task runtime, CLI, daemon, and Cloudflare operations.
-**Out of scope:** Secret values, account credentials, and private deployment targets (see private `mikka-cloud/AGENTS.md` and `mikka-cloud/docs/operations/README.md`), per-feature product specifications (`docs/design/`), and frozen pre-2026-11-01 history (`docs/design/decisions.md`).
+**Out of scope:** Secret values, account credentials, and private deployment targets (see private `mikka-cloud/AGENTS.md` and `mikka-cloud/docs/operations/README.md`), per-feature product specifications (`mikka-hosted-ui/docs/design/`), and frozen pre-2026-11-01 history (`mikka-hosted-ui/docs/design/decisions.md`).
 
 This handbook is the single Living Standard for how Mikka moves work from specification to production and turns every production incident into a permanent mechanical guard. Start at [`AGENTS.md`](../../AGENTS.md) for agent context routing and [`docs/README.md`](../README.md) for the full documentation index.
 
@@ -12,9 +12,9 @@ The following table maps each stage to its required artifact, owning repositorie
 
 | Stage | Objective | Primary spec / template | Owning repositories | Enforcing mechanical gates |
 | --- | --- | --- | --- | --- |
-| **1. Product & UI Spec** | Define the user job, reference target, 7 interaction states, and copy before coding | [`templates/ui-spec.md`](templates/ui-spec.md), [`docs/design/design-system.md`](../design/design-system.md), [`docs/review-checklist.md`](../review-checklist.md) | `Mikka`, `mikka-hosted-ui` | `scripts/check-i18n.mjs`, `scripts/check-copy.mjs`, `scripts/copy-policy.mjs`, `mikka-hosted-ui/scripts/copy-budget.test.mjs` |
+| **1. Product & UI Spec** | Define the user job, reference target, 7 interaction states, and copy before coding | [`mikka-hosted-ui/docs/design/templates/ui-spec.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/templates/ui-spec.md), [`mikka-hosted-ui/docs/design/design-system.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/design-system.md), [`docs/review-checklist.md`](../review-checklist.md) | `Mikka`, `mikka-hosted-ui` | `scripts/check-i18n.mjs`, `scripts/check-copy.mjs`, `scripts/copy-policy.mjs`, `mikka-hosted-ui/scripts/copy-budget.test.mjs` |
 | **2. Architecture & Contracts** | Reuse Pit-of-Success primitives, preserve repo boundaries, and plan zero-downtime compatibility | [`templates/design-doc.md`](templates/design-doc.md), [`docs/architecture/primitives.md`](../architecture/primitives.md) | `Mikka`, `mikka-hosted-ui`, `mikka-cloud` | `scripts/no-public-ui.test.mjs`, `scripts/cloud-boundary-policy.mjs`, `scripts/check-migrations.mjs`, `mikka-hosted-ui/scripts/paid-overrides.mjs` |
-| **3. Coding Standards & Static Analysis** | Enforce security, SQL safety, UI contracts, and zero patch stacking at commit time | [`AGENTS.md`](../../AGENTS.md), [`docs/design/rules.md`](../design/rules.md) | `Mikka`, `mikka-hosted-ui` | `pnpm lint:code` (`oxlint`), `scripts/route-guard-policy.mjs`, `scripts/sql-safety-policy.mjs`, `scripts/error-cause-policy.mjs`, `scripts/polling-policy.mjs`, `mikka-hosted-ui/scripts/frontend-best-practices-policy.mjs` |
+| **3. Coding Standards & Static Analysis** | Enforce security, SQL safety, UI contracts, and zero patch stacking at commit time | [`AGENTS.md`](../../AGENTS.md), [`mikka-hosted-ui/docs/design/rules.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md) | `Mikka`, `mikka-hosted-ui` | `pnpm lint:code` (`oxlint`), `scripts/route-guard-policy.mjs`, `scripts/sql-safety-policy.mjs`, `scripts/error-cause-policy.mjs`, `scripts/polling-policy.mjs`, `mikka-hosted-ui/scripts/frontend-best-practices-policy.mjs` |
 | **4. Automated Verification & Visual Gates** | Prove behavior with isolated tests, real rendered layouts, pixel diffs, and bundle budgets | [`docs/dev-workflow.md`](../dev-workflow.md), [`docs/acceptance.md`](../acceptance.md) | `Mikka`, `mikka-hosted-ui` | `.github/workflows/ui-policy.yml`, `.github/workflows/app-icon.yml`, `mikka-hosted-ui/.github/workflows/ui-policy.yml`, `mikka-hosted-ui/.github/workflows/pairs-with-public-main.yml`, `mikka-hosted-ui/scripts/bundle-budget.mjs` |
 | **5. Progressive Release & Promotion** | Build immutable artifacts once, qualify in staging, and promote fail-closed | [`docs/operations/build-source-of-truth.md`](../operations/build-source-of-truth.md), [`docs/production-smoke.md`](../production-smoke.md) | `Mikka`, `mikka-cloud` | `.github/workflows/cloudflare-api-image.yml`, `.github/workflows/cloudflare-app-deploy.yml`, `mikka-cloud/scripts/verify-hosted-ui-gates.mjs`, `mikka-cloud/operations/primitives/rollout-probe.mjs`, `scripts/ops/production-smoke.mjs` |
 | **6. Observability & Blameless COE** | Detect failures without silent gaps and convert every incident into a permanent Stage 1–5 gate | [`templates/coe-postmortem.md`](templates/coe-postmortem.md), [`docs/operations/tracing.md`](../operations/tracing.md) | `Mikka`, `mikka-hosted-ui`, `mikka-cloud` | `lib/tracing/sanitize.ts`, `mikka-hosted-ui/components/mikka/observability/`, `mikka-cloud/cloudflare/ops-scheduler/`, `mikka-cloud/operations/primitives/deep-health.mjs`, `mikka-cloud/.github/workflows/zero-residency-guard.yml` |
@@ -31,18 +31,18 @@ Tier 1 documents are the **sole active prose authority**. Update the owning Tier
 
 - **SDLC & engineering process:** `docs/engineering/HANDBOOK.md` (this document) and [`docs/dev-workflow.md`](../dev-workflow.md).
 - **Agent context routers:** [`AGENTS.md`](../../AGENTS.md), `mikka-hosted-ui/AGENTS.md`, and `mikka-cloud/AGENTS.md`.
-- **Product & visual standards:** [`docs/design/design-system.md`](../design/design-system.md), [`docs/design/glossary.md`](../design/glossary.md), [`docs/design/rules.md`](../design/rules.md), [`docs/design/components.md`](../design/components.md), [`docs/design/copy.md`](../design/copy.md), and [`docs/design/brand.md`](../design/brand.md).
+- **Product & visual standards:** [`mikka-hosted-ui/docs/design/design-system.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/design-system.md), [`mikka-hosted-ui/docs/design/glossary.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/glossary.md), [`mikka-hosted-ui/docs/design/rules.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md), [`mikka-hosted-ui/docs/design/components.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md), [`mikka-hosted-ui/docs/design/copy.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/copy.md), and [`mikka-hosted-ui/docs/design/brand.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/brand.md).
 - **Executable architecture map:** [`docs/architecture/primitives.md`](../architecture/primitives.md).
 - **Build & release ownership:** [`docs/operations/build-source-of-truth.md`](../operations/build-source-of-truth.md) and [`docs/operations/tracing.md`](../operations/tracing.md).
 
 Keep one source of truth per topic. Link to the owning Tier 1 document rather than restating its rules in a second file.
 
-### Tier 2: Dated architecture decision records (`docs/design/decisions/`)
+### Tier 2: Dated architecture decision records (`mikka-hosted-ui/docs/design/decisions/`)
 
-Every file in [`docs/design/decisions/`](../design/decisions/README.md) records **why** a decision was made on a specific date. Historical ADRs remain immutable provenance:
+Every file in [`mikka-hosted-ui/docs/design/decisions/`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/README.md) records **why** a decision was made on a specific date. Historical ADRs remain immutable provenance:
 
-1. **Preserve history:** Never delete historical ADRs from `docs/design/decisions/` and never modify the frozen pre-2026-11-01 archive in [`docs/design/decisions.md`](../design/decisions.md).
-2. **Require an explicit status header:** Every `docs/design/decisions/20*.md` file carries a top-level status header within its first 15 lines:
+1. **Preserve history:** Never delete historical ADRs from `mikka-hosted-ui/docs/design/decisions/` and never modify the frozen pre-2026-11-01 archive in [`mikka-hosted-ui/docs/design/decisions.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions.md).
+2. **Require an explicit status header:** Every `mikka-hosted-ui/docs/design/decisions/20*.md` file carries a top-level status header within its first 15 lines:
    - `- **Status:** Accepted`
    - `- **Status:** Superseded by [<successor>](<successor>.md)`
    - `- **Status:** Superseded in part by [<successor>](<successor>.md)`
@@ -60,7 +60,7 @@ When two sources conflict, the higher row wins:
 2. **Tier 3 executable primitives and CI policy gates** (compile-time types, static AST policies, layout/visual invariants, release preflight verifiers).
 3. **Tier 1 Living Standards** (`HANDBOOK.md`, `design-system.md`, `glossary.md`, `rules.md`, `build-source-of-truth.md`).
 4. **Verified current `main` implementation.**
-5. **Tier 2 dated ADRs** (`docs/design/decisions/` — historical provenance only; a dated ADR never overrides a later Tier 1 standard or Tier 3 gate).
+5. **Tier 2 dated ADRs** (`mikka-hosted-ui/docs/design/decisions/` — historical provenance only; a dated ADR never overrides a later Tier 1 standard or Tier 3 gate).
 
 ---
 
@@ -71,17 +71,17 @@ Define what the user accomplishes, which visual standard governs the surface, an
 ### Mandatory specification inputs
 
 1. **Choose the template:**
-   - Copy [`docs/engineering/templates/ui-spec.md`](templates/ui-spec.md) for any Web, Desktop, or iOS UI change.
+   - Copy [`mikka-hosted-ui/docs/design/templates/ui-spec.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/templates/ui-spec.md) for any Web, Desktop, or iOS UI change.
    - Copy [`docs/engineering/templates/design-doc.md`](templates/design-doc.md) for backend architecture, protocol, database schema, security, or release changes.
-   - Use [`docs/design/spec-template.md`](../design/spec-template.md) for design-only Figma specifications.
-2. **Pin a mandatory visual reference before coding UI:** Name either an accepted Figma frame (`zPe5LKycb2XuT1ivCLRw07`, or `12Yn4bNPchBdDvdIb83KER` for brand mark and app icons) or the governing reference product from [`docs/design/design-system.md`](../design/design-system.md):
+   - Use [`mikka-hosted-ui/docs/design/spec-template.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/spec-template.md) for design-only Figma specifications.
+2. **Pin a mandatory visual reference before coding UI:** Name either an accepted Figma frame (`zPe5LKycb2XuT1ivCLRw07`, or `12Yn4bNPchBdDvdIb83KER` for brand mark and app icons) or the governing reference product from [`mikka-hosted-ui/docs/design/design-system.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/design-system.md):
    - **ChatGPT / Codex + Claude Code:** chat chrome, transcript typography, composer, inline single-CTA status/quota strips, and flat quiet errors.
    - **Capy (`0.9.2`):** right rail, flat single-level tab bar, sidebar work tree, list pages (Pull Requests, Threads, Tasks), and task detail panel.
    - **Linear:** issue and board semantics not covered above.
    - **Apple Human Interface Guidelines (iOS 26/27 & macOS 26):** native mobile (`mikka-hosted-ui/mobile-next/`) and Desktop window chrome.
-   - **Paid blocks as shipped (R-90):** BoardUI Pro, affectUI, and beUI Pro match their shipped library demo; only data and copy change ([2026-11-09-0050](../design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+   - **Paid blocks as shipped (R-90):** BoardUI Pro, affectUI, and beUI Pro match their shipped library demo; only data and copy change ([2026-11-09-0050](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
 3. **Specify all seven interaction states (`design-system.md` §4):** Loading (shape-matched skeleton), Empty (first-use vs. zero-match search with Clear), Error & Recovery (inline recovery preserving user drafts; status re-check for unknown effectful mutations), Pending & double-submit lock, Dirty & destructive guard (dirty forms, one-time secrets, R-102 confirm), Keyboard/Focus/IME/Esc isolation, and Touch/Hover (`@media (hover: hover)`, `>= 44×44px` coarse hit target, `320px` reflow).
-4. **Enforce copy density and domain terminology:** Follow R-40 (delete every string whose removal leaves the screen unchanged), [`docs/design/copy.md`](../design/copy.md) (`C-01`..`C-10`), and [`docs/design/glossary.md`](../design/glossary.md). Chinese UI uses `线程` (never `对话` except `对话框`, never `会话`), `群聊`, `Bot`, `Agent`, `Mikka Cloud`, and `daemon`.
+4. **Enforce copy density and domain terminology:** Follow R-40 (delete every string whose removal leaves the screen unchanged), [`mikka-hosted-ui/docs/design/copy.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/copy.md) (`C-01`..`C-10`), and [`mikka-hosted-ui/docs/design/glossary.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/glossary.md). Chinese UI uses `线程` (never `对话` except `对话框`, never `会话`), `群聊`, `Bot`, `Agent`, `Mikka Cloud`, and `daemon`.
 5. **Trace action coverage both ways:** For business actions, verify `command × permission × business transition × promised UI entry` with `.claude/skills/mikka-action-coverage/SKILL.md` and [`docs/review-checklist.md`](../review-checklist.md).
 
 ### Stage 1 exit criteria
@@ -108,7 +108,7 @@ Build inside Mikka's Pit-of-Success primitives so recurring security, SQL, proto
 
 Every recurring defect class maps to one executable primitive layer (full path map in [`docs/architecture/primitives.md`](../architecture/primitives.md)):
 
-1. **Design System v2 & restricted UI primitives:** `docs/design/design-system.md`, `mikka-hosted-ui/styles/palette.css`, `ChatStatusStrip`, `TakeoverCard`, `AlertRow`, `WhyDisabled`, and `mikka-hosted-ui/components/mikka/list-page/` (`CapyListPage`).
+1. **Design System v2 & restricted UI primitives:** `mikka-hosted-ui/docs/design/design-system.md`, `mikka-hosted-ui/styles/palette.css`, `ChatStatusStrip`, `TakeoverCard`, `AlertRow`, `WhyDisabled`, and `mikka-hosted-ui/components/mikka/list-page/` (`CapyListPage`).
 2. **Unified error and quota recovery:** `lib/primitives/error-contract.ts` (`MikkaErrorContract`) normalizes refusals, quota/rate limits, model unavailability, auth/Turnstile errors, and run failures with at most one typed `primaryAction` CTA and zero stack or secret leakage.
 3. **Unified API route guards:** `lib/primitives/define-route.ts` (`defineRoute(spec, handler)`) requires explicit `auth`, `origin` (including native `mikka://` mobile clients), `workspace`, and `write` declarations, maps `WorkspaceError` to canonical `403`/`409` JSON (never unhandled `500`), and enforces PAT `tokenWorkspace` fencing.
 4. **Unified conversation, thread, and subagent protocol:** `lib/primitives/conversation-protocol.ts` normalizes `bot:`, `group:`, `thread:`, and `subagent:` IDs, shells, turns, and cursors across backend, Web, and iOS, enforcing `readOnly: true` and `canReply: false` on subagent shells at compile time.
@@ -120,7 +120,7 @@ Every recurring defect class maps to one executable primitive layer (full path m
 
 - **One shared primitive per surface grammar:** Reuse `CapyListPage` (`mikka-hosted-ui/components/mikka/list-page/`) for Pull Requests, Threads, and Tasks directories, `ChatBottomSlotProvider` + `ChatStatusStrip` + `TakeoverCard` for chat overlays, and `@hosted/core/components/icons` for Mikka UI icons. Do not build per-page toolbars or import duplicate icon/primitive libraries (`@remixicon/react`, `react-aria-components`, raw `lucide-react` outside task status glyphs).
 - **Replace, never stack patches:** Never stack a second CSS override layer or `z-`/`zz-` patch on top of an existing paid-block override (`mikka-hosted-ui/patches/*.patch`). Either consolidate into one authoritative rule or extract Mikka-owned chrome into `mikka-hosted-ui/components/mikka/` through a single minimal structural render-slot prop. Per-target patch counts may only decrease, never increase.
-- **Decouple UI view models from dispatch projections:** Project full user-owned catalogues (models, credentials, tasks) directly rather than inferring UI rows or sort order from filtered backend scheduling candidates ([2026-11-22-2205](../design/decisions/2026-11-22-2205-headless-public-engine-and-ui-decoupling.md)).
+- **Decouple UI view models from dispatch projections:** Project full user-owned catalogues (models, credentials, tasks) directly rather than inferring UI rows or sort order from filtered backend scheduling candidates ([2026-11-22-2205](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-2205-headless-public-engine-and-ui-decoupling.md)).
 
 ### Breaking contracts and database migrations
 
@@ -160,7 +160,7 @@ The following gates run in CI (`source-checks` in `.github/workflows/ui-policy.y
 | **Error causes & polling** | `scripts/error-cause-policy.mjs`, `scripts/polling-policy.mjs`, `scripts/focus-refetch-policy.mjs`, `tests/idle-request-budget.json` | Preserves `{ cause: error }` and localized `RunErrors.*`; bans new polling loops (`refreshInterval`, `setInterval`) in favor of `lib/live/*` push; idle page request ceilings in `tests/idle-request-budget.json` only decrease (`#1212`) |
 | **Execution & cloud boundaries** | `pnpm check:cloud-boundary` (`scripts/cloud-boundary-policy.mjs`), `scripts/litellm-policy.mjs`, `scripts/external-client-mock-policy.mjs`, `scripts/check-migrations.mjs`, `scripts/no-public-ui.test.mjs` | Keeps private cloud code out of public `Mikka`, enforces LiteLLM-only managed model egress, forbids unreviewed `DROP COLUMN`, and keeps Web/Desktop UI out of public `Mikka` |
 | **UI, copy & paid-block ratchets** | `pnpm lint:ui` (`scripts/ui-policy.mjs`, `scripts/interaction-policy.mjs`, `scripts/control-size-policy.mjs`, `scripts/motion-policy.mjs`, `scripts/split-pane-policy.mjs`, `scripts/icon-button-policy.mjs`, `scripts/navigation-policy.mjs`, `scripts/copy-policy.mjs`), `pnpm i18n:check`, `node scripts/check-copy.mjs`, `mikka-hosted-ui/scripts/paid-overrides.mjs`, `mikka-hosted-ui/scripts/frontend-best-practices-policy.mjs` | Enforces Design System v2 tokens, control heights, motion tokens, copy/i18n rules, zero stale paid patches, per-file patch-count ceiling, and bans `transform`+`translate` double-shift, scrollWidth-inflating negative tab insets, `absolute` + `pointer-coarse:opacity-100` row-icon overlays, raw hex colors, and duplicate icon/UI imports |
-| **Handbook & ADR integrity** | `pnpm check:handbook` (`scripts/engineering-handbook.test.mjs`), `pnpm check:rule-as-code` (`scripts/rule-as-code-audit.mjs`) | Verifies every ADR in `docs/design/decisions/20*.md` carries a valid `Status:` header, `docs/design/decisions.md` stays frozen, and every local path, link, and `pnpm` script referenced by `HANDBOOK.md` and `primitives.md` exists |
+| **Handbook & ADR integrity** | `pnpm check:handbook` (`scripts/engineering-handbook.test.mjs`), `pnpm check:rule-as-code` (`scripts/rule-as-code-audit.mjs`) | Verifies every ADR in `mikka-hosted-ui/docs/design/decisions/20*.md` carries a valid `Status:` header, `mikka-hosted-ui/docs/design/decisions.md` stays frozen, and every local path, link, and `pnpm` script referenced by `HANDBOOK.md` and `primitives.md` exists |
 
 ### Review risk triage
 
@@ -179,7 +179,7 @@ CI is the independent final merge gate, not the first debugging loop. Draft PRs 
 
 1. **Selected unit, integration, and daemon suites:** Nx Core selection (`scripts/ci/select.mjs`) runs affected `Core unit checks`, `Integration unit checks`, `Source checks`, and `Daemon checks` on Node 24, with conservative full fallback on global, security, or unknown inputs (`docs/ci/incremental.md`).
 2. **Isolated PostgreSQL 17 database shards:** `Database checks` runs across isolated PG17 shards with empty-database migration replay (`tests/migrate-empty-db.test.mjs`), `workspace-governance-checks`, and `analytics-checks` — zero skipped suites permitted (`REQUIRE_DB=1`).
-3. **Scripted model acceptance (never live inference):** Development acceptance, CI, and local-loop jobs substitute only the LiteLLM HTTP boundary with scripted or recorded responses covering streaming, tool calls, timeouts, `429`, upstream `5xx`, and usage/cost receipts ([2026-11-20-1855](../design/decisions/2026-11-20-1855-scripted-model-acceptance.md)).
+3. **Scripted model acceptance (never live inference):** Development acceptance, CI, and local-loop jobs substitute only the LiteLLM HTTP boundary with scripted or recorded responses covering streaming, tool calls, timeouts, `429`, upstream `5xx`, and usage/cost receipts ([2026-11-20-1855](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-20-1855-scripted-model-acceptance.md)).
 
 ### Frontend verification, universal layout audit, and visual gates (`aspectly-labs/mikka-hosted-ui`)
 
