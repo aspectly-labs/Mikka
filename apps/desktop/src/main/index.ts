@@ -11,7 +11,7 @@ import { IPC, BUNDLED_IPC } from '@mikka/protocol/ipc'
 
 import { AppSettings } from './app-settings'
 import { registerBridge } from './bridge'
-import { localDeviceStatus, localQuota } from './daemon'
+import { localDeviceStatus, localQuota, watchLocalRunActivity } from './daemon'
 import { connectForUpdate, updateLocalDaemon } from './daemon-update'
 import { readLocalDeviceAccount, readLocalDeviceOwner } from './local-setup'
 import { AppLoadState, offlineReason, offlineRetryDelay } from './offline'
@@ -381,6 +381,7 @@ function sendMenuCommand(command: DesktopMenuCommand): void {
 }
 
 let appSettings: AppSettings | undefined
+let stopRunActivity: (() => void) | undefined
 let tray: Tray | null = null
 let trayState: DesktopTrayState = { signedIn: false, waiting: 0, threads: null, hasMore: false }
 
@@ -431,7 +432,6 @@ function installTray(): void {
 
 function updateTray(raw: unknown): void {
   trayState = desktopTrayState.parse(raw)
-  appSettings?.setActive(trayState.signedIn && (trayState.activeRuns ?? 0) > 0)
   renderTray()
 }
 
@@ -769,6 +769,7 @@ async function start(): Promise<void> {
   // 立即重启 / 稍后, and installs on quit. Only a server that requires a newer desktop blocks (enforceMinimumVersion).
   createMainWindow()
   appSettings.apply()
+  stopRunActivity = watchLocalRunActivity(active => appSettings?.setActive(active))
   if (app.isPackaged && FLAVOR !== 'dev') {
     // This app may just have updated: the daemon on this computer updates too, when idle (daemon-update.ts).
     void updateLocalDaemon(FLAVOR, { connect: connectForUpdate({ name: 'mikka-desktop', version: APP_VERSION }) })
@@ -796,10 +797,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', closeAuthServer)
   app.on('before-quit', () => { tray?.destroy(); tray = null })
   app.on('before-quit', closeReturnListener)
+  app.on('before-quit', () => stopRunActivity?.())
   app.on('before-quit', () => { bundledAuth?.dispose(); bundledLive?.closeAll(); bundledViewer?.closeAll() })
   app.on('window-all-closed', () => {
-    // No renderer remains to report that the last run ended.
-    appSettings?.setActive(false)
     if (process.platform !== 'darwin') app.quit()
   })
   void app.whenReady().then(start)

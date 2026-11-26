@@ -8,6 +8,7 @@ import type { QuotaSnapshotReport } from '@mikka/protocol/quota'
 import { unknownQuotaReport } from '@mikka/protocol/quota'
 
 import { OFFLINE_DEVICE, toLocalDevice } from './daemon-map'
+import { watchDaemonRunActivity } from './daemon-run-activity'
 
 const CLIENT = { name: 'mikka-desktop', version: __MIKKA_APP_VERSION__ }
 const FLAVOR = __MIKKA_FLAVOR__
@@ -40,4 +41,9 @@ export async function localQuota(): Promise<QuotaSnapshotReport> {
   } catch {
     return unknownQuotaReport()
   }
+}
+
+export function watchLocalRunActivity(setActive: (active: boolean) => void): () => void {
+  const directory = dataDir()
+  return watchDaemonRunActivity(directory, () => connectDaemonInDataDir(directory, CLIENT), setActive)
 }

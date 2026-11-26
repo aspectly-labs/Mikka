@@ -118,6 +118,7 @@ import { baseReport, finishRun, fixedCandidateCheck, verifyAndPublish, type Publ
 import type { WorkspaceControl } from './workspace-control'
 
 export interface SupervisorDeps extends PublicationDeps {
+  runActivityChanged?(active: boolean): void
   acquireWorkspaceControl?(assignment: RunAssignment, signal: AbortSignal, onLost: () => void): Promise<WorkspaceControl>
   /** Trusted candidate launcher opt-in, shared with the official CLI collector. */
   collectCliTiming?: boolean
@@ -1111,6 +1112,7 @@ export class RunSupervisor {
       abort: new AbortController(),
     }
     this.active.set(runId, run)
+    if (this.active.size === 1) this.deps.runActivityChanged?.(true)
     const assignment = this.deps.journal.get(runId)?.assignment
     const harness = assignment?.harness
     if (assignment && runDiagnosticsEnabled(assignment.taskEnv, this.deps.collectCliTiming))
@@ -1166,6 +1168,7 @@ export class RunSupervisor {
             await run.workspaceControl?.release(Boolean(run.sessionExited && !this.stopping))
               .catch(() => this.deps.log.warn('Workspace control cleanup failed'))
             clearTimeout(run.cancelTimer); run.runtimeTiming?.close(); this.active.delete(runId)
+            if (this.active.size === 0) this.deps.runActivityChanged?.(false)
             // Start draining all three telemetry queues before an idle cloud VM
             // can pause; the completed run never waits for the collector.
             void daemonTracer.flush()
