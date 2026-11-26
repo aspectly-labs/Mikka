@@ -1244,10 +1244,10 @@ export class Daemon {
     return info.harness === 'claude_code' || info.harness === 'codex' ? true : undefined
   }
 
-  /** A subscription run here takes a per-run access lease (subscription-local-runner.ts). */
+  /** A subscription run here uses the run-bound model gateway (subscription-local-runner.ts). */
   private localSubscriptionCapable(info: HarnessInfo) {
     return (info.harness === "claude_code" || info.harness === "codex") && info.installed &&
-      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeLease)
+      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeContext)
   }
 
   /** Advertise only a checked local runner, replacing any old readiness or failure. */
@@ -1441,16 +1441,14 @@ export class Daemon {
   }
 
   /**
-   * Subscription runs on this device: the server hands each run its
-   * short-lived access token, never the refresh grant (subscription-local-runner.ts).
+   * Subscription runs on this device receive the run-scoped Mikka model
+   * gateway credential (subscription-local-runner.ts).
    */
   private localSubscriptions() {
-    const link = this.options.link
     const options = this.adapterOptions()
-    if (!options || !link.nativeLease) return undefined
+    if (!options) return undefined
     return createLocalSubscriptionRunner({
       stateDir: this.paths.adapterState,
-      link: { nativeLease: link.nativeLease.bind(link) },
       claude: options.claude,
       codex: options.codex,
     })

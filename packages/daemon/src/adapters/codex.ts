@@ -34,7 +34,7 @@ import {
   prepareCodexHome,
   wipeRunCredentials,
 } from "../agents/harness-home"
-import { codexCredential, credentialDomain } from "../agents/run-credential"
+import { codexCredential, credentialDomain, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
 import { jsonlConnection } from "../agents/jsonl-rpc"
 import {
   MCP_SERVER_NAME,
@@ -56,7 +56,6 @@ import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
 import { mailboxToolResult } from '../run-mailbox'
 import { codexMailboxCatalogue, codexMailboxResumeVersion, recordCodexMailboxSession, verifyCodexMailboxResume } from './codex-mailbox'
-import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
 import type {
   DeltaNotification,
