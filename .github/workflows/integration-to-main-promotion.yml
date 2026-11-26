@@ -1,14 +1,12 @@
 name: Integration to main promotion
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
         description: Evaluate full promotion readiness and cross-repo overlay compatibility without mutating branches or PRs
         type: boolean
-        default: false
+        default: true
 
 permissions: {}
 
@@ -178,8 +176,8 @@ jobs:
           if [ "${SKIP_OVERLAY_PROBE:-}" = "true" ]; then skip_overlay_probe="true"; fi
           allow_coordinated_unpinned="false"
           if [ "${ALLOW_COORDINATED_UNPINNED:-}" = "true" ]; then allow_coordinated_unpinned="true"; fi
-          dry_run="false"
-          if [ "${DRY_RUN:-false}" = "true" ]; then dry_run="true"; fi
+          dry_run="true"
+          if [ "${DRY_RUN:-true}" = "false" ]; then dry_run="false"; fi
 
           encoded_branch=$(jq -rn --arg b "$branch" '$b|@uri')
           main_sha=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
