@@ -427,6 +427,7 @@ export const desktopActionSchemas = {
   'memory.undoRemoveFact': oneId,
   'model-api-keys.getApiKeys': inWorkspace,
   'model-api-keys.refetchApiKeyModels': tuple(uuid, workspace),
+  'model-api-keys.refreshApiKeyDaybreak': tuple(uuid, workspace),
   'model-api-keys.updateApiKeyAfterQuota': tuple(bool, workspace),
   'model-api-keys.createApiKey': tuple(apiKey, workspace, object({ share: bool.optional() }).optional()),
   'model-api-keys.updateApiKey': tuple(uuid, updateApiKeyInput, workspace),

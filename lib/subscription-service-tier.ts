@@ -72,3 +72,18 @@ export function codexUltrafastSupport(catalogue: unknown, revision: number, mode
 export function claudeFastSupport(catalogue: unknown, revision: number, modelId: string): CodexPrioritySupport {
   return readCatalogueFlag(catalogue, revision, modelId, 'fastSupport', false)
 }
+
+/** Only the current credential epoch's advertised `daybreakSupport` can enable Daybreak (`access_programs.cyber`). */
+export function codexDaybreakSupport(catalogue: unknown, revision: number, modelId: string): ('blue' | 'red')[] {
+  if (!catalogue || typeof catalogue !== 'object' || Array.isArray(catalogue)) return []
+  const value = catalogue as Partial<SubscriptionModelCatalogue>
+  if (!Number.isSafeInteger(revision) || revision < 1
+    || (typeof value.revision !== 'number' && typeof value.revision !== 'string') || Number(value.revision) !== revision
+    || !Array.isArray(value.models) || !value.models.includes(modelId)) return []
+  const map = value.daybreakSupport
+  if (!map || typeof map !== 'object' || Array.isArray(map) || !Object.hasOwn(map, modelId)) return []
+  const tiers = map[modelId]
+  if (!Array.isArray(tiers)) return []
+  const valid = tiers.filter((tier): tier is 'blue' | 'red' => tier === 'blue' || tier === 'red')
+  return [...new Set(valid)]
+}

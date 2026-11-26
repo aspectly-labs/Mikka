@@ -19,8 +19,12 @@ import { catalogIdFor } from './model-catalog'
 /** OpenAI's Trusted Access for Cyber tiers (「Daybreak」); a route carries at most one. */
 export const DAYBREAK_TIERS = ['blue', 'red'] as const
 export type DaybreakTier = typeof DAYBREAK_TIERS[number]
+export type CyberAccessProgram = 'daybreak_blue' | 'daybreak_red'
 /** The Responses API wire value for a tier (`access_programs.cyber`, openai/codex codex-api/src/common.rs). */
-export const cyberAccessProgram = (tier: DaybreakTier) => tier === 'red' ? 'daybreak_red' as const : 'daybreak_blue' as const
+export const cyberAccessProgram = (tier: DaybreakTier): CyberAccessProgram => tier === 'red' ? 'daybreak_red' : 'daybreak_blue'
+/** The tier behind a Responses API wire value, or undefined for anything else. */
+export const daybreakTierFromProgram = (program: unknown): DaybreakTier | undefined =>
+  program === 'daybreak_red' ? 'red' : program === 'daybreak_blue' ? 'blue' : undefined
 
 export interface ModelCapabilities {
   /** The levels a run of this model can carry, lowest first; empty when it takes none. */
@@ -145,7 +149,7 @@ export function modesFor(capabilities: Pick<ModelCapabilities, 'speedModes' | 'p
     pro,
     fast: !pro && asked?.ultrafast !== true && asked?.fast === true && (capabilities ? capabilities.speedModes.includes('fast') : true),
     ultrafast: !pro && asked?.ultrafast === true && (capabilities ? capabilities.speedModes.includes('ultrafast') : true),
-    daybreak: false,
+    daybreak: asked?.daybreak === true && (capabilities ? capabilities.daybreak !== undefined : true),
   }
 }
 
@@ -162,6 +166,39 @@ export interface DaybreakAccess {
   grants?: { tier: DaybreakTier; granted: string[] }[]
   /** When it was last checked (ISO time). */
   checkedAt?: string
+}
+
+/** Strictly parses stored DaybreakAccess JSONB, failing closed to undefined on malformed input. */
+export function parseDaybreakAccess(raw: unknown): DaybreakAccess | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  if (!Array.isArray(value.granted) || value.granted.some(item => typeof item !== 'string' || !item.trim())) return undefined
+  const granted = [...new Set(value.granted.map(item => item.trim()))]
+  let tiers: DaybreakTier[] | undefined
+  if (value.tiers !== undefined) {
+    if (!Array.isArray(value.tiers) || value.tiers.some(t => t !== 'blue' && t !== 'red')) return undefined
+    tiers = [...new Set(value.tiers as DaybreakTier[])]
+  }
+  let grants: { tier: DaybreakTier; granted: string[] }[] | undefined
+  if (value.grants !== undefined) {
+    if (!Array.isArray(value.grants)) return undefined
+    const parsedGrants: { tier: DaybreakTier; granted: string[] }[] = []
+    for (const entry of value.grants) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined
+      const rec = entry as Record<string, unknown>
+      if (rec.tier !== 'blue' && rec.tier !== 'red') return undefined
+      if (!Array.isArray(rec.granted) || rec.granted.some(item => typeof item !== 'string' || !item.trim())) return undefined
+      parsedGrants.push({ tier: rec.tier, granted: [...new Set(rec.granted.map(item => item.trim()))] })
+    }
+    grants = parsedGrants
+  }
+  const checkedAt = typeof value.checkedAt === 'string' && value.checkedAt.trim() ? value.checkedAt.trim() : undefined
+  return {
+    granted,
+    ...(tiers ? { tiers } : {}),
+    ...(grants ? { grants } : {}),
+    ...(checkedAt ? { checkedAt } : {}),
+  }
 }
 
 /**
@@ -187,8 +224,9 @@ export function tierForModes(modes: Pick<ModelModes, 'fast' | 'ultrafast'>): Mod
 }
 
 export function supportedModes(capabilities: ModelCapabilities | undefined, modes: ModelModes): boolean {
-  return !modesConflict(modes) && !modes.daybreak &&
+  return !modesConflict(modes) &&
     (!modes.pro || capabilities?.pro === true) &&
     (!modes.fast || capabilities?.speedModes.includes('fast') === true) &&
-    (!modes.ultrafast || capabilities?.speedModes.includes('ultrafast') === true)
+    (!modes.ultrafast || capabilities?.speedModes.includes('ultrafast') === true) &&
+    (!modes.daybreak || capabilities?.daybreak !== undefined)
 }

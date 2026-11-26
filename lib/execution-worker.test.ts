@@ -44,13 +44,16 @@ test("explicit model and device stay frozen through retries", () => {
   );
 });
 
-test("a fallback uses the newly admitted route's Pro setting", async () => {
+test("a fallback uses the newly admitted route's Pro and Daybreak settings", async () => {
   const { providerContinuationDefinition } = await import("./run-provider-fallback");
   const apiKey = { keyId: "10000000-0000-4000-8000-000000000002", model: "gpt-6.2-astra" };
   const entry = { id: "initial", model: apiKey.model, harness: "codex" as const, source: { kind: "api_key" as const, keyId: apiKey.keyId } };
-  const source = freezeWorkerDefinition({ ...base, apiKey, modelDispatch: { mode: "preference", entry, pro: true } });
+  const source = freezeWorkerDefinition({ ...base, apiKey, modelDispatch: { mode: "preference", entry, pro: true, cyberAccessProgram: "daybreak_blue" } });
   const next = apiKeyWorkerDefinition(source, base.prompt, { ...apiKey, model: "other" });
   assert.equal(next.modelDispatch?.pro, undefined);
+  assert.equal(next.modelDispatch?.cyberAccessProgram, undefined);
   assert.equal(providerContinuationDefinition(source, next, base.prompt).modelDispatch?.pro, undefined);
+  assert.equal(providerContinuationDefinition(source, next, base.prompt).modelDispatch?.cyberAccessProgram, undefined);
   assert.equal(providerContinuationDefinition(next, source, base.prompt).modelDispatch?.pro, true);
+  assert.equal(providerContinuationDefinition(next, source, base.prompt).modelDispatch?.cyberAccessProgram, "daybreak_blue");
 });

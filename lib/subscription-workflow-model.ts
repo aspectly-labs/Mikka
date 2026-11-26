@@ -58,15 +58,27 @@ export class SubscriptionWorkflowModel implements V4Model {
     const identity = await stepIdentity()
     // Model resolution may prepare credentials and probe quota before requestedAt.
     // Observe those workers too; setup and provider-request timings keep their origins.
-    const routePolicy: SubscriptionModelRequestPolicy | undefined = !this.requestPolicy
-      ? undefined
-      : this.selection.type === 'api_key'
-        ? (this.requestPolicy.apiKeyPro ? { apiKeyPro: true } : this.requestPolicy.apiKeyServiceTier ? { apiKeyServiceTier: this.requestPolicy.apiKeyServiceTier } : undefined)
-        : this.selection.route === 'codex_cpa'
-          ? (this.requestPolicy.codexServiceTier ? { codexServiceTier: this.requestPolicy.codexServiceTier } : undefined)
-          : this.selection.route === 'claude_cpa'
-            ? (this.requestPolicy.claudeSpeed ? { claudeSpeed: this.requestPolicy.claudeSpeed } : undefined)
-            : undefined
+    const routePolicy: SubscriptionModelRequestPolicy | undefined = (() => {
+      if (!this.requestPolicy) return undefined
+      if (this.selection.type === 'api_key') {
+        const next: SubscriptionModelRequestPolicy = {
+          ...(this.requestPolicy.apiKeyPro ? { apiKeyPro: true } : this.requestPolicy.apiKeyServiceTier ? { apiKeyServiceTier: this.requestPolicy.apiKeyServiceTier } : {}),
+          ...(this.requestPolicy.apiKeyCyberAccessProgram ? { apiKeyCyberAccessProgram: this.requestPolicy.apiKeyCyberAccessProgram } : {}),
+        }
+        return Object.keys(next).length ? next : undefined
+      }
+      if (this.selection.route === 'codex_cpa') {
+        const next: SubscriptionModelRequestPolicy = {
+          ...(this.requestPolicy.codexServiceTier ? { codexServiceTier: this.requestPolicy.codexServiceTier } : {}),
+          ...(this.requestPolicy.codexCyberAccessProgram ? { codexCyberAccessProgram: this.requestPolicy.codexCyberAccessProgram } : {}),
+        }
+        return Object.keys(next).length ? next : undefined
+      }
+      if (this.selection.route === 'claude_cpa') {
+        return this.requestPolicy.claudeSpeed ? { claudeSpeed: this.requestPolicy.claudeSpeed } : undefined
+      }
+      return undefined
+    })()
     const result = await workflowFailureStream(() => withSubscriptionTiming(subscriptionTiming, async () => {
       const model = await resolveSubscriptionWorkflowModel(this.selection, options.abortSignal, routePolicy)
       if (typeof model === 'string' || model.specificationVersion !== 'v4') throw new Error('subscription_model_unavailable')

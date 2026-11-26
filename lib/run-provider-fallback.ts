@@ -81,13 +81,14 @@ const standingIdentity = (identity: ExecutionIdentity) => ({ requester: identity
 export function providerContinuationDefinition(source: WorkerDefinitionSnapshot, admitted: WorkerDefinitionSnapshot, prompt: string, policyCeiling?: RunPolicy): WorkerDefinitionSnapshot {
   const { apiKey: _key, subscription: _subscription, executionIdentity: _identity, repositoryAdmission: _admission,
     allowLocalRecovery: _local, profileOriginRunId: _profileOrigin, taskCompute: _compute, taskMachine: _placement, ...standing } = structuredClone(source)
-  const { routing: _previousRouting, serviceTier: _previousTier, effort: _previousEffort, pro: _previousPro, ...dispatch } = source.modelDispatch!
+  const { routing: _previousRouting, serviceTier: _previousTier, effort: _previousEffort, pro: _previousPro, cyberAccessProgram: _previousCyber, ...dispatch } = source.modelDispatch!
   const definition: WorkerDefinitionSnapshot = { ...standing, harness: admitted.harness, model: admitted.model,
     modelSource: admitted.modelSource, cliModelSelection: 'explicit', promptDigest: digest(prompt),
     ...(source.agentProfile && admitted.modelDispatch?.entry ? { agentProfile: { ...structuredClone(source.agentProfile), targetEntry: structuredClone(admitted.modelDispatch.entry) } } : {}),
     ...(policyCeiling ? { policyCeiling: source.policyCeiling ? intersectRunPolicy(policyCeiling, source.policyCeiling) : policyCeiling } : {}),
     modelDispatch: { ...dispatch, mode: 'preference', entry: admitted.modelDispatch?.entry,
       ...(admitted.modelDispatch?.pro ? { pro: true as const } : {}),
+      ...(admitted.modelDispatch?.cyberAccessProgram ? { cyberAccessProgram: admitted.modelDispatch.cyberAccessProgram } : {}),
       ...(admitted.modelDispatch?.effort ? { effort: admitted.modelDispatch.effort } : {}),
       ...(admitted.modelDispatch?.serviceTier ? { serviceTier: admitted.modelDispatch.serviceTier } : {}),
       ...(admitted.modelDispatch?.routing ? { routing: structuredClone(admitted.modelDispatch.routing) } : {}) },
@@ -214,6 +215,7 @@ async function unavailableRecord(pool: Pool, scope: Scope, run: Run, attempted: 
 async function settle(pool: Pool, original: Run, receipt: ModelFallbackRecord, target?: {
   agentId: string; deviceId: string; deviceRepoId: string; model: string; entry: OrderEntry;
   routing?: ModelRoutingSnapshot; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode;
+  cyberAccessProgram?: import('./model-capabilities').CyberAccessProgram;
   subscriptionBindingId?: string; cloud: boolean; botId: string | null; workspaceId: string;
 }): Promise<Continuation | null> {
   if (!original.workspaceId) throw new ActionFailureError('executionAccountUnavailable')
@@ -263,7 +265,7 @@ async function settle(pool: Pool, original: Run, receipt: ModelFallbackRecord, t
     await withDatabaseClient(client, async () => {
       if (target && source.agentDefinition && source.issueId) {
         const policyCeiling = await providerContinuationPolicy(client, source.userId, source.id)
-        const { routing: _previousRouting, serviceTier: _previousTier, effort: _previousEffort, pro: _previousPro, ...dispatch } = source.agentDefinition.modelDispatch!
+        const { routing: _previousRouting, serviceTier: _previousTier, effort: _previousEffort, pro: _previousPro, cyberAccessProgram: _previousCyber, ...dispatch } = source.agentDefinition.modelDispatch!
         const nextEffort = source.agentDefinition.agentProfile?.effort ? undefined : target.effort
         const modelDispatch = {
           ...dispatch,
@@ -271,6 +273,7 @@ async function settle(pool: Pool, original: Run, receipt: ModelFallbackRecord, t
           entry: target.entry,
           ...(nextEffort ? { effort: nextEffort } : {}),
           ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+          ...(target.cyberAccessProgram ? { cyberAccessProgram: target.cyberAccessProgram } : {}),
         }
         const selection = { model: target.model, modelDispatch, ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
           ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}) }
@@ -443,6 +446,7 @@ async function recoverAuthorizedProviderFailure(pool: Pool, source: Run, initial
           target = { agentId: ready.agentId, deviceId: current.deviceId, deviceRepoId: repoId, model: selected.model, entry: selected.entry,
             ...(selected.effort ? { effort: selected.effort } : {}),
             ...(selected.serviceTier ? { serviceTier: selected.serviceTier } : {}),
+            ...(selected.cyberAccessProgram ? { cyberAccessProgram: selected.cyberAccessProgram } : {}),
             ...(binding ? { subscriptionBindingId: binding } : {}), cloud: true, botId, workspaceId: scope.workspaceId }
         }
       }

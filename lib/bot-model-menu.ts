@@ -192,12 +192,15 @@ export async function botModelMenu(
       : route.source === "subscription" && route.connectionId
         ? capabilityOf({ source: "subscription", connectionId: route.connectionId, provider: option.provider, modelId: option.modelId })
         : capabilityOf({ source: "byok", provider: option.provider, modelId: option.modelId, responsesApi: key?.responsesApi,
+          ...(key?.daybreak ? { daybreak: key.daybreak } : {}),
           ...(key?.modelSpeedModes && Object.hasOwn(key.modelSpeedModes, option.modelId) ? { advertisedSpeedModes: key.modelSpeedModes[option.modelId] } : {}) }) };
   };
   for (const group of groups) group.options = group.options.map(withCapabilities);
   current = withCapabilities(current);
   const models = groupModelOptions(groups);
-  const modes = current.capabilities ? modesFor(current.capabilities, preference.chat.modes) : modesFromTier(null);
+  const modes = current.capabilities
+    ? modesFor(current.capabilities, choice.fallback ? { ...preference.chat.modes, daybreak: false } : preference.chat.modes)
+    : modesFromTier(null);
   const chat = { ...preference.chat, modes, effort: modes.pro ? null : preference.chat.effort };
   const savedKey = preference.key && keys.find(key => key.id === preference.key?.keyId && (key.mine || ownerNames.has(key.ownerId)));
   const unavailableSelection = choice.fallback === "preference" && preference.selected
@@ -230,6 +233,7 @@ async function subscriptionPickerHealth(pool: Pick<Pool, "query">, ownerId: stri
 export async function setChatModelSettings(pool: Pick<Pool, "query">, scope: ExecutionSettingsScope, botId: string | null,
   change: { effort?: string | null; serviceTier?: string | null; modes?: ModelModes }, capabilities?: ModelCapabilities): Promise<void> {
   const { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS } = await import("./model-routing");
+  const hasModes = change.modes !== undefined;
   if (change.modes) {
     if (!supportedModes(capabilities, change.modes) || (change.serviceTier != null && change.serviceTier !== tierForModes(change.modes)))
       throw new ActionFailureError("validationGeneric");
@@ -245,13 +249,14 @@ export async function setChatModelSettings(pool: Pick<Pool, "query">, scope: Exe
     if (!rowCount) throw new ActionFailureError("botNotFound");
   }
   const effort = change.effort !== undefined, tier = change.serviceTier !== undefined;
-  if (!effort && !tier) return;
-  await pool.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey",effort,"serviceTier",pro) VALUES ($1,$2,$3,$4,$5,$8)
+  if (!effort && !tier && !hasModes) return;
+  await pool.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey",effort,"serviceTier",pro,daybreak) VALUES ($1,$2,$3,$4,$5,$8,$11)
     ON CONFLICT ("ownerId","workspaceId","botKey") DO UPDATE SET
       effort = CASE WHEN (NOT $7 AND bot_model_choices.pro AND $9) THEN NULL WHEN $6 THEN EXCLUDED.effort ELSE bot_model_choices.effort END,
       pro = CASE WHEN $7 THEN EXCLUDED.pro ELSE bot_model_choices.pro AND $9 END,
+      daybreak = CASE WHEN $10 THEN EXCLUDED.daybreak ELSE bot_model_choices.daybreak AND $12 END,
       "serviceTier" = CASE WHEN $7 THEN EXCLUDED."serviceTier" ELSE bot_model_choices."serviceTier" END`,
-    [scope.ownerId, scope.workspaceId, botId ?? "coordinator", change.effort ?? null, change.serviceTier ?? null, effort, tier, change.modes?.pro === true, capabilities === undefined || capabilities.pro === true]);
+    [scope.ownerId, scope.workspaceId, botId ?? "coordinator", change.effort ?? null, change.serviceTier ?? null, effort, tier, change.modes?.pro === true, capabilities === undefined || capabilities.pro === true, hasModes, change.modes?.daybreak === true, capabilities === undefined || capabilities.daybreak !== undefined]);
 }
 
 /** Validate the device's route choice. Legacy callers receive the validated choice in this response only. */
@@ -313,6 +318,39 @@ export async function refreshBotModelMenu(
   return botModelMenu(pool, settings, scope, botId);
 }
 
+type StoredRouteIdentity = {
+  connectionId: string | null;
+  bindingModelId: string | null;
+  apiKeyId: string | null;
+  apiKeyModel: string | null;
+  creditsModel: string | null;
+};
+
+async function storedBotModelRoute(
+  pool: Pick<Pool, "query">,
+  scope: ExecutionSettingsScope,
+  botId: string | null,
+): Promise<StoredRouteIdentity | null> {
+  const { rows: [row] } = await pool.query<StoredRouteIdentity>(
+    `SELECT b."connectionId"::text AS "connectionId", b."modelId" AS "bindingModelId",
+            c."apiKeyId"::text AS "apiKeyId", c."apiKeyModel", c."creditsModel"
+     FROM bot_model_choices c
+     LEFT JOIN byos_bindings b ON b.id = c."bindingId"
+     WHERE c."ownerId"=$1 AND c."workspaceId"=$2 AND c."botKey"=$3`,
+    [scope.ownerId, scope.workspaceId, botId ?? "coordinator"],
+  );
+  return row ?? null;
+}
+
+function sameStoredRoute(a: StoredRouteIdentity | null, b: StoredRouteIdentity | null): boolean {
+  if (!a || !b) return false;
+  return a.connectionId === b.connectionId
+    && a.bindingModelId === b.bindingModelId
+    && a.apiKeyId === b.apiKeyId
+    && a.apiKeyModel === b.apiKeyModel
+    && a.creditsModel === b.creditsModel;
+}
+
 /**
  * Saves a chat's model pick for the bot's next runs (a run already going keeps
  * its model) and returns the menu: a binding id, a Mikka 额度 model (`credits:<vendor/model>`), or
@@ -327,6 +365,7 @@ export async function chooseBotModel(
   botId: string | null,
   id: string,
 ): Promise<BotModelMenu> {
+  const priorRoute = await storedBotModelRoute(pool, scope, botId);
   if (id.startsWith("subscription:")) {
     const menu = await botModelMenu(pool, settings, scope, botId);
     const route = menu.models?.flatMap(model => model.routes).find(option => option.entryId === id);
@@ -362,6 +401,15 @@ export async function chooseBotModel(
       }
       throw error;
     }
+  }
+  // Daybreak opt-in is bound to the active credential/model route: switching routes clears it
+  // so another eligible key or subscription never silently sends `access_programs.cyber`.
+  const nextRoute = await storedBotModelRoute(pool, scope, botId);
+  if (!sameStoredRoute(priorRoute, nextRoute)) {
+    await pool.query(
+      'UPDATE bot_model_choices SET daybreak=false WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3 AND daybreak=true',
+      [scope.ownerId, scope.workspaceId, botId ?? "coordinator"],
+    );
   }
   return botModelMenu(pool, settings, scope, botId);
 }

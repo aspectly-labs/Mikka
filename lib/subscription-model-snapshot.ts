@@ -57,7 +57,7 @@ export async function resolveFrozenHostedModel(scope: HostedModelScope, runtime:
     cancelled(signal)
     const { resolveApiKeyChatModel } = await import('./model-api-key-chat')
     const tier = runtime.serviceTier === 'fast' || runtime.serviceTier === 'ultrafast' ? runtime.serviceTier : undefined
-    if (runtime.pro) return resolveApiKeyChatModel(frozen, undefined, true)
+    if (runtime.pro || runtime.cyberAccessProgram) return resolveApiKeyChatModel(frozen, runtime.pro ? undefined : tier, runtime.pro === true, runtime.cyberAccessProgram)
     return tier ? resolveApiKeyChatModel(frozen, tier) : resolveApiKeyChatModel(frozen)
   }
   const frozen = hostedSubscriptionSnapshotSchema.parse(runtime.modelSelection)

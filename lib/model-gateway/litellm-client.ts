@@ -92,10 +92,11 @@ function providerFields(credential: Credential) {
   }
 }
 
-export function createLiteLLMModel(modelId: string, options: { user?: string; credential?: Credential; callId?: string; pro?: boolean } = {}) {
+export function createLiteLLMModel(modelId: string, options: { user?: string; credential?: Credential; callId?: string; pro?: boolean; cyberAccessProgram?: import('../model-capabilities').CyberAccessProgram } = {}) {
   if (options.callId !== undefined && !decodeHostedCallId(options.callId)) throw new Error('hosted_call_identity_invalid')
   const config = connection()
   if (options.pro && !PRO_MODELS.has(modelKeyOf(modelId, options.credential?.provider ?? 'mikka'))) throw new Error('model_pro_unavailable')
+  if (options.cyberAccessProgram && options.credential?.provider !== 'openai') throw new Error('model_daybreak_unavailable')
   const transport: typeof fetch = async (input, init) => {
     const headers = new Headers(init?.headers)
     // Auth and routing come from the server, even when an SDK caller supplies headers.
@@ -105,16 +106,20 @@ export function createLiteLLMModel(modelId: string, options: { user?: string; cr
     else headers.delete('x-litellm-call-id')
     const fields = options.credential ? providerFields(options.credential) : {}
     const payload = JSON.parse(String(init?.body))
+    delete payload.access_programs
     if (options.pro) {
       payload.reasoning = { mode: 'pro' }
       delete payload.service_tier
+    }
+    if (options.cyberAccessProgram) {
+      payload.access_programs = { cyber: options.cyberAccessProgram }
     }
     const body = JSON.stringify({ ...payload, ...(options.user && { user: options.user }), ...fields })
     // Add the person's key beyond the SDK's request-body recording boundary.
     return fetch(input, { ...init, headers, body, redirect: 'error' })
   }
   const target = options.credential ? modelId : managedLiteLlmModel(modelId)
-  const model = options.pro
+  const model = options.pro || options.cyberAccessProgram
     ? createOpenAI({ ...config, fetch: transport }).responses(target)
     : createOpenAICompatible({ ...config, name: 'litellm', includeUsage: true, supportsStructuredOutputs: true,
         supportedUrls: () => ({ 'image/*': [/^https?:\/\//] }), fetch: transport }).chatModel(target)

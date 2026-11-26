@@ -21,7 +21,7 @@ export async function freezeBotModel(
   dependencies: HostedModelDependencies,
 ): Promise<HostedRuntimeSnapshot> {
   const workspaceId = scope.workspaceId ?? (await executionWorkspace(scope.ownerId, scope.botId));
-  const snapshot = await freezeBotModelChoice({ ...scope, workspaceId }, dependencies);
+  const { snapshot, fellBack } = await freezeBotModelChoice({ ...scope, workspaceId }, dependencies);
   // The Bot's reasoning effort and serving speed tier are frozen with the turn's model.
   const [botEffort, orderRow, chatTier] = await Promise.all([
     botModelEffort(pool, { ownerId: scope.ownerId, workspaceId }, scope.botId),
@@ -34,7 +34,8 @@ export async function freezeBotModel(
         ).then(result => result.rows[0] ?? null, () => null)
       : Promise.resolve(null),
     pool
-      ? pool.query<{ tier: string | null; pro: boolean }>('SELECT "serviceTier" AS tier, pro FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3',
+      ? pool.query<{ tier: string | null; pro: boolean; daybreak: boolean }>(
+          'SELECT "serviceTier" AS tier, pro, (to_jsonb(bot_model_choices)->\'daybreak\' = \'true\'::jsonb) AS daybreak FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3',
           [scope.ownerId, workspaceId, scope.botId ?? "coordinator"]).then(result => result.rows[0] ?? null, () => null)
       : Promise.resolve(null),
   ]);
@@ -45,10 +46,16 @@ export async function freezeBotModel(
   // A level the frozen model cannot take is left out (its default), checked against the provider's own catalogue
   // (lib/model-capabilities.ts), so a model the built-in list does not know still gets the level its provider lists.
   let pro = false;
-  if ((effort || chatTier?.pro) && snapshot.model) {
+  let cyberProgram: import("./model-capabilities").CyberAccessProgram | undefined;
+  const allowDaybreak = !fellBack && chatTier?.daybreak === true;
+  if ((effort || chatTier?.pro || allowDaybreak) && snapshot.model) {
     const capabilities = await frozenCapabilities(snapshot).catch(() => null);
     pro = chatTier?.pro === true && capabilities?.pro === true;
     if (pro || (effort && capabilities && !capabilities.efforts.includes(effort))) effort = undefined;
+    if (allowDaybreak && snapshot.modelSelection && capabilities?.daybreak) {
+      const { cyberAccessProgram } = await import("./model-capabilities");
+      cyberProgram = cyberAccessProgram(capabilities.daybreak);
+    }
   }
   let serviceTier: ModelServiceTier | undefined = savedTier;
   if (!snapshot.modelSelection && snapshot.model && (savedTier === "fast" || savedTier === "ultrafast")) {
@@ -61,26 +68,39 @@ export async function freezeBotModel(
     ...snapshot,
     ...(effort ? { effort } : {}),
     ...(pro ? { pro: true as const } : serviceTier ? { serviceTier } : {}),
+    ...(cyberProgram ? { cyberAccessProgram: cyberProgram } : {}),
   };
 }
 
 /** What the frozen model can be asked for on its route: Mikka 额度, a subscription or a key. */
 async function frozenCapabilities(snapshot: HostedRuntimeSnapshot) {
-  const { modelCapabilityReader } = await import("./model-capabilities-server");
+  const [{ modelCapabilityReader }, { parseDaybreakAccess }] = await Promise.all([
+    import("./model-capabilities-server"),
+    import("./model-capabilities"),
+  ]);
   const selection = snapshot.modelSelection;
   if (!selection) return (await modelCapabilityReader(pool, []))({ source: "credits", modelId: snapshot.model! });
   if (selection.type === "subscription") {
     return (await modelCapabilityReader(pool, [selection.connectionId]))({ source: "subscription", connectionId: selection.connectionId,
       provider: selection.route === "claude_cpa" ? "claude" : "codex", modelId: selection.modelId });
   }
-  const { rows: [key] } = await pool.query<{ provider: string; responsesApi: boolean }>('SELECT provider,"responsesApi" FROM model_api_keys WHERE id=$1', [selection.keyId]);
-  return (await modelCapabilityReader(pool, []))({ source: "byok", provider: key?.provider ?? "custom", modelId: selection.modelId, responsesApi: key?.responsesApi });
+  const { rows: [key] } = await pool.query<{ provider: string; responsesApi: boolean; daybreak: unknown }>(
+    'SELECT provider,"responsesApi",to_jsonb(model_api_keys)->\'daybreak\' AS daybreak FROM model_api_keys WHERE id=$1',
+    [selection.keyId],
+  );
+  return (await modelCapabilityReader(pool, []))({
+    source: "byok",
+    provider: key?.provider ?? "custom",
+    modelId: selection.modelId,
+    responsesApi: key?.responsesApi,
+    daybreak: parseDaybreakAccess(key?.daybreak),
+  });
 }
 
 async function freezeBotModelChoice(
   scope: HostedModelScope,
   dependencies: HostedModelDependencies,
-): Promise<HostedRuntimeSnapshot> {
+): Promise<{ snapshot: HostedRuntimeSnapshot; fellBack: boolean }> {
   const workspaceId =
     scope.workspaceId ?? (await executionWorkspace(scope.ownerId, scope.botId));
   const settings = new ExecutionSettings(pool);
@@ -105,24 +125,28 @@ async function freezeBotModelChoice(
   }
   const choice = await resolveBotModelChoice(pool, settings, settingsScope, scope.botId,
     { selected, key: keyChoice }, { keys });
-  if (choice.kind === "hosted") return { harness: "ai_sdk", model: choice.model };
+  const fellBack = Boolean(choice.fallback);
+  if (choice.kind === "hosted") return { snapshot: { harness: "ai_sdk", model: choice.model }, fellBack };
   // Nothing chosen and nothing to fall back to: the chat asks for a model first (decision 2026-11-15-1900).
   if (choice.kind === "none") throw new ActionFailureError("executionModelUnknown");
   if (choice.kind === "apiKey")
     return {
-      harness: "ai_sdk",
-      model: choice.model,
-      modelSelection: hostedApiKeySnapshotSchema.parse({
-        ...(scope.botId === null ? { coordinator: true } : { consumerId: scope.botId }),
-        type: "api_key", keyId: choice.key.id, ownerId: scope.ownerId, workspaceId, modelId: choice.model,
-        ...(choice.fallback === "points" ? { afterPoints: true } : {}),
-        ...(choice.quota ? { afterQuota: {
-          subscription: choice.quota.subscription === "codex" ? "codex" : "claude",
-          plan: choice.quota.plan,
-          keyProvider: choice.key.provider,
-          keyName: choice.key.name,
-        } } : {}),
-      }),
+      fellBack,
+      snapshot: {
+        harness: "ai_sdk",
+        model: choice.model,
+        modelSelection: hostedApiKeySnapshotSchema.parse({
+          ...(scope.botId === null ? { coordinator: true } : { consumerId: scope.botId }),
+          type: "api_key", keyId: choice.key.id, ownerId: scope.ownerId, workspaceId, modelId: choice.model,
+          ...(choice.fallback === "points" ? { afterPoints: true } : {}),
+          ...(choice.quota ? { afterQuota: {
+            subscription: choice.quota.subscription === "codex" ? "codex" : "claude",
+            plan: choice.quota.plan,
+            keyProvider: choice.key.provider,
+            keyName: choice.key.name,
+          } } : {}),
+        }),
+      },
     };
   const bindingId = await settings.bindingForBot(settingsScope, scope.botId, choice.binding.bindingId);
   const frozen = await freezeHostedModelSelection(
@@ -131,7 +155,10 @@ async function freezeBotModelChoice(
     { type: "subscription", bindingId },
     dependencies,
   );
-  return choice.fallback === "points" && frozen.modelSelection
-    ? { ...frozen, modelSelection: { ...frozen.modelSelection, afterPoints: true } }
-    : frozen;
+  return {
+    fellBack,
+    snapshot: choice.fallback === "points" && frozen.modelSelection
+      ? { ...frozen, modelSelection: { ...frozen.modelSelection, afterPoints: true } }
+      : frozen,
+  };
 }

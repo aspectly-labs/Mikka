@@ -9,7 +9,8 @@ import { cloudReady } from './rule-dispatch'
 import { credentialStates, creditsModelSpeedModes, dispatchOrder, orderCandidates, selectedOrderCandidates, poolDevices, readOrder, type OrderScope, type RefreshOrderQuota } from './model-order'
 import { entryKey, planDispatch, whyNoDevice, type NoDeviceWhy, type NothingReason, type OrderEntry, type RunLocation, type SkippedEntry } from './model-order-plan'
 import { modelRouteRejection, type ModelRouteRejection } from './model-route-rejection'
-import { PRO_MODELS, modelKeyOf } from './model-capabilities'
+import { cyberAccessProgram, daybreakTierFor, modelKeyOf, parseDaybreakAccess, PRO_MODELS, type CyberAccessProgram } from './model-capabilities'
+import { codexDaybreakSupport } from './subscription-service-tier'
 import { supportedModelEfforts, type ModelRoutingEffort, type ModelSpeedMode } from './model-routing'
 export { workerModelDispatchFromTarget } from './agent-kit/worker'
 
@@ -30,8 +31,8 @@ export { workerModelDispatchFromTarget } from './agent-kit/worker'
 /** Why nothing runs: the list's reasons, or the model the thread named (decision 2026-11-02-1400). */
 export type DispatchNothingReason = NothingReason | 'cloudTemporarilyUnavailable' | 'notOffered' | 'namedDevice' | 'pickedNoDevice' | 'pickedUnavailable'
 export type ModelDispatch =
-  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; pro?: true; subscriptionBindingId?: string; quotaCheckPending?: true }
-  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; pro?: true; quotaCheckPending?: true }
+  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; pro?: true; cyberAccessProgram?: CyberAccessProgram; subscriptionBindingId?: string; quotaCheckPending?: true }
+  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; pro?: true; cyberAccessProgram?: CyberAccessProgram; quotaCheckPending?: true }
   | { kind: 'none'; reason: DispatchNothingReason; card: ReturnType<typeof modelUnavailableCard>; skipped?: SkippedEntry[] }
 
 /**
@@ -141,7 +142,7 @@ export async function resolveModelDispatch(pool: Pool, scope: OrderScope & { bot
   if (plan.kind === 'none') return { kind: 'none', reason: plan.reason, card: modelUnavailableCard(plan.reason), skipped: plan.skipped }
   const quotaCheckPending = deferStaleQuota && states.get(plan.entry.id)?.quotaCheckPending ? { quotaCheckPending: true as const } : {}
   // A chat preference applies only to the exact route and model a task follows. Recheck the
-  // actual key provider before the run gets its immutable gateway grant.
+  // actual key provider or subscription epoch before the run gets its immutable gateway grant.
   let pro = false
   if (plan.entry.harness === 'codex' && plan.entry.source.kind !== 'subscription' &&
     PRO_MODELS.has(modelKeyOf(plan.model, plan.entry.source.kind === 'credits' ? 'mikka' : 'openai'))) {
@@ -153,6 +154,29 @@ export async function resolveModelDispatch(pool: Pool, scope: OrderScope & { bot
       [scope.ownerId, scope.workspaceId, scope.botId ?? 'coordinator', keyId, plan.model])
     pro = rows.length > 0
   }
+  let cyberProgram: CyberAccessProgram | undefined
+  if (plan.entry.harness === 'codex' && plan.entry.source.kind === 'api_key') {
+    const { rows: [row] } = await pool.query<{ daybreak: unknown }>(
+      `SELECT to_jsonb(k)->'daybreak' AS daybreak FROM bot_model_choices c
+        JOIN model_api_keys k ON k.id=c."apiKeyId"
+        WHERE c."ownerId"=$1 AND c."workspaceId"=$2 AND c."botKey"=$3 AND (to_jsonb(c)->'daybreak' = 'true'::jsonb)
+          AND k.id=$4 AND k.provider='openai' AND k."responsesApi" AND c."apiKeyModel"=$5`,
+      [scope.ownerId, scope.workspaceId, scope.botId ?? 'coordinator', plan.entry.source.keyId, plan.model])
+    const tier = daybreakTierFor(parseDaybreakAccess(row?.daybreak), plan.model)
+    if (tier) cyberProgram = cyberAccessProgram(tier)
+  } else if (plan.entry.harness === 'codex' && plan.entry.source.kind === 'subscription') {
+    const { rows: [row] } = await pool.query<{ epoch: string; modelCatalog: unknown }>(
+      `SELECT conn.epoch::text AS epoch, conn."modelCatalog" FROM bot_model_choices c
+        JOIN byos_bindings b ON b.id=c."bindingId"
+        JOIN byos_connections conn ON conn.id=b."connectionId"
+        WHERE c."ownerId"=$1 AND c."workspaceId"=$2 AND c."botKey"=$3 AND (to_jsonb(c)->'daybreak' = 'true'::jsonb)
+          AND conn.id=$4 AND conn.provider='codex' AND conn.state='connected' AND b."modelId"=$5`,
+      [scope.ownerId, scope.workspaceId, scope.botId ?? 'coordinator', plan.entry.source.connectionId, plan.model])
+    const tiers = row ? codexDaybreakSupport(row.modelCatalog, Number(row.epoch), plan.model) : []
+    const tier = tiers.includes('blue') ? 'blue' : tiers.includes('red') ? 'red' : undefined
+    if (tier) cyberProgram = cyberAccessProgram(tier)
+  }
+  const daybreak = cyberProgram ? { cyberAccessProgram: cyberProgram } : {}
   const resolvedSpeedModes = plan.entry.source.kind === 'credits'
     ? (stored.defaultServiceTier !== 'standard' ? await creditsModelSpeedModes(plan.model) : [])
     : (candidates.find(candidate => entryKey(candidate) === entryKey(plan.entry))?.speedModes ?? [])
@@ -164,12 +188,12 @@ export async function resolveModelDispatch(pool: Pool, scope: OrderScope & { bot
   const effort = !pro && stored.defaultEffort !== 'medium' && supportedModelEfforts(effortModelId, plan.entry.harness).includes(stored.defaultEffort)
     ? { effort: stored.defaultEffort }
     : {}
-  if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...effort, ...serviceTier, ...quotaCheckPending }
+  if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...effort, ...serviceTier, ...daybreak, ...quotaCheckPending }
   const { rows: [agent] } = await pool.query<{ id: string }>('SELECT id FROM agents WHERE "userId"=$1 AND "deviceId"=$2 AND harness=$3 AND ($4::text IS NULL OR id::text=$4) ORDER BY "createdAt",id LIMIT 1',
     [scope.ownerId, plan.deviceId, plan.entry.harness, dependencies.agentId ?? null])
   if (!agent) return { kind: 'none', reason: 'noDevice', card: modelUnavailableCard('noDevice') }
   const subscriptionBindingId = dependencies.bindSubscription !== false && plan.entry.source.kind === 'subscription' ? await bindAgentToConnection(pool, scope, agent.id, plan.entry.harness, plan.entry.source.connectionId, plan.entry.model) : undefined
-  return { kind: 'device', deviceId: plan.deviceId, agentId: agent.id, model: plan.model, entry: plan.entry, ...effort, ...serviceTier, ...(subscriptionBindingId ? { subscriptionBindingId } : {}), ...quotaCheckPending }
+  return { kind: 'device', deviceId: plan.deviceId, agentId: agent.id, model: plan.model, entry: plan.entry, ...effort, ...serviceTier, ...daybreak, ...(subscriptionBindingId ? { subscriptionBindingId } : {}), ...quotaCheckPending }
 }
 
 /**

@@ -57,11 +57,48 @@ test('route grouping normalizes provider ids and keeps custom endpoints under th
   assert.deepEqual([model.key, model.name, model.routes.map(route => route.id)], [key, 'Opus 4.6', ['subscription', 'apiKey', 'shared', 'hosted']])
 })
 
-test('only an advertised single mode is selectable and entitlement labels are read-only', async () => {
-  const { NO_MODES, supportedModes } = await import('./model-capabilities')
-  const caps = resolveModelCapabilities({ modelId: 'fixture', speedModes: ['fast'], daybreak: 'blue' })
-  assert.equal(supportedModes(caps, { ...NO_MODES, fast: true }), true)
-  for (const request of [{ ultrafast: true }, { pro: true }, { daybreak: true }, { pro: true, fast: true }]) {
-    assert.equal(supportedModes(caps, { ...NO_MODES, ...request }), false)
+test('only advertised modes are selectable; Daybreak combines with speed/Pro only when granted', async () => {
+  const { NO_MODES, cyberAccessProgram, daybreakTierFor, daybreakTierFromProgram, modesFor, parseDaybreakAccess, supportedModes } = await import('./model-capabilities')
+  const withDaybreak = resolveModelCapabilities({ modelId: 'gpt-6.1-sol', speedModes: ['fast'], pro: true, daybreak: 'blue' })
+  assert.equal(supportedModes(withDaybreak, { ...NO_MODES, fast: true }), true)
+  assert.equal(supportedModes(withDaybreak, { ...NO_MODES, daybreak: true }), true)
+  assert.equal(supportedModes(withDaybreak, { ...NO_MODES, fast: true, daybreak: true }), true)
+  assert.equal(supportedModes(withDaybreak, { ...NO_MODES, pro: true, daybreak: true }), true)
+  for (const request of [{ ultrafast: true }, { pro: true, fast: true }, { pro: true, fast: true, daybreak: true }]) {
+    assert.equal(supportedModes(withDaybreak, { ...NO_MODES, ...request }), false)
   }
+  assert.deepEqual(modesFor(withDaybreak, { ...NO_MODES, fast: true, daybreak: true }), { fast: true, ultrafast: false, pro: false, daybreak: true })
+
+  const withoutDaybreak = resolveModelCapabilities({ modelId: 'gpt-6.1-sol', speedModes: ['fast'] })
+  assert.equal(supportedModes(withoutDaybreak, { ...NO_MODES, daybreak: true }), false)
+  assert.deepEqual(modesFor(withoutDaybreak, { ...NO_MODES, fast: true, daybreak: true }), { fast: true, ultrafast: false, pro: false, daybreak: false })
+
+  assert.equal(cyberAccessProgram('blue'), 'daybreak_blue')
+  assert.equal(cyberAccessProgram('red'), 'daybreak_red')
+  assert.equal(daybreakTierFromProgram('daybreak_blue'), 'blue')
+  assert.equal(daybreakTierFromProgram('daybreak_red'), 'red')
+  assert.equal(daybreakTierFromProgram('other'), undefined)
+
+  const parsed = parseDaybreakAccess({
+    checkedAt: '2026-11-26T00:00:00.000Z',
+    granted: ['gpt-6-cyber', 'gpt-6.1-sol'],
+    tiers: ['blue', 'red'],
+    grants: [
+      { tier: 'blue', granted: ['gpt-6.1-sol'] },
+      { tier: 'red', granted: ['gpt-6-cyber'] },
+    ],
+  })
+  assert.deepEqual(parsed, {
+    checkedAt: '2026-11-26T00:00:00.000Z',
+    granted: ['gpt-6-cyber', 'gpt-6.1-sol'],
+    tiers: ['blue', 'red'],
+    grants: [
+      { tier: 'blue', granted: ['gpt-6.1-sol'] },
+      { tier: 'red', granted: ['gpt-6-cyber'] },
+    ],
+  })
+  assert.equal(parseDaybreakAccess({ granted: ['gpt-6-cyber'], tiers: ['green'] }), undefined)
+  assert.equal(daybreakTierFor(parsed, 'gpt-6-cyber'), 'red')
+  assert.equal(daybreakTierFor(parsed, 'gpt-6.1-sol'), 'blue')
+  assert.equal(daybreakTierFor(parsed, 'gpt-5'), undefined)
 })

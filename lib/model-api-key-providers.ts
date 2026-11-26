@@ -95,4 +95,6 @@ export interface ApiKeyView {
   responsesApi: boolean
   /** Request features this provider rejects, turned off (decision 2026-11-15-2000); absent means all on. */
   features?: import('./model-gateway/features').GatewayFeatures
+  /** Verified OpenAI Trusted Access for Cyber (Daybreak) grants for this key, when refreshed (#3315). */
+  daybreak?: import('./model-capabilities').DaybreakAccess
 }
