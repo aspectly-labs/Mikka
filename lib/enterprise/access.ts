@@ -4,7 +4,6 @@ import { workspaceFactorJobMatches } from './workspace-factor-job'
 import { pool } from '@/lib/db'
 import { workspaceDb } from '@/lib/workspace-db'
 import { eq, inArray } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
 import type { PoolClient } from 'pg'
 import { workspaces as tenants } from '@/lib/db/workspace-schema'
 import { organizationWorkspaces } from '@/lib/db/governance-schema'
@@ -34,16 +33,11 @@ async function currentPrincipal(userId: string, workspaceId: string, explicit: E
 }
 
 /** Additional tenant gate. It never replaces workspace membership or grants organization admins a workspace. */
-// The MFA timestamp shares the existing authorization round trip. Keep the
-// repeated table qualifiers short on this hot read path.
-const workspaceLink = alias(tenants, 'w')
-const organizationLink = alias(organizationWorkspaces, 'o')
-
 export type WorkspaceLinkExecutor = Pick<typeof workspaceDb, 'select'>
 export type EnterpriseAuthExecutor = Pick<PoolClient, 'query'>
 export async function enterpriseWorkspaceAllowed(userId: string, workspaceId: string, explicit?: EnterprisePrincipal, executor: WorkspaceLinkExecutor = workspaceDb, appExecutor: EnterpriseAuthExecutor = pool): Promise<boolean> {
-  const [link] = await executor.select({ organizationId: organizationLink.organizationId, factorAt: workspaceLink.twoFactorRequiredAt })
-    .from(workspaceLink).leftJoin(organizationLink, eq(organizationLink.workspaceId, workspaceLink.id)).where(eq(workspaceLink.id, workspaceId)).limit(1)
+  const [link] = await executor.select({ organizationId: organizationWorkspaces.organizationId, factorAt: tenants.twoFactorRequiredAt })
+    .from(tenants).leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, tenants.id)).where(eq(tenants.id, workspaceId)).limit(1)
   if (link?.factorAt && !await checkWorkspaceFactor(userId, workspaceId, explicit, appExecutor, link.factorAt)) return false
   return !link?.organizationId || organizationAccess(userId, workspaceId, link.organizationId, explicit, appExecutor)
 }
@@ -154,7 +148,7 @@ export function filterEnterpriseWorkspaceLinks<T extends { id: string; organizat
 
 export async function filterEnterpriseWorkspaces<T extends { id: string }>(reader: string | EnterpriseReader, workspaces: T[], appExecutor?: EnterpriseAuthExecutor): Promise<T[]> {
   if (!workspaces.length) return workspaces
-  const links = await workspaceDb.select({ workspaceId: workspaceLink.id, organizationId: organizationLink.organizationId, factorAt: workspaceLink.twoFactorRequiredAt })
-    .from(workspaceLink).leftJoin(organizationLink, eq(organizationLink.workspaceId, workspaceLink.id)).where(inArray(workspaceLink.id, workspaces.map(workspace => workspace.id)))
+  const links = await workspaceDb.select({ workspaceId: tenants.id, organizationId: organizationWorkspaces.organizationId, factorAt: tenants.twoFactorRequiredAt })
+    .from(tenants).leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, tenants.id)).where(inArray(tenants.id, workspaces.map(workspace => workspace.id)))
   return filterWorkspaceOrganizations(reader, workspaces, new Map(links.map(link => [link.workspaceId, link])), appExecutor)
 }

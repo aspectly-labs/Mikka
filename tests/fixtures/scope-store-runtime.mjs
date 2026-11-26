@@ -68,10 +68,10 @@ function workspaceQuery(columns) {
     },
     async limit(count){
       // The fixture workspace has no Organization link or MFA requirement.
-      assert.equal(table,'w')
+      assert.equal(table,'mikka_workspaces')
       assert.deepEqual(Object.keys(columns), ['organizationId', 'factorAt'])
       const compiled = statement.limit(count).toSQL()
-      assert.equal(compiled.sql, 'select "o"."organizationId", "w"."twoFactorRequiredAt" from "mikka_workspaces" "w" left join "mikka_organization_workspaces" "o" on "o"."workspaceId" = "w"."id" where "w"."id" = $1 limit $2')
+      assert.equal(compiled.sql, 'select "mikka_organization_workspaces"."organizationId", "mikka_workspaces"."twoFactorRequiredAt" from "mikka_workspaces" left join "mikka_organization_workspaces" on "mikka_organization_workspaces"."workspaceId" = "mikka_workspaces"."id" where "mikka_workspaces"."id" = $1 limit $2')
       assert.deepEqual(compiled.params,[globalThis.scopeStoreProbe.workspace.id, 1])
       assert.equal(count,1)
       return [{organizationId:null,factorAt:null}]
