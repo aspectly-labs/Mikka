@@ -13,7 +13,6 @@ import {
 import { pool as defaultPool } from '@/lib/db'
 import { readRunChain } from '@/lib/run-chain'
 import { UNFINISHED_RUN_STATUSES } from '@/lib/agent-run-statuses'
-import { threadChanged } from '@/lib/live/panels'
 
 export interface ThreadRuntimeCommands {
   harness: 'claude_code' | 'codex' | 'mock'
@@ -137,24 +136,36 @@ export async function readBotAvailableCommands(
 }
 
 /**
- * Append a durable `data-system-event` chunk to a run and notify live subscribers
+ * Append a durable host-emitted system event to a thread and notify live subscribers
  * (used for blocked slash-command notices and inline side notes).
+ *
+ * Stored as a paired `coordinator_events` payload + `run_messages` row (never in
+ * `run_chunks`) so host inserts cannot collide with daemon-allocated `run_chunks.seq`.
  */
-export async function appendThreadSystemEvent(runId: string, data: SystemEventData): Promise<void> {
+export async function appendThreadSystemEvent(runId: string, userId: string, data: SystemEventData): Promise<void> {
   const client = await defaultPool.connect()
   try {
     await client.query('BEGIN')
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`run-chunks:${runId}`])
-    const { rows: [seqRow] } = await client.query<{ next: number }>(
-      `SELECT coalesce(max(seq), 0)::int + 1 AS next FROM run_chunks WHERE "runId"=$1`,
-      [runId],
+    const { rows: [run] } = await client.query<{ issueId: string | null; botId: string | null }>(
+      `SELECT "issueId", "botId" FROM agent_runs WHERE id=$1 AND "userId"=$2`,
+      [runId, userId],
     )
-    const seq = seqRow?.next ?? 1
-    const chunk = { type: 'data-system-event', id: `sys:${crypto.randomUUID()}`, data }
+    if (!run) {
+      await client.query('ROLLBACK')
+      return
+    }
+    const eventId = crypto.randomUUID()
     await client.query(
-      `INSERT INTO run_chunks(id, "runId", seq, chunk) VALUES($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING`,
-      [crypto.randomUUID(), runId, seq, JSON.stringify(chunk)],
+      `INSERT INTO coordinator_events (id, "userId", "botId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt")
+       VALUES ($1, $2, $3, $4, 'user_message', $5, $6::jsonb, 'background', now())`,
+      [eventId, userId, run.botId ?? null, run.issueId ?? null, `thread-system-event:${eventId}`, JSON.stringify({ threadSystemEvent: data })],
     )
+    await client.query(
+      `INSERT INTO run_messages (id, "runId", "userId", text, origin, "mailboxWakeDepth", "deliveredAt")
+       VALUES ($1, $2, $3, '', 'peer', -1, now())`,
+      [eventId, runId, userId],
+    )
+    const { threadChanged } = await import('@/lib/live/panels')
     await threadChanged(client, runId)
     await client.query('COMMIT')
   } catch (error) {

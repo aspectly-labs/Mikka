@@ -96,7 +96,19 @@ export async function resolveStructuredMentions(
     const fail: ResolvedStructuredMention = { kind: m.kind, id: m.id, state: 'broken', title: m.label ?? null, detail: null }
     try {
       switch (m.kind) {
-        case 'task':
+        case 'task': {
+          if (!workspaceId) return fail
+          const { resolveMessageReferences } = await import('@/lib/message-references')
+          const [resolvedTask] = await resolveMessageReferences({ userId: ownerId, workspaceId }, `[[issue:${m.id}]]`)
+          if (!resolvedTask || resolvedTask.unavailable) return fail
+          return {
+            kind: 'task',
+            id: m.id,
+            state: 'ok',
+            title: resolvedTask.title ?? m.label ?? m.id,
+            detail: `${resolvedTask.identifier ?? ''} ${resolvedTask.status ?? ''}`.trim() || null,
+          }
+        }
         case 'pr':
         case 'thread':
         case 'bot': {

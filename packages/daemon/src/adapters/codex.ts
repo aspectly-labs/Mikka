@@ -631,6 +631,7 @@ export class CodexAdapter implements AgentAdapter {
     let plans = 0
     let activeTurn: string | null = null
     let pendingTurnStart: Promise<void> | null = null
+    let pendingControlTurn = false
     let ending = false
     let cancelling = false
     const sensitiveText = [firstMessage, options.prompt ?? "", options.continueSession?.message ?? "", options.credential?.key ?? "", options.apps?.token ?? "", ...taskMcpSecretValues(options.apps?.servers)]
@@ -814,9 +815,15 @@ export class CodexAdapter implements AgentAdapter {
           for (const chunk of codexPlanChunks(update, ++plans)) queue.chunk(chunk)
           return
         }
-        case "turn/started":
-          if (!options.mailbox) activeTurn = (params as TurnNotification).turn.id
+        case "turn/started": {
+          const startedId = (params as TurnNotification).turn.id
+          if (!options.mailbox) activeTurn = startedId
+          else if (pendingControlTurn && !activeTurn) {
+            activeTurn = startedId
+            pendingControlTurn = false
+          }
           return
+        }
         case "thread/tokenUsage/updated": {
           const notification = params as TokenUsageNotification
           if (notification.threadId !== sessionId) return
@@ -850,12 +857,17 @@ export class CodexAdapter implements AgentAdapter {
           if (options.mailbox && pendingTurnStart) {
             const completed = (params as TurnNotification).turn
             void pendingTurnStart.then(() => {
-              if (!ending && completed.id === activeTurn) { activeTurn = null; return turnCompleted(completed) }
+              if (!ending && (completed.id === activeTurn || pendingControlTurn)) {
+                activeTurn = null
+                pendingControlTurn = false
+                return turnCompleted(completed)
+              }
             }).catch(() => undefined)
             return
           }
-          if (options.mailbox && (params as TurnNotification).turn.id !== activeTurn) return
+          if (options.mailbox && (params as TurnNotification).turn.id !== activeTurn && !pendingControlTurn) return
           activeTurn = null
+          pendingControlTurn = false
           void turnCompleted((params as TurnNotification).turn)
           return
         default:
@@ -950,6 +962,60 @@ export class CodexAdapter implements AgentAdapter {
       runRuntimeTimings.agentAccepted(options.runId, 'codex_turn_start_ack')
     }
 
+    const startControlRpc = async (method: string, params: Record<string, unknown>, onError?: (error: unknown) => void) => {
+      if (ending) throw new Error("The Codex session already ended")
+      const request = rpc.sendRequest<{ turn?: { id?: string } } | null>(method, params)
+      const tracked = request.then(result => {
+        if (ending) return
+        const turnId = result && typeof result === "object" && typeof result.turn?.id === "string" && result.turn.id ? result.turn.id : null
+        if (turnId) {
+          activeTurn = turnId
+          pendingControlTurn = false
+        } else if (!activeTurn) {
+          pendingControlTurn = true
+        }
+      })
+      if (options.mailbox) {
+        pendingControlTurn = true
+        pendingTurnStart = tracked
+        try {
+          await pendingTurnStart
+        } catch (error) {
+          pendingControlTurn = false
+          onError?.(error)
+          throw error
+        } finally {
+          if (pendingTurnStart === tracked) pendingTurnStart = null
+        }
+      } else {
+        try {
+          await tracked
+        } catch (error) {
+          onError?.(error)
+          throw error
+        }
+      }
+    }
+
+    const runCompact = async () => {
+      if (ending) throw new Error("The Codex session already ended")
+      queue.chunk({ type: "data-system-event", data: { kind: "status", status: "compacting" } })
+      await startControlRpc("thread/compact/start", { threadId: sessionId }, error => {
+        queue.chunk({
+          type: "data-system-event",
+          data: { kind: "status", status: "idle", compactResult: "failed", compactError: errorMessage(error) },
+        })
+      })
+    }
+
+    const startReview = async (instructions?: string) => {
+      const trimmed = instructions?.trim()
+      await startControlRpc("review/start", {
+        threadId: sessionId,
+        target: trimmed ? { type: "custom", instructions: trimmed } : { type: "uncommittedChanges" },
+      })
+    }
+
     void child.exited.then(({ code, signal }) => {
       if (ending) return
       ending = true
@@ -1039,7 +1105,7 @@ export class CodexAdapter implements AgentAdapter {
             "thread/resume",
           )
         } catch (error) {
-          if (managedAuth || mode !== "continue" || ending || options.requireSessionResume || options.mailbox) throw error
+          if (managedAuth || mode !== "continue" || ending || options.requireSessionResume || options.mailbox || options.continueSession?.followUpControl?.kind === "compact") throw error
           log.info(
             { err: error, thread_id: threadId },
             "could not continue the earlier codex thread; starting a new one",
@@ -1079,35 +1145,13 @@ export class CodexAdapter implements AgentAdapter {
         })
         .catch(() => undefined)
 
-      const startCompact = async () => {
-        if (ending) throw new Error("The Codex session already ended")
-        queue.chunk({ type: "data-system-event", data: { kind: "status", status: "compacting" } })
-        try {
-          await rpc.sendRequest("thread/compact/start", { threadId: sessionId })
-        } catch (error) {
-          queue.chunk({
-            type: "data-system-event",
-            data: { kind: "status", status: "idle", compactResult: "failed", compactError: errorMessage(error) },
-          })
-          throw error
-        }
-      }
-      const startReview = async (instructions?: string) => {
-        if (ending) throw new Error("The Codex session already ended")
-        const trimmed = instructions?.trim()
-        await rpc.sendRequest("review/start", {
-          threadId: sessionId,
-          target: trimmed ? { type: "custom", instructions: trimmed } : { type: "uncommittedChanges" },
-        })
-      }
-
       startupPhase = 'turn_start'
       const followUpControl = mode === "continue" ? options.continueSession?.followUpControl : undefined
       if (followUpControl?.kind === "compact") {
-        await ready(startCompact(), "thread/compact/start")
+        await ready(runCompact(), "thread/compact/start")
       } else if (followUpControl?.kind === "slash") {
         const cmd = normalizeCommandName(followUpControl.name).toLowerCase()
-        if (cmd === "compact") await ready(startCompact(), "thread/compact/start")
+        if (cmd === "compact") await ready(runCompact(), "thread/compact/start")
         else if (cmd === "review") await ready(startReview(followUpControl.args), "review/start")
         else if (cmd === "init") await ready(startTurn(CODEX_INIT_PROMPT), "turn/start")
         else await ready(startTurn(firstMessage), "turn/start")
@@ -1131,20 +1175,6 @@ export class CodexAdapter implements AgentAdapter {
     }
     log.info({ session_id: sessionId, mode }, "codex session started")
 
-    const runCompact = async () => {
-      if (ending) throw new Error("The Codex session already ended")
-      queue.chunk({ type: "data-system-event", data: { kind: "status", status: "compacting" } })
-      try {
-        await rpc.sendRequest("thread/compact/start", { threadId: sessionId })
-      } catch (error) {
-        queue.chunk({
-          type: "data-system-event",
-          data: { kind: "status", status: "idle", compactResult: "failed", compactError: errorMessage(error) },
-        })
-        throw error
-      }
-    }
-
     return {
       sessionId,
       runtimeModel,
@@ -1160,11 +1190,7 @@ export class CodexAdapter implements AgentAdapter {
             return
           }
           if (cmd === "review") {
-            const trimmed = sendOpts.slashCommand.args?.trim()
-            await rpc.sendRequest("review/start", {
-              threadId: sessionId,
-              target: trimmed ? { type: "custom", instructions: trimmed } : { type: "uncommittedChanges" },
-            })
+            await startReview(sendOpts.slashCommand.args)
             return
           }
           if (cmd === "init") {

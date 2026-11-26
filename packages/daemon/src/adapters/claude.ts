@@ -1261,9 +1261,9 @@ export class ClaudeAdapter implements AgentAdapter {
         await end(null)
         throw Object.assign(new ProviderFailureError(providerFailure), { failureDetails })
       }
-      if (options.requireSessionResume || externalAuth) {
+      if (options.requireSessionResume || externalAuth || followUpControl?.kind === "compact") {
         await end(null)
-        throw new Error(externalAuth ? SUBSCRIPTION_ERROR : 'Original Claude question session is unavailable; refusing a fresh session')
+        throw new Error(externalAuth ? SUBSCRIPTION_ERROR : followUpControl?.kind === "compact" ? 'Original Claude session is unavailable for compaction' : 'Original Claude question session is unavailable; refusing a fresh session')
       }
       log.info(
         { stderr: redactDiagnostic(stderrTail(), secrets) },

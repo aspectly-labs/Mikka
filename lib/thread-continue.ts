@@ -46,7 +46,7 @@ export async function sendThreadMessage(userId: string, runId: string, text: str
     catch (error) { if (error instanceof ChatFileError) throw new ActionFailureError('messageRequired', undefined, undefined, { cause: error }); throw error }
   }
   const active = UNFINISHED_RUN_STATUSES.some(status => status === chain.attempts.at(-1)?.status)
-  if (delivery === 'queue' && requestId && !parsed.data.modelChoice) {
+  if (delivery === 'queue' && requestId && !parsed.data.modelChoice && !control) {
     const { queueThreadReply, readQueuedReplyReceipt } = await import('./thread-delivery-queue')
     const receipt = await readQueuedReplyReceipt(pool, userId, chain, parsed.data.text, requestId, parsed.data.runId)
     if (receipt) return receipt
@@ -76,7 +76,7 @@ export async function sendThreadMessage(userId: string, runId: string, text: str
       if ((delivery === 'steer' || delivery === 'interrupt') && (!active || chain.latestRunId !== parsed.data.runId)) throw new ActionFailureError('runNotActive')
       return continueThread(userId, parsed.data.text, source, chain, sourceEventId, delivery, parsed.data.modelChoice, control)
     },
-    !parsed.data.modelChoice && typeof source === 'object' && source.source === 'human'
+    !parsed.data.modelChoice && (!control || control.kind === 'client_composed') && typeof source === 'object' && source.source === 'human'
       ? (sourceEventId, previousRunId, receiptOnly) => recoverThreadQuestionAnswer(userId, previousRunId, parsed.data.text, source.sessionId, sourceEventId, scope, receiptOnly)
       : undefined)
   }
@@ -213,6 +213,7 @@ async function continueThread(userId: string, text: string, source: Source,
   if (UNFINISHED_RUN_STATUSES.some(status => status === latest.status)) {
     if (modelChoice) throw new ActionFailureError('threadCannotContinue')
     if (delivery === 'steer') {
+      if (control?.kind === 'compact') throw new ActionFailureError('threadDeliveryUnavailable')
       // Cursor queues during a prompt; Claude SDK may defer or fold an input.
       // Only Codex exposes a native active-turn steer receipt.
       const { rows: [run] } = await pool.query(`SELECT coalesce(r."agentDefinition"->>'harness',a.harness) AS harness
@@ -220,7 +221,9 @@ async function continueThread(userId: string, text: string, source: Source,
         WHERE r.id=$1 AND r."userId"=$2 AND r.status='running' AND device.harnesses @> '[{"harness":"codex","installed":true,"activeTurnSteer":true}]'::jsonb
         AND r."stopRequestedAt" IS NULL`, [latest.runId, userId])
       if (run?.harness !== 'codex') throw new ActionFailureError('threadDeliveryUnavailable')
-      await addRunMessage(userId, { runId: latest.runId, text }, source, sourceEventId)
+      const messageId = sourceEventId ?? (control ? crypto.randomUUID() : undefined)
+      if (control && messageId) await attachMessageControl(userId, latest.runId, messageId, control)
+      await addRunMessage(userId, { runId: latest.runId, text }, source, messageId)
       return { runId: latest.runId, continued: false }
     }
     if (!control && (source === 'user' || (typeof source === 'object' && source.source === 'human')))
@@ -239,6 +242,7 @@ async function continueThread(userId: string, text: string, source: Source,
     // had not seen when they wrote it.
     if (delivery === 'afterRun' || delivery === 'version') throw new ActionFailureError('factoryQuestionNeedsAnswerTool')
     if (modelChoice) throw new ActionFailureError('threadCannotContinue')
+    if (control && control.kind !== 'client_composed') throw new ActionFailureError('threadCannotContinue')
     const messageId = sourceEventId ?? (control ? crypto.randomUUID() : undefined)
     if (control && messageId) await attachMessageControl(userId, latest.runId, messageId, control)
     await addRunMessage(userId, { runId: latest.runId, text }, source, messageId)
@@ -277,19 +281,12 @@ async function continueThread(userId: string, text: string, source: Source,
           [eventId, userId, botId, issueId, `thread-continuation:${eventId}`, JSON.stringify({ text, source: 'thread_continuation', previousRunId: run.id, postedToChat: true })])
         request = { sourceEventId: eventId, botId }
       }
-      return queueNextRun(userId, run, previous, await withReferenceNote(userId, run.workspaceId, text, version?.executionNote ?? note, source), request, modelChoice)
+      return queueNextRun(userId, run, previous, await withReferenceNote(userId, run.workspaceId, text, version?.executionNote ?? note, source), request, modelChoice, undefined, control)
     },
   })
   // A dispatch the person can act on (no machine, say) queued nothing.
   if ('error' in result) throw new ActionFailureError(isActionErrorCode(result.error) ? result.error : 'runInvalid')
   if (result.thread === 'message') return { runId: result.runId, continued: false }
-  if (control) {
-    await pool.query(
-      `UPDATE agent_runs SET "agentDefinition" = jsonb_set(coalesce("agentDefinition", '{}'::jsonb), '{followUpControl}', $2::jsonb, true)
-       WHERE id=$1 AND "userId"=$3`,
-      [result.runId, JSON.stringify(control), userId],
-    )
-  }
   // The words are already in the new run's note; this row shows them in the thread and is never delivered again.
   // A peer's or orchestrator's words stay theirs, as addRunMessage records them: never the owner's, never editable.
   const origin = source === 'user' || (typeof source === 'object' && source.source === 'human') ? 'owner' : 'peer'
@@ -316,7 +313,7 @@ async function withReferenceNote(userId: string, workspaceId: string | null, tex
 
 /** The thread's next run, queued the way its last one was: on the bot's cloud computer, else on the same device. */
 /** `fork`: queue a new thread instead (#2936), keeping the run's place and model; its value names the request. */
-async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, previous: TaskThreadRun, note: string | undefined, request?: { sourceEventId: string; botId: string | null }, modelChoice?: ThreadModelChoice, fork?: string) {
+async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, previous: TaskThreadRun, note: string | undefined, request?: { sourceEventId: string; botId: string | null }, modelChoice?: ThreadModelChoice, fork?: string, control?: ThreadMessageControl) {
   const issueId = run.issueId!
   const { latestThreadRunModel, chooseCloudRunModel, chooseLocalRunModel } = await import('@/lib/computer/run-model')
   const prior = await latestThreadRunModel(pool, userId, issueId, run.agentId)
@@ -356,11 +353,12 @@ async function queueNextRun(userId: string, run: typeof agentRuns.$inferSelect, 
       ...(previous.remoteUrl ? { repo: previous.remoteUrl } : {}), note, ...(request ? { sourceEventId: request.sourceEventId, factoryBotId: request.botId } : {}), withoutBot: run.botId === null,
       // A person's continuation in an open thread is an app entry.
       origin: 'web', originRef: null,
+      ...(control ? { followUpControl: control } : {}),
       ...runModel, ...(fork ? {} : { threadRunId: run.id }), ...turnSettings, ...readOnly }, fork ? `fork:${run.id}:${fork}` : `thread:${run.id}:${request?.sourceEventId ?? crypto.randomUUID()}`)
   }
   if (!previous.remoteUrl) throw new ActionFailureError('agentRepoMissing')
   // The thread's own model and account, as on the cloud; when it has none left, the person is told instead of the CLI choosing.
-  return queueTaskRun(userId, { issueId, agentId: run.agentId, repo: previous.remoteUrl, note, ...runModel, ...turnSettings, ...(fork ? { requestKey: `fork:${run.id}:${fork}` } : { threadRunId: run.id }), ...(request ? { requestKey: `thread:${run.id}:${request.sourceEventId}` } : {}), ...readOnly }, request ? request.botId : run.botId, undefined, request?.sourceEventId, { source: run.source === 'mcp' ? 'mcp' : null, origin: 'web', originRef: null })
+  return queueTaskRun(userId, { issueId, agentId: run.agentId, repo: previous.remoteUrl, note, ...(control ? { followUpControl: control } : {}), ...runModel, ...turnSettings, ...(fork ? { requestKey: `fork:${run.id}:${fork}` } : { threadRunId: run.id }), ...(request ? { requestKey: `thread:${run.id}:${request.sourceEventId}` } : {}), ...readOnly }, request ? request.botId : run.botId, undefined, request?.sourceEventId, { source: run.source === 'mcp' ? 'mcp' : null, origin: 'web', originRef: null })
 }
 
 /**

@@ -547,18 +547,25 @@ async function readThreadComposerModel(runId: string) {
 
 async function readThreadMessages(runIds: string[], viewerId: string, ids?: string[]): Promise<IssueThreadDetail['messages']> {
   if (ids && !ids.length) return []
+  const { systemEventDataSchema } = await import('@mikka/protocol/slash-commands')
   const messages = await db.select({ id: runMessages.id, sourceRunId:runMessages.runId, editable:sql<boolean>`${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
       submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'`,
+      systemEvent: sql<unknown>`${coordinatorEvents.payload}->'threadSystemEvent'`,
       text: runMessages.text, at: runMessages.createdAt, userId: runMessages.userId, name: users.name, email: users.email, image: users.image })
       .from(runMessages).leftJoin(users, eq(users.id, runMessages.userId))
-      .leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id), eq(coordinatorEvents.userId, viewerId), eq(coordinatorEvents.kind, 'user_message')))
+      .leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id), eq(coordinatorEvents.userId, runMessages.userId), eq(coordinatorEvents.kind, 'user_message')))
       .where(ids ? and(inArray(runMessages.runId, runIds), inArray(runMessages.id, ids)) : inArray(runMessages.runId, runIds))
       .orderBy(asc(runMessages.createdAt), asc(runMessages.id))
-  return messages.map(message => ({
-    id: message.id, sourceRunId: message.sourceRunId, editable: message.editable && message.userId === viewerId,
-    ...(message.submissionId ? { submissionId: message.submissionId } : {}), text: message.text, at: message.at,
-    author: message.name || message.email || '', image: message.image ?? null, mine: message.userId === viewerId,
-  }))
+  return messages.map(message => {
+    const parsedEvent = message.systemEvent ? systemEventDataSchema.safeParse(message.systemEvent) : null
+    return {
+      id: message.id, sourceRunId: message.sourceRunId, editable: message.editable && message.userId === viewerId,
+      ...(message.submissionId && message.userId === viewerId ? { submissionId: message.submissionId } : {}),
+      ...(parsedEvent?.success ? { systemEvent: parsedEvent.data } : {}),
+      text: message.text, at: message.at,
+      author: message.name || message.email || '', image: message.image ?? null, mine: message.userId === viewerId,
+    }
+  })
 }
 
 async function readPagedThreadMessages(runIds: string[], viewerId: string, ids: string[], append: boolean) {
@@ -864,11 +871,17 @@ export async function sendIssueThreadMessage(input: {
   }
 
   const slashProtocol = await import('@mikka/protocol/slash-commands')
-  const { readThreadRuntimeCommands, appendThreadSystemEvent } = await import('@/lib/thread-commands')
-  const runtime = await readThreadRuntimeCommands(pool, user.id, row.id)
-
   let control: import('@/lib/thread-continue').ThreadMessageControl | undefined
   const leadingSlash = !input.sendAsText ? slashProtocol.parseLeadingSlashCommand(text.data) : null
+  const hasSkillSignal = Boolean(
+    !input.sendAsText &&
+    ((input.mentions?.some(m => m.kind === 'skill')) || /\$[a-z][a-z0-9-]*/.test(text.data)),
+  )
+  let runtime: Awaited<ReturnType<typeof import('@/lib/thread-commands').readThreadRuntimeCommands>> = null
+  if (leadingSlash || hasSkillSignal) {
+    const { readThreadRuntimeCommands } = await import('@/lib/thread-commands')
+    runtime = await readThreadRuntimeCommands(pool, user.id, row.id)
+  }
 
   if (input.sendAsText) {
     control = { kind: 'client_composed' }
@@ -879,7 +892,8 @@ export async function sendIssueThreadMessage(input: {
       const blockedCheck = slashProtocol.isBlockedClaudeCommand(leadingSlash.name, runtime.terminalSlashCommands)
       if (blockedCheck.blocked) {
         const validCommands = runtime.commands.map(c => c.name)
-        await appendThreadSystemEvent(runtime.latestRunId, {
+        const { appendThreadSystemEvent } = await import('@/lib/thread-commands')
+        await appendThreadSystemEvent(runtime.latestRunId, user.id, {
           kind: 'command_blocked',
           command: blockedCheck.canonical,
           originalText: text.data,
@@ -983,7 +997,7 @@ export async function btwIssueThreadMessage(input: { issueId: string | null; run
     question: text.data,
   })
   if (!sideRun) throw new ActionFailureError('threadCannotContinue')
-  await appendThreadSystemEvent(targetRunId, {
+  await appendThreadSystemEvent(targetRunId, user.id, {
     kind: 'side_note',
     question: text.data,
     sideRunId: String(sideRun.id),
@@ -1044,11 +1058,15 @@ export async function getThreadMachineOptions(input: { issueId: string | null; r
   const { DEFAULT_MACHINE_SIZE, selectableMachineSizeOptions, isMachineSize } = await import('@/lib/cloud-computer/machine-pricing')
   const chain = await readRunChain(pool, user.id, row.id)
   const rootId = chain?.rootRunId ?? row.id
-  const { rows: [root] } = await pool.query<{ preferred: string | null }>(
-    `SELECT "agentDefinition"->>'preferredMachineSize' AS preferred FROM agent_runs WHERE id=$1 AND "userId"=$2`,
-    [rootId, user.id],
+  const latestId = chain?.latestRunId ?? row.id
+  const { rows } = await pool.query<{ id: string; preferred: string | null }>(
+    `SELECT id, "agentDefinition"->>'preferredMachineSize' AS preferred FROM agent_runs WHERE id = ANY($1::uuid[]) AND "userId"=$2`,
+    [[...new Set([latestId, rootId])], user.id],
   )
-  const current = root?.preferred && isMachineSize(root.preferred) ? root.preferred : DEFAULT_MACHINE_SIZE
+  const latestPref = rows.find(r => r.id === latestId)?.preferred
+  const rootPref = rows.find(r => r.id === rootId)?.preferred
+  const chosen = latestPref ?? rootPref
+  const current = chosen && isMachineSize(chosen) ? chosen : DEFAULT_MACHINE_SIZE
   return {
     current,
     options: selectableMachineSizeOptions(),
@@ -1066,13 +1084,16 @@ export async function setThreadMachineSize(input: { issueId: string | null; runI
   await assertHumanWritableThread(user.id, row)
   const chain = await readRunChain(pool, user.id, row.id)
   const rootId = chain?.rootRunId ?? row.id
+  const latestId = chain?.latestRunId ?? row.id
+  const targetIds = [...new Set([rootId, latestId])]
   await pool.query(
     `UPDATE agent_runs SET "agentDefinition" = jsonb_set(coalesce("agentDefinition", '{}'::jsonb), '{preferredMachineSize}', to_jsonb($2::text), true), "updatedAt"=now()
-     WHERE id=$1 AND "userId"=$3`,
-    [rootId, input.machineSize, user.id],
+     WHERE id = ANY($1::uuid[]) AND "userId"=$3`,
+    [targetIds, input.machineSize, user.id],
   )
   const { runChanged } = await import('@/lib/live/panels')
   await runChanged(pool, rootId)
+  if (latestId !== rootId) await runChanged(pool, latestId)
   return { machineSize: input.machineSize }
 }
 

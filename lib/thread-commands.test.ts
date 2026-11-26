@@ -109,3 +109,72 @@ test('normalizeThreadFolder trims whitespace, collapses blank to null, and enfor
   assert.equal(normalizeThreadFolder('a'.repeat(60)), 'a'.repeat(60))
   assert.equal(normalizeThreadFolder('a'.repeat(61)), undefined)
 })
+
+test('threadItems renders host-emitted systemEvent on run_messages as system_event without touching run_chunks', async () => {
+  const { threadItems } = await import('./issue-run-conversation')
+  const items = await threadItems(
+    [],
+    [
+      {
+        id: 'evt-1',
+        text: '',
+        author: 'Owner',
+        mine: true,
+        at: '2026-11-26T00:00:00.000Z',
+        systemEvent: {
+          kind: 'command_blocked',
+          command: '/login',
+          originalText: '/login',
+          validCommands: ['compact', 'review'],
+          reason: 'dangerous_passthrough',
+        },
+      },
+    ],
+  )
+  assert.equal(items.length, 1)
+  assert.equal(items[0]?.kind, 'system_event')
+  if (items[0]?.kind === 'system_event') {
+    assert.equal(items[0].event.kind, 'command_blocked')
+    assert.equal(items[0].event.command, '/login')
+  }
+})
+
+test('projectIssueThreads redacts private tags and folder for viewers without thread read access', async () => {
+  const { projectIssueThreads } = await import('./issue-threads')
+  const row = {
+    id: 'run-1',
+    userId: 'owner-1',
+    issueId: 'issue-1',
+    kind: 'implement',
+    status: 'succeeded',
+    outcome: null,
+    prompt: 'Secret prompt',
+    title: 'Secret title',
+    tags: ['confidential-tag'],
+    folder: 'Secret Folder',
+    createdAt: new Date('2026-11-26T00:00:00.000Z'),
+    startedAt: null,
+    finishedAt: new Date('2026-11-26T00:01:00.000Z'),
+    stopRequestedAt: null,
+    error: null,
+    report: null,
+    agentId: 'agent-1',
+    agentName: 'Claude',
+    agentHarness: 'claude_code',
+    deviceId: 'dev-1',
+    deviceName: 'Mac',
+    deviceKind: 'local',
+    botId: null,
+    botName: null,
+    botAvatar: null,
+    continuesRunId: null,
+    retryOf: null,
+  }
+  const [ownerView] = projectIssueThreads([row], 'issue-1', 'owner-1', new Set(['owner-1', 'other-2']))
+  assert.deepEqual(ownerView?.tags, ['confidential-tag'])
+  assert.equal(ownerView?.folder, 'Secret Folder')
+
+  const [strangerView] = projectIssueThreads([row], 'issue-1', 'other-2', new Set(['owner-1', 'other-2']))
+  assert.equal(strangerView?.tags, undefined)
+  assert.equal(strangerView?.folder, undefined)
+})

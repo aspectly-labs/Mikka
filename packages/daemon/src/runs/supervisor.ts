@@ -1580,6 +1580,15 @@ export class RunSupervisor {
           !adapter.capabilities.supportsResume || (!resuming && !continueSession) ||
           (resuming && entry.sessionId !== assignment.resumeSessionId)))
       throw new Error("factory_question_session_resume_required")
+    if (assignment.followUpControl?.kind === "compact" && !resuming &&
+        (!continueSession || preparedSession || assignment.subscriptionBinding ||
+          (assignment.modelCredential && this.deps.startCredential))) {
+      this.emit(runId, {
+        type: "data-system-event",
+        data: { kind: "status", status: "idle", compactResult: "failed", compactError: "Original harness session is unavailable for compaction" },
+      })
+      throw new Error("compact_session_unavailable")
+    }
     const benchmark = assignment.benchmark
     const policyDigest = assignment.skillReceipt ? createHash('sha256').update(runPolicyDigestInput(assignment.policy)).digest('hex') : undefined
     if (benchmark && (!assignment.skillReceipt || assignment.harness === "mock" ||
@@ -1629,6 +1638,12 @@ export class RunSupervisor {
         })(), undefined, preparedSession)
     } catch (error) {
       if (assignment.skillReceipt) this.deps.journal.update(runId, { skillMount: undefined, execution: undefined, runtime: undefined })
+      if (assignment.followUpControl?.kind === "compact") {
+        this.emit(runId, {
+          type: "data-system-event",
+          data: { kind: "status", status: "idle", compactResult: "failed", compactError: error instanceof Error ? error.message : String(error) },
+        })
+      }
       throw error
     }
     if (assignment.skillReceipt) {

@@ -307,4 +307,56 @@ describe("Issue #3333: runtime slash commands, blocklist, real /compact, system 
       expect(call.codexHome.startsWith(stateDir)).toBe(true)
     }
   })
+
+  it("CodexAdapter with mailbox enabled settles compact() and /review turns cleanly", async () => {
+    const binary = resolve(import.meta.dirname, "fakes/fake-codex-commands.mjs")
+    chmodSync(binary, 0o755)
+    const stateDir = tempDir("mikka-codex-mailbox-cmd-")
+    const cwd = await makeRepo()
+    const adapter = new CodexAdapter({ stateDir, sandbox: new NoSandbox(), binary })
+    const mailbox = {
+      tools: [{ name: "ping", description: "Ping test tool", inputSchema: { type: "object" as const, properties: {} } }],
+      request: async () => ({ content: [{ type: "text" as const, text: "pong" }], isError: false }),
+    }
+
+    const session = await adapter.start({
+      runId: "codex-mb-compact-1",
+      cwd,
+      prompt: "KEEP_OPEN",
+      mailbox,
+      env: buildChildEnv({ host: { PATH: process.env.PATH, HOME: stateDir } }),
+      log: createLogger({ level: "silent" }),
+      toolApproval: new ToolApprovalGate("codex-mb-compact-1", { isLive: () => true }),
+    })
+    const events: AgentEvent[] = []
+    const done = (async () => {
+      for await (const event of session.events()) events.push(event)
+    })()
+
+    await session.compact!()
+    await done
+
+    expect(events.some(e => e.type === "chunk" && e.chunk.type === "data-system-event" && e.chunk.data.kind === "compact_boundary")).toBe(true)
+    expect(events.at(-1)).toMatchObject({ type: "exit", outcome: "succeeded" })
+
+    const reviewSession = await adapter.start({
+      runId: "codex-mb-review-1",
+      cwd,
+      prompt: "KEEP_OPEN",
+      mailbox,
+      env: buildChildEnv({ host: { PATH: process.env.PATH, HOME: stateDir } }),
+      log: createLogger({ level: "silent" }),
+      toolApproval: new ToolApprovalGate("codex-mb-review-1", { isLive: () => true }),
+    })
+    const reviewEvents: AgentEvent[] = []
+    const reviewDone = (async () => {
+      for await (const event of reviewSession.events()) reviewEvents.push(event)
+    })()
+
+    await reviewSession.send("/review mailbox check", { slashCommand: { name: "review", args: "mailbox check" } })
+    await reviewDone
+
+    expect(reviewEvents.some(e => e.type === "chunk" && e.chunk.type === "data-system-event" && e.chunk.data.kind === "local_command_output")).toBe(true)
+    expect(reviewEvents.at(-1)).toMatchObject({ type: "exit", outcome: "succeeded" })
+  })
 })

@@ -12153,6 +12153,33 @@
     "formatToggle": "格式",
     "voiceStart": "语音输入",
     "voiceStop": "停止录音",
-    "voiceTranscribing": "正在转写…"
+    "voiceTranscribing": "正在转写…",
+    "cmdDesc": {
+      "new": "新建线程",
+      "fork": "分叉完整历史",
+      "fork-summary": "摘要分叉线程",
+      "side": "发起侧边提问",
+      "stop": "停止当前运行",
+      "model": "切换模型",
+      "reasoning": "调整推理深度",
+      "fast": "切换 Fast 模式",
+      "ultrafast": "切换 Ultrafast 模式",
+      "pro": "切换 Pro 模式",
+      "machine": "选择机器规格",
+      "tags": "管理标签",
+      "folder": "移到文件夹",
+      "changes": "打开改动文件",
+      "task": "打开关联任务",
+      "help": "查看可用命令",
+      "compact": "压缩上下文",
+      "clear": "清空历史",
+      "review": "审查代码改动",
+      "init": "更新 AGENTS.md",
+      "schedules": "管理自动化",
+      "memory": "查看记忆",
+      "subagents": "查看子 Agent",
+      "web-search": "搜索网页",
+      "dispatch": "派发任务"
+    }
   }
 }

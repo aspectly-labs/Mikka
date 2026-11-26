@@ -274,7 +274,7 @@ export function latestAvailableCommandsFromChunks(
 }
 
 /** A person's message in a thread (`run_messages`): keyed by the id the client minted when it sent it, else its own. */
-export type ThreadPersonMessage = { id: string; submissionId?: string | null; text: string; author: string; image?: string | null; mine: boolean; at: Date | string }
+export type ThreadPersonMessage = { id: string; submissionId?: string | null; text: string; author: string; image?: string | null; mine: boolean; at: Date | string; systemEvent?: import('@mikka/protocol/slash-commands').SystemEventData }
 
 /** The people's messages as the conversation layer orders them: the id their unsent bubble had, so nothing remounts. */
 export function threadPeople(messages: readonly ThreadPersonMessage[]): PersonMessage[] {
@@ -339,6 +339,11 @@ export function conversationItems(conversation: readonly ConversationMessage[], 
   const items: ThreadItem[] = []
   for (const message of conversation) {
     if (message.role === 'user') {
+      const src = message.metadata?.source as ThreadPersonMessage | undefined
+      if (src?.systemEvent) {
+        items.push({ kind: 'system_event', id: `sysevt:${message.id}`, event: src.systemEvent, at: message.metadata?.at ?? 0 })
+        continue
+      }
       const author = message.metadata?.author
       const text = message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('')
       items.push({ kind: 'person', id: message.id, text, author: author?.name ?? '', image: author?.image, mine: author?.mine ?? true, at: message.metadata?.at ?? 0 })

@@ -439,7 +439,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "38b35c2a77eca81af2f974f333c83f5d4acc5e72453c642d949be0a597d4584e"
+      "sourceHash": "2cd80c5b35335bf930a20a8248fb57ca06dfdb0495668d2de6b6c8f02a5ea40b"
     },
     {
       "path": "/mikka/api/cloud/callback",
@@ -3180,7 +3180,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "c6da3f530786a1808738abe10cf62494c36d6c99be6908d98eacc1e14146d0fe"
+      "sourceHash": "2c15f78c3cdf8e72699b838f5bdee06e974ee50a22e7dc5eabff8e06fb0db3cf"
     },
     {
       "path": "/mikka/api/tasks/[taskId]/attachments",

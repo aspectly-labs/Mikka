@@ -65,7 +65,7 @@ const CHAIN_SQL = `WITH RECURSIVE chain AS (SELECT id FROM agent_runs WHERE id=$
 
 async function transcriptExcerpt(sourceRootId: string, limit = 20, cutoff?: string | null): Promise<string> {
   const { rows } = await pool.query(
-    `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt" DESC LIMIT $2`,
+    `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND length(trim(text)) > 0 AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt" DESC LIMIT $2`,
     [sourceRootId, limit, cutoff ?? null])
   return rows.reverse().map(row => String(row.text)).join('\n')
 }
@@ -141,8 +141,9 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   const relation = input.relation
   const normalizedKey = input.idempotencyKey?.trim() || null
   const dispatchKey = normalizedKey ? `thread_spawn:${relation}:${normalizedKey}` : null
+  const trimmedQuestion = input.question?.trim() || null
   const dispatchFingerprint = dispatchKey
-    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null, question: input.question?.trim() || null })).digest('hex')
+    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null, ...(trimmedQuestion ? { question: trimmedQuestion } : {}) })).digest('hex')
     : null
   // `fromMessageId` is the branch point: nothing after it joins the copy or the prompt.
   let cutoff: string | null = null
@@ -225,6 +226,7 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
           `${CHAIN_SQL}, picked AS (
              SELECT "userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
              WHERE "runId" IN (SELECT id FROM chain)
+               AND length(trim(text)) > 0
                AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
              ORDER BY "createdAt" DESC LIMIT $4
            )
@@ -327,7 +329,7 @@ export async function sharedThread(token: string): Promise<Run | null> {
      JOIN agent_runs r ON r.id=s."runId" WHERE s."tokenHash"=$1 AND s."revokedAt" IS NULL AND r."deletedAt" IS NULL`, [hashToken(token)])
   if (!run) return null
   const { rows: messages } = await pool.query(
-    `${CHAIN_SQL} SELECT id,text,origin,"createdAt" FROM run_messages WHERE "runId" IN (SELECT id FROM chain) ORDER BY "createdAt" LIMIT 200`, [run.id])
+    `${CHAIN_SQL} SELECT id,text,origin,"createdAt" FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND length(trim(text)) > 0 ORDER BY "createdAt" LIMIT 200`, [run.id])
   return { ...run, messages }
 }
 

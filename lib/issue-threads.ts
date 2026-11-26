@@ -195,18 +195,21 @@ export function projectIssueThreads(rows: readonly (IssueThreadRow | IssueThread
   return rows.filter(row => row.issueId === issueId && memberIds.has(row.userId))
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
     .slice(0, ISSUE_THREAD_LIMIT)
-    .map(row => ({
-      failureDetails: readCompactRunFailure(row.failureDetails),
-      ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), id: row.id, status: row.status, outcome: row.outcome ?? null, ...(row.kind ? { kind: row.kind } : {}), ...(row.threadRelation ? { threadRelation: row.threadRelation } : {}), ...(Array.isArray(row.tags) ? { tags: row.tags } : {}), ...(row.folder !== undefined ? { folder: row.folder } : {}), createdAt: row.createdAt, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}), finishedAt: row.finishedAt, ownedByCurrentUser: row.userId === viewerId,
-      stopping: runIsActive(row.status) && !!row.stopRequestedAt,
-      ownerName: row.userId === viewerId ? null : row.ownerName ?? null,
-      detail: canReadThread(row.userId, viewerId, memberIds)
-        ? { name: 'prompt' in row ? row.title || threadName(row.prompt, row.agentName) : threadTitle({ name: row.name }) || row.agentName, agentName: row.agentName, harness: row.harness, ...(row.agentId ? { agentId: row.agentId } : {}), ...('report' in row ? runSummaryView({ report: row.report, error: row.error }) : { summary: row.summary, ...('observedModel' in row ? { observedModel: row.observedModel } : {}) }), bot: row.botColor && row.botShape ? { color: row.botColor, shape: row.botShape } : null, ...(row.botId !== undefined ? { botId: row.botId } : {}), ...(row.profile !== undefined ? { profile: threadProfile(row.profile) } : {}) }
-        : null,
-      rootRunId: row.id, latestRunId: row.id,
-      attempts: [{ ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), runId: row.id, attempt: 1, status: row.status, outcome: row.outcome ?? null, stopping: runIsActive(row.status) && !!row.stopRequestedAt, createdAt: row.createdAt, finishedAt: row.finishedAt }],
-      question: null, continuation: null,
-    }))
+    .map(row => {
+      const readable = canReadThread(row.userId, viewerId, memberIds)
+      return {
+        failureDetails: readCompactRunFailure(row.failureDetails),
+        ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), id: row.id, status: row.status, outcome: row.outcome ?? null, ...(row.kind ? { kind: row.kind } : {}), ...(row.threadRelation ? { threadRelation: row.threadRelation } : {}), ...(readable && Array.isArray(row.tags) ? { tags: row.tags } : {}), ...(readable && row.folder !== undefined ? { folder: row.folder } : {}), createdAt: row.createdAt, ...(row.startedAt !== undefined ? { startedAt: row.startedAt } : {}), finishedAt: row.finishedAt, ownedByCurrentUser: row.userId === viewerId,
+        stopping: runIsActive(row.status) && !!row.stopRequestedAt,
+        ownerName: row.userId === viewerId ? null : row.ownerName ?? null,
+        detail: readable
+          ? { name: 'prompt' in row ? row.title || threadName(row.prompt, row.agentName) : threadTitle({ name: row.name }) || row.agentName, agentName: row.agentName, harness: row.harness, ...(row.agentId ? { agentId: row.agentId } : {}), ...('report' in row ? runSummaryView({ report: row.report, error: row.error }) : { summary: row.summary, ...('observedModel' in row ? { observedModel: row.observedModel } : {}) }), bot: row.botColor && row.botShape ? { color: row.botColor, shape: row.botShape } : null, ...(row.botId !== undefined ? { botId: row.botId } : {}), ...(row.profile !== undefined ? { profile: threadProfile(row.profile) } : {}) }
+          : null,
+        rootRunId: row.id, latestRunId: row.id,
+        attempts: [{ ...(row.pauseReason ? { pauseReason: row.pauseReason } : {}), runId: row.id, attempt: 1, status: row.status, outcome: row.outcome ?? null, stopping: runIsActive(row.status) && !!row.stopRequestedAt, createdAt: row.createdAt, finishedAt: row.finishedAt }],
+        question: null, continuation: null,
+      }
+    })
 }
 
 export type ThreadProfile = { id: string; name: string } & ProfileMarkValue

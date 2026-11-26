@@ -1,4 +1,3 @@
-import 'server-only'
 import { apiWorkspaceAllowed, type ApiSession } from '@/lib/api-auth'
 import { writeAllowed } from '@/lib/mobile-api'
 import { ChatFileError } from '@/lib/chat-attachments/extract'

@@ -12153,6 +12153,33 @@
     "formatToggle": "Formatting",
     "voiceStart": "Dictate",
     "voiceStop": "Stop dictation",
-    "voiceTranscribing": "Transcribing…"
+    "voiceTranscribing": "Transcribing…",
+    "cmdDesc": {
+      "new": "Start a new thread",
+      "fork": "Fork full history",
+      "fork-summary": "Fork with summary",
+      "side": "Ask a side question",
+      "stop": "Stop active run",
+      "model": "Switch model",
+      "reasoning": "Adjust reasoning effort",
+      "fast": "Toggle Fast mode",
+      "ultrafast": "Toggle Ultrafast mode",
+      "pro": "Toggle Pro mode",
+      "machine": "Choose machine size",
+      "tags": "Manage tags",
+      "folder": "Move to folder",
+      "changes": "Open changed files",
+      "task": "Open linked task",
+      "help": "Show available commands",
+      "compact": "Compact context",
+      "clear": "Clear history",
+      "review": "Review code changes",
+      "init": "Update AGENTS.md",
+      "schedules": "Manage automations",
+      "memory": "View memory",
+      "subagents": "View subagents",
+      "web-search": "Search the web",
+      "dispatch": "Dispatch task"
+    }
   }
 }
