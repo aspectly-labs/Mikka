@@ -12,7 +12,6 @@ import { computerLiveState } from './state-deadline'
 import { wakeTokens, wakeWorkflowSoon, workflowWakesEnabled } from '@/lib/workflow-wake'
 import { stopRunsForPolicyChange } from '@/lib/run-policy-stop'
 import type { WorkVisibility } from '@mikka/protocol/work-visibility'
-import { withDatabaseClient } from '@/lib/db'
 import { connectForCommitEffects } from '@/lib/db/commit-effects'
 import { withTaskWorkspace } from '@/lib/task-workspace'
 import { initializeWorkVisibility } from '@/lib/settings/work-creation'
@@ -91,7 +90,7 @@ export class ComputerStore {
         for (const { id } of stopped.rows) { await runListChanged(client, id); await runChanged(client, id) }
       }
       const connectForPolicy = async (sandboxId: string) => {
-        try { return await withDatabaseClient(client, () => this.runtime.connectComputer(workspaceId, sandboxId, undefined, undefined, true)) }
+        try { return await this.runtime.connectComputer(workspaceId, sandboxId, undefined, undefined, true) }
         catch (error) {
           if (error instanceof provider.PolicySandboxUnavailable || provider.computerGone(error)) return null
           throw error

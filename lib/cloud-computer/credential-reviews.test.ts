@@ -38,8 +38,9 @@ let execute: typeof import('./credential-reviews').executeCredentialOperation
 let services: Awaited<ReturnType<typeof startExternalServices>>
 let sandboxId = ''
 const realFetch = globalThis.fetch
-const savedE2BEnv = { apiUrl: process.env.E2B_API_URL, sandboxUrl: process.env.E2B_SANDBOX_URL, httpVersion: process.env.E2B_HTTP_VERSION }
+const savedE2BEnv = { edition: process.env.MIKKA_EDITION, apiUrl: process.env.E2B_API_URL, sandboxUrl: process.env.E2B_SANDBOX_URL, httpVersion: process.env.E2B_HTTP_VERSION }
 before(async () => {
+  process.env.MIKKA_EDITION = 'community'
   services = await startExternalServices()
   process.env.E2B_API_URL = services.e2bOptions.apiUrl
   process.env.E2B_SANDBOX_URL = services.e2bOptions.sandboxUrl
@@ -76,7 +77,7 @@ before(async () => {
 })
 after(async () => {
   globalThis.fetch = realFetch
-  for (const [key, value] of [['E2B_API_URL', savedE2BEnv.apiUrl], ['E2B_SANDBOX_URL', savedE2BEnv.sandboxUrl], ['E2B_HTTP_VERSION', savedE2BEnv.httpVersion]] as const) {
+  for (const [key, value] of [['MIKKA_EDITION', savedE2BEnv.edition], ['E2B_API_URL', savedE2BEnv.apiUrl], ['E2B_SANDBOX_URL', savedE2BEnv.sandboxUrl], ['E2B_HTTP_VERSION', savedE2BEnv.httpVersion]] as const) {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value
   }
