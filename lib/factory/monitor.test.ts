@@ -810,7 +810,8 @@ test(
                 [issueId],
               )
             ).rows[0].n,
-            1,
+            0,
+            "local monitor evidence does not enqueue a retired Linear mirror write",
           );
           assert.equal(
             (
