@@ -5,15 +5,11 @@ import { pathToFileURL } from 'node:url'
 
 export const SHA40 = /^[0-9a-f]{40}$/
 export const REQUIRED_UI_POLICY_CHECKS = new Set(['Cloudflare UI Policy', 'UI policy'])
-export const SCRUBBED_ENV_KEYS = Object.freeze([
-  'GITHUB_APP_ID',
-  'GITHUB_APP_PRIVATE_KEY',
-  'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
-  'ACTIONS_ID_TOKEN_REQUEST_URL',
-  'GH_TOKEN',
-  'GITHUB_TOKEN',
-  'MIKKA_OVERLAY_READ_TOKEN',
-  'HOSTED_UI_READ_KEY',
+export const ALLOWED_PROBE_ENV_KEYS = Object.freeze([
+  'PATH',
+  'LANG',
+  'LC_ALL',
+  'TZ',
 ])
 
 /**
@@ -82,8 +78,9 @@ export function diffOverlayTypeErrors(mainOutput, integrationOutput) {
 
 /**
  * Evaluates whether the integration branch needs an automated back-merge PR
- * from main (open, forward-merge, record verified CI evidence, or merge into
- * the non-main integration branch).
+ * from main (open, forward-merge when either main OR integration base moved,
+ * close redundant, record verified CI evidence, or merge into the non-main
+ * integration branch).
  */
 export function evaluateAutoSyncPlan({
   branch,
@@ -92,6 +89,7 @@ export function evaluateAutoSyncPlan({
   featureChildCount,
   syncPr,
   syncPrIncludesMain,
+  syncPrIncludesBase = true,
   syncPrCiOk,
   syncPrCiRunUrl,
   syncPrAcceptanceState,
@@ -119,8 +117,14 @@ export function evaluateAutoSyncPlan({
     if (behindBy <= 0) {
       return { action: 'close_redundant_sync_pr', reason: `close redundant sync PR #${syncPr.number} because \`${branch}\` is already 0 commits behind \`main\`.` }
     }
-    if (!syncPrIncludesMain) {
-      return { action: 'update_sync_pr', reason: `forward-merge latest \`main\` onto open sync PR #${syncPr.number} targeting \`${branch}\`.` }
+    if (!syncPrIncludesMain || !syncPrIncludesBase) {
+      const staleParts = []
+      if (!syncPrIncludesBase) staleParts.push(`\`${branch}\``)
+      if (!syncPrIncludesMain) staleParts.push('`main`')
+      return {
+        action: 'update_sync_pr',
+        reason: `forward-merge latest ${staleParts.join(' and ')} onto open sync PR #${syncPr.number} so CI validates the exact combined revision.`,
+      }
     }
     if (!syncPr.bodyHasHeadSha) {
       return { action: 'reset_sync_acceptance', reason: `reset sync PR #${syncPr.number} acceptance to pending for updated head \`${syncPr.headSha}\`.` }
@@ -193,12 +197,19 @@ export function hasPassingUiPolicyCheck(checkRuns) {
 
 /**
  * Computes the final effective promotion action after applying emergency freeze,
- * cross-repo compatibility probe, explicit operator override, and dry-run guards.
+ * shippable pinned-overlay compatibility, explicit break-glass flags, and dry-run.
+ *
+ * By default ONLY `overlayMode === 'pinned_overlay'` authorizes creating or
+ * enqueueing a promotion PR into main, because cloudflare-api-image.yml builds
+ * main strictly against the approved overlaySource pin in mikka-cloud/main.
+ * A passing `coordinated_ui_pr` is treated as readiness diagnostics only unless
+ * `allowCoordinatedUnpinned` is explicitly enabled as an operator break-glass.
  */
 export function evaluatePromotionGate({
   frozen,
   dryRun,
-  forcePromote,
+  skipOverlayProbe = false,
+  allowCoordinatedUnpinned = false,
   plannedAction,
   plannedReason,
   overlayProbeRan,
@@ -216,26 +227,38 @@ export function evaluatePromotionGate({
     return { effectiveAction: 'noop', effectiveReason: plannedReason }
   }
   const requiresCompatibility = plannedAction === 'create_pr' || plannedAction === 'enqueue_pr'
-  if (requiresCompatibility && !forcePromote) {
+  const pinnedCompatible = overlayProbeRan && overlayCompatible && overlayMode === 'pinned_overlay'
+  const coordinatedCompatible = overlayProbeRan && overlayCompatible && overlayMode === 'coordinated_ui_pr'
+  const compatibilityAuthorized = skipOverlayProbe
+    || pinnedCompatible
+    || (allowCoordinatedUnpinned && coordinatedCompatible)
+
+  if (requiresCompatibility && !compatibilityAuthorized) {
     if (!overlayProbeRan) {
       return {
         effectiveAction: 'noop',
         effectiveReason: `fail-closed: cross-repo overlay compatibility probe did not complete (${overlaySummary || 'no probe result'}).`,
       }
     }
-    if (!overlayCompatible) {
+    if (coordinatedCompatible) {
       return {
         effectiveAction: 'noop',
-        effectiveReason: `waiting for cross-repo overlay compatibility (${overlaySummary || 'overlay build/typecheck incompatible'}).`,
+        effectiveReason: `readiness evidence only: coordinated UI PR paired cleanly, but approved \`overlaySource\` pin is not yet compatible (${overlaySummary}); pin the compatible UI commit in mikka-cloud before enqueueing \`main\` (or set \`MIKKA_INTEGRATION_ALLOW_COORDINATED_UNPINNED_PROMOTE=true\` for an intentional paired-order break-glass).`,
       }
+    }
+    return {
+      effectiveAction: 'noop',
+      effectiveReason: `waiting for approved \`overlaySource\` pin compatibility (${overlaySummary || 'overlay build/typecheck incompatible'}).`,
     }
   }
   if (dryRun) {
-    const compatNote = forcePromote
-      ? 'explicit operator override active'
-      : overlayCompatible
-        ? `overlay compatible via ${overlayMode}`
-        : overlaySummary || 'probe not required for this step'
+    const compatNote = skipOverlayProbe
+      ? 'explicit MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE break-glass active'
+      : pinnedCompatible
+        ? 'approved pinned_overlay compatible'
+        : coordinatedCompatible
+          ? 'coordinated_ui_pr break-glass authorized'
+          : overlaySummary || 'probe not required for this step'
     return {
       effectiveAction: 'noop',
       effectiveReason: `dry run requested (live run would execute \`${plannedAction}\` [${compatNote}]: ${plannedReason}).`,
@@ -244,11 +267,45 @@ export function evaluatePromotionGate({
   return { effectiveAction: plannedAction, effectiveReason: plannedReason }
 }
 
-/** Builds a credential-scrubbed child environment for compiling candidate checkouts. */
-export function scrubbedChildEnv(baseEnv = process.env, extra = {}) {
-  const env = { ...baseEnv }
-  for (const key of SCRUBBED_ENV_KEYS) delete env[key]
-  return { ...env, ...extra }
+/**
+ * Builds a strict allowlist-only environment for candidate compilation so no
+ * GitHub Actions command files (GITHUB_STEP_SUMMARY, GITHUB_OUTPUT, GITHUB_ENV),
+ * runner paths, OIDC tokens, or App credentials are exposed to integration code.
+ */
+export function buildMinimalProbeEnv(baseEnv = process.env, extra = {}) {
+  const env = {}
+  for (const key of ALLOWED_PROBE_ENV_KEYS) {
+    if (typeof baseEnv[key] === 'string' && baseEnv[key].length > 0) {
+      env[key] = baseEnv[key]
+    }
+  }
+  return {
+    HOME: '/tmp',
+    TMPDIR: '/tmp',
+    ...env,
+    ...extra,
+  }
+}
+
+/** Builds docker run arguments enforcing --network none, dropped caps, and strict mount/env isolation. */
+export function buildIsolatedDockerArgs({ dockerImage, absRepo, envVars, cmd }) {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 1000
+  const gid = typeof process.getgid === 'function' ? process.getgid() : 1000
+  const args = [
+    'run', '--rm',
+    '--network', 'none',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges',
+    '--user', `${uid}:${gid}`,
+    '--tmpfs', '/tmp:rw,nosuid,nodev,size=512m',
+    '-v', `${absRepo}:${absRepo}`,
+    '-w', absRepo,
+  ]
+  for (const [key, value] of Object.entries(envVars)) {
+    args.push('-e', `${key}=${value}`)
+  }
+  args.push(dockerImage, ...cmd)
+  return args
 }
 
 function runQuiet(bin, args, { cwd, env, timeoutMs = 300_000 }) {
@@ -268,8 +325,11 @@ function runQuiet(bin, args, { cwd, env, timeoutMs = 300_000 }) {
 
 /**
  * Verifies one exact (integrationSha, overlaySha) pair inside an already-checked-out
- * workspace with dependencies installed (`--ignore-scripts`). Captures all build and
- * typecheck diagnostics privately and returns strictly public-safe booleans/counts.
+ * workspace with dependencies installed (`--ignore-scripts`, overlay `--prod`).
+ * When `dockerImage` is supplied, every untrusted candidate command executes inside
+ * a `--network none` container that cannot reach outbound networks or host GitHub
+ * Actions summary/output files. Captures all build and typecheck diagnostics privately
+ * and returns strictly public-safe booleans, counts, and TS error codes.
  */
 export function verifyPairingInWorkspace({
   repoDir,
@@ -277,6 +337,7 @@ export function verifyPairingInWorkspace({
   integrationSha,
   overlaySha,
   mode,
+  dockerImage = '',
   env = process.env,
 }) {
   if (!SHA40.test(mainSha) || !SHA40.test(integrationSha) || !SHA40.test(overlaySha)) {
@@ -297,19 +358,31 @@ export function verifyPairingInWorkspace({
     }
   }
 
-  const cleanEnv = scrubbedChildEnv(env, {
+  const probeVars = {
+    HOME: '/tmp',
+    TMPDIR: '/tmp',
     MIKKA_UI_OVERLAY_DIR: overlayDir,
     MIKKA_UI_OVERLAY_SHA: overlaySha,
     MIKKA_DEPLOYMENT_STAGE: 'preview',
     MIKKA_PUBLIC_POSTHOG_KEY: 'phc_synthetic_ssr_regression',
-  })
+  }
+  const hostMinimalEnv = buildMinimalProbeEnv(env, probeVars)
+  const nodeBin = dockerImage ? 'node' : process.execPath
+  const runIsolated = (bin, args, timeoutMs = 300_000) => {
+    if (dockerImage) {
+      const dockerArgs = buildIsolatedDockerArgs({
+        dockerImage,
+        absRepo,
+        envVars: probeVars,
+        cmd: [bin, ...args],
+      })
+      return runQuiet('docker', dockerArgs, { cwd: absRepo, env: hostMinimalEnv, timeoutMs })
+    }
+    return runQuiet(bin, args, { cwd: absRepo, env: hostMinimalEnv, timeoutMs })
+  }
 
   // 1. Official Web build (exact FRONTEND release stage).
-  const webBuild = runQuiet(process.execPath, ['apps/frontend/scripts/build.mjs', 'web'], {
-    cwd: absRepo,
-    env: cleanEnv,
-    timeoutMs: 300_000,
-  })
+  const webBuild = runIsolated(nodeBin, ['apps/frontend/scripts/build.mjs', 'web'], 300_000)
 
   let actionContractOk = false
   let auditOk = false
@@ -325,18 +398,10 @@ export function verifyPairingInWorkspace({
       assert.ok(contract.usedActions.length > 0)
       publishedReadActions(manifest)
     `
-    const contractCheck = runQuiet(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', contractScript], {
-      cwd: absRepo,
-      env: cleanEnv,
-      timeoutMs: 60_000,
-    })
+    const contractCheck = runIsolated(nodeBin, ['--import', 'tsx', '--input-type=module', '-e', contractScript], 60_000)
     actionContractOk = contractCheck.ok
 
-    const auditCheck = runQuiet(process.execPath, ['scripts/release/hosted-ui.mjs', 'audit', 'apps/frontend/dist/web'], {
-      cwd: absRepo,
-      env: cleanEnv,
-      timeoutMs: 60_000,
-    })
+    const auditCheck = runIsolated(nodeBin, ['scripts/release/hosted-ui.mjs', 'audit', 'apps/frontend/dist/web'], 60_000)
     auditOk = auditCheck.ok
   }
 
@@ -344,45 +409,36 @@ export function verifyPairingInWorkspace({
   const tsrsBin = resolve(absRepo, 'node_modules/.bin/tsrs')
   const tscBin = existsSync(tsrsBin) ? tsrsBin : resolve(absRepo, 'node_modules/.bin/tsc')
   const typecheckArgs = ['--noEmit', '--incremental', 'false', '-p', resolve(overlayDir, 'tsconfig.json')]
-  const integrationTypecheck = runQuiet(tscBin, typecheckArgs, {
-    cwd: absRepo,
-    env: cleanEnv,
-    timeoutMs: 180_000,
-  })
+  const integrationTypecheck = runIsolated(tscBin, typecheckArgs, 180_000)
 
   let newTypeErrorCount = 0
   let newErrorCodes = []
   const integrationErrors = parseOverlayTypeErrors(integrationTypecheck.output)
   if (!integrationTypecheck.ok && integrationErrors.size === 0) {
-    // Compiler failed without parseable overlay diagnostics (e.g. OOM or config crash): fail closed.
     newTypeErrorCount = -1
   } else if (integrationErrors.size > 0) {
     const lockChanged = !runQuiet('git', ['diff', '--quiet', mainSha, integrationSha, '--', 'pnpm-lock.yaml'], {
       cwd: absRepo,
-      env: cleanEnv,
+      env: hostMinimalEnv,
       timeoutMs: 30_000,
     }).ok
     try {
       const checkoutMain = runQuiet('git', ['checkout', '--quiet', '--detach', mainSha], {
         cwd: absRepo,
-        env: cleanEnv,
+        env: hostMinimalEnv,
         timeoutMs: 60_000,
       })
       const installMainOk = !checkoutMain.ok
         ? false
         : !lockChanged || runQuiet('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], {
           cwd: absRepo,
-          env: cleanEnv,
+          env: hostMinimalEnv,
           timeoutMs: 240_000,
         }).ok
       if (!checkoutMain.ok || !installMainOk) {
         newTypeErrorCount = -1
       } else {
-        const mainTypecheck = runQuiet(tscBin, typecheckArgs, {
-          cwd: absRepo,
-          env: cleanEnv,
-          timeoutMs: 180_000,
-        })
+        const mainTypecheck = runIsolated(tscBin, typecheckArgs, 180_000)
         const mainErrors = parseOverlayTypeErrors(mainTypecheck.output)
         if (!mainTypecheck.ok && mainErrors.size === 0) {
           newTypeErrorCount = -1
@@ -395,13 +451,13 @@ export function verifyPairingInWorkspace({
     } finally {
       runQuiet('git', ['checkout', '--quiet', '--detach', integrationSha], {
         cwd: absRepo,
-        env: cleanEnv,
+        env: hostMinimalEnv,
         timeoutMs: 60_000,
       })
       if (lockChanged) {
         runQuiet('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], {
           cwd: absRepo,
-          env: cleanEnv,
+          env: hostMinimalEnv,
           timeoutMs: 240_000,
         })
       }
@@ -461,6 +517,7 @@ export function main(argv = process.argv.slice(2)) {
       integrationSha: args['integration-sha'],
       overlaySha: args['overlay-sha'],
       mode: args.mode || 'pinned_overlay',
+      dockerImage: args['docker-image'] || '',
     })
     process.stdout.write(`${JSON.stringify(result)}\n`)
     return

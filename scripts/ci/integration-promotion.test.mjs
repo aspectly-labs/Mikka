@@ -5,14 +5,14 @@ import { test } from 'node:test'
 import yaml from 'js-yaml'
 import { inspectAcceptance } from './pr-acceptance-check.mjs'
 import {
+  buildIsolatedDockerArgs,
+  buildMinimalProbeEnv,
   diffOverlayTypeErrors,
   evaluateAutoSyncPlan,
   evaluatePromotionGate,
   hasPassingUiPolicyCheck,
   parseDeployBuildInputs,
   parseOverlayTypeErrors,
-  SCRUBBED_ENV_KEYS,
-  scrubbedChildEnv,
   selectPairingCandidates,
 } from './integration-promotion-probe.mjs'
 
@@ -69,13 +69,18 @@ test('merge-queue-autopilot excludes integration promotion PRs while keeping nor
 test('promotion workflow parses cleanly as YAML with four isolated jobs and strict security boundaries', () => {
   const parsed = yaml.load(promotionWorkflow)
   assert.deepEqual(Object.keys(parsed.jobs), ['plan', 'auto-sync', 'verify-overlay-pairing', 'promote'])
+  assert.match(parsed.env.PROBE_DOCKER_IMAGE, /^node:24-bookworm-slim@sha256:[0-9a-f]{64}$/)
 
-  // Plan resolves exact branch tip from /branches/<ref> (immune to 250-commit /compare limit)
-  // and handles Ready (draft=false) without jq -e aborting.
+  // Plan resolves exact branch tip from /branches/<ref> (immune to 250-commit /compare limit),
+  // verifies sync PR includes BOTH main and current integration base, and does NOT use legacy
+  // MIKKA_INTEGRATION_PROMOTE_TO_MAIN to disable compatibility checks.
   const planEval = parsed.jobs.plan.steps.find(step => step.id === 'eval')
   assert.ok(planEval)
   assert.match(planEval.run, /branches\/\$encoded_branch/)
+  assert.match(planEval.run, /sync_pr_includes_base/)
   assert.match(planEval.run, /jq -er '\.draft \| booleans \| tostring'/)
+  assert.doesNotMatch(promotionWorkflow, /vars\.MIKKA_INTEGRATION_PROMOTE_TO_MAIN/,
+    'legacy MIKKA_INTEGRATION_PROMOTE_TO_MAIN must not bypass overlay compatibility checks')
   for (const draft of [false, true]) {
     const out = execFileSync('jq', ['-er', '.draft | booleans | tostring'], {
       input: JSON.stringify({ draft }),
@@ -84,30 +89,42 @@ test('promotion workflow parses cleanly as YAML with four isolated jobs and stri
     assert.equal(out, String(draft))
   }
 
-  // Promote job never checks out integration code and never calls gh pr merge (strictly enqueuePullRequest).
+  // Promote job never checks out integration code, re-verifies live main/branch tips after the
+  // overlay probe before creating or enqueueing, and never calls gh pr merge on main.
   const promoteSteps = parsed.jobs.promote.steps
+  const driftStep = promoteSteps.find(step => step.id === 'drift')
+  assert.ok(driftStep, 'promote job must re-verify live main and integration tips before writing')
+  assert.match(driftStep.run, /live_main.*EXPECTED_MAIN_SHA/)
+  assert.match(driftStep.run, /live_head.*EXPECTED_HEAD_SHA/)
   const promoteScript = promoteSteps.map(step => step.run ?? '').join('\n')
   assert.match(promoteScript, /enqueuePullRequest/)
   assert.doesNotMatch(promoteScript, /\bgh pr merge\b/, 'promote job must never bypass main merge_group via gh pr merge')
   assert.ok(promoteSteps.every(step => !step.with?.ref || step.with.ref === '${{ github.sha }}'),
     'promote job may only check out trusted main (github.sha), never integration branch code')
 
-  // Auto-sync merges ONLY verified non-main integration PRs with exact head match and never force-pushes.
+  // Auto-sync refreshes stale integration base, re-verifies live base SHA before merge,
+  // merges ONLY verified non-main integration PRs with exact head match, and never force-pushes.
   const syncScript = parsed.jobs['auto-sync'].steps.map(step => step.run ?? '').join('\n')
   assert.match(syncScript, /test "\$BRANCH" != "main"/)
   assert.match(syncScript, /test "\$base_ref" != "main"/)
+  assert.match(syncScript, /live_base_sha.*EXPECTED_BASE_SHA/)
   assert.match(syncScript, /--merge --delete-branch --match-head-commit/)
   assert.doesNotMatch(syncScript, /--force|-f\s+origin/, 'auto-sync must never force-push')
 
-  // Overlay pairing job stages trusted probe from main, scrubs credentials before pnpm/node, and uses --ignore-scripts.
+  // Overlay pairing job stages trusted probe from main, pulls digest-pinned Docker sandbox,
+  // scrubs credentials before pnpm/node, installs overlay with --prod --ignore-scripts, passes
+  // --docker-image for --network none isolation, and cleans up .hosted-ui in always().
   const probeSteps = parsed.jobs['verify-overlay-pairing'].steps
+  const pullIdx = probeSteps.findIndex(step => /Pull digest-pinned sandbox image/i.test(step.name ?? ''))
   const scrubIdx = probeSteps.findIndex(step => /Scrub App credentials/i.test(step.name ?? ''))
   const installIdx = probeSteps.findIndex(step => /Install public workspace/i.test(step.name ?? ''))
   const probeIdx = probeSteps.findIndex(step => step.id === 'probe')
-  assert.ok(scrubIdx > 0 && installIdx > scrubIdx && probeIdx > installIdx)
+  const cleanupStep = probeSteps.find(step => step.if === 'always()')
+  assert.ok(pullIdx > 0 && scrubIdx > pullIdx && installIdx > scrubIdx && probeIdx > installIdx)
+  assert.ok(cleanupStep && /rm -rf \.hosted-ui/.test(cleanupStep.run ?? ''))
   assert.match(probeSteps[installIdx].run, /--ignore-scripts/)
-  assert.match(probeSteps[installIdx].run, /-u GITHUB_APP_PRIVATE_KEY/)
-  assert.match(probeSteps[probeIdx].run, /--ignore-scripts/)
+  assert.match(probeSteps[probeIdx].run, /--prod --ignore-scripts/)
+  assert.match(probeSteps[probeIdx].run, /--docker-image "\$PROBE_DOCKER_IMAGE"/)
   assert.match(probeSteps[probeIdx].run, /trusted-probe\/integration-promotion-probe\.mjs/)
 })
 
@@ -185,7 +202,7 @@ test('diffOverlayTypeErrors ignores baseline main errors, catches new breaks, an
   })
 })
 
-test('evaluateAutoSyncPlan covers all state transitions and refuses targeting main or bypassing feature PRs', () => {
+test('evaluateAutoSyncPlan requires sync PR to include BOTH main and current integration base', () => {
   const base = {
     branch: 'claude/affectionate-einstein-s235cb',
     aheadBy: 10,
@@ -193,6 +210,7 @@ test('evaluateAutoSyncPlan covers all state transitions and refuses targeting ma
     featureChildCount: 0,
     syncPr: null,
     syncPrIncludesMain: false,
+    syncPrIncludesBase: false,
     syncPrCiOk: false,
     syncPrCiRunUrl: '',
     syncPrAcceptanceState: 'missing',
@@ -211,33 +229,43 @@ test('evaluateAutoSyncPlan covers all state transitions and refuses targeting ma
     headSha: SHA,
     draft: false,
     bodyHasHeadSha: true,
-    bodyHasCiRunUrl: false,
+    bodyHasCiRunUrl: true,
   }
-  assert.equal(evaluateAutoSyncPlan({ ...base, syncPr: { ...syncPr, baseRef: 'main' } }).action, 'noop')
-  assert.equal(evaluateAutoSyncPlan({ ...base, behindBy: 0, syncPr }).action, 'close_redundant_sync_pr')
-  assert.equal(evaluateAutoSyncPlan({ ...base, syncPr, syncPrIncludesMain: false }).action, 'update_sync_pr')
-  assert.equal(evaluateAutoSyncPlan({ ...base, syncPr: { ...syncPr, bodyHasHeadSha: false }, syncPrIncludesMain: true }).action, 'reset_sync_acceptance')
-  assert.equal(evaluateAutoSyncPlan({ ...base, syncPr, syncPrIncludesMain: true, syncPrCiOk: false }).action, 'noop')
+  // If a feature PR merged into integration after sync PR passed CI (syncPrIncludesBase=false),
+  // must refresh sync PR and require fresh CI — NEVER merge stale checks!
   assert.equal(evaluateAutoSyncPlan({
     ...base,
     syncPr,
     syncPrIncludesMain: true,
+    syncPrIncludesBase: false,
+    syncPrCiOk: true,
+    syncPrCiRunUrl: 'https://github.com/aspectly-labs/Mikka/actions/runs/1',
+    syncPrAcceptanceState: 'success',
+    syncPrMergeable: 'MERGEABLE',
+  }).action, 'update_sync_pr')
+
+  assert.equal(evaluateAutoSyncPlan({ ...base, syncPr: { ...syncPr, baseRef: 'main' } }).action, 'noop')
+  assert.equal(evaluateAutoSyncPlan({ ...base, behindBy: 0, syncPr }).action, 'close_redundant_sync_pr')
+  assert.equal(evaluateAutoSyncPlan({ ...base, syncPr, syncPrIncludesMain: false, syncPrIncludesBase: true }).action, 'update_sync_pr')
+  assert.equal(evaluateAutoSyncPlan({
+    ...base,
+    syncPr: { ...syncPr, bodyHasHeadSha: false, bodyHasCiRunUrl: false },
+    syncPrIncludesMain: true,
+    syncPrIncludesBase: true,
+  }).action, 'reset_sync_acceptance')
+  assert.equal(evaluateAutoSyncPlan({
+    ...base,
+    syncPr: { ...syncPr, bodyHasCiRunUrl: false },
+    syncPrIncludesMain: true,
+    syncPrIncludesBase: true,
     syncPrCiOk: true,
     syncPrCiRunUrl: 'https://github.com/aspectly-labs/Mikka/actions/runs/1',
   }).action, 'record_sync_evidence')
   assert.equal(evaluateAutoSyncPlan({
     ...base,
-    syncPr: { ...syncPr, bodyHasCiRunUrl: true },
+    syncPr,
     syncPrIncludesMain: true,
-    syncPrCiOk: true,
-    syncPrCiRunUrl: 'https://github.com/aspectly-labs/Mikka/actions/runs/1',
-    syncPrAcceptanceState: 'pending',
-    syncPrMergeable: 'MERGEABLE',
-  }).action, 'noop')
-  assert.equal(evaluateAutoSyncPlan({
-    ...base,
-    syncPr: { ...syncPr, bodyHasCiRunUrl: true },
-    syncPrIncludesMain: true,
+    syncPrIncludesBase: true,
     syncPrCiOk: true,
     syncPrCiRunUrl: 'https://github.com/aspectly-labs/Mikka/actions/runs/1',
     syncPrAcceptanceState: 'success',
@@ -263,7 +291,6 @@ test('selectPairingCandidates prioritizes pinned overlay and adds coordinated Re
       { mode: 'coordinated_ui_pr', sha: SHA2, prNumber: 390 },
     ],
   )
-  // Draft, failing UI policy, or open child UI PRs must NOT qualify as coordinated candidate.
   for (const patch of [
     { hostedUiPr: { number: 390, baseRef: 'main', headSha: SHA2, draft: true } },
     { hostedUiChildCount: 1 },
@@ -287,13 +314,14 @@ test('selectPairingCandidates prioritizes pinned overlay and adds coordinated Re
   assert.equal(hasPassingUiPolicyCheck([{ name: 'Other check', status: 'completed', conclusion: 'success' }]), false)
 })
 
-test('evaluatePromotionGate enforces emergency freeze, cross-repo compatibility, override, and dry-run', () => {
+test('evaluatePromotionGate requires approved pinned_overlay by default and treats coordinated_ui_pr as readiness evidence only', () => {
   const common = {
     frozen: false,
     dryRun: false,
-    forcePromote: false,
-    plannedAction: 'create_pr',
-    plannedReason: 'open promotion PR',
+    skipOverlayProbe: false,
+    allowCoordinatedUnpinned: false,
+    plannedAction: 'enqueue_pr',
+    plannedReason: 'enqueue promotion PR',
     overlayProbeRan: true,
     overlayCompatible: true,
     overlayMode: 'pinned_overlay',
@@ -304,11 +332,26 @@ test('evaluatePromotionGate enforces emergency freeze, cross-repo compatibility,
   assert.equal(evaluatePromotionGate({ ...common, overlayProbeRan: false }).effectiveAction, 'noop')
   assert.equal(evaluatePromotionGate({ ...common, overlayCompatible: false }).effectiveAction, 'noop')
   assert.equal(evaluatePromotionGate({ ...common, dryRun: true }).effectiveAction, 'noop')
-  assert.equal(evaluatePromotionGate(common).effectiveAction, 'create_pr')
-  assert.equal(evaluatePromotionGate({ ...common, plannedAction: 'enqueue_pr' }).effectiveAction, 'enqueue_pr')
+  assert.equal(evaluatePromotionGate(common).effectiveAction, 'enqueue_pr')
+  assert.equal(evaluatePromotionGate({ ...common, plannedAction: 'create_pr' }).effectiveAction, 'create_pr')
+
+  // Coordinated UI PR alone must NOT auto-enqueue an unshippable pair onto main by default.
+  const coordinatedOnly = evaluatePromotionGate({
+    ...common,
+    overlayMode: 'coordinated_ui_pr',
+    overlaySummary: 'pinned_overlay@11111111: compatible=false; coordinated_ui_pr@22222222: compatible=true',
+  })
+  assert.equal(coordinatedOnly.effectiveAction, 'noop')
+  assert.match(coordinatedOnly.effectiveReason, /readiness evidence only/)
+
+  // Explicit operator break-glass allows coordinated_ui_pr or probe skip.
   assert.equal(
-    evaluatePromotionGate({ ...common, overlayProbeRan: false, overlayCompatible: false, forcePromote: true }).effectiveAction,
-    'create_pr',
+    evaluatePromotionGate({ ...common, overlayMode: 'coordinated_ui_pr', allowCoordinatedUnpinned: true }).effectiveAction,
+    'enqueue_pr',
+  )
+  assert.equal(
+    evaluatePromotionGate({ ...common, overlayProbeRan: false, overlayCompatible: false, skipOverlayProbe: true }).effectiveAction,
+    'enqueue_pr',
   )
   // Recording verified evidence on an already-open promotion PR stays allowed without re-running overlay probe.
   assert.equal(
@@ -317,13 +360,31 @@ test('evaluatePromotionGate enforces emergency freeze, cross-repo compatibility,
   )
 })
 
-test('scrubbedChildEnv strips all App, OIDC, and GitHub tokens before candidate execution', () => {
-  const dirty = Object.fromEntries(SCRUBBED_ENV_KEYS.map(key => [key, 'secret-value']))
-  dirty.PATH = '/usr/bin'
-  const clean = scrubbedChildEnv(dirty, { MIKKA_UI_OVERLAY_SHA: SHA3 })
-  for (const key of SCRUBBED_ENV_KEYS) {
-    assert.equal(clean[key], undefined, `${key} must be scrubbed`)
+test('buildMinimalProbeEnv and buildIsolatedDockerArgs strip GitHub Actions files, tokens, and network access', () => {
+  const dirty = {
+    PATH: '/usr/bin',
+    GITHUB_STEP_SUMMARY: '/tmp/summary.md',
+    GITHUB_OUTPUT: '/tmp/output.txt',
+    GITHUB_ENV: '/tmp/env.txt',
+    GITHUB_PATH: '/tmp/path.txt',
+    RUNNER_TEMP: '/tmp/runner',
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'oidc-secret',
+    GITHUB_APP_PRIVATE_KEY: 'pem-secret',
+    GH_TOKEN: 'gh-secret',
   }
-  assert.equal(clean.PATH, '/usr/bin')
-  assert.equal(clean.MIKKA_UI_OVERLAY_SHA, SHA3)
+  const clean = buildMinimalProbeEnv(dirty, { MIKKA_UI_OVERLAY_SHA: SHA3 })
+  assert.deepEqual(Object.keys(clean).sort(), ['HOME', 'MIKKA_UI_OVERLAY_SHA', 'PATH', 'TMPDIR'])
+  assert.equal(clean.HOME, '/tmp')
+  assert.equal(clean.TMPDIR, '/tmp')
+
+  const dockerArgs = buildIsolatedDockerArgs({
+    dockerImage: 'node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9',
+    absRepo: '/work/repo',
+    envVars: { HOME: '/tmp', MIKKA_UI_OVERLAY_SHA: SHA3 },
+    cmd: ['node', 'apps/frontend/scripts/build.mjs', 'web'],
+  })
+  assert.ok(dockerArgs.includes('--network') && dockerArgs[dockerArgs.indexOf('--network') + 1] === 'none')
+  assert.ok(dockerArgs.includes('--cap-drop') && dockerArgs[dockerArgs.indexOf('--cap-drop') + 1] === 'ALL')
+  assert.ok(dockerArgs.includes('no-new-privileges'))
+  assert.ok(!dockerArgs.some(arg => /GITHUB_STEP_SUMMARY|GITHUB_OUTPUT|RUNNER_TEMP/.test(arg)))
 })
