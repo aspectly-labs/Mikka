@@ -381,7 +381,7 @@ function sendMenuCommand(command: DesktopMenuCommand): void {
 }
 
 let appSettings: AppSettings | undefined
-let stopRunActivity: (() => void) | undefined
+let runActivity: ReturnType<typeof watchLocalRunActivity> | undefined
 let tray: Tray | null = null
 let trayState: DesktopTrayState = { signedIn: false, waiting: 0, threads: null, hasMore: false }
 
@@ -769,14 +769,16 @@ async function start(): Promise<void> {
   // 立即重启 / 稍后, and installs on quit. Only a server that requires a newer desktop blocks (enforceMinimumVersion).
   createMainWindow()
   appSettings.apply()
-  stopRunActivity = watchLocalRunActivity(active => appSettings?.setActive(active))
+  runActivity = watchLocalRunActivity(active => appSettings?.setActive(active))
   if (app.isPackaged && FLAVOR !== 'dev') {
     // This app may just have updated: the daemon on this computer updates too, when idle (daemon-update.ts).
     void updateLocalDaemon(FLAVOR, { connect: connectForUpdate({ name: 'mikka-desktop', version: APP_VERSION }) })
+      .then(() => runActivity?.refresh())
     setTimeout(() => { void checkForUpdates(false) }, BACKGROUND_UPDATE_DELAY_MS)
     setInterval(() => { void checkForUpdates(false) }, BACKGROUND_UPDATE_INTERVAL_MS)
   }
   app.on('activate', () => {
+    runActivity?.refresh()
     if (BrowserWindow.getAllWindows().length === 0 && !gate) createMainWindow()
   })
   // Only disk assets and the loading shell may overtake restoration. API and
@@ -797,7 +799,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', closeAuthServer)
   app.on('before-quit', () => { tray?.destroy(); tray = null })
   app.on('before-quit', closeReturnListener)
-  app.on('before-quit', () => stopRunActivity?.())
+  app.on('before-quit', () => runActivity?.close())
   app.on('before-quit', () => { bundledAuth?.dispose(); bundledLive?.closeAll(); bundledViewer?.closeAll() })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()

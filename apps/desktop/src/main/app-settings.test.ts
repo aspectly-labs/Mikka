@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol'
@@ -32,7 +32,9 @@ test('app preferences survive restart and a run holds one sleep blocker', t => {
 
 
 test('the app holds sleep prevention without a window and releases it on run end, disconnect and quit', { timeout: 10_000, skip: process.platform === 'win32' }, async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'mikka-activity-'))
+  const parent = mkdtempSync(join(tmpdir(), 'mikka-activity-'))
+  const directory = join(parent, 'daemon')
+  writeFileSync(directory, 'unavailable to the first native watcher')
   const { socket: socketPath, secret: secretPath } = daemonPaths(directory)
   const secret = 'fixture-desktop-run-activity-secret'
   const events: string[] = []
@@ -45,14 +47,14 @@ test('the app holds sleep prevention without a window and releases it on run end
     while (events.length < count) await new Promise<void>(resolve => { unblockEvent = resolve })
   }
   let blocker = 0
-  const settings = new AppSettings(join(directory, 'preferences.json'), {
+  const settings = new AppSettings(join(parent, 'preferences.json'), {
     loginSupported: false, getLogin: () => false, setLogin: () => undefined, tray: () => undefined,
     block: () => { observed('blocked'); return ++blocker },
     unblock: id => { assert.equal(id, blocker); observed('released') },
   })
   settings.write({ preventSleep: true })
   const connect = () => connectDaemonInDataDir(directory, { name: 'activity-fixture', version: '1' })
-  const stop = watchDaemonRunActivity(directory, connect, active => settings.setActive(active))
+  const watcher = watchDaemonRunActivity(directory, connect, active => settings.setActive(active))
   let active = true
   const serve = (supportsRunActivity = true) => new RpcServer({
     socketPath, secret, hello: () => ({ protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersion: '0.0.0-fixture', pid: process.pid }),
@@ -61,11 +63,14 @@ test('the app holds sleep prevention without a window and releases it on run end
     log: createLogger(),
   })
   let daemon = serve()
-  t.after(async () => { stop(); await daemon.close(); rmSync(directory, { recursive: true, force: true }) })
+  t.after(async () => { watcher.close(); await daemon.close(); rmSync(parent, { recursive: true, force: true }) })
+  rmSync(directory)
+  mkdirSync(directory)
   writeFileSync(secretPath, secret, { mode: 0o600 })
   await daemon.listen()
-  // Native main attaches before the daemon is installed, then receives an
-  // already-running snapshot even though no BrowserWindow exists.
+  // An activation event retries the unavailable filesystem watch and fetches
+  // the already-running snapshot even though no BrowserWindow exists.
+  watcher.refresh()
   await waitFor(1)
   active = false
   daemon.publishRunActivity(active)
@@ -86,7 +91,7 @@ test('the app holds sleep prevention without a window and releases it on run end
   daemon = serve()
   await daemon.listen()
   await waitFor(5)
-  stop()
-  stop()
+  watcher.close()
+  watcher.close()
   assert.deepEqual(events, ['blocked', 'released', 'blocked', 'released', 'blocked', 'released'])
 })

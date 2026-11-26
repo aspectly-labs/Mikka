@@ -3,11 +3,13 @@ import { basename } from 'node:path'
 import type { DaemonClient } from '@mikka/daemon/client'
 import { daemonPaths } from '@mikka/daemon/paths'
 
+export type DaemonRunActivityWatch = { refresh(): void; close(): void }
+
 export function watchDaemonRunActivity(
   dataDir: string,
   connect: () => Promise<DaemonClient>,
   setActive: (active: boolean) => void,
-): () => void {
+): DaemonRunActivityWatch {
   let stopped = false
   let connecting = false
   let retry = false
@@ -31,7 +33,7 @@ export function watchDaemonRunActivity(
         if (client !== next) return
         client = undefined
         setActive(false)
-        void reconnect()
+        refresh()
       })
       try {
         await next.watchRunActivity(active => {
@@ -59,24 +61,37 @@ export function watchDaemonRunActivity(
   const paths = daemonPaths(dataDir)
   const relevant = [basename(paths.socket), basename(paths.secret)]
   let watcher: FSWatcher | undefined
-  try {
-    mkdirSync(dataDir, { recursive: true, mode: 0o700 })
-    watcher = watch(dataDir, { persistent: false }, (_event, name) => {
-      if (!name || relevant.includes(name)) void reconnect()
-    })
-    watcher.on('error', () => watcher?.close())
-  } catch {
-    // Launch can still attach to an already-available daemon.
-  }
-  void reconnect()
-
-  return () => {
+  function refresh() {
     if (stopped) return
-    stopped = true
-    const previous = client
-    client = undefined
-    watcher?.close()
-    previous?.close()
-    setActive(false)
+    if (!watcher) {
+      try {
+        mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+        const next = watch(dataDir, { persistent: false }, (_event, name) => {
+          if (!name || relevant.includes(name)) void reconnect()
+        })
+        next.on('error', () => {
+          if (watcher === next) watcher = undefined
+          next.close()
+        })
+        watcher = next
+      } catch {
+        // The next app activation or daemon lifecycle event can rearm the watch.
+      }
+    }
+    void reconnect()
+  }
+  refresh()
+
+  return {
+    refresh,
+    close() {
+      if (stopped) return
+      stopped = true
+      const previous = client
+      client = undefined
+      watcher?.close()
+      previous?.close()
+      setActive(false)
+    },
   }
 }
