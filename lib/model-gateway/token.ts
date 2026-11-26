@@ -10,7 +10,7 @@ type Query = Pick<Pool | PoolClient, 'query'>
  * on the machine holds only this; the provider key or Mikka's own gateway
  * credential stays on the server. Only the SHA-256 is stored.
  */
-export type GatewaySource = { kind: 'credits' } | { kind: 'api_key'; keyId: string }
+export type GatewaySource = { kind: 'credits' } | { kind: 'api_key'; keyId: string } | { kind: 'subscription'; deviceId: string }
 export interface GatewayGrant {
   runId: string
   ownerId: string
@@ -37,13 +37,14 @@ export async function mintGatewayToken(query: Query, grant: GatewayGrant, now = 
   z.uuid().parse(grant.runId)
   if (grant.workspaceId) z.uuid().parse(grant.workspaceId)
   if (grant.source.kind === 'api_key') z.uuid().parse(grant.source.keyId)
+  if (grant.source.kind === 'subscription') z.uuid().parse(grant.source.deviceId)
   const model = z.string().trim().min(1).max(128).parse(grant.model)
   const token = PREFIX + randomBytes(32).toString('base64url')
   const expiresAt = new Date(now + GATEWAY_TOKEN_TTL_MS)
-  await query.query(`INSERT INTO model_gateway_tokens ("tokenHash","runId","ownerId","workspaceId",harness,model,"sourceKind","keyId","expiresAt")
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+  await query.query(`INSERT INTO model_gateway_tokens ("tokenHash","runId","ownerId","workspaceId",harness,model,"sourceKind","keyId","expiresAt","deviceId")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
   [hashGatewayToken(token), grant.runId, grant.ownerId, grant.workspaceId, grant.harness, model, grant.source.kind,
-    grant.source.kind === 'api_key' ? grant.source.keyId : null, expiresAt])
+    grant.source.kind === 'api_key' ? grant.source.keyId : null, expiresAt, grant.source.kind === 'subscription' ? grant.source.deviceId : null])
   return { token, expiresAt }
 }
 
@@ -54,17 +55,19 @@ export async function mintGatewayToken(query: Query, grant: GatewayGrant, now = 
  */
 export async function verifyGatewayToken(query: Query, token: string, now = new Date()): Promise<GatewayGrant | null> {
   if (!tokenShape.test(token)) return null
-  const { rows: [row] } = await query.query<{ runId: string; ownerId: string; workspaceId: string | null; harness: GatewayGrant['harness']; model: string; sourceKind: 'credits' | 'api_key'; keyId: string | null; pro: boolean; serviceTier: string | null }>(
-    `SELECT t."runId"::text AS "runId",t."ownerId",t."workspaceId"::text AS "workspaceId",t.harness,t.model,t."sourceKind",t."keyId"::text AS "keyId",
+  const { rows: [row] } = await query.query<{ runId: string; ownerId: string; workspaceId: string | null; harness: GatewayGrant['harness']; model: string; sourceKind: 'credits' | 'api_key' | 'subscription'; deviceId: string | null; keyId: string | null; pro: boolean; serviceTier: string | null }>(
+    `SELECT t."runId"::text AS "runId",t."ownerId",t."workspaceId"::text AS "workspaceId",t.harness,t.model,t."sourceKind",t."keyId"::text AS "keyId",t."deviceId"::text AS "deviceId",
        (r."agentDefinition"->'modelDispatch'->'pro') = 'true'::jsonb AS pro,
        r."agentDefinition"->'modelDispatch'->>'serviceTier' AS "serviceTier"
      FROM model_gateway_tokens t JOIN agent_runs r ON r.id=t."runId" AND r."userId"=t."ownerId"
-     WHERE t."tokenHash"=$1 AND t."expiresAt">$2 AND r.status=ANY($3::text[]) AND r."stopRequestedAt" IS NULL`,
+     WHERE t."tokenHash"=$1 AND t."expiresAt">$2 AND r.status=ANY($3::text[]) AND r."stopRequestedAt" IS NULL
+       AND (t."sourceKind" <> 'subscription' OR (t."deviceId"=r."deviceId" AND r."leaseExpiresAt">$2))`,
     [hashGatewayToken(token), now, ACTIVE_RUN])
-  if (!row) return null
+  if (!row || row.sourceKind === 'subscription' && !row.deviceId) return null
   const serviceTier = row.serviceTier === 'fast' || row.serviceTier === 'ultrafast' ? row.serviceTier : undefined
   return { runId: row.runId, ownerId: row.ownerId, workspaceId: row.workspaceId, harness: row.harness, model: row.model,
-    source: row.sourceKind === 'api_key' && row.keyId ? { kind: 'api_key', keyId: row.keyId } : { kind: 'credits' },
+    source: row.sourceKind === 'subscription' ? { kind: 'subscription', deviceId: row.deviceId! }
+      : row.sourceKind === 'api_key' && row.keyId ? { kind: 'api_key', keyId: row.keyId } : { kind: 'credits' },
     ...(row.pro === true ? { pro: true } : serviceTier ? { serviceTier } : {}) }
 }
 

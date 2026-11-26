@@ -1,16 +1,8 @@
-import { withDeviceRoute } from '@/lib/device-route'
-import { authenticateDevice, ownedDeviceWithReport } from '@/lib/device-link'
-import { subscriptionRuntime } from '@/lib/subscription-runtime'
-import { leaseDevice } from '@/lib/subscription-native-device'
-import { subscriptionNativeLease } from '@/lib/subscription-native-lease'
-
-const handlePOST = subscriptionNativeLease({
-  authorize: async (request, deviceId) => {
-    const caller = await authenticateDevice(request)
-    if (!caller || !leaseDevice(await ownedDeviceWithReport(deviceId, caller.userId), deviceId, caller.scopeDeviceId)) return null
-    return caller.userId
-  },
-  service: () => subscriptionRuntime(true, false, { exportAccessLease: true }),
-})
-
-export const POST = withDeviceRoute(handlePOST)
+// Older devices must upgrade to the run-bound model gateway. This route
+// returns the same refusal for every caller and cannot open an OAuth grant.
+export async function POST() {
+  return Response.json({ error: 'subscription_gateway_required' }, {
+    status: 410,
+    headers: { 'cache-control': 'private, no-store' },
+  })
+}

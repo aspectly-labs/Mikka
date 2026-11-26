@@ -271,7 +271,9 @@ export class SubscriptionService {
       const client=this.worker(this.repository.scope(row)).forUse(use)
       await timing.measure('prepare', () => client.call('prepare',{revision:authorized.binding.connectionRevision},signal))
       const info=await timing.measure('context', () => client.call<{accountId:string;plan?:string;expiresAt:string}>('nativeContext',{revision:authorized.binding.connectionRevision},signal))
-      return nativeBrokerContextSchema.parse({...info,route:binding.route,modelId:binding.modelId,revision:authorized.binding.connectionRevision})
+      return nativeBrokerContextSchema.parse({ accountId: info.accountId, ...(info.plan ? { plan: info.plan } : {}),
+        expiresAt: typeof info.expiresAt === 'string' ? new Date(info.expiresAt).toISOString() : info.expiresAt,
+        route: binding.route, modelId: selected.modelId ?? binding.modelId, revision: authorized.binding.connectionRevision })
     })
   }
   /** Prepare a device's direct-provider credential once. nativeAuth performs
@@ -312,7 +314,7 @@ export class SubscriptionService {
       if(!request.body || typeof request.body!=='object' || Array.isArray(request.body) || !('model' in request.body) || typeof request.body.model!=='string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(request.body.model))throw new SubscriptionRefusal('binding_mismatch', { detail: 'model_field_invalid' })
       const selected = await timing.measure('selection', () => this.nativeRunSelection(use, binding.modelId))
       if (selected.modelId !== undefined && request.body.model!==selected.modelId) throw new SubscriptionRefusal('binding_mismatch', { detail: 'model_not_selected' })
-      if(binding.route==='codex_cli'?request.path!=='/responses':binding.route!=='claude_code_cli'||!['/v1/messages','/v1/messages?beta=true'].includes(request.path))throw new SubscriptionRefusal('backend_unavailable', { detail: 'route_not_allowed_for_binding' })
+      if(binding.route==='codex_cli'?request.path!=='/responses':binding.route!=='claude_code_cli'||!['/v1/messages','/v1/messages?beta=true','/v1/messages/count_tokens'].includes(request.path))throw new SubscriptionRefusal('backend_unavailable', { detail: 'route_not_allowed_for_binding' })
       const scope = { ownerId: selected.executionOwnerId, workspaceId: binding.workspaceId, runId: use.runId }
       const model = request.body.model
       await timing.measure('admit_before', () => this.admitModel(scope, model, binding.route, signal))

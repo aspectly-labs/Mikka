@@ -11,6 +11,7 @@ import { isCloudEdition } from '@/lib/edition'
 import { gatewayLiteLlm, SELF_HOSTED_DEFAULT_CATALOG_ID } from './config'
 import { readRunChain } from '@/lib/run-chain'
 import { recordExternalModelUsage, type ModelReceipt } from './ledger'
+import { modelGatewayProtocolBody } from './protocol-fields.mjs'
 import { liteLLMResponseCost } from './litellm-client'
 
 /** The same input-size boundary the hosted model applies to one call. */
@@ -21,6 +22,7 @@ export interface GatewayDependencies {
   fetch: Fetch
   verify(token: string): Promise<GatewayGrant | null>
   /** The upstream for a grant; throws a `GatewayRefusal` when nothing may serve it. */
+  subscription?(grant: GatewayGrant, protocol: GatewayProtocol, operation: GatewayOperation, body: Record<string, unknown>, request: Request): Promise<Response>
   upstream(grant: GatewayGrant, protocol: GatewayProtocol): Promise<{ upstream: GatewayUpstream; features?: import('./features').GatewayFeatures }>
   /** Mikka 额度 only: holds a call's worth of credit; resolves to the hold's id. Throws `PaidResourceError` when nothing can pay. */
   reserve(grant: GatewayGrant, id: string): Promise<void>
@@ -79,7 +81,7 @@ function usageTap(streaming: boolean, onDone: (text: string) => Promise<void>) {
  * run's token, pin the run's frozen model, hold credit when Mikka pays, forward
  * as a stream, then settle at the list price of what the provider reported.
  */
-export async function handleModelGateway(request: Request, protocol: GatewayProtocol, operation: GatewayOperation, dependencies: GatewayDependencies = defaultDependencies()): Promise<Response> {
+export async function handleModelGateway(request: Request, protocol: GatewayProtocol, operation: GatewayOperation, dependencies: GatewayDependencies = modelGatewayDependencies()): Promise<Response> {
   const token = requestGatewayToken(request.headers)
   const grant = token ? await dependencies.verify(token) : null
   if (!grant) return errorResponse(protocol, 401, 'model_gateway_token_invalid')
@@ -95,11 +97,13 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
     body = parsed as Record<string, unknown>
   } catch { return errorResponse(protocol, 400, 'model_gateway_body_invalid') }
 
-  let resolved: Awaited<ReturnType<GatewayDependencies['upstream']>>
-  try { resolved = await dependencies.upstream(grant, protocol) }
-  catch (error) {
-    if (error instanceof GatewayRefusal) return errorResponse(protocol, error.status, error.code)
-    throw new Error('model_gateway_upstream_unavailable', { cause: error })
+  let resolved: Awaited<ReturnType<GatewayDependencies['upstream']>> | undefined
+  if (grant.source.kind !== 'subscription') {
+    try { resolved = await dependencies.upstream(grant, protocol) }
+    catch (error) {
+      if (error instanceof GatewayRefusal) return errorResponse(protocol, error.status, error.code)
+      throw new Error('model_gateway_upstream_unavailable', { cause: error })
+    }
   }
   const metered = grant.source.kind === 'credits' && operation !== 'count_tokens'
   const holdId = randomUUID()
@@ -114,17 +118,24 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
       throw new Error('model_gateway_reserve_failed', { cause: error })
     }
   }
-  const outgoing = upstreamRequest({
-    protocol, operation, model: grant.model,
-    body: withoutDisabledFeatures(body, resolved.features ?? {}),
-    clientHeaders: request.headers, upstream: resolved.upstream,
-    ...(grant.pro ? { pro: true } : grant.serviceTier ? { serviceTier: grant.serviceTier } : {}),
-  })
   let response: Response
   try {
-    response = await dependencies.fetch(outgoing.url, { method: 'POST', headers: outgoing.headers, body: JSON.stringify(outgoing.body), redirect: 'error', signal: request.signal })
+    if (resolved) {
+      const outgoing = upstreamRequest({
+        protocol, operation, model: grant.model,
+        body: withoutDisabledFeatures(body, resolved.features ?? {}),
+        clientHeaders: request.headers, upstream: resolved.upstream,
+        ...(grant.pro ? { pro: true } : grant.serviceTier ? { serviceTier: grant.serviceTier } : {}),
+      })
+      response = await dependencies.fetch(outgoing.url, { method: 'POST', headers: outgoing.headers, body: JSON.stringify(outgoing.body), redirect: 'error', signal: request.signal })
+    } else if (dependencies.subscription) {
+      response = await dependencies.subscription(grant, protocol, operation, body, request)
+    } else {
+      return errorResponse(protocol, 503, 'model_gateway_unconfigured')
+    }
   } catch (error) {
     if (metered) await dependencies.settle(holdId, 0, null)
+    if (error instanceof GatewayRefusal) return errorResponse(protocol, error.status, error.code)
     if (request.signal.aborted) return errorResponse(protocol, 499, 'model_gateway_client_closed')
     console.warn(JSON.stringify({ msg: 'model_gateway_upstream_failed', runId: grant.runId, source: grant.source.kind, error: error instanceof Error ? error.name : 'unknown' }))
     return errorResponse(protocol, 502, 'model_gateway_upstream_failed')
@@ -159,11 +170,12 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
   return new Response(response.body.pipeThrough(tap.stream), { status: response.status, headers })
 }
 
-function defaultDependencies(): GatewayDependencies {
+export function modelGatewayDependencies(): GatewayDependencies {
   return {
     fetch,
     verify: token => verifyGatewayToken(pool, token),
     upstream: (grant, protocol) => resolveGatewayUpstream(grant, protocol),
+    subscription: forwardNativeSubscription,
     async reserve(grant, id) {
       if (!grant.workspaceId) throw new PaidResourceError('free_allowance_used')
       const [{ hostedUsage }, { withSharedCredits }, { hostedBillingScope }] = await Promise.all([
@@ -179,10 +191,10 @@ function defaultDependencies(): GatewayDependencies {
         usage ? { read: usage.cacheReadTokens, write: usage.cacheWriteTokens } : null, messageId)
     },
     async recordExternal(grant, id, receipt) {
-      if (!grant.workspaceId || grant.source.kind !== 'api_key') return
+      if (!grant.workspaceId || grant.source.kind === 'credits') return
       const threadId = (await readRunChain(pool, grant.ownerId, grant.runId))?.rootRunId ?? null
       await recordExternalModelUsage(db, { ...receipt, id, threadId, workspaceId: grant.workspaceId, ownerId: grant.ownerId,
-        runId: grant.runId, model: grant.model, source: 'api_key' })
+        runId: grant.runId, model: grant.model, source: grant.source.kind })
     },
     catalogue: async () => (await import('@/lib/model-catalog-server')).modelCatalog(),
     async refused(grant, code) {
@@ -191,6 +203,23 @@ function defaultDependencies(): GatewayDependencies {
       if (stopped.rowCount) await (await import('@/lib/live/panels')).runChanged(pool, grant.runId)
     },
   }
+}
+
+export async function forwardNativeSubscription(grant: GatewayGrant, protocol: GatewayProtocol, operation: GatewayOperation,
+  body: Record<string, unknown>, request: Request, supplied?: import('@/lib/subscription-service').SubscriptionService) {
+  if (grant.source.kind !== 'subscription') throw new GatewayRefusal(403, 'model_gateway_protocol_mismatch')
+  const service = supplied ?? (await import('@/lib/subscription-runtime')).subscriptionRuntime(true)
+  const use = await service.nativeRun(grant.ownerId, grant.source.deviceId, grant.runId)
+  const path = operation === 'responses' ? '/responses'
+    : operation === 'count_tokens' ? '/v1/messages/count_tokens' : '/v1/messages'
+  const headers: Record<string, string> = Object.fromEntries(
+    ['accept', 'anthropic-version', 'anthropic-beta', 'openai-beta'].flatMap(name => {
+      const value = request.headers.get(name)
+      return value ? [[name, value]] : []
+    }))
+  const payload = { ...modelGatewayProtocolBody(protocol, body), model: grant.model }
+  const upstream = await service.nativeRequest(use, { path, headers, body: payload }, request.signal)
+  return new Response(upstream.body, { headers: { 'content-type': upstream.contentType, ...(upstream.generationId ? { 'x-litellm-call-id': upstream.generationId } : {}) } })
 }
 
 /** The run's frozen source, opened for this one request. */
@@ -203,6 +232,7 @@ export async function resolveGatewayUpstream(grant: GatewayGrant, protocol: Gate
     if (!catalogModel(grant.model, models)?.pricing) throw new GatewayRefusal(400, 'model_gateway_model_unpriced')
     return { upstream: litellm }
   }
+  if (grant.source.kind !== 'api_key') throw new GatewayRefusal(403, 'model_gateway_protocol_mismatch')
   const { openGatewayApiKey } = await import('@/lib/model-api-keys')
   const opened = await openGatewayApiKey(pool, grant.source.keyId, env).catch((error: unknown) => {
     throw new GatewayRefusal(401, 'model_gateway_key_unavailable', { cause: error })

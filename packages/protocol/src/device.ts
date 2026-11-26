@@ -28,7 +28,7 @@ import { runStopReason, runBenchmarkContext } from "./run"
 import { MAX_PROFILE_SKILLS_PER_RUN, MAX_SKILLS_PER_RUN, profileRunSkillSchema, runSkillSchema } from "./skill"
 import { skillAssignmentReceiptSchema } from './skill-artifact'
 import { sanitizeTraceContext } from './trace-context'
-import { nativeLeaseSchema } from './subscription'
+import { nativeBrokerContextSchema, nativeLeaseSchema } from './subscription'
 import { mailboxCatalogueSchema } from './mailbox'
 import { taskSecretAccessSchema } from './task-secrets'
 import { taskBranchSchema } from './orchestrator'
@@ -510,6 +510,7 @@ export const runAssignmentSchema = z.object({
   }).strict().optional(),
   /** Access credential for the selected subscription. Kept in memory, never journaled. */
   subscriptionLease: nativeLeaseSchema.optional(),
+  subscriptionContext: nativeBrokerContextSchema.optional(),
   /**
    * The run's own API key, opened for this claim only. Never with
    * `subscriptionBinding`. The daemon keeps it in memory and hands it only
@@ -660,6 +661,11 @@ export const runAssignmentSchema = z.object({
   /** Resolved personal/workspace Git commit author & committer identity (#3110). */
   gitIdentity: runGitIdentitySchema.optional(),
 }).refine(value => !(value.modelCredential && value.subscriptionBinding), { message: "A run has one model credential", path: ["modelCredential"] })
+  .refine(value => !value.subscriptionContext || Boolean(value.subscriptionBinding && !value.subscriptionLease &&
+    value.subscriptionBinding.route === value.subscriptionContext.route && value.modelCredential?.kind === 'provider' &&
+    (value.harness === 'codex' ? value.subscriptionContext.route === 'codex_cli' && value.modelCredential.protocol === 'openai'
+      : value.harness === 'claude_code' && value.subscriptionContext.route === 'claude_code_cli' && value.modelCredential.protocol === 'anthropic')),
+  { message: 'A subscription context requires its binding and model gateway credential', path: ['subscriptionContext'] })
   .refine(value => !value.subscriptionLease || Boolean(value.subscriptionBinding && value.subscriptionBinding.route === value.subscriptionLease.route &&
     (value.harness === 'codex' ? value.subscriptionLease.route === 'codex_cli' : value.harness === 'claude_code' && value.subscriptionLease.route === 'claude_code_cli')),
   { message: 'A subscription lease belongs to the selected harness and binding', path: ['subscriptionLease'] })
