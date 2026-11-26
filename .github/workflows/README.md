@@ -30,6 +30,7 @@ protected UI check.
   `Browser tests (before merge)` and passes at once; delete it once that name
   is removed from the required checks in the repository settings.
 - `GitGuardian Security Checks` is a separate external required check.
+- The protected `UI policy (strict)` source stage also runs the waiting-issue check, so no separate required check name is needed for `waiting-issues.yml`.
 - All four existing required names remain intact. Do not silently replace
   them with a new aggregate check until the GitHub branch-protection settings
   have been migrated and verified.

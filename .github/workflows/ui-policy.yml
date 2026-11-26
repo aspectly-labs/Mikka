@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   # Main commits need unique groups: a new pending run must not evict an older
@@ -180,6 +181,11 @@ jobs:
         run: node --test scripts/acceptance/auth-audit-production.test.mjs scripts/acceptance/cloud-lease-audit.test.mjs scripts/acceptance/cloud-lease-recovery.test.mjs scripts/acceptance/shared-account-queue.test.mjs scripts/ops/production-smoke.test.mjs
         if: always()
       - run: pnpm docs:check
+        if: always()
+      - name: Check waiting issues
+        run: node scripts/check-waiting-issues.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         if: always()
       - run: pnpm lint:code
         if: always()
