@@ -5545,7 +5545,7 @@
     "close": "Close",
     "stage": {
       "review": "Review",
-      "verify": "Verify",
+      "verify": "Check",
       "execute": "Execute"
     },
     "verifyThread": "Check",
@@ -5564,7 +5564,7 @@
       "preview": "Preview"
     },
     "passed": "Passed",
-    "retryVerify": "Retry verification",
+    "retryVerify": "Retry check",
     "checkRetryFailed": "Retry did not complete",
     "production": "Production",
     "copySha": "Copy full sha {sha}",
@@ -5575,7 +5575,7 @@
     },
     "rejectNote": "Note for changes",
     "blocked": "Blocked",
-    "verify": "Verify",
+    "verify": "Check",
     "previous": "Previous evidence",
     "cannotMerge": "Can't merge",
     "review": "Review",
