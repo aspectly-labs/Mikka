@@ -23,7 +23,7 @@ mock.module(new URL('./settings/work-creation.ts', import.meta.url).href, { name
 } })
 mock.module(new URL('./project-resources/store.ts', import.meta.url).href, { namedExports: {
   withProjectExecution: async (input: ProjectExecutionInput, operation: (snapshot: ProjectExecutionSnapshot) => Promise<unknown>, requireExisting: boolean) => {
-    assert.deepEqual(input, { userId: 'alice', workspaceId: id(2), issueId: id(20), repositoryKey: repository.repoPath, baseBranch: repository.baseBranch, runtime: 'cloud', harness: 'claude_code' })
+    assert.deepEqual(input, { userId: 'alice', botId: id(1), workspaceId: id(2), issueId: id(20), repositoryKey: repository.repoPath, baseBranch: repository.baseBranch, runtime: 'cloud', harness: 'claude_code' })
     assert.equal(requireExisting, false)
     assert.equal(projectLeaseActive, false)
     if (projectDenied) throw new ActionFailureError('projectRepositoryDenied')
@@ -213,7 +213,7 @@ function cloudQueueFixture() {
         assert.equal(projectLeaseActive, false)
         assert.ok(sql.startsWith('SELECT repo."repoPath",repo."remoteUrl",a.harness,'))
         assert.ok(sql.includes('i."workspaceId"=$5') && sql.includes('i."ownershipState"=\'bound\'') && sql.includes('repo."userId"=$3'))
-        assert.deepEqual(args, [id(22), id(21), scope.ownerId, id(20), id(2), null])
+        assert.deepEqual(args, [id(22), id(21), scope.ownerId, id(20), id(2), null, false])
         return { rows: [{ ...repository, harness: 'claude_code' }], rowCount: 1 }
       } } as unknown as Pool,
       { userId: scope.ownerId, workspaceId: id(2) },
