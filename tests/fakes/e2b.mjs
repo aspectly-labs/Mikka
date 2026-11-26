@@ -99,6 +99,14 @@ export function createE2BFake({ now = () => Date.now(), templates = ['base', 'de
       if (!file) return json(response, { message: 'File not found' }, 404)
       response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': file.length }); response.end(file); return true
     }
+    if (path === '/filesystem.Filesystem/Stat' && request.method === 'POST') {
+      const body = await bodyJson(request), target = body.path
+      if (typeof target !== 'string') return json(response, { code: 'invalid_argument', message: 'Invalid path' }, 400)
+      requests.push(requestRecord(request, url, body))
+      const file = sandbox.files.get(target)
+      if (!file) return json(response, { code: 'not_found', message: 'File not found' }, 404)
+      return json(response, { entry: { name: basename(target), type: 'FILE_TYPE_FILE', path: target, size: String(file.length) } })
+    }
     if (path === '/files' && request.method === 'POST') {
       const form = await incomingRequest(request, url).formData(), entries = []
       for (const file of form.getAll('file')) {
