@@ -133,6 +133,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
 
   const { queueCloudRun } = await import('../lib/computer/queue-run')
   const { startThreadMachine } = await import('../lib/run-leases')
+  const { readEnvironmentSnapshot } = await import('../lib/project-resources/environment-snapshots')
   const { ensureThreadMachine, parkThreadMachine } = await import('../lib/cloud-computer/thread-machines')
   const sourceAt = (issueId: string) => pool.query('SELECT "archiveId","sourceRunId",size,sha256,"headSha" FROM task_workspace_archives WHERE "issueId"=$1', [issueId])
   const row = async (runId: string) => (await pool.query(`SELECT r."agentDefinition", r.status,m.* FROM agent_runs r
@@ -186,7 +187,9 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       const issueId = await seedIssue(pool, ownerId, workspaceId)
       const resources = await seedRunProjectResources(pool, { ownerId, workspaceId, issueId, repositoryKey, runtime: 'cloud', harness: 'codex' })
       assert.ok(resources.environment)
-      await assignTaskEnvironment(pool, ownerId, workspaceId, [issueId], resources.environment.id)
+      const environmentId = resources.environment.id
+      const preparation = (provider: Provider) => readEnvironmentSnapshot(ownerId, { workspaceId, environmentId, templateKind: 'codex', provider })
+      await assignTaskEnvironment(pool, ownerId, workspaceId, [issueId], environmentId)
       variant(from)
       const requestId = randomUUID()
       const first = await enqueue(issueId, requestId)
@@ -197,6 +200,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       await ensureThreadMachine(pool, actor, first)
       const original = await row(first)
       assert.equal(original.state, 'running')
+      assert.equal((await preparation(from)).snapshot?.state, 'building')
       assert.deepEqual(original.agentDefinition.taskCompute, { provider: from, size: sizes[from] })
       assert.deepEqual(services.boots.at(-1), { provider: from, runId: first })
       await daemon(original, from, 'write', null)
@@ -215,6 +219,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       else services.refuseE2B(429)
       assert.deepEqual(await startThreadMachine(actor, denied, false), { state: 'unavailable', reason: 'provider_unavailable', provider: to })
       assert.equal((await row(denied)).status, 'failed')
+      assert.notEqual((await preparation(to)).snapshot?.state, 'building')
       services.fail.cloudflare = false
       services.refuseE2B(null)
       assert.equal(from === 'e2b' ? services.e2b.e2b.requests.length : services.cloudflare.length, sourceCalls)
@@ -225,6 +230,10 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       await ensureThreadMachine(pool, actor, next)
       const restored = await row(next)
       assert.equal(restored.state, 'running')
+      const { snapshot } = await preparation(to)
+      assert.ok(snapshot)
+      assert.equal(snapshot.state, 'building')
+      assert.equal((await pool.query('SELECT "buildRunId" FROM environment_snapshots WHERE id=$1', [snapshot.id])).rows[0].buildRunId, next)
       assert.deepEqual(services.boots.at(-1), { provider: to, runId: next })
       const receipt = restored.lifecycle.portableWorkspaceRestore
       assert.deepEqual(receipt, { size: Number(pointer.size), sha256: pointer.sha256, headSha: pointer.headSha })
