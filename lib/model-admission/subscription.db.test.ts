@@ -1,4 +1,3 @@
-import { fixtureSubscriptionChat } from '../../tests/fixtures/subscription-chat'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -90,8 +89,14 @@ test('managed subscription routes authorize the existing service and native HTTP
       return { contentType: 'text/event-stream', body: response.body! }
     },
   }
-  const service = new SubscriptionService(repository, () => worker as never, { ready: () => true, nativeIsolation: 'verified_runtime' }, undefined,
-    async (ownerId, workspaceId) => { await store.read({ ownerId, workspaceId }) }, undefined, undefined, undefined, fixtureSubscriptionChat(worker))
+  const service: SubscriptionService = new SubscriptionService(
+    repository, () => worker as never, { ready: () => true, nativeIsolation: 'verified_runtime' }, undefined,
+    async (ownerId, workspaceId) => { await store.read({ ownerId, workspaceId }) },
+    undefined, undefined, undefined, async (use, model, payload, signal) => {
+      const admitted = await service.openLiteLLMChat(use, model, JSON.parse(payload), signal)
+      return new Response(admitted.start(), { headers: { 'content-type': 'text/event-stream' } })
+    },
+  )
   nativeHTTP = subscriptionNativeHTTP({ authorize: async () => ownerId, service: () => service })
   t.after(async () => {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))
