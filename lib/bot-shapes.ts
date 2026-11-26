@@ -77,7 +77,7 @@ const HEX = /^#[0-9a-f]{6}$/
 /** The colour a look paints the body, or undefined for the body's own. */
 export function botLookHex(look: BotLook): string | undefined {
   if (!look.color) return undefined
-  return look.color in BOT_LOOK_COLORS ? BOT_LOOK_COLORS[look.color as BotLookColor] : look.color
+  return Object.hasOwn(BOT_LOOK_COLORS, look.color) ? BOT_LOOK_COLORS[look.color as BotLookColor] : look.color
 }
 export type BotLookColor = keyof typeof BOT_LOOK_COLORS
 export const BOT_HATS = ['beret', 'beanie', 'party', 'crown'] as const
@@ -90,7 +90,7 @@ const has = <T extends string>(options: readonly T[], value: string | undefined)
 
 /**
  * A look is stored in `bots.color`, which every view that draws a bot already
- * carries next to its shape: `look:c=blue;f=m;h=beret;g=round;p;b`, or `c=#rrggbb` (at most 44
+ * carries next to its shape: `look:c=blue;f=m;h=beret;g=round;p;b`, or `c=#rrggbb` (at most 40
  * characters). Anything else (an old bloub colour, nothing) is the plain body.
  */
 export function parseBotLook(stored: string | null | undefined): BotLook {
@@ -98,7 +98,7 @@ export function parseBotLook(stored: string | null | undefined): BotLook {
   const look: BotLook = {}
   for (const part of stored.slice(LOOK_PREFIX.length).split(';')) {
     const [key, value] = part.split('=')
-    if (key === 'c' && value && (value in BOT_LOOK_COLORS || HEX.test(value))) look.color = value as BotLook['color']
+    if (key === 'c' && value && (Object.hasOwn(BOT_LOOK_COLORS, value) || HEX.test(value))) look.color = value as BotLook['color']
     else if (key === 'f' && value === 'm') look.face = 'mouth'
     else if (key === 'h' && has(BOT_HATS, value)) look.hat = value
     else if (key === 'g' && has(BOT_GLASSES, value)) look.glasses = value

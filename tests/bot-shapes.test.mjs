@@ -56,12 +56,12 @@ test('the plain body stores the old default colour, and old colours read as the 
 test('a custom colour is stored as lowercase #rrggbb and fits', () => {
   const stored = formatBotLook({ color: '#1a2b3c', face: 'mouth', hat: 'beanie', glasses: 'shades', headphones: true, bowTie: true })
   assert.equal(stored, 'look:c=#1a2b3c;f=m;h=beanie;g=shades;p;b')
-  assert.ok(stored.length <= 50)
+  assert.ok(stored.length <= 40)
   assert.ok(isStoredBotColor(stored))
   assert.equal(botLookHex(parseBotLook(stored)), '#1a2b3c')
   assert.equal(botLookHex(parseBotLook('look:c=blue')), BOT_LOOK_COLORS.blue)
 })
 
 test('the API refuses colours no client writes', () => {
-  for (const value of ['look:c=chartreuse', 'look:c=#FF0000', 'look:c=#ff00', 'look:h=fez', 'look:b;p', '#ff0000', '', 'look:']) assert.equal(isStoredBotColor(value), false, value)
+  for (const value of ['look:c=chartreuse', 'look:c=toString', 'look:c=constructor', 'look:c=__proto__', 'look:c=valueOf', 'look:c=hasOwnProperty', 'look:c=#FF0000', 'look:c=#ff00', 'look:h=fez', 'look:b;p', '#ff0000', '', 'look:']) assert.equal(isStoredBotColor(value), false, value)
 })
