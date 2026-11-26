@@ -118,7 +118,7 @@ export async function withRunProjectExecution(input,frozen,operation){
   const p=globalThis.claimResponseProbe, lease=p.projectAdmission
   assert.ok(lease,'project admission must be explicitly configured')
   assert.equal(lease.calls.length,0,'one resource admission per claim')
-  assert.deepEqual(input,{userId:p.run.userId,workspaceId:p.run.workspaceId,issueId:p.run.issueId,
+  assert.deepEqual(input,{userId:p.run.userId,botId:p.run.botId,workspaceId:p.run.workspaceId,issueId:p.run.issueId,
     repositoryKey:p.repo.remoteUrl?p.repo.repoPath:null,baseBranch:p.run.baseBranch,
     runtime:p.device.kind==='cloud'?'cloud':'local',harness:p.run.agentDefinition?.harness??p.agent.harness})
   assert.deepEqual(frozen,p.run.agentDefinition?.projectExecution,'validate the stored execution snapshot')

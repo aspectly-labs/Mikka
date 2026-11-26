@@ -183,9 +183,10 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
     await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [runId, JSON.stringify(legacy.agentDefinition)])
     const resources = await seedRunProjectResources(pool, { ownerId: p.id, workspaceId: p.workspaceId, issueId: legacy.issueId,
       repositoryKey: normalizeRepository(p.remote).key, runtime: 'local', harness: 'claude_code', environment })
+    // A configured branch now lives on the task's environment, so a changed branch also brings an environment.
     if (!environment) await resources.refuse('branch')
     const before = await row(runId), history = await events(runId)
-    await failsWith(quota.retryQuotaPausedRun(p.id, runId), environment ? 'projectEnvironmentUnavailable' : 'projectRepositoryDenied')
+    await failsWith(quota.retryQuotaPausedRun(p.id, runId), 'projectEnvironmentUnavailable')
     assert.deepEqual(await row(runId), before); assert.deepEqual(await events(runId), history)
     assert.deepEqual(await continuations(runId), [])
   })

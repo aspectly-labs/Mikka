@@ -167,6 +167,11 @@ function workspaceResourceExecutor() {
    assert.deepEqual(args,[issueId,workspace]);resourceReads.push('project')
    return fixtureRows([]) // This legacy Task has no canonical Project or Environment.
   }
+  if(sql==='select (select "environmentId" from workspace_task_environments where "issueId"=$1 and "workspaceId"=$2) as "environmentId", (select "baseBranch" from workspace_task_legacy_repository_branches where "workspaceId"=$3 and "issueId"=$4 and "repositoryKey"=$5) as "legacyBranch"') {
+   assert.deepEqual(args.slice(0,4),[issueId,workspace,workspace,issueId])
+   assert.ok([null,'v2/github.com/example/repo','v2/gitlab.com/example/repo'].includes(args[4] as string|null))
+   return fixtureRows([{environmentId:null,legacyBranch:null}])
+  }
   throw new Error(`Unexpected Workspace resource SQL: ${sql}`)
  }
 }
@@ -178,7 +183,12 @@ let cloud=false,localCapable=false
 let protocolVersion=3
 const applicationClient={release(){assert.equal(applicationLease,true,'release the checked-out claim client exactly once');applicationLease=false}}
 stub('../db/index.ts',{
- db,
+ db:{...db,async execute(statement:SQL){
+  const query=dialect.sqlToQuery(statement)
+  assert.equal(compactSql(query.sql),'select "environmentId" from bots where id=$1 and "workspaceId"=$2 and "ownerId"=$3 and "archivedAt" is null')
+  assert.deepEqual(query.params,[botId,workspace,owner])
+  return fixtureRows([{environmentId:null}])
+ }},
  pool:{connect:async()=>{
   assert.equal(memberLease,true,'claim checks out APP only after the Workspace lease')
   requireResourceLease(owner,workspace)
@@ -347,7 +357,7 @@ function cloudQueueFixture(instructions='Review',priorRun?:Record<string,unknown
   query:async(raw:string,args:unknown[])=>{
    calls.push({sql:raw,args});assert.equal(memberLease,false);assert.equal(connected,false)
    assert.equal(compactSql(raw),compactSql(`SELECT repo."repoPath",repo."remoteUrl",a.harness,
-        CASE WHEN source.id IS NULL THEN repo."baseBranch"
+        CASE WHEN source.id IS NULL OR ($7::boolean AND source."agentDefinition"#>>'{projectExecution,environment,chosen}' IS DISTINCT FROM 'true') THEN repo."baseBranch"
           WHEN source."agentDefinition"->'projectExecution' IS NOT NULL THEN source."agentDefinition"->'projectExecution'->>'baseBranch'
           ELSE source."baseBranch" END AS "baseBranch",
         CASE WHEN source."agentDefinition"#>>'{projectExecution,environment,chosen}'='true' THEN source."agentDefinition"#>>'{projectExecution,environment,id}' END AS "chosenEnvironmentId"
@@ -355,7 +365,7 @@ function cloudQueueFixture(instructions='Review',priorRun?:Record<string,unknown
       JOIN issues i ON i.id=$4 AND i."workspaceId"=$5 AND i."ownershipState"='bound'
       LEFT JOIN agent_runs source ON source.id=$6 AND source."userId"=$3 AND source."issueId"=i.id AND source."workspaceId"=i."workspaceId"
       WHERE repo.id=$1 AND repo."userId"=$3`))
-   assert.deepEqual(args,[repoId,agentId,owner,issueId,workspace,null])
+   assert.deepEqual(args,[repoId,agentId,owner,issueId,workspace,null,false])
    return fixtureRows([{...queueRepository,harness:'codex'}])
   },
  } as unknown as Parameters<typeof queue>[0]

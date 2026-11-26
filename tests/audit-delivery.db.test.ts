@@ -34,7 +34,7 @@ async function prepareWorkspace(database: Pool) {
   function defaultValue(value: unknown) {
     if (value instanceof SQL) return dialect.sqlToQuery(value).sql
     if (typeof value === 'boolean' || typeof value === 'number') return String(value)
-    return `'${String(value).replaceAll("'", "''")}'`
+    return `'${(typeof value === 'object' ? JSON.stringify(value) : String(value)).replaceAll("'", "''")}'`
   }
   for (const table of [...Object.values(workspaceSchema), ...Object.values(teamSchema), ...Object.values(projectSchema)]) {
     if (!is(table, PgTable) || table === workspaceSchema.workspaceAuditOutbox) continue

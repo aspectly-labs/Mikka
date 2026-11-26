@@ -1,6 +1,6 @@
 import { betterAuth, type BetterAuthPlugin } from 'better-auth'
 import { createAuthMiddleware } from 'better-auth/api'
-import { bearer, deviceAuthorization, multiSession, twoFactor } from 'better-auth/plugins'
+import { bearer, deviceAuthorization, multiSession, emailOTP } from 'better-auth/plugins'
 import { oauthProvider } from '@better-auth/oauth-provider'
 import { expo } from '@better-auth/expo'
 import { getAuthenticatorName, passkey } from '@better-auth/passkey'
@@ -9,6 +9,7 @@ import { pool } from '@/lib/db'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
 import { appOrigin, MCP_SCOPE, mcpResourceURL } from '@/lib/mcp/resource'
 import { authOAuthProxyOptions, authEffectiveTrustedOrigins, authSignInMethods, authAppleOptions, requireAppleSignInNonce } from '@/lib/auth-config'
+import { disabledEmailOtpPaths, mikkaTwoFactor, publicOtpError } from './auth-email-otp'
 import { createAuthEmail, type AuthMailContext } from '@/lib/auth-email'
 import { mikkaCookies } from '@/lib/auth-cookies'
 import { mobileRefresh } from '@/lib/auth-mobile-refresh'
@@ -42,6 +43,7 @@ const email = createAuthEmail({
   origin: authBaseURL ?? 'http://localhost:3000',
   apiKey: () => process.env.RESEND_API_KEY,
   context: async (): Promise<AuthMailContext> => auth.$context,
+  verificationCode: async (address): Promise<string> => auth.api.createVerificationOTP({ body: { email: address, type: 'email-verification' } }),
   background: task => afterJob('after:auth-email', task),
 })
 
@@ -90,6 +92,8 @@ const authCompletion: BetterAuthPlugin = {
         ctx.setHeader('referrer-policy', 'no-referrer')
         ctx.setHeader('cache-control', 'no-store')
       }
+      const otpError = publicOtpError(ctx.path, ctx.context.returned)
+      if (otpError) return otpError
       const requestResult = await email.publicRequestResult(ctx.path, ctx.context.returned, ctx.request)
       if (requestResult) return Response.json(requestResult, { status: 202, headers: { 'cache-control': 'no-store' } })
       // Publish the private SDK cache only after sign-in auditing succeeds;
@@ -189,7 +193,8 @@ export const auth = betterAuth({
   plugins: [
     enterpriseIdentityModels,
     enterpriseSso(),
-    twoFactor({ issuer: 'Mikka', allowPasswordless: true }),
+    emailOTP(email.emailOtp),
+    mikkaTwoFactor(),
     passkey({
       rpName: 'Mikka',
       rpID: authBaseURL ? new URL(authBaseURL).hostname : undefined,
@@ -239,7 +244,7 @@ export const auth = betterAuth({
   // 2026-11-02). Money, permissions, credentials and deletion read it fresh (lib/fresh-session.ts).
   session: { ...SESSION_OPTIONS, storeSessionInDatabase: true, additionalFields: { ...enterpriseSessionFields, ...twoFactorSessionFields } },
   // Organization identity management uses the fresh-session, organization-admin route.
-  disabledPaths: ['/sso/register', '/sso/update-provider', '/sso/delete-provider', '/sso/providers', '/sso/get-provider', '/sso/request-domain-verification', '/sso/verify-domain'],
+  disabledPaths: [...disabledEmailOtpPaths, '/sso/register', '/sso/update-provider', '/sso/delete-provider', '/sso/providers', '/sso/get-provider', '/sso/request-domain-verification', '/sso/verify-domain'],
   advanced: {
     // Migrations own the schema (scripts/migrate.mjs on every deploy). Better Auth's own check reads
     // every column of every table from the catalog on each cold start, about 225 KB a time.

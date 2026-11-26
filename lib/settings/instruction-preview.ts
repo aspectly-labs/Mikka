@@ -151,7 +151,8 @@ export async function readInstructionContextPreview(
     if (requestedEnvironmentId) {
       const { rows: [env] } = await tx.execute<{ id: string; instructions: string }>(
         sql`SELECT id, instructions FROM workspace_environments
-          WHERE id = ${requestedEnvironmentId}::uuid AND "workspaceId" = ${effectiveWorkspaceId}::uuid AND "archivedAt" IS NULL`,
+          WHERE id = ${requestedEnvironmentId}::uuid AND "workspaceId" = ${effectiveWorkspaceId}::uuid AND "archivedAt" IS NULL
+            AND (scope='workspace' OR "ownerId"=${userId})`,
       )
       if (!env) throw new ActionFailureError('projectEnvironmentUnavailable')
       resolvedEnvironmentId = env.id
@@ -159,7 +160,7 @@ export async function readInstructionContextPreview(
     } else if (botBoundEnvironmentId) {
       const { rows: [env] } = await tx.execute<{ id: string; instructions: string }>(
         sql`SELECT id, instructions FROM workspace_environments
-          WHERE id = ${botBoundEnvironmentId}::uuid AND "workspaceId" = ${effectiveWorkspaceId}::uuid AND "archivedAt" IS NULL`,
+          WHERE id = ${botBoundEnvironmentId}::uuid AND "workspaceId" = ${effectiveWorkspaceId}::uuid AND "archivedAt" IS NULL AND scope='workspace'`,
       )
       if (env) {
         resolvedEnvironmentId = env.id

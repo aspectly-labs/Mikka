@@ -99,8 +99,8 @@ export const automationSeams:AutomationSeams={
     try{return new Set((await linearTeams(await linearAccessToken(ownerId))).map(team=>team.id))}
     catch(error){throw new ScheduleError('scheduleLinearUnreachable',503,{cause:error})}
   },
-  async environment(workspaceId,environmentId){
-    const {rowCount}=await workspacePool.query(`SELECT 1 FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2 AND "archivedAt" IS NULL`,[environmentId,workspaceId])
+  async environment(workspaceId,environmentId,ownerId){
+    const {rowCount}=await workspacePool.query(`SELECT 1 FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2 AND "archivedAt" IS NULL AND (scope='workspace' OR "ownerId"=$3)`,[environmentId,workspaceId,ownerId])
     return Boolean(rowCount)
   },
   /** The thread is the creator's own root run in this workspace, on a task they can still see. */

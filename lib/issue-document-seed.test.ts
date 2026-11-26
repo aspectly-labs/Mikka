@@ -81,3 +81,10 @@ test('the server schema snapshot matches its serialized spec and validates docum
   for (const content of [null, { type: 'doc', content: [{ type: 'mystery' }] }, nested(3000), { type: 'doc', content: [{ type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'cell' }] }] }] }] }] }, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'mention', attrs: { id: 'u', label: 'U' } }, { type: 'text', text: 'x', marks: [{ type: 'comment', attrs: { id: 't' } }] }] }] }])
     assert.deepEqual(readableIssueContentOnServer(content), readIssueContent(serverIssueSchema(), content))
 })
+
+test('a description containing an inline task file seeds the collaboration document', () => {
+  const attrs = { id: '73c96916-3a07-413a-86b5-61eb6a827cb7', name: 'preview.png', size: 200, mediaType: 'image/png' }
+  const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'taskFile', attrs }] }] }
+  assert.deepEqual(readableIssueContentOnServer(content), content)
+  assert.ok(createDocumentSeed(content, 'task-with-file'))
+})

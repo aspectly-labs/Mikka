@@ -58,6 +58,8 @@ import { ownerListRead } from '@/lib/live/list-read-server'
 import { beginOwnerListRead } from '@/lib/live/revision-read'
 import { changedListIds, listPositionKey, readListPositions, unchangedList, type ListPosition } from '@/lib/list-poll'
 import { cacheReadAction } from '@/lib/cache-read-action'
+import { referencedTaskFileIds } from '@/lib/task-comments/document'
+import { syncTaskInlineFileReferences } from '@/lib/task-comments/save-effects'
 import { requireTaskWorkspace, taskReaderScope, withTaskWorkspace } from '@/lib/task-workspace'
 
 type IssueRow = typeof issues.$inferSelect
@@ -300,6 +302,8 @@ async function readIssueSnapshot(workspaceId?: string, known?: string, previous?
     return { version, live, positions, ...(previous ? { delta: true as const } : {}), items: liveRows.map(({ content, checklistTotal, checklistChecked, ...issue }) => ({
       ...issue, issuedIdentifier: identifiers.get(issue.id) ?? null, identifier: identifiers.get(issue.id) ?? null,
       projectId: taskProjects.get(issue.id)?.projectId ?? null, teamId: links.find(link => link.issueId === issue.id)?.teamId ?? null,
+      // The task's 「环境」; absent when it has none. Setting it is a task revision, so the row signature covers it.
+      ...(taskProjects.get(issue.id)?.environmentId ? { environmentId: taskProjects.get(issue.id)!.environmentId! } : {}),
       // Keep the legacy DTO union during the client rollout. taskAssignees
       // above is the runtime authority and emits only active members or null.
       metadata: { ...readIssueMetadata(content), assignee: assignees.get(issue.id) ?? null, project: taskProjects.get(issue.id)?.project ?? null } as ReturnType<typeof readIssueMetadata>,
@@ -424,6 +428,8 @@ async function persistIssue(input: SaveIssueInput, block?: BlockFlag, state?: Ch
           if (!source) throw new ActionFailureError('workspaceAccessDenied')
         }
         await tx.insert(issueVersions).values({ id: crypto.randomUUID(), issueId: id, userId: ownerId, revision: issue.revision, title: issue.title, content: issue.content, status: issue.status, priority: issue.priority, ...actor })
+        // A saved (or restored) description keeps the inline files it names; comments' files are the document's to track.
+        await syncTaskInlineFileReferences(tx, id, referencedTaskFileIds(issue.content as JSONContent, []), { onlyAdd: true })
         await issueListChanged(tx, id, latest.title !== issue.title)
         // Title, status and priority show in every connected task's relations panel.
         await issueRelationsChanged(tx, [id])

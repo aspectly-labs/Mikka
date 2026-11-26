@@ -5,7 +5,7 @@ import type { agentRuns } from '@/lib/db/schema'
 import type { ProjectExecutionSnapshot } from './contracts'
 import { assertFrozenProjectExecution, requireProjectResourceLease, withProjectExecution, withProjectResourceLease, type ProjectExecutionInput } from './store'
 
-type ResourceRun = Pick<typeof agentRuns.$inferSelect, 'userId' | 'workspaceId' | 'issueId' | 'deviceId' | 'deviceRepoId' | 'agentId' | 'baseBranch' | 'agentDefinition'>
+type ResourceRun = Pick<typeof agentRuns.$inferSelect, 'userId' | 'workspaceId' | 'issueId' | 'deviceId' | 'deviceRepoId' | 'agentId' | 'baseBranch' | 'agentDefinition'> & { botId?: string | null }
 
 export type ProjectExecutionRefusal = 'projectRepositoryDenied' | 'projectEnvironmentUnavailable' | 'projectArchived'
 export function isProjectExecutionRefusal(error: unknown): error is ActionFailureError & { code: ProjectExecutionRefusal } {
@@ -29,7 +29,8 @@ export async function withRunProjectExecution<T>(input: ProjectExecutionInput, f
   // Factory checks execute an independently verified candidate SHA in
   // Run.baseBranch. The resource snapshot still names the Project checkout
   // target; current Project bindings may override and revoke that target.
-  return withProjectExecution({ ...input, baseBranch: frozen ? frozen.baseBranch : input.baseBranch }, async admitted => {
+  return withProjectExecution({ ...input, botId: frozen?.environment ? input.botId : undefined, baseBranch: frozen ? frozen.baseBranch : input.baseBranch,
+    ...(frozen?.environment?.chosen ? { environmentId: frozen.environment.id } : {}) }, async admitted => {
     assertRunProjectExecution(input, frozen, admitted)
     return operation()
   })
@@ -59,7 +60,7 @@ export async function assertRunProjectResources(query: Pick<PoolClient, 'query'>
       WHERE repo.id=$1 AND repo."userId"=$2 AND repo."deviceId"=$3 FOR SHARE OF repo,device,agent`,
     [run.deviceRepoId, run.userId, run.deviceId, run.agentId])
   if (!target || !['local', 'cloud'].includes(target.kind)) throw new ActionFailureError('projectRepositoryDenied')
-  await withRunProjectExecution({ userId: run.userId, workspaceId: run.workspaceId, issueId: run.issueId,
+  await withRunProjectExecution({ userId: run.userId, botId: run.botId, workspaceId: run.workspaceId, issueId: run.issueId,
     repositoryKey: target.remoteUrl ? target.repoPath : null, baseBranch: run.baseBranch,
     runtime: target.kind, harness: run.agentDefinition?.harness ?? target.harness }, run.agentDefinition?.projectExecution, async () => undefined)
 }
