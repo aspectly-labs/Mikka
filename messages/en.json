@@ -5118,17 +5118,16 @@
       "looks": {
         "colors": {
           "none": "Own colour",
-          "ink": "Ink",
-          "brown": "Brown",
           "red": "Red",
           "orange": "Orange",
           "amber": "Amber",
           "green": "Green",
           "teal": "Teal",
+          "sky": "Sky",
           "blue": "Blue",
           "violet": "Violet",
           "pink": "Pink",
-          "grey": "Grey"
+          "custom": "Custom colour"
         },
         "hat": "Hat",
         "hats": {

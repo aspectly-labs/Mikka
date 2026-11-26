@@ -32,7 +32,7 @@ test('the API accepts every body and every old id, and nothing else', () => {
   assert.equal(botShapeOf({ id, shape: 'heart' }), botShapeOf({ id, shape: 'cercle' }), 'an unknown value with an id gets the id\'s body')
 })
 
-import { BOT_GLASSES, BOT_HATS, BOT_LOOK_COLORS, formatBotLook, isStoredBotColor, parseBotLook } from '../lib/bot-shapes.ts'
+import { BOT_GLASSES, BOT_HATS, BOT_LOOK_COLORS, botLookHex, formatBotLook, isStoredBotColor, parseBotLook } from '../lib/bot-shapes.ts'
 
 test('a look round-trips through bots.color and fits the API\'s 50 characters', () => {
   const full = { color: 'blue', face: 'mouth', hat: 'beanie', glasses: 'shades', headphones: true, bowTie: true }
@@ -53,6 +53,15 @@ test('the plain body stores the old default colour, and old colours read as the 
   assert.ok(isStoredBotColor('rouge'))
 })
 
+test('a custom colour is stored as lowercase #rrggbb and fits', () => {
+  const stored = formatBotLook({ color: '#1a2b3c', face: 'mouth', hat: 'beanie', glasses: 'shades', headphones: true, bowTie: true })
+  assert.equal(stored, 'look:c=#1a2b3c;f=m;h=beanie;g=shades;p;b')
+  assert.ok(stored.length <= 50)
+  assert.ok(isStoredBotColor(stored))
+  assert.equal(botLookHex(parseBotLook(stored)), '#1a2b3c')
+  assert.equal(botLookHex(parseBotLook('look:c=blue')), BOT_LOOK_COLORS.blue)
+})
+
 test('the API refuses colours no client writes', () => {
-  for (const value of ['look:c=chartreuse', 'look:h=fez', 'look:b;p', '#ff0000', '', 'look:']) assert.equal(isStoredBotColor(value), false, value)
+  for (const value of ['look:c=chartreuse', 'look:c=#FF0000', 'look:c=#ff00', 'look:h=fez', 'look:b;p', '#ff0000', '', 'look:']) assert.equal(isStoredBotColor(value), false, value)
 })

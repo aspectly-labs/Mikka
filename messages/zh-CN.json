@@ -5118,17 +5118,16 @@
       "looks": {
         "colors": {
           "none": "原色",
-          "ink": "墨色",
-          "brown": "棕色",
           "red": "红色",
           "orange": "橙色",
           "amber": "琥珀色",
           "green": "绿色",
           "teal": "青色",
+          "sky": "天蓝",
           "blue": "蓝色",
           "violet": "紫色",
           "pink": "粉色",
-          "grey": "灰色"
+          "custom": "自定义颜色"
         },
         "hat": "帽子",
         "hats": {
