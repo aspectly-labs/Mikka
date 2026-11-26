@@ -15,7 +15,6 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-Community-FFB003)](https://linux.do)
-[![SPONSORED BY E2B FOR STARTUPS](https://img.shields.io/badge/SPONSORED%20BY-E2B%20FOR%20STARTUPS-ff3001?style=for-the-badge&labelColor=black)](https://e2b.dev/startups)
 
 [English](README.md) · **简体中文**
 
@@ -128,15 +127,6 @@ Mikka 的开发得到了 [Codex for Open Source](https://openai.com/form/codex-f
 </a>
 
 感谢 [Neon](https://neon.com) 通过 Neon Open Source Program 为 Mikka 提供支持。
-
-<a href="https://e2b.dev/startups">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/e2b-for-startups-dark.svg">
-    <img src="docs/assets/e2b-for-startups-light.svg" alt="E2B for Startups" width="151" height="32">
-  </picture>
-</a>
-
-感谢 [E2B](https://e2b.dev) 通过 [E2B for Startups](https://e2b.dev/startups) 计划为 Mikka 提供支持。借助 E2B 的沙箱，Mikka 可以在隔离的云端机器上让多个 Agent 并行工作，我们得以专注于产品本身，而不是基础设施。
 
 ## 许可证
 
