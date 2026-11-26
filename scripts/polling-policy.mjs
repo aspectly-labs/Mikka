@@ -50,6 +50,10 @@ const retry = (reason, hits) => ({ kind: "retry", reason, hits });
  * - tracking '#1212': a database poll still waiting to be replaced by push, through `replaceWith`.
  */
 export const pollingAllowlist = {
+  "apps/desktop/src/main/index.ts": external(
+    "installed desktop checks the external release feed every four hours for C7 background updates",
+    1,
+  ),
   "packages/subscription-worker/native_broker.go": db(
     daemon,
     "active native request authorization rechecked every second while upstream is silent; must replace with revocation events without widening authorization in #2820",
