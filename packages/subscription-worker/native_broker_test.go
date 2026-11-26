@@ -271,7 +271,7 @@ func TestNativeRunModelChoiceUsesFrozenServerSnapshot(t *testing.T) {
 func TestNativeBrokerThroughRealLiteLLM(t *testing.T) {
 	proxy := os.Getenv("MIKKA_NATIVE_TEST_LITELLM_URL")
 	if proxy == "" {
-		t.Skip("Run deploy/litellm/native-subscription-check.py with a local LiteLLM binary")
+		t.Skip("Run deploy/litellm/native-subscription.test.py with a local LiteLLM binary")
 	}
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
