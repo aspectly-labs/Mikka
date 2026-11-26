@@ -37,7 +37,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   const { pool } = await import('@/lib/db')
   const { workspaceDb, workspacePool } = await import('@/lib/workspace-db')
   workspacePool.options.max = 1
-  workspacePool.options.connectionTimeoutMillis = 1_000
+  workspacePool.options.connectionTimeoutMillis = 5_000
   t.after(() => Promise.allSettled([pool.end(), workspacePool.end()]))
   const { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, observeMissingE2BAllocation, verifyE2BAllocation } = await import('./e2b-compute-billing')
   const operationId = randomUUID()
@@ -81,6 +81,19 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()-interval '1 second' WHERE "operationId"=$1`, [operationId])
   await assert.rejects(e2bSandboxTimeout(ownerId, sandboxId, 900_000), { code: 'e2b_limit_reached' })
   assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
+
+  const successorId = await seedRun(fixture, { userId: ownerId, agentId, workspaceId, status: 'queued' })
+  await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=now() WHERE id=$1', [runId])
+  await fixture.query('UPDATE thread_machines SET "runId"=$2 WHERE "runId"=$1', [runId, successorId])
+  await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds',
+    "pendingAt"=now(),"pendingRunId"=$2 WHERE "operationId"=$1`, [operationId, runId])
+  await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,
+    [randomUUID(), workspaceId, randomUUID()])
+  assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000) < 30_000)
+  assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
+  assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000) > 300_000)
+  assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId), expected(2, successorId)])
+  await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=NULL WHERE id=$1', [runId])
 
   // A provider hardware mismatch is killed before exposing the instance and
   // releases the prepaid receipt. There is no up/down-tier price adjustment.
