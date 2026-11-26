@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS e2b_compute_leases (
   "hourlyMicroUsd" integer NOT NULL CHECK ("hourlyMicroUsd">0),
   "sandboxId" text UNIQUE,
   "paidUntil" timestamptz,
+  "creationMissingAt" timestamptz,
   "chunkIndex" integer NOT NULL DEFAULT -1,
   "pendingAt" timestamptz,
   "pendingRunId" uuid

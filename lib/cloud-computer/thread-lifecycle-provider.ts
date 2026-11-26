@@ -67,8 +67,10 @@ export const threadLifecycleProvider = {
     }
   },
   async keepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew = true): Promise<number> {
-    const prepared = options((await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey)
-    const paidMs = await e2bSandboxTimeout(ownerId, sandboxId, timeoutMs, renew).catch((error: unknown) => {
+    const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
+    const prepared = options(account.apiKey)
+    const paidMs = await e2bSandboxTimeout(ownerId, sandboxId, timeoutMs, renew, { providerScope: account.scope,
+      inspect: () => withE2BErrors(ownerId, false, () => Sandbox.getInfo(sandboxId, prepared)) }).catch((error: unknown) => {
       if (!renew && error instanceof E2BKeyError && error.code === 'e2b_limit_reached') return 0
       throw error
     })

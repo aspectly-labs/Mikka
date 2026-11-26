@@ -9,7 +9,7 @@ import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from 
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
-import { createPrepaidE2B, e2bComputeWasVoided, e2bCreationTimeout, verifyE2BAllocation, voidUnallocatedE2BCompute } from './e2b-compute-billing'
+import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, verifyE2BAllocation, voidUnallocatedE2BCompute } from './e2b-compute-billing'
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
@@ -1070,7 +1070,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     }
     if (machine?.workerLeaseUntil && new Date(machine.workerLeaseUntil).getTime() > Date.now() && machine.state !== 'paused') throw new ComputerError(409, 'Thread provisioning in progress')
     if (!machine || machine.snapshotId === 'pending' || (!machine.sandboxId && (!cloudTemplateOrigin(machine.snapshotId)
-      || await e2bComputeWasVoided(client, actor.userId, machine.operationId)))) {
+      || await e2bCanReplaceOperation(client, actor.userId, machine.operationId)))) {
       // A follow-up keeps this task's own machine. A new repository task starts
       // from the anonymous ready template of its harness (E2B's claude or codex
       // with Mikka's worker, decision 2026-11-01-2335): the daemon clones its admitted

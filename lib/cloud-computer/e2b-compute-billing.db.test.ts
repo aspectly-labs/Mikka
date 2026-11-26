@@ -39,7 +39,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   workspacePool.options.max = 1
   workspacePool.options.connectionTimeoutMillis = 1_000
   t.after(() => Promise.allSettled([pool.end(), workspacePool.end()]))
-  const { createPrepaidE2B, e2bComputeWasVoided, e2bCreationTimeout, e2bSandboxTimeout, verifyE2BAllocation } = await import('./e2b-compute-billing')
+  const { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, observeMissingE2BAllocation, verifyE2BAllocation } = await import('./e2b-compute-billing')
   const operationId = randomUUID()
   const sandboxId = `sandbox-${operationId}`
   const create = () => e2bCreationTimeout(ownerId, 'team:fixture', operationId, templates.codex.templateId,
@@ -101,10 +101,30 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   await e2bCreationTimeout(ownerId, 'team:fixture', refusedOperation, templates.codex.templateId, { workspaceId, runId }, 900_000)
   const uncertain = Object.assign(new Error('response lost'), { status: 503 })
   await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw uncertain }), error => error === uncertain)
-  assert.equal(await e2bComputeWasVoided(fixture, ownerId, refusedOperation), false)
+  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), false)
   const refused = Object.assign(new Error('template gone'), { status: 404 })
   await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw refused }), error => error === refused)
-  assert.equal(await e2bComputeWasVoided(fixture, ownerId, refusedOperation), true)
+  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), true)
+
+  const missingOperation = randomUUID()
+  await e2bCreationTimeout(ownerId, 'team:fixture', missingOperation, templates.desktop.templateId, { workspaceId, runId: null }, 900_000)
+  await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()-interval '1 second' WHERE "operationId"=$1`, [missingOperation])
+  assert.equal(await e2bInitialAllocationNeedsRecovery(ownerId, missingOperation), true)
+  assert.equal(await observeMissingE2BAllocation(ownerId, missingOperation), false)
+  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, missingOperation), false)
+  await fixture.query(`UPDATE e2b_compute_leases SET "creationMissingAt"=now()-interval '31 seconds' WHERE "operationId"=$1`, [missingOperation])
+  assert.equal(await observeMissingE2BAllocation(ownerId, missingOperation), true)
+  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, missingOperation), true)
+
+  const existingSandboxId = `existing-${randomUUID()}`
+  await fixture.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","operationId","sandboxId",state)
+    VALUES ($1,$2,$3,$4,'running')`, [workspaceId, ownerId, randomUUID(), existingSandboxId])
+  await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('sandbox',$1,$2,'team:fixture')`, [existingSandboxId, ownerId])
+  const existing = await e2bSandboxTimeout(ownerId, existingSandboxId, 900_000, true, {
+    providerScope: 'team:fixture',
+    inspect: async () => ({ sandboxId: existingSandboxId, templateId: 'retired-desktop', cpuCount: 2, memoryMB: 8192 }) as Awaited<ReturnType<typeof Sandbox.getInfo>>,
+  })
+  assert.ok(existing > 270_000 && existing <= 300_000)
 
   const afterMismatch = await receipts()
   process.env.MIKKA_EDITION = 'community'

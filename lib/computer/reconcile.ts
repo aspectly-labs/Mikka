@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import { machineCommitted } from '@/lib/live/computer-state'
 
@@ -28,10 +29,10 @@ export async function reconcileCloudMachines(pool: Pick<Pool, 'query'>, probe?: 
     }
     if (state === 'running') continue
     // Recheck staleness and the lease so a wake that raced the probe wins.
-    const updated = await pool.query(`UPDATE cloud_machines SET state='sleeping'${state === 'gone' ? ',"sandboxId"=NULL,"runtimeReady"=false' : ''}
+    const updated = await pool.query(`UPDATE cloud_machines SET state='sleeping'${state === 'gone' ? ',"sandboxId"=NULL,"runtimeReady"=false,"operationId"=$4' : ''}
       WHERE "workspaceId"=$1 AND "ownerId"=$2 AND "sandboxId"=$3 AND state IN ('running','waking')
         AND "lastActiveAt"<now()-interval '1 hour'
-        AND ("provisionLeaseUntil" IS NULL OR "provisionLeaseUntil"<now())`, [row.workspaceId, row.ownerId, row.sandboxId])
+        AND ("provisionLeaseUntil" IS NULL OR "provisionLeaseUntil"<now())`, [row.workspaceId, row.ownerId, row.sandboxId, ...(state === 'gone' ? [randomUUID()] : [])])
     changed += updated.rowCount ?? 0
     if (updated.rowCount) await machineCommitted(pool, row.ownerId, row.workspaceId)
   }

@@ -227,7 +227,7 @@ export class HostedUsageStore {
       const flight = await this.inFlight(tx, workspaceId)
       if (prepaid && balance.plan + balance.purchased - flight.held < estimate)
         throw new PaidResourceError('points_exhausted')
-      if (flight.calls >= (quota?.limit ?? HOSTED_MAX_IN_FLIGHT_PER_WORKSPACE))
+      if (!prepaid && flight.calls >= (quota?.limit ?? HOSTED_MAX_IN_FLIGHT_PER_WORKSPACE))
         throw new PaidResourceError('usage_concurrency_limit')
       // Concurrent calls must fit the balance together. A lone call is admitted
       // on any positive balance, as before, so the last cents stay usable.

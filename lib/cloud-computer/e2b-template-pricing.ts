@@ -31,3 +31,8 @@ export function e2bMachineOptions(env: Env = process.env) {
     kind: row.kind, size: row.size, ...sizes[row.size],
   })) ?? []
 }
+
+export function e2bPricingForHardware(cpuCount: number, memoryMB: number): E2BComputeSpec | null {
+  const size = E2B_MACHINE_SIZES.find(key => sizes[key].cpuCount === cpuCount && sizes[key].memoryMB === memoryMB)
+  return size ? { size, ...sizes[size] } : null
+}

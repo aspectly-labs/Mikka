@@ -77,7 +77,7 @@ export async function fundE2BChunk(chunk: { ownerId: string; workspaceId: string
     const { rows: [row] } = await pool.query<{state: string}>(`SELECT CASE WHEN state='settled' AND (coalesce("unpaidMicroUsd",0)>0 OR "costMicroUsd" IS DISTINCT FROM $3)
       THEN 'unfunded' ELSE state END AS state FROM hosted_usage WHERE id=$1 AND model=$2
       AND "holdMicroUsd"=$3 AND "usageWorkspaceId"=$4 AND "executionOwnerId"=$5
-      AND "usageRunId" IS NOT DISTINCT FROM $6::uuid`, [id,model,cost,chunk.workspaceId,chunk.ownerId,chunk.runId])
+      AND "inputTokens"=0 AND "outputTokens"=0`, [id, model, cost, chunk.workspaceId, chunk.ownerId])
     return row?.state
   }
   try {

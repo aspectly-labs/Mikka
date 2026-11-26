@@ -1,10 +1,11 @@
 import 'server-only'
-import { NotFoundError, Sandbox, SandboxNotFoundError, type SandboxApiOpts } from 'e2b'
+import { randomUUID } from 'node:crypto'
+import { NotFoundError, Sandbox, SandboxNotFoundError, type SandboxApiOpts, type SandboxInfo } from 'e2b'
 import type { Pool } from 'pg'
 import { pool } from '@/lib/db'
 import { isCloudEdition } from '@/lib/edition'
 import { E2BKeyError } from '@/lib/secrets/flag'
-import { e2bTemplatePricing, type E2BComputeSpec } from './e2b-template-pricing'
+import { e2bPricingForHardware, e2bTemplatePricing, type E2BComputeSpec } from './e2b-template-pricing'
 import { fundE2BChunk } from './machine-billing'
 import { MACHINE_CHUNK_MS } from './machine-pricing'
 
@@ -33,6 +34,9 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
     // concurrent confirmations advance the paid deadline only once.
     if (funded) await pool.query(`UPDATE e2b_compute_leases SET "chunkIndex"=$2,"paidUntil"=greatest(now(),"paidUntil")+$3::int*interval '1 millisecond',
       "pendingAt"=NULL,"pendingRunId"=NULL WHERE "operationId"=$1 AND "chunkIndex"=$2-1`, [lease.operationId, index, MACHINE_CHUNK_MS])
+    else await pool.query(`UPDATE e2b_compute_leases SET "pendingAt"=NULL,"pendingRunId"=NULL
+      WHERE "operationId"=$1 AND "chunkIndex"=$2-1 AND "pendingRunId" IS NOT DISTINCT FROM $3::uuid`,
+    [lease.operationId, index, claim.pendingRunId])
   }
   const { rows: [row] } = await pool.query<{ remainingMs: number }>(
     `SELECT floor(extract(epoch FROM ("paidUntil"-clock_timestamp()))*1000)::int AS "remainingMs"
@@ -60,7 +64,7 @@ export async function e2bCreationTimeout(ownerId: string, providerScope: string,
 
 export async function recordE2BComputeSandbox(ownerId: string, operationId: string, sandboxId: string) {
   if (!isCloudEdition()) return
-  const result = await pool.query(`UPDATE e2b_compute_leases SET "sandboxId"=$3 WHERE "operationId"=$1
+  const result = await pool.query(`UPDATE e2b_compute_leases SET "sandboxId"=$3,"creationMissingAt"=NULL WHERE "operationId"=$1
     AND "ownerId"=$2 AND "paidUntil" IS NOT NULL AND ("sandboxId" IS NULL OR "sandboxId"=$3)`, [operationId,ownerId,sandboxId])
   if (result.rowCount !== 1) throw unavailable()
 }
@@ -87,11 +91,29 @@ export async function voidUnallocatedE2BCompute(ownerId: string, operationId: st
   [operationId, ownerId, `machine:e2b:${operationId}:0`, expiredOnly])
 }
 
+export async function e2bInitialAllocationNeedsRecovery(ownerId: string, operationId: string) {
+  if (!isCloudEdition()) return false
+  const result = await pool.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2
+    AND ("sandboxId" IS NOT NULL OR ("chunkIndex"=0 AND "paidUntil"<=now()))`, [operationId, ownerId])
+  return result.rowCount === 1
+}
+
+/** Require two exact empty provider reads after the initial interval elapsed. */
+export async function observeMissingE2BAllocation(ownerId: string, operationId: string) {
+  const { rows: [row] } = await pool.query<{ confirmed: boolean }>(`UPDATE e2b_compute_leases
+    SET "creationMissingAt"=coalesce("creationMissingAt",now()) WHERE "operationId"=$1 AND "ownerId"=$2
+      AND "paidUntil"<=now()
+    RETURNING "creationMissingAt"<=now()-interval '30 seconds' AS confirmed`, [operationId, ownerId])
+  if (row?.confirmed) await voidUnallocatedE2BCompute(ownerId, operationId, true)
+  return row?.confirmed === true
+}
+
 /** Only a confirmed-unused operation permits rotating its provider idempotency key. */
-export async function e2bComputeWasVoided(query: Pick<Pool, 'query'>, ownerId: string, operationId: string) {
+export async function e2bCanReplaceOperation(query: Pick<Pool, 'query'>, ownerId: string, operationId: string) {
   if (!isCloudEdition()) return false
   const existing = await query.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2
-    AND "sandboxId" IS NULL AND "chunkIndex"=0 AND "paidUntil" IS NULL`, [operationId, ownerId])
+    AND (("sandboxId" IS NULL AND "chunkIndex"=0 AND "paidUntil" IS NULL)
+      OR ("creationMissingAt"<=now()-interval '30 seconds' AND "paidUntil"<=now()))`, [operationId, ownerId])
   return existing.rowCount === 1
 }
 
@@ -123,14 +145,42 @@ export async function verifyE2BAllocation(ownerId: string, operationId: string, 
   await recordE2BComputeSandbox(ownerId, operationId, sandboxId)
 }
 
-export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true, beforeRenew?: () => Promise<unknown>): Promise<number> {
+/** Existing hosted sandboxes predate the compute ledger. Only a bound
+ * installation resource with measured, recognized hardware can acquire one. */
+async function adoptHostedE2BLease(ownerId: string, sandboxId: string, providerScope: string, info: SandboxInfo) {
+  const specs = e2bPricingForHardware(info.cpuCount, info.memoryMB)
+  if (!specs || providerScope === 'personal' || info.sandboxId !== sandboxId)
+    throw new E2BKeyError('e2b_template_unavailable', 'Unverified E2B allocation geometry')
+  const { rows: [placement, ambiguous] } = await pool.query<{ workspaceId: string }>(`SELECT "workspaceId" FROM cloud_machines
+    WHERE "sandboxId"=$1 AND "ownerId"=$2
+    UNION SELECT "workspaceId" FROM thread_machines WHERE "sandboxId"=$1 AND "ownerId"=$2 AND state<>'ended'`,
+  [sandboxId, ownerId])
+  if (!placement || ambiguous) throw unavailable()
+  await pool.query(`INSERT INTO e2b_compute_leases
+    ("operationId","workspaceId","ownerId","providerScope","templateId",size,"hourlyMicroUsd","cpuCount","memoryMB","sandboxId")
+    SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10 FROM e2b_resource_accounts
+    WHERE kind='sandbox' AND id=$10 AND "ownerId"=$3 AND scope=$4
+    ON CONFLICT ("sandboxId") DO NOTHING`, [randomUUID(), placement.workspaceId, ownerId, providerScope, info.templateId,
+    specs.size, specs.hourlyMicroUsd, specs.cpuCount, specs.memoryMB, sandboxId])
+}
+
+type E2BObservation = { providerScope: string; inspect: () => Promise<SandboxInfo> }
+
+export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true, observe?: E2BObservation): Promise<number> {
   if (!isCloudEdition()) return requestedMs
-  const { rows: [lease] } = await pool.query<Lease & {runId: string | null}>(`SELECT l.*,
+  const readLease = async () => (await pool.query<Lease & { runId: string | null }>(`SELECT l.*,
     (SELECT "runId" FROM thread_machines WHERE "ownerId"=l."ownerId" AND "workspaceId"=l."workspaceId"
       AND "sandboxId"=l."sandboxId" AND state<>'ended' ORDER BY "lastActiveAt" DESC LIMIT 1) AS "runId"
-    FROM e2b_compute_leases l WHERE l."ownerId"=$1 AND l."sandboxId"=$2`,[ownerId,sandboxId])
-  if (!lease) throw unavailable()
-  return paidTimeout(lease, lease, requestedMs, renew, false, beforeRenew)
+    FROM e2b_compute_leases l WHERE l."ownerId"=$1 AND l."sandboxId"=$2`, [ownerId, sandboxId])).rows[0]
+  let lease = await readLease()
+  let inspected = false
+  if (!lease && renew && observe) {
+    await adoptHostedE2BLease(ownerId, sandboxId, observe.providerScope, await observe.inspect())
+    inspected = true
+    lease = await readLease()
+  }
+  if (!lease || observe && lease.providerScope !== observe.providerScope) throw unavailable()
+  return paidTimeout(lease, lease, requestedMs, renew, false, inspected ? undefined : observe?.inspect)
 }
 
 export async function recordE2BComputeSnapshot(ownerId: string, sandboxId: string, snapshotId: string) {
