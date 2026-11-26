@@ -33,7 +33,7 @@ function failed(error: unknown) {
   throw error
 }
 
-/** `GET /api/mobile/model?bot=<id>`: the composer's model menu for a bot, or the Coordinator (no `bot`), with the person's `favorites` (lib/model-favorites.ts). */
+/** `GET /api/mobile/model?bot=<id>`: the composer's model menu for a bot, or the Coordinator (no `bot`). */
 async function handleGET(request: Request, user: ApiSession['user']) {
   const bot = botParam.safeParse(new URL(request.url).searchParams.get('bot'))
   if (!bot.success) return json({ error: 'invalidBot' }, 400)

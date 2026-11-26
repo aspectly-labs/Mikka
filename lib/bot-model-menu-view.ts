@@ -4,7 +4,7 @@
  * and tests can read it.
  */
 
-import { modelKeyOf, modesFromTier, type ModelModes } from './model-capabilities'
+import { modelKeyOf, type ModelModes } from './model-capabilities'
 import { modelDisplayName } from './model-display-name'
 import type { ModelRouteHealth } from './model-route-rejection'
 
@@ -41,9 +41,14 @@ export interface BotModelMenuOption {
   modelId: string
   /** `claude`, `codex`, `mikka` for Mikka 额度, or an API key's provider (`anthropic`, `deepseek`, `custom`…). */
   provider: string
-  /** Mikka 额度: the catalogue's name for the model, its USD list price per million tokens, and whether a picker shows it before a search. */
+  /** Mikka 额度: the catalogue's name for the model and its USD list price per million tokens. */
   name?: string
   price?: { input: number; output: number }
+  /**
+   * @deprecated Compatibility flag kept while hosted `slots/onboarding.tsx`, `mobile-next` `wire/model.ts`,
+   * and older serving clients still read `option.featured`; every hosted option sets `true` so nothing filters
+   * Mikka credits to a featured subset.
+   */
   featured?: boolean
   /** A community default uses cloud credits or the administrator's own provider. */
   hostedSource?: 'cloud' | 'self-hosted'
@@ -162,49 +167,6 @@ export interface BotModelMenu {
    * model it freezes supports it (lib/model-capabilities.ts).
    */
   chat?: { modes?: ModelModes; effort: import('./model-routing').ModelRoutingEffort | null; serviceTier: import('./model-routing').ModelSpeedMode | 'standard' | null }
-  /**
-   * Legacy account favorites. A client seeds from these only when its local slots are uninitialized.
-   * An explicitly empty local list takes precedence.
-   */
-  favorites?: BotModelFavorite[]
-}
-
-/** Capy keeps nine favorites (digit keys 1..9). */
-export const MODEL_FAVORITES_MAX = 9
-
-export interface BotModelFavorite {
-  modelKey?: string
-  modes?: ModelModes
-  /** Its position, 0-based; the digit key is `(slot + 1) % 10`. */
-  slot: number
-  /** The menu option it picks (`BotModelMenuOption.id`). */
-  optionId: string
-  /** The level and speed it sets; null is the model's default level, the workspace's speed. */
-  effort: import('./model-routing').ModelRoutingEffort | null
-  serviceTier: import('./model-routing').ModelServiceTier | null
-  /** The menu does not list its option here now (the key, subscription or model went away); it cannot be picked. */
-  unavailable?: true
-}
-
-/** The favorite slot that saves `optionId`, or -1. */
-export function favoriteSlotOf(menu: Pick<BotModelMenu, 'favorites'> & Partial<Pick<BotModelMenu, 'groups'>>, optionId: string): number {
-  const option = menu.groups?.flatMap(group => group.options).find(item => item.id === optionId)
-  const modelKey = option && (option.modelKey ?? modelKeyOf(option.modelId, option.provider, option.route?.label))
-  return menu.favorites?.find(favorite => favorite.optionId === optionId || (modelKey && favorite.modelKey === modelKey))?.slot ?? -1
-}
-
-/**
- * Capy's `holds`: the chat's current model, level and speed are what `slot` saves, so 「Update favorite」 has nothing to
- * save. A level left at the model's default equals that default named.
- */
-export function favoriteHolds(menu: Pick<BotModelMenu, 'favorites' | 'current' | 'chat'>, slot: number): boolean {
-  const favorite = menu.favorites?.find(item => item.slot === slot)
-  if (!favorite || favorite.optionId !== menu.current.id) return false
-  const fallback = menu.current.capabilities?.defaultEffort ?? null
-  const saved = favorite.modes ?? modesFromTier(favorite.serviceTier)
-  const current = menu.chat?.modes ?? modesFromTier(menu.chat?.serviceTier)
-  return (favorite.serviceTier ?? null) === (menu.chat?.serviceTier ?? null) && saved.fast === current.fast && saved.ultrafast === current.ultrafast && saved.pro === current.pro && saved.daybreak === current.daybreak
-    && (saved.pro || (favorite.effort ?? fallback) === (menu.chat?.effort ?? fallback))
 }
 
 /** The option the chip and the menu's check mark stand for. */

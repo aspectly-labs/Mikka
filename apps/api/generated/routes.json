@@ -2002,7 +2002,7 @@
         "POST",
         "PUT"
       ],
-      "sourceHash": "0cfcd30df3650572037bd75bfe14b4b656ca8cd4b4569347565dc75c1421bca7"
+      "sourceHash": "953ec170d048addda4e201fd3f0fc21979fa34170d23da10dd5f201413cf8baa"
     },
     {
       "path": "/mikka/api/mobile/open",
