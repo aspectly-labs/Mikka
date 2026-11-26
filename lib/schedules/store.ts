@@ -675,7 +675,14 @@ export class ScheduleStore {
       const dailyLimited=!misfireSkipped&&!concurrencyLimited&&await this.dailyFull(tx,current,o.id)
       const skipReason=misfireSkipped?'misfireSkipped':concurrencyLimited?'concurrencyLimit':dailyLimited?'dailyRunLimit':null
       const runner=skipReason?row.owner_id:await this.runner(access,current,o.definition)
-      const issue=skipReason?null:await this.permission(tx,runner,row.bot_id,row.workspace_id,o.definition)
+      let issue = null
+      if (!skipReason) {
+        const permission = () => this.permission(tx, runner, row.bot_id, row.workspace_id, o.definition)
+        if (row.workspace_id) {
+          const { withWorkspaceFactorJob } = await import('@/lib/enterprise/workspace-factor-job')
+          issue = await withWorkspaceFactorJob(runner, row.workspace_id, permission)
+        } else issue = await permission()
+      }
       const task=o.definition.task
       // The task is created and handed over after this commit, outside the schedule's locks; the lease fences it.
       if(!skipReason&&task.kind==='dispatch_task')return {dispatch:o,runner}
