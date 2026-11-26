@@ -38,6 +38,7 @@ export async function ensureCloudMachine(pool:Pool,actor:Actor,runtime:Runtime=p
     await client.query('COMMIT')
   } catch(error) {await client.query('ROLLBACK');throw error} finally {client.release()}
   if(!machine) throw new Error('Owned cloud machine unavailable')
+  if (isCloudEdition() && !machine.sandboxId) armDueTimerSoon('run-recovery')
   try {
     let sandbox=machine.sandboxId?await runtime.connectComputer(actor.workspaceId,machine.sandboxId).catch(error=>{if(runtime.computerGone?.(error)) return null;throw error}):null
     if(machine.sandboxId&&(!sandbox||await stale(pool,actor,sandbox,runtime))) {

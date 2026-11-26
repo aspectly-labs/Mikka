@@ -38,6 +38,9 @@ export const RUN_RECOVERY_DUE_SQL = `
     UNION ALL SELECT min(CASE WHEN greatest("lastActiveAt" + interval '1 hour', "provisionLeaseUntil") > now()
         THEN greatest("lastActiveAt" + interval '1 hour', "provisionLeaseUntil") + interval '1 millisecond' ELSE now() + interval '${MACHINE_RECHECK}' END), 'machines'
       FROM cloud_machines WHERE state IN ('running','waking') AND "sandboxId" IS NOT NULL
+    -- Keep one wake scheduled across a worker loss between the Bot intent and prepayment.
+    UNION ALL SELECT min(m."provisionLeaseUntil"), 'machines'
+      FROM cloud_machines m WHERE m."sandboxId" IS NULL AND m.state='waking' AND m."provisionLeaseUntil">now()
     -- An unacknowledged paid Bot create is reconciled twice after its interval expires.
     UNION ALL SELECT min(greatest(l."paidUntil",m."lastActiveAt"+interval '30 seconds',m."provisionLeaseUntil")), 'machines'
       FROM cloud_machines m JOIN e2b_compute_leases l ON l."operationId"=m."operationId" AND l."ownerId"=m."ownerId"

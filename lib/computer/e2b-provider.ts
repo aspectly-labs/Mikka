@@ -1,5 +1,7 @@
 import 'server-only'
 import { createPrepaidE2B, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
+import { isCloudEdition } from '@/lib/edition'
+import { armDueTimerSoon } from '@/lib/due-timer'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -97,6 +99,7 @@ export async function createComputer(workspaceId: string, operationId: string) {
     return withE2BErrors(owner, false, () => Sandbox.connect(recovered.sandboxId, base))
   }
   base.timeoutMs = await e2bCreationTimeout(owner, account.scope, operationId, template, { workspaceId, runId: null }, lifetime)
+  if (isCloudEdition()) armDueTimerSoon('run-recovery')
   const sandbox = await createPrepaidE2B(owner, operationId, () => withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, idempotencyKey: operationId,
     metadata,
     lifecycle: { onTimeout: 'pause', autoResume: false },
