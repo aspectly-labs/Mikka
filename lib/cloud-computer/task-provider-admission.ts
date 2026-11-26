@@ -77,7 +77,8 @@ export function configuredTaskMachinePlanLimits(
     let limits: unknown
     try { limits = JSON.parse(configured) }
     catch (cause) { throw new Error('Invalid task machine plan limits', { cause }) }
-    return hardwareLimitsByPlan.parse(limits)
+    const parsed = hardwareLimitsByPlan.parse(limits)
+    return isCloudEdition(env) ? { ...DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS, ...parsed } : parsed
   }
   return isCloudEdition(env) ? DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS : null
 }
@@ -90,7 +91,7 @@ export async function taskMachinePlanLimit(workspaceId: string): Promise<Machine
   if (!limitsByPlan) return undefined
   const { acquireHostedQuota } = await import('../governance/hosted-quota')
   const lease = await acquireHostedQuota(workspaceId)
-  try { return limitsByPlan[lease.plan] }
+  try { return limitsByPlan[lease.cloudMachinePlan] }
   finally { await lease.close() }
 }
 

@@ -157,9 +157,23 @@ test('task placement defaults preserve the legacy workspace and explicit Cloudfl
     assert.deepEqual(
       configuredTaskMachinePlanLimits({
         MIKKA_EDITION: 'cloud',
-        MIKKA_TASK_MACHINE_PLAN_LIMITS: JSON.stringify({ free: null, pro: { vcpu: 2, ramGib: 8 } }),
+        MIKKA_TASK_MACHINE_PLAN_LIMITS: JSON.stringify({ pro: { vcpu: 2, ramGib: 8 } }),
       }),
-      { free: null, pro: { vcpu: 2, ramGib: 8 } },
+      { free: null, pro: { vcpu: 2, ramGib: 8 }, enterprise: { vcpu: 8, ramGib: 32 } },
+    )
+    assert.deepEqual(
+      configuredTaskMachinePlanLimits({
+        MIKKA_EDITION: 'cloud',
+        MIKKA_TASK_MACHINE_PLAN_LIMITS: JSON.stringify({ enterprise: { vcpu: 16, ramGib: 64 } }),
+      }),
+      { free: null, pro: { vcpu: 4, ramGib: 16 }, enterprise: { vcpu: 16, ramGib: 64 } },
+    )
+    assert.deepEqual(
+      configuredTaskMachinePlanLimits({
+        MIKKA_EDITION: 'community',
+        MIKKA_TASK_MACHINE_PLAN_LIMITS: JSON.stringify({ pro: { vcpu: 2, ramGib: 8 } }),
+      }),
+      { pro: { vcpu: 2, ramGib: 8 } },
     )
     assert.equal(taskComputeSku('e2b', { e2b: 'small' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.free), null)
     assert.equal(taskComputeSku('cloudflare', { cloudflare: 'standard-1' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.free), null)

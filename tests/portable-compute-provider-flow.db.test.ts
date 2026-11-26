@@ -239,6 +239,40 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     }
     await assert.rejects(ensureCloudMachine(pool, actor), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
 
+    // Paid Personal workspaces unlock cloud machines during their active paid period while
+    // keeping Personal seat/concurrency governance intact, and block again once expired.
+    const personalWorkspaceId = randomUUID()
+    const personalActor = { userId: ownerId, workspaceId: personalWorkspaceId }
+    await workspacePool.query(`INSERT INTO mikka_workspaces (id,"userId",name,kind) VALUES ($1,$2,'Personal cloud fixture','personal')`, [personalWorkspaceId, ownerId])
+    await workspacePool.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,$2,$2,'personal-cloud@example.invalid','admin','active')`, [personalWorkspaceId, ownerId])
+    const { acquireHostedQuota } = await import('../lib/governance/hosted-quota')
+    const { taskMachinePlanLimit } = await import('../lib/cloud-computer/task-provider-admission')
+    assert.equal(await taskMachinePlanLimit(personalWorkspaceId), null)
+    await assert.rejects(ensureCloudMachine(pool, personalActor), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+
+    const future = new Date(Date.now() + 3_600_000)
+    await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source,"billingPlan","billingExpiresAt","billingRevision") VALUES ($1,'free','cloud','pro',$2,1)`, [personalWorkspaceId, future])
+    const paidPersonalLease = await acquireHostedQuota(personalWorkspaceId)
+    try {
+      assert.equal(paidPersonalLease.plan, 'free', 'Personal governance plan/concurrency rules stay unchanged')
+      assert.equal(paidPersonalLease.limit, 8)
+      assert.equal(paidPersonalLease.cloudMachinePlan, 'pro', 'active paid Personal billing unlocks Pro cloud machines')
+    } finally { await paidPersonalLease.close() }
+    assert.deepEqual(await taskMachinePlanLimit(personalWorkspaceId), { vcpu: 4, ramGib: 16 })
+    let personalCreated = 0
+    const fakeSandbox = { sandboxId: 'personal-pro-box' } as Awaited<ReturnType<NonNullable<Parameters<typeof ensureCloudMachine>[2]>['createComputer']>>
+    const provisioned = await ensureCloudMachine(pool, personalActor, {
+      createComputer: async () => { personalCreated++; return fakeSandbox },
+      connectComputer: async () => fakeSandbox,
+      installComputerRuntime: async () => {},
+    })
+    assert.equal(personalCreated, 1)
+    assert.equal(provisioned?.sandboxId, 'personal-pro-box')
+
+    await workspacePool.query(`UPDATE mikka_workspace_entitlements SET "billingExpiresAt"=$2 WHERE "workspaceId"=$1`, [personalWorkspaceId, new Date(Date.now() - 60_000)])
+    assert.equal(await taskMachinePlanLimit(personalWorkspaceId), null)
+    await assert.rejects(ensureCloudMachine(pool, personalActor), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+
     // Pro ($20) unlocks cloud machines up to Large (4 vCPU / 16 GiB) and clamps Ultra down to Large.
     await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,'pro','cloud')`, [workspaceId])
     const env = await saveEnvironment(ownerId, {
