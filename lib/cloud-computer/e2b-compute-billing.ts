@@ -16,8 +16,9 @@ const unavailable = () => new E2BKeyError('e2b_unavailable', 'E2B compute billin
 type Lease = { operationId: string; ownerId: string; workspaceId: string; providerScope: string;
   templateId: string; size: string; hourlyMicroUsd: number; chunkIndex: number }
 type Target = { workspaceId: string; runId: string | null }
+export type KeepAlivePayment = { operationId?: string; index?: number; activated?: number }
 
-async function paidTimeout(lease: Lease, target: Target, requestedMs: number, renew = true, creation = false, beforeRenew?: () => Promise<unknown>): Promise<number> {
+async function paidTimeout(lease: Lease, target: Target, requestedMs: number, renew = true, creation = false, beforeRenew?: () => Promise<unknown>, payment?: KeepAlivePayment): Promise<number> {
   const claim = renew ? (await pool.query<{ chunkIndex: number; pendingRunId: string | null }>(
     `UPDATE e2b_compute_leases SET "pendingAt"=coalesce("pendingAt",greatest(now(),"paidUntil")),
         "pendingRunId"=CASE WHEN "pendingAt" IS NULL THEN $2 ELSE "pendingRunId" END
@@ -33,19 +34,52 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
 
     // Settlement precedes activation. A lost response reuses this exact chunk;
     // concurrent confirmations advance the paid deadline only once.
-    if (funded) await pool.query(`UPDATE e2b_compute_leases SET "chunkIndex"=$2,"paidUntil"=greatest(now(),"paidUntil")+$3::int*interval '1 millisecond',
-      "pendingAt"=NULL,"pendingRunId"=NULL WHERE "operationId"=$1 AND "chunkIndex"=$2-1`, [lease.operationId, index, MACHINE_CHUNK_MS])
+    if (funded) {
+      const activation = await pool.query(`UPDATE e2b_compute_leases SET "chunkIndex"=$2,"previousPaidUntil"="paidUntil",
+        "previousActiveChunkIndex"="activeChunkIndex","activeChunkIndex"=$2,
+        "paidUntil"=greatest(now(),"paidUntil")+$3::int*interval '1 millisecond',
+        "pendingAt"=NULL,"pendingRunId"=NULL WHERE "operationId"=$1 AND "chunkIndex"=$2-1
+        AND "pendingAt" IS NOT NULL`, [lease.operationId, index, MACHINE_CHUNK_MS])
+      if (payment && activation.rowCount) payment.activated = index
+    }
     else await pool.query(`UPDATE e2b_compute_leases SET "pendingAt"=NULL,"pendingRunId"=NULL
       WHERE "operationId"=$1 AND "chunkIndex"=$2-1 AND "pendingRunId" IS NOT DISTINCT FROM $3::uuid`,
     [lease.operationId, index, claim.pendingRunId])
   }
-  const { rows: [row] } = await pool.query<{ remainingMs: number }>(
-    `SELECT floor(extract(epoch FROM ("paidUntil"-clock_timestamp()))*1000)::int AS "remainingMs"
+  const { rows: [row] } = await pool.query<{ remainingMs: number; chunkIndex: number }>(
+    `SELECT "activeChunkIndex" AS "chunkIndex",floor(extract(epoch FROM ("paidUntil"-clock_timestamp()))*1000)::int AS "remainingMs"
       FROM e2b_compute_leases WHERE "operationId"=$1`, [lease.operationId])
   // E2B rounds up to seconds. Use whole seconds and allow for provider request latency.
   const seconds = Math.floor((Math.min(requestedMs, row?.remainingMs ?? 0, MACHINE_CHUNK_MS + E2B_RENEW_LEAD_MS) - E2B_TIMEOUT_REQUEST_BUDGET_MS - 1_000) / 1_000)
   if (seconds < 1) throw new E2BKeyError('e2b_limit_reached', 'Mikka credits are insufficient for five minutes of compute')
+  if (payment) {
+    payment.operationId = lease.operationId
+    payment.index = row.chunkIndex
+  } else if (!creation && !await useE2BKeepAlivePayment(pool, lease.ownerId, { operationId: lease.operationId, index: row.chunkIndex })) {
+    throw new E2BKeyError('e2b_limit_reached', 'The paid compute interval changed')
+  }
   return seconds * 1_000
+}
+
+export async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment) {
+  if (!payment.operationId) return true
+  const result = await query.query(`UPDATE e2b_compute_leases l SET "usedChunkIndex"=greatest("usedChunkIndex",$3)
+    WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "paidUntil">now()
+      AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||$3::int
+        AND u."executionOwnerId"=$2 AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')`,
+  [payment.operationId, ownerId, payment.index])
+  return result.rowCount === 1
+}
+
+export async function releaseE2BKeepAlivePayment(ownerId: string, payment: KeepAlivePayment) {
+  if (!payment.operationId || payment.activated === undefined) return
+  await pool.query(`WITH unused AS (
+    UPDATE e2b_compute_leases SET "paidUntil"="previousPaidUntil","previousPaidUntil"=NULL,"activeChunkIndex"="previousActiveChunkIndex"
+      WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "chunkIndex"=$3 AND "usedChunkIndex"<$3
+      RETURNING "workspaceId"
+    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
+    FROM unused WHERE u.id=$4 AND u."usageWorkspaceId"=unused."workspaceId" AND u."executionOwnerId"=$2 AND u.state='settled'`,
+  [payment.operationId, ownerId, payment.activated, `machine:e2b:${payment.operationId}:${payment.activated}`])
 }
 
 export async function e2bCreationTimeout(ownerId: string, providerScope: string, operationId: string, templateId: string,
@@ -86,23 +120,56 @@ async function e2bAllocationMatches(ownerId: string, operationId: string, info: 
 }
 
 /** A terminal provider refusal or a killed, unexposed mismatch used no task compute. */
-export async function voidUnallocatedE2BCompute(ownerId: string, operationId: string, expiredOnly = false) {
+export async function voidUnallocatedE2BCompute(ownerId: string, operationId: string, expiredOnly = false, firstOnly = false) {
   if (!isCloudEdition()) return
   await pool.query(`WITH refused AS (
       UPDATE e2b_compute_leases SET "paidUntil"=NULL WHERE "operationId"=$1 AND "ownerId"=$2
         AND "sandboxId" IS NULL AND "chunkIndex"=0 AND "paidUntil" IS NOT NULL
-        AND (NOT $4::boolean OR "paidUntil"<=now())
+        AND (NOT $4::boolean OR "paidUntil"<=now()) AND (NOT $5::boolean OR "creationAttempts"=1)
       RETURNING "workspaceId"
     ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
     FROM refused WHERE u.id=$3 AND u."usageWorkspaceId"=refused."workspaceId" AND u."executionOwnerId"=$2 AND u.state='settled'`,
-  [operationId, ownerId, `machine:e2b:${operationId}:0`, expiredOnly])
+  [operationId, ownerId, `machine:e2b:${operationId}:0`, expiredOnly, firstOnly])
 }
 
 export async function e2bInitialAllocationNeedsRecovery(ownerId: string, operationId: string) {
   if (!isCloudEdition()) return false
   const result = await pool.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2
-    AND ("sandboxId" IS NOT NULL OR ("chunkIndex"=0 AND "paidUntil"<=now()))`, [operationId, ownerId])
+    AND ("sandboxId" IS NOT NULL OR ("chunkIndex"=0 AND "paidUntil"<=now())
+      OR ("chunkIndex"=-1 AND "pendingAt"<=now()-interval '5 minutes'))`, [operationId, ownerId])
   return result.rowCount === 1
+}
+
+/** A crashed settlement never reached provider admission. Reclaim only
+ * after its provisioning window, racing the normal activation on the same row. */
+export async function releaseInterruptedE2BCreation(ownerId: string, operationId: string) {
+  if (!isCloudEdition()) return false
+  const id = `machine:e2b:${operationId}:0`
+  const result = await pool.query(`WITH interrupted AS (
+      UPDATE e2b_compute_leases l SET "chunkIndex"=0,"pendingAt"=NULL,"pendingRunId"=NULL
+      WHERE l."operationId"=$1 AND l."ownerId"=$2 AND l."sandboxId" IS NULL AND l."chunkIndex"=-1
+      AND l."paidUntil" IS NULL AND l."creationAttempts"=0 AND l."pendingAt"<=now()-interval '5 minutes'
+      AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id=$3 AND u."executionOwnerId"=$2
+        AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')
+      RETURNING l."workspaceId"
+    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
+    FROM interrupted WHERE u.id=$3 AND u."executionOwnerId"=$2 AND u."usageWorkspaceId"=interrupted."workspaceId"
+      AND u.state='settled'`, [operationId, ownerId, id])
+  return result.rowCount === 1
+}
+
+export async function e2bCreationRecoveryAt(ownerId: string, operationId: string): Promise<number | undefined> {
+  if (!isCloudEdition()) return
+  const result = await pool.query<{ recoveryAt: Date | null }>(`SELECT coalesce("paidUntil","pendingAt"+interval '5 minutes') AS "recoveryAt"
+    FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2 AND "sandboxId" IS NULL`, [operationId, ownerId])
+  return result.rows[0]?.recoveryAt?.getTime()
+}
+
+export async function e2bSnapshotFallbackSafe(query: Pick<Pool, 'query'>, ownerId: string, operationId: string) {
+  if (!isCloudEdition()) return true
+  const result = await query.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2
+    AND ("paidUntil" IS NOT NULL OR "pendingAt" IS NOT NULL OR "sandboxId" IS NOT NULL)`, [operationId, ownerId])
+  return !result.rowCount
 }
 
 /** Require two exact empty provider reads after the initial interval elapsed. */
@@ -127,15 +194,20 @@ export async function e2bCanReplaceOperation(query: Pick<Pool, 'query'>, ownerId
 /** Void only unambiguous invalid create requests. Lost responses keep the paid
  * operation so the existing provider reconciliation can safely look it up. */
 export async function createPrepaidE2B<T>(ownerId: string, operationId: string, create: () => Promise<T>): Promise<T> {
+  if (!isCloudEdition()) return create()
+  const { rows: [attempt] } = await pool.query<{ creationAttempts: number }>(
+    `UPDATE e2b_compute_leases SET "creationAttempts"="creationAttempts"+1 WHERE "operationId"=$1
+      AND "ownerId"=$2 AND "paidUntil">now() RETURNING "creationAttempts"`, [operationId, ownerId])
+  if (!attempt) throw new E2BKeyError('e2b_limit_reached', 'No settled interval authorizes E2B creation')
   try {
     return await create()
   } catch (error) {
     const cause = error instanceof E2BKeyError && error.cause ? error.cause : error
     const status = cause && typeof cause === 'object' ? (cause as { status?: unknown; statusCode?: unknown }).status
       ?? (cause as { statusCode?: unknown }).statusCode : undefined
-    if (cause instanceof AuthenticationError || cause instanceof NotFoundError || cause instanceof SandboxNotFoundError
-      || status === 400 || status === 401 || status === 403 || status === 404)
-      await voidUnallocatedE2BCompute(ownerId, operationId)
+    if (attempt.creationAttempts === 1 && (cause instanceof AuthenticationError || cause instanceof NotFoundError || cause instanceof SandboxNotFoundError
+      || status === 400 || status === 401 || status === 403 || status === 404))
+      await voidUnallocatedE2BCompute(ownerId, operationId, false, true)
     throw error
   }
 }
@@ -175,7 +247,7 @@ async function adoptHostedE2BLease(ownerId: string, sandboxId: string, providerS
 
 type E2BObservation = { providerScope: string; inspect: () => Promise<SandboxInfo> }
 
-export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true, observe?: E2BObservation): Promise<number> {
+export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true, observe?: E2BObservation, payment?: KeepAlivePayment): Promise<number> {
   if (!isCloudEdition()) return requestedMs
   const readLease = async () => (await pool.query<Lease & { runId: string | null }>(`SELECT l.*,
     (SELECT "runId" FROM thread_machines WHERE "ownerId"=l."ownerId" AND "workspaceId"=l."workspaceId"
@@ -189,7 +261,7 @@ export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requ
     lease = await readLease()
   }
   if (!lease || observe && lease.providerScope !== observe.providerScope) throw unavailable()
-  return paidTimeout(lease, lease, requestedMs, renew, false, inspected ? undefined : observe?.inspect)
+  return paidTimeout(lease, lease, requestedMs, renew, false, inspected ? undefined : observe?.inspect, payment)
 }
 
 export async function recordE2BComputeSnapshot(ownerId: string, sandboxId: string, snapshotId: string) {

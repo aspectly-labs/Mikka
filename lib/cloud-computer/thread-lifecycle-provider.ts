@@ -1,5 +1,6 @@
+import type { PoolClient } from 'pg'
 import 'server-only'
-import { createPrepaidE2B, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation, e2bSandboxTimeout, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
+import { createPrepaidE2B, releaseE2BKeepAlivePayment, useE2BKeepAlivePayment, type KeepAlivePayment, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation, e2bSandboxTimeout, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
 import { bindE2BResource, e2bCreateAccount, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { environmentSnapshotScope, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -40,6 +41,7 @@ const filesystemSnapshotUnavailable = (error: unknown) => {
  * machine. Snapshots exist only on the owner's own key. */
 export const threadLifecycleProvider = {
   async findCreated(runId: string, workspaceId: string, operationId: string, ownerId: string): Promise<ThreadCreatedSandbox | null> {
+    if (await releaseInterruptedE2BCreation(ownerId, operationId)) return null
     const metadata = { application: 'mikka-thread', workspaceId, runId, operationId }
     const account = await e2bResourceAccount(ownerId, 'operation', operationId)
     const pages = Sandbox.list({ ...options(account.apiKey), limit: 2, query: { metadata, state: ['running', 'paused'] } })
@@ -69,18 +71,23 @@ export const threadLifecycleProvider = {
   async prepareKeepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew = true) {
     const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
     const prepared = options(account.apiKey)
+    const payment: KeepAlivePayment = {}
     const paidMs = await e2bSandboxTimeout(ownerId, sandboxId, timeoutMs, renew, { providerScope: account.scope,
-      inspect: () => withE2BErrors(ownerId, false, () => Sandbox.getInfo(sandboxId, prepared)) }).catch((error: unknown) => {
+      inspect: () => withE2BErrors(ownerId, false, () => Sandbox.getInfo(sandboxId, prepared)) }, payment).catch((error: unknown) => {
       if (!renew && error instanceof E2BKeyError && error.code === 'e2b_limit_reached') return 0
       throw error
     })
     const deadline = Date.now() + paidMs
     // The lifecycle holds the run and machine locks while invoking this
     // provider-only closure. Account lookup and settled billing are complete.
-    return async () => {
-      const remaining = Math.floor((deadline - Date.now()) / 1_000) * 1_000
-      if (remaining > 0) await Sandbox.setTimeout(sandboxId, remaining, { ...prepared, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 })
-      return deadline
+    return {
+      async apply(client: PoolClient) {
+        const remaining = Math.floor((deadline - Date.now()) / 1_000) * 1_000
+        if (remaining < 1 || !await useE2BKeepAlivePayment(client, ownerId, payment)) return null
+        await Sandbox.setTimeout(sandboxId, remaining, { ...prepared, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 })
+        return deadline
+      },
+      cancel: () => releaseE2BKeepAlivePayment(ownerId, payment),
     }
   },
   /** Snapshot the task's filesystem. The sandbox may be left paused by E2B;
@@ -129,7 +136,7 @@ export const threadLifecycleProvider = {
     const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, template, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
     const prepared = options(account.apiKey)
     const sandbox = await createPrepaidE2B(ownerId, operationId, () => withE2BErrors(ownerId, false, () => Sandbox.create(snapshotId, {
-      ...prepared, idempotencyKey: operationId, timeoutMs, metadata,
+      ...prepared, retries: 0, idempotencyKey: operationId, timeoutMs, metadata,
       lifecycle: { onTimeout: 'pause', autoResume: false },
     })))
     await verifyE2BAllocation(ownerId, operationId, sandbox.sandboxId, prepared)

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ThreadMachineFence } from './thread-machines'
 import { threadLifecycleProvider, type ThreadProviderInfo } from './thread-lifecycle-provider'
-import { E2B_RENEW_LEAD_MS, voidUnallocatedE2BCompute } from './e2b-compute-billing'
+import { E2B_RENEW_LEAD_MS, e2bCreationRecoveryAt, voidUnallocatedE2BCompute } from './e2b-compute-billing'
 import { logThreadLifecycle, threadLifecycleErrorKind } from './thread-lifecycle-log'
 import { taskActivityChanged } from '../factory/activity-live'
 import { jsonbSafeBigIntSql, jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
@@ -266,6 +266,7 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     const prepared = await deps.provider.prepareKeepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, canFund)
     // A static provider timeout cannot resume a paused VM. Hold the same
     // run→machine lock order as resume/adopt while extending this exact epoch.
+    let preservePayment = false
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
@@ -289,18 +290,32 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         }
       }
       const stopping = Boolean(run?.stopRequestedAt)
-      const providerDeadline = stopping && canFund
-        ? (observedDeadline ?? deps.now())
-        : (prepared ? await prepared() : await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping))
-          ?? deps.now() + THREAD_MACHINE_PROVIDER_MS
+      let renewedDeadline: number | null | undefined
+      if (!(stopping && canFund)) {
+        try {
+          renewedDeadline = prepared ? await prepared.apply(client)
+            : await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping)
+          preservePayment = renewedDeadline !== null
+        } catch (error) {
+          // A sent request may have succeeded. Keep its use marker across a
+          // transport failure so no competing cancellation can void the debit.
+          preservePayment = true
+          await client.query('COMMIT')
+          throw error
+        }
+      }
+      const providerDeadline = renewedDeadline ?? observedDeadline ?? (prepared ? deps.now() : deps.now() + THREAD_MACHINE_PROVIDER_MS)
       const renewalAt = stopping ? due : Math.max(deps.now() + 5_000, providerDeadline - E2B_RENEW_LEAD_MS + 3_000)
-      providerOutcome = 'timeout_renewed'
+      if (renewedDeadline != null || !prepared && !stopping) providerOutcome = 'timeout_renewed'
       const next = await finish({ phase: reason === 'human_review' ? 'review_resumed' : reason === 'provisioning' ? 'provisioning' : 'active', reason, failures: 0, providerDeadline }, Math.min(due, renewalAt), client)
       await client.query('COMMIT')
       committedTransition?.()
       committedTransition = undefined
       return next
-    } catch (error) { committedTransition = undefined; await client.query('ROLLBACK'); throw error } finally { client.release() }
+    } catch (error) { committedTransition = undefined; await client.query('ROLLBACK'); throw error } finally {
+      client.release()
+      if (!preservePayment) await prepared?.cancel()
+    }
   }
 
   try {
@@ -316,6 +331,9 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     }
     let provider: ThreadProviderInfo | null = null
     if (!row.sandboxId && !live(row.workerLeaseUntil, now) && pendingCreation(row) && row.operationId && deps.provider.findCreated) {
+      const recoveryAt = await e2bCreationRecoveryAt(actor.userId, row.operationId)
+      if (recoveryAt !== undefined && recoveryAt >= now)
+        return await finish({ phase: row.lifecycle.phase ?? 'create_requested', reason: 'creation_provider_deadline' }, recoveryAt + 1)
       const created = await deps.provider.findCreated(runId, actor.workspaceId, row.operationId, actor.userId)
       if (!created) {
         // A list response may briefly lag allocation creation. Reconfirm once

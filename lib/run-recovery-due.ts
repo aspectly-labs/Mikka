@@ -42,9 +42,10 @@ export const RUN_RECOVERY_DUE_SQL = `
     UNION ALL SELECT min(m."provisionLeaseUntil"), 'machines'
       FROM cloud_machines m WHERE m."sandboxId" IS NULL AND m.state='waking' AND m."provisionLeaseUntil">now()
     -- An unacknowledged paid Bot create is reconciled twice after its interval expires.
-    UNION ALL SELECT min(greatest(l."paidUntil",m."lastActiveAt"+interval '30 seconds',m."provisionLeaseUntil")), 'machines'
+    UNION ALL SELECT min(greatest(coalesce(l."paidUntil",l."pendingAt"+interval '5 minutes'),m."lastActiveAt"+interval '30 seconds',m."provisionLeaseUntil")), 'machines'
       FROM cloud_machines m JOIN e2b_compute_leases l ON l."operationId"=m."operationId" AND l."ownerId"=m."ownerId"
-      WHERE m."sandboxId" IS NULL AND m.state IN ('error','waking') AND l."paidUntil" IS NOT NULL
+      WHERE m."sandboxId" IS NULL AND m.state IN ('error','waking') AND (l."paidUntil" IS NOT NULL OR (l."chunkIndex"=-1 AND l."pendingAt" IS NOT NULL
+        AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':0' AND u.state='settled')))
     -- judgePendingOutcomes: an ended run is judged at once, and again OUTCOME_RETRY_AT_SQL after an unanswered try.
     UNION ALL SELECT min(coalesce(${OUTCOME_RETRY_AT_SQL} + interval '1 millisecond', now())), 'outcomes' FROM agent_runs
       WHERE outcome IS NULL AND status = ANY($2::text[]) AND coalesce("finishedAt", "updatedAt") > now() - make_interval(days => ${OUTCOME_WINDOW_DAYS})

@@ -114,6 +114,50 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId), expected(2, successorId)])
   await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=NULL WHERE id=$1', [runId])
 
+  // Let PostgreSQL settle the receipt, then hold the actual lifecycle
+  // callback before it can acquire the run lock and send the provider timeout.
+  const { threadLifecycleProvider } = await import('./thread-lifecycle-provider')
+  const { reconcileThreadMachine } = await import('./thread-lifecycle')
+  const raceInfo = t.mock.method(Sandbox, 'getInfo', async () => ({
+    sandboxId, state: 'running', endAt: new Date(Date.now()+30_000), cpuCount: 2, memoryMB: 8192,
+  }) as Awaited<ReturnType<typeof Sandbox.getInfo>>)
+  const raceTimeout = t.mock.method(Sandbox, 'setTimeout', async () => assert.fail('Stop won before provider renewal'))
+  const actualPrepare = threadLifecycleProvider.prepareKeepAlive
+  try {
+    for (const [index, useConcurrently] of [[3,false],[4,true]] as const) {
+      await fixture.query(`UPDATE agent_runs SET "stopRequestedAt"=NULL,status='running',"leaseExpiresAt"=now()+interval '10 minutes' WHERE id=$1`, [successorId])
+      await fixture.query(`UPDATE thread_machines SET lifecycle='{}',"lifecycleAt"=NULL WHERE "runId"=$1`, [successorId])
+      await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds' WHERE "operationId"=$1`, [operationId])
+      await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,
+        [randomUUID(), workspaceId, randomUUID()])
+      const settled = Promise.withResolvers<void>()
+      const proceed = Promise.withResolvers<void>()
+      const barrier = t.mock.method(threadLifecycleProvider, 'prepareKeepAlive', async (...args: Parameters<typeof actualPrepare>) => {
+        const prepared = await actualPrepare(...args)
+        settled.resolve()
+        await proceed.promise
+        return prepared
+      })
+      const maintenance = reconcileThreadMachine(pool, { userId: ownerId, workspaceId }, successorId)
+      try {
+        await Promise.race([settled.promise, maintenance.then(() => assert.fail('Renewal did not reach its fence'))])
+        assert.equal((await receipts()).find(row => row.id === expected(index, successorId).id)?.state, 'settled')
+        if (useConcurrently) assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000) > 300_000)
+        await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=now() WHERE id=$1', [successorId])
+      } finally {
+        proceed.resolve()
+        await maintenance
+        barrier.mock.restore()
+      }
+      assert.equal(raceTimeout.mock.callCount(), 0)
+      assert.deepEqual((await receipts()).find(row => row.id === expected(index, successorId).id),
+        useConcurrently ? expected(index, successorId) : { ...expected(index, successorId), state: 'failed', cost: 0 })
+    }
+  } finally {
+    raceTimeout.mock.restore()
+    raceInfo.mock.restore()
+  }
+
   // A provider hardware mismatch is killed before exposing the instance and
   // releases the prepaid receipt. There is no up/down-tier price adjustment.
   await fixture.query("INSERT INTO workspace_credit_grants (id,\"workspaceId\",points,bucket,reason,\"externalId\") VALUES ($1,$2,2,'purchased','test',$3)",
@@ -136,7 +180,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), false)
   const refused = Object.assign(new Error('template gone'), { status: 404 })
   await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw refused }), error => error === refused)
-  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), true)
+  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), false)
 
   const requests: { key: string | undefined; body: string }[] = []
   const discovered: URL[] = []
@@ -185,6 +229,8 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.deepEqual(requests.slice(-2).map(request => request.key), [missingOperation, missingOperation])
   assert.equal(requests.at(-1)?.body, requests.at(-2)?.body)
   assert.equal(JSON.parse(requests.at(-1)!.body).timeout, 300)
+  responseStatus = 403
+  await assert.rejects(createOnWire(missingOperation))
   assert.equal(await e2bCanReplaceOperation(fixture, ownerId, missingOperation), false)
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()-interval '1 second' WHERE "operationId"=$1`, [missingOperation])
   await fixture.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","operationId",state,"lastActiveAt")
@@ -204,6 +250,20 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.equal(discovered.length, 2)
   assert.ok(discovered.every(url => url.pathname === '/v2/sandboxes'
     && url.searchParams.get('metadata')?.includes(`operationId=${missingOperation}`)))
+
+  // Failpoint: the independent HostedUsage transaction committed, but the
+  // worker exited before installing the paid interval on the operation.
+  const interrupted = randomUUID()
+  await e2bCreationTimeout(ownerId, 'team:fixture', interrupted, templates.desktop.templateId, { workspaceId, runId: null }, 900_000)
+  await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=NULL,"chunkIndex"=-1,"activeChunkIndex"=-1,
+    "pendingAt"=now()-interval '6 minutes' WHERE "operationId"=$1`, [interrupted])
+  await fixture.query(`UPDATE cloud_machines SET "operationId"=$1,"lastActiveAt"=now()-interval '31 seconds'
+    WHERE "workspaceId"=$2 AND "ownerId"=$3`, [interrupted, workspaceId, ownerId])
+  assert.ok((await runRecoveryDueSweeps(pool, { factoryLifecycle: false })).due.has('machines'))
+  assert.equal(await reconcileCloudMachines(pool), 0)
+  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, interrupted), true)
+  assert.equal(discovered.length, 2)
+  assert.ok((await receipts()).some(row => row.id === `machine:e2b:${interrupted}:0` && row.state === 'failed' && row.cost === 0))
 
   const existingSandboxId = `existing-${randomUUID()}`
   await fixture.query(`UPDATE cloud_machines SET "sandboxId"=$3,"operationId"=$4,state='running' WHERE "workspaceId"=$1 AND "ownerId"=$2`,

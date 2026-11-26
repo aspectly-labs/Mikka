@@ -13,8 +13,19 @@ CREATE TABLE IF NOT EXISTS e2b_compute_leases (
   "sandboxId" text UNIQUE,
   "paidUntil" timestamptz,
   "creationMissingAt" timestamptz,
+  "creationAttempts" integer NOT NULL DEFAULT 0,
   "chunkIndex" integer NOT NULL DEFAULT -1,
   "pendingAt" timestamptz,
-  "pendingRunId" uuid
+  "pendingRunId" uuid,
+  "usedChunkIndex" integer NOT NULL DEFAULT -1,
+  "previousPaidUntil" timestamptz,
+  "activeChunkIndex" integer NOT NULL DEFAULT -1,
+  "previousActiveChunkIndex" integer NOT NULL DEFAULT -1
 );
+ALTER TABLE e2b_compute_leases
+  ADD COLUMN IF NOT EXISTS "creationAttempts" integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "usedChunkIndex" integer NOT NULL DEFAULT -1,
+  ADD COLUMN IF NOT EXISTS "previousPaidUntil" timestamptz,
+  ADD COLUMN IF NOT EXISTS "activeChunkIndex" integer NOT NULL DEFAULT -1,
+  ADD COLUMN IF NOT EXISTS "previousActiveChunkIndex" integer NOT NULL DEFAULT -1;
 ALTER TABLE e2b_resource_accounts ADD COLUMN IF NOT EXISTS "computeTemplateId" text;

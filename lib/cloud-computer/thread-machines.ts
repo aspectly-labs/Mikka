@@ -9,7 +9,7 @@ import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from 
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
-import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, verifyE2BAllocation, voidUnallocatedE2BCompute } from './e2b-compute-billing'
+import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, verifyE2BAllocation, e2bSnapshotFallbackSafe } from './e2b-compute-billing'
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
@@ -301,7 +301,7 @@ export async function restoreThreadMachineFromSnapshot(pool: Pool, actor: Actor,
     const missingHardware = error instanceof E2BKeyError && error.code === 'e2b_template_unavailable'
       && error.detail === 'E2B snapshot has no verified compute record'
     if (!missingHardware && !snapshotUnusable(error)) throw error
-    await voidUnallocatedE2BCompute(actor.userId, transition.operationId)
+    if (!await e2bSnapshotFallbackSafe(pool, actor.userId, transition.operationId)) throw error
     await releaseUnusableSnapshot(pool, actor, runId, transition.epoch, transition.operationId, missingHardware)
     const replaced = await replaceGoneSandbox(pool, runId, template, leaseId)
     // error-cause: the unusable snapshot is already recorded; this new error reports that the lease moved away
@@ -334,7 +334,7 @@ export const threadMachineProvider = {
     const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, snapshotId, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
     const base = { apiKey: account.apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
     const sandbox = await createPrepaidE2B(ownerId, operationId, () => cloudStartupSpan('cloud.sandbox.create', attributes,
-      () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, idempotencyKey: operationId, timeoutMs,
+      () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, retries: 0, idempotencyKey: operationId, timeoutMs,
         metadata, lifecycle: { onTimeout: 'pause', autoResume: false } }))))
     await verifyE2BAllocation(ownerId, operationId, sandbox.sandboxId, base)
     await bindE2BResource(ownerId, 'sandbox', sandbox.sandboxId, account.scope)
@@ -1197,7 +1197,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
           started = await threadLifecycleProvider.createFromSnapshot(candidate.providerId, machine.operationId, metadata(), actor.userId, machine.snapshotId)
         } catch (error) {
           if (!snapshotUnusable(error)) throw error
-          await voidUnallocatedE2BCompute(actor.userId, machine.operationId)
+          if (!await e2bSnapshotFallbackSafe(pool, actor.userId, machine.operationId)) throw error
           machine = await replaceGoneSandbox(pool, runId, freshTemplate(), leaseId)
           // error-cause: the 409 reports a lost provisioning lease during the template fallback.
           if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
