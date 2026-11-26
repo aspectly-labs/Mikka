@@ -1759,6 +1759,16 @@
       "sourceHash": "bfd9b4563ceb37c4e35e10f74fd5bf9ff0c515b71347526b2d9b7b80e1e58cfc"
     },
     {
+      "path": "/mikka/api/internal/subscription/chat",
+      "template": "/api/internal/subscription/chat",
+      "source": "app/api/internal/subscription/chat/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 300,
+      "sourceHash": "a7c8877c0ac8459734a0549b3b38c0cdad15741f7242ad93c47c52300b435b42"
+    },
+    {
       "path": "/mikka/api/invitations/[token]",
       "template": "/api/invitations/[token]",
       "source": "app/api/invitations/[token]/route.ts",

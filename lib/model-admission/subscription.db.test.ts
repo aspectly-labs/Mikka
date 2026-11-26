@@ -1,3 +1,4 @@
+import { fixtureSubscriptionChat } from '../../tests/fixtures/subscription'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -90,7 +91,7 @@ test('managed subscription routes authorize the existing service and native HTTP
     },
   }
   const service = new SubscriptionService(repository, () => worker as never, { ready: () => true, nativeIsolation: 'verified_runtime' }, undefined,
-    async (ownerId, workspaceId) => { await store.read({ ownerId, workspaceId }) })
+    async (ownerId, workspaceId) => { await store.read({ ownerId, workspaceId }) }, undefined, undefined, undefined, fixtureSubscriptionChat(worker))
   nativeHTTP = subscriptionNativeHTTP({ authorize: async () => ownerId, service: () => service })
   t.after(async () => {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))

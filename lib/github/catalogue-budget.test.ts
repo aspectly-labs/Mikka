@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import type { createMCPClient } from '@ai-sdk/mcp'
 import { createGitHubMcpRuntime } from './mcp'
 import { SubscriptionService } from '../subscription-service'
-import { subscriptionFixture } from '../../tests/fixtures/subscription'
+import { fixtureSubscriptionChat, subscriptionFixture } from '../../tests/fixtures/subscription'
 import { withCoordinatorPresentation } from '../coordinator/native-prompt'
 
 // The retained production catalogue measured 53 tools / 152,260 JSON bytes.
@@ -51,7 +51,7 @@ test('GitHub discovery lets the same subscription continue within its existing r
       } })
     },
   } as unknown as ReturnType<SubscriptionService['worker']>
-  const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => {})
+  const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => {}, undefined, undefined, fixtureSubscriptionChat(worker))
   const model = await service.model(use)
   if (model.specificationVersion !== 'v4') throw new Error('expected current SDK v4 model')
 

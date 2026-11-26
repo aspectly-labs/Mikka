@@ -4,7 +4,7 @@ import { APICallError, InvalidResponseDataError } from 'ai'
 import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
 import { generationFailureCode, subscriptionGenerationError, SubscriptionService } from './subscription-service'
-import { subscriptionFixture } from '../tests/fixtures/subscription'
+import { fixtureSubscriptionChat, subscriptionFixture } from '../tests/fixtures/subscription'
 
 test('a failed subscription turn logs only its fixed code, never the message', () => {
   assert.equal(generationFailureCode(new WorkerRefusal('provider_operation_failed')), 'provider_operation_failed')
@@ -45,7 +45,7 @@ test('the real AI SDK stream retains the fixed worker refusal without exposing u
   for (const [source, expected] of [[new WorkerRefusal('subscription_rate_limited'), 'subscription_rate_limited'], [new Error('fixture-private-provider-text'), 'subscription_generation_failed'], [sdkError, 'subscription_generation_failed']] as const) {
     const logStart = logs.length
     const worker = { forUse() { return this }, stream: () => new ReadableStream({ start(controller) { controller.error(source) } }) } as unknown as ReturnType<SubscriptionService['worker']>
-    const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => {})
+    const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => {}, undefined, undefined, fixtureSubscriptionChat(worker))
     const model = await service.model(use)
     assert.notEqual(model.specificationVersion, 'v2')
     if (model.specificationVersion !== 'v4' && model.specificationVersion !== 'v3') throw new Error('expected current SDK model')
@@ -96,7 +96,7 @@ test('the real SDK enforces the bounded hosted-model budget before inference or 
       return new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(finish)}\n\ndata: [DONE]\n\n`)); controller.close() } })
     },
   } as unknown as ReturnType<SubscriptionService['worker']>
-  const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => { admissions++ })
+  const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => { admissions++ }, undefined, undefined, fixtureSubscriptionChat(worker))
   const model = await service.model(use)
   if (model.specificationVersion !== 'v4') throw new Error('expected current SDK model')
   const invoke = async (text: string) => {

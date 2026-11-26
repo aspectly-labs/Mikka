@@ -4,7 +4,7 @@ import { SubscriptionService } from './subscription-service'
 import { subscriptionFixture } from '../tests/fixtures/subscription'
 
 for (const route of ['claude_cpa', 'codex_cpa'] as const) {
-  test(`${route}: model construction reuses its checked connection scope without weakening later access`, async () => {
+  test(`${route}: model construction leaves CPA custody isolated without weakening later access`, async () => {
     const { use, access } = subscriptionFixture(route)
     access.connection!.quota.observedAt = new Date().toISOString()
     const provider = route === 'claude_cpa' ? 'claude' as const : 'codex' as const
@@ -21,7 +21,7 @@ for (const route of ['claude_cpa', 'codex_cpa'] as const) {
       { ready: () => true, nativeIsolation: 'none' }, undefined, async () => { memberships++ }, async () => { admissions++ })
     const model = await service.model(use)
     assert.deepEqual({ bindings, connections, memberships, admissions }, { bindings: 2, connections: 2, memberships: 1, admissions: 1 })
-    assert.deepEqual(scopes, [{ ownerId: use.ownerId, workspaceId: 'custody-workspace', connectionId: row.id, provider }])
+    assert.deepEqual(scopes, [])
 
     row.state = 'disconnected'
     await assert.rejects(async () => model.doStream({ prompt: [] }), { code: 'disconnected' })

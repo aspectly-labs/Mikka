@@ -65,6 +65,14 @@ model_list:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   pass_through_endpoints:
+    - path: /v1/mikka/subscription/chat
+      target: os.environ/MIKKA_SUBSCRIPTION_CPA_CHAT_URL
+      methods: ["POST"]
+      forward_headers: false
+      headers:
+        Content-Type: application/json
+      auth: true
+      timeout: 290
     - path: /v1/mikka/catalog
       target: https://ai-gateway.vercel.sh/v1/models
       methods: ["GET"]
