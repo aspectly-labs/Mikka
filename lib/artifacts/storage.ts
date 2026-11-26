@@ -2,6 +2,8 @@ import 'server-only'
 import { AwsClient } from 'aws4fetch'
 import { isCloudEdition } from '@/lib/edition'
 import { deploymentStage } from '../deployment-stage.mjs'
+import { isProductionEnv } from '@/lib/env/public'
+import { envString, readEnv } from '@/lib/env/server'
 
 // Artifact files use an administrator-owned S3-compatible bucket (including R2).
 // Each version is immutable. Community installations without a bucket retain
@@ -12,21 +14,21 @@ interface ObjectStorageConfig { endpoint: string; bucket: string; client: AwsCli
 type StorageArea = 'artifacts' | 'task-workspaces'
 
 function objectStorageConfig(area: StorageArea = 'artifacts'): ObjectStorageConfig | null {
-  const endpoint = process.env.S3_ENDPOINT?.trim()
-  if (endpoint || process.env.S3_BUCKET || process.env.S3_ACCESS_KEY_ID || process.env.S3_SECRET_ACCESS_KEY) {
-    const bucket = process.env.S3_BUCKET?.trim(), accessKeyId = process.env.S3_ACCESS_KEY_ID, secretAccessKey = process.env.S3_SECRET_ACCESS_KEY
+  const endpoint = envString('S3_ENDPOINT')
+  if (endpoint || readEnv('S3_BUCKET') || readEnv('S3_ACCESS_KEY_ID') || readEnv('S3_SECRET_ACCESS_KEY')) {
+    const bucket = envString('S3_BUCKET'), accessKeyId = readEnv('S3_ACCESS_KEY_ID'), secretAccessKey = readEnv('S3_SECRET_ACCESS_KEY')
     if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) throw new Error('S3 configuration is incomplete')
     const url = new URL(endpoint)
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || /[\\/]/.test(bucket)) throw new Error('S3 configuration is invalid')
-    return { endpoint: url.href.replace(/\/+$/, ''), bucket, client: new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: process.env.S3_REGION?.trim() || 'us-east-1' }) }
+    return { endpoint: url.href.replace(/\/+$/, ''), bucket, client: new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: envString('S3_REGION') || 'us-east-1' }) }
   }
-  const accountId = process.env.R2_ACCOUNT_ID ?? process.env.CLOUDFLARE_ACCOUNT_ID
+  const accountId = readEnv('R2_ACCOUNT_ID') ?? readEnv('CLOUDFLARE_ACCOUNT_ID')
   const accessKeyId = area === 'task-workspaces'
-    ? process.env.R2_TASK_WORKSPACES_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID : process.env.R2_ACCESS_KEY_ID
+    ? readEnv('R2_TASK_WORKSPACES_ACCESS_KEY_ID') ?? readEnv('R2_ACCESS_KEY_ID') : readEnv('R2_ACCESS_KEY_ID')
   const secretAccessKey = area === 'task-workspaces'
-    ? process.env.R2_TASK_WORKSPACES_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY : process.env.R2_SECRET_ACCESS_KEY
+    ? readEnv('R2_TASK_WORKSPACES_SECRET_ACCESS_KEY') ?? readEnv('R2_SECRET_ACCESS_KEY') : readEnv('R2_SECRET_ACCESS_KEY')
   const bucket = area === 'task-workspaces'
-    ? process.env.R2_TASK_WORKSPACES_BUCKET ?? 'mikka-task-workspaces' : process.env.R2_ARTIFACTS_BUCKET ?? 'mikka-artifacts'
+    ? readEnv('R2_TASK_WORKSPACES_BUCKET') ?? 'mikka-task-workspaces' : readEnv('R2_ARTIFACTS_BUCKET') ?? 'mikka-artifacts'
   if (/[\\/]/.test(bucket)) throw new Error('R2 bucket configuration is invalid')
   if (!accountId || !accessKeyId || !secretAccessKey) return null
   return { endpoint: `https://${accountId}.r2.cloudflarestorage.com`, bucket, client: new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto' }) }
@@ -34,7 +36,7 @@ function objectStorageConfig(area: StorageArea = 'artifacts'): ObjectStorageConf
 
 /** Where files go: R2, or the database row when no bucket is configured outside production. */
 export function artifactStorage(area: StorageArea = 'artifacts'): 'r2' | 'inline' {
-  const stage = deploymentStage() ?? (process.env.NODE_ENV === 'production' ? 'production' : undefined)
+  const stage = deploymentStage() ?? (isProductionEnv() ? 'production' : undefined)
   // Keep the existing persisted 'r2' discriminator for every S3 transport.
   if (objectStorageConfig(area)) return 'r2'
   if (isCloudEdition() && stage === 'production') throw new Error('Object storage is not configured')

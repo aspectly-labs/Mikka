@@ -176,6 +176,7 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
     '@/lib/model-gateway/token':{mintGatewayToken:async()=>({token:'mkg_'+'a'.repeat(43)})},
     // The real switch, read against this fixture's environment rather than the test process's.
     '@/lib/deployment-switches':{deploymentSwitch:(name:DeploymentSwitch)=>deploymentSwitch(name,env)},
+    '@/lib/env/server':{runtimeEnv:()=>env,readEnv:(name:string)=>(env as Record<string,string|undefined>)[name],envString:(name:string)=>(env as Record<string,string|undefined>)[name]?.trim()||undefined},
     '@/lib/computer/native-run-binding':{nativeRunBinding:async()=>({id:'subscription',ownerId:'owner',consumerId:'agent',workspaceId:'task-workspace',modelId:'native-default',route:'codex_cli'})},
     '@/lib/personal-policy':{sharedNativeBinding:async()=>null},
     // The benchmark device holds its gateway session; the claim checks it inside the transaction.

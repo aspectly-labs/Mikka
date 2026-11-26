@@ -10,6 +10,7 @@ import { authTrustedOrigins } from '@/lib/auth-config'
 import { cloudflareReview, reviewReply, type CloudflareReview } from '../cloudflare-review'
 import type { ReviewSessionLease } from '../review-sessions'
 import type { TaskReviewAuthority } from '../review-authority'
+import { runtimeEnv } from '@/lib/env/server'
 
 const ROOT = '/run/mikka-preview'
 const SCRIPT = '/opt/mikka/preview/preview-gateway.py'
@@ -38,7 +39,7 @@ type Connector = (workspaceId: string, sandboxId: string, signal?: AbortSignal) 
 type StateReader = typeof computerState
 
 export function previewParentOrigin(request: Request): string {
-  const allowed = authTrustedOrigins(process.env).filter(origin => /^https?:\/\//.test(origin))
+  const allowed = authTrustedOrigins(runtimeEnv()).filter(origin => /^https?:\/\//.test(origin))
   const application = new URL(request.url).origin
   const parent = request.headers.get('origin') ?? application
   if (!allowed.includes(application) || !allowed.includes(parent)) throw new PreviewRuntimeError('configuration', 403)
@@ -170,7 +171,7 @@ export async function issueRunPreview(prepared: PreparedPreview, parentOrigin: s
   const origin = new URL(`https://${host}`)
   const parent = new URL(parentOrigin)
   if (origin.host !== host || origin.username || origin.password || origin.pathname !== '/' || parent.origin === origin.origin
-    || !authTrustedOrigins(process.env).includes(parentOrigin) || parent.origin !== parentOrigin)
+    || !authTrustedOrigins(runtimeEnv()).includes(parentOrigin) || parent.origin !== parentOrigin)
     throw new PreviewRuntimeError('configuration')
   if (prepared.cloudflare && prepared.cloudflare.scope.leaseId !== lease.id) throw new PreviewRuntimeError('scope_changed',403)
   const reply = prepared.cloudflare ? await reviewReply(prepared.cloudflare,'preview-issue',{parentOrigin,expiresAt:expires})

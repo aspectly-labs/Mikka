@@ -2,7 +2,7 @@ import { gatedFeatures, killSwitches, upcomingFeatures } from '@/lib/feature-fla
 
 export type DesktopFeatures = { flags: Record<string, boolean>; cloudComputer: boolean }
 export type DesktopPublicConfiguration = { features: DesktopFeatures; daemonPackageName: string }
-const publicFlags = [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures), killSwitches.computerTab]
+const publicFlags = [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab]
 const defaults = (): DesktopPublicConfiguration => ({ features: { flags: Object.fromEntries(publicFlags.map(key => [key, false])), cloudComputer: false }, daemonPackageName: '@aspectlylabs/mikka' })
 let configuration = defaults()
 const listeners = new Set<() => void>()

@@ -12,6 +12,7 @@ import { createSecretMasker } from '@/lib/secrets/mask'
 import { withTaskEnv } from '../../packages/daemon/src/task-env'
 import { hostedSnapshot } from './sponsored-task'
 import type { Actor } from './subagents'
+import { runtimeEnv } from '@/lib/env/server'
 
 type MachineRow = {
   runId: string; sandboxId: string | null; snapshotId: string | null; state: string
@@ -123,7 +124,7 @@ export async function rerunThreadMachineSetup(pool: Pool, actor: Actor, runId: s
   try {
     injection = environment
       ? await environmentSecretInjection(actor.workspaceId, remoteRepositoryRef(run.remoteUrl),
-        { variables: environment.variables ?? {}, secretIds: environment.secretIds ?? [] }, process.env, actor.userId)
+        { variables: environment.variables ?? {}, secretIds: environment.secretIds ?? [] }, runtimeEnv(), actor.userId)
       : injection
   } catch (error) { throw Object.assign(new ComputerError(409, 'Thread environment unavailable'), { cause: error }) }
   // Same reserved-name guard the daemon's setup bootstrap applies to the claim's taskEnv.

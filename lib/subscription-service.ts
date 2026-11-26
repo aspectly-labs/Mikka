@@ -29,6 +29,13 @@ import { daybreakTierFromProgram } from './model-capabilities'
 const MODEL_REQUEST_MAX_BYTES = SUBSCRIPTION_CHAT_MAX_BYTES
 // Used only to preserve the public refusal of inputs still over budget.
 const LEGACY_HOST_CODE_UNIT_LIMIT = 262144
+// Allowlisted upstream OpenAI ChatGPT/Codex quota tier strings (`plan_type`),
+// distinct from Mikka workspace entitlement plans.
+const UPSTREAM_CODEX_QUOTA_TIERS: ReadonlySet<string> = new Set(['plus', 'pro', 'free', 'team', 'business', 'enterprise', 'go'])
+
+function isUpstreamCodexQuotaTier(tier: unknown): tier is string {
+  return typeof tier === 'string' && UPSTREAM_CODEX_QUOTA_TIERS.has(tier)
+}
 
 /** A provider's reasoning level name, as the worker passes it on (short lowercase word). */
 const EFFORT_NAME = /^[a-z][a-z0-9_-]{0,15}$/
@@ -334,13 +341,13 @@ export class SubscriptionService {
     try {
       const result = await this.worker(this.repository.scope(row)).call<Pick<WorkerUsage, 'status' | 'body'>>('allowance', { revision: Number(row.epoch) }, signal)
       const quota = quotaSnapshotSchema.parse(await this.quota(row.provider, result))
-      const plan = result.body && typeof result.body === 'object' && 'plan_type' in result.body ? result.body.plan_type : undefined
-      // Only the already-returned, allowlisted Codex quota plan is new metadata.
-      // Claude and missing/unknown plans keep the current DB value in the same
+      const upstreamTier = result.body && typeof result.body === 'object' && 'plan_type' in result.body ? result.body.plan_type : undefined
+      // Only the already-returned, allowlisted Codex quota tier is new metadata.
+      // Claude and missing/unknown tiers keep the current DB value in the same
       // epoch-fenced UPDATE, including a Settings change during this await.
-      const hasPlan = row.provider === 'codex' && result.status === 200 && typeof plan === 'string'
-        && ['plus', 'pro', 'free', 'team', 'business', 'enterprise', 'go'].includes(plan) && typeof quota.plan === 'string' && quota.plan.length > 0
-      await this.repository.saveQuota(row, quota, hasPlan ? undefined : { preservePlan: true })
+      const hasUpstreamTier = row.provider === 'codex' && result.status === 200
+        && isUpstreamCodexQuotaTier(upstreamTier) && typeof quota.plan === 'string' && quota.plan.length > 0
+      await this.repository.saveQuota(row, quota, hasUpstreamTier ? undefined : { preservePlan: true })
     } catch {
       const now = await this.repository.connection(ownerId, id).catch(() => null)
       if (now && now.state !== row.state) await (await import('./live/lists')).ownerSettingsChanged(this.repository.pool, ownerId)

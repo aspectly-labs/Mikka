@@ -13,6 +13,7 @@ import { assertCatalogToolkit, composioToolkitLister, composioToolkitRetriever }
 import { PluginError } from '@/lib/plugins/contracts'
 import { isPatSession, sameOriginMutationAllowed } from '@/lib/http-security'
 import { defineRoute } from '@/lib/primitives/define-route'
+import { readEnv } from '@/lib/env/server'
 
 const accountIdSchema = z.string().trim().min(1).max(255)
 const returnToSchema = z.string().max(512).optional()
@@ -49,7 +50,7 @@ export const GET = defineRoute(
     if (isPatSession(session)) return RouteResponse.json({ error: 'sessionRequired' }, { status: 403 })
     const composio = getComposio()
     const callbackVerifierConfigured = isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)
-    const webhookConfigured = Boolean(process.env.COMPOSIO_API_KEY && process.env.COMPOSIO_WEBHOOK_SECRET)
+    const webhookConfigured = Boolean(readEnv('COMPOSIO_API_KEY') && readEnv('COMPOSIO_WEBHOOK_SECRET'))
     if (!composio) {
       return RouteResponse.json({ configured: false, callbackVerifierConfigured, webhookConfigured, accounts: [] }, { headers: { 'Cache-Control': 'private, no-store' } })
     }

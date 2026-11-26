@@ -1,5 +1,6 @@
 import 'server-only'
 import { isCloudEdition } from '@/lib/edition'
+import { readEnv } from '@/lib/env/server'
 import { randomUUID } from 'node:crypto'
 import { start } from 'workflow/api'
 import { environmentSnapshotWorkflow } from '@/workflows/environment-snapshot/workflow'
@@ -27,7 +28,7 @@ import {
 
 type Reader = Parameters<typeof listProjectResources>[0]
 const userOf = (reader: Reader) => (typeof reader === 'string' ? reader : reader.id)
-const enabled = (reader: Reader) => serverFlagEnabled(gatedFeatures.environmentSnapshots, userOf(reader))
+const enabled = (reader: Reader) => serverFlagEnabled(gatedFeatures.environmentSnapshots.key, userOf(reader))
 
 function configuredProvider() {
   try {
@@ -118,7 +119,7 @@ export async function readEnvironmentSnapshot(
       WHERE "workspaceId"=$1 AND "environmentId"=$2 AND "providerScope"=$3 AND "templateKind"=$4
       ORDER BY "createdAt" DESC LIMIT 1`,
       [input.workspaceId, input.environmentId, scope, input.templateKind, environment.revision,
-        templateId, process.env.MIKKA_CLOUD_WORKER_SHA ?? null, current],
+        templateId, readEnv('MIKKA_CLOUD_WORKER_SHA') ?? null, current],
     )).rows[0]
   const template = paid ? environmentSnapshotTemplate(input.templateKind, environment.configuration) : null
   const image = paid ? await latest(environmentSnapshotScope(), template, eligible && Boolean(template) && configuredProvider()) : undefined
@@ -210,7 +211,7 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
     throw new ActionFailureError('projectEnvironmentUnavailable')
   const templateId = environmentSnapshotTemplate(input.templateKind, environment.configuration)
   if (!templateId) throw new ActionFailureError('projectEnvironmentUnavailable')
-  const workerSha = process.env.MIKKA_CLOUD_WORKER_SHA
+  const workerSha = readEnv('MIKKA_CLOUD_WORKER_SHA')
   if (!workerSha || !/^[a-f0-9]{40}$/.test(workerSha)) throw new ActionFailureError('projectEnvironmentUnavailable')
   if (!(await hasRepositoryAccess(userOf(reader), environment.repositories))) throw new ActionFailureError('projectEnvironmentUnavailable')
   const claim = await reserveEnvironmentBuild({ ...input, revision:environment.revision, userId:userOf(reader),templateId,workerSha },trigger)
@@ -250,7 +251,7 @@ export async function buildSnapshotsOnSave(reader: Reader, workspaceId: string, 
 export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templateKind' | 'workerSha'>) {
   if (!(await enabled(input.userId)) || !configuredProvider()) return null
   const kind = cloudTemplateOrigin(input.templateId)?.kind
-  if (!kind || kind === 'desktop' || !process.env.MIKKA_CLOUD_WORKER_SHA) return null
+  if (!kind || kind === 'desktop' || !readEnv('MIKKA_CLOUD_WORKER_SHA')) return null
   const { eligible, environment } = await snapshotConfiguration(input.userId, {
     ...input,
     templateKind: kind,
@@ -272,7 +273,7 @@ export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templa
       input.revision,
       environmentSnapshotScope(),
       input.templateId,
-      process.env.MIKKA_CLOUD_WORKER_SHA,
+      readEnv('MIKKA_CLOUD_WORKER_SHA'),
     ],
   )
   const row = rows[0]

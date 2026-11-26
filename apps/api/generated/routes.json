@@ -119,13 +119,40 @@
       "sourceHash": "b0ea1cebbaf7184793fe8aaa359b6b10ed4bc9badf56e5615d22e52f272c6e94"
     },
     {
+      "path": "/mikka/api/artifacts/open-artifact/bridge",
+      "template": "/api/artifacts/open-artifact/bridge",
+      "source": "app/api/artifacts/open-artifact/bridge/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "ea6d2a83208fead1b3c2a6493f32fc195790f0710b1d6ab28b0e7b2c97f63491"
+    },
+    {
+      "path": "/mikka/api/artifacts/open-artifact/config",
+      "template": "/api/artifacts/open-artifact/config",
+      "source": "app/api/artifacts/open-artifact/config/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "ccf21bd44ac16f03a773fdde39cf84ae242bffa45a7262644dda31f2c039a55d"
+    },
+    {
+      "path": "/mikka/api/artifacts/open-artifact/wake",
+      "template": "/api/artifacts/open-artifact/wake",
+      "source": "app/api/artifacts/open-artifact/wake/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "64c518464db13ad6d24b3771d6b848c32d31ce677eeecac989af5eb17257bd9a"
+    },
+    {
       "path": "/mikka/api/artifacts/shared/[token]",
       "template": "/api/artifacts/shared/[token]",
       "source": "app/api/artifacts/shared/[token]/route.ts",
       "methods": [
         "GET"
       ],
-      "sourceHash": "f89610ca9e86c57acaa02c6f716818b1f3dc40259a7bce77cb827a7eddb19c2c"
+      "sourceHash": "42ccc230b67a8f50bd3bcf556ff5e4c0d4334629e29a8ea29f727488e31a1925"
     },
     {
       "path": "/mikka/api/artifacts/shared/[token]/frame",
@@ -162,7 +189,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "844b0731c8ba42e98bbc967c4892178904276f80f71352b4c41db030bd1c209c"
+      "sourceHash": "61f1c4d028f28e384626e8f50d5004c2905221d2d3a8f96a23fe72a8aede40c0"
     },
     {
       "path": "/mikka/api/avatars/[userId]/[hash]",
@@ -172,6 +199,15 @@
         "GET"
       ],
       "sourceHash": "6a3a7fb6ccd19045de9f36802cc0467243490d1d145b5c777072506e943ad562"
+    },
+    {
+      "path": "/mikka/api/billing/catalog",
+      "template": "/api/billing/catalog",
+      "source": "app/api/billing/catalog/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "73363edf84acfdab57251bae6aa27f009a034769af5f5a566f029eb699b33a1c"
     },
     {
       "path": "/mikka/api/billing/stripe",
@@ -678,7 +714,7 @@
         "POST"
       ],
       "maxDuration": 60,
-      "sourceHash": "e8b870680623bc72f6d3d4f9f6e7c0d5063a30bbd11d33aa8c008e7a4d9039b7"
+      "sourceHash": "9159ed95d7f9a998dba9cdda94757f1333901d5938bb275c7b4d9481243c104d"
     },
     {
       "path": "/mikka/api/cron/account-deletions",
@@ -748,7 +784,7 @@
         "GET"
       ],
       "maxDuration": 60,
-      "sourceHash": "7b46521f8bb254fed25df8ca75b094626a2a43491a87b7eaa973efabd5ed12df"
+      "sourceHash": "0b53e96d110b0baf56de46d928dc94432c575214a1667b6e821d29e8162dbc58"
     },
     {
       "path": "/mikka/api/cron/reconcile",
@@ -835,7 +871,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "d76c68a6e8780c066d3152e928cb39d58cae226dee3619e9504161a4fdf32019"
+      "sourceHash": "617f873602e52c0fdb65e0453f68abba6657a071086003b545d4edebaf9798be"
     },
     {
       "path": "/mikka/api/desktop/exchange",
@@ -1386,7 +1422,7 @@
         "PATCH",
         "POST"
       ],
-      "sourceHash": "1f2d0b42276d103e595b3ff9a78b1b361b8aa91c79593a93f619271475b0e809"
+      "sourceHash": "dfae1d823f072d8bb1acd343f85eb35ae8530050cda12dee7f8057dcce1904f3"
     },
     {
       "path": "/mikka/api/integrations/composio/callback",
@@ -1720,7 +1756,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "3468c02c37226d9dc17820d2e6a84891a4b2e2f6db50947b8ec934b6bbe829f9"
+      "sourceHash": "ab388b31ceef0eaf3f6fbf8fadeb6b34699fecee20afe96cd9416c2115bae437"
     },
     {
       "path": "/mikka/api/integrations/slack/callback",
@@ -1747,7 +1783,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "0c168a24c1597d85c64e1fb1c0eab978ae8dd5f7094f65d530b1de0198914582"
+      "sourceHash": "cbad05d9c29605473c06aea56c320915901805af89cef74a095ae13d125dc70a"
     },
     {
       "path": "/mikka/api/internal/eve/tools",
@@ -1803,7 +1839,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "f4a14dd7619cbf94452ab9236c4295e5060d19ff8fe8b52e1ebd3925bb9539e2"
+      "sourceHash": "90473772d365ae703d4393fb9be1fc1da7b3aa1f65fbb6bd36c0d277afc7d697"
     },
     {
       "path": "/mikka/api/mcp",
@@ -3111,7 +3147,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "8bc7d7b058ede798452935eab33832477d9bd612344e17d893773cbfe4f2a7d6"
+      "sourceHash": "d70bb3668f8f1795ae6d3ed0016c6ca3ef22a311ea88c4fab158dcecf42fbfb4"
     },
     {
       "path": "/mikka/api/subscriptions/enrollments/bind",
@@ -3122,7 +3158,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "6f6b77b828016d46871276d01acb7020cb1d9356be6c174e17ff779a33622e30"
+      "sourceHash": "6eda7ec8c9020be6dca93286119b872ffce79b1ec52744895999e8ecf906c5d7"
     },
     {
       "path": "/mikka/api/subscriptions/enrollments/handoff",
@@ -3355,7 +3391,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "adbb3a46cccc35911ae1722185f2b6a8040de227698363cdf7a1fc2c1bee5ac3"
+      "sourceHash": "606ed5ffaa9732c01eb2ed1a2521f683ed1a6251fa3ae7a274a4478dcfb4c969"
     },
     {
       "path": "/mikka/api/test-workspace",
@@ -3364,7 +3400,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "87fb0f51ca06511af8149fd7118ade766f4d44dab2323301ebbbd8d5b0114958"
+      "sourceHash": "97160ef08aeda0279da1af86713bf254c9bcf74c4aa6f41991d15d4eb28a622e"
     },
     {
       "path": "/mikka/api/threads/shared/[token]",
@@ -3715,7 +3751,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "083ae9c648bcdddf98800a070e89c025e99b628ea96c50c4bab99af0ad755da7"
+      "sourceHash": "f3f92520a94ea236ab07b401d534d06a558e912f24909131f5808c3bd2942f8b"
     },
     {
       "path": "/mikka/api/web/begin",
@@ -3778,7 +3814,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "6aa9c7392a1bcf15d29c4daf0a1f8dc9a455baf5f9caad554f192569f4e673c2"
+      "sourceHash": "c2c4eaec97143df823eb74c898df65173a928e039495ea209668713d79da4736"
     },
     {
       "path": "/mikka/api/webhooks/github",
@@ -3796,7 +3832,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "8e2bda0a8b41c4af7f242c9b22d478154537987c346ffee83208f35a715c9ade"
+      "sourceHash": "91424fa001e49e1b99c73e72e96d546e363d78b687a33546293399782cee0e0d"
     },
     {
       "path": "/mikka/api/webhooks/linear/automations",
@@ -3805,7 +3841,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "cb0d3b68058d362ca7e1b82ae156e78b381dd3027abc3f4b0b72410879750c64"
+      "sourceHash": "66de24077d247be32cec489d3e8082e577924f21025ac2e5ac4c98b012eea91a"
     },
     {
       "path": "/mikka/api/webhooks/slack",
@@ -3833,7 +3869,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "635b9a98323b5d24799b7654a8eebac69bdec7abc82206e7930368dc9b8a756a"
+      "sourceHash": "54c118dfde44318171217dbfe2d4878d74337713ed9a814fc747f8491c8d3208"
     },
     {
       "path": "/mikka/api/workspace",
@@ -4213,7 +4249,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "daecf94a92f2b58f2a763b07cc58c873b5bd657e7e454b7ccb36a04251b08365"
+      "sourceHash": "13b41baae34fc6a1aaf09477f32f0b6da44ebeeaa2f3f573af48daae3c2992b6"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs",
@@ -4240,7 +4276,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "a99c4393e574d8cab17774e747d5eea4e22555806f9e8fe60084af1b9e11d3e6"
+      "sourceHash": "0313d5f30cf39e2093d1bfd98d26e82c1547a8ce4b233964e39dc904b755223d"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
@@ -4428,7 +4464,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "36bfd6e9aa1fdbd416040b88dc7634e30673b8587f61b9ee1425acb990f30f8d"
+      "sourceHash": "e207afa88b242ff91e9abcc22ad475aa77f46b34084eb3907b29930f42a8c0ac"
     }
   ]
 }

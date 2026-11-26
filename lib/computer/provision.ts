@@ -9,6 +9,7 @@ import { isCloudEdition } from '@/lib/edition'
 import { ownE2BKeySql } from '@/lib/secrets/e2b-owner-sql'
 import { canReplaceLegacyBotOperation, e2bCanReplaceOperation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { E2BKeyError } from '@/lib/secrets/flag'
+import { readEnv } from '@/lib/env/server'
 
 type Actor={userId:string;workspaceId:string}
 type Runtime=Pick<typeof provider,'createComputer'|'connectComputer'|'installComputerRuntime'>&Partial<Pick<typeof provider,'computerGone'|'computerWorkerSha'|'killComputer'|'observeComputerWorker'>>
@@ -99,7 +100,7 @@ function provisionErrorCode(error: unknown) {
 
 /** Built from another worker commit, and no live run is using its worker. */
 async function stale(pool:Pool,actor:Actor,sandbox:Awaited<ReturnType<Runtime['connectComputer']>>,runtime:Runtime) {
-  const expected=process.env.MIKKA_CLOUD_WORKER_SHA
+  const expected=readEnv('MIKKA_CLOUD_WORKER_SHA')
   if(!expected||!runtime.computerWorkerSha||!runtime.killComputer) return false
   if(await runtime.computerWorkerSha(sandbox)===expected) return false
   return desktopIdle(pool, actor)

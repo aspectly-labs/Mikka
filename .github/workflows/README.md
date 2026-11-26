@@ -30,6 +30,7 @@ protected UI check.
   `Browser tests (before merge)` and passes at once; delete it once that name
   is removed from the required checks in the repository settings.
 - `GitGuardian Security Checks` is a separate external required check.
+- The protected `UI policy (strict)` source stage also runs the waiting-issue check, so no separate required check name is needed for `waiting-issues.yml`.
 - All four existing required names remain intact. Do not silently replace
   them with a new aggregate check until the GitHub branch-protection settings
   have been migrated and verified.
@@ -476,3 +477,8 @@ rollout and flag deadlines follow the [production acceptance decision](../../doc
 ## Engineering sandbox
 
 `engineering-sandbox.yml` authenticates explicitly dispatched main jobs to the configured engineering Worker and runs the Factory handoff, startup-timing and isolated PostgreSQL 17 policy-migration suites there. External agents can dispatch a supported suite on a committed source SHA using the [engineering runner instructions](../../docs/operations/engineering-sandbox.md).
+
+## Scheduled integration-to-main promotion
+
+`integration-to-main-promotion.yml` runs on a 30-minute schedule (and on manual `workflow_dispatch`, with an optional `dry_run` input) on `main`. It inspects only GitHub metadata and evaluates all promotion gates even in `dry_run` or while repository variable `MIKKA_INTEGRATION_PROMOTE_TO_MAIN` is unset/not `'true'`, reporting the planned action in the job summary without reading App credentials or mutating PRs. `merge-queue-autopilot.yml` explicitly excludes the configured integration branch (`vars.MIKKA_INTEGRATION_BRANCH`, default `claude/affectionate-einstein-s235cb`) so `integration-to-main-promotion.yml` is the single automated enqueue path enforcing freeze and Ready child PR gates. Once `MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true` is set and the integration branch is ahead of `main`, `0` commits behind `main`, and has zero open Ready child PRs targeting it, the workflow opens a Ready promotion PR with `Items: pending` / `Evidence: pending` (resetting to pending on any new head SHA), records the real completed passing `CI` workflow run URL only after required CI/build checks pass on that exact head SHA, and enqueues the PR strictly via `enqueuePullRequest` (preserving full `merge_group` PostgreSQL coverage) once `PR acceptance`, all required checks, `mergeStateStatus == "CLEAN"`, and manual-removal checks pass.
+

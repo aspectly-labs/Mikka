@@ -1,6 +1,7 @@
 import { DEVICE_SESSION_HEADER, DEVICE_SESSION_VERSION, MIN_DAEMON_VERSION, SOURCE_DAEMON_VERSION, type DaemonVersions } from '@mikka/protocol/device'
 import { UPDATE_REQUIRED_STATUS, meetsMinimumVersion } from '@mikka/protocol/version'
 import { daemonTestMode } from '@mikka/protocol/repository'
+import { runtimeEnv } from '@/lib/env/server'
 
 const REGISTRY_LATEST = 'https://registry.npmjs.org/@aspectlylabs%2fmikka/latest'
 const CACHE_MS = 5 * 60_000
@@ -27,7 +28,7 @@ export async function readLatestDaemonVersion(fetcher: typeof fetch = fetch): Pr
  * or its next session triggers.
  */
 // Test servers never ask the public registry; their daemons run from source.
-const defaultRead = async () => daemonTestMode(process.env) ? undefined : readLatestDaemonVersion()
+const defaultRead = async () => daemonTestMode(runtimeEnv()) ? undefined : readLatestDaemonVersion()
 
 export async function daemonVersions(now = Date.now(), read: () => Promise<string | undefined> = defaultRead): Promise<DaemonVersions> {
   if (!cached || now - cached.at >= CACHE_MS) {

@@ -11,6 +11,7 @@ import { cloudflareReview, reviewReply, reviewRequest } from '../cloudflare-revi
 import type { ReviewSessionLease } from '../review-sessions'
 import type { TaskReviewAuthority } from '../review-authority'
 import { terminalKey, signTerminalTicket, terminalResponseError, type TerminalPrepared, type TerminalTarget } from './wire'
+import { readEnv } from '@/lib/env/server'
 
 const PORT = 6084
 const ROOT = '/run/mikka-terminal'
@@ -21,7 +22,7 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 async function options(ownerId: string, sandboxId: string, signal?: AbortSignal) {
   const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
   return { apiKey: account.apiKey,
-    proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy, requestTimeoutMs: 15_000, retries: 0, signal }
+    proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy'), requestTimeoutMs: 15_000, retries: 0, signal }
 }
 
 function cloud(scope: TaskReviewAuthority & { threadTerminal?: boolean }): asserts scope is TaskReviewAuthority & { sandboxId: string; threadTerminal?: boolean } {
@@ -100,7 +101,7 @@ async function verifyRuntime(sandbox: Sandbox, signal?: AbortSignal) {
 async function sponsoredTerminal(scope:TaskReviewAuthority & {sandboxId:string}, lease:ReviewSessionLease | null | undefined,
   action:'terminal-prepare'|'terminal-existing', signal?:AbortSignal):Promise<TerminalPrepared> {
   const review = cloudflareReview(scope,lease,'terminal')
-  const key = terminalKey(scope,process.env.BETTER_AUTH_SECRET)
+  const key = terminalKey(scope, readEnv('BETTER_AUTH_SECRET'))
   const current = await reviewReply(review,action,{key:key.toString('base64')},signal)
   if (typeof current.boot !== 'string' || !/^[a-f0-9-]{36}$/.test(current.boot) ||
       typeof current.version !== 'string' || !/^[a-f0-9]{64}$/.test(current.version))
@@ -117,7 +118,7 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
     const { origin } = await endpoint(target, signal)
     const source = await readFile(join(process.cwd(), 'scripts/e2b/terminal-gateway.py'), 'utf8')
     const version = createHash('sha256').update(source).digest('hex')
-    const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
+    const key = terminalKey(target, readEnv('BETTER_AUTH_SECRET'))
     let current = await health(origin, key, signal)
     // Only opening/reconnecting performs this root check. Input/resize/close
     // keep the existing data plane and never issue a per-command SDK RPC.
@@ -162,7 +163,7 @@ export async function existingTerminal(scope: TaskReviewAuthority, signal?: Abor
     if (scope.sponsoredPlacement) return await sponsoredTerminal(scope,lease,'terminal-existing',signal)
     const target = { runId: scope.runId, ownerId: scope.ownerId, workspaceId: scope.workspaceId, sandboxId: scope.sandboxId }
     const { origin } = await endpoint(target, signal)
-    const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
+    const key = terminalKey(target, readEnv('BETTER_AUTH_SECRET'))
     const current = await health(origin, key, signal)
     if (!current) throw new TerminalError('terminal_ended')
     return { origin, boot: current.boot, key, bindingId: scope.bindingId }
@@ -210,7 +211,7 @@ export async function revokeRunTerminal(target: TerminalTarget, control: { lease
     throw new TerminalError('terminal_binding_changed')
   }
   const { origin } = await endpoint(target)
-  const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
+  const key = terminalKey(target, readEnv('BETTER_AUTH_SECRET'))
   const current = await health(origin, key)
   if (!current) throw new TerminalError('terminal_unavailable', { detail: 'runtime' })
   const body = JSON.stringify({ leaseIds: control.leaseIds })

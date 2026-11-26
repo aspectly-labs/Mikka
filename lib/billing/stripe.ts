@@ -2,6 +2,7 @@
 // redirects, and webhook signature checks. No SDK; tests pass their own fetch.
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { isCloudEdition } from '@/lib/edition'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 export interface StripeConfig {
   secretKey: string
@@ -12,7 +13,7 @@ export interface StripeConfig {
 }
 
 /** Null when billing is not set up on this deployment (billingNotConfigured). */
-export function stripeConfig(env: Readonly<Record<string, string | undefined>> = process.env): StripeConfig | null {
+export function stripeConfig(env: EnvMap = runtimeEnv()): StripeConfig | null {
   if (!isCloudEdition(env)) return null
   const secretKey = env.STRIPE_SECRET_KEY?.trim()
   if (!secretKey) return null

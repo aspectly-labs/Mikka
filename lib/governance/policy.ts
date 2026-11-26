@@ -1,3 +1,25 @@
+import {
+  PLAN_CAPABILITY_PROFILES,
+  WORKSPACE_CAPABILITY_OWNERS,
+  resolveWorkspaceCapabilities,
+  resolveWorkspaceEdition,
+  workspaceCapabilitiesSchema,
+  type PlanEntitlementOverrides,
+  type WorkspaceCapabilities,
+  type WorkspaceEdition,
+} from './capabilities'
+
+export {
+  PLAN_CAPABILITY_PROFILES,
+  WORKSPACE_CAPABILITY_OWNERS,
+  resolveWorkspaceCapabilities,
+  resolveWorkspaceEdition,
+  workspaceCapabilitiesSchema,
+  type PlanEntitlementOverrides,
+  type WorkspaceCapabilities,
+  type WorkspaceEdition,
+}
+
 /** Pure product entitlements. Authorization must be checked independently. */
 export type DeploymentMode = 'cloud' | 'selfhost'
 export type Plan = 'free' | 'pro' | 'enterprise'
@@ -7,12 +29,13 @@ export type PlanGrant = { plan: Plan; source: 'cloud' | 'license'; seatLimit: nu
 export type GovernanceFeature = 'usageExport' | 'approvalTemplates'
 export type Entitlements = {
   plan: Plan
-  edition: 'personal' | 'community' | 'team_free' | 'team_pro' | 'enterprise'
+  edition: WorkspaceEdition
   activeHumanLimit: number | null
   approvalTemplateLimit: number
   hostedMaxInFlight: number
   usageExport: boolean
   approvalTemplates: boolean
+  capabilities: WorkspaceCapabilities
 }
 
 /** Resolve the highest active plan from verified operator and Stripe billing grants. */
@@ -34,20 +57,35 @@ export function resolvePlanFromGrants(input: { mode: DeploymentMode; grant?: Pla
   return plan
 }
 
-export function resolveEntitlements(input: { mode: DeploymentMode; kind: 'personal' | 'team'; grant?: PlanGrant | null; grants?: (PlanGrant | null | undefined)[]; now?: Date }): Entitlements {
-  const plan: Plan = input.kind === 'personal' ? 'free' : resolvePlanFromGrants(input)
-  const community = input.mode === 'selfhost' && plan === 'free'
-  const paid = plan === 'pro' || plan === 'enterprise'
+export function resolveEntitlements(input: {
+  mode: DeploymentMode
+  kind: 'personal' | 'team'
+  grant?: PlanGrant | null
+  grants?: (PlanGrant | null | undefined)[]
+  now?: Date
+  capabilityOverrides?: PlanEntitlementOverrides | null
+}): Entitlements {
+  const nowDate = input.now ?? new Date()
+  const plan: Plan = input.kind === 'personal' ? 'free' : resolvePlanFromGrants({ ...input, now: nowDate })
+  const edition = resolveWorkspaceEdition({ plan, mode: input.mode, kind: input.kind })
+  const capabilities = resolveWorkspaceCapabilities({
+    plan,
+    mode: input.mode,
+    kind: input.kind,
+    overrides: input.capabilityOverrides,
+    now: nowDate,
+  })
   return {
     plan,
-    edition: input.kind === 'personal' ? 'personal' : community ? 'community' : plan === 'enterprise' ? 'enterprise' : plan === 'pro' ? 'team_pro' : 'team_free',
+    edition,
     // #1849: plans allocate resources, not seats. Keep seatLimit in historical
     // grants for reversibility; it no longer denies Shared Workspace members.
-    activeHumanLimit: input.kind === 'personal' ? 1 : null,
-    approvalTemplateLimit: paid ? plan === 'enterprise' ? 1000 : 100 : community ? 100 : 0,
-    hostedMaxInFlight: plan === 'enterprise' ? 128 : plan === 'pro' ? 32 : 8,
-    usageExport: paid || community,
-    approvalTemplates: paid || community,
+    activeHumanLimit: capabilities.activeHumanLimit,
+    approvalTemplateLimit: capabilities.approvalTemplateLimit,
+    hostedMaxInFlight: capabilities.hostedMaxInFlight,
+    usageExport: capabilities.canUseUsageExport,
+    approvalTemplates: capabilities.canUseApprovalTemplates,
+    capabilities,
   }
 }
 

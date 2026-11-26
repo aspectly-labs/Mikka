@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from 'pg'
 import { openSecret, sealSecret } from '@/lib/secrets/crypto'
 import { resolveAppOrigin } from '@/lib/auth-config'
 import { withBasePath } from '@/lib/base-path'
+import { runtimeEnv } from '@/lib/env/server'
 import { PluginError } from './contracts'
 import { publicMcpFetch } from './public-fetch'
 
@@ -34,7 +35,7 @@ export function mcpOAuthTransport() {
 
 /** Persistence adapter for the SDK's native OAuth code/PKCE/discovery/refresh. */
 export class McpOAuthStore {
-  constructor(readonly pool: Pool, readonly env: Record<string, string | undefined> = process.env,
+  constructor(readonly pool: Pool, readonly env: Readonly<Record<string, string | undefined>> = runtimeEnv(),
     readonly transport: () => { fetch: typeof fetch; close: () => Promise<unknown> } = mcpOAuthTransport) {}
 
   callbackUrl(serverId: string) {

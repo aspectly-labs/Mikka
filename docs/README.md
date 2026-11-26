@@ -49,6 +49,11 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 - [7-layer primitive architecture](architecture/primitives.md) maps Mikka's
   executable UI, error, route-guard, conversation-protocol, SQL-safety, ops and
   rule-as-code primitives to their owning modules and CI gates.
+- [Five-Tier Truth Model & anti-hardcoding gates](architecture/five-tier-truth.md)
+  separates structural code invariants (T1), validated env boundaries (T2),
+  authoritative domain/billing catalogs (T3), mutable runtime configuration (T4),
+  and parameterized localized copy (T5), enforced by zero-baseline gates G1–G6
+  and full-repository semantic AST linting.
 
 ## Connect and run Mikka
 
@@ -84,6 +89,12 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 - [Zero-residency baseline](operations/zero-residency-baseline.md) inventories Cloudflare and Oracle compute residency with per-service ownership for epic #3076.
 - [Web deployment](operations/web-deploy.md) and [production smoke](production-smoke.md) retain links to their private operating guides.
 - [Tracing](operations/tracing.md) locates requests and database queries.
+- [Configuration contracts](operations/config-contracts.md) is the generated
+  inventory of Tier-4 runtime configuration keys and Tier-3 workspace capability
+  owners, verified mechanically by G6 (`pnpm check:config-contracts`).
+- [Semantic lint calibration](operations/semantic-lint-calibration.md) documents
+  the four full-repository semantic AST lint rules, allowlists, and calibration
+  results for `pnpm lint:semantic`.
 - [Hosted credential operations](infisical-cloud.md) points to the private operating guide.
 
 - [Inbox API](inbox-api.md) defines pending, snoozed and completed items, actions, permissions and live refresh.

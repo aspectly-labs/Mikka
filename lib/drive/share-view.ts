@@ -5,6 +5,7 @@ import { workspacePool } from '@/lib/workspace-db'
 import { driveShareViewUrl, type DriveVolumeLocation } from './location'
 import type { DriveFileLinkVisibility, DriveShareView } from './contract'
 import { DriveError } from './store'
+import { readEnv } from '@/lib/env/server'
 
 type Database = Pick<PoolClient, 'query'>
 export type ShareLocation = DriveVolumeLocation
@@ -23,7 +24,7 @@ export async function findShareLocation(database: Database, id: string, reader: 
 
 const lifetime = 5 * 60_000
 function signature(id: string, reader: string, digest: string, expires: number): Buffer {
-  const secret = process.env.BETTER_AUTH_SECRET
+  const secret = readEnv('BETTER_AUTH_SECRET')
   if (!secret) throw new Error('Drive download signing is unconfigured')
   return createHmac('sha256', secret).update(JSON.stringify(['mikka-drive-download-v1', id, reader, digest, expires])).digest()
 }

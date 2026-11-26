@@ -2,6 +2,7 @@ import { workerDefinitionDigest } from '@/lib/agent-kit/worker-digest'
 import { scheduleThreadTitle } from '@/lib/thread-title-schedule'
 import { personalMailboxEnabled } from '../personal-mailbox-config'
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 import { admitProfileSelection } from '@/lib/factory/profile-admission'
 import type { ProfileFactoryContext } from '@/lib/factory/profile-watchdog'
 import { freezeExecutionIdentity, revalidateExecutionIdentity, ExecutionIdentityError } from '../execution-identity'
@@ -210,7 +211,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
         if (planLimit && compute.provider === 'e2b') {
           const { sizedTaskTemplate } = await import('../secrets/e2b-runtime')
           const { E2BKeyError } = await import('../secrets/flag')
-          try { sizedTaskTemplate(target.harness, compute.size, process.env, true) }
+          try { sizedTaskTemplate(target.harness, compute.size, runtimeEnv(), true) }
           catch (error) {
             if (!(error instanceof E2BKeyError)) throw error
             throw new TaskProviderAdmissionUnavailable('e2b', frozen.allowLocalRecovery === true, { cause: error })

@@ -209,6 +209,13 @@ with what ChatGPT / Codex, Claude Code, Capy, Linear and Slack do.
 - [ ] A refusal or error matches the person's real state: someone with a
       connected subscription is never told to connect one.
 - [ ] An idle page does not call the server: reads follow the live channel, not a timer; `pnpm test:idle-budget` passes and `tests/idle-request-budget.json` only goes down (#1212).
+- [ ] **"Should changing this require a deploy?"** — prices, promos, trial
+      lengths, credit rates, machine SKUs, model IDs, hosts, and plan
+      entitlements belong in T2–T4 (`lib/env/`, `lib/billing/catalog.ts`,
+      `lib/governance/capabilities.ts`, `lib/runtime-config/`,
+      `lib/model-catalog*.ts`) with parameterized `messages/*.json` copy,
+      never hardcoded in logic or UI
+      ([Five-Tier Truth Model](architecture/five-tier-truth.md)).
 
 ## Pull requests
 

@@ -58,9 +58,10 @@ import { unclaimedPlanQuestionContinuation } from '../factory/questions/executio
 import type { FactoryTask } from '../factory/store'
 import type { agentRuns } from '../db/schema'
 import { assertRunProjectResources, isProjectExecutionRefusal, withRunProjectResources } from '../project-resources/run-lease'
+import { readEnv, runtimeEnv } from '@/lib/env/server'
 /** Resolve the account that allocated this owner's sandbox. */
 async function options(ownerId: string, sandboxId: string) {
-  return { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+  return { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey, proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') }
 }
 /** Register only while this provisioning lease still owns a non-ended row. */
 export async function recordThreadSandbox(pool: Pick<Pool, 'query'>, runId: string, sandboxId: string, leaseId: string, stagePortableWorkspace = false) {
@@ -348,7 +349,7 @@ export const threadMachineProvider = {
     const attributes = metadata.runId ? cloudStartupRunAttributes(metadata.runId) : {}
     const account = await cloudStartupSpan('cloud.sandbox.credentials', attributes, () => e2bCreateAccount(ownerId, operationId))
     const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, snapshotId, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
-    const base = { apiKey: account.apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+    const base = { apiKey: account.apiKey, proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') }
     const sandbox = await createPrepaidE2B(ownerId, operationId, () => cloudStartupSpan('cloud.sandbox.create', attributes,
       () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, retries: 0, idempotencyKey: operationId, timeoutMs,
         metadata, lifecycle: { onTimeout: 'pause', autoResume: false } }))))
@@ -1086,7 +1087,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       (priorSource.size !== null && priorSource.size !== machineSize) || (requireVerifiedHardware && !priorSource.hardwareVerified))
     if (requiresPortableSource && (priorSource.capture !== 'ready' || !portableTaskArchiveEnabled()))
       throw new TaskWorkspaceArchiveUnavailable()
-    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize, process.env, requireVerifiedHardware) : computerTemplate()
+    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize, runtimeEnv(), requireVerifiedHardware) : computerTemplate()
     let machine = (await client.query('SELECT * FROM thread_machines WHERE "runId"=$1 FOR UPDATE', [runId])).rows[0]
     if (machine?.snapshotId === hostedSnapshot || run.agentDefinition?.taskMachine) throw new ComputerError(409,'Task machine provider changed')
     // Stop check 1 shares the explicit Stop path's native-history and lease
@@ -1171,8 +1172,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       if (!state) machine = await replaceGoneSandbox(client, runId, freshTemplate())
       else if (state.state !== 'paused' && !refreshRuntime) {
         const current = await provider.connect(machine.sandboxId, actor.workspaceId)
-        if ((await current.files.read('/opt/mikka/worker-source-sha', {user:'root'})).trim() !== process.env.MIKKA_CLOUD_WORKER_SHA) throw new ComputerError(409, 'Worker version mismatch; refresh the idle task runtime')
-        await switchOfficialWorkerRelease(current,{sourceCommit:process.env.MIKKA_CLOUD_WORKER_SOURCE_COMMIT ?? '',workerSha:process.env.MIKKA_CLOUD_WORKER_SHA ?? '',previousSha:process.env.MIKKA_CLOUD_WORKER_SHA ?? ''},{deviceId:machine.deviceId,workspaceId:actor.workspaceId,operationId:leaseId},'verify')
+        if ((await current.files.read('/opt/mikka/worker-source-sha', {user:'root'})).trim() !== readEnv('MIKKA_CLOUD_WORKER_SHA')) throw new ComputerError(409, 'Worker version mismatch; refresh the idle task runtime')
+        await switchOfficialWorkerRelease(current,{sourceCommit:readEnv('MIKKA_CLOUD_WORKER_SOURCE_COMMIT') ?? '',workerSha:readEnv('MIKKA_CLOUD_WORKER_SHA') ?? '',previousSha:readEnv('MIKKA_CLOUD_WORKER_SHA') ?? ''},{deviceId:machine.deviceId,workspaceId:actor.workspaceId,operationId:leaseId},'verify')
         await client.query('COMMIT'); return { runId, state: 'running' }
       }
     }
@@ -1426,9 +1427,9 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     const deviceId = machine.deviceId ?? randomUUID()
     const repoId = machine.repoId ?? randomUUID()
     const credential = `orv_${randomBytes(32).toString('base64url')}`
-    const origin = new URL(process.env.MIKKA_CLOUD_WORKER_URL ?? '')
+    const origin = new URL(readEnv('MIKKA_CLOUD_WORKER_URL') ?? '')
     if (origin.protocol !== 'https:' || origin.username || origin.password) throw new Error('Worker unavailable')
-    const expectedSha = process.env.MIKKA_CLOUD_WORKER_SHA
+    const expectedSha = readEnv('MIKKA_CLOUD_WORKER_SHA')
     const handoff = `/run/mikka-viewer/thread-${leaseId}.json`
     const directory = '/home/user/.mikka/worker'
     const publish = `install -o user -g user -m 600 ${handoff} /home/user/.mikka/bootstrap.next && install -o user -g user -m 600 ${handoff}.run /home/user/.mikka/initial-run.next && mv /home/user/.mikka/initial-run.next /home/user/.mikka/initial-run.json && install -o user -g user -m 600 ${handoff}.claude /home/user/.mikka/anonymous-claude.next && mv /home/user/.mikka/anonymous-claude.next /home/user/.mikka/anonymous-claude.json && install -o user -g user -m 600 ${handoff}.codex /home/user/.mikka/anonymous-codex.next && mv /home/user/.mikka/anonymous-codex.next /home/user/.mikka/anonymous-codex.json && mv /home/user/.mikka/bootstrap.next /home/user/.mikka/bootstrap.json && unlink ${handoff} && unlink ${handoff}.run && unlink ${handoff}.claude && unlink ${handoff}.codex`
@@ -1537,7 +1538,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       if (!idle.rowCount) throw new ComputerError(409, 'Task runtime is busy')
       refreshPhase = timings.next('stage_release')
       if (!officialKind) throw new ComputerError(409, 'Verified cloud template required')
-      const release = await stageOfficialWorkerRelease(sandbox,officialKind,sourceSha,process.env,undefined,refreshBudget)
+      const release = await stageOfficialWorkerRelease(sandbox,officialKind,sourceSha,runtimeEnv(),undefined,refreshBudget)
       runtimeRollback = async () => {
         // Staging alone did not switch the worker. Once a switch may have
         // started, restore under this lease even if its answer/permission was

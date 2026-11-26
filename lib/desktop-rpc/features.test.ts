@@ -7,14 +7,14 @@ test('desktop flags use only the public hook keys and the verified user identity
   const calls: [string, string][] = []
   const evaluate = async (key: string, userId: string) => {
     calls.push([key, userId])
-    return userId === 'owner' && [gatedFeatures.cloudComputer, upcomingFeatures.product.key, killSwitches.computerTab].includes(key)
+    return userId === 'owner' && [gatedFeatures.cloudComputer.key, upcomingFeatures.product.key, killSwitches.computerTab].includes(key)
   }
   const owner = await desktopFeatures('owner', { evaluate, env: {} })
   assert.equal(owner.cloudComputer, true)
   assert.equal(owner.flags[killSwitches.computerTab], true)
   assert.equal(owner.flags[upcomingFeatures.product.key], true)
-  assert.equal(owner.flags[gatedFeatures.computerBilling], false)
-  assert.deepEqual(calls.map(([key]) => key).sort(), [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures), killSwitches.computerTab].sort())
+  assert.equal(owner.flags[gatedFeatures.computerBilling.key], false)
+  assert.deepEqual(calls.map(([key]) => key).sort(), [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab].sort())
   assert.ok(calls.every(([, userId]) => userId === 'owner'))
   const peer = await desktopFeatures('peer', { evaluate, env: {} })
   assert.equal(peer.cloudComputer, false)
@@ -25,7 +25,7 @@ test('signed-out config uses public defaults without evaluating an anonymous ide
   const features = await desktopFeatures(undefined, { evaluate: async () => { throw new Error('anonymous flag evaluation') }, env: {} })
   assert.equal(features.cloudComputer, false)
   assert.equal(Object.keys(features.flags).length, 9)
-  assert.equal(features.flags[gatedFeatures.environmentSnapshots], false)
+  assert.equal(features.flags[gatedFeatures.environmentSnapshots.key], false)
   assert.ok(Object.values(features.flags).every(value => value === false))
 })
 

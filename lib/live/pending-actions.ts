@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { isApprovalAction } from '../composio-actions'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -26,7 +27,7 @@ export async function pendingActionTargets(database: Database, workspaceDatabase
  * set. The shared adapter follows Drizzle savepoints and request Pool proxies
  * to the real outer COMMIT. Final history/receipt writes never call this. */
 export async function pendingActionsChanged(executor: object, id: string, ownerId: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `pending-action:${ownerId}:${id}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

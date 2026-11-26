@@ -9,6 +9,7 @@ import { upstreamRequest, type GatewayOperation, type GatewayUpstream } from './
 import { gatewayCostMicroUsd, readGatewayReceipt, type GatewayProtocol, type GatewayUsage } from './usage'
 import { withoutDisabledFeatures } from './features'
 import { isCloudEdition } from '@/lib/edition'
+import { runtimeEnv } from '@/lib/env/server'
 import { gatewayLiteLlm, SELF_HOSTED_DEFAULT_CATALOG_ID } from './config'
 import { readRunChain } from '@/lib/run-chain'
 import { claimSubscriptionUsage, finishSubscriptionUsage, recordExternalModelUsage, type ModelReceipt } from './ledger'
@@ -206,7 +207,7 @@ export function modelGatewayDependencies(): GatewayDependencies {
       const workspaceId = grant.workspaceId
       const threadId = (await readRunChain(pool, grant.ownerId, grant.runId))?.rootRunId
       await hostedBillingScope.run({ workspaceId, ownerId: grant.ownerId, runId: grant.runId, actorId: grant.ownerId, threadId, billingSource: 'credits' },
-        () => withSharedCredits(workspaceId, payer => hostedUsage.reserve(payer, grant.model, id, process.env)))
+        () => withSharedCredits(workspaceId, payer => hostedUsage.reserve(payer, grant.model, id, runtimeEnv())))
     },
     async settle(id, cost, usage, generationId, messageId) {
       const { hostedUsage } = await import('@/lib/abuse/runtime')
@@ -277,7 +278,7 @@ export async function forwardNativeSubscription(grant: GatewayGrant, protocol: G
 }
 
 /** The run's frozen source, opened for this one request. */
-export async function resolveGatewayUpstream(grant: GatewayGrant, protocol: GatewayProtocol, env: Record<string, string | undefined> = process.env): Promise<{ upstream: GatewayUpstream; features?: import('./features').GatewayFeatures; daybreakAllowed?: boolean }> {
+export async function resolveGatewayUpstream(grant: GatewayGrant, protocol: GatewayProtocol, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<{ upstream: GatewayUpstream; features?: import('./features').GatewayFeatures; daybreakAllowed?: boolean }> {
   const litellm = gatewayLiteLlm(env)
   if (!litellm) throw new GatewayRefusal(503, 'model_gateway_unconfigured')
   if (grant.source.kind === 'credits') {

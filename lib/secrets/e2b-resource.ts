@@ -1,6 +1,7 @@
 import 'server-only'
 import { pool } from '@/lib/db'
 import { isCloudEdition } from '@/lib/edition'
+import { envString } from '@/lib/env/server'
 import { environmentSnapshotApiKey, environmentSnapshotScope } from './e2b-runtime'
 import { E2BKeyError } from './flag'
 
@@ -44,7 +45,7 @@ export async function e2bCreateAccount(owner: string, operation: string, require
   else {
     try { selected = await account(owner, 'personal') }
     catch (error) {
-      if (!(error instanceof E2BKeyError) || error.code !== 'e2b_key_missing' || !process.env.E2B_API_KEY?.trim()) throw error
+      if (!(error instanceof E2BKeyError) || error.code !== 'e2b_key_missing' || !envString('E2B_API_KEY')) throw error
       selected = await account(owner, environmentSnapshotScope())
     }
   }

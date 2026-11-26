@@ -1,0 +1,386 @@
+name: Integration to main promotion
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Evaluate full promotion readiness without creating, updating, or enqueueing a PR
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: integration-to-main-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: >-
+      github.repository_id == '1427517699' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+      statuses: read
+      id-token: write
+    steps:
+      # This privileged workflow uses only GitHub metadata. It never checks out or runs PR code.
+      - name: Evaluate integration branch and promotion gates
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTE_ENABLED: ${{ vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN }}
+          CONFIGURED_BRANCH: ${{ vars.MIKKA_INTEGRATION_BRANCH }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          branch="${CONFIGURED_BRANCH:-claude/affectionate-einstein-s235cb}"
+          if [[ ! "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "$branch" == "main" ]] || [[ "$branch" == *".."* ]]; then
+            echo "Invalid integration branch name: $branch"
+            exit 1
+          fi
+          printf 'branch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+
+          emit_noop() {
+            local reason="$1"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            {
+              echo "### Integration to \`main\` promotion status"
+              echo ""
+              echo "- **Integration branch:** \`$branch\`"
+              echo "- **Promotion enabled (\`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN\`):** \`${PROMOTE_ENABLED:-false}\`"
+              echo "- **Dry run:** \`${DRY_RUN:-false}\`"
+              echo "- **Decision:** \`noop\` — $reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "noop: $reason"
+            exit 0
+          }
+
+          encoded_branch=$(jq -rn --arg b "$branch" '$b|@uri')
+          if ! compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$encoded_branch" 2>/dev/null); then
+            emit_noop "branch \`$branch\` not found or not comparable with \`main\`"
+          fi
+          head_sha=$(jq -er '.commits[-1].sha // .base_commit.sha' <<< "$compare")
+          ahead_by=$(jq -er '.ahead_by' <<< "$compare")
+          behind_by=$(jq -er '.behind_by' <<< "$compare")
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'head_sha=%s\nahead_by=%s\nbehind_by=%s\n' "$head_sha" "$ahead_by" "$behind_by" >> "$GITHUB_OUTPUT"
+
+          child_prs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$encoded_branch&per_page=100" | jq -c '[flatten[] | select(.draft | not) | .number]')
+          child_count=$(jq -r 'length' <<< "$child_prs")
+
+          open_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&head=${REPO_OWNER}:${encoded_branch}&per_page=10" | jq -c '.[0] // empty')
+          pr_number=""
+          pr_id=""
+          pr_draft="false"
+          pr_head_sha=""
+          pr_body=""
+          if [ -n "$open_pr" ]; then
+            pr_number=$(jq -er '.number' <<< "$open_pr")
+            pr_id=$(jq -er '.node_id' <<< "$open_pr")
+            pr_draft=$(jq -er '.draft | booleans | tostring' <<< "$open_pr")
+            pr_head_sha=$(jq -er '.head.sha' <<< "$open_pr")
+            pr_body=$(jq -r '.body // ""' <<< "$open_pr")
+          fi
+
+          merge_state="n/a"
+          queued="false"
+          stacked="false"
+          removals="0"
+          remover=""
+          req_summary="n/a"
+          ci_required_ok="false"
+          all_required_ok="false"
+          req_total="0"
+          req_names=""
+          ci_run_url=""
+          pr_acceptance_state="n/a"
+
+          if [ -n "$open_pr" ] && [ "$pr_draft" = "false" ] && [ "$pr_head_sha" = "$head_sha" ]; then
+            # shellcheck disable=SC2016
+            state=$(gh api graphql -f id="$pr_id" -f query='
+              query($id:ID!) {
+                node(id:$id) {
+                  ... on PullRequest {
+                    mergeStateStatus
+                    mergeQueueEntry { id }
+                    stackEntry { id }
+                    timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+                      nodes {
+                        ... on RemovedFromMergeQueueEvent {
+                          actor { login }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' --jq '.data.node')
+            merge_state=$(jq -r '.mergeStateStatus // "UNKNOWN"' <<< "$state")
+            queued=$(jq -r '.mergeQueueEntry != null' <<< "$state")
+            stacked=$(jq -r '.stackEntry != null' <<< "$state")
+            removals=$(jq -r '.timelineItems.nodes | length' <<< "$state")
+            remover=$(jq -r '.timelineItems.nodes[0].actor.login // ""' <<< "$state")
+
+            checks_rc=0
+            checks=$(gh pr checks "$pr_number" --repo "$GITHUB_REPOSITORY" --required --json name,bucket) || checks_rc=$?
+            if [ "$checks_rc" -ne 0 ] && [ "$checks_rc" -ne 1 ] && [ "$checks_rc" -ne 8 ]; then
+              exit "$checks_rc"
+            fi
+            if jq -e 'type == "array"' <<< "$checks" >/dev/null 2>&1; then
+              req_total=$(jq -r '[.[] | select(.name != "PR acceptance")] | length' <<< "$checks")
+              req_pass=$(jq -r '[.[] | select(.name != "PR acceptance" and .bucket == "pass")] | length' <<< "$checks")
+              req_names=$(jq -r '[.[] | select(.name != "PR acceptance") | .name] | join(", ")' <<< "$checks")
+              req_summary="${req_pass}/${req_total} non-acceptance required passing"
+              if jq -e '[.[] | select(.name != "PR acceptance")] | length > 0 and all(.[]; .bucket == "pass")' <<< "$checks" >/dev/null; then
+                ci_required_ok="true"
+              fi
+              if jq -e 'length > 0 and all(.[]; .bucket == "pass")' <<< "$checks" >/dev/null; then
+                all_required_ok="true"
+              fi
+            fi
+
+            ci_run_url=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ui-policy.yml/runs?head_sha=$head_sha&event=pull_request&per_page=10" \
+              --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success")] | .[0].html_url // ""')
+            pr_acceptance_state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/status" \
+              --jq '[.statuses[] | select(.context == "PR acceptance")] | .[0].state // "missing"')
+          fi
+
+          planned_action="noop"
+          planned_reason=""
+          if [ "$ahead_by" -eq 0 ]; then
+            planned_reason="\`$branch\` has no unmerged commits ahead of \`main\`."
+          elif [ "$behind_by" -gt 0 ]; then
+            planned_reason="\`$branch\` is $behind_by commit(s) behind \`main\`; back-merge \`main\` into \`$branch\` first."
+          elif [ "$child_count" -gt 0 ]; then
+            planned_reason="waiting for open Ready PR(s) targeting \`$branch\` to merge: $child_prs."
+          elif [ -z "$open_pr" ]; then
+            planned_action="create_pr"
+            planned_reason="open Ready promotion PR \`$branch\` -> \`main\` at \`$head_sha\` with pending acceptance until CI passes on this exact head."
+          elif [ "$pr_draft" = "true" ]; then
+            planned_reason="PR #$pr_number is Draft; will not auto-promote drafts."
+          elif [ "$pr_head_sha" != "$head_sha" ]; then
+            planned_reason="PR #$pr_number head (\`$pr_head_sha\`) does not yet match branch head (\`$head_sha\`)."
+          elif ! grep -Fq "Commit: $head_sha" <<< "$pr_body"; then
+            planned_action="reset_acceptance"
+            planned_reason="reset PR #$pr_number acceptance to pending for new head \`$head_sha\` (never carry forward prior SHA evidence)."
+          elif [ "$queued" = "true" ]; then
+            planned_reason="PR #$pr_number is already in the merge queue."
+          elif [ "$removals" -gt 0 ] && [ "$remover" != "github-merge-queue" ]; then
+            planned_reason="PR #$pr_number was manually removed from the merge queue by \`${remover:-unknown}\`; not re-enqueueing."
+          elif [ "$ci_required_ok" != "true" ]; then
+            planned_reason="waiting for required CI/build checks to pass on PR #$pr_number ($req_summary)."
+          elif [ -z "$ci_run_url" ]; then
+            planned_reason="waiting for completed passing \`CI\` workflow run URL on \`$head_sha\`."
+          elif ! grep -Fq "Evidence: $ci_run_url" <<< "$pr_body"; then
+            planned_action="record_evidence"
+            planned_reason="record verified CI evidence ($ci_run_url) on PR #$pr_number for exact head \`$head_sha\`."
+          elif [ "$pr_acceptance_state" != "success" ] || [ "$all_required_ok" != "true" ]; then
+            planned_reason="waiting for \`PR acceptance\` and all required checks to pass on PR #$pr_number (PR acceptance: \`$pr_acceptance_state\`)."
+          elif [ "$merge_state" != "CLEAN" ] || [ "$stacked" = "true" ]; then
+            planned_reason="PR #$pr_number is not ready to enqueue (\`mergeStateStatus=$merge_state\`, stacked=\`$stacked\`)."
+          else
+            planned_action="enqueue_pr"
+            planned_reason="enqueue PR #$pr_number into the \`main\` merge queue at exact head \`$head_sha\`."
+          fi
+
+          if [ -n "$pr_number" ]; then
+            printf 'pr_number=%s\npr_id=%s\n' "$pr_number" "$pr_id" >> "$GITHUB_OUTPUT"
+          fi
+          printf 'ci_run_url=%s\nreq_total=%s\nreq_names=%s\n' "$ci_run_url" "$req_total" "$req_names" >> "$GITHUB_OUTPUT"
+
+          effective_action="$planned_action"
+          effective_reason="$planned_reason"
+          if [ "${PROMOTE_ENABLED:-}" != "true" ]; then
+            effective_action="noop"
+            effective_reason="waiting for repository variable \`MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\` after release freeze lifts (if enabled now, planned action would be \`$planned_action\`: $planned_reason)."
+          elif [ "${DRY_RUN:-false}" = "true" ]; then
+            effective_action="noop"
+            effective_reason="dry run requested (live run would execute \`$planned_action\`: $planned_reason)."
+          fi
+
+          {
+            echo "### Integration to \`main\` promotion status"
+            echo ""
+            echo "| Gate | Value |"
+            echo "| --- | --- |"
+            echo "| Integration branch | \`$branch\` (\`${head_sha:0:8}\`) |"
+            echo "| Ahead / behind \`main\` | \`$ahead_by\` ahead / \`$behind_by\` behind |"
+            echo "| Open Ready child PRs targeting branch | \`$child_count\` ($child_prs) |"
+            echo "| Open PR to \`main\` | ${pr_number:+#$pr_number (draft=$pr_draft)}${pr_number:-none} |"
+            echo "| Merge state / queue / stacked | \`$merge_state\` / queued=\`$queued\` / stacked=\`$stacked\` |"
+            echo "| Required checks | \`$req_summary\` |"
+            echo "| Passing CI run on head | ${ci_run_url:-none yet} |"
+            echo "| PR acceptance status | \`$pr_acceptance_state\` |"
+            echo "| Freeze lift (\`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN\`) | \`${PROMOTE_ENABLED:-false}\` |"
+            echo "| Dry run | \`${DRY_RUN:-false}\` |"
+            echo "| Planned action | \`$planned_action\` |"
+            echo ""
+            echo "- **Decision:** \`$effective_action\` — $effective_reason"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "planned=$planned_action effective=$effective_action: $effective_reason"
+          printf 'action=%s\n' "$effective_action" >> "$GITHUB_OUTPUT"
+
+      - name: Read the existing product App ID
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /github
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+
+      - name: Read the existing product App key
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /github
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+
+      - name: Verify the product App identity
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
+        run: test "${GITHUB_APP_ID:-}" = 4840908
+
+      - name: Mint a repository-scoped App token
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open Ready promotion PR to main (acceptance pending until CI passes)
+        if: steps.plan.outputs.action == 'create_pr'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_APP_ID: ''
+          GITHUB_APP_PRIVATE_KEY: ''
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+          AHEAD_BY: ${{ steps.plan.outputs.ahead_by }}
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          ## Summary
+          Scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`, authorized via \`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\`).
+
+          ## Acceptance
+          Commit: ${HEAD_SHA}
+          Runtime: both
+          Model: scripted (at the LiteLLM boundary)
+          Fixtures: local PG17 isolated e2e databases and scripted provider/LiteLLM boundaries verified on constituent PRs merged into \`${BRANCH}\`; awaiting CI run on this exact promotion head
+          Items: pending
+          Evidence: pending
+          Screenshots: not needed: backend integration promotion
+          EOF
+          )
+          pr_url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --title "Promote integration branch ${BRANCH} to main" \
+            --body "$body")
+          echo "Opened promotion PR (acceptance pending CI): $pr_url"
+
+      - name: Reset promotion PR acceptance to pending for new head SHA
+        if: steps.plan.outputs.action == 'reset_acceptance'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_APP_ID: ''
+          GITHUB_APP_PRIVATE_KEY: ''
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+          AHEAD_BY: ${{ steps.plan.outputs.ahead_by }}
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          ## Summary
+          Scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`, authorized via \`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\`).
+
+          ## Acceptance
+          Commit: ${HEAD_SHA}
+          Runtime: both
+          Model: scripted (at the LiteLLM boundary)
+          Fixtures: local PG17 isolated e2e databases and scripted provider/LiteLLM boundaries verified on constituent PRs merged into \`${BRANCH}\`; awaiting CI run on this updated promotion head
+          Items: pending
+          Evidence: pending
+          Screenshots: not needed: backend integration promotion
+          EOF
+          )
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+          echo "Reset PR #$PR_NUMBER acceptance to pending for new head $HEAD_SHA"
+
+      - name: Record verified CI evidence on promotion PR for exact head SHA
+        if: steps.plan.outputs.action == 'record_evidence'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_APP_ID: ''
+          GITHUB_APP_PRIVATE_KEY: ''
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+          AHEAD_BY: ${{ steps.plan.outputs.ahead_by }}
+          CI_RUN_URL: ${{ steps.plan.outputs.ci_run_url }}
+          REQ_TOTAL: ${{ steps.plan.outputs.req_total }}
+          REQ_NAMES: ${{ steps.plan.outputs.req_names }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_RUN_URL"
+          body=$(cat <<EOF
+          ## Summary
+          Scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`, authorized via \`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\`).
+
+          ## Acceptance
+          Commit: ${HEAD_SHA}
+          Runtime: both
+          Model: scripted (at the LiteLLM boundary)
+          Fixtures: local PG17 isolated e2e databases and scripted provider/LiteLLM boundaries verified on constituent PRs merged into \`${BRANCH}\` and on this exact promotion head
+          Items: ${REQ_TOTAL}/${REQ_TOTAL} passed (${REQ_NAMES})
+          Evidence: ${CI_RUN_URL}
+          Screenshots: not needed: backend integration promotion
+          EOF
+          )
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+          echo "Recorded verified CI evidence on PR #$PR_NUMBER for $HEAD_SHA: $CI_RUN_URL"
+
+      - name: Enqueue verified promotion PR into main merge queue
+        if: steps.plan.outputs.action == 'enqueue_pr'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_APP_ID: ''
+          GITHUB_APP_PRIVATE_KEY: ''
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+          PR_ID: ${{ steps.plan.outputs.pr_id }}
+          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          # Enqueue strictly via the repository merge queue so merge_group PostgreSQL suites always run.
+          # shellcheck disable=SC2016
+          position=$(gh api graphql -f id="$PR_ID" -f head="$HEAD_SHA" -f query='
+            mutation($id:ID!, $head:GitObjectID!) {
+              enqueuePullRequest(input:{pullRequestId:$id, expectedHeadOid:$head}) {
+                mergeQueueEntry { position }
+              }
+            }' --jq '.data.enqueuePullRequest.mergeQueueEntry.position')
+          test -n "$position"
+          echo "Enqueued promotion PR #$PR_NUMBER at position $position (head $HEAD_SHA)"

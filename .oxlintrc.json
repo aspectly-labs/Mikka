@@ -17,6 +17,9 @@
     ".vercel/**",
     ".hosted-ui/**"
   ],
+  "jsPlugins": [
+    "./scripts/oxlint-plugin-mikka.mjs"
+  ],
   "rules": {
     "no-restricted-imports": [
       "error",
@@ -31,6 +34,10 @@
           }
         ]
       }
-    ]
+    ],
+    "mikka/no-raw-process-env": "error",
+    "mikka/no-plan-name-branching": "error",
+    "mikka/no-hardcoded-model-ids": "error",
+    "mikka/no-hardcoded-hosts": "error"
   }
 }

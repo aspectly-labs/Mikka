@@ -1,8 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { CredentialError } from './contracts'
+import { readEnv } from '@/lib/env/server'
 
 export type SecretFingerprint = { digest: string; length: number }
-export function fingerprint(userId: string, value: string, authSecret = process.env.BETTER_AUTH_SECRET): SecretFingerprint {
+export function fingerprint(userId: string, value: string, authSecret = readEnv('BETTER_AUTH_SECRET')): SecretFingerprint {
   if (!authSecret) throw new CredentialError()
   const key = createHmac('sha256', authSecret).update('mikka-credential-leak-v1').digest()
   try { return { digest: createHmac('sha256', key).update(userId).update('\0').update(value).digest('hex'), length: value.length } }
@@ -10,7 +11,7 @@ export function fingerprint(userId: string, value: string, authSecret = process.
 }
 /** Scan strings before writing chat/tool data. No original value or matching
  * substring is ever returned or included in an exception. */
-export function assertNoSecret(userId: string, value: unknown, entries: SecretFingerprint[], authSecret = process.env.BETTER_AUTH_SECRET) {
+export function assertNoSecret(userId: string, value: unknown, entries: SecretFingerprint[], authSecret = readEnv('BETTER_AUTH_SECRET')) {
   const strings: string[] = []
   function walk(item: unknown) {
     if (typeof item === 'string') strings.push(item)

@@ -3,6 +3,7 @@ import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { resolveAppOrigin } from '@/lib/auth-config'
 import { withBasePath } from '@/lib/base-path'
+import { runtimeEnv } from '@/lib/env/server'
 import { completeGitHubConnect, exchangeGitHubCode, GITHUB_CALLBACK_PATH, GITHUB_CONNECT_COOKIE, githubConnectUser, unsealGitHubSecret } from './connection'
 import { finishLoopbackIntent, isLoopbackState } from './connect-intent'
 import { pool } from '@/lib/db'
@@ -39,7 +40,7 @@ export async function handleGitHubConnectCallback(request: Request): Promise<Res
   if (!starter) return null
   /** Why a link failed, when the callback can tell: cancelled on GitHub, or the Mikka account changed meanwhile. */
   const done = (result: 'connected' | 'link-failed', reason?: 'cancelled' | 'account') => {
-    const destination = new URL(GITHUB_PLUGIN_PATH, resolveAppOrigin(process.env) ?? url.origin)
+    const destination = new URL(GITHUB_PLUGIN_PATH, resolveAppOrigin(runtimeEnv()) ?? url.origin)
     if (result === 'link-failed') destination.searchParams.set('github', 'link-failed')
     if (result === 'link-failed' && reason) destination.searchParams.set('reason', reason)
     const response = RouteResponse.redirect(destination)

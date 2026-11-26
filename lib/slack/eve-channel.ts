@@ -13,6 +13,7 @@ import { nativeSlackToken, type SlackGrantScope } from './channel-grant'
 import type { SlackBinding } from './installation-store'
 import { validSlackSignature } from './webhook'
 import type { SlackScope } from './eve-ambient'
+import { runtimeEnv, type EnvMap } from '../env/server'
 import { slackBotAlias } from '../bot-settings'
 import type { SlackThreadKey } from './thread-bots'
 
@@ -20,7 +21,7 @@ const GUIDANCE =
   'Reply only in this Slack thread. Do not use or disclose the private Mikka chat, personal memories or unrelated integration content. Use ordinary titles and ids; Slack does not render Mikka source chips. If this message is not intended for you or you cannot add useful help, call no_reply. A dispatched task completes separately; do not promise automatic Slack completion updates.'
 
 export interface SlackChannelDependencies {
-  env?: () => Record<string, string | undefined>
+  env?: () => EnvMap
   /**
    * `route.alias` is a message's `bot=<alias>` (lib/bot-settings.ts slackBotAlias): one of the sender's own Bots answers
    * instead of their Coordinator, and the Slack thread `route.thread` remembers it for its later replies.
@@ -97,7 +98,7 @@ async function forwardToAutomations(url: string | undefined, payload: unknown, r
 
 /** Slack's signed envelope selects the installation; Mikka authorizes the human, and Eve owns delivery. */
 export function createMikkaSlackChannel(dependencies: SlackChannelDependencies = {}): SlackChannel {
-  const env = dependencies.env ?? (() => process.env)
+  const env = dependencies.env ?? runtimeEnv
   const resolveScope = dependencies.resolveScope ?? defaultScope
   const binding =
     dependencies.binding ??

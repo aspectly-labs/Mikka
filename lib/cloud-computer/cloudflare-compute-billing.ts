@@ -1,6 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import type { Pool } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { PaidResourceError } from '../abuse/policy'
 import { machineChunkId, type CloudflareMachineChunk } from './machine-billing'
 import { MACHINE_CHUNK_MS, machineLedgerLabel, machineListUsageMicroUsd, machineSkuGeometry, machineSkuListPrice } from './machine-pricing'
@@ -45,7 +46,7 @@ export async function holdCloudflareCompute(pool: Pick<Pool, 'query'>, chunk: Cl
   try {
     await hostedBillingScope.run({ workspaceId: chunk.workspaceId, ownerId: chunk.ownerId,
       actorId: chunk.ownerId, runId: chunk.runId, billingSource: 'credits', attributionComplete: true },
-    () => withSharedCredits(chunk.workspaceId, payer => hostedUsage.reserve(payer, label, id, process.env, hold, {
+    () => withSharedCredits(chunk.workspaceId, payer => hostedUsage.reserve(payer, label, id, runtimeEnv(), hold, {
       machineMeter: { source: 'cloudflare_cgroup_list', provider: 'cloudflare', operationId: chunk.operationId, index: chunk.index, price, grant },
     })))
   } catch (error) {

@@ -1,6 +1,7 @@
 import 'server-only'
 import type { Pool, PoolClient } from 'pg'
 import type { HostedQuotaLease } from '@/lib/abuse/store'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 import { deploymentMode } from './edition'
 import { resolveEntitlements, resolvePlanFromGrants, type DeploymentMode, type Plan, type PlanGrant } from './policy'
 import { GovernanceError } from './errors'
@@ -40,9 +41,19 @@ export async function acquireHostedQuota(workspaceId: string, database?: Pick<Po
     const organizationId = workspace.kind === 'team' ? link?.organizationId ?? null : null
     const { rows: grants } = await query.query<PlanGrant>(`select plan,source,"seatLimit","expiresAt","billingPlan","billingExpiresAt" from mikka_workspace_entitlements where "workspaceId"=$1
       union all select plan,source,"seatLimit","expiresAt","billingPlan","billingExpiresAt" from mikka_organization_entitlements where "organizationId"=$2`, [workspaceId, organizationId])
-    const entitlements = resolveEntitlements({ mode, kind: workspace.kind, grants })
+    const entitlements = resolveEntitlements({
+      mode,
+      kind: workspace.kind,
+      grants,
+      capabilityOverrides: getRuntimeConfig('planEntitlementOverrides'),
+    })
     const cloudMachinePlan = resolvePlanFromGrants({ mode, grants })
-    return { limit: entitlements.hostedMaxInFlight, plan: entitlements.plan, cloudMachinePlan, close,
-      billingAccount: { workspaceId: account?.workspaceId ?? workspaceId, organizationId: account ? link!.organizationId : null } }
+    return {
+      limit: entitlements.hostedMaxInFlight,
+      plan: entitlements.plan,
+      cloudMachinePlan,
+      close,
+      billingAccount: { workspaceId: account?.workspaceId ?? workspaceId, organizationId: account ? link!.organizationId : null },
+    }
   } catch (error) { await close(); throw error }
 }

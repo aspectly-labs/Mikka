@@ -1,5 +1,6 @@
 import { lookup } from 'node:dns/promises'
 import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici'
+import { readEnv, runtimeEnv } from '@/lib/env/server'
 import { abortable, isPublicWebAddress, type ResolveHost } from '@/lib/search/url-policy'
 import { webUrlSchema } from '@/lib/search/url-schema'
 
@@ -11,7 +12,7 @@ import { webUrlSchema } from '@/lib/search/url-schema'
  * proxy, the proxy resolves the name itself; the address was still checked.
  * Redirects and SSE endpoint messages cannot forward auth to another origin. */
 export function publicMcpFetch(origin: string, signal: AbortSignal, options: {
-  resolve?: ResolveHost; send?: typeof undiciFetch; proxy?: string; env?: Record<string, string | undefined>;
+  resolve?: ResolveHost; send?: typeof undiciFetch; proxy?: string; env?: Readonly<Record<string, string | undefined>>;
 } = {}) {
   const dispatchers = new Map<string, Dispatcher>()
   const fetcher: typeof fetch = async (input, init) => {
@@ -22,10 +23,10 @@ export function publicMcpFetch(origin: string, signal: AbortSignal, options: {
     const addresses = await abortable(() => (options.resolve ?? (hostname => lookup(hostname, { all: true })))(url.hostname), combined)
     if (!addresses.length || addresses.some(({ address }) => !isPublicWebAddress(address))) throw new Error('mcpPrivateAddress')
     const address = addresses.find(row => !row.address.includes(':'))?.address ?? addresses[0].address
-    const proxy = options.proxy ?? process.env.https_proxy ?? process.env.HTTPS_PROXY ?? process.env.http_proxy ?? process.env.HTTP_PROXY
+    const proxy = options.proxy ?? readEnv('https_proxy') ?? readEnv('HTTPS_PROXY') ?? readEnv('http_proxy') ?? readEnv('HTTP_PROXY')
     // A proxy resolves the name itself, so the checked address would not be the one dialled.
     // Development may use one; a Vercel deployment never sends through one.
-    const env = options.env ?? process.env
+    const env = options.env ?? runtimeEnv()
     if (proxy && (env.VERCEL || env.VERCEL_ENV)) throw new Error('mcpProxyNotAllowed')
     const key = `${url.hostname}:${address}`
     let dispatcher = dispatchers.get(key)

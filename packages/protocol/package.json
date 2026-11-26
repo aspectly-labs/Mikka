@@ -69,6 +69,7 @@
     "./collab": "./src/collab.ts",
     "./artifact-frame": "./src/artifact-frame.ts",
     "./artifact-share": "./src/artifact-share.ts",
+    "./open-artifact": "./src/open-artifact.ts",
     "./coordinator": "./src/coordinator.ts",
     "./computer": "./src/computer.ts",
     "./subscription": "./src/subscription.ts",

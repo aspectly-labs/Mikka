@@ -28,20 +28,21 @@ import { completeEnterpriseSignIn, enterpriseIdentityModels, enterpriseSessionFi
 
 import { assertTwoFactorManagement, completeTwoFactorVerification, twoFactorSessionFields } from '@/lib/enterprise/two-factor'
 import { assertTwoFactorCanBeDisabled } from '@/lib/governance/organization-security'
+import { DEFAULT_LOCAL_DEV_ORIGIN, getNodeEnv, isDevelopmentEnv, readEnv, runtimeEnv } from '@/lib/env'
 
 /** The iOS app's URL scheme: OAuth returns here, and its requests carry it as their origin. */
 export { MOBILE_APP_ORIGIN } from '@/lib/auth-config'
 
-export const { github: githubEnabled, google: googleEnabled } = authSignInMethods(process.env)
+export const { github: githubEnabled, google: googleEnabled } = authSignInMethods(runtimeEnv())
 export const authBaseURL = appOrigin
-const appleOptions = authAppleOptions(process.env)
-const proxyOptions = authOAuthProxyOptions(process.env)
-const trustedOrigins = authEffectiveTrustedOrigins(process.env)
+const appleOptions = authAppleOptions(runtimeEnv())
+const proxyOptions = authOAuthProxyOptions(runtimeEnv())
+const trustedOrigins = authEffectiveTrustedOrigins(runtimeEnv())
 const passkeyOrigins = trustedOrigins.filter(origin => /^https?:\/\//.test(origin))
 export const oauthCallbackBaseURL = proxyOptions?.productionURL ?? authBaseURL
 const email = createAuthEmail({
-  origin: authBaseURL ?? 'http://localhost:3000',
-  apiKey: () => process.env.RESEND_API_KEY,
+  origin: authBaseURL ?? DEFAULT_LOCAL_DEV_ORIGIN,
+  apiKey: () => readEnv('RESEND_API_KEY'),
   context: async (): Promise<AuthMailContext> => auth.$context,
   verificationCode: async (address): Promise<string> => auth.api.createVerificationOTP({ body: { email: address, type: 'email-verification' } }),
   background: task => afterJob('after:auth-email', task),
@@ -149,7 +150,7 @@ export const auth = betterAuth({
             const { parseFirstTouch, firstTouchProperties } = await import('@/lib/first-touch')
             const { isSmokeAccountEmail } = await import('@/lib/smoke-account')
             posthog.capture({ distinctId: user.id, event: 'registration_completed', properties: {
-              app: 'mikka', environment: process.env.NODE_ENV,
+              app: 'mikka', environment: getNodeEnv(),
               ...firstTouchProperties(parseFirstTouch(ctx?.headers?.get('cookie'))),
               ...(isSmokeAccountEmail(user.email) ? { test_account: true } : {}),
             } })
@@ -172,8 +173,8 @@ export const auth = betterAuth({
       requireEmailVerification: true,
     } },
     ...(googleEnabled ? { google: {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: readEnv('GOOGLE_CLIENT_ID')!,
+      clientSecret: readEnv('GOOGLE_CLIENT_SECRET')!,
       scope: ['openid', 'email', 'profile'],
       includeGrantedScopes: false,
       requireEmailVerification: true,
@@ -184,7 +185,7 @@ export const auth = betterAuth({
   basePath: withBasePath('/api/auth'),
   emailAndPassword: email.emailAndPassword,
   emailVerification: email.emailVerification,
-  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(process.env) }, storage: 'database' },
+  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(runtimeEnv()) }, storage: 'database' },
   trustedOrigins,
   // Makes the app an OAuth 2.1 server so agents (Claude Code, Codex…) can sign
   // in to the MCP server at /api/mcp as the person. Clients register
@@ -250,7 +251,7 @@ export const auth = betterAuth({
     // every column of every table from the catalog on each cold start, about 225 KB a time.
     database: { validateSchema: false },
     // Partition preview sessions by top-level site when third-party cookies are blocked.
-    ...(process.env.NODE_ENV === 'development' && authBaseURL?.startsWith('https://') ? {
+    ...(isDevelopmentEnv() && authBaseURL?.startsWith('https://') ? {
       defaultCookieAttributes: { sameSite: 'none' as const, secure: true, partitioned: true },
     } : {}),
   },

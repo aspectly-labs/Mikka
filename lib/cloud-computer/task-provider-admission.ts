@@ -1,5 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
+import { getNodeEnv } from '@/lib/env/public'
+import { readEnv, runtimeEnv } from '@/lib/env/server'
 import { ComputerError } from '../computer/store'
 import { isCloudEdition } from '../edition'
 import { productionFlagDefault, taskProviderFlag } from '../feature-flags'
@@ -22,12 +24,13 @@ export class TaskProviderAdmissionUnavailable extends ComputerError {
  * is no remote or local selector to change that provider. This reads no flag
  * remotely, including when the admission key is replayed. */
 export function taskProviderSelectionConfigured(workspaceId: string) {
-  const localConfiguration = (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') && Boolean(process.env.MIKKA_FLAG_OVERRIDES)
+  const nodeEnv = getNodeEnv()
+  const localConfiguration = (nodeEnv === 'development' || nodeEnv === 'test') && Boolean(readEnv('MIKKA_FLAG_OVERRIDES'))
   return Boolean(posthogConfig.token) || localConfiguration || productionFlagDefault(taskProviderFlag) === 'cloudflare' || legacyCloudflareWorkspace(workspaceId)
 }
 
 const legacyCloudflareWorkspace = (workspaceId: string) =>
-  process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES?.split(/[,\s]+/).includes(workspaceId) === true
+  readEnv('MIKKA_CLOUDFLARE_TASK_WORKSPACES')?.split(/[,\s]+/).includes(workspaceId) === true
 
 export async function selectTaskProvider(
   actor: { userId: string; workspaceId: string },
@@ -70,7 +73,7 @@ export const DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS: Readonly<Record<Plan, Machi
 }
 
 export function configuredTaskMachinePlanLimits(
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>> = runtimeEnv(),
 ): Partial<Record<Plan, MachineGeometry | null>> | null {
   const configured = env.MIKKA_TASK_MACHINE_PLAN_LIMITS?.trim()
   if (configured) {

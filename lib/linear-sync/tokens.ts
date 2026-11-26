@@ -3,14 +3,15 @@ import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { linearConnections } from '@/lib/db/schema'
+import { readEnv } from '@/lib/env/server'
 import { seal, unseal } from './crypto'
 import { LinearApiError } from './graphql'
 
 const tokenPayload = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() })
 
 export function oauthCredentials() {
-  const clientId = process.env.LINEAR_CLIENT_ID
-  const clientSecret = process.env.LINEAR_CLIENT_SECRET
+  const clientId = readEnv('LINEAR_CLIENT_ID')
+  const clientSecret = readEnv('LINEAR_CLIENT_SECRET')
   if (!clientId || !clientSecret) throw new Error('Linear OAuth is not configured')
   return { clientId, clientSecret }
 }

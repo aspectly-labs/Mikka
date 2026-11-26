@@ -1,6 +1,7 @@
 import 'server-only'
 import type { Pool } from 'pg'
 import { catalogIdFor, type CatalogModel } from './model-catalog'
+import { providerSupportsOpenAIModes } from './model-catalog-metadata'
 import { daybreakTierFor, modelKeyOf, PRO_MODELS, resolveModelCapabilities, type DaybreakAccess, type DaybreakTier, type ModelCapabilities } from './model-capabilities'
 import { resolveSpeedModesFromEvidence, type ModelSpeedMode } from './model-routing'
 
@@ -23,7 +24,7 @@ interface ConnectionCatalogue {
 
 /** Pro on this route: Mikka 额度 or an OpenAI key, a model in PRO_MODELS. No subscription seat offers it (Capy). */
 const proOn = (route: 'credits' | 'byok', provider: string, modelId: string) =>
-  (route === 'credits' || provider === 'openai') && PRO_MODELS.has(modelKeyOf(modelId, provider))
+  (route === 'credits' || providerSupportsOpenAIModes(provider)) && PRO_MODELS.has(modelKeyOf(modelId, provider))
 
 /** A seat's tier for a model: what its catalogue offers, Blue before Red, as Codex picks (`ModelAccessPrograms::daybreak`). */
 const seatTier = (tiers: readonly string[] | undefined): DaybreakTier | undefined =>
@@ -89,7 +90,7 @@ export async function modelCapabilityReader(query: Pick<Pool, 'query'>, connecti
           : { catalogSpeedModes: entry?.speedModes, catalogTags: entry?.tags }),
         pro: target.responsesApi === true && proOn('byok', target.provider, target.modelId),
         // The key's own Daybreak access (refreshApiKeyDaybreak), Capy's per-credential `DaybreakAccess`.
-        daybreak: target.provider === 'openai' ? daybreakTierFor(target.daybreak, target.modelId) : undefined,
+        daybreak: providerSupportsOpenAIModes(target.provider) ? daybreakTierFor(target.daybreak, target.modelId) : undefined,
       })
     }
     const connection = connections.get(target.connectionId)

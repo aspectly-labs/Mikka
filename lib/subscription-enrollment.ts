@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
+import { envValue } from './env/runtime.mjs'
 
 const status = z.object({ id: z.uuid(), provider: z.literal('claude'), state: z.enum(['pending_unbound', 'custody_unconfirmed']), taskUseAllowed: z.literal(false) }).strict()
 const started = z.object({ id: z.uuid(), provider: z.literal('claude'), state: z.literal('awaiting_consent'), taskUseAllowed: z.literal(false), authorizationUrl: z.url(), expiresAt: z.iso.datetime(), handoffKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict()
@@ -48,10 +49,13 @@ export class EnrollmentClient {
   }
   private async invoke(principal: string, request: Record<string, string>, schema: z.ZodType) {
     const { binary, ...config } = this.config
-    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: 'C.UTF-8', NODE_ENV: 'production' }
+    const env: NodeJS.ProcessEnv = { PATH: envValue('PATH'), LANG: 'C.UTF-8', NODE_ENV: 'production' }
     // Honor the platform's normal proxy/CA controls; no provider/local CLI
     // credentials, database URL, HOME or unrelated platform keys are inherited.
-    for (const name of ['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'SSL_CERT_FILE', 'SSL_CERT_DIR']) if (process.env[name]) env[name] = process.env[name]
+    for (const name of ['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'SSL_CERT_FILE', 'SSL_CERT_DIR']) {
+      const value = envValue(name)
+      if (value) env[name] = value
+    }
     const child = spawn(binary, [], { env, stdio: ['pipe', 'pipe', 'pipe'] })
     child.stderr.resume()
     return await new Promise<unknown>((resolve, reject) => {

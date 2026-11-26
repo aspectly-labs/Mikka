@@ -1,6 +1,7 @@
 import 'server-only'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
+import { envString } from '@/lib/env/server'
 import type { SubscriptionUse } from '@mikka/protocol/subscription'
 import { decodeHostedCallId, hostedCallId } from './model-gateway/hosted-call-id.mjs'
 import { stepIdentity } from './model-call-timing'
@@ -21,9 +22,9 @@ const signature = (key: Buffer, bytes: string) => createHmac('sha256', key).upda
 const digest = (payload: string) => createHash('sha256').update(payload, 'utf8').digest('base64url')
 
 function chatSigningKey() {
-  const applicationSecret = process.env.BETTER_AUTH_SECRET?.trim()
+  const applicationSecret = envString('BETTER_AUTH_SECRET')
   if (!applicationSecret || applicationSecret.length < 32 ||
-    applicationSecret === process.env.MIKKA_LITELLM_MASTER_KEY?.trim()) return null
+    applicationSecret === envString('MIKKA_LITELLM_MASTER_KEY')) return null
   return createHmac('sha256', applicationSecret).update('mikka:subscription-chat-ticket-key:v1').digest()
 }
 

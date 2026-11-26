@@ -1,0 +1,45 @@
+- id: subscription-oauth-litellm-exception
+  question: Should subscription OAuth traffic keep the temporary LiteLLM exception from #2869?
+  options:
+    - Keep the exception until subscription OAuth is redesigned.
+    - Remove the exception and require the standard LiteLLM path.
+  recommendation: Remove the exception once the subscription OAuth owner path is implemented.
+  asked_on: 2026-11-21
+  owner: alexj11324
+  link: https://github.com/aspectly-labs/Mikka/issues/2869
+- id: mobile-webhook-polling-decision
+  question: How should mobile watch sources without webhooks?
+  options:
+    - Use polling for those sources.
+    - Defer those sources until webhook coverage exists.
+  recommendation: Defer non-webhook sources rather than adding a polling exception.
+  asked_on: 2026-11-26
+  owner: alexj11324
+  link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/mobile.md
+- id: comma-mobile-tab-bar-tradeoff
+  question: Should iOS keep hiding the tab bar inside pushed detail pages?
+  options:
+    - Keep the current pushed-detail behavior.
+    - Rework detail navigation to preserve the tab bar.
+  recommendation: Keep the current behavior while the Comma redesign is being redrawn.
+  asked_on: 2026-11-26
+  owner: alexj11324
+  link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/mobile-comma-redesign.md
+- id: daemon-connection-review-frames
+  question: Which daemon connection dialog and code confirmation frames are accepted?
+  options:
+    - Accept the current Figma frames.
+    - Request redraws before implementation.
+  recommendation: Accept the existing frames unless a copy or state coverage defect is found.
+  asked_on: 2026-11-26
+  owner: alexj11324
+  link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/daemon-connection.md
+- id: settings-version-review-rows
+  question: Which settings and thread design rows in the Figma versions inventory are accepted?
+  options:
+    - Accept the rows as drawn.
+    - Keep selected rows in design review.
+  recommendation: Resolve each remaining row in the design review before implementation.
+  asked_on: 2026-11-26
+  owner: alexj11324
+  link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/versions.md

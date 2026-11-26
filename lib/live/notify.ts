@@ -1,4 +1,5 @@
 import { afterJob } from '@/lib/background'
+import { runtimeEnv } from '@/lib/env/server'
 import { liveInvalidations, withoutRevisions, type LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
 import { gatewayConfig, gatewayURL } from '../builtin-gateway/config'
@@ -10,7 +11,7 @@ const PLAIN_AFTER_REFUSAL_MS = 10 * 60_000
 let plainUntil = 0
 export function resetLiveRevisionFallback() { plainUntil = 0 }
 
-export async function sendLiveInvalidations(scope: LiveScope, events: LiveInvalidation[], env = process.env, send = fetch, now = Date.now) {
+export async function sendLiveInvalidations(scope: LiveScope, events: LiveInvalidation[], env = runtimeEnv(), send = fetch, now = Date.now) {
   const config = liveGatewayConfig(env)
   if (!config || !liveInvalidations(events, true)) return
   const { sendEnterpriseLiveInvalidations } = await import('../enterprise/live-authority')
@@ -53,7 +54,7 @@ async function sendLiveChannel(channel: string, events: LiveInvalidation[], conf
 
 /** An old Worker refuses the control. Never report that refusal as an ACK or
  * downgrade it to a plain metadata push. The durable source barrier remains. */
-export async function revokeLiveChannel(channel: string, env = process.env, send = fetch): Promise<boolean> {
+export async function revokeLiveChannel(channel: string, env = runtimeEnv(), send = fetch): Promise<boolean> {
   const config = liveGatewayConfig(env)
   if (!config) return false
   if (gatewayConfig(env)?.mode === 'builtin') {

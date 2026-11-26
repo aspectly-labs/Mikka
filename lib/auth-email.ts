@@ -6,6 +6,8 @@ import { verifyJWT } from 'better-auth/crypto'
 import { otpPurposeByPath, otpRequestPaths } from './auth-email-otp'
 import { deliverMail, mailConfigured, mailFrom } from './mail-delivery'
 import { toMikkaErrorContract } from './primitives/error-contract'
+import { LOCALHOST_HOSTNAME, LOOPBACK_IPV4 } from './env/hosts-constants.mjs'
+import { readEnv, runtimeEnv } from './env/server'
 
 export const AUTH_EMAIL_TTL_SECONDS = 15 * 60
 const EMAIL_OTP_TTL_SECONDS = 5 * 60
@@ -55,8 +57,10 @@ export function createAuthEmail(options: {
   report?: (event: Delivery) => void
   background?: (task: () => Promise<void>) => void
 }) {
-  const origin = new URL(options.origin).origin
-  if (origin !== options.origin || (!origin.startsWith('https://') && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))) throw new Error('Invalid authentication email origin')
+  const parsedOrigin = new URL(options.origin)
+  const origin = parsedOrigin.origin
+  const isLoopbackHttp = parsedOrigin.protocol === 'http:' && (parsedOrigin.hostname === LOCALHOST_HOSTNAME || parsedOrigin.hostname === LOOPBACK_IPV4)
+  if (origin !== options.origin || (!origin.startsWith('https://') && !isLoopbackHttp)) throw new Error('Invalid authentication email origin')
   const base = `${origin}/mikka/api/auth`
   const verifyReturn = `${origin}/mikka/sign-in`
   const resetReturn = `${origin}/mikka/reset-password`
@@ -90,7 +94,7 @@ export function createAuthEmail(options: {
 
   async function send(kind: MailKind, data: MailData) {
     const key = options.apiKey()
-    if (!mailConfigured(process.env, key)) unavailable()
+    if (!mailConfigured(runtimeEnv(), key)) unavailable()
     const context = await options.context()
     const window = Math.floor(Date.now() / 60_000)
     const allowed = await context.internalAdapter.reserveVerificationValue({
@@ -194,7 +198,7 @@ export function createAuthEmail(options: {
       if (ctx.path === '/send-verification-email') callback(ctx.body?.callbackURL, verifyReturn)
       if (ctx.path === '/request-password-reset') callback(ctx.body?.redirectTo, resetReturn)
       if (ctx.path?.startsWith('/reset-password/')) callback(ctx.query?.callbackURL, resetReturn, false)
-      if (mailRequestPaths.includes(ctx.path ?? '') && !mailConfigured(process.env, options.apiKey())) unavailable()
+      if (mailRequestPaths.includes(ctx.path ?? '') && !mailConfigured(runtimeEnv(), options.apiKey())) unavailable()
       if (otpRequestPaths.includes(ctx.path ?? '') && typeof ctx.body?.email === 'string' && ctx.body.email.length <= 320) {
         const minute = Math.floor(Date.now() / 60_000)
         const allowed = await ctx.context.internalAdapter.reserveVerificationValue({
@@ -272,7 +276,10 @@ export function createAuthEmail(options: {
         rawNonceUnique: raw ? raw.getAll('nonce').length === 1 : null,
         rawTokenMatchesParsed: raw ? raw.get('token') === ctx.query?.token : null,
         rawNonceMatchesParsed: raw ? raw.get('nonce') === ctx.query?.nonce : null,
-        contextSecretMatchesEnvironment: process.env.BETTER_AUTH_SECRET ? ctx.context.secret === process.env.BETTER_AUTH_SECRET : null,
+        contextSecretMatchesEnvironment: (() => {
+          const authSecret = readEnv('BETTER_AUTH_SECRET')
+          return authSecret ? ctx.context.secret === authSecret : null
+        })(),
       })
       callback(ctx.query?.callbackURL, verifyReturn, false)
       const token = ctx.query?.token

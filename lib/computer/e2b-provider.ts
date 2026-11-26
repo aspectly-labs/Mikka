@@ -13,6 +13,8 @@ import { computerTemplate, sandboxKeyOwner, withE2BErrors } from '@/lib/secrets/
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { bootstrapOfficialInstance, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from './official-runtime'
 import type { ProcessedCaptureVideo, RecordingStep } from '../../packages/daemon/src/agents/capture-video.mjs'
+import { SANDBOX_VNC_PROBE_URL } from '@/lib/env/hosts'
+import { readEnv } from '@/lib/env/server'
 
 const lifetime = 15 * 60_000
 export type DesktopLease = { botId: string; ownerId: string; display: number; epoch: number; controlledBy: string | null; controlUntil: number; computerAllowed: boolean;
@@ -20,7 +22,7 @@ export type DesktopLease = { botId: string; ownerId: string; display: number; ep
   policyVersion: number }
 // A sandbox belongs to the E2B account that allocated it.
 // Every call resolves the owner from the machine's record, never from whoever is asking.
-const options = (apiKey: string) => ({ apiKey, timeoutMs: lifetime, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy })
+const options = (apiKey: string) => ({ apiKey, timeoutMs: lifetime, proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') })
 const ownerOf = async (workspaceId: string, id: string) => {
   const owner = await sandboxKeyOwner(workspaceId, id)
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'sandbox has no owner record')
@@ -106,7 +108,8 @@ export async function computerState(workspaceId: string, id: string, observed?: 
 /** Check a desktop before a connection can buy time or wake it. An immutable
  * released template identifies a paused desktop without resuming its guest. */
 export async function observeComputerWorker(workspaceId: string, id: string): Promise<'current' | 'stale' | 'gone' | 'unknown'> {
-  if (!isCloudEdition() || !process.env.MIKKA_CLOUD_WORKER_SHA) return 'unknown'
+  const workerSha = readEnv('MIKKA_CLOUD_WORKER_SHA')
+  if (!isCloudEdition() || !workerSha) return 'unknown'
   const owner = await ownerOf(workspaceId, id)
   const account = await e2bResourceAccount(owner, 'sandbox', id)
   const info = await withE2BErrors(owner, false, () => Sandbox.getInfo(id, {
@@ -119,7 +122,7 @@ export async function observeComputerWorker(workspaceId: string, id: string): Pr
   if (info.state === 'running') {
     try {
       const running = await connectRunningComputer(owner, id)
-      return await computerWorkerSha(running) === process.env.MIKKA_CLOUD_WORKER_SHA ? 'current' : 'stale'
+      return await computerWorkerSha(running) === workerSha ? 'current' : 'stale'
     } catch (error) {
       if (error instanceof PolicySandboxUnavailable) return 'unknown'
       throw error
@@ -129,7 +132,7 @@ export async function observeComputerWorker(workspaceId: string, id: string): Pr
     && /^[a-f0-9]{40}$/.test(info.metadata.workerSha ?? '') ? info.metadata.workerSha : undefined
   const knownWorker = recordedWorker ?? releasedDesktopWorker(info.templateId)
   if (info.state !== 'paused' || !knownWorker) return 'unknown'
-  return knownWorker === process.env.MIKKA_CLOUD_WORKER_SHA ? 'current' : 'stale'
+  return knownWorker === workerSha ? 'current' : 'stale'
 }
 
 /** Verified additive desktop image, or the original official base for rollback. */
@@ -207,7 +210,7 @@ umask 077
 head -c 32 /dev/urandom > /run/mikka-viewer/key
 chmod 0755 /opt/mikka/computer/lease-driver.py
 nohup flock -n /run/mikka-viewer/gateway.lock /usr/bin/python3 /opt/mikka/computer/viewer-gateway.py </dev/null >>/run/mikka-viewer/gateway.log 2>&1 &
-for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/vnc)" = 401 ] && exit 0; sleep .2; done
+for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w "%{http_code}" ${SANDBOX_VNC_PROBE_URL})" = 401 ] && exit 0; sleep .2; done
 exit 1`
   const result = await sandbox.commands.run(start, { user: 'root', ...runtimeCommandOptions(10_000, budget) })
   if (result.stdout.trim() !== 'mikka-runtime-install-required') return

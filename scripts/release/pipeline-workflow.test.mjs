@@ -121,6 +121,7 @@ test('read-only migration admission precedes candidate preparation and deploymen
     assert.equal(overlayMint.with.repositories, 'mikka-hosted-ui')
     assert.equal(overlayMint.with['permission-contents'], 'read')
     assert.equal(overlayMint.with['permission-actions'], 'read')
+    assert.equal(overlayMint.with['permission-checks'], 'read')
     const clearStep = job.steps.findIndex(step => step.name === 'Remove App credentials before loading private operations code')
     assert.ok(clearStep > job.steps.indexOf(overlayMint), name + ' must clear App credentials after minting overlay token')
     const admissions = job.steps.filter(step => step.run === command)

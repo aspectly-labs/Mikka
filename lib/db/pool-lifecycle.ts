@@ -1,6 +1,7 @@
 import { attachDatabasePool } from '@vercel/functions'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { Pool } from 'pg'
+import { readEnv } from '@/lib/env/server'
 
 const initialized = new WeakSet<Pool>()
 
@@ -20,6 +21,6 @@ export function manageDatabasePool(pool: Pool): Pool {
   pool.on('error', () => console.warn('database_pool_idle_connection_lost'))
   // Fluid releases idle clients when the isolate suspends. Off Vercel the helper
   // is not the runtime, and calling it there fails local and CI pools.
-  if (process.env.VERCEL) attachDatabasePool(pool)
+  if (readEnv('VERCEL')) attachDatabasePool(pool)
   return pool
 }

@@ -6,6 +6,7 @@ import { collectOperationalSignals } from '@/lib/ops/monitor'
 import { collectProviderEgress } from '@/lib/ops/egress-fallback'
 import { isCloudEdition } from '@/lib/edition'
 import { publicEnv } from '@/lib/public-env.mjs'
+import { readEnv } from '@/lib/env/server'
 
 export const maxDuration = 60
 const headers = { 'cache-control': 'no-store' }
@@ -15,8 +16,8 @@ const handleGET = defineRoute(
     try {
       const cloud = isCloudEdition()
       const [operational, provider] = await Promise.allSettled([
-        collectOperationalSignals(pool, { sink: process.env.OPS_INTERNAL_ALERT_SINK }),
-        cloud ? collectProviderEgress(pool, { neonToken: process.env.NEON_API_KEY, posthogKey: publicEnv('MIKKA_PUBLIC_POSTHOG_KEY') })
+        collectOperationalSignals(pool, { sink: readEnv('OPS_INTERNAL_ALERT_SINK') }),
+        cloud ? collectProviderEgress(pool, { neonToken: readEnv('NEON_API_KEY'), posthogKey: publicEnv('MIKKA_PUBLIC_POSTHOG_KEY') })
           : Promise.resolve({ status: 'not_applicable' as const }),
       ])
       if (operational.status !== 'fulfilled' || provider.status !== 'fulfilled') throw Error('opsMonitorUnavailable')

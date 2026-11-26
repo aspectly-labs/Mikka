@@ -2,6 +2,7 @@ import { deploymentSwitch } from '@/lib/deployment-switches'
 import { FactoryError, type FactoryBinding } from "./contract";
 import { maskFactoryNote } from "./note-mask";
 import type { FactorySnapshot } from "./store";
+import { runtimeEnv, type EnvMap } from '@/lib/env/server';
 
 export type FactoryRouteFn = (userId: string, input: unknown) => Promise<FactorySnapshot>;
 export interface FactoryRouteRequest {
@@ -14,7 +15,7 @@ export interface FactoryRouteRequest {
 }
 
 /** Issue mutations AND the factoryRouting and factoryLifecycle switches (lib/deployment-switches.ts). */
-export function factoryRouteEnabled(issueMutations: boolean, env: Record<string, string | undefined> = process.env): boolean {
+export function factoryRouteEnabled(issueMutations: boolean, env: EnvMap = runtimeEnv()): boolean {
   return issueMutations && deploymentSwitch('factoryRouting', env) && deploymentSwitch('factoryLifecycle', env);
 }
 

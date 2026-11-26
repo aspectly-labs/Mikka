@@ -1,7 +1,8 @@
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** Server authority is assigned by the operator, never inherited from a workspace role or signup order. */
-export function isServerAdmin(userId: string, env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+export function isServerAdmin(userId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): boolean {
   return Boolean(userId) && (env.MIKKA_SERVER_ADMIN_USER_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean).includes(userId)
 }
 

@@ -12,6 +12,7 @@ import { snapshotMatchesScope } from '../factory/deliverable-snapshot'
 import type { FactoryTask } from '../factory/store'
 import { retainedDeliverableProbeCommand } from './retained-deliverable-probe.mjs'
 import { recordThreadMaintenanceSession } from './thread-machine-sessions'
+import { readEnv } from '@/lib/env/server'
 
 type Budget = (maximumMs: number) => number
 type ProbeOptions = { user: 'user'; timeoutMs: number; requestTimeoutMs: number; signal: AbortSignal }
@@ -31,7 +32,7 @@ const requestOptions = (budget: Budget, maximumMs: number) => {
 }
 async function ownerOptions(scope: RetainedDeliverableScope) {
   const account = await e2bResourceAccount(scope.ownerId, 'sandbox', scope.sandboxId)
-  return { providerScope: account.scope, apiKey: account.apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+  return { providerScope: account.scope, apiKey: account.apiKey, proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') }
 }
 const defaultRuntime: RetainedDeliverableRuntime = {
   async state(scope, budget) {

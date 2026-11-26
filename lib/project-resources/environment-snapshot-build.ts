@@ -1,6 +1,7 @@
 import 'server-only'
 import { Sandbox } from 'e2b'
 import type { PoolClient } from 'pg'
+import { readEnv } from '@/lib/env/server'
 import { workspacePool } from '@/lib/workspace-db'
 import { withDirectSession } from '@/lib/db/direct-session'
 import { environmentSnapshotApiKey, environmentSnapshotScope } from '@/lib/secrets/e2b-runtime'
@@ -27,7 +28,7 @@ function options(scope: string) {
   if (scope !== environmentSnapshotScope()) throw new Error('Environment snapshot provider scope unavailable')
   return {
     apiKey: environmentSnapshotApiKey(),
-    proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
+    proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy'),
     requestTimeoutMs: 20_000,
   }
 }
@@ -157,8 +158,8 @@ async function allowed(row: Build) {
   if (
     !row.requestedBy ||
     row.providerScope !== environmentSnapshotScope() ||
-    !(await serverFlagEnabled(gatedFeatures.environmentSnapshots, row.requestedBy)) ||
-    row.workerSha !== process.env.MIKKA_CLOUD_WORKER_SHA
+    !(await serverFlagEnabled(gatedFeatures.environmentSnapshots.key, row.requestedBy)) ||
+    row.workerSha !== readEnv('MIKKA_CLOUD_WORKER_SHA')
   )
     return null
   const { environment, eligible } = await snapshotConfiguration(row.requestedBy, row)

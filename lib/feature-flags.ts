@@ -1,3 +1,6 @@
+import { getNodeEnv } from './env/public.ts'
+import { envValue } from './env/runtime.mjs'
+
 export const upcomingFeatures = {
   product: { key: 'mikka-upcoming-product-features', implemented: false },
   integrations: { key: 'mikka-upcoming-integrations', implemented: false },
@@ -19,16 +22,22 @@ export function featureAvailability(feature: UpcomingFeature, remoteValue: boole
 }
 
 /** Built features held back by a PostHog flag until what they depend on is live. */
+export interface GatedFeatureDefinition {
+  key: string
+  /** Public issue this flag is waiting on. Closed issues need an open follow-up. */
+  waitsOn?: number
+}
+
 export const gatedFeatures = {
-  /** The bots' cloud computer UI (#174); off until the E2B backend (#172) is live. */
-  cloudComputer: 'mikka-cloud-computer',
+  /** The bots' cloud computer UI (#174); the E2B backend (#172) is live. */
+  cloudComputer: { key: 'mikka-cloud-computer' },
   /** Environment builds consume the owner's E2B quota; opt in per user. */
-  environmentSnapshots: 'mikka-environment-snapshots',
+  environmentSnapshots: { key: 'mikka-environment-snapshots' },
   /** Points that bill cloud computer time (计费 › 点数). Hidden while E2B runs on the workspace's own API key (Alex, 2026-10-30). */
-  computerBilling: 'mikka-computer-billing',
-  /** 记忆 (sidebar entry, its page and its settings section). Hidden; see the hosted repo. */
-  memory: 'mikka-memory',
-} as const
+  computerBilling: { key: 'mikka-computer-billing' },
+  /** 记忆 (sidebar entry, its page and its settings section). Hidden: it does not work yet (Alex, 2026-11-20). */
+  memory: { key: 'mikka-memory' },
+} as const satisfies Record<string, GatedFeatureDefinition>
 
 export type GatedFeature = keyof typeof gatedFeatures
 
@@ -61,8 +70,9 @@ export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[k
 /** Local server acceptance can exercise both flag states without a PostHog key.
  * Production ignores this setting before reading or parsing it. */
 export function localFlagOverride(key: string): boolean | TaskProviderFlagVariant | undefined {
-  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') return undefined
-  const configured = process.env.MIKKA_FLAG_OVERRIDES
+  const nodeEnv = getNodeEnv()
+  if (nodeEnv !== 'development' && nodeEnv !== 'test') return undefined
+  const configured = envValue('MIKKA_FLAG_OVERRIDES')
   if (!configured) return undefined
   let overrides: unknown
   try {

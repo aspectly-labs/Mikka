@@ -1,6 +1,8 @@
+import { runtimeEnv } from '@/lib/env/runtime.mjs'
+
 /** Public-web trust is separate from Better Auth's cookie/OAuth origin list.
  * An administrator can disable this public client without disabling desktop. */
-export type WebConnectionEnvironment = Record<string, string | undefined>
+export type WebConnectionEnvironment = Readonly<Record<string, string | undefined>>
 export const WEB_CONNECTION_PROTOCOL = 1
 export const OFFICIAL_WEB_URL = 'https://app.aspectlylabs.com/mikka'
 const host = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$|^\[[0-9a-f:.]+\]$/
@@ -19,17 +21,17 @@ export function canonicalWebServer(value: unknown): string | null {
   } catch { return null }
 }
 
-export function webConnectionURL(env: WebConnectionEnvironment = process.env): string | null {
+export function webConnectionURL(env: WebConnectionEnvironment = runtimeEnv()): string | null {
   return canonicalWebServer(env.MIKKA_OFFICIAL_WEB_URL ?? OFFICIAL_WEB_URL)
 }
-export function webConnectionEnabled(env: WebConnectionEnvironment = process.env): boolean {
+export function webConnectionEnabled(env: WebConnectionEnvironment = runtimeEnv()): boolean {
   return env.MIKKA_OFFICIAL_WEB_ENABLED !== '0' && env.MIKKA_OFFICIAL_WEB_ENABLED !== 'false' && webConnectionURL(env) !== null
 }
-export function officialWebOriginAllowed(origin: string | null | undefined, env: WebConnectionEnvironment = process.env): boolean {
+export function officialWebOriginAllowed(origin: string | null | undefined, env: WebConnectionEnvironment = runtimeEnv()): boolean {
   const app = webConnectionURL(env)
   return webConnectionEnabled(env) && !!app && origin === new URL(app).origin
 }
-export function officialWebCallback(value: unknown, env: WebConnectionEnvironment = process.env): string | null {
+export function officialWebCallback(value: unknown, env: WebConnectionEnvironment = runtimeEnv()): string | null {
   const app = webConnectionURL(env)
   const callback = app && `${app}/api/web/complete`
   return webConnectionEnabled(env) && value === callback ? callback : null

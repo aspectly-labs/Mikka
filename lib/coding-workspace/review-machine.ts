@@ -10,6 +10,7 @@ import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { cloudflareReview, reviewReply } from './cloudflare-review'
 import type { ReviewSessionLease } from './review-sessions'
 import type { TaskReviewAuthority } from './review-authority'
+import { readEnv } from '@/lib/env/server'
 
 type Lease = ReviewSessionLease
 type Dependencies = { database: Pick<Pool, 'connect' | 'query'>; resume: (scope: TaskReviewAuthority & { sandboxId: string }, milliseconds: number, signal?: AbortSignal) => Promise<void | number> }
@@ -34,7 +35,7 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
     const { withE2BProviderTime, E2B_TIMEOUT_REQUEST_BUDGET_MS } = await import('../cloud-computer/e2b-compute-billing')
     const account = await e2bResourceAccount(target.ownerId, 'sandbox', target.sandboxId)
     const options = { apiKey: account.apiKey, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, signal: abort, retries: 0,
-      proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+      proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') }
     const requested = milliseconds + (isCloudEdition() ? E2B_REVIEW_TIMEOUT_MARGIN_MS : 0)
     return withE2BProviderTime(target.ownerId, target.sandboxId, requested, {
       providerScope: account.scope,

@@ -10,6 +10,7 @@ import { isActionErrorCode } from '@/lib/workspace-admin/action'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { definitionSchema, ScheduleError, scheduleListInput, webhookBatchListInput, webhookBatchInput, type Command, type Definition } from '@/lib/schedules/contract'
 import type { AutomationHistory, AutomationList, AutomationUsage, AutomationView, CancelledAutomationRun, WebhookBatchClosure, WebhookBatchPage } from '@/lib/schedules/automation-view'
+import { readEnv } from '@/lib/env/server'
 
 /**
  * 自动化: the page's commands. Every one goes through the schedules' one writer, `executeScheduleCommand`, as the
@@ -204,7 +205,7 @@ export async function automationLinearLabels(workspaceId: string): Promise<Actio
 export async function automationSlackChannels(workspaceId?: string): Promise<ActionResult<{ installed: boolean; channels: { id: string; name: string; private: boolean }[] }>> {
   return runAction(async () => {
     if (actingContext.getStore()) throw new ActionFailureError('authRequired')
-    const app = process.env.SLACK_APP_ID
+    const app = readEnv('SLACK_APP_ID')
     let actor
     try { actor = await currentWorkspaceActor(workspaceId) } catch (error) {
       if (error instanceof WorkspaceError) throw new ActionFailureError(isActionErrorCode(error.code) ? error.code : 'generic', undefined, undefined, { cause: error })
@@ -229,7 +230,7 @@ export async function automationSlackEmojis(workspaceId: string): Promise<Action
       if (error instanceof WorkspaceError) throw new ActionFailureError(isActionErrorCode(error.code) ? error.code : 'generic', undefined, undefined, { cause: error })
       throw error
     }
-    const app = process.env.SLACK_APP_ID
+    const app = readEnv('SLACK_APP_ID')
     if (!app) return { emojis: [] }
     const { slackInstallationEmojis } = await import('@/lib/slack/automation-channels')
     try { return { emojis: await slackInstallationEmojis(app, actor.userId, actor.workspaceId) } }
@@ -247,7 +248,7 @@ export async function automationSlackAuthors(workspaceId: string, cursor?: strin
       if (error instanceof WorkspaceError) throw new ActionFailureError(isActionErrorCode(error.code) ? error.code : 'generic', undefined, undefined, { cause: error })
       throw error
     }
-    const app = process.env.SLACK_APP_ID
+    const app = readEnv('SLACK_APP_ID')
     if (!app) return { users: [], nextCursor: null }
     const { slackInstallationAuthors } = await import('@/lib/slack/automation-channels')
     try { return await slackInstallationAuthors(app, actor.userId, actor.workspaceId, cursor) }
