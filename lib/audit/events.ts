@@ -72,6 +72,7 @@ export const AUDIT_ACTIONS = {
   'billing.checkout_started': 'billing',
   'billing.credits_purchased': 'billing',
   'billing.auto_recharge_changed': 'billing',
+  'billing.overage_changed': 'billing',
   'billing.limits_changed': 'billing',
   'billing.payment_method_changed': 'billing',
   'billing.credit_share_changed': 'billing',
@@ -155,6 +156,7 @@ export const AUDIT_METADATA = {
   'billing.checkout_started': z.object({ amountCents: cents, currency, offerId: label }).partial().strict(),
   'billing.credits_purchased': z.object({ amountCents: cents, currency, credits: z.number().int().min(0) }).partial().strict(),
   'billing.auto_recharge_changed': z.object({ enabled: z.boolean(), thresholdCents: cents.nullable(), amountCents: cents.nullable(), monthlyCapCents: cents.nullable(), revision: z.number().int().nonnegative() }).partial().strict(),
+  'billing.overage_changed': z.object({ enabled: z.boolean(), monthlyCapCents: cents.nullable(), revision: z.number().int().nonnegative() }).strict(),
   'billing.limits_changed': z.object({ fromCents: cents.nullable(), toCents: cents.nullable() }).partial().strict(),
   // 由我的卡支付这个团队: a member's card designated, or released (they stopped it or left) with a grace period.
   'billing.payment_method_changed': z.object({ change: z.enum(['designated', 'released']), graceDays: z.number().int().min(0).max(30).optional() }).strict(),

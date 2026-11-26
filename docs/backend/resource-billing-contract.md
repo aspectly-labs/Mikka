@@ -175,3 +175,21 @@ Stripe 的 [订阅 webhook 文档](https://docs.stripe.com/billing/subscriptions
 Stripe 的 [Invoice Payment 对象](https://docs.stripe.com/api/invoice-payment/object) 和 [列表接口](https://docs.stripe.com/api/invoice-payment/list) 定义实际付款分配；[Managed Payments 文档](https://docs.stripe.com/payments/managed-payments) 列出当前不支持的集成，[配置文档](https://docs.stripe.com/payments/managed-payments/set-up) 定义 Checkout 的显式启用参数。这些是提供商能力边界；退款时保留已发生用量、追加补偿账目以及不在未知外部成本上扣点，是 Mikka 的财务归属要求。
 
 Stripe 的 [幂等请求](https://docs.stripe.com/api/idempotent_requests) 明确 API v1 幂等键可能在至少 24 小时后被清除；[Checkout 创建](https://docs.stripe.com/api/checkout/sessions/create)、[列表](https://docs.stripe.com/api/checkout/sessions/list)、[读取](https://docs.stripe.com/api/checkout/sessions/retrieve) 和 [订阅列表](https://docs.stripe.com/api/subscriptions/list) 是请求恢复使用的官方接口。本实现保留固定 Session 过期时间，不能因键被清除而重新创建同一历史付款请求。
+
+## 新定价模型合同（#3328 Part 1）
+
+在保留历史订阅、已结算收据和单库事务边界的前提下，新定价（`2026-11-26`）在 Hosted UI 读写合同与服务端账本中补充以下规则：
+
+1. **1.0× 套餐额度对等与团队按席位授额**：
+   - `resourcePrice()` 默认以 Stripe `unit_amount`（美分，100 额度 = $1）作为月度额度，`mikka_monthly_points` 可选；当 `metadata.mikka_pricing_model = 'at_cost_v1'` 时，强制校验 `monthlyPoints === unit_amount`。
+   - `metadata.mikka_seat_model` 支持 `per_workspace`（默认）与 `per_seat`。`per_seat` 方案在 Checkout 时按当前工作区活跃成员数（`>= 1`）设定 `quantity`，在 `subscription_create` 与 `subscription_cycle` 发放 `monthlyPoints × seats` 的当期套餐额度，并在 `subscription_update` 的已支付按比例增席账单按 `amount_paid` 幂等追加当期共享额度。
+2. **加购额度 12 个月有效期与 FIFO 扣减**：
+   - 每次加购在入账时写入 `expiresAt = createdAt + 12 个月`（UTC 日历月，闰日按月底对齐），并在 `CreditTransaction.expiresAt` 返回给界面；退款补偿行继承原授额的 `expiresAt`。
+   - `HostedUsageStore` 通过 `hosted_usage."purchasedAllocations"` 按授额 `expiresAt ASC NULLS LAST, id` 先进先出扣减；过期授额不再计入可用余额，也不会抹除未过期的加购余额。
+3. **超额默认关闭与强制每月上限**：
+   - `workspace_billing` 新增 `overageEnabled`（默认 `false`）、`overageMonthlyCapPoints` 与 `overageRevision`，`BillingView.overage` 与 `WorkspaceBillingSettingsView.overage` 返回 `{ enabled, monthlyCapPoints, spentOveragePoints, remainingOveragePoints, revision }`。
+   - 仅当前账户 Owner 可通过 `POST /api/workspaces/:id/billing`（`action: 'overage'`）、`POST /api/organizations/:id/billing`、`PUT/PATCH /api/workspaces/:id/billing/settings`（`{ overage }`）、`saveOveragePolicy` Server Action 或 `billing.saveOveragePolicy` Desktop RPC 修改。开启超额必须提供正数 `monthlyCapPoints`，否则返回 `billingOverageCapRequired`（409）。
+   - 持有有效 `resource_v1` 付费套餐且当期套餐额度用尽时：超额关闭则拒绝溢出扣款（有加购余额返回 `usage_budget_exhausted`，无余额返回 `points_exhausted`）；超额开启则按当前 UTC 自然月已结算及在途超出消耗校验 `overageMonthlyCapPoints`。无有效套餐的纯充值工作区仍可自由消耗有效加购余额。
+4. **旧卡验证额度祖父迁移**：
+   - 迁移 `20261126233650_billing_new_pricing_credits.sql` 将既有 `hosted_allowances.remaining > 0` 幂等迁入永不过期的 `workspace_credit_grants`（`bucket = 'purchased'`、`reason = 'allowance_grandfather'`、`expiresAt = NULL`）并将原 `hosted_allowances.remaining` 归零，保证现有用户余额不缩水、不重复计算。
+

@@ -1595,6 +1595,9 @@ export const workspaceBilling = pgTable('workspace_billing', {
   autoRechargeConsentBy: text('autoRechargeConsentBy'),
   autoRechargeConsentAt: timestamp('autoRechargeConsentAt', { withTimezone: true }),
   autoRechargeRevision: integer('autoRechargeRevision').notNull().default(0),
+  overageEnabled: boolean('overageEnabled').notNull().default(false),
+  overageMonthlyCapPoints: integer('overageMonthlyCapPoints'),
+  overageRevision: integer('overageRevision').notNull().default(0),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -1612,7 +1615,7 @@ export const billingCheckoutRequests = pgTable('billing_checkout_requests', {
   closedAt: timestamp('closedAt', { withTimezone: true }),
 }, table => [uniqueIndex('billing_checkout_requests_active_idx').on(table.workspaceId).where(sql`${table.closedAt} IS NULL`)])
 
-/** Credit grants: 'plan' per paid invoice (replaces the previous period's), 'purchased' never expires. */
+/** Credit grants: 'plan' per paid invoice (resets monthly), 'purchased' top-ups expire 12 months after purchase (grandfathered NULL never expires). */
 export const workspaceCreditGrants = pgTable('workspace_credit_grants', {
   id: uuid('id').primaryKey(),
   workspaceId: uuid('workspaceId').notNull(),

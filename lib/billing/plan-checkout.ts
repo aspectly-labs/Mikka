@@ -91,7 +91,8 @@ export type CheckoutOfferResolver = (
 ) => Promise<{ readonly id: string; readonly introCreditCents: number; readonly stripeCouponId?: string; readonly endsAt?: string } | null>
 
 export async function resourcePlanCheckout(actorId: string, workspaceId: string, back: string, price: Price,
-  config: StripeConfig, fetchImpl: typeof fetch, resolveOffer?: CheckoutOfferResolver) {
+  config: StripeConfig, fetchImpl: typeof fetch, resolveOffer?: CheckoutOfferResolver, quantity = 1) {
+  const seatCount = z.number().int().min(1).max(10_000).parse(quantity)
   const customerId = await ensureBillingCustomer(workspaceId, config, fetchImpl)
   const get = (path: string) => stripeGet<unknown>(config, path, fetchImpl)
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -126,13 +127,14 @@ export async function resourcePlanCheckout(actorId: string, workspaceId: string,
       const subscriptionMetadata = {
         ...metadata,
         plan: price.plan,
+        seatModel: price.seatModel,
         ...(offer ? { mikka_intro_credit_cents: String(offer.introCreditCents) } : {}),
       }
       const params = {
         mode: 'subscription',
         managed_payments: { enabled: true },
         customer: customerId,
-        line_items: [{ price: price.id, quantity: 1 }],
+        line_items: [{ price: price.id, quantity: seatCount }],
         ...(offer?.stripeCouponId ? { discounts: [{ coupon: offer.stripeCouponId }] } : {}),
         client_reference_id: workspaceId,
         subscription_data: { metadata: subscriptionMetadata },
@@ -145,7 +147,7 @@ export async function resourcePlanCheckout(actorId: string, workspaceId: string,
         priceId: price.id, params, createdAt: now, expiresAt }).returning()
       await recordAudit(tx, { workspaceId, actor: { type: 'user', id: actorId, name: actorId },
         action: 'billing.checkout_started', target: { type: 'billing_checkout', id: requestId },
-        metadata: { amountCents: price.amountCents, currency: price.currency.toUpperCase(), ...(offer ? { offerId: offer.id } : {}) } })
+        metadata: { amountCents: price.amountCents * seatCount, currency: price.currency.toUpperCase(), ...(offer ? { offerId: offer.id } : {}) } })
       return created
     })
     if (request.customerId !== customerId) throw new Error('billing_customer_scope_mismatch')

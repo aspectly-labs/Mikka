@@ -7,8 +7,6 @@
     "messages/en.json IssueDetail.dialog.estimateLabel C-11-paren",
     "messages/en.json IssueThreads.cost.includedHeading C-11-paren",
     "messages/en.json Settings.agentProfiles.newTab C-11-paren",
-    "messages/en.json Settings.billingAutoRecharge.monthlyCapLabel C-11-paren",
-    "messages/en.json Settings.billingAutoRecharge.thresholdLabel C-11-paren",
     "messages/en.json Settings.environments.variablesLabel C-11-paren",
     "messages/en.json Settings.skillsPage.sourceLabel C-11-paren",
     "messages/zh-CN.json Artifact.frameTitle C-11-paren",
@@ -17,8 +15,6 @@
     "messages/zh-CN.json IssueDetail.dialog.estimateLabel C-11-paren",
     "messages/zh-CN.json IssueThreads.cost.includedHeading C-11-paren",
     "messages/zh-CN.json Settings.agentProfiles.newTab C-11-paren",
-    "messages/zh-CN.json Settings.billingAutoRecharge.monthlyCapLabel C-11-paren",
-    "messages/zh-CN.json Settings.billingAutoRecharge.thresholdLabel C-11-paren",
     "messages/zh-CN.json Settings.environments.variablesLabel C-11-paren"
   ]
 }

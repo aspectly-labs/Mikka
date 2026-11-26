@@ -1307,3 +1307,43 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer enforce applies_to.
   })
   assert.equal(boundaryCatalog.activeOffer, null)
 })
+
+test('catalog surfaces per_seat pricing and at-cost default unit_amount credits', async () => {
+  const seatFetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.endsWith('/v1/prices/price_team_1')) {
+      return Response.json({
+        id: 'price_team_1',
+        active: true,
+        currency: 'usd',
+        type: 'recurring',
+        billing_scheme: 'per_unit',
+        unit_amount: 3000,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+        metadata: {
+          mikka_billing_model: 'resource_v1',
+          mikka_plan: 'pro',
+          mikka_seat_model: 'per_seat',
+          mikka_pricing_model: 'at_cost_v1',
+        },
+      })
+    }
+    return new Response('{}', { status: 404 })
+  }) as typeof fetch
+  const catalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: {
+      MIKKA_EDITION: 'cloud',
+      STRIPE_SECRET_KEY: 'sk_test_catalog',
+      STRIPE_TEAM_RESOURCE_PRICE_ID: 'price_team_1',
+    },
+    fetchImpl: seatFetch,
+    bypassCache: true,
+  })
+  const team = catalog.plans.find((plan) => plan.plan === 'pro')
+  assert.ok(team)
+  assert.equal(team.active, true)
+  assert.equal(team.seatModel, 'per_seat')
+  assert.equal(team.includedPoints, 3000)
+  assert.equal(team.amountCents, 3000)
+})

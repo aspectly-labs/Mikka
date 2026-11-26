@@ -170,6 +170,7 @@ const functions = {
   'billing.startCardVerification': actions5.startCardVerification,
   'billing.getBillingSettings': actions5.getBillingSettings,
   'billing.saveAutoRechargePolicy': actions5.saveAutoRechargePolicy,
+  'billing.saveOveragePolicy': actions5.saveOveragePolicy,
   'devices.getPolicy': deviceSettingsActions.getPolicy,
   'devices.updatePolicy': deviceSettingsActions.updatePolicy,
   'devices.listRepositories': deviceSettingsActions.listRepositories,

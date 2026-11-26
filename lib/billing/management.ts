@@ -18,6 +18,7 @@ import { readCreditBillingAccount } from './history'
 import { readResourceBudgets } from './resource-budgets'
 import { setWorkspaceBudget } from './budget-service'
 import { saveAutoRechargePolicy } from './auto-recharge'
+import { saveOveragePolicy } from './overage'
 import { setOrganizationBillingAccount } from './organization-account'
 import { pointsPurchaseUrl } from './points-purchase'
 import { resolveAppOrigin } from '@/lib/auth-config'
@@ -166,6 +167,7 @@ const operation = z.discriminatedUnion('action', [
   z.object({ action: z.literal('budget'), workspaceId: z.uuid(), budget: z.unknown() }).strict(),
   z.object({ action: z.literal('account'), workspaceId: z.uuid().nullable() }).strict(),
   z.object({ action: z.literal('recharge'), policy: z.unknown(), accountWorkspaceId: z.uuid() }).strict(),
+  z.object({ action: z.literal('overage'), policy: z.unknown(), accountWorkspaceId: z.uuid() }).strict(),
   z.object({ action: z.enum(['checkout', 'portal']), accountWorkspaceId: z.uuid() }).strict(),
   z.object({ action: z.literal('topup'), amount: z.number(), locale: z.enum(['en', 'zh-CN']), accountWorkspaceId: z.uuid() }).strict(),
 ])
@@ -186,6 +188,10 @@ export async function mutateBillingManagement(actorId: string, target: BillingSc
   if (value.action === 'recharge') {
     if (!current.canManageRecharge) throw new WorkspaceError('workspaceAccessDenied')
     return saveAutoRechargePolicy(actorId, current.account.workspaceId, value.policy)
+  }
+  if (value.action === 'overage') {
+    if (!current.canManageRecharge) throw new WorkspaceError('workspaceAccessDenied')
+    return saveOveragePolicy(actorId, current.account.workspaceId, value.policy)
   }
   if (!current.canManagePayments) throw new WorkspaceError('workspaceAccessDenied')
   if (value.action !== 'portal' && !current.canPurchasePlatform) throw new WorkspaceError('billingPolicyChanged')

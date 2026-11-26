@@ -5,6 +5,7 @@ import { workspaceDb } from '@/lib/workspace-db'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
 import { organizationBillingAccounts, organizations, organizationWorkspaces } from '@/lib/db/governance-schema'
 import { requireOrganizationAdmin } from '@/lib/governance/organizations'
+import { workspaces } from '@/lib/db/workspace-schema'
 import type { EnterprisePrincipal } from '@/lib/enterprise/principal'
 
 type Options = { organizationId?: string; ownPlatformAccount?: boolean; principal?: EnterprisePrincipal }
@@ -37,5 +38,24 @@ export async function withBillingAuthority<T>(actorId: string, workspaceId: stri
     const lease: Lease = { actorId, workspaceId, organizationId: options.organizationId, ownPlatformAccount: options.ownPlatformAccount ?? false, active: true }
     try { return await authority.run(lease, work) }
     finally { lease.active = false }
+  })
+}
+
+/** Requires the actor to own the workspace or its designated organization billing account. */
+export async function requireAccountOwner(actorId: string, accountWorkspaceId: string): Promise<string> {
+  return workspaceDb.transaction(async ws => {
+    const [workspace] = await ws.select({ id: workspaces.id, ownerId: workspaces.userId }).from(workspaces)
+      .where(eq(workspaces.id, accountWorkspaceId)).for('update').limit(1)
+    if (!workspace) throw new WorkspaceError('workspaceAccessDenied')
+    const [account] = await ws.select().from(organizationBillingAccounts)
+      .where(eq(organizationBillingAccounts.workspaceId, accountWorkspaceId)).limit(1)
+    if (account) {
+      const { membership } = await requireOrganizationAdmin(ws, account.organizationId, actorId)
+      if (membership.role !== 'owner') throw new WorkspaceError('workspaceAccessDenied')
+      return membership.name
+    }
+    const { membership } = await requireWorkspace(ws, accountWorkspaceId, actorId, true)
+    if (workspace.ownerId !== actorId) throw new WorkspaceError('workspaceAccessDenied')
+    return membership.name
   })
 }

@@ -135,7 +135,7 @@ async function refundUnusedRenewal(ownerId: string, operationId: string, index: 
         AND "renewalDispatchId" IS NOT DISTINCT FROM $5::uuid
         AND ($5::uuid IS NULL OR "renewalUnchangedAt"<clock_timestamp()-interval '29 seconds')
       RETURNING "workspaceId"
-    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
+    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}',"purchasedAllocations"='{}'
     FROM unused WHERE u.id=$4 AND u."usageWorkspaceId"=unused."workspaceId" AND u."executionOwnerId"=$2 AND u.state='settled'`,
   [operationId, ownerId, index, `machine:e2b:${operationId}:${index}`, dispatchId ?? null])
 }
@@ -152,7 +152,7 @@ export async function reconcileE2BKeepAlivePayments() {
   ), cancelled AS (
     UPDATE e2b_compute_leases l SET "chunkIndex"="chunkIndex"+1,"pendingAt"=NULL,"pendingRunId"=NULL,"fundingOpenedAt"=NULL
     FROM due WHERE l."operationId"=due."operationId" RETURNING l."operationId",l."ownerId",l."workspaceId",l."chunkIndex"
-  ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
+  ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}',"purchasedAllocations"='{}'
     FROM cancelled l WHERE u.id='machine:e2b:'||l."operationId"||':'||l."chunkIndex"
       AND u."executionOwnerId"=l."ownerId" AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled'`)
   const { rows } = await pool.query<{ operationId: string; ownerId: string; activeChunkIndex: number;
@@ -238,7 +238,7 @@ export async function voidUnallocatedE2BCompute(ownerId: string, operationId: st
         AND "sandboxId" IS NULL AND "chunkIndex"=0 AND "paidUntil" IS NOT NULL
         AND (NOT $4::boolean OR "paidUntil"<=now()) AND (NOT $5::boolean OR "creationAttempts"=1)
       RETURNING "workspaceId"
-    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
+    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}',"purchasedAllocations"='{}'
     FROM refused WHERE u.id=$3 AND u."usageWorkspaceId"=refused."workspaceId" AND u."executionOwnerId"=$2 AND u.state='settled'`,
   [operationId, ownerId, `machine:e2b:${operationId}:0`, expiredOnly, firstOnly])
 }
